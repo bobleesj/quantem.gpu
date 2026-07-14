@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from quantem.gpu.detector import auto_probe, mean_dp
+from quantem.gpu.detector import mean_dp
 from quantem.gpu.ssb.optics.physics import electron_wavelength_angstrom
 
 
@@ -112,23 +112,92 @@ def _bf_pixels(
     data,
     threshold: float,
     bf_radius: float | None,
-) -> tuple[np.ndarray, np.ndarray, tuple[float, float], float]:
+) -> tuple[np.ndarray, np.ndarray, tuple[float, float], float, float]:
     dp = mean_dp(data)
-    center, detected_radius = auto_probe(dp)
-    radius = float(detected_radius if bf_radius is None else bf_radius)
+    _detected_center, detected_radius = _detect_bf_radius_numpy(dp)
     mask = dp > float(dp.max()) * float(threshold)
     rr, cc = np.nonzero(mask)
-    dist2 = (rr.astype(np.float32) - center[0]) ** 2 + (
-        cc.astype(np.float32) - center[1]
-    ) ** 2
-    keep = dist2 <= radius ** 2
-    rr = rr[keep].astype(np.int32)
-    cc = cc[keep].astype(np.int32)
     if rr.size == 0:
         raise ValueError(
-            f"No BF pixels selected with threshold={threshold} and radius={radius}."
+            f"No bright-field pixels found with threshold={threshold:.2f}."
         )
-    return rr, cc, (float(center[0]), float(center[1])), radius
+    weights = dp[rr, cc].astype(np.float32, copy=False)
+    weight_sum = float(weights.sum())
+    if weight_sum > 0:
+        center = (
+            float((rr.astype(np.float32) * weights).sum() / weight_sum),
+            float((cc.astype(np.float32) * weights).sum() / weight_sum),
+        )
+    else:
+        center = (float(rr.mean()), float(cc.mean()))
+    selected_radius = float(detected_radius if bf_radius is None else bf_radius)
+    if bf_radius is not None:
+        dist2 = (rr.astype(np.float32) - center[0]) ** 2 + (
+            cc.astype(np.float32) - center[1]
+        ) ** 2
+        keep = dist2 <= float(bf_radius) ** 2
+        rr = rr[keep]
+        cc = cc[keep]
+    if rr.size == 0:
+        raise ValueError(
+            f"No BF pixels selected with threshold={threshold} and radius={bf_radius}."
+        )
+    return (
+        rr.astype(np.int32),
+        cc.astype(np.int32),
+        center,
+        selected_radius,
+        float(detected_radius),
+    )
+
+
+def _detect_bf_radius_numpy(
+    mean_dp_array: np.ndarray,
+    threshold_ratio: float = 0.1,
+) -> tuple[tuple[int, int], int]:
+    """NumPy mirror of :func:`quantem.gpu.detector.detect_bf_radius`."""
+    dp = np.asarray(mean_dp_array, dtype=np.float32)
+    if dp.ndim != 2:
+        raise ValueError(f"Expected 2D diffraction pattern, got shape {dp.shape}.")
+    n_k_row, n_k_col = dp.shape
+    dp_max = float(np.nanmax(dp))
+    if not np.isfinite(dp_max) or dp_max <= 0:
+        raise ValueError("Diffraction pattern has no positive finite values.")
+    mask = dp > threshold_ratio * dp_max
+    if not bool(mask.any()):
+        raise ValueError(f"No pixels above threshold ({threshold_ratio:.0%} of max).")
+    mask_f = mask.astype(np.float32)
+    total = float(mask_f.sum())
+    row_coords = np.arange(n_k_row, dtype=np.float32).reshape(-1, 1)
+    col_coords = np.arange(n_k_col, dtype=np.float32).reshape(1, -1)
+    row_center = max(0, min(int(round(float((row_coords * mask_f).sum() / total))), n_k_row - 1))
+    col_center = max(0, min(int(round(float((col_coords * mask_f).sum() / total))), n_k_col - 1))
+    dr = np.arange(n_k_row, dtype=np.float32) - row_center
+    dc = np.arange(n_k_col, dtype=np.float32) - col_center
+    rr, cc = np.meshgrid(dr, dc, indexing="ij")
+    radii = np.rint(np.sqrt(rr * rr + cc * cc)).astype(np.int32).reshape(-1)
+    max_r = min(row_center, col_center, n_k_row - row_center, n_k_col - col_center)
+    if max_r < 2:
+        return (row_center, col_center), max(1, min(n_k_row, n_k_col) // 4)
+    valid = radii < max_r
+    profile = np.bincount(radii[valid], weights=dp.reshape(-1)[valid], minlength=max_r).astype(np.float32)
+    counts = np.bincount(radii[valid], minlength=max_r).astype(np.float32)
+    nonzero = counts > 0
+    profile[nonzero] /= counts[nonzero]
+    if profile.size > 5:
+        sigma = 2.0
+        ksize = int(6 * sigma + 1) | 1
+        x = np.arange(ksize, dtype=np.float32) - ksize // 2
+        kernel = np.exp(-0.5 * (x / sigma) ** 2).astype(np.float32)
+        kernel /= kernel.sum()
+        padded = np.pad(profile, ksize // 2, mode="edge")
+        profile_smooth = np.convolve(padded, kernel, mode="valid")[:profile.size]
+        half_max = float(profile_smooth[:5].mean()) * 0.5
+        below_half = np.flatnonzero(profile_smooth < half_max)
+        radius = int(below_half[0]) if below_half.size else int(profile.size) // 2
+    else:
+        radius = min(n_k_row, n_k_col) // 4
+    return (row_center, col_center), max(1, int(radius))
 
 
 def _ranges_from_start(
@@ -315,9 +384,11 @@ def ssb_preview(
     det_shape = tuple(int(x) for x in frames.shape[-2:])
     scan_sampling = _as_sampling(scan_sampling_A)
 
-    bf_row, bf_col, center, radius = _bf_pixels(frames, bf_intensity_threshold, bf_radius)
+    bf_row, bf_col, center, radius, detected_radius = _bf_pixels(
+        frames, bf_intensity_threshold, bf_radius,
+    )
     if det_sampling is None:
-        det_px = (2.0 * float(semiangle_mrad)) / radius
+        det_px = (2.0 * float(semiangle_mrad)) / detected_radius
         det_sampling = (det_px, det_px)
     else:
         det_sampling = _as_sampling(det_sampling)
@@ -388,9 +459,11 @@ def ssb_fit(
     scan_shape = _scan_shape(frames)
     det_shape = tuple(int(x) for x in frames.shape[-2:])
     scan_sampling = _as_sampling(scan_sampling_A)
-    bf_row, bf_col, center, radius = _bf_pixels(frames, bf_intensity_threshold, bf_radius)
+    bf_row, bf_col, center, radius, detected_radius = _bf_pixels(
+        frames, bf_intensity_threshold, bf_radius,
+    )
     if det_sampling is None:
-        det_px = (2.0 * float(semiangle_mrad)) / radius
+        det_px = (2.0 * float(semiangle_mrad)) / detected_radius
         det_sampling = (det_px, det_px)
     else:
         det_sampling = _as_sampling(det_sampling)
