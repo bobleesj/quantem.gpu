@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "quantem.gpu"
-version = "0.0.1rc1"
+version = "0.0.1rc2"
 description = "Multi-backend accelerated STEM load, decompression, and compute for QuantEM"
 readme = "README.md"
 license = "MIT"
