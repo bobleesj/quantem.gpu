@@ -47,7 +47,11 @@ def _nvidia_gpu_present() -> bool:
 
 
 def _cuda_probe() -> tuple[bool, int, str | None]:
-    if importlib.util.find_spec("cupy") is None:
+    try:
+        cupy_spec = importlib.util.find_spec("cupy")
+    except ModuleNotFoundError:
+        cupy_spec = None
+    if cupy_spec is None:
         note = "cupy is not installed"
         if _nvidia_gpu_present():
             note += "; install cupy-cuda12x/cupy-cuda13x or conda-forge cupy"

@@ -1,6 +1,8 @@
 """Multi-backend accelerated STEM IO and compute for QuantEM."""
 from __future__ import annotations
 
+from importlib import import_module
+
 from .device import DeviceReport, device_report, select_device
 from .compute import compute_backend
 from .detector import (
@@ -17,9 +19,17 @@ from .detector import (
     virtual_image,
 )
 from .dpc import DPCResult, center_of_mass, com, dpc, idpc
-from .ssb import DefocusSweepResult, SSB, SSBResult, defocus_sweep, ssb, ssb_series
 
 __version__ = "0.0.1"
+
+_SSB_EXPORTS = {
+    "DefocusSweepResult",
+    "SSB",
+    "SSBResult",
+    "defocus_sweep",
+    "ssb",
+    "ssb_series",
+}
 
 __all__ = [
     "DPCResult",
@@ -50,3 +60,17 @@ __all__ = [
     "virtual_image",
     "__version__",
 ]
+
+
+def __getattr__(name: str):
+    """Load CUDA-only SSB exports lazily so CPU/MPS imports stay lightweight."""
+    if name in _SSB_EXPORTS:
+        module = import_module("quantem.gpu.ssb")
+        value = getattr(module, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
