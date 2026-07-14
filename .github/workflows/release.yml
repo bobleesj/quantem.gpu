@@ -110,12 +110,17 @@ jobs:
           missing = sorted(required - names)
           if missing:
               raise SystemExit(f"{wheel} missing required files: {missing}")
-          license_files = [
-              name for name in names
-              if name.endswith(".dist-info/licenses/LICENSE")
-          ]
-          if len(license_files) != 1:
-              raise SystemExit(f"{wheel} missing LICENSE in dist-info/licenses")
+          license_files = {
+              name.rsplit("/", 1)[-1]
+              for name in names
+              if ".dist-info/licenses/" in name
+          }
+          required_license_files = {"LICENSE", "THIRD_PARTY_NOTICES.md"}
+          missing_license = sorted(required_license_files - license_files)
+          if missing_license:
+              raise SystemExit(
+                  f"{wheel} missing license files in dist-info/licenses: {missing_license}"
+              )
           print(f"wheel ok: {wheel}")
           PY
 

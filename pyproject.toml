@@ -8,7 +8,7 @@ version = "0.0.1rc1"
 description = "Multi-backend accelerated STEM load, decompression, and compute for QuantEM"
 readme = "README.md"
 license = "MIT"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 requires-python = ">=3.11"
 authors = [
     {name = "Sangjoon Bob Lee"}
