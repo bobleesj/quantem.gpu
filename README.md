@@ -46,6 +46,10 @@ Implemented in this package:
 - CUDA bitshuffle/LZ4 kernels and pinned-buffer HDF5 master load path
 - `quantem.widget.io.hdf5` shim in the migration worktree, re-exporting the new
   `quantem.gpu.io.hdf5` API for one release
+- `quantem.gpu.detector` BF/DF/ADF, `mean_dp`, `masked_sum`, `dp_mean`,
+  `virtual_image`, and BF disk detection copied from the widget/live paths with
+  parity tests
+- `quantem.gpu.dpc` CoM/DPC/iDPC copied from the widget path with parity tests
 
 Out of scope for phase 1:
 
@@ -56,7 +60,8 @@ Out of scope for phase 1:
 
 ## Next Phases
 
-- Phase 2: move BF/DF/DPC and other products into `quantem.gpu` with parity.
+- Phase 2: complete product migration coverage, including MPS chunk-backed
+  virtual products and broader real-data parity.
 - Phase 3: add SSB engine as a pure compute API with preview and free-fit modes.
 - Phase 4: add Show4DSTEM More -> interactive SSB preview and save.
 - Phase 5: move live CLI/dashboard callers onto `quantem.gpu`.
