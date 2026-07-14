@@ -384,6 +384,11 @@ class MetalRawBackend:
         return vi.reshape(self.scan_shape).astype(np.float32, copy=False)
 
     def mean_dp(self) -> np.ndarray:
+        if np.dtype(getattr(self._cf, "_np_dtype", np.uint16)) != np.dtype(np.uint16):
+            acc = np.zeros(self.det_shape, dtype=np.uint64)
+            for chunk in self._cf.chunks:
+                acc += np.asarray(chunk).sum(axis=0, dtype=np.uint64)
+            return acc.astype(np.float32) / self.n_frames
         return np.asarray(self._cf.vi.detector_sum(), dtype=np.float32) / self.n_frames
 
     def reduce_frames(self, scan_indices: np.ndarray, reduce: str = "mean") -> np.ndarray:

@@ -32,6 +32,9 @@ _SSB_EXPORTS = {
     "ssb_preview_mps",
     "ssb_series",
 }
+_LAZY_MODULE_EXPORTS = {
+    "movie": "quantem.gpu.movie",
+}
 
 __all__ = [
     "DPCResult",
@@ -55,6 +58,7 @@ __all__ = [
     "idpc",
     "masked_sum",
     "mean_dp",
+    "movie",
     "select_device",
     "ssb",
     "ssb_fit_mps",
@@ -73,6 +77,10 @@ def __getattr__(name: str):
         value = getattr(module, name)
         globals()[name] = value
         return value
+    if name in _LAZY_MODULE_EXPORTS:
+        module = import_module(_LAZY_MODULE_EXPORTS[name])
+        globals()[name] = module
+        return module
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

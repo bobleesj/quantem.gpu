@@ -292,12 +292,30 @@ def _check_mps_memory_guard(
     )
 
 
-def _get_cached_decompressor(frame_bytes: int, max_frames: int) -> "MPSDecompressor":
+def _get_cached_decompressor(
+    frame_bytes: int,
+    max_frames: int,
+    *,
+    n_blocks_per_frame: int | None = None,
+    max_compressed_bytes: int | None = None,
+) -> "MPSDecompressor":
     """Reuse one decompressor so repeated notebook loads do not leak buffers."""
     global _cached_dec, _cached_dec_key
-    key = (int(frame_bytes), int(max_frames))
+    n_blocks = (
+        int(n_blocks_per_frame)
+        if n_blocks_per_frame is not None
+        else (int(frame_bytes) + 8191) // 8192
+    )
+    max_comp = int(max_compressed_bytes or 150 * 1024 * 1024)
+    key = (int(frame_bytes), int(max_frames), int(n_blocks), int(max_comp))
     if _cached_dec is None or _cached_dec_key != key:
-        _cached_dec = MPSDecompressor(frame_bytes=frame_bytes, max_frames=max_frames)
+        _cached_dec = MPSDecompressor(
+            max_compressed_bytes=max_comp,
+            frame_bytes=frame_bytes,
+            max_frames=max_frames,
+            n_blocks_per_frame=n_blocks,
+            gpu_batch=max_frames,
+        )
         _cached_dec_key = key
     return _cached_dec
 
@@ -346,6 +364,20 @@ def _get_chunk_read_plan(filepath: str) -> _ChunkReadPlan:
     )
     _chunk_read_plan_cache[key] = plan
     return plan
+
+
+def _max_compressed_bytes_for_plan(plan: MPSMasterPlan) -> int:
+    """Return the compressed input buffer size needed for the largest data file."""
+    max_bytes = 0
+    for filepath in plan.chunk_files:
+        chunk_plan = _get_chunk_read_plan(filepath)
+        span_bytes = int(
+            (chunk_plan.file_offsets + chunk_plan.sizes).max()
+            - chunk_plan.file_offsets.min()
+        )
+        needed = max(int(chunk_plan.total_bytes), span_bytes)
+        max_bytes = max(max_bytes, needed)
+    return max(max_bytes + 1024 * 1024, 150 * 1024 * 1024)
 
 
 def load_master(
@@ -1669,7 +1701,12 @@ def load_master_chunked(
     plan = plan_master(master_path)
     if pixel_mask is None and apply_mask:
         pixel_mask = _read_pixel_mask(plan.master_path)
-    dec = _get_cached_decompressor(plan.frame_bytes, max(plan.chunk_n_frames))
+    dec = _get_cached_decompressor(
+        plan.frame_bytes,
+        max(plan.chunk_n_frames),
+        n_blocks_per_frame=plan.n_blocks_per_frame,
+        max_compressed_bytes=_max_compressed_bytes_for_plan(plan),
+    )
     return dec.load_master_chunked(
         plan.master_path,
         pixel_mask=pixel_mask,

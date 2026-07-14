@@ -134,6 +134,20 @@ def _upsample_bin2_dp(dp: np.ndarray, out_shape: tuple[int, int]) -> np.ndarray:
     return _upsample_bin_dp(dp, out_shape, 2)
 
 
+def _torch_dtype(torch, dtype: np.dtype):
+    """Map chunk NumPy dtypes to torch dtypes for widget duck-typing."""
+    dtype = np.dtype(dtype)
+    mapping = {
+        np.dtype(np.uint8): torch.uint8,
+        np.dtype(np.int16): torch.int16,
+        np.dtype(np.uint16): torch.uint16,
+        np.dtype(np.int32): torch.int32,
+        np.dtype(np.uint32): getattr(torch, "uint32", torch.int64),
+        np.dtype(np.float32): torch.float32,
+    }
+    return mapping.get(dtype, torch.float32)
+
+
 def default_fast_bin() -> int:
     """Scrub-sidecar bin factor that fits the host's unified/GPU memory.
 
@@ -971,7 +985,7 @@ class MetalVirtualImage:
 
 
 class ChunkedFrames:
-    """A 3D ``(N, det_h, det_w)`` uint16 view over the Metal-buffer chunks.
+    """A 3D ``(N, det_h, det_w)`` view over Metal-buffer chunks.
 
     Forwards ``shape``/``dtype``/``ndim`` so ``Show4DSTEM.__init__`` treats it as
     a flat-scan 3D stack, and serves single-frame cursor reads from the numpy
@@ -1014,12 +1028,13 @@ class ChunkedFrames:
         self.chunks = chunks
         self.metadata = metadata
         self.det_bin = det_bin
+        self._np_dtype = np.dtype(chunks[0].dtype)
         self._det = tuple(int(x) for x in chunks[0].shape[1:])
         self._frame_elems = self._det[0] * self._det[1]
         self._n = int(sum(int(c.shape[0]) for c in chunks))
         self.shape = (self._n, *self._det)
         self.ndim = 3
-        self.dtype = torch.uint16
+        self.dtype = _torch_dtype(torch, self._np_dtype)
         # Heavy compute stays in raw Metal buffers; torch is only used by the
         # base widget for small masks/traits. Keeping these helper tensors on
         # CPU avoids MPS allocator startup cost and high-watermark pressure.
@@ -1033,7 +1048,7 @@ class ChunkedFrames:
         self.fast_bin = fast_det_bin
 
     def element_size(self) -> int:
-        return 2
+        return int(self._np_dtype.itemsize)
 
     def numel(self) -> int:
         return self._n * self._frame_elems
@@ -1054,7 +1069,7 @@ class ChunkedFrames:
         raise IndexError(idx)
 
     def frame(self, idx: int) -> np.ndarray:
-        """One diffraction pattern (det_h, det_w) as numpy uint16 — cursor read."""
+        """One diffraction pattern ``(det_h, det_w)`` as a NumPy view/copy."""
         ci, local = self._locate(int(idx))
         frame = np.asarray(self.chunks[ci][local])
         if not self.vi.row_prefix_enabled:
@@ -1067,10 +1082,10 @@ class ChunkedFrames:
         return out
 
     def column(self, row: int, col: int) -> np.ndarray:
-        """One detector pixel over all scan positions as numpy uint16."""
+        """One detector pixel over all scan positions, preserving chunk dtype."""
         row = int(row)
         col = int(col)
-        out = np.empty(self._n, dtype=np.uint16)
+        out = np.empty(self._n, dtype=self._np_dtype)
         for ci, chunk in enumerate(self.chunks):
             start = self._offsets[ci]
             stop = self._offsets[ci + 1]
@@ -1078,9 +1093,9 @@ class ChunkedFrames:
                 out[start:stop] = (
                     np.asarray(chunk[:, row, col], dtype=np.uint32)
                     - np.asarray(chunk[:, row, col - 1], dtype=np.uint32)
-                ).astype(np.uint16)
+                ).astype(self._np_dtype)
             else:
-                out[start:stop] = np.asarray(chunk[:, row, col], dtype=np.uint16)
+                out[start:stop] = np.asarray(chunk[:, row, col], dtype=self._np_dtype)
         return out
 
     def ensure_fast_interaction(self, *, verbose: bool = True) -> MetalVirtualImage:

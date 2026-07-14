@@ -8,6 +8,24 @@ import numpy as np
 import pytest
 
 
+def test_mps_sparse_row_indices_match_cuda_supported_sizes() -> None:
+    """Pin MPS sparse objective row masks to the CUDA optimizer kernels."""
+    from quantem.gpu.ssb.mps import _cuda_sparse_row_indices
+
+    rows_256 = _cuda_sparse_row_indices((256, 256))
+    assert rows_256.shape == (128,)
+    assert rows_256[:12].tolist() == [0, 1, 2, 3, 8, 9, 10, 11, 16, 17, 18, 19]
+    assert rows_256[-4:].tolist() == [248, 249, 250, 251]
+
+    rows_512 = _cuda_sparse_row_indices((512, 512))
+    assert rows_512.shape == (128,)
+    assert rows_512[:10].tolist() == [0, 1, 8, 9, 16, 17, 24, 25, 32, 33]
+    assert rows_512[-2:].tolist() == [504, 505]
+
+    with pytest.raises(ValueError, match="256x256 or 512x512"):
+        _cuda_sparse_row_indices((128, 128))
+
+
 @pytest.mark.skipif(
     not os.environ.get("QUANTEM_GPU_SSB_MASTER")
     or not os.environ.get("QUANTEM_GPU_SSB_REFERENCE_NPZ"),
@@ -89,9 +107,24 @@ def test_mps_ssb_sparse_optimizer_loss_matches_cuda_reference() -> None:
 
     frames = _as_chunked_frames(load(str(master), backend="mps", verbose=False).data)
     scan_shape = _scan_shape(frames)
+    if "scan_shape" in reference_meta:
+        assert tuple(reference_meta["scan_shape"]) == scan_shape
     det_shape = tuple(int(x) for x in frames.shape[-2:])
-    bf_row, bf_col, center, _radius, detected_radius = _bf_pixels(frames, 0.5, 5)
-    det_px = (2.0 * 21.4) / detected_radius
+    threshold = float(reference_meta.get("bf_intensity_threshold", 0.5))
+    bf_radius = reference_meta.get("bf_radius_arg", 5)
+    center_override = reference_meta.get("bf_center")
+    if center_override is not None:
+        center_override = (float(center_override[0]), float(center_override[1]))
+    bf_row, bf_col, center, _radius, detected_radius = _bf_pixels(
+        frames,
+        threshold,
+        bf_radius,
+        center_override=center_override,
+    )
+    if "num_bf" in reference_meta:
+        assert int(bf_row.size) == int(reference_meta["num_bf"])
+    semiangle_mrad = float(reference_meta.get("semiangle_mrad", 21.4))
+    det_px = (2.0 * semiangle_mrad) / detected_radius
     prepared = _prepare_selection(
         frames,
         scan_shape=scan_shape,
@@ -99,9 +132,9 @@ def test_mps_ssb_sparse_optimizer_loss_matches_cuda_reference() -> None:
         bf_row=bf_row,
         bf_col=bf_col,
         center=center,
-        voltage_kV=300,
-        semiangle_mrad=21.4,
-        scan_sampling=_as_sampling(0.405),
+        voltage_kV=float(reference_meta.get("voltage_kV", 300)),
+        semiangle_mrad=semiangle_mrad,
+        scan_sampling=_as_sampling(float(reference_meta.get("scan_sampling_A", 0.405))),
         det_sampling=(det_px, det_px),
         rotation_angle_deg=0.0,
         chunk_bf=16,

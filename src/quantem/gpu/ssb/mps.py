@@ -146,6 +146,7 @@ def _bf_pixels(
     data,
     threshold: float,
     bf_radius: float | None,
+    center_override: tuple[float, float] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, tuple[float, float], float, float]:
     dp = mean_dp(data)
     _detected_center, detected_radius = _detect_bf_radius_numpy(dp)
@@ -155,15 +156,21 @@ def _bf_pixels(
         raise ValueError(
             f"No bright-field pixels found with threshold={threshold:.2f}."
         )
-    weights = dp[rr, cc].astype(np.float32, copy=False)
-    weight_sum = float(weights.sum())
-    if weight_sum > 0:
+    if center_override is not None:
         center = (
-            float((rr.astype(np.float32) * weights).sum() / weight_sum),
-            float((cc.astype(np.float32) * weights).sum() / weight_sum),
+            float(center_override[0]),
+            float(center_override[1]),
         )
     else:
-        center = (float(rr.mean()), float(cc.mean()))
+        weights = dp[rr, cc].astype(np.float32, copy=False)
+        weight_sum = float(weights.sum())
+        if weight_sum > 0:
+            center = (
+                float((rr.astype(np.float32) * weights).sum() / weight_sum),
+                float((cc.astype(np.float32) * weights).sum() / weight_sum),
+            )
+        else:
+            center = (float(rr.mean()), float(cc.mean()))
     selected_radius = float(detected_radius if bf_radius is None else bf_radius)
     if bf_radius is not None:
         dist2 = (rr.astype(np.float32) - center[0]) ** 2 + (
@@ -566,10 +573,29 @@ def _reconstruct_prepared(
     return object_wave, loss
 
 
-def _cuda_sparse_row_mask_512(mx):
-    """Mask matching the CUDA 512 optimizer's sampled row staging."""
-    rows = np.zeros((512,), dtype=np.float32)
-    rows[[group * 8 + offset for group in range(64) for offset in (0, 1)]] = 1.0
+def _cuda_sparse_row_indices(scan_shape: tuple[int, int]) -> np.ndarray:
+    """Rows matching CUDA sparse optimizer staging for supported sizes."""
+    ny, nx = (int(scan_shape[0]), int(scan_shape[1]))
+    if ny != nx or ny not in (256, 512):
+        raise ValueError(
+            "MPS SSB fit currently supports CUDA-parity sparse optimizer "
+            f"objective only for square 256x256 or 512x512 scans; got {scan_shape}. "
+            "Use ssb_preview for fixed-aberration reconstruction or add a "
+            "size-specific sparse objective before enabling free-fit."
+        )
+    offsets = range(4) if ny == 256 else range(2)
+    groups = ny // 8
+    return np.asarray(
+        [group * 8 + offset for group in range(groups) for offset in offsets],
+        dtype=np.int32,
+    )
+
+
+def _cuda_sparse_row_mask(mx, scan_shape: tuple[int, int]):
+    """Mask matching CUDA sparse optimizer row staging for supported sizes."""
+    ny = int(scan_shape[0])
+    rows = np.zeros((ny,), dtype=np.float32)
+    rows[_cuda_sparse_row_indices(scan_shape)] = 1.0
     return mx.array(rows, dtype=mx.float32)[None, None, :, None]
 
 
@@ -581,14 +607,7 @@ def _reconstruct_prepared_batch_cuda_sparse(
     phi12: np.ndarray,
     chunk_bf: int,
 ) -> np.ndarray:
-    """Evaluate the CUDA 512 sparse-row optimizer objective on MPS."""
-    if tuple(prepared.scan_shape) != (512, 512):
-        raise ValueError(
-            "MPS SSB fit currently supports CUDA-parity sparse optimizer "
-            f"objective only for 512x512 scans; got {prepared.scan_shape}. "
-            "Use ssb_preview for fixed-aberration reconstruction or add a "
-            "size-specific sparse objective before enabling free-fit."
-        )
+    """Evaluate the CUDA sparse-row optimizer objective on MPS."""
 
     mx = prepared.mx
     c10_np = np.asarray(C10, dtype=np.float32).reshape(-1)
@@ -607,7 +626,7 @@ def _reconstruct_prepared_batch_cuda_sparse(
     cos2phi12 = mx.array(np.cos(2.0 * phi_np).astype(np.float32))[:, None, None, None]
     sin2phi12 = mx.array(np.sin(2.0 * phi_np).astype(np.float32))[:, None, None, None]
     chunk_bf = max(1, int(chunk_bf))
-    row_mask = _cuda_sparse_row_mask_512(mx)
+    row_mask = _cuda_sparse_row_mask(mx, prepared.scan_shape)
 
     for start in range(0, prepared.num_bf, chunk_bf):
         stop = min(start + chunk_bf, prepared.num_bf)
@@ -677,7 +696,13 @@ def _reconstruct_prepared_batch_cuda_sparse(
             mx.array(prepared.dc_value, dtype=mx.complex64),
             corrected,
         )
-        obj_chunk = mx.fft.ifft2(corrected * row_mask)
+        if prepared.scan_shape == (256, 256):
+            # CUDA's 256 sparse row kernel writes first-stage rows transposed
+            # as out[pos, row] before the variance kernel performs stage two.
+            row_fft = mx.fft.ifft(corrected * row_mask, axis=-1)
+            obj_chunk = mx.fft.ifft(mx.swapaxes(row_fft, -1, -2), axis=-1)
+        else:
+            obj_chunk = mx.fft.ifft2(corrected * row_mask)
         chunk_sum, chunk_sumsq = _phase_sums_from_complex(mx, obj_chunk)
         phase_sum = phase_sum + chunk_sum
         phase_sumsq = phase_sumsq + chunk_sumsq
@@ -919,6 +944,7 @@ def ssb_preview(
     phi12: float = 0.0,
     rotation_angle_deg: float = 0.0,
     bf_intensity_threshold: float = 0.5,
+    bf_center: tuple[float, float] | None = None,
     bf_radius: float | None = None,
     chunk_bf: int = 16,
     verbose: bool = False,
@@ -937,7 +963,10 @@ def ssb_preview(
     scan_sampling = _as_sampling(scan_sampling_A)
 
     bf_row, bf_col, center, radius, detected_radius = _bf_pixels(
-        frames, bf_intensity_threshold, bf_radius,
+        frames,
+        bf_intensity_threshold,
+        bf_radius,
+        center_override=bf_center,
     )
     if det_sampling is None:
         det_px = (2.0 * float(semiangle_mrad)) / detected_radius
@@ -993,6 +1022,7 @@ def ssb_fit(
     refine_lock: list[str] | None = None,
     rotation_angle_deg: float = 0.0,
     bf_intensity_threshold: float = 0.5,
+    bf_center: tuple[float, float] | None = None,
     bf_radius: float | None = None,
     chunk_bf: int = 16,
     optuna_batch_size: int = 16,
@@ -1001,9 +1031,9 @@ def ssb_fit(
 ) -> MpsSSBPreviewResult:
     """Free-fit C10/C12/phi12 on Apple GPU, then reconstruct the best SSB phase.
 
-    This is a compact MLX optimizer for Mac workflows. For 512x512 scans it
-    evaluates the same sparse-row phase-variance objective as the CUDA SSB
-    optimizer; other scan sizes fall back to the full MLX objective.
+    This is a compact MLX optimizer for Mac workflows. For supported SSB scan
+    sizes it evaluates the same sparse-row phase-variance objective as the CUDA
+    SSB optimizer.
     """
     _require_mlx()
     import optuna
@@ -1014,7 +1044,10 @@ def ssb_fit(
     det_shape = tuple(int(x) for x in frames.shape[-2:])
     scan_sampling = _as_sampling(scan_sampling_A)
     bf_row, bf_col, center, radius, detected_radius = _bf_pixels(
-        frames, bf_intensity_threshold, bf_radius,
+        frames,
+        bf_intensity_threshold,
+        bf_radius,
+        center_override=bf_center,
     )
     if det_sampling is None:
         det_px = (2.0 * float(semiangle_mrad)) / detected_radius
