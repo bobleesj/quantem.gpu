@@ -31,9 +31,11 @@ file -> quantem.gpu (load + decompress + to_device) -> arrays
 - `cuda`: CuPy RawKernel bitshuffle/LZ4 decompression and GPU arrays. This is
   the phase-1 migrated hot path.
 - `mps`: Apple Silicon device selection is reported. Chunk-backed virtual image
-  and CoM/DPC product dispatch now lives in `quantem.gpu.compute`. The Metal IO
-  implementation remains a temporary legacy shim during phase 1 and should move
-  here in a later backend consolidation pass.
+  and CoM/DPC product dispatch now lives in `quantem.gpu.compute`. SSB has an
+  initial MLX-backed fixed-aberration preview API (`ssb_preview_mps`) that runs
+  on Apple GPU without Torch. The Metal IO implementation remains a temporary
+  legacy shim during phase 1 and should move here in a later backend
+  consolidation pass.
 - `cpu`: h5py/hdf5plugin reference decode for availability and parity.
 
 ## Phase-1 Status
@@ -56,6 +58,9 @@ Implemented in this package:
 - `quantem.gpu.compute` MPS chunk-backed virtual-image and CoM/DPC compute
   copied from widget Metal kernels; Linux CI has dispatch guardrails, and true
   Metal runtime parity must run on macOS
+- `quantem.gpu.ssb.mps.ssb_preview` / `quantem.gpu.ssb_preview_mps`, an
+  optional MLX-backed MPS SSB preview path for chunk-backed Mac data. This is
+  fixed-aberration preview only; optimization/free-fit parity is still pending.
 
 Out of scope for phase 1:
 
@@ -70,7 +75,7 @@ Out of scope for phase 1:
 - Phase 2: complete product migration coverage, including macOS MPS runtime
   parity and broader real-data product parity.
 - Phase 3: complete SSB free-fit/preview compute coverage and broader real-data
-  sweeps.
+  sweeps, including MPS optimizer/free-fit parity beyond the current MLX preview.
 - Phase 4: add Show4DSTEM More -> interactive SSB preview and save.
 - Phase 5: move live CLI/dashboard callers onto `quantem.gpu`.
 - Phase 6: fold/rename `quantem.cuda` internals under `quantem.gpu` backends.
