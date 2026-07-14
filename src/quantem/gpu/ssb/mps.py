@@ -55,6 +55,18 @@ class _PreparedMpsSSB:
     factor: float
     dc_mask: object
     num_bf: int
+    alpha_k2: object | None
+    cos2_k: object | None
+    sin2_k: object | None
+    aperture_k: object | None
+    alpha_m2: object | None
+    cos2_m: object | None
+    sin2_m: object | None
+    ap_m: object | None
+    alpha_p2: object | None
+    cos2_p: object | None
+    sin2_p: object | None
+    ap_p: object | None
 
 
 def _require_mlx():
@@ -306,24 +318,66 @@ def _prepare_selection(
     mx.eval(g_qk)
     dc_value = complex(np.asarray(g_qk[:, 0, 0]).mean())
 
+    qx = mx.array(q_row_np, dtype=mx.float32)[None, :, None]
+    qy = mx.array(q_col_np, dtype=mx.float32)[None, None, :]
+    semiangle_rad = float(semiangle_mrad) * 1e-3
+    ang_y_rad = float(det_sampling[0]) * 1e-3
+    ang_x_rad = float(det_sampling[1]) * 1e-3
+    alpha_k2 = cos2_k = sin2_k = aperture_k = None
+    alpha_m2 = cos2_m = sin2_m = ap_m = None
+    alpha_p2 = cos2_p = sin2_p = ap_p = None
+    # Cache static geometry when the selected BF set is small enough.  For the
+    # Samsung bf_radius=5 path this is ~650 MB of float32 geometry and removes
+    # repeated sqrt/aperture work from every optimizer batch.
+    geometry_values = int(bf_row.size) * int(scan_shape[0]) * int(scan_shape[1])
+    if geometry_values <= 32_000_000:
+        kx = mx.array(kx_np, dtype=mx.float32)[:, None, None]
+        ky = mx.array(ky_np, dtype=mx.float32)[:, None, None]
+        alpha_k2, cos2_k, sin2_k, aperture_k = _compute_geometry(
+            mx, kx, ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
+        )
+        alpha_m2, cos2_m, sin2_m, ap_m = _compute_geometry(
+            mx, qx - kx, qy - ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
+        )
+        alpha_p2, cos2_p, sin2_p, ap_p = _compute_geometry(
+            mx, qx + kx, qy + ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
+        )
+        mx.eval(
+            alpha_k2, cos2_k, sin2_k, aperture_k,
+            alpha_m2, cos2_m, sin2_m, ap_m,
+            alpha_p2, cos2_p, sin2_p, ap_p,
+        )
+
     dc_mask_np = np.zeros(scan_shape, dtype=bool)
     dc_mask_np[0, 0] = True
     return _PreparedMpsSSB(
         mx=mx,
         g_qk=g_qk,
-        qx=mx.array(q_row_np, dtype=mx.float32)[None, :, None],
-        qy=mx.array(q_col_np, dtype=mx.float32)[None, None, :],
+        qx=qx,
+        qy=qy,
         kx_np=kx_np,
         ky_np=ky_np,
         dc_value=dc_value,
         scan_shape=scan_shape,
         wavelength=wavelength,
-        semiangle_rad=float(semiangle_mrad) * 1e-3,
-        ang_y_rad=float(det_sampling[0]) * 1e-3,
-        ang_x_rad=float(det_sampling[1]) * 1e-3,
+        semiangle_rad=semiangle_rad,
+        ang_y_rad=ang_y_rad,
+        ang_x_rad=ang_x_rad,
         factor=math.pi / wavelength,
         dc_mask=mx.array(dc_mask_np),
         num_bf=int(bf_row.size),
+        alpha_k2=alpha_k2,
+        cos2_k=cos2_k,
+        sin2_k=sin2_k,
+        aperture_k=aperture_k,
+        alpha_m2=alpha_m2,
+        cos2_m=cos2_m,
+        sin2_m=sin2_m,
+        ap_m=ap_m,
+        alpha_p2=alpha_p2,
+        cos2_p=cos2_p,
+        sin2_p=sin2_p,
+        ap_p=ap_p,
     )
 
 
@@ -352,41 +406,57 @@ def _reconstruct_prepared(
     for start in range(0, prepared.num_bf, chunk_bf):
         stop = min(start + chunk_bf, prepared.num_bf)
         g_qk = prepared.g_qk[start:stop]
-        kx = mx.array(prepared.kx_np[start:stop], dtype=mx.float32)[:, None, None]
-        ky = mx.array(prepared.ky_np[start:stop], dtype=mx.float32)[:, None, None]
-        alpha_k2, cos2_k, sin2_k, aperture_k = _compute_geometry(
-            mx,
-            kx,
-            ky,
-            prepared.wavelength,
-            prepared.semiangle_rad,
-            prepared.ang_y_rad,
-            prepared.ang_x_rad,
-        )
+        if prepared.alpha_k2 is not None:
+            alpha_k2 = prepared.alpha_k2[start:stop]
+            cos2_k = prepared.cos2_k[start:stop]
+            sin2_k = prepared.sin2_k[start:stop]
+            aperture_k = prepared.aperture_k[start:stop]
+        else:
+            kx = mx.array(prepared.kx_np[start:stop], dtype=mx.float32)[:, None, None]
+            ky = mx.array(prepared.ky_np[start:stop], dtype=mx.float32)[:, None, None]
+            alpha_k2, cos2_k, sin2_k, aperture_k = _compute_geometry(
+                mx,
+                kx,
+                ky,
+                prepared.wavelength,
+                prepared.semiangle_rad,
+                prepared.ang_y_rad,
+                prepared.ang_x_rad,
+            )
         cos_term_k = cos2_k * cos2phi12 + sin2_k * sin2phi12
         chi_k = prepared.factor * alpha_k2 * (
             float(C12) * cos_term_k + float(C10)
         )
         pk = aperture_k * _exp_neg_i(mx, chi_k)
 
-        alpha_m2, cos2_m, sin2_m, ap_m = _compute_geometry(
-            mx,
-            prepared.qx - kx,
-            prepared.qy - ky,
-            prepared.wavelength,
-            prepared.semiangle_rad,
-            prepared.ang_y_rad,
-            prepared.ang_x_rad,
-        )
-        alpha_p2, cos2_p, sin2_p, ap_p = _compute_geometry(
-            mx,
-            prepared.qx + kx,
-            prepared.qy + ky,
-            prepared.wavelength,
-            prepared.semiangle_rad,
-            prepared.ang_y_rad,
-            prepared.ang_x_rad,
-        )
+        if prepared.alpha_m2 is not None:
+            alpha_m2 = prepared.alpha_m2[start:stop]
+            cos2_m = prepared.cos2_m[start:stop]
+            sin2_m = prepared.sin2_m[start:stop]
+            ap_m = prepared.ap_m[start:stop]
+            alpha_p2 = prepared.alpha_p2[start:stop]
+            cos2_p = prepared.cos2_p[start:stop]
+            sin2_p = prepared.sin2_p[start:stop]
+            ap_p = prepared.ap_p[start:stop]
+        else:
+            alpha_m2, cos2_m, sin2_m, ap_m = _compute_geometry(
+                mx,
+                prepared.qx - kx,
+                prepared.qy - ky,
+                prepared.wavelength,
+                prepared.semiangle_rad,
+                prepared.ang_y_rad,
+                prepared.ang_x_rad,
+            )
+            alpha_p2, cos2_p, sin2_p, ap_p = _compute_geometry(
+                mx,
+                prepared.qx + kx,
+                prepared.qy + ky,
+                prepared.wavelength,
+                prepared.semiangle_rad,
+                prepared.ang_y_rad,
+                prepared.ang_x_rad,
+            )
         chi_m = prepared.factor * alpha_m2 * (
             float(C12) * (cos2_m * cos2phi12 + sin2_m * sin2phi12) + float(C10)
         )
@@ -428,6 +498,114 @@ def _reconstruct_prepared(
         var_per_pixel = phase_sumsq / prepared.num_bf - mean_phase * mean_phase
         loss = float(np.asarray(mx.mean(var_per_pixel)))
     return object_wave, loss
+
+
+def _reconstruct_prepared_batch(
+    prepared: _PreparedMpsSSB,
+    *,
+    C10: np.ndarray,
+    C12: np.ndarray,
+    phi12: np.ndarray,
+    chunk_bf: int,
+) -> np.ndarray:
+    """Evaluate full-objective SSB variance loss for many trial parameters."""
+    mx = prepared.mx
+    c10_np = np.asarray(C10, dtype=np.float32).reshape(-1)
+    c12_np = np.asarray(C12, dtype=np.float32).reshape(-1)
+    phi_np = np.asarray(phi12, dtype=np.float32).reshape(-1)
+    if c10_np.size == 0:
+        return np.empty((0,), dtype=np.float32)
+    if c12_np.size != c10_np.size or phi_np.size != c10_np.size:
+        raise ValueError("C10, C12, and phi12 must have matching lengths.")
+
+    batch = int(c10_np.size)
+    phase_sum = mx.zeros((batch, *prepared.scan_shape), dtype=mx.float32)
+    phase_sumsq = mx.zeros((batch, *prepared.scan_shape), dtype=mx.float32)
+    c10 = mx.array(c10_np, dtype=mx.float32)[:, None, None, None]
+    c12 = mx.array(c12_np, dtype=mx.float32)[:, None, None, None]
+    cos2phi12 = mx.array(np.cos(2.0 * phi_np).astype(np.float32))[:, None, None, None]
+    sin2phi12 = mx.array(np.sin(2.0 * phi_np).astype(np.float32))[:, None, None, None]
+    chunk_bf = max(1, int(chunk_bf))
+
+    for start in range(0, prepared.num_bf, chunk_bf):
+        stop = min(start + chunk_bf, prepared.num_bf)
+        g_qk = prepared.g_qk[start:stop][None, :, :, :]
+        if prepared.alpha_k2 is not None:
+            alpha_k2 = prepared.alpha_k2[start:stop][None, :, :, :]
+            cos2_k = prepared.cos2_k[start:stop][None, :, :, :]
+            sin2_k = prepared.sin2_k[start:stop][None, :, :, :]
+            aperture_k = prepared.aperture_k[start:stop][None, :, :, :]
+        else:
+            kx = mx.array(prepared.kx_np[start:stop], dtype=mx.float32)[None, :, None, None]
+            ky = mx.array(prepared.ky_np[start:stop], dtype=mx.float32)[None, :, None, None]
+            alpha_k2, cos2_k, sin2_k, aperture_k = _compute_geometry(
+                mx,
+                kx,
+                ky,
+                prepared.wavelength,
+                prepared.semiangle_rad,
+                prepared.ang_y_rad,
+                prepared.ang_x_rad,
+            )
+        cos_term_k = cos2_k * cos2phi12 + sin2_k * sin2phi12
+        chi_k = prepared.factor * alpha_k2 * (c12 * cos_term_k + c10)
+        pk = aperture_k * _exp_neg_i(mx, chi_k)
+
+        if prepared.alpha_m2 is not None:
+            alpha_m2 = prepared.alpha_m2[start:stop][None, :, :, :]
+            cos2_m = prepared.cos2_m[start:stop][None, :, :, :]
+            sin2_m = prepared.sin2_m[start:stop][None, :, :, :]
+            ap_m = prepared.ap_m[start:stop][None, :, :, :]
+            alpha_p2 = prepared.alpha_p2[start:stop][None, :, :, :]
+            cos2_p = prepared.cos2_p[start:stop][None, :, :, :]
+            sin2_p = prepared.sin2_p[start:stop][None, :, :, :]
+            ap_p = prepared.ap_p[start:stop][None, :, :, :]
+        else:
+            alpha_m2, cos2_m, sin2_m, ap_m = _compute_geometry(
+                mx,
+                prepared.qx[None, :, :, :] - kx,
+                prepared.qy[None, :, :, :] - ky,
+                prepared.wavelength,
+                prepared.semiangle_rad,
+                prepared.ang_y_rad,
+                prepared.ang_x_rad,
+            )
+            alpha_p2, cos2_p, sin2_p, ap_p = _compute_geometry(
+                mx,
+                prepared.qx[None, :, :, :] + kx,
+                prepared.qy[None, :, :, :] + ky,
+                prepared.wavelength,
+                prepared.semiangle_rad,
+                prepared.ang_y_rad,
+                prepared.ang_x_rad,
+            )
+        chi_m = prepared.factor * alpha_m2 * (
+            c12 * (cos2_m * cos2phi12 + sin2_m * sin2phi12) + c10
+        )
+        chi_p = prepared.factor * alpha_p2 * (
+            c12 * (cos2_p * cos2phi12 + sin2_p * sin2phi12) + c10
+        )
+        pm = ap_m * _exp_neg_i(mx, chi_m)
+        pp = ap_p * _exp_neg_i(mx, chi_p)
+        gamma = pm * mx.conjugate(pk) - mx.conjugate(pp) * pk
+        gamma = gamma / mx.maximum(mx.abs(gamma), 1e-8)
+        corrected = g_qk * mx.conjugate(gamma)
+        corrected = mx.where(
+            prepared.dc_mask[None, None, :, :],
+            mx.array(prepared.dc_value, dtype=mx.complex64),
+            corrected,
+        )
+        obj_chunk = mx.fft.ifft2(corrected)
+        phase = mx.arctan2(mx.imag(obj_chunk), mx.real(obj_chunk))
+        phase_sum = phase_sum + mx.sum(phase, axis=1)
+        phase_sumsq = phase_sumsq + mx.sum(phase * phase, axis=1)
+        mx.eval(phase_sum, phase_sumsq)
+
+    mean_phase = phase_sum / prepared.num_bf
+    var_per_pixel = phase_sumsq / prepared.num_bf - mean_phase * mean_phase
+    losses = mx.mean(var_per_pixel, axis=(1, 2))
+    mx.eval(losses)
+    return np.asarray(losses).astype(np.float32, copy=False)
 
 
 def _nelder_mead_refine(
@@ -735,6 +913,7 @@ def ssb_fit(
     bf_intensity_threshold: float = 0.5,
     bf_radius: float | None = None,
     chunk_bf: int = 16,
+    optuna_batch_size: int = 16,
     seed: int = 42,
     verbose: bool = False,
 ) -> MpsSSBPreviewResult:
@@ -794,6 +973,18 @@ def ssb_fit(
         )
         return float(loss)
 
+    def evaluate_batch(params: list[dict[str, float]]) -> np.ndarray:
+        c10 = np.asarray([p["C10"] for p in params], dtype=np.float32)
+        c12 = np.asarray([p["C12"] for p in params], dtype=np.float32)
+        phi = np.asarray([p["phi12"] for p in params], dtype=np.float32)
+        return _reconstruct_prepared_batch(
+            prepared,
+            C10=c10,
+            C12=c12,
+            phi12=phi,
+            chunk_bf=chunk_bf,
+        )
+
     best = dict(start)
     best_loss = evaluate(best["C10"], best["C12"], best["phi12"])
     trials.append({"params": dict(best), "loss": best_loss})
@@ -805,19 +996,26 @@ def ssb_fit(
             sampler=optuna.samplers.TPESampler(seed=int(seed)),
         )
 
-        def objective(trial) -> float:
-            C10 = _suggest_or_fixed(trial, ranges, "C10_nm", best["C10"])
-            C12 = _suggest_or_fixed(trial, ranges, "C12_nm", best["C12"])
-            phi12 = math.radians(_suggest_or_fixed(
-                trial, ranges, "phi12_deg", math.degrees(best["phi12"])
-            ))
-            loss = evaluate(C10, C12, phi12)
-            trials.append(
-                {"params": {"C10": C10, "C12": C12, "phi12": phi12}, "loss": loss}
-            )
-            return loss
+        n_completed = 0
+        batch_size = max(1, int(optuna_batch_size))
+        while n_completed < int(n_trials):
+            current = min(batch_size, int(n_trials) - n_completed)
+            optuna_trials = [study.ask() for _ in range(current)]
+            trial_params = []
+            for trial in optuna_trials:
+                C10 = _suggest_or_fixed(trial, ranges, "C10_nm", best["C10"])
+                C12 = _suggest_or_fixed(trial, ranges, "C12_nm", best["C12"])
+                phi12 = math.radians(_suggest_or_fixed(
+                    trial, ranges, "phi12_deg", math.degrees(best["phi12"])
+                ))
+                trial_params.append({"C10": C10, "C12": C12, "phi12": phi12})
+            losses = evaluate_batch(trial_params)
+            for trial, params, loss in zip(optuna_trials, trial_params, losses):
+                loss_value = float(loss)
+                study.tell(trial, loss_value)
+                trials.append({"params": dict(params), "loss": loss_value})
+            n_completed += current
 
-        study.optimize(objective, n_trials=int(n_trials), show_progress_bar=verbose)
         if study.best_trial is not None and float(study.best_value) < best_loss:
             params = study.best_trial.params
             best = {
