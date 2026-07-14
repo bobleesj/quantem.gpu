@@ -30,9 +30,10 @@ file -> quantem.gpu (load + decompress + to_device) -> arrays
 
 - `cuda`: CuPy RawKernel bitshuffle/LZ4 decompression and GPU arrays. This is
   the phase-1 migrated hot path.
-- `mps`: Apple Silicon device selection is reported. The Metal IO implementation
-  remains a temporary legacy shim during phase 1 and should move here in a
-  later backend consolidation pass.
+- `mps`: Apple Silicon device selection is reported. Chunk-backed virtual image
+  and CoM/DPC product dispatch now lives in `quantem.gpu.compute`. The Metal IO
+  implementation remains a temporary legacy shim during phase 1 and should move
+  here in a later backend consolidation pass.
 - `cpu`: h5py/hdf5plugin reference decode for availability and parity.
 
 ## Phase-1 Status
@@ -52,18 +53,22 @@ Implemented in this package:
 - `quantem.gpu.dpc` CoM/DPC/iDPC copied from the widget path with parity tests
 - `quantem.gpu.ssb` SSB engine/API copied from the live compute path, with
   real-data parity and speed tests against the legacy live implementation
+- `quantem.gpu.compute` MPS chunk-backed virtual-image and CoM/DPC compute
+  copied from widget Metal kernels; Linux CI has dispatch guardrails, and true
+  Metal runtime parity must run on macOS
 
 Out of scope for phase 1:
 
 - Full SSB UI inside Show4DSTEM
-- Full `quantem.live` CLI/dashboard migration
+- Full `quantem.live` CLI/dashboard migration, though SSB/detector production
+  call sites have started routing directly through `quantem.gpu`
 - Rewriting every `quantem.widget.io` helper
 - Paper scripts or denoise sweeps
 
 ## Next Phases
 
-- Phase 2: complete product migration coverage, including MPS chunk-backed
-  virtual products and broader real-data parity.
+- Phase 2: complete product migration coverage, including macOS MPS runtime
+  parity and broader real-data product parity.
 - Phase 3: complete SSB free-fit/preview compute coverage and broader real-data
   sweeps.
 - Phase 4: add Show4DSTEM More -> interactive SSB preview and save.

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from .device import DeviceReport, device_report, select_device
+from .compute import compute_backend
 from .detector import (
     adf,
     auto_probe,
@@ -31,6 +32,7 @@ __all__ = [
     "bf",
     "center_of_mass",
     "com",
+    "compute_backend",
     "detector_mask",
     "detect_bf_radius",
     "df",

@@ -14,7 +14,9 @@ math on the ``(scan_row, scan_col)`` CoM, ported 1:1 from quantem.live's
 
 Usage::
 
-    from quantem.widget import load, dpc, Show2D
+    from quantem.gpu import dpc
+    from quantem.gpu.io.hdf5 import load
+    from quantem.widget import Show2D
     result = dpc(load("scan_master.h5"))     # CoM + auto-rotation + iDPC
     Show2D(result.phase)                      # the iDPC phase image
     Show2D(result.com_col)                    # raw DPC field (col)
@@ -164,10 +166,10 @@ def center_of_mass(data, scan_shape=None, mask=None):
     # MPS raw chunks (MPSChunked4DSTEM or ChunkedFrames) -> Metal CoM kernel
     vi = getattr(data, "vi", None)
     if vi is None and hasattr(data, "chunks"):
-        raise TypeError(
-            "MPS chunk-backed DPC is still served by the legacy quantem.widget "
-            "DPC module in this migration phase."
-        )
+        from quantem.gpu.compute.mps import ChunkedFrames
+
+        data = ChunkedFrames(data)
+        vi = data.vi
     if vi is not None:
         n = vi.n
         sr = int(round(n ** 0.5)); sc = n // sr

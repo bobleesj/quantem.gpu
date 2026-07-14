@@ -3,7 +3,8 @@
 Primary API - place a virtual detector on 4D-STEM data and get its image, with
 collection angles in **mrad**::
 
-    from quantem.widget import load, Show2D
+    from quantem.gpu.io.hdf5 import load
+    from quantem.widget import Show2D
     data = load("master.h5")
     Show2D(bf(data))                       # bright field (the bright disk)
     Show2D(adf(data))                      # annular dark field (auto band)
@@ -135,10 +136,12 @@ def _resolve_backend(data):
     if hasattr(data, "_fields") and "data" in getattr(data, "_fields", ()):
         data = data.data
     if hasattr(data, "chunks"):
-        raise TypeError(
-            "MPS chunk-backed virtual products are still served by the legacy "
-            "quantem.widget detector module in this migration phase."
-        )
+        from quantem.gpu.compute.backends import compute_backend
+        from quantem.gpu.compute.mps import ChunkedFrames
+
+        if not getattr(data, "_is_gpu_frames", False):
+            data = ChunkedFrames(data)
+        return compute_backend(data)
     return _ArrayComputeBackend(data)
 
 
