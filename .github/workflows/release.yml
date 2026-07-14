@@ -33,7 +33,7 @@ jobs:
           cache: pip
 
       - name: Install build tools
-        run: python -m pip install --upgrade build twine
+        run: python -m pip install --upgrade build hatchling twine
 
       - name: Resolve GPU package version from tag
         id: version
