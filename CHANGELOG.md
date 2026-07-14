@@ -6,9 +6,9 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
-- Add `load(path, scan_region=(row_start, row_stop, col_start, col_stop))` as
-  the friendly crop-first HDF5 API. `load_scan_region()` remains available as a
-  compatibility helper.
+- Add `load(path, region=...)` as the friendly crop-first HDF5 API, accepting
+  flat bounds, row/column bound tuples, slices, or ranges. `scan_region=` and
+  `load_scan_region()` remain available as compatibility helpers.
 
 ## rc2 - 2026-07-14
 
