@@ -1,0 +1,11 @@
+.bd-main .bd-content .bd-article-container {
+  max-width: 980px;
+}
+
+.bd-sidebar-secondary {
+  display: none;
+}
+
+code.literal {
+  white-space: nowrap;
+}

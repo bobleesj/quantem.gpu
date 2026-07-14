@@ -1,0 +1,43 @@
+# Jupyter Book config for the quantem.gpu documentation site.
+# The first docs pass is intentionally Markdown-only: examples use small code
+# snippets and real-data commands, but the build does not require private HDF5
+# masters, CUDA, or Apple Metal hardware.
+title: quantem.gpu
+author: Sangjoon Bob Lee, et al
+logo: ""
+only_build_toc_files: true
+exclude_patterns:
+  - "**/._*"
+
+execute:
+  execute_notebooks: "off"
+
+sphinx:
+  extra_extensions:
+    - sphinx.ext.autodoc
+    - sphinx.ext.napoleon
+  config:
+    napoleon_numpy_docstring: true
+    napoleon_google_docstring: false
+    napoleon_use_param: true
+    napoleon_use_rtype: true
+    autodoc_member_order: "bysource"
+    html_theme_options:
+      secondary_sidebar_items: []
+    html_static_path:
+      - "_static"
+    html_css_files:
+      - custom.css
+    suppress_warnings:
+      - "etoc.toctree"
+    copyright: "2026, ophusgroup"
+
+html:
+  use_issues_button: false
+  use_repository_button: true
+  home_page_in_navbar: false
+
+repository:
+  url: https://github.com/bobleesj/quantem.gpu
+  path_to_book: docs
+  branch: quantem-gpu-phase1

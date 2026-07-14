@@ -1,0 +1,25 @@
+format: jb-book
+root: intro
+parts:
+  - caption: Getting started
+    chapters:
+      - file: install
+      - file: backends
+  - caption: Tutorials
+    chapters:
+      - file: tutorials/load_hdf5
+      - file: tutorials/scan_region
+      - file: tutorials/virtual_products
+      - file: tutorials/dpc
+      - file: tutorials/ssb
+      - file: tutorials/widget_migration
+  - caption: API guide
+    chapters:
+      - file: api/index
+        sections:
+          - file: api/io
+          - file: api/products
+          - file: api/ssb
+  - caption: Maintainers
+    chapters:
+      - file: maintainer/migration

@@ -67,6 +67,23 @@ dpc_result = dpc(data)
 custom = virtual(data, mode="BF")
 ```
 
+## Documentation
+
+The docs site lives in `docs/` and mirrors the `quantem.widget` documentation
+shape at a smaller compute-package scale:
+
+- install and backend checks
+- HDF5 loading and scan-region tutorials
+- virtual detector, DPC, and SSB tutorials
+- widget migration notes
+
+Build it locally with:
+
+```bash
+python -m pip install -e ".[docs]"
+jupyter-book build docs
+```
+
 Use the widget migration branch with this release candidate:
 
 ```bash
