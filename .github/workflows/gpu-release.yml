@@ -1,0 +1,120 @@
+name: GPU release
+
+on:
+  push:
+    tags:
+      - "gpu-v*"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: gpu-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  testpypi:
+    name: Build and publish quantem.gpu
+    runs-on: ubuntu-latest
+    environment: testpypi
+    defaults:
+      run:
+        shell: bash -el {0}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install build tools
+        run: python -m pip install --upgrade build twine
+
+      - name: Resolve GPU package version from tag
+        id: version
+        run: |
+          python - <<'PY'
+          import os
+          import re
+
+          tag = os.environ["GITHUB_REF_NAME"]
+          match = re.fullmatch(r"gpu-v(?P<version>\d+\.\d+\.\d+(?:rc\d+|\.post\d+)?)", tag)
+          if match is None:
+              raise SystemExit(
+                  f"Expected tag gpu-vX.Y.Z, gpu-vX.Y.ZrcN, or gpu-vX.Y.Z.postN; got {tag!r}"
+              )
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              print(f"version={match.group('version')}", file=output)
+          PY
+
+      - name: Stamp GPU package version
+        env:
+          GPU_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          python - <<'PY'
+          import os
+          import pathlib
+          import re
+
+          path = pathlib.Path("pyproject.toml")
+          text = path.read_text(encoding="utf-8")
+          version = os.environ["GPU_VERSION"]
+          updated, count = re.subn(
+              r'(?m)^version = "[^"]+"$',
+              f'version = "{version}"',
+              text,
+              count=1,
+          )
+          if count != 1:
+              raise SystemExit("Expected exactly one project.version field")
+          path.write_text(updated, encoding="utf-8")
+          PY
+
+      - name: Build GPU distributions
+        run: python -m build . --wheel --no-isolation --outdir dist/gpu
+
+      - name: Check GPU distributions
+        run: python -m twine check dist/gpu/*
+
+      - name: Check GPU wheel contents
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import zipfile
+
+          wheels = sorted(Path("dist/gpu").glob("quantem_gpu-*.whl"))
+          if len(wheels) != 1:
+              raise SystemExit(f"expected one wheel, found {wheels}")
+          wheel = wheels[0]
+          required = {
+              "quantem/gpu/__init__.py",
+              "quantem/gpu/io/hdf5.py",
+              "quantem/gpu/io/bitshuffle.py",
+              "quantem/gpu/io/backends/mps.py",
+              "quantem/gpu/io/backends/metal/bslz4.msl",
+              "quantem/gpu/compute/backends.py",
+              "quantem/gpu/compute/mps.py",
+              "quantem/gpu/compute/metal/reductions.msl",
+              "quantem/gpu/detector.py",
+              "quantem/gpu/dpc.py",
+              "quantem/gpu/ssb/api.py",
+          }
+          with zipfile.ZipFile(wheel) as zf:
+              names = set(zf.namelist())
+          missing = sorted(required - names)
+          if missing:
+              raise SystemExit(f"{wheel} missing required files: {missing}")
+          print(f"wheel ok: {wheel}")
+          PY
+
+      - name: Publish GPU package to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          packages-dir: dist/gpu/
