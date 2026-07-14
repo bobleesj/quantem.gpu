@@ -139,6 +139,16 @@ file -> quantem.gpu (load + decompress + to_device) -> arrays
   frame assembly before ffmpeg/H.264 encoding.
 - `cpu`: h5py/hdf5plugin reference decode for availability and parity.
 
+### Coverage snapshot
+
+| Area | CUDA | MPS | Further work |
+|---|---|---|---|
+| HDF5 load/decompress | Implemented | Implemented | More held-out real-data parity. |
+| `load(..., scan_region=...)` | Implemented | Implemented | More malformed-file and dataset coverage. |
+| BF/DF/ADF, mean DP, DPC/iDPC | Implemented | Implemented | Broader visual parity reports. |
+| Ptychographic SSB | Reference path implemented | MPS preview/free-fit implemented | More datasets, scan sizes, and temporal/joint SSB validation. |
+| GIF/MP4 movie rendering | CUDA/NVENC MP4 | Metal render plus ffmpeg/VideoToolbox MP4 | Larger export benchmark matrix and widget button wiring. |
+
 ## Phase-1 Status
 
 Implemented in this package:
