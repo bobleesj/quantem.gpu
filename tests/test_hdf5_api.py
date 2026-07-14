@@ -94,17 +94,8 @@ def test_load_scan_region_maps_scan_roi_to_flat_frames(tmp_path, monkeypatch) ->
     }
 
 
-@pytest.mark.parametrize(
-    ("region", "expected"),
-    [
-        ((1, 3, 2, 5), (1, 3, 2, 5)),
-        (((1, 3), (2, 5)), (1, 3, 2, 5)),
-        ((slice(1, 3), slice(2, 5)), (1, 3, 2, 5)),
-        ((range(1, 3), range(2, 5)), (1, 3, 2, 5)),
-    ],
-)
-def test_load_region_is_available_through_load(monkeypatch, region, expected) -> None:
-    """The friendly crop-first API is load(path, region=...), not a second verb."""
+def test_load_scan_region_is_available_through_load(monkeypatch) -> None:
+    """The friendly crop-first API is load(path, scan_region=...), not a second verb."""
     from quantem.gpu.io import hdf5
 
     calls = {}
@@ -127,7 +118,7 @@ def test_load_region_is_available_through_load(monkeypatch, region, expected) ->
 
     result = hdf5.load(
         "scan_master.h5",
-        region=region,
+        scan_region=(1, 3, 2, 5),
         backend="auto",
         det_bin=2,
         dtype="u8",
@@ -136,7 +127,7 @@ def test_load_region_is_available_through_load(monkeypatch, region, expected) ->
 
     assert calls["backend"] == "auto"
     assert calls["filepath"] == "scan_master.h5"
-    assert hdf5._normalize_scan_region(calls["scan_region"], (5, 6)) == expected
+    assert calls["scan_region"] == (1, 3, 2, 5)
     assert calls["kwargs"] == {
         "scan_shape": None,
         "det_bin": 2,
@@ -148,26 +139,15 @@ def test_load_region_is_available_through_load(monkeypatch, region, expected) ->
     assert result.data.dtype == np.uint8
 
 
-def test_load_scan_region_alias_still_works(monkeypatch) -> None:
-    """Keep scan_region= as a compatibility spelling while docs move to region=."""
+def test_load_scan_region_rejects_slice_and_range_forms() -> None:
+    """Keep the public crop API simple: one flat row/column bounds tuple."""
     from quantem.gpu.io import hdf5
 
-    calls = {}
-
-    monkeypatch.setattr("quantem.gpu.io.backends.resolve_backend", lambda _backend: "cuda")
-
-    def fake_load_scan_region(filepath, scan_region, **kwargs):
-        calls["scan_region"] = scan_region
-        return hdf5.LoadResult(np.zeros((1, 1, 1, 1), dtype=np.uint16), {})
-
-    monkeypatch.setattr(hdf5, "load_scan_region", fake_load_scan_region)
-
-    hdf5.load("scan_master.h5", scan_region=(0, 1, 0, 1), verbose=False)
-
-    assert calls["scan_region"] == (0, 1, 0, 1)
+    with pytest.raises(TypeError, match="scan_region must be"):
+        hdf5._normalize_scan_region((slice(0, 1), range(0, 1)), (5, 6))
 
 
-def test_load_region_rejects_non_cuda_backend(monkeypatch) -> None:
+def test_load_scan_region_rejects_non_cuda_backend(monkeypatch) -> None:
     """Crop-first loading should fail honestly until non-CUDA backends exist."""
     from quantem.gpu.io import hdf5
 
@@ -176,20 +156,19 @@ def test_load_region_rejects_non_cuda_backend(monkeypatch) -> None:
     with pytest.raises(RuntimeError, match="CUDA crop-first IO only"):
         hdf5.load(
             "scan_master.h5",
-            region=(0, 1, 0, 1),
+            scan_region=(0, 1, 0, 1),
             backend="mps",
             verbose=False,
         )
 
 
-def test_load_region_rejects_both_region_spellings() -> None:
+def test_load_region_keyword_is_not_supported() -> None:
     from quantem.gpu.io import hdf5
 
-    with pytest.raises(TypeError, match="either region= or scan_region="):
+    with pytest.raises(TypeError, match="region="):
         hdf5.load(
             "scan_master.h5",
             region=(0, 1, 0, 1),
-            scan_region=(0, 1, 0, 1),
             verbose=False,
         )
 

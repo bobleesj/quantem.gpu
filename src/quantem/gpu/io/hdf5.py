@@ -300,62 +300,25 @@ def _apply_scan_shape(
     return data.reshape(scan_r, scan_c, dr, dc)
 
 
-def _axis_region_bounds(axis_region, *, axis_name: str) -> tuple[int, int]:
-    """Return ``(start, stop)`` for a row/column region selector."""
-    if isinstance(axis_region, slice):
-        if axis_region.step not in (None, 1):
-            raise ValueError(
-                f"{axis_name} slice step must be 1 for rectangular region loading"
-            )
-        if axis_region.start is None or axis_region.stop is None:
-            raise ValueError(
-                f"{axis_name} slice must have explicit start and stop values"
-            )
-        return int(axis_region.start), int(axis_region.stop)
-    if isinstance(axis_region, range):
-        if axis_region.step != 1:
-            raise ValueError(
-                f"{axis_name} range step must be 1 for rectangular region loading"
-            )
-        return int(axis_region.start), int(axis_region.stop)
-    if (
-        isinstance(axis_region, (tuple, list))
-        and len(axis_region) == 2
-    ):
-        return int(axis_region[0]), int(axis_region[1])
-    raise TypeError(
-        f"{axis_name} region must be a (start, stop) tuple, slice, or range"
-    )
-
-
 def _normalize_scan_region(
     scan_region,
     scan_shape: tuple[int, int],
 ) -> tuple[int, int, int, int]:
     """Validate a scan-space region as ``(row_start, row_stop, col_start, col_stop)``.
 
-    Accepted forms:
-
-    - ``(row_start, row_stop, col_start, col_stop)``
-    - ``((row_start, row_stop), (col_start, col_stop))``
-    - ``(slice(row_start, row_stop), slice(col_start, col_stop))``
-    - ``(range(row_start, row_stop), range(col_start, col_stop))``
-    - ``{"row_start": ..., "row_stop": ..., "col_start": ..., "col_stop": ...}``
+    The public form is intentionally simple:
+    ``(row_start, row_stop, col_start, col_stop)``.
     """
-    if isinstance(scan_region, dict):
-        row_start = int(scan_region["row_start"])
-        row_stop = int(scan_region["row_stop"])
-        col_start = int(scan_region["col_start"])
-        col_stop = int(scan_region["col_stop"])
-    elif (
-        isinstance(scan_region, (tuple, list))
-        and len(scan_region) == 2
-        and not all(np.isscalar(v) for v in scan_region)
-    ):
-        row_start, row_stop = _axis_region_bounds(scan_region[0], axis_name="row")
-        col_start, col_stop = _axis_region_bounds(scan_region[1], axis_name="column")
-    else:
+    if not isinstance(scan_region, (tuple, list)) or len(scan_region) != 4:
+        raise TypeError(
+            "scan_region must be (row_start, row_stop, col_start, col_stop)"
+        )
+    try:
         row_start, row_stop, col_start, col_stop = (int(v) for v in scan_region)
+    except (TypeError, ValueError) as exc:
+        raise TypeError(
+            "scan_region must be (row_start, row_stop, col_start, col_stop)"
+        ) from exc
 
     scan_r, scan_c = (int(v) for v in scan_shape)
     if not (0 <= row_start < row_stop <= scan_r):
@@ -2933,7 +2896,7 @@ def _is_uint8_browse_dtype(dtype: str | None) -> bool:
 
 def load_scan_region(
     filepath: str,
-    scan_region,
+    scan_region: tuple[int, int, int, int] | list[int],
     *,
     scan_shape: tuple[int, int] | None = None,
     det_bin: int = 1,
@@ -2949,12 +2912,7 @@ def load_scan_region(
     filepath
         Dectris/Arina master HDF5 file.
     scan_region
-        Region in the full scan grid. Prefer ``load(path, region=...)`` for
-        new code. Accepted forms are ``(row_start, row_stop, col_start,
-        col_stop)``, ``((row_start, row_stop), (col_start, col_stop))``,
-        ``(slice(row_start, row_stop), slice(col_start, col_stop))``,
-        ``(range(row_start, row_stop), range(col_start, col_stop))``, or a dict
-        with ``row_start``, ``row_stop``, ``col_start``, and ``col_stop``.
+        ``(row_start, row_stop, col_start, col_stop)`` in the full scan grid.
     scan_shape
         Full acquisition scan shape. When omitted, it is derived from metadata.
     det_bin
@@ -3049,14 +3007,12 @@ def load_scan_region(
 
 
 def load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = True,
-         max_concurrent=None, region=None, scan_region=None, **kwargs):
+         max_concurrent=None, scan_region=None, **kwargs):
     """Load 4D-STEM data — one master, or many.
 
     * ``load(master)`` → one ``LoadResult``.
-    * ``load(master, region=(r0, r1, c0, c1))`` → one cropped ``LoadResult``
-      without loading the full scan first. ``region`` can also be
-      ``((r0, r1), (c0, c1))``, ``(slice(r0, r1), slice(c0, c1))``, or
-      ``(range(r0, r1), range(c0, c1))``.
+    * ``load(master, scan_region=(r0, r1, c0, c1))`` → one cropped
+      ``LoadResult`` without loading the full scan first.
     * ``load([masters])`` → the masters **stacked** into one 5D dataset (the
       series/viewer case).
     * ``load([masters], gpus=[0, 1])`` (or ``stack=False``) → a **list** of separate
@@ -3072,6 +3028,11 @@ def load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = Tru
     """
     is_seq = isinstance(filepath, (list, tuple))
     verbose = kwargs.get("verbose", True)
+    if "region" in kwargs:
+        raise TypeError(
+            "Use scan_region=(row_start, row_stop, col_start, col_stop), "
+            "not region=."
+        )
     requested_u8 = _is_uint8_browse_dtype(dtype)
     if requested_u8 and kwargs.get("output_dtype") is None:
         # Route the public browse token through the low-level direct-output
@@ -3080,25 +3041,21 @@ def load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = Tru
         # Without this, list loads can silently materialize uint16 first and
         # only cast later, defeating the U8 memory/speed contract.
         kwargs["output_dtype"] = np.uint8
-    if region is not None and scan_region is not None:
-        raise TypeError("Use either region= or scan_region=, not both.")
-    if region is None:
-        region = scan_region
-    if region is not None:
+    if scan_region is not None:
         if args:
             raise TypeError(
-                "load(..., region=...) does not accept positional "
+                "load(..., scan_region=...) does not accept positional "
                 "dataset_path arguments; crop-first loading is supported for "
                 "4D-STEM master files."
             )
         if is_seq:
             raise ValueError(
-                "load(..., region=...) expects one master path. For many "
-                "masters, call load(path, region=...) for each crop."
+                "load(..., scan_region=...) expects one master path. For many "
+                "masters, call load(path, scan_region=...) for each crop."
             )
         if gpus is not None or not stack:
             raise ValueError(
-                "load(..., region=...) returns one cropped LoadResult; "
+                "load(..., scan_region=...) returns one cropped LoadResult; "
                 "do not combine it with gpus= or stack=False."
             )
         backend = kwargs.pop("backend", "auto")
@@ -3107,7 +3064,7 @@ def load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = Tru
         resolved_backend = resolve_backend(backend)
         if resolved_backend != "cuda":
             raise RuntimeError(
-                "load(..., region=...) currently supports CUDA crop-first "
+                "load(..., scan_region=...) currently supports CUDA crop-first "
                 f"IO only; backend={resolved_backend!r} was selected. Use a CUDA "
                 "environment or load the full dataset and crop after loading "
                 "until MPS/CPU crop-first IO lands."
@@ -3123,12 +3080,12 @@ def load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = Tru
         extra = sorted(set(kwargs) - allowed)
         if extra:
             raise TypeError(
-                "load(..., region=...) does not accept "
+                "load(..., scan_region=...) does not accept "
                 + ", ".join(f"{name}=" for name in extra)
             )
         return load_scan_region(
             filepath,
-            region,
+            scan_region,
             scan_shape=kwargs.pop("scan_shape", None),
             det_bin=kwargs.pop("det_bin", 1),
             apply_mask=kwargs.pop("apply_mask", True),

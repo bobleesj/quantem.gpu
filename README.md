@@ -48,7 +48,7 @@ from quantem.gpu import load
 
 result = load(
     "scan_master.h5",
-    region=(0, 32, 0, 32),  # row_start, row_stop, col_start, col_stop
+    scan_region=(0, 32, 0, 32),  # row_start, row_stop, col_start, col_stop
 )
 
 data = result.data
@@ -81,7 +81,7 @@ paths route through `quantem.gpu`:
 ```python
 from quantem.widget import Show4DSTEM, load
 
-result = load("scan_master.h5", region=(0, 32, 0, 32))
+result = load("scan_master.h5", scan_region=(0, 32, 0, 32))
 viewer = Show4DSTEM(result.data)
 viewer
 ```
@@ -129,13 +129,10 @@ Implemented in this package:
 - `quantem.gpu.device_report()` and `quantem.gpu.select_device()`
 - `quantem.gpu.io.hdf5.load()`, copied from the proven `quantem.widget` HDF5
   loader and kept API-compatible for the migrated slice
-- `quantem.gpu.io.hdf5.load(..., region=...)` for CUDA scan-ROI HDF5 loading
-  without materializing the full scan first. The region can be
-  `(row_start, row_stop, col_start, col_stop)`, `((row_start, row_stop),
-  (col_start, col_stop))`, `(slice(row_start, row_stop), slice(col_start,
-  col_stop))`, or `(range(row_start, row_stop), range(col_start, col_stop))`.
-  `scan_region=` and `load_scan_region()` are kept as compatibility helpers for
-  existing callers.
+- `quantem.gpu.io.hdf5.load(..., scan_region=(row_start, row_stop, col_start,
+  col_stop))` for CUDA scan-ROI HDF5 loading without materializing the full scan
+  first. `load_scan_region()` is kept as a compatibility helper for existing
+  callers.
 - CUDA bitshuffle/LZ4 kernels and pinned-buffer HDF5 master load path
 - MPS Metal bitshuffle/LZ4 kernels, chunk-backed zero-copy load path, memory
   guard, and `load_mps_4dstem`
