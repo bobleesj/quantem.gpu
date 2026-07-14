@@ -60,6 +60,12 @@ with zipfile.ZipFile(wheel) as zf:
 missing = sorted(required - names)
 if missing:
     raise SystemExit(f"{wheel} missing required files: {missing}")
+license_files = [
+    name for name in names
+    if name.endswith(".dist-info/licenses/LICENSE")
+]
+if len(license_files) != 1:
+    raise SystemExit(f"{wheel} missing LICENSE in dist-info/licenses")
 print(f"wheel ok: {wheel}")
 PY
 
