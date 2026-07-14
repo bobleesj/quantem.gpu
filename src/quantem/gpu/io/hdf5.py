@@ -3001,10 +3001,12 @@ def load_scan_region(
 
 
 def load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = True,
-         max_concurrent=None, **kwargs):
+         max_concurrent=None, scan_region=None, **kwargs):
     """Load 4D-STEM data — one master, or many.
 
     * ``load(master)`` → one ``LoadResult``.
+    * ``load(master, scan_region=(r0, r1, c0, c1))`` → one cropped
+      ``LoadResult`` without loading the full scan first.
     * ``load([masters])`` → the masters **stacked** into one 5D dataset (the
       series/viewer case).
     * ``load([masters], gpus=[0, 1])`` (or ``stack=False``) → a **list** of separate
@@ -3028,6 +3030,58 @@ def load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = Tru
         # Without this, list loads can silently materialize uint16 first and
         # only cast later, defeating the U8 memory/speed contract.
         kwargs["output_dtype"] = np.uint8
+    if scan_region is not None:
+        if args:
+            raise TypeError(
+                "load(..., scan_region=...) does not accept positional "
+                "dataset_path arguments; crop-first loading is supported for "
+                "4D-STEM master files."
+            )
+        if is_seq:
+            raise ValueError(
+                "load(..., scan_region=...) expects one master path. For many "
+                "masters, call load(path, scan_region=...) for each crop."
+            )
+        if gpus is not None or not stack:
+            raise ValueError(
+                "load(..., scan_region=...) returns one cropped LoadResult; "
+                "do not combine it with gpus= or stack=False."
+            )
+        backend = kwargs.pop("backend", "auto")
+        from .backends import resolve_backend
+
+        resolved_backend = resolve_backend(backend)
+        if resolved_backend != "cuda":
+            raise RuntimeError(
+                "load(..., scan_region=...) currently supports CUDA crop-first "
+                f"IO only; backend={resolved_backend!r} was selected. Use a CUDA "
+                "environment or load the full dataset and crop after loading "
+                "until MPS/CPU crop-first IO lands."
+            )
+        allowed = {
+            "scan_shape",
+            "det_bin",
+            "apply_mask",
+            "verbose",
+            "auto_narrow",
+            "output_dtype",
+        }
+        extra = sorted(set(kwargs) - allowed)
+        if extra:
+            raise TypeError(
+                "load(..., scan_region=...) does not accept "
+                + ", ".join(f"{name}=" for name in extra)
+            )
+        return load_scan_region(
+            filepath,
+            scan_region,
+            scan_shape=kwargs.pop("scan_shape", None),
+            det_bin=kwargs.pop("det_bin", 1),
+            apply_mask=kwargs.pop("apply_mask", True),
+            verbose=kwargs.pop("verbose", True),
+            auto_narrow=kwargs.pop("auto_narrow", True),
+            output_dtype=kwargs.pop("output_dtype", None),
+        )
     if is_seq and (gpus is not None or not stack):
         # N separate GPU-placed datasets (parallel read, serial decode).
         result = _load_many_parallel(list(filepath), gpus=gpus, max_concurrent=max_concurrent,

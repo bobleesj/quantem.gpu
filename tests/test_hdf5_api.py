@@ -94,6 +94,66 @@ def test_load_scan_region_maps_scan_roi_to_flat_frames(tmp_path, monkeypatch) ->
     }
 
 
+def test_load_scan_region_is_available_through_load(monkeypatch) -> None:
+    """The friendly crop-first API is load(path, scan_region=...), not a second verb."""
+    from quantem.gpu.io import hdf5
+
+    calls = {}
+
+    def fake_resolve_backend(backend):
+        calls["backend"] = backend
+        return "cuda"
+
+    def fake_load_scan_region(filepath, scan_region, **kwargs):
+        calls["filepath"] = filepath
+        calls["scan_region"] = scan_region
+        calls["kwargs"] = kwargs
+        return hdf5.LoadResult(
+            np.zeros((2, 3, 4, 4), dtype=np.uint8),
+            {"scan_region": scan_region},
+        )
+
+    monkeypatch.setattr(hdf5, "load_scan_region", fake_load_scan_region)
+    monkeypatch.setattr("quantem.gpu.io.backends.resolve_backend", fake_resolve_backend)
+
+    result = hdf5.load(
+        "scan_master.h5",
+        scan_region=(1, 3, 2, 5),
+        backend="auto",
+        det_bin=2,
+        dtype="u8",
+        verbose=False,
+    )
+
+    assert calls["backend"] == "auto"
+    assert calls["filepath"] == "scan_master.h5"
+    assert calls["scan_region"] == (1, 3, 2, 5)
+    assert calls["kwargs"] == {
+        "scan_shape": None,
+        "det_bin": 2,
+        "apply_mask": True,
+        "verbose": False,
+        "auto_narrow": True,
+        "output_dtype": np.uint8,
+    }
+    assert result.data.dtype == np.uint8
+
+
+def test_load_scan_region_rejects_non_cuda_backend(monkeypatch) -> None:
+    """Crop-first loading should fail honestly until non-CUDA backends exist."""
+    from quantem.gpu.io import hdf5
+
+    monkeypatch.setattr("quantem.gpu.io.backends.resolve_backend", lambda _backend: "mps")
+
+    with pytest.raises(RuntimeError, match="CUDA crop-first IO only"):
+        hdf5.load(
+            "scan_master.h5",
+            scan_region=(0, 1, 0, 1),
+            backend="mps",
+            verbose=False,
+        )
+
+
 def test_torch_detector_bin_sum_matches_numpy_reference() -> None:
     torch = pytest.importorskip("torch")
     from quantem.gpu.io import bin

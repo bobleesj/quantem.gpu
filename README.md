@@ -40,13 +40,13 @@ print(report.selected)
 print(report.cuda_available, report.mps_available, report.cpu_available)
 ```
 
-Load a scan crop from an HDF5 master file. On CUDA this returns a CuPy array;
-on MPS it uses the Metal chunk-backed loader where supported.
+Load a scan crop from an HDF5 master file. On CUDA this returns a CuPy array
+without loading the full scan first.
 
 ```python
-from quantem.gpu import load_scan_region
+from quantem.gpu import load
 
-result = load_scan_region(
+result = load(
     "scan_master.h5",
     scan_region=(0, 32, 0, 32),  # row_start, row_stop, col_start, col_stop
 )
@@ -79,9 +79,9 @@ Then existing widget calls continue to work while the heavy load and compute
 paths route through `quantem.gpu`:
 
 ```python
-from quantem.widget import Show4DSTEM, load_scan_region
+from quantem.widget import Show4DSTEM, load
 
-result = load_scan_region("scan_master.h5", scan_region=(0, 32, 0, 32))
+result = load("scan_master.h5", scan_region=(0, 32, 0, 32))
 viewer = Show4DSTEM(result.data)
 viewer
 ```
@@ -129,8 +129,9 @@ Implemented in this package:
 - `quantem.gpu.device_report()` and `quantem.gpu.select_device()`
 - `quantem.gpu.io.hdf5.load()`, copied from the proven `quantem.widget` HDF5
   loader and kept API-compatible for the migrated slice
-- `quantem.gpu.io.hdf5.load_scan_region()` / `quantem.gpu.load_scan_region()`
-  for CUDA scan-ROI HDF5 loading without materializing the full scan first
+- `quantem.gpu.io.hdf5.load(..., scan_region=...)` for CUDA scan-ROI HDF5
+  loading without materializing the full scan first. `load_scan_region()` is
+  kept as a compatibility helper for existing callers.
 - CUDA bitshuffle/LZ4 kernels and pinned-buffer HDF5 master load path
 - MPS Metal bitshuffle/LZ4 kernels, chunk-backed zero-copy load path, memory
   guard, and `load_mps_4dstem`
