@@ -6,6 +6,11 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+## rc4 - 2026-07-14
+
+- Correct installed package version reporting so `quantem.gpu.__version__`
+  matches the `quantem.gpu` distribution version from TestPyPI installs.
+
 ## rc3 - 2026-07-14
 
 - Add `load(path, scan_region=(row_start, row_stop, col_start, col_stop))` as

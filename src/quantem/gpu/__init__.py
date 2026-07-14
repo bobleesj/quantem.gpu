@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from importlib import import_module
+from importlib.metadata import PackageNotFoundError, version
 
 from .device import DeviceReport, device_report, select_device
 from .compute import compute_backend
@@ -20,7 +21,10 @@ from .detector import (
 )
 from .dpc import DPCResult, center_of_mass, com, dpc, idpc
 
-__version__ = "0.0.1rc2"
+try:
+    __version__ = version("quantem.gpu")
+except PackageNotFoundError:
+    __version__ = "0.0.1rc4"
 
 _SSB_EXPORTS = {
     "DefocusSweepResult",
