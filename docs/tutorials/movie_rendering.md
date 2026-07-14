@@ -3,6 +3,9 @@
 Use `quantem.gpu.movie` when movie creation needs the shared QuantEM rendering
 path or CUDA/NVENC MP4 acceleration.
 
+Install with `quantem.gpu[movie]` first. Use `quantem.gpu[cuda,movie]` or
+`quantem.gpu[mps,movie]` when the movie backend should use a specific GPU path.
+
 ```python
 from quantem.gpu import movie
 

@@ -30,6 +30,19 @@ python -m pip install \
   "quantem.gpu[mps]==0.0.1rc5"
 ```
 
+For GIF/MP4 movie rendering, include the `movie` extra. Combine extras when
+you also need a device-specific backend:
+
+```bash
+python -m pip install \
+  --extra-index-url https://test.pypi.org/simple/ \
+  "quantem.gpu[movie]==0.0.1rc5"
+
+python -m pip install \
+  --extra-index-url https://test.pypi.org/simple/ \
+  "quantem.gpu[mps,movie]==0.0.1rc5"
+```
+
 Check which backend will be used:
 
 ```python
@@ -89,7 +102,7 @@ Use the widget display migration branch with this release candidate:
 ```bash
 python -m pip install \
   --extra-index-url https://test.pypi.org/simple/ \
-  "quantem.gpu>=0.0.1rc5"
+  "quantem.gpu[movie]>=0.0.1rc5"
 ```
 
 Then existing widget calls continue to work while the heavy load and compute
