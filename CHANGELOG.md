@@ -1,0 +1,37 @@
+# Changelog
+
+One line per release candidate: the main user-facing thing that changed. Newest
+first. Add an entry under **Unreleased** as you land a change; move it under the
+new `rcN` heading when that rc is published to TestPyPI.
+
+## Unreleased
+
+- No unreleased changes yet.
+
+## rc2 - 2026-07-14
+
+- Publish the first `quantem.gpu` release candidate to TestPyPI as the
+  multi-backend accelerated STEM package for QuantEM (`cuda`, `mps`, `cpu`),
+  with a Quick Start README showing install, device reporting, HDF5 crop load,
+  virtual detector products, and widget migration usage.
+- Move the HDF5 GPU IO/decompression hot path into `quantem.gpu.io`, including
+  CUDA bitshuffle/LZ4 chunk decode, pinned-buffer master loading, scan-region
+  crop loading, MPS Metal bitshuffle/LZ4 chunk IO, and CPU reference decode for
+  parity.
+- Add device policy helpers (`device_report`, `select_device`) and import-light
+  lazy exports so `import quantem.gpu` works without CUDA/CuPy installed.
+- Move BF/DF/ADF, mean diffraction pattern, masked-sum, virtual image, CoM/DPC,
+  and iDPC compute paths into `quantem.gpu`, with parity tests against the
+  legacy widget/live paths.
+- Move SSB compute APIs from `quantem.live` into `quantem.gpu.ssb`, including
+  CUDA reference parity, MPS/MLX preview and C10/C12/phi12 free-fit paths, and
+  real-data parity/speed checks used during migration.
+- Move MPS chunk-backed product compute and movie export helpers into
+  `quantem.gpu`, leaving widget responsible for frontend display/export
+  orchestration.
+- Wire the `quantem.widget` migration branch to depend on
+  `quantem.gpu>=0.0.1rc2`, so widget HDF5 loading and accelerated products can
+  call the new package without changing public widget APIs.
+- Add release automation for `gpu-v*` tags, TestPyPI trusted publishing through
+  `release.yml`, MIT license packaging, and an NVIDIA nvCOMP CUDA LZ4
+  BSD-3-Clause third-party notice.
