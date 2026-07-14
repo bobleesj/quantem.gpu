@@ -16,6 +16,7 @@ _API_EXPORTS = {
     "DefocusSweepResult": ("quantem.gpu.ssb.results", "DefocusSweepResult"),
     "SSBResult": ("quantem.gpu.ssb.results", "SSBResult"),
     "MpsSSBPreviewResult": ("quantem.gpu.ssb.mps", "MpsSSBPreviewResult"),
+    "ssb_fit_mps": ("quantem.gpu.ssb.mps", "ssb_fit"),
     "ssb_preview_mps": ("quantem.gpu.ssb.mps", "ssb_preview"),
 }
 
@@ -31,6 +32,7 @@ __all__ = [
     "dpc",
     "spatial_frequencies",
     "ssb",
+    "ssb_fit_mps",
     "ssb_preview_mps",
     "ssb_series",
 ]

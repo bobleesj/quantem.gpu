@@ -25,7 +25,9 @@ _HDF5_EXPORTS = {
 
 _BACKEND_EXPORTS = {"detect_backend", "resolve_backend"}
 
-__all__ = sorted(_HDF5_EXPORTS | _BACKEND_EXPORTS)
+_MPS_EXPORTS = {"MPSChunked4DSTEM", "clear_mps_cache", "load_mps_4dstem"}
+
+__all__ = sorted(_HDF5_EXPORTS | _BACKEND_EXPORTS | _MPS_EXPORTS)
 
 
 def __getattr__(name: str):
@@ -36,6 +38,11 @@ def __getattr__(name: str):
         return value
     if name in _BACKEND_EXPORTS:
         module = import_module("quantem.gpu.io.backends")
+        value = getattr(module, name)
+        globals()[name] = value
+        return value
+    if name in _MPS_EXPORTS:
+        module = import_module("quantem.gpu.io.backends.mps")
         value = getattr(module, name)
         globals()[name] = value
         return value

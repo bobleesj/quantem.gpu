@@ -28,6 +28,7 @@ _SSB_EXPORTS = {
     "SSBResult",
     "defocus_sweep",
     "ssb",
+    "ssb_fit_mps",
     "ssb_preview_mps",
     "ssb_series",
 }
@@ -56,6 +57,7 @@ __all__ = [
     "mean_dp",
     "select_device",
     "ssb",
+    "ssb_fit_mps",
     "ssb_preview_mps",
     "ssb_series",
     "virtual",

@@ -44,12 +44,20 @@ cuda = [
     "cuda-python",
     "cupy-cuda12x>=12.0",
 ]
+mps = [
+    "mlx",
+    "pyobjc-framework-Metal; platform_system == 'Darwin'",
+]
 dev = [
     "pytest>=8",
 ]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/quantem"]
+artifacts = [
+    "src/quantem/gpu/io/backends/metal/*.msl",
+    "src/quantem/gpu/compute/metal/*.msl",
+]
 
 [tool.hatch.build.targets.sdist]
 include = [
