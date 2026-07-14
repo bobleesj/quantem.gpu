@@ -986,7 +986,10 @@ def _alloc_pinned_fast(nbytes: int) -> np.ndarray:
                 return entry["arr"][:nbytes]
     import ctypes
     import mmap
-    from cuda.bindings import runtime as cudart
+    try:
+        from cuda.bindings import runtime as cudart
+    except ModuleNotFoundError:
+        return np.empty(nbytes, dtype=np.uint8)
     region = mmap.mmap(-1, nbytes)  # anonymous → page-aligned base
     addr = ctypes.addressof(ctypes.c_char.from_buffer(region))
     err = cudart.cudaHostRegister(addr, nbytes, 0)
@@ -2898,6 +2901,7 @@ def load_scan_region(
     filepath: str,
     scan_region: tuple[int, int, int, int] | list[int],
     *,
+    backend: str = "cuda",
     scan_shape: tuple[int, int] | None = None,
     det_bin: int = 1,
     apply_mask: bool = True,
@@ -2921,15 +2925,23 @@ def load_scan_region(
     Returns
     -------
     LoadResult
-        ``data`` is a CuPy array with shape
+        ``data`` is a backend array with shape
         ``(region_rows, region_cols, det_rows, det_cols)``. Metadata keeps the
         full acquisition grid in ``full_scan_shape`` and the loaded patch in
         ``scan_region``.
     """
     import time
 
-    if cp is None:
+    from .backends import resolve_backend
+
+    resolved_backend = resolve_backend(backend)
+    if resolved_backend == "cuda" and cp is None:
         raise RuntimeError("load_scan_region requires CuPy/CUDA")
+    if resolved_backend not in {"cuda", "mps"}:
+        raise RuntimeError(
+            "load_scan_region supports accelerated crop-first IO on CUDA and "
+            f"MPS; backend={resolved_backend!r} was selected."
+        )
     if not os.path.isfile(filepath):
         raise FileNotFoundError(f"HDF5 file not found: {filepath}")
 
@@ -2970,14 +2982,29 @@ def load_scan_region(
         apply_mask=apply_mask,
     )
     pixel_mask = prepared.get("pixel_mask")
-    data = _decompress_prepared(
-        prepared,
-        verbose=False,
-        auto_narrow=auto_narrow,
-        det_bin=det_bin,
-        streaming_bin=(int(det_bin) > 1),
-        output_dtype=output_dtype,
-    )
+    if resolved_backend == "cuda":
+        data = _decompress_prepared(
+            prepared,
+            verbose=False,
+            auto_narrow=auto_narrow,
+            det_bin=det_bin,
+            streaming_bin=(int(det_bin) > 1),
+            output_dtype=output_dtype,
+        )
+    else:
+        if output_dtype is not None and np.dtype(output_dtype) != np.dtype(prepared["dtype"]):
+            raise ValueError(
+                "MPS crop-first IO currently returns the native detector dtype; "
+                "load without dtype='u8' or cast the small returned crop explicitly."
+            )
+        from quantem.gpu.io.backends.mps import load_prepared_frames
+
+        data = load_prepared_frames(
+            prepared,
+            det_bin=det_bin,
+            pixel_mask=pixel_mask if apply_mask else None,
+            verbose=False,
+        )
     det_r, det_c = (int(data.shape[-2]), int(data.shape[-1]))
     data = data.reshape(patch_h, patch_w, det_r, det_c)
 
@@ -2995,6 +3022,7 @@ def load_scan_region(
         "shape": [patch_h, patch_w],
     }
     meta["det_bin"] = int(det_bin)
+    meta["backend"] = resolved_backend
     if verbose:
         size_gb = data.nbytes / 1e9
         print(
@@ -3062,12 +3090,10 @@ def load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = Tru
         from .backends import resolve_backend
 
         resolved_backend = resolve_backend(backend)
-        if resolved_backend != "cuda":
+        if resolved_backend not in {"cuda", "mps"}:
             raise RuntimeError(
-                "load(..., scan_region=...) currently supports CUDA crop-first "
-                f"IO only; backend={resolved_backend!r} was selected. Use a CUDA "
-                "environment or load the full dataset and crop after loading "
-                "until MPS/CPU crop-first IO lands."
+                "load(..., scan_region=...) supports accelerated crop-first IO "
+                f"on CUDA and MPS; backend={resolved_backend!r} was selected."
             )
         allowed = {
             "scan_shape",
@@ -3086,6 +3112,7 @@ def load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = Tru
         return load_scan_region(
             filepath,
             scan_region,
+            backend=resolved_backend,
             scan_shape=kwargs.pop("scan_shape", None),
             det_bin=kwargs.pop("det_bin", 1),
             apply_mask=kwargs.pop("apply_mask", True),
@@ -3526,10 +3553,9 @@ def _load_impl(
             or (isinstance(filepath, (str, os.PathLike))
                 and os.path.isdir(os.path.expanduser(str(filepath))))
         ):
-            # Temporary compatibility: MPS multi-dataset remains in
-            # quantem.widget for phase 1 and is folded into quantem.gpu later.
-            from quantem.widget.multidataset_mps import load_macbook_datasets
-            return load_macbook_datasets(
+            from quantem.gpu.io.mps_multi import load_mps_datasets
+
+            return load_mps_datasets(
                 filepath,
                 det_bin=det_bin,
                 scan_size=None,

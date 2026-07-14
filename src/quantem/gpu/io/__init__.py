@@ -27,8 +27,14 @@ _HDF5_EXPORTS = {
 _BACKEND_EXPORTS = {"detect_backend", "resolve_backend"}
 
 _MPS_EXPORTS = {"MPSChunked4DSTEM", "clear_mps_cache", "load_mps_4dstem"}
+_MPS_MULTI_EXPORTS = {
+    "LazyMPSDatasets",
+    "LazyMacbookDatasets",
+    "load_mps_datasets",
+    "load_macbook_datasets",
+}
 
-__all__ = sorted(_HDF5_EXPORTS | _BACKEND_EXPORTS | _MPS_EXPORTS)
+__all__ = sorted(_HDF5_EXPORTS | _BACKEND_EXPORTS | _MPS_EXPORTS | _MPS_MULTI_EXPORTS)
 
 
 def __getattr__(name: str):
@@ -44,6 +50,11 @@ def __getattr__(name: str):
         return value
     if name in _MPS_EXPORTS:
         module = import_module("quantem.gpu.io.backends.mps")
+        value = getattr(module, name)
+        globals()[name] = value
+        return value
+    if name in _MPS_MULTI_EXPORTS:
+        module = import_module("quantem.gpu.io.mps_multi")
         value = getattr(module, name)
         globals()[name] = value
         return value

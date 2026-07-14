@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import sys
+import types
+
 import numpy as np
 import pytest
 
@@ -135,8 +138,85 @@ def test_load_scan_region_is_available_through_load(monkeypatch) -> None:
         "verbose": False,
         "auto_narrow": True,
         "output_dtype": np.uint8,
+        "backend": "cuda",
     }
     assert result.data.dtype == np.uint8
+
+
+def test_load_scan_region_routes_mps_to_sparse_decoder(tmp_path, monkeypatch) -> None:
+    """MPS crop-first IO should use quantem.gpu's sparse Metal decode path."""
+    from quantem.gpu.io import hdf5
+
+    master = tmp_path / "scan_master.h5"
+    master.write_bytes(b"placeholder")
+    calls = {}
+
+    monkeypatch.setattr(hdf5, "get_metadata", lambda _path: {"scan_shape": (4, 4)})
+    monkeypatch.setattr(hdf5, "_discover_chunk_names", lambda _path: ["data_000001"])
+
+    def fake_prepare(filepath, chunk_names, frame_indices, apply_mask=True):
+        calls["frame_indices"] = frame_indices.copy()
+        return {
+            "pixel_mask": np.zeros((2, 2), dtype=np.uint8),
+            "dtype": np.dtype(np.uint16),
+        }
+
+    def fake_mps_decode(prepared, **kwargs):
+        calls["prepared"] = prepared
+        calls["mps_kwargs"] = kwargs
+        return np.arange(4 * 2 * 2, dtype=np.uint16).reshape(4, 2, 2)
+
+    monkeypatch.setattr(hdf5, "_prepare_master_frames", fake_prepare)
+    monkeypatch.setitem(
+        sys.modules,
+        "quantem.gpu.io.backends.mps",
+        types.SimpleNamespace(load_prepared_frames=fake_mps_decode),
+    )
+
+    result = hdf5.load(
+        str(master),
+        scan_region=(1, 3, 1, 3),
+        backend="mps",
+        verbose=False,
+    )
+
+    np.testing.assert_array_equal(
+        calls["frame_indices"],
+        np.asarray([5, 6, 9, 10], dtype=np.int64),
+    )
+    assert calls["mps_kwargs"]["det_bin"] == 1
+    assert calls["mps_kwargs"]["pixel_mask"].shape == (2, 2)
+    assert result.data.shape == (2, 2, 2, 2)
+    assert result.metadata["backend"] == "mps"
+
+
+def test_mps_multi_dataset_loader_is_owned_by_quantem_gpu(monkeypatch) -> None:
+    """MPS list loads should dispatch to quantem.gpu.io, not widget IO."""
+    from quantem.gpu.io import hdf5
+    from quantem.gpu.io import mps_multi
+
+    calls = {}
+
+    monkeypatch.setattr("quantem.gpu.io.backends.resolve_backend", lambda _backend: "mps")
+
+    def fake_load_mps_datasets(filepath, **kwargs):
+        calls["filepath"] = filepath
+        calls["kwargs"] = kwargs
+        return "lazy-mps-handle"
+
+    monkeypatch.setattr(mps_multi, "load_mps_datasets", fake_load_mps_datasets)
+
+    result = hdf5.load(
+        ["a_master.h5", "b_master.h5"],
+        backend="mps",
+        det_bin=4,
+        verbose=False,
+    )
+
+    assert result == "lazy-mps-handle"
+    assert calls["filepath"] == ["a_master.h5", "b_master.h5"]
+    assert calls["kwargs"]["det_bin"] == 4
+    assert calls["kwargs"]["verbose"] is False
 
 
 def test_load_scan_region_rejects_slice_and_range_forms() -> None:
@@ -147,17 +227,17 @@ def test_load_scan_region_rejects_slice_and_range_forms() -> None:
         hdf5._normalize_scan_region((slice(0, 1), range(0, 1)), (5, 6))
 
 
-def test_load_scan_region_rejects_non_cuda_backend(monkeypatch) -> None:
-    """Crop-first loading should fail honestly until non-CUDA backends exist."""
+def test_load_scan_region_rejects_cpu_backend(monkeypatch) -> None:
+    """Crop-first loading should fail honestly when no accelerated backend exists."""
     from quantem.gpu.io import hdf5
 
-    monkeypatch.setattr("quantem.gpu.io.backends.resolve_backend", lambda _backend: "mps")
+    monkeypatch.setattr("quantem.gpu.io.backends.resolve_backend", lambda _backend: "cpu")
 
-    with pytest.raises(RuntimeError, match="CUDA crop-first IO only"):
+    with pytest.raises(RuntimeError, match="CUDA and MPS"):
         hdf5.load(
             "scan_master.h5",
             scan_region=(0, 1, 0, 1),
-            backend="mps",
+            backend="cpu",
             verbose=False,
         )
 

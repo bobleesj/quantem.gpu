@@ -37,6 +37,7 @@ __all__ = [
     "load_master_chunked",
     "load_master_torch",
     "load_mps_4dstem",
+    "load_prepared_frames",
     "plan_master",
 ]
 
@@ -1683,6 +1684,128 @@ class MPSDecompressor:
             )
         return result
 
+    def load_prepared_frames(
+        self,
+        prepared: dict,
+        *,
+        det_bin: int = 1,
+        pixel_mask: np.ndarray | None = None,
+        verbose: bool = False,
+    ) -> np.ndarray:
+        """Decompress selected prepared HDF5 chunks into an MPS-backed array.
+
+        ``prepared`` is the sparse frame plan returned by
+        :func:`quantem.gpu.io.hdf5._prepare_master_frames`. The compressed bytes
+        are copied into unified-memory Metal buffers and decoded with the same
+        LZ4/bitshuffle kernels as full-Master MPS loads.
+        """
+        t0 = time.perf_counter()
+        det_bin = int(det_bin)
+        if det_bin < 1:
+            raise ValueError("det_bin must be >= 1.")
+        read_buffer = prepared["read_buffer"]
+        total_frames = int(prepared["total_frames"])
+        frame_shape = tuple(int(v) for v in prepared["frame_shape"])
+        dtype = np.dtype(prepared["dtype"])
+        frame_bytes = int(prepared["frame_bytes"])
+        elem_size = int(dtype.itemsize)
+        if total_frames > self.max_frames:
+            raise ValueError(
+                f"Prepared crop has {total_frames} frames but this MPS decoder "
+                f"was allocated for {self.max_frames}."
+            )
+        if len(read_buffer) > self._comp_np.size:
+            raise ValueError(
+                f"Prepared compressed crop is {len(read_buffer)} bytes but this "
+                f"MPS decoder was allocated for {self._comp_np.size} bytes."
+            )
+        chunk_offsets = np.asarray(prepared["chunk_offsets"], dtype=np.uint64)
+        if int(chunk_offsets.max(initial=0)) > np.iinfo(np.uint32).max:
+            raise ValueError(
+                "MPS sparse crop compressed buffer exceeds 32-bit chunk offsets; "
+                "load a smaller scan_region."
+            )
+        block_starts = np.asarray(prepared["block_starts"], dtype=np.uint32)
+        block_counts = np.asarray(prepared["block_counts"], dtype=np.uint32)
+        block_offsets = np.asarray(prepared["block_offsets"], dtype=np.uint32)
+        n_blocks = int(block_starts.size)
+        if n_blocks > self._bs_np.size:
+            raise ValueError(
+                f"Prepared crop has {n_blocks} LZ4 blocks but this MPS decoder "
+                f"was allocated for {self._bs_np.size}."
+            )
+
+        self._comp_np[: len(read_buffer)] = read_buffer
+        self._co_np[:total_frames] = chunk_offsets.astype(np.uint32, copy=False)
+        self._bs_np[:n_blocks] = block_starts
+        self._bc_np[:total_frames] = block_counts[:total_frames]
+        self._bo_np[: total_frames + 1] = block_offsets[: total_frames + 1]
+        max_blocks = int(block_counts[:total_frames].max(initial=1))
+
+        if pixel_mask is None:
+            pixel_mask = prepared.get("pixel_mask")
+        if det_bin > 1:
+            det_row, det_col = frame_shape
+            if det_row % det_bin or det_col % det_bin:
+                raise ValueError(
+                    f"Detector shape {frame_shape} is not divisible by det_bin={det_bin}."
+                )
+            self._set_mask(pixel_mask, det_row, det_col)
+            out_shape = (det_row // det_bin, det_col // det_bin)
+            out_frame_bytes = out_shape[0] * out_shape[1] * elem_size
+            out_total_bytes = total_frames * out_frame_bytes
+            out_mtl = _metal_buffer_alloc(out_total_bytes)
+            out_np = _numpy_view(out_mtl, np.uint8, out_total_bytes)
+            cmd = self._submit_gpu_binned(
+                total_frames,
+                frame_bytes,
+                elem_size,
+                0,
+                det_row,
+                det_col,
+                det_bin,
+                self._comp_mtl,
+                self._co_mtl,
+                self._bs_mtl,
+                self._bc_mtl,
+                self._bo_mtl,
+                max_blocks,
+            )
+            cmd.waitUntilCompleted()
+            out = out_np.view(dtype).reshape((total_frames,) + out_shape).view(_MtlArray)
+            out._mtl = out_mtl
+        else:
+            self._set_bad_pixels(pixel_mask, frame_shape)
+            zero_bad = bool(self._bad_idx_count and elem_size == 2)
+            out_total_bytes = total_frames * frame_bytes
+            out_mtl = _metal_buffer_alloc(out_total_bytes)
+            out_np = _numpy_view(out_mtl, np.uint8, out_total_bytes)
+            cmd = self._submit_gpu(
+                total_frames,
+                frame_bytes,
+                elem_size,
+                0,
+                self._comp_mtl,
+                self._co_mtl,
+                self._bs_mtl,
+                self._bc_mtl,
+                self._bo_mtl,
+                max_blocks,
+                out_mtl=out_mtl,
+                zero_bad=zero_bad,
+                det_shape=frame_shape,
+            )
+            cmd.waitUntilCompleted()
+            out = out_np.view(dtype).reshape((total_frames,) + frame_shape).view(_MtlArray)
+            out._mtl = out_mtl
+        if verbose:
+            print(
+                f"MPS sparse crop: {total_frames} frames, "
+                f"{len(read_buffer) / 1e6:.0f} MB compressed -> "
+                f"{out.nbytes / 1e6:.0f} MB in {time.perf_counter() - t0:.3f}s"
+            )
+        return out
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -1872,6 +1995,39 @@ def load_mps_4dstem(
             f"{gbps:.1f} GB/s raw)"
         )
     return data
+
+
+def load_prepared_frames(
+    prepared: dict,
+    *,
+    det_bin: int = 1,
+    pixel_mask: np.ndarray | None = None,
+    verbose: bool = False,
+) -> np.ndarray:
+    """Decode sparse prepared HDF5 frames with the MPS backend.
+
+    This is the MPS counterpart to the CUDA ``_decompress_prepared`` path used
+    by crop-first IO. It expects the caller to have already selected the scan
+    frames and packed their compressed HDF5 chunks.
+    """
+    frame_bytes = int(prepared["frame_bytes"])
+    total_frames = int(prepared["total_frames"])
+    read_buffer = prepared["read_buffer"]
+    n_blocks_per_frame = (frame_bytes + 8191) // 8192
+    max_comp = max(1, int(len(read_buffer)))
+    dec = MPSDecompressor(
+        max_compressed_bytes=max_comp,
+        max_frames=total_frames,
+        frame_bytes=frame_bytes,
+        n_blocks_per_frame=n_blocks_per_frame,
+        gpu_batch=total_frames,
+    )
+    return dec.load_prepared_frames(
+        prepared,
+        det_bin=det_bin,
+        pixel_mask=pixel_mask,
+        verbose=verbose,
+    )
 
 
 _decompressor_cache: dict[int, MPSDecompressor] = {}

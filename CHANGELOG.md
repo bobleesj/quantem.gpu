@@ -9,6 +9,15 @@ new `rcN` heading when that rc is published to TestPyPI.
 - Add `load(path, scan_region=(row_start, row_stop, col_start, col_stop))` as
   the friendly crop-first HDF5 API. `load_scan_region()` remains available as a
   compatibility helper.
+- Move MPS crop-first sparse HDF5 decode and the lazy multi-dataset MPS loader
+  into `quantem.gpu.io`, leaving `quantem.widget.multidataset_mps` as a
+  compatibility re-export.
+- Add real-data CUDA/MPS parity tests for crop-first HDF5 IO and MPS SSB sparse
+  optimizer objective checks on the full Samsung 512x512 dataset.
+- Match MPS SSB fixed-preview phase output to CUDA's mean-of-per-BF-phase
+  contract, tighten real Samsung phase parity thresholds, and add a fused
+  MLX/Metal correction kernel that reduces MPS sparse objective timing from
+  about 26 ms/candidate to about 7 ms/candidate on Phil.
 
 ## rc2 - 2026-07-14
 

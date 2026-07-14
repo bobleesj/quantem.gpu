@@ -130,12 +130,13 @@ Implemented in this package:
 - `quantem.gpu.io.hdf5.load()`, copied from the proven `quantem.widget` HDF5
   loader and kept API-compatible for the migrated slice
 - `quantem.gpu.io.hdf5.load(..., scan_region=(row_start, row_stop, col_start,
-  col_stop))` for CUDA scan-ROI HDF5 loading without materializing the full scan
-  first. `load_scan_region()` is kept as a compatibility helper for existing
-  callers.
+  col_stop))` for CUDA and MPS scan-ROI HDF5 loading without materializing the
+  full scan first. `load_scan_region()` is kept as a compatibility helper for
+  existing callers.
 - CUDA bitshuffle/LZ4 kernels and pinned-buffer HDF5 master load path
 - MPS Metal bitshuffle/LZ4 kernels, chunk-backed zero-copy load path, memory
-  guard, and `load_mps_4dstem`
+  guard, crop-first sparse decode, lazy multi-dataset loader, and
+  `load_mps_4dstem`
 - `quantem.widget.io.hdf5` shim in the migration worktree, re-exporting the new
   `quantem.gpu.io.hdf5` API for one release
 - `quantem.gpu.detector` BF/DF/ADF, `mean_dp`, `masked_sum`, `dp_mean`,
@@ -150,6 +151,10 @@ Implemented in this package:
 - `quantem.gpu.ssb.mps.ssb_preview` / `quantem.gpu.ssb_preview_mps` and
   `quantem.gpu.ssb.mps.ssb_fit` / `quantem.gpu.ssb_fit_mps`, optional
   MLX-backed MPS SSB preview/free-fit paths for chunk-backed Mac data.
+- Active `quantem.gpu`, `quantem.widget`, and `quantem.live` source trees no
+  longer import the legacy `quantem.cuda` package at runtime. The remaining
+  unique legacy code is primarily ptychography CLI/fused-kernel internals, which
+  still need a separate backend-folding pass.
 
 Out of scope for phase 1:
 
@@ -165,6 +170,6 @@ Out of scope for phase 1:
   parity and broader real-data product parity.
 - Phase 3: broaden SSB real-data parity, including full CUDA-engine optimizer
   parity and dashboard integration for the MPS MLX fit path.
-- Phase 4: add Show4DSTEM More -> interactive SSB preview and save.
-- Phase 5: move live CLI/dashboard callers onto `quantem.gpu`.
-- Phase 6: fold/rename `quantem.cuda` internals under `quantem.gpu` backends.
+- Phase 4: move live CLI/dashboard callers onto `quantem.gpu`.
+- Phase 5: fold/rename remaining `quantem.cuda` ptychography internals under
+  `quantem.gpu` backends.

@@ -334,6 +334,149 @@ def _phase_sums_from_complex(mx, obj_chunk):
     return outputs[0], outputs[1]
 
 
+@lru_cache(maxsize=16)
+def _corrected_kernel(batch: int, chunk: int, ny: int, nx: int):
+    mx = _require_mlx()
+    source = f"""
+        uint elem = thread_position_in_grid.x;
+        constexpr uint BATCH = {int(batch)};
+        constexpr uint CHUNK = {int(chunk)};
+        constexpr uint NY = {int(ny)};
+        constexpr uint NX = {int(nx)};
+        constexpr uint PLANE = NY * NX;
+        uint total = BATCH * CHUNK * PLANE;
+        if (elem >= total) {{
+            return;
+        }}
+        uint batch = elem / (CHUNK * PLANE);
+        uint rem = elem - batch * CHUNK * PLANE;
+        uint bf = rem / PLANE;
+        uint pixel = rem - bf * PLANE;
+        uint geom_idx = bf * PLANE + pixel;
+
+        if (pixel == 0) {{
+            corrected[elem].real = scalars[1];
+            corrected[elem].imag = scalars[2];
+            return;
+        }}
+
+        float c10v = c10[batch];
+        float c12v = c12[batch];
+        float cos2v = cos2phi12[batch];
+        float sin2v = sin2phi12[batch];
+        float factor = scalars[0];
+
+        float cos_term_k = cos2_k[bf] * cos2v + sin2_k[bf] * sin2v;
+        float chi_k = factor * alpha_k2[bf] * (c12v * cos_term_k + c10v);
+        float pk_amp = aperture_k[bf];
+        float pkr = pk_amp * metal::cos(chi_k);
+        float pki = -pk_amp * metal::sin(chi_k);
+
+        float cos_term_m = cos2_m[geom_idx] * cos2v + sin2_m[geom_idx] * sin2v;
+        float chi_m = factor * alpha_m2[geom_idx] * (c12v * cos_term_m + c10v);
+        float pm_amp = ap_m[geom_idx];
+        float pmr = pm_amp * metal::cos(chi_m);
+        float pmi = -pm_amp * metal::sin(chi_m);
+
+        float cos_term_p = cos2_p[geom_idx] * cos2v + sin2_p[geom_idx] * sin2v;
+        float chi_p = factor * alpha_p2[geom_idx] * (c12v * cos_term_p + c10v);
+        float pp_amp = ap_p[geom_idx];
+        float ppr = pp_amp * metal::cos(chi_p);
+        float ppi = -pp_amp * metal::sin(chi_p);
+
+        float gamma_r = (pmr * pkr + pmi * pki) - (ppr * pkr + ppi * pki);
+        float gamma_i = (pmi * pkr - pmr * pki) - (ppr * pki - ppi * pkr);
+        float mag = metal::sqrt(gamma_r * gamma_r + gamma_i * gamma_i);
+        float inv_mag = 1.0f / metal::max(mag, 1.0e-8f);
+        float conj_gamma_r = gamma_r * inv_mag;
+        float conj_gamma_i = -gamma_i * inv_mag;
+
+        auto gz = g[geom_idx];
+        corrected[elem].real = gz.real * conj_gamma_r - gz.imag * conj_gamma_i;
+        corrected[elem].imag = gz.real * conj_gamma_i + gz.imag * conj_gamma_r;
+    """
+    return mx.fast.metal_kernel(
+        name=f"ssb_corrected_n{int(batch)}_b{int(chunk)}_{int(ny)}_{int(nx)}",
+        input_names=[
+            "g",
+            "alpha_k2",
+            "cos2_k",
+            "sin2_k",
+            "aperture_k",
+            "alpha_m2",
+            "cos2_m",
+            "sin2_m",
+            "ap_m",
+            "alpha_p2",
+            "cos2_p",
+            "sin2_p",
+            "ap_p",
+            "c10",
+            "c12",
+            "cos2phi12",
+            "sin2phi12",
+            "scalars",
+        ],
+        output_names=["corrected"],
+        source=source,
+        compile_options={"math_mode": "fast"},
+    )
+
+
+def _corrected_from_cached_geometry(
+    prepared: _PreparedMpsSSB,
+    *,
+    start: int,
+    stop: int,
+    c10,
+    c12,
+    cos2phi12,
+    sin2phi12,
+):
+    """Fused Metal correction for cached-geometry MPS sparse objectives."""
+    mx = prepared.mx
+    batch = int(c10.shape[0])
+    chunk = int(stop) - int(start)
+    ny, nx = prepared.scan_shape
+    kernel = _corrected_kernel(batch, chunk, int(ny), int(nx))
+    scalars = mx.array(
+        [
+            float(prepared.factor),
+            float(prepared.dc_value.real),
+            float(prepared.dc_value.imag),
+        ],
+        dtype=mx.float32,
+    )
+    outputs = kernel(
+        inputs=[
+            prepared.g_qk[start:stop],
+            prepared.alpha_k2[start:stop],
+            prepared.cos2_k[start:stop],
+            prepared.sin2_k[start:stop],
+            prepared.aperture_k[start:stop],
+            prepared.alpha_m2[start:stop],
+            prepared.cos2_m[start:stop],
+            prepared.sin2_m[start:stop],
+            prepared.ap_m[start:stop],
+            prepared.alpha_p2[start:stop],
+            prepared.cos2_p[start:stop],
+            prepared.sin2_p[start:stop],
+            prepared.ap_p[start:stop],
+            c10,
+            c12,
+            cos2phi12,
+            sin2phi12,
+            scalars,
+        ],
+        template=[],
+        grid=(batch * chunk * int(ny) * int(nx), 1, 1),
+        threadgroup=(256, 1, 1),
+        output_shapes=[(batch, chunk, int(ny), int(nx))],
+        output_dtypes=[mx.complex64],
+    )
+    return outputs[0]
+
+
 def _prepare_selection(
     frames,
     *,
@@ -463,14 +606,16 @@ def _reconstruct_prepared(
     chunk_bf: int,
     compute_loss: bool,
     compute_object: bool,
-) -> tuple[np.ndarray | None, float | None]:
+) -> tuple[np.ndarray | None, float | None, np.ndarray | None]:
     """Run SSB correction from a prepared BF FFT stack."""
     mx = prepared.mx
     accumulator = (
         mx.zeros(prepared.scan_shape, dtype=mx.complex64)
         if compute_object else None
     )
-    phase_sum = mx.zeros(prepared.scan_shape, dtype=mx.float32) if compute_loss else None
+    # CUDA's fixed SSB output is the mean of per-BF phase images, not the
+    # phase of the averaged complex object wave. Keep that contract for parity.
+    phase_sum = mx.zeros(prepared.scan_shape, dtype=mx.float32)
     phase_sumsq = mx.zeros(prepared.scan_shape, dtype=mx.float32) if compute_loss else None
     cos2phi12 = math.cos(2.0 * float(phi12))
     sin2phi12 = math.sin(2.0 * float(phi12))
@@ -549,9 +694,9 @@ def _reconstruct_prepared(
         obj_chunk = mx.fft.ifft2(corrected)
         if compute_object:
             accumulator = accumulator + mx.sum(obj_chunk, axis=0)
+        chunk_sum, chunk_sumsq = _loss_from_phase_stack(mx, obj_chunk)
+        phase_sum = phase_sum + chunk_sum
         if compute_loss:
-            chunk_sum, chunk_sumsq = _loss_from_phase_stack(mx, obj_chunk)
-            phase_sum = phase_sum + chunk_sum
             phase_sumsq = phase_sumsq + chunk_sumsq
         mx.eval(
             *[
@@ -565,12 +710,14 @@ def _reconstruct_prepared(
         object_wave_mx = accumulator / prepared.num_bf
         mx.eval(object_wave_mx)
         object_wave = np.asarray(object_wave_mx).astype(np.complex64, copy=False)
+    mean_phase_mx = phase_sum / prepared.num_bf
+    mx.eval(mean_phase_mx)
+    mean_phase = np.asarray(mean_phase_mx).astype(np.float32, copy=False)
     loss = None
     if compute_loss:
-        mean_phase = phase_sum / prepared.num_bf
-        var_per_pixel = phase_sumsq / prepared.num_bf - mean_phase * mean_phase
+        var_per_pixel = phase_sumsq / prepared.num_bf - mean_phase_mx * mean_phase_mx
         loss = float(np.asarray(mx.mean(var_per_pixel)))
-    return object_wave, loss
+    return object_wave, loss, mean_phase
 
 
 def _cuda_sparse_row_indices(scan_shape: tuple[int, int]) -> np.ndarray:
@@ -621,22 +768,31 @@ def _reconstruct_prepared_batch_cuda_sparse(
     batch = int(c10_np.size)
     phase_sum = mx.zeros((batch, *prepared.scan_shape), dtype=mx.float32)
     phase_sumsq = mx.zeros((batch, *prepared.scan_shape), dtype=mx.float32)
-    c10 = mx.array(c10_np, dtype=mx.float32)[:, None, None, None]
-    c12 = mx.array(c12_np, dtype=mx.float32)[:, None, None, None]
-    cos2phi12 = mx.array(np.cos(2.0 * phi_np).astype(np.float32))[:, None, None, None]
-    sin2phi12 = mx.array(np.sin(2.0 * phi_np).astype(np.float32))[:, None, None, None]
+    c10_values = mx.array(c10_np, dtype=mx.float32)
+    c12_values = mx.array(c12_np, dtype=mx.float32)
+    cos2phi12_values = mx.array(np.cos(2.0 * phi_np).astype(np.float32))
+    sin2phi12_values = mx.array(np.sin(2.0 * phi_np).astype(np.float32))
+    c10 = c10_values[:, None, None, None]
+    c12 = c12_values[:, None, None, None]
+    cos2phi12 = cos2phi12_values[:, None, None, None]
+    sin2phi12 = sin2phi12_values[:, None, None, None]
     chunk_bf = max(1, int(chunk_bf))
     row_mask = _cuda_sparse_row_mask(mx, prepared.scan_shape)
 
     for start in range(0, prepared.num_bf, chunk_bf):
         stop = min(start + chunk_bf, prepared.num_bf)
-        g_qk = prepared.g_qk[start:stop][None, :, :, :]
         if prepared.alpha_k2 is not None:
-            alpha_k2 = prepared.alpha_k2[start:stop][None, :, :, :]
-            cos2_k = prepared.cos2_k[start:stop][None, :, :, :]
-            sin2_k = prepared.sin2_k[start:stop][None, :, :, :]
-            aperture_k = prepared.aperture_k[start:stop][None, :, :, :]
+            corrected = _corrected_from_cached_geometry(
+                prepared,
+                start=start,
+                stop=stop,
+                c10=c10_values,
+                c12=c12_values,
+                cos2phi12=cos2phi12_values,
+                sin2phi12=sin2phi12_values,
+            )
         else:
+            g_qk = prepared.g_qk[start:stop][None, :, :, :]
             kx = mx.array(prepared.kx_np[start:stop], dtype=mx.float32)[None, :, None, None]
             ky = mx.array(prepared.ky_np[start:stop], dtype=mx.float32)[None, :, None, None]
             alpha_k2, cos2_k, sin2_k, aperture_k = _compute_geometry(
@@ -648,20 +804,10 @@ def _reconstruct_prepared_batch_cuda_sparse(
                 prepared.ang_y_rad,
                 prepared.ang_x_rad,
             )
-        cos_term_k = cos2_k * cos2phi12 + sin2_k * sin2phi12
-        chi_k = prepared.factor * alpha_k2 * (c12 * cos_term_k + c10)
-        pk = aperture_k * _exp_neg_i(mx, chi_k)
+            cos_term_k = cos2_k * cos2phi12 + sin2_k * sin2phi12
+            chi_k = prepared.factor * alpha_k2 * (c12 * cos_term_k + c10)
+            pk = aperture_k * _exp_neg_i(mx, chi_k)
 
-        if prepared.alpha_m2 is not None:
-            alpha_m2 = prepared.alpha_m2[start:stop][None, :, :, :]
-            cos2_m = prepared.cos2_m[start:stop][None, :, :, :]
-            sin2_m = prepared.sin2_m[start:stop][None, :, :, :]
-            ap_m = prepared.ap_m[start:stop][None, :, :, :]
-            alpha_p2 = prepared.alpha_p2[start:stop][None, :, :, :]
-            cos2_p = prepared.cos2_p[start:stop][None, :, :, :]
-            sin2_p = prepared.sin2_p[start:stop][None, :, :, :]
-            ap_p = prepared.ap_p[start:stop][None, :, :, :]
-        else:
             alpha_m2, cos2_m, sin2_m, ap_m = _compute_geometry(
                 mx,
                 prepared.qx[None, :, :, :] - kx,
@@ -680,22 +826,22 @@ def _reconstruct_prepared_batch_cuda_sparse(
                 prepared.ang_y_rad,
                 prepared.ang_x_rad,
             )
-        chi_m = prepared.factor * alpha_m2 * (
-            c12 * (cos2_m * cos2phi12 + sin2_m * sin2phi12) + c10
-        )
-        chi_p = prepared.factor * alpha_p2 * (
-            c12 * (cos2_p * cos2phi12 + sin2_p * sin2phi12) + c10
-        )
-        pm = ap_m * _exp_neg_i(mx, chi_m)
-        pp = ap_p * _exp_neg_i(mx, chi_p)
-        gamma = pm * mx.conjugate(pk) - mx.conjugate(pp) * pk
-        gamma = gamma / mx.maximum(mx.abs(gamma), 1e-8)
-        corrected = g_qk * mx.conjugate(gamma)
-        corrected = mx.where(
-            prepared.dc_mask[None, None, :, :],
-            mx.array(prepared.dc_value, dtype=mx.complex64),
-            corrected,
-        )
+            chi_m = prepared.factor * alpha_m2 * (
+                c12 * (cos2_m * cos2phi12 + sin2_m * sin2phi12) + c10
+            )
+            chi_p = prepared.factor * alpha_p2 * (
+                c12 * (cos2_p * cos2phi12 + sin2_p * sin2phi12) + c10
+            )
+            pm = ap_m * _exp_neg_i(mx, chi_m)
+            pp = ap_p * _exp_neg_i(mx, chi_p)
+            gamma = pm * mx.conjugate(pk) - mx.conjugate(pp) * pk
+            gamma = gamma / mx.maximum(mx.abs(gamma), 1e-8)
+            corrected = g_qk * mx.conjugate(gamma)
+            corrected = mx.where(
+                prepared.dc_mask[None, None, :, :],
+                mx.array(prepared.dc_value, dtype=mx.complex64),
+                corrected,
+            )
         if prepared.scan_shape == (256, 256):
             # CUDA's 256 sparse row kernel writes first-stage rows transposed
             # as out[pos, row] before the variance kernel performs stage two.
@@ -828,7 +974,7 @@ def _reconstruct_selection(
     chunk_bf: int,
     compute_loss: bool,
     verbose: bool,
-) -> tuple[np.ndarray, float | None]:
+) -> tuple[np.ndarray, float | None, np.ndarray]:
     mx = _require_mlx()
     wavelength = float(electron_wavelength_angstrom(float(voltage_kV) * 1e3))
     reciprocal_sampling = (
@@ -857,7 +1003,8 @@ def _reconstruct_selection(
     qy = mx.array(q_col_np, dtype=mx.float32)[None, None, :]
     dc_value = complex(0.0)
     accumulator = mx.zeros(scan_shape, dtype=mx.complex64)
-    phase_sum = mx.zeros(scan_shape, dtype=mx.float32) if compute_loss else None
+    # Match CUDA fixed-preview semantics: mean of per-BF phases.
+    phase_sum = mx.zeros(scan_shape, dtype=mx.float32)
     phase_sumsq = mx.zeros(scan_shape, dtype=mx.float32) if compute_loss else None
     semiangle_rad = float(semiangle_mrad) * 1e-3
     ang_y_rad = float(det_sampling[0]) * 1e-3
@@ -911,25 +1058,29 @@ def _reconstruct_selection(
         corrected = mx.where(dc_mask[None, :, :], mx.array(dc_value, dtype=mx.complex64), corrected)
         obj_chunk = mx.fft.ifft2(corrected)
         accumulator = accumulator + mx.sum(obj_chunk, axis=0)
+        chunk_sum, chunk_sumsq = _loss_from_phase_stack(mx, obj_chunk)
+        phase_sum = phase_sum + chunk_sum
         if compute_loss:
-            chunk_sum, chunk_sumsq = _loss_from_phase_stack(mx, obj_chunk)
-            phase_sum = phase_sum + chunk_sum
             phase_sumsq = phase_sumsq + chunk_sumsq
-            mx.eval(accumulator, phase_sum, phase_sumsq)
-        else:
-            mx.eval(accumulator)
+        mx.eval(
+            *[
+                arr for arr in (accumulator, phase_sum, phase_sumsq)
+                if arr is not None
+            ]
+        )
         if verbose:
             print(f"MPS SSB BF {stop}/{bf_row.size}")
 
     object_wave_mx = accumulator / int(bf_row.size)
     loss = None
+    mean_phase_mx = phase_sum / int(bf_row.size)
     if compute_loss:
-        mean_phase = phase_sum / int(bf_row.size)
-        var_per_pixel = phase_sumsq / int(bf_row.size) - mean_phase * mean_phase
+        var_per_pixel = phase_sumsq / int(bf_row.size) - mean_phase_mx * mean_phase_mx
         loss = float(np.asarray(mx.mean(var_per_pixel)))
-    mx.eval(object_wave_mx)
+    mx.eval(object_wave_mx, mean_phase_mx)
     object_wave = np.asarray(object_wave_mx).astype(np.complex64, copy=False)
-    return object_wave, loss
+    mean_phase = np.asarray(mean_phase_mx).astype(np.float32, copy=False)
+    return object_wave, loss, mean_phase
 
 
 def ssb_preview(
@@ -973,7 +1124,7 @@ def ssb_preview(
         det_sampling = (det_px, det_px)
     else:
         det_sampling = _as_sampling(det_sampling)
-    object_wave, loss = _reconstruct_selection(
+    object_wave, loss, phase = _reconstruct_selection(
         frames,
         scan_shape=scan_shape,
         det_shape=det_shape,
@@ -993,7 +1144,6 @@ def ssb_preview(
         compute_loss=compute_loss,
         verbose=verbose,
     )
-    phase = np.angle(object_wave).astype(np.float32)
     amplitude = np.abs(object_wave).astype(np.float32)
     return MpsSSBPreviewResult(
         object_wave=object_wave,
@@ -1154,7 +1304,7 @@ def ssb_fit(
     elif refine is not None:
         raise ValueError(f"refine must be 'nmead' or None, got {refine!r}")
 
-    object_wave, _full_loss = _reconstruct_prepared(
+    object_wave, _full_loss, phase = _reconstruct_prepared(
         prepared,
         C10=best["C10"],
         C12=best["C12"],
@@ -1164,7 +1314,6 @@ def ssb_fit(
         compute_object=True,
     )
     final_loss = evaluate(best["C10"], best["C12"], best["phi12"])
-    phase = np.angle(object_wave).astype(np.float32)
     amplitude = np.abs(object_wave).astype(np.float32)
     return MpsSSBPreviewResult(
         object_wave=object_wave,
