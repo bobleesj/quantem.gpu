@@ -14,6 +14,7 @@ _HDF5_EXPORTS = {
     "inspect_master_readiness",
     "is_master_ready",
     "load",
+    "load_scan_region",
     "load_parallel",
     "disk_of",
     "group_by_disk",

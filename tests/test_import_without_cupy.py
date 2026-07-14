@@ -26,6 +26,7 @@ def test_quantem_gpu_root_import_without_cupy() -> None:
         report = qg.device_report("cpu")
         assert report.selected == "cpu"
         assert qg.dp_mean.__module__ == "quantem.gpu.detector"
+        assert qg.load_scan_region.__module__ == "quantem.gpu.io.hdf5"
         assert qg.ssb_fit_mps.__module__ == "quantem.gpu.ssb.mps"
         assert qg.ssb_preview_mps.__module__ == "quantem.gpu.ssb.mps"
         assert ssb_mps.ssb_preview.__module__ == "quantem.gpu.ssb.mps"

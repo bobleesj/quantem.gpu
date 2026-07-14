@@ -32,6 +32,10 @@ _SSB_EXPORTS = {
     "ssb_preview_mps",
     "ssb_series",
 }
+_IO_EXPORTS = {
+    "load",
+    "load_scan_region",
+}
 _LAZY_MODULE_EXPORTS = {
     "movie": "quantem.gpu.movie",
 }
@@ -56,6 +60,8 @@ __all__ = [
     "dpc",
     "dp_mean",
     "idpc",
+    "load",
+    "load_scan_region",
     "masked_sum",
     "mean_dp",
     "movie",
@@ -74,6 +80,11 @@ def __getattr__(name: str):
     """Load CUDA-only SSB exports lazily so CPU/MPS imports stay lightweight."""
     if name in _SSB_EXPORTS:
         module = import_module("quantem.gpu.ssb")
+        value = getattr(module, name)
+        globals()[name] = value
+        return value
+    if name in _IO_EXPORTS:
+        module = import_module("quantem.gpu.io")
         value = getattr(module, name)
         globals()[name] = value
         return value

@@ -46,6 +46,8 @@ Implemented in this package:
 - `quantem.gpu.device_report()` and `quantem.gpu.select_device()`
 - `quantem.gpu.io.hdf5.load()`, copied from the proven `quantem.widget` HDF5
   loader and kept API-compatible for the migrated slice
+- `quantem.gpu.io.hdf5.load_scan_region()` / `quantem.gpu.load_scan_region()`
+  for CUDA scan-ROI HDF5 loading without materializing the full scan first
 - CUDA bitshuffle/LZ4 kernels and pinned-buffer HDF5 master load path
 - MPS Metal bitshuffle/LZ4 kernels, chunk-backed zero-copy load path, memory
   guard, and `load_mps_4dstem`
