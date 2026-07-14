@@ -3,6 +3,89 @@
 `quantem.gpu` is the multi-backend accelerated STEM package for QuantEM.
 The public brand is `quantem.gpu`, not `quantem.cuda`.
 
+## Quick Start
+
+Install the current release candidate from TestPyPI:
+
+```bash
+python -m pip install \
+  --extra-index-url https://test.pypi.org/simple/ \
+  "quantem.gpu==0.0.1rc2"
+```
+
+For CUDA machines, install the CUDA extra in an environment with a matching
+CUDA runtime:
+
+```bash
+python -m pip install \
+  --extra-index-url https://test.pypi.org/simple/ \
+  "quantem.gpu[cuda]==0.0.1rc2"
+```
+
+For Apple Silicon MPS testing:
+
+```bash
+python -m pip install \
+  --extra-index-url https://test.pypi.org/simple/ \
+  "quantem.gpu[mps]==0.0.1rc2"
+```
+
+Check which backend will be used:
+
+```python
+import quantem.gpu as qgpu
+
+report = qgpu.device_report()
+print(report.selected)
+print(report.cuda_available, report.mps_available, report.cpu_available)
+```
+
+Load a scan crop from an HDF5 master file. On CUDA this returns a CuPy array;
+on MPS it uses the Metal chunk-backed loader where supported.
+
+```python
+from quantem.gpu import load_scan_region
+
+result = load_scan_region(
+    "scan_master.h5",
+    scan_region=(0, 32, 0, 32),  # row_start, row_stop, col_start, col_stop
+)
+
+data = result.data
+print(data.shape, data.dtype, type(data))
+```
+
+Compute common virtual detector products directly through `quantem.gpu`:
+
+```python
+from quantem.gpu import adf, bf, df, dpc, virtual
+
+bright = bf(data)
+annular = adf(data, inner=40, outer=90, unit="px")
+dark = df(data)
+dpc_result = dpc(data)
+custom = virtual(data, mode="BF")
+```
+
+Use the widget migration branch with this release candidate:
+
+```bash
+python -m pip install \
+  --extra-index-url https://test.pypi.org/simple/ \
+  "quantem.gpu>=0.0.1rc2"
+```
+
+Then existing widget calls continue to work while the heavy load and compute
+paths route through `quantem.gpu`:
+
+```python
+from quantem.widget import Show4DSTEM, load_scan_region
+
+result = load_scan_region("scan_master.h5", scan_region=(0, 32, 0, 32))
+viewer = Show4DSTEM(result.data)
+viewer
+```
+
 ## Charter
 
 `quantem.gpu` owns:
