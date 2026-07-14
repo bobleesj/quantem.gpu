@@ -103,6 +103,7 @@ jobs:
               "quantem/gpu/compute/metal/reductions.msl",
               "quantem/gpu/detector.py",
               "quantem/gpu/dpc.py",
+              "quantem/gpu/movie/mps_mp4.py",
               "quantem/gpu/ssb/api.py",
           }
           with zipfile.ZipFile(wheel) as zf:

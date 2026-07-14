@@ -10,7 +10,7 @@ Install the current release candidate from TestPyPI:
 ```bash
 python -m pip install \
   --extra-index-url https://test.pypi.org/simple/ \
-  "quantem.gpu==0.0.1rc4"
+  "quantem.gpu==0.0.1rc5"
 ```
 
 For CUDA machines, install the CUDA extra in an environment with a matching
@@ -19,7 +19,7 @@ CUDA runtime:
 ```bash
 python -m pip install \
   --extra-index-url https://test.pypi.org/simple/ \
-  "quantem.gpu[cuda]==0.0.1rc4"
+  "quantem.gpu[cuda]==0.0.1rc5"
 ```
 
 For Apple Silicon MPS testing:
@@ -27,7 +27,7 @@ For Apple Silicon MPS testing:
 ```bash
 python -m pip install \
   --extra-index-url https://test.pypi.org/simple/ \
-  "quantem.gpu[mps]==0.0.1rc4"
+  "quantem.gpu[mps]==0.0.1rc5"
 ```
 
 Check which backend will be used:
@@ -89,7 +89,7 @@ Use the widget display migration branch with this release candidate:
 ```bash
 python -m pip install \
   --extra-index-url https://test.pypi.org/simple/ \
-  "quantem.gpu>=0.0.1rc4"
+  "quantem.gpu>=0.0.1rc5"
 ```
 
 Then existing widget calls continue to work while the heavy load and compute

@@ -5,7 +5,7 @@ Install the release candidate from TestPyPI:
 ```bash
 python -m pip install \
   --extra-index-url https://test.pypi.org/simple/ \
-  "quantem.gpu==0.0.1rc4"
+  "quantem.gpu==0.0.1rc5"
 ```
 
 For CUDA machines, install the CUDA extra in an environment that already has a
@@ -14,7 +14,7 @@ compatible CUDA runtime:
 ```bash
 python -m pip install \
   --extra-index-url https://test.pypi.org/simple/ \
-  "quantem.gpu[cuda]==0.0.1rc4"
+  "quantem.gpu[cuda]==0.0.1rc5"
 ```
 
 For Apple Silicon MPS testing:
@@ -22,11 +22,11 @@ For Apple Silicon MPS testing:
 ```bash
 python -m pip install \
   --extra-index-url https://test.pypi.org/simple/ \
-  "quantem.gpu[mps]==0.0.1rc4"
+  "quantem.gpu[mps]==0.0.1rc5"
 ```
 
 For widget display testing, install widget and allow it to resolve
-`quantem.gpu>=0.0.1rc4`:
+`quantem.gpu>=0.0.1rc5`:
 
 ```bash
 python -m pip install \

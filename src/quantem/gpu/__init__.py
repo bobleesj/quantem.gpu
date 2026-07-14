@@ -24,7 +24,7 @@ from .dpc import DPCResult, center_of_mass, com, dpc, idpc
 try:
     __version__ = version("quantem.gpu")
 except PackageNotFoundError:
-    __version__ = "0.0.1rc4"
+    __version__ = "0.0.1rc5"
 
 _SSB_EXPORTS = {
     "DefocusSweepResult",

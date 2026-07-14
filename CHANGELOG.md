@@ -6,6 +6,14 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+## rc5 - 2026-07-14
+
+- Add the first documentation site with install/backend tutorials, simplify the
+  tutorial language around BF/DF/ADF/DPC, add movie rendering docs, and add a
+  backend coverage matrix for CUDA, MPS, CPU, and remaining migration work.
+- Add an Apple Metal/MPS MP4 rendering backend so `save_mp4(...,
+  backend="auto")` tries CUDA/NVENC, then MPS/Metal, then CPU/ffmpeg.
+
 ## rc4 - 2026-07-14
 
 - Correct installed package version reporting so `quantem.gpu.__version__`

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "quantem.gpu"
-version = "0.0.1rc4"
+version = "0.0.1rc5"
 description = "Multi-backend accelerated STEM load, decompression, and compute for QuantEM"
 readme = "README.md"
 license = "MIT"
@@ -71,6 +71,7 @@ artifacts = [
 
 [tool.hatch.build.targets.sdist]
 include = [
+    "docs",
     "src/quantem/gpu",
     "tests",
     "README.md",
