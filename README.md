@@ -1,7 +1,8 @@
 # quantem.gpu
 
 `quantem.gpu` is the multi-backend accelerated STEM package for QuantEM.
-The public brand is `quantem.gpu`, not `quantem.cuda`.
+It is built primarily for NVIDIA CUDA workstations and Apple Silicon MPS Macs,
+with CPU reference paths for availability and parity checks.
 
 ## Quick Start
 
@@ -143,13 +144,12 @@ file -> quantem.gpu (load + decompress + to_device) -> arrays
 
 - `cuda`: CuPy RawKernel bitshuffle/LZ4 decompression, GPU arrays, and
   CUDA/NVENC MP4 rendering. This is the phase-1 migrated hot path.
-- `mps`: Apple Silicon device selection is reported. Chunk-backed virtual image
-  and CoM/DPC product dispatch now lives in `quantem.gpu.compute`. Metal
-  bitshuffle/LZ4 chunk IO and zero-copy chunk assembly now live in
-  `quantem.gpu.io.backends.mps`. SSB has MLX-backed fixed-aberration preview
-  (`ssb_preview_mps`) and C10/C12/phi12 free-fit (`ssb_fit_mps`) APIs that run
-  on Apple GPU without Torch. Movie rendering can use Metal for grayscale
-  frame assembly before ffmpeg/H.264 encoding.
+- `mps`: Apple Silicon Metal/MLX paths for MacBook-scale 4D-STEM. The raw
+  Metal loaders keep data chunk-backed and avoid materializing one giant
+  Torch-MPS tensor, which matters because Torch-MPS can hit 32-bit indexing /
+  `>2^31` element limits and unified-memory pressure on full 4D-STEM stacks.
+  BF/DF/DPC, Metal bitshuffle/LZ4 IO, SSB preview/free-fit, and movie rendering
+  run through Apple GPU paths where implemented.
 - `cpu`: h5py/hdf5plugin reference decode for availability and parity.
 
 ### Coverage snapshot
@@ -192,10 +192,10 @@ Implemented in this package:
 - `quantem.gpu.ssb.mps.ssb_preview` / `quantem.gpu.ssb_preview_mps` and
   `quantem.gpu.ssb.mps.ssb_fit` / `quantem.gpu.ssb_fit_mps`, optional
   MLX-backed MPS SSB preview/free-fit paths for chunk-backed Mac data.
-- Active `quantem.gpu`, `quantem.widget`, and `quantem.live` source trees no
-  longer import the legacy `quantem.cuda` package at runtime. The remaining
-  unique legacy code is primarily ptychography CLI/fused-kernel internals, which
-  still need a separate backend-folding pass.
+- Active `quantem.gpu`, `quantem.widget`, and `quantem.live` source trees route
+  migrated load and compute paths through `quantem.gpu`. The remaining unique
+  ptychography CLI/fused-kernel internals still need a separate backend-folding
+  pass.
 
 Out of scope for phase 1:
 
@@ -212,5 +212,4 @@ Out of scope for phase 1:
 - Phase 3: broaden SSB real-data parity, including full CUDA-engine optimizer
   parity and dashboard integration for the MPS MLX fit path.
 - Phase 4: move live CLI/dashboard callers onto `quantem.gpu`.
-- Phase 5: fold/rename remaining `quantem.cuda` ptychography internals under
-  `quantem.gpu` backends.
+- Phase 5: fold remaining ptychography internals under `quantem.gpu` backends.
