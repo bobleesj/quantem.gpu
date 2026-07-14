@@ -15,7 +15,7 @@ movie.save_movie(data, "movie.mp4")
 - `.gif` -> `save_gif`
 - `.mp4` -> `save_mp4`
 
-`save_mp4(..., backend="auto")` tries the CUDA/NVENC writer when it is
-available, then falls back to CPU frame rendering plus ffmpeg. Use
-`backend="cuda"` only when the CUDA path is required for a benchmark or release
-claim.
+`save_mp4(..., backend="auto")` tries CUDA/NVENC when it is available, then
+Apple Metal/MPS on macOS, then CPU frame rendering plus ffmpeg. Use
+`backend="cuda"` or `backend="mps"` only when that path is required for a
+benchmark or release claim.

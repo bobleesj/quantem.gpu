@@ -81,6 +81,7 @@ def test_save_mp4_rejects_unknown_backend(tmp_path: Path) -> None:
         movie.save_mp4(_stack(), tmp_path / "bad.mp4", backend="bad")
     except ValueError as exc:
         assert "unknown movie backend" in str(exc)
+        assert "mps" in str(exc)
     else:
         raise AssertionError("save_mp4 should reject unavailable backends")
 
@@ -109,6 +110,7 @@ def test_save_mp4_auto_uses_cuda_backend_when_available(tmp_path: Path, monkeypa
 
 def test_save_mp4_auto_falls_back_when_cuda_unavailable(tmp_path: Path, monkeypatch) -> None:
     from quantem.gpu.movie import cuda_mp4
+    from quantem.gpu.movie import mps_mp4
 
     captured = {}
 
@@ -119,6 +121,7 @@ def test_save_mp4_auto_falls_back_when_cuda_unavailable(tmp_path: Path, monkeypa
         return path
 
     monkeypatch.setattr(cuda_mp4, "is_available", lambda: False)
+    monkeypatch.setattr(mps_mp4, "is_available", lambda: False)
     monkeypatch.setattr(movie, "_write_mp4", fake_write_mp4)
 
     out = movie.save_mp4(_stack(), tmp_path / "fallback.mp4")
@@ -136,3 +139,50 @@ def test_cuda_backend_rejects_rendered_frames(tmp_path: Path) -> None:
         assert "requires array movie data" in str(exc)
     else:
         raise AssertionError("CUDA backend should reject pre-rendered frames")
+
+
+def test_save_mp4_auto_uses_mps_when_cuda_unavailable(tmp_path: Path, monkeypatch) -> None:
+    from quantem.gpu.movie import cuda_mp4
+    from quantem.gpu.movie import mps_mp4
+
+    captured = {}
+
+    def fake_mps_writer(stacks, path, **kwargs):
+        captured["shape"] = stacks[0].shape
+        captured["labels"] = kwargs["labels"]
+        captured["crf"] = kwargs["crf"]
+        captured["quality"] = kwargs["quality"]
+        path = Path(path)
+        path.write_bytes(b"mps")
+        return path
+
+    monkeypatch.setattr(cuda_mp4, "is_available", lambda: False)
+    monkeypatch.setattr(mps_mp4, "is_available", lambda: True)
+    monkeypatch.setattr(mps_mp4, "save_mp4", fake_mps_writer)
+
+    out = movie.save_mp4(
+        _stack(),
+        tmp_path / "auto-mps.mp4",
+        labels=["raw"],
+        crf=20,
+        quality=71,
+    )
+
+    assert out.read_bytes() == b"mps"
+    assert captured == {
+        "shape": (3, 10, 12),
+        "labels": ["raw"],
+        "crf": 20,
+        "quality": 71,
+    }
+
+
+def test_mps_backend_rejects_rendered_frames(tmp_path: Path) -> None:
+    frames = [Image.new("RGB", (11, 9), (idx, idx, idx)) for idx in range(2)]
+
+    try:
+        movie.save_mp4(frames, tmp_path / "frames.mp4", backend="mps")
+    except ValueError as exc:
+        assert "requires array movie data" in str(exc)
+    else:
+        raise AssertionError("MPS backend should reject pre-rendered frames")

@@ -33,8 +33,9 @@ Backend choices:
 
 | Backend | Meaning |
 |---|---|
-| `auto` | use CUDA/NVENC when available, otherwise use CPU rendering and ffmpeg |
+| `auto` | use CUDA/NVENC when available, then MPS/Metal on macOS, otherwise CPU rendering and ffmpeg |
 | `cuda` | require CUDA/NVENC path and fail honestly if unavailable |
+| `mps` | require Apple Metal rendering and fail honestly if unavailable |
 | `cpu` | render frames on CPU and write MP4 with ffmpeg |
 
 Widget export buttons can call these helpers, but the user-facing export UI

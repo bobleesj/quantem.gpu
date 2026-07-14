@@ -6,8 +6,9 @@ The public API is intentionally small:
 
 ``data`` may be one stack with shape ``(frame, row, col)``, several stacks as
 ``(movie, frame, row, col)``, a list of stacks, or a list of pre-rendered PIL
-frames from a widget method. ``backend="auto"`` uses CUDA MP4 when available
-and otherwise falls back to the portable CPU writer.
+frames from a widget method. ``backend="auto"`` uses CUDA MP4 when available,
+then Apple Metal/MPS when available, and otherwise falls back to the portable
+CPU writer.
 """
 
 from __future__ import annotations
@@ -258,20 +259,21 @@ def save_mp4(
 
     Parameters
     ----------
-    backend : {"auto", "cuda", "cpu"}
+    backend : {"auto", "cuda", "mps", "cpu"}
         ``"auto"`` uses the NVIDIA CUDA/NVENC backend when available for array
-        inputs, otherwise it falls back to the portable CPU writer.
-        ``"cuda"`` requires an NVIDIA CUDA environment.
+        inputs, then the Apple Metal/MPS backend on macOS, otherwise it falls
+        back to the portable CPU writer. ``"cuda"`` requires an NVIDIA CUDA
+        environment. ``"mps"`` requires an Apple Metal environment.
     """
 
     backend = str(backend).lower()
-    if backend not in {"auto", "cuda", "cpu"}:
+    if backend not in {"auto", "cuda", "mps", "cpu"}:
         raise ValueError(
-            f"unknown movie backend {backend!r}; use 'auto', 'cuda', or 'cpu'"
+            f"unknown movie backend {backend!r}; use 'auto', 'cuda', 'mps', or 'cpu'"
         )
-    if backend == "cuda" and _is_pil_frame_sequence(data):
+    if backend in {"cuda", "mps"} and _is_pil_frame_sequence(data):
         raise ValueError(
-            "backend='cuda' requires array movie data; rendered PIL frames "
+            f"backend={backend!r} requires array movie data; rendered PIL frames "
             "must use backend='cpu'"
         )
     if backend in {"auto", "cuda"} and not _is_pil_frame_sequence(data):
@@ -307,6 +309,40 @@ def save_mp4(
                 preset=str(backend_options.pop("preset", "P3")),
                 tuning_info=str(backend_options.pop("tuning_info", "high_quality")),
                 gpu_id=int(backend_options.pop("gpu_id", 0)),
+                faststart=bool(backend_options.pop("faststart", True)),
+            )
+    if backend in {"auto", "mps"} and not _is_pil_frame_sequence(data):
+        try_mps = backend == "mps"
+        if backend == "auto":
+            try:
+                from quantem.gpu.movie import mps_mp4
+            except ImportError:
+                mps_mp4 = None
+            try_mps = bool(mps_mp4 is not None and mps_mp4.is_available())
+        if try_mps:
+            from quantem.gpu.movie import mps_mp4
+
+            stacks = _as_stack_list(data)
+            _validate_stacks(stacks)
+            limits = _contrast_limits(
+                stacks,
+                percentile=percentile,
+                shared=shared_contrast,
+                ref_stacks=ref_stacks,
+            )
+            return mps_mp4.save_mp4(
+                stacks,
+                path,
+                labels=labels,
+                fps=float(fps),
+                gap=gap,
+                label_height=label_height,
+                max_width=max_width,
+                cols=cols,
+                limits=limits,
+                crf=int(crf),
+                quality=int(backend_options.pop("quality", 65)),
+                codec=str(backend_options.pop("codec", "auto")),
                 faststart=bool(backend_options.pop("faststart", True)),
             )
     frames = _movie_frames(

@@ -128,14 +128,15 @@ file -> quantem.gpu (load + decompress + to_device) -> arrays
 
 ## Backends
 
-- `cuda`: CuPy RawKernel bitshuffle/LZ4 decompression and GPU arrays. This is
-  the phase-1 migrated hot path.
+- `cuda`: CuPy RawKernel bitshuffle/LZ4 decompression, GPU arrays, and
+  CUDA/NVENC MP4 rendering. This is the phase-1 migrated hot path.
 - `mps`: Apple Silicon device selection is reported. Chunk-backed virtual image
   and CoM/DPC product dispatch now lives in `quantem.gpu.compute`. Metal
   bitshuffle/LZ4 chunk IO and zero-copy chunk assembly now live in
   `quantem.gpu.io.backends.mps`. SSB has MLX-backed fixed-aberration preview
   (`ssb_preview_mps`) and C10/C12/phi12 free-fit (`ssb_fit_mps`) APIs that run
-  on Apple GPU without Torch.
+  on Apple GPU without Torch. Movie rendering can use Metal for grayscale
+  frame assembly before ffmpeg/H.264 encoding.
 - `cpu`: h5py/hdf5plugin reference decode for availability and parity.
 
 ## Phase-1 Status
