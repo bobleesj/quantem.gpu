@@ -35,6 +35,8 @@ dependencies = [
     "hdf5plugin",
     "numba>=0.60",
     "numpy>=2.0.0",
+    "optuna",
+    "tqdm",
 ]
 
 [project.optional-dependencies]

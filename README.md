@@ -50,11 +50,13 @@ Implemented in this package:
   `virtual_image`, and BF disk detection copied from the widget/live paths with
   parity tests
 - `quantem.gpu.dpc` CoM/DPC/iDPC copied from the widget path with parity tests
+- `quantem.gpu.ssb` SSB engine/API copied from the live compute path, with
+  real-data parity and speed tests against the legacy live implementation
 
 Out of scope for phase 1:
 
 - Full SSB UI inside Show4DSTEM
-- Full `quantem.live` migration
+- Full `quantem.live` CLI/dashboard migration
 - Rewriting every `quantem.widget.io` helper
 - Paper scripts or denoise sweeps
 
@@ -62,7 +64,8 @@ Out of scope for phase 1:
 
 - Phase 2: complete product migration coverage, including MPS chunk-backed
   virtual products and broader real-data parity.
-- Phase 3: add SSB engine as a pure compute API with preview and free-fit modes.
+- Phase 3: complete SSB free-fit/preview compute coverage and broader real-data
+  sweeps.
 - Phase 4: add Show4DSTEM More -> interactive SSB preview and save.
 - Phase 5: move live CLI/dashboard callers onto `quantem.gpu`.
 - Phase 6: fold/rename `quantem.cuda` internals under `quantem.gpu` backends.
