@@ -9,17 +9,19 @@ parts:
     chapters:
       - file: tutorials/load_hdf5
       - file: tutorials/scan_region
-      - file: tutorials/virtual_products
+      - file: tutorials/bf_df_adf
       - file: tutorials/dpc
       - file: tutorials/ssb
-      - file: tutorials/widget_migration
+      - file: tutorials/movie_rendering
+      - file: tutorials/display_widget
   - caption: API guide
     chapters:
       - file: api/index
         sections:
           - file: api/io
-          - file: api/products
+          - file: api/images_dpc
           - file: api/ssb
+          - file: api/movie
   - caption: Maintainers
     chapters:
       - file: maintainer/migration

@@ -25,7 +25,7 @@ python -m pip install \
   "quantem.gpu[mps]==0.0.1rc4"
 ```
 
-For widget migration testing, install widget and allow it to resolve
+For widget display testing, install widget and allow it to resolve
 `quantem.gpu>=0.0.1rc4`:
 
 ```bash

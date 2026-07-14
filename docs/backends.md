@@ -5,7 +5,7 @@
 | Backend | Purpose | Notes |
 |---|---|---|
 | `cuda` | NVIDIA GPU IO, decompression, reductions, and SSB reference paths | Uses CuPy/CUDA kernels where available. |
-| `mps` | Apple Silicon Metal/MLX paths | Used for MacBook chunk-backed loading, products, and MPS SSB preview/free-fit paths. |
+| `mps` | Apple Silicon Metal/MLX paths | Used for MacBook chunk-backed loading, BF/DF/DPC images, and MPS SSB preview/free-fit paths. |
 | `cpu` | Portable reference fallback | Useful for metadata, availability, and parity checks; not the target for heavy workflows. |
 
 Check the selected backend:

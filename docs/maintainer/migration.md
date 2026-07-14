@@ -10,7 +10,7 @@
 - GPU IO and decompression.
 - Chunk assembly and load-to-device.
 - Device selection and backend errors.
-- Heavy product compute.
+- Heavy BF/DF/DPC image compute.
 - SSB compute APIs.
 
 `quantem.widget` owns:
@@ -18,7 +18,7 @@
 - anywidget UI.
 - Interaction state.
 - HTML/notebook export.
-- Display wrappers around arrays and products from `quantem.gpu`.
+- Display wrappers around arrays and reduced images from `quantem.gpu`.
 
 `quantem.live` should call `quantem.gpu` for product and SSB compute instead of
 keeping second copies.

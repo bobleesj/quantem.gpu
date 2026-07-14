@@ -1,6 +1,6 @@
-# Product API
+# BF, DF, ADF, and DPC API
 
-Top-level product imports:
+Top-level image and DPC imports:
 
 ```python
 from quantem.gpu import (
@@ -15,7 +15,6 @@ from quantem.gpu import (
     idpc,
     masked_sum,
     mean_dp,
-    virtual,
 )
 ```
 
@@ -33,4 +32,4 @@ dpc_result = dpc(data)
 These functions accept loaded arrays, `LoadResult`-style objects, and migrated
 chunk-backed MPS data where supported.
 
-For visual review, hand the reduced product to `quantem.widget.Show2D`.
+For visual review, hand the reduced image to `quantem.widget.Show2D`.

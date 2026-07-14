@@ -6,8 +6,7 @@ critical:
 
 - HDF5 master/chunk IO, bitshuffle/LZ4 decompression, chunk assembly, and
   load-to-device paths.
-- Virtual detector products such as BF, DF, ADF, mean diffraction patterns,
-  CoM/DPC, and iDPC.
+- BF, DF, ADF, mean diffraction pattern, CoM/DPC, and iDPC image computation.
 - SSB compute APIs that can be called by `quantem.live`, scripts, and future
   widget workflows.
 - Device policy for `cuda`, `mps`, and `cpu` with explicit errors.
@@ -20,12 +19,12 @@ The intended dependency arrow is:
 
 ```text
 file -> quantem.gpu (load + decompress + to_device) -> arrays
-     -> quantem.gpu (products / SSB) -> quantem.widget (display)
+     -> quantem.gpu (BF/DF/DPC / SSB / movies) -> quantem.widget (display)
 ```
 
 ## Current release candidate
 
-The current release candidate used by the widget migration branch is
+The current release candidate used by the widget display migration branch is
 `quantem.gpu==0.0.1rc4`.
 
 ```bash

@@ -1,7 +1,8 @@
-# Run SSB compute
+# Ptychographic SSB
 
-SSB migration is compute-only. The engine should not contain any widget UI.
-Display, export, and interactions stay in `quantem.widget`.
+Ptychographic SSB reconstruction is compute-only in `quantem.gpu`. The engine
+should not contain any widget UI. Display, export, and interactions stay in
+`quantem.widget`.
 
 The high-level API is available from `quantem.gpu.ssb`:
 
@@ -17,6 +18,15 @@ result = ssb(
 
 object_wave = result.object_wave
 phase = result.phase
+```
+
+Display the reconstructed phase or amplitude with widget views:
+
+```python
+from quantem.widget import Show2D
+
+Show2D(result.phase)
+Show2D(abs(result.object_wave))
 ```
 
 For Apple Silicon MPS data, use the MPS entry points when testing the Mac path:
@@ -39,6 +49,6 @@ Parity expectations:
 - Reports should include phase images, difference maps, loss, C10, C12, phi12,
   load time, fit time, and BF pixel count.
 
-Temporal or joined SSB work should stay on a separate verification track until
-it has real time-series metrics showing whether it improves over per-frame SSB
-or a simple complex/phase average.
+Temporal or joined ptychographic SSB work should stay on a separate
+verification track until it has real time-series metrics showing whether it
+improves over per-frame SSB or a simple complex/phase average.

@@ -55,7 +55,7 @@ data = result.data
 print(data.shape, data.dtype, type(data))
 ```
 
-Compute common virtual detector products directly through `quantem.gpu`:
+Compute common BF, DF, ADF, and DPC images directly through `quantem.gpu`:
 
 ```python
 from quantem.gpu import adf, bf, df, dpc, virtual
@@ -74,8 +74,8 @@ shape at a smaller compute-package scale:
 
 - install and backend checks
 - HDF5 loading and scan-region tutorials
-- virtual detector, DPC, and SSB tutorials
-- widget migration notes
+- BF/DF/ADF, DPC, ptychographic SSB, and movie tutorials
+- display-with-widget notes
 
 Build it locally with:
 
@@ -84,7 +84,7 @@ python -m pip install -e ".[docs]"
 jupyter-book build docs
 ```
 
-Use the widget migration branch with this release candidate:
+Use the widget display migration branch with this release candidate:
 
 ```bash
 python -m pip install \
@@ -123,7 +123,7 @@ Dependency arrow:
 
 ```text
 file -> quantem.gpu (load + decompress + to_device) -> arrays
-     -> quantem.gpu (products / later SSB) -> quantem.widget (display)
+     -> quantem.gpu (BF/DF/DPC / SSB / movies) -> quantem.widget (display)
 ```
 
 ## Backends
