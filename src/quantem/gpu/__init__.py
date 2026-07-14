@@ -36,6 +36,12 @@ _IO_EXPORTS = {
     "load",
     "load_scan_region",
 }
+_PARALLAX_EXPORTS = {
+    "BFImage": ("quantem.gpu.parallax_results", "BFImage"),
+    "Parallax": ("quantem.gpu.parallax", "Parallax"),
+    "ParallaxResult": ("quantem.gpu.parallax_results", "ParallaxResult"),
+    "parallax": ("quantem.gpu.parallax", "parallax"),
+}
 _LAZY_MODULE_EXPORTS = {
     "movie": "quantem.gpu.movie",
 }
@@ -44,8 +50,11 @@ __all__ = [
     "DPCResult",
     "DefocusSweepResult",
     "DeviceReport",
+    "BFImage",
     "SSB",
     "SSBResult",
+    "Parallax",
+    "ParallaxResult",
     "adf",
     "auto_probe",
     "bf",
@@ -65,6 +74,7 @@ __all__ = [
     "masked_sum",
     "mean_dp",
     "movie",
+    "parallax",
     "select_device",
     "ssb",
     "ssb_fit_mps",
@@ -86,6 +96,12 @@ def __getattr__(name: str):
     if name in _IO_EXPORTS:
         module = import_module("quantem.gpu.io")
         value = getattr(module, name)
+        globals()[name] = value
+        return value
+    if name in _PARALLAX_EXPORTS:
+        module_name, attr = _PARALLAX_EXPORTS[name]
+        module = import_module(module_name)
+        value = getattr(module, attr)
         globals()[name] = value
         return value
     if name in _LAZY_MODULE_EXPORTS:
