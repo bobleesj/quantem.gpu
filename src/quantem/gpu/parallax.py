@@ -613,7 +613,7 @@ class Parallax:
             aberrations = self.fit_aberrations(shifts, voltage_kV, delta_r_A)
             if verbose:
                 print(f"  C10 (defocus): {aberrations.get('C10', 0):.1f} Å")
-                print(f"  C12 (astigmatism): {aberrations.get('C12_a', 0):.1f} Å")
+                print(f"  C12 (astigmatism): {aberrations.get('C12', 0):.1f} Å")
         if plot:
             self.plot_reconstruction(image)
         if verbose:

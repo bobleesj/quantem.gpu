@@ -136,6 +136,47 @@ def test_parallax_aberration_fit_end_to_end() -> None:
         assert np.isfinite(result.aberrations[key])
 
 
+def test_parallax_result_converts_aberrations_for_ssb() -> None:
+    from quantem.gpu import ParallaxResult
+
+    result = ParallaxResult(
+        image=np.zeros((2, 2), dtype=np.float32),
+        density=np.ones((2, 2), dtype=np.float32),
+        shifts=[],
+        aberrations={
+            "C10": 125.0,
+            "C12": 35.0,
+            "phi12": 0.37,
+            "rotation_angle": np.deg2rad(-12.0),
+        },
+    )
+
+    assert result.to_ssb_aberrations() == {
+        "C10": 12.5,
+        "C12": 3.5,
+        "phi12": 0.37,
+    }
+    assert result.rotation_angle_deg() == pytest.approx(-12.0)
+    assert result.to_ssb_kwargs() == {
+        "aberrations": {"C10": 12.5, "C12": 3.5, "phi12": 0.37},
+        "rotation_angle_deg": pytest.approx(-12.0),
+    }
+
+
+def test_parallax_result_rejects_missing_ssb_conversion_inputs() -> None:
+    from quantem.gpu import ParallaxResult
+
+    result = ParallaxResult(
+        image=np.zeros((2, 2), dtype=np.float32),
+        density=np.ones((2, 2), dtype=np.float32),
+        shifts=[],
+        aberrations={"C10": 10.0, "phi12": 0.0},
+    )
+
+    with pytest.raises(ValueError, match="Missing"):
+        result.to_ssb_aberrations()
+
+
 def test_parallax_real_samsung_crop_recovers_aberrations_when_available() -> None:
     cp = pytest.importorskip("cupy")
     from quantem.gpu import parallax
