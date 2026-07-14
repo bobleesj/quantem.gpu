@@ -126,3 +126,65 @@ def test_mps_ssb_batched_loss_matches_scalar() -> None:
         chunk_bf=16,
     )
     assert np.allclose(batch_losses, np.asarray(scalar_losses), atol=1e-6)
+
+
+@pytest.mark.skipif(
+    not os.environ.get("QUANTEM_GPU_SSB_MASTER")
+    or not os.environ.get("QUANTEM_GPU_SSB_SPARSE_REFERENCE_NPZ"),
+    reason=(
+        "set QUANTEM_GPU_SSB_MASTER and QUANTEM_GPU_SSB_SPARSE_REFERENCE_NPZ "
+        "for real-data CUDA/MPS sparse optimizer parity"
+    ),
+)
+def test_mps_ssb_sparse_optimizer_loss_matches_cuda_reference() -> None:
+    """Compare MPS optimizer objective against pinned CUDA sparse losses."""
+    from quantem.gpu.io import load
+    from quantem.gpu.ssb.mps import (
+        _as_chunked_frames,
+        _as_sampling,
+        _bf_pixels,
+        _prepare_selection,
+        _reconstruct_prepared_batch_cuda_sparse,
+        _scan_shape,
+    )
+
+    master = Path(os.environ["QUANTEM_GPU_SSB_MASTER"])
+    reference_path = Path(os.environ["QUANTEM_GPU_SSB_SPARSE_REFERENCE_NPZ"])
+    if not master.exists():
+        pytest.skip(f"master not available: {master}")
+    if not reference_path.exists():
+        pytest.skip(f"reference not available: {reference_path}")
+
+    reference = np.load(reference_path)
+    reference_meta = json.loads(str(reference["meta"]))
+    assert reference_meta["objective"] == "cuda_sparse_variance_loss_batch"
+
+    frames = _as_chunked_frames(load(str(master), backend="mps", verbose=False).data)
+    scan_shape = _scan_shape(frames)
+    det_shape = tuple(int(x) for x in frames.shape[-2:])
+    bf_row, bf_col, center, _radius, detected_radius = _bf_pixels(frames, 0.5, 5)
+    det_px = (2.0 * 21.4) / detected_radius
+    prepared = _prepare_selection(
+        frames,
+        scan_shape=scan_shape,
+        det_shape=det_shape,
+        bf_row=bf_row,
+        bf_col=bf_col,
+        center=center,
+        voltage_kV=300,
+        semiangle_mrad=21.4,
+        scan_sampling=_as_sampling(0.405),
+        det_sampling=(det_px, det_px),
+        rotation_angle_deg=0.0,
+        chunk_bf=16,
+    )
+
+    params = reference["params"].astype(np.float32)
+    losses = _reconstruct_prepared_batch_cuda_sparse(
+        prepared,
+        C10=params[:, 0],
+        C12=params[:, 1],
+        phi12=params[:, 2],
+        chunk_bf=16,
+    )
+    assert np.allclose(losses, reference["losses"], atol=6e-5)

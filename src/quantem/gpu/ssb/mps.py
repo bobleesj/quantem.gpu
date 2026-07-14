@@ -11,6 +11,7 @@ from __future__ import annotations
 import math
 import time
 from dataclasses import dataclass
+from functools import lru_cache
 
 import numpy as np
 
@@ -259,6 +260,71 @@ def _suggest_or_fixed(trial, ranges: dict, key: str, default: float) -> float:
 def _loss_from_phase_stack(mx, obj_chunk):
     phase = mx.arctan2(mx.imag(obj_chunk), mx.real(obj_chunk))
     return mx.sum(phase, axis=0), mx.sum(phase * phase, axis=0)
+
+
+@lru_cache(maxsize=16)
+def _phase_sums_kernel(batch: int, chunk: int, ny: int, nx: int):
+    mx = _require_mlx()
+    source = f"""
+        uint elem = thread_position_in_grid.x;
+        constexpr uint BATCH = {int(batch)};
+        constexpr uint CHUNK = {int(chunk)};
+        constexpr uint NY = {int(ny)};
+        constexpr uint NX = {int(nx)};
+        constexpr uint PLANE = NY * NX;
+        uint total = BATCH * PLANE;
+        if (elem >= total) {{
+            return;
+        }}
+        uint batch = elem / PLANE;
+        uint pixel = elem - batch * PLANE;
+        size_t base = ((size_t)batch * (size_t)CHUNK * (size_t)PLANE) + (size_t)pixel;
+        float s = 0.0f;
+        float sq = 0.0f;
+        for (uint bf = 0; bf < CHUNK; ++bf) {{
+            auto z = obj[base + (size_t)bf * (size_t)PLANE];
+            float a = metal::atan2(z.imag, z.real);
+            s += a;
+            sq += a * a;
+        }}
+        sum_out[elem] = s;
+        sumsq_out[elem] = sq;
+    """
+    return mx.fast.metal_kernel(
+        name=f"ssb_phase_sums_n{int(batch)}_b{int(chunk)}_{int(ny)}_{int(nx)}",
+        input_names=["obj"],
+        output_names=["sum_out", "sumsq_out"],
+        source=source,
+        compile_options={"math_mode": "fast"},
+    )
+
+
+def _phase_sums_from_complex(mx, obj_chunk):
+    """Metal fused atan2/sum/sumsq over BF pixels for a chunked object stack."""
+    shape = tuple(int(x) for x in obj_chunk.shape)
+    if len(shape) == 3:
+        chunk, ny, nx = shape
+        obj = obj_chunk[None, :, :, :]
+        squeeze = True
+        batch = 1
+    elif len(shape) == 4:
+        batch, chunk, ny, nx = shape
+        obj = obj_chunk
+        squeeze = False
+    else:
+        raise ValueError(f"Expected 3D or 4D object chunk, got shape {shape}.")
+    kernel = _phase_sums_kernel(int(batch), int(chunk), int(ny), int(nx))
+    outputs = kernel(
+        inputs=[obj],
+        template=[],
+        grid=(int(batch) * int(ny) * int(nx), 1, 1),
+        threadgroup=(256, 1, 1),
+        output_shapes=[(int(batch), int(ny), int(nx)), (int(batch), int(ny), int(nx))],
+        output_dtypes=[mx.float32, mx.float32],
+    )
+    if squeeze:
+        return outputs[0][0], outputs[1][0]
+    return outputs[0], outputs[1]
 
 
 def _prepare_selection(
@@ -596,9 +662,134 @@ def _reconstruct_prepared_batch(
             corrected,
         )
         obj_chunk = mx.fft.ifft2(corrected)
-        phase = mx.arctan2(mx.imag(obj_chunk), mx.real(obj_chunk))
-        phase_sum = phase_sum + mx.sum(phase, axis=1)
-        phase_sumsq = phase_sumsq + mx.sum(phase * phase, axis=1)
+        chunk_sum, chunk_sumsq = _phase_sums_from_complex(mx, obj_chunk)
+        phase_sum = phase_sum + chunk_sum
+        phase_sumsq = phase_sumsq + chunk_sumsq
+        mx.eval(phase_sum, phase_sumsq)
+
+    mean_phase = phase_sum / prepared.num_bf
+    var_per_pixel = phase_sumsq / prepared.num_bf - mean_phase * mean_phase
+    losses = mx.mean(var_per_pixel, axis=(1, 2))
+    mx.eval(losses)
+    return np.asarray(losses).astype(np.float32, copy=False)
+
+
+def _cuda_sparse_row_mask_512(mx):
+    """Mask matching the CUDA 512 optimizer's sampled row staging."""
+    rows = np.zeros((512,), dtype=np.float32)
+    rows[[group * 8 + offset for group in range(64) for offset in (0, 1)]] = 1.0
+    return mx.array(rows, dtype=mx.float32)[None, None, :, None]
+
+
+def _reconstruct_prepared_batch_cuda_sparse(
+    prepared: _PreparedMpsSSB,
+    *,
+    C10: np.ndarray,
+    C12: np.ndarray,
+    phi12: np.ndarray,
+    chunk_bf: int,
+) -> np.ndarray:
+    """Evaluate the CUDA 512 sparse-row optimizer objective on MPS."""
+    if tuple(prepared.scan_shape) != (512, 512):
+        return _reconstruct_prepared_batch(
+            prepared,
+            C10=C10,
+            C12=C12,
+            phi12=phi12,
+            chunk_bf=chunk_bf,
+        )
+
+    mx = prepared.mx
+    c10_np = np.asarray(C10, dtype=np.float32).reshape(-1)
+    c12_np = np.asarray(C12, dtype=np.float32).reshape(-1)
+    phi_np = np.asarray(phi12, dtype=np.float32).reshape(-1)
+    if c10_np.size == 0:
+        return np.empty((0,), dtype=np.float32)
+    if c12_np.size != c10_np.size or phi_np.size != c10_np.size:
+        raise ValueError("C10, C12, and phi12 must have matching lengths.")
+
+    batch = int(c10_np.size)
+    phase_sum = mx.zeros((batch, *prepared.scan_shape), dtype=mx.float32)
+    phase_sumsq = mx.zeros((batch, *prepared.scan_shape), dtype=mx.float32)
+    c10 = mx.array(c10_np, dtype=mx.float32)[:, None, None, None]
+    c12 = mx.array(c12_np, dtype=mx.float32)[:, None, None, None]
+    cos2phi12 = mx.array(np.cos(2.0 * phi_np).astype(np.float32))[:, None, None, None]
+    sin2phi12 = mx.array(np.sin(2.0 * phi_np).astype(np.float32))[:, None, None, None]
+    chunk_bf = max(1, int(chunk_bf))
+    row_mask = _cuda_sparse_row_mask_512(mx)
+
+    for start in range(0, prepared.num_bf, chunk_bf):
+        stop = min(start + chunk_bf, prepared.num_bf)
+        g_qk = prepared.g_qk[start:stop][None, :, :, :]
+        if prepared.alpha_k2 is not None:
+            alpha_k2 = prepared.alpha_k2[start:stop][None, :, :, :]
+            cos2_k = prepared.cos2_k[start:stop][None, :, :, :]
+            sin2_k = prepared.sin2_k[start:stop][None, :, :, :]
+            aperture_k = prepared.aperture_k[start:stop][None, :, :, :]
+        else:
+            kx = mx.array(prepared.kx_np[start:stop], dtype=mx.float32)[None, :, None, None]
+            ky = mx.array(prepared.ky_np[start:stop], dtype=mx.float32)[None, :, None, None]
+            alpha_k2, cos2_k, sin2_k, aperture_k = _compute_geometry(
+                mx,
+                kx,
+                ky,
+                prepared.wavelength,
+                prepared.semiangle_rad,
+                prepared.ang_y_rad,
+                prepared.ang_x_rad,
+            )
+        cos_term_k = cos2_k * cos2phi12 + sin2_k * sin2phi12
+        chi_k = prepared.factor * alpha_k2 * (c12 * cos_term_k + c10)
+        pk = aperture_k * _exp_neg_i(mx, chi_k)
+
+        if prepared.alpha_m2 is not None:
+            alpha_m2 = prepared.alpha_m2[start:stop][None, :, :, :]
+            cos2_m = prepared.cos2_m[start:stop][None, :, :, :]
+            sin2_m = prepared.sin2_m[start:stop][None, :, :, :]
+            ap_m = prepared.ap_m[start:stop][None, :, :, :]
+            alpha_p2 = prepared.alpha_p2[start:stop][None, :, :, :]
+            cos2_p = prepared.cos2_p[start:stop][None, :, :, :]
+            sin2_p = prepared.sin2_p[start:stop][None, :, :, :]
+            ap_p = prepared.ap_p[start:stop][None, :, :, :]
+        else:
+            alpha_m2, cos2_m, sin2_m, ap_m = _compute_geometry(
+                mx,
+                prepared.qx[None, :, :, :] - kx,
+                prepared.qy[None, :, :, :] - ky,
+                prepared.wavelength,
+                prepared.semiangle_rad,
+                prepared.ang_y_rad,
+                prepared.ang_x_rad,
+            )
+            alpha_p2, cos2_p, sin2_p, ap_p = _compute_geometry(
+                mx,
+                prepared.qx[None, :, :, :] + kx,
+                prepared.qy[None, :, :, :] + ky,
+                prepared.wavelength,
+                prepared.semiangle_rad,
+                prepared.ang_y_rad,
+                prepared.ang_x_rad,
+            )
+        chi_m = prepared.factor * alpha_m2 * (
+            c12 * (cos2_m * cos2phi12 + sin2_m * sin2phi12) + c10
+        )
+        chi_p = prepared.factor * alpha_p2 * (
+            c12 * (cos2_p * cos2phi12 + sin2_p * sin2phi12) + c10
+        )
+        pm = ap_m * _exp_neg_i(mx, chi_m)
+        pp = ap_p * _exp_neg_i(mx, chi_p)
+        gamma = pm * mx.conjugate(pk) - mx.conjugate(pp) * pk
+        gamma = gamma / mx.maximum(mx.abs(gamma), 1e-8)
+        corrected = g_qk * mx.conjugate(gamma)
+        corrected = mx.where(
+            prepared.dc_mask[None, None, :, :],
+            mx.array(prepared.dc_value, dtype=mx.complex64),
+            corrected,
+        )
+        obj_chunk = mx.fft.ifft2(corrected * row_mask)
+        chunk_sum, chunk_sumsq = _phase_sums_from_complex(mx, obj_chunk)
+        phase_sum = phase_sum + chunk_sum
+        phase_sumsq = phase_sumsq + chunk_sumsq
         mx.eval(phase_sum, phase_sumsq)
 
     mean_phase = phase_sum / prepared.num_bf
@@ -919,9 +1110,9 @@ def ssb_fit(
 ) -> MpsSSBPreviewResult:
     """Free-fit C10/C12/phi12 on Apple GPU, then reconstruct the best SSB phase.
 
-    This is a compact MLX optimizer for Mac workflows. It uses the same
-    per-BF-pixel phase-variance loss family as the CUDA SSB engine, but not the
-    batched CUDA kernels.
+    This is a compact MLX optimizer for Mac workflows. For 512x512 scans it
+    evaluates the same sparse-row phase-variance objective as the CUDA SSB
+    optimizer; other scan sizes fall back to the full MLX objective.
     """
     _require_mlx()
     import optuna
@@ -962,22 +1153,20 @@ def ssb_fit(
     trials: list[dict] = []
 
     def evaluate(C10: float, C12: float, phi12: float) -> float:
-        _obj, loss = _reconstruct_prepared(
+        loss = _reconstruct_prepared_batch_cuda_sparse(
             prepared,
-            C10=C10,
-            C12=C12,
-            phi12=phi12,
+            C10=np.asarray([C10], dtype=np.float32),
+            C12=np.asarray([C12], dtype=np.float32),
+            phi12=np.asarray([phi12], dtype=np.float32),
             chunk_bf=chunk_bf,
-            compute_loss=True,
-            compute_object=False,
-        )
+        )[0]
         return float(loss)
 
     def evaluate_batch(params: list[dict[str, float]]) -> np.ndarray:
         c10 = np.asarray([p["C10"] for p in params], dtype=np.float32)
         c12 = np.asarray([p["C12"] for p in params], dtype=np.float32)
         phi = np.asarray([p["phi12"] for p in params], dtype=np.float32)
-        return _reconstruct_prepared_batch(
+        return _reconstruct_prepared_batch_cuda_sparse(
             prepared,
             C10=c10,
             C12=c12,
@@ -1041,15 +1230,16 @@ def ssb_fit(
     elif refine is not None:
         raise ValueError(f"refine must be 'nmead' or None, got {refine!r}")
 
-    object_wave, final_loss = _reconstruct_prepared(
+    object_wave, _full_loss = _reconstruct_prepared(
         prepared,
         C10=best["C10"],
         C12=best["C12"],
         phi12=best["phi12"],
         chunk_bf=chunk_bf,
-        compute_loss=True,
+        compute_loss=False,
         compute_object=True,
     )
+    final_loss = evaluate(best["C10"], best["C12"], best["phi12"])
     phase = np.angle(object_wave).astype(np.float32)
     amplitude = np.abs(object_wave).astype(np.float32)
     return MpsSSBPreviewResult(
