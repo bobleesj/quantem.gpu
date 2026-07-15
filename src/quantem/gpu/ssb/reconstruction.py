@@ -239,12 +239,13 @@ class SSB:
         elif data.ndim != 4:
             raise ValueError("data must be 3D or 4D.")
 
-        # SSB supports 256x256 and 512x512 scan sizes. Auto-pad with mean DP
+        # SSB supports 128x128, 256x256, and 512x512 scan sizes. Auto-pad with mean DP
         # (or center-crop) to the closest supported shape so callers can pass
         # arbitrary scan dims (e.g. drift-corrected cubes).
         H, W = data.shape[0], data.shape[1]
-        if (H, W) not in ((256, 256), (512, 512)):
-            target = 512 if max(H, W) > 256 else 256
+        if (H, W) not in ((128, 128), (256, 256), (512, 512)):
+            longest = max(H, W)
+            target = 128 if longest <= 128 else 256 if longest <= 256 else 512
             if H > target or W > target:
                 # center crop oversize axes
                 r0 = max(0, (H - target) // 2)

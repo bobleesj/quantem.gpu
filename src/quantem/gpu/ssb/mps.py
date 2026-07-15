@@ -70,6 +70,47 @@ class _PreparedMpsSSB:
     ap_p: object | None
 
 
+class _ArrayFrames:
+    """Flat detector-column view over a 4D crop-first array.
+
+    ``ssb_preview`` and ``ssb_fit`` stream one detector pixel over all scan
+    positions.  Full no-bin MPS loads provide that through ``ChunkedFrames``;
+    crop-first MPS loads return a Metal-backed ndarray-like object instead.
+    This adapter gives both inputs the same ``column(row, col)`` contract.
+    """
+
+    _is_gpu_frames = True
+
+    def __init__(self, data):
+        arr = np.asarray(data)
+        if arr.ndim == 4:
+            self.scan_shape = (int(arr.shape[0]), int(arr.shape[1]))
+            self.det_shape = (int(arr.shape[2]), int(arr.shape[3]))
+            self._flat = arr.reshape(-1, *self.det_shape)
+        elif arr.ndim == 3:
+            self.scan_shape = None
+            self.det_shape = (int(arr.shape[1]), int(arr.shape[2]))
+            self._flat = arr
+        else:
+            raise TypeError(
+                "MPS SSB preview expects 3D/4D detector data or chunk-backed "
+                f"MPS data, got shape {getattr(arr, 'shape', None)}."
+            )
+        self.shape = tuple(int(x) for x in self._flat.shape)
+        self.ndim = 3
+        self.dtype = self._flat.dtype
+
+    def __array__(self, dtype=None):
+        arr = np.asarray(self._flat)
+        return arr.astype(dtype, copy=False) if dtype is not None else arr
+
+    def reshape(self, *shape, **kwargs):
+        return self._flat.reshape(*shape, **kwargs)
+
+    def column(self, row: int, col: int) -> np.ndarray:
+        return np.asarray(self._flat[:, int(row), int(col)])
+
+
 def _require_mlx():
     try:
         import mlx.core as mx
@@ -90,9 +131,12 @@ def _as_chunked_frames(data):
         from quantem.gpu.compute.mps import ChunkedFrames
 
         return ChunkedFrames(data)
+    if hasattr(data, "ndim") and int(getattr(data, "ndim")) in (3, 4):
+        return _ArrayFrames(data)
     raise TypeError(
         "MPS SSB preview expects chunk-backed MPS data from "
-        "`quantem.gpu.io.hdf5.load(..., backend='mps')`."
+        "`quantem.gpu.io.hdf5.load(..., backend='mps')` or a crop-first "
+        "3D/4D MPS/NumPy array."
     )
 
 
@@ -723,14 +767,14 @@ def _reconstruct_prepared(
 def _cuda_sparse_row_indices(scan_shape: tuple[int, int]) -> np.ndarray:
     """Rows matching CUDA sparse optimizer staging for supported sizes."""
     ny, nx = (int(scan_shape[0]), int(scan_shape[1]))
-    if ny != nx or ny not in (256, 512):
+    if ny != nx or ny not in (128, 256, 512):
         raise ValueError(
             "MPS SSB fit currently supports CUDA-parity sparse optimizer "
-            f"objective only for square 256x256 or 512x512 scans; got {scan_shape}. "
+            f"objective only for square 128x128, 256x256, or 512x512 scans; got {scan_shape}. "
             "Use ssb_preview for fixed-aberration reconstruction or add a "
             "size-specific sparse objective before enabling free-fit."
         )
-    offsets = range(4) if ny == 256 else range(2)
+    offsets = range(8) if ny == 128 else range(4) if ny == 256 else range(2)
     groups = ny // 8
     return np.asarray(
         [group * 8 + offset for group in range(groups) for offset in offsets],

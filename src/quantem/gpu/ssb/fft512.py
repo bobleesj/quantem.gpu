@@ -338,7 +338,7 @@ __global__ void ifft512_rows_fused_pk_full_t128_mr4_packed(
     out[idx3] = srow[pos3];
 }
 
-__global__ __launch_bounds__(256, 3)
+__global__ __launch_bounds__(256, 4)
 void ifft512_rows_fused_pk_batch_t128_mr2_transpose_packed_b4(
     const float* __restrict__ kx_bf,
     const float* __restrict__ ky_bf,

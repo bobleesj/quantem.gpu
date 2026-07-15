@@ -257,7 +257,7 @@ _pk_kernel_full = cp.ElementwiseKernel(
 
 class SSBEngine:
     """
-    CuPy-accelerated SSB computation with fused CUDA kernels (256x256 only).
+    CuPy-accelerated SSB computation with fused CUDA kernels.
 
     All computation is done on GPU using CuPy arrays.
     Pre-computes rotation-dependent quantities and caches them for
@@ -279,6 +279,15 @@ class SSBEngine:
         semiangle_cutoff: float,
         angular_sampling: tuple[float, float],
     ):
+        n_bf = int(G_qk.shape[0])
+        n_row = int(bf_inds_row.shape[0])
+        n_col = int(bf_inds_col.shape[0])
+        if n_bf != n_row or n_bf != n_col:
+            raise ValueError(
+                "G_qk first dimension must match bf_inds_row and bf_inds_col "
+                f"lengths; got G_qk.shape[0]={n_bf}, "
+                f"len(row)={n_row}, len(col)={n_col}."
+            )
         self.G_qk = G_qk
         self.bf_inds_row = bf_inds_row
         self.bf_inds_col = bf_inds_col
@@ -477,14 +486,20 @@ class SSBEngine:
         self._cached_rotation_rad = rotation_angle_rad
         # Initialize custom FFT based on scan size
         if self._custom_fft is None:
-            if ny == 512 and nx == 512:
+            if ny == 128 and nx == 128:
+                from .fft128 import get_custom_fft_128
+                self._custom_fft = get_custom_fft_128()
+            elif ny == 512 and nx == 512:
                 from .fft512 import get_custom_fft_512
                 self._custom_fft = get_custom_fft_512()
             elif ny == 256 and nx == 256:
                 from .fft256 import get_custom_fft_256
                 self._custom_fft = get_custom_fft_256()
             else:
-                raise ValueError(f"Custom FFT only supports 256x256 and 512x512 scan, got {ny}x{nx}")
+                raise ValueError(
+                    "SSB CUDA backend supports 128x128, 256x256, and 512x512 "
+                    f"scan, got {ny}x{nx}"
+                )
             self._colvar_group = int(self._custom_fft._colvar_group)
         # Work buffers. _result_buffer is (num_bf, ny, nx) complex64 and
         # only used by the reconstruct path - optimize/refine use separate
@@ -775,6 +790,11 @@ class SSBEngine:
         num_bf = int(c["num_bf"])
         ny = int(c["ny"])
         nx = int(c["nx"])
+        if getattr(self._custom_fft, "_size", None) == 128:
+            raise NotImplementedError(
+                "128x128 CUDA SSB currently supports C10/C12/phi12 only; "
+                "higher-order reconstruction needs a size-specific full-aberration path."
+            )
         full_bytes = num_bf * ny * nx * 8
         if full_bytes > 6 * 1024 ** 3:
             return self._reconstruct_chunked_full(mags_m, angles_rad)
@@ -866,6 +886,11 @@ class SSBEngine:
         num_bf = int(c["num_bf"])
         ny = int(c["ny"])
         nx = int(c["nx"])
+        if getattr(self._custom_fft, "_size", None) == 128:
+            raise NotImplementedError(
+                "128x128 CUDA SSB currently supports C10/C12/phi12 only; "
+                "higher-order loss needs a size-specific full-aberration path."
+            )
         full_bytes = num_bf * ny * nx * 8
         if full_bytes > 6 * 1024 ** 3:
             return self._reconstruct_full_with_loss_chunked(mags_m, angles_rad)
@@ -1113,7 +1138,7 @@ class SSBEngine:
     def _get_streaming_buffers(self, batch: int, stream_bf: int) -> dict[str, object]:
         """Get small buffers for streaming variance computation.
 
-        The staging buffer is (batch, stream_bf, 256, 256) complex64 - sized to
+        The staging buffer is (batch, stream_bf, ny, nx) complex64 - sized to
         fit in L2 cache so the row IFFT → column IFFT data never hits GDDR7.
         """
         c = self._cache
@@ -1158,33 +1183,33 @@ class SSBEngine:
     def _get_batch_chunk_buffers(self, batch: int, chunk_bf: int, num_bf: int) -> dict[str, object]:
         key = (batch, chunk_bf, num_bf)
         cached = self._batch_chunk_cache.get(key)
+        c = self._cache
+        ny = int(c["ny"])
+        nx = int(c["nx"])
         if cached is not None:
             if cached.get("sum_partial_buffer") is None:
                 groups = (chunk_bf + self._colvar_group - 1) // self._colvar_group
                 try:
-                    cached["sum_partial_buffer"] = cp.empty((batch * groups, 256, 256), dtype=cp.float32)
-                    cached["sumsq_partial_buffer"] = cp.empty((batch * groups, 256, 256), dtype=cp.float32)
-                    cached["sum_chunk_buffer"] = cp.empty((batch, 256, 256), dtype=cp.float32)
-                    cached["sumsq_chunk_buffer"] = cp.empty((batch, 256, 256), dtype=cp.float32)
+                    cached["sum_partial_buffer"] = cp.empty((batch * groups, ny, nx), dtype=cp.float32)
+                    cached["sumsq_partial_buffer"] = cp.empty((batch * groups, ny, nx), dtype=cp.float32)
+                    cached["sum_chunk_buffer"] = cp.empty((batch, ny, nx), dtype=cp.float32)
+                    cached["sumsq_chunk_buffer"] = cp.empty((batch, ny, nx), dtype=cp.float32)
                 except cp.cuda.memory.OutOfMemoryError:
                     cached["sum_partial_buffer"] = None
                     cached["sumsq_partial_buffer"] = None
                     cached["sum_chunk_buffer"] = None
                     cached["sumsq_chunk_buffer"] = None
             return cached
-        c = self._cache
-        ny = int(c["ny"])
-        nx = int(c["nx"])
         groups = (chunk_bf + self._colvar_group - 1) // self._colvar_group
         sum_partial_buffer = None
         sumsq_partial_buffer = None
         sum_chunk_buffer = None
         sumsq_chunk_buffer = None
         try:
-            sum_partial_buffer = cp.empty((batch * groups, 256, 256), dtype=cp.float32)
-            sumsq_partial_buffer = cp.empty((batch * groups, 256, 256), dtype=cp.float32)
-            sum_chunk_buffer = cp.empty((batch, 256, 256), dtype=cp.float32)
-            sumsq_chunk_buffer = cp.empty((batch, 256, 256), dtype=cp.float32)
+            sum_partial_buffer = cp.empty((batch * groups, ny, nx), dtype=cp.float32)
+            sumsq_partial_buffer = cp.empty((batch * groups, ny, nx), dtype=cp.float32)
+            sum_chunk_buffer = cp.empty((batch, ny, nx), dtype=cp.float32)
+            sumsq_chunk_buffer = cp.empty((batch, ny, nx), dtype=cp.float32)
         except cp.cuda.memory.OutOfMemoryError:
             pass
         cached = {
@@ -1449,6 +1474,28 @@ class SSBEngine:
             # Need room for staging + tail buffer (2x staging in worst case)
             max_stream_bf = usable // (2 * staging_bytes_per_bf)
             stream_bf = min(self._stream_bf, max(32, max_stream_bf), num_bf)
+            full_staging_bytes = staging_bytes_per_bf * num_bf
+            if ny_scan == 128:
+                if full_staging_bytes <= 2 * 1024 ** 3:
+                    # Small 128 objectives fit comfortably as one resident
+                    # staging buffer; avoid an avoidable second tail launch.
+                    stream_bf = num_bf
+                else:
+                    # Real no-bin 128x128 objectives are dominated by launch
+                    # count at tiny BF chunks. 1024 BF/chunk avoids the slow
+                    # full-buffer path while cutting the common 9.4k-BF disk
+                    # from ~49 chunks to ~10 chunks.
+                    stream_bf = min(max(32, max_stream_bf), 1024, num_bf)
+            elif ny_scan == 256 and full_staging_bytes <= 2 * 1024 ** 3:
+                # For common binned 256 objectives (~560 BF), a full resident
+                # staging buffer regressed versus cache-sized chunks.
+                stream_bf = min(stream_bf, 128, num_bf)
+            elif ny_scan == 256:
+                # Real no-bin 256x256 objectives are launch-limited enough
+                # after the mixed-radix variance kernel that larger BF chunks
+                # win despite exceeding L2 residency.  2048 keeps peak modest
+                # while matching the 4096-BF timing within measurement noise.
+                stream_bf = min(max(32, max_stream_bf), 2048, num_bf)
         except (RuntimeError, AttributeError):
             # memGetInfo() unavailable; fall back to the conservative stream_bf cap.
             stream_bf = min(self._stream_bf, num_bf)

@@ -12,6 +12,11 @@ def test_mps_sparse_row_indices_match_cuda_supported_sizes() -> None:
     """Pin MPS sparse objective row masks to the CUDA optimizer kernels."""
     from quantem.gpu.ssb.mps import _cuda_sparse_row_indices
 
+    rows_128 = _cuda_sparse_row_indices((128, 128))
+    assert rows_128.shape == (128,)
+    assert rows_128[:12].tolist() == [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    assert rows_128[-8:].tolist() == [120, 121, 122, 123, 124, 125, 126, 127]
+
     rows_256 = _cuda_sparse_row_indices((256, 256))
     assert rows_256.shape == (128,)
     assert rows_256[:12].tolist() == [0, 1, 2, 3, 8, 9, 10, 11, 16, 17, 18, 19]
@@ -22,8 +27,8 @@ def test_mps_sparse_row_indices_match_cuda_supported_sizes() -> None:
     assert rows_512[:10].tolist() == [0, 1, 8, 9, 16, 17, 24, 25, 32, 33]
     assert rows_512[-2:].tolist() == [504, 505]
 
-    with pytest.raises(ValueError, match="256x256 or 512x512"):
-        _cuda_sparse_row_indices((128, 128))
+    with pytest.raises(ValueError, match="128x128, 256x256, or 512x512"):
+        _cuda_sparse_row_indices((64, 64))
 
 
 @pytest.mark.skipif(

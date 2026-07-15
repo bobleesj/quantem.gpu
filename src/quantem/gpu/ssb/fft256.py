@@ -13,6 +13,50 @@ from .fft_common import CustomFFTBase, build_cuda_code
 _TWIDDLE_DECL = '__constant__ float2 TWIDDLE_256[256];'
 
 _FFT256_KERNELS = r'''
+__device__ __forceinline__ unsigned int mixed_reverse_256_884(unsigned int n) {
+    unsigned int d0 = n & 7u;
+    unsigned int d1 = (n >> 3) & 7u;
+    unsigned int d2 = n >> 6;
+    return (d0 << 5) | (d1 << 2) | d2;
+}
+
+#define SQ2_INV_256_F 0.70710678118654752f
+
+__device__ __forceinline__ float2 cmul_w8_1_256(float2 a) {
+    return make_float2(SQ2_INV_256_F * (a.x - a.y),
+                       SQ2_INV_256_F * (a.x + a.y));
+}
+
+__device__ __forceinline__ float2 cmul_w8_3_256(float2 a) {
+    return make_float2(SQ2_INV_256_F * (-a.x - a.y),
+                       SQ2_INV_256_F * ( a.x - a.y));
+}
+
+__device__ __forceinline__ void radix8_butterfly_256(
+    float2 &x0, float2 &x1, float2 &x2, float2 &x3,
+    float2 &x4, float2 &x5, float2 &x6, float2 &x7)
+{
+    float2 a0 = x0, a1 = x4, a2 = x2, a3 = x6;
+    float2 a4 = x1, a5 = x5, a6 = x3, a7 = x7;
+    float2 t0 = cadd(a0, a1), t1 = csub(a0, a1);
+    float2 t2 = cadd(a2, a3), t3 = csub(a2, a3);
+    float2 t4 = cadd(a4, a5), t5 = csub(a4, a5);
+    float2 t6 = cadd(a6, a7), t7 = csub(a6, a7);
+    float2 u0 = cadd(t0, t2), u2 = csub(t0, t2);
+    float2 it3 = cmul_i(t3);
+    float2 u1 = cadd(t1, it3), u3 = csub(t1, it3);
+    float2 u4 = cadd(t4, t6), u6 = csub(t4, t6);
+    float2 it7 = cmul_i(t7);
+    float2 u5 = cadd(t5, it7), u7 = csub(t5, it7);
+    float2 w1u5 = cmul_w8_1_256(u5);
+    float2 w3u7 = cmul_w8_3_256(u7);
+    float2 iu6  = cmul_i(u6);
+    x0 = cadd(u0, u4);    x4 = csub(u0, u4);
+    x1 = cadd(u1, w1u5);  x5 = csub(u1, w1u5);
+    x2 = cadd(u2, iu6);   x6 = csub(u2, iu6);
+    x3 = cadd(u3, w3u7);  x7 = csub(u3, w3u7);
+}
+
 __global__ void ifft256_rows_fused_pk_t64_mr8_packed(
     const float* __restrict__ kx_bf,
     const float* __restrict__ ky_bf,
@@ -243,7 +287,8 @@ __global__ void ifft256_rows_fused_pk_full_t64_mr8_packed(
     out[idx3] = srow[pos3];
 }
 
-__global__ void ifft256_rows_fused_pk_batch_t64_mr8_transpose_packed_b4(
+__global__ __launch_bounds__(256, 4)
+void ifft256_rows_fused_pk_batch_t64_mr8_transpose_packed_b4(
     const float* __restrict__ kx_bf,
     const float* __restrict__ ky_bf,
     const float* __restrict__ qx_1d,
@@ -712,28 +757,36 @@ __global__ void ifft256_cols_accumulate_t64_mr8(
     partial_sum[o3] = s3; partial_sumsq[o3] = q3;
 }
 
-__global__ void ifft256_rows_var_g32_t64_mr1_batch(const float2* __restrict__ data,
-                                                  float* __restrict__ sum,
-                                                  float* __restrict__ sumsq,
-                                                  int num_bf,
-                                                  int batch,
-                                                  float scale,
-                                                  int use_partial) {
+__global__ __launch_bounds__(32, 16)
+void ifft256_rows_var_radix884_t32(const float2* __restrict__ data,
+                                   float* __restrict__ sum,
+                                   float* __restrict__ sumsq,
+                                   int num_bf,
+                                   int batch,
+                                   float scale,
+                                   int use_partial) {
     int row = blockIdx.y;
     int tid = threadIdx.x;
-    if (row >= 256 || tid >= 64) return;
+    if (row >= 256 || tid >= 32) return;
     int groups = (num_bf + 31) >> 5;
     int group = blockIdx.z % groups;
     int cand = blockIdx.z / groups;
     if (cand >= batch) return;
     int bf0 = group * 32;
-    int pos0 = tid, pos1 = tid + 64, pos2 = tid + 128, pos3 = tid + 192;
-    int rev0 = bit_reverse4_8((unsigned int)pos0);
-    int rev1 = bit_reverse4_8((unsigned int)pos1);
-    int rev2 = bit_reverse4_8((unsigned int)pos2);
-    int rev3 = bit_reverse4_8((unsigned int)pos3);
+    int j0 = tid;
+    int j1 = tid + 32;
+    int src0 = (int)mixed_reverse_256_884((unsigned int)(tid * 8 + 0));
+    int src1 = (int)mixed_reverse_256_884((unsigned int)(tid * 8 + 1));
+    int src2 = (int)mixed_reverse_256_884((unsigned int)(tid * 8 + 2));
+    int src3 = (int)mixed_reverse_256_884((unsigned int)(tid * 8 + 3));
+    int src4 = (int)mixed_reverse_256_884((unsigned int)(tid * 8 + 4));
+    int src5 = (int)mixed_reverse_256_884((unsigned int)(tid * 8 + 5));
+    int src6 = (int)mixed_reverse_256_884((unsigned int)(tid * 8 + 6));
+    int src7 = (int)mixed_reverse_256_884((unsigned int)(tid * 8 + 7));
     float sum0=0, sum1=0, sum2=0, sum3=0;
+    float sum4=0, sum5=0, sum6=0, sum7=0;
     float sumsq0=0, sumsq1=0, sumsq2=0, sumsq3=0;
+    float sumsq4=0, sumsq5=0, sumsq6=0, sumsq7=0;
     __shared__ float2 s[256];
     size_t plane = 256u * 256u;
     size_t cand_offset = (size_t)cand * (size_t)num_bf * plane;
@@ -741,54 +794,142 @@ __global__ void ifft256_rows_var_g32_t64_mr1_batch(const float2* __restrict__ da
         ? ((size_t)cand * (size_t)groups + (size_t)group) * plane
         : (size_t)cand * plane;
 
+    int s2_pre = tid & 7;
+    float2 tw2_1 = TWIDDLE_256[(s2_pre * 1 * 4) & 255];
+    float2 tw2_2 = TWIDDLE_256[(s2_pre * 2 * 4) & 255];
+    float2 tw2_3 = TWIDDLE_256[(s2_pre * 3 * 4) & 255];
+    float2 tw2_4 = TWIDDLE_256[(s2_pre * 4 * 4) & 255];
+    float2 tw2_5 = TWIDDLE_256[(s2_pre * 5 * 4) & 255];
+    float2 tw2_6 = TWIDDLE_256[(s2_pre * 6 * 4) & 255];
+    float2 tw2_7 = TWIDDLE_256[(s2_pre * 7 * 4) & 255];
+
     for (int i = 0; i < 32; ++i) {
         int bf = bf0 + i;
         size_t base = cand_offset + (size_t)bf * plane + (size_t)row * 256;
-        float2 in0={0,0}, in1={0,0}, in2={0,0}, in3={0,0};
+        float2 r0={0,0}, r1={0,0}, r2={0,0}, r3={0,0};
+        float2 r4={0,0}, r5={0,0}, r6={0,0}, r7={0,0};
         if (bf < num_bf) {
-            in0 = data[base + (size_t)pos0];
-            in1 = data[base + (size_t)pos1];
-            in2 = data[base + (size_t)pos2];
-            in3 = data[base + (size_t)pos3];
+            r0 = data[base + (size_t)src0];
+            r1 = data[base + (size_t)src1];
+            r2 = data[base + (size_t)src2];
+            r3 = data[base + (size_t)src3];
+            r4 = data[base + (size_t)src4];
+            r5 = data[base + (size_t)src5];
+            r6 = data[base + (size_t)src6];
+            r7 = data[base + (size_t)src7];
         }
-        s[rev0] = in0; s[rev1] = in1; s[rev2] = in2; s[rev3] = in3;
-        __syncthreads();
-        for (int m = 4; m <= 256; m <<= 2) {
-            int quarter = m >> 2;
-            int j = tid % quarter, k = tid / quarter;
-            int idx0 = k*m+j, idx1 = idx0+quarter, idx2 = idx1+quarter, idx3 = idx2+quarter;
-            int tw = j * (256 / m);
-            float2 x0=s[idx0], x1=cmul(TWIDDLE_256[tw],s[idx1]);
-            float2 x2=cmul(TWIDDLE_256[tw*2],s[idx2]), x3=cmul(TWIDDLE_256[tw*3],s[idx3]);
-            float2 t0=cadd(x0,x2), t1=csub(x0,x2), t2=cadd(x1,x3), t3=csub(x1,x3);
-            float2 it3=cmul_i(t3);
-            s[idx0]=cadd(t0,t2); s[idx1]=cadd(t1,it3);
-            s[idx2]=csub(t0,t2); s[idx3]=csub(t1,it3);
-            __syncthreads();
+
+        radix8_butterfly_256(r0, r1, r2, r3, r4, r5, r6, r7);
+
+#define SHFL_XOR_256_F2(val, mask) make_float2( \
+            __shfl_xor_sync(0xffffffff, (val).x, (mask)), \
+            __shfl_xor_sync(0xffffffff, (val).y, (mask)))
+        {
+            float2 sent, got;
+            sent = (tid & 1) ? r0 : r1; got = SHFL_XOR_256_F2(sent, 1);
+            if (tid & 1) r0 = got; else r1 = got;
+            sent = (tid & 1) ? r2 : r3; got = SHFL_XOR_256_F2(sent, 1);
+            if (tid & 1) r2 = got; else r3 = got;
+            sent = (tid & 1) ? r4 : r5; got = SHFL_XOR_256_F2(sent, 1);
+            if (tid & 1) r4 = got; else r5 = got;
+            sent = (tid & 1) ? r6 : r7; got = SHFL_XOR_256_F2(sent, 1);
+            if (tid & 1) r6 = got; else r7 = got;
+
+            sent = (tid & 2) ? r0 : r2; got = SHFL_XOR_256_F2(sent, 2);
+            if (tid & 2) r0 = got; else r2 = got;
+            sent = (tid & 2) ? r1 : r3; got = SHFL_XOR_256_F2(sent, 2);
+            if (tid & 2) r1 = got; else r3 = got;
+            sent = (tid & 2) ? r4 : r6; got = SHFL_XOR_256_F2(sent, 2);
+            if (tid & 2) r4 = got; else r6 = got;
+            sent = (tid & 2) ? r5 : r7; got = SHFL_XOR_256_F2(sent, 2);
+            if (tid & 2) r5 = got; else r7 = got;
+
+            sent = (tid & 4) ? r0 : r4; got = SHFL_XOR_256_F2(sent, 4);
+            if (tid & 4) r0 = got; else r4 = got;
+            sent = (tid & 4) ? r1 : r5; got = SHFL_XOR_256_F2(sent, 4);
+            if (tid & 4) r1 = got; else r5 = got;
+            sent = (tid & 4) ? r2 : r6; got = SHFL_XOR_256_F2(sent, 4);
+            if (tid & 4) r2 = got; else r6 = got;
+            sent = (tid & 4) ? r3 : r7; got = SHFL_XOR_256_F2(sent, 4);
+            if (tid & 4) r3 = got; else r7 = got;
         }
+#undef SHFL_XOR_256_F2
+
+        r1 = cmul(tw2_1, r1);
+        r2 = cmul(tw2_2, r2);
+        r3 = cmul(tw2_3, r3);
+        r4 = cmul(tw2_4, r4);
+        r5 = cmul(tw2_5, r5);
+        r6 = cmul(tw2_6, r6);
+        r7 = cmul(tw2_7, r7);
+
+        radix8_butterfly_256(r0, r1, r2, r3, r4, r5, r6, r7);
+
+        int g_outer = tid >> 3;
+        int base2 = g_outer * 64 + s2_pre;
+        s[base2 +  0] = r0;
+        s[base2 +  8] = r1;
+        s[base2 + 16] = r2;
+        s[base2 + 24] = r3;
+        s[base2 + 32] = r4;
+        s[base2 + 40] = r5;
+        s[base2 + 48] = r6;
+        s[base2 + 56] = r7;
+        __syncwarp();
+
+        float2 a0=s[j0], a1=cmul(TWIDDLE_256[j0],s[j0+64]);
+        float2 a2=cmul(TWIDDLE_256[j0*2],s[j0+128]);
+        float2 a3=cmul(TWIDDLE_256[j0*3],s[j0+192]);
+        float2 t0=cadd(a0,a2), t1=csub(a0,a2), t2=cadd(a1,a3), t3=csub(a1,a3);
+        float2 it3=cmul_i(t3);
+        float2 y0=cadd(t0,t2), y1=cadd(t1,it3);
+        float2 y2=csub(t0,t2), y3=csub(t1,it3);
+
+        a0=s[j1]; a1=cmul(TWIDDLE_256[j1],s[j1+64]);
+        a2=cmul(TWIDDLE_256[j1*2],s[j1+128]);
+        a3=cmul(TWIDDLE_256[j1*3],s[j1+192]);
+        t0=cadd(a0,a2); t1=csub(a0,a2); t2=cadd(a1,a3); t3=csub(a1,a3);
+        it3=cmul_i(t3);
+        float2 y4=cadd(t0,t2), y5=cadd(t1,it3);
+        float2 y6=csub(t0,t2), y7=csub(t1,it3);
+
         if (bf < num_bf) {
-            float2 o0=s[pos0],o1=s[pos1],o2=s[pos2],o3=s[pos3];
-            float p0=atan2f(o0.y,o0.x),p1=atan2f(o1.y,o1.x);
-            float p2=atan2f(o2.y,o2.x),p3=atan2f(o3.y,o3.x);
+            float p0=atan2f(y0.y,y0.x),p1=atan2f(y1.y,y1.x);
+            float p2=atan2f(y2.y,y2.x),p3=atan2f(y3.y,y3.x);
+            float p4=atan2f(y4.y,y4.x),p5=atan2f(y5.y,y5.x);
+            float p6=atan2f(y6.y,y6.x),p7=atan2f(y7.y,y7.x);
             sum0+=p0;sum1+=p1;sum2+=p2;sum3+=p3;
+            sum4+=p4;sum5+=p5;sum6+=p6;sum7+=p7;
             sumsq0+=p0*p0;sumsq1+=p1*p1;sumsq2+=p2*p2;sumsq3+=p3*p3;
+            sumsq4+=p4*p4;sumsq5+=p5*p5;sumsq6+=p6*p6;sumsq7+=p7*p7;
         }
-        __syncthreads();
     }
-    size_t o0=sum_base+(size_t)pos0*256+row;
-    size_t o1=sum_base+(size_t)pos1*256+row;
-    size_t o2=sum_base+(size_t)pos2*256+row;
-    size_t o3=sum_base+(size_t)pos3*256+row;
+    size_t o0=sum_base+(size_t)j0*256+row;
+    size_t o1=sum_base+(size_t)(j0+64)*256+row;
+    size_t o2=sum_base+(size_t)(j0+128)*256+row;
+    size_t o3=sum_base+(size_t)(j0+192)*256+row;
+    size_t o4=sum_base+(size_t)j1*256+row;
+    size_t o5=sum_base+(size_t)(j1+64)*256+row;
+    size_t o6=sum_base+(size_t)(j1+128)*256+row;
+    size_t o7=sum_base+(size_t)(j1+192)*256+row;
     if (use_partial) {
         sum[o0]=sum0;sumsq[o0]=sumsq0;
         sum[o1]=sum1;sumsq[o1]=sumsq1;
         sum[o2]=sum2;sumsq[o2]=sumsq2;
         sum[o3]=sum3;sumsq[o3]=sumsq3;
+        sum[o4]=sum4;sumsq[o4]=sumsq4;
+        sum[o5]=sum5;sumsq[o5]=sumsq5;
+        sum[o6]=sum6;sumsq[o6]=sumsq6;
+        sum[o7]=sum7;sumsq[o7]=sumsq7;
     } else {
         atomicAdd(&sum[o0],sum0);atomicAdd(&sumsq[o0],sumsq0);
         atomicAdd(&sum[o1],sum1);atomicAdd(&sumsq[o1],sumsq1);
         atomicAdd(&sum[o2],sum2);atomicAdd(&sumsq[o2],sumsq2);
         atomicAdd(&sum[o3],sum3);atomicAdd(&sumsq[o3],sumsq3);
+        atomicAdd(&sum[o4],sum4);atomicAdd(&sumsq[o4],sumsq4);
+        atomicAdd(&sum[o5],sum5);atomicAdd(&sumsq[o5],sumsq5);
+        atomicAdd(&sum[o6],sum6);atomicAdd(&sumsq[o6],sumsq6);
+        atomicAdd(&sum[o7],sum7);atomicAdd(&sumsq[o7],sumsq7);
     }
 }
 '''
@@ -805,7 +946,7 @@ class CustomFFT256(CustomFFTBase):
                 "ifft256_rows_fused_pk_t64_mr8_packed",
                 "ifft256_rows_fused_pk_batch_t64_mr8_transpose_packed_b4",
                 "ifft256_cols_t64_mr8",
-                "ifft256_rows_var_g32_t64_mr1_batch",
+                "ifft256_rows_var_radix884_t32",
                 "ifft256_cols_accumulate_t64_mr8",
                 "ifft256_rows_fused_pk_full_t64_mr8_packed",
             ),
@@ -814,7 +955,7 @@ class CustomFFT256(CustomFFTBase):
             rows_grid_y=32,
             batch_block=(64, 4, 1),
             batch_grid_y=64,
-            var_block=(64, 1, 1),
+            var_block=(32, 1, 1),
             var_grid_y=256,
             cols_block=(64, 8, 1),
             cols_grid_y=32,
