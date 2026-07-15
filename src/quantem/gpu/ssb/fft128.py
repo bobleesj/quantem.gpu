@@ -140,7 +140,7 @@ __global__ void ifft128_rows_fused_pk_t32_mr8_packed(
     out[idx3] = srow[pos3];
 }
 
-__global__ __launch_bounds__(256, 3)
+__global__ __launch_bounds__(512, 1)
 void ifft128_rows_fused_pk_batch_t32_mr8_transpose_packed_b4(
     const float* __restrict__ kx_bf,
     const float* __restrict__ ky_bf,
@@ -170,7 +170,7 @@ void ifft128_rows_fused_pk_batch_t32_mr8_transpose_packed_b4(
     int cand1 = cand0 + 1;
     int cand2 = cand0 + 2;
     int cand3 = cand0 + 3;
-    int row = blockIdx.y * 8 + threadIdx.y;
+    int row = blockIdx.y * 16 + threadIdx.y;
     int tid = threadIdx.x;
     if (cand0 >= batch || bf >= num_bf || row >= 128 || tid >= 32) return;
 
@@ -247,8 +247,9 @@ void ifft128_rows_fused_pk_batch_t32_mr8_transpose_packed_b4(
         if (has3) { res0b.z = dc_real; res0b.w = dc_imag; }
     }
 
-    __shared__ float4 s0[8][128];
-    __shared__ float4 s1[8][128];
+    extern __shared__ float4 row_tile[];
+    float4 (*s0)[128] = (float4 (*)[128])row_tile;
+    float4 (*s1)[128] = (float4 (*)[128])(row_tile + 16 * 128);
     float4* srow0 = s0[threadIdx.y];
     float4* srow1 = s1[threadIdx.y];
     srow0[digit_reverse_128((unsigned int)pos0)] = res0a;
@@ -303,41 +304,32 @@ void ifft128_rows_fused_pk_batch_t32_mr8_transpose_packed_b4(
     FINAL2(srow1);
 #undef FINAL2
     FFT128_SYNC();
+    __syncthreads();
 
-    float4 o0a = srow0[pos0], o1a = srow0[pos1], o2a = srow0[pos2], o3a = srow0[pos3];
-    float4 o0b = srow1[pos0], o1b = srow1[pos1], o2b = srow1[pos2], o3b = srow1[pos3];
-#define STORE0(CAND) do { \
-    out[(((size_t)(CAND) * num_bf + bf) * 128 + pos0) * 128 + row] = make_float2(o0a.x, o0a.y); \
-    out[(((size_t)(CAND) * num_bf + bf) * 128 + pos1) * 128 + row] = make_float2(o1a.x, o1a.y); \
-    out[(((size_t)(CAND) * num_bf + bf) * 128 + pos2) * 128 + row] = make_float2(o2a.x, o2a.y); \
-    out[(((size_t)(CAND) * num_bf + bf) * 128 + pos3) * 128 + row] = make_float2(o3a.x, o3a.y); \
-} while (0)
-#define STORE1(CAND) do { \
-    out[(((size_t)(CAND) * num_bf + bf) * 128 + pos0) * 128 + row] = make_float2(o0a.z, o0a.w); \
-    out[(((size_t)(CAND) * num_bf + bf) * 128 + pos1) * 128 + row] = make_float2(o1a.z, o1a.w); \
-    out[(((size_t)(CAND) * num_bf + bf) * 128 + pos2) * 128 + row] = make_float2(o2a.z, o2a.w); \
-    out[(((size_t)(CAND) * num_bf + bf) * 128 + pos3) * 128 + row] = make_float2(o3a.z, o3a.w); \
-} while (0)
-#define STORE2(CAND) do { \
-    out[(((size_t)(CAND) * num_bf + bf) * 128 + pos0) * 128 + row] = make_float2(o0b.x, o0b.y); \
-    out[(((size_t)(CAND) * num_bf + bf) * 128 + pos1) * 128 + row] = make_float2(o1b.x, o1b.y); \
-    out[(((size_t)(CAND) * num_bf + bf) * 128 + pos2) * 128 + row] = make_float2(o2b.x, o2b.y); \
-    out[(((size_t)(CAND) * num_bf + bf) * 128 + pos3) * 128 + row] = make_float2(o3b.x, o3b.y); \
-} while (0)
-#define STORE3(CAND) do { \
-    out[(((size_t)(CAND) * num_bf + bf) * 128 + pos0) * 128 + row] = make_float2(o0b.z, o0b.w); \
-    out[(((size_t)(CAND) * num_bf + bf) * 128 + pos1) * 128 + row] = make_float2(o1b.z, o1b.w); \
-    out[(((size_t)(CAND) * num_bf + bf) * 128 + pos2) * 128 + row] = make_float2(o2b.z, o2b.w); \
-    out[(((size_t)(CAND) * num_bf + bf) * 128 + pos3) * 128 + row] = make_float2(o3b.z, o3b.w); \
-} while (0)
-    STORE0(cand0);
-    if (has1) STORE1(cand1);
-    if (has2) STORE2(cand2);
-    if (has3) STORE3(cand3);
-#undef STORE0
-#undef STORE1
-#undef STORE2
-#undef STORE3
+    int linear = threadIdx.y * 32 + threadIdx.x;
+    int row_base = blockIdx.y * 16;
+#pragma unroll
+    for (int n = 0; n < 4; ++n) {
+        int elem = linear + n * 512;
+        int dst_pos = elem >> 4;
+        int dst_row = row_base + (elem & 15);
+        float4 va = s0[elem & 15][dst_pos];
+        float4 vb = s1[elem & 15][dst_pos];
+        size_t base0 = (((size_t)cand0 * num_bf + bf) * 128 + dst_pos) * 128 + dst_row;
+        out[base0] = make_float2(va.x, va.y);
+        if (has1) {
+            size_t base1 = (((size_t)cand1 * num_bf + bf) * 128 + dst_pos) * 128 + dst_row;
+            out[base1] = make_float2(va.z, va.w);
+        }
+        if (has2) {
+            size_t base2 = (((size_t)cand2 * num_bf + bf) * 128 + dst_pos) * 128 + dst_row;
+            out[base2] = make_float2(vb.x, vb.y);
+        }
+        if (has3) {
+            size_t base3 = (((size_t)cand3 * num_bf + bf) * 128 + dst_pos) * 128 + dst_row;
+            out[base3] = make_float2(vb.z, vb.w);
+        }
+    }
 }
 
 __global__ void ifft128_cols_t32_mr8(float2* __restrict__ data,
@@ -557,12 +549,13 @@ class CustomFFT128(CustomFFTBase):
             twiddle_name="TWIDDLE_128",
             rows_block=(32, 8, 1),
             rows_grid_y=16,
-            batch_block=(32, 8, 1),
-            batch_grid_y=16,
+            batch_block=(32, 16, 1),
+            batch_grid_y=8,
             var_block=(32, 1, 1),
             var_grid_y=128,
             cols_block=(32, 8, 1),
             cols_grid_y=16,
+            batch_shared_mem=16 * 128 * 2 * 16,
         )
 
 

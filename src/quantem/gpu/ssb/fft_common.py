@@ -462,6 +462,7 @@ class CustomFFTBase:
         var_grid_y: int,
         cols_block: tuple[int, int, int],
         cols_grid_y: int,
+        batch_shared_mem: int = 0,
     ) -> None:
         self._size = size
         options = ("--std=c++11", "--maxrregcount=96", "-Xptxas=-dlcm=cg")
@@ -472,6 +473,11 @@ class CustomFFTBase:
         )
         self._rows_fused_pk = self._module.get_function(kernel_names[0])
         self._rows_fused_pk_batch_quad_transpose = self._module.get_function(kernel_names[1])
+        self._rows_fused_pk_batch_shared_mem = int(batch_shared_mem)
+        if self._rows_fused_pk_batch_shared_mem:
+            self._rows_fused_pk_batch_quad_transpose.max_dynamic_shared_size_bytes = (
+                self._rows_fused_pk_batch_shared_mem
+            )
         self._cols = self._module.get_function(kernel_names[2])
         self._rows_var_batch = self._module.get_function(kernel_names[3])
         self._cols_accumulate = (
@@ -749,7 +755,8 @@ class CustomFFTBase:
                      C10, C12, cos2phi12, sin2phi12,
                      factor_f32, pk_group, G_group,
                      staging, dc_re, dc_im,
-                     chunk_i32, batch_i32))
+                     chunk_i32, batch_i32),
+                    shared_mem=self._rows_fused_pk_batch_shared_mem)
                 groups_var = (chunk + self._colvar_group - 1) // self._colvar_group
                 grid_var = (1, self._rows_var_grid_y, groups_var * batch)
                 self._rows_var_batch(
@@ -795,6 +802,7 @@ class CustomFFTBase:
                 np.float32(dc_value.real), np.float32(dc_value.imag),
                 np.int32(num_bf), np.int32(batch),
             ),
+            shared_mem=self._rows_fused_pk_batch_shared_mem,
         )
         scale = np.float32(1.0 / (N * N))
         groups = (num_bf + self._colvar_group - 1) // self._colvar_group
