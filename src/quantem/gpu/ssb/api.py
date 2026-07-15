@@ -90,10 +90,9 @@ def _resolve_bf_subsample_ratio(
 ) -> float | None:
     """Resolve a public BF subsample value to the engine's ratio API.
 
-    Public callers usually think in pixels: ``2000`` means optimize/refine
-    against about 2000 bright-field pixels. The SSB engine takes a fraction
-    in ``(0, 1]``. Keeping this conversion here avoids accidentally running
-    full-BF optimization on large microscope scans.
+    Public callers may think in pixels: ``2000`` means optimize/refine against
+    about 2000 bright-field pixels. The SSB engine takes a fraction in
+    ``(0, 1]``. ``None`` is the default and keeps the full BF disk for parity.
     """
     if bf_subsample is None:
         return None
@@ -266,7 +265,7 @@ def ssb(
     rotation_angle_deg: float = 0.0,
     source_path: str | None = None,
     verbose: bool = True,
-    bf_subsample: int | float | None = 2000,
+    bf_subsample: int | float | None = None,
     bf_radius: int | None = None,
 ) -> SSBResult:
     """Single-sideband ptychographic reconstruction.
@@ -312,14 +311,12 @@ def ssb(
         Source file path stored on the result for traceability.
     verbose : bool
         Print progress bars and summaries (default True).
-    bf_subsample : int, float, or None, default 2000
-        Run optimize() and refine() on a uniform-stride BF-pixel subset of
-        this approximate size instead of the full BF disk. Values in
-        ``(0, 1]`` are treated as a fraction of the BF disk; values above
-        ``1`` are treated as a target BF-pixel count. ~4.5× faster on
-        gold_02 with aberration parity within 0.05 nm on C10/C12 (phi is
-        weakly constrained and may drift ~0.5°). Set to None to force
-        full-BF optimization (legacy path, ~4.5× slower).
+    bf_subsample : int, float, or None, default None
+        Default ``None`` runs optimize() and refine() on the full BF disk for
+        parity. Values in ``(0, 1]`` are treated as a fraction of the BF disk;
+        values above ``1`` are treated as a target BF-pixel count and run on a
+        uniform-stride BF-pixel subset. Subsampling is an explicit speed/preview
+        tradeoff, not the default signoff path.
     bf_radius : int or None
         Optional radius, in detector pixels, for the BF disk used by SSB.
         Use this to keep large 512x512 microscope scans within GPU memory by
