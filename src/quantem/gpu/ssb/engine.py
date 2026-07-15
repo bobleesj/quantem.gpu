@@ -86,6 +86,46 @@ void variance_from_sums_batch(
 }
 ''', 'variance_from_sums_batch')
 
+_loss_from_sums_batch_kernel = cp.RawKernel(r'''
+extern "C" __global__
+void loss_from_sums_batch(
+    const float* __restrict__ sum,
+    const float* __restrict__ sumsq,
+    float* __restrict__ out,
+    int num_bf,
+    int ny,
+    int nx,
+    int batch
+) {
+    int b = blockIdx.x;
+    int tid = threadIdx.x;
+    if (b >= batch || tid >= 256) return;
+
+    int plane = ny * nx;
+    int base = b * plane;
+    float inv_num_bf = 1.0f / (float)num_bf;
+    float local = 0.0f;
+    for (int i = tid; i < plane; i += blockDim.x) {
+        float mean = sum[base + i] * inv_num_bf;
+        float mean_sq = sumsq[base + i] * inv_num_bf;
+        local += mean_sq - mean * mean;
+    }
+
+    __shared__ float partial[256];
+    partial[tid] = local;
+    __syncthreads();
+    for (int offset = 128; offset > 0; offset >>= 1) {
+        if (tid < offset) {
+            partial[tid] += partial[tid + offset];
+        }
+        __syncthreads();
+    }
+    if (tid == 0) {
+        out[b] = partial[0] / (float)plane;
+    }
+}
+''', 'loss_from_sums_batch')
+
 def _choose_reduce_block(groups: int) -> int:
     if groups <= 32:
         return 32
@@ -1154,6 +1194,7 @@ class SSBEngine:
             "sum": cp.empty((batch, ny, nx), dtype=cp.float32),
             "sumsq": cp.empty((batch, ny, nx), dtype=cp.float32),
             "variance": cp.empty((batch, ny, nx), dtype=cp.float32),
+            "loss": cp.empty((batch,), dtype=cp.float32),
         }
         self._streaming_cache[key] = cached
         return cached
@@ -1534,6 +1575,22 @@ class SSBEngine:
             sumsq_buffer,
             stream_bf=stream_bf,
         )
+        if int(c["ny"]) == 128 and int(c["nx"]) == 128 and batch >= 16:
+            loss_out = out if out is not None else bufs["loss"]
+            _loss_from_sums_batch_kernel(
+                (batch,),
+                (256,),
+                (
+                    sum_buffer,
+                    sumsq_buffer,
+                    loss_out,
+                    np.int32(num_bf),
+                    np.int32(c["ny"]),
+                    np.int32(c["nx"]),
+                    np.int32(batch),
+                ),
+            )
+            return loss_out
         total = int(batch * c["ny"] * c["nx"])
         block = 256
         grid = (total + block - 1) // block
