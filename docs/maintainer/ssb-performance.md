@@ -932,30 +932,32 @@ repeating local minima.
 | 6-row arbitrary-dual row block with static shared memory | Focused CUDA parity passed, but real Samsung loss regressed to `37.21 ms` mean / `37.20 ms` p50 (`26.9 FPS`) in a 240-step run. | Rejected: the larger block lowered scheduling efficiency and did not recover enough row-stage throughput. |
 | Global module register cap tightened from `96` to `80`/`72` | Focused CUDA parity passed. Real Samsung loss measured `35.32 ms` mean at `80` and `35.44 ms` mean at `72`. | Rejected: forcing lower register allocation did not overcome the column occupancy limiter and likely traded occupancy for spills/scheduling pressure. |
 
-Current sustained real Samsung `512x512`, full active-BF, Hermitian-storage
-loss baseline on GPU1 is about `35-36 ms` (`~28 FPS`). Component event timing
-on the accepted full-buffer path is approximately `22.6 ms` row/gamma,
-`12.3 ms` column/phase, and `<0.2 ms` finalization, so the target gap is not
-in Python, final reduction, or scalar loss bookkeeping. GPU1 is also a 300 W
-card and sustained runs show `pviol=100%`, `299-300 W`, and SM clocks settling
-near `1.41-1.45 GHz`; this explains why short early samples look closer to
-target than long sustained runs.
+Accepted 2026-07-17 breakthrough: native `512x512` exact phase/loss now uses
+64-BF staging chunks by default. This keeps the row-IFFT producer/consumer
+working set small instead of writing and rereading one `18+ GB` intermediate.
+The scientific contract is unchanged: same full active BF disk (`8822` BF on
+the central Samsung field), same Hermitian `G_qk`, same per-BF phase/loss
+arithmetic, no binning, no crop, and no preview/settle split. Focused CUDA
+parity passed (`25/25`).
 
-One accepted side improvement from the same pass is a 512 phase-only
-sum-accumulation mode (`use_partial=4`). It skips dummy `sumsq` atomics when
-the microscopist is steering the exact phase image without requesting the
-variance loss. Focused CUDA parity passed, and real Samsung phase-only timing
-measured `35.25 ms` mean / `35.62 ms` p50 over 600 steps on GPU1. This does
-not solve the stricter phase+loss target.
+Sustained real Samsung GPU1 result after the default change:
 
-Current conclusion: gamma algebra, BF group sizing, atomics-vs-partials,
-cache policy, simple stream overlap, and branch-only specialization are not the
-next breakthrough. The best measured clue is still that coalesced row writes
-save about `6 ms`, but every out-of-kernel way to restore coalesced column
-input costs as much or more. The next serious candidate should fuse/tile the
-row and column stages so row output becomes effectively coalesced for global
-memory without paying a separate full transpose, or redesign the 2D FFT/phase
-accumulation around an exact in-kernel tile.
+| Mode | Steps | Mean | p50 | p95 | FPS |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Phase+loss | 600 | `32.49 ms` | `32.15 ms` | `33.31 ms` | `30.78 FPS` |
+| Phase-only | 240 | `31.94 ms` | `31.93 ms` | `32.08 ms` | `31.31 FPS` |
+
+Earlier full-buffer component timing was approximately `22.6 ms` row/gamma,
+`12.3 ms` column/phase, and `<0.2 ms` finalization. The new chunking win is not
+from changing gamma algebra or scalar loss; it is from making the producer/
+consumer memory working set smaller. GPU1 remains a 300 W card and sustained
+runs can still show `pviol=100%`, so the p95 margin around the 30 FPS frame
+budget should be watched on other machines.
+
+Current conclusion: the `512x512` exact full-BF phase/loss target is met on the
+real central Samsung field. The next structural performance target is
+`1024x1024`, where the same exact phase/loss path still needs a larger topology
+change, likely fused/tiled row-column work or another exact formulation.
 
 ## Next performance work
 
@@ -966,15 +968,13 @@ Action: run the Samsung/BTO HDF5 path end to end, including load/decode,
 hot-pixel filtering, BF-mask formation, Nelder-Mead/SSB setup, live controls,
 FFT display, and browser/widget reporting.
 
-Problem: the `512x512` exact phase/loss path is faster after the radix-8 row,
-transposed-staging, aperture, compiler, column-atan, and no-pair dual-BF work,
-but sustained real Samsung timing is still about `36-37 ms` (`~27 FPS`), not
-the `33.3 ms` / `30 FPS` target.
+Problem: the `512x512` exact phase/loss path now meets the `33.3 ms` / `30 FPS`
+target on the real central Samsung field, but the p95 margin is small on the
+300 W GPU1 power envelope.
 
-Action: attack the row-stage topology next. The current accepted kernel made
-column reads coalesced by making row writes strided; a real breakthrough needs
-coalesced row output and coalesced column input, or a fused/tiled row-column
-design that preserves the exact per-BF phase/loss arithmetic.
+Action: keep the 64-BF default chunking for 512, and re-run a 600-step
+real-data signoff whenever row/column kernels, power settings, BF policy, or
+driver/toolkit versions change.
 
 Problem: the phase-variance optimizer path cannot inherit the object Fourier-
 sum result because `mean(angle(object_bf))` is a different scientific quantity

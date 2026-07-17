@@ -1258,14 +1258,22 @@ class SSBEngine:
 
         bytes_per_bf = ny * nx * 8
         chunk_bf = max(1, (2 * 1024 ** 3) // bytes_per_bf)
-        try:
-            free_bytes = cp.cuda.runtime.memGetInfo()[0]
-            if self._result_buffer is not None:
-                free_bytes += int(self._result_buffer.nbytes)
-            target_bytes = min(int(free_bytes * 0.45), 24 * 1024 ** 3)
-            chunk_bf = min(num_bf, max(chunk_bf, max(1, target_bytes // bytes_per_bf)))
-        except Exception:
-            pass
+        if 0 < self._preferred_chunk_bf < num_bf:
+            chunk_bf = int(self._preferred_chunk_bf)
+        elif ny == 512 and nx == 512 and num_bf > 64:
+            # Keep the staged row-IFFT producer/consumer working set small.
+            # For full-BF 512 SSB, 64 BF chunks avoid the slow 18+ GB
+            # write-then-read pass while preserving exact phase/loss accumulation.
+            chunk_bf = 64
+        else:
+            try:
+                free_bytes = cp.cuda.runtime.memGetInfo()[0]
+                if self._result_buffer is not None:
+                    free_bytes += int(self._result_buffer.nbytes)
+                target_bytes = min(int(free_bytes * 0.45), 24 * 1024 ** 3)
+                chunk_bf = min(num_bf, max(chunk_bf, max(1, target_bytes // bytes_per_bf)))
+            except Exception:
+                pass
         if self._result_buffer is not None and self._result_buffer.shape[0] > chunk_bf:
             self._result_buffer = None
         chunk_shape = (chunk_bf, ny, nx)
