@@ -408,6 +408,9 @@ Rejected candidates from the same pass:
 | Column BF group `16` after the paired row change | Parity passed, but sustained p50 regressed to about `43.8 ms`; it added more atomic/group overhead. | Reverted. |
 | Column BF group `48` after the paired row change | Parity passed, but sustained p50 regressed to about `43.9 ms`; `32` was the best measured group in this pass. | Reverted. |
 | Partial-plane reduction instead of direct atomics for paired chunks | Scratch component timing was slower (`pair_col` p50 about `13.3 ms` plus reduction) than direct accumulation. | Rejected. |
+| Two-lane column phase/loss block `(64,2,1)` | Parity passed, but sustained p50 stayed about `43.8 ms`; extra shared-memory reduction and lower occupancy offset the halved BF-loop iterations. | Reverted. |
+| Direct full-plane `G_qk` loads in the paired row kernel | Full-storage timing regressed to p50 `44.0 ms`; the Hermitian-capable helper branch is not the row bottleneck. | Reverted. |
+| `16x16` tiled intermediate layout balancing row writes and column reads | Parity passed, but p50 regressed to `50.5 ms`; improved row-store locality was outweighed by worse column-load locality. | Reverted. |
 
 GPU1 was saturated during the long run (`100%` SM at the `300 W` power cap,
 about `66%` memory controller). The remaining exact-path bottleneck is not
