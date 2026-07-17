@@ -859,6 +859,7 @@ repeating local minima.
 | Dual row launch bound relaxed from `__launch_bounds__(256, 4)` to `256,3` | Full CUDA parity passed, but real Samsung no-pair loss p50 regressed to `36.79 ms`. | Rejected: the compiler freedom did not overcome the row-stage scheduling/shared-memory floor. |
 | No-pair dual partial-plane reduction instead of direct atomics | Scratch profile p50 moved from about `13.4 ms` direct column accumulation to about `14.0 ms` with partial reduction plus summing. | Rejected: extra global writes/reduction cost more than atomics for this path. |
 | Same-row dual `kx` reuse branch | Full CUDA parity passed and `4351/4411` real Samsung dual pairs shared detector row, but real loss p50 stayed about `36.6 ms` and row p50 stayed about `21.8 ms`. | Rejected: saved scalar `dx` work was too small and added branch/register pressure. |
+| One-shared-buffer arbitrary dual row IFFT | Focused CUDA parity passed, but row p50 regressed from about `21.6 ms` to `24.2 ms`; sustained real Samsung loss regressed to `38.78 ms` p50 (`25.8 FPS`). | Rejected: halving shared memory serialized the A/B row IFFTs and added barriers/stores, so occupancy pressure was not the dominant floor. |
 
 Current conclusion: gamma algebra and BF group sizing are not the next
 breakthrough. The best measured clue is still that coalesced row writes save
