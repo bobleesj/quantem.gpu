@@ -1,0 +1,141 @@
+# SSB performance notes
+
+This page records the current native CUDA SSB live-redraw contract so future
+work starts from measured behavior, not from memory.
+
+## User-facing target
+
+Microscopists need to steer aberration controls while viewing the same
+full-BF reconstruction used for the final result. For native full-resolution
+live display, the current targets are:
+
+- `512x512`: at least 30 FPS (`<=33.3 ms/redraw`).
+- `1024x1024`: at least 10 FPS (`<=100 ms/redraw`).
+
+Do not claim these numbers from detector binning, scan cropping, fewer BF
+pixels, or saved complex64 caches. Those are separate preview/export choices.
+
+## Exact object redraw path
+
+`SSB.result()` displays the complex object wave and then exposes its phase.
+For that object path, the inverse FFT can move outside the BF average:
+
+```text
+mean_bf(ifft2(corrected_bf)) == ifft2(mean_bf(corrected_bf))
+```
+
+The CUDA object redraw path now uses this identity for large native scans:
+
+1. Compute the same per-BF `pk` correction as the full custom SSB path.
+2. Sum corrected Fourier-domain terms in BF groups on the GPU.
+3. Reduce those group sums to one corrected Fourier image.
+4. Run one `ifft2` for the final object.
+
+This changes the memory/computation topology only. It does not change the BF
+selection, scan size, precision type, or object definition.
+
+The path is intentionally separate from the phase-variance optimizer path.
+`reconstruct()` and `reconstruct_with_loss()` average per-BF phase and still
+need their own optimized kernels because `angle(mean(object))` is not the same
+operation as `mean(angle(object))`.
+
+## Current measured baseline
+
+Hardware: RTX PRO 6000 Blackwell-class GPU on `mjgoat`.
+
+Input: synthetic complex64 `G_qk`, fitted 192-pixel detector BF disk radius
+`53 px`, `8809` BF pixels, native scan size, no crop, no binning.
+
+Benchmark: `SSBEngine.reconstruct_object(C10, C12, phi12)` after cache warmup.
+
+| Scan | Mean | p50 | p95 | FPS | VRAM pool |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `128x128` | `0.80 ms` | `0.80 ms` | `0.81 ms` | `1247.9` | `2.3 GB` |
+| `256x256` | `3.97 ms` | `3.37 ms` | `5.55 ms` | `251.6` | `9.4 GB` |
+| `512x512` | `12.29 ms` | `12.30 ms` | `12.53 ms` | `81.4` | `19.1 GB` |
+| `1024x1024` | `56.22 ms` | `55.54 ms` | `62.20 ms` | `17.8` | `76.2 GB` |
+
+This meets the current live-object target for both sizes. Treat it as a kernel
+microbenchmark, not as complete scientist-workflow signoff. Real-data HDF5
+load, hot-pixel filtering, BF-mask setup, browser/widget interaction, and
+display readback still need end-to-end checks for every public workflow.
+
+The same run measured the existing phase-mean and phase+loss paths. Those
+paths are different scientific quantities and remain the next optimization
+target:
+
+| Mode | `128x128` | `256x256` | `512x512` | `1024x1024` |
+| --- | ---: | ---: | ---: | ---: |
+| Object redraw | `0.80 ms / 1247.9 FPS` | `3.97 ms / 251.6 FPS` | `12.29 ms / 81.4 FPS` | `56.22 ms / 17.8 FPS` |
+| Phase redraw | `10.05 ms / 99.5 FPS` | `22.49 ms / 44.5 FPS` | `72.39 ms / 13.8 FPS` | `342.71 ms / 2.9 FPS` |
+| Phase+loss | `9.17 ms / 109.1 FPS` | `19.55 ms / 51.2 FPS` | `69.48 ms / 14.4 FPS` | `326.71 ms / 3.1 FPS` |
+
+## Parity evidence
+
+Focused CUDA parity tests live in `tests/test_ssb_cuda_128.py`.
+
+The object Fourier-sum path is compared against the previous per-BF chunked
+IFFT object path for `128x128`, `256x256`, `512x512`, and `1024x1024`:
+
+- `p99.9(abs_err) < 5e-9`
+- `p99.9(rel_err) < 1e-4`
+
+The `1024x1024` reconstruct-with-loss path is compared to an explicit CuPy
+reference with a tolerance that allows rare `atan2` branch-cut pixels while
+requiring the scalar objective and 99.9% of phase pixels to match.
+
+Run before changing SSB kernels:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 \
+PYTHONPATH=/home/owner/repos/quantem.gpu/src \
+pytest -q /home/owner/repos/quantem.gpu/tests/test_ssb_cuda_128.py
+```
+
+## Repeat the native benchmark
+
+Use the local Codex skill benchmark for synthetic kernel timing:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 \
+PYTHONPATH=/home/owner/repos/quantem.gpu/src \
+python /home/owner/.codex/skills/quantem-ssb-kernel-optimization/scripts/ssb_native_bench.py \
+  --repo /home/owner/repos/quantem.gpu \
+  --sizes 128,256,512,1024 \
+  --num-bf 8809 \
+  --iters 4 \
+  --mode object
+```
+
+Repeat with `--mode phase` and `--mode loss` for the full 12-run matrix. Do not
+compare object-mode FPS to phase-mode optimizer FPS without saying which
+scientific quantity is being drawn.
+
+## Next performance work
+
+Problem: the live object redraw target is met in the synthetic native-kernel
+benchmark, but real-data workflow signoff is still incomplete.
+
+Action: run the Samsung/BTO HDF5 path end to end, including load/decode,
+hot-pixel filtering, BF-mask formation, Nelder-Mead/SSB setup, live controls,
+FFT display, and browser/widget reporting.
+
+Problem: the phase-variance optimizer path has not received the same topology
+breakthrough.
+
+Action: keep optimizing `reconstruct()` and `reconstruct_with_loss()` with
+dedicated 1024 variance kernels or an equivalent exact reformulation; do not
+reuse the object-path claim for the optimizer objective.
+
+Problem: `1024x1024` batched optimizer variance is still disabled.
+
+Action: implement and parity-test a dedicated 1024 batch variance kernel before
+enabling batch trials at that size.
+
+Problem: MPS and WebGPU are not yet at parity with the CUDA native-size matrix.
+
+Action: run a separate backend matrix. MPS has `quantem.gpu.ssb.mps` and
+existing CUDA-reference tests, but the object Fourier-sum topology has not been
+ported there. WebGPU SSB currently lives in `quantem.widget` and supports
+`128/256/512`; `1024` needs a new WGSL FFT topology because the current shader
+is built around the `512` worker layout.

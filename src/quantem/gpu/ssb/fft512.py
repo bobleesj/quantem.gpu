@@ -857,6 +857,67 @@ __global__ void ifft512_cols_accumulate_t128_mr4(
     partial_sum[o3] = s3; partial_sumsq[o3] = q3;
 }
 
+__global__ void ssb512_corrected_fourier_sum_t256(
+    const float* __restrict__ kx_bf,
+    const float* __restrict__ ky_bf,
+    const float* __restrict__ qx_1d,
+    const float* __restrict__ qy_1d,
+    float wavelength,
+    float semiangle_rad,
+    float ang_y_rad,
+    float ang_x_rad,
+    float C10,
+    float C12,
+    float cos2phi12,
+    float sin2phi12,
+    float factor,
+    const float2* __restrict__ pk,
+    const float2* __restrict__ G_qk,
+    float2* __restrict__ partial_sum,
+    float dc_real,
+    float dc_imag,
+    int num_bf,
+    int k_bf
+) {
+    unsigned long long linear = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+    const unsigned long long plane = 512ull * 512ull;
+    int groups = (num_bf + k_bf - 1) / k_bf;
+    unsigned long long total = (unsigned long long)groups * plane;
+    if (linear >= total) return;
+
+    int group = (int)(linear / plane);
+    unsigned int idx = (unsigned int)(linear - (unsigned long long)group * plane);
+    int row = idx / 512u;
+    int col = idx - (unsigned int)row * 512u;
+    int bf_start = group * k_bf;
+    int bf_end = bf_start + k_bf;
+    if (bf_end > num_bf) bf_end = num_bf;
+
+    if (idx == 0u) {
+        float count = (float)(bf_end - bf_start);
+        partial_sum[(unsigned long long)group * plane] = make_float2(count * dc_real, count * dc_imag);
+        return;
+    }
+
+    float qx = __ldg(&qx_1d[row]);
+    float qy = __ldg(&qy_1d[col]);
+    float sum_re = 0.0f;
+    float sum_im = 0.0f;
+    for (int bf = bf_start; bf < bf_end; ++bf) {
+        float2 pkv = pk[bf];
+        float2 v = gamma_mul_pk_onthefly(
+            qx, qy,
+            __ldg(&kx_bf[bf]), __ldg(&ky_bf[bf]),
+            wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
+            C10, C12, cos2phi12, sin2phi12, factor,
+            pkv.x, pkv.y,
+            ld_float2(G_qk, (unsigned long long)bf * plane + idx));
+        sum_re += v.x;
+        sum_im += v.y;
+    }
+    partial_sum[(unsigned long long)group * plane + idx] = make_float2(sum_re, sum_im);
+}
+
 // Radix-8 variance kernel: 64 threads × 8 elements/thread. 3 FFT stages
 // (m=8 in-register, m=64 smem, m=512 smem) instead of 5 radix-4 stages.
 // Each block processes one column × 32 BFs sequentially. Sum/sumsq are
@@ -1159,6 +1220,7 @@ class CustomFFT512(CustomFFTBase):
                 "ifft512_rows_var_radix8_t64",
                 "ifft512_cols_accumulate_t128_mr4",
                 "ifft512_rows_fused_pk_full_t128_mr4_packed",
+                "ssb512_corrected_fourier_sum_t256",
             ),
             twiddle_name="TWIDDLE_512",
             rows_block=(128, 4, 1),
@@ -1170,6 +1232,7 @@ class CustomFFT512(CustomFFTBase):
             cols_block=(128, 4, 1),
             cols_grid_y=128,
         )
+        self._fourier_sum = self._module.get_function("ssb512_corrected_fourier_sum_t256")
 
 
 @lru_cache(maxsize=1)

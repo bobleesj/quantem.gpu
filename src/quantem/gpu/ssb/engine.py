@@ -357,6 +357,7 @@ class SSBEngine:
         self._sumsq_buffer = None
         self._partial_sum = None
         self._partial_sumsq = None
+        self._fourier_partial_buffer = None
         # Custom FFT (initialized in cache_rotation)
         self._custom_fft = None
         self._colvar_group = 32
@@ -529,6 +530,9 @@ class SSBEngine:
             if ny == 128 and nx == 128:
                 from .fft128 import get_custom_fft_128
                 self._custom_fft = get_custom_fft_128()
+            elif ny == 1024 and nx == 1024:
+                from .fft1024 import get_custom_fft_1024
+                self._custom_fft = get_custom_fft_1024()
             elif ny == 512 and nx == 512:
                 from .fft512 import get_custom_fft_512
                 self._custom_fft = get_custom_fft_512()
@@ -537,7 +541,8 @@ class SSBEngine:
                 self._custom_fft = get_custom_fft_256()
             else:
                 raise ValueError(
-                    "SSB CUDA backend supports 128x128, 256x256, and 512x512 "
+                    "SSB CUDA backend supports 128x128, 256x256, 512x512, "
+                    "and 1024x1024 "
                     f"scan, got {ny}x{nx}"
                 )
             self._colvar_group = int(self._custom_fft._colvar_group)
@@ -681,6 +686,68 @@ class SSBEngine:
             accumulator += chunk_buf.sum(axis=0)
         return accumulator / num_bf
 
+    def _reconstruct_object_fourier_sum(
+        self,
+        C10: float,
+        C12: float,
+        phi12: float,
+    ) -> "cp.ndarray":
+        """Exact object reconstruction via Fourier-domain BF summation.
+
+        This uses IFFT linearity:
+        ``mean_bf(ifft2(corrected_bf)) == ifft2(mean_bf(corrected_bf))``.
+        It preserves the final SSB object definition while avoiding one 2D
+        inverse FFT per BF pixel.
+        """
+        c = self._cache
+        num_bf = int(c["num_bf"])
+        ny = int(c["ny"])
+        nx = int(c["nx"])
+        if ny != nx:
+            raise ValueError("Fourier-sum object path expects square scan grids")
+
+        if self._pk_buffer is None or self._pk_buffer.shape != (num_bf,):
+            self._pk_buffer = cp.empty((num_bf,), dtype=cp.complex64)
+        cos2phi12 = math.cos(2.0 * phi12)
+        sin2phi12 = math.sin(2.0 * phi12)
+        _pk_kernel(
+            c["alpha_k2_1d"],
+            c["cos2phi_k_1d"],
+            c["sin2phi_k_1d"],
+            c["aperture_k_1d"],
+            cp.float32(C10),
+            cp.float32(C12),
+            cp.float32(cos2phi12),
+            cp.float32(sin2phi12),
+            cp.float32(self._factor),
+            self._pk_buffer,
+        )
+
+        k_bf = 32
+        n_groups = (num_bf + k_bf - 1) // k_bf
+        partial_shape = (n_groups, ny, nx)
+        if (
+            self._fourier_partial_buffer is None
+            or self._fourier_partial_buffer.shape != partial_shape
+        ):
+            self._fourier_partial_buffer = cp.empty(partial_shape, dtype=cp.complex64)
+
+        self._custom_fft.corrected_fourier_partial_sum(
+            self._fourier_partial_buffer,
+            self.G_qk,
+            c,
+            self._pk_buffer,
+            C10,
+            C12,
+            cos2phi12,
+            sin2phi12,
+            self._factor,
+            self._dc_value_host,
+            k_bf,
+        )
+        corrected_mean = self._fourier_partial_buffer.sum(axis=0) / float(num_bf)
+        return cp.fft.ifft2(corrected_mean)
+
     def reconstruct_object(self, C10: float, C12: float, phi12: float) -> "cp.ndarray":
         """Reconstruct complex transmission function.
 
@@ -699,6 +766,14 @@ class SSBEngine:
         n_row = int(c["ny"])
         n_col = int(c["nx"])
         full_bytes = num_bf * n_row * n_col * 8
+        if hasattr(self._custom_fft, "corrected_fourier_partial_sum"):
+            try:
+                return self._reconstruct_object_fourier_sum(C10, C12, phi12)
+            except RuntimeError:
+                if full_bytes > 6 * 1024 ** 3:
+                    pass
+                else:
+                    raise
         if full_bytes > 6 * 1024 ** 3:
             # Target ~2 GB chunk transient. Speed is flat from 64..9070 BF
             # per chunk on Blackwell (kernel-launch overhead negligible) so
@@ -1128,6 +1203,14 @@ class SSBEngine:
         partial_shape = (max_groups, ny, nx)
         if self._partial_sum is None or self._partial_sum.shape != partial_shape:
             self._partial_sum = cp.empty(partial_shape, dtype=cp.float32)
+
+        use_sum_only = (
+            not compute_loss
+            and hasattr(self._custom_fft, "ifft2_fused_pk_col_accumulate_sum")
+        )
+        if not use_sum_only and (
+            self._partial_sumsq is None or self._partial_sumsq.shape != partial_shape
+        ):
             self._partial_sumsq = cp.empty(partial_shape, dtype=cp.float32)
 
         phase_sum = cp.zeros((ny, nx), dtype=cp.float32)
@@ -1141,17 +1224,29 @@ class SSBEngine:
             sub_cache["ky_bf"] = c["ky_bf"][bf_start:bf_end]
             chunk_buf = self._result_buffer[:chunk]
             n_groups = (chunk + k_bf - 1) // k_bf
-            self._custom_fft.ifft2_fused_pk_col_accumulate(
-                chunk_buf,
-                self.G_qk[bf_start:bf_end],
-                sub_cache,
-                self._pk_buffer[bf_start:bf_end],
-                C10, C12, cos2phi12, sin2phi12,
-                self._factor, self._dc_value_host,
-                self._partial_sum[:n_groups],
-                self._partial_sumsq[:n_groups],
-                k_bf,
-            )
+            if use_sum_only:
+                self._custom_fft.ifft2_fused_pk_col_accumulate_sum(
+                    chunk_buf,
+                    self.G_qk[bf_start:bf_end],
+                    sub_cache,
+                    self._pk_buffer[bf_start:bf_end],
+                    C10, C12, cos2phi12, sin2phi12,
+                    self._factor, self._dc_value_host,
+                    self._partial_sum[:n_groups],
+                    k_bf,
+                )
+            else:
+                self._custom_fft.ifft2_fused_pk_col_accumulate(
+                    chunk_buf,
+                    self.G_qk[bf_start:bf_end],
+                    sub_cache,
+                    self._pk_buffer[bf_start:bf_end],
+                    C10, C12, cos2phi12, sin2phi12,
+                    self._factor, self._dc_value_host,
+                    self._partial_sum[:n_groups],
+                    self._partial_sumsq[:n_groups],
+                    k_bf,
+                )
             phase_sum += self._partial_sum[:n_groups].sum(axis=0)
             if compute_loss:
                 phase_sumsq += self._partial_sumsq[:n_groups].sum(axis=0)

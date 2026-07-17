@@ -689,6 +689,61 @@ class CustomFFTBase:
              np.int32(num_bf), np.int32(k_bf)),
         )
 
+    def corrected_fourier_partial_sum(
+        self,
+        partial_sum: cp.ndarray,
+        G_qk: cp.ndarray,
+        cache: dict,
+        pk: cp.ndarray,
+        C10: float,
+        C12: float,
+        cos2phi12: float,
+        sin2phi12: float,
+        factor: float,
+        dc_value: complex,
+        k_bf: int = 32,
+    ) -> None:
+        """Accumulate corrected Fourier terms in BF groups.
+
+        This is the exact linear path for ``reconstruct_object``:
+        ``mean_bf(ifft2(corrected_bf)) == ifft2(mean_bf(corrected_bf))``.
+        Size-specific subclasses register ``self._fourier_sum`` when this
+        path is available.
+        """
+        fourier_sum = getattr(self, "_fourier_sum", None)
+        if fourier_sum is None:
+            raise RuntimeError("corrected Fourier sum kernel not available")
+        N = self._size
+        if G_qk.dtype != cp.complex64 or pk.dtype != cp.complex64:
+            raise ValueError("Requires complex64 G_qk and pk")
+        if G_qk.ndim != 3 or G_qk.shape[1] != N or G_qk.shape[2] != N:
+            raise ValueError(f"Expects G_qk shape (num_bf, {N}, {N})")
+        num_bf = int(G_qk.shape[0])
+        if pk.shape != (num_bf,):
+            raise ValueError("pk must have shape (num_bf,)")
+        n_groups = (num_bf + k_bf - 1) // k_bf
+        if partial_sum.shape != (n_groups, N, N) or partial_sum.dtype != cp.complex64:
+            raise ValueError(f"partial_sum must have complex64 shape ({n_groups}, {N}, {N})")
+        (kx_bf, ky_bf, qx_1d, qy_1d,
+         wavelength, semiangle_rad, ang_y_rad, ang_x_rad) = self._require_geometry(cache)
+        total = n_groups * N * N
+        block = (256,)
+        grid = ((total + block[0] - 1) // block[0],)
+        fourier_sum(
+            grid,
+            block,
+            (
+                kx_bf, ky_bf, qx_1d, qy_1d,
+                np.float32(wavelength), np.float32(semiangle_rad),
+                np.float32(ang_y_rad), np.float32(ang_x_rad),
+                np.float32(C10), np.float32(C12),
+                np.float32(cos2phi12), np.float32(sin2phi12),
+                np.float32(factor), pk, G_qk, partial_sum,
+                np.float32(dc_value.real), np.float32(dc_value.imag),
+                np.int32(num_bf), np.int32(k_bf),
+            ),
+        )
+
     def ifft2_inplace_batch_fused_pk_variance(
         self,
         data: cp.ndarray,

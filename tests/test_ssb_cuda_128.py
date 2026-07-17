@@ -261,6 +261,44 @@ def test_cuda_128_engine_matches_explicit_cupy_reference() -> None:
     assert loss == pytest.approx(ref_loss, rel=2e-6, abs=2e-6)
 
 
+def test_cuda_1024_engine_matches_explicit_cupy_reference() -> None:
+    cp = _cupy()
+    engine = _make_engine(size=1024, num_bf=3)
+
+    c10, c12, phi12 = -120.0, 55.0, math.radians(17.0)
+    phase, loss = engine.reconstruct_with_loss(c10, c12, phi12)
+    ref_phase, ref_loss = _reference_phase_loss_chunked(
+        engine, c10, c12, phi12, chunk_bf=1
+    )
+
+    # A tiny number of pixels can cross the atan2 branch cut differently
+    # between the fixed-size CUDA IFFT and cuFFT, shifting the arithmetic mean
+    # by 2π / num_bf.  The scalar objective and essentially all pixels should
+    # still match the explicit reference.
+    phase_abs_err = cp.abs(phase - ref_phase)
+    assert float(cp.percentile(phase_abs_err, 99.9)) < 3e-4
+    assert loss == pytest.approx(ref_loss, rel=1e-4, abs=1e-4)
+
+    phase_sum_only = engine._reconstruct_chunked(c10, c12, phi12)
+    sum_only_abs_err = cp.abs(phase_sum_only - ref_phase)
+    assert float(cp.percentile(sum_only_abs_err, 99.9)) < 3e-4
+
+
+@pytest.mark.parametrize("size,num_bf", [(128, 7), (256, 5), (512, 5), (1024, 3)])
+def test_cuda_fourier_sum_object_matches_chunked_ifft(size: int, num_bf: int) -> None:
+    cp = _cupy()
+    engine = _make_engine(size=size, num_bf=num_bf)
+
+    c10, c12, phi12 = -120.0, 55.0, math.radians(17.0)
+    old_obj = engine._run_correction_pipeline_chunked(c10, c12, phi12, chunk_bf=1)
+    new_obj = engine._reconstruct_object_fourier_sum(c10, c12, phi12)
+
+    abs_err = cp.abs(old_obj - new_obj)
+    rel_err = abs_err / cp.maximum(cp.abs(old_obj), cp.float32(1e-6))
+    assert float(cp.percentile(abs_err, 99.9)) < 5e-9
+    assert float(cp.percentile(rel_err, 99.9)) < 1e-4
+
+
 def test_cuda_128_variance_loss_batch_matches_reference() -> None:
     cp = _cupy()
     engine = _make_engine()

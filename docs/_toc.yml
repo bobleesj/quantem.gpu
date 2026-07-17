@@ -25,3 +25,4 @@ parts:
   - caption: Maintainers
     chapters:
       - file: maintainer/migration
+      - file: maintainer/ssb-performance
