@@ -1233,6 +1233,9 @@ class SSBEngine:
 
         phase_sum = cp.zeros((ny, nx), dtype=cp.float32)
         phase_sumsq = cp.zeros((ny, nx), dtype=cp.float32) if compute_loss else None
+        use_direct_accumulate = hasattr(
+            self._custom_fft, "ifft2_fused_pk_col_accumulate_direct"
+        )
 
         for bf_start in range(0, num_bf, chunk_bf):
             bf_end = min(bf_start + chunk_bf, num_bf)
@@ -1242,7 +1245,19 @@ class SSBEngine:
             sub_cache["ky_bf"] = c["ky_bf"][bf_start:bf_end]
             chunk_buf = self._result_buffer[:chunk]
             n_groups = (chunk + k_bf - 1) // k_bf
-            if use_sum_only:
+            if use_direct_accumulate:
+                self._custom_fft.ifft2_fused_pk_col_accumulate_direct(
+                    chunk_buf,
+                    self.G_qk[bf_start:bf_end],
+                    sub_cache,
+                    self._pk_buffer[bf_start:bf_end],
+                    C10, C12, cos2phi12, sin2phi12,
+                    self._factor, self._dc_value_host,
+                    phase_sum,
+                    phase_sumsq,
+                    k_bf,
+                )
+            elif use_sum_only:
                 self._custom_fft.ifft2_fused_pk_col_accumulate_sum(
                     chunk_buf,
                     self.G_qk[bf_start:bf_end],
@@ -1265,9 +1280,10 @@ class SSBEngine:
                     self._partial_sumsq[:n_groups],
                     k_bf,
                 )
-            phase_sum += self._partial_sum[:n_groups].sum(axis=0)
-            if compute_loss:
-                phase_sumsq += self._partial_sumsq[:n_groups].sum(axis=0)
+            if not use_direct_accumulate:
+                phase_sum += self._partial_sum[:n_groups].sum(axis=0)
+                if compute_loss:
+                    phase_sumsq += self._partial_sumsq[:n_groups].sum(axis=0)
 
         mean_phase = phase_sum / float(num_bf)
 

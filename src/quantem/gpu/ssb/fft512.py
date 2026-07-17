@@ -1593,6 +1593,7 @@ class CustomFFT512(CustomFFTBase):
         )
         self._fourier_sum = self._module.get_function("ssb512_corrected_fourier_sum_t256")
         self._phase_sum_dummy_sumsq = None
+        self._direct_dummy_sumsq = None
         self._colvar_group = 64
 
     def ifft2_fused_pk_col_accumulate(
@@ -1757,6 +1758,80 @@ class CustomFFT512(CustomFFTBase):
             grid_cols,
             self._cols_block,
             (data, partial_sum, np.int32(num_bf), np.int32(k_bf)),
+        )
+
+    def ifft2_fused_pk_col_accumulate_direct(
+        self,
+        data: cp.ndarray,
+        G_qk: cp.ndarray,
+        cache: dict,
+        pk: cp.ndarray,
+        C10: float,
+        C12: float,
+        cos2phi12: float,
+        sin2phi12: float,
+        factor: float,
+        dc_value: complex,
+        phase_sum: cp.ndarray,
+        phase_sumsq: cp.ndarray | None,
+        k_bf: int = 64,
+    ) -> None:
+        """Row FFT + column IFFT, atomically accumulating into final planes."""
+        N = self._size
+        if k_bf != self._colvar_group:
+            raise ValueError(f"direct accumulate requires k_bf={self._colvar_group}")
+        if data.dtype != cp.complex64 or G_qk.dtype != cp.complex64 or pk.dtype != cp.complex64:
+            raise ValueError("Requires complex64 input")
+        if data.ndim != 3 or data.shape[1] != N or data.shape[2] != N:
+            raise ValueError(f"Expects shape (num_bf, {N}, {N})")
+        num_bf = int(data.shape[0])
+        if G_qk.ndim != 3 or G_qk.shape[0] != num_bf or G_qk.shape[1] != N:
+            raise ValueError(f"G_qk must have shape (num_bf, {N}, {N}) or Hermitian")
+        if G_qk.shape[2] not in (N, N // 2 + 1):
+            raise ValueError(
+                f"G_qk must have {N} columns or Hermitian {N // 2 + 1} columns"
+            )
+        gqk_cols = int(G_qk.shape[2])
+        if pk.shape != (num_bf,):
+            raise ValueError("pk must have shape (num_bf,)")
+        if phase_sum.shape != (N, N):
+            raise ValueError(f"phase_sum must have shape ({N}, {N})")
+        if phase_sumsq is None:
+            if self._direct_dummy_sumsq is None or self._direct_dummy_sumsq.shape != (N, N):
+                self._direct_dummy_sumsq = cp.empty_like(phase_sum)
+            phase_sumsq = self._direct_dummy_sumsq
+        elif phase_sumsq.shape != (N, N):
+            raise ValueError(f"phase_sumsq must have shape ({N}, {N})")
+        (kx_bf, ky_bf, qx_1d, qy_1d,
+         wavelength, semiangle_rad, ang_y_rad, ang_x_rad) = self._require_geometry(cache)
+
+        self._rows_fused_pk_r8(
+            (1, N, num_bf),
+            self._rows_var_block,
+            (
+                kx_bf, ky_bf, qx_1d, qy_1d,
+                np.float32(wavelength), np.float32(semiangle_rad),
+                np.float32(ang_y_rad), np.float32(ang_x_rad),
+                np.float32(C10), np.float32(C12),
+                np.float32(cos2phi12), np.float32(sin2phi12),
+                np.float32(factor), pk, G_qk, data,
+                np.float32(dc_value.real), np.float32(dc_value.imag),
+                np.int32(num_bf), np.int32(gqk_cols),
+            ),
+        )
+        n_groups = (num_bf + k_bf - 1) // k_bf
+        self._rows_var_batch(
+            (1, self._rows_var_grid_y, n_groups),
+            self._rows_var_block,
+            (
+                data,
+                phase_sum,
+                phase_sumsq,
+                np.int32(num_bf),
+                np.int32(1),
+                np.float32(1.0 / (N * N)),
+                np.int32(0),
+            ),
         )
 
 

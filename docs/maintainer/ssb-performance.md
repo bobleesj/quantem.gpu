@@ -236,13 +236,17 @@ Accepted kernel changes:
 - Relaxed the two 512 radix-8 hot kernels from `__launch_bounds__(64, 10)` to
   `__launch_bounds__(64, 8)`, which gave a small scheduling win without parity
   changes.
+- Added a 512 direct-accumulate path where the column phase/loss kernel
+  atomically accumulates into the final phase planes. This removes the
+  per-chunk partial-plane reduction launches; atomic cost is lower than the
+  removed launch/reduction overhead at this size.
 
 Steady-state synthetic `512x512`, `8809` BF timing on GPU1:
 
 | Mode | Before this pass | After radix-8 row | After transposed staging | After 64-BF groups | FPS after |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Phase redraw | `70.57 ms` | `58.10 ms` | `53.46 ms` | `52.45 ms` | `19.1` |
-| Phase+loss | `69.26 ms` | `58.09 ms` | `52.98 ms` | `52.67 ms` | `19.0` |
+| Phase redraw | `70.57 ms` | `58.10 ms` | `53.46 ms` | `52.27 ms` | `19.1` |
+| Phase+loss | `69.26 ms` | `58.09 ms` | `52.98 ms` | `52.36 ms` | `19.1` |
 
 Component timing for phase redraw after the accepted changes:
 
@@ -267,6 +271,9 @@ loss:  mean 52.83 ms, p50 53.42 ms, p95 53.61 ms, 18.9 FPS
 with 64-BF groups and relaxed launch bounds:
 phase: mean 52.45 ms, p50 52.97 ms, p95 53.09 ms, 19.1 FPS
 loss:  mean 52.67 ms, p50 53.31 ms, p95 53.44 ms, 19.0 FPS
+with direct accumulation:
+phase: mean 52.27 ms, p50 52.78 ms, p95 52.90 ms, 19.1 FPS
+loss:  mean 52.36 ms, p50 52.97 ms, p95 53.11 ms, 19.1 FPS
 ```
 
 Rejected candidates from the same pass:
@@ -288,6 +295,7 @@ Rejected candidates from the same pass:
 | Raising the exact phase/loss chunk cap from `2 GB` to `4 GB` | Parity passed, but phase/loss timing stayed around `52.7-52.9 ms` while using more transient memory. | Reverted. |
 | Raising the column phase/loss BF group from `64` to `128` | Parity passed, but phase/loss timing regressed slightly to `52.8-53.0 ms`. | Reverted. |
 | Relaxing 512 radix-8 launch bounds further from `8` to `6` blocks | Parity passed, but phase timing regressed to `52.6 ms` from the `52.45 ms` launch-bounds-8 result. | Reverted. |
+| Raising the direct-accumulate BF group from `64` to `128` | Parity passed, but phase timing regressed to `52.47 ms` from the `52.27 ms` direct 64-BF result. | Reverted. |
 
 GPU1 was saturated during the long run (`100%` SM at the `300 W` power cap,
 about `66%` memory controller). The remaining exact-path bottleneck is not
