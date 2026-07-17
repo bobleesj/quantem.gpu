@@ -363,7 +363,7 @@ __global__ void ifft512_rows_fused_pk_full_t128_mr4_packed(
     out[idx3] = srow[pos3];
 }
 
-__global__ __launch_bounds__(64, 10)
+__global__ __launch_bounds__(64, 8)
 void ifft512_rows_fused_pk_radix8_t64_packed(
     const float* __restrict__ kx_bf,
     const float* __restrict__ ky_bf,
@@ -1273,7 +1273,7 @@ __global__ void ssb512_corrected_fourier_sum_t256(
 // (m=8 in-register, m=64 smem, m=512 smem) instead of 5 radix-4 stages.
 // Each block processes one column × 64 BFs sequentially. Sum/sumsq are
 // accumulated across BFs per output position.
-__global__ __launch_bounds__(64, 10)
+__global__ __launch_bounds__(64, 8)
 void ifft512_rows_var_radix8_t64(const float2* __restrict__ data,
                                  float* __restrict__ sum,
                                  float* __restrict__ sumsq,

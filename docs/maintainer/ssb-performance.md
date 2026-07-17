@@ -233,13 +233,16 @@ Accepted kernel changes:
   reader, preserving parity for batched optimizer candidates.
 - Raised the `512x512` column phase/loss BF group from `32` to `64`, reducing
   partial-plane overhead without changing the per-BF phase/loss arithmetic.
+- Relaxed the two 512 radix-8 hot kernels from `__launch_bounds__(64, 10)` to
+  `__launch_bounds__(64, 8)`, which gave a small scheduling win without parity
+  changes.
 
 Steady-state synthetic `512x512`, `8809` BF timing on GPU1:
 
 | Mode | Before this pass | After radix-8 row | After transposed staging | After 64-BF groups | FPS after |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Phase redraw | `70.57 ms` | `58.10 ms` | `53.46 ms` | `52.63 ms` | `19.0` |
-| Phase+loss | `69.26 ms` | `58.09 ms` | `52.98 ms` | `52.83 ms` | `18.9` |
+| Phase redraw | `70.57 ms` | `58.10 ms` | `53.46 ms` | `52.45 ms` | `19.1` |
+| Phase+loss | `69.26 ms` | `58.09 ms` | `52.98 ms` | `52.67 ms` | `19.0` |
 
 Component timing for phase redraw after the accepted changes:
 
@@ -261,6 +264,9 @@ loss:  mean 52.98 ms, p50 53.29 ms, p95 53.43 ms, 18.9 FPS
 with 64-BF column groups:
 phase: mean 52.63 ms, p50 53.12 ms, p95 53.31 ms, 19.0 FPS
 loss:  mean 52.83 ms, p50 53.42 ms, p95 53.61 ms, 18.9 FPS
+with 64-BF groups and relaxed launch bounds:
+phase: mean 52.45 ms, p50 52.97 ms, p95 53.09 ms, 19.1 FPS
+loss:  mean 52.67 ms, p50 53.31 ms, p95 53.44 ms, 19.0 FPS
 ```
 
 Rejected candidates from the same pass:
@@ -280,6 +286,8 @@ Rejected candidates from the same pass:
 | Computing 2 rows per block and writing transposed tiles directly | Parity passed, but `512` phase redraw regressed to `54.5 ms` (`18.4 FPS`). | Reverted. |
 | Skipping `sincos` when shifted apertures are exactly zero | Parity passed, but `512` phase redraw stayed around `53.1 ms`; branch/control-flow cost offset the skipped work. | Reverted. |
 | Raising the exact phase/loss chunk cap from `2 GB` to `4 GB` | Parity passed, but phase/loss timing stayed around `52.7-52.9 ms` while using more transient memory. | Reverted. |
+| Raising the column phase/loss BF group from `64` to `128` | Parity passed, but phase/loss timing regressed slightly to `52.8-53.0 ms`. | Reverted. |
+| Relaxing 512 radix-8 launch bounds further from `8` to `6` blocks | Parity passed, but phase timing regressed to `52.6 ms` from the `52.45 ms` launch-bounds-8 result. | Reverted. |
 
 GPU1 was saturated during the long run (`100%` SM at the `300 W` power cap,
 about `66%` memory controller). The remaining exact-path bottleneck is not
