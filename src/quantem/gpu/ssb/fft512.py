@@ -684,7 +684,7 @@ void ifft512_rows_fused_pk_radix8_t64_packed(
     out[out_base + (size_t)(tid + 448) * 512u] = r7;
 }
 
-__global__ __launch_bounds__(64, 10)
+__global__ __launch_bounds__(256, 3)
 void ifft512_rows_fused_pk_pair_radix8_t64_packed(
     const int* __restrict__ pair_a,
     const int* __restrict__ pair_b,
@@ -710,7 +710,7 @@ void ifft512_rows_fused_pk_pair_radix8_t64_packed(
     int gqk_cols
 ) {
     int pair = blockIdx.z;
-    int row = blockIdx.y;
+    int row = blockIdx.y * 4 + threadIdx.y;
     int tid = threadIdx.x;
     if (pair >= num_pairs || row >= 512 || tid >= 64) return;
 
@@ -824,7 +824,8 @@ void ifft512_rows_fused_pk_pair_radix8_t64_packed(
         if (src7 == 0) { a7 = make_float2(dc_real, dc_imag); b7 = make_float2(dc_real, dc_imag); }
     }
 
-    __shared__ float2 sbuf[1024];
+    __shared__ float2 sbuf_all[4][1024];
+    float2* sbuf = sbuf_all[threadIdx.y];
     ifft512_radix8_apply_t64(a0, a1, a2, a3, a4, a5, a6, a7, tid, sbuf);
     ifft512_radix8_apply_t64(b0, b1, b2, b3, b4, b5, b6, b7, tid, sbuf + 512);
 
@@ -1862,6 +1863,8 @@ class CustomFFT512(CustomFFTBase):
         self._rows_fused_pk_pair_r8 = self._module.get_function(
             "ifft512_rows_fused_pk_pair_radix8_t64_packed"
         )
+        self._rows_pair_block = (64, 4, 1)
+        self._rows_pair_grid_y = 128
         self._phase_sum_dummy_sumsq = None
         self._direct_dummy_sumsq = None
         self._colvar_group = 32
@@ -2154,8 +2157,8 @@ class CustomFFT512(CustomFFTBase):
 
         out = data[:out_bf]
         self._rows_fused_pk_pair_r8(
-            (1, N, num_pairs),
-            self._rows_var_block,
+            (1, self._rows_pair_grid_y, num_pairs),
+            self._rows_pair_block,
             (
                 pair_a, pair_b,
                 kx_bf, ky_bf, qx_1d, qy_1d,

@@ -346,6 +346,55 @@ Current component split for the paired full-storage path:
 | Singleton/final overhead | `0.18 ms` |
 | Profiled GPU total | `42.45 ms` |
 
+Follow-up on GPU1 kept two exact-path micro-improvements for the `512x512`,
+`8809` BF C10/C12 phase/loss path:
+
+- The paired row kernel now processes four rows per block, reducing row-kernel
+  block scheduling pressure while preserving the same `+k/-k` arithmetic.
+- The C10/C12 chunked core can use a memory-aware transient staging buffer.
+  On the 96 GB GPU1 test run it staged the full `8809 x 512 x 512` complex64
+  intermediate in VRAM (`~37.5 GB` CuPy pool including source `G_qk`) and
+  reduced row/column launch count. This is not a saved cache and does not
+  change BF selection, scan size, precision, or phase/loss definition.
+
+Sustained timing after those changes:
+
+| Mode | Mean | p50 | p95 | FPS |
+| --- | ---: | ---: | ---: | ---: |
+| Phase redraw | `42.58 ms` | `43.04 ms` | `43.14 ms` | `23.5` |
+| Phase+loss | `42.46 ms` | `42.97 ms` | `43.05 ms` | `23.6` |
+
+This is a small checkpoint, not the `30 FPS` target. The exact path still
+misses the `33.3 ms` frame budget by about `9.7 ms` p50.
+
+Component split for the full-staging four-row path:
+
+| Component | p50 total |
+| --- | ---: |
+| `pk` update | `0.012 ms` |
+| Row gamma + row IFFT + transposed write | `27.87 ms` |
+| Column IFFT + phase/loss accumulation | `13.33 ms` |
+| Singleton/final overhead | `0.11 ms` |
+| Profiled GPU total | `~41.3 ms` |
+
+Nsight Compute on the four-row paired row kernel with
+`__launch_bounds__(256, 3)`:
+
+- `78` registers/thread, no local/shared spills.
+- `50.0%` theoretical occupancy, `46.8%` achieved occupancy.
+- `0.45` eligible warps/scheduler and `79.6%` cycles with no eligible warp.
+- `794 GB/s` memory throughput, `94.2%` memory busy, `75.4%` L2 hit rate.
+- Main stall: MIO/shared-memory pressure. Raising occupancy did not produce a
+  large wall-time win because eligible warps remained low.
+
+Nsight Compute on the column phase/loss kernel:
+
+- `115` registers/thread, no local/shared spills.
+- `33.3%` theoretical occupancy, `33.1%` achieved occupancy.
+- `0.57` eligible warps/scheduler and `68.4%` cycles with no eligible warp.
+- `846 GB/s` memory throughput but low L2 hit rate, with L1TEX scoreboard
+  stalls. Launch-bound forcing to reduce registers regressed timing.
+
 Nsight Compute on the paired row kernel:
 
 - `94` registers/thread, no local/shared spills.
@@ -411,6 +460,10 @@ Rejected candidates from the same pass:
 | Two-lane column phase/loss block `(64,2,1)` | Parity passed, but sustained p50 stayed about `43.8 ms`; extra shared-memory reduction and lower occupancy offset the halved BF-loop iterations. | Reverted. |
 | Direct full-plane `G_qk` loads in the paired row kernel | Full-storage timing regressed to p50 `44.0 ms`; the Hermitian-capable helper branch is not the row bottleneck. | Reverted. |
 | `16x16` tiled intermediate layout balancing row writes and column reads | Parity passed, but p50 regressed to `50.5 ms`; improved row-store locality was outweighed by worse column-load locality. | Reverted. |
+| Eight rows per paired row block using dynamic 64 KB shared memory | Parity passed, but p50 regressed to `46.0 ms`; lower occupancy/shared-memory pressure outweighed lower block count. | Reverted. |
+| Packed `float4` helper transforming the `+k/-k` row FFTs together | Parity passed, but p50 regressed to `43.7 ms`; extra register and shuffle pressure outweighed saved barriers. | Reverted. |
+| Column launch bound `__launch_bounds__(64, 12)` | Parity passed, but p50 regressed to `44.25 ms`; forcing more blocks over-constrained the compiler. | Reverted. |
+| Column launch bound `__launch_bounds__(64, 10)` | Parity passed, but p50 regressed to `43.21 ms`; the original `64,8` launch bound remains best for the column kernel. | Reverted. |
 
 GPU1 was saturated during the long run (`100%` SM at the `300 W` power cap,
 about `66%` memory controller). The remaining exact-path bottleneck is not

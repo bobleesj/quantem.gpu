@@ -1249,7 +1249,16 @@ class SSBEngine:
             self._pk_buffer,
         )
 
-        chunk_bf = max(1, (2 * 1024 ** 3) // (ny * nx * 8))
+        bytes_per_bf = ny * nx * 8
+        chunk_bf = max(1, (2 * 1024 ** 3) // bytes_per_bf)
+        try:
+            free_bytes = cp.cuda.runtime.memGetInfo()[0]
+            if self._result_buffer is not None:
+                free_bytes += int(self._result_buffer.nbytes)
+            target_bytes = min(int(free_bytes * 0.45), 24 * 1024 ** 3)
+            chunk_bf = min(num_bf, max(chunk_bf, max(1, target_bytes // bytes_per_bf)))
+        except Exception:
+            pass
         if self._result_buffer is not None and self._result_buffer.shape[0] > chunk_bf:
             self._result_buffer = None
         chunk_shape = (chunk_bf, ny, nx)
