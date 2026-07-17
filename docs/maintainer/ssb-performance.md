@@ -405,6 +405,19 @@ Nsight Compute on the column phase/loss kernel:
 - `846 GB/s` memory throughput but low L2 hit rate, with L1TEX scoreboard
   stalls. Launch-bound forcing to reduce registers regressed timing.
 
+Follow-up full-plane profiling on GPU1, matching the synthetic FPS benchmark
+storage mode, confirmed the same limit after the coalesced row-store commit:
+
+- Paired row/gamma kernel: `77` registers/thread, no spills, `50.0%`
+  theoretical occupancy, `49.2%` achieved occupancy, `0.57` eligible
+  warps/scheduler, about `1.09 TB/s` memory throughput, and source counters
+  reported about `50%` excessive shared-memory wavefronts.
+- Column phase/loss kernel: `115` registers/thread, no spills, `33.3%`
+  theoretical occupancy, `33.1%` achieved occupancy, `0.57` eligible
+  warps/scheduler, about `847 GB/s` memory throughput, near-zero L1 hit rate,
+  and source counters reported L1TEX scoreboard stalls plus about `33%`
+  excessive shared-memory wavefronts.
+
 Nsight Compute on the paired row kernel:
 
 - `94` registers/thread, no local/shared spills.
@@ -466,6 +479,7 @@ Rejected candidates from the same pass:
 | Column BF group `128` after the paired row change | Parity passed, but sustained p50 stayed around `43.9 ms` and mean worsened slightly. | Reverted. |
 | Column BF group `16` after the paired row change | Parity passed, but sustained p50 regressed to about `43.8 ms`; it added more atomic/group overhead. | Reverted. |
 | Column BF group `48` after the paired row change | Parity passed, but sustained p50 regressed to about `43.9 ms`; `32` was the best measured group in this pass. | Reverted. |
+| Column BF group `64` after the coalesced paired-row write | Parity passed, but exact loss p50 regressed to `39.56 ms`; halving group/atomic count reduced wavefront parallelism too much. | Reverted. |
 | Partial-plane reduction instead of direct atomics for paired chunks | Scratch component timing was slower (`pair_col` p50 about `13.3 ms` plus reduction) than direct accumulation. | Rejected. |
 | Two-lane column phase/loss block `(64,2,1)` | Parity passed, but sustained p50 stayed about `43.8 ms`; extra shared-memory reduction and lower occupancy offset the halved BF-loop iterations. | Reverted. |
 | Direct full-plane `G_qk` loads in the paired row kernel | Full-storage timing regressed to p50 `44.0 ms`; the Hermitian-capable helper branch is not the row bottleneck. | Reverted. |
@@ -480,6 +494,11 @@ Rejected candidates from the same pass:
 | Bit-reversed transient row layout plus contiguous column loads | Parity passed after fixing the direct/partial address mode, but the split-kernel version stayed around p50 `42.8 ms` and the branch version raised column registers from `115` to `127` for only a noise-level win. | Reverted. |
 | Contiguous `G_qk` row-load microscope for a hypothetical column-permuted storage layout | Synthetic constant-`G_qk` throughput probe regressed to p50 `47.8 ms`; row `G_qk` column order is not the current breakthrough. | Reverted. |
 | CUDA cache policy `-Xptxas=-dlcm=cg` instead of `ca` | Exact loss p50 regressed to `42.83 ms`; cache-all remains better for the current row/column mix. | Reverted. |
+| Column no-prefetch register-reduction variant | Parity passed and registers dropped from `115` to `101`, but exact loss p50 stayed about `39.42 ms` and L1TEX scoreboard stalls worsened. | Reverted. |
+| Degree-5 `atan2` polynomial in the phase accumulator | Full CUDA parity passed, but A/B timing was noise-level (`~0.04-0.09 ms` p50) and not worth a precision-sensitive change. | Reverted. |
+| Negative `use_partial` phase-only branch to skip dummy `sumsq` writes | Small CUDA parity passed, but the full `8809` BF phase benchmark hit `CUDA_ERROR_ILLEGAL_ADDRESS`, reproducing the earlier unsafe branch failure mode. | Reverted. |
+| Column read-only `ld_float2` loads for the transposed intermediate | Full CUDA parity passed, but exact loss p50 regressed to `39.48 ms`; the plain global-load path remains better for the streaming intermediate. | Reverted. |
+| Global CUDA `--maxrregcount=80` after the coalesced paired-row write | Full CUDA parity passed, but exact loss p50 stayed around `39.29 ms`; occupancy pressure is not solved by this broad cap. | Reverted. |
 
 GPU1 was saturated during the long run (`100%` SM at the `300 W` power cap,
 about `66%` memory controller). The remaining exact-path bottleneck is not
