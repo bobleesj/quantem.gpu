@@ -928,6 +928,7 @@ repeating local minima.
 | Column BF group `32 -> 16` | Full CUDA parity passed, but real Samsung loss regressed to `35.92 ms` mean / `35.91 ms` p50. | Rejected: extra phase-atomic groups outweighed lower loop pressure. |
 | Hermitian-only duplicate arbitrary-dual row kernel | Full CUDA parity passed, but real Samsung loss regressed to `35.80 ms` mean / `35.80 ms` p50. | Rejected: removing the runtime `gqk_cols` branch increased code footprint/register pressure enough to lose. |
 | Two-stream row/column chunk overlap prototype | Exact BF chunks ran with two staging buffers, but best chunked p50 was still about `35.15 ms` for row+column work only. | Rejected as a breakthrough path: the kernels do not overlap enough on one GPU to close the budget. |
+| 8-row arbitrary-dual row block with 64 KB dynamic shared memory | Small focused parity passed, but the real full-BF Samsung launch hit `CUDA_ERROR_ILLEGAL_ADDRESS` inside the row kernel under `CUDA_LAUNCH_BLOCKING=1`. | Rejected: the larger row-store topology is unsafe on the target grid and must not be carried without a fresh memory-correct redesign. |
 
 Current sustained real Samsung `512x512`, full active-BF, Hermitian-storage
 loss baseline on GPU1 is about `35-36 ms` (`~28 FPS`). Component event timing
