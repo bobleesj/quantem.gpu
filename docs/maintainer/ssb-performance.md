@@ -240,6 +240,18 @@ Accepted kernel changes:
   atomically accumulates into the final phase planes. This removes the
   per-chunk partial-plane reduction launches; atomic cost is lower than the
   removed launch/reduction overhead at this size.
+- Added an exact safe-inside aperture branch to `compute_geometry()`. For the
+  Samsung-like `512`, `8809` BF benchmark, both shifted apertures are exactly
+  `1.0` for `99.9995%` of points, so the row kernel now avoids the soft-edge
+  aperture `sqrt/div` path except at the edge while preserving parity.
+- Enabled CUDA fast math for these RawModules, switched global-load cache
+  policy from `dlcm=cg` to `dlcm=ca`, changed the 512 column phase/loss loop
+  from unroll `8` to unroll `2`, and retuned the 512 row/gamma launch bound to
+  `__launch_bounds__(64, 10)` with the column kernel staying at
+  `__launch_bounds__(64, 8)`.
+- Replaced the hot 512 column `atan2f` calls with a degree-6 polynomial
+  `atan2` helper. Full CUDA parity tests still pass; this is a small
+  column-side win after `--use_fast_math`, not the main breakthrough.
 
 Steady-state synthetic `512x512`, `8809` BF timing on GPU1:
 
@@ -274,7 +286,36 @@ loss:  mean 52.67 ms, p50 53.31 ms, p95 53.44 ms, 19.0 FPS
 with direct accumulation:
 phase: mean 52.27 ms, p50 52.78 ms, p95 52.90 ms, 19.1 FPS
 loss:  mean 52.36 ms, p50 52.97 ms, p95 53.11 ms, 19.1 FPS
+with aperture shortcut, fast math/cache retune, column unroll 2, row launch
+bound 10, and polynomial atan:
+phase: mean 45.18 ms, p50 45.33 ms, p95 45.47 ms, 22.1 FPS
+loss:  mean 45.11 ms, p50 45.32 ms, p95 45.42 ms, 22.2 FPS
 ```
+
+Final component timing for the accepted 2026-07-17 incremental pass:
+
+| Component | p50 total |
+| --- | ---: |
+| `pk` update | `0.015 ms` |
+| Row gamma + row IFFT + transposed write | `29.99 ms` |
+| Column IFFT + phase/loss accumulation | `13.71 ms` |
+| Partial/direct final accumulation overhead | `0.59 ms` |
+| Profiled GPU total | `44.39 ms` |
+
+Final Nsight samples on a `1024`-BF chunk still show the structural limit:
+
+- Row/gamma kernel: `93` registers/thread, no spills, `38.2%` achieved
+  occupancy, `0.53` eligible warps/scheduler, high memory-pipe/MIO pressure,
+  and about `550 GB/s` memory throughput. The row kernel is still the largest
+  single cost.
+- Column phase/loss kernel: `115` registers/thread, no spills, `32.1%`
+  achieved occupancy, `0.59` eligible warps/scheduler, L1TEX scoreboard
+  stalls, and about `845 GB/s` memory throughput.
+- A scratch gamma-bypass lower-bound experiment, which is not scientifically
+  valid and was reverted, still landed around `36 ms` component time. That
+  means gamma-only shortcuts cannot reach the `33.3 ms` budget by themselves;
+  the row/column staging and column phase accumulation topology also has to
+  change.
 
 Rejected candidates from the same pass:
 
@@ -288,6 +329,9 @@ Rejected candidates from the same pass:
 | Replacing `sqrtf`/division geometry with `rsqrtf` geometry in the exact C10/C12 helper | Focused parity failed the 1024 explicit-reference gate (`p99.9` phase error `4.35e-4` versus `3e-4`). | Reverted. |
 | Lowering global CUDA `--maxrregcount` from `96` to `64`/`48` | Component timings were only noise-level better, and sequential full-loop timing stayed around `53 ms`. | Reverted. |
 | Row-major row output followed by an out-of-place tiled GPU transpose | Parity passed, but `512` phase redraw regressed to `71.4 ms` (`14 FPS`) because the added full-stack transpose outweighed the row-store savings. | Reverted. |
+| 512 phase-only skip of `sumsq` accumulation | Parity passed, but phase-only timing barely moved and loss did not improve. | Reverted as extra complexity without a target-path win. |
+| 512 column `__launch_bounds__(64, 10)` under the final compiler settings | Parity passed, but steady p50/p95 regressed relative to column launch bound `8`. | Reverted. |
+| 512 row `__launch_bounds__(64, 12)` under the final compiler settings | Parity passed, but steady p50/p95 regressed relative to row launch bound `10`. | Reverted. |
 | Computing 8 rows per block and writing transposed tiles directly | Parity passed, but `512` phase redraw regressed to `60.1 ms` (`16.6 FPS`) from lower occupancy/shared-memory cost. | Reverted. |
 | Computing 4 rows per block and writing transposed tiles directly | Parity passed, but `512` phase redraw still regressed to `55.7 ms` (`18.0 FPS`). | Reverted. |
 | Computing 2 rows per block and writing transposed tiles directly | Parity passed, but `512` phase redraw regressed to `54.5 ms` (`18.4 FPS`). | Reverted. |
@@ -548,9 +592,9 @@ Action: run the Samsung/BTO HDF5 path end to end, including load/decode,
 hot-pixel filtering, BF-mask formation, Nelder-Mead/SSB setup, live controls,
 FFT display, and browser/widget reporting.
 
-Problem: the `512x512` exact phase/loss path is faster after the radix-8 row
-and transposed-staging work, but `~53 ms` is still only `~19 FPS`, not the
-`33.3 ms` / `30 FPS` target.
+Problem: the `512x512` exact phase/loss path is faster after the radix-8 row,
+transposed-staging, aperture, compiler, and column-atan work, but `~45 ms` is
+still only `~22 FPS`, not the `33.3 ms` / `30 FPS` target.
 
 Action: attack the row-stage topology next. The current accepted kernel made
 column reads coalesced by making row writes strided; a real breakthrough needs

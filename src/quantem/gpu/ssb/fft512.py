@@ -363,7 +363,7 @@ __global__ void ifft512_rows_fused_pk_full_t128_mr4_packed(
     out[idx3] = srow[pos3];
 }
 
-__global__ __launch_bounds__(64, 8)
+__global__ __launch_bounds__(64, 10)
 void ifft512_rows_fused_pk_radix8_t64_packed(
     const float* __restrict__ kx_bf,
     const float* __restrict__ ky_bf,
@@ -1355,11 +1355,9 @@ void ifft512_rows_var_radix8_t64(const float2* __restrict__ data,
         r6 = make_float2(0,0); r7 = make_float2(0,0);
     }
 
-    // Sweet spot shifted with V10's warp-shuffle transpose: unroll 8 now
-    // beats unroll 4 by ~0.4 ms because there's more compute between the
-    // remaining smem ops (stage 2 store, stage 3 load) so the compiler has
-    // more latency to hide. Unroll 16 still spills. Unroll 2 regresses.
-    #pragma unroll 8
+    // Unroll enough to expose memory/SMEM latency without forcing excessive
+    // register pressure in the column phase/loss accumulator.
+    #pragma unroll 2
     for (int i = 0; i < 64; ++i) {
         int bf = bf0 + i;
         int valid = bf < num_bf;
@@ -1495,14 +1493,14 @@ void ifft512_rows_var_radix8_t64(const float2* __restrict__ data,
 
         // Phase extract + accumulate per-position.
         if (valid) {
-            float p0 = atan2f(r0.y, r0.x);
-            float p1 = atan2f(r1.y, r1.x);
-            float p2 = atan2f(r2.y, r2.x);
-            float p3 = atan2f(r3.y, r3.x);
-            float p4 = atan2f(r4.y, r4.x);
-            float p5 = atan2f(r5.y, r5.x);
-            float p6 = atan2f(r6.y, r6.x);
-            float p7 = atan2f(r7.y, r7.x);
+            float p0 = atan2f_ssb_poly(r0.y, r0.x);
+            float p1 = atan2f_ssb_poly(r1.y, r1.x);
+            float p2 = atan2f_ssb_poly(r2.y, r2.x);
+            float p3 = atan2f_ssb_poly(r3.y, r3.x);
+            float p4 = atan2f_ssb_poly(r4.y, r4.x);
+            float p5 = atan2f_ssb_poly(r5.y, r5.x);
+            float p6 = atan2f_ssb_poly(r6.y, r6.x);
+            float p7 = atan2f_ssb_poly(r7.y, r7.x);
             sum0 += p0; sum1 += p1; sum2 += p2; sum3 += p3;
             sum4 += p4; sum5 += p5; sum6 += p6; sum7 += p7;
             sumsq0 += p0*p0; sumsq1 += p1*p1; sumsq2 += p2*p2; sumsq3 += p3*p3;

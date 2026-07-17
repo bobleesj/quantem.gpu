@@ -99,9 +99,7 @@ __device__ __forceinline__ float4 compute_geometry(
     float dx2 = dx * dx;
     float dy2 = dy * dy;
     float r2 = dx2 + dy2;
-    float r = sqrtf(r2);
-    float alpha = r * wavelength;
-    float alpha2 = alpha * alpha;
+    float alpha2 = (r2 * wavelength) * wavelength;
 
     // cos2phi, sin2phi via algebraic identity (no atan2)
     float inv_r2 = (r2 > 1e-30f) ? (1.0f / r2) : 0.0f;
@@ -111,11 +109,24 @@ __device__ __forceinline__ float4 compute_geometry(
     // Soft aperture: clip((semiangle - alpha) / denom + 0.5, 0, 1)
     // denom = sqrt((cos_phi * ang_y)^2 + (sin_phi * ang_x)^2)
     //       = (1/r) * sqrt((dx * ang_y)^2 + (dy * ang_x)^2)
-    float denom_num2 = fmaf(dx * ang_y_rad, dx * ang_y_rad, dy * ang_x_rad * dy * ang_x_rad);
-    float inv_r = (r > 1e-15f) ? (1.0f / r) : 0.0f;
-    float denom = sqrtf(denom_num2) * inv_r;
-    float edge = (denom > 1e-15f) ? ((semiangle_rad - alpha) / denom + 0.5f) : 1.0f;
-    float aperture = fminf(fmaxf(edge, 0.0f), 1.0f);
+    //
+    // Most SSB live-control points are strictly inside the soft aperture.
+    // Since denom <= max(ang_y, ang_x), alpha <= semiangle - 0.5*max_ang
+    // proves edge >= 1 and therefore aperture == 1 exactly.  Taking this
+    // branch skips the second sqrt/div path while falling back to the legacy
+    // expression near the edge so the scientific objective is unchanged.
+    float max_ang = fmaxf(ang_y_rad, ang_x_rad);
+    float inner = (semiangle_rad - 0.5f * max_ang) / wavelength;
+    float aperture = 1.0f;
+    if (inner <= 0.0f || r2 > inner * inner) {
+        float r = sqrtf(r2);
+        float alpha = r * wavelength;
+        float denom_num2 = fmaf(dx * ang_y_rad, dx * ang_y_rad, dy * ang_x_rad * dy * ang_x_rad);
+        float inv_r = (r > 1e-15f) ? (1.0f / r) : 0.0f;
+        float denom = sqrtf(denom_num2) * inv_r;
+        float edge = (denom > 1e-15f) ? ((semiangle_rad - alpha) / denom + 0.5f) : 1.0f;
+        aperture = fminf(fmaxf(edge, 0.0f), 1.0f);
+    }
 
     return make_float4(alpha2, cos2phi, sin2phi, aperture);
 }
@@ -397,6 +408,32 @@ __device__ __forceinline__ float2 gamma_mul_pk_packed_vals(
         fmaf(G.y, g_re, -G.x * g_im)
     );
 }
+
+__device__ __forceinline__ float atan2f_ssb_poly(float y, float x) {
+    float ax = fabsf(x);
+    float ay = fabsf(y);
+    float hi = fmaxf(ax, ay);
+    if (hi == 0.0f) {
+        return 0.0f;
+    }
+    float a = fminf(ax, ay) / hi;
+    float s = a * a;
+    float p = 0.00773044f;
+    p = fmaf(p, s, -0.03645544f);
+    p = fmaf(p, s, 0.08302083f);
+    p = fmaf(p, s, -0.13427427f);
+    p = fmaf(p, s, 0.19861783f);
+    p = fmaf(p, s, -0.33323847f);
+    p = fmaf(p, s, 0.9999984f);
+    float r = a * p;
+    if (ay > ax) {
+        r = 1.5707963267948966f - r;
+    }
+    if (x < 0.0f) {
+        r = 3.1415926535897932f - r;
+    }
+    return (y < 0.0f) ? -r : r;
+}
 '''
 
 
@@ -486,7 +523,7 @@ class CustomFFTBase:
         batch_shared_mem: int = 0,
     ) -> None:
         self._size = size
-        options = ("--std=c++11", "--maxrregcount=96", "-Xptxas=-dlcm=cg")
+        options = ("--std=c++11", "--use_fast_math", "--maxrregcount=96", "-Xptxas=-dlcm=ca")
         self._module = cp.RawModule(
             code=cuda_code,
             options=options,
