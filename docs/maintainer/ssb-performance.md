@@ -418,6 +418,14 @@ storage mode, confirmed the same limit after the coalesced row-store commit:
   and source counters reported L1TEX scoreboard stalls plus about `33%`
   excessive shared-memory wavefronts.
 
+Hardware note from the same continuation: GPU1 was power-capped at `300 W`.
+During a sustained 512 loss benchmark it held `100%` GPU utilization with
+throttle reason `0x4` and SM clocks around `1.59-1.61 GHz`. The driver reports
+`325 W` as the max power limit, but raising GPU1 to `325 W` failed with
+insufficient permissions. This is real clock headroom, but the available
+`300 -> 325 W` increase is too small to explain the full `39.5 -> 33.3 ms`
+target gap by itself.
+
 Nsight Compute on the paired row kernel:
 
 - `94` registers/thread, no local/shared spills.
@@ -499,6 +507,9 @@ Rejected candidates from the same pass:
 | Negative `use_partial` phase-only branch to skip dummy `sumsq` writes | Small CUDA parity passed, but the full `8809` BF phase benchmark hit `CUDA_ERROR_ILLEGAL_ADDRESS`, reproducing the earlier unsafe branch failure mode. | Reverted. |
 | Column read-only `ld_float2` loads for the transposed intermediate | Full CUDA parity passed, but exact loss p50 regressed to `39.48 ms`; the plain global-load path remains better for the streaming intermediate. | Reverted. |
 | Global CUDA `--maxrregcount=80` after the coalesced paired-row write | Full CUDA parity passed, but exact loss p50 stayed around `39.29 ms`; occupancy pressure is not solved by this broad cap. | Reverted. |
+| Global CUDA `--maxrregcount=128` after the coalesced paired-row write | Full CUDA parity passed, but exact loss p50 stayed around `39.46 ms`; extra compiler freedom did not reduce the dependency floor. | Reverted. |
+| Runtime preferred shared-memory carveout on paired row/column kernels | Scratch timings regressed to about `41-47 ms` p50 for carveout values `0-50`; the default driver carveout remained best. | Rejected. |
+| Row-level aperture-fast microscope for the synthetic geometry | Only rows `250..262` can touch the soft aperture edge, but hard-coding aperture=1 elsewhere still measured about `39.47 ms` p50; the skipped branch is not the row bottleneck. | Reverted. |
 
 GPU1 was saturated during the long run (`100%` SM at the `300 W` power cap,
 about `66%` memory controller). The remaining exact-path bottleneck is not
