@@ -175,7 +175,7 @@ Current status:
 |---|---:|---:|---:|---:|---|
 | CUDA object redraw | `0.80 ms` | `3.97 ms` | `12.29 ms` | `56.22 ms` | Implemented, parity-tested, measured on RTX PRO 6000 Blackwell. |
 | MPS object redraw | pending | pending | pending | pending | MLX/MPS SSB preview/free-fit exists; CUDA object Fourier-sum topology still needs a Metal/MLX port and parity tests. |
-| WebGPU phase/loss widget path | supported | supported | supported | supported | 1024 WGSL topology exists in `quantem.widget`; migration to `quantem.gpu` is pending. Real 512 full-BF widget drive measured about `31 ms` GPU / `42 ms` UI. |
+| WebGPU phase/loss widget path | supported | supported | supported | supported | 1024 range-index HDF5 workflow works in `quantem.widget`; migration to `quantem.gpu` is pending. Real 512 full-BF widget drive measured about `31 ms` GPU / `42 ms` UI. Real Berk 1024 opens, but redraw is still about `150-200 ms` UI. |
 
 Do not treat this table as a reason to downsample or crop. Full-resolution
 claims must keep the BF policy, scan size, and scientific objective unchanged.

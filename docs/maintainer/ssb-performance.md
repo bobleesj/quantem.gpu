@@ -81,7 +81,7 @@ as a supported scientist workflow.
 | --- | --- | --- | --- | --- |
 | CUDA object redraw | Implemented. Mean `0.80 ms`, p95 `0.81 ms`, `1247.9 FPS`. | Implemented. Mean `3.97 ms`, p95 `5.55 ms`, `251.6 FPS`. | Implemented. Mean `12.29 ms`, p95 `12.53 ms`, `81.4 FPS`. | Implemented. Mean `56.22 ms`, p95 `62.20 ms`, `17.8 FPS`. |
 | MPS object redraw | Pending object Fourier-sum port. | Pending object Fourier-sum port. | Pending object Fourier-sum port. | Pending object Fourier-sum port. |
-| WebGPU phase/loss path | Implemented in `quantem.widget`; migration pending. Synthetic browser parity passed. | Implemented in `quantem.widget`; migration pending. Synthetic browser parity passed. | Implemented in `quantem.widget`; migration pending. Real Samsung 512 full-BF drive measured mean `31.4 ms` GPU and `41.8 ms` UI for C10 changes at `9070/9070` BF. | WGSL topology implemented in `quantem.widget`; migration pending. Synthetic browser stress passed, but real 1024 Berk/Samsung workflow signoff is still in progress. |
+| WebGPU phase/loss path | Implemented in `quantem.widget`; migration pending. Synthetic browser parity passed. | Implemented in `quantem.widget`; migration pending. Synthetic browser parity passed. | Implemented in `quantem.widget`; migration pending. Real Samsung 512 full-BF drive measured mean `31.4 ms` GPU and `41.8 ms` UI for C10 changes at `9070/9070` BF. | Implemented in `quantem.widget`; migration pending. Real Berk 1024 range-index load passes. Live redraw works but remains about `150-200 ms` UI for control nudges, below the 30 FPS target. |
 
 Interpretation:
 
@@ -109,7 +109,7 @@ Headed Chrome/CDP evidence on NVIDIA Blackwell:
 | Synthetic stress | `1024x1024`, 64 BF pixels | WGSL compute mean `8.2 ms`; page wall mean about `503 ms` because the standalone parity/demo page repaints and compares too much on the CPU. |
 | Real Samsung full BF | `512x512`, `9070/9070` BF | C10 keyboard drive mean `31.4 ms` GPU, mean `41.8 ms` UI, about `23.9 FPS`; screenshot/report under `/tmp/showptycho-webgpu-size-matrix/real_samsung_fullbf_c10_keys/`. |
 
-Real `1024x1024` data target for the next browser signoff:
+Real `1024x1024` data target used for browser signoff:
 
 ```text
 /home/owner/ssd/data/berk_tomo_20260716_one_tilt/pos_38_tilt0.h5
@@ -118,6 +118,22 @@ native shape: (1024, 1024, 192, 192) via flattened (1048576, 192, 192)
 dtype: uint16 on disk; exact max count 12, so uint8 is lossless for browsing/load
 wrapper: /home/owner/data/reports/berk_tomo_20260716_one_tilt_ssb/pos_38_tilt0_master_wrapper.h5
 ```
+
+Headed Chrome result on mjgoat after adding the range-index HDF5 source path:
+
+| Step | Result |
+| --- | --- |
+| Initial compressed-source load | Reducer ready in `15.6 s` wall; profile `parse 103 ms`, `decode 5013 ms`, `gather 2286 ms`, `fft 65 ms`, total setup `13.05 s`. |
+| Network shape | One small master fetch, one `16 MB` chunk-index fetch, then `206` byte-range reads for the `2.7 GB` compressed HDF5 data file. The previous single `200` full-file fetch failed in Chrome before WebGPU work started. |
+| 0.3 BF interaction | `542/1805` selected BF, `379` active aperture BF. C10/C12/phi12/scan-rotation coordinate drives updated live, with UI readouts `148-200 ms` and GPU readouts `134-189 ms`. |
+| Near-full BF setup | `1767/1805` selected BF, `1382` active aperture BF. HDF5 setup completed in `14.1 s` wall; profile total `13.11 s`. |
+| Near-full BF interaction | C10 drive updated live at about `141 ms` GPU and `152 ms` UI. |
+
+Interpretation for the microscopist: the full native Berk field can now be
+opened from the compressed HDF5 source without saving `g_bf.c64`, and the
+controls do update the scientific image and FFT at 1024. It is not yet a
+30 FPS steering experience. The next WebGPU work is reducing redraw latency
+for the 1024 phase/loss path, not further reducing or binning the dataset.
 
 This is the correct real-data target for WebGPU 1024 workflow testing. Do not
 substitute a synthetic 1024 page for final signoff.
