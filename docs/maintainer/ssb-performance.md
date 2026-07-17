@@ -939,6 +939,13 @@ card and sustained runs show `pviol=100%`, `299-300 W`, and SM clocks settling
 near `1.41-1.45 GHz`; this explains why short early samples look closer to
 target than long sustained runs.
 
+One accepted side improvement from the same pass is a 512 phase-only
+sum-accumulation mode (`use_partial=4`). It skips dummy `sumsq` atomics when
+the microscopist is steering the exact phase image without requesting the
+variance loss. Focused CUDA parity passed, and real Samsung phase-only timing
+measured `35.25 ms` mean / `35.62 ms` p50 over 600 steps on GPU1. This does
+not solve the stricter phase+loss target.
+
 Current conclusion: gamma algebra, BF group sizing, atomics-vs-partials,
 cache policy, simple stream overlap, and branch-only specialization are not the
 next breakthrough. The best measured clue is still that coalesced row writes

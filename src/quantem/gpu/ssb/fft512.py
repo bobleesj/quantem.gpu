@@ -2015,6 +2015,15 @@ void ifft512_rows_var_radix8_t64(const float2* __restrict__ data,
         if (tid == 0) {
             atomicAdd(&sumsq[cand], block_sumsq[0]);
         }
+    } else if (use_partial == 4) {
+        atomicAdd(&sum[o0], sum0);
+        atomicAdd(&sum[o1], sum1);
+        atomicAdd(&sum[o2], sum2);
+        atomicAdd(&sum[o3], sum3);
+        atomicAdd(&sum[o4], sum4);
+        atomicAdd(&sum[o5], sum5);
+        atomicAdd(&sum[o6], sum6);
+        atomicAdd(&sum[o7], sum7);
     } else {
         atomicAdd(&sum[o0], sum0); atomicAdd(&sumsq[o0], sumsq0);
         atomicAdd(&sum[o1], sum1); atomicAdd(&sumsq[o1], sumsq1);
@@ -2288,6 +2297,7 @@ class CustomFFT512(CustomFFTBase):
             raise ValueError("pk must have shape (num_bf,)")
         if phase_sum.shape != (N, N):
             raise ValueError(f"phase_sum must have shape ({N}, {N})")
+        sum_only = phase_sumsq is None
         scalar_sumsq = phase_sumsq is not None and phase_sumsq.shape == (1,)
         if phase_sumsq is None:
             if self._direct_dummy_sumsq is None or self._direct_dummy_sumsq.shape != (N, N):
@@ -2327,7 +2337,7 @@ class CustomFFT512(CustomFFTBase):
                 np.int32(num_bf),
                 np.int32(1),
                 np.float32(1.0 / (N * N)),
-                np.int32(0),
+                np.int32(4 if sum_only else 0),
             ),
         )
 
@@ -2370,6 +2380,7 @@ class CustomFFT512(CustomFFTBase):
             raise ValueError("pk must have shape (num_bf,)")
         if phase_sum.shape != (N, N):
             raise ValueError(f"phase_sum must have shape ({N}, {N})")
+        sum_only = phase_sumsq is None
         scalar_sumsq = phase_sumsq is not None and phase_sumsq.shape == (1,)
         if phase_sumsq is None:
             if self._direct_dummy_sumsq is None or self._direct_dummy_sumsq.shape != (N, N):
@@ -2411,7 +2422,7 @@ class CustomFFT512(CustomFFTBase):
                 np.int32(out_bf),
                 np.int32(1),
                 np.float32(1.0 / (N * N)),
-                np.int32(2 if scalar_sumsq else 0),
+                np.int32(4 if sum_only else (2 if scalar_sumsq else 0)),
             ),
         )
         return out_bf
@@ -2455,6 +2466,7 @@ class CustomFFT512(CustomFFTBase):
             raise ValueError("pk must have shape (num_bf,)")
         if phase_sum.shape != (N, N):
             raise ValueError(f"phase_sum must have shape ({N}, {N})")
+        sum_only = phase_sumsq is None
         scalar_sumsq = phase_sumsq is not None and phase_sumsq.shape == (1,)
         if phase_sumsq is None:
             if self._direct_dummy_sumsq is None or self._direct_dummy_sumsq.shape != (N, N):
@@ -2496,7 +2508,7 @@ class CustomFFT512(CustomFFTBase):
                 np.int32(out_bf),
                 np.int32(1),
                 np.float32(1.0 / (N * N)),
-                np.int32(2 if scalar_sumsq else 0),
+                np.int32(4 if sum_only else (2 if scalar_sumsq else 0)),
             ),
         )
         return out_bf
