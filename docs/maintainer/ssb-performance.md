@@ -361,36 +361,41 @@ Follow-up on GPU1 kept two exact-path micro-improvements for the `512x512`,
   `cos(2phi)`/`sin(2phi)` through a division. This is restricted to the
   `512x512` paired C10/C12 hot path; broader polar/aberration paths still use
   the shared geometry helper.
+- The paired row kernel now stages each 4-row `+k/-k` output tile in shared
+  memory and writes row-contiguous groups to the transposed intermediate. This
+  keeps the column reader's fast layout while reducing excessive global store
+  sectors from the row stage.
 
 Sustained timing after those changes:
 
 | Mode | Mean | p50 | p95 | FPS |
 | --- | ---: | ---: | ---: | ---: |
-| Phase redraw | `42.22 ms` | `42.61 ms` | `42.80 ms` | `23.7` |
-| Phase+loss | `42.31 ms` | `42.77 ms` | `42.94 ms` | `23.6` |
+| Phase redraw | `39.26 ms` | `39.40 ms` | `39.46 ms` | `25.5` |
+| Phase+loss | `39.28 ms` | `39.44 ms` | `39.54 ms` | `25.5` |
 
 This is a small checkpoint, not the `30 FPS` target. The exact path still
-misses the `33.3 ms` frame budget by about `9.3 ms` p50.
+misses the `33.3 ms` frame budget by about `6.1 ms` p50.
 
 Component split for the full-staging four-row path:
 
 | Component | p50 total |
 | --- | ---: |
 | `pk` update | `0.012 ms` |
-| Row gamma + row IFFT + transposed write | `27.87 ms` |
-| Column IFFT + phase/loss accumulation | `13.33 ms` |
+| Row gamma + row IFFT + coalesced transposed write | `25.43 ms` |
+| Column IFFT + phase/loss accumulation | `13.17 ms` |
 | Singleton/final overhead | `0.11 ms` |
-| Profiled GPU total | `~41.3 ms` |
+| Profiled GPU total | `~38.7 ms` |
 
 Nsight Compute on the four-row paired row kernel with
 `__launch_bounds__(256, 3)`:
 
-- `78` registers/thread, no local/shared spills.
-- `50.0%` theoretical occupancy, `46.8%` achieved occupancy.
-- `0.45` eligible warps/scheduler and `79.6%` cycles with no eligible warp.
-- `794 GB/s` memory throughput, `94.2%` memory busy, `75.4%` L2 hit rate.
-- Main stall: MIO/shared-memory pressure. Raising occupancy did not produce a
-  large wall-time win because eligible warps remained low.
+- `77` registers/thread, no local/shared spills.
+- `50.0%` theoretical occupancy, `48.7%` achieved occupancy.
+- `0.80` eligible warps/scheduler and `61.7%` cycles with no eligible warp.
+- `993 GB/s` memory throughput, `57.9%` memory busy, `65.1%` L2 hit rate.
+- Main stall: still MIO/shared-memory pressure, but the coalesced tile write
+  roughly halves warp cycles per issued instruction (`27.9 -> 14.5`) versus
+  the prior direct transposed stores.
 
 Nsight Compute on the column phase/loss kernel:
 

@@ -832,25 +832,38 @@ void ifft512_rows_fused_pk_pair_radix8_t64_packed(
     ifft512_radix8_apply_t64(b0, b1, b2, b3, b4, b5, b6, b7, tid, sbuf + 512);
 
     size_t slot_a = (size_t)pair * 2u;
-    size_t slot_b = slot_a + 1u;
-    size_t base_a = slot_a * 512u * 512u + (size_t)row;
-    size_t base_b = slot_b * 512u * 512u + (size_t)row;
-    out[base_a + (size_t)(tid +   0) * 512u] = a0;
-    out[base_a + (size_t)(tid +  64) * 512u] = a1;
-    out[base_a + (size_t)(tid + 128) * 512u] = a2;
-    out[base_a + (size_t)(tid + 192) * 512u] = a3;
-    out[base_a + (size_t)(tid + 256) * 512u] = a4;
-    out[base_a + (size_t)(tid + 320) * 512u] = a5;
-    out[base_a + (size_t)(tid + 384) * 512u] = a6;
-    out[base_a + (size_t)(tid + 448) * 512u] = a7;
-    out[base_b + (size_t)(tid +   0) * 512u] = b0;
-    out[base_b + (size_t)(tid +  64) * 512u] = b1;
-    out[base_b + (size_t)(tid + 128) * 512u] = b2;
-    out[base_b + (size_t)(tid + 192) * 512u] = b3;
-    out[base_b + (size_t)(tid + 256) * 512u] = b4;
-    out[base_b + (size_t)(tid + 320) * 512u] = b5;
-    out[base_b + (size_t)(tid + 384) * 512u] = b6;
-    out[base_b + (size_t)(tid + 448) * 512u] = b7;
+    sbuf[tid +   0] = a0;
+    sbuf[tid +  64] = a1;
+    sbuf[tid + 128] = a2;
+    sbuf[tid + 192] = a3;
+    sbuf[tid + 256] = a4;
+    sbuf[tid + 320] = a5;
+    sbuf[tid + 384] = a6;
+    sbuf[tid + 448] = a7;
+    sbuf[512 + tid +   0] = b0;
+    sbuf[512 + tid +  64] = b1;
+    sbuf[512 + tid + 128] = b2;
+    sbuf[512 + tid + 192] = b3;
+    sbuf[512 + tid + 256] = b4;
+    sbuf[512 + tid + 320] = b5;
+    sbuf[512 + tid + 384] = b6;
+    sbuf[512 + tid + 448] = b7;
+    __syncthreads();
+
+    int row_base = blockIdx.y * 4;
+    int linear = threadIdx.y * 64 + tid;
+    #pragma unroll
+    for (int t = linear; t < 4096; t += 256) {
+        int slot_offset = t >> 11;
+        int rem = t & 2047;
+        int col = rem >> 2;
+        int local_row = rem & 3;
+        float2 v = sbuf_all[local_row][(slot_offset << 9) + col];
+        size_t out_idx = (slot_a + (size_t)slot_offset) * 512u * 512u
+                       + (size_t)col * 512u
+                       + (size_t)(row_base + local_row);
+        out[out_idx] = v;
+    }
 }
 
 __global__ __launch_bounds__(256, 4)
