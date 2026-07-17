@@ -455,6 +455,8 @@ Rejected follow-ups from this subpixel-BF pass:
 | Column launch-bound tightening (`64,10`, `64,9`, `64,12`) | Full parity passed for the tested bounds. `64,10` produced no sustained real-data win (`36.17 ms` p50 before the Hermitian branch), and `64,12` regressed column p50 to about `14.4 ms`. | Rejected: register pressure/spills outweighed the occupancy attempt. |
 | Hermitian row offset precompute | Full parity passed, but sustained real-data timing stayed about `35.43 ms` p50 versus `35.40 ms` for the simpler Hermitian branch. | Rejected: extra live offsets did not beat the compiler's simpler inline path. |
 | Reusing loaded `qy` values across A/B dual gamma calls | Full parity passed, but component p50 did not improve and added register-pressure risk. | Rejected: the compiler/read-only cache already handles this cheaply enough. |
+| Runtime shared-memory carveout `100` on the no-pair row/column kernels | Scratch component timing left row p50 about `21.3 ms` and combined dual p50 about `34.7 ms`, not a sustained breakthrough. | Rejected: larger carveout did not turn the shared-memory occupancy warning into real FPS. |
+| One-BF/four-row index row kernel | Existing parity still passed, but forcing all BF pixels through the experimental topology gave row p50 about `24.2 ms` and row+column p50 about `37.6 ms`. | Rejected: doubling the independent BF blocks did not compensate for lost dual-BF staging efficiency. |
 
 Nsight Compute on the accepted dual row kernel:
 
