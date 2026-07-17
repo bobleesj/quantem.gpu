@@ -475,6 +475,7 @@ Rejected follow-ups from this subpixel-BF pass:
 | Module `--maxrregcount` reduced from `96` to `80` | Full focused CUDA parity passed and a 240-step run improved to `35.12 ms` p50, but the 600-step sustained run settled at `35.72 ms` p50. | Rejected: lower register cap was not a durable sustained win. |
 | Column phase/loss group reduced from `32` BF to `16` BF | Full focused CUDA parity passed. A 240-step run stayed near baseline (`35.52 ms` p50), and the 600-step sustained run regressed to `36.25 ms` p50. | Rejected: extra scheduler parallelism did not offset the doubled group/atomic overhead. |
 | Dual row transposed copy-out changed from `float2` stores to adjacent-row `float4` stores | Full focused CUDA parity passed and a 240-step run measured `35.34 ms` p50, but the 600-step sustained run regressed to `36.06 ms` p50. | Rejected: fewer store instructions did not improve the sustained power-capped row path. |
+| Dual row Hermitian path forced at compile time by replacing the `gqk_cols == 257` branch with `true` | Exploratory Hermitian-only timing regressed to `35.79 ms` p50 in a 240-step real Samsung run. | Rejected: a separate Hermitian-only row kernel is not justified by this branch-cost probe. |
 
 Nsight Compute on the accepted dual row kernel:
 
