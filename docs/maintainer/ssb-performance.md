@@ -469,6 +469,12 @@ Rejected candidates from the same pass:
 | Packed `float4` helper transforming the `+k/-k` row FFTs together | Parity passed, but p50 regressed to `43.7 ms`; extra register and shuffle pressure outweighed saved barriers. | Reverted. |
 | Column launch bound `__launch_bounds__(64, 12)` | Parity passed, but p50 regressed to `44.25 ms`; forcing more blocks over-constrained the compiler. | Reverted. |
 | Column launch bound `__launch_bounds__(64, 10)` | Parity passed, but p50 regressed to `43.21 ms`; the original `64,8` launch bound remains best for the column kernel. | Reverted. |
+| Paired row launch bound relaxed from `__launch_bounds__(256, 3)` to `256,2` | Parity passed, but p50 regressed to `44.08 ms`; lower occupancy outweighed any extra compiler freedom. | Reverted. |
+| Paired row blocks reduced from 4 rows/block to 2 rows/block | Parity passed, but p50 regressed to `43.11 ms`; lower shared memory per block did not hide the row-stage stalls. | Reverted. |
+| Paired row blocks reduced to 1 row/block | Parity passed, but p50 regressed to `43.35 ms`; more independent blocks added overhead without enough latency hiding. | Reverted. |
+| Bit-reversed transient row layout plus contiguous column loads | Parity passed after fixing the direct/partial address mode, but the split-kernel version stayed around p50 `42.8 ms` and the branch version raised column registers from `115` to `127` for only a noise-level win. | Reverted. |
+| Contiguous `G_qk` row-load microscope for a hypothetical column-permuted storage layout | Synthetic constant-`G_qk` throughput probe regressed to p50 `47.8 ms`; row `G_qk` column order is not the current breakthrough. | Reverted. |
+| CUDA cache policy `-Xptxas=-dlcm=cg` instead of `ca` | Exact loss p50 regressed to `42.83 ms`; cache-all remains better for the current row/column mix. | Reverted. |
 
 GPU1 was saturated during the long run (`100%` SM at the `300 W` power cap,
 about `66%` memory controller). The remaining exact-path bottleneck is not
