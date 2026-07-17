@@ -443,6 +443,16 @@ view is now around `28 FPS` on the real central Samsung field. It is still a
 fail against the declared `30 FPS` target because the frame budget is
 `33.3 ms`, leaving a sustained `~2.1 ms` gap.
 
+Hardware note from the same 2026-07-17 push: sustained GPU1 runs sit at the
+`300 W` power limit with `100%` SM utilization, memory utilization around
+`80-83%`, and SM clocks around `1.41-1.45 GHz`. A one-off comparison on GPU0
+(`600 W` limit, but shared with display and another process) crossed the target
+at p50 (`32.98 ms`) while mean/p95 were noisy (`35.67 ms` mean,
+`47.51 ms` p95). Treat GPU0 as evidence that the current kernel is near the
+target on a higher-power card, not as a clean signoff. The GPU1 goal still
+needs a code-side `~2-3 ms` sustained reduction or a deliberate power-limit
+change by an operator.
+
 Rejected follow-ups from this subpixel-BF pass:
 
 | Candidate | Result | Decision |
