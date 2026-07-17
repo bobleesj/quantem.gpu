@@ -857,6 +857,8 @@ repeating local minima.
 | Degree-2 column `atan2` polynomial | Focused parity passed, full loss p50 improved only about `0.1 ms`. | Rejected: too little speedup for a rougher scientific approximation. |
 | Fixed 64-BF variant of `ifft512_rows_var_radix8_t64` | Full CUDA parity passed, but real Samsung no-pair loss p50 regressed to `36.09 ms` from the `~35.97 ms` short-run baseline. | Rejected: halving the group count/atomics reduced useful parallelism enough to erase the savings. |
 | Dual row launch bound relaxed from `__launch_bounds__(256, 4)` to `256,3` | Full CUDA parity passed, but real Samsung no-pair loss p50 regressed to `36.79 ms`. | Rejected: the compiler freedom did not overcome the row-stage scheduling/shared-memory floor. |
+| No-pair dual partial-plane reduction instead of direct atomics | Scratch profile p50 moved from about `13.4 ms` direct column accumulation to about `14.0 ms` with partial reduction plus summing. | Rejected: extra global writes/reduction cost more than atomics for this path. |
+| Same-row dual `kx` reuse branch | Full CUDA parity passed and `4351/4411` real Samsung dual pairs shared detector row, but real loss p50 stayed about `36.6 ms` and row p50 stayed about `21.8 ms`. | Rejected: saved scalar `dx` work was too small and added branch/register pressure. |
 
 Current conclusion: gamma algebra and BF group sizing are not the next
 breakthrough. The best measured clue is still that coalesced row writes save
