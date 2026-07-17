@@ -918,13 +918,33 @@ repeating local minima.
 | No-pair dual partial-plane reduction instead of direct atomics | Scratch profile p50 moved from about `13.4 ms` direct column accumulation to about `14.0 ms` with partial reduction plus summing. | Rejected: extra global writes/reduction cost more than atomics for this path. |
 | Same-row dual `kx` reuse branch | Full CUDA parity passed and `4351/4411` real Samsung dual pairs shared detector row, but real loss p50 stayed about `36.6 ms` and row p50 stayed about `21.8 ms`. | Rejected: saved scalar `dx` work was too small and added branch/register pressure. |
 | One-shared-buffer arbitrary dual row IFFT | Focused CUDA parity passed, but row p50 regressed from about `21.6 ms` to `24.2 ms`; sustained real Samsung loss regressed to `38.78 ms` p50 (`25.8 FPS`). | Rejected: halving shared memory serialized the A/B row IFFTs and added barriers/stores, so occupancy pressure was not the dominant floor. |
+| Phase partial planes plus scalar loss (`use_partial=3`) | Full CUDA parity passed, but real Samsung loss regressed to `35.46 ms` mean / `35.44 ms` p50 in a 240-step run. | Rejected: replacing phase atomics with partial writes plus a separate reduction costs more than the current in-kernel atomics. |
+| Analytic `qy` index formula in the dual row kernel | Full CUDA parity passed and a 240-step run was neutral (`35.03 ms` mean), but the 600-step sustained run regressed to `35.66 ms` mean / `35.66 ms` p50. | Rejected: `qy_1d` cached loads are not a durable row-stage bottleneck. |
+| Double-zero aperture early return before `sincos` | Full CUDA parity passed, but real Samsung loss regressed to `35.28 ms` mean / `35.28 ms` p50. | Rejected: the exact branch and code pressure cost more than the skipped outside-aperture work for this dataset. |
+| Column launch bounds relaxed from `__launch_bounds__(64, 8)` to `64,6` | Full CUDA parity passed, but real Samsung loss regressed to `35.60 ms` mean / `35.61 ms` p50. | Rejected: the column kernel still wants the current occupancy constraint. |
+| Column staged-data loads through `ld_float2`/read-only path | Full CUDA parity passed, but real Samsung loss regressed to `35.69 ms` mean / `35.66 ms` p50. | Rejected: the staged row output does not benefit from the read-only cache path. |
+| Column no-prefetch schedule | Full CUDA parity passed, but real Samsung loss regressed to `35.49 ms` mean / `35.48 ms` p50. | Rejected: lower register lifetime did not beat the lost global-load overlap. |
+| PTX cache policy `-dlcm=ca -> -dlcm=cg` | Full CUDA parity passed, but real Samsung loss regressed to `35.76 ms` mean / `35.72 ms` p50. | Rejected: L1 caching is still the better default for this mixed row/column path. |
+| Column BF group `32 -> 16` | Full CUDA parity passed, but real Samsung loss regressed to `35.92 ms` mean / `35.91 ms` p50. | Rejected: extra phase-atomic groups outweighed lower loop pressure. |
+| Hermitian-only duplicate arbitrary-dual row kernel | Full CUDA parity passed, but real Samsung loss regressed to `35.80 ms` mean / `35.80 ms` p50. | Rejected: removing the runtime `gqk_cols` branch increased code footprint/register pressure enough to lose. |
+| Two-stream row/column chunk overlap prototype | Exact BF chunks ran with two staging buffers, but best chunked p50 was still about `35.15 ms` for row+column work only. | Rejected as a breakthrough path: the kernels do not overlap enough on one GPU to close the budget. |
 
-Current conclusion: gamma algebra and BF group sizing are not the next
-breakthrough. The best measured clue is still that coalesced row writes save
-about `6 ms`, but every out-of-kernel way to restore coalesced column input
-costs as much or more. The next serious candidate should fuse/tile the row and
-column stages so row output becomes effectively coalesced for global memory
-without paying a separate full transpose, or redesign the 2D FFT/phase
+Current sustained real Samsung `512x512`, full active-BF, Hermitian-storage
+loss baseline on GPU1 is about `35-36 ms` (`~28 FPS`). Component event timing
+on the accepted full-buffer path is approximately `22.6 ms` row/gamma,
+`12.3 ms` column/phase, and `<0.2 ms` finalization, so the target gap is not
+in Python, final reduction, or scalar loss bookkeeping. GPU1 is also a 300 W
+card and sustained runs show `pviol=100%`, `299-300 W`, and SM clocks settling
+near `1.41-1.45 GHz`; this explains why short early samples look closer to
+target than long sustained runs.
+
+Current conclusion: gamma algebra, BF group sizing, atomics-vs-partials,
+cache policy, simple stream overlap, and branch-only specialization are not the
+next breakthrough. The best measured clue is still that coalesced row writes
+save about `6 ms`, but every out-of-kernel way to restore coalesced column
+input costs as much or more. The next serious candidate should fuse/tile the
+row and column stages so row output becomes effectively coalesced for global
+memory without paying a separate full transpose, or redesign the 2D FFT/phase
 accumulation around an exact in-kernel tile.
 
 ## Next performance work
