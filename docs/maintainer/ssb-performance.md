@@ -855,6 +855,8 @@ repeating local minima.
 | Coalesced radix-8 row output plus radix-8 normal-layout column reader | Column p50 rose to about `28.3 ms`; total about `52.8 ms`. | Rejected: strided column reads dominate. |
 | Coalesced radix-8 row output plus tiled explicit transpose | Parity passed, but full loss p50 worsened to about `66 ms`. | Rejected: explicit full transpose costs far more than the row-store savings. |
 | Degree-2 column `atan2` polynomial | Focused parity passed, full loss p50 improved only about `0.1 ms`. | Rejected: too little speedup for a rougher scientific approximation. |
+| Fixed 64-BF variant of `ifft512_rows_var_radix8_t64` | Full CUDA parity passed, but real Samsung no-pair loss p50 regressed to `36.09 ms` from the `~35.97 ms` short-run baseline. | Rejected: halving the group count/atomics reduced useful parallelism enough to erase the savings. |
+| Dual row launch bound relaxed from `__launch_bounds__(256, 4)` to `256,3` | Full CUDA parity passed, but real Samsung no-pair loss p50 regressed to `36.79 ms`. | Rejected: the compiler freedom did not overcome the row-stage scheduling/shared-memory floor. |
 
 Current conclusion: gamma algebra and BF group sizing are not the next
 breakthrough. The best measured clue is still that coalesced row writes save
@@ -874,8 +876,9 @@ hot-pixel filtering, BF-mask formation, Nelder-Mead/SSB setup, live controls,
 FFT display, and browser/widget reporting.
 
 Problem: the `512x512` exact phase/loss path is faster after the radix-8 row,
-transposed-staging, aperture, compiler, and column-atan work, but `~45 ms` is
-still only `~22 FPS`, not the `33.3 ms` / `30 FPS` target.
+transposed-staging, aperture, compiler, column-atan, and no-pair dual-BF work,
+but sustained real Samsung timing is still about `36-37 ms` (`~27 FPS`), not
+the `33.3 ms` / `30 FPS` target.
 
 Action: attack the row-stage topology next. The current accepted kernel made
 column reads coalesced by making row writes strided; a real breakthrough needs
