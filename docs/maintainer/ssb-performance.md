@@ -460,6 +460,7 @@ Rejected follow-ups from this subpixel-BF pass:
 | Closed-form radix-8 source indices instead of `octal_reverse_512(tid*8+s)` | Full focused CUDA parity passed. A 240-step real Samsung run briefly measured `34.90 ms` p50, but a 600-step sustained run settled at `35.53 ms` p50, matching or slightly regressing the accepted `35.50 ms` baseline. | Rejected: not a robust wall-time win for a microscopist dragging controls. |
 | Exact inside-aperture phase-identity branch for normalized gamma | Full focused CUDA parity passed, but real Samsung loss regressed to `37.43 ms` p50 (`26.7 FPS`). | Rejected: the added branch, `chi_k` load, and changed special-function mix cost more than the removed normalization. |
 | Degree-5 column `atan2` polynomial | Full focused CUDA parity passed and a 240-step run measured `35.22 ms` p50, but the 600-step sustained run regressed to `35.79 ms` p50. | Rejected: removing one FMA was not a durable column-side speedup. |
+| Column loop unroll reduced from `2` to `1` | Full focused CUDA parity passed. A 240-step run stayed near baseline (`35.53 ms` p50), and the 600-step sustained run regressed to `36.27 ms` p50. | Rejected: lower unroll did not overcome the register/L1TEX floor. |
 
 Nsight Compute on the accepted dual row kernel:
 
