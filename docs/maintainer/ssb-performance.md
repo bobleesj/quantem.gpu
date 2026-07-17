@@ -474,6 +474,7 @@ Rejected follow-ups from this subpixel-BF pass:
 | Column launch bound relaxed from `__launch_bounds__(64, 8)` to `64,4` | Full focused CUDA parity passed, but the 240-step real Samsung run regressed to `35.79 ms` p50. | Rejected: giving the compiler more register freedom did not beat the occupancy loss. |
 | Module `--maxrregcount` reduced from `96` to `80` | Full focused CUDA parity passed and a 240-step run improved to `35.12 ms` p50, but the 600-step sustained run settled at `35.72 ms` p50. | Rejected: lower register cap was not a durable sustained win. |
 | Column phase/loss group reduced from `32` BF to `16` BF | Full focused CUDA parity passed. A 240-step run stayed near baseline (`35.52 ms` p50), and the 600-step sustained run regressed to `36.25 ms` p50. | Rejected: extra scheduler parallelism did not offset the doubled group/atomic overhead. |
+| Dual row transposed copy-out changed from `float2` stores to adjacent-row `float4` stores | Full focused CUDA parity passed and a 240-step run measured `35.34 ms` p50, but the 600-step sustained run regressed to `36.06 ms` p50. | Rejected: fewer store instructions did not improve the sustained power-capped row path. |
 
 Nsight Compute on the accepted dual row kernel:
 
