@@ -70,6 +70,58 @@ target:
 | Phase redraw | `10.05 ms / 99.5 FPS` | `22.49 ms / 44.5 FPS` | `72.39 ms / 13.8 FPS` | `342.71 ms / 2.9 FPS` |
 | Phase+loss | `9.17 ms / 109.1 FPS` | `19.55 ms / 51.2 FPS` | `69.48 ms / 14.4 FPS` | `326.71 ms / 3.1 FPS` |
 
+## 12-cell backend tracking matrix
+
+Track native SSB live-redraw work as a 12-cell backend matrix: three GPU
+backends by four native scan sizes. Each cell must record implementation
+status, parity status, and the best measured performance before it is treated
+as a supported scientist workflow.
+
+| Backend / size | `128x128` | `256x256` | `512x512` | `1024x1024` |
+| --- | --- | --- | --- | --- |
+| CUDA object redraw | Implemented. Mean `0.80 ms`, p95 `0.81 ms`, `1247.9 FPS`. | Implemented. Mean `3.97 ms`, p95 `5.55 ms`, `251.6 FPS`. | Implemented. Mean `12.29 ms`, p95 `12.53 ms`, `81.4 FPS`. | Implemented. Mean `56.22 ms`, p95 `62.20 ms`, `17.8 FPS`. |
+| MPS object redraw | Pending object Fourier-sum port. | Pending object Fourier-sum port. | Pending object Fourier-sum port. | Pending object Fourier-sum port. |
+| WebGPU phase/loss path | Implemented in `quantem.widget`; migration pending. Synthetic browser parity passed. | Implemented in `quantem.widget`; migration pending. Synthetic browser parity passed. | Implemented in `quantem.widget`; migration pending. Real Samsung 512 full-BF drive measured mean `31.4 ms` GPU and `41.8 ms` UI for C10 changes at `9070/9070` BF. | WGSL topology implemented in `quantem.widget`; migration pending. Synthetic browser stress passed, but real 1024 Berk/Samsung workflow signoff is still in progress. |
+
+Interpretation:
+
+- CUDA is the only backend with all four object-redraw cells implemented and
+  parity-tested against the previous per-BF IFFT object path.
+- MPS has useful SSB preview/free-fit infrastructure, but it has not received
+  the exact object Fourier-sum topology. Do not claim MPS parity from image
+  agreement or reduced optimizer settings.
+- WebGPU currently lives in `quantem.widget` because it is bundled for browser
+  export. The maintenance target is to move reusable kernel source, shape
+  guards, and parity fixtures into `quantem.gpu`, then let `quantem.widget`
+  import/build from that source for display.
+
+### WebGPU 1024 status from 2026-07-16
+
+The browser kernel was extended to support `1024x1024` by using a 256-thread
+WGSL topology with looped row/column load-store and looped butterflies. This
+avoids relying on a 1024-thread workgroup, which common WebGPU limits reject.
+
+Headed Chrome/CDP evidence on NVIDIA Blackwell:
+
+| Case | Data | Result |
+| --- | --- | --- |
+| Synthetic shape matrix | `128/256/512/1024`, 8 BF pixels | Browser parity passed for phase and FFT log-magnitude at every size. |
+| Synthetic stress | `1024x1024`, 64 BF pixels | WGSL compute mean `8.2 ms`; page wall mean about `503 ms` because the standalone parity/demo page repaints and compares too much on the CPU. |
+| Real Samsung full BF | `512x512`, `9070/9070` BF | C10 keyboard drive mean `31.4 ms` GPU, mean `41.8 ms` UI, about `23.9 FPS`; screenshot/report under `/tmp/showptycho-webgpu-size-matrix/real_samsung_fullbf_c10_keys/`. |
+
+Real `1024x1024` data target for the next browser signoff:
+
+```text
+/home/owner/ssd/data/berk_tomo_20260716_one_tilt/pos_38_tilt0.h5
+dataset: /entry/data/data
+native shape: (1024, 1024, 192, 192) via flattened (1048576, 192, 192)
+dtype: uint16 on disk; exact max count 12, so uint8 is lossless for browsing/load
+wrapper: /home/owner/data/reports/berk_tomo_20260716_one_tilt_ssb/pos_38_tilt0_master_wrapper.h5
+```
+
+This is the correct real-data target for WebGPU 1024 workflow testing. Do not
+substitute a synthetic 1024 page for final signoff.
+
 ## Parity evidence
 
 Focused CUDA parity tests live in `tests/test_ssb_cuda_128.py`.
@@ -134,8 +186,8 @@ enabling batch trials at that size.
 
 Problem: MPS and WebGPU are not yet at parity with the CUDA native-size matrix.
 
-Action: run a separate backend matrix. MPS has `quantem.gpu.ssb.mps` and
-existing CUDA-reference tests, but the object Fourier-sum topology has not been
-ported there. WebGPU SSB currently lives in `quantem.widget` and supports
-`128/256/512`; `1024` needs a new WGSL FFT topology because the current shader
-is built around the `512` worker layout.
+Action: run and update the 12-cell backend matrix above. MPS has
+`quantem.gpu.ssb.mps` and existing CUDA-reference tests, but the object
+Fourier-sum topology has not been ported there. WebGPU SSB currently lives in
+`quantem.widget`; 1024 support exists there, but reusable WGSL kernels and
+parity fixtures still need to move into `quantem.gpu`.
