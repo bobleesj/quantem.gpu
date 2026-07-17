@@ -363,6 +363,108 @@ __global__ void ifft512_rows_fused_pk_full_t128_mr4_packed(
     out[idx3] = srow[pos3];
 }
 
+__device__ __forceinline__ void ifft512_radix8_apply_t64(
+    float2 &r0, float2 &r1, float2 &r2, float2 &r3,
+    float2 &r4, float2 &r5, float2 &r6, float2 &r7,
+    int tid,
+    float2* __restrict__ sbuf
+) {
+    int s2_pre = tid & 7;
+    float2 tw2_1 = TWIDDLE_512[(s2_pre * 1 * 8) & 511];
+    float2 tw2_2 = TWIDDLE_512[(s2_pre * 2 * 8) & 511];
+    float2 tw2_3 = TWIDDLE_512[(s2_pre * 3 * 8) & 511];
+    float2 tw2_4 = TWIDDLE_512[(s2_pre * 4 * 8) & 511];
+    float2 tw2_5 = TWIDDLE_512[(s2_pre * 5 * 8) & 511];
+    float2 tw2_6 = TWIDDLE_512[(s2_pre * 6 * 8) & 511];
+    float2 tw2_7 = TWIDDLE_512[(s2_pre * 7 * 8) & 511];
+    float2 tw3_1 = TWIDDLE_512[(tid * 1) & 511];
+    float2 tw3_2 = TWIDDLE_512[(tid * 2) & 511];
+    float2 tw3_3 = TWIDDLE_512[(tid * 3) & 511];
+    float2 tw3_4 = TWIDDLE_512[(tid * 4) & 511];
+    float2 tw3_5 = TWIDDLE_512[(tid * 5) & 511];
+    float2 tw3_6 = TWIDDLE_512[(tid * 6) & 511];
+    float2 tw3_7 = TWIDDLE_512[(tid * 7) & 511];
+
+    radix8_butterfly(r0, r1, r2, r3, r4, r5, r6, r7);
+
+    #define SHFL_XOR_F2_LOCAL(val, mask) make_float2( \
+        __shfl_xor_sync(0xffffffff, (val).x, (mask)), \
+        __shfl_xor_sync(0xffffffff, (val).y, (mask)))
+    {
+        float2 sent, got;
+        sent = (tid & 1) ? r0 : r1;
+        got = SHFL_XOR_F2_LOCAL(sent, 1);
+        if (tid & 1) r0 = got; else r1 = got;
+        sent = (tid & 1) ? r2 : r3;
+        got = SHFL_XOR_F2_LOCAL(sent, 1);
+        if (tid & 1) r2 = got; else r3 = got;
+        sent = (tid & 1) ? r4 : r5;
+        got = SHFL_XOR_F2_LOCAL(sent, 1);
+        if (tid & 1) r4 = got; else r5 = got;
+        sent = (tid & 1) ? r6 : r7;
+        got = SHFL_XOR_F2_LOCAL(sent, 1);
+        if (tid & 1) r6 = got; else r7 = got;
+        sent = (tid & 2) ? r0 : r2;
+        got = SHFL_XOR_F2_LOCAL(sent, 2);
+        if (tid & 2) r0 = got; else r2 = got;
+        sent = (tid & 2) ? r1 : r3;
+        got = SHFL_XOR_F2_LOCAL(sent, 2);
+        if (tid & 2) r1 = got; else r3 = got;
+        sent = (tid & 2) ? r4 : r6;
+        got = SHFL_XOR_F2_LOCAL(sent, 2);
+        if (tid & 2) r4 = got; else r6 = got;
+        sent = (tid & 2) ? r5 : r7;
+        got = SHFL_XOR_F2_LOCAL(sent, 2);
+        if (tid & 2) r5 = got; else r7 = got;
+        sent = (tid & 4) ? r0 : r4;
+        got = SHFL_XOR_F2_LOCAL(sent, 4);
+        if (tid & 4) r0 = got; else r4 = got;
+        sent = (tid & 4) ? r1 : r5;
+        got = SHFL_XOR_F2_LOCAL(sent, 4);
+        if (tid & 4) r1 = got; else r5 = got;
+        sent = (tid & 4) ? r2 : r6;
+        got = SHFL_XOR_F2_LOCAL(sent, 4);
+        if (tid & 4) r2 = got; else r6 = got;
+        sent = (tid & 4) ? r3 : r7;
+        got = SHFL_XOR_F2_LOCAL(sent, 4);
+        if (tid & 4) r3 = got; else r7 = got;
+    }
+    #undef SHFL_XOR_F2_LOCAL
+
+    r1 = cmul(tw2_1, r1);
+    r2 = cmul(tw2_2, r2);
+    r3 = cmul(tw2_3, r3);
+    r4 = cmul(tw2_4, r4);
+    r5 = cmul(tw2_5, r5);
+    r6 = cmul(tw2_6, r6);
+    r7 = cmul(tw2_7, r7);
+
+    radix8_butterfly(r0, r1, r2, r3, r4, r5, r6, r7);
+
+    int g_outer = tid >> 3;
+    int base2 = g_outer * 64 + s2_pre;
+    sbuf[base2 +  0] = r0;
+    sbuf[base2 +  8] = r1;
+    sbuf[base2 + 16] = r2;
+    sbuf[base2 + 24] = r3;
+    sbuf[base2 + 32] = r4;
+    sbuf[base2 + 40] = r5;
+    sbuf[base2 + 48] = r6;
+    sbuf[base2 + 56] = r7;
+    __syncthreads();
+
+    r0 = sbuf[tid +   0];
+    r1 = cmul(tw3_1, sbuf[tid +  64]);
+    r2 = cmul(tw3_2, sbuf[tid + 128]);
+    r3 = cmul(tw3_3, sbuf[tid + 192]);
+    r4 = cmul(tw3_4, sbuf[tid + 256]);
+    r5 = cmul(tw3_5, sbuf[tid + 320]);
+    r6 = cmul(tw3_6, sbuf[tid + 384]);
+    r7 = cmul(tw3_7, sbuf[tid + 448]);
+
+    radix8_butterfly(r0, r1, r2, r3, r4, r5, r6, r7);
+}
+
 __global__ __launch_bounds__(64, 10)
 void ifft512_rows_fused_pk_radix8_t64_packed(
     const float* __restrict__ kx_bf,
@@ -580,6 +682,172 @@ void ifft512_rows_fused_pk_radix8_t64_packed(
     out[out_base + (size_t)(tid + 320) * 512u] = r5;
     out[out_base + (size_t)(tid + 384) * 512u] = r6;
     out[out_base + (size_t)(tid + 448) * 512u] = r7;
+}
+
+__global__ __launch_bounds__(64, 10)
+void ifft512_rows_fused_pk_pair_radix8_t64_packed(
+    const int* __restrict__ pair_a,
+    const int* __restrict__ pair_b,
+    const float* __restrict__ kx_bf,
+    const float* __restrict__ ky_bf,
+    const float* __restrict__ qx_1d,
+    const float* __restrict__ qy_1d,
+    float wavelength,
+    float semiangle_rad,
+    float ang_y_rad,
+    float ang_x_rad,
+    float C10,
+    float C12,
+    float cos2phi12,
+    float sin2phi12,
+    float factor,
+    const float2* __restrict__ pk,
+    const float2* __restrict__ G_qk,
+    float2* __restrict__ out,
+    float dc_real,
+    float dc_imag,
+    int num_pairs,
+    int gqk_cols
+) {
+    int pair = blockIdx.z;
+    int row = blockIdx.y;
+    int tid = threadIdx.x;
+    if (pair >= num_pairs || row >= 512 || tid >= 64) return;
+
+    int idx_a = __ldg(&pair_a[pair]);
+    int idx_b = __ldg(&pair_b[pair]);
+    int src0 = (int)octal_reverse_512((unsigned int)(tid*8 + 0));
+    int src1 = (int)octal_reverse_512((unsigned int)(tid*8 + 1));
+    int src2 = (int)octal_reverse_512((unsigned int)(tid*8 + 2));
+    int src3 = (int)octal_reverse_512((unsigned int)(tid*8 + 3));
+    int src4 = (int)octal_reverse_512((unsigned int)(tid*8 + 4));
+    int src5 = (int)octal_reverse_512((unsigned int)(tid*8 + 5));
+    int src6 = (int)octal_reverse_512((unsigned int)(tid*8 + 6));
+    int src7 = (int)octal_reverse_512((unsigned int)(tid*8 + 7));
+
+    float kx = __ldg(&kx_bf[idx_a]);
+    float ky = __ldg(&ky_bf[idx_a]);
+    float qx = __ldg(&qx_1d[row]);
+    float2 pka = pk[idx_a];
+
+    float2 a0, a1, a2, a3, a4, a5, a6, a7;
+    float2 b0, b1, b2, b3, b4, b5, b6, b7;
+    gamma_mul_pk_pair_onthefly(
+        qx, __ldg(&qy_1d[src0]), kx, ky,
+        wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
+        C10, C12, cos2phi12, sin2phi12, factor,
+        pka.x, pka.y,
+        ld_gqk_maybe_herm(G_qk, (unsigned long long)idx_a, (unsigned int)row,
+                          (unsigned int)src0, 512u, (unsigned int)gqk_cols),
+        ld_gqk_maybe_herm(G_qk, (unsigned long long)idx_b, (unsigned int)row,
+                          (unsigned int)src0, 512u, (unsigned int)gqk_cols),
+        a0, b0);
+    gamma_mul_pk_pair_onthefly(
+        qx, __ldg(&qy_1d[src1]), kx, ky,
+        wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
+        C10, C12, cos2phi12, sin2phi12, factor,
+        pka.x, pka.y,
+        ld_gqk_maybe_herm(G_qk, (unsigned long long)idx_a, (unsigned int)row,
+                          (unsigned int)src1, 512u, (unsigned int)gqk_cols),
+        ld_gqk_maybe_herm(G_qk, (unsigned long long)idx_b, (unsigned int)row,
+                          (unsigned int)src1, 512u, (unsigned int)gqk_cols),
+        a1, b1);
+    gamma_mul_pk_pair_onthefly(
+        qx, __ldg(&qy_1d[src2]), kx, ky,
+        wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
+        C10, C12, cos2phi12, sin2phi12, factor,
+        pka.x, pka.y,
+        ld_gqk_maybe_herm(G_qk, (unsigned long long)idx_a, (unsigned int)row,
+                          (unsigned int)src2, 512u, (unsigned int)gqk_cols),
+        ld_gqk_maybe_herm(G_qk, (unsigned long long)idx_b, (unsigned int)row,
+                          (unsigned int)src2, 512u, (unsigned int)gqk_cols),
+        a2, b2);
+    gamma_mul_pk_pair_onthefly(
+        qx, __ldg(&qy_1d[src3]), kx, ky,
+        wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
+        C10, C12, cos2phi12, sin2phi12, factor,
+        pka.x, pka.y,
+        ld_gqk_maybe_herm(G_qk, (unsigned long long)idx_a, (unsigned int)row,
+                          (unsigned int)src3, 512u, (unsigned int)gqk_cols),
+        ld_gqk_maybe_herm(G_qk, (unsigned long long)idx_b, (unsigned int)row,
+                          (unsigned int)src3, 512u, (unsigned int)gqk_cols),
+        a3, b3);
+    gamma_mul_pk_pair_onthefly(
+        qx, __ldg(&qy_1d[src4]), kx, ky,
+        wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
+        C10, C12, cos2phi12, sin2phi12, factor,
+        pka.x, pka.y,
+        ld_gqk_maybe_herm(G_qk, (unsigned long long)idx_a, (unsigned int)row,
+                          (unsigned int)src4, 512u, (unsigned int)gqk_cols),
+        ld_gqk_maybe_herm(G_qk, (unsigned long long)idx_b, (unsigned int)row,
+                          (unsigned int)src4, 512u, (unsigned int)gqk_cols),
+        a4, b4);
+    gamma_mul_pk_pair_onthefly(
+        qx, __ldg(&qy_1d[src5]), kx, ky,
+        wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
+        C10, C12, cos2phi12, sin2phi12, factor,
+        pka.x, pka.y,
+        ld_gqk_maybe_herm(G_qk, (unsigned long long)idx_a, (unsigned int)row,
+                          (unsigned int)src5, 512u, (unsigned int)gqk_cols),
+        ld_gqk_maybe_herm(G_qk, (unsigned long long)idx_b, (unsigned int)row,
+                          (unsigned int)src5, 512u, (unsigned int)gqk_cols),
+        a5, b5);
+    gamma_mul_pk_pair_onthefly(
+        qx, __ldg(&qy_1d[src6]), kx, ky,
+        wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
+        C10, C12, cos2phi12, sin2phi12, factor,
+        pka.x, pka.y,
+        ld_gqk_maybe_herm(G_qk, (unsigned long long)idx_a, (unsigned int)row,
+                          (unsigned int)src6, 512u, (unsigned int)gqk_cols),
+        ld_gqk_maybe_herm(G_qk, (unsigned long long)idx_b, (unsigned int)row,
+                          (unsigned int)src6, 512u, (unsigned int)gqk_cols),
+        a6, b6);
+    gamma_mul_pk_pair_onthefly(
+        qx, __ldg(&qy_1d[src7]), kx, ky,
+        wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
+        C10, C12, cos2phi12, sin2phi12, factor,
+        pka.x, pka.y,
+        ld_gqk_maybe_herm(G_qk, (unsigned long long)idx_a, (unsigned int)row,
+                          (unsigned int)src7, 512u, (unsigned int)gqk_cols),
+        ld_gqk_maybe_herm(G_qk, (unsigned long long)idx_b, (unsigned int)row,
+                          (unsigned int)src7, 512u, (unsigned int)gqk_cols),
+        a7, b7);
+
+    if (row == 0) {
+        if (src0 == 0) { a0 = make_float2(dc_real, dc_imag); b0 = make_float2(dc_real, dc_imag); }
+        if (src1 == 0) { a1 = make_float2(dc_real, dc_imag); b1 = make_float2(dc_real, dc_imag); }
+        if (src2 == 0) { a2 = make_float2(dc_real, dc_imag); b2 = make_float2(dc_real, dc_imag); }
+        if (src3 == 0) { a3 = make_float2(dc_real, dc_imag); b3 = make_float2(dc_real, dc_imag); }
+        if (src4 == 0) { a4 = make_float2(dc_real, dc_imag); b4 = make_float2(dc_real, dc_imag); }
+        if (src5 == 0) { a5 = make_float2(dc_real, dc_imag); b5 = make_float2(dc_real, dc_imag); }
+        if (src6 == 0) { a6 = make_float2(dc_real, dc_imag); b6 = make_float2(dc_real, dc_imag); }
+        if (src7 == 0) { a7 = make_float2(dc_real, dc_imag); b7 = make_float2(dc_real, dc_imag); }
+    }
+
+    __shared__ float2 sbuf[1024];
+    ifft512_radix8_apply_t64(a0, a1, a2, a3, a4, a5, a6, a7, tid, sbuf);
+    ifft512_radix8_apply_t64(b0, b1, b2, b3, b4, b5, b6, b7, tid, sbuf + 512);
+
+    size_t slot_a = (size_t)pair * 2u;
+    size_t slot_b = slot_a + 1u;
+    size_t base_a = slot_a * 512u * 512u + (size_t)row;
+    size_t base_b = slot_b * 512u * 512u + (size_t)row;
+    out[base_a + (size_t)(tid +   0) * 512u] = a0;
+    out[base_a + (size_t)(tid +  64) * 512u] = a1;
+    out[base_a + (size_t)(tid + 128) * 512u] = a2;
+    out[base_a + (size_t)(tid + 192) * 512u] = a3;
+    out[base_a + (size_t)(tid + 256) * 512u] = a4;
+    out[base_a + (size_t)(tid + 320) * 512u] = a5;
+    out[base_a + (size_t)(tid + 384) * 512u] = a6;
+    out[base_a + (size_t)(tid + 448) * 512u] = a7;
+    out[base_b + (size_t)(tid +   0) * 512u] = b0;
+    out[base_b + (size_t)(tid +  64) * 512u] = b1;
+    out[base_b + (size_t)(tid + 128) * 512u] = b2;
+    out[base_b + (size_t)(tid + 192) * 512u] = b3;
+    out[base_b + (size_t)(tid + 256) * 512u] = b4;
+    out[base_b + (size_t)(tid + 320) * 512u] = b5;
+    out[base_b + (size_t)(tid + 384) * 512u] = b6;
+    out[base_b + (size_t)(tid + 448) * 512u] = b7;
 }
 
 __global__ __launch_bounds__(256, 4)
@@ -1271,7 +1539,7 @@ __global__ void ssb512_corrected_fourier_sum_t256(
 
 // Radix-8 variance kernel: 64 threads × 8 elements/thread. 3 FFT stages
 // (m=8 in-register, m=64 smem, m=512 smem) instead of 5 radix-4 stages.
-// Each block processes one column × 64 BFs sequentially. Sum/sumsq are
+// Each block processes one column × 32 BFs sequentially. Sum/sumsq are
 // accumulated across BFs per output position.
 __global__ __launch_bounds__(64, 8)
 void ifft512_rows_var_radix8_t64(const float2* __restrict__ data,
@@ -1283,11 +1551,11 @@ void ifft512_rows_var_radix8_t64(const float2* __restrict__ data,
                                  int use_partial) {
     int col = blockIdx.y;
     int tid = threadIdx.x;
-    int groups = (num_bf + 63) >> 6;
+    int groups = (num_bf + 31) >> 5;
     int group = blockIdx.z % groups;
     int cand = blockIdx.z / groups;
     if (cand >= batch) return;
-    int bf0 = group * 64;
+    int bf0 = group * 32;
 
     // Direct-load positions: compute the octal-reversed row for each of
     // the thread's 8 elements. Loading gmem in this order gives us stage 1
@@ -1358,11 +1626,11 @@ void ifft512_rows_var_radix8_t64(const float2* __restrict__ data,
     // Unroll enough to expose memory/SMEM latency without forcing excessive
     // register pressure in the column phase/loss accumulator.
     #pragma unroll 2
-    for (int i = 0; i < 64; ++i) {
+    for (int i = 0; i < 32; ++i) {
         int bf = bf0 + i;
         int valid = bf < num_bf;
         int bf_next = bf + 1;
-        int has_next = (i < 63) && (bf_next < num_bf);
+        int has_next = (i < 31) && (bf_next < num_bf);
 
         // Pick the active buffer for this iter. Toggling buffers lets the
         // next iter's stage 1 writes run in parallel with this iter's
@@ -1572,6 +1840,7 @@ class CustomFFT512(CustomFFTBase):
                 "ifft512_rows_fused_pk_full_t128_mr4_packed",
                 "ifft512_cols_accumulate_sum_t128_mr4",
                 "ssb512_corrected_fourier_sum_t256",
+                "ifft512_rows_fused_pk_pair_radix8_t64_packed",
             ),
             twiddle_name="TWIDDLE_512",
             rows_block=(128, 4, 1),
@@ -1590,9 +1859,12 @@ class CustomFFT512(CustomFFTBase):
             "ifft512_rows_fused_pk_radix8_t64_packed"
         )
         self._fourier_sum = self._module.get_function("ssb512_corrected_fourier_sum_t256")
+        self._rows_fused_pk_pair_r8 = self._module.get_function(
+            "ifft512_rows_fused_pk_pair_radix8_t64_packed"
+        )
         self._phase_sum_dummy_sumsq = None
         self._direct_dummy_sumsq = None
-        self._colvar_group = 64
+        self._colvar_group = 32
 
     def ifft2_fused_pk_col_accumulate(
         self,
@@ -1831,6 +2103,86 @@ class CustomFFT512(CustomFFTBase):
                 np.int32(0),
             ),
         )
+
+    def ifft2_fused_pk_pair_col_accumulate_direct(
+        self,
+        data: cp.ndarray,
+        G_qk: cp.ndarray,
+        cache: dict,
+        pk: cp.ndarray,
+        pair_a: cp.ndarray,
+        pair_b: cp.ndarray,
+        C10: float,
+        C12: float,
+        cos2phi12: float,
+        sin2phi12: float,
+        factor: float,
+        dc_value: complex,
+        phase_sum: cp.ndarray,
+        phase_sumsq: cp.ndarray | None,
+        k_bf: int = 64,
+    ) -> int:
+        """Pair +/- BF rows, then run the existing column phase accumulator."""
+        N = self._size
+        if k_bf != self._colvar_group:
+            raise ValueError(f"paired direct accumulate requires k_bf={self._colvar_group}")
+        num_pairs = int(pair_a.shape[0])
+        out_bf = num_pairs * 2
+        if out_bf == 0:
+            return 0
+        if data.dtype != cp.complex64 or G_qk.dtype != cp.complex64 or pk.dtype != cp.complex64:
+            raise ValueError("Requires complex64 input")
+        if data.ndim != 3 or data.shape[0] < out_bf or data.shape[1] != N or data.shape[2] != N:
+            raise ValueError(f"data must have at least ({out_bf}, {N}, {N})")
+        if G_qk.ndim != 3 or G_qk.shape[1] != N or G_qk.shape[2] not in (N, N // 2 + 1):
+            raise ValueError(
+                f"G_qk must have shape (num_bf, {N}, {N}) or Hermitian"
+            )
+        gqk_cols = int(G_qk.shape[2])
+        if pk.shape != (G_qk.shape[0],):
+            raise ValueError("pk must have shape (num_bf,)")
+        if phase_sum.shape != (N, N):
+            raise ValueError(f"phase_sum must have shape ({N}, {N})")
+        if phase_sumsq is None:
+            if self._direct_dummy_sumsq is None or self._direct_dummy_sumsq.shape != (N, N):
+                self._direct_dummy_sumsq = cp.empty_like(phase_sum)
+            phase_sumsq = self._direct_dummy_sumsq
+        elif phase_sumsq.shape != (N, N):
+            raise ValueError(f"phase_sumsq must have shape ({N}, {N})")
+        (kx_bf, ky_bf, qx_1d, qy_1d,
+         wavelength, semiangle_rad, ang_y_rad, ang_x_rad) = self._require_geometry(cache)
+
+        out = data[:out_bf]
+        self._rows_fused_pk_pair_r8(
+            (1, N, num_pairs),
+            self._rows_var_block,
+            (
+                pair_a, pair_b,
+                kx_bf, ky_bf, qx_1d, qy_1d,
+                np.float32(wavelength), np.float32(semiangle_rad),
+                np.float32(ang_y_rad), np.float32(ang_x_rad),
+                np.float32(C10), np.float32(C12),
+                np.float32(cos2phi12), np.float32(sin2phi12),
+                np.float32(factor), pk, G_qk, out,
+                np.float32(dc_value.real), np.float32(dc_value.imag),
+                np.int32(num_pairs), np.int32(gqk_cols),
+            ),
+        )
+        n_groups = (out_bf + k_bf - 1) // k_bf
+        self._rows_var_batch(
+            (1, self._rows_var_grid_y, n_groups),
+            self._rows_var_block,
+            (
+                out,
+                phase_sum,
+                phase_sumsq,
+                np.int32(out_bf),
+                np.int32(1),
+                np.float32(1.0 / (N * N)),
+                np.int32(0),
+            ),
+        )
+        return out_bf
 
 
 @lru_cache(maxsize=1)

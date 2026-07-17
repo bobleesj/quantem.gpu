@@ -196,6 +196,70 @@ __device__ __forceinline__ float2 gamma_mul_pk_onthefly(
     );
 }
 
+__device__ __forceinline__ void gamma_mul_pk_pair_onthefly(
+    float qx, float qy,
+    float kx, float ky,
+    float wavelength, float semiangle_rad, float ang_y_rad, float ang_x_rad,
+    float C10,
+    float C12,
+    float cos2phi12,
+    float sin2phi12,
+    float factor,
+    float pk_a_re,
+    float pk_a_im,
+    float2 G_a,
+    float2 G_b,
+    float2 &out_a,
+    float2 &out_b
+) {
+    float4 m = compute_geometry(qx - kx, qy - ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad);
+    float4 p = compute_geometry(qx + kx, qy + ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad);
+
+    float cos_term_m = fmaf(m.y, cos2phi12, m.z * sin2phi12);
+    float cos_term_p = fmaf(p.y, cos2phi12, p.z * sin2phi12);
+
+    float chi_m = factor * m.x * fmaf(C12, cos_term_m, C10);
+    float chi_p = factor * p.x * fmaf(C12, cos_term_p, C10);
+
+    float sin_m, cos_m, sin_p, cos_p;
+    __sincosf(chi_m, &sin_m, &cos_m);
+    __sincosf(chi_p, &sin_p, &cos_p);
+
+    float pm_re = m.w * cos_m;
+    float pm_im = -m.w * sin_m;
+    float pp_re = p.w * cos_p;
+    float pp_im = -p.w * sin_p;
+
+    // +k BF: P(q-k) * conj(P(k)) - conj(P(q+k)) * P(k)
+    float pk_a_conj_im = -pk_a_im;
+    float t1a_re = fmaf(pm_re, pk_a_re, -pm_im * pk_a_conj_im);
+    float t1a_im = fmaf(pm_re, pk_a_conj_im, pm_im * pk_a_re);
+    float pp_conj_im = -pp_im;
+    float t2a_re = fmaf(pp_re, pk_a_re, -pp_conj_im * pk_a_im);
+    float t2a_im = fmaf(pp_re, pk_a_im, pp_conj_im * pk_a_re);
+    float ga_re = t1a_re - t2a_re;
+    float ga_im = t1a_im - t2a_im;
+    float mag_a = fmaf(ga_re, ga_re, ga_im * ga_im);
+    float inv_a = (mag_a > 1e-16f) ? rsqrtf(mag_a) : 1e8f;
+    ga_re *= inv_a;
+    ga_im *= inv_a;
+
+    out_a = make_float2(
+        fmaf(G_a.x, ga_re, G_a.y * ga_im),
+        fmaf(G_a.y, ga_re, -G_a.x * ga_im)
+    );
+    // For the C10/C12 probe used by the fast 512 path, P(-k) == P(+k)
+    // under the paired BF map, so gamma(-k) == -conj(gamma(+k)).
+    // The normalized relation lets the paired BF share the geometry,
+    // sincos, and normalization from the +k side.
+    float gb_re = -ga_re;
+    float gb_im = ga_im;
+    out_b = make_float2(
+        fmaf(G_b.x, gb_re, G_b.y * gb_im),
+        fmaf(G_b.y, gb_re, -G_b.x * gb_im)
+    );
+}
+
 // Evaluate χ including all 14 Krivanek aberrations at a single (dx, dy)
 // vector in reciprocal space.
 //

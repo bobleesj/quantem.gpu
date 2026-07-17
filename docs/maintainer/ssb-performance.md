@@ -302,6 +302,66 @@ Final component timing for the accepted 2026-07-17 incremental pass:
 | Partial/direct final accumulation overhead | `0.59 ms` |
 | Profiled GPU total | `44.39 ms` |
 
+### 512 paired-BF phase/loss follow-up
+
+The next GPU1 pass paired bright-field pixels at `+k` and `-k` for the
+`512x512` C10/C12 exact phase/loss path. For the even C10/C12 probe,
+`P(-k) == P(+k)` under the paired BF map, so the row kernel can share the
+shifted probe geometry, `sincos`, and gamma normalization for the pair while
+still applying each BF pixel's own `G_qk` evidence. This preserves the same
+BF disk, scan size, and phase/loss definition; no preview path, binning,
+cropping, saved `g_bf` cache, or multi-GPU work is counted.
+
+Focused parity during this pass:
+
+```text
+CUDA_VISIBLE_DEVICES=1 PYTHONPATH=src pytest -q \
+  tests/test_ssb_cuda_128.py -k 'engine_matches_explicit or phase_loss'
+
+6 passed, 18 deselected
+```
+
+Sustained synthetic `512x512`, `8809` BF timing on GPU1 after the paired path:
+
+| Mode | Mean | p50 | p95 | FPS |
+| --- | ---: | ---: | ---: | ---: |
+| Phase redraw | `43.30 ms` | `43.76 ms` | `43.87 ms` | `23.1` |
+| Phase+loss | `43.30 ms` | `43.83 ms` | `43.93 ms` | `23.1` |
+
+The first few samples in a run can report `37-38 ms`, but sustained samples
+settle around `43-44 ms`. During the same run, `nvidia-smi dmon` showed GPU1
+at `100%` SM, `83-85%` memory activity, about `280 W`, and about `1550 MHz`
+graphics clock under the `300 W` board power limit. An unprivileged attempt
+to raise GPU1 to its reported `325 W` max was rejected by the driver. GPU0 was
+also checked as a single-GPU comparison but was slower under current machine
+load (`p50 ~47.8 ms`), so GPU1 remains the cleaner benchmark device.
+
+Current component split for the paired full-storage path:
+
+| Component | p50 total |
+| --- | ---: |
+| `pk` update | `0.015 ms` |
+| Row gamma + row IFFT + transposed write | `28.55 ms` |
+| Column IFFT + phase/loss accumulation | `13.69 ms` |
+| Singleton/final overhead | `0.18 ms` |
+| Profiled GPU total | `42.45 ms` |
+
+Nsight Compute on the paired row kernel:
+
+- `94` registers/thread, no local/shared spills.
+- `41.7%` theoretical occupancy, `38.9%` achieved occupancy.
+- `0.37` eligible warps/scheduler and `79%` cycles with no eligible warp.
+- `577 GB/s` memory throughput, `91%` memory busy, `85.8%` L2 hit rate.
+- The primary warning is still uncoalesced global traffic: about `63%`
+  excessive global sectors, plus about `33%` excessive shared wavefronts.
+
+Interpretation: the paired BF symmetry is a real exact-path improvement, but
+it does not reach the `33.3 ms` / `30 FPS` target. The remaining bottleneck is
+the same topology issue: the row stage writes a full transposed complex
+intermediate so the column stage can read coalesced data. Reaching 30 FPS
+requires a deeper row/column topology change that reduces this intermediate
+traffic or coalesces both sides without changing the per-BF phase/loss math.
+
 Final Nsight samples on a `1024`-BF chunk still show the structural limit:
 
 - Row/gamma kernel: `93` registers/thread, no spills, `38.2%` achieved
@@ -340,6 +400,14 @@ Rejected candidates from the same pass:
 | Raising the column phase/loss BF group from `64` to `128` | Parity passed, but phase/loss timing regressed slightly to `52.8-53.0 ms`. | Reverted. |
 | Relaxing 512 radix-8 launch bounds further from `8` to `6` blocks | Parity passed, but phase timing regressed to `52.6 ms` from the `52.45 ms` launch-bounds-8 result. | Reverted. |
 | Raising the direct-accumulate BF group from `64` to `128` | Parity passed, but phase timing regressed to `52.47 ms` from the `52.27 ms` direct 64-BF result. | Reverted. |
+| Paired row FFT helper applying `+k` and `-k` simultaneously | Parity passed, but sustained p50 regressed to `43.1 ms`; higher register pressure erased the saved barrier/twiddle work. | Reverted. |
+| Exact phase/loss staging chunk raised from `2 GB` to `4 GB` with paired rows | Parity passed, but timing stayed around `42.9 ms` while using more transient VRAM. | Reverted. |
+| Global CUDA `--maxrregcount=80` with paired rows | Parity passed, but p50 stayed around `42.7 ms`; this broad compile knob was not worth the risk. | Reverted. |
+| Paired row launch bound `__launch_bounds__(64, 12)` | Parity passed, but p50 regressed to about `42.9 ms`; `64,10` remains better. | Reverted. |
+| Column BF group `128` after the paired row change | Parity passed, but sustained p50 stayed around `43.9 ms` and mean worsened slightly. | Reverted. |
+| Column BF group `16` after the paired row change | Parity passed, but sustained p50 regressed to about `43.8 ms`; it added more atomic/group overhead. | Reverted. |
+| Column BF group `48` after the paired row change | Parity passed, but sustained p50 regressed to about `43.9 ms`; `32` was the best measured group in this pass. | Reverted. |
+| Partial-plane reduction instead of direct atomics for paired chunks | Scratch component timing was slower (`pair_col` p50 about `13.3 ms` plus reduction) than direct accumulation. | Rejected. |
 
 GPU1 was saturated during the long run (`100%` SM at the `300 W` power cap,
 about `66%` memory controller). The remaining exact-path bottleneck is not

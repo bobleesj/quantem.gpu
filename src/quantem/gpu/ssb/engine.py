@@ -460,6 +460,8 @@ class SSBEngine:
             if k in sub_cache:
                 sub_cache[k] = cp.ascontiguousarray(saved_cache[k][indices])
         sub_cache["num_bf"] = subset_num_bf
+        for k in ("pair_a", "pair_b", "single_idx"):
+            sub_cache.pop(k, None)
         self._cache = sub_cache
         # The pk buffer is sized per num_bf; subset needs its own
         self._pk_buffer = cp.empty((subset_num_bf,), dtype=cp.complex64)
@@ -525,7 +527,7 @@ class SSBEngine:
         cos2phi_k = cos_phi_k * cos_phi_k - sin_phi_k * sin_phi_k
         sin2phi_k = 2.0 * sin_phi_k * cos_phi_k
         del cos_phi_k, sin_phi_k, denom_k, phi_k
-        self._cache = {
+        cache = {
             "num_bf": num_bf,
             "ny": ny,
             "nx": nx,
@@ -542,6 +544,44 @@ class SSBEngine:
             "ang_y_rad": float(ang_y * 1e-3),
             "ang_x_rad": float(ang_x * 1e-3),
         }
+        rows_cpu = cp.asnumpy(self.bf_inds_row).astype(np.int32, copy=False)
+        cols_cpu = cp.asnumpy(self.bf_inds_col).astype(np.int32, copy=False)
+        row_center = float(self.bf_center[0])
+        col_center = float(self.bf_center[1])
+        pair_lookup = {
+            (int(r), int(c)): i for i, (r, c) in enumerate(zip(rows_cpu, cols_cpu))
+        }
+        pair_a: list[int] = []
+        pair_b: list[int] = []
+        single_idx: list[int] = []
+        seen: set[int] = set()
+        for i, (r, cidx) in enumerate(zip(rows_cpu, cols_cpu)):
+            if i in seen:
+                continue
+            opp_r_f = 2.0 * row_center - float(r)
+            opp_c_f = 2.0 * col_center - float(cidx)
+            opp_r = int(round(opp_r_f))
+            opp_c = int(round(opp_c_f))
+            j = pair_lookup.get((opp_r, opp_c))
+            if (
+                j is None
+                or abs(opp_r_f - opp_r) > 1e-6
+                or abs(opp_c_f - opp_c) > 1e-6
+            ):
+                single_idx.append(i)
+                seen.add(i)
+            elif j == i:
+                single_idx.append(i)
+                seen.add(i)
+            else:
+                pair_a.append(i)
+                pair_b.append(j)
+                seen.add(i)
+                seen.add(j)
+        cache["pair_a"] = cp.asarray(pair_a, dtype=cp.int32)
+        cache["pair_b"] = cp.asarray(pair_b, dtype=cp.int32)
+        cache["single_idx"] = cp.asarray(single_idx, dtype=cp.int32)
+        self._cache = cache
         self._cached_rotation_rad = rotation_angle_rad
         # Initialize custom FFT based on scan size
         if self._custom_fft is None:
@@ -1236,6 +1276,55 @@ class SSBEngine:
         use_direct_accumulate = hasattr(
             self._custom_fft, "ifft2_fused_pk_col_accumulate_direct"
         )
+        use_paired_direct = (
+            use_direct_accumulate
+            and hasattr(self._custom_fft, "ifft2_fused_pk_pair_col_accumulate_direct")
+            and "pair_a" in c
+            and int(c["pair_a"].shape[0]) > 0
+        )
+
+        if use_paired_direct:
+            pair_a_all = c["pair_a"]
+            pair_b_all = c["pair_b"]
+            pair_chunk = max(1, chunk_bf // 2)
+            for pair_start in range(0, int(pair_a_all.shape[0]), pair_chunk):
+                pair_end = min(pair_start + pair_chunk, int(pair_a_all.shape[0]))
+                pair_count = pair_end - pair_start
+                self._custom_fft.ifft2_fused_pk_pair_col_accumulate_direct(
+                    self._result_buffer[: pair_count * 2],
+                    self.G_qk,
+                    c,
+                    self._pk_buffer,
+                    pair_a_all[pair_start:pair_end],
+                    pair_b_all[pair_start:pair_end],
+                    C10, C12, cos2phi12, sin2phi12,
+                    self._factor, self._dc_value_host,
+                    phase_sum,
+                    phase_sumsq,
+                    k_bf,
+                )
+            single_idx = c.get("single_idx")
+            if single_idx is not None and int(single_idx.shape[0]) > 0:
+                sub_cache = dict(c)
+                sub_cache["kx_bf"] = cp.ascontiguousarray(c["kx_bf"][single_idx])
+                sub_cache["ky_bf"] = cp.ascontiguousarray(c["ky_bf"][single_idx])
+                self._custom_fft.ifft2_fused_pk_col_accumulate_direct(
+                    self._result_buffer[: int(single_idx.shape[0])],
+                    cp.ascontiguousarray(self.G_qk[single_idx]),
+                    sub_cache,
+                    cp.ascontiguousarray(self._pk_buffer[single_idx]),
+                    C10, C12, cos2phi12, sin2phi12,
+                    self._factor, self._dc_value_host,
+                    phase_sum,
+                    phase_sumsq,
+                    k_bf,
+                )
+            mean_phase = phase_sum / float(num_bf)
+            if compute_loss:
+                var_per_pixel = phase_sumsq / float(num_bf) - mean_phase ** 2
+                loss = float(cp.mean(var_per_pixel))
+                return mean_phase, loss
+            return mean_phase
 
         for bf_start in range(0, num_bf, chunk_bf):
             bf_end = min(bf_start + chunk_bf, num_bf)
