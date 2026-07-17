@@ -480,6 +480,8 @@ void ifft512_rows_fused_pk_radix8_t64_packed(
     float cos2phi12,
     float sin2phi12,
     float factor,
+    float phase_scale,
+    float inner2,
     const float2* __restrict__ pk,
     const float2* __restrict__ G_qk,
     float2* __restrict__ out,
@@ -509,59 +511,67 @@ void ifft512_rows_fused_pk_radix8_t64_packed(
     float pk_re = pkv.x;
     float pk_im = pkv.y;
 
-    float2 r0 = gamma_mul_pk_onthefly(
+    float2 r0 = gamma_mul_pk_cartesian_onthefly(
         qx, __ldg(&qy_1d[src0]), kx, ky,
         wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
         C10, C12, cos2phi12, sin2phi12, factor,
+        phase_scale, inner2,
         pk_re, pk_im,
         ld_gqk_maybe_herm(G_qk, (unsigned long long)bf, (unsigned int)row,
                           (unsigned int)src0, 512u, (unsigned int)gqk_cols));
-    float2 r1 = gamma_mul_pk_onthefly(
+    float2 r1 = gamma_mul_pk_cartesian_onthefly(
         qx, __ldg(&qy_1d[src1]), kx, ky,
         wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
         C10, C12, cos2phi12, sin2phi12, factor,
+        phase_scale, inner2,
         pk_re, pk_im,
         ld_gqk_maybe_herm(G_qk, (unsigned long long)bf, (unsigned int)row,
                           (unsigned int)src1, 512u, (unsigned int)gqk_cols));
-    float2 r2 = gamma_mul_pk_onthefly(
+    float2 r2 = gamma_mul_pk_cartesian_onthefly(
         qx, __ldg(&qy_1d[src2]), kx, ky,
         wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
         C10, C12, cos2phi12, sin2phi12, factor,
+        phase_scale, inner2,
         pk_re, pk_im,
         ld_gqk_maybe_herm(G_qk, (unsigned long long)bf, (unsigned int)row,
                           (unsigned int)src2, 512u, (unsigned int)gqk_cols));
-    float2 r3 = gamma_mul_pk_onthefly(
+    float2 r3 = gamma_mul_pk_cartesian_onthefly(
         qx, __ldg(&qy_1d[src3]), kx, ky,
         wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
         C10, C12, cos2phi12, sin2phi12, factor,
+        phase_scale, inner2,
         pk_re, pk_im,
         ld_gqk_maybe_herm(G_qk, (unsigned long long)bf, (unsigned int)row,
                           (unsigned int)src3, 512u, (unsigned int)gqk_cols));
-    float2 r4 = gamma_mul_pk_onthefly(
+    float2 r4 = gamma_mul_pk_cartesian_onthefly(
         qx, __ldg(&qy_1d[src4]), kx, ky,
         wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
         C10, C12, cos2phi12, sin2phi12, factor,
+        phase_scale, inner2,
         pk_re, pk_im,
         ld_gqk_maybe_herm(G_qk, (unsigned long long)bf, (unsigned int)row,
                           (unsigned int)src4, 512u, (unsigned int)gqk_cols));
-    float2 r5 = gamma_mul_pk_onthefly(
+    float2 r5 = gamma_mul_pk_cartesian_onthefly(
         qx, __ldg(&qy_1d[src5]), kx, ky,
         wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
         C10, C12, cos2phi12, sin2phi12, factor,
+        phase_scale, inner2,
         pk_re, pk_im,
         ld_gqk_maybe_herm(G_qk, (unsigned long long)bf, (unsigned int)row,
                           (unsigned int)src5, 512u, (unsigned int)gqk_cols));
-    float2 r6 = gamma_mul_pk_onthefly(
+    float2 r6 = gamma_mul_pk_cartesian_onthefly(
         qx, __ldg(&qy_1d[src6]), kx, ky,
         wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
         C10, C12, cos2phi12, sin2phi12, factor,
+        phase_scale, inner2,
         pk_re, pk_im,
         ld_gqk_maybe_herm(G_qk, (unsigned long long)bf, (unsigned int)row,
                           (unsigned int)src6, 512u, (unsigned int)gqk_cols));
-    float2 r7 = gamma_mul_pk_onthefly(
+    float2 r7 = gamma_mul_pk_cartesian_onthefly(
         qx, __ldg(&qy_1d[src7]), kx, ky,
         wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
         C10, C12, cos2phi12, sin2phi12, factor,
+        phase_scale, inner2,
         pk_re, pk_im,
         ld_gqk_maybe_herm(G_qk, (unsigned long long)bf, (unsigned int)row,
                           (unsigned int)src7, 512u, (unsigned int)gqk_cols));
@@ -814,6 +824,135 @@ void ifft512_rows_fused_pk_pair_radix8_t64_packed(
         ld_gqk_maybe_herm(G_qk, (unsigned long long)idx_b, (unsigned int)row,
                           (unsigned int)src7, 512u, (unsigned int)gqk_cols),
         a7, b7);
+
+    if (row == 0) {
+        if (src0 == 0) { a0 = make_float2(dc_real, dc_imag); b0 = make_float2(dc_real, dc_imag); }
+        if (src1 == 0) { a1 = make_float2(dc_real, dc_imag); b1 = make_float2(dc_real, dc_imag); }
+        if (src2 == 0) { a2 = make_float2(dc_real, dc_imag); b2 = make_float2(dc_real, dc_imag); }
+        if (src3 == 0) { a3 = make_float2(dc_real, dc_imag); b3 = make_float2(dc_real, dc_imag); }
+        if (src4 == 0) { a4 = make_float2(dc_real, dc_imag); b4 = make_float2(dc_real, dc_imag); }
+        if (src5 == 0) { a5 = make_float2(dc_real, dc_imag); b5 = make_float2(dc_real, dc_imag); }
+        if (src6 == 0) { a6 = make_float2(dc_real, dc_imag); b6 = make_float2(dc_real, dc_imag); }
+        if (src7 == 0) { a7 = make_float2(dc_real, dc_imag); b7 = make_float2(dc_real, dc_imag); }
+    }
+
+    __shared__ float2 sbuf_all[4][1024];
+    float2* sbuf = sbuf_all[threadIdx.y];
+    ifft512_radix8_apply_t64(a0, a1, a2, a3, a4, a5, a6, a7, tid, sbuf);
+    ifft512_radix8_apply_t64(b0, b1, b2, b3, b4, b5, b6, b7, tid, sbuf + 512);
+
+    size_t slot_a = (size_t)pair * 2u;
+    sbuf[tid +   0] = a0;
+    sbuf[tid +  64] = a1;
+    sbuf[tid + 128] = a2;
+    sbuf[tid + 192] = a3;
+    sbuf[tid + 256] = a4;
+    sbuf[tid + 320] = a5;
+    sbuf[tid + 384] = a6;
+    sbuf[tid + 448] = a7;
+    sbuf[512 + tid +   0] = b0;
+    sbuf[512 + tid +  64] = b1;
+    sbuf[512 + tid + 128] = b2;
+    sbuf[512 + tid + 192] = b3;
+    sbuf[512 + tid + 256] = b4;
+    sbuf[512 + tid + 320] = b5;
+    sbuf[512 + tid + 384] = b6;
+    sbuf[512 + tid + 448] = b7;
+    __syncthreads();
+
+    int row_base = blockIdx.y * 4;
+    int linear = threadIdx.y * 64 + tid;
+    #pragma unroll
+    for (int t = linear; t < 4096; t += 256) {
+        int slot_offset = t >> 11;
+        int rem = t & 2047;
+        int col = rem >> 2;
+        int local_row = rem & 3;
+        float2 v = sbuf_all[local_row][(slot_offset << 9) + col];
+        size_t out_idx = (slot_a + (size_t)slot_offset) * 512u * 512u
+                       + (size_t)col * 512u
+                       + (size_t)(row_base + local_row);
+        out[out_idx] = v;
+    }
+}
+
+__global__ __launch_bounds__(256, 4)
+void ifft512_rows_fused_pk_dual_radix8_t64_packed(
+    const int* __restrict__ pair_a,
+    const int* __restrict__ pair_b,
+    const float* __restrict__ kx_bf,
+    const float* __restrict__ ky_bf,
+    const float* __restrict__ qx_1d,
+    const float* __restrict__ qy_1d,
+    float wavelength,
+    float semiangle_rad,
+    float ang_y_rad,
+    float ang_x_rad,
+    float C10,
+    float C12,
+    float cos2phi12,
+    float sin2phi12,
+    float factor,
+    float phase_scale,
+    float inner2,
+    const float2* __restrict__ pk,
+    const float2* __restrict__ G_qk,
+    float2* __restrict__ out,
+    float dc_real,
+    float dc_imag,
+    int num_pairs,
+    int gqk_cols
+) {
+    int pair = blockIdx.z;
+    int row = blockIdx.y * 4 + threadIdx.y;
+    int tid = threadIdx.x;
+    if (pair >= num_pairs || row >= 512 || tid >= 64) return;
+
+    int idx_a = __ldg(&pair_a[pair]);
+    int idx_b = __ldg(&pair_b[pair]);
+    int src0 = (int)octal_reverse_512((unsigned int)(tid*8 + 0));
+    int src1 = (int)octal_reverse_512((unsigned int)(tid*8 + 1));
+    int src2 = (int)octal_reverse_512((unsigned int)(tid*8 + 2));
+    int src3 = (int)octal_reverse_512((unsigned int)(tid*8 + 3));
+    int src4 = (int)octal_reverse_512((unsigned int)(tid*8 + 4));
+    int src5 = (int)octal_reverse_512((unsigned int)(tid*8 + 5));
+    int src6 = (int)octal_reverse_512((unsigned int)(tid*8 + 6));
+    int src7 = (int)octal_reverse_512((unsigned int)(tid*8 + 7));
+
+    float kx_a = __ldg(&kx_bf[idx_a]);
+    float ky_a = __ldg(&ky_bf[idx_a]);
+    float kx_b = __ldg(&kx_bf[idx_b]);
+    float ky_b = __ldg(&ky_bf[idx_b]);
+    float qx = __ldg(&qx_1d[row]);
+    float2 pka = pk[idx_a];
+    float2 pkb = pk[idx_b];
+
+    float2 a0, a1, a2, a3, a4, a5, a6, a7;
+    float2 b0, b1, b2, b3, b4, b5, b6, b7;
+#define DUAL_EVAL(slot, src) \
+    a##slot = gamma_mul_pk_cartesian_onthefly( \
+        qx, __ldg(&qy_1d[src]), kx_a, ky_a, \
+        wavelength, semiangle_rad, ang_y_rad, ang_x_rad, \
+        C10, C12, cos2phi12, sin2phi12, factor, phase_scale, inner2, \
+        pka.x, pka.y, \
+        ld_gqk_maybe_herm(G_qk, (unsigned long long)idx_a, (unsigned int)row, \
+                          (unsigned int)src, 512u, (unsigned int)gqk_cols)); \
+    b##slot = gamma_mul_pk_cartesian_onthefly( \
+        qx, __ldg(&qy_1d[src]), kx_b, ky_b, \
+        wavelength, semiangle_rad, ang_y_rad, ang_x_rad, \
+        C10, C12, cos2phi12, sin2phi12, factor, phase_scale, inner2, \
+        pkb.x, pkb.y, \
+        ld_gqk_maybe_herm(G_qk, (unsigned long long)idx_b, (unsigned int)row, \
+                          (unsigned int)src, 512u, (unsigned int)gqk_cols))
+    DUAL_EVAL(0, src0);
+    DUAL_EVAL(1, src1);
+    DUAL_EVAL(2, src2);
+    DUAL_EVAL(3, src3);
+    DUAL_EVAL(4, src4);
+    DUAL_EVAL(5, src5);
+    DUAL_EVAL(6, src6);
+    DUAL_EVAL(7, src7);
+#undef DUAL_EVAL
 
     if (row == 0) {
         if (src0 == 0) { a0 = make_float2(dc_real, dc_imag); b0 = make_float2(dc_real, dc_imag); }
@@ -1857,6 +1996,7 @@ class CustomFFT512(CustomFFTBase):
                 "ifft512_cols_accumulate_sum_t128_mr4",
                 "ssb512_corrected_fourier_sum_t256",
                 "ifft512_rows_fused_pk_pair_radix8_t64_packed",
+                "ifft512_rows_fused_pk_dual_radix8_t64_packed",
             ),
             twiddle_name="TWIDDLE_512",
             rows_block=(128, 4, 1),
@@ -1878,8 +2018,13 @@ class CustomFFT512(CustomFFTBase):
         self._rows_fused_pk_pair_r8 = self._module.get_function(
             "ifft512_rows_fused_pk_pair_radix8_t64_packed"
         )
+        self._rows_fused_pk_dual_r8 = self._module.get_function(
+            "ifft512_rows_fused_pk_dual_radix8_t64_packed"
+        )
         self._rows_pair_block = (64, 4, 1)
         self._rows_pair_grid_y = 128
+        self._rows_dual_block = (64, 4, 1)
+        self._rows_dual_grid_y = 128
         self._phase_sum_dummy_sumsq = None
         self._direct_dummy_sumsq = None
         self._colvar_group = 32
@@ -1937,6 +2082,10 @@ class CustomFFT512(CustomFFTBase):
             raise ValueError(f"partial buffers must have shape ({n_groups}, {N}, {N})")
         (kx_bf, ky_bf, qx_1d, qy_1d,
          wavelength, semiangle_rad, ang_y_rad, ang_x_rad) = self._require_geometry(cache)
+        phase_scale = np.float32(factor * wavelength * wavelength)
+        max_ang = max(float(ang_y_rad), float(ang_x_rad))
+        inner = (float(semiangle_rad) - 0.5 * max_ang) / float(wavelength)
+        inner2 = np.float32(inner * inner if inner > 0.0 else -1.0)
 
         grid_rows = (1, N, num_bf)
         self._rows_fused_pk_r8(
@@ -1948,7 +2097,7 @@ class CustomFFT512(CustomFFTBase):
                 np.float32(ang_y_rad), np.float32(ang_x_rad),
                 np.float32(C10), np.float32(C12),
                 np.float32(cos2phi12), np.float32(sin2phi12),
-                np.float32(factor), pk, G_qk, data,
+                np.float32(factor), phase_scale, inner2, pk, G_qk, data,
                 np.float32(dc_value.real), np.float32(dc_value.imag),
                 np.int32(num_bf), np.int32(gqk_cols),
             ),
@@ -2004,6 +2153,10 @@ class CustomFFT512(CustomFFTBase):
             raise ValueError(f"partial_sum must have shape ({n_groups}, {N}, {N})")
         (kx_bf, ky_bf, qx_1d, qy_1d,
          wavelength, semiangle_rad, ang_y_rad, ang_x_rad) = self._require_geometry(cache)
+        phase_scale = np.float32(factor * wavelength * wavelength)
+        max_ang = max(float(ang_y_rad), float(ang_x_rad))
+        inner = (float(semiangle_rad) - 0.5 * max_ang) / float(wavelength)
+        inner2 = np.float32(inner * inner if inner > 0.0 else -1.0)
 
         grid_rows = (1, N, num_bf)
         self._rows_fused_pk_r8(
@@ -2015,7 +2168,7 @@ class CustomFFT512(CustomFFTBase):
                 np.float32(ang_y_rad), np.float32(ang_x_rad),
                 np.float32(C10), np.float32(C12),
                 np.float32(cos2phi12), np.float32(sin2phi12),
-                np.float32(factor), pk, G_qk, data,
+                np.float32(factor), phase_scale, inner2, pk, G_qk, data,
                 np.float32(dc_value.real), np.float32(dc_value.imag),
                 np.int32(num_bf), np.int32(gqk_cols),
             ),
@@ -2092,6 +2245,10 @@ class CustomFFT512(CustomFFTBase):
             raise ValueError(f"phase_sumsq must have shape ({N}, {N})")
         (kx_bf, ky_bf, qx_1d, qy_1d,
          wavelength, semiangle_rad, ang_y_rad, ang_x_rad) = self._require_geometry(cache)
+        phase_scale = np.float32(factor * wavelength * wavelength)
+        max_ang = max(float(ang_y_rad), float(ang_x_rad))
+        inner = (float(semiangle_rad) - 0.5 * max_ang) / float(wavelength)
+        inner2 = np.float32(inner * inner if inner > 0.0 else -1.0)
 
         self._rows_fused_pk_r8(
             (1, N, num_bf),
@@ -2102,7 +2259,7 @@ class CustomFFT512(CustomFFTBase):
                 np.float32(ang_y_rad), np.float32(ang_x_rad),
                 np.float32(C10), np.float32(C12),
                 np.float32(cos2phi12), np.float32(sin2phi12),
-                np.float32(factor), pk, G_qk, data,
+                np.float32(factor), phase_scale, inner2, pk, G_qk, data,
                 np.float32(dc_value.real), np.float32(dc_value.imag),
                 np.int32(num_bf), np.int32(gqk_cols),
             ),
@@ -2178,6 +2335,90 @@ class CustomFFT512(CustomFFTBase):
         self._rows_fused_pk_pair_r8(
             (1, self._rows_pair_grid_y, num_pairs),
             self._rows_pair_block,
+            (
+                pair_a, pair_b,
+                kx_bf, ky_bf, qx_1d, qy_1d,
+                np.float32(wavelength), np.float32(semiangle_rad),
+                np.float32(ang_y_rad), np.float32(ang_x_rad),
+                np.float32(C10), np.float32(C12),
+                np.float32(cos2phi12), np.float32(sin2phi12),
+                np.float32(factor), phase_scale, inner2, pk, G_qk, out,
+                np.float32(dc_value.real), np.float32(dc_value.imag),
+                np.int32(num_pairs), np.int32(gqk_cols),
+            ),
+        )
+        n_groups = (out_bf + k_bf - 1) // k_bf
+        self._rows_var_batch(
+            (1, self._rows_var_grid_y, n_groups),
+            self._rows_var_block,
+            (
+                out,
+                phase_sum,
+                phase_sumsq,
+                np.int32(out_bf),
+                np.int32(1),
+                np.float32(1.0 / (N * N)),
+                np.int32(0),
+            ),
+        )
+        return out_bf
+
+    def ifft2_fused_pk_dual_col_accumulate_direct(
+        self,
+        data: cp.ndarray,
+        G_qk: cp.ndarray,
+        cache: dict,
+        pk: cp.ndarray,
+        pair_a: cp.ndarray,
+        pair_b: cp.ndarray,
+        C10: float,
+        C12: float,
+        cos2phi12: float,
+        sin2phi12: float,
+        factor: float,
+        dc_value: complex,
+        phase_sum: cp.ndarray,
+        phase_sumsq: cp.ndarray | None,
+        k_bf: int = 64,
+    ) -> int:
+        """Process two arbitrary BF pixels per row block, preserving exact gamma."""
+        N = self._size
+        if k_bf != self._colvar_group:
+            raise ValueError(f"dual direct accumulate requires k_bf={self._colvar_group}")
+        num_pairs = int(pair_a.shape[0])
+        out_bf = num_pairs * 2
+        if out_bf == 0:
+            return 0
+        if data.dtype != cp.complex64 or G_qk.dtype != cp.complex64 or pk.dtype != cp.complex64:
+            raise ValueError("Requires complex64 input")
+        if data.ndim != 3 or data.shape[0] < out_bf or data.shape[1] != N or data.shape[2] != N:
+            raise ValueError(f"data must have at least ({out_bf}, {N}, {N})")
+        if G_qk.ndim != 3 or G_qk.shape[1] != N or G_qk.shape[2] not in (N, N // 2 + 1):
+            raise ValueError(
+                f"G_qk must have shape (num_bf, {N}, {N}) or Hermitian"
+            )
+        gqk_cols = int(G_qk.shape[2])
+        if pk.shape != (G_qk.shape[0],):
+            raise ValueError("pk must have shape (num_bf,)")
+        if phase_sum.shape != (N, N):
+            raise ValueError(f"phase_sum must have shape ({N}, {N})")
+        if phase_sumsq is None:
+            if self._direct_dummy_sumsq is None or self._direct_dummy_sumsq.shape != (N, N):
+                self._direct_dummy_sumsq = cp.empty_like(phase_sum)
+            phase_sumsq = self._direct_dummy_sumsq
+        elif phase_sumsq.shape != (N, N):
+            raise ValueError(f"phase_sumsq must have shape ({N}, {N})")
+        (kx_bf, ky_bf, qx_1d, qy_1d,
+         wavelength, semiangle_rad, ang_y_rad, ang_x_rad) = self._require_geometry(cache)
+        phase_scale = np.float32(factor * wavelength * wavelength)
+        max_ang = max(float(ang_y_rad), float(ang_x_rad))
+        inner = (float(semiangle_rad) - 0.5 * max_ang) / float(wavelength)
+        inner2 = np.float32(inner * inner if inner > 0.0 else -1.0)
+
+        out = data[:out_bf]
+        self._rows_fused_pk_dual_r8(
+            (1, self._rows_dual_grid_y, num_pairs),
+            self._rows_dual_block,
             (
                 pair_a, pair_b,
                 kx_bf, ky_bf, qx_1d, qy_1d,

@@ -231,8 +231,11 @@ Accepted kernel changes:
   expensive row writes for a much cheaper column pass.
 - Updated the batch variance row staging layout to match the transposed column
   reader, preserving parity for batched optimizer candidates.
-- Raised the `512x512` column phase/loss BF group from `32` to `64`, reducing
-  partial-plane overhead without changing the per-BF phase/loss arithmetic.
+- Tested larger `512x512` column phase/loss BF groups as an intermediate
+  partial-plane optimization, but the durable direct-accumulate path keeps the
+  fixed 32-BF variance grouping. The row-variance kernel is specialized for
+  32 BF pixels per group; changing only the wrapper group count under-counts
+  BF evidence and is not valid.
 - Relaxed the two 512 radix-8 hot kernels from `__launch_bounds__(64, 10)` to
   `__launch_bounds__(64, 8)`, which gave a small scheduling win without parity
   changes.
@@ -386,6 +389,86 @@ Component split for the full-staging four-row path:
 | Singleton/final overhead | `0.11 ms` |
 | Profiled GPU total | `~38.7 ms` |
 
+### 512 real subpixel-BF dual path
+
+The real Samsung `512x512` central field has a subpixel fitted BF center. Under
+the exact integer detector-pixel mirror test, that means there are no usable
+`+k/-k` pairs:
+
+```text
+source: /home/owner/ssd/data/samsung/logic_pmos_1p3Mx_30pA_1mrad_5um_17mradtilt/maped/logic_pmos_1p3Mx_30pA_1mrad_5um_17mradtilt_0.0x_0.0y_20260129_15-41-52_master.h5
+shape: (512, 512, 192, 192), uint16, 19.33 GB
+BF policy: bf_radius=53, threshold=0.0
+active BF: 8822
+exact symmetry pairs: 0
+```
+
+For that scientist workflow, the accepted exact optimization is an arbitrary
+dual-BF row kernel. It pairs the remaining singleton BF pixels two at a time
+for launch/staging efficiency, but computes each BF pixel's own `kx/ky`, probe
+correction, `G_qk` fetch, inverse FFT, phase, and loss contribution. It is not
+a symmetry approximation and does not reduce the BF disk, scan size, detector
+sampling, or precision.
+
+Focused parity now includes this condition directly:
+
+```text
+CUDA_VISIBLE_DEVICES=1 PYTHONPATH=src pytest -q tests/test_ssb_cuda_128.py
+
+25 passed
+```
+
+The new regression test constructs a `512x512` subpixel-BF center with zero
+exact symmetry pairs, asserts that the dual path is used, and compares
+`reconstruct_with_loss()` against an explicit chunked CuPy reference.
+
+Real Samsung GPU1 timing after the dual-BF path:
+
+| Mode | Storage | Active BF | Mean | p50 | p95 | FPS |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Phase+loss | herm | `8822` | `35.96 ms` | `35.97 ms` | `36.09 ms` | `27.8` |
+
+Component timing for the same no-pair condition:
+
+| Component | p50 total |
+| --- | ---: |
+| `pk` update | `0.012 ms` |
+| Dual row gamma + row IFFT + transposed write | `21.8-22.6 ms` |
+| Column IFFT + phase/loss accumulation | `13.5-13.8 ms` |
+| Final mean/loss bookkeeping | `<0.1 ms` |
+
+This is real progress for the microscopist: the exact full-BF 512 phase/loss
+view is now around `28 FPS` on the real central Samsung field. It is still a
+fail against the declared `30 FPS` target because the frame budget is
+`33.3 ms`, leaving a sustained `~2.6 ms` gap.
+
+Rejected follow-ups from this subpixel-BF pass:
+
+| Candidate | Result | Decision |
+| --- | --- | --- |
+| Full-plane resident `G_qk` instead of Hermitian fetch | Real Samsung p50 regressed to about `37.8 ms` and doubled resident `G_qk` from `9.29 GB` to `18.50 GB`. | Rejected. |
+| Dual row launch bound relaxed from `__launch_bounds__(256, 4)` to `256,2` | Parity passed, but real Samsung timing regressed to about `35.5 ms` p50 in short runs. | Reverted. |
+| Dual row blocks reduced from 4 rows/block to 2 rows/block | Parity passed, but real Samsung timing regressed to about `36.3 ms` p50. | Reverted. |
+| Precomputed row/q/k term helper for the dual row kernel | Parity passed, but register pressure made real timing worse (`~36.6 ms` p50). | Reverted. |
+| Wrapper-only `_colvar_group` change from 32 to 64/128 | Initially looked faster, but it was invalid because `ifft512_rows_var_radix8_t64` hard-codes 32 BF pixels per group. A dynamic-k attempt hit illegal memory access at full BF. | Reverted; do not repeat without a separate parity-tested fixed-size kernel. |
+
+Nsight Compute on the accepted dual row kernel:
+
+- Grid `(1, 128, 4404)`, block `(64, 4, 1)`.
+- `64` registers/thread and `32.77 KB` static shared memory/block.
+- `50.0%` theoretical occupancy, `49.2%` achieved occupancy.
+- About `1.06` eligible warps/scheduler, with `~52%` cycles having no
+  eligible warp.
+- About `972 GB/s` memory throughput, `57.5%` memory busy, `64.6%` L2 hit
+  rate, and `37.4%` L1/TEX hit rate.
+
+Interpretation: the no-pair real-data path is no longer dominated by HDF5
+load, BF selection, or Python. The remaining floor is the row/column FFT
+topology: row is shared-memory/scheduler limited, and column still spends
+about `13-14 ms` doing exact per-BF phase/loss accumulation. The next
+breakthrough should target one of these structural costs, not another storage
+flag.
+
 Nsight Compute on the four-row paired row kernel with
 `__launch_bounds__(256, 3)`:
 
@@ -528,12 +611,14 @@ Hermitian error about `2.0`. The corrected per-BF image is complex, so a
 real-output half-complex IFFT would be mathematically wrong for exact phase
 mean/loss.
 
-Rejected exact-path experiment: replacing the standard C10/C12 polar phase
-calculation with an algebraically equivalent Cartesian polynomial reduced some
-row-stage math on paper, but changed float32 rounding enough to fail the
-current 1024 explicit-reference gate (`p99.9` phase error `3.89e-4` versus
-`3e-4`). Keep it out of the exact path unless the reference formulation and
-tolerance policy are intentionally updated.
+Rejected broad exact-path experiment: replacing the standard C10/C12 polar
+phase calculation with an algebraically equivalent Cartesian polynomial across
+the general fixed-size kernels reduced some row-stage math on paper, but
+changed float32 rounding enough to fail the current 1024 explicit-reference
+gate (`p99.9` phase error `3.89e-4` versus `3e-4`). Do not generalize that
+shortcut without an explicit reference/tolerance decision. The narrower
+512-only C10/C12 hot-path helper used by the accepted paired/dual kernels is
+covered by the focused CUDA parity suite above.
 
 Synthetic `1024x1024`, `1382` BF Hermitian timing on GPU1:
 

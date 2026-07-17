@@ -197,7 +197,12 @@ def _reference_phase_loss_chunked(
     return phase.astype(cp.float32, copy=False), float(loss)
 
 
-def _make_engine(size: int = 128, num_bf: int = 7, g_qk=None):
+def _make_engine(
+    size: int = 128,
+    num_bf: int = 7,
+    g_qk=None,
+    bf_center: tuple[float, float] = (15.5, 15.5),
+):
     cp = _cupy()
     from quantem.gpu.ssb.engine import SSBEngine
 
@@ -218,7 +223,7 @@ def _make_engine(size: int = 128, num_bf: int = 7, g_qk=None):
         G_qk=g_qk,
         bf_inds_row=bf_inds_row,
         bf_inds_col=bf_inds_col,
-        bf_center=(15.5, 15.5),
+        bf_center=bf_center,
         dc_value=complex(g_qk[:, 0, 0].mean().get()),
         gpts=(32, 32),
         sampling=(1.0, 1.0),
@@ -305,6 +310,26 @@ def test_cuda_1024_engine_matches_explicit_cupy_reference() -> None:
     phase_sum_only = engine._reconstruct_chunked(c10, c12, phi12)
     sum_only_abs_err = cp.abs(phase_sum_only - ref_phase)
     assert float(cp.percentile(sum_only_abs_err, 99.9)) < 3e-4
+
+
+def test_cuda_512_subpixel_bf_dual_path_matches_explicit_reference() -> None:
+    cp = _cupy()
+    engine = _make_engine(size=512, num_bf=6, bf_center=(15.3, 15.7))
+
+    cache = engine._cache
+    assert int(cache["pair_a"].shape[0]) == 0
+    assert int(cache["dual_pair_a"].shape[0]) == 3
+    assert int(cache["dual_tail"].shape[0]) == 0
+
+    c10, c12, phi12 = -120.0, 55.0, math.radians(17.0)
+    phase, loss = engine.reconstruct_with_loss(c10, c12, phi12)
+    ref_phase, ref_loss = _reference_phase_loss_chunked(
+        engine, c10, c12, phi12, chunk_bf=2
+    )
+
+    phase_abs_err = cp.abs(phase - ref_phase)
+    assert float(cp.percentile(phase_abs_err, 99.9)) < 3e-4
+    assert loss == pytest.approx(ref_loss, rel=1e-4, abs=1e-4)
 
 
 @pytest.mark.parametrize("size,num_bf", [(128, 7), (256, 5), (512, 5), (1024, 3)])

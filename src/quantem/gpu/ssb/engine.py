@@ -578,9 +578,15 @@ class SSBEngine:
                 pair_b.append(j)
                 seen.add(i)
                 seen.add(j)
+        dual_pair_a = single_idx[0::2]
+        dual_pair_b = single_idx[1::2]
+        dual_tail = single_idx[(len(single_idx) // 2) * 2 :]
         cache["pair_a"] = cp.asarray(pair_a, dtype=cp.int32)
         cache["pair_b"] = cp.asarray(pair_b, dtype=cp.int32)
         cache["single_idx"] = cp.asarray(single_idx, dtype=cp.int32)
+        cache["dual_pair_a"] = cp.asarray(dual_pair_a, dtype=cp.int32)
+        cache["dual_pair_b"] = cp.asarray(dual_pair_b, dtype=cp.int32)
+        cache["dual_tail"] = cp.asarray(dual_tail, dtype=cp.int32)
         self._cache = cache
         self._cached_rotation_rad = rotation_angle_rad
         # Initialize custom FFT based on scan size
@@ -1291,28 +1297,54 @@ class SSBEngine:
             and "pair_a" in c
             and int(c["pair_a"].shape[0]) > 0
         )
+        use_dual_direct = (
+            use_direct_accumulate
+            and hasattr(self._custom_fft, "ifft2_fused_pk_dual_col_accumulate_direct")
+            and "dual_pair_a" in c
+            and int(c["dual_pair_a"].shape[0]) > 0
+        )
 
-        if use_paired_direct:
+        if use_paired_direct or use_dual_direct:
             pair_a_all = c["pair_a"]
             pair_b_all = c["pair_b"]
             pair_chunk = max(1, chunk_bf // 2)
-            for pair_start in range(0, int(pair_a_all.shape[0]), pair_chunk):
-                pair_end = min(pair_start + pair_chunk, int(pair_a_all.shape[0]))
-                pair_count = pair_end - pair_start
-                self._custom_fft.ifft2_fused_pk_pair_col_accumulate_direct(
-                    self._result_buffer[: pair_count * 2],
-                    self.G_qk,
-                    c,
-                    self._pk_buffer,
-                    pair_a_all[pair_start:pair_end],
-                    pair_b_all[pair_start:pair_end],
-                    C10, C12, cos2phi12, sin2phi12,
-                    self._factor, self._dc_value_host,
-                    phase_sum,
-                    phase_sumsq,
-                    k_bf,
-                )
-            single_idx = c.get("single_idx")
+            if use_paired_direct:
+                for pair_start in range(0, int(pair_a_all.shape[0]), pair_chunk):
+                    pair_end = min(pair_start + pair_chunk, int(pair_a_all.shape[0]))
+                    pair_count = pair_end - pair_start
+                    self._custom_fft.ifft2_fused_pk_pair_col_accumulate_direct(
+                        self._result_buffer[: pair_count * 2],
+                        self.G_qk,
+                        c,
+                        self._pk_buffer,
+                        pair_a_all[pair_start:pair_end],
+                        pair_b_all[pair_start:pair_end],
+                        C10, C12, cos2phi12, sin2phi12,
+                        self._factor, self._dc_value_host,
+                        phase_sum,
+                        phase_sumsq,
+                        k_bf,
+                    )
+            if use_dual_direct:
+                dual_a_all = c["dual_pair_a"]
+                dual_b_all = c["dual_pair_b"]
+                for pair_start in range(0, int(dual_a_all.shape[0]), pair_chunk):
+                    pair_end = min(pair_start + pair_chunk, int(dual_a_all.shape[0]))
+                    pair_count = pair_end - pair_start
+                    self._custom_fft.ifft2_fused_pk_dual_col_accumulate_direct(
+                        self._result_buffer[: pair_count * 2],
+                        self.G_qk,
+                        c,
+                        self._pk_buffer,
+                        dual_a_all[pair_start:pair_end],
+                        dual_b_all[pair_start:pair_end],
+                        C10, C12, cos2phi12, sin2phi12,
+                        self._factor, self._dc_value_host,
+                        phase_sum,
+                        phase_sumsq,
+                        k_bf,
+                    )
+            single_idx = c.get("dual_tail") if use_dual_direct else c.get("single_idx")
             if single_idx is not None and int(single_idx.shape[0]) > 0:
                 sub_cache = dict(c)
                 sub_cache["kx_bf"] = cp.ascontiguousarray(c["kx_bf"][single_idx])

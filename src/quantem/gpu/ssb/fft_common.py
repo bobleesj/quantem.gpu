@@ -214,6 +214,71 @@ __device__ __forceinline__ float2 gamma_mul_pk_onthefly(
     );
 }
 
+__device__ __forceinline__ float2 gamma_mul_pk_cartesian_onthefly(
+    float qx, float qy,
+    float kx, float ky,
+    float wavelength, float semiangle_rad, float ang_y_rad, float ang_x_rad,
+    float C10,
+    float C12,
+    float cos2phi12,
+    float sin2phi12,
+    float factor,
+    float phase_scale,
+    float inner2,
+    float pk_re,
+    float pk_im,
+    float2 G
+) {
+    float dx_m = qx - kx;
+    float dy_m = qy - ky;
+    float dx_p = qx + kx;
+    float dy_p = qy + ky;
+    float dx2_m = dx_m * dx_m;
+    float dy2_m = dy_m * dy_m;
+    float dx2_p = dx_p * dx_p;
+    float dy2_p = dy_p * dy_p;
+    float r2_m = dx2_m + dy2_m;
+    float r2_p = dx2_p + dy2_p;
+    float aperture_m = compute_aperture_from_r2(
+        dx_m, dy_m, r2_m, wavelength, semiangle_rad, ang_y_rad, ang_x_rad, inner2);
+    float aperture_p = compute_aperture_from_r2(
+        dx_p, dy_p, r2_p, wavelength, semiangle_rad, ang_y_rad, ang_x_rad, inner2);
+    float quad_m = fmaf(dx2_m - dy2_m, cos2phi12, (2.0f * dx_m * dy_m) * sin2phi12);
+    float quad_p = fmaf(dx2_p - dy2_p, cos2phi12, (2.0f * dx_p * dy_p) * sin2phi12);
+    float chi_m = phase_scale * fmaf(C10, r2_m, C12 * quad_m);
+    float chi_p = phase_scale * fmaf(C10, r2_p, C12 * quad_p);
+
+    float sin_m, cos_m, sin_p, cos_p;
+    __sincosf(chi_m, &sin_m, &cos_m);
+    __sincosf(chi_p, &sin_p, &cos_p);
+
+    float pm_re = aperture_m * cos_m;
+    float pm_im = -aperture_m * sin_m;
+    float pp_re = aperture_p * cos_p;
+    float pp_im = -aperture_p * sin_p;
+
+    float pk_conj_im = -pk_im;
+    float t1_re = fmaf(pm_re, pk_re, -pm_im * pk_conj_im);
+    float t1_im = fmaf(pm_re, pk_conj_im, pm_im * pk_re);
+
+    float pp_conj_im = -pp_im;
+    float t2_re = fmaf(pp_re, pk_re, -pp_conj_im * pk_im);
+    float t2_im = fmaf(pp_re, pk_im, pp_conj_im * pk_re);
+
+    float g_re = t1_re - t2_re;
+    float g_im = t1_im - t2_im;
+
+    float mag_sq = fmaf(g_re, g_re, g_im * g_im);
+    float inv_mag = (mag_sq > 1e-16f) ? rsqrtf(mag_sq) : 1e8f;
+    g_re *= inv_mag;
+    g_im *= inv_mag;
+
+    return make_float2(
+        fmaf(G.x, g_re, G.y * g_im),
+        fmaf(G.y, g_re, -G.x * g_im)
+    );
+}
+
 __device__ __forceinline__ void gamma_mul_pk_pair_onthefly(
     float qx, float qy,
     float kx, float ky,
