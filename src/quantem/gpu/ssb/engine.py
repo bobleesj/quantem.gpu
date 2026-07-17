@@ -741,7 +741,7 @@ class SSBEngine:
             self._pk_buffer,
         )
 
-        k_bf = 32
+        k_bf = int(self._colvar_group)
         n_groups = (num_bf + k_bf - 1) // k_bf
         partial_shape = (n_groups, ny, nx)
         if (
@@ -1216,7 +1216,7 @@ class SSBEngine:
         if self._result_buffer is None or self._result_buffer.shape != chunk_shape:
             self._result_buffer = cp.empty(chunk_shape, dtype=cp.complex64)
 
-        k_bf = 32
+        k_bf = int(self._colvar_group)
         max_groups = (chunk_bf + k_bf - 1) // k_bf
         partial_shape = (max_groups, ny, nx)
         if self._partial_sum is None or self._partial_sum.shape != partial_shape:

@@ -231,13 +231,15 @@ Accepted kernel changes:
   expensive row writes for a much cheaper column pass.
 - Updated the batch variance row staging layout to match the transposed column
   reader, preserving parity for batched optimizer candidates.
+- Raised the `512x512` column phase/loss BF group from `32` to `64`, reducing
+  partial-plane overhead without changing the per-BF phase/loss arithmetic.
 
 Steady-state synthetic `512x512`, `8809` BF timing on GPU1:
 
-| Mode | Before this pass | After radix-8 row | After transposed staging | FPS after |
-| --- | ---: | ---: | ---: | ---: |
-| Phase redraw | `70.57 ms` | `58.10 ms` | `53.46 ms` | `18.7` |
-| Phase+loss | `69.26 ms` | `58.09 ms` | `52.98 ms` | `18.9` |
+| Mode | Before this pass | After radix-8 row | After transposed staging | After 64-BF groups | FPS after |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Phase redraw | `70.57 ms` | `58.10 ms` | `53.46 ms` | `52.63 ms` | `19.0` |
+| Phase+loss | `69.26 ms` | `58.09 ms` | `52.98 ms` | `52.83 ms` | `18.9` |
 
 Component timing for phase redraw after the accepted changes:
 
@@ -256,6 +258,9 @@ loop overhead and steady GPU clocks:
 ```text
 phase: mean 53.46 ms, p50 53.74 ms, p95 53.91 ms, 18.7 FPS
 loss:  mean 52.98 ms, p50 53.29 ms, p95 53.43 ms, 18.9 FPS
+with 64-BF column groups:
+phase: mean 52.63 ms, p50 53.12 ms, p95 53.31 ms, 19.0 FPS
+loss:  mean 52.83 ms, p50 53.42 ms, p95 53.61 ms, 18.9 FPS
 ```
 
 Rejected candidates from the same pass:
@@ -269,6 +274,12 @@ Rejected candidates from the same pass:
 | Batch throughput for optimizer candidates | Batch sizes `4/8/16` stayed near `19.2` exact eval/s (`~52 ms/eval`). | Not a 30 FPS breakthrough. |
 | Replacing `sqrtf`/division geometry with `rsqrtf` geometry in the exact C10/C12 helper | Focused parity failed the 1024 explicit-reference gate (`p99.9` phase error `4.35e-4` versus `3e-4`). | Reverted. |
 | Lowering global CUDA `--maxrregcount` from `96` to `64`/`48` | Component timings were only noise-level better, and sequential full-loop timing stayed around `53 ms`. | Reverted. |
+| Row-major row output followed by an out-of-place tiled GPU transpose | Parity passed, but `512` phase redraw regressed to `71.4 ms` (`14 FPS`) because the added full-stack transpose outweighed the row-store savings. | Reverted. |
+| Computing 8 rows per block and writing transposed tiles directly | Parity passed, but `512` phase redraw regressed to `60.1 ms` (`16.6 FPS`) from lower occupancy/shared-memory cost. | Reverted. |
+| Computing 4 rows per block and writing transposed tiles directly | Parity passed, but `512` phase redraw still regressed to `55.7 ms` (`18.0 FPS`). | Reverted. |
+| Computing 2 rows per block and writing transposed tiles directly | Parity passed, but `512` phase redraw regressed to `54.5 ms` (`18.4 FPS`). | Reverted. |
+| Skipping `sincos` when shifted apertures are exactly zero | Parity passed, but `512` phase redraw stayed around `53.1 ms`; branch/control-flow cost offset the skipped work. | Reverted. |
+| Raising the exact phase/loss chunk cap from `2 GB` to `4 GB` | Parity passed, but phase/loss timing stayed around `52.7-52.9 ms` while using more transient memory. | Reverted. |
 
 GPU1 was saturated during the long run (`100%` SM at the `300 W` power cap,
 about `66%` memory controller). The remaining exact-path bottleneck is not

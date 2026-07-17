@@ -1271,7 +1271,7 @@ __global__ void ssb512_corrected_fourier_sum_t256(
 
 // Radix-8 variance kernel: 64 threads × 8 elements/thread. 3 FFT stages
 // (m=8 in-register, m=64 smem, m=512 smem) instead of 5 radix-4 stages.
-// Each block processes one column × 32 BFs sequentially. Sum/sumsq are
+// Each block processes one column × 64 BFs sequentially. Sum/sumsq are
 // accumulated across BFs per output position.
 __global__ __launch_bounds__(64, 10)
 void ifft512_rows_var_radix8_t64(const float2* __restrict__ data,
@@ -1283,11 +1283,11 @@ void ifft512_rows_var_radix8_t64(const float2* __restrict__ data,
                                  int use_partial) {
     int col = blockIdx.y;
     int tid = threadIdx.x;
-    int groups = (num_bf + 31) >> 5;
+    int groups = (num_bf + 63) >> 6;
     int group = blockIdx.z % groups;
     int cand = blockIdx.z / groups;
     if (cand >= batch) return;
-    int bf0 = group * 32;
+    int bf0 = group * 64;
 
     // Direct-load positions: compute the octal-reversed row for each of
     // the thread's 8 elements. Loading gmem in this order gives us stage 1
@@ -1360,11 +1360,11 @@ void ifft512_rows_var_radix8_t64(const float2* __restrict__ data,
     // remaining smem ops (stage 2 store, stage 3 load) so the compiler has
     // more latency to hide. Unroll 16 still spills. Unroll 2 regresses.
     #pragma unroll 8
-    for (int i = 0; i < 32; ++i) {
+    for (int i = 0; i < 64; ++i) {
         int bf = bf0 + i;
         int valid = bf < num_bf;
         int bf_next = bf + 1;
-        int has_next = (i < 31) && (bf_next < num_bf);
+        int has_next = (i < 63) && (bf_next < num_bf);
 
         // Pick the active buffer for this iter. Toggling buffers lets the
         // next iter's stage 1 writes run in parallel with this iter's
@@ -1593,6 +1593,7 @@ class CustomFFT512(CustomFFTBase):
         )
         self._fourier_sum = self._module.get_function("ssb512_corrected_fourier_sum_t256")
         self._phase_sum_dummy_sumsq = None
+        self._colvar_group = 64
 
     def ifft2_fused_pk_col_accumulate(
         self,
@@ -1611,7 +1612,7 @@ class CustomFFT512(CustomFFTBase):
         k_bf: int = 32,
     ) -> None:
         """Row FFT + radix-8 column IFFT with phase sum/sumsq accumulation."""
-        if k_bf != 32:
+        if k_bf != self._colvar_group:
             return super().ifft2_fused_pk_col_accumulate(
                 data,
                 G_qk,
@@ -1691,7 +1692,7 @@ class CustomFFT512(CustomFFTBase):
         factor: float,
         dc_value: complex,
         partial_sum: cp.ndarray,
-        k_bf: int = 32,
+        k_bf: int = 64,
     ) -> None:
         """Row FFT + fused column IFFT with phase-sum accumulation only."""
         N = self._size
@@ -1730,7 +1731,7 @@ class CustomFFT512(CustomFFTBase):
                 np.int32(num_bf), np.int32(gqk_cols),
             ),
         )
-        if k_bf == 32:
+        if k_bf == self._colvar_group:
             if (
                 self._phase_sum_dummy_sumsq is None
                 or self._phase_sum_dummy_sumsq.shape != partial_sum.shape
