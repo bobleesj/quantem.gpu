@@ -131,6 +131,24 @@ __device__ __forceinline__ float4 compute_geometry(
     return make_float4(alpha2, cos2phi, sin2phi, aperture);
 }
 
+__device__ __forceinline__ float compute_aperture_from_r2(
+    float dx, float dy, float r2,
+    float wavelength, float semiangle_rad,
+    float ang_y_rad, float ang_x_rad,
+    float inner2
+) {
+    if (inner2 > 0.0f && r2 <= inner2) {
+        return 1.0f;
+    }
+    float r = sqrtf(r2);
+    float alpha = r * wavelength;
+    float denom_num2 = fmaf(dx * ang_y_rad, dx * ang_y_rad, dy * ang_x_rad * dy * ang_x_rad);
+    float inv_r = (r > 1e-15f) ? (1.0f / r) : 0.0f;
+    float denom = sqrtf(denom_num2) * inv_r;
+    float edge = (denom > 1e-15f) ? ((semiangle_rad - alpha) / denom + 0.5f) : 1.0f;
+    return fminf(fmaxf(edge, 0.0f), 1.0f);
+}
+
 __device__ __forceinline__ float2 gamma_mul_pk_onthefly(
     float qx, float qy,
     float kx, float ky,
@@ -205,6 +223,8 @@ __device__ __forceinline__ void gamma_mul_pk_pair_onthefly(
     float cos2phi12,
     float sin2phi12,
     float factor,
+    float phase_scale,
+    float inner2,
     float pk_a_re,
     float pk_a_im,
     float2 G_a,
@@ -212,23 +232,33 @@ __device__ __forceinline__ void gamma_mul_pk_pair_onthefly(
     float2 &out_a,
     float2 &out_b
 ) {
-    float4 m = compute_geometry(qx - kx, qy - ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad);
-    float4 p = compute_geometry(qx + kx, qy + ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad);
-
-    float cos_term_m = fmaf(m.y, cos2phi12, m.z * sin2phi12);
-    float cos_term_p = fmaf(p.y, cos2phi12, p.z * sin2phi12);
-
-    float chi_m = factor * m.x * fmaf(C12, cos_term_m, C10);
-    float chi_p = factor * p.x * fmaf(C12, cos_term_p, C10);
+    float dx_m = qx - kx;
+    float dy_m = qy - ky;
+    float dx_p = qx + kx;
+    float dy_p = qy + ky;
+    float dx2_m = dx_m * dx_m;
+    float dy2_m = dy_m * dy_m;
+    float dx2_p = dx_p * dx_p;
+    float dy2_p = dy_p * dy_p;
+    float r2_m = dx2_m + dy2_m;
+    float r2_p = dx2_p + dy2_p;
+    float aperture_m = compute_aperture_from_r2(
+        dx_m, dy_m, r2_m, wavelength, semiangle_rad, ang_y_rad, ang_x_rad, inner2);
+    float aperture_p = compute_aperture_from_r2(
+        dx_p, dy_p, r2_p, wavelength, semiangle_rad, ang_y_rad, ang_x_rad, inner2);
+    float quad_m = fmaf(dx2_m - dy2_m, cos2phi12, (2.0f * dx_m * dy_m) * sin2phi12);
+    float quad_p = fmaf(dx2_p - dy2_p, cos2phi12, (2.0f * dx_p * dy_p) * sin2phi12);
+    float chi_m = phase_scale * fmaf(C10, r2_m, C12 * quad_m);
+    float chi_p = phase_scale * fmaf(C10, r2_p, C12 * quad_p);
 
     float sin_m, cos_m, sin_p, cos_p;
     __sincosf(chi_m, &sin_m, &cos_m);
     __sincosf(chi_p, &sin_p, &cos_p);
 
-    float pm_re = m.w * cos_m;
-    float pm_im = -m.w * sin_m;
-    float pp_re = p.w * cos_p;
-    float pp_im = -p.w * sin_p;
+    float pm_re = aperture_m * cos_m;
+    float pm_im = -aperture_m * sin_m;
+    float pp_re = aperture_p * cos_p;
+    float pp_im = -aperture_p * sin_p;
 
     // +k BF: P(q-k) * conj(P(k)) - conj(P(q+k)) * P(k)
     float pk_a_conj_im = -pk_a_im;

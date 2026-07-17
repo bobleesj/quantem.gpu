@@ -701,6 +701,8 @@ void ifft512_rows_fused_pk_pair_radix8_t64_packed(
     float cos2phi12,
     float sin2phi12,
     float factor,
+    float phase_scale,
+    float inner2,
     const float2* __restrict__ pk,
     const float2* __restrict__ G_qk,
     float2* __restrict__ out,
@@ -735,7 +737,7 @@ void ifft512_rows_fused_pk_pair_radix8_t64_packed(
     gamma_mul_pk_pair_onthefly(
         qx, __ldg(&qy_1d[src0]), kx, ky,
         wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
-        C10, C12, cos2phi12, sin2phi12, factor,
+        C10, C12, cos2phi12, sin2phi12, factor, phase_scale, inner2,
         pka.x, pka.y,
         ld_gqk_maybe_herm(G_qk, (unsigned long long)idx_a, (unsigned int)row,
                           (unsigned int)src0, 512u, (unsigned int)gqk_cols),
@@ -745,7 +747,7 @@ void ifft512_rows_fused_pk_pair_radix8_t64_packed(
     gamma_mul_pk_pair_onthefly(
         qx, __ldg(&qy_1d[src1]), kx, ky,
         wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
-        C10, C12, cos2phi12, sin2phi12, factor,
+        C10, C12, cos2phi12, sin2phi12, factor, phase_scale, inner2,
         pka.x, pka.y,
         ld_gqk_maybe_herm(G_qk, (unsigned long long)idx_a, (unsigned int)row,
                           (unsigned int)src1, 512u, (unsigned int)gqk_cols),
@@ -755,7 +757,7 @@ void ifft512_rows_fused_pk_pair_radix8_t64_packed(
     gamma_mul_pk_pair_onthefly(
         qx, __ldg(&qy_1d[src2]), kx, ky,
         wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
-        C10, C12, cos2phi12, sin2phi12, factor,
+        C10, C12, cos2phi12, sin2phi12, factor, phase_scale, inner2,
         pka.x, pka.y,
         ld_gqk_maybe_herm(G_qk, (unsigned long long)idx_a, (unsigned int)row,
                           (unsigned int)src2, 512u, (unsigned int)gqk_cols),
@@ -765,7 +767,7 @@ void ifft512_rows_fused_pk_pair_radix8_t64_packed(
     gamma_mul_pk_pair_onthefly(
         qx, __ldg(&qy_1d[src3]), kx, ky,
         wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
-        C10, C12, cos2phi12, sin2phi12, factor,
+        C10, C12, cos2phi12, sin2phi12, factor, phase_scale, inner2,
         pka.x, pka.y,
         ld_gqk_maybe_herm(G_qk, (unsigned long long)idx_a, (unsigned int)row,
                           (unsigned int)src3, 512u, (unsigned int)gqk_cols),
@@ -775,7 +777,7 @@ void ifft512_rows_fused_pk_pair_radix8_t64_packed(
     gamma_mul_pk_pair_onthefly(
         qx, __ldg(&qy_1d[src4]), kx, ky,
         wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
-        C10, C12, cos2phi12, sin2phi12, factor,
+        C10, C12, cos2phi12, sin2phi12, factor, phase_scale, inner2,
         pka.x, pka.y,
         ld_gqk_maybe_herm(G_qk, (unsigned long long)idx_a, (unsigned int)row,
                           (unsigned int)src4, 512u, (unsigned int)gqk_cols),
@@ -785,7 +787,7 @@ void ifft512_rows_fused_pk_pair_radix8_t64_packed(
     gamma_mul_pk_pair_onthefly(
         qx, __ldg(&qy_1d[src5]), kx, ky,
         wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
-        C10, C12, cos2phi12, sin2phi12, factor,
+        C10, C12, cos2phi12, sin2phi12, factor, phase_scale, inner2,
         pka.x, pka.y,
         ld_gqk_maybe_herm(G_qk, (unsigned long long)idx_a, (unsigned int)row,
                           (unsigned int)src5, 512u, (unsigned int)gqk_cols),
@@ -795,7 +797,7 @@ void ifft512_rows_fused_pk_pair_radix8_t64_packed(
     gamma_mul_pk_pair_onthefly(
         qx, __ldg(&qy_1d[src6]), kx, ky,
         wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
-        C10, C12, cos2phi12, sin2phi12, factor,
+        C10, C12, cos2phi12, sin2phi12, factor, phase_scale, inner2,
         pka.x, pka.y,
         ld_gqk_maybe_herm(G_qk, (unsigned long long)idx_a, (unsigned int)row,
                           (unsigned int)src6, 512u, (unsigned int)gqk_cols),
@@ -805,7 +807,7 @@ void ifft512_rows_fused_pk_pair_radix8_t64_packed(
     gamma_mul_pk_pair_onthefly(
         qx, __ldg(&qy_1d[src7]), kx, ky,
         wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
-        C10, C12, cos2phi12, sin2phi12, factor,
+        C10, C12, cos2phi12, sin2phi12, factor, phase_scale, inner2,
         pka.x, pka.y,
         ld_gqk_maybe_herm(G_qk, (unsigned long long)idx_a, (unsigned int)row,
                           (unsigned int)src7, 512u, (unsigned int)gqk_cols),
@@ -2154,6 +2156,10 @@ class CustomFFT512(CustomFFTBase):
             raise ValueError(f"phase_sumsq must have shape ({N}, {N})")
         (kx_bf, ky_bf, qx_1d, qy_1d,
          wavelength, semiangle_rad, ang_y_rad, ang_x_rad) = self._require_geometry(cache)
+        phase_scale = np.float32(factor * wavelength * wavelength)
+        max_ang = max(float(ang_y_rad), float(ang_x_rad))
+        inner = (float(semiangle_rad) - 0.5 * max_ang) / float(wavelength)
+        inner2 = np.float32(inner * inner if inner > 0.0 else -1.0)
 
         out = data[:out_bf]
         self._rows_fused_pk_pair_r8(
@@ -2166,7 +2172,7 @@ class CustomFFT512(CustomFFTBase):
                 np.float32(ang_y_rad), np.float32(ang_x_rad),
                 np.float32(C10), np.float32(C12),
                 np.float32(cos2phi12), np.float32(sin2phi12),
-                np.float32(factor), pk, G_qk, out,
+                np.float32(factor), phase_scale, inner2, pk, G_qk, out,
                 np.float32(dc_value.real), np.float32(dc_value.imag),
                 np.int32(num_pairs), np.int32(gqk_cols),
             ),

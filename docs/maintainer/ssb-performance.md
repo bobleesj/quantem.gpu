@@ -356,16 +356,21 @@ Follow-up on GPU1 kept two exact-path micro-improvements for the `512x512`,
   intermediate in VRAM (`~37.5 GB` CuPy pool including source `G_qk`) and
   reduced row/column launch count. This is not a saved cache and does not
   change BF selection, scan size, precision, or phase/loss definition.
+- The paired C10/C12 row helper now evaluates the quadratic phase directly
+  from `r^2`, `dx^2 - dy^2`, and `2dxdy` instead of forming
+  `cos(2phi)`/`sin(2phi)` through a division. This is restricted to the
+  `512x512` paired C10/C12 hot path; broader polar/aberration paths still use
+  the shared geometry helper.
 
 Sustained timing after those changes:
 
 | Mode | Mean | p50 | p95 | FPS |
 | --- | ---: | ---: | ---: | ---: |
-| Phase redraw | `42.58 ms` | `43.04 ms` | `43.14 ms` | `23.5` |
-| Phase+loss | `42.46 ms` | `42.97 ms` | `43.05 ms` | `23.6` |
+| Phase redraw | `42.22 ms` | `42.61 ms` | `42.80 ms` | `23.7` |
+| Phase+loss | `42.31 ms` | `42.77 ms` | `42.94 ms` | `23.6` |
 
 This is a small checkpoint, not the `30 FPS` target. The exact path still
-misses the `33.3 ms` frame budget by about `9.7 ms` p50.
+misses the `33.3 ms` frame budget by about `9.3 ms` p50.
 
 Component split for the full-staging four-row path:
 
