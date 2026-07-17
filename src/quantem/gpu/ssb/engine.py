@@ -358,6 +358,7 @@ class SSBEngine:
         self._partial_sum = None
         self._partial_sumsq = None
         self._fourier_partial_buffer = None
+        self._loss_sumsq_scalar = None
         # Custom FFT (initialized in cache_rotation)
         self._custom_fft = None
         self._colvar_group = 32
@@ -1286,8 +1287,6 @@ class SSBEngine:
         ):
             self._partial_sumsq = cp.empty(partial_shape, dtype=cp.float32)
 
-        phase_sum = cp.zeros((ny, nx), dtype=cp.float32)
-        phase_sumsq = cp.zeros((ny, nx), dtype=cp.float32) if compute_loss else None
         use_direct_accumulate = hasattr(
             self._custom_fft, "ifft2_fused_pk_col_accumulate_direct"
         )
@@ -1303,6 +1302,24 @@ class SSBEngine:
             and "dual_pair_a" in c
             and int(c["dual_pair_a"].shape[0]) > 0
         )
+        scalar_loss_direct = False
+        phase_sum = cp.zeros((ny, nx), dtype=cp.float32)
+        phase_sumsq = None
+        if compute_loss:
+            dual_tail = c.get("dual_tail")
+            scalar_loss_direct = (
+                use_dual_direct
+                and not use_paired_direct
+                and dual_tail is not None
+                and int(dual_tail.shape[0]) == 0
+            )
+            if scalar_loss_direct:
+                if self._loss_sumsq_scalar is None:
+                    self._loss_sumsq_scalar = cp.empty((1,), dtype=cp.float32)
+                self._loss_sumsq_scalar.fill(0.0)
+                phase_sumsq = self._loss_sumsq_scalar
+            else:
+                phase_sumsq = cp.zeros((ny, nx), dtype=cp.float32)
 
         if use_paired_direct or use_dual_direct:
             pair_a_all = c["pair_a"]
@@ -1362,8 +1379,14 @@ class SSBEngine:
                 )
             mean_phase = phase_sum / float(num_bf)
             if compute_loss:
-                var_per_pixel = phase_sumsq / float(num_bf) - mean_phase ** 2
-                loss = float(cp.mean(var_per_pixel))
+                if scalar_loss_direct:
+                    mean_sq = cp.mean(mean_phase * mean_phase)
+                    loss = float(
+                        phase_sumsq[0] / float(num_bf * ny * nx) - mean_sq
+                    )
+                else:
+                    var_per_pixel = phase_sumsq / float(num_bf) - mean_phase ** 2
+                    loss = float(cp.mean(var_per_pixel))
                 return mean_phase, loss
             return mean_phase
 

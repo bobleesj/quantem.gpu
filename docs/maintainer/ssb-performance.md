@@ -429,6 +429,30 @@ dual row fetch:
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
 | Phase+loss | herm | `8822` | `35.41 ms` | `35.40 ms` | `35.64 ms` | `28.2` |
 
+Follow-up scalar-loss checkpoint: the exact C10/C12 loss path now keeps the
+mean phase image as before but accumulates the phase-squared term into one
+scalar for the no-pair dual path. This matches the optimizer objective,
+because the loss only needs the global mean of `phase^2`; it avoids writing and
+clearing a full per-pixel variance plane for the hot real Samsung condition.
+Focused CUDA parity still passes:
+
+```text
+CUDA_VISIBLE_DEVICES=1 PYTHONPATH=/home/owner/repos/quantem.gpu/src \
+  python -m pytest -q tests/test_ssb_cuda_128.py
+
+25 passed
+```
+
+Sustained real Samsung GPU1 timing after the scalar-loss path:
+
+| Mode | Storage | Active BF | Mean | p50 | p95 | FPS |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Phase+loss | herm | `8822` | `34.97 ms` | `34.95 ms` | `35.47 ms` | `28.6` |
+
+This is a valid incremental win, but not a signoff. The exact full-BF 512
+phase/loss path still misses the `30 FPS` frame budget (`33.3 ms`) by about
+`1.6-1.7 ms` on GPU1.
+
 Component timing for the same no-pair condition:
 
 | Component | p50 total |

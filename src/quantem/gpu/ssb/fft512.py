@@ -1781,7 +1781,7 @@ void ifft512_rows_var_radix8_t64(const float2* __restrict__ data,
     __shared__ float2 sbuf_all[1024];
 
     size_t cand_base = ((size_t)cand * (size_t)num_bf) * (512u * 512u) + (size_t)col * 512u;
-    size_t sum_base = use_partial
+    size_t sum_base = (use_partial == 1)
         ? ((size_t)cand * (size_t)groups + (size_t)group) * (512u * 512u)
         : (size_t)cand * (512u * 512u);
 
@@ -1982,7 +1982,7 @@ void ifft512_rows_var_radix8_t64(const float2* __restrict__ data,
     size_t o5 = base_out + (size_t)(tid + 320);
     size_t o6 = base_out + (size_t)(tid + 384);
     size_t o7 = base_out + (size_t)(tid + 448);
-    if (use_partial) {
+    if (use_partial == 1) {
         sum[o0]=sum0; sumsq[o0]=sumsq0;
         sum[o1]=sum1; sumsq[o1]=sumsq1;
         sum[o2]=sum2; sumsq[o2]=sumsq2;
@@ -1991,6 +1991,30 @@ void ifft512_rows_var_radix8_t64(const float2* __restrict__ data,
         sum[o5]=sum5; sumsq[o5]=sumsq5;
         sum[o6]=sum6; sumsq[o6]=sumsq6;
         sum[o7]=sum7; sumsq[o7]=sumsq7;
+    } else if (use_partial == 2) {
+        atomicAdd(&sum[o0], sum0);
+        atomicAdd(&sum[o1], sum1);
+        atomicAdd(&sum[o2], sum2);
+        atomicAdd(&sum[o3], sum3);
+        atomicAdd(&sum[o4], sum4);
+        atomicAdd(&sum[o5], sum5);
+        atomicAdd(&sum[o6], sum6);
+        atomicAdd(&sum[o7], sum7);
+
+        float local_sumsq = sumsq0 + sumsq1 + sumsq2 + sumsq3
+                          + sumsq4 + sumsq5 + sumsq6 + sumsq7;
+        __shared__ float block_sumsq[64];
+        block_sumsq[tid] = local_sumsq;
+        __syncthreads();
+        for (int stride = 32; stride > 0; stride >>= 1) {
+            if (tid < stride) {
+                block_sumsq[tid] += block_sumsq[tid + stride];
+            }
+            __syncthreads();
+        }
+        if (tid == 0) {
+            atomicAdd(&sumsq[cand], block_sumsq[0]);
+        }
     } else {
         atomicAdd(&sum[o0], sum0); atomicAdd(&sumsq[o0], sumsq0);
         atomicAdd(&sum[o1], sum1); atomicAdd(&sumsq[o1], sumsq1);
@@ -2264,12 +2288,13 @@ class CustomFFT512(CustomFFTBase):
             raise ValueError("pk must have shape (num_bf,)")
         if phase_sum.shape != (N, N):
             raise ValueError(f"phase_sum must have shape ({N}, {N})")
+        scalar_sumsq = phase_sumsq is not None and phase_sumsq.shape == (1,)
         if phase_sumsq is None:
             if self._direct_dummy_sumsq is None or self._direct_dummy_sumsq.shape != (N, N):
                 self._direct_dummy_sumsq = cp.empty_like(phase_sum)
             phase_sumsq = self._direct_dummy_sumsq
-        elif phase_sumsq.shape != (N, N):
-            raise ValueError(f"phase_sumsq must have shape ({N}, {N})")
+        elif not scalar_sumsq and phase_sumsq.shape != (N, N):
+            raise ValueError(f"phase_sumsq must have shape ({N}, {N}) or (1,)")
         (kx_bf, ky_bf, qx_1d, qy_1d,
          wavelength, semiangle_rad, ang_y_rad, ang_x_rad) = self._require_geometry(cache)
         phase_scale = np.float32(factor * wavelength * wavelength)
@@ -2345,12 +2370,13 @@ class CustomFFT512(CustomFFTBase):
             raise ValueError("pk must have shape (num_bf,)")
         if phase_sum.shape != (N, N):
             raise ValueError(f"phase_sum must have shape ({N}, {N})")
+        scalar_sumsq = phase_sumsq is not None and phase_sumsq.shape == (1,)
         if phase_sumsq is None:
             if self._direct_dummy_sumsq is None or self._direct_dummy_sumsq.shape != (N, N):
                 self._direct_dummy_sumsq = cp.empty_like(phase_sum)
             phase_sumsq = self._direct_dummy_sumsq
-        elif phase_sumsq.shape != (N, N):
-            raise ValueError(f"phase_sumsq must have shape ({N}, {N})")
+        elif not scalar_sumsq and phase_sumsq.shape != (N, N):
+            raise ValueError(f"phase_sumsq must have shape ({N}, {N}) or (1,)")
         (kx_bf, ky_bf, qx_1d, qy_1d,
          wavelength, semiangle_rad, ang_y_rad, ang_x_rad) = self._require_geometry(cache)
         phase_scale = np.float32(factor * wavelength * wavelength)
@@ -2385,7 +2411,7 @@ class CustomFFT512(CustomFFTBase):
                 np.int32(out_bf),
                 np.int32(1),
                 np.float32(1.0 / (N * N)),
-                np.int32(0),
+                np.int32(2 if scalar_sumsq else 0),
             ),
         )
         return out_bf
@@ -2429,12 +2455,13 @@ class CustomFFT512(CustomFFTBase):
             raise ValueError("pk must have shape (num_bf,)")
         if phase_sum.shape != (N, N):
             raise ValueError(f"phase_sum must have shape ({N}, {N})")
+        scalar_sumsq = phase_sumsq is not None and phase_sumsq.shape == (1,)
         if phase_sumsq is None:
             if self._direct_dummy_sumsq is None or self._direct_dummy_sumsq.shape != (N, N):
                 self._direct_dummy_sumsq = cp.empty_like(phase_sum)
             phase_sumsq = self._direct_dummy_sumsq
-        elif phase_sumsq.shape != (N, N):
-            raise ValueError(f"phase_sumsq must have shape ({N}, {N})")
+        elif not scalar_sumsq and phase_sumsq.shape != (N, N):
+            raise ValueError(f"phase_sumsq must have shape ({N}, {N}) or (1,)")
         (kx_bf, ky_bf, qx_1d, qy_1d,
          wavelength, semiangle_rad, ang_y_rad, ang_x_rad) = self._require_geometry(cache)
         phase_scale = np.float32(factor * wavelength * wavelength)
@@ -2469,7 +2496,7 @@ class CustomFFT512(CustomFFTBase):
                 np.int32(out_bf),
                 np.int32(1),
                 np.float32(1.0 / (N * N)),
-                np.int32(0),
+                np.int32(2 if scalar_sumsq else 0),
             ),
         )
         return out_bf
