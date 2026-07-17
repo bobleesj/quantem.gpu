@@ -38,11 +38,12 @@ __global__ void ifft128_rows_fused_pk_t32_mr8_packed(
     float factor,
     const float2* __restrict__ pk,
     const float2* __restrict__ G_qk,
-    float2* __restrict__ out,
-    float dc_real,
-    float dc_imag,
-    int num_bf
-) {
+	    float2* __restrict__ out,
+	    float dc_real,
+	    float dc_imag,
+	    int num_bf,
+	    int gqk_cols
+	) {
     int bf = blockIdx.z;
     int row = blockIdx.y * 8 + threadIdx.y;
     int tid = threadIdx.x;
@@ -64,26 +65,34 @@ __global__ void ifft128_rows_fused_pk_t32_mr8_packed(
     float ky = __ldg(&ky_bf[bf]);
     float qx = __ldg(&qx_1d[row]);
 
-    float2 res0 = gamma_mul_pk_onthefly(
-        qx, __ldg(&qy_1d[pos0]), kx, ky,
-        wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
-        C10, C12, cos2phi12, sin2phi12, factor,
-        pk_re, pk_im, ld_float2(G_qk, idx0));
-    float2 res1 = gamma_mul_pk_onthefly(
-        qx, __ldg(&qy_1d[pos1]), kx, ky,
-        wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
-        C10, C12, cos2phi12, sin2phi12, factor,
-        pk_re, pk_im, ld_float2(G_qk, idx1));
-    float2 res2 = gamma_mul_pk_onthefly(
-        qx, __ldg(&qy_1d[pos2]), kx, ky,
-        wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
-        C10, C12, cos2phi12, sin2phi12, factor,
-        pk_re, pk_im, ld_float2(G_qk, idx2));
-    float2 res3 = gamma_mul_pk_onthefly(
-        qx, __ldg(&qy_1d[pos3]), kx, ky,
-        wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
-        C10, C12, cos2phi12, sin2phi12, factor,
-        pk_re, pk_im, ld_float2(G_qk, idx3));
+	    float2 res0 = gamma_mul_pk_onthefly(
+	        qx, __ldg(&qy_1d[pos0]), kx, ky,
+	        wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
+	        C10, C12, cos2phi12, sin2phi12, factor,
+	        pk_re, pk_im, ld_gqk_maybe_herm(
+	            G_qk, (unsigned long long)bf, (unsigned int)row,
+	            (unsigned int)pos0, 128u, (unsigned int)gqk_cols));
+	    float2 res1 = gamma_mul_pk_onthefly(
+	        qx, __ldg(&qy_1d[pos1]), kx, ky,
+	        wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
+	        C10, C12, cos2phi12, sin2phi12, factor,
+	        pk_re, pk_im, ld_gqk_maybe_herm(
+	            G_qk, (unsigned long long)bf, (unsigned int)row,
+	            (unsigned int)pos1, 128u, (unsigned int)gqk_cols));
+	    float2 res2 = gamma_mul_pk_onthefly(
+	        qx, __ldg(&qy_1d[pos2]), kx, ky,
+	        wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
+	        C10, C12, cos2phi12, sin2phi12, factor,
+	        pk_re, pk_im, ld_gqk_maybe_herm(
+	            G_qk, (unsigned long long)bf, (unsigned int)row,
+	            (unsigned int)pos2, 128u, (unsigned int)gqk_cols));
+	    float2 res3 = gamma_mul_pk_onthefly(
+	        qx, __ldg(&qy_1d[pos3]), kx, ky,
+	        wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
+	        C10, C12, cos2phi12, sin2phi12, factor,
+	        pk_re, pk_im, ld_gqk_maybe_herm(
+	            G_qk, (unsigned long long)bf, (unsigned int)row,
+	            (unsigned int)pos3, 128u, (unsigned int)gqk_cols));
 
     if (row == 0 && tid == 0) {
         res0 = make_float2(dc_real, dc_imag);
@@ -158,11 +167,12 @@ void ifft128_rows_fused_pk_batch_t32_mr8_transpose_packed_b4(
     const float2* __restrict__ pk,
     const float2* __restrict__ G_qk,
     float2* __restrict__ out,
-    float dc_real,
-    float dc_imag,
-    int num_bf,
-    int batch
-) {
+	    float dc_real,
+	    float dc_imag,
+	    int num_bf,
+	    int batch,
+	    int gqk_cols
+	) {
     int idx = blockIdx.z;
     int bf = idx % num_bf;
     int quad = idx / num_bf;
@@ -208,10 +218,18 @@ void ifft128_rows_fused_pk_batch_t32_mr8_transpose_packed_b4(
     float4 p2 = compute_geometry(qx + kx, qy2 + ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad);
     float4 m3 = compute_geometry(qx - kx, qy3 - ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad);
     float4 p3 = compute_geometry(qx + kx, qy3 + ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad);
-    float2 G0 = ld_float2(G_qk, base_cache + pos0);
-    float2 G1 = ld_float2(G_qk, base_cache + pos1);
-    float2 G2 = ld_float2(G_qk, base_cache + pos2);
-    float2 G3 = ld_float2(G_qk, base_cache + pos3);
+	    float2 G0 = ld_gqk_maybe_herm(
+	        G_qk, (unsigned long long)bf, (unsigned int)row,
+	        (unsigned int)pos0, 128u, (unsigned int)gqk_cols);
+	    float2 G1 = ld_gqk_maybe_herm(
+	        G_qk, (unsigned long long)bf, (unsigned int)row,
+	        (unsigned int)pos1, 128u, (unsigned int)gqk_cols);
+	    float2 G2 = ld_gqk_maybe_herm(
+	        G_qk, (unsigned long long)bf, (unsigned int)row,
+	        (unsigned int)pos2, 128u, (unsigned int)gqk_cols);
+	    float2 G3 = ld_gqk_maybe_herm(
+	        G_qk, (unsigned long long)bf, (unsigned int)row,
+	        (unsigned int)pos3, 128u, (unsigned int)gqk_cols);
 
 #define GM(m,p,G,C10v,C12v,cosv,sinv,pkv) gamma_mul_pk_packed_vals(m,p,G,C10v,C12v,cosv,sinv,factor,pkv.x,pkv.y)
     float2 r00 = GM(m0, p0, G0, C10v0, C12v0, cos2v0, sin2v0, pkv0);
@@ -550,7 +568,8 @@ __global__ void ssb128_corrected_fourier_sum_t256(
     float dc_real,
     float dc_imag,
     int num_bf,
-    int k_bf
+    int k_bf,
+    int gqk_cols
 ) {
     unsigned long long linear = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
     const unsigned long long plane = 128ull * 128ull;
@@ -584,7 +603,10 @@ __global__ void ssb128_corrected_fourier_sum_t256(
             wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
             C10, C12, cos2phi12, sin2phi12, factor,
             pkv.x, pkv.y,
-            ld_float2(G_qk, (unsigned long long)bf * plane + idx));
+            ld_gqk_maybe_herm(
+                G_qk, (unsigned long long)bf, (unsigned int)row,
+                (unsigned int)col, 128u, (unsigned int)gqk_cols
+            ));
         sum_re += v.x;
         sum_im += v.y;
     }

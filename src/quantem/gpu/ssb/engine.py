@@ -381,6 +381,24 @@ class SSBEngine:
         # 512 works for both L40S 48 GB and RTX PRO 6000 96 GB.
         self._stream_bf = 512
 
+    def _gqk_is_hermitian_half_plane(self) -> bool:
+        """Return True when ``G_qk`` stores only the Hermitian half-plane."""
+        if self.G_qk.ndim != 3:
+            return False
+        nx = int(self.q_col.shape[1])
+        return int(self.G_qk.shape[2]) == nx // 2 + 1
+
+    def _require_full_gqk(self, quantity: str) -> None:
+        """Reject Hermitian ``G_qk`` for paths that are not ported yet."""
+        if self._gqk_is_hermitian_half_plane():
+            nx = int(self.q_col.shape[1])
+            raise ValueError(
+                f"{quantity} currently requires full-plane G_qk. Hermitian "
+                f"G_qk with {nx // 2 + 1} stored columns is supported only "
+                "by reconstruct_object's Fourier-sum path until phase/loss "
+                "kernels are ported and parity-tested."
+            )
+
     @property
     def num_bf(self) -> int:
         """Number of bright-field pixels."""
@@ -1270,6 +1288,36 @@ class SSBEngine:
         self._variance_buffer = None
         self._corrected_buffer = None
 
+    @property
+    def uses_optimizer_reconstruct_fallback(self) -> bool:
+        """Whether optimizer losses use sequential full-IFFT reconstruction."""
+        return bool(getattr(self._custom_fft, "_optimizer_uses_reconstruct_fallback", False))
+
+    def _variance_loss_batch_reconstruct_fallback(
+        self,
+        c10_vals: np.ndarray,
+        c12_vals: np.ndarray,
+        phi_vals: np.ndarray,
+        out: "cp.ndarray | None",
+    ) -> "cp.ndarray":
+        """Evaluate 1024 optimizer candidates through full-IFFT loss.
+
+        The native 1024 kernels currently support reconstruction and
+        reconstruct_with_loss, but not the batched row-subsampled optimizer
+        variance kernel. Keep the public optimizer API usable by evaluating
+        each candidate through the existing chunked full-IFFT path.
+        """
+        batch = int(c10_vals.size)
+        losses = out if out is not None else cp.empty(batch, dtype=cp.float32)
+        for i in range(batch):
+            _, loss = self.reconstruct_with_loss(
+                float(c10_vals[i]),
+                float(c12_vals[i]),
+                float(phi_vals[i]),
+            )
+            losses[i] = np.float32(loss)
+        return losses
+
     def _get_streaming_buffers(self, batch: int, stream_bf: int) -> dict[str, object]:
         """Get small buffers for streaming variance computation.
 
@@ -1278,11 +1326,11 @@ class SSBEngine:
         """
         c = self._cache
         num_bf = int(c["num_bf"])
-        key = (batch, stream_bf, num_bf)
+        ny, nx = int(c["ny"]), int(c["nx"])
+        key = (batch, stream_bf, num_bf, ny, nx)
         cached = self._streaming_cache.get(key)
         if cached is not None:
             return cached
-        ny, nx = int(c["ny"]), int(c["nx"])
         cached = {
             "staging": cp.empty((batch, stream_bf, ny, nx), dtype=cp.complex64),
             "pk": cp.empty((batch, num_bf), dtype=cp.complex64),
@@ -1540,6 +1588,12 @@ class SSBEngine:
         c10_arr = np.full(4, C10, dtype=np.float32)
         c12_arr = np.full(4, C12, dtype=np.float32)
         phi_arr = np.full(4, phi12, dtype=np.float32)
+        if self.uses_optimizer_reconstruct_fallback:
+            _, loss = self.reconstruct_with_loss(C10, C12, phi12)
+            if out is None:
+                return loss
+            out[()] = np.float32(loss)
+            return out
         result = self.variance_loss_batch(c10_arr, c12_arr, phi_arr)
         if out is None:
             return float(result[0])
@@ -1559,34 +1613,32 @@ class SSBEngine:
         if c10_vals.ndim == 0:
             c10_vals = np.asarray([float(c10_vals)], dtype=np.float32)
         orig_batch = int(c10_vals.size)
+        c12_vals = np.asarray(C12, dtype=np.float32)
+        if c12_vals.ndim == 0:
+            c12_vals = np.full(orig_batch, float(c12_vals), dtype=np.float32)
+        phi_vals = np.asarray(phi12, dtype=np.float32)
+        if phi_vals.ndim == 0:
+            phi_vals = np.full(orig_batch, float(phi_vals), dtype=np.float32)
+        if c12_vals.size != orig_batch or phi_vals.size != orig_batch:
+            raise ValueError("C10, C12, and phi12 must have matching lengths")
+        if self.uses_optimizer_reconstruct_fallback:
+            return self._variance_loss_batch_reconstruct_fallback(
+                c10_vals, c12_vals, phi_vals, out
+            )
         # The pair kernel (batch<4) produces incorrect variance results.
         # For small batches, pad to batch=4 with identical copies.
         _MIN_BATCH = 4
         if orig_batch < _MIN_BATCH:
-            C12_arr = np.asarray(C12, dtype=np.float32)
-            if C12_arr.ndim == 0:
-                C12_arr = np.full(orig_batch, float(C12_arr), dtype=np.float32)
-            phi_arr = np.asarray(phi12, dtype=np.float32)
-            if phi_arr.ndim == 0:
-                phi_arr = np.full(orig_batch, float(phi_arr), dtype=np.float32)
             results = cp.empty(orig_batch, dtype=cp.float32)
             for i in range(orig_batch):
                 results[i] = self.variance_loss(
-                    float(c10_vals[i]), float(C12_arr[i]), float(phi_arr[i])
+                    float(c10_vals[i]), float(c12_vals[i]), float(phi_vals[i])
                 )
             if out is not None:
                 out[:orig_batch] = results
                 return out
             return results
         batch = int(c10_vals.size)
-        c12_vals = np.asarray(C12, dtype=np.float32)
-        if c12_vals.ndim == 0:
-            c12_vals = np.full(batch, float(c12_vals), dtype=np.float32)
-        phi_vals = np.asarray(phi12, dtype=np.float32)
-        if phi_vals.ndim == 0:
-            phi_vals = np.full(batch, float(phi_vals), dtype=np.float32)
-        if c12_vals.size != batch or phi_vals.size != batch:
-            raise ValueError("C10, C12, and phi12 must have matching lengths")
         cos2phi12 = np.cos(2.0 * phi_vals).astype(np.float32)
         sin2phi12 = np.sin(2.0 * phi_vals).astype(np.float32)
         c10_gpu = cp.asarray(c10_vals)
@@ -1632,9 +1684,24 @@ class SSBEngine:
                 # win despite exceeding L2 residency.  2048 keeps peak modest
                 # while matching the 4096-BF timing within measurement noise.
                 stream_bf = min(max(32, max_stream_bf), 2048, num_bf)
+            elif ny_scan == 1024:
+                # A 1024 batch=4 staging chunk is 32 MiB per BF. 256 BF keeps
+                # the optimizer stable inside the resident G_qk memory budget.
+                stream_bf = min(max(32, max_stream_bf), 256, num_bf)
         except (RuntimeError, AttributeError):
             # memGetInfo() unavailable; fall back to the conservative stream_bf cap.
             stream_bf = min(self._stream_bf, num_bf)
+        cached_streams = [
+            int(key[1])
+            for key in self._streaming_cache
+            if len(key) == 5
+            and int(key[0]) == batch
+            and int(key[2]) == num_bf
+            and int(key[3]) == ny_scan
+            and int(key[4]) == nx_scan
+        ]
+        if cached_streams:
+            stream_bf = max(cached_streams)
         bufs = self._get_streaming_buffers(batch, stream_bf)
         pk_buffer = bufs["pk"]
         sum_buffer = bufs["sum"]
@@ -1670,7 +1737,9 @@ class SSBEngine:
             sumsq_buffer,
             stream_bf=stream_bf,
         )
-        if int(c["ny"]) == 128 and int(c["nx"]) == 128 and batch >= 16:
+        loss_ny = int(sum_buffer.shape[1])
+        loss_nx = int(sum_buffer.shape[2])
+        if loss_ny == 128 and loss_nx == 128 and batch >= 16:
             loss_out = out if out is not None else bufs["loss"]
             _loss_from_sums_batch_kernel(
                 (batch,),
@@ -1680,13 +1749,13 @@ class SSBEngine:
                     sumsq_buffer,
                     loss_out,
                     np.int32(num_bf),
-                    np.int32(c["ny"]),
-                    np.int32(c["nx"]),
+                    np.int32(loss_ny),
+                    np.int32(loss_nx),
                     np.int32(batch),
                 ),
             )
             return loss_out
-        total = int(batch * c["ny"] * c["nx"])
+        total = int(batch * loss_ny * loss_nx)
         block = 256
         grid = (total + block - 1) // block
         _variance_from_sums_batch_kernel(
@@ -1697,8 +1766,8 @@ class SSBEngine:
                 sumsq_buffer,
                 variance_buffer,
                 np.int32(num_bf),
-                np.int32(c["ny"]),
-                np.int32(c["nx"]),
+                np.int32(loss_ny),
+                np.int32(loss_nx),
                 np.int32(batch),
             ),
         )

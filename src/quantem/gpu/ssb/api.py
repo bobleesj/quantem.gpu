@@ -267,6 +267,7 @@ def ssb(
     verbose: bool = True,
     bf_subsample: int | float | None = None,
     bf_radius: int | None = None,
+    detector_gain: cp.ndarray | None = None,
 ) -> SSBResult:
     """Single-sideband ptychographic reconstruction.
 
@@ -321,6 +322,11 @@ def ssb(
         Optional radius, in detector pixels, for the BF disk used by SSB.
         Use this to keep large 512x512 microscope scans within GPU memory by
         reconstructing from the central BF disk.
+    detector_gain : cupy.ndarray or None
+        Optional detector flatfield/gain image. When supplied, SSB applies it
+        to the mean diffraction pattern used for BF-mask detection and to the
+        selected BF virtual images before FFT, without materializing a
+        full float32 4D cube.
 
     Returns
     -------
@@ -366,6 +372,7 @@ def ssb(
         bf_radius=bf_radius,
         aberrations=starting,
         rotation_angle_deg=rotation_angle_deg,
+        detector_gain=detector_gain,
     )
     # Release the raw data reference so the 19 GB block can be freed.
     # Critical for L40S 48 GB budget on 512x512 scans.

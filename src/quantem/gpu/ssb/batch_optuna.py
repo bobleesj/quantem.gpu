@@ -240,6 +240,7 @@ def batch_nelder_mead(
     xatol: float = 0.1,
     fatol: float = 1e-8,
     max_iter: int = 300,
+    flat_fatol: float | None = None,
 ) -> tuple[np.ndarray, float, int]:
     """
     Nelder-Mead simplex optimization with batched vertex evaluations.
@@ -267,6 +268,11 @@ def batch_nelder_mead(
         Convergence tolerances.
     max_iter : int
         Maximum iterations.
+    flat_fatol : float or None
+        Optional early-stop threshold for flat objectives. When the initial
+        simplex loss spread is already below this value, return the best
+        vertex instead of spending serial Nelder-Mead evaluations on numerical
+        noise.
 
     Returns
     -------
@@ -297,6 +303,12 @@ def batch_nelder_mead(
     losses_gpu = accel.variance_loss_batch(c10_arr, c12_arr, phi12_arr)
     f_values[:] = cp.asnumpy(losses_gpu).astype(np.float64)
     n_evals = n + 1
+    if flat_fatol is not None and np.ptp(f_values) <= float(flat_fatol):
+        # Treat a numerically flat initial simplex as converged at the
+        # incoming solution.  Picking the min vertex inside this band lets
+        # sub-ULP objective noise move coefficients without a meaningful loss
+        # improvement, which is especially visible in the 1024 sparse path.
+        return simplex[0], float(f_values[0]), n_evals
 
     # Standard Nelder-Mead coefficients
     alpha = 1.0   # reflection

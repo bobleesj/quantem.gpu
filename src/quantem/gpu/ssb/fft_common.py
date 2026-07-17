@@ -62,6 +62,27 @@ __device__ __forceinline__ float2 ld_float2(const float2* ptr, size_t idx) {
 #endif
 }
 
+__device__ __forceinline__ float2 ld_gqk_maybe_herm(
+    const float2* ptr,
+    unsigned long long bf,
+    unsigned int row,
+    unsigned int col,
+    unsigned int n,
+    unsigned int stored_cols
+) {
+    unsigned long long base = bf * (unsigned long long)n * (unsigned long long)stored_cols;
+    if (stored_cols == n || col <= (n >> 1)) {
+        return ld_float2(ptr, base + (unsigned long long)row * stored_cols + col);
+    }
+    unsigned int mirror_row = row == 0u ? 0u : n - row;
+    unsigned int mirror_col = n - col;
+    float2 z = ld_float2(
+        ptr,
+        base + (unsigned long long)mirror_row * stored_cols + mirror_col
+    );
+    return make_float2(z.x, -z.y);
+}
+
 __device__ __forceinline__ unsigned int bit_reverse4_8(unsigned int x) {
     return ((x & 0x03u) << 6) | ((x & 0x0Cu) << 2) | ((x & 0x30u) >> 2) | ((x & 0xC0u) >> 6);
 }
@@ -542,11 +563,16 @@ class CustomFFTBase:
         N = self._size
         if data.dtype != cp.complex64 or G_qk.dtype != cp.complex64 or pk.dtype != cp.complex64:
             raise ValueError("Requires complex64 input")
-        if data.shape != G_qk.shape:
-            raise ValueError("data and G_qk must have the same shape")
         if data.ndim != 3 or data.shape[1] != N or data.shape[2] != N:
             raise ValueError(f"Expects shape (num_bf, {N}, {N})")
         num_bf = int(data.shape[0])
+        if G_qk.ndim != 3 or G_qk.shape[0] != num_bf or G_qk.shape[1] != N:
+            raise ValueError(f"G_qk must have shape (num_bf, {N}, {N}) or Hermitian")
+        if G_qk.shape[2] not in (N, N // 2 + 1):
+            raise ValueError(
+                f"G_qk must have {N} columns or Hermitian {N // 2 + 1} columns"
+            )
+        gqk_cols = int(G_qk.shape[2])
         if pk.shape != (num_bf,):
             raise ValueError("pk must have shape (num_bf,)")
         (kx_bf, ky_bf, qx_1d, qy_1d,
@@ -563,7 +589,7 @@ class CustomFFTBase:
                 np.float32(cos2phi12), np.float32(sin2phi12),
                 np.float32(factor), pk, G_qk, data,
                 np.float32(dc_value.real), np.float32(dc_value.imag),
-                np.int32(num_bf),
+                np.int32(num_bf), np.int32(gqk_cols),
             ),
         )
         scale = np.float32(1.0 / (N * N))
@@ -596,11 +622,16 @@ class CustomFFTBase:
         N = self._size
         if data.dtype != cp.complex64 or G_qk.dtype != cp.complex64 or pk.dtype != cp.complex64:
             raise ValueError("Requires complex64 input")
-        if data.shape != G_qk.shape:
-            raise ValueError("data and G_qk must have the same shape")
         if data.ndim != 3 or data.shape[1] != N or data.shape[2] != N:
             raise ValueError(f"Expects shape (num_bf, {N}, {N})")
         num_bf = int(data.shape[0])
+        if G_qk.ndim != 3 or G_qk.shape[0] != num_bf or G_qk.shape[1] != N:
+            raise ValueError(f"G_qk must have shape (num_bf, {N}, {N}) or Hermitian")
+        if G_qk.shape[2] not in (N, N // 2 + 1):
+            raise ValueError(
+                f"G_qk must have {N} columns or Hermitian {N // 2 + 1} columns"
+            )
+        gqk_cols = int(G_qk.shape[2])
         if pk.shape != (num_bf,):
             raise ValueError("pk must have shape (num_bf,)")
         if mags_m.dtype != cp.float32 or angles_rad.dtype != cp.float32:
@@ -621,7 +652,7 @@ class CustomFFTBase:
                 abr_mag_scaled, abr_cm, abr_sm,
                 pk, G_qk, data,
                 np.float32(dc_value.real), np.float32(dc_value.imag),
-                np.int32(num_bf),
+                np.int32(num_bf), np.int32(gqk_cols),
             ),
         )
         scale = np.float32(1.0 / (N * N))
@@ -653,11 +684,16 @@ class CustomFFTBase:
             raise RuntimeError("col_accumulate kernel not available")
         if data.dtype != cp.complex64 or G_qk.dtype != cp.complex64 or pk.dtype != cp.complex64:
             raise ValueError("Requires complex64 input")
-        if data.shape != G_qk.shape:
-            raise ValueError("data and G_qk must have the same shape")
         if data.ndim != 3 or data.shape[1] != N or data.shape[2] != N:
             raise ValueError(f"Expects shape (num_bf, {N}, {N})")
         num_bf = int(data.shape[0])
+        if G_qk.ndim != 3 or G_qk.shape[0] != num_bf or G_qk.shape[1] != N:
+            raise ValueError(f"G_qk must have shape (num_bf, {N}, {N}) or Hermitian")
+        if G_qk.shape[2] not in (N, N // 2 + 1):
+            raise ValueError(
+                f"G_qk must have {N} columns or Hermitian {N // 2 + 1} columns"
+            )
+        gqk_cols = int(G_qk.shape[2])
         if pk.shape != (num_bf,):
             raise ValueError("pk must have shape (num_bf,)")
         n_groups = (num_bf + k_bf - 1) // k_bf
@@ -678,7 +714,7 @@ class CustomFFTBase:
                 np.float32(cos2phi12), np.float32(sin2phi12),
                 np.float32(factor), pk, G_qk, data,
                 np.float32(dc_value.real), np.float32(dc_value.imag),
-                np.int32(num_bf),
+                np.int32(num_bf), np.int32(gqk_cols),
             ),
         )
         # Fused col-FFT + accumulate (reads data, writes partial buffers)
@@ -716,9 +752,13 @@ class CustomFFTBase:
         N = self._size
         if G_qk.dtype != cp.complex64 or pk.dtype != cp.complex64:
             raise ValueError("Requires complex64 G_qk and pk")
-        if G_qk.ndim != 3 or G_qk.shape[1] != N or G_qk.shape[2] != N:
-            raise ValueError(f"Expects G_qk shape (num_bf, {N}, {N})")
+        if G_qk.ndim != 3 or G_qk.shape[1] != N or G_qk.shape[2] not in (N, N // 2 + 1):
+            raise ValueError(
+                f"Expects G_qk shape (num_bf, {N}, {N}) or Hermitian "
+                f"(num_bf, {N}, {N // 2 + 1})"
+            )
         num_bf = int(G_qk.shape[0])
+        gqk_cols = int(G_qk.shape[2])
         if pk.shape != (num_bf,):
             raise ValueError("pk must have shape (num_bf,)")
         n_groups = (num_bf + k_bf - 1) // k_bf
@@ -740,7 +780,7 @@ class CustomFFTBase:
                 np.float32(cos2phi12), np.float32(sin2phi12),
                 np.float32(factor), pk, G_qk, partial_sum,
                 np.float32(dc_value.real), np.float32(dc_value.imag),
-                np.int32(num_bf), np.int32(k_bf),
+                np.int32(num_bf), np.int32(k_bf), np.int32(gqk_cols),
             ),
         )
 
@@ -770,6 +810,12 @@ class CustomFFTBase:
             raise ValueError("Requires complex64 input")
         batch = int(C10.size)
         num_bf = int(G_qk.shape[0])
+        if G_qk.ndim != 3 or G_qk.shape[1] != N or G_qk.shape[2] not in (N, N // 2 + 1):
+            raise ValueError(
+                f"G_qk must have shape (num_bf, {N}, {N}) or Hermitian "
+                f"(num_bf, {N}, {N // 2 + 1})"
+            )
+        gqk_cols = int(G_qk.shape[2])
         if stream_bf > 0 and stream_bf < num_bf:
             if batch < 4:
                 raise ValueError("Batch size must be >= 4; caller should pad")
@@ -802,6 +848,8 @@ class CustomFFTBase:
                     pk_group = pk_staging
                 else:
                     pk_group = cp.ascontiguousarray(pk[:, bf_start:bf_end])
+                if N == 1024:
+                    staging.fill(0)
                 grid_rows = (1, self._rows_fused_pk_grid_y_quad, quads * chunk)
                 self._rows_fused_pk_batch_quad_transpose(
                     grid_rows, self._rows_fused_pk_block_quad,
@@ -810,7 +858,7 @@ class CustomFFTBase:
                      C10, C12, cos2phi12, sin2phi12,
                      factor_f32, pk_group, G_group,
                      staging, dc_re, dc_im,
-                     chunk_i32, batch_i32),
+                     chunk_i32, batch_i32, np.int32(gqk_cols)),
                     shared_mem=self._rows_fused_pk_batch_shared_mem)
                 groups_var = (chunk + self._colvar_group - 1) // self._colvar_group
                 grid_var = (1, self._rows_var_grid_y, groups_var * batch)
@@ -845,6 +893,8 @@ class CustomFFTBase:
         if batch < 4:
             raise ValueError("Batch size must be >= 4; caller should pad")
         quads = (batch + 3) // 4
+        if N == 1024:
+            data.fill(0)
         grid_rows = (1, self._rows_fused_pk_grid_y_quad, quads * num_bf)
         self._rows_fused_pk_batch_quad_transpose(
             grid_rows, self._rows_fused_pk_block_quad,
@@ -855,7 +905,7 @@ class CustomFFTBase:
                 C10, C12, cos2phi12, sin2phi12,
                 np.float32(factor), pk, G_qk, data,
                 np.float32(dc_value.real), np.float32(dc_value.imag),
-                np.int32(num_bf), np.int32(batch),
+                np.int32(num_bf), np.int32(batch), np.int32(gqk_cols),
             ),
             shared_mem=self._rows_fused_pk_batch_shared_mem,
         )
