@@ -583,6 +583,32 @@ Repeat with `--mode phase` and `--mode loss` for the full 12-run matrix. Do not
 compare object-mode FPS to phase-mode optimizer FPS without saying which
 scientific quantity is being drawn.
 
+## Rejected 512 phase/loss probes
+
+Follow-up GPU1 probes after the accepted `~45-47 ms` exact `512x512`, `8809`
+BF path did not produce another accepted kernel change. Keep these as negative
+evidence so the next pass starts at the remaining bottleneck instead of
+repeating local minima.
+
+| Probe | Result | Decision |
+| --- | ---: | --- |
+| Quadratic C10/C12 gamma fast branch inside the aperture | Parity passed, but row p50 stayed about `30.6 ms`; full loss p50 was about `46.8 ms`. | Rejected: branch/scheduling pressure erased the special-math savings. |
+| Precomputed `sign(sin(Q(q)))` plus BF row/column phase tables | Parity passed, but full loss p50 worsened to about `48.3 ms`. | Rejected: extra table loads were worse than recomputing gamma. |
+| Column BF group `64 -> 128` | Parity passed, full loss p50 about `46.8 ms`. | Rejected: atomics/group count is not the dominant cost. |
+| Adaptive/full 8809-BF staging chunk | Component total improved slightly, but engine p50 improved only about `0.1 ms` while staging memory rose to about `37 GB`. | Rejected as a default: too much memory for negligible wall-time gain. |
+| Coalesced radix-8 row output plus legacy column reader | Row p50 dropped to about `23.8 ms`, but column p50 rose to about `22.3 ms`; total about `46.8 ms`. | Rejected: legacy column path gives back the row-store win. |
+| Coalesced radix-8 row output plus radix-8 normal-layout column reader | Column p50 rose to about `28.3 ms`; total about `52.8 ms`. | Rejected: strided column reads dominate. |
+| Coalesced radix-8 row output plus tiled explicit transpose | Parity passed, but full loss p50 worsened to about `66 ms`. | Rejected: explicit full transpose costs far more than the row-store savings. |
+| Degree-2 column `atan2` polynomial | Focused parity passed, full loss p50 improved only about `0.1 ms`. | Rejected: too little speedup for a rougher scientific approximation. |
+
+Current conclusion: gamma algebra and BF group sizing are not the next
+breakthrough. The best measured clue is still that coalesced row writes save
+about `6 ms`, but every out-of-kernel way to restore coalesced column input
+costs as much or more. The next serious candidate should fuse/tile the row and
+column stages so row output becomes effectively coalesced for global memory
+without paying a separate full transpose, or redesign the 2D FFT/phase
+accumulation around an exact in-kernel tile.
+
 ## Next performance work
 
 Problem: the live object redraw target is met in the synthetic native-kernel
