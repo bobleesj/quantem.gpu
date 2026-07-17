@@ -458,6 +458,7 @@ Rejected follow-ups from this subpixel-BF pass:
 | Runtime shared-memory carveout `100` on the no-pair row/column kernels | Scratch component timing left row p50 about `21.3 ms` and combined dual p50 about `34.7 ms`, not a sustained breakthrough. | Rejected: larger carveout did not turn the shared-memory occupancy warning into real FPS. |
 | One-BF/four-row index row kernel | Existing parity still passed, but forcing all BF pixels through the experimental topology gave row p50 about `24.2 ms` and row+column p50 about `37.6 ms`. | Rejected: doubling the independent BF blocks did not compensate for lost dual-BF staging efficiency. |
 | Closed-form radix-8 source indices instead of `octal_reverse_512(tid*8+s)` | Full focused CUDA parity passed. A 240-step real Samsung run briefly measured `34.90 ms` p50, but a 600-step sustained run settled at `35.53 ms` p50, matching or slightly regressing the accepted `35.50 ms` baseline. | Rejected: not a robust wall-time win for a microscopist dragging controls. |
+| Exact inside-aperture phase-identity branch for normalized gamma | Full focused CUDA parity passed, but real Samsung loss regressed to `37.43 ms` p50 (`26.7 FPS`). | Rejected: the added branch, `chi_k` load, and changed special-function mix cost more than the removed normalization. |
 
 Nsight Compute on the accepted dual row kernel:
 
