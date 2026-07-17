@@ -422,25 +422,26 @@ The new regression test constructs a `512x512` subpixel-BF center with zero
 exact symmetry pairs, asserts that the dual path is used, and compares
 `reconstruct_with_loss()` against an explicit chunked CuPy reference.
 
-Real Samsung GPU1 timing after the dual-BF path:
+Real Samsung GPU1 timing after the dual-BF path, plus the Hermitian-specialized
+dual row fetch:
 
 | Mode | Storage | Active BF | Mean | p50 | p95 | FPS |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| Phase+loss | herm | `8822` | `35.96 ms` | `35.97 ms` | `36.09 ms` | `27.8` |
+| Phase+loss | herm | `8822` | `35.41 ms` | `35.40 ms` | `35.64 ms` | `28.2` |
 
 Component timing for the same no-pair condition:
 
 | Component | p50 total |
 | --- | ---: |
 | `pk` update | `0.012 ms` |
-| Dual row gamma + row IFFT + transposed write | `21.8-22.6 ms` |
-| Column IFFT + phase/loss accumulation | `13.5-13.8 ms` |
-| Final mean/loss bookkeeping | `<0.1 ms` |
+| Dual row gamma + row IFFT + transposed write | `~21.3 ms` |
+| Column IFFT + phase/loss accumulation | `~13.5 ms` |
+| Final mean/loss bookkeeping | `<0.2 ms` |
 
 This is real progress for the microscopist: the exact full-BF 512 phase/loss
 view is now around `28 FPS` on the real central Samsung field. It is still a
 fail against the declared `30 FPS` target because the frame budget is
-`33.3 ms`, leaving a sustained `~2.6 ms` gap.
+`33.3 ms`, leaving a sustained `~2.1 ms` gap.
 
 Rejected follow-ups from this subpixel-BF pass:
 
@@ -451,6 +452,9 @@ Rejected follow-ups from this subpixel-BF pass:
 | Dual row blocks reduced from 4 rows/block to 2 rows/block | Parity passed, but real Samsung timing regressed to about `36.3 ms` p50. | Reverted. |
 | Precomputed row/q/k term helper for the dual row kernel | Parity passed, but register pressure made real timing worse (`~36.6 ms` p50). | Reverted. |
 | Wrapper-only `_colvar_group` change from 32 to 64/128 | Initially looked faster, but it was invalid because `ifft512_rows_var_radix8_t64` hard-codes 32 BF pixels per group. A dynamic-k attempt hit illegal memory access at full BF. | Reverted; do not repeat without a separate parity-tested fixed-size kernel. |
+| Column launch-bound tightening (`64,10`, `64,9`, `64,12`) | Full parity passed for the tested bounds. `64,10` produced no sustained real-data win (`36.17 ms` p50 before the Hermitian branch), and `64,12` regressed column p50 to about `14.4 ms`. | Rejected: register pressure/spills outweighed the occupancy attempt. |
+| Hermitian row offset precompute | Full parity passed, but sustained real-data timing stayed about `35.43 ms` p50 versus `35.40 ms` for the simpler Hermitian branch. | Rejected: extra live offsets did not beat the compiler's simpler inline path. |
+| Reusing loaded `qy` values across A/B dual gamma calls | Full parity passed, but component p50 did not improve and added register-pressure risk. | Rejected: the compiler/read-only cache already handles this cheaply enough. |
 
 Nsight Compute on the accepted dual row kernel:
 

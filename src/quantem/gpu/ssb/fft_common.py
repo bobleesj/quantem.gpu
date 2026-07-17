@@ -83,6 +83,27 @@ __device__ __forceinline__ float2 ld_gqk_maybe_herm(
     return make_float2(z.x, -z.y);
 }
 
+__device__ __forceinline__ float2 ld_gqk_herm_512(
+    const float2* ptr,
+    unsigned long long bf,
+    unsigned int row,
+    unsigned int col
+) {
+    const unsigned int n = 512u;
+    const unsigned int stored_cols = 257u;
+    unsigned long long base = bf * (unsigned long long)n * (unsigned long long)stored_cols;
+    if (col <= 256u) {
+        return ld_float2(ptr, base + (unsigned long long)row * stored_cols + col);
+    }
+    unsigned int mirror_row = row == 0u ? 0u : n - row;
+    unsigned int mirror_col = n - col;
+    float2 z = ld_float2(
+        ptr,
+        base + (unsigned long long)mirror_row * stored_cols + mirror_col
+    );
+    return make_float2(z.x, -z.y);
+}
+
 __device__ __forceinline__ unsigned int bit_reverse4_8(unsigned int x) {
     return ((x & 0x03u) << 6) | ((x & 0x0Cu) << 2) | ((x & 0x30u) >> 2) | ((x & 0xC0u) >> 6);
 }

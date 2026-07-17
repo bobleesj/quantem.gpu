@@ -929,30 +929,57 @@ void ifft512_rows_fused_pk_dual_radix8_t64_packed(
 
     float2 a0, a1, a2, a3, a4, a5, a6, a7;
     float2 b0, b1, b2, b3, b4, b5, b6, b7;
+    if (gqk_cols == 257) {
 #define DUAL_EVAL(slot, src) \
-    a##slot = gamma_mul_pk_cartesian_onthefly( \
-        qx, __ldg(&qy_1d[src]), kx_a, ky_a, \
-        wavelength, semiangle_rad, ang_y_rad, ang_x_rad, \
-        C10, C12, cos2phi12, sin2phi12, factor, phase_scale, inner2, \
-        pka.x, pka.y, \
-        ld_gqk_maybe_herm(G_qk, (unsigned long long)idx_a, (unsigned int)row, \
-                          (unsigned int)src, 512u, (unsigned int)gqk_cols)); \
-    b##slot = gamma_mul_pk_cartesian_onthefly( \
-        qx, __ldg(&qy_1d[src]), kx_b, ky_b, \
-        wavelength, semiangle_rad, ang_y_rad, ang_x_rad, \
-        C10, C12, cos2phi12, sin2phi12, factor, phase_scale, inner2, \
-        pkb.x, pkb.y, \
-        ld_gqk_maybe_herm(G_qk, (unsigned long long)idx_b, (unsigned int)row, \
-                          (unsigned int)src, 512u, (unsigned int)gqk_cols))
-    DUAL_EVAL(0, src0);
-    DUAL_EVAL(1, src1);
-    DUAL_EVAL(2, src2);
-    DUAL_EVAL(3, src3);
-    DUAL_EVAL(4, src4);
-    DUAL_EVAL(5, src5);
-    DUAL_EVAL(6, src6);
-    DUAL_EVAL(7, src7);
+        a##slot = gamma_mul_pk_cartesian_onthefly( \
+            qx, __ldg(&qy_1d[src]), kx_a, ky_a, \
+            wavelength, semiangle_rad, ang_y_rad, ang_x_rad, \
+            C10, C12, cos2phi12, sin2phi12, factor, phase_scale, inner2, \
+            pka.x, pka.y, \
+            ld_gqk_herm_512(G_qk, (unsigned long long)idx_a, (unsigned int)row, \
+                            (unsigned int)src)); \
+        b##slot = gamma_mul_pk_cartesian_onthefly( \
+            qx, __ldg(&qy_1d[src]), kx_b, ky_b, \
+            wavelength, semiangle_rad, ang_y_rad, ang_x_rad, \
+            C10, C12, cos2phi12, sin2phi12, factor, phase_scale, inner2, \
+            pkb.x, pkb.y, \
+            ld_gqk_herm_512(G_qk, (unsigned long long)idx_b, (unsigned int)row, \
+                            (unsigned int)src))
+        DUAL_EVAL(0, src0);
+        DUAL_EVAL(1, src1);
+        DUAL_EVAL(2, src2);
+        DUAL_EVAL(3, src3);
+        DUAL_EVAL(4, src4);
+        DUAL_EVAL(5, src5);
+        DUAL_EVAL(6, src6);
+        DUAL_EVAL(7, src7);
 #undef DUAL_EVAL
+    } else {
+#define DUAL_EVAL(slot, src) \
+        a##slot = gamma_mul_pk_cartesian_onthefly( \
+            qx, __ldg(&qy_1d[src]), kx_a, ky_a, \
+            wavelength, semiangle_rad, ang_y_rad, ang_x_rad, \
+            C10, C12, cos2phi12, sin2phi12, factor, phase_scale, inner2, \
+            pka.x, pka.y, \
+            ld_gqk_maybe_herm(G_qk, (unsigned long long)idx_a, (unsigned int)row, \
+                              (unsigned int)src, 512u, (unsigned int)gqk_cols)); \
+        b##slot = gamma_mul_pk_cartesian_onthefly( \
+            qx, __ldg(&qy_1d[src]), kx_b, ky_b, \
+            wavelength, semiangle_rad, ang_y_rad, ang_x_rad, \
+            C10, C12, cos2phi12, sin2phi12, factor, phase_scale, inner2, \
+            pkb.x, pkb.y, \
+            ld_gqk_maybe_herm(G_qk, (unsigned long long)idx_b, (unsigned int)row, \
+                              (unsigned int)src, 512u, (unsigned int)gqk_cols))
+        DUAL_EVAL(0, src0);
+        DUAL_EVAL(1, src1);
+        DUAL_EVAL(2, src2);
+        DUAL_EVAL(3, src3);
+        DUAL_EVAL(4, src4);
+        DUAL_EVAL(5, src5);
+        DUAL_EVAL(6, src6);
+        DUAL_EVAL(7, src7);
+#undef DUAL_EVAL
+    }
 
     if (row == 0) {
         if (src0 == 0) { a0 = make_float2(dc_real, dc_imag); b0 = make_float2(dc_real, dc_imag); }
