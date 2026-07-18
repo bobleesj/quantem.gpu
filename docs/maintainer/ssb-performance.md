@@ -15,6 +15,101 @@ live display, the current targets are:
 Do not claim these numbers from detector binning, scan cropping, fewer BF
 pixels, or saved complex64 caches. Those are separate preview/export choices.
 
+## Current CUDA/MPS checkpoint, 2026-07-17
+
+This checkpoint excludes WebGPU by request. It uses full active BF evidence:
+no scan crop, detector binning, BF subsampling, preview/settle split, or saved
+derived float32/complex64 cache.
+
+Microscopist workflow, real 512 field:
+
+```text
+source: private HDF5 master file
+shape: (512, 512, 192, 192), uint16, 19.33 GB
+BF policy: threshold=0.0, bf_radius=53, full active BF
+active BF: 8827
+resident G_qk: Hermitian complex64, (8827, 512, 257), 9.29 GB
+```
+
+CUDA GPU1 live-control timing, sustained real-data run:
+
+| Quantity | Mean | p50 | p95 | FPS | Status |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Phase-only | `31.10 ms` | `31.13 ms` | `31.20 ms` | `32.2` | Passes 30 FPS |
+| Phase+loss | `31.27 ms` | `31.27 ms` | `31.37 ms` | `32.0` | Passes 30 FPS |
+
+CUDA GPU1 calibration path, same data and BF policy:
+
+| Stage | Wall time | Notes |
+| --- | ---: | --- |
+| HDF5 load | `1.19 s` | CUDA load of full `(512,512,192,192)` uint16 block |
+| SSB construction / Gqk | `0.27 s` | Hermitian `G_qk`, `9.29 GB` |
+| `optimize(n_trials=200)` | `7.39 s` | Full BF, no `bf_subsample`, latest rerun used `8793` active BF |
+| `refine()` | `1.14 s` | `gpu-full-ifft-nmead`, `36` evaluations |
+| Final `result()` | `0.046 s` | Final loss `0.0464598909` |
+| Total through final result | `9.91 s` | End-to-end CUDA/Python compute path |
+
+CUDA synthetic matrix on GPU1, Hermitian `G_qk`, `8809` BF:
+
+| Scan | Object mean / FPS | Phase mean / FPS | Phase+loss mean / FPS |
+| --- | ---: | ---: | ---: |
+| `128x128` | `4.85 ms / 206.1` | `8.30 ms / 120.5` | `8.35 ms / 119.7` |
+| `256x256` | `2.20 ms / 454.0` | `20.94 ms / 47.8` | `20.99 ms / 47.7` |
+| `512x512` | `8.59 ms / 116.3` | `27.24 ms / 36.7` | `27.33 ms / 36.6` |
+| `1024x1024` | `41.79 ms / 23.9` | `195.54 ms / 5.11` | `197.71 ms / 5.06` |
+
+The latest CUDA 1024 exact phase/loss path uses a split-512 row and column IFFT
+topology over transposed scratch. It keeps the same full active BF evidence,
+Hermitian complex64 `G_qk`, float32 phase/loss arithmetic, scan size, and
+objective definition. On the synthetic full active BF-style benchmark, this
+moved phase+loss from `382.24 ms` (`2.62 FPS`) to `197.71 ms` (`5.06 FPS`)
+while keeping the CuPy memory-pool footprint about `45.9 GB`. This is a real
+exact-kernel speedup, but it still fails the 10 FPS and 30 FPS targets.
+
+Nsight Compute on the current CUDA 1024 exact phase/loss path shows the row and
+column FFT kernels are scheduler/shared-memory limited, not disk or DRAM
+bandwidth limited:
+
+| Kernel | Eligible warps/scheduler | No eligible cycles | Achieved occupancy | Memory throughput | Main stall |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `ifft1024_rows_fused_pk_split512_t64_packed` | `0.36` | `74.9%` | `31.6%` | `520 GB/s` | `123` regs/thread, MIO/short scoreboard, shared-memory and memory-pipe pressure |
+| `ifft1024_cols_accumulate_split512_t64` | `0.70` | `58.8%` | `32.8%` | `888 GB/s` | `121` regs/thread, MIO/short scoreboard, high memory-pipe use |
+
+The accepted split-512 topology is the first larger CUDA 1024 phase/loss
+breakthrough in this sequence. The next breakthrough must reduce the
+register-heavy row/gamma stage or the amount of exact per-BF phase work; chunk
+size and BF-group retuning were measured and stayed flat.
+
+MPS real 512 timing, same full active BF selection:
+
+| Quantity | Mean | p50 | p95 | FPS | Status |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Object redraw | `22.25 ms` | `21.65 ms` | `23.44 ms` | `44.9` | Usable for object-wave steering |
+| Phase-only | `168.84 ms` | `168.60 ms` | `171.66 ms` | `5.9` | Fails exact phase target |
+| Phase+loss | `165.20 ms` | `165.57 ms` | `166.71 ms` | `6.1` | Fails exact loss target |
+
+Parity gates for this checkpoint:
+
+- CUDA: `tests/test_ssb_cuda_128.py` + `tests/test_ssb_batch_optuna.py`,
+  `29 passed` on GPU1.
+- MPS: `tests/test_ssb_mps_cuda_reference.py`, `14 passed, 2 skipped` on a
+  Mac MPS machine.
+  This includes the fused 128/256/512/1024 column phase/loss helpers and the
+  fused 128/256/1024 dynamic row-IFFT helpers.
+
+MPS scalar-loss reduction is scientifically valid, but it did not produce a
+large wall-time win: avoiding a full phase-squared image write leaves the
+row/column IFFT work dominant. The default exact phase/loss chunk is now
+`3072` BF on 96 GB-class Macs, `1024` BF on 64 GB-class Macs, and `512` BF on
+smaller Macs. The 96 GB Mac setting is a small warmed steady-state win, but it
+is still not a real-time exact phase/loss breakthrough. The next MPS
+breakthrough needs a different exact row/column FFT topology, not another
+scalar-loss or chunk-size tweak.
+
+Latest MPS exact-loss chunk repeat on the same real `512x512` field kept the
+`3072` BF default: `3072` BF measured `165.47 ms` mean / `166.96 ms` p95,
+while `1024` BF measured `169.03 ms` mean / `171.66 ms` p95.
+
 ## Exact object redraw path
 
 `SSB.result()` displays the complex object wave and then exposes its phase.
@@ -46,7 +141,6 @@ default:
 
 ```python
 ssb = SSB(...)                       # default: gqk_storage="herm"
-ssb_full = SSB(..., gqk_storage="full")
 ```
 
 `gqk_storage="herm"` stores only scan-frequency columns `0..N/2`. The CUDA
@@ -58,11 +152,9 @@ relies on the exact Hermitian symmetry of the FFT of real virtual-BF images.
 The object-wave definition, phase/loss definition, and BF selection are
 unchanged; only the resident storage layout and fetch path change.
 
-`gqk_storage="full"` is now a canonical full-plane expansion from the same
-half-plane, not an independent source of redundant lower-half FFT roundoff.
-That keeps full-vs-Hermitian object comparisons at the kernel arithmetic floor
-instead of preserving backend-specific noise in mathematically redundant
-columns.
+Persistent `gqk_storage="full"` has been removed from the public SSB runtime
+path. Full-plane `G_qk` appears only in low-level parity tests as a canonical
+expansion from the Hermitian half-plane; it is not a user-facing mode.
 
 Resident `G_qk` memory becomes:
 
@@ -75,14 +167,12 @@ For a microscopist this is useful when the goal is to fit aberrations and steer
 the final object view without spending the persistent VRAM budget on redundant
 Fourier columns. Phase mean, phase variance/loss, `optimize()`, `refine()`,
 `grid_search()`, defocus sweeps, and higher-order aberration paths now keep the
-same resident Hermitian storage and fetch missing columns on demand where those
-kernels have been ported. Use `gqk_storage="full"` when explicitly
-benchmarking full storage or comparing against legacy full-residency behavior.
+same resident Hermitian storage and fetch missing columns on demand.
 
 Implementation status from the 2026-07-17 pass:
 
-- CUDA object kernels `128/256/512/1024` accept either full-plane or Hermitian
-  half-plane `G_qk`.
+- CUDA object kernels `128/256/512/1024` use Hermitian half-plane `G_qk` in the
+  public SSB path; full-plane references are constructed only inside tests.
 - CUDA phase/loss paths `128/256/512/1024` preserve Hermitian resident storage
   and fetch the missing half-plane directly inside the row kernels; no
   transient full-plane `G_qk` chunk is built for the current phase/loss paths.
@@ -90,14 +180,16 @@ Implementation status from the 2026-07-17 pass:
   `reconstruct()` does not compute phase variance when `reconstruct_with_loss()`
   is not requested. The measured speed did not improve materially, which shows
   the remaining floor is FFT topology rather than the removed `sumsq` writes.
-- `_extract_gqk(..., gqk_storage="herm")` builds the half-plane directly after
-  the BF-stack FFT, avoiding a persistent full `G_qk` allocation.
+- `_extract_gqk(...)` builds the half-plane directly after the BF-stack FFT,
+  avoiding a persistent full `G_qk` allocation.
 - Parity tests compare default Hermitian end-to-end `SSB(...).result()` against
   explicit canonical full storage. A raw `cp.fft.fft2` redundant half-plane can
   differ from exact conjugate symmetry at the expected fp32 arithmetic-noise
   floor, so full storage is canonicalized from the half-plane rather than using
   that redundant noise as a separate reference.
-- MPS has not received this half-plane storage path yet.
+- MPS fixed-preview and sparse-fit prepared paths now store the same Hermitian
+  half-plane. The cached sparse objective Metal kernel fetches missing columns
+  by mirror-conjugate symmetry; non-cached MLX paths expand only per chunk.
 
 Synthetic storage benchmark on GPU1, `8809` BF pixels, object-redraw mode:
 
@@ -124,9 +216,14 @@ This is an end-to-end API check (`SSB(...) -> result()`), not only a raw kernel
 probe. The exact-zero parity here comes from canonicalizing both storage modes
 from the same Hermitian half-plane.
 
-## Current measured baseline
+## Historical measured baseline
 
-Hardware: RTX PRO 6000 Blackwell-class GPU on `mjgoat`.
+This subsection is retained as the pre-Hermitian-only CUDA benchmark history.
+The later "Hermitian-only and MPS matrix follow-up" section is the current
+source of truth for public runtime storage, MPS status, and post-removal test
+results.
+
+Hardware: RTX PRO 6000 Blackwell-class CUDA workstation.
 
 Input: synthetic complex64 `G_qk`, fitted 192-pixel detector BF disk radius
 `53 px`, `8809` BF pixels, native scan size, no crop, no binning.
@@ -701,17 +798,20 @@ as a supported scientist workflow.
 
 | Backend / size | `128x128` | `256x256` | `512x512` | `1024x1024` |
 | --- | --- | --- | --- | --- |
-| CUDA object redraw | Implemented. Mean `0.80 ms`, p95 `0.81 ms`, `1247.9 FPS`. | Implemented. Mean `3.97 ms`, p95 `5.55 ms`, `251.6 FPS`. | Implemented. Mean `12.29 ms`, p95 `12.53 ms`, `81.4 FPS`. | Implemented. Mean `56.22 ms`, p95 `62.20 ms`, `17.8 FPS`. |
-| MPS object redraw | Pending object Fourier-sum port. | Pending object Fourier-sum port. | Pending object Fourier-sum port. | Pending object Fourier-sum port. |
-| WebGPU phase/loss path | Implemented in `quantem.widget`; migration pending. Synthetic browser parity passed. | Implemented in `quantem.widget`; migration pending. Synthetic browser parity passed. | Implemented in `quantem.widget`; migration pending. Real Samsung 512 full-BF drive measured mean `31.4 ms` GPU and `41.8 ms` UI for C10 changes at `9070/9070` BF. | Implemented in `quantem.widget`; migration pending. Real Berk 1024 BF-column load passes on Phil Chrome Metal. Full active-BF controls work but remain about `168-170 ms` UI/GPU, about `5.9 FPS`, below the 30 FPS target. |
+| CUDA object redraw | Implemented. High-BF exact fallback mean `4.81 ms`, p95 `5.08 ms`, `208.1 FPS`. | Implemented. Mean `1.74 ms`, p95 `1.78 ms`, `575.2 FPS`. | Implemented. Mean `6.97 ms`, p95 `7.30 ms`, `143.5 FPS`. | Implemented. Older full-BF mean `56.22 ms`, p95 `62.20 ms`, `17.8 FPS`; current pass measured `3000` BF mean `12.41 ms`, p95 `12.60 ms`, `80.6 FPS`. |
+| MPS Hermitian preview/free-fit | Implemented on a Mac MPS machine. Sparse `3.60 ms` / exact `4.02 ms` at `128` BF. | Implemented on a Mac MPS machine. Sparse `10.25 ms` / exact `10.68 ms` at `96` BF. | Implemented on a Mac MPS machine. Sparse `28.27 ms` / exact `33.26 ms` at `64` BF. | Implemented on a Mac MPS machine. Sparse `44.66 ms` / exact `50.39 ms` at `24` BF. |
+| WebGPU phase/loss path | Implemented in `quantem.widget`; migration pending. Synthetic browser parity passed. | Implemented in `quantem.widget`; migration pending. Synthetic browser parity passed. | Implemented in `quantem.widget`; migration pending. Real 512 full-BF drive measured mean `31.4 ms` GPU and `41.8 ms` UI for C10 changes at `9070/9070` BF. | Implemented in `quantem.widget`; migration pending. Real 1024 BF-column load passes on Mac Chrome Metal. Full active-BF controls work but remain about `168-170 ms` UI/GPU, about `5.9 FPS`, below the 30 FPS target. |
 
 Interpretation:
 
 - CUDA is the only backend with all four object-redraw cells implemented and
-  parity-tested against the previous per-BF IFFT object path.
-- MPS has useful SSB preview/free-fit infrastructure, but it has not received
-  the exact object Fourier-sum topology. Do not claim MPS parity from image
-  agreement or reduced optimizer settings.
+  parity-tested against the previous per-BF IFFT object path. The current
+  `1024x1024` full-BF synthetic rerun needs a quiet GPU because the Hermitian
+  resident `G_qk` allocation is about `37 GB` before scratch.
+- MPS now stores prepared `G_qk` as the same Hermitian half-plane and supports
+  `128/256/512/1024` MLX/Metal preview/free-fit runs. Treat the MPS table as
+  prepared-data MPS evidence, not as CUDA object Fourier-sum parity or full-BF
+  real-data signoff.
 - WebGPU currently lives in `quantem.widget` because it is bundled for browser
   export. The maintenance target is to move reusable kernel source, shape
   guards, and parity fixtures into `quantem.gpu`, then let `quantem.widget`
@@ -727,7 +827,7 @@ Browser performance signoff must record the WebGPU adapter. SwiftShader,
 llvmpipe, or any other software adapter is a CPU fallback. It can prove that an
 HTML page opens, fetches data, and avoids crashes, but it is not valid evidence
 for FPS, GPU latency, or end-to-end interactive performance. Re-run those tests
-on Phil/Mac Chrome Metal, a working NVIDIA Chrome/WebGPU session, or the native
+on Mac Chrome Metal, a working NVIDIA Chrome/WebGPU session, or the native
 CUDA/MPS path before claiming responsiveness.
 
 Headed Chrome/CDP evidence on NVIDIA Blackwell:
@@ -738,14 +838,14 @@ Headed Chrome/CDP evidence on NVIDIA Blackwell:
 | Synthetic stress | `1024x1024`, 64 BF pixels | WGSL compute mean `8.2 ms`; page wall mean about `503 ms` because the standalone parity/demo page repaints and compares too much on the CPU. |
 | Real Samsung full BF | `512x512`, `9070/9070` BF | C10 keyboard drive mean `31.4 ms` GPU, mean `41.8 ms` UI, about `23.9 FPS`; screenshot/report under `/tmp/showptycho-webgpu-size-matrix/real_samsung_fullbf_c10_keys/`. |
 
-Real `1024x1024` data target used for browser signoff:
+Local real `1024x1024` data target used for browser signoff:
 
 ```text
-/home/owner/ssd/data/berk_tomo_20260716_one_tilt/pos_38_tilt0.h5
+/path/to/local/1024_scan.h5
 dataset: /entry/data/data
 native shape: (1024, 1024, 192, 192) via flattened (1048576, 192, 192)
 dtype: uint16 on disk; exact max count 12, so uint8 is lossless for browsing/load
-wrapper: /home/owner/data/reports/berk_tomo_20260716_one_tilt_ssb/pos_38_tilt0_master_wrapper.h5
+wrapper: /path/to/local/1024_scan_master_wrapper.h5
 ```
 
 ### Evidence-selective WebGPU BF loading
@@ -754,7 +854,7 @@ The preferred 1024 browser source is no longer a persistent float32/complex64
 `g_bf` cache. It is an exact detector-major BF-column companion:
 
 ```text
-/home/owner/ssd/agent-show/berk-showptycho-webgpu-1024-bfcols-20260716/source/bf_columns.u4
+/path/to/local/1024_bf_columns.u4
 layout: [bf, scan]
 shape: [1805, 1048576]
 encoding: uint4
@@ -825,7 +925,7 @@ Headed Chrome result on mjgoat after adding the range-index HDF5 source path:
 | Near-full BF setup | `1767/1805` selected BF, `1382` active aperture BF. HDF5 setup completed in `14.1 s` wall; profile total `13.11 s`. |
 | Near-full BF interaction | C10 drive updated live at about `141 ms` GPU and `152 ms` UI. |
 
-Interpretation for the microscopist: the full native Berk field can now be
+Interpretation for the microscopist: the full native 1024 field can now be
 opened from the compressed HDF5 source without saving `g_bf.c64`, and the
 controls do update the scientific image and FFT at 1024. It is not yet a
 30 FPS steering experience. The next WebGPU work is reducing redraw latency
@@ -847,14 +947,15 @@ IFFT object path for `128x128`, `256x256`, `512x512`, and `1024x1024`:
 The Hermitian `G_qk` object and phase/loss paths are compared against a
 canonical full-plane reference for the same four scan sizes, and `_extract_gqk`
 is tested to keep only the nonredundant columns. Default constructor-to-
-`result()` parity is also tested against explicit full storage, including the
-diagnostic loss. Focused CUDA check from 2026-07-17 on GPU1:
+`result()` parity is tested against a test-only full-plane expansion of the
+same half-plane, including the diagnostic loss. Focused CUDA check from
+2026-07-17 on GPU1:
 
 ```text
 CUDA_VISIBLE_DEVICES=1 PYTHONPATH=src pytest -q \
   tests/test_ssb_cuda_128.py -k 'hermitian or phase_loss'
 
-12 passed, 12 deselected
+14 passed, 14 deselected
 ```
 
 Full CUDA SSB test file from the same pass:
@@ -862,8 +963,23 @@ Full CUDA SSB test file from the same pass:
 ```text
 CUDA_VISIBLE_DEVICES=1 PYTHONPATH=src pytest -q tests/test_ssb_cuda_128.py
 
-24 passed
+28 passed
 ```
+
+MPS Hermitian half-plane checks from a Mac MPS machine:
+
+```text
+cd /path/to/quantem.gpu
+PYTHONPATH=src python -m pytest -q \
+  tests/test_ssb_mps_cuda_reference.py
+
+2 passed, 2 skipped
+```
+
+The skipped MPS cases are optional real-data CUDA-reference comparisons that
+require local `QUANTEM_GPU_SSB_MASTER` / `QUANTEM_GPU_SSB_REFERENCE_NPZ`
+fixtures. The executed checks cover supported sparse row masks through
+`1024x1024` and exact Hermitian half-plane expansion against `fft2`.
 
 The `1024x1024` reconstruct-with-loss path is compared to an explicit CuPy
 reference with a tolerance that allows rare `atan2` branch-cut pixels while
@@ -955,18 +1071,401 @@ runs can still show `pviol=100%`, so the p95 margin around the 30 FPS frame
 budget should be watched on other machines.
 
 Current conclusion: the `512x512` exact full-BF phase/loss target is met on the
-real central Samsung field. The next structural performance target is
+real central field. The next structural performance target is
 `1024x1024`, where the same exact phase/loss path still needs a larger topology
 change, likely fused/tiled row-column work or another exact formulation.
 
+### 512 full-BF calibration timing follow-up
+
+The same real `512x512` field was used to test the full calibration workflow,
+not only live redraw. Source: private HDF5 master file loaded as full
+scan/full detector `uint16`, `9070` active BF after the fitted
+aperture, Hermitian `G_qk=(9070,512,257)` / `9.55 GB`.
+
+The important workflow split is:
+
+- Live interaction uses the exact full-IFFT `reconstruct_with_loss()` path.
+- Default historical calibration uses sparse `variance_loss_batch()`, a
+  different scalar objective.
+- Forced exact calibration uses the exact full-IFFT path for optimizer and
+  refiner objective evaluations.
+
+Accepted calibration improvement:
+
+| Stage | Before | After | Notes |
+| --- | ---: | ---: | --- |
+| Exact 200-trial optimize | `~6.7 s` | `~6.7 s` | Still bounded by `~32-33 ms` per exact full-BF candidate. |
+| Exact Nelder-Mead refine | `~7.1 s / 200 evals` in the earlier forced path | `1.12 s / 34 evals` | Exact full-BF objective; default exact-fallback tolerances now stop before the invisible flat tail. |
+| Load -> Gqk -> optimize -> refine -> widget | `17.05 s` | `11.32 s` | Full BF, no binning, no crop, no trial-count reduction. |
+
+The new exact-refine default for this fallback path was chosen from a sweep:
+`xatol=0.25`, `fatol=2e-6`, `max_iter=160`. Compared with the longer exact
+baseline, the selected policy gave loss delta about `4-6e-7` and phase deltas
+around `5.7e-5 rad` mean / `3.9e-4 rad` p99.9 in the real-data probe. The
+too-loose four-evaluation policies were rejected because they produced
+`~0.0014 rad` mean and `~0.01 rad` max phase deltas.
+
+Rejected calibration hypotheses:
+
+| Hypothesis | Measurement | Decision |
+| --- | --- | --- |
+| Host-sync-free GPU scalar losses for exact fallback | Parity passed (`2.2e-8` max scalar-loss delta), but batch-4 exact stayed about `130.6 ms` (`32.6 ms/candidate`). | Rejected and removed from production code: no measurable throughput win for the added complexity. |
+| Concurrent exact candidates on separate CUDA streams | Four candidates were slower concurrently (`140.9 ms`) than sequentially (`129.7 ms`). | Rejected: kernels contend for the same shared-memory/scheduler resources. |
+| Larger exact BF chunks for calibration | Real-data sweep showed `32/64` BF chunks at `~32.0-32.1 ms`; `96+` chunks regressed to `35-36 ms`. | Keep `64` as the default; larger chunks are not a calibration win. |
+| Fewer exact Optuna trials | `150` trials + exact refine reached `6.72 s` optimize+refine with `0.00054 rad` p99.9 phase delta versus the 200-trial baseline. | Useful evidence for an opt-in fast-calibration mode, but do not present it as the full 200-trial default. |
+
+Nsight on the exact 512 row kernels confirms the next kernel-level ceiling:
+`ifft512_rows_fused_pk_dual_radix8_t64_packed` runs at about 50% theoretical
+occupancy, limited by shared memory, with about `49%` no-eligible scheduler
+cycles and MIO/short-scoreboard stalls. The column phase/loss accumulator
+`ifft512_rows_var_radix8_t64` is register-limited, reaches about 20% achieved
+occupancy in the small chunk launch, and also shows scheduler starvation. The
+next kernel breakthrough therefore needs a different row/column topology or a
+parity-tested exact multi-candidate formulation, not bigger chunks or streams.
+
+### Hermitian-only and MPS matrix follow-up
+
+The 2026-07-17 follow-up made Hermitian `G_qk` the only public runtime storage
+mode. `SSB(..., gqk_storage="full")` now raises a corrective `ValueError`.
+Full-plane `G_qk` remains available only as a test-only canonical expansion of
+the Hermitian half-plane, so parity references are stable without carrying
+redundant FFT roundoff as a separate public mode.
+
+CUDA validation after the removal:
+
+```text
+env CUDA_VISIBLE_DEVICES=1 PYTHONPATH=src pytest -q \
+  tests/test_ssb_cuda_128.py tests/test_ssb_batch_optuna.py
+
+29 passed in 3.91s
+```
+
+The `128x128` high-BF object path currently uses the exact fused-IFFT fallback
+when `num_bf > 1024`. The small-BF Fourier-sum kernel remains parity-tested,
+but a high-BF synthetic stress probe left the CUDA context in an illegal-
+address state. The fallback keeps the user path exact and fast at `128x128`
+while that microkernel is investigated.
+
+CUDA synthetic Hermitian timing from this pass:
+
+| Scan | Mode | BF | Resident `G_qk` | Mean | p50 | p95 | FPS |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `128x128` | object, fused-IFFT fallback | `8809` | `586 MB` | `4.81 ms` | `4.70 ms` | `5.08 ms` | `208.1` |
+| `256x256` | object | `8809` | `2.33 GB` | `1.74 ms` | `1.73 ms` | `1.78 ms` | `575.2` |
+| `512x512` | object | `8809` | `9.27 GB` | `6.97 ms` | `6.82 ms` | `7.30 ms` | `143.5` |
+| `1024x1024` | object | `8809` | `37.02 GB` | `41.79 ms` | `42.32 ms` | `43.93 ms` | `23.9` |
+| `1024x1024` | phase-only, split-512 row/column | `8809` | `37.02 GB` | `195.54 ms` | `194.99 ms` | `200.84 ms` | `5.11` |
+| `1024x1024` | phase+loss, split-512 row/column | `8809` | `37.02 GB` | `197.71 ms` | `199.00 ms` | `199.24 ms` | `5.06` |
+| `128x128` | phase+loss | `8809` | `586 MB` | `7.86 ms` | `7.80 ms` | `7.99 ms` | `127.2` |
+| `256x256` | phase+loss | `8809` | `2.33 GB` | `18.31 ms` | `18.20 ms` | `18.51 ms` | `54.6` |
+| `512x512` | phase+loss | `8809` | `9.27 GB` | `26.98 ms` | `27.11 ms` | `27.12 ms` | `37.1` |
+
+The `1024x1024` exact phase/loss path now uses a split-512 row and column IFFT:
+each 1024 IFFT is decomposed into exact even/odd 512-point radix-8 transforms
+plus a final radix-2 combine. The row kernel writes transposed scratch, and the
+column kernel consumes that layout directly. This preserves the default math
+and focused CUDA parity while cutting the synthetic full-BF phase+loss time
+from `382.24 ms` to `197.71 ms`.
+
+The current `1024x1024` exact phase/loss default still uses a `1024` BF staging
+chunk for high-BF runs. Chunk sweeps from `512` to `4096` BF measured about
+`197-200 ms`; BF-group sweeps kept `32` BF as the most stable column
+accumulation group. Those knobs reduce memory footprint or stabilize the run,
+but the next FPS win must come from the register-heavy row/gamma path or a new
+exact formulation.
+
+MPS validation and timing were run on a Mac MPS machine with MLX `0.32.0`.
+Prepared MPS `G_qk` now stores the same Hermitian half-plane. The cached sparse
+objective Metal kernel fetches missing columns by mirror-conjugate symmetry,
+and the non-cached MLX preview path expands only the active chunk.
+
+Mac MPS test:
+
+```text
+PYTHONPATH=src python -m pytest -q \
+  tests/test_ssb_mps_cuda_reference.py
+
+2 passed, 2 skipped in 1.29s
+```
+
+Mac MPS synthetic prepared-data timing:
+
+| Scan | BF | Resident `G_qk` | Prep | Sparse objective mean / p95 / FPS | Exact preview mean / p95 / FPS |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `128x128` | `128` | `8.52 MB` | `0.163 s` | `3.60 ms` / `4.25 ms` / `278` | `4.02 ms` / `4.40 ms` / `248` |
+| `256x256` | `96` | `25.36 MB` | `0.036 s` | `10.25 ms` / `11.08 ms` / `97.5` | `10.68 ms` / `11.36 ms` / `93.6` |
+| `512x512` | `64` | `67.37 MB` | `0.067 s` | `28.27 ms` / `30.67 ms` / `35.4` | `33.26 ms` / `33.61 ms` / `30.1` |
+| `1024x1024` | `24` | `100.86 MB` | `0.120 s` | `44.66 ms` / `48.79 ms` / `22.4` | `50.39 ms` / `55.98 ms` / `19.8` |
+| `512x512` pushed | `96` | `101.06 MB` | `0.166 s` | `44.18 ms` / `45.90 ms` / `22.6` | `49.71 ms` / `50.20 ms` / `20.1` |
+| `1024x1024` pushed | `30` | `126.07 MB` | `0.092 s` | `54.27 ms` / `55.75 ms` / `18.4` | `61.05 ms` / `61.58 ms` / `16.4` |
+
+Interpretation for Mac users: MPS now supports the native size matrix for the
+prepared SSB path and is interactive for moderate BF counts, especially at
+`128/256/512`. This is not yet a full-BF `1024x1024` Mac signoff. Report the
+BF count with every MPS FPS number because Mac unified memory and MLX FFT cost
+scale directly with the number of active BF columns.
+
+### MPS full-BF 512 follow-up
+
+The next MPS pass targeted Mac no-crop/no-bin review on the real `512x512`
+logic dataset:
+
+```text
+private HDF5 master file
+native shape: (262144, 192, 192), uint16
+BF policy: threshold=0.0, bf_radius=53
+selected BF: 8827
+Hermitian G_qk: (8827, 512, 257), 9.29 GB
+```
+
+Accepted MPS changes:
+
+- Added batched `ChunkedFrames.columns(rows, cols)` so SSB preparation reads BF
+  columns in groups instead of calling `column()` once per detector pixel.
+- Changed the non-prefix MPS column gather to fill scan-major chunks with
+  `np.take` from the flattened detector grid, then enabled threaded extraction
+  over independent Metal chunks for large BF selections. This keeps the same
+  raw detector evidence and only changes the host extraction topology.
+- Added a fused dynamic Metal correction kernel for large-BF prepared paths.
+  It computes the same C10/C12/phi12 correction and fetches missing Hermitian
+  columns directly, avoiding expanded `G_qk` and large MLX geometry
+  temporaries.
+- Added an explicit `phase_mode="object"` path for `ssb_preview_mps`. This is
+  an exact BF-averaged object wave, using Fourier-domain BF summation followed
+  by one inverse FFT. It is now the default no-loss preview mode; requesting
+  `compute_loss=True` or `phase_mode="mean"` uses the exact
+  mean-of-per-BF phase/loss quantity.
+- Precomputed the BF-only probe term `p(k)` once per live aberration setting
+  and passed it into the object Fourier-sum Metal kernel. The kernel still
+  computes the `q-k` and `q+k` terms per pixel, but it no longer recomputes the
+  same BF-only probe phase for every output pixel.
+- Split object-mode chunking into separate setup and redraw defaults:
+  `QUANTEM_MPS_SSB_OBJECT_CHUNK_BF` controls first-use BF FFT setup, while
+  `QUANTEM_MPS_SSB_OBJECT_REDRAW_CHUNK_BF` controls repeated live redraw. On
+  the Mac MPS machine, setup is fastest at `1024` BF chunks, but synchronized live redraw is
+  fastest with the object redraw default `128`; tying those together regressed
+  interaction timing.
+- Added `QUANTEM_MPS_SSB_OBJECT_THREADGROUP` for repeated object redraw and
+  set the high-memory Mac default to a `16`-thread Metal threadgroup after launch-shape
+  sweeps.
+- Replaced separate object-kernel `sin`/`cos` calls with
+  `metal::fast::sincos` for the two shifted aperture phases. Mac MPS parity
+  stayed green, and this was the decisive redraw speedup.
+- Added a 512-only fused Metal column-IFFT + phase/loss accumulator for the
+  prepared MPS exact mean-phase path. The route still uses the same full BF
+  disk and the same float32 per-BF phase/loss definition, but it no longer
+  materializes the full per-BF object chunk before summing phases.
+- Added a 512-only fused dynamic correction + row-IFFT Metal kernel for the
+  prepared MPS exact mean-phase path. This removes the MLX corrected-plane
+  materialization and MLX row-IFFT from the large-BF loop while preserving the
+  same Hermitian `G_qk`, BF disk, and float32 phase/loss definition.
+
+Real Mac MPS before/after:
+
+| Path | Before | After | FPS after | Status |
+| --- | ---: | ---: | ---: | --- |
+| Full no-bin MPS load | not retimed in same harness | `0.94 s` final run, earlier `1.05-1.85 s` | n/a | Pass. |
+| BF select | not retimed in same harness | `0.28-0.33 s` | n/a | Pass. |
+| Prepare Hermitian `G_qk` | `22.67 s` | `3.21 s` final run, earlier `2.91-3.04 s` | n/a | `~7x` faster than the old per-column setup. |
+| Public object-mode preview after load | `24.84 s` | about `3.3-3.5 s` | n/a | `~7x` faster first review, no BF reduction. |
+| Repeated object-wave redraw | `~211 ms` scratch loop; first optimized pass `50.6 ms` mean, p95 `65.0 ms` | mean `24.01 ms`, p50 `23.85 ms`, p95 `26.34 ms` | `41.65 FPS` | Exact object-wave path passes the 30 FPS target after warm-up. |
+| Repeated exact phase+loss redraw | `710 ms`; pre-column-fusion best `~550-640 ms`; fused-column-only best `335.18 ms` mean | best `169.62 ms` mean, `169.68 ms` p50, `170.24 ms` p95 | `5.90 FPS` | Fused correction+row plus fused column is exact and about `2x` faster than the fused-column-only path, but still fails the 30 FPS live target. |
+
+Latest setup split with `chunk_bf=1024`:
+
+```text
+load_s=1.05, bf_select_s=0.33
+prepare_total_s=2.91
+  gather_s=1.49
+  cpu_to_mlx_stage_s=0.48
+  rfft2_eval_s=0.54
+  concat_s=0.30
+selected_bf=8827
+```
+
+Final default-path object redraw timing:
+
+```text
+load_s=1.196, prepare_s=3.230
+selected_bf=8827
+Hermitian G_qk=(8827, 512, 257)
+object redraw defaults: chunk_bf=128, threadgroup=16
+best measured chunk_bf=256:
+  mean_ms=21.82, p50_ms=21.88, p95_ms=23.16, fps=45.82
+default chunk_bf=128:
+  mean_ms=22.21, p50_ms=22.19, p95_ms=22.98, fps=45.03
+public ssb_preview_mps default after load:
+  wall_s=3.436, loss=None
+public ssb_preview_mps explicit object after load:
+  wall_s=3.257, loss=None
+```
+
+Final exact mean-phase/phase-loss redraw timing after fused correction+row and
+fused column accumulation:
+
+```text
+load_s=1.196, prepare_s=3.230
+selected_bf=8827
+Hermitian G_qk=(8827, 512, 257)
+phase-only best chunk_bf=1024:
+  mean_ms=168.77, p50_ms=168.52, p95_ms=169.86, fps=5.93
+phase+loss best warmed chunk_bf=3072:
+  mean_ms=165.20, p50_ms=165.57, p95_ms=166.71, fps=6.05
+component split at chunk_bf=1024:
+  correction+row-IFFT mean=74.30 ms
+  column-IFFT+phase/loss mean=93.76 ms
+  accumulation mean=2.87 ms
+public ssb_preview_mps explicit mean after load:
+  wall_s=4.281, loss=None
+public ssb_preview_mps compute_loss=True after load:
+  latest default chunk_bf=3072 wall_s=4.751, loss=0.050665274262428284
+```
+
+Follow-up on 2026-07-17 changed `_default_phase_loss_chunk_bf()` to return
+`3072` on 96 GB-class Macs, `1024` on 64 GB-class Macs, and `512` otherwise.
+The high-memory Mac path reports `default_phase_chunk=3072`; the public real
+`ssb_preview(..., compute_loss=True, chunk_bf=16)` path completed with
+`8827` BF and `512x512` phase/amplitude in `4.75 s` after a `0.97 s` full
+MPS load. The prepared steady-state exact phase+loss redraw is still only
+about `6 FPS`, so do not present this as a solved 30 FPS MPS path.
+
+Real full-BF parity against the previous MLX row-IFFT + fused-column path:
+
+```text
+loss_old=0.021938618272542953
+loss_new=0.021938620135188103
+phase_max_abs=1.4901161193847656e-08
+phase_mean_abs=1.894959078541092e-09
+```
+
+### MPS native full-BF matrix follow-up, 2026-07-18
+
+This pass extended the exact fused Metal phase/loss topology beyond the earlier
+512-only path. It keeps the same full active BF-style evidence, native scan
+size, Hermitian complex64 `G_qk`, and float32 mean-phase/loss definition. No
+scan crop, detector binning, BF subsampling, preview/settle split, or derived
+float/complex cache is used.
+
+Accepted MPS changes:
+
+- Added fused 128/256 Metal column-IFFT + phase/loss accumulation.
+- Added fused 128/256 Metal dynamic correction + row-IFFT.
+- Added fused 1024 Metal dynamic correction + row-IFFT and column-IFFT +
+  phase/loss accumulation.
+- Fixed the top-level fused MPS loss accumulator so all fused exact sizes
+  (`128/256/512/1024`) use scalar `phase^2` accumulation instead of
+  accidentally broadcasting the scalar loss tile through an image-shaped
+  accumulator.
+- Changed the 128/256 MPS exact phase/loss default chunk to a large
+  full-BF-capable chunk on 96 GB-class Macs. This removes avoidable loop and
+  partial-reduction overhead without changing BF evidence.
+- Changed the 1024 MPS exact phase/loss default chunk to `512` BF after the
+  scalar-loss fix. Isolated sweeps show `512/768` are close; the default keeps
+  the smaller, safer working set.
+- Changed 128/256 phase-only column grouping to 8 columns per Metal
+  threadgroup. Phase+loss keeps 4 columns because 8 columns regressed the loss
+  path in repeated timing.
+- Changed repeated MPS object redraw to use a `64`-threadgroup default for
+  `512x512` and larger scans after a small launch-shape sweep.
+- Added `QUANTEM_MPS_SSB_PHASE_COL_K_BF` as an internal tuning knob. Sweeps
+  from `8` to `128` BF did not produce a durable 512 breakthrough, so the
+  default remains `32`.
+
+Mac MPS parity gate:
+
+```text
+PYTHONPATH=src python -m pytest -q tests/test_ssb_mps_cuda_reference.py
+
+15 passed, 2 skipped
+```
+
+MPS synthetic prepared full-BF-style matrix, Hermitian `G_qk`, `8809` BF:
+
+| Scan | Object mean / FPS | Phase mean / FPS | Phase+loss mean / FPS | Notes |
+| --- | ---: | ---: | ---: | --- |
+| `128x128` | `2.45 ms / 408.4` | `~8.0 ms / 122-126` | `~8.3 ms / 119-121` | Exact fused row/column path passes 30 FPS. |
+| `256x256` | `8.62 ms / 116.1` | `32.75 ms / 30.5` | `~34-35 ms / 28.6-29.4` | Phase-only reaches 30 FPS; phase+loss remains just above the strict `33.3 ms` budget. |
+| `512x512` | `37.65 ms / 26.6` | warm `166-182 ms / 5-6` | warm `170-173 ms / 5-6` | No new durable 512 exact phase/loss breakthrough; long stress loops throttle upward. |
+| `1024x1024` | clean `~156 ms / 6.4`, hot `~222 ms / 4.5` | warm `~0.78-1.0 s / 1.0-1.3` | warm `~0.79-1.0 s / 1.0-1.3` | Fused 1024 is about 2-2.6x faster than the generic MLX path, but still far from 10/30 FPS. |
+
+Before/after for the exact MPS phase/loss paths in the same synthetic prepared
+full-BF-style harness:
+
+| Scan | Quantity | Before | After | Speedup | Status |
+| --- | --- | ---: | ---: | ---: | --- |
+| `128x128` | phase | `38.70 ms` | `~8.0 ms` | `~4.8x` | Passes 30 FPS. |
+| `128x128` | phase+loss | `37.33 ms` | `~8.3 ms` | `~4.5x` | Passes 30 FPS. |
+| `256x256` | phase | `144.98 ms` | `32.75 ms` | `4.4x` | Passes 30 FPS by mean; p95 remains close to budget. |
+| `256x256` | phase+loss | `146.51 ms` | `~34-35 ms` | `~4.2x` | Near miss for 30 FPS. |
+| `1024x1024` | phase | `1994 ms` | warm `~0.78-1.0 s` | `~2.0-2.6x` | Still fails 10/30 FPS. |
+| `1024x1024` | phase+loss | `1984 ms` | warm `~0.79-1.0 s` | `~2.0-2.5x` | Still fails 10/30 FPS. |
+
+Rejected or non-breakthrough MPS probes from this pass:
+
+| Probe | Result | Decision |
+| --- | --- | --- |
+| 512 exact phase/loss chunk sweep down to `64` BF | Small CUDA-like chunks regressed (`~226 ms` at `64` BF). Larger chunks stayed best (`~166-170 ms`). | Keep the high-memory 512 default at `3072` BF. MPS benefits from fewer loop launches here. |
+| 512 column BF grouping `8/16/32/64/128` | Best cases moved only `1-2 ms`; larger groups regressed. | Not a topology breakthrough; keep default `32`. |
+| 1024 fused chunk sweep `128/256/512/768/1024` after scalar-loss fix | `512/768` were close and better than the earlier `256` cap in isolated runs, but order and thermal state moved the result by hundreds of ms. | Set 1024 default to `512` for a smaller safe working set; this remains far from interactive. |
+| Object threadgroup sweep `8/16/32/64/128` | `64/128` modestly improved large-object redraw. | Keep `64` for `512+`; it is a small object-mode win, not a phase/loss breakthrough. |
+| 128/256 in-kernel scalar-loss reduction | Parity passed, but 256 phase+loss regressed to about `34.5 ms`. | Reverted. Smaller loss outputs did not beat the extra threadgroup barriers. |
+| 128/256 8-column Metal grouping | Phase-only improved enough for 256 to reach about `32.75 ms`, but phase+loss regressed. | Use 8 columns only for phase-only; keep phase+loss at 4 columns. |
+
+Interpretation for the microscopist: on an Apple GPU, exact full-BF
+mean-phase/loss is now real-time at `128x128`, very close at `256x256`, still
+review-only at `512x512`, and not live-interactive at `1024x1024`. The 1024
+fused Metal path proves the generic MLX FFT route was a major bottleneck, but
+the remaining wall time is still per-BF exact phase work. The next MPS
+breakthrough needs a different exact 512/1024 row-column topology or a
+scientifically equivalent reformulation, not BF reduction.
+
+Rejected MPS probes from the same pass:
+
+| Probe | Result | Decision |
+| --- | --- | --- |
+| Direct one-threadgroup-per-Fourier-pixel reduce | Parity passed, but real full-BF timing was `~103-168 ms` depending on thread count because it destroyed useful parallelism. | Removed from production code. |
+| Lazy aperture branch that moved astigmatism/trig work after support checks | Parity passed, but real timing regressed because the extra branching hurt Metal occupancy. | Reverted. |
+| Old redraw launch defaults `chunk_bf=48/64`, threadgroup `64/256` | Worked, but sustained real-data redraw stayed roughly `18-24 FPS`. | Replaced by `chunk_bf=128`, threadgroup `16`. |
+| Phase-only sum kernel that skipped `sumsq` | Parity passed, but phase-only still measured about `334-348 ms` because the inverse FFT and correction dominate. | Kept only where it is simple; do not expect it to be the MPS breakthrough. |
+| Column BF grouping `k_bf=8/16/32/64/128/256` after fused row | Real full-BF column+accumulation stayed best around `k_bf=16/32` at `~92 ms`; larger groups reduced partial outputs but lost useful BF parallelism. | Keep `k_bf=32`; the next exact breakthrough needs a different row-column topology, not a grouping constant. |
+| CUDA 1024 direct atomic phase/loss accumulation | Focused parity passed, but `1024x1024`, `1382` BF loss regressed to `210.8 ms` mean before reverting; the known partial-sum path measured `62.0 ms` in the same condition. | Removed. Direct atomics are not the 1024 breakthrough. |
+| CUDA 1024 column grouping `k_bf=8` | The isolated column kernel moved slightly, but full `8809` BF loss regressed from `406.5 ms` to `427.3 ms`. | Keep `k_bf=32`. |
+| CUDA 1024 Cartesian row correction helper | Focused parity failed the 1024 CuPy reference gate (`99.9%` phase error `3.26e-4` vs `3e-4`). | Reverted. Keep exact reference parity. |
+| CUDA 1024 launch bounds on row/column kernels | Focused parity passed, but full `8809` BF loss regressed to `859 ms`. | Reverted. Occupancy pressure is not solved by forcing launch bounds. |
+| CUDA 1024 polynomial `atan2` in column phase/loss | Focused parity passed, but warmed full `8809` BF loss was noise-level (`389.0 ms` vs `389.5 ms` same-session baseline). | Rejected as a non-breakthrough. |
+| CUDA 1024 specialized Hermitian `G_qk` fetch helper | Focused parity passed, but default full `8809` BF timing did not improve (`380.84 ms` phase, `382.67 ms` loss). | Reverted; the generic fetch is not the bottleneck. |
+| CUDA 1024 split-512 launch bound tightened from `64,8` to `64,12` | Focused parity passed, but component timing regressed from about `15.2 ms` row / `6.9 ms` column to about `17.0 ms` row / `11.5 ms` column per 1024-BF chunk. | Reverted. The higher-register compiler choice is faster despite lower occupancy. |
+| CUDA 1024 coalesced-load split row | Focused parity passed, but warmed full `8809` BF loss stayed about `200-201 ms`, slower than the direct split row at about `197-199 ms`. | Removed. The extra shared gather and synchronization cost more than the improved source-load order. |
+
+The object-mode parity guard compares the fused object Fourier-sum kernel
+against the looped corrected-object reference on a Mac MPS machine:
+
+```text
+PYTHONPATH=src python -m pytest -q \
+  tests/test_ssb_mps_cuda_reference.py
+
+5 passed, 2 skipped
+```
+
+Interpretation for the microscopist: on an Apple GPU, a full-BF `512x512`
+field can now load no-bin data, build the BF evidence, and show an
+exact object-wave phase review a few seconds after load, then steer the object
+view above `40 FPS` after warm-up on a Mac MPS machine. The stricter exact
+mean-phase/phase-variance loss view improved from about `550-640 ms` to about
+`335 ms`, so it is better but still not usable for live full-BF steering on
+MPS. The next real MPS breakthrough has to fuse the correction + row FFT side
+of the exact phase/loss path or port the CUDA row/column topology more fully;
+another BF-column gather or UI flag will not close the remaining budget.
+
 ## Next performance work
 
-Problem: the live object redraw target is met in the synthetic native-kernel
-benchmark, but real-data workflow signoff is still incomplete.
+Problem: the live object redraw target is met for the real Mac MPS `512x512`
+full-BF object-wave workflow, and the fused column accumulator improved exact
+phase/loss to about `3 FPS`, but exact phase/loss is still far below real-time
+on MPS.
 
-Action: run the Samsung/BTO HDF5 path end to end, including load/decode,
-hot-pixel filtering, BF-mask formation, Nelder-Mead/SSB setup, live controls,
-FFT display, and browser/widget reporting.
+Action: port or prototype the fused correction + row-FFT half of the CUDA
+topology on MPS, then rerun the same before/after table with full BF.
 
 Problem: the `512x512` exact phase/loss path now meets the `33.3 ms` / `30 FPS`
 target on the real central Samsung field, but the p95 margin is small on the
@@ -989,10 +1488,11 @@ Problem: `1024x1024` batched optimizer variance is still disabled.
 Action: implement and parity-test a dedicated 1024 batch variance kernel before
 enabling batch trials at that size.
 
-Problem: MPS and WebGPU are not yet at parity with the CUDA native-size matrix.
+Problem: MPS and WebGPU are implemented for native-size SSB review, but they
+are not yet equivalent to CUDA full-BF real-data signoff.
 
-Action: run and update the 12-cell backend matrix above. MPS has
-`quantem.gpu.ssb.mps` and existing CUDA-reference tests, but the object
-Fourier-sum topology has not been ported there. WebGPU SSB currently lives in
-`quantem.widget`; 1024 support exists there, but reusable WGSL kernels and
-parity fixtures still need to move into `quantem.gpu`.
+Action: keep extending the 12-cell matrix with real-data MPS and WebGPU runs.
+For MPS, measure the same BF policies used by scientists on a Mac MPS machine and compare
+against CUDA-reference fixtures. For WebGPU, move reusable WGSL kernels and
+parity fixtures from `quantem.widget` into `quantem.gpu` without using
+SwiftShader performance numbers.

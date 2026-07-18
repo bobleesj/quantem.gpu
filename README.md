@@ -173,9 +173,9 @@ Current status:
 
 | Backend | `128` | `256` | `512` | `1024` | Status |
 |---|---:|---:|---:|---:|---|
-| CUDA object redraw | `0.80 ms` | `3.97 ms` | `12.29 ms` | `56.22 ms` | Implemented, parity-tested, measured on RTX PRO 6000 Blackwell. |
-| MPS object redraw | pending | pending | pending | pending | MLX/MPS SSB preview/free-fit exists; CUDA object Fourier-sum topology still needs a Metal/MLX port and parity tests. |
-| WebGPU phase/loss widget path | supported | supported | supported | supported | 1024 range-index HDF5 workflow works in `quantem.widget`; migration to `quantem.gpu` is pending. Real 512 full-BF widget drive measured about `31 ms` GPU / `42 ms` UI. Real Berk 1024 opens, but redraw is still about `150-200 ms` UI. |
+| CUDA object / phase / loss | object `4.83 ms`; phase+loss `9.65 ms` | object `2.17 ms`; phase+loss `20.89 ms` | real full-BF phase+loss `31.27 ms` / `32.0 FPS`; synthetic phase+loss `27.46 ms` | object `40.90 ms`; phase+loss `190.88 ms` / `5.2 FPS` | CUDA 512 full-BF real-field phase/loss passes 30 FPS on GPU1. 1024 exact phase/loss uses split-512 row/column FFTs and is about `2x` faster than the old exact path, but still misses the 10/30 FPS target. |
+| MPS Hermitian preview/free-fit | object `2.45 ms`; phase+loss `~8.3 ms` | object `8.62 ms`; phase `32.75 ms`; phase+loss `~34-35 ms` | object `37.65 ms`; exact phase+loss warm `~170 ms` / `~6 FPS` | object clean `~156 ms`; exact phase/loss warm `~0.8-1.0 s` / `~1 FPS` | Implemented on a Mac MPS machine for prepared Hermitian `G_qk`. Full-BF 128 is real-time, 256 phase-only reaches 30 FPS while phase+loss remains just over budget, 512 object-wave steering is usable, and 1024 exact phase/loss is about `2-2.6x` faster than the old MLX path but still not live-interactive. |
+| WebGPU phase/loss widget path | supported | supported | supported | supported | Excluded from the 2026-07-17 CUDA/MPS checkpoint. 1024 range-index HDF5 workflow works in `quantem.widget`; migration to `quantem.gpu` remains pending. |
 
 Do not treat this table as a reason to downsample or crop. Full-resolution
 claims must keep the BF policy, scan size, and scientific objective unchanged.

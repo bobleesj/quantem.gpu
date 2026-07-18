@@ -2088,6 +2088,10 @@ class CustomFFT512(CustomFFTBase):
         self._phase_sum_dummy_sumsq = None
         self._direct_dummy_sumsq = None
         self._colvar_group = 32
+        # The 512 exact phase/loss path is faster than the older batched
+        # optimizer variance kernel on full-BF Samsung data, and it keeps
+        # optimize()/refine() on the same objective.
+        self._optimizer_uses_reconstruct_fallback = True
 
     def ifft2_fused_pk_col_accumulate(
         self,

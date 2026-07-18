@@ -389,17 +389,6 @@ class SSBEngine:
         nx = int(self.q_col.shape[1])
         return int(self.G_qk.shape[2]) == nx // 2 + 1
 
-    def _require_full_gqk(self, quantity: str) -> None:
-        """Reject Hermitian ``G_qk`` for paths that are not ported yet."""
-        if self._gqk_is_hermitian_half_plane():
-            nx = int(self.q_col.shape[1])
-            raise ValueError(
-                f"{quantity} currently requires full-plane G_qk. Hermitian "
-                f"G_qk with {nx // 2 + 1} stored columns is supported only "
-                "by reconstruct_object's Fourier-sum path until phase/loss "
-                "kernels are ported and parity-tested."
-            )
-
     @property
     def num_bf(self) -> int:
         """Number of bright-field pixels."""
@@ -579,9 +568,11 @@ class SSBEngine:
                 pair_b.append(j)
                 seen.add(i)
                 seen.add(j)
-        dual_pair_a = single_idx[0::2]
-        dual_pair_b = single_idx[1::2]
-        dual_tail = single_idx[(len(single_idx) // 2) * 2 :]
+        dual_pair_count = len(single_idx) // 2
+        dual_pair_limit = dual_pair_count * 2
+        dual_pair_a = single_idx[:dual_pair_limit:2]
+        dual_pair_b = single_idx[1:dual_pair_limit:2]
+        dual_tail = single_idx[dual_pair_limit:]
         cache["pair_a"] = cp.asarray(pair_a, dtype=cp.int32)
         cache["pair_b"] = cp.asarray(pair_b, dtype=cp.int32)
         cache["single_idx"] = cp.asarray(single_idx, dtype=cp.int32)
@@ -831,7 +822,15 @@ class SSBEngine:
         n_row = int(c["ny"])
         n_col = int(c["nx"])
         full_bytes = num_bf * n_row * n_col * 8
-        if hasattr(self._custom_fft, "corrected_fourier_partial_sum"):
+        use_fourier_sum = hasattr(self._custom_fft, "corrected_fourier_partial_sum")
+        if n_row == 128 and n_col == 128 and num_bf > 1024:
+            # The 128 Fourier-sum microkernel is parity-tested for small BF
+            # sets, but high-BF synthetic stress leaves the CUDA context in an
+            # illegal-address state. The full fused-IFFT path is exact and
+            # small enough at 128x128, so keep large-BF user workflows stable
+            # while the 128 Fourier-sum kernel is investigated separately.
+            use_fourier_sum = False
+        if use_fourier_sum:
             try:
                 return self._reconstruct_object_fourier_sum(C10, C12, phi12)
             except RuntimeError:
@@ -1265,6 +1264,11 @@ class SSBEngine:
             # For full-BF 512 SSB, 64 BF chunks avoid the slow 18+ GB
             # write-then-read pass while preserving exact phase/loss accumulation.
             chunk_bf = 64
+        elif ny == 1024 and nx == 1024 and num_bf > 1024:
+            # Native 1024 exact phase/loss has the same redraw time at a
+            # smaller staging chunk but avoids the 60+ GB transient pool.
+            # This is a memory-footprint default, not a FPS breakthrough.
+            chunk_bf = 1024
         else:
             try:
                 free_bytes = cp.cuda.runtime.memGetInfo()[0]

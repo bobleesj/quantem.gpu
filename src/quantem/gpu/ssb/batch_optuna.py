@@ -395,8 +395,11 @@ def batch_nelder_mead(
     best_idx = np.argmin(f_values)
     return simplex[best_idx], float(f_values[best_idx]), n_evals
 
+
 def _eval_single(accel: SSBEngine, x: np.ndarray) -> float:
-    """Evaluate variance_loss for a single point, padding to batch=4."""
+    """Evaluate one optimizer point without duplicating exact fallback work."""
+    if getattr(accel, "uses_optimizer_reconstruct_fallback", False):
+        return float(accel.variance_loss(float(x[0]), float(x[1]), float(x[2])))
     c10_arr = np.full(4, x[0], dtype=np.float32)
     c12_arr = np.full(4, x[1], dtype=np.float32)
     phi12_arr = np.full(4, x[2], dtype=np.float32)

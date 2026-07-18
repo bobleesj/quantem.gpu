@@ -110,7 +110,10 @@ def _reference_phase_loss(accel, c10: float, c12: float, phi12: float):
         np.float32(1.0) / cp.sqrt(gamma_mag_sq),
         np.float32(1e8),
     )
-    corrected = accel.G_qk * cp.conj(gamma)
+    g_qk = accel.G_qk
+    if int(g_qk.shape[2]) != int(c["nx"]):
+        g_qk = _expand_hermitian_cp(g_qk)
+    corrected = g_qk * cp.conj(gamma)
     corrected[:, 0, 0] = cp.complex64(accel._dc_value_host)
     obj = cp.fft.ifft2(corrected)
     angles = cp.angle(obj)
@@ -186,7 +189,10 @@ def _reference_phase_loss_chunked(
             np.float32(1.0) / cp.sqrt(gamma_mag_sq),
             np.float32(1e8),
         )
-        corrected = accel.G_qk[start:end] * cp.conj(gamma)
+        g_qk = accel.G_qk[start:end]
+        if int(g_qk.shape[2]) != int(c["nx"]):
+            g_qk = _expand_hermitian_cp(g_qk)
+        corrected = g_qk * cp.conj(gamma)
         corrected[:, 0, 0] = cp.complex64(accel._dc_value_host)
         angles = cp.angle(cp.fft.ifft2(corrected))
         phase_sum += angles.sum(axis=0)
@@ -332,6 +338,33 @@ def test_cuda_512_subpixel_bf_dual_path_matches_explicit_reference() -> None:
     assert loss == pytest.approx(ref_loss, rel=1e-4, abs=1e-4)
 
 
+def test_cuda_512_subpixel_bf_dual_tail_matches_explicit_reference() -> None:
+    engine = _make_engine(size=512, num_bf=5, bf_center=(15.3, 15.7))
+
+    cache = engine._cache
+    assert int(cache["pair_a"].shape[0]) == 0
+    assert int(cache["dual_pair_a"].shape[0]) == 2
+    assert int(cache["dual_pair_b"].shape[0]) == 2
+    assert int(cache["dual_tail"].shape[0]) == 1
+
+    c10, c12, phi12 = -120.0, 55.0, math.radians(17.0)
+    _phase, loss = engine._reconstruct_with_loss_chunked(c10, c12, phi12)
+    _ref_phase, ref_loss = _reference_phase_loss_chunked(
+        engine, c10, c12, phi12, chunk_bf=2
+    )
+
+    # With only five BF pixels, arithmetic mean phase is dominated by atan2
+    # branch-cut choices. This regression protects the odd singleton-tail path
+    # used by the scalar optimizer objective, which must not read past pair_b.
+    assert loss == pytest.approx(ref_loss, rel=1e-4, abs=1e-4)
+
+
+def test_cuda_512_optimizer_uses_exact_phase_loss_objective() -> None:
+    engine = _make_engine(size=512, num_bf=4, bf_center=(15.3, 15.7))
+
+    assert engine.uses_optimizer_reconstruct_fallback
+
+
 @pytest.mark.parametrize("size,num_bf", [(128, 7), (256, 5), (512, 5), (1024, 3)])
 def test_cuda_fourier_sum_object_matches_chunked_ifft(size: int, num_bf: int) -> None:
     cp = _cupy()
@@ -387,28 +420,36 @@ def test_extract_gqk_hermitian_storage_keeps_nonredundant_columns() -> None:
     bf_rows = cp.asarray([2, 2, 3, 3], dtype=cp.int32)
     bf_cols = cp.asarray([2, 3, 2, 3], dtype=cp.int32)
 
-    full_gqk, full_dc = SSB._extract_gqk(
-        data,
-        bf_rows,
-        bf_cols,
-        (8, 8),
-        (6, 6),
-        gqk_storage="full",
-    )
     herm_gqk, herm_dc = SSB._extract_gqk(
         data,
         bf_rows,
         bf_cols,
         (8, 8),
         (6, 6),
-        gqk_storage="herm",
     )
+    full_gqk = _expand_hermitian_cp(herm_gqk)
 
     assert full_gqk.shape == (4, 8, 8)
     assert herm_gqk.shape == (4, 8, 5)
     assert herm_gqk.nbytes < full_gqk.nbytes
     cp.testing.assert_allclose(herm_gqk, full_gqk[:, :, :5])
-    assert herm_dc == pytest.approx(full_dc)
+    assert herm_dc == pytest.approx(complex(full_gqk[:, 0, 0].mean().get()))
+
+
+def test_ssb_rejects_persistent_full_gqk_storage() -> None:
+    cp = _cupy()
+    from quantem.gpu.ssb import SSB
+
+    data = cp.zeros((128, 128, 8, 8), dtype=cp.uint16)
+    with pytest.raises(ValueError, match="gqk_storage='full' was removed"):
+        SSB(
+            data,
+            voltage_kV=300,
+            semiangle=21.4,
+            scan_sampling=0.5,
+            det_sampling=1.0,
+            gqk_storage="full",
+        )
 
 
 @pytest.mark.parametrize("size,num_bf", [(128, 7), (256, 5), (512, 5), (1024, 3)])
@@ -464,24 +505,42 @@ def test_ssb_default_hermitian_result_matches_full_storage_end_to_end() -> None:
     )
 
     herm = SSB(cp.asarray(data), **kwargs)
-    full = SSB(cp.asarray(data), gqk_storage="full", **kwargs)
-
     assert herm.gqk_storage == "herm"
     assert herm.G_qk.shape[2] == 65
-    assert full.G_qk.shape[2] == 128
-    assert herm.G_qk.nbytes < full.G_qk.nbytes
     assert herm.G_qk.nbytes == len(herm.bf_inds_row) * 128 * 65 * 8
-    assert full.G_qk.nbytes == len(full.bf_inds_row) * 128 * 128 * 8
 
     herm_result = herm.result()
-    full_result = full.result()
-    abs_err = cp.abs(herm_result.object_wave - full_result.object_wave)
-    rel_err = abs_err / cp.maximum(cp.abs(full_result.object_wave), cp.float32(1e-6))
+    accel = herm._get_accelerator()
+    full_engine = _make_engine(
+        size=128,
+        num_bf=len(herm.bf_inds_row),
+        g_qk=_expand_hermitian_cp(herm.G_qk),
+        bf_center=herm.bf_center,
+    )
+    full_engine.bf_inds_row = herm.bf_inds_row
+    full_engine.bf_inds_col = herm.bf_inds_col
+    full_engine.q_row = herm.q_row
+    full_engine.q_col = herm.q_col
+    full_engine.gpts = herm.gpts
+    full_engine.sampling = herm.sampling
+    full_engine.wavelength = herm.wavelength
+    full_engine.semiangle_cutoff = herm.semiangle_cutoff
+    full_engine.angular_sampling = herm.angular_sampling
+    full_engine._factor = accel._factor
+    full_engine.cache_rotation(herm._rotation_angle_rad, force=True)
+    args = (
+        herm.aberrations["C10"],
+        herm.aberrations["C12"],
+        herm.aberrations["phi12"],
+    )
+    full_obj = full_engine.reconstruct_object(*args)
+    _full_phase, full_loss = full_engine.reconstruct_with_loss(*args)
+    abs_err = cp.abs(herm_result.object_wave - full_obj)
+    rel_err = abs_err / cp.maximum(cp.abs(full_obj), cp.float32(1e-6))
     assert float(cp.percentile(abs_err, 99.9)) < 1e-7
     assert float(cp.percentile(rel_err, 99.9)) < 1e-4
     assert herm_result.loss is not None
-    assert full_result.loss is not None
-    assert herm_result.loss == pytest.approx(full_result.loss, rel=1e-4, abs=1e-4)
+    assert herm_result.loss == pytest.approx(full_loss, rel=1e-4, abs=1e-4)
 
 
 def test_ssb_hermitian_storage_preserves_half_plane_for_phase_reconstruction() -> None:
@@ -502,14 +561,29 @@ def test_ssb_hermitian_storage_preserves_half_plane_for_phase_reconstruction() -
     )
 
     herm = SSB(cp.asarray(data), **kwargs)
-    full = SSB(cp.asarray(data), gqk_storage="full", **kwargs)
-
     herm_phase = herm._reconstruct(C10=-120.0, C12=55.0, phi12=math.radians(17.0))
-    full_phase = full._reconstruct(C10=-120.0, C12=55.0, phi12=math.radians(17.0))
+    accel = herm._get_accelerator()
+    full_engine = _make_engine(
+        size=128,
+        num_bf=len(herm.bf_inds_row),
+        g_qk=_expand_hermitian_cp(herm.G_qk),
+        bf_center=herm.bf_center,
+    )
+    full_engine.bf_inds_row = herm.bf_inds_row
+    full_engine.bf_inds_col = herm.bf_inds_col
+    full_engine.q_row = herm.q_row
+    full_engine.q_col = herm.q_col
+    full_engine.gpts = herm.gpts
+    full_engine.sampling = herm.sampling
+    full_engine.wavelength = herm.wavelength
+    full_engine.semiangle_cutoff = herm.semiangle_cutoff
+    full_engine.angular_sampling = herm.angular_sampling
+    full_engine._factor = accel._factor
+    full_engine.cache_rotation(herm._rotation_angle_rad, force=True)
+    full_phase = full_engine.reconstruct(-120.0, 55.0, math.radians(17.0))
 
     assert herm.gqk_storage == "herm"
     assert herm.G_qk.shape[2] == 65
-    assert herm.G_qk.nbytes < full.G_qk.nbytes
     phase_abs_err = cp.abs(herm_phase - full_phase)
     assert float(cp.percentile(phase_abs_err, 99.9)) < 3e-4
 
@@ -747,7 +821,6 @@ def test_cuda_128_real_steph_crop_matches_explicit_cupy_reference() -> None:
         semiangle=21.9,
         scan_sampling=0.5,
         rotation_angle_deg=0.0,
-        gqk_storage="full",
     )
     accel = ssb._get_accelerator()
     accel.cache_rotation(0.0)

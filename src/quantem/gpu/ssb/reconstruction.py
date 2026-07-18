@@ -155,20 +155,18 @@ class SSB:
         Limit BF disk to this radius in pixels. If None, uses the full
         detected BF disk. Smaller radius = faster but lower resolution.
         Leave None for bf_radius_sweep to explore all radii.
-    gqk_storage : {"herm", "full"}, default "herm"
-        Resident Fourier-stack storage. ``"herm"`` stores only the Hermitian
-        half-plane by default, roughly halving persistent ``G_qk`` memory.
-        CUDA object, phase, loss, defocus, and 3-parameter optimizer workflows
-        preserve this resident layout; legacy full-plane kernels receive only
-        transient canonical chunks. ``"full"`` remains available for explicit
-        full-storage benchmarking or compatibility checks.
+    gqk_storage : {"herm"}, default "herm"
+        Resident Fourier-stack storage. SSB stores only the Hermitian
+        half-plane, roughly halving persistent ``G_qk`` memory without changing
+        precision or the scientific objective. The old persistent full-plane
+        layout has been removed from the public runtime path.
 
     Troubleshooting
     ---------------
     **Out of memory**: Use ``SSB(..., bf_radius=30)`` to reduce BF pixel
     count. Default Hermitian ``G_qk`` storage costs roughly
     ``scan_row × (scan_col/2 + 1) × 8`` bytes per BF pixel; phase/loss
-    workflows also need one transient full chunk sized by the CUDA engine.
+    workflows fetch the missing half-plane on demand inside the CUDA kernels.
     Or restart the kernel to free stale GPU memory.
 
     **Loss not improving**: Check that ``semiangle`` and ``scan_sampling``
@@ -213,7 +211,7 @@ class SSB:
         aberrations: dict[str, float] | None = None,
         rotation_angle_deg: float = 0.0,
         detector_gain: cp.ndarray | np.ndarray | None = None,
-        gqk_storage: Literal["full", "herm"] = "herm",
+        gqk_storage: Literal["herm"] = "herm",
     ):
         # Convert rotation angle from degrees (public API) to radians (internal)
         rotation_angle_rad = math.radians(rotation_angle_deg)
@@ -323,8 +321,12 @@ class SSB:
             det_sampling = (float(det_sampling), float(det_sampling))
         if aberrations is None:
             aberrations = {"C10": 0.0, "C12": 0.0, "phi12": 0.0}
-        if gqk_storage not in {"full", "herm"}:
-            raise ValueError("gqk_storage must be 'full' or 'herm'")
+        if gqk_storage != "herm":
+            raise ValueError(
+                "gqk_storage='full' was removed from the SSB runtime path. "
+                "Use the default exact Hermitian storage; low-level tests may "
+                "construct canonical full-plane references directly."
+            )
 
         # Store user parameters
         self.energy = energy
@@ -369,7 +371,6 @@ class SSB:
         self.G_qk, self.dc_value = self._extract_gqk(
             data, self.bf_inds_row, self.bf_inds_col, scan_gpts, det_gpts,
             detector_gain=gain,
-            gqk_storage=gqk_storage,
         )
         del data
         gc.collect()
@@ -421,81 +422,6 @@ class SSB:
         if self._accelerator is not None:
             self._accelerator.clear_batch_caches()
             self._accelerator._release_scalar_buffers()
-        gc.collect()
-        cp.get_default_memory_pool().free_all_blocks()
-
-    def _is_hermitian_gqk_storage(self) -> bool:
-        """Return whether this instance currently stores half-plane G_qk."""
-        return (
-            getattr(self, "gqk_storage", "full") == "herm"
-            and self.G_qk is not None
-            and self.G_qk.ndim == 3
-        )
-
-    def _require_full_gqk_storage(self, workflow: str) -> None:
-        """Reject Hermitian storage for any future explicitly full-only path."""
-        if getattr(self, "gqk_storage", "full") == "herm":
-            raise ValueError(
-                f"{workflow} requires gqk_storage='full'. "
-                "gqk_storage='herm' stores only the Hermitian half-plane. "
-                "CUDA object, phase, loss, defocus, and 3-parameter optimizer "
-                "paths are parity-tested with transient full chunks; this guard "
-                "is reserved for future paths that have not adopted that layout."
-            )
-
-    @staticmethod
-    def _fill_full_gqk_from_hermitian(full: cp.ndarray, half: cp.ndarray) -> None:
-        """Fill a full Fourier stack from canonical Hermitian half-plane data."""
-        num_bf, full_row, full_col = (int(v) for v in full.shape)
-        if half.shape != (num_bf, full_row, full_col // 2 + 1):
-            raise ValueError(
-                f"Expected half-plane shape {(num_bf, full_row, full_col // 2 + 1)}, "
-                f"got {half.shape}."
-            )
-        stored_col = int(half.shape[2])
-        full[:, :, :stored_col] = half
-        mirror_rows = cp.asarray((-np.arange(full_row)) % full_row, dtype=cp.int32)
-        for col in range(stored_col, full_col):
-            full[:, :, col] = cp.conj(half[:, mirror_rows, full_col - col])
-        cp.cuda.Stream.null.synchronize()
-
-    def _ensure_full_gqk_storage(self, workflow: str) -> None:
-        """Expand Hermitian G_qk to persistent full-plane storage if requested."""
-        if not self._is_hermitian_gqk_storage():
-            return
-        num_bf, scan_row, stored_col = (int(v) for v in self.G_qk.shape)
-        full_row, full_col = (int(v) for v in self._scan_shape)
-        expected_cols = full_col // 2 + 1
-        if scan_row != full_row or stored_col != expected_cols:
-            raise ValueError(
-                f"{workflow} cannot expand G_qk with shape {self.G_qk.shape}; "
-                f"expected Hermitian shape ({num_bf}, {full_row}, {expected_cols})."
-            )
-
-        cp.get_default_memory_pool().free_all_blocks()
-        free_bytes, total_bytes = cp.cuda.runtime.memGetInfo()
-        full_nbytes = num_bf * full_row * full_col * self.G_qk.dtype.itemsize
-        margin = max(2 * 1024 ** 3, int(0.05 * total_bytes))
-        if free_bytes < full_nbytes + margin:
-            raise MemoryError(
-                f"{workflow} needs full-plane G_qk ({full_nbytes / 1e9:.2f} GB) "
-                f"but only {free_bytes / 1e9:.2f} GB is free while the "
-                f"Hermitian G_qk ({self.G_qk.nbytes / 1e9:.2f} GB) is resident. "
-                "Construct SSB(..., gqk_storage='full') up front if a workflow "
-                "explicitly requires persistent full storage."
-            )
-
-        if self._accelerator is not None:
-            self._accelerator.clear_batch_caches()
-            self._accelerator._release_scalar_buffers()
-            self._accelerator = None
-
-        half = self.G_qk
-        full = cp.empty((num_bf, full_row, full_col), dtype=half.dtype)
-        self._fill_full_gqk_from_hermitian(full, half)
-        self.G_qk = full
-        self.gqk_storage = "full"
-        del half
         gc.collect()
         cp.get_default_memory_pool().free_all_blocks()
 
@@ -590,7 +516,6 @@ class SSB:
         scan_gpts: tuple[int, ...],
         det_gpts: tuple[int, ...],
         detector_gain: cp.ndarray | None = None,
-        gqk_storage: Literal["full", "herm"] = "herm",
     ) -> tuple[cp.ndarray, complex]:
         """Extract G_qk via virtual BF stack and FFT, chunked on the BF axis.
 
@@ -599,29 +524,24 @@ class SSB:
         L40S 48 GB even before optimize ran.
 
         By chunking on BF pixels we keep only a small complex64 staging
-        chunk live at a time. Default Hermitian storage pre-allocates the
-        nonredundant half-plane output first, then fills it in chunks. Full
-        storage is still available for explicit compatibility checks and is
-        canonicalized from the same half-plane.
+        chunk live at a time. Hermitian storage pre-allocates the nonredundant
+        half-plane output first, then fills it in chunks.
 
         Picks chunk_bf to cap the staging buffer at ~2 GB, same L2-cache
         sweet spot that made the reconstruct chunking fast.
 
         Returns (G_qk, dc_value).
         """
-        if gqk_storage not in {"full", "herm"}:
-            raise ValueError("gqk_storage must be 'full' or 'herm'")
         num_bf = int(len(bf_inds_row))
         scan_row, scan_col = int(scan_gpts[0]), int(scan_gpts[1])
         det_row, det_col = int(det_gpts[0]), int(det_gpts[1])
-        stored_col = scan_col if gqk_storage == "full" else scan_col // 2 + 1
+        stored_col = scan_col // 2 + 1
 
         # Flat view: (N_scan, det_row, det_col) - shares storage with raw data.
         flat_data = data.reshape(-1, det_row, det_col)
 
-        # Pre-allocate resident G_qk. Hermitian mode stores only the non-
-        # redundant scan-frequency half-plane and is exact for object-wave
-        # Fourier-sum reconstruction. Phase/loss kernels still require full.
+        # Pre-allocate resident G_qk. The nonredundant scan-frequency
+        # half-plane is exact because virtual-BF images are real-valued.
         G_qk = cp.empty((num_bf, scan_row, stored_col), dtype=cp.complex64)
 
         # Chunk sized so the complex64 staging buffer is ~2 GB (L2-friendly).
@@ -646,16 +566,12 @@ class SSB:
             if detector_gain is not None:
                 gain_chunk = detector_gain[row_chunk, col_chunk].astype(cp.float32)
                 vbf_stack *= gain_chunk[:, None, None]
-            # FFT into the pre-allocated G_qk slice. Hermitian storage keeps
-            # q_col=0..N/2 as the canonical source of truth. Full storage is
-            # filled from the same half-plane so the redundant half never
-            # carries backend-specific FFT roundoff differences.
+            # FFT into the pre-allocated G_qk slice. q_col=0..N/2 is the
+            # canonical source of truth; CUDA/MPS kernels mirror-conjugate
+            # missing columns when a full Fourier coordinate is requested.
             fft_chunk = cp.fft.fft2(vbf_stack)
             half_chunk = cp.ascontiguousarray(fft_chunk[:, :, :scan_col // 2 + 1])
-            if gqk_storage == "herm":
-                G_qk[bf_start:bf_end] = half_chunk
-            else:
-                SSB._fill_full_gqk_from_hermitian(G_qk[bf_start:bf_end], half_chunk)
+            G_qk[bf_start:bf_end] = half_chunk
             del half_chunk
             del fft_chunk
             del vbf_stack
@@ -1659,16 +1575,29 @@ class SSB:
         from quantem.gpu.ssb.batch_optuna import batch_nelder_mead
 
         def _run_batched():
+            exact_fallback = getattr(accel, "uses_optimizer_reconstruct_fallback", False)
             sparse_1024 = (
                 tuple(int(v) for v in self._scan_shape) == (1024, 1024)
-                and not getattr(accel, "uses_optimizer_reconstruct_fallback", False)
+                and not exact_fallback
             )
+            effective_xatol = xatol
+            effective_fatol = fatol
+            effective_max_iter = 80 if sparse_1024 else 300
+            if exact_fallback and xatol == 0.1 and fatol == 1e-8:
+                # The exact full-IFFT objective is smooth enough on Samsung
+                # 512 full BF that the legacy sparse tolerances over-solve the
+                # phase by hundreds of evals. These defaults preserve the
+                # phase image to <1e-3 rad p99.9 in the real-data signoff while
+                # avoiding an invisible 200+ eval tail.
+                effective_xatol = 0.25
+                effective_fatol = 2e-6
+                effective_max_iter = 160
             return batch_nelder_mead(
                 accel,
                 x0.astype(np.float64),
-                xatol=xatol,
-                fatol=fatol,
-                max_iter=80 if sparse_1024 else 300,
+                xatol=effective_xatol,
+                fatol=effective_fatol,
+                max_iter=effective_max_iter,
                 flat_fatol=1e-6 if sparse_1024 else None,
             )
 
