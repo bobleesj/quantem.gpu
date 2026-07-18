@@ -92,7 +92,7 @@ def _resolve_bf_subsample_ratio(
 
     Public callers may think in pixels: ``2000`` means optimize/refine against
     about 2000 bright-field pixels. The SSB engine takes a fraction in
-    ``(0, 1]``. ``None`` is the default and keeps the full BF disk for parity.
+    ``(0, 1]``. ``None`` is the default and keeps the full BF disk for reference agreement.
     """
     if bf_subsample is None:
         return None
@@ -314,7 +314,7 @@ def ssb(
         Print progress bars and summaries (default True).
     bf_subsample : int, float, or None, default None
         Default ``None`` runs optimize() and refine() on the full BF disk for
-        parity. Values in ``(0, 1]`` are treated as a fraction of the BF disk;
+        reference agreement. Values in ``(0, 1]`` are treated as a fraction of the BF disk;
         values above ``1`` are treated as a target BF-pixel count and run on a
         uniform-stride BF-pixel subset. Subsampling is an explicit speed/preview
         tradeoff, not the default signoff path.

@@ -2,29 +2,30 @@ from __future__ import annotations
 
 import gc
 import math
+import os
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-STEPH_MASTER_CANDIDATES = (
-    Path("/home/owner/data/steph/251115_ncem_arina_steph/lamella_2_005_master.h5"),
-    Path("/home/owner/ssd/data/steph/20251115_ncem_arina/lamella_2_005_master.h5"),
-)
+REALDATA_MASTER_ENV = "QUANTEM_GPU_SSB_MASTER"
 
-FLOAT32_PARITY_RTOL = 1e-5
-FLOAT32_PARITY_ATOL = 1e-6
+FLOAT32_REF_RTOL = 1e-5
+FLOAT32_REF_ATOL = 1e-6
 
 
 def _cupy():
     return pytest.importorskip("cupy")
 
 
-def _steph_master() -> Path:
-    for path in STEPH_MASTER_CANDIDATES:
-        if path.exists():
-            return path
-    pytest.skip("Steph real-data master is not available on this host.")
+def _realdata_master() -> Path:
+    raw_path = os.environ.get(REALDATA_MASTER_ENV)
+    if not raw_path:
+        pytest.skip(f"{REALDATA_MASTER_ENV} is not set.")
+    path = Path(raw_path).expanduser()
+    if not path.exists():
+        pytest.skip(f"{REALDATA_MASTER_ENV} does not point to an existing file.")
+    return path
 
 
 def _clean_gpu() -> None:
@@ -290,8 +291,8 @@ def test_cuda_128_engine_matches_explicit_cupy_reference() -> None:
     cp.testing.assert_allclose(phase, ref_phase, rtol=2e-4, atol=2e-4)
     assert loss == pytest.approx(
         ref_loss,
-        rel=FLOAT32_PARITY_RTOL,
-        abs=FLOAT32_PARITY_ATOL,
+        rel=FLOAT32_REF_RTOL,
+        abs=FLOAT32_REF_ATOL,
     )
 
 
@@ -481,8 +482,8 @@ def test_cuda_phase_loss_accepts_hermitian_gqk(size: int, num_bf: int) -> None:
     cp.testing.assert_allclose(
         herm_engine.variance_loss_batch(c10_batch, c12_batch, phi_batch),
         full_engine.variance_loss_batch(c10_batch, c12_batch, phi_batch),
-        rtol=FLOAT32_PARITY_RTOL,
-        atol=FLOAT32_PARITY_ATOL,
+        rtol=FLOAT32_REF_RTOL,
+        atol=FLOAT32_REF_ATOL,
     )
 
 
@@ -631,8 +632,8 @@ def test_cuda_128_variance_loss_batch_matches_reference() -> None:
     cp.testing.assert_allclose(
         got,
         cp.asarray(expected, dtype=cp.float32),
-        rtol=FLOAT32_PARITY_RTOL,
-        atol=FLOAT32_PARITY_ATOL,
+        rtol=FLOAT32_REF_RTOL,
+        atol=FLOAT32_REF_ATOL,
     )
 
 
@@ -710,8 +711,8 @@ def test_cuda_1024_variance_batch_uses_full_staging_buffers() -> None:
     cp.testing.assert_allclose(
         got,
         expected,
-        rtol=FLOAT32_PARITY_RTOL,
-        atol=FLOAT32_PARITY_ATOL,
+        rtol=FLOAT32_REF_RTOL,
+        atol=FLOAT32_REF_ATOL,
     )
 
 
@@ -796,18 +797,18 @@ def test_cuda_256_variance_kernel_matches_staged_cupy_reference() -> None:
     cp.testing.assert_allclose(
         got,
         expected,
-        rtol=FLOAT32_PARITY_RTOL,
-        atol=FLOAT32_PARITY_ATOL,
+        rtol=FLOAT32_REF_RTOL,
+        atol=FLOAT32_REF_ATOL,
     )
 
 
-def test_cuda_128_real_steph_crop_matches_explicit_cupy_reference() -> None:
+def test_cuda_128_realdata_crop_matches_explicit_cupy_reference() -> None:
     cp = _cupy()
     from quantem.gpu.io.hdf5 import load
     from quantem.gpu.ssb import SSB
 
     _clean_gpu()
-    path = _steph_master()
+    path = _realdata_master()
     loaded = load(
         path,
         scan_region=(64, 192, 64, 192),
@@ -832,8 +833,8 @@ def test_cuda_128_real_steph_crop_matches_explicit_cupy_reference() -> None:
 
     assert loss == pytest.approx(
         ref_loss,
-        rel=FLOAT32_PARITY_RTOL,
-        abs=FLOAT32_PARITY_ATOL,
+        rel=FLOAT32_REF_RTOL,
+        abs=FLOAT32_REF_ATOL,
     )
     cp.testing.assert_allclose(phase, ref_phase, rtol=2e-4, atol=2e-4)
     del ssb, loaded, phase, ref_phase

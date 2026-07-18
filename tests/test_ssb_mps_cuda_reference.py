@@ -663,7 +663,7 @@ def test_mps_reconstruct_prepared_uses_scalar_loss_for_small_fused_path() -> Non
     or not os.environ.get("QUANTEM_GPU_SSB_REFERENCE_NPZ"),
     reason=(
         "set QUANTEM_GPU_SSB_MASTER and QUANTEM_GPU_SSB_REFERENCE_NPZ "
-        "for real-data CUDA/MPS SSB reference parity"
+        "for real-data CUDA/MPS SSB reference reference agreement"
     ),
 )
 def test_mps_ssb_fixed_aberration_matches_cuda_reference() -> None:
@@ -714,7 +714,7 @@ def test_mps_ssb_fixed_aberration_matches_cuda_reference() -> None:
     or not os.environ.get("QUANTEM_GPU_SSB_SPARSE_REFERENCE_NPZ"),
     reason=(
         "set QUANTEM_GPU_SSB_MASTER and QUANTEM_GPU_SSB_SPARSE_REFERENCE_NPZ "
-        "for real-data CUDA/MPS sparse optimizer parity"
+        "for real-data CUDA/MPS sparse optimizer reference agreement"
     ),
 )
 def test_mps_ssb_sparse_optimizer_loss_matches_cuda_reference() -> None:

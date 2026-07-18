@@ -367,7 +367,7 @@ class SSBEngine:
         self._batch_chunk_cache: dict[tuple[int, int, int], dict[str, object]] = {}
         self._streaming_cache: dict[tuple[int, int, int], dict[str, object]] = {}
         self._preferred_chunk_bf = 0
-        # Empirically tuned on Samsung 512x512 (Blackwell, 2026-04-08):
+        # Empirically tuned on held-out dataset 512x512 (Blackwell, 2026-04-08):
         # 512 is the sweet spot where the staging buffer
         # (4 × 512 × 512 × 512 × 8 = 2 GB) fits in L2 cache. Sweeping
         # 128 → 2048 showed 512 is fastest AND lowest-peak simultaneously:
@@ -606,7 +606,7 @@ class SSBEngine:
         # only used by the reconstruct path - optimize/refine use separate
         # `staging` buffers from _get_streaming_buffers. On small scans
         # (e.g. Steph 256x256, ~600 MB) we pre-allocate it at engine init
-        # for a faster reconstruct call path. On large scans (e.g. Samsung
+        # for a faster reconstruct call path. On large scans (e.g. held-out dataset
         # 512x512, ~19 GB) we defer the allocation - pre-allocating blows
         # the L40S 48 GB budget during optimize for no reason, since the
         # chunked reconstruct path will allocate a small chunk buffer
@@ -676,7 +676,7 @@ class SSBEngine:
         ``(num_bf, ny, nx)`` result buffer (~19 GB for 9070 BF × 512 × 512).
 
         Peak transient buffer is ``chunk_bf × ny × nx × 8`` bytes, e.g.
-        ``chunk_bf=1024`` at 512×512 = ~2 GB. For Samsung 512 this cuts
+        ``chunk_bf=1024`` at 512×512 = ~2 GB. For held-out dataset 512 this cuts
         reconstruct peak by 18 GB with negligible speed cost (~1 ms of extra
         kernel-launch overhead across the chunks).
 
@@ -824,7 +824,7 @@ class SSBEngine:
         full_bytes = num_bf * n_row * n_col * 8
         use_fourier_sum = hasattr(self._custom_fft, "corrected_fourier_partial_sum")
         if n_row == 128 and n_col == 128 and num_bf > 1024:
-            # The 128 Fourier-sum microkernel is parity-tested for small BF
+            # The 128 Fourier-sum microkernel is reference-checked for small BF
             # sets, but high-BF synthetic stress leaves the CUDA context in an
             # illegal-address state. The full fused-IFFT path is exact and
             # small enough at 128x128, so keep large-BF user workflows stable
@@ -841,7 +841,7 @@ class SSBEngine:
         if full_bytes > 6 * 1024 ** 3:
             # Target ~2 GB chunk transient. Speed is flat from 64..9070 BF
             # per chunk on Blackwell (kernel-launch overhead negligible) so
-            # we pick the smaller chunk for maximum L40S headroom. Parity
+            # we pick the smaller chunk for maximum L40S headroom. Reference agreement
             # is at the float32 summation-order floor (~1e-5 max|Δ|).
             chunk_bf = max(1, (2 * 1024 ** 3) // (n_row * n_col * 8))
             return self._run_correction_pipeline_chunked(C10, C12, phi12, chunk_bf)
@@ -960,7 +960,7 @@ class SSBEngine:
 
         Notes
         -----
-        For scans with full staging buffer >6 GB (e.g. Samsung 512²), falls
+        For scans with full staging buffer >6 GB (e.g. held-out dataset 512²), falls
         back to a chunked BF-axis loop.  The col-accumulate optimization used
         in the legacy chunked path is 2-term-only, so this path always
         materializes each chunk before phase reduction.

@@ -1,6 +1,6 @@
 """MPS compute kernels: BF/DF/ADF reductions over chunked unified-memory buffers.
 
-Extracted from widgets/show4dstem_mps.py (the macbook viewer) into kernels/compute
+Extracted from widgets/show4dstem_mps.py (the Mac viewer) into kernels/compute
 per docs/dev-notes/2026-06-01-kernels-backend-architecture.md. Holds the raw-Metal
 masked-sum / detector-sum / prefix reductions + the ChunkedFrames container. The
 widget imports MetalVirtualImage + ChunkedFrames from here; this module has NO

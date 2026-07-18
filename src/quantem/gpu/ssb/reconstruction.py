@@ -519,7 +519,7 @@ class SSB:
     ) -> tuple[cp.ndarray, complex]:
         """Extract G_qk via virtual BF stack and FFT, chunked on the BF axis.
 
-        For Samsung 512x512 the unchunked transient peak was ~57 GB:
+        For held-out dataset 512x512 the unchunked transient peak was ~57 GB:
         raw data (19) + vbf_stack complex64 (19) + G_qk (19). That blew
         L40S 48 GB even before optimize ran.
 
@@ -1396,7 +1396,7 @@ class SSB:
             Fraction of BF pixels to use, in (0, 1]. None uses the full
             BF disk (legacy, bit-identical to prior behavior). A ratio like
             0.25 runs the optimizer on every 4th BF pixel (uniform stride)
-            and is ~3-4x faster on large-BF datasets with aberration parity
+            and is ~3-4x faster on large-BF datasets with aberration reference agreement
             within 0.05 nm on C10/C12. Small BF disks (< 2000 pixels) and
             flat-loss samples (lamella) can silently drift the aberrations
             with matching loss, so only set this when you can validate the
@@ -1527,7 +1527,7 @@ class SSB:
         xatol : float, default 0.1
             Stop when the simplex spread is below this (nm for C10/C12,
             radians for phi12). Loosening to 0.5 saves ~37% of evals on
-            gold but drifts ~1 nm on Samsung; leave at 0.1 for calibrations.
+            gold but drifts ~1 nm on held-out dataset; leave at 0.1 for calibrations.
         fatol : float, default 1e-8
             Stop when the loss spread across simplex vertices is below this.
         lock : list[str], optional
@@ -1584,7 +1584,7 @@ class SSB:
             effective_fatol = fatol
             effective_max_iter = 80 if sparse_1024 else 300
             if exact_fallback and xatol == 0.1 and fatol == 1e-8:
-                # The exact full-IFFT objective is smooth enough on Samsung
+                # The exact full-IFFT objective is smooth enough on held-out dataset
                 # 512 full BF that the legacy sparse tolerances over-solve the
                 # phase by hundreds of evals. These defaults preserve the
                 # phase image to <1e-3 rad p99.9 in the real-data signoff while

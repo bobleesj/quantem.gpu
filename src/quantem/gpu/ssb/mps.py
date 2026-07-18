@@ -2611,7 +2611,7 @@ def _prepare_selection(
     alpha_m2 = cos2_m = sin2_m = ap_m = None
     alpha_p2 = cos2_p = sin2_p = ap_p = None
     # Cache static geometry when the selected BF set is small enough.  For the
-    # Samsung bf_radius=5 path this is ~650 MB of float32 geometry and removes
+    # held-out dataset bf_radius=5 path this is ~650 MB of float32 geometry and removes
     # repeated sqrt/aperture work from every optimizer batch.
     geometry_values = int(bf_row.size) * int(scan_shape[0]) * int(scan_shape[1])
     if geometry_values <= 32_000_000:
@@ -2690,7 +2690,7 @@ def _reconstruct_prepared(
         if compute_object else None
     )
     # CUDA's fixed SSB output is the mean of per-BF phase images, not the
-    # phase of the averaged complex object wave. Keep that contract for parity.
+    # phase of the averaged complex object wave. Keep that contract for reference agreement.
     phase_sum = mx.zeros(prepared.scan_shape, dtype=mx.float32)
     use_scalar_loss = (
         compute_loss
@@ -2855,7 +2855,7 @@ def _cuda_sparse_row_indices(scan_shape: tuple[int, int]) -> np.ndarray:
     ny, nx = (int(scan_shape[0]), int(scan_shape[1]))
     if ny != nx or ny not in (128, 256, 512, 1024):
         raise ValueError(
-            "MPS SSB fit currently supports CUDA-parity sparse optimizer "
+            "MPS SSB fit currently supports CUDA reference-equivalent sparse optimizer "
             "objective only for square 128x128, 256x256, 512x512, or "
             f"1024x1024 scans; got {scan_shape}. "
             "Use ssb_preview for fixed-aberration reconstruction or add a "

@@ -2,7 +2,7 @@
 
 `quantem.gpu` is the multi-backend accelerated STEM package for QuantEM.
 It is built primarily for NVIDIA CUDA workstations and Apple Silicon MPS Macs,
-with CPU reference paths for availability and parity checks.
+with CPU reference paths for availability and reference agreement checks.
 
 ## Quick Start
 
@@ -150,15 +150,15 @@ file -> quantem.gpu (load + decompress + to_device) -> arrays
   `>2^31` element limits and unified-memory pressure on full 4D-STEM stacks.
   BF/DF/DPC, Metal bitshuffle/LZ4 IO, SSB preview/free-fit, and movie rendering
   run through Apple GPU paths where implemented.
-- `cpu`: h5py/hdf5plugin reference decode for availability and parity.
+- `cpu`: h5py/hdf5plugin reference decode for availability and reference agreement.
 
 ### Coverage snapshot
 
 | Area | CUDA | MPS | Further work |
 |---|---|---|---|
-| HDF5 load/decompress | Implemented | Implemented | More held-out real-data parity. |
+| HDF5 load/decompress | Implemented | Implemented | More held-out real-data reference agreement. |
 | `load(..., scan_region=...)` | Implemented | Implemented | More malformed-file and dataset coverage. |
-| BF/DF/ADF, mean DP, DPC/iDPC | Implemented | Implemented | Broader visual parity reports. |
+| BF/DF/ADF, mean DP, DPC/iDPC | Implemented | Implemented | Broader visual reference agreement reports. |
 | Ptychographic SSB | Reference path implemented | MPS preview/free-fit implemented | More datasets, scan sizes, and temporal/joint SSB validation. |
 | GIF/MP4 movie rendering | CUDA/NVENC MP4 | Metal render plus ffmpeg/VideoToolbox MP4 | Larger export benchmark matrix and widget button wiring. |
 
@@ -166,7 +166,7 @@ file -> quantem.gpu (load + decompress + to_device) -> arrays
 
 The native SSB live-redraw target is tracked as a 12-cell backend matrix:
 `cuda`, `mps`, and `webgpu` across `128x128`, `256x256`, `512x512`, and
-`1024x1024` scan sizes. Detailed timing, parity status, and known bottlenecks
+`1024x1024` scan sizes. Detailed timing, reference-check status, and known bottlenecks
 live in `docs/maintainer/ssb-performance.md`.
 
 Current status:
@@ -200,13 +200,13 @@ Implemented in this package:
   `quantem.gpu.io.hdf5` API for one release
 - `quantem.gpu.detector` BF/DF/ADF, `mean_dp`, `masked_sum`, `dp_mean`,
   `virtual_image`, and BF disk detection copied from the widget/live paths with
-  parity tests
-- `quantem.gpu.dpc` CoM/DPC/iDPC copied from the widget path with parity tests
+  reference checks
+- `quantem.gpu.dpc` CoM/DPC/iDPC copied from the widget path with reference checks
 - `quantem.gpu.ssb` SSB engine/API copied from the live compute path, with
-  real-data parity and speed tests against the legacy live implementation
+  real-data reference agreement and speed tests against the legacy live implementation
 - `quantem.gpu.compute` MPS chunk-backed virtual-image and CoM/DPC compute
   copied from widget Metal kernels; Linux CI has dispatch guardrails, and true
-  Metal runtime parity must run on macOS
+  Metal runtime reference agreement must run on macOS
 - `quantem.gpu.ssb.mps.ssb_preview` / `quantem.gpu.ssb_preview_mps` and
   `quantem.gpu.ssb.mps.ssb_fit` / `quantem.gpu.ssb_fit_mps`, optional
   MLX-backed MPS SSB preview/free-fit paths for chunk-backed Mac data.
@@ -226,8 +226,8 @@ Out of scope for phase 1:
 ## Next Phases
 
 - Phase 2: complete product migration coverage, including macOS MPS runtime
-  parity and broader real-data product parity.
-- Phase 3: broaden SSB real-data parity, including full CUDA-engine optimizer
-  parity and dashboard integration for the MPS MLX fit path.
+  reference agreement and broader real-data product reference agreement.
+- Phase 3: broaden SSB real-data reference agreement, including full CUDA-engine optimizer
+  reference agreement and dashboard integration for the MPS MLX fit path.
 - Phase 4: move live CLI/dashboard callers onto `quantem.gpu`.
 - Phase 5: fold remaining ptychography internals under `quantem.gpu` backends.

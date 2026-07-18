@@ -24,7 +24,7 @@ derived float32/complex64 cache.
 Microscopist workflow, real 512 field:
 
 ```text
-source: private HDF5 master file
+source: held-out HDF5 master file
 shape: (512, 512, 192, 192), uint16, 19.33 GB
 BF policy: threshold=0.0, bf_radius=53, full active BF
 active BF: 8827
@@ -88,7 +88,7 @@ MPS real 512 timing, same full active BF selection:
 | Phase-only | `168.84 ms` | `168.60 ms` | `171.66 ms` | `5.9` | Fails exact phase target |
 | Phase+loss | `165.20 ms` | `165.57 ms` | `166.71 ms` | `6.1` | Fails exact loss target |
 
-Parity gates for this checkpoint:
+Reference checks for this checkpoint:
 
 - CUDA: `tests/test_ssb_cuda_128.py` + `tests/test_ssb_batch_optuna.py`,
   `29 passed` on GPU1.
@@ -153,7 +153,7 @@ The object-wave definition, phase/loss definition, and BF selection are
 unchanged; only the resident storage layout and fetch path change.
 
 Persistent `gqk_storage="full"` has been removed from the public SSB runtime
-path. Full-plane `G_qk` appears only in low-level parity tests as a canonical
+path. Full-plane `G_qk` appears only in low-level reference checks as a canonical
 expansion from the Hermitian half-plane; it is not a user-facing mode.
 
 Resident `G_qk` memory becomes:
@@ -182,7 +182,7 @@ Implementation status from the 2026-07-17 pass:
   the remaining floor is FFT topology rather than the removed `sumsq` writes.
 - `_extract_gqk(...)` builds the half-plane directly after the BF-stack FFT,
   avoiding a persistent full `G_qk` allocation.
-- Parity tests compare default Hermitian end-to-end `SSB(...).result()` against
+- Reference checks validate default Hermitian end-to-end `SSB(...).result()` against
   explicit canonical full storage. A raw `cp.fft.fft2` redundant half-plane can
   differ from exact conjugate symmetry at the expected fp32 arithmetic-noise
   floor, so full storage is canonicalized from the half-plane rather than using
@@ -207,13 +207,13 @@ target on one GPU still needs a deeper FFT/reduction topology change.
 Public constructor-to-result smoke profile on GPU1, synthetic
 `(256, 256, 20, 20)` uint16 data with `47` BF pixels:
 
-| Storage | Resident `G_qk` | Warm `result()` mean | Object parity vs full |
+| Storage | Resident `G_qk` | Warm `result()` mean | Object agreement vs full |
 | --- | ---: | ---: | ---: |
 | default `herm` | `12.42 MB` | `0.20 ms` | `p99.9 abs = 0.0` |
 | explicit `full` | `24.64 MB` | `0.50 ms` | reference |
 
 This is an end-to-end API check (`SSB(...) -> result()`), not only a raw kernel
-probe. The exact-zero parity here comes from canonicalizing both storage modes
+probe. The exact-zero reference agreement here comes from canonicalizing both storage modes
 from the same Hermitian half-plane.
 
 ## Historical measured baseline
@@ -261,7 +261,7 @@ Hermitian fetch alone was not a 2x breakthrough because `G_qk` fetch is not the
 dominant cost; the radix-8 column path is the first real phase redraw speedup
 from this pass.
 
-Focused CUDA parity after the direct-fetch change:
+Focused CUDA reference agreement after the direct-fetch change:
 
 ```text
 CUDA_VISIBLE_DEVICES=1 PYTHONPATH=src pytest -q tests/test_ssb_cuda_128.py
@@ -327,30 +327,30 @@ Accepted kernel changes:
   phase/loss kernel reads coalesced memory. This intentionally trades more
   expensive row writes for a much cheaper column pass.
 - Updated the batch variance row staging layout to match the transposed column
-  reader, preserving parity for batched optimizer candidates.
+  reader, preserving reference agreement for batched optimizer candidates.
 - Tested larger `512x512` column phase/loss BF groups as an intermediate
   partial-plane optimization, but the durable direct-accumulate path keeps the
   fixed 32-BF variance grouping. The row-variance kernel is specialized for
   32 BF pixels per group; changing only the wrapper group count under-counts
   BF evidence and is not valid.
 - Relaxed the two 512 radix-8 hot kernels from `__launch_bounds__(64, 10)` to
-  `__launch_bounds__(64, 8)`, which gave a small scheduling win without parity
+  `__launch_bounds__(64, 8)`, which gave a small scheduling win without reference agreement
   changes.
 - Added a 512 direct-accumulate path where the column phase/loss kernel
   atomically accumulates into the final phase planes. This removes the
   per-chunk partial-plane reduction launches; atomic cost is lower than the
   removed launch/reduction overhead at this size.
 - Added an exact safe-inside aperture branch to `compute_geometry()`. For the
-  Samsung-like `512`, `8809` BF benchmark, both shifted apertures are exactly
+  real-data-like `512`, `8809` BF benchmark, both shifted apertures are exactly
   `1.0` for `99.9995%` of points, so the row kernel now avoids the soft-edge
-  aperture `sqrt/div` path except at the edge while preserving parity.
+  aperture `sqrt/div` path except at the edge while preserving reference agreement.
 - Enabled CUDA fast math for these RawModules, switched global-load cache
   policy from `dlcm=cg` to `dlcm=ca`, changed the 512 column phase/loss loop
   from unroll `8` to unroll `2`, and retuned the 512 row/gamma launch bound to
   `__launch_bounds__(64, 10)` with the column kernel staying at
   `__launch_bounds__(64, 8)`.
 - Replaced the hot 512 column `atan2f` calls with a degree-6 polynomial
-  `atan2` helper. Full CUDA parity tests still pass; this is a small
+  `atan2` helper. Full CUDA reference checks still pass; this is a small
   column-side win after `--use_fast_math`, not the main breakthrough.
 
 Steady-state synthetic `512x512`, `8809` BF timing on GPU1:
@@ -412,7 +412,7 @@ still applying each BF pixel's own `G_qk` evidence. This preserves the same
 BF disk, scan size, and phase/loss definition; no preview path, binning,
 cropping, saved `g_bf` cache, or multi-GPU work is counted.
 
-Focused parity during this pass:
+Focused reference agreement during this pass:
 
 ```text
 CUDA_VISIBLE_DEVICES=1 PYTHONPATH=src pytest -q \
@@ -433,7 +433,7 @@ settle around `43-44 ms`. During the same run, `nvidia-smi dmon` showed GPU1
 at `100%` SM, `83-85%` memory activity, about `280 W`, and about `1550 MHz`
 graphics clock under the `300 W` board power limit. An unprivileged attempt
 to raise GPU1 to its reported `325 W` max was rejected by the driver. GPU0 was
-also checked as a single-GPU comparison but was slower under current machine
+also checked as a single-GPU side-by-side check but was slower under current machine
 load (`p50 ~47.8 ms`), so GPU1 remains the cleaner benchmark device.
 
 Current component split for the paired full-storage path:
@@ -488,12 +488,12 @@ Component split for the full-staging four-row path:
 
 ### 512 real subpixel-BF dual path
 
-The real Samsung `512x512` central field has a subpixel fitted BF center. Under
+The real held-out `512x512` central field has a subpixel fitted BF center. Under
 the exact integer detector-pixel mirror test, that means there are no usable
 `+k/-k` pairs:
 
 ```text
-source: /home/owner/ssd/data/samsung/logic_pmos_1p3Mx_30pA_1mrad_5um_17mradtilt/maped/logic_pmos_1p3Mx_30pA_1mrad_5um_17mradtilt_0.0x_0.0y_20260129_15-41-52_master.h5
+source: held-out HDF5 master file
 shape: (512, 512, 192, 192), uint16, 19.33 GB
 BF policy: bf_radius=53, threshold=0.0
 active BF: 8822
@@ -507,7 +507,7 @@ correction, `G_qk` fetch, inverse FFT, phase, and loss contribution. It is not
 a symmetry approximation and does not reduce the BF disk, scan size, detector
 sampling, or precision.
 
-Focused parity now includes this condition directly:
+Focused reference agreement now includes this condition directly:
 
 ```text
 CUDA_VISIBLE_DEVICES=1 PYTHONPATH=src pytest -q tests/test_ssb_cuda_128.py
@@ -516,10 +516,10 @@ CUDA_VISIBLE_DEVICES=1 PYTHONPATH=src pytest -q tests/test_ssb_cuda_128.py
 ```
 
 The new regression test constructs a `512x512` subpixel-BF center with zero
-exact symmetry pairs, asserts that the dual path is used, and compares
+exact symmetry pairs, asserts that the dual path is used, and checks
 `reconstruct_with_loss()` against an explicit chunked CuPy reference.
 
-Real Samsung GPU1 timing after the dual-BF path, plus the Hermitian-specialized
+Real held-out GPU1 timing after the dual-BF path, plus the Hermitian-specialized
 dual row fetch:
 
 | Mode | Storage | Active BF | Mean | p50 | p95 | FPS |
@@ -530,17 +530,17 @@ Follow-up scalar-loss checkpoint: the exact C10/C12 loss path now keeps the
 mean phase image as before but accumulates the phase-squared term into one
 scalar for the no-pair dual path. This matches the optimizer objective,
 because the loss only needs the global mean of `phase^2`; it avoids writing and
-clearing a full per-pixel variance plane for the hot real Samsung condition.
-Focused CUDA parity still passes:
+clearing a full per-pixel variance plane for the hot real held-out condition.
+Focused CUDA reference agreement still passes:
 
 ```text
-CUDA_VISIBLE_DEVICES=1 PYTHONPATH=/home/owner/repos/quantem.gpu/src \
+CUDA_VISIBLE_DEVICES=1 PYTHONPATH=src \
   python -m pytest -q tests/test_ssb_cuda_128.py
 
 25 passed
 ```
 
-Sustained real Samsung GPU1 timing after the scalar-loss path:
+Sustained real held-out GPU1 timing after the scalar-loss path:
 
 | Mode | Storage | Active BF | Mean | p50 | p95 | FPS |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
@@ -560,13 +560,13 @@ Component timing for the same no-pair condition:
 | Final mean/loss bookkeeping | `<0.2 ms` |
 
 This is real progress for the microscopist: the exact full-BF 512 phase/loss
-view is now around `28 FPS` on the real central Samsung field. It is still a
+view is now around `28 FPS` on the real central held-out dataset field. It is still a
 fail against the declared `30 FPS` target because the frame budget is
 `33.3 ms`, leaving a sustained `~2.1 ms` gap.
 
 Hardware note from the same 2026-07-17 push: sustained GPU1 runs sit at the
 `300 W` power limit with `100%` SM utilization, memory utilization around
-`80-83%`, and SM clocks around `1.41-1.45 GHz`. A one-off comparison on GPU0
+`80-83%`, and SM clocks around `1.41-1.45 GHz`. A one-off side-by-side check on GPU0
 (`600 W` limit, but shared with display and another process) crossed the target
 at p50 (`32.98 ms`) while mean/p95 were noisy (`35.67 ms` mean,
 `47.51 ms` p95). Treat GPU0 as evidence that the current kernel is near the
@@ -578,34 +578,34 @@ Rejected follow-ups from this subpixel-BF pass:
 
 | Candidate | Result | Decision |
 | --- | --- | --- |
-| Full-plane resident `G_qk` instead of Hermitian fetch | Real Samsung p50 regressed to about `37.8 ms` and doubled resident `G_qk` from `9.29 GB` to `18.50 GB`. | Rejected. |
-| Dual row launch bound relaxed from `__launch_bounds__(256, 4)` to `256,2` | Parity passed, but real Samsung timing regressed to about `35.5 ms` p50 in short runs. | Reverted. |
-| Dual row blocks reduced from 4 rows/block to 2 rows/block | Parity passed, but real Samsung timing regressed to about `36.3 ms` p50. | Reverted. |
-| Precomputed row/q/k term helper for the dual row kernel | Parity passed, but register pressure made real timing worse (`~36.6 ms` p50). | Reverted. |
-| Wrapper-only `_colvar_group` change from 32 to 64/128 | Initially looked faster, but it was invalid because `ifft512_rows_var_radix8_t64` hard-codes 32 BF pixels per group. A dynamic-k attempt hit illegal memory access at full BF. | Reverted; do not repeat without a separate parity-tested fixed-size kernel. |
-| Column launch-bound tightening (`64,10`, `64,9`, `64,12`) | Full parity passed for the tested bounds. `64,10` produced no sustained real-data win (`36.17 ms` p50 before the Hermitian branch), and `64,12` regressed column p50 to about `14.4 ms`. | Rejected: register pressure/spills outweighed the occupancy attempt. |
-| Hermitian row offset precompute | Full parity passed, but sustained real-data timing stayed about `35.43 ms` p50 versus `35.40 ms` for the simpler Hermitian branch. | Rejected: extra live offsets did not beat the compiler's simpler inline path. |
-| Reusing loaded `qy` values across A/B dual gamma calls | Full parity passed, but component p50 did not improve and added register-pressure risk. | Rejected: the compiler/read-only cache already handles this cheaply enough. |
+| Full-plane resident `G_qk` instead of Hermitian fetch | Real held-out p50 regressed to about `37.8 ms` and doubled resident `G_qk` from `9.29 GB` to `18.50 GB`. | Rejected. |
+| Dual row launch bound relaxed from `__launch_bounds__(256, 4)` to `256,2` | Reference agreement passed, but real held-out timing regressed to about `35.5 ms` p50 in short runs. | Reverted. |
+| Dual row blocks reduced from 4 rows/block to 2 rows/block | Reference agreement passed, but real held-out timing regressed to about `36.3 ms` p50. | Reverted. |
+| Precomputed row/q/k term helper for the dual row kernel | Reference agreement passed, but register pressure made real timing worse (`~36.6 ms` p50). | Reverted. |
+| Wrapper-only `_colvar_group` change from 32 to 64/128 | Initially looked faster, but it was invalid because `ifft512_rows_var_radix8_t64` hard-codes 32 BF pixels per group. A dynamic-k attempt hit illegal memory access at full BF. | Reverted; do not repeat without a separate reference-checked fixed-size kernel. |
+| Column launch-bound tightening (`64,10`, `64,9`, `64,12`) | Full reference agreement passed for the tested bounds. `64,10` produced no sustained real-data win (`36.17 ms` p50 before the Hermitian branch), and `64,12` regressed column p50 to about `14.4 ms`. | Rejected: register pressure/spills outweighed the occupancy attempt. |
+| Hermitian row offset precompute | Full reference agreement passed, but sustained real-data timing stayed about `35.43 ms` p50 versus `35.40 ms` for the simpler Hermitian branch. | Rejected: extra live offsets did not beat the compiler's simpler inline path. |
+| Reusing loaded `qy` values across A/B dual gamma calls | Full reference agreement passed, but component p50 did not improve and added register-pressure risk. | Rejected: the compiler/read-only cache already handles this cheaply enough. |
 | Runtime shared-memory carveout `100` on the no-pair row/column kernels | Scratch component timing left row p50 about `21.3 ms` and combined dual p50 about `34.7 ms`, not a sustained breakthrough. | Rejected: larger carveout did not turn the shared-memory occupancy warning into real FPS. |
-| One-BF/four-row index row kernel | Existing parity still passed, but forcing all BF pixels through the experimental topology gave row p50 about `24.2 ms` and row+column p50 about `37.6 ms`. | Rejected: doubling the independent BF blocks did not compensate for lost dual-BF staging efficiency. |
-| Closed-form radix-8 source indices instead of `octal_reverse_512(tid*8+s)` | Full focused CUDA parity passed. A 240-step real Samsung run briefly measured `34.90 ms` p50, but a 600-step sustained run settled at `35.53 ms` p50, matching or slightly regressing the accepted `35.50 ms` baseline. | Rejected: not a robust wall-time win for a microscopist dragging controls. |
-| Exact inside-aperture phase-identity branch for normalized gamma | Full focused CUDA parity passed, but real Samsung loss regressed to `37.43 ms` p50 (`26.7 FPS`). | Rejected: the added branch, `chi_k` load, and changed special-function mix cost more than the removed normalization. |
-| Degree-5 column `atan2` polynomial | Full focused CUDA parity passed and a 240-step run measured `35.22 ms` p50, but the 600-step sustained run regressed to `35.79 ms` p50. | Rejected: removing one FMA was not a durable column-side speedup. |
-| Column loop unroll reduced from `2` to `1` | Full focused CUDA parity passed. A 240-step run stayed near baseline (`35.53 ms` p50), and the 600-step sustained run regressed to `36.27 ms` p50. | Rejected: lower unroll did not overcome the register/L1TEX floor. |
-| Column launch bound relaxed from `__launch_bounds__(64, 8)` to `64,4` | Full focused CUDA parity passed, but the 240-step real Samsung run regressed to `35.79 ms` p50. | Rejected: giving the compiler more register freedom did not beat the occupancy loss. |
-| Module `--maxrregcount` reduced from `96` to `80` | Full focused CUDA parity passed and a 240-step run improved to `35.12 ms` p50, but the 600-step sustained run settled at `35.72 ms` p50. | Rejected: lower register cap was not a durable sustained win. |
-| Column phase/loss group reduced from `32` BF to `16` BF | Full focused CUDA parity passed. A 240-step run stayed near baseline (`35.52 ms` p50), and the 600-step sustained run regressed to `36.25 ms` p50. | Rejected: extra scheduler parallelism did not offset the doubled group/atomic overhead. |
-| Fixed `64`-BF column phase/loss kernel after scalar-loss path | Full focused CUDA parity passed. A 240-step real Samsung run improved to `34.62 ms` mean/p50, but the 600-step sustained run regressed to `35.25 ms` mean and `35.28 ms` p50. | Rejected: halving phase-sum atomics was not durable under sustained GPU1 power/occupancy behavior. |
-| In-place `phase_sum` normalization after scalar-loss path | Full focused CUDA parity passed. A 240-step run had `34.82 ms` p50 but worse mean/p95, and the 600-step sustained run regressed to `35.61 ms` mean and `35.62 ms` p50. | Rejected: allocation avoidance in finalization did not beat the existing CuPy expression path under sustained timing. |
-| Reusing `_sum_buffer` for phase accumulation after scalar-loss path | Full focused CUDA parity passed. A 240-step run had similar p50 but worse mean/p95, and the 600-step sustained run regressed to `35.63 ms` mean and `35.64 ms` p50. | Rejected: CuPy's fresh zeroed plane path is more stable than reusing and filling the internal accumulation buffer here. |
-| Dedicated scalar-loss column kernel without per-pixel `sumsq0..7` accumulators | Full focused CUDA parity passed, but the 240-step real Samsung run regressed to `35.23 ms` p50. NCU showed registers dropped only from `115` to `108`, theoretical occupancy stayed `33.3%`, and L1TEX/eligible-warp stalls were unchanged. | Rejected: removing per-pixel sumsq registers was not enough to change the column kernel's occupancy class or latency floor. |
-| Dual row `float4` row-IFFT packing for arbitrary no-pair BF pixels | Full focused CUDA parity passed after isolating the probe to the real Samsung no-pair dual row kernel. The 240-step real Samsung run regressed to `36.18 ms` mean and `36.17 ms` p50 (`27.6 FPS`) versus the accepted scalar-loss baseline of about `34.97 ms` mean / `34.95 ms` p50. | Rejected: packing the A/B row FFTs into `float4` reduced no useful sustained wall time; the extra register/instruction pressure outweighed fewer shared-memory slots and helper calls. |
-| Sequential-index mode for the arbitrary no-pair dual row kernel | The real Samsung full-BF cache has `8822` sequential singleton BF pixels and dual pairs `[0,1], [2,3], ...`, so a guarded mode replaced `pair_a/pair_b` loads with affine `idx_a = base + 2*pair`. Full focused CUDA parity passed, but the 240-step real Samsung run regressed to `35.31 ms` mean and `35.31 ms` p50. | Rejected: pair-index gathers are not a meaningful part of the remaining row/column floor. |
-| Row-aware singleton pairing for the arbitrary no-pair dual row kernel | Reordered singleton BF pairs to maximize same-detector-row pairs (`4403/4411` versus `4351/4411`) while keeping every BF pixel and no tail. Full focused CUDA parity passed, but the 240-step real Samsung run regressed to `35.24 ms` mean and `35.26 ms` p50. | Rejected: pairing locality alone does not remove enough row-kernel work without a different same-`ky` kernel. |
-| Same-`ky` dual gamma helper inside the arbitrary no-pair row kernel | Added an exact branch for pairs with the same detector row so A/B share `dy_m` and `dy_p` while still computing each BF's own `kx`, `pk`, `G_qk`, IFFT, phase, and loss. Full focused CUDA parity passed, but the 240-step real Samsung run regressed to `35.40 ms` mean and `35.40 ms` p50. | Rejected: the extra branch/code pressure outweighed the small duplicated-geometry savings. |
-| Warp-shuffle scalar-loss block reduction in the column kernel | Replaced the scalar `phase^2` shared-memory tree reduction with warp shuffles plus one shared handoff. Full focused CUDA parity passed, but the 240-step real Samsung run regressed to `35.46 ms` mean and `35.47 ms` p50. | Rejected: the block reduction barriers are not the dominant column cost; the register/L1TEX FFT path remains the floor. |
-| Dual row transposed copy-out changed from `float2` stores to adjacent-row `float4` stores | Full focused CUDA parity passed and a 240-step run measured `35.34 ms` p50, but the 600-step sustained run regressed to `36.06 ms` p50. | Rejected: fewer store instructions did not improve the sustained power-capped row path. |
-| Dual row Hermitian path forced at compile time by replacing the `gqk_cols == 257` branch with `true` | Exploratory Hermitian-only timing regressed to `35.79 ms` p50 in a 240-step real Samsung run. | Rejected: a separate Hermitian-only row kernel is not justified by this branch-cost probe. |
+| One-BF/four-row index row kernel | Existing reference agreement still passed, but forcing all BF pixels through the experimental topology gave row p50 about `24.2 ms` and row+column p50 about `37.6 ms`. | Rejected: doubling the independent BF blocks did not compensate for lost dual-BF staging efficiency. |
+| Closed-form radix-8 source indices instead of `octal_reverse_512(tid*8+s)` | Full focused CUDA reference agreement passed. A 240-step real held-out run briefly measured `34.90 ms` p50, but a 600-step sustained run settled at `35.53 ms` p50, matching or slightly regressing the accepted `35.50 ms` baseline. | Rejected: not a robust wall-time win for a microscopist dragging controls. |
+| Exact inside-aperture phase-identity branch for normalized gamma | Full focused CUDA reference agreement passed, but real held-out loss regressed to `37.43 ms` p50 (`26.7 FPS`). | Rejected: the added branch, `chi_k` load, and changed special-function mix cost more than the removed normalization. |
+| Degree-5 column `atan2` polynomial | Full focused CUDA reference agreement passed and a 240-step run measured `35.22 ms` p50, but the 600-step sustained run regressed to `35.79 ms` p50. | Rejected: removing one FMA was not a durable column-side speedup. |
+| Column loop unroll reduced from `2` to `1` | Full focused CUDA reference agreement passed. A 240-step run stayed near baseline (`35.53 ms` p50), and the 600-step sustained run regressed to `36.27 ms` p50. | Rejected: lower unroll did not overcome the register/L1TEX floor. |
+| Column launch bound relaxed from `__launch_bounds__(64, 8)` to `64,4` | Full focused CUDA reference agreement passed, but the 240-step real held-out run regressed to `35.79 ms` p50. | Rejected: giving the compiler more register freedom did not beat the occupancy loss. |
+| Module `--maxrregcount` reduced from `96` to `80` | Full focused CUDA reference agreement passed and a 240-step run improved to `35.12 ms` p50, but the 600-step sustained run settled at `35.72 ms` p50. | Rejected: lower register cap was not a durable sustained win. |
+| Column phase/loss group reduced from `32` BF to `16` BF | Full focused CUDA reference agreement passed. A 240-step run stayed near baseline (`35.52 ms` p50), and the 600-step sustained run regressed to `36.25 ms` p50. | Rejected: extra scheduler parallelism did not offset the doubled group/atomic overhead. |
+| Fixed `64`-BF column phase/loss kernel after scalar-loss path | Full focused CUDA reference agreement passed. A 240-step real held-out run improved to `34.62 ms` mean/p50, but the 600-step sustained run regressed to `35.25 ms` mean and `35.28 ms` p50. | Rejected: halving phase-sum atomics was not durable under sustained GPU1 power/occupancy behavior. |
+| In-place `phase_sum` normalization after scalar-loss path | Full focused CUDA reference agreement passed. A 240-step run had `34.82 ms` p50 but worse mean/p95, and the 600-step sustained run regressed to `35.61 ms` mean and `35.62 ms` p50. | Rejected: allocation avoidance in finalization did not beat the existing CuPy expression path under sustained timing. |
+| Reusing `_sum_buffer` for phase accumulation after scalar-loss path | Full focused CUDA reference agreement passed. A 240-step run had similar p50 but worse mean/p95, and the 600-step sustained run regressed to `35.63 ms` mean and `35.64 ms` p50. | Rejected: CuPy's fresh zeroed plane path is more stable than reusing and filling the internal accumulation buffer here. |
+| Dedicated scalar-loss column kernel without per-pixel `sumsq0..7` accumulators | Full focused CUDA reference agreement passed, but the 240-step real held-out run regressed to `35.23 ms` p50. NCU showed registers dropped only from `115` to `108`, theoretical occupancy stayed `33.3%`, and L1TEX/eligible-warp stalls were unchanged. | Rejected: removing per-pixel sumsq registers was not enough to change the column kernel's occupancy class or latency floor. |
+| Dual row `float4` row-IFFT packing for arbitrary no-pair BF pixels | Full focused CUDA reference agreement passed after isolating the probe to the real held-out no-pair dual row kernel. The 240-step real held-out run regressed to `36.18 ms` mean and `36.17 ms` p50 (`27.6 FPS`) versus the accepted scalar-loss baseline of about `34.97 ms` mean / `34.95 ms` p50. | Rejected: packing the A/B row FFTs into `float4` reduced no useful sustained wall time; the extra register/instruction pressure outweighed fewer shared-memory slots and helper calls. |
+| Sequential-index mode for the arbitrary no-pair dual row kernel | The real held-out full-BF cache has `8822` sequential singleton BF pixels and dual pairs `[0,1], [2,3], ...`, so a guarded mode replaced `pair_a/pair_b` loads with affine `idx_a = base + 2*pair`. Full focused CUDA reference agreement passed, but the 240-step real held-out run regressed to `35.31 ms` mean and `35.31 ms` p50. | Rejected: pair-index gathers are not a meaningful part of the remaining row/column floor. |
+| Row-aware singleton pairing for the arbitrary no-pair dual row kernel | Reordered singleton BF pairs to maximize same-detector-row pairs (`4403/4411` versus `4351/4411`) while keeping every BF pixel and no tail. Full focused CUDA reference agreement passed, but the 240-step real held-out run regressed to `35.24 ms` mean and `35.26 ms` p50. | Rejected: pairing locality alone does not remove enough row-kernel work without a different same-`ky` kernel. |
+| Same-`ky` dual gamma helper inside the arbitrary no-pair row kernel | Added an exact branch for pairs with the same detector row so A/B share `dy_m` and `dy_p` while still computing each BF's own `kx`, `pk`, `G_qk`, IFFT, phase, and loss. Full focused CUDA reference agreement passed, but the 240-step real held-out run regressed to `35.40 ms` mean and `35.40 ms` p50. | Rejected: the extra branch/code pressure outweighed the small duplicated-geometry savings. |
+| Warp-shuffle scalar-loss block reduction in the column kernel | Replaced the scalar `phase^2` shared-memory tree reduction with warp shuffles plus one shared handoff. Full focused CUDA reference agreement passed, but the 240-step real held-out run regressed to `35.46 ms` mean and `35.47 ms` p50. | Rejected: the block reduction barriers are not the dominant column cost; the register/L1TEX FFT path remains the floor. |
+| Dual row transposed copy-out changed from `float2` stores to adjacent-row `float4` stores | Full focused CUDA reference agreement passed and a 240-step run measured `35.34 ms` p50, but the 600-step sustained run regressed to `36.06 ms` p50. | Rejected: fewer store instructions did not improve the sustained power-capped row path. |
+| Dual row Hermitian path forced at compile time by replacing the `gqk_cols == 257` branch with `true` | Exploratory Hermitian-only timing regressed to `35.79 ms` p50 in a 240-step real held-out run. | Rejected: a separate Hermitian-only row kernel is not justified by this branch-cost probe. |
 
 Nsight Compute on the accepted dual row kernel:
 
@@ -699,53 +699,53 @@ Rejected candidates from the same pass:
 
 | Candidate | Result | Decision |
 | --- | --- | --- |
-| Phase-only radix-8 column variant | Parity passed, but timing stayed around `69.5 ms` before the row/transposed breakthrough. | Reverted. |
-| Resident aperture-pair cache | Parity passed, but full-BF frame time regressed to about `178 ms` because the row kernel streamed two huge aperture arrays every redraw. | Reverted. |
-| Shared-memory padding in row/column radix-8 kernels | Parity passed, but short-run timing was neutral (`~50.4 ms`) and component timing did not improve. | Reverted. |
-| Legacy radix-4 column accumulator | Column pass measured about `43 ms`, compared with about `14 ms` for the transposed radix-8 column path. | Rejected. |
+| Phase-only radix-8 column variant | Reference agreement passed, but timing stayed around `69.5 ms` before the row/transposed breakthrough. | Reverted. |
+| Resident aperture-pair cache | Reference agreement passed, but full-BF frame time regressed to about `178 ms` because the row kernel streamed two huge aperture arrays every redraw. | Reverted. |
+| Shared-memory padding in row/column radix-8 kernels | Reference agreement passed, but short-run timing was neutral (`~50.4 ms`) and component timing did not improve. | Reverted. |
+| Legacy radix-4 column accumulator | Column pass measured about `43 ms`, versus about `14 ms` for the transposed radix-8 column path. | Rejected. |
 | Batch throughput for optimizer candidates | Batch sizes `4/8/16` stayed near `19.2` exact eval/s (`~52 ms/eval`). | Not a 30 FPS breakthrough. |
-| Replacing `sqrtf`/division geometry with `rsqrtf` geometry in the exact C10/C12 helper | Focused parity failed the 1024 explicit-reference gate (`p99.9` phase error `4.35e-4` versus `3e-4`). | Reverted. |
+| Replacing `sqrtf`/division geometry with `rsqrtf` geometry in the exact C10/C12 helper | Focused reference agreement failed the 1024 explicit-reference gate (`p99.9` phase error `4.35e-4` versus `3e-4`). | Reverted. |
 | Lowering global CUDA `--maxrregcount` from `96` to `64`/`48` | Component timings were only noise-level better, and sequential full-loop timing stayed around `53 ms`. | Reverted. |
-| Row-major row output followed by an out-of-place tiled GPU transpose | Parity passed, but `512` phase redraw regressed to `71.4 ms` (`14 FPS`) because the added full-stack transpose outweighed the row-store savings. | Reverted. |
-| 512 phase-only skip of `sumsq` accumulation | Parity passed, but phase-only timing barely moved and loss did not improve. | Reverted as extra complexity without a target-path win. |
-| 512 column `__launch_bounds__(64, 10)` under the final compiler settings | Parity passed, but steady p50/p95 regressed relative to column launch bound `8`. | Reverted. |
-| 512 row `__launch_bounds__(64, 12)` under the final compiler settings | Parity passed, but steady p50/p95 regressed relative to row launch bound `10`. | Reverted. |
-| Computing 8 rows per block and writing transposed tiles directly | Parity passed, but `512` phase redraw regressed to `60.1 ms` (`16.6 FPS`) from lower occupancy/shared-memory cost. | Reverted. |
-| Computing 4 rows per block and writing transposed tiles directly | Parity passed, but `512` phase redraw still regressed to `55.7 ms` (`18.0 FPS`). | Reverted. |
-| Computing 2 rows per block and writing transposed tiles directly | Parity passed, but `512` phase redraw regressed to `54.5 ms` (`18.4 FPS`). | Reverted. |
-| Skipping `sincos` when shifted apertures are exactly zero | Parity passed, but `512` phase redraw stayed around `53.1 ms`; branch/control-flow cost offset the skipped work. | Reverted. |
-| Raising the exact phase/loss chunk cap from `2 GB` to `4 GB` | Parity passed, but phase/loss timing stayed around `52.7-52.9 ms` while using more transient memory. | Reverted. |
-| Raising the column phase/loss BF group from `64` to `128` | Parity passed, but phase/loss timing regressed slightly to `52.8-53.0 ms`. | Reverted. |
-| Relaxing 512 radix-8 launch bounds further from `8` to `6` blocks | Parity passed, but phase timing regressed to `52.6 ms` from the `52.45 ms` launch-bounds-8 result. | Reverted. |
-| Raising the direct-accumulate BF group from `64` to `128` | Parity passed, but phase timing regressed to `52.47 ms` from the `52.27 ms` direct 64-BF result. | Reverted. |
-| Paired row FFT helper applying `+k` and `-k` simultaneously | Parity passed, but sustained p50 regressed to `43.1 ms`; higher register pressure erased the saved barrier/twiddle work. | Reverted. |
-| Exact phase/loss staging chunk raised from `2 GB` to `4 GB` with paired rows | Parity passed, but timing stayed around `42.9 ms` while using more transient VRAM. | Reverted. |
-| Global CUDA `--maxrregcount=80` with paired rows | Parity passed, but p50 stayed around `42.7 ms`; this broad compile knob was not worth the risk. | Reverted. |
-| Paired row launch bound `__launch_bounds__(64, 12)` | Parity passed, but p50 regressed to about `42.9 ms`; `64,10` remains better. | Reverted. |
-| Column BF group `128` after the paired row change | Parity passed, but sustained p50 stayed around `43.9 ms` and mean worsened slightly. | Reverted. |
-| Column BF group `16` after the paired row change | Parity passed, but sustained p50 regressed to about `43.8 ms`; it added more atomic/group overhead. | Reverted. |
-| Column BF group `48` after the paired row change | Parity passed, but sustained p50 regressed to about `43.9 ms`; `32` was the best measured group in this pass. | Reverted. |
-| Column BF group `64` after the coalesced paired-row write | Parity passed, but exact loss p50 regressed to `39.56 ms`; halving group/atomic count reduced wavefront parallelism too much. | Reverted. |
+| Row-major row output followed by an out-of-place tiled GPU transpose | Reference agreement passed, but `512` phase redraw regressed to `71.4 ms` (`14 FPS`) because the added full-stack transpose outweighed the row-store savings. | Reverted. |
+| 512 phase-only skip of `sumsq` accumulation | Reference agreement passed, but phase-only timing barely moved and loss did not improve. | Reverted as extra complexity without a target-path win. |
+| 512 column `__launch_bounds__(64, 10)` under the final compiler settings | Reference agreement passed, but steady p50/p95 regressed relative to column launch bound `8`. | Reverted. |
+| 512 row `__launch_bounds__(64, 12)` under the final compiler settings | Reference agreement passed, but steady p50/p95 regressed relative to row launch bound `10`. | Reverted. |
+| Computing 8 rows per block and writing transposed tiles directly | Reference agreement passed, but `512` phase redraw regressed to `60.1 ms` (`16.6 FPS`) from lower occupancy/shared-memory cost. | Reverted. |
+| Computing 4 rows per block and writing transposed tiles directly | Reference agreement passed, but `512` phase redraw still regressed to `55.7 ms` (`18.0 FPS`). | Reverted. |
+| Computing 2 rows per block and writing transposed tiles directly | Reference agreement passed, but `512` phase redraw regressed to `54.5 ms` (`18.4 FPS`). | Reverted. |
+| Skipping `sincos` when shifted apertures are exactly zero | Reference agreement passed, but `512` phase redraw stayed around `53.1 ms`; branch/control-flow cost offset the skipped work. | Reverted. |
+| Raising the exact phase/loss chunk cap from `2 GB` to `4 GB` | Reference agreement passed, but phase/loss timing stayed around `52.7-52.9 ms` while using more transient memory. | Reverted. |
+| Raising the column phase/loss BF group from `64` to `128` | Reference agreement passed, but phase/loss timing regressed slightly to `52.8-53.0 ms`. | Reverted. |
+| Relaxing 512 radix-8 launch bounds further from `8` to `6` blocks | Reference agreement passed, but phase timing regressed to `52.6 ms` from the `52.45 ms` launch-bounds-8 result. | Reverted. |
+| Raising the direct-accumulate BF group from `64` to `128` | Reference agreement passed, but phase timing regressed to `52.47 ms` from the `52.27 ms` direct 64-BF result. | Reverted. |
+| Paired row FFT helper applying `+k` and `-k` simultaneously | Reference agreement passed, but sustained p50 regressed to `43.1 ms`; higher register pressure erased the saved barrier/twiddle work. | Reverted. |
+| Exact phase/loss staging chunk raised from `2 GB` to `4 GB` with paired rows | Reference agreement passed, but timing stayed around `42.9 ms` while using more transient VRAM. | Reverted. |
+| Global CUDA `--maxrregcount=80` with paired rows | Reference agreement passed, but p50 stayed around `42.7 ms`; this broad compile knob was not worth the risk. | Reverted. |
+| Paired row launch bound `__launch_bounds__(64, 12)` | Reference agreement passed, but p50 regressed to about `42.9 ms`; `64,10` remains better. | Reverted. |
+| Column BF group `128` after the paired row change | Reference agreement passed, but sustained p50 stayed around `43.9 ms` and mean worsened slightly. | Reverted. |
+| Column BF group `16` after the paired row change | Reference agreement passed, but sustained p50 regressed to about `43.8 ms`; it added more atomic/group overhead. | Reverted. |
+| Column BF group `48` after the paired row change | Reference agreement passed, but sustained p50 regressed to about `43.9 ms`; `32` was the best measured group in this pass. | Reverted. |
+| Column BF group `64` after the coalesced paired-row write | Reference agreement passed, but exact loss p50 regressed to `39.56 ms`; halving group/atomic count reduced wavefront parallelism too much. | Reverted. |
 | Partial-plane reduction instead of direct atomics for paired chunks | Scratch component timing was slower (`pair_col` p50 about `13.3 ms` plus reduction) than direct accumulation. | Rejected. |
-| Two-lane column phase/loss block `(64,2,1)` | Parity passed, but sustained p50 stayed about `43.8 ms`; extra shared-memory reduction and lower occupancy offset the halved BF-loop iterations. | Reverted. |
+| Two-lane column phase/loss block `(64,2,1)` | Reference agreement passed, but sustained p50 stayed about `43.8 ms`; extra shared-memory reduction and lower occupancy offset the halved BF-loop iterations. | Reverted. |
 | Direct full-plane `G_qk` loads in the paired row kernel | Full-storage timing regressed to p50 `44.0 ms`; the Hermitian-capable helper branch is not the row bottleneck. | Reverted. |
-| `16x16` tiled intermediate layout balancing row writes and column reads | Parity passed, but p50 regressed to `50.5 ms`; improved row-store locality was outweighed by worse column-load locality. | Reverted. |
-| Eight rows per paired row block using dynamic 64 KB shared memory | Parity passed, but p50 regressed to `46.0 ms`; lower occupancy/shared-memory pressure outweighed lower block count. | Reverted. |
-| Packed `float4` helper transforming the `+k/-k` row FFTs together | Parity passed, but p50 regressed to `43.7 ms`; extra register and shuffle pressure outweighed saved barriers. | Reverted. |
-| Column launch bound `__launch_bounds__(64, 12)` | Parity passed, but p50 regressed to `44.25 ms`; forcing more blocks over-constrained the compiler. | Reverted. |
-| Column launch bound `__launch_bounds__(64, 10)` | Parity passed, but p50 regressed to `43.21 ms`; the original `64,8` launch bound remains best for the column kernel. | Reverted. |
-| Paired row launch bound relaxed from `__launch_bounds__(256, 3)` to `256,2` | Parity passed, but p50 regressed to `44.08 ms`; lower occupancy outweighed any extra compiler freedom. | Reverted. |
-| Paired row blocks reduced from 4 rows/block to 2 rows/block | Parity passed, but p50 regressed to `43.11 ms`; lower shared memory per block did not hide the row-stage stalls. | Reverted. |
-| Paired row blocks reduced to 1 row/block | Parity passed, but p50 regressed to `43.35 ms`; more independent blocks added overhead without enough latency hiding. | Reverted. |
-| Bit-reversed transient row layout plus contiguous column loads | Parity passed after fixing the direct/partial address mode, but the split-kernel version stayed around p50 `42.8 ms` and the branch version raised column registers from `115` to `127` for only a noise-level win. | Reverted. |
+| `16x16` tiled intermediate layout balancing row writes and column reads | Reference agreement passed, but p50 regressed to `50.5 ms`; improved row-store locality was outweighed by worse column-load locality. | Reverted. |
+| Eight rows per paired row block using dynamic 64 KB shared memory | Reference agreement passed, but p50 regressed to `46.0 ms`; lower occupancy/shared-memory pressure outweighed lower block count. | Reverted. |
+| Packed `float4` helper transforming the `+k/-k` row FFTs together | Reference agreement passed, but p50 regressed to `43.7 ms`; extra register and shuffle pressure outweighed saved barriers. | Reverted. |
+| Column launch bound `__launch_bounds__(64, 12)` | Reference agreement passed, but p50 regressed to `44.25 ms`; forcing more blocks over-constrained the compiler. | Reverted. |
+| Column launch bound `__launch_bounds__(64, 10)` | Reference agreement passed, but p50 regressed to `43.21 ms`; the original `64,8` launch bound remains best for the column kernel. | Reverted. |
+| Paired row launch bound relaxed from `__launch_bounds__(256, 3)` to `256,2` | Reference agreement passed, but p50 regressed to `44.08 ms`; lower occupancy outweighed any extra compiler freedom. | Reverted. |
+| Paired row blocks reduced from 4 rows/block to 2 rows/block | Reference agreement passed, but p50 regressed to `43.11 ms`; lower shared memory per block did not hide the row-stage stalls. | Reverted. |
+| Paired row blocks reduced to 1 row/block | Reference agreement passed, but p50 regressed to `43.35 ms`; more independent blocks added overhead without enough latency hiding. | Reverted. |
+| Bit-reversed transient row layout plus contiguous column loads | Reference agreement passed after fixing the direct/partial address mode, but the split-kernel version stayed around p50 `42.8 ms` and the branch version raised column registers from `115` to `127` for only a noise-level win. | Reverted. |
 | Contiguous `G_qk` row-load microscope for a hypothetical column-permuted storage layout | Synthetic constant-`G_qk` throughput probe regressed to p50 `47.8 ms`; row `G_qk` column order is not the current breakthrough. | Reverted. |
 | CUDA cache policy `-Xptxas=-dlcm=cg` instead of `ca` | Exact loss p50 regressed to `42.83 ms`; cache-all remains better for the current row/column mix. | Reverted. |
-| Column no-prefetch register-reduction variant | Parity passed and registers dropped from `115` to `101`, but exact loss p50 stayed about `39.42 ms` and L1TEX scoreboard stalls worsened. | Reverted. |
-| Degree-5 `atan2` polynomial in the phase accumulator | Full CUDA parity passed, but A/B timing was noise-level (`~0.04-0.09 ms` p50) and not worth a precision-sensitive change. | Reverted. |
-| Negative `use_partial` phase-only branch to skip dummy `sumsq` writes | Small CUDA parity passed, but the full `8809` BF phase benchmark hit `CUDA_ERROR_ILLEGAL_ADDRESS`, reproducing the earlier unsafe branch failure mode. | Reverted. |
-| Column read-only `ld_float2` loads for the transposed intermediate | Full CUDA parity passed, but exact loss p50 regressed to `39.48 ms`; the plain global-load path remains better for the streaming intermediate. | Reverted. |
-| Global CUDA `--maxrregcount=80` after the coalesced paired-row write | Full CUDA parity passed, but exact loss p50 stayed around `39.29 ms`; occupancy pressure is not solved by this broad cap. | Reverted. |
-| Global CUDA `--maxrregcount=128` after the coalesced paired-row write | Full CUDA parity passed, but exact loss p50 stayed around `39.46 ms`; extra compiler freedom did not reduce the dependency floor. | Reverted. |
+| Column no-prefetch register-reduction variant | Reference agreement passed and registers dropped from `115` to `101`, but exact loss p50 stayed about `39.42 ms` and L1TEX scoreboard stalls worsened. | Reverted. |
+| Degree-5 `atan2` polynomial in the phase accumulator | Full CUDA reference agreement passed, but A/B timing was noise-level (`~0.04-0.09 ms` p50) and not worth a precision-sensitive change. | Reverted. |
+| Negative `use_partial` phase-only branch to skip dummy `sumsq` writes | Small CUDA reference agreement passed, but the full `8809` BF phase benchmark hit `CUDA_ERROR_ILLEGAL_ADDRESS`, reproducing the earlier unsafe branch failure mode. | Reverted. |
+| Column read-only `ld_float2` loads for the transposed intermediate | Full CUDA reference agreement passed, but exact loss p50 regressed to `39.48 ms`; the plain global-load path remains better for the streaming intermediate. | Reverted. |
+| Global CUDA `--maxrregcount=80` after the coalesced paired-row write | Full CUDA reference agreement passed, but exact loss p50 stayed around `39.29 ms`; occupancy pressure is not solved by this broad cap. | Reverted. |
+| Global CUDA `--maxrregcount=128` after the coalesced paired-row write | Full CUDA reference agreement passed, but exact loss p50 stayed around `39.46 ms`; extra compiler freedom did not reduce the dependency floor. | Reverted. |
 | Runtime preferred shared-memory carveout on paired row/column kernels | Scratch timings regressed to about `41-47 ms` p50 for carveout values `0-50`; the default driver carveout remained best. | Rejected. |
 | Row-level aperture-fast microscope for the synthetic geometry | Only rows `250..262` can touch the soft aperture edge, but hard-coding aperture=1 elsewhere still measured about `39.47 ms` p50; the skipped branch is not the row bottleneck. | Reverted. |
 
@@ -773,7 +773,7 @@ changed float32 rounding enough to fail the current 1024 explicit-reference
 gate (`p99.9` phase error `3.89e-4` versus `3e-4`). Do not generalize that
 shortcut without an explicit reference/tolerance decision. The narrower
 512-only C10/C12 hot-path helper used by the accepted paired/dual kernels is
-covered by the focused CUDA parity suite above.
+covered by the focused CUDA reference agreement suite above.
 
 Synthetic `1024x1024`, `1382` BF Hermitian timing on GPU1:
 
@@ -793,28 +793,28 @@ object phase during drag and exact mean phase on release.
 
 Track native SSB live-redraw work as a 12-cell backend matrix: three GPU
 backends by four native scan sizes. Each cell must record implementation
-status, parity status, and the best measured performance before it is treated
+status, reference-check status, and the best measured performance before it is treated
 as a supported scientist workflow.
 
 | Backend / size | `128x128` | `256x256` | `512x512` | `1024x1024` |
 | --- | --- | --- | --- | --- |
 | CUDA object redraw | Implemented. High-BF exact fallback mean `4.81 ms`, p95 `5.08 ms`, `208.1 FPS`. | Implemented. Mean `1.74 ms`, p95 `1.78 ms`, `575.2 FPS`. | Implemented. Mean `6.97 ms`, p95 `7.30 ms`, `143.5 FPS`. | Implemented. Older full-BF mean `56.22 ms`, p95 `62.20 ms`, `17.8 FPS`; current pass measured `3000` BF mean `12.41 ms`, p95 `12.60 ms`, `80.6 FPS`. |
 | MPS Hermitian preview/free-fit | Implemented on a Mac MPS machine. Sparse `3.60 ms` / exact `4.02 ms` at `128` BF. | Implemented on a Mac MPS machine. Sparse `10.25 ms` / exact `10.68 ms` at `96` BF. | Implemented on a Mac MPS machine. Sparse `28.27 ms` / exact `33.26 ms` at `64` BF. | Implemented on a Mac MPS machine. Sparse `44.66 ms` / exact `50.39 ms` at `24` BF. |
-| WebGPU phase/loss path | Implemented in `quantem.widget`; migration pending. Synthetic browser parity passed. | Implemented in `quantem.widget`; migration pending. Synthetic browser parity passed. | Implemented in `quantem.widget`; migration pending. Real 512 full-BF drive measured mean `31.4 ms` GPU and `41.8 ms` UI for C10 changes at `9070/9070` BF. | Implemented in `quantem.widget`; migration pending. Real 1024 BF-column load passes on Mac Chrome Metal. Full active-BF controls work but remain about `168-170 ms` UI/GPU, about `5.9 FPS`, below the 30 FPS target. |
+| WebGPU phase/loss path | Implemented in `quantem.widget`; migration pending. Synthetic browser reference agreement passed. | Implemented in `quantem.widget`; migration pending. Synthetic browser reference agreement passed. | Implemented in `quantem.widget`; migration pending. Real 512 full-BF drive measured mean `31.4 ms` GPU and `41.8 ms` UI for C10 changes at `9070/9070` BF. | Implemented in `quantem.widget`; migration pending. Real 1024 BF-column load passes on Mac Chrome Metal. Full active-BF controls work but remain about `168-170 ms` UI/GPU, about `5.9 FPS`, below the 30 FPS target. |
 
 Interpretation:
 
 - CUDA is the only backend with all four object-redraw cells implemented and
-  parity-tested against the previous per-BF IFFT object path. The current
+  reference-checked against the previous per-BF IFFT object path. The current
   `1024x1024` full-BF synthetic rerun needs a quiet GPU because the Hermitian
   resident `G_qk` allocation is about `37 GB` before scratch.
 - MPS now stores prepared `G_qk` as the same Hermitian half-plane and supports
   `128/256/512/1024` MLX/Metal preview/free-fit runs. Treat the MPS table as
-  prepared-data MPS evidence, not as CUDA object Fourier-sum parity or full-BF
+  prepared-data MPS evidence, not as CUDA object Fourier-sum reference agreement or full-BF
   real-data signoff.
 - WebGPU currently lives in `quantem.widget` because it is bundled for browser
   export. The maintenance target is to move reusable kernel source, shape
-  guards, and parity fixtures into `quantem.gpu`, then let `quantem.widget`
+  guards, and reference-check fixtures into `quantem.gpu`, then let `quantem.widget`
   import/build from that source for display.
 
 ### WebGPU 1024 status from 2026-07-16
@@ -834,9 +834,9 @@ Headed Chrome/CDP evidence on NVIDIA Blackwell:
 
 | Case | Data | Result |
 | --- | --- | --- |
-| Synthetic shape matrix | `128/256/512/1024`, 8 BF pixels | Browser parity passed for phase and FFT log-magnitude at every size. |
-| Synthetic stress | `1024x1024`, 64 BF pixels | WGSL compute mean `8.2 ms`; page wall mean about `503 ms` because the standalone parity/demo page repaints and compares too much on the CPU. |
-| Real Samsung full BF | `512x512`, `9070/9070` BF | C10 keyboard drive mean `31.4 ms` GPU, mean `41.8 ms` UI, about `23.9 FPS`; screenshot/report under `/tmp/showptycho-webgpu-size-matrix/real_samsung_fullbf_c10_keys/`. |
+| Synthetic shape matrix | `128/256/512/1024`, 8 BF pixels | Browser reference agreement passed for phase and FFT log-magnitude at every size. |
+| Synthetic stress | `1024x1024`, 64 BF pixels | WGSL compute mean `8.2 ms`; page wall mean about `503 ms` because the standalone reference agreement/demo page repaints and checks too much on the CPU. |
+| Real held-out full BF | `512x512`, `9070/9070` BF | C10 keyboard drive mean `31.4 ms` GPU, mean `41.8 ms` UI, about `23.9 FPS`; screenshot/report under `local UI report directory`. |
 
 Local real `1024x1024` data target used for browser signoff:
 
@@ -875,9 +875,9 @@ policy:
 Interpretation for the microscopist: `BF=1.0` is the full active-BF review
 path, but it still should not fetch non-BF detector pixels or decode the whole
 scan-major HDF5 file. `BF<1.0` is a selected-BF or preview policy and must be
-reported as such when comparing speed.
+reported as such when reporting speed.
 
-Headed Phil Chrome Metal result after switching the real 1024 target to the
+Headed Mac Chrome Metal result after switching the real 1024 target to the
 BF-column companion:
 
 | Step | Result |
@@ -887,14 +887,14 @@ BF-column companion:
 | Default BF setup | `BF=0.3`, `542/1805` selected, `379` active, `0.199 GB` fetched, `558 ms` fetch, `157 ms` unpack, `40 ms` FFT, `757 ms` total. |
 | Full active BF setup | `BF=0.99-1.0`, `1783-1805/1805` selected, `1382` active, `0.725 GB` fetched, `1668 ms` fetch, `640 ms` unpack, `216 ms` FFT, `2525 ms` total. |
 | Full active BF controls | C10, C12, phi12, and scan rotation all updated the phase image; UI mean `169.5 ms`, GPU mean `167.8 ms`, about `5.9 FPS`. |
-| Screenshots | `/tmp/phil-showptycho-bfcols-after-load.png`, `/tmp/phil-showptycho-bfcols-bf1-exact.png`, `/tmp/phil-showptycho-bfcols-controls-visible.png`. |
+| Screenshots | `local screenshot: after-load`, `local screenshot: bf1-exact`, `local screenshot: controls-visible`. |
 
 This is a real improvement in first-use loading and source layout, not a solved
 redraw target. For full active BF at 1024, the browser still recomputes the
 phase/loss path over `1382` active BF columns on each control change. The next
 breakthrough must change that WebGPU math topology, for example by porting an
-exact object Fourier-sum formulation or another parity-tested reduction that
-keeps the same BF policy and precision. Do not compare the CUDA object-redraw
+exact object Fourier-sum formulation or another reference-checked reduction that
+keeps the same BF policy and precision. Do not align the CUDA object-redraw
 `17.8 FPS` figure directly with this browser phase/loss path without naming the
 different scientific quantity being timed.
 
@@ -915,7 +915,7 @@ Before a browser result is treated as a supported scientist workflow, record:
 - [ ] Screenshot/report paths and console/WebGPU errors.
 - [ ] Pass/fail against the declared target frame budget.
 
-Headed Chrome result on mjgoat after adding the range-index HDF5 source path:
+Headed Chrome result on a Linux GPU workstation after adding the range-index HDF5 source path:
 
 | Step | Result |
 | --- | --- |
@@ -934,20 +934,20 @@ for the 1024 phase/loss path, not further reducing or binning the dataset.
 This is the correct real-data target for WebGPU 1024 workflow testing. Do not
 substitute a synthetic 1024 page for final signoff.
 
-## Parity evidence
+## Reference evidence
 
-Focused CUDA parity tests live in `tests/test_ssb_cuda_128.py`.
+Focused CUDA reference checks live in `tests/test_ssb_cuda_128.py`.
 
-The object Fourier-sum path is compared against the previous per-BF chunked
+The object Fourier-sum path is validated against the previous per-BF chunked
 IFFT object path for `128x128`, `256x256`, `512x512`, and `1024x1024`:
 
 - `p99.9(abs_err) < 5e-9`
 - `p99.9(rel_err) < 1e-4`
 
-The Hermitian `G_qk` object and phase/loss paths are compared against a
+The Hermitian `G_qk` object and phase/loss paths are validated against a
 canonical full-plane reference for the same four scan sizes, and `_extract_gqk`
 is tested to keep only the nonredundant columns. Default constructor-to-
-`result()` parity is tested against a test-only full-plane expansion of the
+`result()` reference agreement is tested against a test-only full-plane expansion of the
 same half-plane, including the diagnostic loss. Focused CUDA check from
 2026-07-17 on GPU1:
 
@@ -976,12 +976,12 @@ PYTHONPATH=src python -m pytest -q \
 2 passed, 2 skipped
 ```
 
-The skipped MPS cases are optional real-data CUDA-reference comparisons that
+The skipped MPS cases are optional real-data CUDA-reference checks that
 require local `QUANTEM_GPU_SSB_MASTER` / `QUANTEM_GPU_SSB_REFERENCE_NPZ`
 fixtures. The executed checks cover supported sparse row masks through
 `1024x1024` and exact Hermitian half-plane expansion against `fft2`.
 
-The `1024x1024` reconstruct-with-loss path is compared to an explicit CuPy
+The `1024x1024` reconstruct-with-loss path is validated against an explicit CuPy
 reference with a tolerance that allows rare `atan2` branch-cut pixels while
 requiring the scalar objective and 99.9% of phase pixels to match.
 
@@ -989,8 +989,8 @@ Run before changing SSB kernels:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 \
-PYTHONPATH=/home/owner/repos/quantem.gpu/src \
-pytest -q /home/owner/repos/quantem.gpu/tests/test_ssb_cuda_128.py
+PYTHONPATH=src \
+pytest -q tests/test_ssb_cuda_128.py
 ```
 
 ## Repeat the native benchmark
@@ -999,9 +999,9 @@ Use the local Codex skill benchmark for synthetic kernel timing:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 \
-PYTHONPATH=/home/owner/repos/quantem.gpu/src \
-python /home/owner/.codex/skills/quantem-ssb-kernel-optimization/scripts/ssb_native_bench.py \
-  --repo /home/owner/repos/quantem.gpu \
+PYTHONPATH=src \
+python quantem-ssb-kernel-optimization/scripts/ssb_native_bench.py \
+  --repo . \
   --sizes 128,256,512,1024 \
   --num-bf 8809 \
   --iters 4 \
@@ -1009,7 +1009,7 @@ python /home/owner/.codex/skills/quantem-ssb-kernel-optimization/scripts/ssb_nat
 ```
 
 Repeat with `--mode phase` and `--mode loss` for the full 12-run matrix. Do not
-compare object-mode FPS to phase-mode optimizer FPS without saying which
+validate object-mode FPS to phase-mode optimizer FPS without saying which
 scientific quantity is being drawn.
 
 ## Rejected 512 phase/loss probes
@@ -1021,42 +1021,42 @@ repeating local minima.
 
 | Probe | Result | Decision |
 | --- | ---: | --- |
-| Quadratic C10/C12 gamma fast branch inside the aperture | Parity passed, but row p50 stayed about `30.6 ms`; full loss p50 was about `46.8 ms`. | Rejected: branch/scheduling pressure erased the special-math savings. |
-| Precomputed `sign(sin(Q(q)))` plus BF row/column phase tables | Parity passed, but full loss p50 worsened to about `48.3 ms`. | Rejected: extra table loads were worse than recomputing gamma. |
-| Column BF group `64 -> 128` | Parity passed, full loss p50 about `46.8 ms`. | Rejected: atomics/group count is not the dominant cost. |
+| Quadratic C10/C12 gamma fast branch inside the aperture | Reference agreement passed, but row p50 stayed about `30.6 ms`; full loss p50 was about `46.8 ms`. | Rejected: branch/scheduling pressure erased the special-math savings. |
+| Precomputed `sign(sin(Q(q)))` plus BF row/column phase tables | Reference agreement passed, but full loss p50 worsened to about `48.3 ms`. | Rejected: extra table loads were worse than recomputing gamma. |
+| Column BF group `64 -> 128` | Reference agreement passed, full loss p50 about `46.8 ms`. | Rejected: atomics/group count is not the dominant cost. |
 | Adaptive/full 8809-BF staging chunk | Component total improved slightly, but engine p50 improved only about `0.1 ms` while staging memory rose to about `37 GB`. | Rejected as a default: too much memory for negligible wall-time gain. |
 | Coalesced radix-8 row output plus legacy column reader | Row p50 dropped to about `23.8 ms`, but column p50 rose to about `22.3 ms`; total about `46.8 ms`. | Rejected: legacy column path gives back the row-store win. |
 | Coalesced radix-8 row output plus radix-8 normal-layout column reader | Column p50 rose to about `28.3 ms`; total about `52.8 ms`. | Rejected: strided column reads dominate. |
-| Coalesced radix-8 row output plus tiled explicit transpose | Parity passed, but full loss p50 worsened to about `66 ms`. | Rejected: explicit full transpose costs far more than the row-store savings. |
-| Degree-2 column `atan2` polynomial | Focused parity passed, full loss p50 improved only about `0.1 ms`. | Rejected: too little speedup for a rougher scientific approximation. |
-| Fixed 64-BF variant of `ifft512_rows_var_radix8_t64` | Full CUDA parity passed, but real Samsung no-pair loss p50 regressed to `36.09 ms` from the `~35.97 ms` short-run baseline. | Rejected: halving the group count/atomics reduced useful parallelism enough to erase the savings. |
-| Dual row launch bound relaxed from `__launch_bounds__(256, 4)` to `256,3` | Full CUDA parity passed, but real Samsung no-pair loss p50 regressed to `36.79 ms`. | Rejected: the compiler freedom did not overcome the row-stage scheduling/shared-memory floor. |
+| Coalesced radix-8 row output plus tiled explicit transpose | Reference agreement passed, but full loss p50 worsened to about `66 ms`. | Rejected: explicit full transpose costs far more than the row-store savings. |
+| Degree-2 column `atan2` polynomial | Focused reference agreement passed, full loss p50 improved only about `0.1 ms`. | Rejected: too little speedup for a rougher scientific approximation. |
+| Fixed 64-BF variant of `ifft512_rows_var_radix8_t64` | Full CUDA reference agreement passed, but real held-out no-pair loss p50 regressed to `36.09 ms` from the `~35.97 ms` short-run baseline. | Rejected: halving the group count/atomics reduced useful parallelism enough to erase the savings. |
+| Dual row launch bound relaxed from `__launch_bounds__(256, 4)` to `256,3` | Full CUDA reference agreement passed, but real held-out no-pair loss p50 regressed to `36.79 ms`. | Rejected: the compiler freedom did not overcome the row-stage scheduling/shared-memory floor. |
 | No-pair dual partial-plane reduction instead of direct atomics | Scratch profile p50 moved from about `13.4 ms` direct column accumulation to about `14.0 ms` with partial reduction plus summing. | Rejected: extra global writes/reduction cost more than atomics for this path. |
-| Same-row dual `kx` reuse branch | Full CUDA parity passed and `4351/4411` real Samsung dual pairs shared detector row, but real loss p50 stayed about `36.6 ms` and row p50 stayed about `21.8 ms`. | Rejected: saved scalar `dx` work was too small and added branch/register pressure. |
-| One-shared-buffer arbitrary dual row IFFT | Focused CUDA parity passed, but row p50 regressed from about `21.6 ms` to `24.2 ms`; sustained real Samsung loss regressed to `38.78 ms` p50 (`25.8 FPS`). | Rejected: halving shared memory serialized the A/B row IFFTs and added barriers/stores, so occupancy pressure was not the dominant floor. |
-| Phase partial planes plus scalar loss (`use_partial=3`) | Full CUDA parity passed, but real Samsung loss regressed to `35.46 ms` mean / `35.44 ms` p50 in a 240-step run. | Rejected: replacing phase atomics with partial writes plus a separate reduction costs more than the current in-kernel atomics. |
-| Analytic `qy` index formula in the dual row kernel | Full CUDA parity passed and a 240-step run was neutral (`35.03 ms` mean), but the 600-step sustained run regressed to `35.66 ms` mean / `35.66 ms` p50. | Rejected: `qy_1d` cached loads are not a durable row-stage bottleneck. |
-| Double-zero aperture early return before `sincos` | Full CUDA parity passed, but real Samsung loss regressed to `35.28 ms` mean / `35.28 ms` p50. | Rejected: the exact branch and code pressure cost more than the skipped outside-aperture work for this dataset. |
-| Column launch bounds relaxed from `__launch_bounds__(64, 8)` to `64,6` | Full CUDA parity passed, but real Samsung loss regressed to `35.60 ms` mean / `35.61 ms` p50. | Rejected: the column kernel still wants the current occupancy constraint. |
-| Column staged-data loads through `ld_float2`/read-only path | Full CUDA parity passed, but real Samsung loss regressed to `35.69 ms` mean / `35.66 ms` p50. | Rejected: the staged row output does not benefit from the read-only cache path. |
-| Column no-prefetch schedule | Full CUDA parity passed, but real Samsung loss regressed to `35.49 ms` mean / `35.48 ms` p50. | Rejected: lower register lifetime did not beat the lost global-load overlap. |
-| PTX cache policy `-dlcm=ca -> -dlcm=cg` | Full CUDA parity passed, but real Samsung loss regressed to `35.76 ms` mean / `35.72 ms` p50. | Rejected: L1 caching is still the better default for this mixed row/column path. |
-| Column BF group `32 -> 16` | Full CUDA parity passed, but real Samsung loss regressed to `35.92 ms` mean / `35.91 ms` p50. | Rejected: extra phase-atomic groups outweighed lower loop pressure. |
-| Hermitian-only duplicate arbitrary-dual row kernel | Full CUDA parity passed, but real Samsung loss regressed to `35.80 ms` mean / `35.80 ms` p50. | Rejected: removing the runtime `gqk_cols` branch increased code footprint/register pressure enough to lose. |
+| Same-row dual `kx` reuse branch | Full CUDA reference agreement passed and `4351/4411` real held-out dual pairs shared detector row, but real loss p50 stayed about `36.6 ms` and row p50 stayed about `21.8 ms`. | Rejected: saved scalar `dx` work was too small and added branch/register pressure. |
+| One-shared-buffer arbitrary dual row IFFT | Focused CUDA reference agreement passed, but row p50 regressed from about `21.6 ms` to `24.2 ms`; sustained real held-out loss regressed to `38.78 ms` p50 (`25.8 FPS`). | Rejected: halving shared memory serialized the A/B row IFFTs and added barriers/stores, so occupancy pressure was not the dominant floor. |
+| Phase partial planes plus scalar loss (`use_partial=3`) | Full CUDA reference agreement passed, but real held-out loss regressed to `35.46 ms` mean / `35.44 ms` p50 in a 240-step run. | Rejected: replacing phase atomics with partial writes plus a separate reduction costs more than the current in-kernel atomics. |
+| Analytic `qy` index formula in the dual row kernel | Full CUDA reference agreement passed and a 240-step run was neutral (`35.03 ms` mean), but the 600-step sustained run regressed to `35.66 ms` mean / `35.66 ms` p50. | Rejected: `qy_1d` cached loads are not a durable row-stage bottleneck. |
+| Double-zero aperture early return before `sincos` | Full CUDA reference agreement passed, but real held-out loss regressed to `35.28 ms` mean / `35.28 ms` p50. | Rejected: the exact branch and code pressure cost more than the skipped outside-aperture work for this dataset. |
+| Column launch bounds relaxed from `__launch_bounds__(64, 8)` to `64,6` | Full CUDA reference agreement passed, but real held-out loss regressed to `35.60 ms` mean / `35.61 ms` p50. | Rejected: the column kernel still wants the current occupancy constraint. |
+| Column staged-data loads through `ld_float2`/read-only path | Full CUDA reference agreement passed, but real held-out loss regressed to `35.69 ms` mean / `35.66 ms` p50. | Rejected: the staged row output does not benefit from the read-only cache path. |
+| Column no-prefetch schedule | Full CUDA reference agreement passed, but real held-out loss regressed to `35.49 ms` mean / `35.48 ms` p50. | Rejected: lower register lifetime did not beat the lost global-load overlap. |
+| PTX cache policy `-dlcm=ca -> -dlcm=cg` | Full CUDA reference agreement passed, but real held-out loss regressed to `35.76 ms` mean / `35.72 ms` p50. | Rejected: L1 caching is still the better default for this mixed row/column path. |
+| Column BF group `32 -> 16` | Full CUDA reference agreement passed, but real held-out loss regressed to `35.92 ms` mean / `35.91 ms` p50. | Rejected: extra phase-atomic groups outweighed lower loop pressure. |
+| Hermitian-only duplicate arbitrary-dual row kernel | Full CUDA reference agreement passed, but real held-out loss regressed to `35.80 ms` mean / `35.80 ms` p50. | Rejected: removing the runtime `gqk_cols` branch increased code footprint/register pressure enough to lose. |
 | Two-stream row/column chunk overlap prototype | Exact BF chunks ran with two staging buffers, but best chunked p50 was still about `35.15 ms` for row+column work only. | Rejected as a breakthrough path: the kernels do not overlap enough on one GPU to close the budget. |
-| 8-row arbitrary-dual row block with 64 KB dynamic shared memory | Small focused parity passed, but the real full-BF Samsung launch hit `CUDA_ERROR_ILLEGAL_ADDRESS` inside the row kernel under `CUDA_LAUNCH_BLOCKING=1`. | Rejected: the larger row-store topology is unsafe on the target grid and must not be carried without a fresh memory-correct redesign. |
-| 6-row arbitrary-dual row block with static shared memory | Focused CUDA parity passed, but real Samsung loss regressed to `37.21 ms` mean / `37.20 ms` p50 (`26.9 FPS`) in a 240-step run. | Rejected: the larger block lowered scheduling efficiency and did not recover enough row-stage throughput. |
-| Global module register cap tightened from `96` to `80`/`72` | Focused CUDA parity passed. Real Samsung loss measured `35.32 ms` mean at `80` and `35.44 ms` mean at `72`. | Rejected: forcing lower register allocation did not overcome the column occupancy limiter and likely traded occupancy for spills/scheduling pressure. |
+| 8-row arbitrary-dual row block with 64 KB dynamic shared memory | Small focused reference agreement passed, but the real full-BF held-out dataset launch hit `CUDA_ERROR_ILLEGAL_ADDRESS` inside the row kernel under `CUDA_LAUNCH_BLOCKING=1`. | Rejected: the larger row-store topology is unsafe on the target grid and must not be carried without a fresh memory-correct redesign. |
+| 6-row arbitrary-dual row block with static shared memory | Focused CUDA reference agreement passed, but real held-out loss regressed to `37.21 ms` mean / `37.20 ms` p50 (`26.9 FPS`) in a 240-step run. | Rejected: the larger block lowered scheduling efficiency and did not recover enough row-stage throughput. |
+| Global module register cap tightened from `96` to `80`/`72` | Focused CUDA reference agreement passed. Real held-out loss measured `35.32 ms` mean at `80` and `35.44 ms` mean at `72`. | Rejected: forcing lower register allocation did not overcome the column occupancy limiter and likely traded occupancy for spills/scheduling pressure. |
 
 Accepted 2026-07-17 breakthrough: native `512x512` exact phase/loss now uses
 64-BF staging chunks by default. This keeps the row-IFFT producer/consumer
 working set small instead of writing and rereading one `18+ GB` intermediate.
 The scientific contract is unchanged: same full active BF disk (`8822` BF on
-the central Samsung field), same Hermitian `G_qk`, same per-BF phase/loss
+the central held-out dataset field), same Hermitian `G_qk`, same per-BF phase/loss
 arithmetic, no binning, no crop, and no preview/settle split. Focused CUDA
-parity passed (`25/25`).
+reference agreement passed (`25/25`).
 
-Sustained real Samsung GPU1 result after the default change:
+Sustained real held-out GPU1 result after the default change:
 
 | Mode | Steps | Mean | p50 | p95 | FPS |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -1078,7 +1078,7 @@ change, likely fused/tiled row-column work or another exact formulation.
 ### 512 full-BF calibration timing follow-up
 
 The same real `512x512` field was used to test the full calibration workflow,
-not only live redraw. Source: private HDF5 master file loaded as full
+not only live redraw. Source: held-out HDF5 master file loaded as full
 scan/full detector `uint16`, `9070` active BF after the fitted
 aperture, Hermitian `G_qk=(9070,512,257)` / `9.55 GB`.
 
@@ -1099,7 +1099,7 @@ Accepted calibration improvement:
 | Load -> Gqk -> optimize -> refine -> widget | `17.05 s` | `11.32 s` | Full BF, no binning, no crop, no trial-count reduction. |
 
 The new exact-refine default for this fallback path was chosen from a sweep:
-`xatol=0.25`, `fatol=2e-6`, `max_iter=160`. Compared with the longer exact
+`xatol=0.25`, `fatol=2e-6`, `max_iter=160`. Versus the longer exact
 baseline, the selected policy gave loss delta about `4-6e-7` and phase deltas
 around `5.7e-5 rad` mean / `3.9e-4 rad` p99.9 in the real-data probe. The
 too-loose four-evaluation policies were rejected because they produced
@@ -1109,7 +1109,7 @@ Rejected calibration hypotheses:
 
 | Hypothesis | Measurement | Decision |
 | --- | --- | --- |
-| Host-sync-free GPU scalar losses for exact fallback | Parity passed (`2.2e-8` max scalar-loss delta), but batch-4 exact stayed about `130.6 ms` (`32.6 ms/candidate`). | Rejected and removed from production code: no measurable throughput win for the added complexity. |
+| Host-sync-free GPU scalar losses for exact fallback | Reference agreement passed (`2.2e-8` max scalar-loss delta), but batch-4 exact stayed about `130.6 ms` (`32.6 ms/candidate`). | Rejected and removed from production code: no measurable throughput win for the added complexity. |
 | Concurrent exact candidates on separate CUDA streams | Four candidates were slower concurrently (`140.9 ms`) than sequentially (`129.7 ms`). | Rejected: kernels contend for the same shared-memory/scheduler resources. |
 | Larger exact BF chunks for calibration | Real-data sweep showed `32/64` BF chunks at `~32.0-32.1 ms`; `96+` chunks regressed to `35-36 ms`. | Keep `64` as the default; larger chunks are not a calibration win. |
 | Fewer exact Optuna trials | `150` trials + exact refine reached `6.72 s` optimize+refine with `0.00054 rad` p99.9 phase delta versus the 200-trial baseline. | Useful evidence for an opt-in fast-calibration mode, but do not present it as the full 200-trial default. |
@@ -1121,14 +1121,14 @@ cycles and MIO/short-scoreboard stalls. The column phase/loss accumulator
 `ifft512_rows_var_radix8_t64` is register-limited, reaches about 20% achieved
 occupancy in the small chunk launch, and also shows scheduler starvation. The
 next kernel breakthrough therefore needs a different row/column topology or a
-parity-tested exact multi-candidate formulation, not bigger chunks or streams.
+reference-checked exact multi-candidate formulation, not bigger chunks or streams.
 
 ### Hermitian-only and MPS matrix follow-up
 
 The 2026-07-17 follow-up made Hermitian `G_qk` the only public runtime storage
 mode. `SSB(..., gqk_storage="full")` now raises a corrective `ValueError`.
 Full-plane `G_qk` remains available only as a test-only canonical expansion of
-the Hermitian half-plane, so parity references are stable without carrying
+the Hermitian half-plane, so reference agreement references are stable without carrying
 redundant FFT roundoff as a separate public mode.
 
 CUDA validation after the removal:
@@ -1141,7 +1141,7 @@ env CUDA_VISIBLE_DEVICES=1 PYTHONPATH=src pytest -q \
 ```
 
 The `128x128` high-BF object path currently uses the exact fused-IFFT fallback
-when `num_bf > 1024`. The small-BF Fourier-sum kernel remains parity-tested,
+when `num_bf > 1024`. The small-BF Fourier-sum kernel remains reference-checked,
 but a high-BF synthetic stress probe left the CUDA context in an illegal-
 address state. The fallback keeps the user path exact and fast at `128x128`
 while that microkernel is investigated.
@@ -1164,7 +1164,7 @@ The `1024x1024` exact phase/loss path now uses a split-512 row and column IFFT:
 each 1024 IFFT is decomposed into exact even/odd 512-point radix-8 transforms
 plus a final radix-2 combine. The row kernel writes transposed scratch, and the
 column kernel consumes that layout directly. This preserves the default math
-and focused CUDA parity while cutting the synthetic full-BF phase+loss time
+and focused CUDA reference agreement while cutting the synthetic full-BF phase+loss time
 from `382.24 ms` to `197.71 ms`.
 
 The current `1024x1024` exact phase/loss default still uses a `1024` BF staging
@@ -1211,7 +1211,7 @@ The next MPS pass targeted Mac no-crop/no-bin review on the real `512x512`
 logic dataset:
 
 ```text
-private HDF5 master file
+held-out HDF5 master file
 native shape: (262144, 192, 192), uint16
 BF policy: threshold=0.0, bf_radius=53
 selected BF: 8827
@@ -1249,7 +1249,7 @@ Accepted MPS changes:
   set the high-memory Mac default to a `16`-thread Metal threadgroup after launch-shape
   sweeps.
 - Replaced separate object-kernel `sin`/`cos` calls with
-  `metal::fast::sincos` for the two shifted aperture phases. Mac MPS parity
+  `metal::fast::sincos` for the two shifted aperture phases. Mac MPS reference agreement
   stayed green, and this was the decisive redraw speedup.
 - Added a 512-only fused Metal column-IFFT + phase/loss accumulator for the
   prepared MPS exact mean-phase path. The route still uses the same full BF
@@ -1329,7 +1329,7 @@ The high-memory Mac path reports `default_phase_chunk=3072`; the public real
 MPS load. The prepared steady-state exact phase+loss redraw is still only
 about `6 FPS`, so do not present this as a solved 30 FPS MPS path.
 
-Real full-BF parity against the previous MLX row-IFFT + fused-column path:
+Real full-BF reference agreement against the previous MLX row-IFFT + fused-column path:
 
 ```text
 loss_old=0.021938618272542953
@@ -1371,7 +1371,7 @@ Accepted MPS changes:
   from `8` to `128` BF did not produce a durable 512 breakthrough, so the
   default remains `32`.
 
-Mac MPS parity gate:
+Mac MPS reference check:
 
 ```text
 PYTHONPATH=src python -m pytest -q tests/test_ssb_mps_cuda_reference.py
@@ -1408,7 +1408,7 @@ Rejected or non-breakthrough MPS probes from this pass:
 | 512 column BF grouping `8/16/32/64/128` | Best cases moved only `1-2 ms`; larger groups regressed. | Not a topology breakthrough; keep default `32`. |
 | 1024 fused chunk sweep `128/256/512/768/1024` after scalar-loss fix | `512/768` were close and better than the earlier `256` cap in isolated runs, but order and thermal state moved the result by hundreds of ms. | Set 1024 default to `512` for a smaller safe working set; this remains far from interactive. |
 | Object threadgroup sweep `8/16/32/64/128` | `64/128` modestly improved large-object redraw. | Keep `64` for `512+`; it is a small object-mode win, not a phase/loss breakthrough. |
-| 128/256 in-kernel scalar-loss reduction | Parity passed, but 256 phase+loss regressed to about `34.5 ms`. | Reverted. Smaller loss outputs did not beat the extra threadgroup barriers. |
+| 128/256 in-kernel scalar-loss reduction | Reference agreement passed, but 256 phase+loss regressed to about `34.5 ms`. | Reverted. Smaller loss outputs did not beat the extra threadgroup barriers. |
 | 128/256 8-column Metal grouping | Phase-only improved enough for 256 to reach about `32.75 ms`, but phase+loss regressed. | Use 8 columns only for phase-only; keep phase+loss at 4 columns. |
 
 Interpretation for the microscopist: on an Apple GPU, exact full-BF
@@ -1423,21 +1423,21 @@ Rejected MPS probes from the same pass:
 
 | Probe | Result | Decision |
 | --- | --- | --- |
-| Direct one-threadgroup-per-Fourier-pixel reduce | Parity passed, but real full-BF timing was `~103-168 ms` depending on thread count because it destroyed useful parallelism. | Removed from production code. |
-| Lazy aperture branch that moved astigmatism/trig work after support checks | Parity passed, but real timing regressed because the extra branching hurt Metal occupancy. | Reverted. |
+| Direct one-threadgroup-per-Fourier-pixel reduce | Reference agreement passed, but real full-BF timing was `~103-168 ms` depending on thread count because it destroyed useful parallelism. | Removed from production code. |
+| Lazy aperture branch that moved astigmatism/trig work after support checks | Reference agreement passed, but real timing regressed because the extra branching hurt Metal occupancy. | Reverted. |
 | Old redraw launch defaults `chunk_bf=48/64`, threadgroup `64/256` | Worked, but sustained real-data redraw stayed roughly `18-24 FPS`. | Replaced by `chunk_bf=128`, threadgroup `16`. |
-| Phase-only sum kernel that skipped `sumsq` | Parity passed, but phase-only still measured about `334-348 ms` because the inverse FFT and correction dominate. | Kept only where it is simple; do not expect it to be the MPS breakthrough. |
+| Phase-only sum kernel that skipped `sumsq` | Reference agreement passed, but phase-only still measured about `334-348 ms` because the inverse FFT and correction dominate. | Kept only where it is simple; do not expect it to be the MPS breakthrough. |
 | Column BF grouping `k_bf=8/16/32/64/128/256` after fused row | Real full-BF column+accumulation stayed best around `k_bf=16/32` at `~92 ms`; larger groups reduced partial outputs but lost useful BF parallelism. | Keep `k_bf=32`; the next exact breakthrough needs a different row-column topology, not a grouping constant. |
-| CUDA 1024 direct atomic phase/loss accumulation | Focused parity passed, but `1024x1024`, `1382` BF loss regressed to `210.8 ms` mean before reverting; the known partial-sum path measured `62.0 ms` in the same condition. | Removed. Direct atomics are not the 1024 breakthrough. |
+| CUDA 1024 direct atomic phase/loss accumulation | Focused reference agreement passed, but `1024x1024`, `1382` BF loss regressed to `210.8 ms` mean before reverting; the known partial-sum path measured `62.0 ms` in the same condition. | Removed. Direct atomics are not the 1024 breakthrough. |
 | CUDA 1024 column grouping `k_bf=8` | The isolated column kernel moved slightly, but full `8809` BF loss regressed from `406.5 ms` to `427.3 ms`. | Keep `k_bf=32`. |
-| CUDA 1024 Cartesian row correction helper | Focused parity failed the 1024 CuPy reference gate (`99.9%` phase error `3.26e-4` vs `3e-4`). | Reverted. Keep exact reference parity. |
-| CUDA 1024 launch bounds on row/column kernels | Focused parity passed, but full `8809` BF loss regressed to `859 ms`. | Reverted. Occupancy pressure is not solved by forcing launch bounds. |
-| CUDA 1024 polynomial `atan2` in column phase/loss | Focused parity passed, but warmed full `8809` BF loss was noise-level (`389.0 ms` vs `389.5 ms` same-session baseline). | Rejected as a non-breakthrough. |
-| CUDA 1024 specialized Hermitian `G_qk` fetch helper | Focused parity passed, but default full `8809` BF timing did not improve (`380.84 ms` phase, `382.67 ms` loss). | Reverted; the generic fetch is not the bottleneck. |
-| CUDA 1024 split-512 launch bound tightened from `64,8` to `64,12` | Focused parity passed, but component timing regressed from about `15.2 ms` row / `6.9 ms` column to about `17.0 ms` row / `11.5 ms` column per 1024-BF chunk. | Reverted. The higher-register compiler choice is faster despite lower occupancy. |
-| CUDA 1024 coalesced-load split row | Focused parity passed, but warmed full `8809` BF loss stayed about `200-201 ms`, slower than the direct split row at about `197-199 ms`. | Removed. The extra shared gather and synchronization cost more than the improved source-load order. |
+| CUDA 1024 Cartesian row correction helper | Focused reference agreement failed the 1024 CuPy reference gate (`99.9%` phase error `3.26e-4` vs `3e-4`). | Reverted. Keep exact reference agreement. |
+| CUDA 1024 launch bounds on row/column kernels | Focused reference agreement passed, but full `8809` BF loss regressed to `859 ms`. | Reverted. Occupancy pressure is not solved by forcing launch bounds. |
+| CUDA 1024 polynomial `atan2` in column phase/loss | Focused reference agreement passed, but warmed full `8809` BF loss was noise-level (`389.0 ms` vs `389.5 ms` same-session baseline). | Rejected as a non-breakthrough. |
+| CUDA 1024 specialized Hermitian `G_qk` fetch helper | Focused reference agreement passed, but default full `8809` BF timing did not improve (`380.84 ms` phase, `382.67 ms` loss). | Reverted; the generic fetch is not the bottleneck. |
+| CUDA 1024 split-512 launch bound tightened from `64,8` to `64,12` | Focused reference agreement passed, but component timing regressed from about `15.2 ms` row / `6.9 ms` column to about `17.0 ms` row / `11.5 ms` column per 1024-BF chunk. | Reverted. The higher-register compiler choice is faster despite lower occupancy. |
+| CUDA 1024 coalesced-load split row | Focused reference agreement passed, but warmed full `8809` BF loss stayed about `200-201 ms`, slower than the direct split row at about `197-199 ms`. | Removed. The extra shared gather and synchronization cost more than the improved source-load order. |
 
-The object-mode parity guard compares the fused object Fourier-sum kernel
+The object-mode reference agreement guard checks the fused object Fourier-sum kernel
 against the looped corrected-object reference on a Mac MPS machine:
 
 ```text
@@ -1468,7 +1468,7 @@ Action: port or prototype the fused correction + row-FFT half of the CUDA
 topology on MPS, then rerun the same before/after table with full BF.
 
 Problem: the `512x512` exact phase/loss path now meets the `33.3 ms` / `30 FPS`
-target on the real central Samsung field, but the p95 margin is small on the
+target on the real central held-out dataset field, but the p95 margin is small on the
 300 W GPU1 power envelope.
 
 Action: keep the 64-BF default chunking for 512, and re-run a 600-step
@@ -1485,14 +1485,14 @@ reuse the object-path claim for the optimizer objective.
 
 Problem: `1024x1024` batched optimizer variance is still disabled.
 
-Action: implement and parity-test a dedicated 1024 batch variance kernel before
+Action: implement and reference-check a dedicated 1024 batch variance kernel before
 enabling batch trials at that size.
 
 Problem: MPS and WebGPU are implemented for native-size SSB review, but they
 are not yet equivalent to CUDA full-BF real-data signoff.
 
 Action: keep extending the 12-cell matrix with real-data MPS and WebGPU runs.
-For MPS, measure the same BF policies used by scientists on a Mac MPS machine and compare
-against CUDA-reference fixtures. For WebGPU, move reusable WGSL kernels and
-parity fixtures from `quantem.widget` into `quantem.gpu` without using
+For MPS, measure the same BF policies used by scientists on a Mac MPS machine and
+validate against CUDA-reference fixtures. For WebGPU, move reusable WGSL kernels and
+reference-check fixtures from `quantem.widget` into `quantem.gpu` without using
 SwiftShader performance numbers.

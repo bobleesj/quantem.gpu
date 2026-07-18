@@ -67,7 +67,7 @@ Current performance checkpoint, 2026-07-18:
   fused Metal path is about `2-2.6x` faster than the old generic MLX route but
   is still not live-interactive.
 - MPS object-wave steering is a separate fast review quantity: it is useful
-  for object-wave inspection, but it is not a parity claim for exact
+  for object-wave inspection, but it is not a reference-agreement claim for exact
   mean-phase or phase-variance loss.
 
 Signoff expectations:
@@ -76,6 +76,6 @@ Signoff expectations:
 - Compare CUDA and MPS on the same BF-pixel selection.
 - Include images and difference maps, not only scalar tables.
 - Do not use object mode or any other fast review mode for exact phase/loss
-  parity claims.
+  reference-agreement claims.
 - Keep temporal/joint SSB experiments separate until the improvement metric is
   clear.
