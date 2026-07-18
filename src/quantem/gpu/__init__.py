@@ -38,6 +38,8 @@ _SSB_EXPORTS = {
     "ssb_fit_mps",
     "ssb_preview_mps",
     "ssb_series",
+    "bf_df_dpc",
+    "Preview",
 }
 _IO_EXPORTS = {
     "load",
@@ -61,11 +63,13 @@ __all__ = [
     "SSB",
     "SSBResult",
     "SSBTimeSeriesResult",
+    "Preview",
     "Parallax",
     "ParallaxResult",
     "adf",
     "auto_probe",
     "bf",
+    "bf_df_dpc",
     "center_of_mass",
     "com",
     "compute_backend",

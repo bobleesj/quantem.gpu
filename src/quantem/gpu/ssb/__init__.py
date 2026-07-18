@@ -21,6 +21,8 @@ _API_EXPORTS = {
     "DefocusSweepResult": ("quantem.gpu.ssb.results", "DefocusSweepResult"),
     "SSBResult": ("quantem.gpu.ssb.results", "SSBResult"),
     "MpsSSBPreviewResult": ("quantem.gpu.ssb.mps", "MpsSSBPreviewResult"),
+    "Preview": ("quantem.gpu.ssb.preprocess", "Preview"),
+    "bf_df_dpc": ("quantem.gpu.ssb.preprocess", "bf_df_dpc"),
     "ssb_fit_mps": ("quantem.gpu.ssb.mps", "ssb_fit"),
     "ssb_preview_mps": ("quantem.gpu.ssb.mps", "ssb_preview"),
 }
@@ -34,6 +36,8 @@ __all__ = [
     "SSBResult",
     "SSBTimeSeriesResult",
     "MpsSSBPreviewResult",
+    "Preview",
+    "bf_df_dpc",
     "defocus_sweep",
     "dpc",
     "spatial_frequencies",

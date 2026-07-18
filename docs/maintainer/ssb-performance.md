@@ -100,15 +100,18 @@ Reference checks for this checkpoint:
 MPS scalar-loss reduction is scientifically valid, but it did not produce a
 large wall-time win: avoiding a full phase-squared image write leaves the
 row/column IFFT work dominant. The default exact phase/loss chunk is now
-`3072` BF on 96 GB-class Macs, `1024` BF on 64 GB-class Macs, and `512` BF on
+`4096` BF on 96 GB-class Macs, `1024` BF on 64 GB-class Macs, and `512` BF on
 smaller Macs. The 96 GB Mac setting is a small warmed steady-state win, but it
 is still not a real-time exact phase/loss breakthrough. The next MPS
 breakthrough needs a different exact row/column FFT topology, not another
 scalar-loss or chunk-size tweak.
 
-Latest MPS exact-loss chunk repeat on the same real `512x512` field kept the
-`3072` BF default: `3072` BF measured `165.47 ms` mean / `166.96 ms` p95,
-while `1024` BF measured `169.03 ms` mean / `171.66 ms` p95.
+Latest MPS exact-loss chunk repeats on the same real `512x512` field moved the
+high-memory default from `3072` to `4096` BF. The earlier `3072` repeat
+measured `165.47 ms` mean / `166.96 ms` p95, while a later single-candidate
+repeat favored the larger chunks: `2048` BF measured `248.21 ms` mean /
+`257.40 ms` p95 and `4096` BF measured `248.74 ms` mean / `251.28 ms` p95,
+versus `3072` BF at `265.31 ms` mean / `311.79 ms` p95 in that same run.
 
 ## Exact object redraw path
 
@@ -1323,11 +1326,13 @@ public ssb_preview_mps compute_loss=True after load:
 
 Follow-up on 2026-07-17 changed `_default_phase_loss_chunk_bf()` to return
 `3072` on 96 GB-class Macs, `1024` on 64 GB-class Macs, and `512` otherwise.
-The high-memory Mac path reports `default_phase_chunk=3072`; the public real
+A 2026-07-18 repeat moved the 96 GB-class default to `4096` BF after the
+single-candidate sweep above. The public real
 `ssb_preview(..., compute_loss=True, chunk_bf=16)` path completed with
 `8827` BF and `512x512` phase/amplitude in `4.75 s` after a `0.97 s` full
-MPS load. The prepared steady-state exact phase+loss redraw is still only
-about `6 FPS`, so do not present this as a solved 30 FPS MPS path.
+MPS load on the earlier default. The prepared steady-state exact phase+loss
+redraw is still only a few FPS, so do not present this as a solved 30 FPS MPS
+phase/loss path.
 
 Real full-BF reference agreement against the previous MLX row-IFFT + fused-column path:
 
@@ -1404,7 +1409,7 @@ Rejected or non-breakthrough MPS probes from this pass:
 
 | Probe | Result | Decision |
 | --- | --- | --- |
-| 512 exact phase/loss chunk sweep down to `64` BF | Small CUDA-like chunks regressed (`~226 ms` at `64` BF). Larger chunks stayed best (`~166-170 ms`). | Keep the high-memory 512 default at `3072` BF. MPS benefits from fewer loop launches here. |
+| 512 exact phase/loss chunk sweep down to `64` BF | Small CUDA-like chunks regressed (`~226 ms` at `64` BF). Larger chunks stayed best, and the latest single-candidate repeat favored `2048-4096` BF. | Keep the high-memory 512 default at `4096` BF. MPS benefits from fewer loop launches here. |
 | 512 column BF grouping `8/16/32/64/128` | Best cases moved only `1-2 ms`; larger groups regressed. | Not a topology breakthrough; keep default `32`. |
 | 1024 fused chunk sweep `128/256/512/768/1024` after scalar-loss fix | `512/768` were close and better than the earlier `256` cap in isolated runs, but order and thermal state moved the result by hundreds of ms. | Set 1024 default to `512` for a smaller safe working set; this remains far from interactive. |
 | Object threadgroup sweep `8/16/32/64/128` | `64/128` modestly improved large-object redraw. | Keep `64` for `512+`; it is a small object-mode win, not a phase/loss breakthrough. |
@@ -1456,6 +1461,60 @@ mean-phase/phase-variance loss view improved from about `550-640 ms` to about
 MPS. The next real MPS breakthrough has to fuse the correction + row FFT side
 of the exact phase/loss path or port the CUDA row/column topology more fully;
 another BF-column gather or UI flag will not close the remaining budget.
+
+### MPS exact objective default
+
+The next MPS pass changed Mac `ssb_fit()` from the legacy CUDA-shaped sparse
+row objective to the exact full active-BF phase-variance objective by default,
+then added a candidate-batched exact-loss evaluator for the Optuna phase. The
+old path remains available with `objective_mode="sparse"` for pinned reference
+checks, but the default now optimizes the same loss used by the final full-BF
+phase reconstruction.
+
+Real MPS `512x512` HDF5 timing:
+
+```text
+native scan: 512x512
+detector: 192x192
+dtype: uint16
+BF policy: threshold=0.0, bf_radius=53
+selected BF: 8826
+Hermitian G_qk: (8826, 512, 257), 9.29 GB
+```
+
+| Path | BF Policy | Mean / Wall Time | p50 | p95 | FPS / Rate | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| HDF5 load | full scan metadata-backed MPS load | `0.88-1.56 s` | not recorded | not recorded | n/a | Warm local SSD range |
+| BF select | full active BF disk | `0.231-0.287 s` | not recorded | not recorded | n/a | Mean diffraction pattern path |
+| Gqk construction | full active BF | `3.20-3.36 s` | not recorded | not recorded | n/a | Hermitian complex64, `9.29 GB` |
+| Object redraw | full active BF | `22.46-30.50 ms` | `22.31-31.63 ms` | `23.66-35.48 ms` | `32.8-44.5 FPS` | Microscopist live steering path; machine thermal/load state moved the number |
+| Exact loss candidate | full active BF | `235-272 ms` | `235-275 ms` | `238-277 ms` | `3.7-4.3 eval/s` | Single-candidate fused row-IFFT + scalar phase-loss, no phase CPU copy |
+| Exact loss batch, 2 candidates | full active BF | `320-428 ms` | `319-424 ms` | `326-452 ms` | `4.7-6.2 eval/s` | Same exact loss; batch-vs-single max abs error `0-3.7e-9` |
+| Legacy sparse loss | full active BF, sparse rows | `603.60 ms` | `598.09 ms` | `616.78 ms` | `1.66 eval/s` | Kept only for reference-check mode |
+| 200 trials + Nelder-Mead, previous exact default | full active BF | `61.44 s` | not recorded | not recorded | `274 evals` | Exact objective, final loss `0.051254` |
+| 200 trials + Nelder-Mead, current direct first-use run | full active BF | `64.22 s` including `1.56 s` HDF5 load | not recorded | not recorded | `218 evals` | Exact objective, first-use Metal compile included, final loss `0.051252` |
+| 200 trials + Nelder-Mead, current warmed-kernel run | full active BF | `54.53 s` fit after load | not recorded | not recorded | `218 evals` | Exact objective, same final loss `0.051252`; kernels/data path already warm |
+
+Accepted MPS changes:
+
+- `objective_mode="exact"` is the default for `ssb_fit()`, so Mac calibration
+  no longer silently optimizes the legacy sparse-row objective.
+- `optuna_batch_size=2` is the default for the exact MPS path because the real
+  candidate sweep showed larger batches did not improve candidate throughput
+  and increased memory pressure.
+- The final phase pass now computes and reuses its exact scalar loss instead of
+  running one redundant extra exact-loss evaluation.
+
+Rejected MPS experiments:
+
+- Generic exact batching with MLX `ifft2` measured only `~2.2-2.3` candidates/s
+  at batch sizes `1`, `2`, and `4`, and therefore lost to the fused
+  single-candidate exact kernel. Do not add generic exact batching unless the
+  row-IFFT and phase-loss kernels are also fused over candidate batches.
+- Transposed row-IFFT scratch for candidate batches preserved exact loss
+  agreement (`max_abs=3.7e-9`) and sped up the column read, but slowed the row
+  write enough that the full `200`-trial plus Nelder-Mead workflow regressed
+  to about `70 s`. It was removed.
 
 ## Next performance work
 

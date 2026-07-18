@@ -455,6 +455,94 @@ def test_mps_row_ifft512_dynamic_matches_mlx_reference() -> None:
     )
 
 
+def test_mps_batched_exact_loss512_matches_single_candidate_path() -> None:
+    """Batched 512 exact loss must match the single-candidate MPS path."""
+    mx = pytest.importorskip("mlx.core")
+    from quantem.gpu.ssb.mps import (
+        _PreparedMpsSSB,
+        _reconstruct_prepared,
+        _reconstruct_prepared_batch_exact_loss,
+    )
+
+    n = 512
+    num_bf = 4
+    q_row = np.fft.fftfreq(n, 1.0).astype(np.float32)
+    q_col = np.fft.fftfreq(n, 1.0).astype(np.float32)
+    kx_np = np.array([-0.17, 0.03, 0.21, -0.09], dtype=np.float32)
+    ky_np = np.array([0.11, -0.19, 0.07, 0.18], dtype=np.float32)
+    rng = np.random.default_rng(49)
+    real_stack = rng.standard_normal((num_bf, n, n)).astype(np.float32)
+    g_qk = mx.fft.rfft2(mx.array(real_stack))
+    dc_mask = np.zeros((n, n), dtype=bool)
+    dc_mask[0, 0] = True
+    q_row_mx = mx.array(q_row, dtype=mx.float32)
+    q_col_mx = mx.array(q_col, dtype=mx.float32)
+    prepared = _PreparedMpsSSB(
+        mx=mx,
+        g_qk=g_qk,
+        qx=q_row_mx[None, :, None],
+        qy=q_col_mx[None, None, :],
+        q_row=q_row_mx,
+        q_col=q_col_mx,
+        kx=mx.array(kx_np, dtype=mx.float32),
+        ky=mx.array(ky_np, dtype=mx.float32),
+        kx_np=kx_np,
+        ky_np=ky_np,
+        dc_value=complex(np.asarray(g_qk[:, 0, 0]).mean()),
+        scan_shape=(n, n),
+        wavelength=0.0197,
+        semiangle_rad=0.0214,
+        ang_y_rad=0.0008,
+        ang_x_rad=0.0008,
+        factor=float(np.pi / 0.0197),
+        dc_mask=mx.array(dc_mask),
+        num_bf=num_bf,
+        alpha_k2=None,
+        cos2_k=None,
+        sin2_k=None,
+        aperture_k=None,
+        alpha_m2=None,
+        cos2_m=None,
+        sin2_m=None,
+        ap_m=None,
+        alpha_p2=None,
+        cos2_p=None,
+        sin2_p=None,
+        ap_p=None,
+    )
+
+    c10 = np.array([-120.0, 35.0], dtype=np.float32)
+    c12 = np.array([55.0, 12.0], dtype=np.float32)
+    phi12 = np.array([0.3, -0.2], dtype=np.float32)
+    got = _reconstruct_prepared_batch_exact_loss(
+        prepared,
+        C10=c10,
+        C12=c12,
+        phi12=phi12,
+        chunk_bf=2,
+    )
+    expected = []
+    for values in zip(c10, c12, phi12):
+        _object, loss, _phase = _reconstruct_prepared(
+            prepared,
+            C10=float(values[0]),
+            C12=float(values[1]),
+            phi12=float(values[2]),
+            chunk_bf=2,
+            compute_loss=True,
+            compute_object=False,
+            return_phase=False,
+        )
+        expected.append(loss)
+
+    np.testing.assert_allclose(
+        got,
+        np.asarray(expected, dtype=np.float32),
+        rtol=1e-5,
+        atol=1e-4,
+    )
+
+
 @pytest.mark.parametrize("n", [128, 256, 1024])
 def test_mps_row_ifft_small_dynamic_matches_mlx_reference(n: int) -> None:
     """Fused 128/256/1024 correction + row-IFFT must match the MLX reference."""
@@ -656,6 +744,51 @@ def test_mps_reconstruct_prepared_uses_scalar_loss_for_small_fused_path() -> Non
     )
     assert got_loss is not None
     np.testing.assert_allclose(got_loss, float(np.asarray(ref_loss)), atol=1e-4)
+
+
+def test_mps_fit_defaults_to_exact_objective() -> None:
+    """Small MPS fit should use the full active BF objective by default."""
+    pytest.importorskip("mlx.core")
+    pytest.importorskip("optuna")
+    from quantem.gpu.ssb.mps import ssb_fit
+
+    rng = np.random.default_rng(61)
+    data = rng.poisson(4, size=(8, 8, 12, 12)).astype(np.uint16)
+
+    result = ssb_fit(
+        data,
+        voltage_kV=300,
+        semiangle_mrad=21.4,
+        scan_sampling_A=1.0,
+        aberrations={"C10": 0.0, "C12": 10.0, "phi12": 0.0},
+        bf_intensity_threshold=0.0,
+        bf_radius=3,
+        chunk_bf=4,
+        n_trials=0,
+        refine=None,
+    )
+
+    assert result.objective_mode == "exact"
+    assert result.loss is not None
+    assert result.num_bf > 0
+    assert result.phase.shape == (8, 8)
+    assert result.amplitude.shape == (8, 8)
+
+
+def test_mps_fit_rejects_unknown_objective_before_setup() -> None:
+    """Invalid MPS fit objective names should fail before GPU data prep."""
+    pytest.importorskip("mlx.core")
+    from quantem.gpu.ssb.mps import ssb_fit
+
+    data = np.ones((4, 4, 4, 4), dtype=np.uint16)
+    with pytest.raises(ValueError, match="objective_mode"):
+        ssb_fit(
+            data,
+            voltage_kV=300,
+            semiangle_mrad=21.4,
+            scan_sampling_A=1.0,
+            objective_mode="row-preview",
+        )
 
 
 @pytest.mark.skipif(

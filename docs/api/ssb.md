@@ -17,6 +17,10 @@ from quantem.gpu.ssb import (
 Use `ssb()` or `SSBEngine` for CUDA/reference workflows. Use `ssb_preview_mps`
 and `ssb_fit_mps` for the Apple GPU path.
 
+`ssb_fit_mps(...)` optimizes the exact full active-BF phase-variance objective
+by default. Use `objective_mode="sparse"` only for legacy sparse-row reference
+checks.
+
 For Apple GPU live review, `ssb_preview_mps(...)` uses an exact BF-averaged
 object-wave path by default when `compute_loss=False`:
 
@@ -66,6 +70,11 @@ Current performance checkpoint, 2026-07-18:
   `1024x1024`. The 256 phase-only path reaches about `32.75 ms`; the 1024
   fused Metal path is about `2-2.6x` faster than the old generic MLX route but
   is still not live-interactive.
+- MPS real full-BF `512x512` exact calibration is about one minute for
+  `200` Optuna trials plus Nelder-Mead on a high-memory Apple GPU. A direct
+  first-use run measured `64.2 s` including full HDF5 load and Metal compile;
+  a warmed-kernel run measured `54.5 s` after load. Batch-vs-single exact loss
+  agreement was `0-3.7e-9` max abs in the measured checks.
 - MPS object-wave steering is a separate fast review quantity: it is useful
   for object-wave inspection, but it is not a reference-agreement claim for exact
   mean-phase or phase-variance loss.

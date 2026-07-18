@@ -37,6 +37,7 @@ class MpsSSBPreviewResult:
     n_trials: int | None = None
     optuna_trials: list[dict] | None = None
     refine_method: str | None = None
+    objective_mode: str | None = None
 
 
 @dataclass
@@ -256,7 +257,7 @@ def _default_phase_loss_chunk_bf(
     except Exception:
         return 512
     if total >= 96 * 1024**3:
-        chunk = 3072
+        chunk = 4096
     elif total >= 64 * 1024**3:
         chunk = 1024
     else:
@@ -1282,9 +1283,23 @@ def _phase_cols512_scalar_loss_from_row_ifft(mx, row_ifft, *, k_bf: int = 32):
     return phase_sum, mx.sum(partial_sumsq_tile)
 
 
-@lru_cache(maxsize=16)
-def _row_ifft512_dynamic_kernel(chunk: int, gqk_cols: int):
+@lru_cache(maxsize=32)
+def _phase_cols512_reduced_batch_kernel(
+    batch: int,
+    num_bf: int,
+    k_bf: int,
+):
     mx = _require_mlx()
+    row_ifft_load = """
+            size_t base = (
+                ((size_t)batch * (size_t)NUM_BF + (size_t)bf) * 512u * 512u
+                + (size_t)col
+            );
+            auto z0 = row_ifft[base + (size_t)pos0 * 512u];
+            auto z1 = row_ifft[base + (size_t)pos1 * 512u];
+            auto z2 = row_ifft[base + (size_t)pos2 * 512u];
+            auto z3 = row_ifft[base + (size_t)pos3 * 512u];
+        """
     source = f"""
         #define CADD(a, b) float2((a).x + (b).x, (a).y + (b).y)
         #define CSUB(a, b) float2((a).x - (b).x, (a).y - (b).y)
@@ -1294,6 +1309,194 @@ def _row_ifft512_dynamic_kernel(chunk: int, gqk_cols: int):
         #define BITREV4_8(x) ((((x) & 0x03u) << 6) | (((x) & 0x0Cu) << 2) | (((x) & 0x30u) >> 2) | (((x) & 0xC0u) >> 6))
         #define DIGITREV512(x) ((((x) & 1u) << 8) | BITREV4_8((x) >> 1))
 
+        constexpr uint BATCH = {int(batch)};
+        constexpr uint NUM_BF = {int(num_bf)};
+        constexpr uint K_BF = {int(k_bf)};
+        constexpr uint GROUPS = (NUM_BF + K_BF - 1u) / K_BF;
+        uint tid = thread_position_in_threadgroup.x;
+        uint local_col = thread_position_in_threadgroup.y;
+        uint col = thread_position_in_grid.y;
+        uint z = thread_position_in_grid.z;
+        uint batch = z / GROUPS;
+        uint group = z - batch * GROUPS;
+        if (tid >= 128u || local_col >= 4u || col >= 512u || batch >= BATCH || group >= GROUPS) {{
+            return;
+        }}
+
+        threadgroup float2 shared_cols[4][512];
+        threadgroup float2* srow = &shared_cols[local_col][0];
+
+        uint pos0 = tid;
+        uint pos1 = tid + 128u;
+        uint pos2 = tid + 256u;
+        uint pos3 = tid + 384u;
+        uint rev0 = DIGITREV512(pos0);
+        uint rev1 = DIGITREV512(pos1);
+        uint rev2 = DIGITREV512(pos2);
+        uint rev3 = DIGITREV512(pos3);
+        float sum0 = 0.0f;
+        float sum1 = 0.0f;
+        float sum2 = 0.0f;
+        float sum3 = 0.0f;
+        float sq0 = 0.0f;
+        float sq1 = 0.0f;
+        float sq2 = 0.0f;
+        float sq3 = 0.0f;
+
+        uint bf_start = group * K_BF;
+        uint bf_end = metal::min(bf_start + K_BF, NUM_BF);
+        for (uint bf = bf_start; bf < bf_end; ++bf) {{
+            {row_ifft_load}
+            srow[rev0] = float2(z0.real, z0.imag);
+            srow[rev1] = float2(z1.real, z1.imag);
+            srow[rev2] = float2(z2.real, z2.imag);
+            srow[rev3] = float2(z3.real, z3.imag);
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+
+            for (uint m = 4u; m <= 256u; m <<= 2) {{
+                uint quarter = m >> 2;
+                uint j = tid % quarter;
+                uint k = tid / quarter;
+                uint idx0 = k * m + j;
+                uint idx1 = idx0 + quarter;
+                uint idx2 = idx1 + quarter;
+                uint idx3 = idx2 + quarter;
+                uint tw = j * (512u / m);
+                float2 x0 = srow[idx0];
+                float2 x1 = CMUL(TW(tw), srow[idx1]);
+                float2 x2 = CMUL(TW(tw * 2u), srow[idx2]);
+                float2 x3 = CMUL(TW(tw * 3u), srow[idx3]);
+                float2 t0 = CADD(x0, x2);
+                float2 t1 = CSUB(x0, x2);
+                float2 t2 = CADD(x1, x3);
+                float2 t3 = CSUB(x1, x3);
+                float2 it3 = CMULI(t3);
+                srow[idx0] = CADD(t0, t2);
+                srow[idx1] = CADD(t1, it3);
+                srow[idx2] = CSUB(t0, t2);
+                srow[idx3] = CSUB(t1, it3);
+                threadgroup_barrier(mem_flags::mem_threadgroup);
+            }}
+
+            uint j0 = tid;
+            uint j1 = tid + 128u;
+            float2 a0 = srow[j0];
+            float2 b0 = CMUL(TW(j0), srow[j0 + 256u]);
+            float2 a1 = srow[j1];
+            float2 b1 = CMUL(TW(j1), srow[j1 + 256u]);
+            srow[j0] = CADD(a0, b0);
+            srow[j0 + 256u] = CSUB(a0, b0);
+            srow[j1] = CADD(a1, b1);
+            srow[j1 + 256u] = CSUB(a1, b1);
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+
+            float2 o0 = srow[pos0];
+            float2 o1 = srow[pos1];
+            float2 o2 = srow[pos2];
+            float2 o3 = srow[pos3];
+            float p0 = metal::atan2(o0.y, o0.x);
+            float p1 = metal::atan2(o1.y, o1.x);
+            float p2 = metal::atan2(o2.y, o2.x);
+            float p3 = metal::atan2(o3.y, o3.x);
+            sum0 += p0;
+            sum1 += p1;
+            sum2 += p2;
+            sum3 += p3;
+            sq0 += p0 * p0;
+            sq1 += p1 * p1;
+            sq2 += p2 * p2;
+            sq3 += p3 * p3;
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+        }}
+
+        size_t out_base = (
+            ((size_t)batch * (size_t)GROUPS + (size_t)group) * 512u * 512u
+        );
+        sum_out[out_base + (size_t)pos0 * 512u + (size_t)col] = sum0;
+        sum_out[out_base + (size_t)pos1 * 512u + (size_t)col] = sum1;
+        sum_out[out_base + (size_t)pos2 * 512u + (size_t)col] = sum2;
+        sum_out[out_base + (size_t)pos3 * 512u + (size_t)col] = sum3;
+        sumsq_tile[
+            (((size_t)batch * (size_t)GROUPS + (size_t)group) * 512u + (size_t)col)
+            * 128u + tid
+        ] = sq0 + sq1 + sq2 + sq3;
+
+        #undef CADD
+        #undef CSUB
+        #undef CMUL
+        #undef CMULI
+        #undef TW
+        #undef BITREV4_8
+        #undef DIGITREV512
+    """
+    return mx.fast.metal_kernel(
+        name=(
+            f"ssb_phase_cols512_batch_scalar_n{int(batch)}_"
+            f"bf{int(num_bf)}_k{int(k_bf)}"
+        ),
+        input_names=["row_ifft", "twiddle"],
+        output_names=["sum_out", "sumsq_tile"],
+        source=source,
+        compile_options={"math_mode": "fast"},
+    )
+
+
+def _phase_cols512_scalar_loss_batch_from_row_ifft(mx, row_ifft, *, k_bf: int = 32):
+    """Fuse 512-column IFFT and scalar loss for candidate-batched row IFFT."""
+    shape = tuple(int(x) for x in row_ifft.shape)
+    if len(shape) != 4 or shape[-2:] != (512, 512):
+        raise ValueError(
+            "Expected row-IFFT chunk shape (batch, BF, 512, 512), "
+            f"got {shape}."
+        )
+    batch, num_bf = int(shape[0]), int(shape[1])
+    k_bf = max(1, int(k_bf))
+    groups = (num_bf + k_bf - 1) // k_bf
+    kernel = _phase_cols512_reduced_batch_kernel(batch, num_bf, k_bf)
+    partial_sum, partial_sumsq_tile = kernel(
+        inputs=[row_ifft, _twiddle_512(mx)],
+        template=[],
+        grid=(128, 512, batch * groups),
+        threadgroup=(128, 4, 1),
+        output_shapes=[(batch, groups, 512, 512), (batch, groups, 512, 128)],
+        output_dtypes=[mx.float32, mx.float32],
+    )
+    phase_sum = partial_sum[:, 0, :, :] if groups == 1 else mx.sum(partial_sum, axis=1)
+    phase_sumsq = mx.sum(mx.sum(mx.sum(partial_sumsq_tile, axis=3), axis=2), axis=1)
+    return phase_sum, phase_sumsq
+
+
+@lru_cache(maxsize=32)
+def _row_ifft512_dynamic_kernel(
+    batch: int,
+    chunk: int,
+    gqk_cols: int,
+):
+    mx = _require_mlx()
+    row_ifft_store = """
+        size_t base = (
+            ((size_t)batch * (size_t)CHUNK + (size_t)bf) * (size_t)PLANE
+            + (size_t)row * 512u
+        );
+        row_ifft[base + tid].real = srow[tid].x;
+        row_ifft[base + tid].imag = srow[tid].y;
+        row_ifft[base + tid + 128u].real = srow[tid + 128u].x;
+        row_ifft[base + tid + 128u].imag = srow[tid + 128u].y;
+        row_ifft[base + tid + 256u].real = srow[tid + 256u].x;
+        row_ifft[base + tid + 256u].imag = srow[tid + 256u].y;
+        row_ifft[base + tid + 384u].real = srow[tid + 384u].x;
+        row_ifft[base + tid + 384u].imag = srow[tid + 384u].y;
+        """
+    source = f"""
+        #define CADD(a, b) float2((a).x + (b).x, (a).y + (b).y)
+        #define CSUB(a, b) float2((a).x - (b).x, (a).y - (b).y)
+        #define CMUL(a, b) float2((a).x * (b).x - (a).y * (b).y, (a).x * (b).y + (a).y * (b).x)
+        #define CMULI(a) float2(-(a).y, (a).x)
+        #define TW(i) float2(twiddle[(i)].real, twiddle[(i)].imag)
+        #define BITREV4_8(x) ((((x) & 0x03u) << 6) | (((x) & 0x0Cu) << 2) | (((x) & 0x30u) >> 2) | (((x) & 0xC0u) >> 6))
+        #define DIGITREV512(x) ((((x) & 1u) << 8) | BITREV4_8((x) >> 1))
+
+        constexpr uint BATCH = {int(batch)};
         constexpr uint CHUNK = {int(chunk)};
         constexpr uint NX = 512u;
         constexpr uint PLANE = 512u * 512u;
@@ -1302,8 +1505,10 @@ def _row_ifft512_dynamic_kernel(chunk: int, gqk_cols: int):
         uint tid = thread_position_in_threadgroup.x;
         uint local_row = thread_position_in_threadgroup.y;
         uint row = thread_position_in_grid.y;
-        uint bf = thread_position_in_grid.z;
-        if (tid >= 128u || local_row >= 4u || row >= 512u || bf >= CHUNK) {{
+        uint z = thread_position_in_grid.z;
+        uint batch = z / CHUNK;
+        uint bf = z - batch * CHUNK;
+        if (tid >= 128u || local_row >= 4u || row >= 512u || batch >= BATCH || bf >= CHUNK) {{
             return;
         }}
 
@@ -1317,14 +1522,14 @@ def _row_ifft512_dynamic_kernel(chunk: int, gqk_cols: int):
         float semiangle = scalars[4];
         float ang_y = scalars[5];
         float ang_x = scalars[6];
-        float c10v = c10[0];
-        float c12v = c12[0];
-        float cos2v = cos2phi12[0];
-        float sin2v = sin2phi12[0];
+        float c10v = c10[batch];
+        float c12v = c12[batch];
+        float cos2v = cos2phi12[batch];
+        float sin2v = sin2phi12[batch];
         float kxv = kx[bf];
         float kyv = ky[bf];
         float qxv = q_row[row];
-        auto pkz = pk[bf];
+        auto pkz = pk[(size_t)batch * (size_t)CHUNK + bf];
         float pkr = pkz.real;
         float pki = pkz.imag;
 
@@ -1454,15 +1659,7 @@ def _row_ifft512_dynamic_kernel(chunk: int, gqk_cols: int):
         srow[j1 + 256u] = CSUB(a1, b1);
         threadgroup_barrier(mem_flags::mem_threadgroup);
 
-        size_t base = (size_t)bf * (size_t)PLANE + (size_t)row * 512u;
-        row_ifft[base + tid].real = srow[tid].x;
-        row_ifft[base + tid].imag = srow[tid].y;
-        row_ifft[base + tid + 128u].real = srow[tid + 128u].x;
-        row_ifft[base + tid + 128u].imag = srow[tid + 128u].y;
-        row_ifft[base + tid + 256u].real = srow[tid + 256u].x;
-        row_ifft[base + tid + 256u].imag = srow[tid + 256u].y;
-        row_ifft[base + tid + 384u].real = srow[tid + 384u].x;
-        row_ifft[base + tid + 384u].imag = srow[tid + 384u].y;
+        {row_ifft_store}
 
         #undef CADD
         #undef CSUB
@@ -1473,7 +1670,10 @@ def _row_ifft512_dynamic_kernel(chunk: int, gqk_cols: int):
         #undef DIGITREV512
     """
     return mx.fast.metal_kernel(
-        name=f"ssb_row_ifft512_dyn_b{int(chunk)}_g{int(gqk_cols)}",
+        name=(
+            f"ssb_row_ifft512_dyn_n{int(batch)}_b{int(chunk)}_"
+            f"g{int(gqk_cols)}"
+        ),
         input_names=[
             "g",
             "q_row",
@@ -1511,7 +1711,7 @@ def _row_ifft512_from_dynamic_geometry(
     if int(c10.shape[0]) != 1:
         raise ValueError("Fused MPS row IFFT currently supports one candidate.")
     chunk = int(stop) - int(start)
-    kernel = _row_ifft512_dynamic_kernel(chunk, int(prepared.g_qk.shape[-1]))
+    kernel = _row_ifft512_dynamic_kernel(1, chunk, int(prepared.g_qk.shape[-1]))
     scalars = mx.array(
         [
             float(prepared.factor),
@@ -1532,7 +1732,7 @@ def _row_ifft512_from_dynamic_geometry(
         c12=c12,
         cos2phi12=cos2phi12,
         sin2phi12=sin2phi12,
-    )[0]
+    )
     return kernel(
         inputs=[
             prepared.g_qk[start:stop],
@@ -1551,7 +1751,72 @@ def _row_ifft512_from_dynamic_geometry(
         template=[],
         grid=(128, 512, chunk),
         threadgroup=(128, 4, 1),
-        output_shapes=[(chunk, 512, 512)],
+        output_shapes=[(1, chunk, 512, 512)],
+        output_dtypes=[mx.complex64],
+    )[0][0]
+
+
+def _row_ifft512_batch_from_dynamic_geometry(
+    prepared: _PreparedMpsSSB,
+    *,
+    start: int,
+    stop: int,
+    c10,
+    c12,
+    cos2phi12,
+    sin2phi12,
+):
+    """Fused dynamic correction + 512 row IFFT for batched exact MPS loss."""
+    mx = prepared.mx
+    if prepared.scan_shape != (512, 512):
+        raise ValueError("Batched fused MPS row IFFT currently supports only 512x512.")
+    batch = int(c10.shape[0])
+    chunk = int(stop) - int(start)
+    kernel = _row_ifft512_dynamic_kernel(
+        batch,
+        chunk,
+        int(prepared.g_qk.shape[-1]),
+    )
+    scalars = mx.array(
+        [
+            float(prepared.factor),
+            float(prepared.dc_value.real),
+            float(prepared.dc_value.imag),
+            float(prepared.wavelength),
+            float(prepared.semiangle_rad),
+            float(prepared.ang_y_rad),
+            float(prepared.ang_x_rad),
+        ],
+        dtype=mx.float32,
+    )
+    pk = _pk_batch_from_prepared(
+        prepared,
+        start=start,
+        stop=stop,
+        c10=c10,
+        c12=c12,
+        cos2phi12=cos2phi12,
+        sin2phi12=sin2phi12,
+    )
+    return kernel(
+        inputs=[
+            prepared.g_qk[start:stop],
+            prepared.q_row,
+            prepared.q_col,
+            prepared.kx[start:stop],
+            prepared.ky[start:stop],
+            pk,
+            c10,
+            c12,
+            cos2phi12,
+            sin2phi12,
+            scalars,
+            _twiddle_512(mx),
+        ],
+        template=[],
+        grid=(128, 512, batch * chunk),
+        threadgroup=(128, 4, 1),
+        output_shapes=[(batch, chunk, 512, 512)],
         output_dtypes=[mx.complex64],
     )[0]
 
@@ -2682,6 +2947,7 @@ def _reconstruct_prepared(
     chunk_bf: int,
     compute_loss: bool,
     compute_object: bool,
+    return_phase: bool = True,
 ) -> tuple[np.ndarray | None, float | None, np.ndarray | None]:
     """Run SSB correction from a prepared BF FFT stack."""
     mx = prepared.mx
@@ -2834,8 +3100,6 @@ def _reconstruct_prepared(
         mx.eval(object_wave_mx)
         object_wave = np.asarray(object_wave_mx).astype(np.complex64, copy=False)
     mean_phase_mx = phase_sum / prepared.num_bf
-    mx.eval(mean_phase_mx)
-    mean_phase = np.asarray(mean_phase_mx).astype(np.float32, copy=False)
     loss = None
     if compute_loss:
         if use_scalar_loss:
@@ -2847,7 +3111,104 @@ def _reconstruct_prepared(
         else:
             var_per_pixel = phase_sumsq / prepared.num_bf - mean_phase_mx * mean_phase_mx
             loss = float(np.asarray(mx.mean(var_per_pixel)))
+    mean_phase = None
+    if return_phase:
+        mx.eval(mean_phase_mx)
+        mean_phase = np.asarray(mean_phase_mx).astype(np.float32, copy=False)
     return object_wave, loss, mean_phase
+
+
+def _effective_exact_batch_chunk_bf(
+    chunk_bf: int,
+    scan_shape: tuple[int, int],
+    batch: int,
+) -> int:
+    """Choose an MPS exact-loss chunk that leaves room for candidate batches."""
+    requested = max(1, int(chunk_bf))
+    batch = max(1, int(batch))
+    if batch <= 1:
+        return requested
+    if tuple(scan_shape) == (512, 512):
+        if batch >= 8:
+            return min(requested, 256)
+        if batch >= 4:
+            return min(requested, 512)
+        return min(requested, 1024)
+    return requested
+
+
+def _reconstruct_prepared_batch_exact_loss(
+    prepared: _PreparedMpsSSB,
+    *,
+    C10: np.ndarray,
+    C12: np.ndarray,
+    phi12: np.ndarray,
+    chunk_bf: int,
+) -> np.ndarray:
+    """Evaluate the exact full-BF phase-variance loss for candidate batches."""
+    c10_np = np.asarray(C10, dtype=np.float32).reshape(-1)
+    c12_np = np.asarray(C12, dtype=np.float32).reshape(-1)
+    phi_np = np.asarray(phi12, dtype=np.float32).reshape(-1)
+    if c10_np.size == 0:
+        return np.empty((0,), dtype=np.float32)
+    if c12_np.size != c10_np.size or phi_np.size != c10_np.size:
+        raise ValueError("C10, C12, and phi12 must have matching lengths.")
+
+    batch = int(c10_np.size)
+    if batch == 1 or prepared.scan_shape != (512, 512) or prepared.alpha_k2 is not None:
+        losses = []
+        for c10, c12, phi in zip(c10_np, c12_np, phi_np):
+            _object_wave, loss, _phase = _reconstruct_prepared(
+                prepared,
+                C10=float(c10),
+                C12=float(c12),
+                phi12=float(phi),
+                chunk_bf=chunk_bf,
+                compute_loss=True,
+                compute_object=False,
+                return_phase=False,
+            )
+            if loss is None:
+                raise RuntimeError("Exact MPS SSB objective did not return a loss.")
+            losses.append(float(loss))
+        return np.asarray(losses, dtype=np.float32)
+
+    mx = prepared.mx
+    phase_sum = mx.zeros((batch, *prepared.scan_shape), dtype=mx.float32)
+    phase_sumsq = mx.zeros((batch,), dtype=mx.float32)
+    c10_values = mx.array(c10_np, dtype=mx.float32)
+    c12_values = mx.array(c12_np, dtype=mx.float32)
+    cos2phi12_values = mx.array(np.cos(2.0 * phi_np).astype(np.float32))
+    sin2phi12_values = mx.array(np.sin(2.0 * phi_np).astype(np.float32))
+    chunk_bf = _effective_exact_batch_chunk_bf(chunk_bf, prepared.scan_shape, batch)
+    phase_col_k_bf = _default_phase_col_k_bf(prepared.scan_shape)
+
+    for start in range(0, prepared.num_bf, chunk_bf):
+        stop = min(start + chunk_bf, prepared.num_bf)
+        row_ifft = _row_ifft512_batch_from_dynamic_geometry(
+            prepared,
+            start=start,
+            stop=stop,
+            c10=c10_values,
+            c12=c12_values,
+            cos2phi12=cos2phi12_values,
+            sin2phi12=sin2phi12_values,
+        )
+        chunk_sum, chunk_sumsq = _phase_cols512_scalar_loss_batch_from_row_ifft(
+            mx,
+            row_ifft,
+            k_bf=phase_col_k_bf,
+        )
+        phase_sum = phase_sum + chunk_sum
+        phase_sumsq = phase_sumsq + chunk_sumsq
+        mx.eval(phase_sum, phase_sumsq)
+
+    mean_phase = phase_sum / prepared.num_bf
+    mean_sq = mx.mean(mean_phase * mean_phase, axis=(1, 2))
+    norm = float(prepared.num_bf * prepared.scan_shape[0] * prepared.scan_shape[1])
+    losses = phase_sumsq / norm - mean_sq
+    mx.eval(losses)
+    return np.asarray(losses).astype(np.float32, copy=False)
 
 
 def _cuda_sparse_row_indices(scan_shape: tuple[int, int]) -> np.ndarray:
@@ -3338,16 +3699,21 @@ def ssb_fit(
     bf_center: tuple[float, float] | None = None,
     bf_radius: float | None = None,
     chunk_bf: int = 16,
-    optuna_batch_size: int = 16,
+    optuna_batch_size: int = 2,
+    objective_mode: str = "exact",
     seed: int = 42,
     verbose: bool = False,
 ) -> MpsSSBPreviewResult:
     """Free-fit C10/C12/phi12 on Apple GPU, then reconstruct the best SSB phase.
 
-    This is a compact MLX optimizer for Mac workflows. For supported SSB scan
-    sizes it evaluates the same sparse-row phase-variance objective as the CUDA
-    SSB optimizer.
+    This is a compact MLX optimizer for Mac workflows. The default exact
+    objective uses the same full active BF phase-variance loss as the final
+    reconstruction. Set ``objective_mode="sparse"`` only for legacy CUDA-shaped
+    reference checks.
     """
+    objective_mode = str(objective_mode).lower()
+    if objective_mode not in {"exact", "sparse"}:
+        raise ValueError("objective_mode must be 'exact' or 'sparse'.")
     _require_mlx()
     import optuna
 
@@ -3384,7 +3750,11 @@ def ssb_fit(
         rotation_angle_deg=rotation_angle_deg,
         chunk_bf=setup_chunk_bf,
     )
-    fit_chunk_bf = requested_chunk_bf
+    fit_chunk_bf = (
+        _effective_phase_loss_chunk_bf(requested_chunk_bf, scan_shape)
+        if objective_mode == "exact"
+        else requested_chunk_bf
+    )
 
     start = {"C10": 0.0, "C12": 50.0, "phi12": 0.0}
     if aberrations:
@@ -3393,6 +3763,20 @@ def ssb_fit(
     trials: list[dict] = []
 
     def evaluate(C10: float, C12: float, phi12: float) -> float:
+        if objective_mode == "exact":
+            _object_wave, loss, _phase = _reconstruct_prepared(
+                prepared,
+                C10=C10,
+                C12=C12,
+                phi12=phi12,
+                chunk_bf=fit_chunk_bf,
+                compute_loss=True,
+                compute_object=False,
+                return_phase=False,
+            )
+            if loss is None:
+                raise RuntimeError("Exact MPS SSB objective did not return a loss.")
+            return float(loss)
         loss = _reconstruct_prepared_batch_cuda_sparse(
             prepared,
             C10=np.asarray([C10], dtype=np.float32),
@@ -3406,6 +3790,14 @@ def ssb_fit(
         c10 = np.asarray([p["C10"] for p in params], dtype=np.float32)
         c12 = np.asarray([p["C12"] for p in params], dtype=np.float32)
         phi = np.asarray([p["phi12"] for p in params], dtype=np.float32)
+        if objective_mode == "exact":
+            return _reconstruct_prepared_batch_exact_loss(
+                prepared,
+                C10=c10,
+                C12=c12,
+                phi12=phi,
+                chunk_bf=fit_chunk_bf,
+            )
         return _reconstruct_prepared_batch_cuda_sparse(
             prepared,
             C10=c10,
@@ -3466,6 +3858,8 @@ def ssb_fit(
             best_loss,
             refine_eval,
             lock=lock,
+            fatol=1e-6 if objective_mode == "exact" else 1e-8,
+            max_iter=80 if objective_mode == "exact" else 300,
         )
     elif refine is not None:
         raise ValueError(f"refine must be 'nmead' or None, got {refine!r}")
@@ -3487,10 +3881,10 @@ def ssb_fit(
         C12=best["C12"],
         phi12=best["phi12"],
         chunk_bf=final_chunk_bf,
-        compute_loss=False,
+        compute_loss=True,
         compute_object=False,
     )
-    final_loss = evaluate(best["C10"], best["C12"], best["phi12"])
+    final_loss = _full_loss if _full_loss is not None else best_loss
     amplitude = np.abs(object_wave).astype(np.float32)
     return MpsSSBPreviewResult(
         object_wave=object_wave,
@@ -3505,6 +3899,7 @@ def ssb_fit(
         n_trials=int(n_trials),
         optuna_trials=trials,
         refine_method=refine,
+        objective_mode=objective_mode,
     )
 
 
