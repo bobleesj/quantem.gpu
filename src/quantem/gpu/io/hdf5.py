@@ -42,6 +42,8 @@ from numba import njit, prange
 from .constants import BLOCK_SIZE
 from .save import H5Writer, save, wait_for_saves
 
+ScanOrder = Literal["row-major", "serpentine"]
+
 
 # Lazy bitshuffle+LZ4 kernel proxies. The kernels compile only on first CALL
 # (inside the cuda decompress path), so importing this module never touches
@@ -281,23 +283,63 @@ def _apply_scan_shape(
     data: "cp.ndarray",
     explicit: tuple[int, int] | None,
     meta: dict,
+    scan_order: str = "row-major",
 ) -> "cp.ndarray":
     """Reshape 3D ``(N, det_r, det_c)`` → 4D ``(scan_r, scan_c, det_r, det_c)``.
 
     Uses ``explicit`` when the caller passed ``scan_shape=``, else
     ``meta["scan_shape"]`` (auto-derived from ``ntrigger``). No-op when
-    data is already 4D or no shape is available.
+    no shape is available. ``scan_order="serpentine"`` reverses odd scan rows
+    after unflattening so downstream code sees normal ``(row, col)`` order.
     """
+    order = _normalize_scan_order(scan_order)
     shape = explicit if explicit is not None else meta.get("scan_shape")
-    if shape is None or data.ndim != 3:
+    if shape is None:
         return data
     scan_r, scan_c = shape
-    if scan_r * scan_c != data.shape[0]:
+    if data.ndim == 3:
+        if scan_r * scan_c != data.shape[0]:
+            raise ValueError(
+                f"scan_shape {shape} incompatible with frame count {data.shape[0]}"
+            )
+        dr, dc = data.shape[-2:]
+        data = data.reshape(scan_r, scan_c, dr, dc)
+    elif data.ndim == 4:
+        if tuple(int(v) for v in data.shape[:2]) != (int(scan_r), int(scan_c)):
+            return data
+    else:
+        return data
+    return _apply_scan_order(data, order)
+
+
+def _normalize_scan_order(scan_order: str | None) -> ScanOrder:
+    """Normalize accepted flattened scan order names."""
+    key = "row-major" if scan_order is None else str(scan_order).lower()
+    key = key.replace("_", "-").replace(" ", "-")
+    aliases: dict[str, ScanOrder] = {
+        "row-major": "row-major",
+        "raster": "row-major",
+        "serpentine": "serpentine",
+        "snake": "serpentine",
+        "boustrophedon": "serpentine",
+    }
+    if key not in aliases:
         raise ValueError(
-            f"scan_shape {shape} incompatible with frame count {data.shape[0]}"
+            "scan_order must be 'row-major' or 'serpentine' "
+            f"(got {scan_order!r})"
         )
-    dr, dc = data.shape[-2:]
-    return data.reshape(scan_r, scan_c, dr, dc)
+    return aliases[key]
+
+
+def _apply_scan_order(data: "cp.ndarray", scan_order: ScanOrder) -> "cp.ndarray":
+    """Apply scan-order correction in-place on an already 4D scan array."""
+    if scan_order == "row-major" or data.ndim != 4:
+        return data
+    # Reverse one scan row at a time to avoid materializing a full second
+    # 4D array for no-bin 512/1024 acquisitions.
+    for row in range(1, int(data.shape[0]), 2):
+        data[row] = data[row, ::-1].copy()
+    return data
 
 
 def _normalize_scan_region(
@@ -330,6 +372,29 @@ def _normalize_scan_region(
             f"scan column region [{col_start}, {col_stop}) is outside scan width {scan_c}"
         )
     return row_start, row_stop, col_start, col_stop
+
+
+def _scan_region_frame_indices(
+    scan_region: tuple[int, int, int, int],
+    scan_shape: tuple[int, int],
+    scan_order: str = "row-major",
+) -> np.ndarray:
+    """Map a rectangular scan-space ROI to flattened detector frame indices."""
+    row_start, row_stop, col_start, col_stop = _normalize_scan_region(
+        scan_region, scan_shape
+    )
+    order = _normalize_scan_order(scan_order)
+    scan_c = int(scan_shape[1])
+    rows = np.arange(row_start, row_stop, dtype=np.int64)
+    cols = np.arange(col_start, col_stop, dtype=np.int64)
+    if order == "row-major":
+        return (rows[:, None] * scan_c + cols[None, :]).reshape(-1)
+
+    frame_indices = np.empty((len(rows), len(cols)), dtype=np.int64)
+    for out_row, row in enumerate(rows):
+        physical_cols = cols if int(row) % 2 == 0 else (scan_c - 1 - cols)
+        frame_indices[out_row] = int(row) * scan_c + physical_cols
+    return frame_indices.reshape(-1)
 
 
 def get_metadata(filepath: str) -> dict:
@@ -2453,7 +2518,8 @@ def _load_sharded(
     devices: list[int] | str,
     *,
     dataset_path=None, apply_mask=True, scan_shape=None,
-    det_bin=1, verbose=True, auto_narrow=True, output_dtype=None,
+    scan_order="row-major", det_bin=1, verbose=True, auto_narrow=True,
+    output_dtype=None,
 ) -> LoadResult:
     """Sharded multi-GPU load — files split across GPUs, each kept on its card.
 
@@ -2496,6 +2562,7 @@ def _load_sharded(
                 try:
                     r = load(filepaths[idx], dataset_path=dataset_path,
                              apply_mask=apply_mask, scan_shape=scan_shape,
+                             scan_order=scan_order,
                              det_bin=det_bin, verbose=False,
                              auto_narrow=auto_narrow, output_dtype=output_dtype)
                 except (FileNotFoundError, OSError, ValueError) as e:
@@ -2550,8 +2617,9 @@ def _load_sharded(
 
 
 def _load_as_dataset5dstem(
-    filepath, *, dataset_path, apply_mask, scan_shape, det_bin, verbose,
-    auto_narrow, output_dtype, devices, series_type, series, sampling, units,
+    filepath, *, dataset_path, apply_mask, scan_shape, scan_order, det_bin,
+    verbose, auto_narrow, output_dtype, devices, series_type, series, sampling,
+    units,
 ):
     """Load (born-sharded across ``devices`` when given) and wrap into one
     ``Dataset5dstem`` - a multi-tilt / time series presented as a single logical
@@ -2605,6 +2673,7 @@ def _load_as_dataset5dstem(
                             dataset_path=dataset_path,
                             apply_mask=apply_mask,
                             scan_shape=scan_shape,
+                            scan_order=scan_order,
                             det_bin=det_bin,
                             verbose=False,
                             auto_narrow=auto_narrow,
@@ -2679,7 +2748,7 @@ def _load_as_dataset5dstem(
 
     result = load(
         filepath, dataset_path=dataset_path, apply_mask=apply_mask,
-        scan_shape=scan_shape, det_bin=det_bin, verbose=verbose,
+        scan_shape=scan_shape, scan_order=scan_order, det_bin=det_bin, verbose=verbose,
         auto_narrow=auto_narrow, output_dtype=output_dtype, devices=devices,
     )
     data, meta = result.data, result.metadata
@@ -2709,6 +2778,7 @@ def _load_view(
     dataset_path=None,
     apply_mask: bool = True,
     scan_shape=None,
+    scan_order: str = "row-major",
     det_bin: int = 1,
     verbose: bool = True,
     auto_narrow: bool = True,
@@ -2742,6 +2812,12 @@ def _load_view(
             and dataset_path is None
             and output_dtype is None
         ):
+            if _normalize_scan_order(scan_order) != "row-major":
+                raise ValueError(
+                    "scan_order='serpentine' is not supported for full no-bin "
+                    "MPS zero-copy chunked loads yet. Use scan_region=... or "
+                    "det_bin>1, or load on CUDA."
+                )
             data = _be.load_mps_4dstem(
                 str(path),
                 scan_shape=scan_shape,
@@ -2752,6 +2828,7 @@ def _load_view(
                 skip_mps_memory_check=skip_mps_memory_check,
             )
             meta.update(data.metadata)
+            meta["scan_order"] = _normalize_scan_order(scan_order)
             if apply_mask:
                 mask = read_pixel_mask(str(path))
                 if mask is not None:
@@ -2776,7 +2853,8 @@ def _load_view(
                 data = np.minimum(data, 255).astype(np.uint8)
             else:
                 data = data.astype(out_dtype)
-        data = _apply_scan_shape(data, scan_shape, meta)
+        data = _apply_scan_shape(data, scan_shape, meta, scan_order)
+        meta["scan_order"] = _normalize_scan_order(scan_order)
         if backend == "mps":
             # Torch MPS tensor is the first-class GPU citizen on Apple, the peer
             # of cupy on cuda. Show4DSTEM consumes it directly and runs BF/DF +
@@ -2903,6 +2981,7 @@ def load_scan_region(
     *,
     backend: str = "cuda",
     scan_shape: tuple[int, int] | None = None,
+    scan_order: str = "row-major",
     det_bin: int = 1,
     apply_mask: bool = True,
     verbose: bool = True,
@@ -2919,6 +2998,10 @@ def load_scan_region(
         ``(row_start, row_stop, col_start, col_stop)`` in the full scan grid.
     scan_shape
         Full acquisition scan shape. When omitted, it is derived from metadata.
+    scan_order
+        Flattened scan ordering. ``"row-major"`` keeps the normal raster order;
+        ``"serpentine"`` maps odd rows from right to left while returning the
+        crop in normal ``(row, col)`` order.
     det_bin
         Optional detector binning factor. The scan region is never binned.
 
@@ -2954,15 +3037,17 @@ def load_scan_region(
             "square scan grid"
         )
     full_scan_shape = tuple(int(v) for v in full_scan_shape)
+    order = _normalize_scan_order(scan_order)
     row_start, row_stop, col_start, col_stop = _normalize_scan_region(
         scan_region, full_scan_shape
     )
     patch_h = int(row_stop - row_start)
     patch_w = int(col_stop - col_start)
-    scan_c = int(full_scan_shape[1])
-    rows = np.arange(row_start, row_stop, dtype=np.int64)
-    cols = np.arange(col_start, col_stop, dtype=np.int64)
-    frame_indices = (rows[:, None] * scan_c + cols[None, :]).reshape(-1)
+    frame_indices = _scan_region_frame_indices(
+        (row_start, row_stop, col_start, col_stop),
+        full_scan_shape,
+        order,
+    )
 
     chunk_names = _discover_chunk_names(filepath)
     if not chunk_names:
@@ -3013,6 +3098,7 @@ def load_scan_region(
     meta["full_scan_shape"] = full_scan_shape
     meta["full_n_frames"] = int(full_scan_shape[0] * full_scan_shape[1])
     meta["scan_shape"] = (patch_h, patch_w)
+    meta["scan_order"] = order
     meta["n_frames"] = int(patch_h * patch_w)
     meta["scan_region"] = {
         "row_start": int(row_start),
@@ -3097,6 +3183,7 @@ def load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = Tru
             )
         allowed = {
             "scan_shape",
+            "scan_order",
             "det_bin",
             "apply_mask",
             "verbose",
@@ -3114,6 +3201,7 @@ def load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = Tru
             scan_region,
             backend=resolved_backend,
             scan_shape=kwargs.pop("scan_shape", None),
+            scan_order=kwargs.pop("scan_order", "row-major"),
             det_bin=kwargs.pop("det_bin", 1),
             apply_mask=kwargs.pop("apply_mask", True),
             verbose=kwargs.pop("verbose", True),
@@ -3304,6 +3392,7 @@ def _load_many_parallel(masters, *, gpus=None, max_concurrent=None, verbose=Fals
     # Consumer: serial decode, each master onto its assigned GPU.
     decode_kw = {k: load_kwargs[k] for k in ("output_dtype", "det_bin", "auto_narrow")
                  if k in load_kwargs}
+    scan_order = load_kwargs.get("scan_order", "row-major")
     if decode_kw.get("det_bin", 1) > 1:
         decode_kw["streaming_bin"] = True
     results: list = [None] * n
@@ -3315,11 +3404,14 @@ def _load_many_parallel(masters, *, gpus=None, max_concurrent=None, verbose=Fals
         d = dev[i]
         with (cp.cuda.Device(d) if d is not None else nullcontext()):
             data = _decompress_prepared(prepared, **decode_kw)
+            meta = get_metadata(masters[i])
             nf = int(data.shape[0])
             side = int(nf ** 0.5)
-            if data.ndim == 3 and side * side == nf:  # (frames,k,k) -> (scan,scan,k,k)
-                data = data.reshape(side, side, *data.shape[1:])
-        results[i] = LoadResult(data, get_metadata(masters[i]))
+            if data.ndim == 3 and side * side == nf:
+                meta.setdefault("scan_shape", (side, side))
+            data = _apply_scan_shape(data, load_kwargs.get("scan_shape"), meta, scan_order)
+            meta["scan_order"] = _normalize_scan_order(scan_order)
+        results[i] = LoadResult(data, meta)
     return results
 
 
@@ -3338,6 +3430,7 @@ def _load_impl(
     dataset_path: str | None = None,
     apply_mask: bool = True,
     scan_shape: tuple[int, int] | None = None,
+    scan_order: str = "row-major",
     det_bin: int = 1,
     verbose: bool = True,
     auto_narrow: bool = True,
@@ -3379,6 +3472,10 @@ def _load_impl(
         When provided (or derived), the scan dimension is unflattened:
         ``(N, det_r, det_c)`` → ``(scan_r, scan_c, det_r, det_c)``; for
         multi-file loads: ``(n_files, scan_r, scan_c, det_r, det_c)``.
+    scan_order : {"row-major", "serpentine"}, optional
+        Ordering of flattened scan frames before unflattening. Serpentine
+        acquisitions store odd scan rows right-to-left; the loader corrects
+        them so returned arrays are always indexed as normal ``(row, col)``.
     det_bin : int, optional
         Detector binning factor (default 1 = no binning). Applied immediately
         after loading each file, before copying into the output array. Reduces
@@ -3518,6 +3615,7 @@ def _load_impl(
     import os
     import re
     import time
+    scan_order = _normalize_scan_order(scan_order)
 
     # Resolve the decompress backend ("auto" → cuda on an NVIDIA box, else mps
     # on Apple Silicon, else cpu). The cuda path below is unchanged. cpu/mps are
@@ -3553,6 +3651,12 @@ def _load_impl(
             or (isinstance(filepath, (str, os.PathLike))
                 and os.path.isdir(os.path.expanduser(str(filepath))))
         ):
+            if scan_order != "row-major":
+                raise ValueError(
+                    "scan_order='serpentine' is not supported for MPS lazy "
+                    "multi-dataset loads yet. Load one CUDA dataset, use "
+                    "scan_region=..., or use det_bin>1."
+                )
             from quantem.gpu.io.mps_multi import load_mps_datasets
 
             return load_mps_datasets(
@@ -3564,7 +3668,7 @@ def _load_impl(
             )
         return _load_view(
             filepath, backend, dataset_path=dataset_path, apply_mask=apply_mask,
-            scan_shape=scan_shape, det_bin=det_bin, verbose=verbose,
+            scan_shape=scan_shape, scan_order=scan_order, det_bin=det_bin, verbose=verbose,
             auto_narrow=auto_narrow, output_dtype=output_dtype,
             row_prefix=row_prefix,
             skip_mps_memory_check=skip_mps_memory_check,
@@ -3581,7 +3685,7 @@ def _load_impl(
         # no axis to plot against - fail early with a copy-paste fix.
         return _load_as_dataset5dstem(
             filepath, dataset_path=dataset_path, apply_mask=apply_mask,
-            scan_shape=scan_shape, det_bin=det_bin, verbose=verbose,
+            scan_shape=scan_shape, scan_order=scan_order, det_bin=det_bin, verbose=verbose,
             auto_narrow=auto_narrow, output_dtype=output_dtype, devices=devices,
             series_type=series_type, series=series, sampling=sampling, units=units,
         )
@@ -3593,7 +3697,7 @@ def _load_impl(
         with cp.cuda.Device(device_idx):
             return _load_impl(
                 filepath, dataset_path=dataset_path, apply_mask=apply_mask,
-                scan_shape=scan_shape, det_bin=det_bin, verbose=verbose,
+                scan_shape=scan_shape, scan_order=scan_order, det_bin=det_bin, verbose=verbose,
                 auto_narrow=auto_narrow, output_dtype=output_dtype,
                 skip_mps_memory_check=skip_mps_memory_check,
             )
@@ -3606,7 +3710,8 @@ def _load_impl(
     if devices is not None and isinstance(filepath, (list, tuple)):
         return _load_sharded(
             list(filepath), devices, dataset_path=dataset_path,
-            apply_mask=apply_mask, scan_shape=scan_shape, det_bin=det_bin,
+            apply_mask=apply_mask, scan_shape=scan_shape, scan_order=scan_order,
+            det_bin=det_bin,
             verbose=verbose, auto_narrow=auto_narrow, output_dtype=output_dtype,
         )
 
@@ -3670,7 +3775,7 @@ def _load_impl(
                 if prepared is None:
                     # Fallback: not a chunked master — full serial load.
                     r = load(fp, dataset_path=dataset_path, apply_mask=apply_mask,
-                             scan_shape=effective_shape, det_bin=det_bin,
+                             scan_shape=effective_shape, scan_order=scan_order, det_bin=det_bin,
                              verbose=False, auto_narrow=auto_narrow,
                              output_dtype=output_dtype)
                     fmeta, d = r.metadata, r.data
@@ -3682,7 +3787,8 @@ def _load_impl(
                     fmeta = get_metadata(fp)
                     if prepared.get("pixel_mask") is not None:
                         fmeta["pixel_mask"] = prepared["pixel_mask"]
-                    d = _apply_scan_shape(d, effective_shape, fmeta)
+                    d = _apply_scan_shape(d, effective_shape, fmeta, scan_order)
+                    fmeta["scan_order"] = scan_order
             except (FileNotFoundError, OSError, ValueError) as e:
                 if verbose:
                     print(f"  [{i+1}/{n_files}] SKIPPED: {e}")
@@ -3779,7 +3885,8 @@ def _load_impl(
                 meta = get_metadata(filepath)
                 if pixel_mask is not None:
                     meta["pixel_mask"] = pixel_mask
-                data = _apply_scan_shape(data, scan_shape, meta)
+                data = _apply_scan_shape(data, scan_shape, meta, scan_order)
+                meta["scan_order"] = scan_order
                 return LoadResult(data, meta)
             if "data" in data_group:
                 # Self-contained master OR a master whose sibling chunk
@@ -3845,7 +3952,8 @@ def _load_impl(
             meta = get_metadata(filepath)
             if pixel_mask is not None:
                 meta["pixel_mask"] = pixel_mask
-            data = _apply_scan_shape(data, scan_shape, meta)
+            data = _apply_scan_shape(data, scan_shape, meta, scan_order)
+            meta["scan_order"] = scan_order
             return LoadResult(data, meta)
 
     # For 4D/5D compressed data, use the dedicated loader
@@ -3860,7 +3968,8 @@ def _load_impl(
         meta = get_metadata(filepath)
         if pixel_mask is not None:
             meta["pixel_mask"] = pixel_mask
-        data = _apply_scan_shape(data, scan_shape, meta)
+        data = _apply_scan_shape(data, scan_shape, meta, scan_order)
+        meta["scan_order"] = scan_order
         return LoadResult(data, meta)
 
     # For 3D data, use cached GPUDecompressor
@@ -3907,7 +4016,8 @@ def _load_impl(
     meta = get_metadata(filepath)
     if pixel_mask is not None:
         meta["pixel_mask"] = pixel_mask
-    data = _apply_scan_shape(data, scan_shape, meta)
+    data = _apply_scan_shape(data, scan_shape, meta, scan_order)
+    meta["scan_order"] = scan_order
 
     return LoadResult(data, meta)
 

@@ -25,6 +25,8 @@ from PIL import Image, ImageDraw, ImageFont
 
 MovieData = np.ndarray | Sequence[np.ndarray] | Sequence[Image.Image]
 
+_CUDA_NVENC_MIN_EDGE_PX = 256
+
 
 def _is_pil_frame_sequence(data: object) -> bool:
     return (
@@ -283,7 +285,24 @@ def save_mp4(
                 from quantem.gpu.movie import cuda_mp4
             except ImportError:
                 cuda_mp4 = None
-            try_cuda = bool(cuda_mp4 is not None and cuda_mp4.is_available())
+            if cuda_mp4 is not None:
+                stacks = _as_stack_list(data)
+                _frames, height, width = _validate_stacks(stacks)
+                out_width, out_height, *_ = cuda_mp4._layout(
+                    len(stacks),
+                    height,
+                    width,
+                    cols=cols,
+                    gap=gap,
+                    label_height=label_height,
+                    max_width=max_width,
+                )
+                # PyNvVideoCodec may import successfully while NVENC rejects
+                # small H.264 surfaces at encoder initialization time.
+                large_enough = min(out_width, out_height) >= _CUDA_NVENC_MIN_EDGE_PX
+                try_cuda = bool(large_enough and cuda_mp4.is_available())
+            else:
+                try_cuda = False
         if try_cuda:
             from quantem.gpu.movie import cuda_mp4
 
@@ -295,22 +314,27 @@ def save_mp4(
                 shared=shared_contrast,
                 ref_stacks=ref_stacks,
             )
-            return cuda_mp4.save_mp4(
-                stacks,
-                path,
-                labels=labels,
-                fps=float(fps),
-                gap=gap,
-                label_height=label_height,
-                max_width=max_width,
-                cols=cols,
-                limits=limits,
-                qp=int(backend_options.pop("qp", crf)),
-                preset=str(backend_options.pop("preset", "P3")),
-                tuning_info=str(backend_options.pop("tuning_info", "high_quality")),
-                gpu_id=int(backend_options.pop("gpu_id", 0)),
-                faststart=bool(backend_options.pop("faststart", True)),
-            )
+            cuda_options = dict(backend_options)
+            try:
+                return cuda_mp4.save_mp4(
+                    stacks,
+                    path,
+                    labels=labels,
+                    fps=float(fps),
+                    gap=gap,
+                    label_height=label_height,
+                    max_width=max_width,
+                    cols=cols,
+                    limits=limits,
+                    qp=int(cuda_options.pop("qp", crf)),
+                    preset=str(cuda_options.pop("preset", "P3")),
+                    tuning_info=str(cuda_options.pop("tuning_info", "high_quality")),
+                    gpu_id=int(cuda_options.pop("gpu_id", 0)),
+                    faststart=bool(cuda_options.pop("faststart", True)),
+                )
+            except Exception:
+                if backend == "cuda":
+                    raise
     if backend in {"auto", "mps"} and not _is_pil_frame_sequence(data):
         try_mps = backend == "mps"
         if backend == "auto":
@@ -330,21 +354,26 @@ def save_mp4(
                 shared=shared_contrast,
                 ref_stacks=ref_stacks,
             )
-            return mps_mp4.save_mp4(
-                stacks,
-                path,
-                labels=labels,
-                fps=float(fps),
-                gap=gap,
-                label_height=label_height,
-                max_width=max_width,
-                cols=cols,
-                limits=limits,
-                crf=int(crf),
-                quality=int(backend_options.pop("quality", 65)),
-                codec=str(backend_options.pop("codec", "auto")),
-                faststart=bool(backend_options.pop("faststart", True)),
-            )
+            mps_options = dict(backend_options)
+            try:
+                return mps_mp4.save_mp4(
+                    stacks,
+                    path,
+                    labels=labels,
+                    fps=float(fps),
+                    gap=gap,
+                    label_height=label_height,
+                    max_width=max_width,
+                    cols=cols,
+                    limits=limits,
+                    crf=int(crf),
+                    quality=int(mps_options.pop("quality", 65)),
+                    codec=str(mps_options.pop("codec", "auto")),
+                    faststart=bool(mps_options.pop("faststart", True)),
+                )
+            except Exception:
+                if backend == "mps":
+                    raise
     frames = _movie_frames(
         data,
         labels=labels,

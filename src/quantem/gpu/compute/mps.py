@@ -8,6 +8,7 @@ widget/UI dependency.
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import gc
 import os
 import time
@@ -89,6 +90,19 @@ def _chunk_groups(chunks: list):
         count += 1
     if count:
         yield range(start, len(chunks))
+
+
+def _column_gather_workers(num_chunks: int, num_pixels: int) -> int:
+    """Number of CPU workers for zero-copy detector-column gathers."""
+    override = os.environ.get("QUANTEM_MPS_COLUMN_GATHER_WORKERS")
+    if override:
+        try:
+            return max(1, int(override))
+        except ValueError:
+            pass
+    if int(num_pixels) < 128 or int(num_chunks) <= 1:
+        return 1
+    return max(1, min(16, int(num_chunks), os.cpu_count() or 1))
 
 
 def _format_seconds(seconds: float) -> str:
@@ -1097,6 +1111,37 @@ class ChunkedFrames:
             else:
                 out[start:stop] = np.asarray(chunk[:, row, col], dtype=self._np_dtype)
         return out
+
+    def columns(self, rows, cols) -> np.ndarray:
+        """Detector pixels over all scan positions as ``(num_pixels, frames)``."""
+        rows = np.asarray(rows, dtype=np.intp).reshape(-1)
+        cols = np.asarray(cols, dtype=np.intp).reshape(-1)
+        if rows.shape != cols.shape:
+            raise ValueError("rows and cols must have matching shapes.")
+        num_pixels = int(rows.size)
+        if self.vi.row_prefix_enabled:
+            out = np.empty((num_pixels, self._n), dtype=self._np_dtype)
+            for i, (row, col) in enumerate(zip(rows.tolist(), cols.tolist())):
+                out[i] = self.column(int(row), int(col))
+            return out
+        flat_idx = rows * int(self._det[1]) + cols
+        out_scan_major = np.empty((self._n, num_pixels), dtype=self._np_dtype)
+
+        def fill_chunk(ci: int) -> None:
+            chunk = self.chunks[ci]
+            start = self._offsets[ci]
+            stop = self._offsets[ci + 1]
+            flat = np.asarray(chunk).reshape(int(chunk.shape[0]), -1)
+            out_scan_major[start:stop, :] = np.take(flat, flat_idx, axis=1)
+
+        workers = _column_gather_workers(len(self.chunks), num_pixels)
+        if workers == 1:
+            for ci in range(len(self.chunks)):
+                fill_chunk(ci)
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                list(executor.map(fill_chunk, range(len(self.chunks))))
+        return out_scan_major.T
 
     def ensure_fast_interaction(self, *, verbose: bool = True) -> MetalVirtualImage:
         """Prepare the detector-bin``fast_bin`` sidecar for fast virtual images.
