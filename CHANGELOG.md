@@ -6,6 +6,10 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- Make CUDA SSB batch variance deterministic for sparse 256/512/1024 row
+  transforms, clarify the ShowPtycho UI handoff, and document that WebGPU/WGSL
+  remains browser-owned in `quantem.widget`.
+
 ## rc5 - 2026-07-14
 
 - Add the first documentation site with install/backend tutorials, simplify the

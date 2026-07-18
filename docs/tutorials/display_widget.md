@@ -36,8 +36,8 @@ The target ownership split is:
 
 ## Display ptychographic SSB results
 
-Ptychographic SSB compute should stay in `quantem.gpu.ssb`; display should stay
-in `quantem.widget`.
+Ptychographic SSB compute should stay in `quantem.gpu.ssb`; interactive display
+should stay in `quantem.widget.ShowPtycho`.
 
 ```python
 from quantem.gpu.ssb import ssb
@@ -49,5 +49,7 @@ Show2D(result.phase)
 Show2D(abs(result.object_wave))
 ```
 
-If a future widget exposes an SSB workflow, it should call `quantem.gpu.ssb` for
-the reconstruction and keep controls, previews, and export in widget code.
+For interactive ptychography tuning, construct the compute object with
+`quantem.gpu.ssb.SSB` and pass it to `quantem.widget.ShowPtycho(ssb)`. The
+widget owns controls, previews, and export; this package owns the reconstruction
+math and backend policy.

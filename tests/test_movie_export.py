@@ -14,6 +14,11 @@ def _stack(offset: float = 0.0) -> np.ndarray:
     return np.stack([(xx + frame) + yy * 0.5 + offset for frame in range(3)]).astype(np.float32)
 
 
+def _nvenc_stack(offset: float = 0.0) -> np.ndarray:
+    yy, xx = np.mgrid[:256, :256].astype(np.float32)
+    return np.stack([(xx + frame) + yy * 0.5 + offset for frame in range(3)]).astype(np.float32)
+
+
 def test_movie_module_is_available_from_package() -> None:
     assert qg.movie.save_mp4 is movie.save_mp4
 
@@ -102,10 +107,17 @@ def test_save_mp4_auto_uses_cuda_backend_when_available(tmp_path: Path, monkeypa
     monkeypatch.setattr(cuda_mp4, "is_available", lambda: True)
     monkeypatch.setattr(cuda_mp4, "save_mp4", fake_cuda_writer)
 
-    out = movie.save_mp4(_stack(), tmp_path / "auto.mp4", labels=["raw"], crf=22)
+    out = movie.save_mp4(
+        _nvenc_stack(),
+        tmp_path / "auto.mp4",
+        labels=["raw"],
+        crf=22,
+        label_height=0,
+        max_width=None,
+    )
 
     assert out.read_bytes() == b"cuda"
-    assert captured == {"shape": (3, 10, 12), "labels": ["raw"], "qp": 22}
+    assert captured == {"shape": (3, 256, 256), "labels": ["raw"], "qp": 22}
 
 
 def test_save_mp4_auto_falls_back_when_cuda_unavailable(tmp_path: Path, monkeypatch) -> None:

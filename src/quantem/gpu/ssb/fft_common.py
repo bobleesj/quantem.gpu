@@ -1065,7 +1065,11 @@ class CustomFFTBase:
                     pk_group = pk_staging
                 else:
                     pk_group = cp.ascontiguousarray(pk[:, bf_start:bf_end])
-                if N == 1024:
+                # 256/512/1024 batch transposes intentionally write a sparse
+                # row subset for the optimizer objective. The variance pass
+                # reads the full staged plane, so the unwritten entries must be
+                # deterministic zeros rather than reused allocator contents.
+                if N != 128:
                     staging.fill(0)
                 grid_rows = (1, self._rows_fused_pk_grid_y_quad, quads * chunk)
                 self._rows_fused_pk_batch_quad_transpose(
@@ -1110,7 +1114,10 @@ class CustomFFTBase:
         if batch < 4:
             raise ValueError("Batch size must be >= 4; caller should pad")
         quads = (batch + 3) // 4
-        if N == 1024:
+        # See the streaming-path note above: non-128 batch transforms leave a
+        # validated row subset unwritten, and the variance reducer expects zero
+        # contribution from those entries.
+        if N != 128:
             data.fill(0)
         grid_rows = (1, self._rows_fused_pk_grid_y_quad, quads * num_bf)
         self._rows_fused_pk_batch_quad_transpose(

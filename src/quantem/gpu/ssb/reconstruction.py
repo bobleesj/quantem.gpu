@@ -885,8 +885,8 @@ class SSB:
         self._best_loss = float(study.best_value)
         self._n_trials = n_trials
         self._elapsed_optimize = elapsed
-        # Preserve the compact trial list that explore() reads.  We pack every
-        # trial's (loss, free params) so the explorer can show the
+        # Preserve the compact trial list that ShowPtycho reads.  We pack every
+        # trial's (loss, free params) so ShowPtycho can show the
         # higher-order search history.
         self._optuna_trials = [
             {"loss": float(t.value) if t.value is not None else float("inf"),
@@ -1762,7 +1762,7 @@ class SSB:
         ))
 
     # =====================================================================
-    #  Interactive exploration (Jupyter)
+    #  Interactive UI handoff (Jupyter)
     # =====================================================================
 
     def explore(
@@ -1777,13 +1777,13 @@ class SSB:
         size: int = 800,
         fft_on: bool = False,
         calibration: "str | pathlib.Path | object | None" = None,
-    ) -> "SSBExplore":
-        """Interactive SSB preview is owned by the UI layer.
+    ) -> None:
+        """Interactive SSB tuning is owned by the UI layer.
 
-        ``quantem.gpu`` owns the compute engine only. Use the widget/live SSB
-        preview layer for anywidget interaction.
+        ``quantem.gpu`` owns the compute engine only. Use ``ShowPtycho`` from
+        ``quantem.widget`` for anywidget interaction.
         """
         raise RuntimeError(
             "SSB.explore() is a UI feature and is not part of quantem.gpu. "
-            "Use the quantem.gpu/widget SSB preview layer for interactive exploration."
+            "Use quantem.widget.ShowPtycho(ssb) for interactive tuning."
         )
