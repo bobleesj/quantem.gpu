@@ -189,7 +189,12 @@ def _mps_max_buffer_bytes() -> int | None:
     return value if value > 0 else None
 
 
-def _mps_output_bytes(plan: MPSMasterPlan, det_bin: int) -> int:
+def _mps_output_bytes(
+    plan: MPSMasterPlan,
+    det_bin: int,
+    *,
+    output_dtype: type | np.dtype | str | None = None,
+) -> int:
     det_bin = int(det_bin)
     if det_bin < 1:
         raise ValueError("det_bin must be >= 1.")
@@ -198,20 +203,26 @@ def _mps_output_bytes(plan: MPSMasterPlan, det_bin: int) -> int:
         raise ValueError(
             f"Detector dims {(det_row, det_col)} are not divisible by det_bin={det_bin}."
         )
+    dtype = _normalize_output_dtype(output_dtype) or plan.dtype
     return (
         int(plan.total_frames)
         * (det_row // det_bin)
         * (det_col // det_bin)
-        * int(plan.dtype.itemsize)
+        * int(dtype.itemsize)
     )
 
 
-def _mps_recommended_det_bin(plan: MPSMasterPlan, limit_bytes: int) -> tuple[int, int] | None:
+def _mps_recommended_det_bin(
+    plan: MPSMasterPlan,
+    limit_bytes: int,
+    *,
+    output_dtype: type | np.dtype | str | None = None,
+) -> tuple[int, int] | None:
     for factor in (2, 4, 8, 16):
         det_row, det_col = (int(x) for x in plan.detector_shape)
         if det_row % factor or det_col % factor:
             continue
-        output_bytes = _mps_output_bytes(plan, factor)
+        output_bytes = _mps_output_bytes(plan, factor, output_dtype=output_dtype)
         if output_bytes <= int(limit_bytes):
             return factor, output_bytes
     return None
@@ -231,6 +242,7 @@ def _check_mps_memory_guard(
     plan: MPSMasterPlan,
     *,
     det_bin: int,
+    output_dtype: type | np.dtype | str | None = None,
     skip_memory_check: bool | None = None,
 ) -> None:
     """Fail early before an MPS load can pressure unified memory.
@@ -243,7 +255,7 @@ def _check_mps_memory_guard(
     recommended = _mps_recommended_working_set_bytes()
     if recommended is None:
         return
-    output_bytes = _mps_output_bytes(plan, det_bin)
+    output_bytes = _mps_output_bytes(plan, det_bin, output_dtype=output_dtype)
     safe_limit = int(recommended * _MPS_SAFE_WORKING_SET_FRACTION)
     warn_limit = int(recommended * _MPS_WARN_WORKING_SET_FRACTION)
     max_buffer = _mps_max_buffer_bytes()
@@ -256,7 +268,11 @@ def _check_mps_memory_guard(
     if output_bytes <= warn_limit:
         return
 
-    recommendation = _mps_recommended_det_bin(plan, hard_limit)
+    recommendation = _mps_recommended_det_bin(
+        plan,
+        hard_limit,
+        output_dtype=output_dtype,
+    )
     if recommendation is None:
         rec_text = "Use a larger det_bin or load a smaller scan region."
     else:
@@ -452,6 +468,7 @@ _bin_u16_fn = _library.newFunctionWithName_("bin_sum_u16")
 _bin_u32_fn = _library.newFunctionWithName_("bin_sum_u32")
 _bin_tiled_u16_fn = _library.newFunctionWithName_("bin_sum_tiled_u16")
 _zero_bad_u16_fn = _library.newFunctionWithName_("zero_bad_pixels_u16")
+_clip_u16_to_u8_fn = _library.newFunctionWithName_("clip_u16_to_u8")
 _row_prefix_masked_u16_fn = _library.newFunctionWithName_("row_prefix_masked_u16")
 _row_prefix_u16_fn = _library.newFunctionWithName_("row_prefix_u16")
 _h5lz4dc_pipeline, _ = _device.newComputePipelineStateWithFunction_error_(_h5lz4dc_fn, None)
@@ -461,6 +478,9 @@ _bin_u16_pipeline, _ = _device.newComputePipelineStateWithFunction_error_(_bin_u
 _bin_u32_pipeline, _ = _device.newComputePipelineStateWithFunction_error_(_bin_u32_fn, None)
 _bin_tiled_u16_pipeline, _ = _device.newComputePipelineStateWithFunction_error_(_bin_tiled_u16_fn, None)
 _zero_bad_u16_pipeline, _ = _device.newComputePipelineStateWithFunction_error_(_zero_bad_u16_fn, None)
+_clip_u16_to_u8_pipeline, _ = _device.newComputePipelineStateWithFunction_error_(
+    _clip_u16_to_u8_fn, None
+)
 _row_prefix_masked_u16_pipeline, _ = _device.newComputePipelineStateWithFunction_error_(
     _row_prefix_masked_u16_fn, None
 )
@@ -554,6 +574,64 @@ class _MtlArray(np.ndarray):
     _mtl = None
 
 
+def _normalize_output_dtype(output_dtype: type | np.dtype | str | None) -> np.dtype | None:
+    """Return supported decode-output dtype for MPS chunked browse loads."""
+    if output_dtype is None:
+        return None
+    if isinstance(output_dtype, str) and output_dtype in {"u8", "uint8"}:
+        output_dtype = np.uint8
+    dtype = np.dtype(output_dtype)
+    if dtype != np.dtype(np.uint8):
+        raise ValueError(
+            "MPS chunk-backed load currently supports output_dtype=None or "
+            "output_dtype=np.uint8. Use CUDA or a small crop for other casts."
+        )
+    return dtype
+
+
+def _mtl_array_from_buffer(
+    mtl_buf,
+    dtype: np.dtype,
+    shape: tuple[int, ...],
+) -> _MtlArray:
+    """Create an ``_MtlArray`` view that owns ``mtl_buf``."""
+    dtype = np.dtype(dtype)
+    count = int(np.prod(shape, dtype=np.uint64))
+    view = _numpy_view(mtl_buf, dtype, count)
+    arr = view.reshape(shape).view(_MtlArray)
+    arr._mtl = mtl_buf
+    return arr
+
+
+def _cast_mtl_u16_to_u8(src: np.ndarray) -> _MtlArray:
+    """Clip a Metal-backed uint16 array into a new Metal-backed uint8 array."""
+    src_dtype = np.dtype(src.dtype)
+    if src_dtype == np.dtype(np.uint8):
+        out = src.view(_MtlArray)
+        out._mtl = src._mtl
+        return out
+    if src_dtype != np.dtype(np.uint16) or not hasattr(src, "_mtl"):
+        raise TypeError(
+            "MPS uint8 output requires a Metal-backed uint16 source array."
+        )
+    n = int(src.size)
+    out_mtl = _metal_buffer_alloc(n)
+    cmd = _queue.commandBuffer()
+    enc = cmd.computeCommandEncoder()
+    enc.setComputePipelineState_(_clip_u16_to_u8_pipeline)
+    enc.setBuffer_offset_atIndex_(src._mtl, 0, 0)
+    enc.setBuffer_offset_atIndex_(out_mtl, 0, 1)
+    enc.setBytes_length_atIndex_(np.array([n], dtype=np.uint32).tobytes(), 4, 2)
+    enc.dispatchThreadgroups_threadsPerThreadgroup_(
+        Metal.MTLSizeMake((n + 255) // 256, 1, 1),
+        Metal.MTLSizeMake(256, 1, 1),
+    )
+    enc.endEncoding()
+    cmd.commit()
+    cmd.waitUntilCompleted()
+    return _mtl_array_from_buffer(out_mtl, np.dtype(np.uint8), tuple(src.shape))
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -644,6 +722,7 @@ class MPSDecompressor:
         self._out_nbytes = 0
         # Reusable per-chunk output buffer pool for load_master_chunked()
         self._chunk_out_pool: list = []
+        self._chunk_u8_pool: list = []
         self._chunk_fast_pool: list = []
         self._bad_idx_mtl = None
         self._bad_idx_np = None
@@ -742,7 +821,10 @@ class MPSDecompressor:
                     det_shape: tuple[int, int] | None = None,
                     fast_out_mtl=None,
                     fast_out_byte_offset: int = 0,
-                    fast_det_bin: int | None = None):
+                    fast_det_bin: int | None = None,
+                    cast_u8_out_mtl=None,
+                    cast_u8_out_byte_offset: int = 0,
+                    cast_u8_nelem: int | None = None):
         """Submit LZ4 + bitshuffle GPU work, return uncommitted command buffer.
 
         out_mtl: destination buffer for the bitshuffle output. Defaults to the
@@ -931,6 +1013,25 @@ class MPSDecompressor:
             enc.dispatchThreadgroups_threadsPerThreadgroup_(
                 Metal.MTLSizeMake(n_frames, grid_y, grid_x),
                 Metal.MTLSizeMake(1, 16, 16),
+            )
+        if cast_u8_out_mtl is not None:
+            if elem_size != 2:
+                raise ValueError("output_dtype=np.uint8 requires uint16 source data.")
+            nelem = int(
+                cast_u8_nelem
+                if cast_u8_nelem is not None
+                else n_frames * (frame_bytes // 2)
+            )
+            enc.memoryBarrierWithScope_(Metal.MTLBarrierScopeBuffers)
+            enc.setComputePipelineState_(_clip_u16_to_u8_pipeline)
+            enc.setBuffer_offset_atIndex_(out_mtl, out_byte_offset, 0)
+            enc.setBuffer_offset_atIndex_(cast_u8_out_mtl, cast_u8_out_byte_offset, 1)
+            enc.setBytes_length_atIndex_(
+                np.array([nelem], dtype=np.uint32).tobytes(), 4, 2
+            )
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                Metal.MTLSizeMake((nelem + 255) // 256, 1, 1),
+                Metal.MTLSizeMake(256, 1, 1),
             )
         enc.endEncoding()
         cmd.commit()
@@ -1281,12 +1382,16 @@ class MPSDecompressor:
         )
         return result
 
-    def load_master_chunked(self, master_path: str,
-                            pixel_mask: "np.ndarray | None" = None,
-                            verbose: bool = True,
-                            target_bytes: int | None = None,
-                            row_prefix: bool = False,
-                            fast_det_bin: int | None = None) -> list:
+    def load_master_chunked(
+        self,
+        master_path: str,
+        pixel_mask: "np.ndarray | None" = None,
+        verbose: bool = True,
+        target_bytes: int | None = None,
+        row_prefix: bool = False,
+        fast_det_bin: int | None = None,
+        output_dtype: type | np.dtype | str | None = None,
+    ) -> list:
         """Zero-copy no-bin decompress returning a LIST of per-chunk arrays.
 
         Same zero-copy unified-memory path as load_master (disk reads straight
@@ -1318,6 +1423,22 @@ class MPSDecompressor:
         dtype = plan.dtype
         frame_bytes = plan.frame_bytes
         elem_size = plan.elem_size
+        final_dtype = _normalize_output_dtype(output_dtype) or dtype
+        final_elem_size = int(final_dtype.itemsize)
+        frame_elems = int(np.prod(frame_shape, dtype=np.uint64))
+        final_frame_bytes = frame_elems * final_elem_size
+        output_u8 = final_dtype == np.dtype(np.uint8)
+        if output_u8:
+            if dtype != np.dtype(np.uint16):
+                raise ValueError("output_dtype=np.uint8 requires uint16 detector data.")
+            if row_prefix:
+                raise ValueError(
+                    "output_dtype=np.uint8 cannot be combined with row_prefix=True."
+                )
+            if target_bytes is not None:
+                raise ValueError(
+                    "output_dtype=np.uint8 is not supported with compact=True."
+                )
         fast_det_bin = int(fast_det_bin or 0)
         if fast_det_bin:
             if row_prefix:
@@ -1402,14 +1523,17 @@ class MPSDecompressor:
                 _metal_buffer_alloc(nf * frame_bytes)
                 for nf in output_n_frames
             ]
+            u8_out_mtls: list = []
         else:
             pool = self._chunk_out_pool
+            u8_pool = self._chunk_u8_pool
             fast_pool = self._chunk_fast_pool
             output_group_for_chunk = list(range(n_chunks))
             output_frame_offset = [0] * n_chunks
             output_n_frames = chunk_n_frames
             out_views: list = [None] * n_chunks
             out_mtls: list = [None] * n_chunks
+            u8_out_mtls: list = [None] * n_chunks if output_u8 else []
             fast_frame_shape = (
                 int(frame_shape[0]) // fast_det_bin,
                 int(frame_shape[1]) // fast_det_bin,
@@ -1434,9 +1558,10 @@ class MPSDecompressor:
 
         def _finalize_output(oi):
             nf = output_n_frames[oi]
-            view = _numpy_view(out_mtls[oi], dtype, nf * (frame_bytes // elem_size))
+            mtl = u8_out_mtls[oi] if output_u8 else out_mtls[oi]
+            view = _numpy_view(mtl, final_dtype, nf * frame_elems)
             arr = view.reshape((nf,) + frame_shape).view(_MtlArray)
-            arr._mtl = out_mtls[oi]  # keep the unified buffer alive on the array
+            arr._mtl = mtl  # keep the unified buffer alive on the array
             arr._row_prefix = bool(row_prefix)
             out_views[oi] = arr
 
@@ -1459,6 +1584,8 @@ class MPSDecompressor:
                 oi = output_group_for_chunk[ci]
                 out_mtl = out_mtls[oi]
                 out_byte_offset = output_frame_offset[ci] * frame_bytes
+                cast_u8_out_mtl = None
+                cast_u8_out_byte_offset = 0
             else:
                 if ci < len(pool) and pool[ci].length() >= need:
                     out_mtl = pool[ci]
@@ -1470,6 +1597,19 @@ class MPSDecompressor:
                         pool.append(out_mtl)
                 out_mtls[ci] = out_mtl
                 out_byte_offset = 0
+                cast_u8_out_mtl = None
+                cast_u8_out_byte_offset = 0
+                if output_u8:
+                    u8_need = nf * final_frame_bytes
+                    if ci < len(u8_pool) and u8_pool[ci].length() >= u8_need:
+                        cast_u8_out_mtl = u8_pool[ci]
+                    else:
+                        cast_u8_out_mtl = _metal_buffer_alloc(u8_need)
+                        if ci < len(u8_pool):
+                            u8_pool[ci] = cast_u8_out_mtl
+                        else:
+                            u8_pool.append(cast_u8_out_mtl)
+                    u8_out_mtls[ci] = cast_u8_out_mtl
             fast_out_mtl = None
             fast_out_byte_offset = 0
             if fast_det_bin:
@@ -1494,6 +1634,9 @@ class MPSDecompressor:
                 fast_out_mtl=fast_out_mtl,
                 fast_out_byte_offset=fast_out_byte_offset,
                 fast_det_bin=fast_det_bin if fast_det_bin else None,
+                cast_u8_out_mtl=cast_u8_out_mtl,
+                cast_u8_out_byte_offset=cast_u8_out_byte_offset,
+                cast_u8_nelem=nf * frame_elems if output_u8 else None,
             )
         for ci in range(max(0, n_chunks - D), n_chunks):  # drain the in-flight tail
             cmds[ci].waitUntilCompleted()
@@ -1509,14 +1652,17 @@ class MPSDecompressor:
         if verbose:
             total = sum(chunk_n_frames)
             elapsed = time.perf_counter() - t0
-            gbps = total * frame_bytes / elapsed / 1e9 if elapsed > 0 else float("inf")
+            loaded_bytes = total * final_frame_bytes
+            gbps = loaded_bytes / elapsed / 1e9 if elapsed > 0 else float("inf")
             label = (
                 f"fused bin{fast_det_bin} " if fast_det_bin else
                 "row-prefix " if row_prefix else ""
             )
+            if output_u8:
+                label = "uint8 " + label
             print(
                 f"Loaded {label}chunked MPS data in {elapsed:.2f}s "
-                f"({total} frames, {total * frame_bytes / 1e9:.2f} GB, "
+                f"({total} frames, {loaded_bytes / 1e9:.2f} GB, "
                 f"{len(out_views)} arrays, {gbps:.1f} GB/s)"
             )
         if fast_det_bin:
@@ -1819,6 +1965,7 @@ def load_master_chunked(
     target_bytes: int | None = None,
     row_prefix: bool = False,
     fast_det_bin: int | None = None,
+    output_dtype: type | np.dtype | str | None = None,
 ) -> list:
     """Explicit zero-copy MPS no-bin IO step returning Metal-backed chunks."""
     plan = plan_master(master_path)
@@ -1837,6 +1984,7 @@ def load_master_chunked(
         target_bytes=target_bytes,
         row_prefix=row_prefix,
         fast_det_bin=fast_det_bin,
+        output_dtype=output_dtype,
     )
 
 
@@ -1852,6 +2000,7 @@ def load_mps_4dstem(
     row_prefix: bool = False,
     det_bin: int = 1,
     fast_det_bin: int | None = None,
+    output_dtype: type | np.dtype | str | None = None,
     skip_mps_memory_check: bool | None = None,
 ) -> MPSChunked4DSTEM:
     """Load full no-bin Arina data as zero-copy MPS chunks for viewing.
@@ -1872,6 +2021,7 @@ def load_mps_4dstem(
     """
     t0 = time.perf_counter()
     plan = plan_master(master_path)
+    final_dtype = _normalize_output_dtype(output_dtype) or plan.dtype
     det_bin = int(det_bin)
     if det_bin < 1:
         raise ValueError("det_bin must be >= 1.")
@@ -1886,6 +2036,7 @@ def load_mps_4dstem(
     _check_mps_memory_guard(
         plan,
         det_bin=det_bin,
+        output_dtype=final_dtype if final_dtype != plan.dtype else None,
         skip_memory_check=skip_mps_memory_check,
     )
     target_bytes = int(float(compact_target_gb) * 1e9) if compact else None
@@ -1897,6 +2048,8 @@ def load_mps_4dstem(
             if fast_det_bin else
             "row-prefix " if row_prefix else ""
         )
+        if final_dtype == np.dtype(np.uint8):
+            layout = "uint8 " + layout
         print(f"Loading {layout}MPS chunks from {os.path.basename(plan.master_path)}")
     fast_chunks = None
     if det_bin > 1:
@@ -1908,6 +2061,8 @@ def load_mps_4dstem(
             pixel_mask=pixel_mask,
             verbose=False,
         )
+        if final_dtype == np.dtype(np.uint8):
+            arr = _cast_mtl_u16_to_u8(arr)
         chunks = [arr]
     else:
         result = load_master_chunked(
@@ -1918,6 +2073,7 @@ def load_mps_4dstem(
             target_bytes=target_bytes,
             row_prefix=row_prefix,
             fast_det_bin=fast_det_bin,
+            output_dtype=final_dtype if final_dtype != plan.dtype else None,
         )
         if fast_det_bin:
             chunks, fast_chunks = result
@@ -1951,7 +2107,8 @@ def load_mps_4dstem(
         "detector_shape": tuple(int(x) // det_bin for x in plan.detector_shape),
         "raw_detector_shape": plan.detector_shape,
         "det_bin": det_bin,
-        "dtype": str(plan.dtype),
+        "source_dtype": str(plan.dtype),
+        "dtype": str(final_dtype),
         "n_frames": plan.total_frames,
         "chunk_n_frames": list(plan.chunk_n_frames),
         "n_chunks": len(chunks),

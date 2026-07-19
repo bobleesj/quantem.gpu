@@ -17,9 +17,9 @@ import numpy as np
 from numba import njit, prange
 
 
-# Raw Metal masked-sum kernel: one thread per scan position, reads uint16 detector
-# in place, accumulates int, skips non-masked pixels (so a BF disk reads ~8% of
-# the detector and is faster than a full read). No dtype cast.
+# Raw Metal masked-sum kernels: one thread per scan position, reading resident
+# uint8/uint16 detector chunks in place. No torch and no dtype cast during
+# Show4DSTEM BF/DF/ADF interaction.
 import pathlib as _pathlib
 _MASKED_SUM_MSL = (_pathlib.Path(__file__).parent / 'metal' / 'reductions.msl').read_text()
 
@@ -187,7 +187,8 @@ class MetalVirtualImage:
 
     Each chunk is a ``_MtlArray`` (numpy view over a Metal buffer) from
     ``MPSDecompressor.load_master_chunked``. The masked-sum kernel reads the
-    underlying ``_mtl`` buffer directly — no torch, no copy, no cast.
+    underlying ``_mtl`` buffer directly: no torch, no copy, and no dtype cast
+    while the user drags BF/DF/ADF masks.
     """
 
     def __init__(self, chunks: list, *, row_prefix: bool = False):
@@ -197,6 +198,15 @@ class MetalVirtualImage:
         self._mps = _mps
         self._Metal = Metal
         self.chunks = chunks
+        self._dtype = np.dtype(chunks[0].dtype)
+        if self._dtype not in (np.dtype(np.uint8), np.dtype(np.uint16)):
+            raise TypeError(
+                "MetalVirtualImage supports uint8 and uint16 chunk-backed "
+                f"data, got {self._dtype}."
+            )
+        if row_prefix and self._dtype != np.dtype(np.uint16):
+            raise ValueError("row_prefix=True requires uint16 MPS chunks.")
+        suffix = "u8" if self._dtype == np.dtype(np.uint8) else "u16"
         self.det = tuple(int(x) for x in chunks[0].shape[1:])
         self.ndet = self.det[0] * self.det[1]
         self.n = int(sum(int(c.shape[0]) for c in chunks))
@@ -209,9 +219,9 @@ class MetalVirtualImage:
         if err:
             raise RuntimeError(f"masked_sum kernel compile failed: {err}")
         self._pipe, _ = dev.newComputePipelineStateWithFunction_error_(
-            lib.newFunctionWithName_("masked_sum_u16"), None)
+            lib.newFunctionWithName_(f"masked_sum_{suffix}"), None)
         self._detsum_pipe, _ = dev.newComputePipelineStateWithFunction_error_(
-            lib.newFunctionWithName_("detector_sum_u16"), None)
+            lib.newFunctionWithName_(f"detector_sum_{suffix}"), None)
         self._detsum_prefix_pipe, _ = dev.newComputePipelineStateWithFunction_error_(
             lib.newFunctionWithName_("detector_sum_prefix_u16"), None)
         self._row_overflow_pipe, _ = dev.newComputePipelineStateWithFunction_error_(
@@ -219,13 +229,13 @@ class MetalVirtualImage:
         self._row_prefix_pipe, _ = dev.newComputePipelineStateWithFunction_error_(
             lib.newFunctionWithName_("row_prefix_u16_inplace"), None)
         self._bin_pipe, _ = dev.newComputePipelineStateWithFunction_error_(
-            lib.newFunctionWithName_("bin_detector_u16"), None)
+            lib.newFunctionWithName_(f"bin_detector_{suffix}"), None)
         self._mean_dp_pipe, _ = dev.newComputePipelineStateWithFunction_error_(
-            lib.newFunctionWithName_("mean_dp_sum_u16"), None)
+            lib.newFunctionWithName_(f"mean_dp_sum_{suffix}"), None)
         self._mean_dp_prefix_pipe, _ = dev.newComputePipelineStateWithFunction_error_(
             lib.newFunctionWithName_("mean_dp_sum_prefix_u16"), None)
         self._span_raw_pipe, _ = dev.newComputePipelineStateWithFunction_error_(
-            lib.newFunctionWithName_("rowspan_sum_u16"), None)
+            lib.newFunctionWithName_(f"rowspan_sum_{suffix}"), None)
         self._span_pipe, _ = dev.newComputePipelineStateWithFunction_error_(
             lib.newFunctionWithName_("rowspan_sum_prefix_u16"), None)
         self._span_tg_pipe, _ = dev.newComputePipelineStateWithFunction_error_(
@@ -235,7 +245,7 @@ class MetalVirtualImage:
         self._span_simd8_pipe, _ = dev.newComputePipelineStateWithFunction_error_(
             lib.newFunctionWithName_("rowspan_sum_prefix_simd8_u16"), None)
         self._radial_pipe, _ = dev.newComputePipelineStateWithFunction_error_(
-            lib.newFunctionWithName_("radial_cumsum_u16"), None)
+            lib.newFunctionWithName_(f"radial_cumsum_{suffix}"), None)
         self._radial_prefix_pipe, _ = dev.newComputePipelineStateWithFunction_error_(
             lib.newFunctionWithName_("radial_cumsum_prefix_u16"), None)
         self._radial_dual_prefix_pipe, _ = dev.newComputePipelineStateWithFunction_error_(
@@ -243,7 +253,7 @@ class MetalVirtualImage:
         self._radial_dual_prefix_tg_pipe, _ = dev.newComputePipelineStateWithFunction_error_(
             lib.newFunctionWithName_("radial_cumsum_dual_prefix_tg_u16"), None)
         self._com_pipe, _ = dev.newComputePipelineStateWithFunction_error_(
-            lib.newFunctionWithName_("com_u16"), None)
+            lib.newFunctionWithName_(f"com_{suffix}"), None)
         # one int32 output buffer per chunk (reused every recompute)
         self._out_mtls = [_mps._metal_buffer_alloc(int(c.shape[0]) * 4)
                           for c in chunks]
@@ -1069,7 +1079,7 @@ class ChunkedFrames:
 
     @property
     def nbytes(self) -> int:
-        return self.numel() * 2
+        return self.numel() * self.element_size()
 
     def __len__(self) -> int:
         return self._n

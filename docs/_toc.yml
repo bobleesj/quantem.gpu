@@ -26,3 +26,4 @@ parts:
     chapters:
       - file: maintainer/migration
       - file: maintainer/ssb-performance
+      - file: maintainer/virtual-image-kernel-checklist

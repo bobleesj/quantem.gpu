@@ -5,8 +5,9 @@ This is the **backend** side of the backend-vs-backendless split. A backend
 owns the 4D-STEM data on the Python side and exposes a fixed set of compute
 primitives the widget calls. Backends today:
 
-  TorchBackend       — universal: CUDA / MPS-binned / CPU via torch
-  MetalRawBackend    — raw Metal for a 19.3 GB large-no-bin-class no-bin stack
+  CudaKernelCompute  — CuPy CUDA arrays with RawKernel virtual-image sums
+  TorchBackend       — generic tensor/CPU fallback via torch
+  MetalRawBackend    — raw Metal for chunk-backed MPS uint8/uint16 stacks
                        where torch.MPS hits the >2^31-element buffer limit.
                        Also owns MPS lifecycle: fast_vi (bin2 sidecar), radial
                        cache, multi-dataset proxy.
@@ -52,9 +53,9 @@ ComputeCapability = Literal[
 class ComputeBackend(Protocol):
     """Protocol every Show4DSTEM compute backend conforms to.
 
-    Implementations: ``TorchBackend`` (universal torch), ``MetalRawBackend``
-    (raw Metal for big-no-bin MPS), ``CudaKernelCompute`` (future cupy
-    RawKernel for web Browse).
+    Implementations: ``TorchBackend`` (generic fallback), ``MetalRawBackend``
+    (raw Metal for chunk-backed MPS), and ``CudaKernelCompute`` (CuPy CUDA
+    RawKernel reducers).
 
     Only the REQUIRED primitives + the ``capabilities`` tuple are declared
     here. Optional features (``fast_sidecar``, ``radial_cache``,

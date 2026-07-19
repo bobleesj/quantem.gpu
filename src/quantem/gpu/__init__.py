@@ -5,7 +5,11 @@ from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
 
 from .device import DeviceReport, device_report, select_device
-from .compute import compute_backend
+from .compute import (
+    VirtualImageKernelSupport,
+    compute_backend,
+    virtual_image_kernel_support,
+)
 from .detector import (
     adf,
     auto_probe,
@@ -31,6 +35,7 @@ _SSB_EXPORTS = {
     "SSB",
     "SSBResult",
     "SSBTimeSeriesResult",
+    "VirtualImageKernelSupport",
     "defocus_sweep",
     "ssb",
     "ssb_time_average",
@@ -53,6 +58,7 @@ _PARALLAX_EXPORTS = {
 }
 _LAZY_MODULE_EXPORTS = {
     "movie": "quantem.gpu.movie",
+    "webgpu": "quantem.gpu.webgpu",
 }
 
 __all__ = [
@@ -96,6 +102,8 @@ __all__ = [
     "ssb_series",
     "virtual",
     "virtual_image",
+    "virtual_image_kernel_support",
+    "webgpu",
     "__version__",
 ]
 

@@ -67,6 +67,8 @@ packages = ["src/quantem"]
 artifacts = [
     "src/quantem/gpu/io/backends/metal/*.msl",
     "src/quantem/gpu/compute/metal/*.msl",
+    "src/quantem/gpu/webgpu/*.md",
+    "src/quantem/gpu/webgpu/*.ts",
 ]
 
 [tool.hatch.build.targets.sdist]

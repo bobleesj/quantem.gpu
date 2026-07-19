@@ -8,8 +8,9 @@ Three backends:
 
 - ``cuda`` — cupy RawKernels (the original, fastest path). Returns a cupy array
   on the GPU and feeds the full pipeline including reconstruction.
-- ``mps`` — Apple Metal compute shaders on Apple Silicon. Returns a numpy array
-  (unified memory). View / screen only.
+- ``mps`` — Apple Metal compute shaders on Apple Silicon. Full master loads
+  return chunk-backed unified-memory arrays for Show4DSTEM BF/DF/ADF/CoM;
+  small generic loads can still materialize NumPy/Torch tensors as fallback.
 - ``cpu`` — pure h5py + hdf5plugin transparent decompress. Works anywhere.
   Returns a numpy array. View / screen only.
 

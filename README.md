@@ -81,6 +81,21 @@ dpc_result = dpc(data)
 custom = virtual(data, mode="BF")
 ```
 
+Check whether a large planned virtual-image workflow has a custom GPU kernel
+before allocating the array:
+
+```python
+from quantem.gpu import virtual_image_kernel_support
+
+support = virtual_image_kernel_support(
+    backend="cuda",
+    shape=(1024, 1024, 192, 192),
+    dtype="uint8",
+    bf_radius=30,
+)
+print(support.resident_gib, support.mask_paths)
+```
+
 ## Documentation
 
 The docs site lives in `docs/` and mirrors the `quantem.widget` documentation
@@ -90,6 +105,20 @@ shape at a smaller compute-package scale:
 - HDF5 loading and scan-region tutorials
 - BF/DF/ADF, DPC, ptychographic SSB, and movie tutorials
 - display-with-widget notes
+
+`quantem.gpu.webgpu` ships canonical browser-compute TypeScript/WGSL sources
+for widget/export bundling:
+
+```python
+from quantem.gpu import webgpu
+
+print(webgpu.source_names())
+compute_ts = webgpu.source_text("compute.ts")
+```
+
+The shipped Show4DSTEM WebGPU source covers GPU-resident BF/DF/ADF masked
+reductions and DPC row/col reducers; `quantem.widget` bundles these sources for
+browser/offline HTML use while keeping the widget package focused on UI.
 
 Build it locally with:
 
@@ -148,9 +177,12 @@ file -> quantem.gpu (load + decompress + to_device) -> arrays
   Metal loaders keep data chunk-backed and avoid materializing one giant
   Torch-MPS tensor, which matters because Torch-MPS can hit 32-bit indexing /
   `>2^31` element limits and unified-memory pressure on full 4D-STEM stacks.
-  BF/DF/DPC, Metal bitshuffle/LZ4 IO, SSB preview/free-fit, and movie rendering
-  run through Apple GPU paths where implemented.
+  BF/DF/DPC, Metal bitshuffle/LZ4 IO, MPS `uint8` browse loads, SSB
+  preview/free-fit, and movie rendering run through Apple GPU paths where
+  implemented.
 - `cpu`: h5py/hdf5plugin reference decode for availability and reference agreement.
+- `webgpu`: canonical browser-compute sources shipped in `quantem.gpu.webgpu`;
+  widget bundles them into anywidget JavaScript and exported HTML.
 
 ### Coverage snapshot
 
@@ -159,6 +191,7 @@ file -> quantem.gpu (load + decompress + to_device) -> arrays
 | HDF5 load/decompress | Implemented | Implemented | More held-out real-data reference agreement. |
 | `load(..., scan_region=...)` | Implemented | Implemented | More malformed-file and dataset coverage. |
 | BF/DF/ADF, mean DP, DPC/iDPC | Implemented | Implemented | Broader visual reference agreement reports. |
+| Resident virtual-image drag kernels | CUDA RawKernel for CuPy uint8/uint16; warp-shuffle selected reducers; dense DF uses fused cached `total - complement`; DPC/CoM uses a fused one-pass moment reducer with backend caching | Metal uint8/uint16 chunk-backed path; dense DF uses cached `total - complement`; CoM/DPC uses raw Metal `com_u8`/`com_u16`; no giant Torch-MPS tensor for full no-bin browse loads | WebGPU TypeScript/WGSL source lives in `quantem.gpu.webgpu` and widget bundles it; BF/DF/ADF has a GPU-resident buffer path, while CoM/DPC needs equivalent buffer/cache parity and real-adapter browser tests. |
 | Ptychographic SSB | Reference path implemented | MPS preview/free-fit implemented | More datasets, scan sizes, and temporal/joint SSB validation. |
 | GIF/MP4 movie rendering | CUDA/NVENC MP4 | Metal render plus ffmpeg/VideoToolbox MP4 | Larger export benchmark matrix and widget button wiring. |
 
@@ -175,7 +208,7 @@ Current status:
 |---|---:|---:|---:|---:|---|
 | CUDA object / phase / loss | object `4.83 ms`; phase+loss `9.65 ms` | object `2.17 ms`; phase+loss `20.89 ms` | real full-BF phase+loss `31.27 ms` / `32.0 FPS`; synthetic phase+loss `27.46 ms` | object `40.90 ms`; phase+loss `190.88 ms` / `5.2 FPS` | CUDA 512 full-BF real-field phase/loss passes 30 FPS on GPU1. 1024 exact phase/loss uses split-512 row/column FFTs and is about `2x` faster than the old exact path, but still misses the 10/30 FPS target. |
 | MPS Hermitian preview/free-fit | object `2.45 ms`; phase+loss `~8.3 ms` | object `8.62 ms`; phase `32.75 ms`; phase+loss `~34-35 ms` | object `37.65 ms`; exact phase+loss warm `~170 ms` / `~6 FPS` | object clean `~156 ms`; exact phase/loss warm `~0.8-1.0 s` / `~1 FPS` | Implemented on a Mac MPS machine for prepared Hermitian `G_qk`. Full-BF 128 is real-time, 256 phase-only reaches 30 FPS while phase+loss remains just over budget, 512 object-wave steering is usable, and 1024 exact phase/loss is about `2-2.6x` faster than the old MLX path but still not live-interactive. |
-| WebGPU phase/loss widget path | supported | supported | supported | supported | Browser-owned in `quantem.widget` by design; no WGSL kernels live in this Python package. |
+| WebGPU phase/loss widget path | supported | supported | supported | supported | Browser runtime bundled by `quantem.widget`; reusable TypeScript/WGSL source is shipped in `quantem.gpu.webgpu`. |
 
 Do not treat this table as a reason to downsample or crop. Full-resolution
 claims must keep the BF policy, scan size, and scientific objective unchanged.

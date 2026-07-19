@@ -440,6 +440,17 @@ kernel void zero_bad_pixels_u16(
         data[(ulong)frame * ndet + pix] = 0;
     }
 }
+
+kernel void clip_u16_to_u8(
+    device const ushort* in  [[buffer(0)]],
+    device uchar*        out [[buffer(1)]],
+    constant uint&       n   [[buffer(2)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= n) return;
+    out[gid] = (uchar)min((uint)in[gid], 255u);
+}
+
 kernel void row_prefix_masked_u16(
     device ushort*      data     [[buffer(0)]],  // (nframes, rows, cols)
     device const uchar* mask     [[buffer(1)]],  // detector mask, nonzero = dead

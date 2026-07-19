@@ -6,9 +6,56 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- Add WebGPU GPU-resident DPC row/col reducers to the canonical
+  `quantem.gpu.webgpu` Show4DSTEM engine. The browser path now computes CoM,
+  global CoM mean, and centered DPC components in WGSL, with direct browser
+  parity against NumPy and a private real-data NVIDIA WebGPU stress run.
+- Keep Show4DSTEM browser VI/DPC ownership in `quantem.gpu.webgpu`: detector
+  and scan mask builders now live with the canonical WebGPU compute source, and
+  the widget source-contract tests verify the frontend does not reintroduce
+  local BF/DF/DPC mask helper implementations.
+- Add a CUDA RawKernel virtual-image backend for resident CuPy uint8/uint16
+  4D-STEM data, wire `compute_backend(cupy_array)` to it, and add exact parity
+  tests against the old CuPy selected-pixel reduction. Add a
+  `virtual_image_kernel_support()` probe plus a maintainer checklist covering
+  CUDA, MPS, and `quantem.gpu.webgpu` browser paths, including the future
+  `1024x1024x192x192 uint8` target. The CUDA path now uses warp-shuffle
+  selected-pixel reducers, a custom total-count reducer, fused dense
+  `total - complement` output, and per-viewer detector-index caching. On a
+  private full 512x512x192x192 real-data benchmark, median BF/ADF/DF drag
+  latency improved from 4.96/16.16/62.64 ms on the old widget Torch path to
+  1.35/3.86/1.84 ms with bit-exact output. On a private seven-tilt detector-bin2
+  benchmark, per-panel BF/ADF/DF medians are now 0.54/1.35/0.53 ms with
+  max absolute error 0.
+- Add a CUDA RawKernel CoM/DPC reducer for resident CuPy uint8/uint16 data.
+  The fused kernel accumulates total intensity, detector-row moment, and
+  detector-column moment in one detector pass and caches the full-detector CoM
+  field per backend. On a private full 512x512x192x192 uint16 benchmark, DPC
+  CoM improved from 200.42 ms to 12.39 ms with max absolute error 0; on a
+  private seven-panel detector-bin2 benchmark, first full-grid DPC improved
+  from 373.14 ms to 24.63 ms with max absolute error 0, and repeated DPC reads
+  use the backend cache.
+- Clarify the cross-backend CoM/DPC product-kernel tracker: MPS uses raw Metal
+  `com_u8`/`com_u16`, while WebGPU already has WGSL masked CoM source under
+  `quantem.gpu.webgpu` but still needs the same GPU-resident buffer/cache
+  parity path as virtual-image dragging.
+- Add `quantem.gpu.webgpu` as the canonical source package for reusable
+  WebGPU/TypeScript browser compute. The existing Show4DSTEM WebGPU engine and
+  ShowPtycho SSB browser engine are copied there as package data, with helpers
+  for widget build scripts to read the shipped sources.
+- Fix MPS SSB fixed-aberration loss reporting for cached 512x512 geometry. The
+  cached path now treats the 512 column-kernel sum-of-squares as a scalar, so
+  real-data MPS fixed phase/loss and sparse optimizer parity pass against the
+  CUDA reference artifacts on Phil.
+- Add MPS Metal uint8 virtual-image kernels and route
+  `load(..., backend="mps", dtype="u8")` through chunk-backed Metal IO, so
+  Show4DSTEM browse loads do not materialize a giant Torch-MPS tensor.
+- Add the MPS dense-mask `total - complement` cache path so dark-field style
+  Show4DSTEM drags use sparse complement reads on Metal, matching the CUDA
+  kernel strategy.
 - Make CUDA SSB batch variance deterministic for sparse 256/512/1024 row
   transforms, clarify the ShowPtycho UI handoff, and document that WebGPU/WGSL
-  remains browser-owned in `quantem.widget`.
+  runs in the browser while reusable source lives in `quantem.gpu.webgpu`.
 
 ## rc5 - 2026-07-14
 

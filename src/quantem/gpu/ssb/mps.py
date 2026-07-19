@@ -2958,11 +2958,15 @@ def _reconstruct_prepared(
     # CUDA's fixed SSB output is the mean of per-BF phase images, not the
     # phase of the averaged complex object wave. Keep that contract for reference agreement.
     phase_sum = mx.zeros(prepared.scan_shape, dtype=mx.float32)
+    uses_scalar_512_loss = prepared.scan_shape == (512, 512)
+    uses_scalar_dynamic_loss = (
+        prepared.scan_shape in ((128, 128), (256, 256), (1024, 1024))
+        and prepared.alpha_k2 is None
+    )
     use_scalar_loss = (
         compute_loss
         and not compute_object
-        and prepared.scan_shape in ((128, 128), (256, 256), (512, 512), (1024, 1024))
-        and prepared.alpha_k2 is None
+        and (uses_scalar_512_loss or uses_scalar_dynamic_loss)
     )
     if use_scalar_loss:
         phase_sumsq = mx.array(0.0, dtype=mx.float32)

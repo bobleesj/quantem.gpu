@@ -5,9 +5,10 @@ CoM, DPC, and iDPC are DERIVED scalar fields, not raw 4D data, so they live here
 
 The only expensive step is the per-scan-position center of mass over the full
 detector - one pass over the (no-bin) 4D block:
-  - MPS (MacBook): the raw-Metal ``com_u16`` kernel over chunked uint16 buffers,
-    int64 accumulate, no float cast - fits the full 19 GB no-bin stack in 24 GB.
-  - CUDA / CPU: a chunked numpy/torch CoM (same formula).
+  - MPS (MacBook): raw-Metal ``com_u8``/``com_u16`` kernels over chunked
+    buffers, int64 accumulate, no float cast.
+  - CUDA: CuPy-backed GPU CoM for resident arrays.
+  - CPU/Torch: reference fallback with the same formula.
 Everything after CoM (rotation alignment, Fourier integration) is small-field
 math on the ``(scan_row, scan_col)`` CoM, ported 1:1 from quantem.live's
 ``engine.dpc`` so results match the dashboard.
@@ -180,16 +181,24 @@ def center_of_mass(data, scan_shape=None, mask=None):
         import torch
         if isinstance(data, torch.Tensor):
             data = data.detach().cpu().numpy()
-        elif type(data).__module__.split(".")[0] != "cupy":
-            # numpy / list -> ndarray. cupy passes through: _com_numpy reduces it
-            # on-device (xp=cp) and returns numpy, so CUDA input works too.
-            data = np.asarray(data)
         if scan_shape is None:
             n = data.shape[0] if data.ndim == 3 else data.shape[0] * data.shape[1]
             sr = int(round(n ** 0.5)); sc = n // sr
         else:
             sr, sc = scan_shape
-        com_row, com_col = _com_numpy(data, (sr, sc))
+        if type(data).__module__.split(".")[0] == "cupy":
+            from quantem.gpu.compute.cuda import cuda_center_of_mass
+
+            got = cuda_center_of_mass(data, mask)
+            if got is None:
+                com_row, com_col = _com_numpy(data, (sr, sc))
+            else:
+                com_row, com_col = (got[0].get(), got[1].get())
+        else:
+            # numpy / list -> ndarray. cupy passes through: _com_numpy reduces it
+            # on-device (xp=cp) and returns numpy, so CUDA input works too.
+            data = np.asarray(data)
+            com_row, com_col = _com_numpy(data, (sr, sc))
     com_row = np.asarray(com_row, dtype=np.float32) - float(np.mean(com_row))
     com_col = np.asarray(com_col, dtype=np.float32) - float(np.mean(com_col))
     return com_row.reshape(sr, sc), com_col.reshape(sr, sc)

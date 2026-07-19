@@ -14,6 +14,22 @@ kernel void masked_sum_u16(
     for (uint i = 0; i < ndet; i++) s += mask[i] ? (int)frame[i] : 0;
     out[gid] = s;
 }
+
+kernel void masked_sum_u8(
+    device const uchar*  data    [[buffer(0)]],  // (nframes, ndet) uint8, flat
+    device const uchar*  mask    [[buffer(1)]],  // (ndet,) 0/1
+    device int*          out     [[buffer(2)]],  // (nframes,) int32
+    constant uint&       ndet    [[buffer(3)]],
+    constant uint&       nframes [[buffer(4)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= nframes) return;
+    device const uchar* frame = data + (ulong)gid * ndet;
+    int s = 0;
+    for (uint i = 0; i < ndet; i++) s += mask[i] ? (int)frame[i] : 0;
+    out[gid] = s;
+}
+
 kernel void detector_sum_u16(
     device const ushort* data    [[buffer(0)]],   // (nframes, ndet) uint16
     device atomic_int*   out     [[buffer(1)]],   // (ndet,) int32, accumulated
@@ -26,6 +42,20 @@ kernel void detector_sum_u16(
     for (uint fr = 0; fr < nframes; fr++) s += (int)data[(ulong)fr * ndet + pix];
     atomic_fetch_add_explicit(&out[pix], s, memory_order_relaxed);
 }
+
+kernel void detector_sum_u8(
+    device const uchar*  data    [[buffer(0)]],   // (nframes, ndet) uint8
+    device atomic_int*   out     [[buffer(1)]],   // (ndet,) int32, accumulated
+    constant uint&       ndet    [[buffer(2)]],
+    constant uint&       nframes [[buffer(3)]],
+    uint pix [[thread_position_in_grid]]
+) {
+    if (pix >= ndet) return;
+    int s = 0;
+    for (uint fr = 0; fr < nframes; fr++) s += (int)data[(ulong)fr * ndet + pix];
+    atomic_fetch_add_explicit(&out[pix], s, memory_order_relaxed);
+}
+
 kernel void detector_sum_prefix_u16(
     device const ushort* data    [[buffer(0)]],   // row-prefix (nframes, ndet)
     device atomic_int*   out     [[buffer(1)]],   // (ndet,) int32, accumulated
@@ -113,6 +143,35 @@ kernel void bin_detector_u16(
     }
     out[gid] = (ushort)min(s, 65535u);
 }
+
+kernel void bin_detector_u8(
+    device const uchar*  data    [[buffer(0)]],  // raw (nframes, detrows, detcols)
+    device ushort*       out     [[buffer(1)]],  // binned uint16 sums
+    constant uint&       detcols [[buffer(2)]],
+    constant uint&       outcols [[buffer(3)]],
+    constant uint&       outndet [[buffer(4)]],
+    constant uint&       nframes [[buffer(5)]],
+    constant uint&       binf    [[buffer(6)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    uint total = nframes * outndet;
+    if (gid >= total) return;
+    uint fr = gid / outndet;
+    uint opix = gid - fr * outndet;
+    uint orow = opix / outcols;
+    uint ocol = opix - orow * outcols;
+    ulong base = (ulong)fr * (outndet * binf * binf)
+               + (ulong)(orow * binf) * detcols + (ocol * binf);
+    uint s = 0;
+    for (uint dr = 0; dr < binf; dr++) {
+        ulong rowbase = base + (ulong)dr * detcols;
+        for (uint dc = 0; dc < binf; dc++) {
+            s += (uint)data[rowbase + dc];
+        }
+    }
+    out[gid] = (ushort)min(s, 65535u);
+}
+
 kernel void mean_dp_sum_u16(
     device const ushort* data          [[buffer(0)]],  // raw (nframes, ndet)
     device const uint*   frame_indices [[buffer(1)]],  // local frame indices
@@ -128,6 +187,23 @@ kernel void mean_dp_sum_u16(
     }
     out[pix] = s;
 }
+
+kernel void mean_dp_sum_u8(
+    device const uchar*  data          [[buffer(0)]],  // raw (nframes, ndet)
+    device const uint*   frame_indices [[buffer(1)]],  // local frame indices
+    device uint*         out           [[buffer(2)]],  // (ndet,) uint32 sum
+    constant uint&       ndet          [[buffer(3)]],
+    constant uint&       nindices      [[buffer(4)]],
+    uint pix [[thread_position_in_grid]]
+) {
+    if (pix >= ndet) return;
+    uint s = 0;
+    for (uint i = 0; i < nindices; i++) {
+        s += (uint)data[(ulong)frame_indices[i] * ndet + pix];
+    }
+    out[pix] = s;
+}
+
 kernel void mean_dp_sum_prefix_u16(
     device const ushort* data          [[buffer(0)]],  // row-prefix (nframes, ndet)
     device const uint*   frame_indices [[buffer(1)]],  // local frame indices
@@ -170,6 +246,30 @@ kernel void rowspan_sum_u16(
     }
     out[gid] = s;
 }
+
+kernel void rowspan_sum_u8(
+    device const uchar*  data    [[buffer(0)]],  // raw (nframes, ndet)
+    device const uint*   starts  [[buffer(1)]],  // inclusive flat span starts
+    device const uint*   ends    [[buffer(2)]],  // inclusive flat span ends
+    device int*          out     [[buffer(3)]],  // (nframes,) int32
+    constant uint&       nspans  [[buffer(4)]],
+    constant uint&       ndet    [[buffer(5)]],
+    constant uint&       nframes [[buffer(6)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= nframes) return;
+    device const uchar* frame = data + (ulong)gid * ndet;
+    int s = 0;
+    for (uint sp = 0; sp < nspans; sp++) {
+        uint start = starts[sp];
+        uint end = ends[sp];
+        for (uint pix = start; pix <= end; pix++) {
+            s += (int)frame[pix];
+        }
+    }
+    out[gid] = s;
+}
+
 kernel void rowspan_sum_prefix_u16(
     device const ushort* data    [[buffer(0)]],  // row-prefix (nframes, ndet)
     device const uint*   lefts   [[buffer(1)]],  // start-1, or 0xffffffff at row start
@@ -304,6 +404,25 @@ kernel void radial_cumsum_u16(
     int acc = 0;
     for (uint b = 0; b < nbins; b++) { acc += o[b]; o[b] = acc; }
 }
+
+kernel void radial_cumsum_u8(
+    device const uchar*  data    [[buffer(0)]],   // (nframes, ndet) uint8
+    device const int*    radbin  [[buffer(1)]],   // (ndet,) radial bin per pixel
+    device int*          out     [[buffer(2)]],   // (nframes, nbins) int32 cumsum
+    constant uint&       ndet    [[buffer(3)]],
+    constant uint&       nbins   [[buffer(4)]],
+    constant uint&       nframes [[buffer(5)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= nframes) return;
+    device const uchar* frame = data + (ulong)gid * ndet;
+    device int* o = out + (ulong)gid * nbins;
+    for (uint b = 0; b < nbins; b++) o[b] = 0;
+    for (uint i = 0; i < ndet; i++) o[radbin[i]] += (int)frame[i];
+    int acc = 0;
+    for (uint b = 0; b < nbins; b++) { acc += o[b]; o[b] = acc; }
+}
+
 kernel void radial_cumsum_prefix_u16(
     device const ushort* data    [[buffer(0)]],   // row-prefix (nframes, ndet)
     device const int*    radbin  [[buffer(1)]],   // (ndet,) ceil(radius) bin
@@ -434,6 +553,30 @@ kernel void com_u16(
 ) {
     if (gid >= nframes) return;
     device const ushort* frame = data + (ulong)gid * ndet;
+    long sI = 0, sx = 0, sy = 0;
+    for (uint i = 0; i < ndet; i++) {
+        if (mask[i]) {
+            long v = (long)frame[i];
+            sI += v;
+            sx += v * (long)(i % detcols);
+            sy += v * (long)(i / detcols);
+        }
+    }
+    float invI = sI > 0 ? 1.0f / (float)sI : 0.0f;
+    out[gid] = float2((float)sx * invI, (float)sy * invI);
+}
+
+kernel void com_u8(
+    device const uchar*  data    [[buffer(0)]],   // (nframes, ndet) uint8, flat
+    device const uchar*  mask    [[buffer(1)]],   // (ndet,) 0/1
+    device float2*       out     [[buffer(2)]],   // (nframes,) (CoMx, CoMy)
+    constant uint&       ndet    [[buffer(3)]],
+    constant uint&       detcols [[buffer(4)]],
+    constant uint&       nframes [[buffer(5)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= nframes) return;
+    device const uchar* frame = data + (ulong)gid * ndet;
     long sI = 0, sx = 0, sy = 0;
     for (uint i = 0; i < ndet; i++) {
         if (mask[i]) {

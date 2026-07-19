@@ -15,8 +15,9 @@ collection angles in **mrad**::
 build a boolean detector mask and call :func:`masked_sum` - the same fast
 reduction that Show4DSTEM and live Browse use. The probe (disk center + size)
 auto-fits from the mean diffraction pattern. MacBook (MPS) runs the raw-Metal
-masked-sum over chunked uint16 buffers; CUDA / CPU runs torch. **No binning** on
-either path.
+masked-sum over chunked uint8/uint16 buffers; CUDA runs the CuPy RawKernel
+reducer for resident uint8/uint16 arrays; Torch/NumPy are fallback paths for
+small or unsupported arrays. **No binning** on either GPU path.
 
 The lower-level :func:`virtual` function (below) is mode-based
 (DP/BF/ABF/ADF/HAADF/DF, bands measured in the auto-detected disk radius) and is
@@ -110,11 +111,20 @@ class _ArrayComputeBackend:
             )
         if _is_cupy_array(self.flat):
             import cupy as cp
+            from quantem.gpu.compute.cuda import cuda_masked_sum
 
+            out = cuda_masked_sum(self.data, mask_np)
+            if out is not None:
+                return out
             mask = cp.asarray(mask_np.reshape(-1))
             selected = cp.where(mask)[0]
             flat = self.flat.reshape(self.n_frames, -1)
-            return flat[:, selected].sum(axis=1, dtype=cp.uint64).astype(cp.float32).reshape(self.scan_shape)
+            return (
+                flat[:, selected]
+                .sum(axis=1, dtype=cp.uint64)
+                .astype(cp.float32)
+                .reshape(self.scan_shape)
+            )
         if _is_torch_tensor(self.flat):
             import torch
 
@@ -541,7 +551,13 @@ def virtual_image(
     else:
         raise ValueError("Provide either radius (BF) or inner_radius + outer_radius (DF)")
 
-    # Grab only the masked pixels, sum them with an integer accumulator.
+    from quantem.gpu.compute.cuda import cuda_masked_sum
+
+    raw_out = cuda_masked_sum(data, mask)
+    if raw_out is not None:
+        return raw_out
+
+    # Fallback: grab only the masked pixels and sum with an integer accumulator.
     indices = cp.where(mask.ravel())[0]
     data_2d = data.reshape(-1, det_row * det_col)  # view, no copy
     n_total = int(data_2d.shape[0])

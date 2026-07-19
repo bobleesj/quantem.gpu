@@ -12,7 +12,7 @@ Backends conform to the ``ComputeBackend`` protocol (see ``backend.py``):
                          large-no-bin-class no-bin path where torch.MPS overflows.
                          Owns fast_vi sidecar, radial cache, multi-dataset
                          proxy lifecycle (see capabilities tuple).
-    CudaKernelCompute  — placeholder; web Browse RawKernel will collapse here.
+    CudaKernelCompute  — resident CUDA virtual-image drag path.
 
 ``TorchCompute`` / ``MetalCompute`` are kept as aliases for one release.
 
@@ -21,8 +21,8 @@ backend so callers (widget + web Browse) never branch on hardware themselves.
 
 Backend dispatch — which one runs on your box?
 
-    24 GB RTX            → TorchBackend  (cupy → dlpack → torch CUDA, zero copy)
-    96 GB Blackwell      → TorchBackend  (same)
+    24 GB RTX            → CudaKernelCompute for CuPy resident uint8/uint16
+    96 GB Blackwell      → CudaKernelCompute for CuPy resident uint8/uint16
     torch tensor already on CUDA → TorchBackend
     NumPy on CPU         → TorchBackend  (torch.as_tensor)
     torch.mps binned     → TorchBackend  (device='mps')
@@ -71,6 +71,7 @@ for the cap-a-dummy-tensor pattern that reproduces it.
 """
 from __future__ import annotations
 
+from collections import OrderedDict
 import threading
 
 import numpy as np
@@ -80,6 +81,7 @@ from quantem.gpu.compute.backend import ComputeBackend  # noqa: F401
 # Cap transient float32 memory per reduction chunk (matches the widget budget).
 _CHUNK_BYTE_BUDGET = 600 * 1024 * 1024
 _SPARSE_MASK_CHUNK_BYTE_BUDGET = 64 * 1024 * 1024
+_CUDA_MASK_INDEX_CACHE_SIZE = 32
 
 
 def compute_backend(data):
@@ -90,9 +92,8 @@ def compute_backend(data):
     ChunkedFrames / anything with ``_is_gpu_frames`` -> MetalRawBackend
         (raw Metal). The device-specific path, used ONLY for MPS no-bin
         (where torch can't hold the >2^31-element stack).
-    cupy ndarray -> converted to a torch CUDA tensor (zero-copy dlpack) and
-        run on TorchBackend. The widget compute path is torch, never cupy;
-        cupy lives only in the io decode + the parity-test reference.
+    cupy ndarray -> CudaKernelCompute. Virtual image dragging stays on resident
+        uint8/uint16 CUDA memory and avoids CuPy gather temporaries.
 
     One selection point here means callers (widget + web Browse) never branch
     on hardware themselves.
@@ -101,8 +102,7 @@ def compute_backend(data):
         return MetalRawBackend(data)
     cls_name = type(data).__module__.split(".")[0]
     if cls_name == "cupy":
-        import torch
-        return TorchBackend(torch.from_dlpack(data))  # cupy -> torch CUDA, no cupy compute
+        return CudaKernelCompute(data)
     try:
         import torch
         if isinstance(data, torch.Tensor):
@@ -344,6 +344,8 @@ class MetalRawBackend:
         # so interaction jumps to real-time once ready; serve full-res until then.
         # Already-binned data (det_bin>1) is small enough - no sidecar.
         self._com_cache = None  # full-detector CoM (com_col, com_row), eager-built below
+        self._total_cache = None
+        self._fast_total_cache = None
         self._auto_fast = (self.det_bin == 1 and det[0] >= 96
                            and hasattr(self._cf, "ensure_fast_interaction"))
         # Background radial-cache lifecycle. Only matters when row_prefix is on.
@@ -371,16 +373,60 @@ class MetalRawBackend:
     def frame(self, idx: int) -> np.ndarray:
         return self._cf.frame(int(idx))
 
+    def _masked_sum_with_total_cache(
+        self,
+        vi,
+        det_mask: np.ndarray,
+        *,
+        cache_attr: str,
+    ) -> np.ndarray:
+        """Use total-minus-complement for dense DF masks on one Metal VI."""
+        mask = np.ascontiguousarray(det_mask, dtype=bool)
+        selected = int(mask.sum())
+        ndet = int(mask.size)
+        if selected == 0:
+            return np.zeros(self.n_frames, dtype=np.int32)
+        if selected == ndet:
+            total = getattr(self, cache_attr, None)
+            if total is None:
+                total = np.asarray(vi.masked_sum(mask)).copy()
+                setattr(self, cache_attr, total)
+            return total
+        complement = ndet - selected
+        if selected > ndet // 2 and complement < selected:
+            total = getattr(self, cache_attr, None)
+            if total is None:
+                total = np.asarray(
+                    vi.masked_sum(np.ones(mask.shape, dtype=bool))
+                ).copy()
+                setattr(self, cache_attr, total)
+            return total - np.asarray(vi.masked_sum(~mask))
+        return np.asarray(vi.masked_sum(mask))
+
     def masked_sum(self, det_mask: np.ndarray) -> np.ndarray:
         cf = self._cf
         fv = getattr(cf, "fast_vi", None)
         if self._auto_fast and fv is not None:
-            # bin2 sidecar ready: downsample the detector mask + reduce on 96x96
-            # (4x fewer pixels = real-time). The scan-space output shape is unchanged.
-            from quantem.gpu.compute.mps import _bin2_mask
-            vi = np.asarray(fv.masked_sum(_bin2_mask(np.ascontiguousarray(det_mask))))
+            # Sidecar ready: downsample the detector mask to the actual sidecar
+            # bin factor (bin2 on large-memory Macs, bin4 on small ones), then
+            # reduce on the smaller resident Metal buffer.
+            from quantem.gpu.compute.mps import _bin_mask
+
+            mask = _bin_mask(
+                np.ascontiguousarray(det_mask),
+                getattr(cf, "fast_bin", 2),
+            )
+            vi = self._masked_sum_with_total_cache(
+                fv,
+                mask,
+                cache_attr="_fast_total_cache",
+            )
         else:
-            vi = np.asarray(cf.vi.masked_sum(np.ascontiguousarray(det_mask)))
+            vi = self._masked_sum_with_total_cache(
+                cf.vi,
+                np.ascontiguousarray(det_mask),
+                cache_attr="_total_cache",
+            )
         return vi.reshape(self.scan_shape).astype(np.float32, copy=False)
 
     def mean_dp(self) -> np.ndarray:
@@ -564,6 +610,9 @@ class MetalRawBackend:
     def set_active_dataset(self, idx: int) -> None:
         if hasattr(self._cf, "set_active"):
             self._cf.set_active(int(idx))
+            self._com_cache = None
+            self._total_cache = None
+            self._fast_total_cache = None
 
     @property
     def multi_n_ready(self) -> int:
@@ -595,17 +644,134 @@ MetalCompute = MetalRawBackend
 
 
 class CudaKernelCompute:
-    """CuPy backend - the web Browse fused RawKernel path (designed-for, not yet wired).
+    """CuPy CUDA backend for resident virtual-image interaction.
 
-    Placeholder so `compute_backend(cupy_array)` resolves; the real implementation
-    moves `server/routers/browse.py:_vi_mask_kernel` here so the web Browse and the
-    widget share one CUDA masked-sum. Until then this raises a clear error.
+    The hot path is ``masked_sum`` over an already-loaded 4D-STEM tensor. It
+    uses a RawKernel selected-pixel reducer for uint8/uint16 data and falls back
+    to ``TorchBackend`` for unsupported dtypes. Dense masks are computed as
+    ``total - complement`` with a cached total-count image.
     """
+
+    capabilities: tuple[str, ...] = ()
 
     def __init__(self, data):
         self._data = data
-        raise NotImplementedError(
-            "CudaKernelCompute is reserved for folding the web Browse RawKernel into "
-            "the shared compute layer (see docs/2026-06-01-show4dstem-compute-backends.md). "
-            "Use TorchCompute for CUDA today."
+        self._flat, self.scan_shape, self.det_shape = self._flatten_scan(data)
+        self.n_frames = int(self._flat.shape[0])
+        self.device = "cuda"
+        self._total_cache_uint64 = None
+        self._com_cache = None
+        self._mask_index_cache = OrderedDict()
+        self._fallback = None
+
+    @staticmethod
+    def _flatten_scan(data):
+        if data.ndim == 4:
+            sr, sc, dr, dc = data.shape
+            return data.reshape(-1, dr, dc), (int(sr), int(sc)), (int(dr), int(dc))
+        if data.ndim == 3:
+            n, dr, dc = data.shape
+            sr = int(round(int(n) ** 0.5))
+            scan_shape = (sr, int(n) // sr) if sr * sr == int(n) else (int(n),)
+            return data.reshape(-1, dr, dc), scan_shape, (int(dr), int(dc))
+        raise ValueError(f"expected 3D/4D cupy array, got {tuple(data.shape)}")
+
+    def _fallback_backend(self):
+        if self._fallback is None:
+            import torch
+
+            self._fallback = TorchBackend(torch.from_dlpack(self._data))
+        return self._fallback
+
+    def frame(self, idx: int) -> np.ndarray:
+        return self._flat[int(idx)].get()
+
+    def _total_counts_uint64(self):
+        if self._total_cache_uint64 is None:
+            from quantem.gpu.compute.cuda import cuda_sum_all_uint64
+
+            self._total_cache_uint64 = cuda_sum_all_uint64(self._data)
+        return self._total_cache_uint64
+
+    def _device_indices_for(self, mask_np: np.ndarray):
+        import cupy as cp
+
+        contiguous = np.ascontiguousarray(mask_np.reshape(-1), dtype=bool)
+        key = contiguous.tobytes()
+        indices = self._mask_index_cache.get(key)
+        if indices is not None:
+            self._mask_index_cache.move_to_end(key)
+            return indices
+        indices = cp.asarray(np.flatnonzero(contiguous).astype(np.int32, copy=False))
+        self._mask_index_cache[key] = indices
+        if len(self._mask_index_cache) > _CUDA_MASK_INDEX_CACHE_SIZE:
+            self._mask_index_cache.popitem(last=False)
+        return indices
+
+    def masked_sum(self, det_mask: np.ndarray) -> np.ndarray:
+        import cupy as cp
+        from quantem.gpu.compute.cuda import (
+            cuda_selected_sum,
+            cuda_selected_sum_from_total,
         )
+
+        mask_np = np.asarray(det_mask, dtype=bool)
+        if mask_np.shape != self.det_shape:
+            raise ValueError(
+                f"det_mask shape {mask_np.shape} does not match detector shape "
+                f"{self.det_shape}."
+            )
+        selected = int(mask_np.sum())
+        if selected == 0:
+            return np.zeros(self.scan_shape, dtype=np.float32)
+        if selected == mask_np.size:
+            total = self._total_counts_uint64()
+            out = None if total is None else total.astype(cp.float32)
+        elif selected > int(mask_np.size * 0.5):
+            complement = self._device_indices_for(~mask_np)
+            total = self._total_counts_uint64()
+            out = (
+                None
+                if total is None
+                else cuda_selected_sum_from_total(self._data, complement, total)
+            )
+        else:
+            indices = self._device_indices_for(mask_np)
+            out = cuda_selected_sum(self._data, indices)
+        if out is None:
+            return self._fallback_backend().masked_sum(mask_np)
+        return out.get().astype(np.float32, copy=False)
+
+    def mean_dp(self) -> np.ndarray:
+        import cupy as cp
+
+        acc = self._flat.sum(axis=0, dtype=cp.uint64)
+        return (acc.astype(cp.float32) / self.n_frames).get()
+
+    def reduce_frames(self, scan_indices: np.ndarray, reduce: str = "mean") -> np.ndarray:
+        import cupy as cp
+
+        idx = cp.asarray(np.asarray(scan_indices, dtype=np.int64))
+        frames = self._flat.reshape(self.n_frames, -1).take(idx, axis=0)
+        if reduce == "sum":
+            out = frames.sum(axis=0, dtype=cp.uint64).astype(cp.float32)
+        elif reduce == "max":
+            out = frames.max(axis=0).astype(cp.float32)
+        else:
+            out = frames.sum(axis=0, dtype=cp.uint64).astype(cp.float32) / int(idx.size)
+        return out.reshape(self.det_shape).get()
+
+    def center_of_mass(self, det_mask: np.ndarray | None = None):
+        from quantem.gpu.compute.cuda import cuda_center_of_mass
+
+        if det_mask is None and self._com_cache is not None:
+            return self._com_cache
+        got = cuda_center_of_mass(self._data, det_mask)
+        if got is None:
+            return self._fallback_backend().center_of_mass(det_mask)
+        com_row = got[0].get().astype(np.float32, copy=False)
+        com_col = got[1].get().astype(np.float32, copy=False)
+        out = com_col.reshape(-1), com_row.reshape(-1)
+        if det_mask is None:
+            self._com_cache = out
+        return out

@@ -2807,10 +2807,19 @@ def _load_view(
 
     def _one(path):
         meta = get_metadata(str(path))
+        mps_chunk_output_dtype = None
+        if backend == "mps" and output_dtype is not None:
+            if isinstance(output_dtype, str) and output_dtype in ("u8", "uint8"):
+                mps_chunk_output_dtype = np.dtype(np.uint8)
+            else:
+                mps_chunk_output_dtype = np.dtype(output_dtype)
         if (
             backend == "mps"
             and dataset_path is None
-            and output_dtype is None
+            and (
+                output_dtype is None
+                or mps_chunk_output_dtype == np.dtype(np.uint8)
+            )
         ):
             if _normalize_scan_order(scan_order) != "row-major":
                 raise ValueError(
@@ -2825,6 +2834,7 @@ def _load_view(
                 verbose=verbose,
                 row_prefix=row_prefix,
                 det_bin=det_bin,
+                output_dtype=mps_chunk_output_dtype,
                 skip_mps_memory_check=skip_mps_memory_check,
             )
             meta.update(data.metadata)

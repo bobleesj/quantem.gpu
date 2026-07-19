@@ -303,6 +303,131 @@ def test_mps_phase_cols512_reduced_modes_match_mlx_reference() -> None:
     )
 
 
+def test_mps_reconstruct_cached_geometry_512_loss_matches_mlx_reference() -> None:
+    """Cached-geometry 512 phase/loss must not broadcast scalar sumsq as an image."""
+    mx = pytest.importorskip("mlx.core")
+    from quantem.gpu.ssb.mps import (
+        _PreparedMpsSSB,
+        _compute_geometry,
+        _corrected_from_cached_geometry,
+        _phase_sums_from_complex,
+        _reconstruct_prepared,
+    )
+
+    n = 512
+    num_bf = 5
+    rng = np.random.default_rng(38)
+    real_stack = rng.standard_normal((num_bf, n, n)).astype(np.float32)
+    g_qk = mx.fft.rfft2(mx.array(real_stack))
+    q_row = np.fft.fftfreq(n, 1.0).astype(np.float32)
+    q_col = np.fft.fftfreq(n, 1.0).astype(np.float32)
+    kx_np = np.linspace(-0.17, 0.13, num_bf, dtype=np.float32)
+    ky_np = np.linspace(0.11, -0.15, num_bf, dtype=np.float32)
+    q_row_mx = mx.array(q_row, dtype=mx.float32)
+    q_col_mx = mx.array(q_col, dtype=mx.float32)
+    kx = mx.array(kx_np, dtype=mx.float32)[:, None, None]
+    ky = mx.array(ky_np, dtype=mx.float32)[:, None, None]
+    qx = q_row_mx[None, :, None]
+    qy = q_col_mx[None, None, :]
+    wavelength = 0.0197
+    semiangle_rad = 0.0214
+    ang_y_rad = 0.0008
+    ang_x_rad = 0.0008
+    alpha_k2, cos2_k, sin2_k, aperture_k = _compute_geometry(
+        mx,
+        kx,
+        ky,
+        wavelength,
+        semiangle_rad,
+        ang_y_rad,
+        ang_x_rad,
+    )
+    alpha_m2, cos2_m, sin2_m, ap_m = _compute_geometry(
+        mx,
+        qx - kx,
+        qy - ky,
+        wavelength,
+        semiangle_rad,
+        ang_y_rad,
+        ang_x_rad,
+    )
+    alpha_p2, cos2_p, sin2_p, ap_p = _compute_geometry(
+        mx,
+        qx + kx,
+        qy + ky,
+        wavelength,
+        semiangle_rad,
+        ang_y_rad,
+        ang_x_rad,
+    )
+    dc_mask = np.zeros((n, n), dtype=bool)
+    dc_mask[0, 0] = True
+    prepared = _PreparedMpsSSB(
+        mx=mx,
+        g_qk=g_qk,
+        qx=qx,
+        qy=qy,
+        q_row=q_row_mx,
+        q_col=q_col_mx,
+        kx=mx.array(kx_np, dtype=mx.float32),
+        ky=mx.array(ky_np, dtype=mx.float32),
+        kx_np=kx_np,
+        ky_np=ky_np,
+        dc_value=complex(np.asarray(g_qk[:, 0, 0]).mean()),
+        scan_shape=(n, n),
+        wavelength=wavelength,
+        semiangle_rad=semiangle_rad,
+        ang_y_rad=ang_y_rad,
+        ang_x_rad=ang_x_rad,
+        factor=float(np.pi / wavelength),
+        dc_mask=mx.array(dc_mask),
+        num_bf=num_bf,
+        alpha_k2=alpha_k2,
+        cos2_k=cos2_k,
+        sin2_k=sin2_k,
+        aperture_k=aperture_k,
+        alpha_m2=alpha_m2,
+        cos2_m=cos2_m,
+        sin2_m=sin2_m,
+        ap_m=ap_m,
+        alpha_p2=alpha_p2,
+        cos2_p=cos2_p,
+        sin2_p=sin2_p,
+        ap_p=ap_p,
+    )
+    c10 = mx.array([0.0], dtype=mx.float32)
+    c12 = mx.array([50.0], dtype=mx.float32)
+    cos2phi12 = mx.array([1.0], dtype=mx.float32)
+    sin2phi12 = mx.array([0.0], dtype=mx.float32)
+    corrected = _corrected_from_cached_geometry(
+        prepared,
+        start=0,
+        stop=num_bf,
+        c10=c10,
+        c12=c12,
+        cos2phi12=cos2phi12,
+        sin2phi12=sin2phi12,
+    )[0]
+    obj_reference = mx.fft.ifft2(corrected)
+    ref_sum, ref_sumsq = _phase_sums_from_complex(mx, obj_reference)
+    ref_phase = ref_sum / num_bf
+    ref_loss = mx.mean(ref_sumsq / num_bf - ref_phase * ref_phase)
+
+    _obj, loss, phase = _reconstruct_prepared(
+        prepared,
+        C10=0.0,
+        C12=50.0,
+        phi12=0.0,
+        chunk_bf=16,
+        compute_loss=True,
+        compute_object=False,
+    )
+    mx.eval(ref_phase, ref_loss)
+
+    np.testing.assert_allclose(phase, np.asarray(ref_phase), rtol=1e-5, atol=1e-3)
+    np.testing.assert_allclose(loss, float(np.asarray(ref_loss)), rtol=1e-5, atol=1e-4)
+
+
 @pytest.mark.parametrize("n", [128, 256, 1024])
 def test_mps_phase_cols_small_reduced_modes_match_mlx_reference(n: int) -> None:
     """Reduced 128/256/1024-column phase/loss modes must match MLX IFFT reference."""
