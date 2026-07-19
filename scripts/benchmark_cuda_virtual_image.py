@@ -48,7 +48,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("/home/owner/data/reports/quantem_gpu_cuda_vi_kernel"),
+        default=Path("reports/quantem_gpu_cuda_vi_kernel"),
     )
     parser.add_argument(
         "--label-prefix",
