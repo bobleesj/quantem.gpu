@@ -33,6 +33,8 @@ def test_webgpu_compute_source_tracks_vi_and_dpc_kernels() -> None:
     assert "const DPC_COMPONENT_WGSL" in source
     assert "maskedDpcBuffer(mask: Uint32Array" in source
     assert "maskedDpc(mask: Uint32Array" in source
+    assert "getDevice(): GPUDevice" in source
+    assert "readFloatBuffer(buf: GPUBuffer" in source
     assert "subgroupAdd" in source
 
 
