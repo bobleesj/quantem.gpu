@@ -36,6 +36,8 @@ import threading
 import time
 from typing import Any, Callable
 
+import numpy as np
+
 
 @dataclass
 class _DecodeJob:
@@ -872,6 +874,7 @@ def load_mps_datasets(
             backend="mps",
             det_bin=det_bin,
             verbose=False,
+            output_dtype=np.uint16,
             skip_mps_memory_check=skip_mps_memory_check,
         )
         row_prefix = bool(getattr(data, "row_prefix", False)

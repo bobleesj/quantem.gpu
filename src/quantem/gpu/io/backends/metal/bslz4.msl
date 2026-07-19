@@ -451,6 +451,25 @@ kernel void clip_u16_to_u8(
     out[gid] = (uchar)min((uint)in[gid], 255u);
 }
 
+kernel void narrow_u32_to_u16_masked(
+    device const uint*  in       [[buffer(0)]],
+    device ushort*      out      [[buffer(1)]],
+    device const uchar* mask     [[buffer(2)]],
+    device atomic_uint* overflow [[buffer(3)]],
+    constant uint&      n        [[buffer(4)]],
+    constant uint&      ndet     [[buffer(5)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= n) return;
+    uint pix = gid % ndet;
+    uint value = (mask[pix] == 0) ? in[gid] : 0u;
+    if (value > 65535u) {
+        atomic_store_explicit(overflow, 1u, memory_order_relaxed);
+        value = 65535u;
+    }
+    out[gid] = ushort(value);
+}
+
 kernel void row_prefix_masked_u16(
     device ushort*      data     [[buffer(0)]],  // (nframes, rows, cols)
     device const uchar* mask     [[buffer(1)]],  // detector mask, nonzero = dead

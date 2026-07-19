@@ -468,10 +468,16 @@ class MetalRawBackend:
         cf = self._cf
         fv = getattr(cf, "fast_vi", None)
         if self._auto_fast and fv is not None:
-            from quantem.gpu.compute.mps import _bin2_mask
-            m = None if det_mask is None else _bin2_mask(np.ascontiguousarray(det_mask))
+            from quantem.gpu.compute.mps import _bin_mask
+
+            binf = self.fast_bin
+            m = (
+                None
+                if det_mask is None
+                else _bin_mask(np.ascontiguousarray(det_mask), binf)
+            )
             cc, cr = fv.center_of_mass(m)
-            return cc * 2.0, cr * 2.0  # bin2 px -> full-res detector px
+            return cc * binf, cr * binf  # sidecar px -> full-res detector px
         mask = None if det_mask is None else np.ascontiguousarray(det_mask)
         return cf.vi.center_of_mass(mask)
 

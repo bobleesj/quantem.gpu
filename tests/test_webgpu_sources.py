@@ -27,6 +27,9 @@ def test_webgpu_compute_source_tracks_vi_and_dpc_kernels() -> None:
     assert "export function buildFullDetectorMask" in source
     assert "export function buildScanMask" in source
     assert "maskedSumBuffer(mask: Uint32Array)" in source
+    assert "const SUBTRACT_FROM_TOTAL_WGSL" in source
+    assert "detectorComplementIndices(mask: Uint32Array)" in source
+    assert "totalSumBuffer()" in source
     assert "const maskedComSrc" in source
     assert "maskedCoM(mask: Uint32Array" in source
     assert "const DPC_MEAN_WGSL" in source
@@ -50,6 +53,16 @@ def test_webgpu_showptycho_source_tracks_ssb_engine() -> None:
     assert "const SUPPORTED_SSB_SIZES = [128, 256, 512, 1024]" in source
     assert "makeSsbShader" in source
     assert "WebGPU SSB buffers are not ready after setup" in source
+
+
+def test_webgpu_h5reader_keeps_single_pass_block_metadata_parse() -> None:
+    from quantem.gpu.webgpu import source_text
+
+    source = source_text("h5reader.ts")
+
+    assert "const frameBlockMeta: number[][] = new Array(nFrames);" in source
+    assert "frameBlockMeta[f] = meta;" in source
+    assert "readFrameBlockMeta(f, 0, []);" not in source
 
 
 def test_webgpu_source_rejects_unknown_names() -> None:

@@ -2818,7 +2818,8 @@ def _load_view(
             and dataset_path is None
             and (
                 output_dtype is None
-                or mps_chunk_output_dtype == np.dtype(np.uint8)
+                or mps_chunk_output_dtype
+                in (np.dtype(np.uint8), np.dtype(np.uint16))
             )
         ):
             if _normalize_scan_order(scan_order) != "row-major":

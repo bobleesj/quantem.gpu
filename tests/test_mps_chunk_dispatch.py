@@ -77,3 +77,50 @@ def test_center_of_mass_dispatches_chunk_source_through_gpu_compute(monkeypatch)
     expected = np.array([[-1.5, -0.5], [0.5, 1.5]], dtype=np.float32)
     np.testing.assert_allclose(com_row, expected)
     np.testing.assert_allclose(com_col, expected)
+
+
+def test_mps_fast_sidecar_center_of_mass_uses_configured_bin(monkeypatch):
+    from quantem.gpu.compute.backends import MetalRawBackend
+    from quantem.gpu.compute import mps
+
+    received = {}
+
+    class FakeFastVI:
+        def center_of_mass(self, mask):
+            received["mask"] = mask
+            com_col = np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32)
+            com_row = np.array([5.0, 6.0, 7.0, 8.0], dtype=np.float32)
+            return com_col, com_row
+
+    class FakeChunkedFrames:
+        fast_vi = FakeFastVI()
+        fast_bin = 4
+
+    backend = object.__new__(MetalRawBackend)
+    backend._cf = FakeChunkedFrames()
+    backend._auto_fast = True
+    backend._com_cache = None
+    backend.scan_shape = (2, 2)
+    backend.det_shape = (8, 8)
+
+    calls = {}
+
+    def fake_bin_mask(mask, binf):
+        calls["binf"] = binf
+        assert mask.shape == (8, 8)
+        return np.ones((2, 2), dtype=bool)
+
+    monkeypatch.setattr(mps, "_bin_mask", fake_bin_mask)
+
+    com_col, com_row = backend.center_of_mass(np.ones((8, 8), dtype=bool))
+
+    assert calls["binf"] == 4
+    assert received["mask"].shape == (2, 2)
+    np.testing.assert_array_equal(
+        com_col,
+        np.array([4.0, 8.0, 12.0, 16.0], dtype=np.float32),
+    )
+    np.testing.assert_array_equal(
+        com_row,
+        np.array([20.0, 24.0, 28.0, 32.0], dtype=np.float32),
+    )
