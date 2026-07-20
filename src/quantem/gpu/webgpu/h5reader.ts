@@ -98,6 +98,42 @@ function align4(n: number): number {
   return Math.ceil(n / 4) * 4;
 }
 
+function finitePositiveInteger(value: number): boolean {
+  return Number.isFinite(value) && Math.floor(value) === value && value > 0;
+}
+
+function validateBslz4ChunkHeader(
+  fileBytes: Uint8Array,
+  offset: number,
+  srcBytes: number,
+  detSize: number,
+  name: string,
+): { blockBytes: number; blockElems: number; nBlocksPerFrame: number } {
+  if (!Number.isFinite(offset) || offset < 0 || offset + 12 > fileBytes.byteLength) {
+    throw new Error(`${name}: HDF5 raw chunk offset is outside the file; cannot read bslz4 header.`);
+  }
+  const blockBytes = readBE32(fileBytes, offset + 8);
+  const maxFrameBytes = detSize * srcBytes;
+  if (
+    !finitePositiveInteger(blockBytes)
+    || blockBytes % srcBytes !== 0
+    || blockBytes > maxFrameBytes
+  ) {
+    throw new Error(
+      `${name}: unsupported HDF5 chunk codec or uncompressed detector chunks. `
+      + "ShowPtycho browser compressed-HDF5 loading expects bitshuffle-LZ4 "
+      + "(bslz4/filter 32008) detector chunks; regenerate with that source or "
+      + "export the BF-column sidecar fallback.",
+    );
+  }
+  const blockElems = blockBytes / srcBytes;
+  const nBlocksPerFrame = Math.ceil(detSize / blockElems);
+  if (!finitePositiveInteger(blockElems) || !finitePositiveInteger(nBlocksPerFrame)) {
+    throw new Error(`${name}: invalid bslz4 block geometry in HDF5 chunk header.`);
+  }
+  return { blockBytes, blockElems, nBlocksPerFrame };
+}
+
 // Walk a chunked dataset's B-tree and return per-frame raw bslz4 chunk bytes, indexed by
 // the scan-frame index (chunk_offset[0]). Returns each frame's ABSOLUTE byte offset in the
 // file (NOT a copy) - jsfive reads the B-tree but does NOT apply the bitshuffle filter
@@ -226,6 +262,9 @@ export function readH5VolumeFromFrameIndex(
   const { detRows, detCols, nFrames, srcDtype } = index;
   const detSize = detRows * detCols;
   const offsets = index.frameOffsets;
+  if (!finitePositiveInteger(detRows) || !finitePositiveInteger(detCols) || !finitePositiveInteger(nFrames)) {
+    throw new Error(`${name}: invalid HDF5 detector stack shape ${nFrames}x${detRows}x${detCols}.`);
+  }
   if (offsets.length < nFrames) {
     throw new Error(`HDF5 frame index for ${name} has ${offsets.length} offsets, expected ${nFrames}.`);
   }
@@ -236,9 +275,7 @@ export function readH5VolumeFromFrameIndex(
   const fileBytes = new Uint8Array(buffer);
   // Block geometry from the first chunk's 12-byte header: bytes 8-11 (BE) are the per-block
   // uncompressed byte count; blockElems = that / element bytes.
-  const blockBytes = readBE32(fileBytes, offsets[0] + 8);
-  const blockElems = blockBytes / srcBytes;
-  const nBlocksPerFrame = Math.ceil(detSize / blockElems);
+  const { blockElems, nBlocksPerFrame } = validateBslz4ChunkHeader(fileBytes, offsets[0], srcBytes, detSize, name);
   const defaultFramesPerChunk = Math.max(1, Math.floor((1024 * 1024 * 1024) / detSize));
   const frameStep = Math.max(1, Math.floor(framesPerChunk || defaultFramesPerChunk));
   const chunks: Bslz4Spec[] = [];
@@ -252,6 +289,7 @@ export function readH5VolumeFromFrameIndex(
     let m = 0;
     for (let f = start; f < stop; f++) {
       const addr = offsets[f];
+      validateBslz4ChunkHeader(fileBytes, addr, srcBytes, detSize, name);
       rangeStart = Math.min(rangeStart, addr);
       let pos = 12;
       for (let b = 0; b < nBlocksPerFrame; b++) {
