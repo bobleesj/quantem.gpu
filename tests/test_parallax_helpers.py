@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import math
+import os
 import sys
 from pathlib import Path
 
@@ -22,17 +23,24 @@ from quantem.gpu.parallax_utils import (
 from quantem.gpu.ssb.optics.aberration_fitting import fit_aberrations_svd_polar
 
 
-QUANTEM_SRC = Path("/home/owner/repos/quantem/src")
+QUANTEM_SRC_ENV = "QUANTEM_ORIGINAL_SRC"
+
+
+def _quantem_src() -> Path:
+    raw_path = os.environ.get(QUANTEM_SRC_ENV)
+    if raw_path:
+        return Path(raw_path).expanduser()
+    return Path(__file__).resolve().parents[2] / "quantem" / "src"
 
 
 def _load_quantem_module(name: str, relpath: str):
     """Load original QuantEM reference modules without importing its top-level package."""
-    path = QUANTEM_SRC / relpath
+    path = _quantem_src() / relpath
     if not path.exists():
-        pytest.skip(f"original QuantEM source not available: {path}")
+        pytest.skip(f"original QuantEM source is not available; set {QUANTEM_SRC_ENV}.")
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
-        pytest.skip(f"could not load original QuantEM module: {path}")
+        pytest.skip(f"could not load original QuantEM module; check {QUANTEM_SRC_ENV}.")
     mod = importlib.util.module_from_spec(spec)
     sys.modules[name] = mod
     spec.loader.exec_module(mod)

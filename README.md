@@ -184,16 +184,62 @@ file -> quantem.gpu (load + decompress + to_device) -> arrays
 - `webgpu`: canonical browser-compute sources shipped in `quantem.gpu.webgpu`;
   widget bundles them into anywidget JavaScript and exported HTML.
 
-### Coverage snapshot
+### Feature matrix
 
-| Area | CUDA | MPS | Further work |
-|---|---|---|---|
-| HDF5 load/decompress | Implemented | Implemented | More held-out real-data reference agreement. |
-| `load(..., scan_region=...)` | Implemented | Implemented | More malformed-file and dataset coverage. |
-| BF/DF/ADF, mean DP, DPC/iDPC | Implemented | Implemented | Broader visual reference agreement reports. |
-| Resident virtual-image drag kernels | CUDA RawKernel for CuPy uint8/uint16; warp-shuffle selected reducers; dense DF uses fused cached `total - complement`; DPC/CoM uses a fused one-pass moment reducer with backend caching | Metal uint8/uint16 chunk-backed path; dense DF uses cached `total - complement`; CoM/DPC uses raw Metal `com_u8`/`com_u16`; no giant Torch-MPS tensor for full no-bin browse loads | WebGPU TypeScript/WGSL source lives in `quantem.gpu.webgpu` and widget bundles it; BF/DF/ADF has a GPU-resident buffer path, while CoM/DPC needs equivalent buffer/cache parity and real-adapter browser tests. |
-| Ptychographic SSB | Reference path implemented | MPS preview/free-fit implemented | More datasets, scan sizes, and temporal/joint SSB validation. |
-| GIF/MP4 movie rendering | CUDA/NVENC MP4 | Metal render plus ffmpeg/VideoToolbox MP4 | Larger export benchmark matrix and widget button wiring. |
+Status terms: `Done` means implemented with real-data parity and performance
+evidence; `Partial` means source exists but the full signoff matrix is not
+complete; `Gap` means the backend does not implement that capability yet.
+
+| Capability | CUDA | MPS | WebGPU | Notes |
+|---|---|---|---|---|
+| Device report and explicit selection | Done | Done | NA | WebGPU adapter selection happens in the browser; software adapters are rejected for timing claims. |
+| HDF5 master metadata and discovery | Done | Done | Done | One shared API should serve widget and live callers. |
+| Full HDF5 bitshuffle/LZ4 load/decompress | Done | Done | Done | CUDA uses CuPy/CUDA kernels; MPS uses Metal chunk-backed unified memory; WebGPU uses browser local-file HDF5 plus WGSL decode. |
+| `load(..., scan_region=...)` crop-first IO | Done | Done | Done | CUDA/MPS crop during load; WebGPU slices frame windows before upload/decode. |
+| Detector bin during load, min-memory | Done | Done | Gap | WebGPU detector-bin load is the main IO gap; any bin must be explicit. |
+| BF/DF/ADF resident kernels | Done | Done | Done | CUDA RawKernel, MPS Metal, and WebGPU WGSL selected reducers are implemented. |
+| Dense DF/ADF strategy | Done | Done | Done | Uses cached full-detector total minus complement when that is cheaper than scanning dense masks. |
+| CoM/DPC resident kernels | Done | Done | Partial | CUDA and MPS have fused moment kernels; WebGPU source exists and needs broader full no-bin FPS signoff. |
+| iDPC | Done | Done | Partial | Uses shared DPC reconstruction after CoM; browser integration policy is still narrower than CUDA/MPS. |
+| Ptychographic SSB preview/object steering | Done | Done | Partial | CUDA and MPS are implemented; WebGPU source exists through `quantem.gpu.webgpu` and widget bundling. |
+| Ptychographic SSB optimizer/free-fit | Done | Done | Partial | MPS supports current parity shapes but large exact phase/loss remains slower than CUDA. |
+| GIF/MP4 movie rendering | Done | Done | NA | CUDA/NVENC and Metal/VideoToolbox paths live here; widget owns buttons/export UI. |
+| Browser source ownership | Done | Done | Done | Reusable TypeScript/WGSL sources live in `quantem.gpu.webgpu`; widget bundles them. |
+
+Before adding another custom kernel, run `virtual_image_kernel_support(...)` for
+the target shape/dtype and update the maintainer matrices with the same backend,
+shape, dtype, parity metric, timing split, and memory footprint. The supported
+kernel families are:
+
+| Kernel family | CUDA source | MPS source | WebGPU source | Required gate |
+|---|---|---|---|---|
+| HDF5 bitshuffle/LZ4 decode | `quantem.gpu.io.backends.cuda` | `quantem.gpu.io.backends.mps` | `quantem.gpu.webgpu.bslz4` and `local-h5.ts` | Corrected-frame checksum parity and load-stage timing. |
+| BF/DF/ADF masked sums | `quantem.gpu.compute.cuda` / `detector` | `quantem.gpu.compute.mps` | `quantem.gpu.webgpu.compute` / `local-h5.ts` | Exact integer product parity and first/warm interaction timing. |
+| CoM/DPC | `quantem.gpu.compute.cuda` / `dpc` | `quantem.gpu.compute.mps` / `dpc` | `quantem.gpu.webgpu.compute` | Row/col CoM and centered DPC parity within `1e-5`. |
+| SSB object, phase, loss | `quantem.gpu.ssb.cuda` | `quantem.gpu.ssb.mps` | `quantem.gpu.webgpu.showptycho-ssb` | Same BF policy, same aberrations, phase/loss parity, and interactive redraw timing. |
+| Movie rendering | `quantem.gpu.movie.cuda` | `quantem.gpu.movie.mps` | NA | Frame parity and encoded movie smoke tests. |
+
+### Backend performance snapshot
+
+These public-safe numbers summarize the current full-size Show4DSTEM load and
+browser product work without raw file paths or project-specific dataset names.
+The full-stack rows use `512x512x192x192` HDF5 evidence. CUDA reference timing
+was measured in `cuda-env` on an NVIDIA RTX PRO 6000 Blackwell GPU. WebGPU
+timing used real Chrome WebGPU on Apple Metal, with software adapters rejected.
+
+| Path | Backend / hardware | Evidence shape | Median | Parity / notes |
+|---|---|---:|---:|---|
+| HDF5 load/decompress | CUDA, RTX PRO 6000 Blackwell | `512x512x192x192` | `450 ms` over 946 runs | Reference warm load; min `408 ms`, max `1159 ms`, resident stack `9.66 GB`. |
+| Local HDF5 full-stack load | WebGPU, Chrome Apple Metal | `512x512x192x192` | `772 ms` over 946 runs | Corrected-frame checksum parity versus CUDA; min `726 ms`, max `879 ms`; full path still materializes the `9.7 GB` browse cube. |
+| Local HDF5 scan crop | WebGPU, Chrome Apple Metal | true `256x256x192x192` crop | `338 ms` over 946 runs | Corrected-frame checksum parity versus CUDA; min `316 ms`, max `464 ms`. |
+| Product-first BF selected-block sidecar | WebGPU, Chrome Apple Metal | true `256x256`, BF radius `30` | `210 ms` over 946 runs | Product max/mean abs error `0` versus CUDA; min `185 ms`, max `246 ms`. |
+| Product-first BF selected-block sidecar | WebGPU, Chrome Apple Metal | full `512x512`, BF radius `30` | `378 ms` over 945 successful runs | Product max/mean abs error `0` versus CUDA; min `358 ms`, max `473 ms`. |
+| Product-first BF selected-block sidecar | WebGPU, Chrome Apple Metal | `1024x1024` repeat-stress, BF radius `30` | `1170 ms` over 944 successful runs | Product max/mean abs error `0`; this is four repeats of real `512` evidence, not a true 1024 acquisition signoff. |
+| Visible Show4DSTEM interaction | WebGPU, Chrome Apple Metal | full `512x512x192x192` local HDF5 | full load `933 ms`; drag frames `0.5-0.9 ms` | BF/ADF/DPC display interactions stay GPU-resident after load; warm cached BF/ADF/DPC hits were `0.1-0.5 ms`. |
+
+Across the 8-hour browser soak there were 5 transient Chrome/CDP socket or
+timeout harness failures among 5676 recorded rows. Successful parity rows had no
+numeric mismatch.
 
 ### Native SSB kernel tracking
 

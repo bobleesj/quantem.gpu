@@ -35,3 +35,19 @@ python -m pip install \
 
 These docs are intentionally compute-facing. If you want interactive viewers,
 load with `quantem.gpu` and display the result with `quantem.widget`.
+
+## Agent quick rules
+
+When using or extending this package, keep these rules first:
+
+- Use `quantem.gpu.load(...)` for 4D-STEM HDF5 load/decompress work. Use
+  `scan_region=(row_start, row_stop, col_start, col_stop)` for crop-first IO.
+- Put reusable CUDA, MPS/Metal, and WebGPU kernels in `quantem.gpu`, then have
+  `quantem.widget` bundle or call them. Widget should keep UI, display, and
+  export orchestration.
+- Before claiming a backend is fast, record backend, hardware, shape, dtype,
+  BF policy or mask, parity metric, stage timing, and memory footprint.
+- Do not count hidden crop, hidden binning, reduced BF pixels, saved derived
+  caches, CPU fallback, or software WebGPU adapters as backend parity.
+- Update the backend feature matrix and maintainer checklist whenever a kernel
+  moves from `Gap` or `Partial` to `Done`.

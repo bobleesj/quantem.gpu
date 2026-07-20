@@ -126,7 +126,7 @@ def reconstruct_phase_from_gradient(grad_row, grad_col):
 # --- CoM dispatch (the only step that touches the 4D block) ---
 
 
-def _com_numpy(data, scan_shape, chunk=4096):
+def _com_numpy(data, scan_shape, mask=None, chunk=4096):
     """Chunked numpy/cupy CoM over a 3D/4D array - never casts the whole block."""
     xp = np
     try:
@@ -138,10 +138,37 @@ def _com_numpy(data, scan_shape, chunk=4096):
     if data.ndim == 4:
         data = data.reshape(-1, *data.shape[-2:])
     n, kr, kc = data.shape
+    mask_np = None
+    if mask is not None:
+        mask_np = np.asarray(mask, dtype=bool)
+        if mask_np.shape != (kr, kc):
+            raise ValueError(
+                f"mask shape {mask_np.shape} does not match detector shape {(kr, kc)}."
+            )
+        mask_np = np.ascontiguousarray(mask_np.reshape(-1))
+        selected = int(mask_np.sum())
+        if selected == 0:
+            return xp.zeros(n, dtype=xp.float32), xp.zeros(n, dtype=xp.float32)
+        if selected == kr * kc:
+            mask_np = None
     row_idx = xp.arange(kr, dtype=xp.float64)
     col_idx = xp.arange(kc, dtype=xp.float64)
     com_row = xp.empty(n, dtype=xp.float32)
     com_col = xp.empty(n, dtype=xp.float32)
+    if mask_np is not None:
+        selected_idx_np = np.flatnonzero(mask_np).astype(np.int64, copy=False)
+        selected_idx = xp.asarray(selected_idx_np)
+        row_sel = xp.asarray((selected_idx_np // kc).astype(np.float64, copy=False))
+        col_sel = xp.asarray((selected_idx_np % kc).astype(np.float64, copy=False))
+        flat = data.reshape(n, kr * kc)
+        for i in range(0, n, chunk):
+            block = flat[i:i + chunk][:, selected_idx].astype(xp.float64, copy=False)
+            isum = xp.maximum(block.sum(axis=1), 1e-10)
+            com_row[i:i + chunk] = ((block * row_sel[None, :]).sum(axis=1) / isum).astype(xp.float32)
+            com_col[i:i + chunk] = ((block * col_sel[None, :]).sum(axis=1) / isum).astype(xp.float32)
+        if xp is not np:
+            com_row, com_col = xp.asnumpy(com_row), xp.asnumpy(com_col)
+        return com_row, com_col
     for i in range(0, n, chunk):
         block = data[i:i + chunk]
         sum_kc = block.sum(axis=2, dtype=xp.float64)   # (b, kr)
@@ -191,14 +218,14 @@ def center_of_mass(data, scan_shape=None, mask=None):
 
             got = cuda_center_of_mass(data, mask)
             if got is None:
-                com_row, com_col = _com_numpy(data, (sr, sc))
+                com_row, com_col = _com_numpy(data, (sr, sc), mask=mask)
             else:
                 com_row, com_col = (got[0].get(), got[1].get())
         else:
             # numpy / list -> ndarray. cupy passes through: _com_numpy reduces it
             # on-device (xp=cp) and returns numpy, so CUDA input works too.
             data = np.asarray(data)
-            com_row, com_col = _com_numpy(data, (sr, sc))
+            com_row, com_col = _com_numpy(data, (sr, sc), mask=mask)
     com_row = np.asarray(com_row, dtype=np.float32) - float(np.mean(com_row))
     com_col = np.asarray(com_col, dtype=np.float32) - float(np.mean(com_col))
     return com_row.reshape(sr, sc), com_col.reshape(sr, sc)

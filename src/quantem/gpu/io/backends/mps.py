@@ -749,6 +749,16 @@ class MPSDecompressor:
             self._cast_overflow_mtl, np.uint32, 1
         )
 
+    def drop_output_pool_refs(self) -> None:
+        """Release returned/output chunk references but keep reusable scratch."""
+        self._chunk_out_pool = []
+        self._chunk_u8_pool = []
+        self._chunk_u16_pool = []
+        self._chunk_fast_pool = []
+        self._out_mtl = None
+        self._out_np = None
+        self._out_nbytes = 0
+
     def _read_ahead_buffer(self):
         """Return a third compressed-input metadata slot for load pipelining."""
         if self._comp_mtl_c is None:
@@ -1665,7 +1675,7 @@ class MPSDecompressor:
                 cast_u16_out_mtl = None
                 cast_u16_out_byte_offset = 0
             else:
-                if output_u16_narrow:
+                if output_u8 or output_u16_narrow:
                     scratch_idx = ci % D
                     if (
                         scratch_idx < len(narrow_scratch_pool)
@@ -2096,7 +2106,7 @@ def load_master_chunked(
         n_blocks_per_frame=plan.n_blocks_per_frame,
         max_compressed_bytes=_max_compressed_bytes_for_plan(plan),
     )
-    return dec.load_master_chunked(
+    result = dec.load_master_chunked(
         plan.master_path,
         pixel_mask=pixel_mask,
         verbose=verbose,
@@ -2105,6 +2115,8 @@ def load_master_chunked(
         fast_det_bin=fast_det_bin,
         output_dtype=output_dtype,
     )
+    dec.drop_output_pool_refs()
+    return result
 
 
 def load_mps_4dstem(
@@ -2199,18 +2211,6 @@ def load_mps_4dstem(
         else:
             chunks = result
             fast_chunks = None
-    # Drop the cached decompressor once the result is built. The returned arrays
-    # each own their Metal output buffer via ``arr._mtl``, so they survive the
-    # clear; only the decoder's reusable scratch (lz4 + compressed staging +
-    # read-ahead) and its pool list lose their Python refs. This lets a later
-    # ``del result`` actually release the data instead of the cached decompressor
-    # pinning it forever, and keeps the no-bin phys_footprint at ~20.2 GB on a
-    # device 512x512x192x192 load (19.3 GB data + ~0.9 GB decode working set).
-    # The headline footprint win is ``fast_det_bin=None`` above (no +4.8 GB bin2
-    # sidecar); the clear is the second-order hygiene that stops the decompressor
-    # from holding a second reference to the whole pool. Only cost: the next load
-    # re-zeroes the 19.3 GB pool (~1.4 s) instead of reusing it.
-    clear_mps_cache()
     import gc
 
     gc.collect()

@@ -94,6 +94,9 @@ def test_mps_uint8_chunked_load_source_contract_is_present() -> None:
     assert "output_dtype=mps_chunk_output_dtype" in hdf5_source
     assert "output_dtype=np.uint8" in mps_source
     assert "cast_u8_out_mtl" in mps_source
+    assert "if output_u8 or output_u16_narrow:" in mps_source
+    assert "scratch_idx = ci % D" in mps_source
+    assert "dec.drop_output_pool_refs()" in mps_source
 
 
 def test_mps_dense_mask_uses_total_minus_complement_contract() -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gc
 import math
+import os
 import time
 from pathlib import Path
 
@@ -9,17 +10,17 @@ import numpy as np
 import pytest
 
 
-STEPH_MASTER_CANDIDATES = (
-    Path("/home/owner/data/steph/251115_ncem_arina_steph/lamella_2_005_master.h5"),
-    Path("/home/owner/ssd/data/steph/20251115_ncem_arina/lamella_2_005_master.h5"),
-)
+REALDATA_MASTER_ENV = "QUANTEM_GPU_REALDATA_MASTER"
 
 
-def _steph_master() -> Path:
-    for path in STEPH_MASTER_CANDIDATES:
-        if path.exists():
-            return path
-    pytest.skip("Steph real-data master is not available on this host.")
+def _realdata_master() -> Path:
+    raw_path = os.environ.get(REALDATA_MASTER_ENV)
+    if not raw_path:
+        pytest.skip(f"{REALDATA_MASTER_ENV} is not set.")
+    path = Path(raw_path).expanduser()
+    if not path.exists():
+        pytest.skip(f"{REALDATA_MASTER_ENV} does not point to an existing file.")
+    return path
 
 
 def _cupy():
@@ -41,7 +42,7 @@ def _require_vram(min_gb: float) -> None:
         pytest.skip(f"Not enough free VRAM ({free_gb:.1f} GB free, need {min_gb:.0f} GB).")
 
 
-def test_real_steph_detector_products_match_legacy_widget_and_not_slower() -> None:
+def test_realdata_detector_products_match_legacy_widget_and_not_slower() -> None:
     """Real-data parity for the migrated detector helpers."""
     cp = _cupy()
     legacy_detector = pytest.importorskip("quantem.widget.detector")
@@ -49,7 +50,7 @@ def test_real_steph_detector_products_match_legacy_widget_and_not_slower() -> No
     from quantem.gpu.io.hdf5 import load
 
     _require_vram(12.0)
-    path = _steph_master()
+    path = _realdata_master()
     _clean_gpu()
     data = load(path, verbose=False).data
 
@@ -130,14 +131,14 @@ def _ssb_snapshot(ssb_cls, path: Path) -> dict[str, object]:
     return snapshot
 
 
-def test_real_steph_ssb_matches_legacy_live_and_not_slower() -> None:
+def test_realdata_ssb_matches_legacy_live_and_not_slower() -> None:
     """Real-data SSB parity against the legacy live engine."""
     pytest.importorskip("quantem.live.engine.reconstruction")
     from quantem.live.engine.reconstruction import SSB as LegacySSB
     from quantem.gpu.ssb import SSB as GpuSSB
 
     _require_vram(18.0)
-    path = _steph_master()
+    path = _realdata_master()
 
     legacy = _ssb_snapshot(LegacySSB, path)
     migrated = _ssb_snapshot(GpuSSB, path)

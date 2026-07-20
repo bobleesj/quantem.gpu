@@ -19,6 +19,14 @@ def _checksum(arr):
     )
 
 
+def _parity_dtype() -> str:
+    return os.environ.get("QUANTEM_GPU_PARITY_DTYPE", "uint8")
+
+
+def _required_vram_gb(dtype: str) -> float:
+    return 12.0 if dtype in {"uint8", "u1"} else 28.0
+
+
 @pytest.mark.skipif(
     not os.environ.get("QUANTEM_GPU_PARITY_MASTER"),
     reason="set QUANTEM_GPU_PARITY_MASTER to a real Arina master for old/new parity",
@@ -33,15 +41,17 @@ def test_real_master_matches_legacy_widget_checksum() -> None:
     master = os.environ["QUANTEM_GPU_PARITY_MASTER"]
     if not os.path.exists(master):
         pytest.skip(f"master not available: {master}")
-    if cp.cuda.runtime.memGetInfo()[0] / 1e9 < 8.0:
-        pytest.skip("not enough free VRAM for real-master parity")
+    dtype = _parity_dtype()
+    required = _required_vram_gb(dtype)
+    if cp.cuda.runtime.memGetInfo()[0] / 1e9 < required:
+        pytest.skip(f"not enough free VRAM for real-master {dtype} parity")
 
-    old = widget_hdf5.load(master, verbose=False, backend="cuda")
+    old = widget_hdf5.load(master, verbose=False, backend="cuda", dtype=dtype)
     old_ck = _checksum(old.data)
     del old
     cp.get_default_memory_pool().free_all_blocks()
 
-    new = gpu_hdf5.load(master, verbose=False, backend="cuda")
+    new = gpu_hdf5.load(master, verbose=False, backend="cuda", dtype=dtype)
     new_ck = _checksum(new.data)
     del new
     cp.get_default_memory_pool().free_all_blocks()
@@ -62,8 +72,10 @@ def test_real_master_crop_first_matches_full_slice() -> None:
     master = os.environ["QUANTEM_GPU_PARITY_MASTER"]
     if not os.path.exists(master):
         pytest.skip(f"master not available: {master}")
-    if cp.cuda.runtime.memGetInfo()[0] / 1e9 < 24.0:
-        pytest.skip("not enough free VRAM for full-master crop parity")
+    dtype = _parity_dtype()
+    required = _required_vram_gb(dtype)
+    if cp.cuda.runtime.memGetInfo()[0] / 1e9 < required:
+        pytest.skip(f"not enough free VRAM for full-master {dtype} crop parity")
 
     region = tuple(
         int(value)
@@ -72,8 +84,8 @@ def test_real_master_crop_first_matches_full_slice() -> None:
     if len(region) != 4:
         raise ValueError("QUANTEM_GPU_PARITY_REGION must be r0,r1,c0,c1")
 
-    crop = load(master, scan_region=region, backend="cuda", verbose=False)
-    full = load(master, backend="cuda", verbose=False)
+    crop = load(master, scan_region=region, backend="cuda", verbose=False, dtype=dtype)
+    full = load(master, backend="cuda", verbose=False, dtype=dtype)
     ref = cp.ascontiguousarray(full.data[region[0]:region[1], region[2]:region[3]])
 
     assert tuple(crop.data.shape) == tuple(ref.shape)

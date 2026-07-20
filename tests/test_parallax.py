@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import numpy as np
@@ -177,19 +178,19 @@ def test_parallax_result_rejects_missing_ssb_conversion_inputs() -> None:
         result.to_ssb_aberrations()
 
 
-def test_parallax_real_samsung_crop_recovers_aberrations_when_available() -> None:
+def test_parallax_real_env_crop_recovers_aberrations_when_available() -> None:
     cp = pytest.importorskip("cupy")
     from quantem.gpu import parallax
     from quantem.gpu.detector import detect_bf_radius
     from quantem.gpu.io.hdf5 import load_scan_region
 
-    master = Path(
-        "/home/owner/ssd/data/samsung/logic_pmos_1p3Mx_30pA_1mrad_5um_17mradtilt/"
-        "maped/logic_pmos_1p3Mx_30pA_1mrad_5um_17mradtilt_0.0x_0.0y_"
-        "20260129_15-41-52_master.h5"
-    )
+    master_env = "QUANTEM_GPU_PARALLAX_MASTER"
+    master_raw = os.environ.get(master_env)
+    if not master_raw:
+        pytest.skip(f"{master_env} is not set.")
+    master = Path(master_raw).expanduser()
     if not master.exists():
-        pytest.skip(f"Samsung master not available: {master}")
+        pytest.skip(f"{master_env} does not point to an existing file.")
 
     scan_shape = (48, 48)
     loaded = load_scan_region(

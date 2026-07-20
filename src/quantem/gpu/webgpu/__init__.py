@@ -16,6 +16,7 @@ WEBGPU_SOURCE_NAMES: tuple[str, ...] = (
     "fft-shader.ts",
     "h5reader.ts",
     "lazy.ts",
+    "local-h5.ts",
     "showptycho-ssb.ts",
 )
 

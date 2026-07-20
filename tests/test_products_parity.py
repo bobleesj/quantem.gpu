@@ -82,6 +82,31 @@ def test_dpc_fixed_rotation_matches_legacy_widget() -> None:
     assert got.rotation_deg == expected.rotation_deg
 
 
+def test_center_of_mass_numpy_fallback_applies_mask() -> None:
+    from quantem.gpu.dpc import center_of_mass
+
+    data = _synthetic_4dstem()
+    mask = np.zeros(data.shape[-2:], dtype=bool)
+    mask[2:6, 1:4] = True
+
+    got_row, got_col = center_of_mass(data, mask=mask)
+    full_row, full_col = center_of_mass(data)
+
+    rows = np.arange(data.shape[-2], dtype=np.float64)[:, None]
+    cols = np.arange(data.shape[-1], dtype=np.float64)[None, :]
+    masked = data.astype(np.float64) * mask
+    denom = np.maximum(masked.sum(axis=(2, 3)), 1e-10)
+    exp_row = ((masked * rows).sum(axis=(2, 3)) / denom).astype(np.float32)
+    exp_col = ((masked * cols).sum(axis=(2, 3)) / denom).astype(np.float32)
+    exp_row = exp_row - float(exp_row.mean())
+    exp_col = exp_col - float(exp_col.mean())
+
+    np.testing.assert_allclose(got_row, exp_row, atol=1e-5)
+    np.testing.assert_allclose(got_col, exp_col, atol=1e-5)
+    assert not np.allclose(got_row, full_row)
+    assert not np.allclose(got_col, full_col)
+
+
 def test_cupy_dp_mean_and_virtual_image_match_manual_sum() -> None:
     cp = pytest.importorskip("cupy")
     from quantem.gpu import dp_mean, virtual_image

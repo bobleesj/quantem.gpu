@@ -26,5 +26,6 @@ parts:
     chapters:
       - file: maintainer/migration
       - file: maintainer/backend-optimization-matrix
+      - file: maintainer/backend-4dstem-load-checklist
       - file: maintainer/ssb-performance
       - file: maintainer/virtual-image-kernel-checklist

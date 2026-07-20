@@ -1,7 +1,7 @@
 # Load an HDF5 master
 
-Use `quantem.gpu.load()` for ARINA/HDF5 4D-STEM masters. The returned object is
-a `LoadResult` with `data` and `metadata`.
+Use `quantem.gpu.load()` for bitshuffle/LZ4 HDF5 4D-STEM masters. The returned
+object is a `LoadResult` with `data` and `metadata`.
 
 ```python
 from quantem.gpu import load
@@ -37,4 +37,4 @@ Keep load parameters explicit in reports:
 - `det_bin`
 - `dtype`
 - `scan_region`, if used
-- master path, scan shape, detector shape, and timing
+- public-safe file label, scan shape, detector shape, and timing
