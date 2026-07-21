@@ -50,11 +50,11 @@ complete; `Gap` means the backend does not implement that capability yet.
 | HDF5 metadata, readiness, discovery | Done | Done | Done | Done | Keep one shared API for widget/live callers. |
 | Full HDF5 bitshuffle/LZ4 load/decompress | Done | Done | Done | Reference | CUDA kernels, Metal chunk-backed loaders, and WebGPU WGSL decode are implemented. |
 | `load(..., scan_region=...)` crop-first IO | Done | Done | Done | Reference | WebGPU uses frame-window slicing before upload/decode. |
-| Detector bin during load, min-memory | Done | Done | Gap | Reference | WebGPU detector-bin load remains a real gap; never hide binning. |
+| Detector bin during load, min-memory | Done | Done | Done | Reference | WebGPU has explicit count-preserving `detBin` source support; full `512x512x192x192` `detBin=2/4/8` headed parity is exact on a real NVIDIA WebGPU adapter, including native non-low8 `uint16` `detBin=2`. |
 | BF/DF/ADF resident kernels | Done | Done | Done | Reference | CUDA RawKernel, MPS Metal, and WebGPU WGSL selected reducers are implemented. |
 | Dense DF/ADF strategy | Done | Done | Done | Reference | Dense masks use cached `total - complement` where cheaper. |
-| CoM/DPC resident kernels | Done | Done | Partial | Reference | WebGPU source exists but still needs broader full no-bin FPS signoff. |
-| iDPC | Done | Done | Partial | Reference | Browser integration is narrower than CUDA/MPS. |
+| CoM/DPC resident kernels | Done | Done | Done | Reference | WebGPU row/col DPC has full no-bin headed signoff on real hardware. |
+| iDPC | Done | Done | Done | Reference | WebGPU fixed-rotation iDPC is implemented with paired DPC buffers and a dual-real FFT; parity is float32 FFT tolerance, not bit-exact. |
 | Ptychographic SSB preview/object steering | Done | Done | Partial | Reference | WebGPU source is shipped and widget-bundled; the full browser matrix is not complete. |
 | Ptychographic SSB optimizer/free-fit | Done | Done | Partial | Not target | MPS supports current parity shapes; large exact phase/loss is still slower than CUDA. |
 | GIF/MP4 movie rendering | Done | Done | NA | Fallback | CUDA/NVENC and Metal/VideoToolbox paths live here; widget owns UI buttons. |
@@ -68,17 +68,23 @@ The rule for new heavy work is: implement the compute or IO path in
 These numbers are public-safe summaries. They do not include raw local paths or
 project-specific dataset names. The full-stack rows use `512x512x192x192` HDF5
 evidence. CUDA reference timing was measured on an NVIDIA RTX PRO 6000
-Blackwell GPU. WebGPU timing used real Chrome WebGPU on Apple Metal.
+Blackwell GPU. WebGPU timing used real Chrome WebGPU on Apple Metal or NVIDIA
+Blackwell as listed.
 
 | Path | Backend / hardware | Shape | Median | Parity / notes |
 |---|---|---:|---:|---|
 | HDF5 load/decompress | CUDA, RTX PRO 6000 Blackwell | full `512` | `450 ms` | 946-run warm reference; resident stack `9.66 GB`. |
+| HDF5 load/decompress | CUDA, RTX PRO 6000 Blackwell | true full `1024` | `4.704 s` | Real acquisition, no bin/crop, `uint16` output, selected corrected frames bit-exact, resident stack `77.31 GB`. |
+| HDF5 load/decompress | MPS, Apple Metal | true full `1024` | `4.617 s` | Real acquisition, no bin/crop, chunk-backed `uint16` output, selected corrected frames bit-exact, resident stack `77.31 GB`. |
 | Local HDF5 full-stack load | WebGPU, Chrome Apple Metal | full `512` | `772 ms` | Corrected-frame checksum parity versus CUDA. |
+| Local HDF5 detector-bin load | WebGPU, Chrome NVIDIA Blackwell | full `512` and true `256` crop, `detBin=2/4/8` | full `1199/1212/1106 ms`; crop p95 `798/813/775 ms` | Corrected-frame checksum parity exact versus zero-bad-before-bin reference; crop medians `774/755/733 ms`; native non-low8 `uint16` `detBin=2` also exact at `2651 ms`. |
 | Local HDF5 scan crop | WebGPU, Chrome Apple Metal | true `256` crop | `338 ms` | Corrected-frame checksum parity versus CUDA. |
 | Product-first BF selected-block sidecar | WebGPU, Chrome Apple Metal | true `256`, BF radius `30` | `210 ms` | Product max/mean abs error `0` versus CUDA. |
 | Product-first BF selected-block sidecar | WebGPU, Chrome Apple Metal | full `512`, BF radius `30` | `378 ms` | Product max/mean abs error `0` versus CUDA. |
+| Product-first BF selected-block sidecar | WebGPU, Chrome NVIDIA Blackwell | true `1024`, BF radius `30` | `4.92 s` wall; `1.56 s` product stage | True real-acquisition product-first BF signoff; selected compressed payload `6.88 GB`, output `4.19 MB`, max/mean abs error `0` versus an independent Python reference. This is not full-stack no-bin browse/load signoff. |
 | Product-first BF selected-block sidecar | WebGPU, Chrome Apple Metal | `1024` repeat-stress, BF radius `30` | `1170 ms` | Four repeats of real `512` evidence; not true 1024 acquisition signoff. |
 | Visible Show4DSTEM interaction | WebGPU, Chrome Apple Metal | full `512` local HDF5 | full load `933 ms`; drag `0.5-0.9 ms` | GPU-resident warm BF/ADF/DPC display interactions. |
+| DPC/iDPC display | WebGPU, Chrome NVIDIA Blackwell | full `512` no-bin | DPC row/col/iDPC display medians `14.9/13.2/13.2 ms` | FFT command batching keeps iDPC in the 30 FPS budget by median; full recompute medians `13.7/19.3/22.7 ms`; corrected-frame parity passed; DPC max abs error `7.63e-6`; iDPC mean abs error `4.70e-6`, max `3.05e-5` from float32 FFT order; idle RAF `60 FPS`. Local-file timing harness runs reject URL fallback with `--require-local-profile`. |
 
 ## Adding a backend kernel
 

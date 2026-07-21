@@ -29,11 +29,34 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--fixture-dir", required=True)
     parser.add_argument("--master-name", default="master.h5")
     parser.add_argument("--data-template", default="data_{index:06d}.h5")
+    parser.add_argument(
+        "--block-index-template",
+        help=(
+            "Optional metadata-only QH5IDX sidecar template, for example "
+            "'data_{index:06d}.qh5idx'. Files are added to the same browser "
+            "file input as the HDF5 master/data files."
+        ),
+    )
     parser.add_argument("--data-files", type=int, default=27)
     parser.add_argument("--frames", type=int, default=262144)
+    parser.add_argument(
+        "--source-scan-shape",
+        help=(
+            "Optional source scan shape as ROWS,COLS for crop tests where the "
+            "exported widget shape is the cropped output shape."
+        ),
+    )
+    parser.add_argument(
+        "--scan-region",
+        help=(
+            "Optional true source scan crop as r0,r1,c0,c1. The browser loader "
+            "decodes only that frame window; this is not load-then-slice."
+        ),
+    )
     parser.add_argument("--workers", type=int)
     parser.add_argument("--group-size", type=int)
     parser.add_argument("--decode-batch", type=int)
+    parser.add_argument("--det-bin", type=int, default=1)
     parser.add_argument(
         "--frame-low8",
         choices=("default", "true", "false"),
@@ -78,11 +101,39 @@ def _parse_args() -> argparse.Namespace:
         help="Runtime override for the compressed-byte WebGPU upload route.",
     )
     parser.add_argument("--reps", type=int, default=1)
+    parser.add_argument(
+        "--dpc-reps",
+        type=int,
+        default=0,
+        help="Measure full no-bin DPC row/col browser paths after load.",
+    )
+    parser.add_argument(
+        "--dpc-warmup",
+        type=int,
+        default=1,
+        help="Warm DPC row/col GPU/readback caches before timing repeated phases.",
+    )
+    parser.add_argument(
+        "--fps-ms",
+        type=int,
+        default=1000,
+        help="requestAnimationFrame sampling window for DPC interaction checks.",
+    )
     parser.add_argument("--checksum-json", type=Path)
+    parser.add_argument(
+        "--dpc-reference-json",
+        type=Path,
+        help="Optional private reference manifest with DPC/iDPC .f32 files for browser max/mean error checks.",
+    )
     parser.add_argument(
         "--frame-index-json",
         type=Path,
         help="Optional metadata-only frame-offset manifest injected as __QT_H5_LOCAL_FRAME_INDEX.",
+    )
+    parser.add_argument(
+        "--require-local-profile",
+        action="store_true",
+        help="Wait for a local-file load profile instead of accepting the URL/fetch fallback.",
     )
     parser.add_argument("--screenshot", type=Path)
     parser.add_argument("--timeout-s", type=float, default=120.0)
@@ -142,12 +193,21 @@ class CdpTarget:
 
 def _runtime_prelude(args: argparse.Namespace) -> str:
     statements: list[str] = []
+    if args.source_scan_shape:
+        rows, cols = _parse_int_tuple(args.source_scan_shape, 2, "--source-scan-shape")
+        statements.append(f"globalThis.__QT_H5_SOURCE_SCAN_ROWS={rows};")
+        statements.append(f"globalThis.__QT_H5_SOURCE_SCAN_COLS={cols};")
+    if args.scan_region:
+        region = _parse_int_tuple(args.scan_region, 4, "--scan-region")
+        statements.append(f"globalThis.__QT_H5_SCAN_REGION={json.dumps(region)};")
     if args.workers is not None:
         statements.append(f"globalThis.__QT_H5_LOCAL_WORKERS={int(args.workers)};")
     if args.group_size is not None:
         statements.append(f"globalThis.__QT_H5_LOCAL_GROUP={int(args.group_size)};")
     if args.decode_batch is not None:
         statements.append(f"globalThis.__QT_H5_DECODE_BATCH={int(args.decode_batch)};")
+    if args.det_bin and int(args.det_bin) > 1:
+        statements.append(f"globalThis.__QT_H5_DET_BIN={int(args.det_bin)};")
     if args.frame_index_json:
         manifest = json.dumps(json.loads(args.frame_index_json.read_text(encoding="utf-8")))
         statements.append(f"globalThis.__QT_H5_LOCAL_FRAME_INDEX={manifest};")
@@ -186,6 +246,13 @@ def _runtime_prelude(args: argparse.Namespace) -> str:
     return "\n".join(statements)
 
 
+def _parse_int_tuple(text: str, n: int, label: str) -> list[int]:
+    parts = [part.strip() for part in text.split(",")]
+    if len(parts) != n:
+        raise ValueError(f"{label} must contain {n} comma-separated integers")
+    return [int(part) for part in parts]
+
+
 def _fixture_files(args: argparse.Namespace) -> list[str]:
     base = args.fixture_dir.rstrip("/")
     files = [f"{base}/{args.master_name}"]
@@ -193,13 +260,23 @@ def _fixture_files(args: argparse.Namespace) -> list[str]:
         f"{base}/{args.data_template.format(index=index)}"
         for index in range(1, args.data_files + 1)
     )
+    if args.block_index_template:
+        files.extend(
+            f"{base}/{args.block_index_template.format(index=index)}"
+            for index in range(1, args.data_files + 1)
+        )
+    missing = [file for file in files if not Path(file).is_file()]
+    if missing:
+        preview = ", ".join(missing[:3])
+        suffix = "" if len(missing) <= 3 else f", ... ({len(missing)} missing total)"
+        raise FileNotFoundError(f"Fixture file(s) not found: {preview}{suffix}")
     return files
 
 
 def _summary(runs: list[dict[str, Any]]) -> dict[str, Any]:
     totals = [int(run["profile"]["totalMs"]) for run in runs]
     walls = [int(run["wallMs"]) for run in runs]
-    return {
+    summary: dict[str, Any] = {
         "n": len(runs),
         "allParity": all(bool(run.get("parity", True)) for run in runs),
         "totalProfileMsSum": sum(totals),
@@ -211,9 +288,160 @@ def _summary(runs: list[dict[str, Any]]) -> dict[str, Any]:
         "wallMsMin": min(walls),
         "wallMsMax": max(walls),
     }
+    dpc = _dpc_summary(runs)
+    if dpc:
+        summary["dpc"] = dpc
+    return summary
 
 
-def _run_one(args: argparse.Namespace, files: list[str], reference_checksums: list[dict[str, Any]] | None, index: int) -> dict[str, Any]:
+def _dpc_summary(runs: list[dict[str, Any]]) -> dict[str, Any]:
+    samples: dict[str, list[float]] = {}
+    fps_values: list[float] = []
+    all_lengths: list[int] = []
+    out: dict[str, Any] = {}
+    for run in runs:
+        dpc = run.get("dpc") or {}
+        raf = dpc.get("raf") or {}
+        if isinstance(raf.get("fps"), (int, float)):
+            fps_values.append(float(raf["fps"]))
+        for sample in dpc.get("samples") or []:
+            kind = sample.get("kind")
+            source = sample.get("source")
+            value = sample.get("value") or {}
+            elapsed = sample.get("elapsedMs")
+            if isinstance(value.get("length"), int):
+                all_lengths.append(int(value["length"]))
+            if isinstance(elapsed, (int, float)) and kind and source:
+                samples.setdefault(f"{source}:{kind}", []).append(float(elapsed))
+        for parity in dpc.get("parity") or []:
+            source = parity.get("source")
+            if not source:
+                continue
+            out.setdefault("parity", {})[source] = parity
+
+    if not samples and not fps_values and "parity" not in out:
+        return {}
+    for key, values in sorted(samples.items()):
+        out[key] = {
+            "n": len(values),
+            "medianMs": round(statistics.median(values), 3),
+            "minMs": round(min(values), 3),
+            "maxMs": round(max(values), 3),
+        }
+    if fps_values:
+        out["raf"] = {
+            "n": len(fps_values),
+            "medianFps": round(statistics.median(fps_values), 2),
+            "minFps": round(min(fps_values), 2),
+        }
+    if all_lengths:
+        out["pixelLengths"] = sorted(set(all_lengths))
+    return out
+
+
+def _dpc_probe_script(reps: int, fps_ms: int, warmup: int, dpc_references: dict[str, str] | None) -> str:
+    references_json = json.dumps(dpc_references or {})
+    return f"""(async () => {{
+      const api = globalThis.__sh4d || null;
+      if (!api) return {{ available: false, error: "__sh4d missing" }};
+      const sources = ["DPC_row", "DPC_col", "iDPC"];
+      const samples = [];
+      const parity = [];
+      const references = {references_json};
+      const measure = async (kind, source, fn) => {{
+        const t0 = performance.now();
+        const value = await fn();
+        samples.push({{
+          kind,
+          source,
+          elapsedMs: performance.now() - t0,
+          value,
+        }});
+      }};
+      const display = async (source) => {{
+        if (typeof api.dpcDisplayOnly === "function") {{
+          return await api.dpcDisplayOnly(source);
+        }}
+        if (typeof api.dpcBufferOnly === "function") {{
+          return await api.dpcBufferOnly(source);
+        }}
+        return {{ available: false, error: "DPC display hook missing" }};
+      }};
+      for (const source of sources) {{
+        for (let i = 0; i < {int(warmup)}; i++) {{
+          await display(source);
+          if (typeof api.dpcOnly === "function") await api.dpcOnly(source);
+        }}
+      }}
+      for (const source of sources) {{
+        for (let i = 0; i < {int(reps)}; i++) {{
+          await measure("display", source, () => display(source));
+        }}
+      }}
+      for (const source of sources) {{
+        for (let i = 0; i < {int(reps)}; i++) {{
+          if (typeof api.dpcOnly === "function") await measure("readback", source, () => api.dpcOnly(source));
+        }}
+      }}
+      for (const source of sources) {{
+        for (let i = 0; i < {int(reps)}; i++) {{
+          if (api.model && typeof api.model.set === "function" && typeof api.recomputeVI === "function") {{
+            await measure("recomputeVI", source, async () => {{
+              api.model.set("vi_source", source);
+              await api.recomputeVI();
+              await new Promise((resolve) => requestAnimationFrame(resolve));
+              return {{
+                profile: globalThis.__sh4dViProfile || null,
+                display: globalThis.__sh4dDpcDisplay || null,
+              }};
+            }});
+          }}
+        }}
+      }}
+      if (typeof api.dpcCompareReference === "function") {{
+        for (const source of sources) {{
+          if (references[source]) {{
+            const t0 = performance.now();
+            const got = await api.dpcCompareReference(source, references[source]);
+            parity.push({{ ...got, elapsedMs: performance.now() - t0 }});
+          }}
+        }}
+      }}
+      const fpsWindowMs = Math.max(250, {int(fps_ms)});
+      let frames = 0;
+      const rafStart = performance.now();
+      await new Promise((resolve) => {{
+        const step = () => {{
+          frames += 1;
+          if (performance.now() - rafStart >= fpsWindowMs) resolve();
+          else requestAnimationFrame(step);
+        }};
+        requestAnimationFrame(step);
+      }});
+      const rafElapsedMs = performance.now() - rafStart;
+      return {{
+        available: true,
+        samples,
+        parity,
+        raf: {{
+          frames,
+          elapsedMs: rafElapsedMs,
+          fps: frames * 1000 / Math.max(1, rafElapsedMs),
+        }},
+        profile: globalThis.__loadprof || null,
+        softwareAdapter: Boolean(globalThis.__loadprof && globalThis.__loadprof.softwareAdapter),
+        adapterInfo: globalThis.__loadprof ? globalThis.__loadprof.adapterInfo : null,
+      }};
+    }})()"""
+
+
+def _run_one(
+    args: argparse.Namespace,
+    files: list[str],
+    reference_checksums: list[dict[str, Any]] | None,
+    dpc_references: dict[str, str] | None,
+    index: int,
+) -> dict[str, Any]:
     target = CdpTarget(args.cdp, "about:blank")
     try:
         target.call("Page.enable")
@@ -244,7 +472,7 @@ def _run_one(args: argparse.Namespace, files: list[str], reference_checksums: li
             raise RuntimeError(f"file input not found; title={title!r} body={body!r}")
         wall0 = time.perf_counter()
         target.call("DOM.setFileInputFiles", {"nodeId": node, "files": files}, timeout=60)
-        target.eval(
+        mounted_count = target.eval(
             """(() => {
               const input = document.querySelector('input[type=file]');
               input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -252,6 +480,10 @@ def _run_one(args: argparse.Namespace, files: list[str], reference_checksums: li
               return input.files.length;
             })()"""
         )
+        if mounted_count != len(files):
+            raise RuntimeError(
+                f"Browser mounted {mounted_count} file(s), expected {len(files)}"
+            )
         state = None
         while time.perf_counter() - wall0 < args.timeout_s:
             state = target.eval(
@@ -261,7 +493,10 @@ def _run_one(args: argparse.Namespace, files: list[str], reference_checksums: li
                 }}))()"""
             )
             profile = (state or {}).get("loadprof")
-            if profile and profile.get("frames") == args.frames and state.get("hasChecksums"):
+            local_ok = bool(profile) and (
+                not args.require_local_profile or bool(profile.get("localFiles"))
+            )
+            if profile and profile.get("frames") == args.frames and state.get("hasChecksums") and local_ok:
                 break
             time.sleep(0.25)
         else:
@@ -269,8 +504,21 @@ def _run_one(args: argparse.Namespace, files: list[str], reference_checksums: li
         checksums = None
         parity = None
         if reference_checksums is not None:
-            checksums = target.eval("globalThis.__sh4d.rawChecksums([0,131072,262143])", timeout=30, await_promise=True)
+            middle = max(0, args.frames // 2)
+            last = max(0, args.frames - 1)
+            checksums = target.eval(
+                f"globalThis.__sh4d.rawChecksums([0,{middle},{last}])",
+                timeout=30,
+                await_promise=True,
+            )
             parity = checksums == reference_checksums
+        dpc = None
+        if args.dpc_reps > 0:
+            dpc = target.eval(
+                _dpc_probe_script(args.dpc_reps, args.fps_ms, args.dpc_warmup, dpc_references),
+                timeout=max(30, args.timeout_s),
+                await_promise=True,
+            )
         if args.screenshot and index == args.reps:
             png = target.call("Page.captureScreenshot", {"format": "png", "fromSurface": True}, timeout=30)["data"]
             args.screenshot.parent.mkdir(parents=True, exist_ok=True)
@@ -281,6 +529,7 @@ def _run_one(args: argparse.Namespace, files: list[str], reference_checksums: li
             "profile": state["loadprof"],
             "checksums": checksums,
             "parity": parity,
+            "dpc": dpc,
         }
     finally:
         target.close(args.cdp)
@@ -291,10 +540,18 @@ def main() -> None:
     reference_checksums = None
     if args.checksum_json:
         reference_checksums = json.loads(args.checksum_json.read_text(encoding="utf-8"))["checksums"]
+    dpc_references = None
+    if args.dpc_reference_json:
+        manifest = json.loads(args.dpc_reference_json.read_text(encoding="utf-8"))
+        base_url = args.html_url.rsplit("/", 1)[0] + "/"
+        dpc_references = {
+            str(name): urllib.parse.urljoin(base_url, str(filename))
+            for name, filename in (manifest.get("files") or {}).items()
+        }
     files = _fixture_files(args)
     runs = []
     for index in range(1, args.reps + 1):
-        run = _run_one(args, files, reference_checksums, index)
+        run = _run_one(args, files, reference_checksums, dpc_references, index)
         runs.append(run)
         print(
             json.dumps(
@@ -327,7 +584,13 @@ def main() -> None:
             "frameWg": args.frame_wg,
             "pipelineStaging": not bool(args.no_pipeline_staging),
             "upload": args.upload,
+            "sourceScanShape": args.source_scan_shape,
+            "scanRegion": args.scan_region,
             "frameIndex": bool(args.frame_index_json),
+            "blockIndex": bool(args.block_index_template),
+            "dpcReps": args.dpc_reps,
+            "dpcWarmup": args.dpc_warmup,
+            "fpsMs": args.fps_ms,
         },
         "runs": runs,
         "summary": _summary(runs),

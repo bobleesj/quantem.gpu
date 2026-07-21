@@ -48,6 +48,7 @@ export interface LocalH5LoadProfile {
   decompressMs: number;
   uploadMs: number;
   uploadCopyWaitMs?: number;
+  detBinMs?: number;
   decodeBuildMs: number;
   gpuWaitMs: number;
   decodeComputeWaitMs?: number;
@@ -57,7 +58,12 @@ export interface LocalH5LoadProfile {
   compressedGB: number;
   decodeCompressedMB: number;
   sourceDtype: SourceDtype | "unknown";
-  decodeDtype: "uint8" | "float32";
+  decodeDtype: "uint8" | "uint16" | "float32";
+  detBin: number;
+  sourceDetRows: number;
+  sourceDetCols: number;
+  outputDetRows: number;
+  outputDetCols: number;
   chunks: number;
   frames: number;
   sourceFrames: number;
@@ -88,6 +94,11 @@ export interface LocalH5LoadResult {
   chunks: LocalH5GpuChunk[];
   scanCount: number;
   detSize: number;
+  detRows: number;
+  detCols: number;
+  sourceDetRows: number;
+  sourceDetCols: number;
+  detBin: number;
   mode: number;
   badPixels: Uint32Array;
   profile: LocalH5LoadProfile;
@@ -101,6 +112,7 @@ export interface LocalH5LoadOptions {
   decodeBatch?: number;
   groupSize?: number;
   workerCount?: number;
+  detBin?: number;
 }
 
 export interface LocalH5MaskedSumOptions extends LocalH5LoadOptions {
@@ -822,6 +834,214 @@ function accumulateProfile(dst: Bslz4BatchProfile, src: Bslz4BatchProfile): void
   dst.profileSplit = Boolean(dst.profileSplit || src.profileSplit);
 }
 
+const ZERO_BAD_PIXELS_WGSL = `
+@group(0) @binding(0) var<storage,read_write> src: array<u32>;
+@group(0) @binding(1) var<storage,read> specs: array<u32>;  // wordOffset, clearMask pairs
+@group(0) @binding(2) var<uniform> cfg: vec4<u32>;  // nScan, wordsPerFrame, nSpecs, unused
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let specIdx = gid.x;
+  let scan = gid.y;
+  if (specIdx >= cfg.z || scan >= cfg.x) { return; }
+  let wordOffset = specs[specIdx * 2u];
+  let clearMask = specs[specIdx * 2u + 1u];
+  let index = scan * cfg.y + wordOffset;
+  src[index] = src[index] & clearMask;
+}`;
+
+const DETECTOR_BIN_WGSL = `
+@group(0) @binding(0) var<storage,read> src: array<u32>;
+@group(0) @binding(1) var<storage,read_write> dst: array<u32>;
+@group(0) @binding(2) var<uniform> cfg: vec4<u32>;   // nScan, srcRows, srcCols, detBin
+@group(0) @binding(3) var<uniform> cfg2: vec4<u32>;  // outDetSize, srcDetSize, mode, outCols
+fn sample(idx: u32, mode: u32) -> f32 {
+  if (mode == 1u) {
+    let word = src[idx >> 2u];
+    return f32((word >> ((idx & 3u) * 8u)) & 255u);
+  }
+  if (mode == 0u) {
+    let word = src[idx >> 1u];
+    return f32((word >> ((idx & 1u) * 16u)) & 65535u);
+  }
+  return bitcast<f32>(src[idx]);
+}
+@compute @workgroup_size(16, 16)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let outPix = gid.x;
+  let scan = gid.y;
+  if (outPix >= cfg2.x || scan >= cfg.x) { return; }
+  let outCols = cfg2.w;
+  let outRow = outPix / outCols;
+  let outCol = outPix - outRow * outCols;
+  var sum = 0.0;
+  for (var br = 0u; br < cfg.w; br = br + 1u) {
+    for (var bc = 0u; bc < cfg.w; bc = bc + 1u) {
+      let srcRow = outRow * cfg.w + br;
+      let srcCol = outCol * cfg.w + bc;
+      let detPix = srcRow * cfg.z + srcCol;
+      sum = sum + sample(scan * cfg2.y + detPix, cfg2.z);
+    }
+  }
+  dst[scan * cfg2.x + outPix] = bitcast<u32>(sum);
+}`;
+
+let detectorBinPipe: GPUComputePipeline | null = null;
+let zeroBadPixelsPipe: GPUComputePipeline | null = null;
+
+function getZeroBadPixelsPipe(device: GPUDevice): GPUComputePipeline {
+  if (!zeroBadPixelsPipe) {
+    zeroBadPixelsPipe = device.createComputePipeline({
+      layout: "auto",
+      compute: {
+        module: device.createShaderModule({ code: ZERO_BAD_PIXELS_WGSL }),
+        entryPoint: "main",
+      },
+    });
+  }
+  return zeroBadPixelsPipe;
+}
+
+function getDetectorBinPipe(device: GPUDevice): GPUComputePipeline {
+  if (!detectorBinPipe) {
+    detectorBinPipe = device.createComputePipeline({
+      layout: "auto",
+      compute: {
+        module: device.createShaderModule({ code: DETECTOR_BIN_WGSL }),
+        entryPoint: "main",
+      },
+    });
+  }
+  return detectorBinPipe;
+}
+
+function localUniform(device: GPUDevice, vals: number[]): GPUBuffer {
+  const arr = new Uint32Array(vals);
+  const buffer = device.createBuffer({
+    size: Math.max(16, arr.byteLength),
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  });
+  device.queue.writeBuffer(buffer, 0, arr.buffer, arr.byteOffset, arr.byteLength);
+  return buffer;
+}
+
+function badPixelClearSpecs(badPixels: Uint32Array, detSize: number, mode: number): Uint32Array {
+  const clear = new Map<number, number>();
+  for (let i = 0; i < badPixels.length; i++) {
+    const idx = badPixels[i];
+    if (idx >= detSize) continue;
+    let word = idx;
+    let mask = 0;
+    if (mode === 1) {
+      word = idx >> 2;
+      const shift = (idx & 3) * 8;
+      mask = (~(0xff << shift)) >>> 0;
+    } else if (mode === 0) {
+      word = idx >> 1;
+      const shift = (idx & 1) * 16;
+      mask = (~(0xffff << shift)) >>> 0;
+    }
+    clear.set(word, (clear.get(word) ?? 0xffffffff) & mask);
+  }
+  const specs = new Uint32Array(Math.max(2, clear.size * 2));
+  let pos = 0;
+  for (const [word, mask] of clear) {
+    specs[pos++] = word >>> 0;
+    specs[pos++] = mask >>> 0;
+  }
+  return specs.subarray(0, pos);
+}
+
+async function binDetectorChunks(
+  device: GPUDevice,
+  sources: GPUBuffer[],
+  sourceMode: number,
+  nScans: number[],
+  sourceDetRows: number,
+  sourceDetCols: number,
+  detBin: number,
+  badPixels: Uint32Array,
+): Promise<{ buffers: GPUBuffer[]; detRows: number; detCols: number; detSize: number; mode: number; ms: number }> {
+  const outputDetRows = sourceDetRows / detBin;
+  const outputDetCols = sourceDetCols / detBin;
+  const outputDetSize = outputDetRows * outputDetCols;
+  const sourceDetSize = sourceDetRows * sourceDetCols;
+  const outs = sources.map((_, i) => device.createBuffer({
+    size: Math.max(4, nScans[i] * outputDetSize * 4),
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+  }));
+  const clearSpecs = badPixelClearSpecs(badPixels, sourceDetSize, sourceMode);
+  const nClearSpecs = clearSpecs.length / 2;
+  const wordsPerFrame = sourceMode === 1
+    ? Math.ceil(sourceDetSize / 4)
+    : sourceMode === 0
+      ? Math.ceil(sourceDetSize / 2)
+      : sourceDetSize;
+  const temps: GPUBuffer[] = [];
+  let clearSpecBuf: GPUBuffer | null = null;
+  let zeroPipe: GPUComputePipeline | null = null;
+  const zeroBindGroups: GPUBindGroup[] = [];
+  if (nClearSpecs) {
+    clearSpecBuf = device.createBuffer({
+      size: Math.max(8, clearSpecs.byteLength),
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+    temps.push(clearSpecBuf);
+    device.queue.writeBuffer(clearSpecBuf, 0, clearSpecs.buffer, clearSpecs.byteOffset, clearSpecs.byteLength);
+    zeroPipe = getZeroBadPixelsPipe(device);
+    for (let i = 0; i < sources.length; i++) {
+      const cfg = localUniform(device, [nScans[i], wordsPerFrame, nClearSpecs, 0]);
+      temps.push(cfg);
+      zeroBindGroups.push(device.createBindGroup({
+        layout: zeroPipe.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: { buffer: sources[i] } },
+          { binding: 1, resource: { buffer: clearSpecBuf } },
+          { binding: 2, resource: { buffer: cfg } },
+        ],
+      }));
+    }
+  }
+  const binPipe = getDetectorBinPipe(device);
+  const binBindGroups: GPUBindGroup[] = [];
+  for (let i = 0; i < sources.length; i++) {
+    const cfg = localUniform(device, [nScans[i], sourceDetRows, sourceDetCols, detBin]);
+    const cfg2 = localUniform(device, [outputDetSize, sourceDetSize, sourceMode, outputDetCols]);
+    temps.push(cfg, cfg2);
+    binBindGroups.push(device.createBindGroup({
+      layout: binPipe.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: sources[i] } },
+        { binding: 1, resource: { buffer: outs[i] } },
+        { binding: 2, resource: { buffer: cfg } },
+        { binding: 3, resource: { buffer: cfg2 } },
+      ],
+    }));
+  }
+  const enc = device.createCommandEncoder();
+  if (zeroPipe && zeroBindGroups.length) {
+    const pass = enc.beginComputePass();
+    pass.setPipeline(zeroPipe);
+    for (let i = 0; i < zeroBindGroups.length; i++) {
+      pass.setBindGroup(0, zeroBindGroups[i]);
+      pass.dispatchWorkgroups(Math.ceil(nClearSpecs / 64), nScans[i]);
+    }
+    pass.end();
+  }
+  const pass = enc.beginComputePass();
+  pass.setPipeline(binPipe);
+  for (let i = 0; i < binBindGroups.length; i++) {
+    pass.setBindGroup(0, binBindGroups[i]);
+    pass.dispatchWorkgroups(Math.ceil(outputDetSize / 16), Math.ceil(nScans[i] / 16));
+  }
+  pass.end();
+  const t0 = performance.now();
+  device.queue.submit([enc.finish()]);
+  await device.queue.onSubmittedWorkDone();
+  const ms = performance.now() - t0;
+  temps.forEach((buf) => buf.destroy());
+  return { buffers: outs, detRows: outputDetRows, detCols: outputDetCols, detSize: outputDetSize, mode: 2, ms };
+}
+
 export async function loadShow4DSTEMLocalH5Master(
   masterUrl: string,
   options: LocalH5LoadOptions,
@@ -835,6 +1055,7 @@ export async function loadShow4DSTEMLocalH5Master(
   const scanCols = Math.max(1, Math.round(options.scanCols));
   const { rows: outputRows, cols: outputCols, region } = normaliseScanRegion(scanRows, scanCols, options.scanRegion);
   const scanCount = outputRows * outputCols;
+  const detBin = safeInt(options.detBin, 1, 1, 16);
   const low8Only = typeof globalThis !== "undefined" && (globalThis as { __BSLZ4_LOW8_ONLY?: boolean }).__BSLZ4_LOW8_ONLY === true;
   const dataItems = dataFileItemsForScanRegion(dataFiles, scanRows, scanCols, region);
   const blockIndexedDataItems = dataItems.length > 0 && dataItems.every((item) => Boolean(localBlockIndexFor(item.file.name)));
@@ -868,6 +1089,10 @@ export async function loadShow4DSTEMLocalH5Master(
   let device: GPUDevice | null = null;
   let mode = 1;
   let detSize = 0;
+  let sourceDetRows = 0;
+  let sourceDetCols = 0;
+  let outputDetRows = 0;
+  let outputDetCols = 0;
   let frames = 0;
   let sourceFrames = 0;
   let fileBytes = 0;
@@ -880,8 +1105,9 @@ export async function loadShow4DSTEMLocalH5Master(
   let frameIndexFiles = 0;
   let blockIndexFiles = 0;
   let sourceDtype: SourceDtype | "unknown" = "unknown";
-  let decodeDtype: "uint8" | "float32" = "uint8";
+  let decodeDtype: "uint8" | "uint16" | "float32" = "uint8";
   let decompressMs = 0;
+  let detBinMs = 0;
   const decodeProfile: Bslz4BatchProfile = {
     variant: "",
     groups: 0,
@@ -902,12 +1128,32 @@ export async function loadShow4DSTEMLocalH5Master(
     decompressMs += performance.now() - dt;
     if (!decoded) throw new Error("WebGPU unavailable for local HDF5 decode.");
     device = decoded.device;
-    if (decoded.buffers.length) mode = decoded.mode;
+    if (decoded.buffers.length) mode = detBin > 1 ? 2 : decoded.mode;
     accumulateProfile(decodeProfile, decoded.profile);
-    decoded.buffers.forEach((buffer, i) => {
+    let outputBuffers = decoded.buffers;
+    if (detBin > 1 && decoded.buffers.length) {
+      const binned = await binDetectorChunks(
+        decoded.device,
+        decoded.buffers,
+        decoded.mode,
+        pendingSpecs.map((spec) => spec.nScan),
+        sourceDetRows,
+        sourceDetCols,
+        detBin,
+        badPixels,
+      );
+      decoded.buffers.forEach((buffer) => buffer.destroy());
+      outputBuffers = binned.buffers;
+      detSize = binned.detSize;
+      outputDetRows = binned.detRows;
+      outputDetCols = binned.detCols;
+      detBinMs += binned.ms;
+    }
+    for (let i = 0; i < decoded.buffers.length; i++) {
+      const buffer = outputBuffers[i];
       const spec = pendingSpecs[i];
       gpuChunks.push({ buffer, startScan: spec.startScan, nScan: spec.nScan });
-    });
+    }
     pendingDecode = null;
     pendingSpecs = [];
   };
@@ -937,8 +1183,28 @@ export async function loadShow4DSTEMLocalH5Master(
         throw new Error(`Mixed HDF5 source dtypes are not supported in one local load: ${sourceDtype} and ${vol.srcDtype}.`);
       }
       sourceDtype = vol.srcDtype;
-      decodeDtype = vol.srcDtype === "float32" ? "float32" : "uint8";
-      detSize = vol.detSize;
+      if (sourceDetRows && (sourceDetRows !== vol.detRows || sourceDetCols !== vol.detCols)) {
+        throw new Error(`Mixed detector shapes are not supported in one local HDF5 load: ${sourceDetRows}x${sourceDetCols} and ${vol.detRows}x${vol.detCols}.`);
+      }
+      if (detBin > 1 && (vol.detRows % detBin !== 0 || vol.detCols % detBin !== 0)) {
+        throw new Error(`Detector shape ${vol.detRows}x${vol.detCols} is not divisible by detBin=${detBin}.`);
+      }
+      if (detBin > 1 && vol.srcDtype === "uint32") {
+        throw new Error("WebGPU detector-bin load currently supports uint8, uint16, and float32 sources; uint32 needs real-acquisition parity before enablement.");
+      }
+      // Count-audited low8 browse sources can be detector-binned directly from
+      // the same lossless low8 decode. This preserves the explicit detBin
+      // evidence policy while avoiding the slower full uint16 intermediate.
+      decodeDtype = detBin > 1
+        ? (vol.srcDtype === "float32" ? "float32" : low8Only ? "uint8" : vol.srcDtype === "uint16" ? "uint16" : "uint8")
+        : vol.srcDtype === "float32"
+          ? "float32"
+          : "uint8";
+      sourceDetRows = vol.detRows;
+      sourceDetCols = vol.detCols;
+      outputDetRows = detBin > 1 ? vol.detRows / detBin : vol.detRows;
+      outputDetCols = detBin > 1 ? vol.detCols / detBin : vol.detCols;
+      detSize = outputDetRows * outputDetCols;
       const fileSourceStart = item.startScan ?? sourceFrames;
       let chunkStart = fileSourceStart;
       vol.chunks.forEach((chunk, chunkIndex) => {
@@ -973,6 +1239,7 @@ export async function loadShow4DSTEMLocalH5Master(
     decompressMs: Math.round(decompressMs),
     uploadMs: Math.round(decodeProfile.uploadMs),
     uploadCopyWaitMs: Math.round(decodeProfile.uploadCopyWaitMs ?? 0),
+    detBinMs: Math.round(detBinMs),
     decodeBuildMs: Math.round(decodeProfile.buildMs),
     gpuWaitMs: Math.round(decodeProfile.gpuWaitMs),
     decodeComputeWaitMs: Math.round(decodeProfile.decodeComputeWaitMs ?? 0),
@@ -983,6 +1250,11 @@ export async function loadShow4DSTEMLocalH5Master(
     decodeCompressedMB: Math.round(decodeProfile.compressedMB),
     sourceDtype,
     decodeDtype,
+    detBin,
+    sourceDetRows,
+    sourceDetCols,
+    outputDetRows,
+    outputDetCols,
     chunks: gpuChunks.length,
     frames,
     sourceFrames: totalFrames || sourceFrames,
@@ -1016,7 +1288,20 @@ export async function loadShow4DSTEMLocalH5Master(
   if (frames < scanCount) {
     console.warn(`Local HDF5 load decoded ${frames} scan positions, fewer than target scan shape ${scanCount}.`);
   }
-  return { device: profileDevice, chunks: gpuChunks, scanCount, detSize, mode, badPixels, profile };
+  return {
+    device: profileDevice,
+    chunks: gpuChunks,
+    scanCount,
+    detSize,
+    detRows: outputDetRows,
+    detCols: outputDetCols,
+    sourceDetRows,
+    sourceDetCols,
+    detBin,
+    mode,
+    badPixels: detBin > 1 ? new Uint32Array(0) : badPixels,
+    profile,
+  };
 }
 
 export async function loadShow4DSTEMLocalH5MaskedSum(

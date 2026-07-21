@@ -15,6 +15,7 @@
 // value IS the count, near-lossless) or uint16; dtype inferred from byte length.
 import { getGPUDevice } from "./device";
 import { decodeBslz4ToStack, decodeBslz4Batch, type Bslz4Spec } from "./bslz4";
+import { FFT_2D_SHADER } from "./fft-shader";
 
 // `mode`: 0 = uint16 (2 samples/u32), 1 = uint8 (4/u32). `sample(gp)` reads a
 // detector value at a chunk-local global pixel index.
@@ -133,20 +134,48 @@ ${sg ? "enable subgroups;" : ""}
 @group(0) @binding(3) var<uniform> u: vec4<u32>;   // startScan, nScanInChunk, detSize, mode
 @group(0) @binding(4) var<uniform> u2: vec4<u32>;  // detCols, scanCount, gridX, 0
 ${SAMPLE}
+fn ratioU32(num: u32, den: u32) -> f32 {
+  if (den == 0u) { return 0.0; }
+  let q = num / den;
+  let rem = num - q * den;
+  return f32(q) + f32(rem) / f32(den);
+}
 var<workgroup> pw: array<f32, ${WGSZ}>;
 var<workgroup> py: array<f32, ${WGSZ}>;
 var<workgroup> px: array<f32, ${WGSZ}>;
+var<workgroup> pwu: array<u32, ${WGSZ}>;
+var<workgroup> pyu: array<u32, ${WGSZ}>;
+var<workgroup> pxu: array<u32, ${WGSZ}>;
 @compute @workgroup_size(${WGSZ})
 fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {
   let sl = wid.y * u2.z + wid.x; let tid = lid.x;
   let base = sl * u.z; let n = arrayLength(&idx); let detCols = u2.x;
   var wsum: f32 = 0.0; var ysum: f32 = 0.0; var xsum: f32 = 0.0;
-  if (sl < u.y) { for (var j: u32 = tid; j < n; j = j + ${WGSZ}u) {
-    let p = idx[j]; let v = sampleF(base + p, u.w);
-    wsum = wsum + v; ysum = ysum + f32(p / detCols) * v; xsum = xsum + f32(p % detCols) * v;
-  } }
+  var wsumU: u32 = 0u; var ysumU: u32 = 0u; var xsumU: u32 = 0u;
+  if (u.w == 1u) {
+    if (sl < u.y) { for (var j: u32 = tid; j < n; j = j + ${WGSZ}u) {
+      let p = idx[j]; let v = sample(base + p, u.w);
+      wsumU = wsumU + v; ysumU = ysumU + (p / detCols) * v; xsumU = xsumU + (p % detCols) * v;
+    } }
+  } else {
+    if (sl < u.y) { for (var j: u32 = tid; j < n; j = j + ${WGSZ}u) {
+      let p = idx[j]; let v = sampleF(base + p, u.w);
+      wsum = wsum + v; ysum = ysum + f32(p / detCols) * v; xsum = xsum + f32(p % detCols) * v;
+    } }
+  }
 ${sg
-  ? `  wsum = subgroupAdd(wsum); ysum = subgroupAdd(ysum); xsum = subgroupAdd(xsum);
+  ? `  if (u.w == 1u) {
+    wsumU = subgroupAdd(wsumU); ysumU = subgroupAdd(ysumU); xsumU = subgroupAdd(xsumU);
+    if (subgroupElect()) { let w = tid / ${SGSZ}u; pwu[w] = wsumU; pyu[w] = ysumU; pxu[w] = xsumU; }
+    workgroupBarrier();
+    if (tid == 0u && sl < u.y) {
+      var w = 0u; var y = 0u; var x = 0u;
+      for (var k = 0u; k < ${WGSZ / SGSZ}u; k = k + 1u) { w = w + pwu[k]; y = y + pyu[k]; x = x + pxu[k]; }
+      let gi = u.x + sl;
+      if (w > 0u) { com[gi] = ratioU32(y, w); com[u2.y + gi] = ratioU32(x, w); } else { com[gi] = 0.0; com[u2.y + gi] = 0.0; }
+    }
+  } else {
+    wsum = subgroupAdd(wsum); ysum = subgroupAdd(ysum); xsum = subgroupAdd(xsum);
   if (subgroupElect()) { let w = tid / ${SGSZ}u; pw[w] = wsum; py[w] = ysum; px[w] = xsum; }
   workgroupBarrier();
   if (tid == 0u && sl < u.y) {
@@ -154,8 +183,20 @@ ${sg
     for (var k = 0u; k < ${WGSZ / SGSZ}u; k = k + 1u) { w = w + pw[k]; y = y + py[k]; x = x + px[k]; }
     let gi = u.x + sl;
     if (w > 0.0) { com[gi] = y / w; com[u2.y + gi] = x / w; } else { com[gi] = 0.0; com[u2.y + gi] = 0.0; }
+  }
   }`
-  : `  pw[tid] = wsum; py[tid] = ysum; px[tid] = xsum; workgroupBarrier();
+  : `  if (u.w == 1u) {
+    pwu[tid] = wsumU; pyu[tid] = ysumU; pxu[tid] = xsumU; workgroupBarrier();
+    for (var s: u32 = ${WGSZ / 2}u; s > 0u; s = s >> 1u) {
+      if (tid < s) { pwu[tid] = pwu[tid] + pwu[tid + s]; pyu[tid] = pyu[tid] + pyu[tid + s]; pxu[tid] = pxu[tid] + pxu[tid + s]; }
+      workgroupBarrier();
+    }
+    if (tid == 0u && sl < u.y) {
+      let gi = u.x + sl;
+      if (pwu[0] > 0u) { com[gi] = ratioU32(pyu[0], pwu[0]); com[u2.y + gi] = ratioU32(pxu[0], pwu[0]); } else { com[gi] = 0.0; com[u2.y + gi] = 0.0; }
+    }
+  } else {
+    pw[tid] = wsum; py[tid] = ysum; px[tid] = xsum; workgroupBarrier();
   for (var s: u32 = ${WGSZ / 2}u; s > 0u; s = s >> 1u) {
     if (tid < s) { pw[tid] = pw[tid] + pw[tid + s]; py[tid] = py[tid] + py[tid + s]; px[tid] = px[tid] + px[tid + s]; }
     workgroupBarrier();
@@ -163,6 +204,7 @@ ${sg
   if (tid == 0u && sl < u.y) {
     let gi = u.x + sl;
     if (pw[0] > 0.0) { com[gi] = py[0] / pw[0]; com[u2.y + gi] = px[0] / pw[0]; } else { com[gi] = 0.0; com[u2.y + gi] = 0.0; }
+  }
   }`}
 }`;
 
@@ -179,9 +221,16 @@ var<workgroup> partCol: array<f32, 256>;
 fn main(@builtin(local_invocation_id) lid: vec3<u32>) {
   let tid = lid.x; let n = u.x;
   var rowSum = 0.0; var colSum = 0.0;
+  var rowComp = 0.0; var colComp = 0.0;
   for (var i = tid; i < n; i = i + 256u) {
-    rowSum = rowSum + com[i];
-    colSum = colSum + com[n + i];
+    let rowY = com[i] - rowComp;
+    let rowT = rowSum + rowY;
+    rowComp = (rowT - rowSum) - rowY;
+    rowSum = rowT;
+    let colY = com[n + i] - colComp;
+    let colT = colSum + colY;
+    colComp = (colT - colSum) - colY;
+    colSum = colT;
   }
   partRow[tid] = rowSum; partCol[tid] = colSum; workgroupBarrier();
   for (var s = 128u; s > 0u; s = s >> 1u) {
@@ -213,6 +262,152 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   } else {
     out[i] = com[n + i] - mean[1];
   }
+}`;
+
+const DPC_COMPONENT_PAIR_WGSL = `
+@group(0) @binding(0) var<storage,read> com: array<f32>;
+@group(0) @binding(1) var<storage,read> mean: array<f32>;
+@group(0) @binding(2) var<storage,read_write> rowOut: array<f32>;
+@group(0) @binding(3) var<storage,read_write> colOut: array<f32>;
+@group(0) @binding(4) var<uniform> u: vec4<u32>; // scanCount, 0, 0, 0
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let i = gid.x;
+  let n = u.x;
+  if (i >= n) { return; }
+  rowOut[i] = com[i] - mean[0];
+  colOut[i] = com[n + i] - mean[1];
+}`;
+
+// Mean reduction for one already-centered DPC component. The first DPC centering
+// matches the backend semantics; this pass lets the next shader choose the same
+// one-ulp rounding side as the NumPy/CUDA reference without a CPU readback.
+const DPC_OUTPUT_MEAN_WGSL = `
+@group(0) @binding(0) var<storage,read> values: array<f32>;
+@group(0) @binding(1) var<storage,read_write> mean: array<f32>;
+@group(0) @binding(2) var<uniform> u: vec4<u32>; // scanCount, 0, 0, 0
+var<workgroup> part: array<f32, 256>;
+@compute @workgroup_size(256)
+fn main(@builtin(local_invocation_id) lid: vec3<u32>) {
+  let tid = lid.x;
+  let n = u.x;
+  var sum = 0.0;
+  var comp = 0.0;
+  for (var i = tid; i < n; i = i + 256u) {
+    let y = values[i] - comp;
+    let t = sum + y;
+    comp = (t - sum) - y;
+    sum = t;
+  }
+  part[tid] = sum;
+  workgroupBarrier();
+  for (var s = 128u; s > 0u; s = s >> 1u) {
+    if (tid < s) {
+      part[tid] = part[tid] + part[tid + s];
+    }
+    workgroupBarrier();
+  }
+  if (tid == 0u) {
+    mean[0] = part[0] / max(f32(n), 1.0);
+  }
+}`;
+
+const DPC_OUTPUT_ULP_CORRECT_WGSL = `
+@group(0) @binding(0) var<storage,read_write> values: array<f32>;
+@group(0) @binding(1) var<storage,read> residualMean: array<f32>;
+@group(0) @binding(2) var<storage,read> dpcMean: array<f32>;
+@group(0) @binding(3) var<uniform> u: vec4<u32>; // scanCount, component, 0, 0
+fn oneUlpBelowDelta(value: f32) -> f32 {
+  if (value <= 0.0) { return 0.0; }
+  let bits = bitcast<u32>(value);
+  if (bits == 0u) { return 0.0; }
+  return value - bitcast<f32>(bits - 1u);
+}
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let i = gid.x;
+  if (i >= u.x) { return; }
+  let delta = select(0.0, oneUlpBelowDelta(dpcMean[u.y]), residualMean[0] < 0.0);
+  values[i] = values[i] + delta;
+}`;
+
+// Pack centered DPC row/col maps into one complex dual-real FFT input for iDPC.
+// flags bit 0 selects the transpose convention used by the Python DPC solver.
+const IDPC_PACK_WGSL = `
+struct PackParams {
+  n: u32,
+  flags: u32,
+  _pad0: u32,
+  _pad1: u32,
+  rot: vec4<f32>, // cos(theta), sin(theta), 0, 0
+}
+@group(0) @binding(0) var<storage,read> rowDpc: array<f32>;
+@group(0) @binding(1) var<storage,read> colDpc: array<f32>;
+@group(0) @binding(2) var<storage,read_write> gradFft: array<vec2<f32>>;
+@group(0) @binding(3) var<uniform> u: PackParams;
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let i = gid.x;
+  if (i >= u.n) { return; }
+  let row = rowDpc[i];
+  let col = colDpc[i];
+  var gradRow: f32;
+  var gradCol: f32;
+  if ((u.flags & 1u) != 0u) {
+    gradRow = u.rot.y * col + u.rot.x * row;
+    gradCol = u.rot.x * col - u.rot.y * row;
+  } else {
+    gradRow = u.rot.x * row - u.rot.y * col;
+    gradCol = u.rot.y * row + u.rot.x * col;
+  }
+  gradFft[i] = vec2<f32>(gradRow, gradCol);
+}`;
+
+const IDPC_POISSON_WGSL = `
+@group(0) @binding(0) var<storage,read> gradFft: array<vec2<f32>>;
+@group(0) @binding(1) var<storage,read_write> phaseFft: array<vec2<f32>>;
+@group(0) @binding(2) var<uniform> u: vec4<u32>; // width, height, n, 0
+fn freq(i: u32, n: u32) -> f32 {
+  if (i < (n + 1u) / 2u) {
+    return f32(i) / f32(n);
+  }
+  return -f32(n - i) / f32(n);
+}
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let i = gid.x;
+  if (i >= u.z) { return; }
+  if (i == 0u) {
+    phaseFft[i] = vec2<f32>(0.0, 0.0);
+    return;
+  }
+  let row = i / u.x;
+  let col = i - row * u.x;
+  let mirrorRow = (u.y - row) % u.y;
+  let mirrorCol = (u.x - col) % u.x;
+  let mirror = mirrorRow * u.x + mirrorCol;
+  let z = gradFft[i];
+  let zMirrorConj = vec2<f32>(gradFft[mirror].x, -gradFft[mirror].y);
+  let rowF = 0.5 * (z + zMirrorConj);
+  let diff = z - zMirrorConj;
+  let colF = vec2<f32>(0.5 * diff.y, -0.5 * diff.x);
+  let k0 = freq(row, u.y);
+  let k1 = freq(col, u.x);
+  let k2 = k0 * k0 + k1 * k1;
+  let g = rowF * k0 + colF * k1;
+  let scale = 0.25 / k2;
+  phaseFft[i] = vec2<f32>(g.y * scale, -g.x * scale);
+}`;
+
+const IDPC_EXTRACT_WGSL = `
+@group(0) @binding(0) var<storage,read> phaseComplex: array<vec2<f32>>;
+@group(0) @binding(1) var<storage,read_write> phase: array<f32>;
+@group(0) @binding(2) var<uniform> u: vec4<u32>; // n, 0, 0, 0
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let i = gid.x;
+  if (i >= u.x) { return; }
+  phase[i] = -phaseComplex[i].x;
 }`;
 
 // Dense DF/ADF helper: out = full-detector total - complement sum. This mirrors
@@ -299,10 +494,24 @@ export class Show4DSTEMCompute {
   private maskedComPipe: GPUComputePipeline;
   private dpcMeanPipe: GPUComputePipeline;
   private dpcComponentPipe: GPUComputePipeline;
+  private dpcComponentPairPipe: GPUComputePipeline;
+  private dpcOutputMeanPipe: GPUComputePipeline;
+  private dpcOutputUlpCorrectPipe: GPUComputePipeline;
+  private idpcPackPipe: GPUComputePipeline;
+  private idpcPoissonPipe: GPUComputePipeline;
+  private idpcExtractPipe: GPUComputePipeline;
+  private fftPipes: {
+    bitReverseRows: GPUComputePipeline;
+    bitReverseCols: GPUComputePipeline;
+    butterflyRows: GPUComputePipeline;
+    butterflyCols: GPUComputePipeline;
+    normalize: GPUComputePipeline;
+  };
   private subtractPipe: GPUComputePipeline;
   private reduceFramesPipe: GPUComputePipeline;
   private frameAtPipe: GPUComputePipeline;
   private chunks: Chunk[];
+  private dpcBufferCache = new Map<string, { buffer: GPUBuffer; n: number }>();
   readonly scanCount: number;
   readonly detSize: number;
   readonly mode: number;
@@ -320,6 +529,20 @@ export class Show4DSTEMCompute {
     this.maskedComPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: maskedComSrc(sg) }), entryPoint: "main" } });
     this.dpcMeanPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: DPC_MEAN_WGSL }), entryPoint: "main" } });
     this.dpcComponentPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: DPC_COMPONENT_WGSL }), entryPoint: "main" } });
+    this.dpcComponentPairPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: DPC_COMPONENT_PAIR_WGSL }), entryPoint: "main" } });
+    this.dpcOutputMeanPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: DPC_OUTPUT_MEAN_WGSL }), entryPoint: "main" } });
+    this.dpcOutputUlpCorrectPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: DPC_OUTPUT_ULP_CORRECT_WGSL }), entryPoint: "main" } });
+    this.idpcPackPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: IDPC_PACK_WGSL }), entryPoint: "main" } });
+    this.idpcPoissonPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: IDPC_POISSON_WGSL }), entryPoint: "main" } });
+    this.idpcExtractPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: IDPC_EXTRACT_WGSL }), entryPoint: "main" } });
+    const fftModule = device.createShaderModule({ code: FFT_2D_SHADER });
+    this.fftPipes = {
+      bitReverseRows: device.createComputePipeline({ layout: "auto", compute: { module: fftModule, entryPoint: "bitReverseRows" } }),
+      bitReverseCols: device.createComputePipeline({ layout: "auto", compute: { module: fftModule, entryPoint: "bitReverseCols" } }),
+      butterflyRows: device.createComputePipeline({ layout: "auto", compute: { module: fftModule, entryPoint: "butterflyRows" } }),
+      butterflyCols: device.createComputePipeline({ layout: "auto", compute: { module: fftModule, entryPoint: "butterflyCols" } }),
+      normalize: device.createComputePipeline({ layout: "auto", compute: { module: fftModule, entryPoint: "normalize2D" } }),
+    };
     this.subtractPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: SUBTRACT_FROM_TOTAL_WGSL }), entryPoint: "main" } });
     this.reduceFramesPipe = device.createComputePipeline({ layout: "auto", compute: { module: rf, entryPoint: "main" } });
     this.frameAtPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: FRAME_WGSL }), entryPoint: "main" } });
@@ -421,14 +644,19 @@ export class Show4DSTEMCompute {
   // CoM reduction -> global mean -> component subtraction, with no JavaScript pass over scan pixels.
   maskedDpcBuffer(mask: Uint32Array, detCols: number, component: "row" | "col" | 0 | 1): { buffer: GPUBuffer; n: number; cleanup?: () => void } {
     const device = this.device;
-    const out = device.createBuffer({ size: this.scanCount * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
     const { idx, n } = this.detectorIndices(mask);
+    const comp = component === "row" || component === 0 ? 0 : 1;
+    const key = this.dpcCacheKey(mask, detCols, comp, n);
+    const cached = this.dpcBufferCache.get(key);
+    if (cached) return { buffer: this.copyScanBuffer(cached.buffer), n: cached.n };
+    const out = device.createBuffer({ size: this.scanCount * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
     if (n === 0) return { buffer: out, n };
     const idxBuf = this.upload(idx, GPUBufferUsage.STORAGE);
     const com = device.createBuffer({ size: this.scanCount * 2 * 4, usage: GPUBufferUsage.STORAGE });
     const mean = device.createBuffer({ size: 16, usage: GPUBufferUsage.STORAGE });
+    const residualMean = device.createBuffer({ size: 16, usage: GPUBufferUsage.STORAGE });
+    const cache = device.createBuffer({ size: this.scanCount * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
     const meanDims = this.uniform([this.scanCount, 0, 0, 0]);
-    const comp = component === "row" || component === 0 ? 0 : 1;
     const compDims = this.uniform([this.scanCount, comp, 0, 0]);
     const enc = device.createCommandEncoder();
     const pass = enc.beginComputePass();
@@ -440,14 +668,25 @@ export class Show4DSTEMCompute {
     pass.setPipeline(this.dpcComponentPipe);
     pass.setBindGroup(0, device.createBindGroup({ layout: this.dpcComponentPipe.getBindGroupLayout(0), entries: [
       { binding: 0, resource: { buffer: com } }, { binding: 1, resource: { buffer: mean } },
-      { binding: 2, resource: { buffer: out } }, { binding: 3, resource: { buffer: compDims } } ] }));
+      { binding: 2, resource: { buffer: cache } }, { binding: 3, resource: { buffer: compDims } } ] }));
+    pass.dispatchWorkgroups(Math.ceil(this.scanCount / 256));
+    pass.setPipeline(this.dpcOutputMeanPipe);
+    pass.setBindGroup(0, device.createBindGroup({ layout: this.dpcOutputMeanPipe.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: cache } }, { binding: 1, resource: { buffer: residualMean } }, { binding: 2, resource: { buffer: meanDims } } ] }));
+    pass.dispatchWorkgroups(1);
+    pass.setPipeline(this.dpcOutputUlpCorrectPipe);
+    pass.setBindGroup(0, device.createBindGroup({ layout: this.dpcOutputUlpCorrectPipe.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: cache } }, { binding: 1, resource: { buffer: residualMean } },
+      { binding: 2, resource: { buffer: mean } }, { binding: 3, resource: { buffer: compDims } } ] }));
     pass.dispatchWorkgroups(Math.ceil(this.scanCount / 256));
     pass.end();
+    enc.copyBufferToBuffer(cache, 0, out, 0, this.scanCount * 4);
     device.queue.submit([enc.finish()]);
+    this.storeDpcCache(key, cache, n);
     return {
       buffer: out,
       n,
-      cleanup: () => { idxBuf.destroy(); com.destroy(); mean.destroy(); meanDims.destroy(); compDims.destroy(); },
+      cleanup: () => { idxBuf.destroy(); com.destroy(); mean.destroy(); residualMean.destroy(); meanDims.destroy(); compDims.destroy(); },
     };
   }
 
@@ -455,6 +694,142 @@ export class Show4DSTEMCompute {
     const { buffer, n, cleanup } = this.maskedDpcBuffer(mask, detCols, component);
     const out = await this.readF32(buffer, this.scanCount);
     cleanup?.();
+    buffer.destroy();
+    if (n === 0) out.fill(0);
+    return out;
+  }
+
+  private maskedDpcPairBuffers(mask: Uint32Array, detCols: number): { row: GPUBuffer; col: GPUBuffer; n: number; cleanup?: () => void } {
+    const device = this.device;
+    const { idx, n } = this.detectorIndices(mask);
+    const rowKey = this.dpcCacheKey(mask, detCols, 0, n);
+    const colKey = this.dpcCacheKey(mask, detCols, 1, n);
+    const rowCached = this.dpcBufferCache.get(rowKey);
+    const colCached = this.dpcBufferCache.get(colKey);
+    if (rowCached && colCached) {
+      return { row: rowCached.buffer, col: colCached.buffer, n };
+    }
+    const rowCache = device.createBuffer({ size: this.scanCount * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+    const colCache = device.createBuffer({ size: this.scanCount * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+    if (n === 0) return { row: rowCache, col: colCache, n, cleanup: () => { rowCache.destroy(); colCache.destroy(); } };
+    const idxBuf = this.upload(idx, GPUBufferUsage.STORAGE);
+    const com = device.createBuffer({ size: this.scanCount * 2 * 4, usage: GPUBufferUsage.STORAGE });
+    const mean = device.createBuffer({ size: 16, usage: GPUBufferUsage.STORAGE });
+    const rowResidualMean = device.createBuffer({ size: 16, usage: GPUBufferUsage.STORAGE });
+    const colResidualMean = device.createBuffer({ size: 16, usage: GPUBufferUsage.STORAGE });
+    const meanDims = this.uniform([this.scanCount, 0, 0, 0]);
+    const rowDims = this.uniform([this.scanCount, 0, 0, 0]);
+    const colDims = this.uniform([this.scanCount, 1, 0, 0]);
+    const enc = device.createCommandEncoder();
+    const pass = enc.beginComputePass();
+    this.encodeMaskedCoM(pass, idxBuf, com, detCols);
+    pass.setPipeline(this.dpcMeanPipe);
+    pass.setBindGroup(0, device.createBindGroup({ layout: this.dpcMeanPipe.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: com } }, { binding: 1, resource: { buffer: mean } }, { binding: 2, resource: { buffer: meanDims } } ] }));
+    pass.dispatchWorkgroups(1);
+    pass.setPipeline(this.dpcComponentPairPipe);
+    pass.setBindGroup(0, device.createBindGroup({ layout: this.dpcComponentPairPipe.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: com } }, { binding: 1, resource: { buffer: mean } },
+      { binding: 2, resource: { buffer: rowCache } }, { binding: 3, resource: { buffer: colCache } },
+      { binding: 4, resource: { buffer: meanDims } } ] }));
+    pass.dispatchWorkgroups(Math.ceil(this.scanCount / 256));
+    pass.setPipeline(this.dpcOutputMeanPipe);
+    pass.setBindGroup(0, device.createBindGroup({ layout: this.dpcOutputMeanPipe.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: rowCache } }, { binding: 1, resource: { buffer: rowResidualMean } }, { binding: 2, resource: { buffer: rowDims } } ] }));
+    pass.dispatchWorkgroups(1);
+    pass.setPipeline(this.dpcOutputUlpCorrectPipe);
+    pass.setBindGroup(0, device.createBindGroup({ layout: this.dpcOutputUlpCorrectPipe.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: rowCache } }, { binding: 1, resource: { buffer: rowResidualMean } },
+      { binding: 2, resource: { buffer: mean } }, { binding: 3, resource: { buffer: rowDims } } ] }));
+    pass.dispatchWorkgroups(Math.ceil(this.scanCount / 256));
+    pass.setPipeline(this.dpcOutputMeanPipe);
+    pass.setBindGroup(0, device.createBindGroup({ layout: this.dpcOutputMeanPipe.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: colCache } }, { binding: 1, resource: { buffer: colResidualMean } }, { binding: 2, resource: { buffer: colDims } } ] }));
+    pass.dispatchWorkgroups(1);
+    pass.setPipeline(this.dpcOutputUlpCorrectPipe);
+    pass.setBindGroup(0, device.createBindGroup({ layout: this.dpcOutputUlpCorrectPipe.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: colCache } }, { binding: 1, resource: { buffer: colResidualMean } },
+      { binding: 2, resource: { buffer: mean } }, { binding: 3, resource: { buffer: colDims } } ] }));
+    pass.dispatchWorkgroups(Math.ceil(this.scanCount / 256));
+    pass.end();
+    device.queue.submit([enc.finish()]);
+    this.storeDpcCache(rowKey, rowCache, n);
+    this.storeDpcCache(colKey, colCache, n);
+    return {
+      row: rowCache,
+      col: colCache,
+      n,
+      cleanup: () => this.retireBuffers([idxBuf, com, mean, rowResidualMean, colResidualMean, meanDims, rowDims, colDims]),
+    };
+  }
+
+  // GPU-resident fixed-rotation iDPC phase. Auto-rotation is intentionally not
+  // hidden here; callers must pass the explicit rotation/transpose policy they
+  // want to compare against.
+  async maskedIDpcBuffer(
+    mask: Uint32Array,
+    detCols: number,
+    scanRows: number,
+    scanCols: number,
+    rotationDeg = 0,
+    useTranspose = false,
+  ): Promise<{ buffer: GPUBuffer; n: number }> {
+    if (scanRows * scanCols !== this.scanCount) {
+      throw new Error(`WebGPU iDPC scan shape ${scanRows}x${scanCols} does not match scanCount=${this.scanCount}.`);
+    }
+    if (!this.isPowerOfTwo(scanRows) || !this.isPowerOfTwo(scanCols)) {
+      throw new Error(`WebGPU iDPC requires power-of-two scan dimensions, got ${scanRows}x${scanCols}.`);
+    }
+    const dpc = this.maskedDpcPairBuffers(mask, detCols);
+    await this.device.queue.onSubmittedWorkDone().catch(() => {});
+    dpc.cleanup?.();
+    const n = dpc.n;
+    const out = this.device.createBuffer({ size: this.scanCount * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+    if (n === 0) {
+      return { buffer: out, n };
+    }
+    const complexBytes = this.scanCount * 8;
+    const gradFft = this.device.createBuffer({ size: complexBytes, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+    const phaseFft = this.device.createBuffer({ size: complexBytes, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+    const theta = rotationDeg * Math.PI / 180.0;
+    const packParams = this.idpcPackParams(Math.cos(theta), Math.sin(theta), useTranspose);
+    const packBind = this.device.createBindGroup({ layout: this.idpcPackPipe.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: dpc.row } },
+      { binding: 1, resource: { buffer: dpc.col } },
+      { binding: 2, resource: { buffer: gradFft } },
+      { binding: 3, resource: { buffer: packParams } },
+    ] });
+    this.dispatch(this.idpcPackPipe, packBind, Math.ceil(this.scanCount / 256));
+    this.runFFT2DInPlace(gradFft, scanCols, scanRows, false);
+    const poissonDims = this.uniform([scanCols, scanRows, this.scanCount, 0]);
+    const poissonBind = this.device.createBindGroup({ layout: this.idpcPoissonPipe.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: gradFft } },
+      { binding: 1, resource: { buffer: phaseFft } },
+      { binding: 2, resource: { buffer: poissonDims } },
+    ] });
+    this.dispatch(this.idpcPoissonPipe, poissonBind, Math.ceil(this.scanCount / 256));
+    this.runFFT2DInPlace(phaseFft, scanCols, scanRows, true);
+    const extractDims = this.uniform([this.scanCount, 0, 0, 0]);
+    const extractBind = this.device.createBindGroup({ layout: this.idpcExtractPipe.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: phaseFft } },
+      { binding: 1, resource: { buffer: out } },
+      { binding: 2, resource: { buffer: extractDims } },
+    ] });
+    this.dispatch(this.idpcExtractPipe, extractBind, Math.ceil(this.scanCount / 256));
+    this.retireBuffers([gradFft, phaseFft, packParams, poissonDims, extractDims]);
+    return { buffer: out, n };
+  }
+
+  async maskedIDpc(
+    mask: Uint32Array,
+    detCols: number,
+    scanRows: number,
+    scanCols: number,
+    rotationDeg = 0,
+    useTranspose = false,
+  ): Promise<Float32Array> {
+    const { buffer, n } = await this.maskedIDpcBuffer(mask, detCols, scanRows, scanCols, rotationDeg, useTranspose);
+    const out = await this.readF32(buffer, this.scanCount);
     buffer.destroy();
     if (n === 0) out.fill(0);
     return out;
@@ -719,6 +1094,37 @@ export class Show4DSTEMCompute {
     }
     return `${this.badPx.length}:${hash >>> 0}`;
   }
+  private detectorMaskHash(mask: Uint32Array): string {
+    let hash = 2166136261;
+    for (let i = 0; i < mask.length; i++) {
+      hash = Math.imul(hash ^ (mask[i] ? 1 : 0), 16777619);
+    }
+    return `${mask.length}:${hash >>> 0}`;
+  }
+  private dpcCacheKey(mask: Uint32Array, detCols: number, component: number, activePixels: number): string {
+    return [
+      this.badPixelKey(),
+      this.detectorMaskHash(mask),
+      `detCols:${detCols}`,
+      `component:${component}`,
+      `active:${activePixels}`,
+      `scan:${this.scanCount}`,
+      `det:${this.detSize}`,
+      `mode:${this.mode}`,
+    ].join("|");
+  }
+  private storeDpcCache(key: string, buffer: GPUBuffer, n: number): void {
+    const previous = this.dpcBufferCache.get(key);
+    if (previous && previous.buffer !== buffer) previous.buffer.destroy();
+    this.dpcBufferCache.set(key, { buffer, n });
+    while (this.dpcBufferCache.size > 8) {
+      const oldest = this.dpcBufferCache.keys().next().value;
+      if (oldest === undefined) break;
+      const entry = this.dpcBufferCache.get(oldest);
+      entry?.buffer.destroy();
+      this.dpcBufferCache.delete(oldest);
+    }
+  }
   private copyScanBuffer(src: GPUBuffer): GPUBuffer {
     const out = this.device.createBuffer({ size: this.scanCount * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
     const enc = this.device.createCommandEncoder();
@@ -739,6 +1145,78 @@ export class Show4DSTEMCompute {
   private uniform(vals: number[]): GPUBuffer {
     const b = this.device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     const a = new Uint32Array(vals); this.device.queue.writeBuffer(b, 0, a.buffer as ArrayBuffer, a.byteOffset, a.byteLength); return b;
+  }
+  private idpcPackParams(cosTheta: number, sinTheta: number, useTranspose: boolean): GPUBuffer {
+    const buf = new ArrayBuffer(32);
+    const u32 = new Uint32Array(buf);
+    const f32 = new Float32Array(buf);
+    u32[0] = this.scanCount;
+    u32[1] = useTranspose ? 1 : 0;
+    f32[4] = cosTheta;
+    f32[5] = sinTheta;
+    const b = this.device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.device.queue.writeBuffer(b, 0, buf);
+    return b;
+  }
+  private isPowerOfTwo(value: number): boolean {
+    const n = Math.max(0, Math.round(value));
+    return n > 0 && (n & (n - 1)) === 0;
+  }
+  private runFFT2DInPlace(dataBuffer: GPUBuffer, width: number, height: number, inverse: boolean): void {
+    if (!this.isPowerOfTwo(width) || !this.isPowerOfTwo(height)) {
+      throw new Error(`WebGPU FFT requires power-of-two dimensions, got ${height}x${width}.`);
+    }
+    const workgroupsX = Math.ceil(width / 16);
+    const workgroupsY = Math.ceil(height / 16);
+    const passes: { pipeline: GPUComputePipeline; params: ArrayBuffer }[] = [];
+    const pushPass = (
+      pipeline: GPUComputePipeline,
+      stageCount: number,
+      stageIndex: number,
+      rowAxis: boolean,
+    ) => {
+      const params = new ArrayBuffer(24);
+      const paramsU32 = new Uint32Array(params);
+      const paramsF32 = new Float32Array(params);
+      paramsU32[0] = width;
+      paramsU32[1] = height;
+      paramsU32[2] = stageCount;
+      paramsU32[3] = stageIndex;
+      paramsF32[4] = inverse ? 1.0 : -1.0;
+      paramsU32[5] = rowAxis ? 1 : 0;
+      passes.push({ pipeline, params });
+    };
+    const widthStages = Math.log2(width);
+    const heightStages = Math.log2(height);
+    pushPass(this.fftPipes.bitReverseRows, widthStages, 0, true);
+    for (let stage = 0; stage < widthStages; stage++) {
+      pushPass(this.fftPipes.butterflyRows, widthStages, stage, true);
+    }
+    pushPass(this.fftPipes.bitReverseCols, heightStages, 0, false);
+    for (let stage = 0; stage < heightStages; stage++) {
+      pushPass(this.fftPipes.butterflyCols, heightStages, stage, false);
+    }
+    if (inverse) pushPass(this.fftPipes.normalize, heightStages, 0, false);
+
+    const paramsBuffers = passes.map((item) => {
+      const buffer = this.device.createBuffer({ size: 24, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+      this.device.queue.writeBuffer(buffer, 0, item.params);
+      return buffer;
+    });
+    const enc = this.device.createCommandEncoder();
+    passes.forEach((item, index) => {
+      const bind = this.device.createBindGroup({ layout: item.pipeline.getBindGroupLayout(0), entries: [
+        { binding: 0, resource: { buffer: paramsBuffers[index] } },
+        { binding: 1, resource: { buffer: dataBuffer } },
+      ] });
+      const pass = enc.beginComputePass();
+      pass.setPipeline(item.pipeline);
+      pass.setBindGroup(0, bind);
+      pass.dispatchWorkgroups(workgroupsX, workgroupsY);
+      pass.end();
+    });
+    this.device.queue.submit([enc.finish()]);
+    this.retireBuffers(paramsBuffers);
   }
   private retireBuffers(buffers: GPUBuffer[]): void {
     if (!buffers.length) return;
@@ -762,6 +1240,8 @@ export class Show4DSTEMCompute {
   dispose() {
     for (const c of this.chunks) c.buffer.destroy();
     if (this.totalSumCache) { this.totalSumCache.destroy(); this.totalSumCache = null; this.totalSumCacheKey = null; }
+    for (const entry of this.dpcBufferCache.values()) entry.buffer.destroy();
+    this.dpcBufferCache.clear();
     if (this.sumDimsCache) { for (const cd of this.sumDimsCache) { cd.dims.destroy(); cd.dims2.destroy(); } this.sumDimsCache = null; }
     if (this.comDimsCache) { for (const cd of this.comDimsCache.rows) { cd.dims.destroy(); cd.dims2.destroy(); } this.comDimsCache = null; }
   }

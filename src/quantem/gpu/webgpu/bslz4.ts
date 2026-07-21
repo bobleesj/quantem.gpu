@@ -1957,13 +1957,14 @@ export async function decodeBslz4MaskedSumLow8Batch(
 // + a GPU-internal copyBufferToBuffer. Cleared on device loss.
 let STAGING: GPUBuffer[] = [];
 let STAGING_BYTES = 0;
+let STAGING_READY: Promise<void> = Promise.resolve();
 function ensureStaging(device: GPUDevice, count: number, bytes: number): void {
   if (STAGING.length >= count && STAGING_BYTES >= bytes) return;
   STAGING.forEach((b) => b.destroy());
   STAGING_BYTES = Math.max(bytes, STAGING_BYTES);
   STAGING = Array.from({ length: count }, () => device.createBuffer({ size: STAGING_BYTES, usage: GPUBufferUsage.MAP_WRITE | GPUBufferUsage.COPY_SRC }));
 }
-onGPULost(() => { STAGING = []; STAGING_BYTES = 0; });
+onGPULost(() => { STAGING = []; STAGING_BYTES = 0; STAGING_READY = Promise.resolve(); });
 
 // Upload each spec's compressed bytes into a plain STORAGE buffer via the staging pool:
 // map a pooled staging buffer (no per-load alloc), wide-copy the bytes in, then a GPU copy
@@ -1974,19 +1975,23 @@ async function uploadViaStagingWithProfile(device: GPUDevice, specs: Bslz4Spec[]
 }> {
   const align4 = (n: number) => Math.ceil(n / 4) * 4;
   const maxBytes = specs.reduce((m, s) => Math.max(m, align4(s.compressed.byteLength)), 0);
+  await STAGING_READY.catch(() => undefined);
   ensureStaging(device, specs.length, maxBytes);
   const rawBufs = specs.map((s) => device.createBuffer({ size: align4(s.compressed.byteLength), usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST }));
-  await Promise.all(specs.map(async (s, i) => {
+  for (let i = 0; i < specs.length; i++) {
+    const s = specs[i];
     const sz = align4(s.compressed.byteLength);
     await STAGING[i].mapAsync(GPUMapMode.WRITE, 0, sz);   // reused buffer: maps without re-alloc
     copyWide(STAGING[i].getMappedRange(0, sz), s.compressed);
     STAGING[i].unmap();
-  }));
+  }
   const enc = device.createCommandEncoder();
   specs.forEach((s, i) => enc.copyBufferToBuffer(STAGING[i], 0, rawBufs[i], 0, align4(s.compressed.byteLength)));
   const tCopy = performance.now();
   device.queue.submit([enc.finish()]);   // ordered before the decode submit; next group's mapAsync waits on it
-  const copyWaitMs = waitForCopy ? await device.queue.onSubmittedWorkDone().then(() => performance.now() - tCopy) : 0;
+  const copyDone = device.queue.onSubmittedWorkDone().then(() => undefined);
+  STAGING_READY = copyDone;
+  const copyWaitMs = waitForCopy ? await copyDone.then(() => performance.now() - tCopy) : 0;
   return { rawBufs, copyWaitMs };
 }
 
@@ -2000,14 +2005,16 @@ async function stageUploadCopies(device: GPUDevice, specs: Bslz4Spec[]): Promise
 }> {
   const align4 = (n: number) => Math.ceil(n / 4) * 4;
   const maxBytes = specs.reduce((m, s) => Math.max(m, align4(s.compressed.byteLength)), 0);
+  await STAGING_READY.catch(() => undefined);
   ensureStaging(device, specs.length, maxBytes);
   const rawBufs = specs.map((s) => device.createBuffer({ size: align4(s.compressed.byteLength), usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST }));
-  await Promise.all(specs.map(async (s, i) => {
+  for (let i = 0; i < specs.length; i++) {
+    const s = specs[i];
     const sz = align4(s.compressed.byteLength);
     await STAGING[i].mapAsync(GPUMapMode.WRITE, 0, sz);
     copyWide(STAGING[i].getMappedRange(0, sz), s.compressed);
     STAGING[i].unmap();
-  }));
+  }
   return {
     rawBufs,
     recordCopies(enc: GPUCommandEncoder) {

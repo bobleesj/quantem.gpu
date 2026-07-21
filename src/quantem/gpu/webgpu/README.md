@@ -31,12 +31,32 @@ Current status:
 - BF/DF/ADF has a GPU-resident `maskedSumBuffer` path, including cached
   full-detector total minus complement for dense DF/ADF masks.
 - CoM/DPC has GPU-resident `maskedCoMBuffer` and `maskedDpcBuffer` source
-  paths. It still needs headed real-adapter agreement/performance signoff before
-  it is considered equivalent to the CUDA/MPS interaction path.
+  paths. Fixed-rotation iDPC uses paired DPC buffers plus a dual-real FFT for
+  the browser Poisson integration. A headed real Chrome/NVIDIA Blackwell signoff
+  on full no-bin `512x512x192x192` data measured DPC row/col/iDPC display
+  medians of about `14.9/13.2/13.2 ms` after batching FFT stages into one
+  command submission, with corrected-frame load parity and `60 FPS` idle RAF.
+  Full recompute medians were `13.7/19.3/22.7 ms`. DPC row/col max abs error
+  was `7.63e-6`; iDPC mean abs error was `4.70e-6` with `3.05e-5` max from
+  float32 FFT order. Browser
+  local-file timing harnesses should use `--require-local-profile` so a URL
+  fallback is reported as a failure, not as a local-file number.
 - `local-h5.ts` contains the Show4DSTEM local-file HDF5 acquisition path. When
   the browser is given the local master/data files, it reads them with a classic
   Blob worker pool, parses the HDF5 chunk index, and feeds the same WGSL
   bitshuffle/LZ4 decoder as the URL path.
+- The local-H5 full-stack path has explicit detector-bin source support through
+  `detBin`. For `detBin > 1`, the decoder preserves integer counts
+  (`uint8`/`uint16`) or float32 values, then a WGSL pass sums detector-bin
+  blocks to a float32 binned stack while zeroing raw bad pixels before the sum.
+  Full `512x512x192x192` headed Chrome signoff on a real NVIDIA Blackwell
+  WebGPU adapter matched corrected-frame integer checksums exactly against the
+  zero-bad-before-bin reference for count-audited low8 `detBin=2/4/8`
+  (`1.199/1.212/1.106 s` page profiles) and native non-low8 `uint16`
+  `detBin=2` (`2.651 s`). Repeated true crop-256 profiles on the same adapter
+  had medians `0.774/0.755/0.733 s` with p95 `0.798/0.813/0.775 s` for
+  `detBin=2/4/8`. The default remains no-bin, and detector binning must stay an
+  explicit API/report choice.
 - Maintainers can prebuild optional metadata-only block-index sidecars with:
 
   ```bash
@@ -77,6 +97,13 @@ Current status:
   profile time, with range `0.316-0.464 s` and exact corrected-frame checksum
   parity against CUDA. This is not wired into the Show4DSTEM display path until
   the frontend also switches to the cropped scan shape.
+- Detector-bin local-H5 loads are explicit and count preserving. On real
+  Chrome/NVIDIA Blackwell WebGPU, full `512x512x192x192` low8 browse profiles
+  were `1.199/1.212/1.106 s` for `detBin=2/4/8`, and true crop-256 repeated
+  profiles had medians `0.774/0.755/0.733 s` with p95
+  `0.798/0.813/0.775 s`. Corrected-frame checksum parity matched the
+  zero-bad-before-bin reference exactly for all runs; native non-low8 `uint16`
+  `detBin=2` was also exact at `2.651 s`.
 - `local-h5.ts` also exposes a product-first masked-sum path for BF/DF/ADF-style
   virtual images. It reads local HDF5 data, builds only the requested
   scan-region product, and returns a GPU-resident float32 image buffer without
@@ -100,6 +127,15 @@ Current status:
   `1.170 s` for a `1024x1024` repeat-stress gate. The `1024` number exercises a
   1,048,576-position output/dispatch using repeated real `512` evidence; it is
   not a true 1024-acquisition signoff.
+- A separate true real-acquisition `1024x1024x192x192` selected-block BF
+  signoff on Chrome/NVIDIA Blackwell matched an independent Python reference
+  exactly (`max_abs=0`, `mean_abs=0`, mismatches `0`) with 4-run median wall
+  `4.92 s`, page/profile `4.85 s`, product stage `1.56 s`, selected compressed
+  payload `6.88 GB`, and `4.19 MB` output. This is product-first BF evidence,
+  not full-stack no-bin browse/load signoff.
+- The selected-block staging uploader waits for prior submitted copy work
+  before remapping reused staging buffers. Keep this lifecycle guard: without
+  it, large product runs can trip browser `mapAsync` outstanding-map errors.
 - The selected-block reducer has separate grouped-mask, `pixel-wg64`,
   `pixel-wg128`, and `pixel-wg256` kernels for profiling. On Apple WebGPU, the
   production auto route uses pixel `wg64` for `<=256x256` outputs, grouped-mask

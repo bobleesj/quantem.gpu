@@ -58,6 +58,7 @@ the same:
 | ADF | `webgpu_wgsl_masked_sum_buffer` |
 | DF | `webgpu_wgsl_masked_sum_buffer` plus dense-mask cache if needed |
 | CoM/DPC | `webgpu_wgsl_masked_dpc_buffer` / `webgpu_wgsl_masked_com_buffer` |
+| iDPC | `webgpu_wgsl_masked_idpc_buffer` with paired DPC buffers and dual-real FFT |
 
 ## Backend Checklist
 
@@ -66,7 +67,7 @@ the same:
 | Show4DSTEM Python CUDA, resident CuPy | Implemented in `CudaKernelCompute`; widget must preserve the CuPy source for compute while keeping Torch for existing display code. Uses warp-shuffle selected reducers, a custom total-count reducer, fused dense `total - complement`, a fused CoM/DPC reducer, a cached full-detector CoM field, and a small per-viewer detector-index cache. | Exact parity vs old CuPy selected-pixel sum for BF/ADF/DF and old CuPy CoM for DPC; widget smoke must report `CudaKernelCompute`; compare-grid path must use the CUDA backend. | 512x512x192x192 uint16 no-bin BF/ADF/DF/DPC faster than old widget path; 1024x1024x192x192 uint8 shape probe must pass before real-data allocation tests. |
 | Public `quantem.gpu.detector` CUDA helpers | Implemented through `cuda_masked_sum`. | Exact parity for `masked_sum`, `virtual_image`, BF/ADF/DF helper outputs. | Same or faster than old CuPy gather path, with lower transient memory. |
 | Show4DSTEM MPS chunk-backed data | Implemented for uint8/uint16 through `MetalVirtualImage`; dense DF uses cached `total - complement`; CoM/DPC uses raw Metal `com_u8`/`com_u16`; no Torch-MPS giant tensor for full no-bin browse loads. | Mac runtime parity vs NumPy/reference on BF/ADF/DF and CoM/DPC; widget smoke must report `MetalRawBackend`; no silent CPU fallback. | 512 no-bin interaction should use the Metal path or fast sidecar; 1024 uint8 requires an explicit memory policy before real allocation. |
-| Show4DSTEM WebGPU browser | Implemented in canonical `quantem.gpu.webgpu` sources. BF/DF/ADF uses `maskedSumBuffer`; DPC row/col uses WGSL CoM, global mean reduction, and centered component output through `maskedDpcBuffer`; readback wrappers remain for widget model compatibility and parity tests. | Source contract test plus headed Chrome test with a real adapter, not SwiftShader; BF/ADF/DF, CoM, and DPC parity against NumPy/Python reference. | Drag path should keep VI and DPC GPU-resident where the display pipeline can accept GPU buffers; widget model-byte shims remain for current anywidget compatibility. |
+| Show4DSTEM WebGPU browser | Implemented in canonical `quantem.gpu.webgpu` sources. BF/DF/ADF uses `maskedSumBuffer`; DPC row/col uses WGSL CoM, global mean reduction, one-ULP mean-side correction, and centered component output through `maskedDpcBuffer`; iDPC uses paired DPC buffers plus a dual-real FFT. Readback wrappers remain for widget model compatibility and parity tests. | Source contract test plus headed Chrome test with a real adapter, not SwiftShader; BF/ADF/DF, CoM, DPC, and iDPC parity against NumPy/Python reference. | Drag path should keep VI, DPC, and iDPC GPU-resident where the display pipeline can accept GPU buffers; widget model-byte shims remain for current anywidget compatibility. |
 | Multi-tilt/series compare grid | CUDA path tested for seven 512 panels at detector bin 2; full no-bin panels are one-at-a-time unless sharded. | Compare-grid BF/ADF/DF parity and timing for 7 panels; verify per-panel backend path. | Refresh all visible panels without falling back to per-panel Torch gather. |
 
 ## Done For This Branch
@@ -92,7 +93,35 @@ the same:
   Show4DSTEM engine and ShowPtycho SSB engine copied as canonical source
   package data. Widget build/export syncs these sources before bundling.
   BF/DF/ADF has a GPU-resident buffer path; DPC row/col now uses a WGSL CoM
-  reducer, WGSL mean reducer, and WGSL centered-component pass.
+  reducer, WGSL mean reducer, one-ULP mean-side correction, and WGSL
+  centered-component pass. Browser iDPC uses paired DPC buffers and a dual-real
+  FFT before the Poisson integration.
+- Private full 512x512x192x192 no-bin WebGPU DPC/iDPC browser signoff on a real
+  NVIDIA Blackwell adapter:
+  - corrected-frame load parity: passed
+  - DPC row/col max abs error: `7.63e-6`
+  - iDPC mean abs error: `4.70e-6`; max abs error: `3.05e-5` from float32 FFT order
+  - DPC row/DPC col/iDPC display medians: `14.9/13.2/13.2 ms`
+  - DPC row/col/iDPC recompute medians: `13.7/19.3/22.7 ms`
+  - idle RAF: `60 FPS`
+  - local-file timing reruns use `--require-local-profile` so the browser URL
+    fallback cannot be recorded as a local-file benchmark
+- Private full 512x512x192x192 and true crop-256 WebGPU detector-bin local-H5
+  signoff on a real NVIDIA Blackwell adapter:
+  - `detBin=2/4/8` corrected-frame checksums: exact against the
+    zero-bad-before-bin reference
+  - full-load low8 page profiles: `1.199/1.212/1.106 s`
+  - crop-256 20-repeat medians: `0.774/0.755/0.733 s`
+  - crop-256 p95: `0.798/0.813/0.775 s`
+  - native non-low8 `uint16` `detBin=2`: exact at `2.651 s`
+- Private true 1024x1024x192x192 WebGPU product-first selected-block BF
+  signoff on a real NVIDIA Blackwell adapter:
+  - BF radius: `30`
+  - selected compressed payload: `6.88 GB`
+  - output image: `4.19 MB`
+  - 4-run median wall/profile/product: `4.92/4.85/1.56 s`
+  - max/mean absolute error: `0/0` against an independent Python reference
+  - this is product-first BF evidence, not full-stack no-bin browse/load
 - Private real-data WebGPU browser stress on a 128x128 scan, 96x96 detector,
   uint8 sidecar, real NVIDIA Vulkan adapter:
   - mount/decode to interactive: `1.94 s`
@@ -137,9 +166,12 @@ the same:
   the first-click vs cached-repeat timing.
 - Add a headed WebGPU test that records the real adapter and verifies BF/ADF/DF
   parity plus `maskedSumBuffer` drag behavior.
-- Add WebGPU CoM/DPC parity/performance tests and a GPU-resident
-  `maskedCoMBuffer`-style path so DPC interaction avoids readback like VI.
+- Keep WebGPU CoM/DPC/iDPC headed parity/performance tests in the release gate,
+  including the FFT command-batching path that keeps iDPC median redraw under
+  the 30 FPS budget.
 - Remove any remaining widget-local permanent backend copies after each synced
   `quantem.gpu.webgpu` source is covered by build and browser parity tests.
-- Run a real `1024x1024x192x192 uint8` allocation/performance test when a
-  representative dataset is available.
+- Run a real WebGPU `1024x1024x192x192` full-stack no-bin browse/load
+  allocation/performance test when enough free browser GPU memory is available,
+  or document the memory-policy rejection. Product-first BF for true 1024 is
+  already signed off.

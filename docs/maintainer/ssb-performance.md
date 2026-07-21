@@ -80,19 +80,19 @@ breakthrough in this sequence. The next breakthrough must reduce the
 register-heavy row/gamma stage or the amount of exact per-BF phase work; chunk
 size and BF-group retuning were measured and stayed flat.
 
-MPS real 512 timing, same full active BF selection:
+MPS 512 timing, same full active BF selection:
 
 | Quantity | Mean | p50 | p95 | FPS | Status |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Object redraw | `22.25 ms` | `21.65 ms` | `23.44 ms` | `44.9` | Usable for object-wave steering |
-| Phase-only | `168.84 ms` | `168.60 ms` | `171.66 ms` | `5.9` | Fails exact phase target |
-| Phase+loss | `165.20 ms` | `165.57 ms` | `166.71 ms` | `6.1` | Fails exact loss target |
+| Object redraw | `22-36 ms` | not recorded | not recorded | `28-45` | Usable for object-wave steering |
+| Phase-only | `~222 ms` | `222.1 ms` | not recorded | `4.5` | Fails exact phase target |
+| Phase+loss | `~230 ms` fresh source-tree probe; real exact-loss candidate `235-272 ms` | `230.4 ms` | not recorded | `3.7-4.3` | Fails exact loss target |
 
 Reference checks for this checkpoint:
 
 - CUDA: `tests/test_ssb_cuda_128.py` + `tests/test_ssb_batch_optuna.py`,
   `29 passed` on GPU1.
-- MPS: `tests/test_ssb_mps_cuda_reference.py`, `14 passed, 2 skipped` on a
+- MPS: `tests/test_ssb_mps_cuda_reference.py`, `20 passed, 2 skipped` on a
   Mac MPS machine.
   This includes the fused 128/256/512/1024 column phase/loss helpers and the
   fused 128/256/1024 dynamic row-IFFT helpers.
@@ -1381,17 +1381,19 @@ Mac MPS reference check:
 ```text
 PYTHONPATH=src python -m pytest -q tests/test_ssb_mps_cuda_reference.py
 
-15 passed, 2 skipped
+20 passed, 2 skipped
 ```
 
-MPS synthetic prepared full-BF-style matrix, Hermitian `G_qk`, `8809` BF:
+MPS synthetic prepared full-BF-style matrix, Hermitian `G_qk`, `8809` BF.
+The 512/1024 rows were refreshed on Phil from the current source tree on
+2026-07-20 after the previous `~79 ms` 512 exact note did not reproduce:
 
 | Scan | Object mean / FPS | Phase mean / FPS | Phase+loss mean / FPS | Notes |
 | --- | ---: | ---: | ---: | --- |
 | `128x128` | `2.45 ms / 408.4` | `~8.0 ms / 122-126` | `~8.3 ms / 119-121` | Exact fused row/column path passes 30 FPS. |
 | `256x256` | `8.62 ms / 116.1` | `32.75 ms / 30.5` | `~34-35 ms / 28.6-29.4` | Phase-only reaches 30 FPS; phase+loss remains just above the strict `33.3 ms` budget. |
-| `512x512` | `37.65 ms / 26.6` | warm `166-182 ms / 5-6` | warm `170-173 ms / 5-6` | No new durable 512 exact phase/loss breakthrough; long stress loops throttle upward. |
-| `1024x1024` | clean `~156 ms / 6.4`, hot `~222 ms / 4.5` | warm `~0.78-1.0 s / 1.0-1.3` | warm `~0.79-1.0 s / 1.0-1.3` | Fused 1024 is about 2-2.6x faster than the generic MLX path, but still far from 10/30 FPS. |
+| `512x512` | `34-36 ms / 28-29` in the synthetic refresh; real object steering previously `22-30 ms` | `222.1 ms / 4.5` | `230.4 ms / 4.3` | Exact phase/loss is correct but not interactive; object-wave steering is a different quantity. |
+| `1024x1024` | `142.7 ms / 7.0` | not rerun separately at full BF | `669.1 ms / 1.5` | Full-BF-sized synthetic `G_qk` (`37.02 GB`) remains far from 10/30 FPS. A reduced-BF topology probe at `1382` BF measured `~104 ms`, showing BF-count scaling is the dominant cost. |
 
 Before/after for the exact MPS phase/loss paths in the same synthetic prepared
 full-BF-style harness:
@@ -1402,14 +1404,16 @@ full-BF-style harness:
 | `128x128` | phase+loss | `37.33 ms` | `~8.3 ms` | `~4.5x` | Passes 30 FPS. |
 | `256x256` | phase | `144.98 ms` | `32.75 ms` | `4.4x` | Passes 30 FPS by mean; p95 remains close to budget. |
 | `256x256` | phase+loss | `146.51 ms` | `~34-35 ms` | `~4.2x` | Near miss for 30 FPS. |
-| `1024x1024` | phase | `1994 ms` | warm `~0.78-1.0 s` | `~2.0-2.6x` | Still fails 10/30 FPS. |
-| `1024x1024` | phase+loss | `1984 ms` | warm `~0.79-1.0 s` | `~2.0-2.5x` | Still fails 10/30 FPS. |
+| `512x512` | phase+loss, current prepared path | older generic path `~550-640 ms` | fresh source-tree probe `~230 ms`; real exact-loss candidate `235-272 ms` | `~2.4x` versus the older generic path | Still fails 30 FPS and remains much slower than CUDA. |
+| `1024x1024` | phase | `1994 ms` | not rerun separately at full BF | not recorded | Still fails 10/30 FPS. |
+| `1024x1024` | phase+loss | `1984 ms` | fresh full-BF-sized source-tree probe `669 ms` | `~3.0x` | Still fails 10/30 FPS. |
 
 Rejected or non-breakthrough MPS probes from this pass:
 
 | Probe | Result | Decision |
 | --- | --- | --- |
 | 512 exact phase/loss chunk sweep down to `64` BF | Small CUDA-like chunks regressed (`~226 ms` at `64` BF). Larger chunks stayed best, and the latest single-candidate repeat favored `2048-4096` BF. | Keep the high-memory 512 default at `4096` BF. MPS benefits from fewer loop launches here. |
+| 512 ShowPtycho adapter object-wave accumulation | The adapter must not ask `_reconstruct_prepared(..., compute_object=True)` for exact phase/loss interactions because object-wave output is a separate quantity. A fresh current-source probe did not reproduce the previous `79 ms` exact phase/loss note; phase-only/phase+loss were `~222/230 ms`. | Keep `compute_object=False` for exact phase/loss, but do not claim a 512 exact-phase 30 FPS breakthrough. Object-wave steering remains the fast MPS interaction path. |
 | 512 column BF grouping `8/16/32/64/128` | Best cases moved only `1-2 ms`; larger groups regressed. | Not a topology breakthrough; keep default `32`. |
 | 1024 fused chunk sweep `128/256/512/768/1024` after scalar-loss fix | `512/768` were close and better than the earlier `256` cap in isolated runs, but order and thermal state moved the result by hundreds of ms. | Set 1024 default to `512` for a smaller safe working set; this remains far from interactive. |
 | Object threadgroup sweep `8/16/32/64/128` | `64/128` modestly improved large-object redraw. | Keep `64` for `512+`; it is a small object-mode win, not a phase/loss breakthrough. |

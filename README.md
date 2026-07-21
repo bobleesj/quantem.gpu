@@ -117,8 +117,9 @@ compute_ts = webgpu.source_text("compute.ts")
 ```
 
 The shipped Show4DSTEM WebGPU source covers GPU-resident BF/DF/ADF masked
-reductions and DPC row/col reducers; `quantem.widget` bundles these sources for
-browser/offline HTML use while keeping the widget package focused on UI.
+reductions, DPC row/col reducers, and fixed-rotation iDPC; `quantem.widget`
+bundles these sources for browser/offline HTML use while keeping the widget
+package focused on UI.
 
 Build it locally with:
 
@@ -196,11 +197,11 @@ complete; `Gap` means the backend does not implement that capability yet.
 | HDF5 master metadata and discovery | Done | Done | Done | One shared API should serve widget and live callers. |
 | Full HDF5 bitshuffle/LZ4 load/decompress | Done | Done | Done | CUDA uses CuPy/CUDA kernels; MPS uses Metal chunk-backed unified memory; WebGPU uses browser local-file HDF5 plus WGSL decode. |
 | `load(..., scan_region=...)` crop-first IO | Done | Done | Done | CUDA/MPS crop during load; WebGPU slices frame windows before upload/decode. |
-| Detector bin during load, min-memory | Done | Done | Gap | WebGPU detector-bin load is the main IO gap; any bin must be explicit. |
+| Detector bin during load, min-memory | Done | Done | Done | WebGPU has an explicit count-preserving `detBin` load option in the local-H5 source; full `512x512x192x192` `detBin=2/4/8` headed parity is exact on a real NVIDIA WebGPU adapter, including native non-low8 `uint16` `detBin=2`. |
 | BF/DF/ADF resident kernels | Done | Done | Done | CUDA RawKernel, MPS Metal, and WebGPU WGSL selected reducers are implemented. |
 | Dense DF/ADF strategy | Done | Done | Done | Uses cached full-detector total minus complement when that is cheaper than scanning dense masks. |
-| CoM/DPC resident kernels | Done | Done | Partial | CUDA and MPS have fused moment kernels; WebGPU source exists and needs broader full no-bin FPS signoff. |
-| iDPC | Done | Done | Partial | Uses shared DPC reconstruction after CoM; browser integration policy is still narrower than CUDA/MPS. |
+| CoM/DPC resident kernels | Done | Done | Done | CUDA and MPS have fused moment kernels; WebGPU row/col DPC has full no-bin headed signoff on real hardware. |
+| iDPC | Done | Done | Done | WebGPU has a fixed-rotation browser iDPC solver using paired DPC buffers and a dual-real FFT. It matches the Python reference within float32 FFT tolerance, not bit-exact. |
 | Ptychographic SSB preview/object steering | Done | Done | Partial | CUDA and MPS are implemented; WebGPU source exists through `quantem.gpu.webgpu` and widget bundling. |
 | Ptychographic SSB optimizer/free-fit | Done | Done | Partial | MPS supports current parity shapes but large exact phase/loss remains slower than CUDA. |
 | GIF/MP4 movie rendering | Done | Done | NA | CUDA/NVENC and Metal/VideoToolbox paths live here; widget owns buttons/export UI. |
@@ -225,17 +226,23 @@ These public-safe numbers summarize the current full-size Show4DSTEM load and
 browser product work without raw file paths or project-specific dataset names.
 The full-stack rows use `512x512x192x192` HDF5 evidence. CUDA reference timing
 was measured in `cuda-env` on an NVIDIA RTX PRO 6000 Blackwell GPU. WebGPU
-timing used real Chrome WebGPU on Apple Metal, with software adapters rejected.
+timing used real Chrome WebGPU on Apple Metal or NVIDIA Blackwell as listed,
+with software adapters rejected.
 
 | Path | Backend / hardware | Evidence shape | Median | Parity / notes |
 |---|---|---:|---:|---|
 | HDF5 load/decompress | CUDA, RTX PRO 6000 Blackwell | `512x512x192x192` | `450 ms` over 946 runs | Reference warm load; min `408 ms`, max `1159 ms`, resident stack `9.66 GB`. |
+| HDF5 load/decompress | CUDA, RTX PRO 6000 Blackwell | true `1024x1024x192x192` | `4.704 s` | Real acquisition, no bin/crop, `uint16` output, selected corrected frames bit-exact, resident stack `77.31 GB`. |
+| HDF5 load/decompress | MPS, Apple Metal | true `1024x1024x192x192` | `4.617 s` | Real acquisition, no bin/crop, chunk-backed `uint16` output, selected corrected frames bit-exact, resident stack `77.31 GB`. |
 | Local HDF5 full-stack load | WebGPU, Chrome Apple Metal | `512x512x192x192` | `772 ms` over 946 runs | Corrected-frame checksum parity versus CUDA; min `726 ms`, max `879 ms`; full path still materializes the `9.7 GB` browse cube. |
+| Local HDF5 detector-bin load | WebGPU, Chrome NVIDIA Blackwell | full `512x512x192x192` and true `256x256` crop, `detBin=2/4/8` | full page profiles `1199/1212/1106 ms`; crop p95 `798/813/775 ms` | Corrected-frame checksum parity exact versus zero-bad-before-bin reference; crop medians `774/755/733 ms`; native non-low8 `uint16` `detBin=2` also exact at `2651 ms`. |
 | Local HDF5 scan crop | WebGPU, Chrome Apple Metal | true `256x256x192x192` crop | `338 ms` over 946 runs | Corrected-frame checksum parity versus CUDA; min `316 ms`, max `464 ms`. |
 | Product-first BF selected-block sidecar | WebGPU, Chrome Apple Metal | true `256x256`, BF radius `30` | `210 ms` over 946 runs | Product max/mean abs error `0` versus CUDA; min `185 ms`, max `246 ms`. |
 | Product-first BF selected-block sidecar | WebGPU, Chrome Apple Metal | full `512x512`, BF radius `30` | `378 ms` over 945 successful runs | Product max/mean abs error `0` versus CUDA; min `358 ms`, max `473 ms`. |
+| Product-first BF selected-block sidecar | WebGPU, Chrome NVIDIA Blackwell | true `1024x1024`, BF radius `30` | `4.92 s` wall; `1.56 s` product stage | True real-acquisition product-first BF signoff; selected compressed payload `6.88 GB`, output `4.19 MB`, max/mean abs error `0` versus an independent Python reference. This is not full-stack no-bin browse/load signoff. |
 | Product-first BF selected-block sidecar | WebGPU, Chrome Apple Metal | `1024x1024` repeat-stress, BF radius `30` | `1170 ms` over 944 successful runs | Product max/mean abs error `0`; this is four repeats of real `512` evidence, not a true 1024 acquisition signoff. |
 | Visible Show4DSTEM interaction | WebGPU, Chrome Apple Metal | full `512x512x192x192` local HDF5 | full load `933 ms`; drag frames `0.5-0.9 ms` | BF/ADF/DPC display interactions stay GPU-resident after load; warm cached BF/ADF/DPC hits were `0.1-0.5 ms`. |
+| DPC/iDPC display | WebGPU, Chrome NVIDIA Blackwell | full `512x512x192x192` no-bin | DPC row/col/iDPC display medians `14.9/13.2/13.2 ms` | Headed real-adapter signoff after FFT command batching; full recompute medians `13.7/19.3/22.7 ms`; corrected-frame parity passed; DPC max abs error `7.63e-6`; iDPC mean abs error `4.70e-6`, max `3.05e-5` from float32 FFT order; idle RAF `60 FPS`. Local-file timing harness runs use `--require-local-profile` so URL fallback is rejected. |
 
 Across the 8-hour browser soak there were 5 transient Chrome/CDP socket or
 timeout harness failures among 5676 recorded rows. Successful parity rows had no
@@ -253,7 +260,7 @@ Current status:
 | Backend | `128` | `256` | `512` | `1024` | Status |
 |---|---:|---:|---:|---:|---|
 | CUDA object / phase / loss | object `4.83 ms`; phase+loss `9.65 ms` | object `2.17 ms`; phase+loss `20.89 ms` | real full-BF phase+loss `31.27 ms` / `32.0 FPS`; synthetic phase+loss `27.46 ms` | object `40.90 ms`; phase+loss `190.88 ms` / `5.2 FPS` | CUDA 512 full-BF real-field phase/loss passes 30 FPS on GPU1. 1024 exact phase/loss uses split-512 row/column FFTs and is about `2x` faster than the old exact path, but still misses the 10/30 FPS target. |
-| MPS Hermitian preview/free-fit | object `2.45 ms`; phase+loss `~8.3 ms` | object `8.62 ms`; phase `32.75 ms`; phase+loss `~34-35 ms` | object `37.65 ms`; exact phase+loss warm `~170 ms` / `~6 FPS` | object clean `~156 ms`; exact phase/loss warm `~0.8-1.0 s` / `~1 FPS` | Implemented on a Mac MPS machine for prepared Hermitian `G_qk`. Full-BF 128 is real-time, 256 phase-only reaches 30 FPS while phase+loss remains just over budget, 512 object-wave steering is usable, and 1024 exact phase/loss is about `2-2.6x` faster than the old MLX path but still not live-interactive. |
+| MPS Hermitian preview/free-fit | object `2.45 ms`; phase+loss `~8.3 ms` | object `8.62 ms`; phase `32.75 ms`; phase+loss `~34-35 ms` | object `22-36 ms`; exact phase+loss `~230 ms` | object `143 ms`; exact phase+loss `~669 ms` for full-BF-sized synthetic `G_qk` | Implemented on a Mac MPS machine for prepared Hermitian `G_qk`. Full-BF 128 is real-time, 256 phase-only reaches 30 FPS, object-wave steering is usable at 512/1024, and exact phase/loss at 512/1024 remains much slower than CUDA. |
 | WebGPU phase/loss widget path | supported | supported | supported | supported | Browser runtime bundled by `quantem.widget`; reusable TypeScript/WGSL source is shipped in `quantem.gpu.webgpu`. |
 
 Do not treat this table as a reason to downsample or crop. Full-resolution

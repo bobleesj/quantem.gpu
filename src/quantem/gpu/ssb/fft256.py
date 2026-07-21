@@ -344,8 +344,8 @@ void ifft256_rows_fused_pk_batch_t64_mr8_transpose_packed_b4(
     // gives rows 0-3, 8-11, 16-19, ... (128 of 256 rows, interleaved).
     // This interleaved row sampling matches the original precomputed-geometry
     // path. Changing to *4 processes all 256 rows but produces a DIFFERENT
-    // variance loss landscape that breaks Optuna convergence (loss doubles
-    // from 0.039 to 0.082 on Steph's data, wrong C10 by 150nm).
+    // variance loss landscape that breaks Optuna convergence in calibration
+    // checks (loss doubles from 0.039 to 0.082, wrong C10 by 150nm).
     // The col+var kernel reads the transposed output including the unwritten
     // rows, and the variance was validated against this specific pattern.
     int row = blockIdx.y * 8 + threadIdx.y;

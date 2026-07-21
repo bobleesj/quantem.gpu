@@ -35,8 +35,20 @@ def test_webgpu_compute_source_tracks_vi_and_dpc_kernels() -> None:
     assert "maskedCoM(mask: Uint32Array" in source
     assert "const DPC_MEAN_WGSL" in source
     assert "const DPC_COMPONENT_WGSL" in source
+    assert "const DPC_COMPONENT_PAIR_WGSL" in source
+    assert "const DPC_OUTPUT_ULP_CORRECT_WGSL" in source
+    assert 'import { FFT_2D_SHADER } from "./fft-shader";' in source
+    assert "const IDPC_PACK_WGSL" in source
+    assert "const IDPC_POISSON_WGSL" in source
+    assert "const IDPC_EXTRACT_WGSL" in source
     assert "maskedDpcBuffer(mask: Uint32Array" in source
     assert "maskedDpc(mask: Uint32Array" in source
+    assert "maskedDpcPairBuffers(mask: Uint32Array" in source
+    assert "maskedIDpcBuffer(" in source
+    assert "maskedIDpc(" in source
+    assert "gradFft[i] = vec2<f32>(gradRow, gradCol)" in source
+    assert "let zMirrorConj = vec2<f32>(gradFft[mirror].x, -gradFft[mirror].y)" in source
+    assert "runFFT2DInPlace" in source
     assert "getDevice(): GPUDevice" in source
     assert "readFloatBuffer(buf: GPUBuffer" in source
     assert "checksumFrames(scanIndices: number[])" in source
@@ -142,6 +154,9 @@ def test_webgpu_bslz4_uses_fused_integer_to_uint8_decoder() -> None:
     assert "function compactSelectedBslz4Blocks" in source
     assert "function compactBslz4Blocks" in source
     assert "decodeBslz4MaskedSumLow8Batch" in source
+    assert "let STAGING_READY: Promise<void> = Promise.resolve();" in source
+    assert "await STAGING_READY.catch(() => undefined);" in source
+    assert "STAGING_READY = copyDone;" in source
 
 
 def test_webgpu_local_h5_source_tracks_show4dstem_loader_contract() -> None:
@@ -187,6 +202,17 @@ def test_webgpu_local_h5_source_tracks_show4dstem_loader_contract() -> None:
     assert "workerCount" in source
     assert "groupSize" in source
     assert "decodeVariant" in source
+    assert "detBin?: number;" in source
+    assert "const ZERO_BAD_PIXELS_WGSL" in source
+    assert "const DETECTOR_BIN_WGSL" in source
+    assert "async function binDetectorChunks" in source
+    assert "decoded.buffers.forEach((buffer) => buffer.destroy())" in source
+    assert "badPixelClearSpecs(badPixels" in source
+    assert "Detector shape ${vol.detRows}x${vol.detCols} is not divisible by detBin=${detBin}" in source
+    assert "uint32 needs real-acquisition parity before enablement" in source
+    assert 'low8Only ? "uint8"' in source
+    assert "detBinMs" in source
+    assert "badPixels: detBin > 1 ? new Uint32Array(0) : badPixels" in source
 
 
 def test_webgpu_source_rejects_unknown_names() -> None:

@@ -129,6 +129,11 @@ def _fixture_files(args: argparse.Namespace) -> list[str]:
     template = args.sidecar_template or args.data_template
     files.extend(f"{base}/{template.format(index=index)}" for index in range(1, args.data_files + 1))
     files.append(args.reference_file)
+    missing = [file for file in files if not Path(file).is_file()]
+    if missing:
+        preview = ", ".join(missing[:3])
+        suffix = "" if len(missing) <= 3 else f", ... ({len(missing)} missing total)"
+        raise FileNotFoundError(f"Fixture file(s) not found: {preview}{suffix}")
     return files
 
 
@@ -174,9 +179,88 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
         started = target.eval(
             """(() => {
               const input = document.querySelector('input[type=file]');
-              if (typeof globalThis.__runProductFirst !== 'function') {
+              const selectedFiles = Array.from(input.files || []);
+              const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+              const compareReference = async () => {
+                const refFile = selectedFiles.find((file) => /\\.f32$/i.test(file.name));
+                if (!refFile) throw new Error("reference .f32 file was not selected");
+                const model = globalThis.__sh4d && globalThis.__sh4d.model;
+                if (!model || typeof model.get !== "function") {
+                  throw new Error("Show4DSTEM debug model is unavailable");
+                }
+                const bytes = model.get("virtual_image_bytes");
+                if (!bytes || !bytes.buffer || bytes.byteLength === 0) {
+                  throw new Error("Show4DSTEM virtual_image_bytes is empty after product run");
+                }
+                const out = new Float32Array(
+                  bytes.buffer,
+                  bytes.byteOffset || 0,
+                  Math.floor(bytes.byteLength / 4)
+                );
+                const ref = new Float32Array(await refFile.arrayBuffer());
+                if (ref.length !== out.length) {
+                  throw new Error(`reference length ${ref.length} != output length ${out.length}`);
+                }
+                let maxAbs = 0;
+                let meanAbs = 0;
+                let mismatch = 0;
+                for (let i = 0; i < out.length; i++) {
+                  const err = Math.abs(out[i] - ref[i]);
+                  if (err > maxAbs) maxAbs = err;
+                  meanAbs += err;
+                  if (err !== 0) mismatch++;
+                }
+                meanAbs /= Math.max(1, out.length);
+                return { maxAbs, meanAbs, mismatch, length: out.length };
+              };
+              const runWidgetProduct = async () => {
                 input.dispatchEvent(new Event('input', { bubbles: true }));
                 input.dispatchEvent(new Event('change', { bubbles: true }));
+                const deadline = performance.now() + 120000;
+                while (performance.now() < deadline) {
+                  if (
+                    globalThis.__sh4d &&
+                    typeof globalThis.__sh4d.h5ProductFirstRoi === "function"
+                  ) {
+                    break;
+                  }
+                  await delay(100);
+                }
+                if (
+                  !globalThis.__sh4d ||
+                  typeof globalThis.__sh4d.h5ProductFirstRoi !== "function"
+                ) {
+                  throw new Error("Show4DSTEM product-first debug hook did not become available");
+                }
+                const result = await globalThis.__sh4d.h5ProductFirstRoi();
+                if (!result || result.available === false) {
+                  throw new Error(`Show4DSTEM product-first run unavailable: ${JSON.stringify(result)}`);
+                }
+                const parity = await compareReference();
+                globalThis.__productProf = {
+                  totalMs: result.elapsedMs,
+                  profile: result.profile || {},
+                  detail: result.detail || {},
+                  parity,
+                  localH5: globalThis.__QT_LOCAL_H5_DEBUG || null
+                };
+              };
+              if (typeof globalThis.__runTrue1024Product === 'function') {
+                globalThis.__runTrue1024Product(input.files).catch((err) => {
+                  globalThis.__productProf = {
+                    error: err instanceof Error ? (err.stack || err.message) : String(err),
+                    localH5: globalThis.__QT_LOCAL_H5_DEBUG || null
+                  };
+                });
+                return {direct:true, selected: input.files.length, hasRunner:"true1024"};
+              }
+              if (typeof globalThis.__runProductFirst !== 'function') {
+                runWidgetProduct().catch((err) => {
+                  globalThis.__productProf = {
+                    error: err instanceof Error ? (err.stack || err.message) : String(err),
+                    localH5: globalThis.__QT_LOCAL_H5_DEBUG || null
+                  };
+                });
                 return {direct:false, selected: input.files.length, hasRunner:false};
               }
               globalThis.__runProductFirst(input.files).catch((err) => {
@@ -190,6 +274,10 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
         )
         if int(selected_count or 0) == 0:
             raise RuntimeError(f"no files selected; start={started}")
+        if int(selected_count or 0) != len(files):
+            raise RuntimeError(
+                f"Browser mounted {selected_count} file(s), expected {len(files)}; start={started}"
+            )
         state = None
         while time.perf_counter() - wall0 < args.timeout_s:
             state = target.eval(

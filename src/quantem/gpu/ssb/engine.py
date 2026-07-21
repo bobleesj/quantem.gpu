@@ -605,8 +605,8 @@ class SSBEngine:
         # Work buffers. _result_buffer is (num_bf, ny, nx) complex64 and
         # only used by the reconstruct path - optimize/refine use separate
         # `staging` buffers from _get_streaming_buffers. On small scans
-        # (e.g. Steph 256x256, ~600 MB) we pre-allocate it at engine init
-        # for a faster reconstruct call path. On large scans (e.g. held-out dataset
+        # (e.g. a 256x256 scan, ~600 MB) we pre-allocate it at engine init
+        # for a faster reconstruct call path. On large scans (e.g. held-out data
         # 512x512, ~19 GB) we defer the allocation - pre-allocating blows
         # the L40S 48 GB budget during optimize for no reason, since the
         # chunked reconstruct path will allocate a small chunk buffer

@@ -6,10 +6,50 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
-- Add WebGPU GPU-resident DPC row/col reducers to the canonical
+- Add WebGPU GPU-resident DPC row/col and iDPC reducers to the canonical
   `quantem.gpu.webgpu` Show4DSTEM engine. The browser path now computes CoM,
-  global CoM mean, and centered DPC components in WGSL, with direct browser
-  parity against NumPy and a private real-data NVIDIA WebGPU stress run.
+  global CoM mean, centered DPC components, and fixed-rotation iDPC in WGSL,
+  with direct browser parity against NumPy/CUDA references and a private
+  full-512 no-bin real-data NVIDIA WebGPU stress run. The latest headed signoff
+  reports DPC row/col max abs error `7.63e-6`, iDPC mean abs error `4.70e-6`
+  (`3.05e-5` max, float32 FFT tolerance), GPU-resident display medians of
+  about `14.9/13.2/13.2 ms`, and full recompute medians of
+  `13.7/19.3/22.7 ms` for DPC row/DPC col/iDPC on an RTX PRO 6000
+  Blackwell WebGPU adapter after batching the browser FFT passes into one
+  command submission. The browser benchmark harness now has a
+  `--require-local-profile` guard so local-file timing runs cannot silently
+  accept the URL/fetch fallback path.
+- Sign off the Show4DSTEM WebGPU local-H5 detector-bin path for explicit
+  `detBin=2/4/8` on full `512x512x192x192` and true crop-256 real evidence.
+  The WGSL load path now zeroes raw bad detector pixels before binning and
+  keeps the binned output free of raw-detector bad-pixel indices. Headed Chrome
+  on an RTX PRO 6000 Blackwell WebGPU adapter matched corrected-frame integer
+  checksums exactly against the zero-bad-before-bin reference, with full-load
+  count-audited low8 page profiles `1.199/1.212/1.106 s` and crop-256
+  20-repeat medians `0.774/0.755/0.733 s` with p95
+  `0.798/0.813/0.775 s`; native non-low8 `uint16` `detBin=2` was also exact
+  at `2.651 s`.
+- Sign off WebGPU product-first BF selected-block loading on true
+  real-acquisition `1024x1024x192x192` evidence with BF radius `30`. Headed
+  Chrome on an RTX PRO 6000 Blackwell WebGPU adapter matched an independent
+  Python reference exactly (`max_abs=0`, `mean_abs=0`, mismatches `0`) with
+  4-run median wall `4.92 s`, page/profile `4.85 s`, product stage `1.56 s`,
+  selected compressed payload `6.88 GB`, and `4.19 MB` output. This is a
+  product-first signoff, not full-stack no-bin browser browse/load signoff.
+- Harden the WebGPU selected-block staging uploader so reused staging buffers
+  are not remapped until the previous submitted copy work has completed. The
+  browser product benchmark now validates fixture existence, mounted file
+  count, required reference arrays, and product-debug hooks before reporting
+  timings.
+- Refresh the MPS SSB performance status from Phil source-tree probes: object
+  steering remains usable at large shapes, but exact mean-phase/loss is still
+  not CUDA-like (`~230 ms` at full-BF-sized `512`, `~669 ms` at full-BF-sized
+  `1024`). The docs now keep object-wave steering separate from exact
+  phase/loss timing.
+- Record true real-acquisition `1024x1024x192x192` CUDA and MPS HDF5
+  load/decode signoffs: no hidden bin/crop, `uint16` output, selected
+  corrected frames bit-exact against direct HDF5, `77.31 GB` resident,
+  `4.704 s` wall on CUDA and `4.617 s` wall through the chunk-backed MPS path.
 - Keep Show4DSTEM browser VI/DPC ownership in `quantem.gpu.webgpu`: detector
   and scan mask builders now live with the canonical WebGPU compute source, and
   the widget source-contract tests verify the frontend does not reintroduce
@@ -79,9 +119,9 @@ new `rcN` heading when that rc is published to TestPyPI.
   into `quantem.gpu.io`, leaving `quantem.widget.multidataset_mps` as a
   compatibility re-export.
 - Add real-data CUDA/MPS parity tests for crop-first HDF5 IO and MPS SSB sparse
-  optimizer objective checks on the full Samsung 512x512 dataset.
+  optimizer objective checks on a full 512x512 acquisition.
 - Match MPS SSB fixed-preview phase output to CUDA's mean-of-per-BF-phase
-  contract, tighten real Samsung phase parity thresholds, and add a fused
+  contract, tighten real-data phase parity thresholds, and add a fused
   MLX/Metal correction kernel that reduces MPS sparse objective timing from
   about 26 ms/candidate to about 7 ms/candidate on Phil.
 
