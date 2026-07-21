@@ -803,7 +803,7 @@ as a supported scientist workflow.
 | --- | --- | --- | --- | --- |
 | CUDA object redraw | Implemented. High-BF exact fallback mean `4.81 ms`, p95 `5.08 ms`, `208.1 FPS`. | Implemented. Mean `1.74 ms`, p95 `1.78 ms`, `575.2 FPS`. | Implemented. Mean `6.97 ms`, p95 `7.30 ms`, `143.5 FPS`. | Implemented. Older full-BF mean `56.22 ms`, p95 `62.20 ms`, `17.8 FPS`; current pass measured `3000` BF mean `12.41 ms`, p95 `12.60 ms`, `80.6 FPS`. |
 | MPS Hermitian preview/free-fit | Implemented on a Mac MPS machine. Sparse `3.60 ms` / exact `4.02 ms` at `128` BF. | Implemented on a Mac MPS machine. Sparse `10.25 ms` / exact `10.68 ms` at `96` BF. | Implemented on a Mac MPS machine. Sparse `28.27 ms` / exact `33.26 ms` at `64` BF. | Implemented on a Mac MPS machine. Sparse `44.66 ms` / exact `50.39 ms` at `24` BF. |
-| WebGPU phase/loss path | Implemented through `quantem.gpu.webgpu` source bundled by `quantem.widget`. Synthetic browser reference agreement passed. | Implemented through `quantem.gpu.webgpu` source bundled by `quantem.widget`. Synthetic browser reference agreement passed. | Implemented through `quantem.gpu.webgpu` source bundled by `quantem.widget`. Real 512 full-BF drive measured mean `31.4 ms` GPU and `41.8 ms` UI for C10 changes at `9070/9070` BF. | Implemented through `quantem.gpu.webgpu` source bundled by `quantem.widget`. Real 1024 BF-column load passes on Mac Chrome Metal. Full active-BF controls work but remain about `168-170 ms` UI/GPU, about `5.9 FPS`, below the 30 FPS target. |
+| WebGPU phase/loss path | Real BF30 crop agreement passed against CUDA on NVIDIA WebGPU: phase max abs `1.42e-7`, FFT log-mag max abs `4.89e-6`, loss diff `2.37e-8`; warm full-BF WGSL `3.3 ms`, FFT `2.7 ms`. | Implemented through `quantem.gpu.webgpu` source bundled by `quantem.widget`. Synthetic browser reference agreement passed; real CUDA-reference agreement artifact still needed. | Implemented through `quantem.gpu.webgpu` source bundled by `quantem.widget`. Real 512 full-BF drive measured mean `31.4 ms` GPU and `41.8 ms` UI for C10 changes at `9070/9070` BF; real CUDA-reference agreement artifact still needed. | Implemented through `quantem.gpu.webgpu` source bundled by `quantem.widget`. Real 1024 BF-column load passes on Mac Chrome Metal. Full active-BF controls work but remain about `168-170 ms` UI/GPU, about `5.9 FPS`, below the 30 FPS target; real CUDA-reference agreement artifact still needed. |
 
 Interpretation:
 
@@ -819,6 +819,10 @@ Interpretation:
   source now lives in `quantem.gpu.webgpu` and is synced into
   `quantem.widget` before bundling. Use `quantem.gpu` native CUDA/MPS SSB
   outputs as the reference for browser agreement checks.
+- Current WebGPU real-data signoff is strongest at `128x128` BF30. The
+  `256/512/1024` cells are implementation/interaction evidence until a frozen
+  native `quantem.gpu` reference artifact is generated for each size and the
+  browser compares phase, FFT display, and loss at the same aberration state.
 
 ### WebGPU 1024 status from 2026-07-16
 
@@ -838,6 +842,7 @@ Headed Chrome/CDP evidence on NVIDIA Blackwell:
 | Case | Data | Result |
 | --- | --- | --- |
 | Synthetic shape matrix | `128/256/512/1024`, 8 BF pixels | Browser reference agreement passed for phase and FFT log-magnitude at every size. |
+| Real BF30 crop agreement | `128x128`, `2829` BF pixels | Phase max abs `1.42e-7`, FFT log-mag max abs `4.89e-6`, loss diff `2.37e-8` versus CUDA; warm full-BF WGSL `3.3 ms`, FFT `2.7 ms`, real NVIDIA WebGPU adapter. |
 | Synthetic stress | `1024x1024`, 64 BF pixels | WGSL compute mean `8.2 ms`; page wall mean about `503 ms` because the standalone reference agreement/demo page repaints and checks too much on the CPU. |
 | Real held-out full BF | `512x512`, `9070/9070` BF | C10 keyboard drive mean `31.4 ms` GPU, mean `41.8 ms` UI, about `23.9 FPS`; screenshot/report under `local UI report directory`. |
 
@@ -1323,6 +1328,30 @@ public ssb_preview_mps explicit mean after load:
 public ssb_preview_mps compute_loss=True after load:
   latest default chunk_bf=3072 wall_s=4.751, loss=0.050665274262428284
 ```
+
+Current Phil MPS BF30 refresh, 2026-07-21:
+
+```text
+source: anonymized real 512 HDF5 master
+shape: (512, 512, 192, 192), uint16
+BF policy: bf_radius=30, threshold=0.0
+selected BF: 2829
+load_s=1.248, prepare_s=1.112
+```
+
+Warmed resident prepared-state timing, no full phase readback in the timing
+loop:
+
+| Quantity | Mean | p50 | p95 | FPS | Status |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Object redraw | `10.33 ms` | `10.71 ms` | `11.24 ms` | `96.8` | Passes 30 FPS for object-wave steering. |
+| Exact mean phase | `75.96 ms` | `75.84 ms` | `78.00 ms` | `13.2` | Better than the older full-BF high-radius result, but still below 30 FPS. |
+| Exact phase+loss | `77.27 ms` | `77.18 ms` | `78.46 ms` | `12.9` | Usable for settle/refinement checks, not 30 FPS live dragging. |
+
+Public API first-use timing on the same source, including preparation inside
+each call, was `1.85 s` object, `3.35 s` exact phase, and `5.41 s` exact
+phase+loss after a `0.92 s` full MPS HDF5 load. Treat those as first-review
+latency, not warm interaction timing.
 
 Follow-up on 2026-07-17 changed `_default_phase_loss_chunk_bf()` to return
 `3072` on 96 GB-class Macs, `1024` on 64 GB-class Macs, and `512` otherwise.

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import sys
+import types
+
 import numpy as np
 
 
@@ -143,6 +146,164 @@ def test_load_calibration_products_cache_hit_is_backend_neutral(tmp_path) -> Non
     assert loaded.use_transpose is True
     assert loaded.rotation_deg == 23.0
     np.testing.assert_array_equal(loaded.bf, products.bf)
+
+
+def test_load_calibration_products_build_dispatches_to_mps(tmp_path, monkeypatch) -> None:
+    import quantem.gpu.calibration as calibration
+    import quantem.gpu.io.hdf5 as hdf5
+
+    master = tmp_path / "scan_master.h5"
+    master.write_bytes(b"placeholder")
+    monkeypatch.setattr(
+        hdf5,
+        "get_metadata",
+        lambda _path: {
+            "scan_shape": (4, 4),
+            "detector_shape": (8, 8),
+            "dtype": "uint16",
+        },
+    )
+
+    calls = []
+
+    def fake_build(master_path, **kwargs):
+        calls.append((master_path, kwargs))
+        metadata = {
+            "version": 1,
+            "source": calibration._source_fingerprint(master),
+            "parameters": {
+                "center": [4.0, 4.0],
+                "radius_px": 2.0,
+                "rotation_deg": 0.0,
+                "use_transpose": False,
+                "backend": "mps",
+            },
+        }
+        return calibration.CalibrationProducts(
+            mean_dp=np.zeros((8, 8), dtype=np.float32),
+            bf=np.zeros((4, 4), dtype=np.float32),
+            df=np.zeros((4, 4), dtype=np.float32),
+            com_row=np.zeros((4, 4), dtype=np.float32),
+            com_col=np.zeros((4, 4), dtype=np.float32),
+            center=(4.0, 4.0),
+            radius_px=2.0,
+            rotation_deg=0.0,
+            use_transpose=False,
+            metadata=metadata,
+            elapsed_s=0.1,
+        )
+
+    monkeypatch.setattr(calibration, "_build_mps_calibration_products", fake_build)
+
+    products = calibration.load_calibration_products(
+        master,
+        backend="mps",
+        cache=False,
+        memory_budget_gb=1,
+        chunk_rows=2,
+        skip_mps_memory_check=True,
+    )
+
+    assert products.metadata["parameters"]["backend"] not in {"cuda"}
+    assert len(calls) == 1
+    _, kwargs = calls[0]
+    assert kwargs["scan_shape"] == (4, 4)
+    assert kwargs["chunk_rows"] == 2
+    assert kwargs["skip_mps_memory_check"] is True
+    assert kwargs["memory_plan"].dtype == "uint16"
+
+
+def test_load_calibration_products_cache_miss_rejects_cpu(tmp_path, monkeypatch) -> None:
+    import pytest
+
+    import quantem.gpu.io.hdf5 as hdf5
+    from quantem.gpu.calibration import load_calibration_products
+
+    master = tmp_path / "scan_master.h5"
+    master.write_bytes(b"placeholder")
+    monkeypatch.setattr(
+        hdf5,
+        "get_metadata",
+        lambda _path: {
+            "scan_shape": (4, 4),
+            "detector_shape": (8, 8),
+            "dtype": "uint16",
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="backend='cuda' or backend='mps'"):
+        load_calibration_products(master, backend="cpu", cache=False)
+
+
+def test_skip_mps_memory_check_rejects_non_mps(tmp_path, monkeypatch) -> None:
+    import pytest
+
+    import quantem.gpu.io.hdf5 as hdf5
+    from quantem.gpu.calibration import load_calibration_products
+
+    master = tmp_path / "scan_master.h5"
+    master.write_bytes(b"placeholder")
+    monkeypatch.setattr(
+        hdf5,
+        "get_metadata",
+        lambda _path: {
+            "scan_shape": (4, 4),
+            "detector_shape": (8, 8),
+            "dtype": "uint16",
+        },
+    )
+
+    with pytest.raises(ValueError, match="skip_mps_memory_check"):
+        load_calibration_products(
+            master,
+            backend="cuda",
+            cache=False,
+            skip_mps_memory_check=True,
+        )
+
+
+def test_metal_buffer_for_follows_numpy_base_views() -> None:
+    from quantem.gpu.calibration import _metal_buffer_for
+
+    class MtlArray(np.ndarray):
+        _mtl = None
+
+    base = np.arange(16, dtype=np.uint16).view(MtlArray)
+    backing = object()
+    base._mtl = backing
+
+    view = base.reshape(4, 4)[1:3]
+
+    assert getattr(view, "_mtl", None) is None
+    assert _metal_buffer_for(view) is backing
+
+
+def test_mps_chunked_frames_stamps_buffer_on_reshaped_view(monkeypatch) -> None:
+    from quantem.gpu.calibration import _mps_chunked_frames_for
+
+    class MtlArray(np.ndarray):
+        _mtl = None
+
+    class FakeChunkedFrames:
+        def __init__(self, chunks):
+            self.chunks = chunks
+
+    fake_compute_mps = types.ModuleType("quantem.gpu.compute.mps")
+    fake_compute_mps.ChunkedFrames = FakeChunkedFrames
+    fake_backend_mps = types.ModuleType("quantem.gpu.io.backends.mps")
+    fake_backend_mps._MtlArray = MtlArray
+    monkeypatch.setitem(sys.modules, "quantem.gpu.compute.mps", fake_compute_mps)
+    monkeypatch.setitem(sys.modules, "quantem.gpu.io.backends.mps", fake_backend_mps)
+
+    base = np.arange(16, dtype=np.uint16).view(MtlArray)
+    backing = object()
+    base._mtl = backing
+    data = base.reshape(2, 2, 2, 2)
+
+    frames = _mps_chunked_frames_for(data)
+
+    assert frames.chunks[0].shape == (4, 2, 2)
+    assert frames.chunks[0]._mtl is backing
 
 
 def test_calibration_memory_plan_scales_to_one_full_chunk() -> None:

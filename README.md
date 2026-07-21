@@ -134,7 +134,7 @@ from quantem.gpu import load_calibration_products
 
 products = load_calibration_products(
     "scan_master.h5",
-    backend="cuda",
+    backend="auto",
 )
 
 print(products.loaded_from_cache, products.elapsed_s)
@@ -142,20 +142,23 @@ print(products.bf.shape, products.df.shape, products.rotation_deg)
 ```
 
 On a cache miss this streams the raw HDF5 once with GPU bitshuffle/LZ4 decode
-and custom CUDA BF/DF/CoM kernels. The default cache build estimates the BF disk
-from the first decoded row chunk so it does not pay a second HDF5 pass before
-the streaming reduction; pass `sample_positions>0` only when an explicit random
-probe sample is needed. On a cache hit it reads only the small derived arrays,
-so UI launch can be well below the `0.5 s` target. Cache hits are
-backend-neutral: a Mac MPS workflow can open an existing cache without
-initializing CUDA.
+and backend-native BF/DF/CoM kernels. CUDA uses the optimized RawKernel path;
+MPS uses chunk-backed Metal reductions and the same crop-first row streaming
+policy. The default cache build estimates the BF disk from the first decoded row
+chunk so it does not pay a second HDF5 pass before the streaming reduction; pass
+`sample_positions>0` only when an explicit random probe sample is needed. On a
+cache hit it reads only the small derived arrays, so UI launch can be well below
+the `0.5 s` target. Cache hits are backend-neutral.
 
-By default, `load_calibration_products()` inspects current free CUDA VRAM and
-chooses a bounded chunk plan automatically. Pass `memory_budget_gb=` only to
-force a smaller or larger working set. For a real `1024x1024x192x192 uint16`
-compressed master, cache-miss timing is about `7.1 s` with a `24 GB` budget,
-`7.3 s` with `48 GB`, and `3.8 s` with `96 GB` because the full `77 GB` raw
-scan fits and can use the optimized full-master loader. Once cached, loading
+By default, `load_calibration_products()` inspects current free CUDA VRAM on
+CUDA machines and otherwise uses a conservative streaming plan. Pass
+`memory_budget_gb=` only to force a smaller or larger working set. For a real
+`1024x1024x192x192 uint16` compressed master, CUDA cache-miss timing is about
+`7.1 s` with a `24 GB` budget, `7.3 s` with `48 GB`, and `3.8 s` with `96 GB`
+because the full `77 GB` raw scan fits and can use the optimized full-master
+loader. On a real `512x512x192x192 uint16` master, MPS cache generation with
+64-row chunks measured `3.96 s` and matched CUDA products exactly for mean DP,
+BF, and DF, with CoM max error `7.63e-6`. Once cached, loading
 BF/DF/CoM/rotation products is about `0.01-0.2 s`, and repeating the rotation
 search on the cached CoM maps is about `0.027 s` median. Ptychography sweeps
 should reuse this calibration cache rather than recomputing BF/DF/rotation for
@@ -287,7 +290,7 @@ complete; `Gap` means the backend does not implement that capability yet.
 |---|---|---|---|---|
 | Device report and explicit selection | Done | Done | NA | WebGPU adapter selection happens in the browser; software adapters are rejected for timing claims. |
 | HDF5 master metadata and discovery | Done | Done | Done | One shared API should serve widget and live callers. |
-| Full HDF5 bitshuffle/LZ4 load/decompress | Done | Done | Done | CUDA uses CuPy/CUDA kernels; MPS uses Metal chunk-backed unified memory; WebGPU uses browser local-file HDF5 plus WGSL decode. |
+| Full HDF5 bitshuffle/LZ4 load/decompress | Done | Done | Done | CUDA uses CuPy/CUDA kernels; MPS uses Metal chunk-backed unified memory; WebGPU uses browser local-file HDF5 plus WGSL decode. WebGPU strict full-stack no-bin `1024x1024x192x192` browse is intentionally rejected as a memory-policy path; use product-first, crop, or explicit bin. |
 | `load(..., scan_region=...)` crop-first IO | Done | Done | Done | CUDA/MPS crop during load; WebGPU slices frame windows before upload/decode. |
 | Detector bin during load, min-memory | Done | Done | Done | WebGPU has an explicit count-preserving `detBin` load option in the local-H5 source; full `512x512x192x192` `detBin=2/4/8` headed parity is exact on a real NVIDIA WebGPU adapter, including native non-low8 `uint16` `detBin=2`. |
 | BF/DF/ADF resident kernels | Done | Done | Done | CUDA RawKernel, MPS Metal, and WebGPU WGSL selected reducers are implemented. |
@@ -327,6 +330,7 @@ with software adapters rejected.
 | HDF5 load/decompress | CUDA, RTX PRO 6000 Blackwell | true `1024x1024x192x192` | `4.704 s` | Real acquisition, no bin/crop, `uint16` output, selected corrected frames bit-exact, resident stack `77.31 GB`. |
 | HDF5 load/decompress | MPS, Apple Metal | true `1024x1024x192x192` | `4.617 s` | Real acquisition, no bin/crop, chunk-backed `uint16` output, selected corrected frames bit-exact, resident stack `77.31 GB`. |
 | Local HDF5 full-stack load | WebGPU, Chrome Apple Metal | `512x512x192x192` | `772 ms` over 946 runs | Corrected-frame checksum parity versus CUDA; min `726 ms`, max `879 ms`; full path still materializes the `9.7 GB` browse cube. |
+| Local HDF5 full-stack load | WebGPU, Chrome NVIDIA Blackwell | true `1024x1024x192x192`, no crop/bin | Rejected | Attempt reached about `97.2 GB` GPU memory and failed before publishing a load profile/checksum readback. Do not count strict full-stack browser browse as signed off for 1024; use product-first, true crop, or explicit detector-bin paths. |
 | Local HDF5 detector-bin load | WebGPU, Chrome NVIDIA Blackwell | full `512x512x192x192` and true `256x256` crop, `detBin=2/4/8` | full page profiles `1199/1212/1106 ms`; crop p95 `798/813/775 ms` | Corrected-frame checksum parity exact versus zero-bad-before-bin reference; crop medians `774/755/733 ms`; native non-low8 `uint16` `detBin=2` also exact at `2651 ms`. |
 | Local HDF5 scan crop | WebGPU, Chrome Apple Metal | true `256x256x192x192` crop | `338 ms` over 946 runs | Corrected-frame checksum parity versus CUDA; min `316 ms`, max `464 ms`. |
 | Product-first BF selected-block sidecar | WebGPU, Chrome Apple Metal | true `256x256`, BF radius `30` | `210 ms` over 946 runs | Product max/mean abs error `0` versus CUDA; min `185 ms`, max `246 ms`. |

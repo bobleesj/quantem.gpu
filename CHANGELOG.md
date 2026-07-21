@@ -6,11 +6,16 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- Add MPS cache-miss generation for `load_calibration_products()`. CUDA still
+  uses the RawKernel reduction path; MPS now streams raw HDF5 row chunks through
+  chunk-backed Metal BF/DF/CoM reducers, records timing/memory metadata, and
+  matched CUDA on local anonymized real-data agreement: mean DP/BF/DF exact,
+  CoM max abs error `7.63e-6`, and matched rotation/radius.
 - Add WebGPU GPU-resident DPC row/col and iDPC reducers to the canonical
   `quantem.gpu.webgpu` Show4DSTEM engine. The browser path now computes CoM,
   global CoM mean, centered DPC components, and fixed-rotation iDPC in WGSL,
-  with direct browser parity against NumPy/CUDA references and a private
-  full-512 no-bin real-data NVIDIA WebGPU stress run. The latest headed signoff
+  with direct browser agreement against NumPy/CUDA references and a local
+  anonymized full-512 no-bin real-data NVIDIA WebGPU stress run. The latest headed signoff
   reports DPC row/col max abs error `7.63e-6`, iDPC mean abs error `4.70e-6`
   (`3.05e-5` max, float32 FFT tolerance), GPU-resident display medians of
   about `14.9/13.2/13.2 ms`, and full recompute medians of
@@ -62,17 +67,17 @@ new `rcN` heading when that rc is published to TestPyPI.
   `1024x1024x192x192 uint8` target. The CUDA path now uses warp-shuffle
   selected-pixel reducers, a custom total-count reducer, fused dense
   `total - complement` output, and per-viewer detector-index caching. On a
-  private full 512x512x192x192 real-data benchmark, median BF/ADF/DF drag
+  local anonymized full 512x512x192x192 real-data benchmark, median BF/ADF/DF drag
   latency improved from 4.96/16.16/62.64 ms on the old widget Torch path to
-  1.35/3.86/1.84 ms with bit-exact output. On a private seven-tilt detector-bin2
+  1.35/3.86/1.84 ms with bit-exact output. On a local seven-tilt detector-bin2
   benchmark, per-panel BF/ADF/DF medians are now 0.54/1.35/0.53 ms with
   max absolute error 0.
 - Add a CUDA RawKernel CoM/DPC reducer for resident CuPy uint8/uint16 data.
   The fused kernel accumulates total intensity, detector-row moment, and
   detector-column moment in one detector pass and caches the full-detector CoM
-  field per backend. On a private full 512x512x192x192 uint16 benchmark, DPC
+  field per backend. On a local anonymized full 512x512x192x192 uint16 benchmark, DPC
   CoM improved from 200.42 ms to 12.39 ms with max absolute error 0; on a
-  private seven-panel detector-bin2 benchmark, first full-grid DPC improved
+  local seven-panel detector-bin2 benchmark, first full-grid DPC improved
   from 373.14 ms to 24.63 ms with max absolute error 0, and repeated DPC reads
   use the backend cache.
 - Clarify the cross-backend CoM/DPC product-kernel tracker: MPS uses raw Metal

@@ -91,7 +91,7 @@ from quantem.gpu import load_calibration_products
 
 products = load_calibration_products(
     "scan_master.h5",
-    backend="cuda",
+    backend="auto",
     memory_budget_gb=12,
 )
 
@@ -100,13 +100,14 @@ print(products.bf.shape, products.df.shape, products.rotation_deg)
 ```
 
 The first cache build still reads the raw HDF5 evidence and streams the detector
-volume in bounded chunks. The default BF-disk estimate comes from the first
+volume in bounded chunks. CUDA builds with RawKernel reductions; MPS builds with
+chunk-backed Metal reductions. The default BF-disk estimate comes from the first
 decoded row chunk; set `sample_positions>0` only when a separate random probe
 sample is worth the extra HDF5 pass. That build step is not the interactive
 launch path. After the cache exists, the UI reads small BF/DF/CoM arrays and
 fitted parameters from the `.npz` sidecar, which is the path intended for
-sub-`0.5 s` screen opens. Existing caches can be read from Mac MPS or CPU-facing
-code; CUDA is currently the cache-generation backend for the full raw stream.
+sub-`0.5 s` screen opens. Existing caches can be read from CUDA, MPS, or
+CPU-facing code.
 
 Keep load parameters explicit in reports:
 

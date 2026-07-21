@@ -4440,7 +4440,7 @@ def _load_impl(
     --------
     >>> from quantem.gpu.io import load
     >>> # scan_shape auto-derived from h5 metadata - no need to type it
-    >>> data, meta = load('gold_master.h5')
+    >>> data, meta = load('scan_master.h5')
     >>> data.shape
     (512, 512, 192, 192)
     >>> meta['dwell_time_us']

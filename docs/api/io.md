@@ -88,7 +88,7 @@ immediately:
 ```python
 products = load_calibration_products(
     "scan_master.h5",
-    backend="cuda",
+    backend="auto",
 )
 
 print(products.loaded_from_cache, products.elapsed_s)
@@ -96,16 +96,18 @@ print(products.bf.shape, products.df.shape, products.com_row.shape)
 ```
 
 On a cache miss, this streams the full raw HDF5 once with GPU bitshuffle/LZ4
-decode and custom CUDA BF/DF/CoM kernels. When `memory_budget_gb` is omitted,
-the planner inspects current free CUDA VRAM and automatically chooses row chunks
-or a full-master read. Full-region requests are routed through the optimized
-full-master loader instead of the crop loader. For chunked builds, the default
-BF-disk probe estimate uses the first decoded row chunk; `sample_positions>0`
-opts into a separate random scan-position sample when that is preferred over
-minimum latency. On a cache hit, it loads only the small `.npz` product cache and
-is the path expected to meet a sub-`0.5 s` screen/UI launch budget. Cache hits
-are backend-neutral; existing caches can be loaded from CUDA, MPS, or CPU-facing
-code without probing the build backend.
+decode and backend-native BF/DF/CoM kernels. CUDA uses RawKernel reductions; MPS
+uses chunk-backed Metal reductions and crop-first scan-row streaming. When
+`memory_budget_gb` is omitted, the planner inspects current free CUDA VRAM on
+CUDA machines and otherwise uses a conservative streaming plan. Full-region
+CUDA requests are routed through the optimized full-master loader instead of the
+crop loader. For chunked builds, the default BF-disk probe estimate uses the
+first decoded row chunk; `sample_positions>0` opts into a separate random
+scan-position sample when that is preferred over minimum latency. On a cache
+hit, it loads only the small `.npz` product cache and is the path expected to
+meet a sub-`0.5 s` screen/UI launch budget. Cache hits are backend-neutral;
+existing caches can be loaded from CUDA, MPS, or CPU-facing code without probing
+the build backend.
 
 For a real `1024x1024x192x192 uint16` compressed master, representative
 cache-miss timings on one 96 GB NVIDIA workstation GPU were:

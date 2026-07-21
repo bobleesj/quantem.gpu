@@ -133,6 +133,13 @@ Current status:
   `4.92 s`, page/profile `4.85 s`, product stage `1.56 s`, selected compressed
   payload `6.88 GB`, and `4.19 MB` output. This is product-first BF evidence,
   not full-stack no-bin browse/load signoff.
+- A true real-acquisition `1024x1024x192x192` strict full-stack no-bin browser
+  browse was also driven with a shape-explicit local-H5 harness. It reached
+  about `97.2 GB` GPU memory on a `97.9 GB` NVIDIA Blackwell budget and failed
+  before profile publication/checksum readback with an invalid WebGPU buffer
+  after a previous device/buffer error. Keep this path rejected for browser UI
+  signoff unless the implementation stops materializing the whole decoded stack;
+  use product-first, true scan crop, or explicit detector bin instead.
 - The selected-block staging uploader waits for prior submitted copy work
   before remapping reused staging buffers. Keep this lifecycle guard: without
   it, large product runs can trip browser `mapAsync` outstanding-map errors.

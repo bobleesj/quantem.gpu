@@ -4,7 +4,7 @@
 This is a maintainer tool for comparing the pre-kernel widget reduction paths
 against the shared ``quantem.gpu`` CUDA RawKernel backend. Reports anonymize
 dataset names by default; pass explicit labels if you need provenance in a
-private report.
+local provenance report.
 """
 
 from __future__ import annotations
@@ -269,7 +269,7 @@ figcaption {{ color: #4a4f55; margin-top: 4px; }}
 </head>
 <body>
 <h1>CUDA Virtual Image Kernel Benchmark</h1>
-<p class="note">Local private-data benchmark. Dataset names are anonymized; timings include the production NumPy return used by Show4DSTEM, after the 4D data is resident on the GPU.</p>
+<p class="note">Local-data benchmark. Dataset names are anonymized; timings include the production NumPy return used by Show4DSTEM, after the 4D data is resident on the GPU.</p>
 <h2>Summary</h2>
 {table(summary)}
 <h2>Per Dataset</h2>

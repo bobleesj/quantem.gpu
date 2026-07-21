@@ -3,7 +3,7 @@
 
 Maintainer tool for comparing CUDA and MPS load/decompression against browser
 WebGPU profiles. Paths are anonymized in the output by default; pass
-``--show-paths`` only for private reports.
+``--show-paths`` only for local provenance reports.
 """
 
 from __future__ import annotations

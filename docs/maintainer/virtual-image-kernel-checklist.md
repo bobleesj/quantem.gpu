@@ -96,7 +96,7 @@ the same:
   reducer, WGSL mean reducer, one-ULP mean-side correction, and WGSL
   centered-component pass. Browser iDPC uses paired DPC buffers and a dual-real
   FFT before the Poisson integration.
-- Private full 512x512x192x192 no-bin WebGPU DPC/iDPC browser signoff on a real
+- Local full 512x512x192x192 no-bin WebGPU DPC/iDPC browser signoff on a real
   NVIDIA Blackwell adapter:
   - corrected-frame load parity: passed
   - DPC row/col max abs error: `7.63e-6`
@@ -106,7 +106,7 @@ the same:
   - idle RAF: `60 FPS`
   - local-file timing reruns use `--require-local-profile` so the browser URL
     fallback cannot be recorded as a local-file benchmark
-- Private full 512x512x192x192 and true crop-256 WebGPU detector-bin local-H5
+- Local full 512x512x192x192 and true crop-256 WebGPU detector-bin local-H5
   signoff on a real NVIDIA Blackwell adapter:
   - `detBin=2/4/8` corrected-frame checksums: exact against the
     zero-bad-before-bin reference
@@ -114,7 +114,7 @@ the same:
   - crop-256 20-repeat medians: `0.774/0.755/0.733 s`
   - crop-256 p95: `0.798/0.813/0.775 s`
   - native non-low8 `uint16` `detBin=2`: exact at `2.651 s`
-- Private true 1024x1024x192x192 WebGPU product-first selected-block BF
+- Local true 1024x1024x192x192 WebGPU product-first selected-block BF
   signoff on a real NVIDIA Blackwell adapter:
   - BF radius: `30`
   - selected compressed payload: `6.88 GB`
@@ -122,7 +122,19 @@ the same:
   - 4-run median wall/profile/product: `4.92/4.85/1.56 s`
   - max/mean absolute error: `0/0` against an independent Python reference
   - this is product-first BF evidence, not full-stack no-bin browse/load
-- Private real-data WebGPU browser stress on a 128x128 scan, 96x96 detector,
+- Local true 1024x1024x192x192 WebGPU full-stack no-bin browser browse was
+  driven with the shape-explicit local-H5 harness and rejected as a memory-policy
+  path:
+  - no crop, no detector bin, count-audited `uint8` browse decode
+  - 105 HDF5 data files plus 105 metadata-only block-index sidecars
+  - selected corrected-frame CUDA checksums were prepared for first/middle/last
+    frames
+  - GPU memory reached about `97.2 GB` of a `97.9 GB` budget
+  - browser failed before publishing a load profile/checksum readback with an
+    invalid WebGPU buffer after a previous device/buffer error
+  - do not mark strict full-stack browser browse as signed off for true 1024;
+    use product-first, true scan crop, or explicit detector bin instead
+- Local real-data WebGPU browser stress on a 128x128 scan, 96x96 detector,
   uint8 sidecar, real NVIDIA Vulkan adapter:
   - mount/decode to interactive: `1.94 s`
   - BF warm recompute: `2.7-3.7 ms`
@@ -130,23 +142,23 @@ the same:
   - DPC col warm recompute floor: `8.3-9.7 ms` with browser scheduling outliers
   - idle RAF: `60.0 FPS`
 - Exact focused parity tests for CUDA selected and dense-mask paths.
-- Private full 512x512x192x192 real-data benchmark:
+- Local full 512x512x192x192 real-data benchmark:
   - BF median `4.96 ms -> 1.35 ms`
   - ADF median `16.16 ms -> 3.86 ms`
   - DF median `62.64 ms -> 1.84 ms`
   - max absolute error `0` for every row.
-- Private seven-tilt detector-bin2 real-data benchmark:
+- Local seven-tilt detector-bin2 real-data benchmark:
   - BF median `1.50 ms -> 0.54 ms`
   - ADF median `3.83 ms -> 1.35 ms`
   - DF median `15.88 ms -> 0.53 ms`
   - max absolute error `0` for every row.
-- Private seven-tilt Show4DSTEM compare-grid method benchmark after widget
+- Local seven-tilt Show4DSTEM compare-grid method benchmark after widget
   backend reuse:
   - BF full grid `3.97 ms` (`0.57 ms/panel`)
   - ADF full grid `9.56 ms` (`1.37 ms/panel`)
   - DF full grid `4.00 ms` (`0.57 ms/panel`)
   - max absolute error `0` after the widget's detector-area normalization.
-- Private DPC/CoM real-data benchmark:
+- Local DPC/CoM real-data benchmark:
   - full 512x512x192x192 uint16: `200.42 ms -> 12.39 ms`, max absolute error `0`
   - seven detector-bin2 panels: old summed median `373.14 ms`; uncached CUDA
     summed median `24.06 ms`; first backend-filled grid `24.63 ms`; cached
@@ -171,7 +183,6 @@ the same:
   the 30 FPS budget.
 - Remove any remaining widget-local permanent backend copies after each synced
   `quantem.gpu.webgpu` source is covered by build and browser parity tests.
-- Run a real WebGPU `1024x1024x192x192` full-stack no-bin browse/load
-  allocation/performance test when enough free browser GPU memory is available,
-  or document the memory-policy rejection. Product-first BF for true 1024 is
-  already signed off.
+- Treat real WebGPU `1024x1024x192x192` full-stack no-bin browse/load as
+  explicitly rejected unless a future browser/device path avoids materializing
+  the whole decoded stack. Product-first BF for true 1024 is already signed off.

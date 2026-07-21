@@ -4,7 +4,7 @@
 This is a maintainer harness for exported QuantEM widget HTML. It drives the
 real browser File API, waits for the WebGPU local-HDF5 load profile, optionally
 checks corrected-frame checksums, and writes a JSON artifact without recording
-private raw-data paths.
+local raw-data paths.
 """
 
 from __future__ import annotations
@@ -123,7 +123,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--dpc-reference-json",
         type=Path,
-        help="Optional private reference manifest with DPC/iDPC .f32 files for browser max/mean error checks.",
+        help="Optional local reference manifest with DPC/iDPC .f32 files for browser max/mean error checks.",
     )
     parser.add_argument(
         "--frame-index-json",
@@ -498,6 +498,12 @@ def _run_one(
             )
             if profile and profile.get("frames") == args.frames and state.get("hasChecksums") and local_ok:
                 break
+            if profile and local_ok and profile.get("frames") not in (None, args.frames):
+                raise RuntimeError(
+                    "browser load completed with an unexpected frame count: "
+                    f"got {profile.get('frames')}, expected {args.frames}; "
+                    "check the exported widget scan shape or use a shape-explicit harness"
+                )
             time.sleep(0.25)
         else:
             raise TimeoutError(f"load did not finish; last state={state}")
