@@ -46,11 +46,11 @@ new `rcN` heading when that rc is published to TestPyPI.
   browser product benchmark now validates fixture existence, mounted file
   count, required reference arrays, and product-debug hooks before reporting
   timings.
-- Refresh the MPS SSB performance status from Phil source-tree probes: object
-  steering remains usable at large shapes, but exact mean-phase/loss is still
-  not CUDA-like (`~230 ms` at full-BF-sized `512`, `~669 ms` at full-BF-sized
-  `1024`). The docs now keep object-wave steering separate from exact
-  phase/loss timing.
+- Refresh the MPS SSB performance status from Phil source-tree probes: radius-30
+  `512x512` object steering is real-time (`10.86 ms` mean), radius-30 exact
+  phase/loss is reviewable but not CUDA-like (`76.28 ms` mean), and full-active
+  `512x512` exact phase/loss remains slow (`528.90 ms` mean). The docs now keep
+  BF policy, object-wave steering, and exact phase/loss timing separate.
 - Record true real-acquisition `1024x1024x192x192` CUDA and MPS HDF5
   load/decode signoffs: no hidden bin/crop, `uint16` output, selected
   corrected frames bit-exact against direct HDF5, `77.31 GB` resident,

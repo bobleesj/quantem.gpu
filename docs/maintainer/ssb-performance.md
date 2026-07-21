@@ -80,30 +80,35 @@ breakthrough in this sequence. The next breakthrough must reduce the
 register-heavy row/gamma stage or the amount of exact per-BF phase work; chunk
 size and BF-group retuning were measured and stayed flat.
 
-MPS 512 timing, same full active BF selection:
+MPS 512 timing on Phil, 2026-07-21. These rows intentionally separate BF
+policies because exact phase/loss scales with the active BF count:
 
-| Quantity | Mean | p50 | p95 | FPS | Status |
-| --- | ---: | ---: | ---: | ---: | --- |
-| Object redraw | `22-36 ms` | not recorded | not recorded | `28-45` | Usable for object-wave steering |
-| Phase-only | `~222 ms` | `222.1 ms` | not recorded | `4.5` | Fails exact phase target |
-| Phase+loss | `~230 ms` fresh source-tree probe; real exact-loss candidate `235-272 ms` | `230.4 ms` | not recorded | `3.7-4.3` | Fails exact loss target |
+| BF policy | Quantity | Mean | p50 | p95 | FPS | Status |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| radius `30` px, `2824` BF | Object redraw | `10.86 ms` | `11.28 ms` | `11.67 ms` | `92.1` | Real-time object-wave steering |
+| radius `30` px, `2824` BF | Phase-only | `76.67 ms` | `76.88 ms` | `78.98 ms` | `13.0` | Reviewable, not 30 FPS |
+| radius `30` px, `2824` BF | Phase+loss | `76.28 ms` | `76.52 ms` | `77.41 ms` | `13.1` | Reviewable, not CUDA-like |
+| full active BF mask, `13137` BF | Object redraw | `55.20 ms` | `58.34 ms` | `61.43 ms` | `18.1` | Usable but not 30 FPS |
+| full active BF mask, `13137` BF | Phase-only | `481.15 ms` | `476.32 ms` | `509.44 ms` | `2.1` | Too slow for live exact steering |
+| full active BF mask, `13137` BF | Phase+loss | `528.90 ms` | `537.58 ms` | `557.51 ms` | `1.9` | Needs a deeper topology change |
 
 Reference checks for this checkpoint:
 
 - CUDA: `tests/test_ssb_cuda_128.py` + `tests/test_ssb_batch_optuna.py`,
   `29 passed` on GPU1.
-- MPS: `tests/test_ssb_mps_cuda_reference.py`, `20 passed, 2 skipped` on a
-  Mac MPS machine.
+- MPS: `tests/test_ssb_mps_cuda_reference.py`, `21 passed` on Phil with the
+  matching real reference fixture; the full Phil package suite also passed
+  (`105 passed, 63 skipped`).
   This includes the fused 128/256/512/1024 column phase/loss helpers and the
   fused 128/256/1024 dynamic row-IFFT helpers.
 
-MPS scalar-loss reduction is scientifically valid, but it did not produce a
-large wall-time win: avoiding a full phase-squared image write leaves the
+MPS scalar-loss reduction is scientifically valid, but it does not solve the
+large-BF wall time: avoiding a full phase-squared image write leaves the
 row/column IFFT work dominant. The default exact phase/loss chunk is now
 `4096` BF on 96 GB-class Macs, `1024` BF on 64 GB-class Macs, and `512` BF on
 smaller Macs. The 96 GB Mac setting is a small warmed steady-state win, but it
-is still not a real-time exact phase/loss breakthrough. The next MPS
-breakthrough needs a different exact row/column FFT topology, not another
+is still not a real-time full-active-BF exact phase/loss breakthrough. The next
+MPS breakthrough needs a different exact row/column FFT topology, not another
 scalar-loss or chunk-size tweak.
 
 Latest MPS exact-loss chunk repeats on the same real `512x512` field moved the
@@ -1415,13 +1420,14 @@ PYTHONPATH=src python -m pytest -q tests/test_ssb_mps_cuda_reference.py
 
 MPS synthetic prepared full-BF-style matrix, Hermitian `G_qk`, `8809` BF.
 The 512/1024 rows were refreshed on Phil from the current source tree on
-2026-07-20 after the previous `~79 ms` 512 exact note did not reproduce:
+2026-07-21 after rerunning the MPS path on Phil from `origin/main`:
 
 | Scan | Object mean / FPS | Phase mean / FPS | Phase+loss mean / FPS | Notes |
 | --- | ---: | ---: | ---: | --- |
 | `128x128` | `2.45 ms / 408.4` | `~8.0 ms / 122-126` | `~8.3 ms / 119-121` | Exact fused row/column path passes 30 FPS. |
 | `256x256` | `8.62 ms / 116.1` | `32.75 ms / 30.5` | `~34-35 ms / 28.6-29.4` | Phase-only reaches 30 FPS; phase+loss remains just above the strict `33.3 ms` budget. |
-| `512x512` | `34-36 ms / 28-29` in the synthetic refresh; real object steering previously `22-30 ms` | `222.1 ms / 4.5` | `230.4 ms / 4.3` | Exact phase/loss is correct but not interactive; object-wave steering is a different quantity. |
+| `512x512`, radius `30` px | `10.86 ms / 92.1` | `76.67 ms / 13.0` | `76.28 ms / 13.1` | Fixed-BF policy is reviewable for exact phase/loss but still not 30 FPS. |
+| `512x512`, full active BF | `55.20 ms / 18.1` | `481.15 ms / 2.1` | `528.90 ms / 1.9` | Full active BF is correct but not interactive; object-wave steering is a different quantity. |
 | `1024x1024` | `142.7 ms / 7.0` | not rerun separately at full BF | `669.1 ms / 1.5` | Full-BF-sized synthetic `G_qk` (`37.02 GB`) remains far from 10/30 FPS. A reduced-BF topology probe at `1382` BF measured `~104 ms`, showing BF-count scaling is the dominant cost. |
 
 Before/after for the exact MPS phase/loss paths in the same synthetic prepared
@@ -1433,7 +1439,8 @@ full-BF-style harness:
 | `128x128` | phase+loss | `37.33 ms` | `~8.3 ms` | `~4.5x` | Passes 30 FPS. |
 | `256x256` | phase | `144.98 ms` | `32.75 ms` | `4.4x` | Passes 30 FPS by mean; p95 remains close to budget. |
 | `256x256` | phase+loss | `146.51 ms` | `~34-35 ms` | `~4.2x` | Near miss for 30 FPS. |
-| `512x512` | phase+loss, current prepared path | older generic path `~550-640 ms` | fresh source-tree probe `~230 ms`; real exact-loss candidate `235-272 ms` | `~2.4x` versus the older generic path | Still fails 30 FPS and remains much slower than CUDA. |
+| `512x512`, radius `30` px | phase+loss, current prepared path | older generic path `~550-640 ms` | fresh Phil `origin/main` probe `76.28 ms` mean / `77.41 ms` p95 | `~7x` versus the older generic path for the radius-30 policy | Reviewable, still slower than CUDA. |
+| `512x512`, full active BF | phase+loss, current prepared path | older generic path not directly comparable | fresh Phil `origin/main` probe `528.90 ms` mean / `557.51 ms` p95 | not recorded | Still fails 30 FPS and remains much slower than CUDA. |
 | `1024x1024` | phase | `1994 ms` | not rerun separately at full BF | not recorded | Still fails 10/30 FPS. |
 | `1024x1024` | phase+loss | `1984 ms` | fresh full-BF-sized source-tree probe `669 ms` | `~3.0x` | Still fails 10/30 FPS. |
 
@@ -1442,7 +1449,7 @@ Rejected or non-breakthrough MPS probes from this pass:
 | Probe | Result | Decision |
 | --- | --- | --- |
 | 512 exact phase/loss chunk sweep down to `64` BF | Small CUDA-like chunks regressed (`~226 ms` at `64` BF). Larger chunks stayed best, and the latest single-candidate repeat favored `2048-4096` BF. | Keep the high-memory 512 default at `4096` BF. MPS benefits from fewer loop launches here. |
-| 512 ShowPtycho adapter object-wave accumulation | The adapter must not ask `_reconstruct_prepared(..., compute_object=True)` for exact phase/loss interactions because object-wave output is a separate quantity. A fresh current-source probe did not reproduce the previous `79 ms` exact phase/loss note; phase-only/phase+loss were `~222/230 ms`. | Keep `compute_object=False` for exact phase/loss, but do not claim a 512 exact-phase 30 FPS breakthrough. Object-wave steering remains the fast MPS interaction path. |
+| 512 ShowPtycho adapter object-wave accumulation | The adapter must not ask `_reconstruct_prepared(..., compute_object=True)` for exact phase/loss interactions because object-wave output is a separate quantity. A fresh Phil `origin/main` probe measured radius-30 phase-only/phase+loss at `~76 ms`, while the full-active-BF policy measured `~481/529 ms`. | Keep `compute_object=False` for exact phase/loss, keep BF policy explicit, and do not claim a 512 exact-phase 30 FPS breakthrough. Object-wave steering remains the fast MPS interaction path. |
 | 512 column BF grouping `8/16/32/64/128` | Best cases moved only `1-2 ms`; larger groups regressed. | Not a topology breakthrough; keep default `32`. |
 | 1024 fused chunk sweep `128/256/512/768/1024` after scalar-loss fix | `512/768` were close and better than the earlier `256` cap in isolated runs, but order and thermal state moved the result by hundreds of ms. | Set 1024 default to `512` for a smaller safe working set; this remains far from interactive. |
 | Object threadgroup sweep `8/16/32/64/128` | `64/128` modestly improved large-object redraw. | Keep `64` for `512+`; it is a small object-mode win, not a phase/loss breakthrough. |
@@ -1521,7 +1528,8 @@ Hermitian G_qk: (8826, 512, 257), 9.29 GB
 | BF select | full active BF disk | `0.231-0.287 s` | not recorded | not recorded | n/a | Mean diffraction pattern path |
 | Gqk construction | full active BF | `3.20-3.36 s` | not recorded | not recorded | n/a | Hermitian complex64, `9.29 GB` |
 | Object redraw | full active BF | `22.46-30.50 ms` | `22.31-31.63 ms` | `23.66-35.48 ms` | `32.8-44.5 FPS` | Microscopist live steering path; machine thermal/load state moved the number |
-| Exact loss candidate | full active BF | `235-272 ms` | `235-275 ms` | `238-277 ms` | `3.7-4.3 eval/s` | Single-candidate fused row-IFFT + scalar phase-loss, no phase CPU copy |
+| Exact loss candidate | radius `30` px BF | `76.28 ms` | `76.52 ms` | `77.41 ms` | `13.1 eval/s` | Single-candidate fused row-IFFT + scalar phase-loss on Phil `origin/main` |
+| Exact loss candidate | full active BF | `528.90 ms` | `537.58 ms` | `557.51 ms` | `1.9 eval/s` | Same exact objective with many more BF pixels; not interactive |
 | Exact loss batch, 2 candidates | full active BF | `320-428 ms` | `319-424 ms` | `326-452 ms` | `4.7-6.2 eval/s` | Same exact loss; batch-vs-single max abs error `0-3.7e-9` |
 | Legacy sparse loss | full active BF, sparse rows | `603.60 ms` | `598.09 ms` | `616.78 ms` | `1.66 eval/s` | Kept only for reference-check mode |
 | 200 trials + Nelder-Mead, previous exact default | full active BF | `61.44 s` | not recorded | not recorded | `274 evals` | Exact objective, final loss `0.051254` |
@@ -1552,9 +1560,9 @@ Rejected MPS experiments:
 ## Next performance work
 
 Problem: the live object redraw target is met for the real Mac MPS `512x512`
-full-BF object-wave workflow, and the fused column accumulator improved exact
-phase/loss to about `3 FPS`, but exact phase/loss is still far below real-time
-on MPS.
+radius-30 object-wave workflow, and the fused column accumulator makes exact
+radius-30 phase/loss reviewable at about `13 FPS`, but full-active-BF exact
+phase/loss is still far below real-time on MPS.
 
 Action: port or prototype the fused correction + row-FFT half of the CUDA
 topology on MPS, then rerun the same before/after table with full BF.

@@ -121,7 +121,8 @@ and optimizer state, not the full acquisition.
 | WebGPU corrected-frame checksum gate | WebGPU on Apple GPU | full `512x512x192x192`, first/middle/last detector frames after bad-pixel correction | selected-frame `sum/min/max/n` exactly matches CUDA for all three scan indices | Strong browser HDF5 parse/decode/chunk-order/dtype/bad-pixel parity gate without reading the full 9.7 GB stack back to CPU. |
 | SSB exact phase/loss | CUDA | real `512x512` full-BF field | mean about `32.5 ms`, p50 about `32.2 ms`, p95 about `33.3 ms` | Meets 30 FPS with small p95 margin. |
 | SSB exact phase/loss | CUDA | synthetic `1024x1024`, full-BF style | about `198 ms`, `5 FPS` | Not interactive yet. |
-| SSB exact phase/loss | MPS | full-BF-sized `512x512`, prepared Hermitian `G_qk` on Apple GPU | fresh Phil source-tree probe: phase-only median `222.1 ms`, phase+loss median `230.4 ms`; real exact-loss candidate table remains `235-272 ms` without phase copy | Correct but not interactive. Object-wave steering is a separate path and is usable; exact mean-phase/loss remains much slower than CUDA's 512 exact path. |
+| SSB exact phase/loss | MPS | real `512x512`, radius-30 BF, prepared Hermitian `G_qk` on Apple GPU | fresh Phil `origin/main` probe: phase-only mean `76.67 ms`, p50 `76.88 ms`, p95 `78.98 ms`; phase+loss mean `76.28 ms`, p50 `76.52 ms`, p95 `77.41 ms`; loss `0.2932657` | Correct and reviewable at about `13 FPS`, but still not CUDA-like. Object-wave steering for the same BF policy measured `10.86 ms` mean. |
+| SSB exact phase/loss | MPS | real `512x512`, full active BF mask, prepared Hermitian `G_qk` on Apple GPU | fresh Phil `origin/main` probe: phase-only mean `481.15 ms`, p50 `476.32 ms`, p95 `509.44 ms`; phase+loss mean `528.90 ms`, p50 `537.58 ms`, p95 `557.51 ms`; loss `0.0885396` | Correct but slow. This is the large-BF policy that still needs a deeper MPS row/column FFT topology. |
 | SSB exact phase/loss | MPS | synthetic full-BF-style `1024x1024`, `8809` BF | fresh Phil source-tree probe: object median `142.7 ms`; exact phase+loss median `669.1 ms` with `37.02 GB` Hermitian `G_qk` | Needs deeper MPS topology for large exact phase/loss; chunk tuning alone is not enough. |
 
 ## Required Agreement Gates
@@ -204,9 +205,10 @@ speed:
    still needs either enough free WebGPU VRAM for a true full-stack run or an
    explicit documented memory-policy rejection.
 15. SSB MPS `512/1024` exact phase/loss topology: optimize row/column FFT work;
-   chunk-size-only changes are not enough. A fresh Phil source-tree probe shows
-   `512` exact phase/loss around `230 ms` and full-BF-sized `1024` around
-   `669 ms`; the usable object-wave steering path is a separate quantity.
+   chunk-size-only changes are not enough. Fresh Phil `origin/main` probes show
+   radius-30 `512` exact phase/loss around `76 ms`, full-active-BF `512` around
+   `529 ms`, and full-BF-sized synthetic `1024` around `669 ms`; the usable
+   object-wave steering path is a separate quantity.
 16. SSB WebGPU matrix: run `128/256/512/1024` object, phase, and phase+loss
    against CUDA references on a real WebGPU adapter.
 

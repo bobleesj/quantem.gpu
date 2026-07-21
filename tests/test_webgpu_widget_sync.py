@@ -15,11 +15,15 @@ def test_widget_webgpu_sources_match_quantem_gpu() -> None:
     from quantem.gpu import webgpu
 
     widget_repo = Path(os.environ["QUANTEM_WIDGET_REPO"]).expanduser()
-    engine_dir = widget_repo / "js" / "engine"
+    legacy_engine_dir = widget_repo / "js" / "engine"
+    if legacy_engine_dir.is_dir():
+        assert not list(legacy_engine_dir.glob("*.ts"))
+
+    engine_dir = widget_repo / "js" / ".generated" / "engine"
     if not engine_dir.is_dir():
-        pytest.skip("widget engine source directory is not available")
+        pytest.skip("widget generated engine source directory is not available")
 
     for name in webgpu.source_names():
         target = engine_dir / name
-        assert target.exists(), f"widget engine is missing synced {name}"
+        assert target.exists(), f"widget generated engine is missing synced {name}"
         assert target.read_text(encoding="utf-8") == webgpu.source_text(name)
