@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 
 def test_eval_single_exact_fallback_calls_scalar_loss_once() -> None:
     # C1: exact reconstruction fallback is active, expect no batch padding
     # because padding would run the same full-IFFT objective four times.
+    pytest.importorskip("cupy")
     from quantem.gpu.ssb.batch_optuna import _eval_single
 
     class FakeAccel:

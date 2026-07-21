@@ -75,6 +75,7 @@ def test_parallax_synthetic_end_to_end() -> None:
 
 
 def test_parallax_aberration_fit_recovers_known_coefficients() -> None:
+    pytest.importorskip("cupy")
     from quantem.gpu.ssb.optics.aberration_fitting import fit_aberrations_svd_polar
     from quantem.gpu.ssb.optics.physics import wavelength_A_from_kV
 

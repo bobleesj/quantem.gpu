@@ -1267,9 +1267,16 @@ def _get_libc():
             _LIBC = False
         else:
             try:
-                _LIBC = ctypes.CDLL(lib_name, use_errno=True)
+                libc = ctypes.CDLL(lib_name, use_errno=True)
             except OSError:
                 _LIBC = False
+            else:
+                try:
+                    libc.posix_fadvise
+                except AttributeError:
+                    _LIBC = False
+                else:
+                    _LIBC = libc
     return _LIBC if _LIBC is not False else None
 
 

@@ -49,6 +49,21 @@ def test_load_u8_does_not_override_explicit_output_dtype(monkeypatch) -> None:
     assert calls["kwargs"]["output_dtype"] is np.float16
 
 
+def test_get_libc_returns_none_when_posix_fadvise_is_unavailable(monkeypatch) -> None:
+    """macOS libc exists but does not expose Linux posix_fadvise."""
+    import ctypes
+    import ctypes.util
+
+    from quantem.gpu.io import hdf5
+
+    monkeypatch.setattr(ctypes.util, "find_library", lambda _name: "libc.dylib")
+    monkeypatch.setattr(ctypes, "CDLL", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(hdf5, "_LIBC", None)
+
+    assert hdf5._get_libc() is None
+    assert hdf5._LIBC is False
+
+
 def test_apply_scan_shape_supports_serpentine_order() -> None:
     """Full flat scans can be unflattened with odd scan rows reversed."""
     from quantem.gpu.io import hdf5
@@ -112,18 +127,23 @@ def test_load_scan_region_maps_scan_roi_to_flat_frames(tmp_path, monkeypatch) ->
         calls["chunk_names"] = chunk_names
         calls["frame_indices"] = frame_indices.copy()
         calls["apply_mask"] = apply_mask
-        return {"pixel_mask": None}
+        return {"pixel_mask": None, "dtype": np.dtype(np.uint16)}
 
-    def fake_decompress(prepared, **kwargs):
-        calls["decompress_kwargs"] = kwargs
+    def fake_mps_decode(prepared, **kwargs):
+        calls["mps_kwargs"] = kwargs
         return np.arange(6 * 2 * 2, dtype=np.uint16).reshape(6, 2, 2)
 
     monkeypatch.setattr(hdf5, "_prepare_master_frames", fake_prepare)
-    monkeypatch.setattr(hdf5, "_decompress_prepared", fake_decompress)
+    monkeypatch.setitem(
+        sys.modules,
+        "quantem.gpu.io.backends.mps",
+        types.SimpleNamespace(load_prepared_frames=fake_mps_decode),
+    )
 
     result = hdf5.load_scan_region(
         str(master),
         scan_region=(1, 3, 2, 5),
+        backend="mps",
         verbose=False,
         det_bin=1,
     )
@@ -158,18 +178,23 @@ def test_load_scan_region_maps_serpentine_roi_to_flat_frames(tmp_path, monkeypat
 
     def fake_prepare(filepath, chunk_names, frame_indices, apply_mask=True):
         calls["frame_indices"] = frame_indices.copy()
-        return {"pixel_mask": None}
+        return {"pixel_mask": None, "dtype": np.dtype(np.uint16)}
 
-    def fake_decompress(prepared, **kwargs):
-        calls["decompress_kwargs"] = kwargs
+    def fake_mps_decode(prepared, **kwargs):
+        calls["mps_kwargs"] = kwargs
         return np.arange(6 * 2 * 2, dtype=np.uint16).reshape(6, 2, 2)
 
     monkeypatch.setattr(hdf5, "_prepare_master_frames", fake_prepare)
-    monkeypatch.setattr(hdf5, "_decompress_prepared", fake_decompress)
+    monkeypatch.setitem(
+        sys.modules,
+        "quantem.gpu.io.backends.mps",
+        types.SimpleNamespace(load_prepared_frames=fake_mps_decode),
+    )
 
     result = hdf5.load_scan_region(
         str(master),
         scan_region=(1, 3, 2, 5),
+        backend="mps",
         scan_order="serpentine",
         verbose=False,
     )

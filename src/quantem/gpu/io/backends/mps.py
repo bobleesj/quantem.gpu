@@ -1097,12 +1097,14 @@ class MPSDecompressor:
     def _submit_gpu_binned(self, n_frames, frame_bytes, elem_size,
                            out_byte_offset, det_row, det_col, bin_factor,
                            comp_mtl, co_mtl, bs_mtl, bc_mtl, bo_mtl,
-                           max_blocks, meta_frame_offset=0):
+                           max_blocks, meta_frame_offset=0, out_mtl=None):
         """Submit LZ4 + bitshuffle + bin GPU work. Returns command buffer.
 
         meta_frame_offset: offset into metadata buffers (co, bc, bo) for
         sub-batch processing. bs (block_starts) uses absolute indexing.
         """
+        if out_mtl is None:
+            out_mtl = self._out_mtl
         meta_off = meta_frame_offset * 4  # bytes (uint32 arrays)
         cmd = _queue.commandBuffer()
         enc = cmd.computeCommandEncoder()
@@ -1183,7 +1185,7 @@ class MPSDecompressor:
                         else (_bin_u16_pipeline if elem_size == 2 else _bin_u32_pipeline))
         enc.setComputePipelineState_(bin_pipeline)
         enc.setBuffer_offset_atIndex_(self._shuf_mtl, 0, 0)
-        enc.setBuffer_offset_atIndex_(self._out_mtl, out_byte_offset, 1)
+        enc.setBuffer_offset_atIndex_(out_mtl, out_byte_offset, 1)
         enc.setBytes_length_atIndex_(
             np.array([det_col], dtype=np.uint32).tobytes(), 4, 2
         )
@@ -2045,6 +2047,7 @@ class MPSDecompressor:
                 self._bc_mtl,
                 self._bo_mtl,
                 max_blocks,
+                out_mtl=out_mtl,
             )
             cmd.waitUntilCompleted()
             out = out_np.view(dtype).reshape((total_frames,) + out_shape).view(_MtlArray)
