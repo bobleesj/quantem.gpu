@@ -13,6 +13,7 @@ from quantem.gpu import (
     df,
     dpc,
     idpc,
+    load_calibration_products,
     masked_sum,
     mean_dp,
 )
@@ -31,5 +32,9 @@ dpc_result = dpc(data)
 
 These functions accept loaded arrays, `LoadResult`-style objects, and migrated
 chunk-backed MPS data where supported.
+
+For a screen page or exported viewer that needs BF/DF/CoM/DPC products on
+launch, prefer `load_calibration_products()` and reuse the product cache instead
+of reloading and reducing the full raw HDF5 volume on every open.
 
 For visual review, hand the reduced image to `quantem.widget.Show2D`.

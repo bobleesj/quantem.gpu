@@ -14,6 +14,11 @@ print(dpc_result.use_transpose)
 print(dpc_result.elapsed)
 ```
 
+On CUDA, the expensive CoM pass uses the custom `cuda_center_of_mass` kernel for
+resident raw-count arrays. Auto-rotation is evaluated after CoM on the small
+scan-shaped vector field: the search uses analytic curl/divergence moments, so
+it does not allocate one rotated full-field map per candidate angle.
+
 Display the outputs with `quantem.widget`:
 
 ```python

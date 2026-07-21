@@ -41,6 +41,30 @@ SSB Hermitian `G_qk` footprint, complex64 half-plane:
 Full-plane SSB `G_qk` is about twice the Hermitian footprint and is not a
 public runtime mode.
 
+## Streaming Ptychography IO
+
+No-bin iterative ptychography should not require the full raw 4D/5D evidence to
+be resident in VRAM. Keep calibration and reconstruction stages streaming:
+
+- Compute COM, detector-center, rotation, and BF/DF/DPC calibration products as
+  chunked reductions. Store the small maps or fitted values, then release the
+  raw detector chunk.
+- Treat this first raw stream as cache generation. The interactive screen path
+  should load the small BF/DF/CoM/rotation cache and must not recompute exact
+  full-field products from raw HDF5 on every open.
+- Feed the solver stochastic HDF5 mini-batches with
+  `load(..., random_positions=...)` or exact caller-selected batches with
+  `load(..., scan_indices=...)`.
+- Keep the requested stochastic order for optimizer semantics, but sort and
+  de-duplicate HDF5 frame indices internally for efficient compressed reads.
+- Auto-tune solver batch size to VRAM. A full `1024x1024x192x192 uint16`
+  acquisition is about `77 GB`; a `1000x192x192 uint16` batch is about
+  `74 MB` before ptychography float/complex working buffers.
+
+This is the path that makes strong no-bin ptychography plausible on 24 GB GPUs:
+VRAM holds the current mini-batch, probe/object patches, propagators, gradients,
+and optimizer state, not the full acquisition.
+
 ## Product Coverage
 
 | Product path | CUDA | MPS | WebGPU | Current gap |
@@ -63,6 +87,9 @@ public runtime mode.
 | CoM/DPC | CUDA | full `512x512x192x192` real data | `200.42 ms -> 12.39 ms`, max abs error `0` | Strong. |
 | HDF5 load/decompress | CUDA | full `512x512x192x192`, `uint8` browse output | cold first load about `2.8-3.0 s`; refreshed warm steady load median `0.443 s`, range `0.427-0.460 s`; resident stack `9.66 GB` | Meets single-dataset warm target; cold includes process/device/cache startup. |
 | HDF5 load/decompress | CUDA | true real `1024x1024x192x192`, `uint16` output, no bin/crop | `4.704 s` wall; resident stack `77.31 GB`; selected corrected frames bit-exact versus direct HDF5 (`max_abs_err=0`, `sum_abs_err=0`) | Strong CUDA reference signoff for true 1024 acquisition. |
+| Stochastic HDF5 ptycho minibatch | CUDA, GPU1 | 40 real-data masters, 1000 global random scan positions per master, detector `192x192`, native `uint16`, no detector bin | true cold scattered-read worker sweep: `prep_workers=1/2/4/8` measured `8.90/8.98/9.47/9.97 s`; warm-cache repeats measured about `1.0-1.6 s`; GPU decode sum about `0.05-0.11 s`; output `2.95 GB` | Correct global stochastic order and raw counts. Default stays `prep_workers=1`; use more workers only when the storage path benefits from concurrent payload reads. Bottleneck is scattered HDF5 payload access, not bitshuffle/LZ4 GPU decompression. |
+| BF/DF/CoM/rotation cache build | CUDA, GPU1 under 12 GB allocator cap | true real `1024x1024x192x192`, native `uint16`, no detector bin, bounded scan-row chunks | first build `12.31 s`; raw HDF5 stream `11.76 s`; BF/DF/CoM custom CUDA reductions median `8.68 ms/chunk`; optimized auto-rotation search `0.018-0.022 s`; cache output `16.93 MB` | Demonstrates no-bin full-field calibration products on a 12 GB-style budget. This is the product-cache build path. It is too slow for page launch and must not be presented as the interactive path. |
+| BF/DF/CoM/rotation cache hit | Any backend-facing caller | true real `1024x1024x192x192` product cache | local cache read repeats `8.0/7.2/7.1/6.8/6.8 ms` | This is the screen/UI launch path for BF/DF/DPC/rotation. Cache hits are backend-neutral and do not probe CUDA before returning. |
 | HDF5 load/decompress | MPS | true real `1024x1024x192x192`, chunk-backed `uint16` output, no bin/crop | `4.617 s` wall; resident stack `77.31 GB`; selected corrected frames bit-exact versus direct HDF5 (`max_abs_err=0`, `sum_abs_err=0`) | Strong MPS reference signoff for true 1024 acquisition; close to the conservative Apple memory guard and should stay chunk-backed. |
 | Seven-master HDF5 load/decompress | CUDA | seven full `512x512x192x192` masters, `uint8` browse output | explicit warmup then measured loads sum to `2.90 s`; per-master range `0.38-0.47 s` | Meets `3-4 s` steady seven-dataset target on idle GPU. |
 | Seven-panel BF/ADF/DF grid | CUDA | detector-bin2 seven-panel real workflow | BF `0.57 ms/panel`, ADF `1.37 ms/panel`, DF `0.57 ms/panel`, max abs error `0` | Strong for current grid policy. |

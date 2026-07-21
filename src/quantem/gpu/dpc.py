@@ -92,21 +92,57 @@ def _curl_batch(v_row, v_col):
     return (curl ** 2).mean(axis=(1, 2))
 
 
+def _rotation_curl_scores(v_row, v_col, angles_rad):
+    """Curl score for many rotation angles without materializing rotated maps."""
+    # For rotated vector field:
+    #   r' = cos(a) r - sin(a) c
+    #   c' = sin(a) r + cos(a) c
+    # curl(r', c') = cos(a) * curl(r, c) + sin(a) * div(r, c).
+    # Therefore mean(curl^2) for every angle can be evaluated from three scalar
+    # moments of curl/divergence, instead of allocating one full map per angle.
+    curl = (
+        0.5 * (v_col[2:, 1:-1] - v_col[:-2, 1:-1])
+        - 0.5 * (v_row[1:-1, 2:] - v_row[1:-1, :-2])
+    ).astype(np.float64, copy=False)
+    divergence = (
+        0.5 * (v_row[2:, 1:-1] - v_row[:-2, 1:-1])
+        + 0.5 * (v_col[1:-1, 2:] - v_col[1:-1, :-2])
+    ).astype(np.float64, copy=False)
+    cc = float(np.mean(curl * curl))
+    dd = float(np.mean(divergence * divergence))
+    cd = float(np.mean(curl * divergence))
+    cos_a = np.cos(angles_rad, dtype=np.float64)
+    sin_a = np.sin(angles_rad, dtype=np.float64)
+    return cos_a * cos_a * cc + sin_a * sin_a * dd + 2.0 * cos_a * sin_a * cd
+
+
+def _rotate_vector(v_row, v_col, angle_rad):
+    c = float(np.cos(angle_rad))
+    s = float(np.sin(angle_rad))
+    return (
+        (c * v_row - s * v_col).astype(np.float32, copy=False),
+        (s * v_row + c * v_col).astype(np.float32, copy=False),
+    )
+
+
 def find_optimal_rotation(com_row, com_col, rotation_steps=180):
     """Rotation (deg) that minimizes the curl of the CoM field; tests transpose too."""
     angles = np.linspace(0, np.pi, rotation_steps, dtype=np.float32)
-    r, c = _rotate_vector_batch(com_row, com_col, angles)
-    rt, ct = _rotate_vector_batch(com_col, com_row, angles)
-    curls = _curl_batch(r, c)
-    curls_t = _curl_batch(rt, ct)
+    if min(com_row.shape) < 3:
+        r, c = _rotate_vector(com_row, com_col, angles[0])
+        return r, c, 0.0, False
+    curls = _rotation_curl_scores(com_row, com_col, angles)
+    curls_t = _rotation_curl_scores(com_col, com_row, angles)
     stacked = np.concatenate([curls, curls_t])
     idx = int(stacked.argmin())
     use_transpose = idx >= rotation_steps
     ai = idx % rotation_steps
     angle_deg = float(angles[ai]) * 180.0 / np.pi
     if use_transpose:
-        return rt[ai], ct[ai], angle_deg, True
-    return r[ai], c[ai], angle_deg, False
+        rt, ct = _rotate_vector(com_col, com_row, angles[ai])
+        return rt, ct, angle_deg, True
+    r, c = _rotate_vector(com_row, com_col, angles[ai])
+    return r, c, angle_deg, False
 
 
 def reconstruct_phase_from_gradient(grad_row, grad_col):

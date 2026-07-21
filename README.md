@@ -69,6 +69,98 @@ data = result.data
 print(data.shape, data.dtype, type(data))
 ```
 
+Load stochastic scan positions for ptychography-style minibatches. Use
+`random_positions=` when QuantEM should sample global scan positions for you;
+use `scan_indices=` when your sampler already chose the positions. In both
+cases, the returned array follows stochastic order, while the loader internally
+sorts and de-duplicates HDF5 frame indices before GPU bitshuffle/LZ4
+decompression.
+
+```python
+import numpy as np
+from quantem.gpu import load
+
+single = load(
+    "scan_master.h5",
+    random_positions=1000,
+    scan_shape=(512, 512),
+    seed=42,
+)
+print(single.data.shape)  # (1000, 192, 192)
+
+rng = np.random.default_rng(42)
+per_frame = np.vstack([  # explicit user-provided positions
+    rng.choice(512 * 512, size=1000, replace=False)
+    for _ in range(40)
+])
+series = load(
+    master_paths[:40],
+    scan_indices=per_frame,
+    scan_shape=(512, 512),
+    prep_workers=4,
+)
+print(series.data.shape)  # (40, 1000, 192, 192)
+
+random_series = load(
+    master_paths[:40],
+    random_positions=1000,
+    scan_shape=(512, 512),
+    seed=42,
+)
+```
+
+For multi-master stochastic batches, `prep_workers=` controls how many HDF5
+masters are prepared in parallel before the GPU bitshuffle/LZ4 decoder runs.
+Benchmark this on the storage path you will use. On one real-data 40-master
+`512x512x192x192` random-position benchmark, a true cold scattered read took
+about `8.90 s` with the default single worker; `2`, `4`, and `8` workers were
+not faster (`8.98 s`, `9.47 s`, `9.97 s`). With the OS page cache warm, the
+same 40 x 1000-position native-`uint16` batch loads in about `1.0-1.6 s`, and
+`8` workers still regresses. Use more workers only when local measurement shows
+that the payload files live on storage that scales with concurrent reads.
+
+This sparse path is designed for no-bin ptychography on modest VRAM. A full
+`1024x1024x192x192 uint16` acquisition is about `77 GB` and cannot be resident
+on a 24 GB GPU, but a stochastic `1000x192x192 uint16` batch is only about
+`74 MB` before ptychography working buffers. Build BF/DF/CoM/rotation products
+once as a small cache, then decode random HDF5 batches into VRAM for the
+optimizer step and release them.
+
+For screen-style launch, do not recompute BF/DF/DPC from the raw HDF5 every
+time. Use the cached product API:
+
+```python
+from quantem.gpu import load_calibration_products
+
+products = load_calibration_products(
+    "scan_master.h5",
+    backend="cuda",
+)
+
+print(products.loaded_from_cache, products.elapsed_s)
+print(products.bf.shape, products.df.shape, products.rotation_deg)
+```
+
+On a cache miss this streams the raw HDF5 once with GPU bitshuffle/LZ4 decode
+and custom CUDA BF/DF/CoM kernels. The default cache build estimates the BF disk
+from the first decoded row chunk so it does not pay a second HDF5 pass before
+the streaming reduction; pass `sample_positions>0` only when an explicit random
+probe sample is needed. On a cache hit it reads only the small derived arrays,
+so UI launch can be well below the `0.5 s` target. Cache hits are
+backend-neutral: a Mac MPS workflow can open an existing cache without
+initializing CUDA.
+
+By default, `load_calibration_products()` inspects current free CUDA VRAM and
+chooses a bounded chunk plan automatically. Pass `memory_budget_gb=` only to
+force a smaller or larger working set. For a real `1024x1024x192x192 uint16`
+compressed master, cache-miss timing is about `7.1 s` with a `24 GB` budget,
+`7.3 s` with `48 GB`, and `3.8 s` with `96 GB` because the full `77 GB` raw
+scan fits and can use the optimized full-master loader. Once cached, loading
+BF/DF/CoM/rotation products is about `0.01-0.2 s`, and repeating the rotation
+search on the cached CoM maps is about `0.027 s` median. Ptychography sweeps
+should reuse this calibration cache rather than recomputing BF/DF/rotation for
+every trial.
+
 Compute common BF, DF, ADF, and DPC images directly through `quantem.gpu`:
 
 ```python
@@ -278,6 +370,14 @@ Implemented in this package:
   col_stop))` for CUDA and MPS scan-ROI HDF5 loading without materializing the
   full scan first. `load_scan_region()` is kept as a compatibility helper for
   existing callers.
+- `quantem.gpu.io.hdf5.load(..., scan_indices=...)` and
+  `load_scan_indices()` for PyTorch/DataLoader-style stochastic scan batches:
+  random positions are returned in requested order, while compressed HDF5 chunks
+  are sorted and de-duplicated before CUDA/MPS GPU decompression.
+- `quantem.gpu.io.hdf5.load(..., random_positions=...)` and
+  `random_scan_indices()` for one-line global random HDF5 minibatches with
+  reproducible seeds and explicit multi-file HDF5 preparation workers when a
+  measured storage path benefits from concurrent readers.
 - CUDA bitshuffle/LZ4 kernels and pinned-buffer HDF5 master load path
 - MPS Metal bitshuffle/LZ4 kernels, chunk-backed zero-copy load path, memory
   guard, crop-first sparse decode, lazy multi-dataset loader, and

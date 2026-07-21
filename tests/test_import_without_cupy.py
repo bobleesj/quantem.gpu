@@ -26,9 +26,14 @@ def test_quantem_gpu_root_import_without_cupy() -> None:
 
         report = qg.device_report("cpu")
         assert report.selected == "cpu"
+        assert qg.CalibrationMemoryPlan.__module__ == "quantem.gpu.calibration"
+        assert qg.calibration_memory_plan.__module__ == "quantem.gpu.calibration"
+        assert qg.load_calibration_products.__module__ == "quantem.gpu.calibration"
         assert qg.dp_mean.__module__ == "quantem.gpu.detector"
         assert qg.bf_df_dpc.__module__ == "quantem.gpu.ssb.preprocess"
+        assert qg.load_scan_indices.__module__ == "quantem.gpu.io.hdf5"
         assert qg.load_scan_region.__module__ == "quantem.gpu.io.hdf5"
+        assert qg.random_scan_indices.__module__ == "quantem.gpu.io.hdf5"
         assert qg.ssb_fit_mps.__module__ == "quantem.gpu.ssb.mps"
         assert qg.ssb_preview_mps.__module__ == "quantem.gpu.ssb.mps"
         assert ssb_mps.ssb_preview.__module__ == "quantem.gpu.ssb.mps"

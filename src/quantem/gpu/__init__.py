@@ -5,6 +5,13 @@ from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
 
 from .device import DeviceReport, device_report, select_device
+from .calibration import (
+    CalibrationMemoryPlan,
+    CalibrationProducts,
+    calibration_memory_plan,
+    calibration_products_cache_path,
+    load_calibration_products,
+)
 from .compute import (
     VirtualImageKernelSupport,
     compute_backend,
@@ -48,7 +55,9 @@ _SSB_EXPORTS = {
 }
 _IO_EXPORTS = {
     "load",
+    "load_scan_indices",
     "load_scan_region",
+    "random_scan_indices",
 }
 _PARALLAX_EXPORTS = {
     "BFImage": ("quantem.gpu.parallax_results", "BFImage"),
@@ -64,6 +73,8 @@ _LAZY_MODULE_EXPORTS = {
 __all__ = [
     "DPCResult",
     "DefocusSweepResult",
+    "CalibrationMemoryPlan",
+    "CalibrationProducts",
     "DeviceReport",
     "BFImage",
     "SSB",
@@ -76,6 +87,8 @@ __all__ = [
     "auto_probe",
     "bf",
     "bf_df_dpc",
+    "calibration_products_cache_path",
+    "calibration_memory_plan",
     "center_of_mass",
     "com",
     "compute_backend",
@@ -88,11 +101,14 @@ __all__ = [
     "dp_mean",
     "idpc",
     "load",
+    "load_calibration_products",
+    "load_scan_indices",
     "load_scan_region",
     "masked_sum",
     "mean_dp",
     "movie",
     "parallax",
+    "random_scan_indices",
     "select_device",
     "ssb",
     "ssb_time_average",

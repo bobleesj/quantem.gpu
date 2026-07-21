@@ -73,7 +73,7 @@ _clip_u32_to_u8_count_kernel = _lazy_kernel("clip_u32_to_u8_count_kernel")
 
 __version__ = "0.0.3"
 __all__ = [
-    "load", "load_scan_region", "load_parallel", "disk_of", "group_by_disk", "save", "H5Writer", "LoadResult", "wait_for_saves", "bin",
+    "load", "load_scan_indices", "load_scan_region", "random_scan_indices", "load_parallel", "disk_of", "group_by_disk", "save", "H5Writer", "LoadResult", "wait_for_saves", "bin",
     "discover_masters", "inspect_master_readiness", "is_master_ready",
     "MasterReadiness", "find_emd_sibling", "get_metadata", "read_emd_metadata",
     "read_pixel_mask", "__version__",
@@ -395,6 +395,280 @@ def _scan_region_frame_indices(
         physical_cols = cols if int(row) % 2 == 0 else (scan_c - 1 - cols)
         frame_indices[out_row] = int(row) * scan_c + physical_cols
     return frame_indices.reshape(-1)
+
+
+def _scan_positions_to_frame_indices(
+    rows: np.ndarray,
+    cols: np.ndarray,
+    scan_shape: tuple[int, int],
+    scan_order: str = "row-major",
+) -> np.ndarray:
+    """Map logical scan ``(row, col)`` positions to flattened HDF5 frames."""
+    order = _normalize_scan_order(scan_order)
+    scan_r, scan_c = (int(v) for v in scan_shape)
+    rows = np.asarray(rows, dtype=np.int64).reshape(-1)
+    cols = np.asarray(cols, dtype=np.int64).reshape(-1)
+    if rows.shape != cols.shape:
+        raise ValueError("scan position rows and columns must have matching shape")
+    if rows.size == 0:
+        raise ValueError("scan_indices must contain at least one scan position")
+    if np.any(rows < 0) or np.any(rows >= scan_r):
+        bad = rows[(rows < 0) | (rows >= scan_r)][0]
+        raise ValueError(f"scan row {int(bad)} is outside scan height {scan_r}")
+    if np.any(cols < 0) or np.any(cols >= scan_c):
+        bad = cols[(cols < 0) | (cols >= scan_c)][0]
+        raise ValueError(f"scan column {int(bad)} is outside scan width {scan_c}")
+
+    physical_cols = cols.copy()
+    if order == "serpentine":
+        odd = rows % 2 == 1
+        physical_cols[odd] = scan_c - 1 - physical_cols[odd]
+    return rows * scan_c + physical_cols
+
+
+def _frame_indices_to_scan_positions(
+    frame_indices: np.ndarray,
+    scan_shape: tuple[int, int],
+    scan_order: str = "row-major",
+) -> np.ndarray:
+    """Map flattened HDF5 frame indices back to logical scan ``(row, col)``."""
+    order = _normalize_scan_order(scan_order)
+    scan_r, scan_c = (int(v) for v in scan_shape)
+    total = scan_r * scan_c
+    frame_indices = np.asarray(frame_indices, dtype=np.int64).reshape(-1)
+    if frame_indices.size == 0:
+        raise ValueError("scan_indices must contain at least one scan position")
+    if np.any(frame_indices < 0) or np.any(frame_indices >= total):
+        bad = frame_indices[(frame_indices < 0) | (frame_indices >= total)][0]
+        raise ValueError(
+            f"scan frame index {int(bad)} is outside flattened scan size {total}"
+        )
+
+    rows = frame_indices // scan_c
+    physical_cols = frame_indices % scan_c
+    cols = physical_cols.copy()
+    if order == "serpentine":
+        odd = rows % 2 == 1
+        cols[odd] = scan_c - 1 - cols[odd]
+    return np.stack([rows, cols], axis=1).astype(np.int64, copy=False)
+
+
+def _normalize_scan_indices(
+    scan_indices,
+    scan_shape: tuple[int, int],
+    scan_order: str = "row-major",
+    index_mode: str = "scan",
+) -> tuple[np.ndarray, np.ndarray]:
+    """Validate stochastic scan positions and return HDF5 frames + row/col.
+
+    ``scan_indices`` accepts either a flat vector of logical row-major scan
+    indices or an ``(N, 2)`` array of logical ``(row, col)`` positions. Flat
+    indices default to logical scan coordinates, matching PyTorch-style
+    samplers; pass ``index_mode="hdf5"`` only when the caller already has
+    physical flattened detector-frame indices from the file.
+    """
+    mode = str(index_mode).lower().replace("_", "-")
+    if mode not in {"scan", "hdf5"}:
+        raise ValueError("index_mode must be 'scan' or 'hdf5'")
+
+    arr = np.asarray(scan_indices)
+    if arr.ndim == 1:
+        flat = arr.astype(np.int64, copy=False).reshape(-1)
+        if mode == "hdf5":
+            positions = _frame_indices_to_scan_positions(
+                flat,
+                scan_shape,
+                scan_order,
+            )
+            return flat.copy(), positions
+
+        scan_r, scan_c = (int(v) for v in scan_shape)
+        total = scan_r * scan_c
+        if flat.size == 0:
+            raise ValueError("scan_indices must contain at least one scan position")
+        if np.any(flat < 0) or np.any(flat >= total):
+            bad = flat[(flat < 0) | (flat >= total)][0]
+            raise ValueError(
+                f"scan index {int(bad)} is outside flattened scan size {total}"
+            )
+        rows = flat // scan_c
+        cols = flat % scan_c
+        frame_indices = _scan_positions_to_frame_indices(
+            rows,
+            cols,
+            scan_shape,
+            scan_order,
+        )
+        positions = np.stack([rows, cols], axis=1).astype(np.int64, copy=False)
+        return frame_indices, positions
+
+    if arr.ndim == 2 and arr.shape[1] == 2:
+        if mode == "hdf5":
+            raise ValueError(
+                "index_mode='hdf5' expects a flat vector of HDF5 frame indices, "
+                "not an (N, 2) row/column array"
+            )
+        rows = arr[:, 0].astype(np.int64, copy=False)
+        cols = arr[:, 1].astype(np.int64, copy=False)
+        frame_indices = _scan_positions_to_frame_indices(
+            rows,
+            cols,
+            scan_shape,
+            scan_order,
+        )
+        positions = np.stack([rows, cols], axis=1).astype(np.int64, copy=False)
+        return frame_indices, positions
+
+    raise TypeError(
+        "scan_indices must be a flat vector of scan indices or an "
+        "(N, 2) array of (row, col) scan positions"
+    )
+
+
+def _normalize_scan_indices_by_file(
+    scan_indices,
+    n_files: int,
+    scan_shape: tuple[int, int],
+    scan_order: str = "row-major",
+    index_mode: str = "scan",
+) -> tuple[list[np.ndarray], list[np.ndarray]]:
+    """Normalize common or per-file stochastic scan indices for file lists."""
+    n_files = int(n_files)
+    arr = np.asarray(scan_indices)
+
+    # Common positions for every file: flat (N,) or row/col (N, 2).
+    if arr.ndim == 1 or (arr.ndim == 2 and arr.shape[-1] == 2):
+        frames, positions = _normalize_scan_indices(
+            arr,
+            scan_shape,
+            scan_order,
+            index_mode,
+        )
+        return [frames.copy() for _ in range(n_files)], [
+            positions.copy() for _ in range(n_files)
+        ]
+
+    # Per-file flat logical scan indices: (n_files, n_positions).
+    if arr.ndim == 2 and arr.shape[0] == n_files:
+        frame_lists: list[np.ndarray] = []
+        position_lists: list[np.ndarray] = []
+        for i in range(n_files):
+            frames, positions = _normalize_scan_indices(
+                arr[i],
+                scan_shape,
+                scan_order,
+                index_mode,
+            )
+            frame_lists.append(frames)
+            position_lists.append(positions)
+        return frame_lists, position_lists
+
+    # Per-file row/column scan positions: (n_files, n_positions, 2).
+    if arr.ndim == 3 and arr.shape[0] == n_files and arr.shape[-1] == 2:
+        frame_lists = []
+        position_lists = []
+        for i in range(n_files):
+            frames, positions = _normalize_scan_indices(
+                arr[i],
+                scan_shape,
+                scan_order,
+                index_mode,
+            )
+            frame_lists.append(frames)
+            position_lists.append(positions)
+        return frame_lists, position_lists
+
+    raise TypeError(
+        "For multiple files, scan_indices must be common positions shaped "
+        "(N,), (N, 2), or per-file positions shaped (n_files, N) / "
+        "(n_files, N, 2)"
+    )
+
+
+def _normalize_random_position_count(n: int) -> int:
+    """Validate a requested stochastic scan-position count."""
+    if isinstance(n, (bool, np.bool_)):
+        raise TypeError("random_positions must be a positive integer count")
+    try:
+        count = int(n)
+    except (TypeError, ValueError) as exc:
+        raise TypeError("random_positions must be a positive integer count") from exc
+    if count <= 0:
+        raise ValueError("random_positions must be a positive integer count")
+    return count
+
+
+def random_scan_indices(
+    n: int,
+    scan_shape: tuple[int, int],
+    *,
+    n_files: int | None = None,
+    seed: int | np.random.Generator | None = None,
+    replace: bool = False,
+    same_for_all_files: bool = False,
+    return_positions: bool = False,
+) -> np.ndarray:
+    """Sample logical row-major scan indices for stochastic HDF5 minibatches.
+
+    Parameters
+    ----------
+    n
+        Number of scan positions to sample per file.
+    scan_shape
+        Full scan shape as ``(rows, cols)``.
+    n_files
+        When provided, return independent per-file samples shaped
+        ``(n_files, n)``. If ``same_for_all_files=True``, return one common
+        ``(n,)`` sample that can be reused for every file.
+    seed
+        Optional reproducibility seed, or an existing NumPy ``Generator``.
+    replace
+        Sample with replacement. Defaults to ``False`` for ptychography-style
+        minibatches that should not duplicate positions in one file unless
+        explicitly requested.
+    same_for_all_files
+        Use one common random sample for every file instead of independent
+        per-file positions.
+    return_positions
+        Return logical ``(row, col)`` positions instead of flat scan indices.
+
+    Returns
+    -------
+    np.ndarray
+        ``(n,)`` / ``(n, 2)`` for a single/common sample, or
+        ``(n_files, n)`` / ``(n_files, n, 2)`` for independent per-file samples.
+    """
+    count = _normalize_random_position_count(n)
+    scan_r, scan_c = (int(v) for v in scan_shape)
+    if scan_r <= 0 or scan_c <= 0:
+        raise ValueError("scan_shape must contain positive row/column sizes")
+    total = scan_r * scan_c
+    if not replace and count > total:
+        raise ValueError(
+            f"Cannot sample {count} random positions without replacement from "
+            f"scan_shape={tuple(scan_shape)} ({total} positions)."
+        )
+    if n_files is not None:
+        n_files = int(n_files)
+        if n_files <= 0:
+            raise ValueError("n_files must be positive when provided")
+
+    rng = seed if isinstance(seed, np.random.Generator) else np.random.default_rng(seed)
+
+    def _one() -> np.ndarray:
+        return rng.choice(total, size=count, replace=replace).astype(np.int64, copy=False)
+
+    if n_files is None or same_for_all_files:
+        indices = _one()
+    else:
+        indices = np.vstack([_one() for _ in range(n_files)])
+
+    if not return_positions:
+        return indices
+
+    rows = indices // scan_c
+    cols = indices % scan_c
+    return np.stack([rows, cols], axis=-1).astype(np.int64, copy=False)
 
 
 def get_metadata(filepath: str) -> dict:
@@ -1249,6 +1523,8 @@ def _prepare_master_frames(
     intentionally compatible with :func:`_decompress_prepared`.
     """
     import bisect
+    import ctypes
+    from concurrent.futures import ThreadPoolExecutor
 
     selected = np.asarray(frame_indices, dtype=np.int64).reshape(-1)
     if selected.size == 0:
@@ -1283,6 +1559,10 @@ def _prepare_master_frames(
                         "load_scan_region requires one detector frame per "
                         f"HDF5 chunk; got chunks={ds.chunks} in {data_path}"
                     )
+                chunk_infos = []
+                ds.id.chunk_iter(
+                    lambda info: chunk_infos.append((info.byte_offset, info.size))
+                )
                 source_infos.append(
                     {
                         "path": data_path,
@@ -1290,6 +1570,7 @@ def _prepare_master_frames(
                         "n_frames": int(ds.shape[0]),
                         "frame_shape": tuple(int(v) for v in ds.shape[1:]),
                         "dtype": ds.dtype,
+                        "chunk_infos": chunk_infos,
                     }
                 )
         if apply_mask:
@@ -1312,33 +1593,105 @@ def _prepare_master_frames(
             f"Requested frame {int(selected.max())}, but only {total_available} frames are available"
         )
 
-    raw_chunks: list[bytes] = []
-    open_files: dict[int, h5py.File] = {}
-    datasets: dict[int, h5py.Dataset] = {}
-    try:
-        for global_idx in selected:
-            source_idx = bisect.bisect_right(source_starts, int(global_idx)) - 1
-            local_idx = int(global_idx) - int(source_starts[source_idx])
-            if source_idx not in datasets:
-                info = source_infos[source_idx]
-                open_files[source_idx] = h5py.File(info["path"], "r")
-                datasets[source_idx] = open_files[source_idx][info["dataset_path"]]
-            _, chunk = datasets[source_idx].id.read_direct_chunk((local_idx, 0, 0))
-            raw_chunks.append(chunk)
-    finally:
-        for handle in open_files.values():
-            handle.close()
-
-    chunk_sizes_arr = np.asarray([len(chunk) for chunk in raw_chunks], dtype=np.uint32)
-    total_compressed = int(chunk_sizes_arr.sum(dtype=np.uint64))
-    read_buffer = _alloc_pinned_fast(total_compressed)
     chunk_offsets_arr = np.empty(selected.size, dtype=np.uint64)
+    chunk_sizes_arr = np.empty(selected.size, dtype=np.uint32)
+    entries_by_source: dict[int, list[tuple[int, int, int]]] = {}
+    for order_pos, global_idx in enumerate(selected):
+        source_idx = bisect.bisect_right(source_starts, int(global_idx)) - 1
+        local_idx = int(global_idx) - int(source_starts[source_idx])
+        chunk_infos = source_infos[source_idx]["chunk_infos"]
+        if local_idx >= len(chunk_infos):
+            raise ValueError(
+                f"Requested local frame {local_idx}, but only "
+                f"{len(chunk_infos)} HDF5 chunks were indexed"
+            )
+        byte_offset, chunk_size = chunk_infos[local_idx]
+        entries_by_source.setdefault(source_idx, []).append(
+            (order_pos, int(byte_offset), int(chunk_size))
+        )
+
+    max_gap_bytes = 4096
+    read_plan_by_source: dict[int, list[tuple[int, int, int]]] = {}
     cursor = 0
-    for idx, chunk in enumerate(raw_chunks):
-        chunk_offsets_arr[idx] = cursor
-        nbytes = len(chunk)
-        read_buffer[cursor:cursor + nbytes] = np.frombuffer(chunk, dtype=np.uint8)
-        cursor += nbytes
+    for source_idx, entries in entries_by_source.items():
+        entries = sorted(entries, key=lambda item: item[1])
+        span_start = entries[0][1]
+        span_end = entries[0][1] + entries[0][2]
+        span_entries = [entries[0]]
+
+        def flush_span() -> None:
+            nonlocal cursor, span_start, span_end, span_entries
+            dst_start = cursor
+            span_nbytes = int(span_end - span_start)
+            read_plan_by_source.setdefault(source_idx, []).append(
+                (int(span_start), int(dst_start), span_nbytes)
+            )
+            for order_pos, byte_offset, chunk_size in span_entries:
+                chunk_offsets_arr[order_pos] = dst_start + int(byte_offset - span_start)
+                chunk_sizes_arr[order_pos] = int(chunk_size)
+            cursor += span_nbytes
+
+        for entry in entries[1:]:
+            _, byte_offset, chunk_size = entry
+            next_end = int(byte_offset + chunk_size)
+            if int(byte_offset) <= span_end + max_gap_bytes:
+                span_end = max(span_end, next_end)
+                span_entries.append(entry)
+            else:
+                flush_span()
+                span_start = int(byte_offset)
+                span_end = next_end
+                span_entries = [entry]
+        flush_span()
+
+    total_compressed = int(cursor)
+    read_buffer = _alloc_pinned_fast(total_compressed)
+    libc = _get_libc()
+
+    def read_exact_at(fd: int, dst_offset: int, nbytes: int, file_offset: int) -> None:
+        mv = memoryview(read_buffer)[dst_offset:dst_offset + nbytes]
+        remaining = int(nbytes)
+        view_offset = 0
+        while remaining > 0:
+            if hasattr(os, "preadv"):
+                got = os.preadv(
+                    fd,
+                    [mv[view_offset:view_offset + remaining]],
+                    int(file_offset + view_offset),
+                )
+            else:
+                block = os.pread(fd, remaining, int(file_offset + view_offset))
+                got = len(block)
+                mv[view_offset:view_offset + got] = block
+            if got == 0:
+                raise OSError("short read while loading selected HDF5 chunks")
+            remaining -= int(got)
+            view_offset += int(got)
+
+    def read_source(item: tuple[int, list[tuple[int, int, int]]]) -> None:
+        source_idx, reads = item
+        fd = os.open(source_infos[source_idx]["path"], os.O_RDONLY)
+        try:
+            if libc is not None:
+                for file_offset, _, nbytes in reads:
+                    libc.posix_fadvise(
+                        fd,
+                        ctypes.c_long(file_offset),
+                        ctypes.c_long(nbytes),
+                        _POSIX_FADV_WILLNEED,
+                    )
+            for file_offset, dst_offset, nbytes in reads:
+                read_exact_at(fd, dst_offset, nbytes, file_offset)
+        finally:
+            os.close(fd)
+
+    worker_count = min(12, max(1, len(read_plan_by_source)))
+    if worker_count > 1:
+        with ThreadPoolExecutor(max_workers=worker_count) as pool:
+            list(pool.map(read_source, read_plan_by_source.items()))
+    else:
+        for item in read_plan_by_source.items():
+            read_source(item)
 
     frame_bytes = int(np.prod(frame_shape) * np.dtype(dtype).itemsize)
     n_blocks_per_frame = (frame_bytes + BLOCK_SIZE - 1) // BLOCK_SIZE
@@ -1471,8 +1824,25 @@ def _decompress_prepared(
         # more than one batch (a single-batch file cannot overlap). Async
         # upload of batch N+1 hides behind batch N's LZ4/bitshuffle work, so
         # the per-file H2D (~116 ms at 512²) no longer runs serially before
-        # the kernels. Single-batch files fall back to one full upload.
-        streaming_upload = (total_frames + max_batch - 1) // max_batch > 1
+        # the kernels. Single-batch files fall back to one full upload. The
+        # streaming slicer also requires chunk offsets to be monotonic in output
+        # order; serpentine crops can request physical chunks in reverse order
+        # within odd scan rows, so those safely use one full compressed upload.
+        offsets_monotonic = bool(
+            total_frames <= 1
+            or np.all(chunk_offsets_arr[1:] >= chunk_offsets_arr[:-1])
+        )
+        streaming_upload = (
+            offsets_monotonic
+            and (total_frames + max_batch - 1) // max_batch > 1
+        )
+    elif streaming_upload:
+        offsets_monotonic = bool(
+            total_frames <= 1
+            or np.all(chunk_offsets_arr[1:] >= chunk_offsets_arr[:-1])
+        )
+        if not offsets_monotonic:
+            streaming_upload = False
 
     # --- Upload compressed + metadata to GPU -------------------------------
     # streaming_upload=True (default): per-batch compressed slice (~120 MB)
@@ -3131,13 +3501,406 @@ def load_scan_region(
     return LoadResult(data, meta)
 
 
+def _take_requested_scan_order(data, inverse: np.ndarray):
+    """Restore stochastic request order after sorted unique HDF5 reads."""
+    inverse = np.asarray(inverse, dtype=np.int64)
+    if inverse.size == int(data.shape[0]) and np.array_equal(
+        inverse,
+        np.arange(inverse.size, dtype=np.int64),
+    ):
+        return data
+    if cp is not None and isinstance(data, cp.ndarray):
+        return data[cp.asarray(inverse)]
+    return data[inverse]
+
+
+def _normalize_prep_workers(prep_workers: int | None, n_files: int) -> int:
+    """Choose a bounded worker count for CPU/HDF5 sparse preparation."""
+    n_files = int(n_files)
+    if n_files <= 1:
+        return 1
+    if prep_workers is None:
+        return 1
+    try:
+        workers = int(prep_workers)
+    except (TypeError, ValueError) as exc:
+        raise TypeError("prep_workers must be a positive integer or None") from exc
+    if workers <= 0:
+        raise ValueError("prep_workers must be a positive integer or None")
+    return max(1, min(workers, n_files))
+
+
+def _prepare_scan_indices_one(
+    filepath: str,
+    frame_indices: np.ndarray,
+    scan_positions: np.ndarray,
+    *,
+    apply_mask: bool,
+) -> dict:
+    """Prepare one stochastic sparse HDF5 batch without GPU decompression."""
+    import time
+
+    if not os.path.isfile(filepath):
+        raise FileNotFoundError(f"HDF5 file not found: {filepath}")
+
+    t0 = time.perf_counter()
+    meta = get_metadata(filepath)
+    chunk_names = _discover_chunk_names(filepath)
+    if not chunk_names:
+        with h5py.File(filepath, "r") as f:
+            data_group = f.get("entry/data")
+            if data_group is not None and "data" in data_group:
+                chunk_names = ["data"]
+            else:
+                raise ValueError(
+                    f"{filepath} has no entry/data/data or data_###### detector chunks"
+                )
+
+    unique_frame_indices, inverse = np.unique(frame_indices, return_inverse=True)
+    prepared = _prepare_master_frames(
+        filepath,
+        chunk_names,
+        unique_frame_indices,
+        apply_mask=apply_mask,
+    )
+    return {
+        "filepath": filepath,
+        "meta": meta,
+        "prepared": prepared,
+        "frame_indices": frame_indices,
+        "scan_positions": scan_positions,
+        "unique_frame_indices": unique_frame_indices,
+        "inverse": inverse,
+        "prepare_seconds": time.perf_counter() - t0,
+    }
+
+
+def _decode_scan_indices_prepared(
+    prepared_item: dict,
+    *,
+    backend: str,
+    full_scan_shape: tuple[int, int],
+    scan_order: ScanOrder,
+    det_bin: int,
+    apply_mask: bool,
+    verbose: bool,
+    auto_narrow: bool,
+    output_dtype: type | np.dtype | None,
+) -> LoadResult:
+    """GPU-decompress one prepared stochastic sparse HDF5 batch."""
+    import time
+
+    t0 = time.perf_counter()
+    filepath = prepared_item["filepath"]
+    meta = dict(prepared_item["meta"])
+    prepared = prepared_item["prepared"]
+    frame_indices = prepared_item["frame_indices"]
+    scan_positions = prepared_item["scan_positions"]
+    unique_frame_indices = prepared_item["unique_frame_indices"]
+    inverse = prepared_item["inverse"]
+    pixel_mask = prepared.get("pixel_mask")
+    if backend == "cuda":
+        data = _decompress_prepared(
+            prepared,
+            verbose=False,
+            auto_narrow=auto_narrow,
+            det_bin=det_bin,
+            streaming_bin=(int(det_bin) > 1),
+            output_dtype=output_dtype,
+        )
+    else:
+        if output_dtype is not None and np.dtype(output_dtype) != np.dtype(prepared["dtype"]):
+            raise ValueError(
+                "MPS scan-index IO currently returns the native detector dtype; "
+                "load without dtype='u8' or cast the small returned batch explicitly."
+            )
+        from quantem.gpu.io.backends.mps import load_prepared_frames
+
+        data = load_prepared_frames(
+            prepared,
+            det_bin=det_bin,
+            pixel_mask=pixel_mask if apply_mask else None,
+            verbose=False,
+        )
+
+    data = _take_requested_scan_order(data, inverse)
+    logical_scan_indices = (
+        scan_positions[:, 0] * int(full_scan_shape[1]) + scan_positions[:, 1]
+    ).astype(np.int64, copy=False)
+
+    if pixel_mask is not None:
+        meta["pixel_mask"] = pixel_mask
+    meta["full_scan_shape"] = tuple(int(v) for v in full_scan_shape)
+    meta["scan_shape"] = None
+    meta["scan_order"] = scan_order
+    meta["n_frames"] = int(frame_indices.size)
+    meta["scan_indices"] = logical_scan_indices.tolist()
+    meta["scan_positions"] = scan_positions.astype(np.int64, copy=False).tolist()
+    meta["hdf5_frame_indices"] = frame_indices.astype(np.int64, copy=False).tolist()
+    meta["unique_hdf5_frame_indices"] = unique_frame_indices.astype(
+        np.int64,
+        copy=False,
+    ).tolist()
+    meta["unique_frame_count"] = int(unique_frame_indices.size)
+    meta["duplicate_frame_count"] = int(frame_indices.size - unique_frame_indices.size)
+    meta["read_order"] = "sorted_unique_hdf5_frame_indices"
+    meta["det_bin"] = int(det_bin)
+    meta["backend"] = backend
+    meta["prepare_seconds"] = float(prepared_item["prepare_seconds"])
+    meta["decode_seconds"] = float(time.perf_counter() - t0)
+    if verbose:
+        size_gb = data.nbytes / 1e9
+        print(
+            f"  {os.path.basename(filepath)} scan_indices "
+            f"{frame_indices.size} requested / {unique_frame_indices.size} unique "
+            f"-> {tuple(data.shape)} ({size_gb:.2f} GB) "
+            f"in {time.perf_counter() - t0:.2f}s"
+        )
+    return LoadResult(data, meta)
+
+
+def _load_scan_indices_one(
+    filepath: str,
+    frame_indices: np.ndarray,
+    scan_positions: np.ndarray,
+    *,
+    backend: str,
+    full_scan_shape: tuple[int, int],
+    scan_order: ScanOrder,
+    det_bin: int,
+    apply_mask: bool,
+    verbose: bool,
+    auto_narrow: bool,
+    output_dtype: type | np.dtype | None,
+) -> LoadResult:
+    """Load one stochastic scan-index batch using sorted unique HDF5 chunks."""
+    prepared_item = _prepare_scan_indices_one(
+        filepath,
+        frame_indices,
+        scan_positions,
+        apply_mask=apply_mask,
+    )
+    return _decode_scan_indices_prepared(
+        prepared_item,
+        backend=backend,
+        full_scan_shape=full_scan_shape,
+        scan_order=scan_order,
+        det_bin=det_bin,
+        apply_mask=apply_mask,
+        verbose=verbose,
+        auto_narrow=auto_narrow,
+        output_dtype=output_dtype,
+    )
+
+
+def load_scan_indices(
+    filepath: str | list[str] | tuple[str, ...],
+    scan_indices,
+    *,
+    backend: str = "cuda",
+    scan_shape: tuple[int, int] | None = None,
+    scan_order: str = "row-major",
+    index_mode: str = "scan",
+    det_bin: int = 1,
+    apply_mask: bool = True,
+    verbose: bool = True,
+    auto_narrow: bool = True,
+    output_dtype: type | np.dtype | None = None,
+    stack: bool = True,
+    prep_workers: int | None = None,
+) -> LoadResult:
+    """Load stochastic scan positions from one or many raw HDF5 masters.
+
+    This is the ptychography/DataLoader-style sparse IO path. The requested
+    stochastic order is the returned order. Internally, each file's requested
+    scan positions are converted to flattened HDF5 frame indices, sorted and
+    de-duplicated for compressed-chunk reads, GPU-decompressed through the
+    CUDA/MPS bitshuffle+LZ4 path, then gathered back to the requested order.
+
+    Parameters
+    ----------
+    filepath
+        One master HDF5 path or a list of masters.
+    scan_indices
+        For one file, either ``(N,)`` logical row-major scan indices or
+        ``(N, 2)`` logical ``(row, col)`` positions. For multiple files, pass a
+        common ``(N,)`` / ``(N, 2)`` batch for every file, or per-file arrays
+        shaped ``(n_files, N)`` / ``(n_files, N, 2)``.
+    index_mode
+        ``"scan"`` means flat ``scan_indices`` are logical row-major scan
+        positions. ``"hdf5"`` means flat ``scan_indices`` are already physical
+        flattened HDF5 detector-frame indices. Row/column arrays are always
+        logical scan positions.
+    stack
+        For multiple files, stack into ``(n_files, N, det_r, det_c)`` when
+        shapes match. Use ``stack=False`` to return a list of per-file arrays.
+    prep_workers
+        Number of worker threads used to read and index compressed HDF5 chunks
+        before GPU decompression. Defaults to 1 because many chunked HDF5
+        layouts are limited by scattered payload reads and become slower with
+        too many concurrent readers. Set this explicitly after benchmarking the
+        local storage path.
+    """
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    from .backends import resolve_backend
+
+    resolved_backend = resolve_backend(backend)
+    if resolved_backend == "cuda" and cp is None:
+        raise RuntimeError("load_scan_indices requires CuPy/CUDA")
+    if resolved_backend not in {"cuda", "mps"}:
+        raise RuntimeError(
+            "load_scan_indices supports GPU-decompressed sparse IO on CUDA and "
+            f"MPS; backend={resolved_backend!r} was selected."
+        )
+
+    paths = list(filepath) if isinstance(filepath, (list, tuple)) else [filepath]
+    if not paths:
+        raise ValueError("filepath list must contain at least one HDF5 master")
+    order = _normalize_scan_order(scan_order)
+    if scan_shape is None:
+        first_meta = get_metadata(os.fspath(paths[0]))
+        scan_shape = first_meta.get("scan_shape")
+    if scan_shape is None:
+        raise ValueError(
+            "scan_shape is required because the HDF5 metadata did not expose a "
+            "square scan grid"
+        )
+    full_scan_shape = tuple(int(v) for v in scan_shape)
+
+    frame_lists, position_lists = _normalize_scan_indices_by_file(
+        scan_indices,
+        len(paths),
+        full_scan_shape,
+        order,
+        index_mode,
+    )
+
+    t0 = time.perf_counter()
+    worker_count = _normalize_prep_workers(prep_workers, len(paths))
+    if worker_count > 1:
+        with ThreadPoolExecutor(max_workers=worker_count) as pool:
+            prepared_items = list(
+                pool.map(
+                    lambda args: _prepare_scan_indices_one(*args, apply_mask=apply_mask),
+                    [
+                        (os.fspath(path), frame_lists[i], position_lists[i])
+                        for i, path in enumerate(paths)
+                    ],
+                )
+            )
+    else:
+        prepared_items = [
+            _prepare_scan_indices_one(
+                os.fspath(path),
+                frame_lists[i],
+                position_lists[i],
+                apply_mask=apply_mask,
+            )
+            for i, path in enumerate(paths)
+        ]
+
+    per_file_meta = []
+    arrays = []
+    out = None
+    for i, prepared_item in enumerate(prepared_items):
+        result = _decode_scan_indices_prepared(
+            prepared_item,
+            backend=resolved_backend,
+            full_scan_shape=full_scan_shape,
+            scan_order=order,
+            det_bin=det_bin,
+            apply_mask=apply_mask,
+            verbose=verbose and len(paths) == 1,
+            auto_narrow=auto_narrow,
+            output_dtype=output_dtype,
+        )
+        per_file_meta.append(result.metadata)
+        if stack and len(paths) > 1:
+            if out is None:
+                if cp is not None and isinstance(result.data, cp.ndarray):
+                    out = cp.empty((len(paths), *result.data.shape), dtype=result.data.dtype)
+                else:
+                    out = np.empty((len(paths), *result.data.shape), dtype=result.data.dtype)
+            if tuple(result.data.shape) != tuple(out.shape[1:]):
+                raise ValueError(
+                    "Per-file scan-index loads have different output shapes; "
+                    "pass stack=False for variable-length batches."
+                )
+            out[i] = result.data
+        else:
+            arrays.append(result.data)
+
+    data = out if stack and len(paths) > 1 else arrays[0] if len(paths) == 1 else arrays
+    if len(paths) == 1:
+        meta = dict(per_file_meta[0])
+        meta["n_files"] = 1
+        meta["file_paths"] = [os.fspath(paths[0])]
+        meta["file_names"] = [os.path.basename(os.fspath(paths[0]))]
+        meta["prep_workers"] = int(worker_count)
+        return LoadResult(data, meta)
+
+    meta = {
+        "backend": resolved_backend,
+        "det_bin": int(det_bin),
+        "full_scan_shape": full_scan_shape,
+        "scan_shape": None,
+        "scan_order": order,
+        "n_files": len(paths),
+        "file_paths": [os.fspath(p) for p in paths],
+        "file_names": [os.path.basename(os.fspath(p)) for p in paths],
+        "n_frames": int(sum(len(x) for x in frame_lists)),
+        "prep_workers": int(worker_count),
+        "positions_per_file": [int(len(x)) for x in frame_lists],
+        "unique_frame_count_per_file": [
+            int(m["unique_frame_count"]) for m in per_file_meta
+        ],
+        "duplicate_frame_count_per_file": [
+            int(m["duplicate_frame_count"]) for m in per_file_meta
+        ],
+        "prepare_seconds_per_file": [
+            float(m["prepare_seconds"]) for m in per_file_meta
+        ],
+        "decode_seconds_per_file": [
+            float(m["decode_seconds"]) for m in per_file_meta
+        ],
+        "scan_indices_per_file": [m["scan_indices"] for m in per_file_meta],
+        "scan_positions_per_file": [m["scan_positions"] for m in per_file_meta],
+        "hdf5_frame_indices_per_file": [
+            m["hdf5_frame_indices"] for m in per_file_meta
+        ],
+        "read_order": "sorted_unique_hdf5_frame_indices_per_file",
+        "per_file_metadata": per_file_meta,
+    }
+    if verbose and len(paths) > 1:
+        size_gb = (
+            sum(arr.nbytes for arr in data) / 1e9
+            if isinstance(data, list)
+            else data.nbytes / 1e9
+        )
+        print(
+            f"  {len(paths)} masters scan_indices "
+            f"{meta['n_frames']} requested -> {size_gb:.2f} GB "
+            f"in {time.perf_counter() - t0:.2f}s"
+        )
+    return LoadResult(data, meta)
+
+
 def load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = True,
-         max_concurrent=None, scan_region=None, **kwargs):
+         max_concurrent=None, scan_region=None, scan_indices=None,
+         random_positions: int | None = None, seed=None,
+         replace: bool = False, same_random_positions: bool = False,
+         prep_workers: int | None = None, **kwargs):
     """Load 4D-STEM data — one master, or many.
 
     * ``load(master)`` → one ``LoadResult``.
     * ``load(master, scan_region=(r0, r1, c0, c1))`` → one cropped
       ``LoadResult`` without loading the full scan first.
+    * ``load(master, scan_indices=positions)`` → one stochastic sparse
+      ``LoadResult`` in the caller-provided scan-position order.
+    * ``load(master, random_positions=1000, seed=42)`` → one stochastic sparse
+      ``LoadResult`` after sampling logical scan positions for the caller.
     * ``load([masters])`` → the masters **stacked** into one 5D dataset (the
       series/viewer case).
     * ``load([masters], gpus=[0, 1])`` (or ``stack=False``) → a **list** of separate
@@ -3166,6 +3929,109 @@ def load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = Tru
         # Without this, list loads can silently materialize uint16 first and
         # only cast later, defeating the U8 memory/speed contract.
         kwargs["output_dtype"] = np.uint8
+    if sum(x is not None for x in (scan_region, scan_indices, random_positions)) > 1:
+        raise ValueError(
+            "Pass only one of scan_region=, scan_indices=, or random_positions=."
+        )
+    random_sample_meta = None
+    if random_positions is not None:
+        if args:
+            raise TypeError(
+                "load(..., random_positions=...) does not accept positional "
+                "dataset_path arguments; sparse scan loading is supported for "
+                "4D-STEM master files."
+            )
+        if str(kwargs.get("index_mode", "scan")).lower().replace("_", "-") != "scan":
+            raise ValueError(
+                "random_positions generates logical scan indices; do not pass "
+                "index_mode='hdf5'. Use scan_indices=... for physical HDF5 frame indices."
+            )
+        random_scan_shape = kwargs.get("scan_shape")
+        if random_scan_shape is None:
+            first_path = filepath[0] if isinstance(filepath, (list, tuple)) else filepath
+            random_scan_shape = get_metadata(os.fspath(first_path)).get("scan_shape")
+        if random_scan_shape is None:
+            raise ValueError(
+                "scan_shape is required for random_positions because the HDF5 "
+                "metadata did not expose a square scan grid"
+            )
+        random_scan_shape = tuple(int(v) for v in random_scan_shape)
+        n_files = len(filepath) if isinstance(filepath, (list, tuple)) else None
+        scan_indices = random_scan_indices(
+            random_positions,
+            random_scan_shape,
+            n_files=n_files,
+            seed=seed,
+            replace=replace,
+            same_for_all_files=same_random_positions,
+        )
+        random_sample_meta = {
+            "mode": "random_positions",
+            "positions_per_file": int(_normalize_random_position_count(random_positions)),
+            "scan_shape": [int(v) for v in random_scan_shape],
+            "seed": int(seed) if isinstance(seed, (int, np.integer)) else None,
+            "replace": bool(replace),
+            "same_random_positions": bool(same_random_positions),
+            "n_files": int(n_files) if n_files is not None else 1,
+            "index_space": "logical_row_major_scan",
+        }
+    if scan_indices is not None:
+        if random_sample_meta is None and seed is not None:
+            raise ValueError("seed= only applies with random_positions=.")
+        if args:
+            raise TypeError(
+                "load(..., scan_indices=...) does not accept positional "
+                "dataset_path arguments; sparse scan loading is supported for "
+                "4D-STEM master files."
+            )
+        if gpus is not None:
+            raise ValueError(
+                "load(..., scan_indices=...) does not accept gpus=. Use "
+                "CUDA_VISIBLE_DEVICES for the current single-GPU sparse path."
+            )
+        backend = kwargs.pop("backend", "auto")
+        from .backends import resolve_backend
+
+        resolved_backend = resolve_backend(backend)
+        if resolved_backend not in {"cuda", "mps"}:
+            raise RuntimeError(
+                "load(..., scan_indices=...) supports GPU-decompressed sparse "
+                f"IO on CUDA and MPS; backend={resolved_backend!r} was selected."
+            )
+        allowed = {
+            "scan_shape",
+            "scan_order",
+            "index_mode",
+            "det_bin",
+            "apply_mask",
+            "verbose",
+            "auto_narrow",
+            "output_dtype",
+        }
+        extra = sorted(set(kwargs) - allowed)
+        if extra:
+            raise TypeError(
+                "load(..., scan_indices=...) does not accept "
+                + ", ".join(f"{name}=" for name in extra)
+            )
+        result = load_scan_indices(
+            filepath,
+            scan_indices,
+            backend=resolved_backend,
+            scan_shape=kwargs.pop("scan_shape", None),
+            scan_order=kwargs.pop("scan_order", "row-major"),
+            index_mode=kwargs.pop("index_mode", "scan"),
+            det_bin=kwargs.pop("det_bin", 1),
+            apply_mask=kwargs.pop("apply_mask", True),
+            verbose=kwargs.pop("verbose", True),
+            auto_narrow=kwargs.pop("auto_narrow", True),
+            output_dtype=kwargs.pop("output_dtype", None),
+            stack=stack,
+            prep_workers=prep_workers,
+        )
+        if random_sample_meta is not None:
+            result.metadata["sample"] = random_sample_meta
+        return result
     if scan_region is not None:
         if args:
             raise TypeError(
@@ -3207,17 +4073,44 @@ def load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = Tru
                 "load(..., scan_region=...) does not accept "
                 + ", ".join(f"{name}=" for name in extra)
             )
+        region_scan_shape = kwargs.pop("scan_shape", None)
+        region_scan_order = kwargs.pop("scan_order", "row-major")
+        region_det_bin = kwargs.pop("det_bin", 1)
+        region_apply_mask = kwargs.pop("apply_mask", True)
+        region_verbose = kwargs.pop("verbose", True)
+        region_auto_narrow = kwargs.pop("auto_narrow", True)
+        region_output_dtype = kwargs.pop("output_dtype", None)
+        if region_scan_shape is not None:
+            full_scan_shape = tuple(int(v) for v in region_scan_shape)
+            normalized_region = _normalize_scan_region(scan_region, full_scan_shape)
+            if normalized_region == (
+                0,
+                int(full_scan_shape[0]),
+                0,
+                int(full_scan_shape[1]),
+            ):
+                return _load_impl(
+                    filepath,
+                    scan_shape=full_scan_shape,
+                    scan_order=region_scan_order,
+                    det_bin=region_det_bin,
+                    apply_mask=region_apply_mask,
+                    verbose=region_verbose,
+                    auto_narrow=region_auto_narrow,
+                    output_dtype=region_output_dtype,
+                    backend=resolved_backend,
+                )
         return load_scan_region(
             filepath,
             scan_region,
             backend=resolved_backend,
-            scan_shape=kwargs.pop("scan_shape", None),
-            scan_order=kwargs.pop("scan_order", "row-major"),
-            det_bin=kwargs.pop("det_bin", 1),
-            apply_mask=kwargs.pop("apply_mask", True),
-            verbose=kwargs.pop("verbose", True),
-            auto_narrow=kwargs.pop("auto_narrow", True),
-            output_dtype=kwargs.pop("output_dtype", None),
+            scan_shape=region_scan_shape,
+            scan_order=region_scan_order,
+            det_bin=region_det_bin,
+            apply_mask=region_apply_mask,
+            verbose=region_verbose,
+            auto_narrow=region_auto_narrow,
+            output_dtype=region_output_dtype,
         )
     if is_seq and (gpus is not None or not stack):
         # N separate GPU-placed datasets (parallel read, serial decode).
