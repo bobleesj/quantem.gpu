@@ -73,7 +73,7 @@ _clip_u32_to_u8_count_kernel = _lazy_kernel("clip_u32_to_u8_count_kernel")
 
 __version__ = "0.0.3"
 __all__ = [
-    "load", "load_scan_indices", "load_scan_region", "random_scan_indices", "load_parallel", "disk_of", "group_by_disk", "save", "H5Writer", "LoadResult", "wait_for_saves", "bin",
+    "load", "load_scan_indices", "random_scan_indices", "load_parallel", "disk_of", "group_by_disk", "save", "H5Writer", "LoadResult", "wait_for_saves", "bin",
     "discover_masters", "inspect_master_readiness", "is_master_ready",
     "MasterReadiness", "find_emd_sibling", "get_metadata", "read_emd_metadata",
     "read_pixel_mask", "__version__",
@@ -1558,12 +1558,12 @@ def _prepare_master_frames(
                 ds = df[dataset_path]
                 if ds.ndim != 3:
                     raise ValueError(
-                        "load_scan_region currently supports flattened "
+                        "load(..., scan_region=...) currently supports flattened "
                         f"3D detector chunks; got {ds.shape} in {data_path}"
                     )
                 if ds.chunks is None or int(ds.chunks[0]) != 1:
                     raise ValueError(
-                        "load_scan_region requires one detector frame per "
+                        "load(..., scan_region=...) requires one detector frame per "
                         f"HDF5 chunk; got chunks={ds.chunks} in {data_path}"
                     )
                 chunk_infos = []
@@ -3363,7 +3363,7 @@ def _is_uint8_browse_dtype(dtype: str | None) -> bool:
     return isinstance(dtype, str) and dtype.lower() in ("u8", "uint8")
 
 
-def load_scan_region(
+def _load_scan_crop_impl(
     filepath: str,
     scan_region: tuple[int, int, int, int] | list[int],
     *,
@@ -3407,10 +3407,10 @@ def load_scan_region(
 
     resolved_backend = resolve_backend(backend)
     if resolved_backend == "cuda" and cp is None:
-        raise RuntimeError("load_scan_region requires CuPy/CUDA")
+        raise RuntimeError("load(..., scan_region=...) requires CuPy/CUDA")
     if resolved_backend not in {"cuda", "mps"}:
         raise RuntimeError(
-            "load_scan_region supports accelerated crop-first IO on CUDA and "
+            "load(..., scan_region=...) supports accelerated crop-first IO on CUDA and "
             f"MPS; backend={resolved_backend!r} was selected."
         )
     if not os.path.isfile(filepath):
@@ -4107,7 +4107,7 @@ def load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = Tru
                     output_dtype=region_output_dtype,
                     backend=resolved_backend,
                 )
-        return load_scan_region(
+        return _load_scan_crop_impl(
             filepath,
             scan_region,
             backend=resolved_backend,

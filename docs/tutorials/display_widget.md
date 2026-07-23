@@ -15,16 +15,8 @@ result = load(
 Show4DSTEM(result.data)
 ```
 
-Existing code that imports `load_scan_region` can keep working for one release:
-
-```python
-from quantem.widget import load_scan_region
-
-result = load_scan_region("scan_master.h5", scan_region=(0, 32, 0, 32))
-```
-
-Internally, widget compatibility wrappers should re-export from `quantem.gpu`
-instead of maintaining second copies of GPU decompression or BF/DF/DPC kernels.
+Widget code should call the same `load(..., scan_region=...)` API instead of
+maintaining second copies of GPU decompression or BF/DF/DPC kernels.
 
 The target ownership split is:
 

@@ -32,7 +32,10 @@ def test_quantem_gpu_root_import_without_cupy() -> None:
         assert qg.dp_mean.__module__ == "quantem.gpu.detector"
         assert qg.bf_df_dpc.__module__ == "quantem.gpu.ssb.preprocess"
         assert qg.load_scan_indices.__module__ == "quantem.gpu.io.hdf5"
-        assert qg.load_scan_region.__module__ == "quantem.gpu.io.hdf5"
+        assert "load_scan_region" not in qg.__all__
+        assert not hasattr(qg, "load_scan_region")
+        assert "load_scan_region" not in qgio.__all__
+        assert not hasattr(qgio, "load_scan_region")
         assert qg.random_scan_indices.__module__ == "quantem.gpu.io.hdf5"
         assert qg.ssb_fit_mps.__module__ == "quantem.gpu.ssb.mps"
         assert qg.ssb_preview_mps.__module__ == "quantem.gpu.ssb.mps"

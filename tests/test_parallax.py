@@ -183,7 +183,7 @@ def test_parallax_real_env_crop_recovers_aberrations_when_available() -> None:
     cp = pytest.importorskip("cupy")
     from quantem.gpu import parallax
     from quantem.gpu.detector import detect_bf_radius
-    from quantem.gpu.io.hdf5 import load_scan_region
+    from quantem.gpu.io.hdf5 import load
 
     master_env = "QUANTEM_GPU_PARALLAX_MASTER"
     master_raw = os.environ.get(master_env)
@@ -194,9 +194,9 @@ def test_parallax_real_env_crop_recovers_aberrations_when_available() -> None:
         pytest.skip(f"{master_env} does not point to an existing file.")
 
     scan_shape = (48, 48)
-    loaded = load_scan_region(
+    loaded = load(
         str(master),
-        (232, 280, 232, 280),
+        scan_region=(232, 280, 232, 280),
         scan_shape=(512, 512),
         det_bin=1,
         verbose=False,

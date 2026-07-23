@@ -56,7 +56,6 @@ _SSB_EXPORTS = {
 _IO_EXPORTS = {
     "load",
     "load_scan_indices",
-    "load_scan_region",
     "random_scan_indices",
 }
 _PARALLAX_EXPORTS = {
@@ -103,7 +102,6 @@ __all__ = [
     "load",
     "load_calibration_products",
     "load_scan_indices",
-    "load_scan_region",
     "masked_sum",
     "mean_dp",
     "movie",

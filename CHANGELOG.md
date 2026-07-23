@@ -118,8 +118,7 @@ new `rcN` heading when that rc is published to TestPyPI.
 ## rc3 - 2026-07-14
 
 - Add `load(path, scan_region=(row_start, row_stop, col_start, col_stop))` as
-  the friendly crop-first HDF5 API. `load_scan_region()` remains available as a
-  compatibility helper.
+  the crop-first HDF5 API.
 - Move MPS crop-first sparse HDF5 decode and the lazy multi-dataset MPS loader
   into `quantem.gpu.io`, leaving `quantem.widget.multidataset_mps` as a
   compatibility re-export.

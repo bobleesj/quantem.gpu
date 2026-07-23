@@ -372,8 +372,7 @@ Implemented in this package:
   loader and kept API-compatible for the migrated slice
 - `quantem.gpu.io.hdf5.load(..., scan_region=(row_start, row_stop, col_start,
   col_stop))` for CUDA and MPS scan-ROI HDF5 loading without materializing the
-  full scan first. `load_scan_region()` is kept as a compatibility helper for
-  existing callers.
+  full scan first.
 - `quantem.gpu.io.hdf5.load(..., scan_indices=...)` and
   `load_scan_indices()` for PyTorch/DataLoader-style stochastic scan batches:
   random positions are returned in requested order, while compressed HDF5 chunks

@@ -7,7 +7,6 @@ from quantem.gpu import (
     load,
     load_calibration_products,
     load_scan_indices,
-    load_scan_region,
 )
 from quantem.gpu.io import discover_masters, get_metadata, is_master_ready
 ```
@@ -32,11 +31,6 @@ Important keyword arguments:
 | `scan_indices` | caller-provided stochastic scan positions |
 | `random_positions` | number of global random scan positions to sample |
 | `prep_workers` | explicit HDF5 preparation worker count for sparse multi-file loads |
-
-## `load_scan_region`
-
-`load_scan_region()` remains available as a compatibility helper. New code should
-prefer `load(..., scan_region=...)`.
 
 ## Stochastic scan batches
 

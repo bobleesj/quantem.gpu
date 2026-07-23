@@ -111,7 +111,7 @@ def test_load_rejects_unknown_scan_order() -> None:
         hdf5._normalize_scan_order("zigzag")
 
 
-def test_load_scan_region_maps_scan_roi_to_flat_frames(tmp_path, monkeypatch) -> None:
+def test_load_with_scan_region_maps_scan_roi_to_flat_frames(tmp_path, monkeypatch) -> None:
     """Region loading should request only the flattened scan frames in row-major order."""
     from quantem.gpu.io import hdf5
 
@@ -140,7 +140,7 @@ def test_load_scan_region_maps_scan_roi_to_flat_frames(tmp_path, monkeypatch) ->
         types.SimpleNamespace(load_prepared_frames=fake_mps_decode),
     )
 
-    result = hdf5.load_scan_region(
+    result = hdf5.load(
         str(master),
         scan_region=(1, 3, 2, 5),
         backend="mps",
@@ -165,7 +165,7 @@ def test_load_scan_region_maps_scan_roi_to_flat_frames(tmp_path, monkeypatch) ->
     }
 
 
-def test_load_scan_region_maps_serpentine_roi_to_flat_frames(tmp_path, monkeypatch) -> None:
+def test_load_with_scan_region_maps_serpentine_roi_to_flat_frames(tmp_path, monkeypatch) -> None:
     """Serpentine crop-first IO should read frames in corrected scan order."""
     from quantem.gpu.io import hdf5
 
@@ -191,7 +191,7 @@ def test_load_scan_region_maps_serpentine_roi_to_flat_frames(tmp_path, monkeypat
         types.SimpleNamespace(load_prepared_frames=fake_mps_decode),
     )
 
-    result = hdf5.load_scan_region(
+    result = hdf5.load(
         str(master),
         scan_region=(1, 3, 2, 5),
         backend="mps",
@@ -207,8 +207,8 @@ def test_load_scan_region_maps_serpentine_roi_to_flat_frames(tmp_path, monkeypat
     assert result.metadata["scan_order"] == "serpentine"
 
 
-def test_load_scan_region_is_available_through_load(monkeypatch) -> None:
-    """The friendly crop-first API is load(path, scan_region=...), not a second verb."""
+def test_scan_region_crop_is_private_implementation_behind_load(monkeypatch) -> None:
+    """The crop-first API is load(path, scan_region=...), not a second public verb."""
     from quantem.gpu.io import hdf5
 
     calls = {}
@@ -217,7 +217,7 @@ def test_load_scan_region_is_available_through_load(monkeypatch) -> None:
         calls["backend"] = backend
         return "cuda"
 
-    def fake_load_scan_region(filepath, scan_region, **kwargs):
+    def fake_load_scan_crop(filepath, scan_region, **kwargs):
         calls["filepath"] = filepath
         calls["scan_region"] = scan_region
         calls["kwargs"] = kwargs
@@ -226,7 +226,7 @@ def test_load_scan_region_is_available_through_load(monkeypatch) -> None:
             {"scan_region": scan_region},
         )
 
-    monkeypatch.setattr(hdf5, "load_scan_region", fake_load_scan_region)
+    monkeypatch.setattr(hdf5, "_load_scan_crop_impl", fake_load_scan_crop)
     monkeypatch.setattr("quantem.gpu.io.backends.resolve_backend", fake_resolve_backend)
 
     result = hdf5.load(
@@ -272,11 +272,11 @@ def test_full_scan_region_routes_to_full_loader(monkeypatch) -> None:
             {"scan_shape": (4, 5)},
         )
 
-    def fail_load_scan_region(*args, **kwargs):
+    def fail_load_scan_crop(*args, **kwargs):
         raise AssertionError("full scan region must use the full loader")
 
     monkeypatch.setattr(hdf5, "_load_impl", fake_load_impl)
-    monkeypatch.setattr(hdf5, "load_scan_region", fail_load_scan_region)
+    monkeypatch.setattr(hdf5, "_load_scan_crop_impl", fail_load_scan_crop)
     monkeypatch.setattr("quantem.gpu.io.backends.resolve_backend", fake_resolve_backend)
 
     result = hdf5.load(
@@ -615,7 +615,7 @@ def test_load_random_positions_rejects_hdf5_index_mode() -> None:
         )
 
 
-def test_load_scan_region_routes_mps_to_sparse_decoder(tmp_path, monkeypatch) -> None:
+def test_load_with_scan_region_routes_mps_to_sparse_decoder(tmp_path, monkeypatch) -> None:
     """MPS crop-first IO should use quantem.gpu's sparse Metal decode path."""
     from quantem.gpu.io import hdf5
 
@@ -693,7 +693,7 @@ def test_mps_multi_dataset_loader_is_owned_by_quantem_gpu(monkeypatch) -> None:
     assert calls["kwargs"]["verbose"] is False
 
 
-def test_load_scan_region_rejects_slice_and_range_forms() -> None:
+def test_load_with_scan_region_rejects_slice_and_range_forms() -> None:
     """Keep the public crop API simple: one flat row/column bounds tuple."""
     from quantem.gpu.io import hdf5
 
@@ -701,7 +701,7 @@ def test_load_scan_region_rejects_slice_and_range_forms() -> None:
         hdf5._normalize_scan_region((slice(0, 1), range(0, 1)), (5, 6))
 
 
-def test_load_scan_region_rejects_cpu_backend(monkeypatch) -> None:
+def test_load_with_scan_region_rejects_cpu_backend(monkeypatch) -> None:
     """Crop-first loading should fail honestly when no accelerated backend exists."""
     from quantem.gpu.io import hdf5
 
