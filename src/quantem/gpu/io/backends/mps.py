@@ -468,7 +468,9 @@ _bin_u16_fn = _library.newFunctionWithName_("bin_sum_u16")
 _bin_u32_fn = _library.newFunctionWithName_("bin_sum_u32")
 _bin_tiled_u16_fn = _library.newFunctionWithName_("bin_sum_tiled_u16")
 _zero_bad_u16_fn = _library.newFunctionWithName_("zero_bad_pixels_u16")
+_zero_bad_u32_fn = _library.newFunctionWithName_("zero_bad_pixels_u32")
 _clip_u16_to_u8_fn = _library.newFunctionWithName_("clip_u16_to_u8")
+_clip_u32_to_u8_fn = _library.newFunctionWithName_("clip_u32_to_u8")
 _narrow_u32_to_u16_masked_fn = _library.newFunctionWithName_("narrow_u32_to_u16_masked")
 _row_prefix_masked_u16_fn = _library.newFunctionWithName_("row_prefix_masked_u16")
 _row_prefix_u16_fn = _library.newFunctionWithName_("row_prefix_u16")
@@ -479,8 +481,12 @@ _bin_u16_pipeline, _ = _device.newComputePipelineStateWithFunction_error_(_bin_u
 _bin_u32_pipeline, _ = _device.newComputePipelineStateWithFunction_error_(_bin_u32_fn, None)
 _bin_tiled_u16_pipeline, _ = _device.newComputePipelineStateWithFunction_error_(_bin_tiled_u16_fn, None)
 _zero_bad_u16_pipeline, _ = _device.newComputePipelineStateWithFunction_error_(_zero_bad_u16_fn, None)
+_zero_bad_u32_pipeline, _ = _device.newComputePipelineStateWithFunction_error_(_zero_bad_u32_fn, None)
 _clip_u16_to_u8_pipeline, _ = _device.newComputePipelineStateWithFunction_error_(
     _clip_u16_to_u8_fn, None
+)
+_clip_u32_to_u8_pipeline, _ = _device.newComputePipelineStateWithFunction_error_(
+    _clip_u32_to_u8_fn, None
 )
 _narrow_u32_to_u16_masked_pipeline, _ = (
     _device.newComputePipelineStateWithFunction_error_(
@@ -590,11 +596,21 @@ def _normalize_output_dtype(output_dtype: type | np.dtype | str | None) -> np.dt
             output_dtype = np.uint8
         elif token in {"u16", "uint16"}:
             output_dtype = np.uint16
+        elif token in {"u32", "uint32"}:
+            output_dtype = np.uint32
+        elif token in {"u4", "uint4"}:
+            raise NotImplementedError(
+                "MPS output_dtype='u4' means packed 4-bit detector counts "
+                "(0..15), not NumPy's four-byte '<u4' dtype. Packed uint4 "
+                "MPS load is not implemented yet; use output_dtype='uint8' "
+                "or output_dtype='uint16'."
+            )
     dtype = np.dtype(output_dtype)
-    if dtype not in (np.dtype(np.uint8), np.dtype(np.uint16)):
+    if dtype not in (np.dtype(np.uint8), np.dtype(np.uint16), np.dtype(np.uint32)):
         raise ValueError(
             "MPS chunk-backed load currently supports output_dtype=None or "
-            "output_dtype=np.uint8/np.uint16. Use CUDA or a small crop for other casts."
+            "output_dtype=np.uint8/np.uint16/np.uint32. Use CUDA or a small "
+            "crop for other casts."
         )
     return dtype
 
@@ -613,22 +629,26 @@ def _mtl_array_from_buffer(
     return arr
 
 
-def _cast_mtl_u16_to_u8(src: np.ndarray) -> _MtlArray:
-    """Clip a Metal-backed uint16 array into a new Metal-backed uint8 array."""
+def _cast_mtl_integer_to_u8(src: np.ndarray) -> _MtlArray:
+    """Clip a Metal-backed uint16/uint32 array into a Metal-backed uint8 array."""
     src_dtype = np.dtype(src.dtype)
     if src_dtype == np.dtype(np.uint8):
         out = src.view(_MtlArray)
         out._mtl = src._mtl
         return out
-    if src_dtype != np.dtype(np.uint16) or not hasattr(src, "_mtl"):
+    if src_dtype not in (np.dtype(np.uint16), np.dtype(np.uint32)) or not hasattr(src, "_mtl"):
         raise TypeError(
-            "MPS uint8 output requires a Metal-backed uint16 source array."
+            "MPS uint8 output requires a Metal-backed uint16 or uint32 source array."
         )
     n = int(src.size)
     out_mtl = _metal_buffer_alloc(n)
     cmd = _queue.commandBuffer()
     enc = cmd.computeCommandEncoder()
-    enc.setComputePipelineState_(_clip_u16_to_u8_pipeline)
+    enc.setComputePipelineState_(
+        _clip_u16_to_u8_pipeline
+        if src_dtype == np.dtype(np.uint16)
+        else _clip_u32_to_u8_pipeline
+    )
     enc.setBuffer_offset_atIndex_(src._mtl, 0, 0)
     enc.setBuffer_offset_atIndex_(out_mtl, 0, 1)
     enc.setBytes_length_atIndex_(np.array([n], dtype=np.uint32).tobytes(), 4, 2)
@@ -640,6 +660,11 @@ def _cast_mtl_u16_to_u8(src: np.ndarray) -> _MtlArray:
     cmd.commit()
     cmd.waitUntilCompleted()
     return _mtl_array_from_buffer(out_mtl, np.dtype(np.uint8), tuple(src.shape))
+
+
+def _cast_mtl_u16_to_u8(src: np.ndarray) -> _MtlArray:
+    """Backward-compatible name for integer-to-uint8 Metal clipping."""
+    return _cast_mtl_integer_to_u8(src)
 
 
 # ---------------------------------------------------------------------------
@@ -985,7 +1010,12 @@ class MPSDecompressor:
             enc.memoryBarrierWithScope_(Metal.MTLBarrierScopeBuffers)
             nbad = int(self._bad_idx_count)
             ndet = int(frame_bytes // elem_size)
-            enc.setComputePipelineState_(_zero_bad_u16_pipeline)
+            zero_pipeline = (
+                _zero_bad_u16_pipeline
+                if elem_size == 2
+                else _zero_bad_u32_pipeline
+            )
+            enc.setComputePipelineState_(zero_pipeline)
             enc.setBuffer_offset_atIndex_(out_mtl, out_byte_offset, 0)
             enc.setBuffer_offset_atIndex_(self._bad_idx_mtl, 0, 1)
             enc.setBytes_length_atIndex_(
@@ -1072,15 +1102,22 @@ class MPSDecompressor:
                 Metal.MTLSizeMake(256, 1, 1),
             )
         if cast_u8_out_mtl is not None:
-            if elem_size != 2:
-                raise ValueError("output_dtype=np.uint8 requires uint16 source data.")
+            if elem_size not in (2, 4):
+                raise ValueError(
+                    "output_dtype=np.uint8 requires uint16 or uint32 source data."
+                )
             nelem = int(
                 cast_u8_nelem
                 if cast_u8_nelem is not None
-                else n_frames * (frame_bytes // 2)
+                else n_frames * (frame_bytes // elem_size)
             )
             enc.memoryBarrierWithScope_(Metal.MTLBarrierScopeBuffers)
-            enc.setComputePipelineState_(_clip_u16_to_u8_pipeline)
+            clip_pipeline = (
+                _clip_u16_to_u8_pipeline
+                if elem_size == 2
+                else _clip_u32_to_u8_pipeline
+            )
+            enc.setComputePipelineState_(clip_pipeline)
             enc.setBuffer_offset_atIndex_(out_mtl, out_byte_offset, 0)
             enc.setBuffer_offset_atIndex_(cast_u8_out_mtl, cast_u8_out_byte_offset, 1)
             enc.setBytes_length_atIndex_(
@@ -1492,8 +1529,10 @@ class MPSDecompressor:
             and dtype == np.dtype(np.uint32)
         )
         if output_u8:
-            if dtype != np.dtype(np.uint16):
-                raise ValueError("output_dtype=np.uint8 requires uint16 detector data.")
+            if dtype not in (np.dtype(np.uint16), np.dtype(np.uint32)):
+                raise ValueError(
+                    "output_dtype=np.uint8 requires uint16 or uint32 detector data."
+                )
             if row_prefix:
                 raise ValueError(
                     "output_dtype=np.uint8 cannot be combined with row_prefix=True."
@@ -1535,10 +1574,10 @@ class MPSDecompressor:
         if row_prefix:
             self._set_bad_pixels(pixel_mask, frame_shape)
             self._prefix_overflow_np[0] = 0
-            zero_bad = bool(self._bad_idx_count and elem_size == 2)
+            zero_bad = bool(self._bad_idx_count and elem_size in (2, 4))
         else:
             self._set_bad_pixels(pixel_mask, frame_shape)
-            zero_bad = bool(self._bad_idx_count and elem_size == 2)
+            zero_bad = bool(self._bad_idx_count and elem_size in (2, 4))
         if output_u16_narrow:
             self._set_mask(pixel_mask, int(frame_shape[0]), int(frame_shape[1]))
             self._cast_overflow_np[0] = 0
@@ -1968,6 +2007,7 @@ class MPSDecompressor:
         det_bin: int = 1,
         pixel_mask: np.ndarray | None = None,
         verbose: bool = False,
+        output_dtype: type | np.dtype | str | None = None,
     ) -> np.ndarray:
         """Decompress selected prepared HDF5 chunks into an MPS-backed array.
 
@@ -1984,8 +2024,19 @@ class MPSDecompressor:
         total_frames = int(prepared["total_frames"])
         frame_shape = tuple(int(v) for v in prepared["frame_shape"])
         dtype = np.dtype(prepared["dtype"])
+        final_dtype = _normalize_output_dtype(output_dtype) or dtype
         frame_bytes = int(prepared["frame_bytes"])
         elem_size = int(dtype.itemsize)
+        output_u8 = final_dtype == np.dtype(np.uint8)
+        output_u16_narrow = (
+            final_dtype == np.dtype(np.uint16)
+            and dtype == np.dtype(np.uint32)
+        )
+        if final_dtype != dtype and not output_u8 and not output_u16_narrow:
+            raise ValueError(
+                f"MPS sparse IO cannot cast {dtype} to {final_dtype} during "
+                "decode. Use native dtype or request uint8 browse clipping."
+            )
         if total_frames > self.max_frames:
             raise ValueError(
                 f"Prepared crop has {total_frames} frames but this MPS decoder "
@@ -2022,6 +2073,12 @@ class MPSDecompressor:
         if pixel_mask is None:
             pixel_mask = prepared.get("pixel_mask")
         if det_bin > 1:
+            if output_u16_narrow:
+                raise ValueError(
+                    "MPS sparse detector-bin IO cannot narrow uint32 to uint16 "
+                    "during binning. Use native uint32 or dtype='u8' for "
+                    "explicit clipped browsing."
+                )
             det_row, det_col = frame_shape
             if det_row % det_bin or det_col % det_bin:
                 raise ValueError(
@@ -2052,12 +2109,24 @@ class MPSDecompressor:
             cmd.waitUntilCompleted()
             out = out_np.view(dtype).reshape((total_frames,) + out_shape).view(_MtlArray)
             out._mtl = out_mtl
+            if output_u8:
+                out = _cast_mtl_integer_to_u8(out)
         else:
             self._set_bad_pixels(pixel_mask, frame_shape)
-            zero_bad = bool(self._bad_idx_count and elem_size == 2)
+            zero_bad = bool(self._bad_idx_count and elem_size in (2, 4))
+            frame_elems = int(np.prod(frame_shape, dtype=np.uint64))
+            final_frame_bytes = frame_elems * int(final_dtype.itemsize)
             out_total_bytes = total_frames * frame_bytes
             out_mtl = _metal_buffer_alloc(out_total_bytes)
             out_np = _numpy_view(out_mtl, np.uint8, out_total_bytes)
+            cast_u8_out_mtl = None
+            cast_u16_out_mtl = None
+            if output_u8:
+                cast_u8_out_mtl = _metal_buffer_alloc(total_frames * final_frame_bytes)
+            elif output_u16_narrow:
+                cast_u16_out_mtl = _metal_buffer_alloc(total_frames * final_frame_bytes)
+                self._set_mask(pixel_mask, int(frame_shape[0]), int(frame_shape[1]))
+                self._cast_overflow_np[0] = 0
             cmd = self._submit_gpu(
                 total_frames,
                 frame_bytes,
@@ -2072,10 +2141,37 @@ class MPSDecompressor:
                 out_mtl=out_mtl,
                 zero_bad=zero_bad,
                 det_shape=frame_shape,
+                cast_u8_out_mtl=cast_u8_out_mtl,
+                cast_u8_nelem=total_frames * frame_elems if output_u8 else None,
+                cast_u16_out_mtl=cast_u16_out_mtl,
+                cast_u16_nelem=(
+                    total_frames * frame_elems if output_u16_narrow else None
+                ),
+                cast_u16_ndet=frame_elems if output_u16_narrow else None,
+                cast_u16_overflow_mtl=(
+                    self._cast_overflow_mtl if output_u16_narrow else None
+                ),
             )
             cmd.waitUntilCompleted()
-            out = out_np.view(dtype).reshape((total_frames,) + frame_shape).view(_MtlArray)
-            out._mtl = out_mtl
+            if output_u16_narrow and int(self._cast_overflow_np[0]) != 0:
+                raise RuntimeError(
+                    "output_dtype=np.uint16 cannot losslessly represent this "
+                    "uint32 detector data after dead-pixel masking. Use the "
+                    "native uint32 path."
+                )
+            final_mtl = (
+                cast_u8_out_mtl
+                if output_u8
+                else cast_u16_out_mtl
+                if output_u16_narrow
+                else out_mtl
+            )
+            out = _numpy_view(
+                final_mtl,
+                final_dtype,
+                total_frames * frame_elems,
+            ).reshape((total_frames,) + frame_shape).view(_MtlArray)
+            out._mtl = final_mtl
         if verbose:
             print(
                 f"MPS sparse crop: {total_frames} frames, "
@@ -2167,6 +2263,15 @@ def load_mps_4dstem(
         fast_det_bin = int(fast_det_bin)
         if fast_det_bin <= 1:
             fast_det_bin = None
+    if (
+        det_bin > 1
+        and final_dtype != plan.dtype
+        and final_dtype != np.dtype(np.uint8)
+    ):
+        raise ValueError(
+            "MPS detector-bin loads support native dtype or dtype='u8' browse "
+            "clipping. Use det_bin=1 for guarded uint32 -> uint16 narrowing."
+        )
     _check_mps_memory_guard(
         plan,
         det_bin=det_bin,
@@ -2282,6 +2387,7 @@ def load_prepared_frames(
     det_bin: int = 1,
     pixel_mask: np.ndarray | None = None,
     verbose: bool = False,
+    output_dtype: type | np.dtype | str | None = None,
 ) -> np.ndarray:
     """Decode sparse prepared HDF5 frames with the MPS backend.
 
@@ -2306,6 +2412,7 @@ def load_prepared_frames(
         det_bin=det_bin,
         pixel_mask=pixel_mask,
         verbose=verbose,
+        output_dtype=output_dtype,
     )
 
 

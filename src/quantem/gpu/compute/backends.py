@@ -77,6 +77,7 @@ import threading
 import numpy as np
 
 from quantem.gpu.compute.backend import ComputeBackend  # noqa: F401
+from quantem.gpu.uint4 import is_packed_uint4
 
 # Cap transient float32 memory per reduction chunk (matches the widget budget).
 _CHUNK_BYTE_BUDGET = 600 * 1024 * 1024
@@ -98,6 +99,14 @@ def compute_backend(data):
     One selection point here means callers (widget + web Browse) never branch
     on hardware themselves.
     """
+    if is_packed_uint4(data):
+        if data.backend == "cuda":
+            return CudaPackedUInt4Compute(data)
+        raise NotImplementedError(
+            "Packed uint4 compute currently has optimized CUDA kernels only. "
+            f"Got backend={data.backend!r}; use dtype='uint8' on this backend "
+            "until a packed uint4 kernel is available."
+        )
     if getattr(data, "_is_gpu_frames", False):
         return MetalRawBackend(data)
     cls_name = type(data).__module__.split(".")[0]
@@ -346,8 +355,13 @@ class MetalRawBackend:
         self._com_cache = None  # full-detector CoM (com_col, com_row), eager-built below
         self._total_cache = None
         self._fast_total_cache = None
-        self._auto_fast = (self.det_bin == 1 and det[0] >= 96
-                           and hasattr(self._cf, "ensure_fast_interaction"))
+        cf_dtype = np.dtype(getattr(self._cf, "_np_dtype", np.uint16))
+        self._auto_fast = (
+            self.det_bin == 1
+            and det[0] >= 96
+            and cf_dtype != np.dtype(np.uint32)
+            and hasattr(self._cf, "ensure_fast_interaction")
+        )
         # Background radial-cache lifecycle. Only matters when row_prefix is on.
         self._radial_thread: threading.Thread | None = None
         self._radial_pending: tuple[float, float] | None = None
@@ -775,6 +789,146 @@ class CudaKernelCompute:
         got = cuda_center_of_mass(self._data, det_mask)
         if got is None:
             return self._fallback_backend().center_of_mass(det_mask)
+        com_row = got[0].get().astype(np.float32, copy=False)
+        com_col = got[1].get().astype(np.float32, copy=False)
+        out = com_col.reshape(-1), com_row.reshape(-1)
+        if det_mask is None:
+            self._com_cache = out
+        return out
+
+
+class CudaPackedUInt4Compute:
+    """CUDA backend for packed ``uint4`` detector-count arrays.
+
+    ``uint4`` is two 0..15 count values per byte. The hot virtual-image and CoM
+    paths read the packed buffer directly through RawKernels instead of unpacking
+    the full 4D stack to uint8.
+    """
+
+    capabilities: tuple[str, ...] = ()
+
+    def __init__(self, data):
+        self._data = data
+        shape = tuple(int(v) for v in data.shape)
+        if len(shape) == 4:
+            self.scan_shape = (shape[0], shape[1])
+            self.det_shape = (shape[2], shape[3])
+        elif len(shape) == 3:
+            n, dr, dc = shape
+            sr = int(round(int(n) ** 0.5))
+            self.scan_shape = (sr, int(n) // sr) if sr * sr == int(n) else (int(n),)
+            self.det_shape = (int(dr), int(dc))
+        else:
+            raise ValueError(f"expected 3D/4D packed uint4 array, got {shape}")
+        self.n_frames = int(np.prod(self.scan_shape))
+        self.device = "cuda"
+        self._total_cache_uint64 = None
+        self._com_cache = None
+        self._mask_index_cache = OrderedDict()
+
+    def frame(self, idx: int) -> np.ndarray:
+        from quantem.gpu.compute.cuda import cuda_frame_uint4_to_u8
+
+        frame = cuda_frame_uint4_to_u8(self._data, int(idx))
+        if frame is None:
+            raise RuntimeError("Packed uint4 CUDA frame unpack is unavailable.")
+        return frame.get()
+
+    def _total_counts_uint64(self):
+        if self._total_cache_uint64 is None:
+            from quantem.gpu.compute.cuda import cuda_sum_all_uint64_uint4
+
+            self._total_cache_uint64 = cuda_sum_all_uint64_uint4(self._data)
+        return self._total_cache_uint64
+
+    def _device_indices_for(self, mask_np: np.ndarray):
+        import cupy as cp
+
+        contiguous = np.ascontiguousarray(mask_np.reshape(-1), dtype=bool)
+        key = contiguous.tobytes()
+        indices = self._mask_index_cache.get(key)
+        if indices is not None:
+            self._mask_index_cache.move_to_end(key)
+            return indices
+        indices = cp.asarray(np.flatnonzero(contiguous).astype(np.int32, copy=False))
+        self._mask_index_cache[key] = indices
+        if len(self._mask_index_cache) > _CUDA_MASK_INDEX_CACHE_SIZE:
+            self._mask_index_cache.popitem(last=False)
+        return indices
+
+    def masked_sum(self, det_mask: np.ndarray) -> np.ndarray:
+        import cupy as cp
+        from quantem.gpu.compute.cuda import (
+            cuda_selected_sum_from_total_uint4,
+            cuda_selected_sum_uint4,
+        )
+
+        mask_np = np.asarray(det_mask, dtype=bool)
+        if mask_np.shape != self.det_shape:
+            raise ValueError(
+                f"det_mask shape {mask_np.shape} does not match detector shape "
+                f"{self.det_shape}."
+            )
+        selected = int(mask_np.sum())
+        if selected == 0:
+            return np.zeros(self.scan_shape, dtype=np.float32)
+        if selected == mask_np.size:
+            total = self._total_counts_uint64()
+            out = None if total is None else total.astype(cp.float32)
+        elif selected > int(mask_np.size * 0.5):
+            complement = self._device_indices_for(~mask_np)
+            total = self._total_counts_uint64()
+            out = (
+                None
+                if total is None
+                else cuda_selected_sum_from_total_uint4(self._data, complement, total)
+            )
+        else:
+            indices = self._device_indices_for(mask_np)
+            out = cuda_selected_sum_uint4(self._data, indices)
+        if out is None:
+            raise RuntimeError("Packed uint4 CUDA masked-sum kernel is unavailable.")
+        return out.get().astype(np.float32, copy=False)
+
+    def mean_dp(self) -> np.ndarray:
+        from quantem.gpu.compute.cuda import cuda_mean_dp_uint4
+
+        out = cuda_mean_dp_uint4(self._data)
+        if out is None:
+            raise RuntimeError("Packed uint4 CUDA mean-DP kernel is unavailable.")
+        return out.get().astype(np.float32, copy=False)
+
+    def reduce_frames(self, scan_indices: np.ndarray, reduce: str = "mean") -> np.ndarray:
+        import cupy as cp
+        from quantem.gpu.compute.cuda import cuda_frame_uint4_to_u8
+
+        idx = np.asarray(scan_indices, dtype=np.int64).reshape(-1)
+        n_det = int(self.det_shape[0] * self.det_shape[1])
+        if idx.size == 0:
+            return np.zeros(self.det_shape, dtype=np.float32)
+        if reduce == "max":
+            out = cp.zeros(n_det, dtype=cp.uint8)
+            for frame_idx in idx:
+                frame = cuda_frame_uint4_to_u8(self._data, int(frame_idx)).reshape(-1)
+                out = cp.maximum(out, frame)
+            return out.astype(cp.float32).reshape(self.det_shape).get()
+        acc = cp.zeros(n_det, dtype=cp.uint64)
+        for frame_idx in idx:
+            frame = cuda_frame_uint4_to_u8(self._data, int(frame_idx)).reshape(-1)
+            acc += frame.astype(cp.uint64)
+        out = acc.astype(cp.float32)
+        if reduce != "sum":
+            out /= int(idx.size)
+        return out.reshape(self.det_shape).get()
+
+    def center_of_mass(self, det_mask: np.ndarray | None = None):
+        from quantem.gpu.compute.cuda import cuda_center_of_mass_uint4
+
+        if det_mask is None and self._com_cache is not None:
+            return self._com_cache
+        got = cuda_center_of_mass_uint4(self._data, det_mask)
+        if got is None:
+            raise RuntimeError("Packed uint4 CUDA CoM kernel is unavailable.")
         com_row = got[0].get().astype(np.float32, copy=False)
         com_col = got[1].get().astype(np.float32, copy=False)
         out = com_col.reshape(-1), com_row.reshape(-1)

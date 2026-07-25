@@ -9,6 +9,12 @@ import numpy as np
 
 
 _CUDA_VI_CODE = r'''
+__device__ __forceinline__
+unsigned int uint4_at(const unsigned char* __restrict__ data, unsigned long long logical_idx) {
+    unsigned char byte = data[logical_idx >> 1];
+    return (logical_idx & 1ULL) ? ((unsigned int)(byte >> 4) & 0x0fU) : ((unsigned int)byte & 0x0fU);
+}
+
 template <typename T, typename OutT>
 __device__ __forceinline__
 void selected_sum_warp32_16f_impl(
@@ -62,6 +68,47 @@ void selected_sum_u16_16f(
     selected_sum_warp32_16f_impl(data, indices, out, nidx, ndet, nframes);
 }
 
+template <typename T, typename OutT>
+__device__ __forceinline__
+void selected_sum_warp32_16f_u64_impl(
+    const T* __restrict__ data,
+    const int* __restrict__ indices,
+    OutT* __restrict__ out,
+    int nidx,
+    int ndet,
+    int nframes
+) {
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+    int frame = blockIdx.x * blockDim.y + ty;
+    unsigned long long s = 0;
+    if (frame < nframes) {
+        const T* frame_ptr =
+            data + (unsigned long long)frame * (unsigned int)ndet;
+        for (int j = tx; j < nidx; j += 32) {
+            s += (unsigned long long)frame_ptr[indices[j]];
+        }
+    }
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        s += __shfl_down_sync(0xffffffff, s, offset);
+    }
+    if (tx == 0 && frame < nframes) {
+        out[frame] = (OutT)s;
+    }
+}
+
+extern "C" __global__
+void selected_sum_u32_16f(
+    const unsigned int* __restrict__ data,
+    const int* __restrict__ indices,
+    unsigned int* __restrict__ out,
+    int nidx,
+    int ndet,
+    int nframes
+) {
+    selected_sum_warp32_16f_u64_impl(data, indices, out, nidx, ndet, nframes);
+}
+
 extern "C" __global__
 void selected_sum_f32_u8_16f(
     const unsigned char* __restrict__ data,
@@ -84,6 +131,18 @@ void selected_sum_f32_u16_16f(
     int nframes
 ) {
     selected_sum_warp32_16f_impl(data, indices, out, nidx, ndet, nframes);
+}
+
+extern "C" __global__
+void selected_sum_f32_u32_16f(
+    const unsigned int* __restrict__ data,
+    const int* __restrict__ indices,
+    float* __restrict__ out,
+    int nidx,
+    int ndet,
+    int nframes
+) {
+    selected_sum_warp32_16f_u64_impl(data, indices, out, nidx, ndet, nframes);
 }
 
 template <typename T>
@@ -118,6 +177,34 @@ void selected_sum_from_total_f32_warp32_16f_impl(
 }
 
 extern "C" __global__
+void selected_sum_f32_uint4_16f(
+    const unsigned char* __restrict__ data,
+    const int* __restrict__ indices,
+    float* __restrict__ out,
+    int nidx,
+    int ndet,
+    int nframes
+) {
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+    int frame = blockIdx.x * blockDim.y + ty;
+    unsigned int s = 0;
+    if (frame < nframes) {
+        unsigned long long frame_base =
+            (unsigned long long)frame * (unsigned int)ndet;
+        for (int j = tx; j < nidx; j += 32) {
+            s += uint4_at(data, frame_base + (unsigned int)indices[j]);
+        }
+    }
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        s += __shfl_down_sync(0xffffffff, s, offset);
+    }
+    if (tx == 0 && frame < nframes) {
+        out[frame] = (float)s;
+    }
+}
+
+extern "C" __global__
 void selected_sum_from_total_f32_u8_16f(
     const unsigned char* __restrict__ data,
     const int* __restrict__ indices,
@@ -143,6 +230,52 @@ void selected_sum_from_total_f32_u16_16f(
     int nframes
 ) {
     selected_sum_from_total_f32_warp32_16f_impl(
+        data, indices, total, out, nidx, ndet, nframes
+    );
+}
+
+template <typename T>
+__device__ __forceinline__
+void selected_sum_from_total_f32_warp32_16f_u64_impl(
+    const T* __restrict__ data,
+    const int* __restrict__ indices,
+    const unsigned long long* __restrict__ total,
+    float* __restrict__ out,
+    int nidx,
+    int ndet,
+    int nframes
+) {
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+    int frame = blockIdx.x * blockDim.y + ty;
+    unsigned long long s = 0;
+    if (frame < nframes) {
+        const T* frame_ptr =
+            data + (unsigned long long)frame * (unsigned int)ndet;
+        for (int j = tx; j < nidx; j += 32) {
+            s += (unsigned long long)frame_ptr[indices[j]];
+        }
+    }
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        s += __shfl_down_sync(0xffffffff, s, offset);
+    }
+    if (tx == 0 && frame < nframes) {
+        unsigned long long value = total[frame] - s;
+        out[frame] = (float)value;
+    }
+}
+
+extern "C" __global__
+void selected_sum_from_total_f32_u32_16f(
+    const unsigned int* __restrict__ data,
+    const int* __restrict__ indices,
+    const unsigned long long* __restrict__ total,
+    float* __restrict__ out,
+    int nidx,
+    int ndet,
+    int nframes
+) {
+    selected_sum_from_total_f32_warp32_16f_u64_impl(
         data, indices, total, out, nidx, ndet, nframes
     );
 }
@@ -186,6 +319,35 @@ void total_sum_warp128_4f_impl(
 }
 
 extern "C" __global__
+void selected_sum_from_total_f32_uint4_16f(
+    const unsigned char* __restrict__ data,
+    const int* __restrict__ indices,
+    const unsigned long long* __restrict__ total,
+    float* __restrict__ out,
+    int nidx,
+    int ndet,
+    int nframes
+) {
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+    int frame = blockIdx.x * blockDim.y + ty;
+    unsigned int s = 0;
+    if (frame < nframes) {
+        unsigned long long frame_base =
+            (unsigned long long)frame * (unsigned int)ndet;
+        for (int j = tx; j < nidx; j += 32) {
+            s += uint4_at(data, frame_base + (unsigned int)indices[j]);
+        }
+    }
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        s += __shfl_down_sync(0xffffffff, s, offset);
+    }
+    if (tx == 0 && frame < nframes) {
+        out[frame] = (float)(total[frame] - (unsigned long long)s);
+    }
+}
+
+extern "C" __global__
 void total_sum_u8_4f(
     const unsigned char* __restrict__ data,
     unsigned long long* __restrict__ out,
@@ -198,6 +360,16 @@ void total_sum_u8_4f(
 extern "C" __global__
 void total_sum_u16_4f(
     const unsigned short* __restrict__ data,
+    unsigned long long* __restrict__ out,
+    int ndet,
+    int nframes
+) {
+    total_sum_warp128_4f_impl(data, out, ndet, nframes);
+}
+
+extern "C" __global__
+void total_sum_u32_4f(
+    const unsigned int* __restrict__ data,
     unsigned long long* __restrict__ out,
     int ndet,
     int nframes
@@ -270,6 +442,43 @@ void center_of_mass_full_warp128_4f_impl(
 }
 
 extern "C" __global__
+void total_sum_uint4_4f(
+    const unsigned char* __restrict__ data,
+    unsigned long long* __restrict__ out,
+    int ndet,
+    int nframes
+) {
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+    int frame = blockIdx.x * blockDim.y + ty;
+    int lane = tx & 31;
+    int warp = tx >> 5;
+    __shared__ unsigned long long partial[16];
+    unsigned long long s = 0;
+    if (frame < nframes) {
+        unsigned long long frame_base =
+            (unsigned long long)frame * (unsigned int)ndet;
+        for (int j = tx; j < ndet; j += 128) {
+            s += (unsigned long long)uint4_at(data, frame_base + (unsigned int)j);
+        }
+    }
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        s += __shfl_down_sync(0xffffffff, s, offset);
+    }
+    if (lane == 0) {
+        partial[ty * 4 + warp] = s;
+    }
+    __syncthreads();
+    unsigned long long v = (tx < 4) ? partial[ty * 4 + tx] : 0;
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        v += __shfl_down_sync(0xffffffff, v, offset);
+    }
+    if (tx == 0 && frame < nframes) {
+        out[frame] = v;
+    }
+}
+
+extern "C" __global__
 void center_of_mass_full_u8_4f(
     const unsigned char* __restrict__ data,
     float* __restrict__ out_row,
@@ -286,6 +495,20 @@ void center_of_mass_full_u8_4f(
 extern "C" __global__
 void center_of_mass_full_u16_4f(
     const unsigned short* __restrict__ data,
+    float* __restrict__ out_row,
+    float* __restrict__ out_col,
+    int ndet,
+    int det_cols,
+    int nframes
+) {
+    center_of_mass_full_warp128_4f_impl(
+        data, out_row, out_col, ndet, det_cols, nframes
+    );
+}
+
+extern "C" __global__
+void center_of_mass_full_u32_4f(
+    const unsigned int* __restrict__ data,
     float* __restrict__ out_row,
     float* __restrict__ out_col,
     int ndet,
@@ -365,6 +588,70 @@ void center_of_mass_selected_warp128_4f_impl(
 }
 
 extern "C" __global__
+void center_of_mass_full_uint4_4f(
+    const unsigned char* __restrict__ data,
+    float* __restrict__ out_row,
+    float* __restrict__ out_col,
+    int ndet,
+    int det_cols,
+    int nframes
+) {
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+    int frame = blockIdx.x * blockDim.y + ty;
+    int lane = tx & 31;
+    int warp = tx >> 5;
+    __shared__ unsigned long long partial_total[16];
+    __shared__ unsigned long long partial_row[16];
+    __shared__ unsigned long long partial_col[16];
+    unsigned long long total = 0;
+    unsigned long long row_sum = 0;
+    unsigned long long col_sum = 0;
+    if (frame < nframes) {
+        unsigned long long frame_base =
+            (unsigned long long)frame * (unsigned int)ndet;
+        for (int j = tx; j < ndet; j += 128) {
+            unsigned long long value =
+                (unsigned long long)uint4_at(data, frame_base + (unsigned int)j);
+            int row = j / det_cols;
+            int col = j - row * det_cols;
+            total += value;
+            row_sum += value * (unsigned long long)row;
+            col_sum += value * (unsigned long long)col;
+        }
+    }
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        total += __shfl_down_sync(0xffffffff, total, offset);
+        row_sum += __shfl_down_sync(0xffffffff, row_sum, offset);
+        col_sum += __shfl_down_sync(0xffffffff, col_sum, offset);
+    }
+    if (lane == 0) {
+        int slot = ty * 4 + warp;
+        partial_total[slot] = total;
+        partial_row[slot] = row_sum;
+        partial_col[slot] = col_sum;
+    }
+    __syncthreads();
+    unsigned long long total2 = (tx < 4) ? partial_total[ty * 4 + tx] : 0;
+    unsigned long long row2 = (tx < 4) ? partial_row[ty * 4 + tx] : 0;
+    unsigned long long col2 = (tx < 4) ? partial_col[ty * 4 + tx] : 0;
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        total2 += __shfl_down_sync(0xffffffff, total2, offset);
+        row2 += __shfl_down_sync(0xffffffff, row2, offset);
+        col2 += __shfl_down_sync(0xffffffff, col2, offset);
+    }
+    if (tx == 0 && frame < nframes) {
+        if (total2 == 0) {
+            out_row[frame] = 0.0f;
+            out_col[frame] = 0.0f;
+        } else {
+            out_row[frame] = (float)row2 / (float)total2;
+            out_col[frame] = (float)col2 / (float)total2;
+        }
+    }
+}
+
+extern "C" __global__
 void center_of_mass_selected_u8_4f(
     const unsigned char* __restrict__ data,
     const int* __restrict__ indices,
@@ -383,6 +670,133 @@ void center_of_mass_selected_u8_4f(
 extern "C" __global__
 void center_of_mass_selected_u16_4f(
     const unsigned short* __restrict__ data,
+    const int* __restrict__ indices,
+    float* __restrict__ out_row,
+    float* __restrict__ out_col,
+    int nidx,
+    int ndet,
+    int det_cols,
+    int nframes
+) {
+    center_of_mass_selected_warp128_4f_impl(
+        data, indices, out_row, out_col, nidx, ndet, det_cols, nframes
+    );
+}
+
+extern "C" __global__
+void center_of_mass_selected_uint4_4f(
+    const unsigned char* __restrict__ data,
+    const int* __restrict__ indices,
+    float* __restrict__ out_row,
+    float* __restrict__ out_col,
+    int nidx,
+    int ndet,
+    int det_cols,
+    int nframes
+) {
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+    int frame = blockIdx.x * blockDim.y + ty;
+    int lane = tx & 31;
+    int warp = tx >> 5;
+    __shared__ unsigned long long partial_total[16];
+    __shared__ unsigned long long partial_row[16];
+    __shared__ unsigned long long partial_col[16];
+    unsigned long long total = 0;
+    unsigned long long row_sum = 0;
+    unsigned long long col_sum = 0;
+    if (frame < nframes) {
+        unsigned long long frame_base =
+            (unsigned long long)frame * (unsigned int)ndet;
+        for (int j = tx; j < nidx; j += 128) {
+            int idx = indices[j];
+            unsigned long long value =
+                (unsigned long long)uint4_at(data, frame_base + (unsigned int)idx);
+            int row = idx / det_cols;
+            int col = idx - row * det_cols;
+            total += value;
+            row_sum += value * (unsigned long long)row;
+            col_sum += value * (unsigned long long)col;
+        }
+    }
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        total += __shfl_down_sync(0xffffffff, total, offset);
+        row_sum += __shfl_down_sync(0xffffffff, row_sum, offset);
+        col_sum += __shfl_down_sync(0xffffffff, col_sum, offset);
+    }
+    if (lane == 0) {
+        int slot = ty * 4 + warp;
+        partial_total[slot] = total;
+        partial_row[slot] = row_sum;
+        partial_col[slot] = col_sum;
+    }
+    __syncthreads();
+    unsigned long long total2 = (tx < 4) ? partial_total[ty * 4 + tx] : 0;
+    unsigned long long row2 = (tx < 4) ? partial_row[ty * 4 + tx] : 0;
+    unsigned long long col2 = (tx < 4) ? partial_col[ty * 4 + tx] : 0;
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        total2 += __shfl_down_sync(0xffffffff, total2, offset);
+        row2 += __shfl_down_sync(0xffffffff, row2, offset);
+        col2 += __shfl_down_sync(0xffffffff, col2, offset);
+    }
+    if (tx == 0 && frame < nframes) {
+        if (total2 == 0) {
+            out_row[frame] = 0.0f;
+            out_col[frame] = 0.0f;
+        } else {
+            out_row[frame] = (float)row2 / (float)total2;
+            out_col[frame] = (float)col2 / (float)total2;
+        }
+    }
+}
+
+extern "C" __global__
+void frame_uint4_to_u8(
+    const unsigned char* __restrict__ data,
+    unsigned char* __restrict__ out,
+    int frame,
+    int ndet
+) {
+    unsigned int j = blockIdx.x * blockDim.x + threadIdx.x;
+    if (j >= (unsigned int)ndet) {
+        return;
+    }
+    unsigned long long base = (unsigned long long)frame * (unsigned int)ndet;
+    out[j] = (unsigned char)uint4_at(data, base + j);
+}
+
+extern "C" __global__
+void mean_dp_uint4(
+    const unsigned char* __restrict__ data,
+    float* __restrict__ out,
+    int ndet,
+    int nframes
+) {
+    int det = blockIdx.x;
+    int tx = threadIdx.x;
+    __shared__ unsigned long long partial[256];
+    unsigned long long s = 0;
+    for (int frame = tx; frame < nframes; frame += blockDim.x) {
+        unsigned long long idx = (unsigned long long)frame * (unsigned int)ndet
+            + (unsigned int)det;
+        s += (unsigned long long)uint4_at(data, idx);
+    }
+    partial[tx] = s;
+    __syncthreads();
+    for (int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
+        if (tx < stride) {
+            partial[tx] += partial[tx + stride];
+        }
+        __syncthreads();
+    }
+    if (tx == 0) {
+        out[det] = (float)partial[0] / (float)nframes;
+    }
+}
+
+extern "C" __global__
+void center_of_mass_selected_u32_4f(
+    const unsigned int* __restrict__ data,
     const int* __restrict__ indices,
     float* __restrict__ out_row,
     float* __restrict__ out_col,
@@ -443,6 +857,8 @@ def _supported_raw_dtype(dtype: np.dtype) -> str | None:
         return "u8"
     if dtype == np.dtype(np.uint16):
         return "u16"
+    if dtype == np.dtype(np.uint32):
+        return "u32"
     return None
 
 
@@ -553,9 +969,6 @@ def cuda_selected_sum(data: Any, indices: Any) -> Any | None:
     n_idx = int(indices.size)
     if n_idx == 0:
         return cp.zeros(scan_shape, dtype=cp.float32)
-    if not _uint32_accum_safe(n_idx, data.dtype):
-        return None
-
     out = cp.empty(n_frames, dtype=cp.float32)
     block = (32, 16, 1)
     grid = ((n_frames + block[1] - 1) // block[1], 1, 1)
@@ -599,9 +1012,6 @@ def cuda_selected_sum_from_total(
     if int(total.size) != n_frames:
         return None
     n_idx = int(indices.size)
-    if not _uint32_accum_safe(n_idx, data.dtype):
-        return None
-
     out = cp.empty(n_frames, dtype=cp.float32)
     if n_idx == 0:
         out[...] = total.reshape(-1).astype(cp.float32)
@@ -738,4 +1148,278 @@ def cuda_center_of_mass(data: Any, det_mask: Any | None = None) -> tuple[Any, An
             ),
         )
 
+    return out_row.reshape(scan_shape), out_col.reshape(scan_shape)
+
+
+def _flatten_uint4(data: Any) -> tuple[Any, tuple[int, ...], tuple[int, int], int, int] | None:
+    from quantem.gpu.uint4 import is_packed_uint4
+
+    if not is_packed_uint4(data) or data.backend != "cuda":
+        return None
+    shape = tuple(int(v) for v in data.shape)
+    if len(shape) == 4:
+        scan_shape = (shape[0], shape[1])
+        det_shape = (shape[2], shape[3])
+    elif len(shape) == 3:
+        det_shape = (shape[1], shape[2])
+        scan_shape = _scan_shape_from_flat(shape[0])
+    else:
+        raise ValueError(
+            f"Expected 3D or 4D packed uint4 4D-STEM data, got "
+            f"{len(shape)}D with shape {shape}."
+        )
+    n_frames = int(math.prod(scan_shape))
+    n_det = int(det_shape[0] * det_shape[1])
+    return data.buffer, scan_shape, det_shape, n_frames, n_det
+
+
+def cuda_sum_all_uint64_uint4(data: Any) -> Any | None:
+    """Return per-frame total detector counts for packed CUDA uint4 data."""
+    import cupy as cp
+
+    flattened = _flatten_uint4(data)
+    if flattened is None:
+        return None
+    buffer, scan_shape, _det_shape, n_frames, n_det = flattened
+    if type(buffer).__module__.split(".", 1)[0] != "cupy":
+        return None
+    if not buffer.flags.c_contiguous:
+        return None
+    out = cp.empty(n_frames, dtype=cp.uint64)
+    block = (128, 4, 1)
+    grid = ((n_frames + block[1] - 1) // block[1], 1, 1)
+    kernel = _cuda_vi_module().get_function("total_sum_uint4_4f")
+    kernel(
+        grid,
+        block,
+        (
+            buffer,
+            out,
+            np.int32(n_det),
+            np.int32(n_frames),
+        ),
+    )
+    return out.reshape(scan_shape)
+
+
+def cuda_selected_sum_uint4(data: Any, indices: Any) -> Any | None:
+    """Sum selected detector pixels as float32 for packed CUDA uint4 data."""
+    import cupy as cp
+
+    flattened = _flatten_uint4(data)
+    if flattened is None:
+        return None
+    buffer, scan_shape, _det_shape, n_frames, n_det = flattened
+    if type(buffer).__module__.split(".", 1)[0] != "cupy":
+        return None
+    if not buffer.flags.c_contiguous:
+        return None
+    indices = cp.asarray(indices, dtype=cp.int32)
+    n_idx = int(indices.size)
+    if n_idx == 0:
+        return cp.zeros(scan_shape, dtype=cp.float32)
+    out = cp.empty(n_frames, dtype=cp.float32)
+    block = (32, 16, 1)
+    grid = ((n_frames + block[1] - 1) // block[1], 1, 1)
+    kernel = _cuda_vi_module().get_function("selected_sum_f32_uint4_16f")
+    kernel(
+        grid,
+        block,
+        (
+            buffer,
+            indices,
+            out,
+            np.int32(n_idx),
+            np.int32(n_det),
+            np.int32(n_frames),
+        ),
+    )
+    return out.reshape(scan_shape)
+
+
+def cuda_selected_sum_from_total_uint4(
+    data: Any,
+    indices: Any,
+    total: Any,
+) -> Any | None:
+    """Return ``total - selected(indices)`` for packed CUDA uint4 data."""
+    import cupy as cp
+
+    flattened = _flatten_uint4(data)
+    if flattened is None:
+        return None
+    buffer, scan_shape, _det_shape, n_frames, n_det = flattened
+    if type(buffer).__module__.split(".", 1)[0] != "cupy":
+        return None
+    if not buffer.flags.c_contiguous:
+        return None
+    indices = cp.asarray(indices, dtype=cp.int32)
+    total = cp.asarray(total, dtype=cp.uint64).reshape(-1)
+    if int(total.size) != n_frames:
+        return None
+    n_idx = int(indices.size)
+    out = cp.empty(n_frames, dtype=cp.float32)
+    if n_idx == 0:
+        out[...] = total.astype(cp.float32)
+        return out.reshape(scan_shape)
+    block = (32, 16, 1)
+    grid = ((n_frames + block[1] - 1) // block[1], 1, 1)
+    kernel = _cuda_vi_module().get_function("selected_sum_from_total_f32_uint4_16f")
+    kernel(
+        grid,
+        block,
+        (
+            buffer,
+            indices,
+            total,
+            out,
+            np.int32(n_idx),
+            np.int32(n_det),
+            np.int32(n_frames),
+        ),
+    )
+    return out.reshape(scan_shape)
+
+
+def cuda_masked_sum_uint4(
+    data: Any,
+    det_mask: Any,
+    *,
+    total: Any | None = None,
+    dense_complement_threshold: float = 0.5,
+) -> Any | None:
+    """Sum a detector mask for every scan position on packed CUDA uint4 data."""
+    import cupy as cp
+
+    flattened = _flatten_uint4(data)
+    if flattened is None:
+        return None
+    _buffer, scan_shape, det_shape, _n_frames, _n_det = flattened
+    mask_np = _as_mask_np(det_mask, det_shape)
+    selected = int(mask_np.sum())
+    n_det = int(mask_np.size)
+    if selected == 0:
+        return cp.zeros(scan_shape, dtype=cp.float32)
+    if selected == n_det:
+        total_out = total if total is not None else cuda_sum_all_uint64_uint4(data)
+        return None if total_out is None else total_out.astype(cp.float32)
+    if selected > int(n_det * dense_complement_threshold):
+        complement = np.flatnonzero(~mask_np).astype(np.int32, copy=False)
+        total_out = total if total is not None else cuda_sum_all_uint64_uint4(data)
+        if total_out is None:
+            return None
+        return cuda_selected_sum_from_total_uint4(data, complement, total_out)
+    indices = np.flatnonzero(mask_np).astype(np.int32, copy=False)
+    return cuda_selected_sum_uint4(data, indices)
+
+
+def cuda_frame_uint4_to_u8(data: Any, idx: int) -> Any | None:
+    """Return one packed CUDA uint4 diffraction pattern as a CuPy uint8 array."""
+    import cupy as cp
+
+    flattened = _flatten_uint4(data)
+    if flattened is None:
+        return None
+    buffer, _scan_shape, det_shape, n_frames, n_det = flattened
+    frame = int(idx)
+    if frame < 0 or frame >= n_frames:
+        raise IndexError(f"frame index {frame} is outside 0..{n_frames - 1}")
+    out = cp.empty(n_det, dtype=cp.uint8)
+    threads = 256
+    kernel = _cuda_vi_module().get_function("frame_uint4_to_u8")
+    kernel(
+        ((n_det + threads - 1) // threads, 1, 1),
+        (threads, 1, 1),
+        (
+            buffer,
+            out,
+            np.int32(frame),
+            np.int32(n_det),
+        ),
+    )
+    return out.reshape(det_shape)
+
+
+def cuda_mean_dp_uint4(data: Any) -> Any | None:
+    """Return the mean diffraction pattern for packed CUDA uint4 data."""
+    import cupy as cp
+
+    flattened = _flatten_uint4(data)
+    if flattened is None:
+        return None
+    buffer, _scan_shape, det_shape, n_frames, n_det = flattened
+    out = cp.empty(n_det, dtype=cp.float32)
+    kernel = _cuda_vi_module().get_function("mean_dp_uint4")
+    kernel(
+        (n_det, 1, 1),
+        (256, 1, 1),
+        (
+            buffer,
+            out,
+            np.int32(n_det),
+            np.int32(n_frames),
+        ),
+    )
+    return out.reshape(det_shape)
+
+
+def cuda_center_of_mass_uint4(
+    data: Any,
+    det_mask: Any | None = None,
+) -> tuple[Any, Any] | None:
+    """Return absolute detector-row/column CoM maps for packed CUDA uint4 data."""
+    import cupy as cp
+
+    flattened = _flatten_uint4(data)
+    if flattened is None:
+        return None
+    buffer, scan_shape, det_shape, n_frames, n_det = flattened
+    det_cols = int(det_shape[1])
+    out_row = cp.empty(n_frames, dtype=cp.float32)
+    out_col = cp.empty(n_frames, dtype=cp.float32)
+    block = (128, 4, 1)
+    grid = ((n_frames + block[1] - 1) // block[1], 1, 1)
+    module = _cuda_vi_module()
+    if det_mask is None:
+        kernel = module.get_function("center_of_mass_full_uint4_4f")
+        kernel(
+            grid,
+            block,
+            (
+                buffer,
+                out_row,
+                out_col,
+                np.int32(n_det),
+                np.int32(det_cols),
+                np.int32(n_frames),
+            ),
+        )
+    else:
+        mask_np = _as_mask_np(det_mask, det_shape)
+        selected = int(mask_np.sum())
+        if selected == 0:
+            out_row.fill(0)
+            out_col.fill(0)
+            return out_row.reshape(scan_shape), out_col.reshape(scan_shape)
+        if selected == n_det:
+            return cuda_center_of_mass_uint4(data, None)
+        indices = cp.asarray(
+            np.flatnonzero(mask_np).astype(np.int32, copy=False),
+            dtype=cp.int32,
+        )
+        kernel = module.get_function("center_of_mass_selected_uint4_4f")
+        kernel(
+            grid,
+            block,
+            (
+                buffer,
+                indices,
+                out_row,
+                out_col,
+                np.int32(selected),
+                np.int32(n_det),
+                np.int32(det_cols),
+                np.int32(n_frames),
+            ),
+        )
     return out_row.reshape(scan_shape), out_col.reshape(scan_shape)

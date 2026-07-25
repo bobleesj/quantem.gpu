@@ -11,22 +11,24 @@
 // dispatching per chunk and accumulating. A single-buffer dataset is just the
 // N=1 case. Verified bit-exact vs numpy (chunked masked_sum maxErr 0).
 //
-// Stack ships as uint8 (clip(0,255): real detector counts are 0-~200, so the
-// value IS the count, near-lossless) or uint16; dtype inferred from byte length.
+// Stack ships as uint8 (clip(0,255): real detector counts are often 0-~200, so
+// the value IS the count after a count-range audit), uint16, uint32, or float32.
 import { getGPUDevice } from "./device";
 import { decodeBslz4ToStack, decodeBslz4Batch, type Bslz4Spec } from "./bslz4";
 import { FFT_2D_SHADER } from "./fft-shader";
 
-// `mode`: 0 = uint16 (2 samples/u32), 1 = uint8 (4/u32). `sample(gp)` reads a
-// detector value at a chunk-local global pixel index.
+// `mode`: 0 = uint16 (2 samples/u32), 1 = uint8 (4/u32), 2 = float32
+// bit-pattern, 3 = uint32 (1/u32). `sample(gp)` reads an integer detector value
+// at a chunk-local global pixel index.
 const SAMPLE = `
 fn sample(gp: u32, mode: u32) -> u32 {
+  if (mode == 3u) { return data[gp]; }
   if (mode == 1u) { let w = data[gp >> 2u]; return (w >> ((gp & 3u) * 8u)) & 0xffu; }
   let w = data[gp >> 1u];
   return select(w >> 16u, w & 0xffffu, (gp & 1u) == 0u);
 }
-// Float value of a pixel. mode 2 = float32 (1 u32/pixel = IEEE-754 bit pattern -> bitcast,
-// full precision); modes 0/1 return the integer count as f32.
+// Float value of a pixel. mode 2 = float32 (1 u32/pixel = IEEE-754 bit pattern
+// -> bitcast, full precision); modes 0/1/3 return the integer count as f32.
 fn sampleF(gp: u32, mode: u32) -> f32 {
   if (mode == 2u) { return bitcast<f32>(data[gp]); }
   return f32(sample(gp, mode));
@@ -557,7 +559,7 @@ export class Show4DSTEMCompute {
   }
 
   async checksumFrames(scanIndices: number[]): Promise<Array<{ scanIndex: number; sum: number; min: number; max: number; n: number }>> {
-    const bytesPerPixel = this.mode === 0 ? 2 : this.mode === 2 ? 4 : 1;
+    const bytesPerPixel = this.mode === 0 ? 2 : (this.mode === 2 || this.mode === 3) ? 4 : 1;
     const bad = this.badPx.length ? new Set(this.badPx) : null;
     const out: Array<{ scanIndex: number; sum: number; min: number; max: number; n: number }> = [];
     for (const rawIndex of scanIndices) {
@@ -581,6 +583,9 @@ export class Show4DSTEMCompute {
         for (let i = 0; i < values.length; i++) { const v = bad?.has(i) ? 0 : values[i]; sum += v; if (v < min) min = v; if (v > max) max = v; }
       } else if (this.mode === 2) {
         const values = new Float32Array(mapped, 0, this.detSize);
+        for (let i = 0; i < values.length; i++) { const v = bad?.has(i) ? 0 : values[i]; sum += v; if (v < min) min = v; if (v > max) max = v; }
+      } else if (this.mode === 3) {
+        const values = new Uint32Array(mapped, 0, this.detSize);
         for (let i = 0; i < values.length; i++) { const v = bad?.has(i) ? 0 : values[i]; sum += v; if (v < min) min = v; if (v > max) max = v; }
       } else {
         const values = new Uint8Array(mapped, 0, this.detSize);
@@ -843,10 +848,10 @@ export class Show4DSTEMCompute {
   // Decompress a native HDF5 bitshuffle+LZ4 (bslz4) stack on the GPU and wrap the
   // decoded buffer as the (single) compute chunk - the offline "ship compressed,
   // decompress in browser, no Python" path. dtype "uint8" (offline default, clip
-  // 0-255, half memory) or "uint16" (lossless). The decoded buffer is packed in
+  // 0-255, lowest-memory browse), "uint16", "uint32", or "float32". The decoded buffer is packed in
   // [scanPos][detPixel] order matching sample() for that mode, so masked_sum /
   // reduceFrames run on it unchanged.
-  static async createFromBslz4(spec: Bslz4Spec, dtype: "uint8" | "uint16" | "float32" = "uint8", srcDtype: "uint8" | "uint16" | "uint32" | "float32" = "uint16"): Promise<Show4DSTEMCompute | null> {
+  static async createFromBslz4(spec: Bslz4Spec, dtype: "uint8" | "uint16" | "uint32" | "float32" = "uint8", srcDtype: "uint8" | "uint16" | "uint32" | "float32" = "uint16"): Promise<Show4DSTEMCompute | null> {
     const decoded = await decodeBslz4ToStack(spec, dtype, srcDtype);
     if (!decoded) return null;
     const chunks: Chunk[] = [{ buffer: decoded.buffer, startScan: 0, nScan: spec.nFrames }];
@@ -855,7 +860,7 @@ export class Show4DSTEMCompute {
 
   // Wrap already-decoded GPU stack buffers as a compute (no decode). Lets a caller pipeline
   // parse + decode itself (decode group N while parsing group N+1) and hand the finished
-  // chunk buffers here. mode: 1 = uint8, 0 = uint16.
+  // chunk buffers here. mode: 1 = uint8, 0 = uint16, 2 = float32, 3 = uint32.
   static fromGpuChunks(device: GPUDevice, chunks: { buffer: GPUBuffer; startScan: number; nScan: number }[], scanCount: number, detSize: number, mode: number): Show4DSTEMCompute {
     return new Show4DSTEMCompute(device, chunks, scanCount, detSize, mode);
   }
@@ -866,7 +871,7 @@ export class Show4DSTEMCompute {
   // reduceFrames reduce across them. Each decode reuses a ~1 GB scratch internally.
   static async createFromBslz4Chunked(
     chunkSpecs: (Bslz4Spec & { startScan: number; nScan: number })[],
-    scanCount: number, detSize: number, dtype: "uint8" | "uint16" | "float32" = "uint8",
+    scanCount: number, detSize: number, dtype: "uint8" | "uint16" | "uint32" | "float32" = "uint8",
     srcDtype: "uint8" | "uint16" | "uint32" | "float32" = "uint16",
   ): Promise<Show4DSTEMCompute | null> {
     // Batch the per-chunk decodes (one submit + await per group) so the GPU overlaps
@@ -879,18 +884,19 @@ export class Show4DSTEMCompute {
 
   // N chunks, each {bytes, startScan, nScan}. Each chunk's bytes hold its scan
   // range's frames contiguously. dtype inferred from total bytes vs total pixels.
-  static async createChunked(chunkSpecs: { bytes: Uint8Array; startScan: number; nScan: number }[], scanCount: number, detSize: number): Promise<Show4DSTEMCompute | null> {
+  static async createChunked(chunkSpecs: { bytes: Uint8Array; startScan: number; nScan: number }[], scanCount: number, detSize: number, mode?: number): Promise<Show4DSTEMCompute | null> {
     const device = await getGPUDevice();
     if (!device) return null;
     const totalBytes = chunkSpecs.reduce((a, c) => a + c.bytes.byteLength, 0);
-    const mode = totalBytes <= scanCount * detSize ? 1 : 0;  // <= 1 byte/pixel => uint8
+    const inferredMode = totalBytes <= scanCount * detSize ? 1 : 0;  // <= 1 byte/pixel => uint8
+    const sourceMode = mode ?? inferredMode;
     const chunks: Chunk[] = chunkSpecs.map((c) => {
       const padLen = Math.ceil(c.bytes.byteLength / 4) * 4;
       const buffer = device.createBuffer({ size: Math.max(4, padLen), usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
       device.queue.writeBuffer(buffer, 0, c.bytes.buffer as ArrayBuffer, c.bytes.byteOffset, c.bytes.byteLength);
       return { buffer, startScan: c.startScan, nScan: c.nScan };
     });
-    return new Show4DSTEMCompute(device, chunks, scanCount, detSize, mode);
+    return new Show4DSTEMCompute(device, chunks, scanCount, detSize, sourceMode);
   }
 
   // Virtual image: f32[scanCount]. Each chunk writes its disjoint VI slice.
@@ -1261,10 +1267,10 @@ export class Show4DSTEMCpuCompute {
     this.mode = mode;
   }
 
-  static create(stack: Uint8Array, scanCount: number, detSize: number): Show4DSTEMCpuCompute {
+  static create(stack: Uint8Array, scanCount: number, detSize: number, mode?: number): Show4DSTEMCpuCompute {
     const expectedU8 = scanCount * detSize;
-    const mode = stack.byteLength <= expectedU8 ? 1 : 0;
-    return new Show4DSTEMCpuCompute(stack, scanCount, detSize, mode);
+    const inferredMode = stack.byteLength <= expectedU8 ? 1 : 0;
+    return new Show4DSTEMCpuCompute(stack, scanCount, detSize, mode ?? inferredMode);
   }
 
   async frameAt(scanIdx: number): Promise<Float32Array> {
@@ -1354,6 +1360,22 @@ export class Show4DSTEMCpuCompute {
 
   private sample(globalPixel: number): number {
     if (this.mode === 1) return this.stack[globalPixel] ?? 0;
+    if (this.mode === 3) {
+      const i = globalPixel * 4;
+      return (
+        (this.stack[i] ?? 0)
+        | ((this.stack[i + 1] ?? 0) << 8)
+        | ((this.stack[i + 2] ?? 0) << 16)
+        | ((this.stack[i + 3] ?? 0) << 24)
+      ) >>> 0;
+    }
+    if (this.mode === 2) {
+      return new DataView(
+        this.stack.buffer,
+        this.stack.byteOffset + globalPixel * 4,
+        4,
+      ).getFloat32(0, true);
+    }
     const i = globalPixel * 2;
     return (this.stack[i] ?? 0) | ((this.stack[i + 1] ?? 0) << 8);
   }

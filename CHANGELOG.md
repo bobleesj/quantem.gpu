@@ -6,6 +6,15 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- Add native four-byte unsigned (`dtype='uint32'` / `u32`) load and virtual-image
+  support across CUDA, MPS, and WebGPU, and add CUDA packed `dtype='u4'`
+  output for true 4-bit counts (`0..15`). CUDA and MPS selected sums use wider
+  internal accumulation before float32 display output; MPS and WebGPU load paths
+  preserve native `uint32` unless the caller explicitly requests `uint8` browse
+  clipping. WebGPU product-first low8 sidecars now reject `uint32` sources
+  instead of silently dropping high bits. Public `dtype='u4'` now means packed
+  two-counts-per-byte storage with exact range audit and CUDA BF/DF/CoM kernels;
+  it no longer aliases NumPy's four-byte `<u4` storage token.
 - Add MPS cache-miss generation for `load_calibration_products()`. CUDA still
   uses the RawKernel reduction path; MPS now streams raw HDF5 row chunks through
   chunk-backed Metal BF/DF/CoM reducers, records timing/memory metadata, and

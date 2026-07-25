@@ -1747,7 +1747,9 @@ function srcDtypeFromH5(dtype: string | undefined): "uint8" | "uint16" | "uint32
   const raw = String(dtype || "").toLowerCase();
   if (raw.includes("float32") || raw.includes("f4")) return "float32";
   if (raw.includes("uint8") || raw.includes("u1")) return "uint8";
-  if (raw.includes("uint32") || raw.includes("u4")) return "uint32";
+  // HDF5/NumPy "<u4" means a four-byte uint32 source. Public
+  // encoding="u4" remains reserved for packed 4-bit BF-column payloads below.
+  if (raw.includes("uint32") || raw === "<u4" || raw === ">u4" || raw === "|u4") return "uint32";
   return "uint16";
 }
 

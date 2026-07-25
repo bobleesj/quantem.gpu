@@ -45,9 +45,16 @@ Current status:
   the browser is given the local master/data files, it reads them with a classic
   Blob worker pool, parses the HDF5 chunk index, and feeds the same WGSL
   bitshuffle/LZ4 decoder as the URL path.
+- Native `uint32` HDF5 sources use WebGPU stack mode `3` and stay four-byte
+  unsigned during full-stack interaction. Request that explicitly with
+  `decodeDtype="uint32"` or `decodeDtype="u32"`; `decodeDtype="u4"` means packed
+  4-bit counts (`0..15`), not four-byte uint32, and currently raises for WebGPU
+  HDF5 decode. The product-first low8 sidecar path is intentionally rejected for
+  `uint32` because it is a clipped browse decoder,
+  not an exact high-count reducer.
 - The local-H5 full-stack path has explicit detector-bin source support through
   `detBin`. For `detBin > 1`, the decoder preserves integer counts
-  (`uint8`/`uint16`) or float32 values, then a WGSL pass sums detector-bin
+  (`uint8`/`uint16`/`uint32`) or float32 values, then a WGSL pass sums detector-bin
   blocks to a float32 binned stack while zeroing raw bad pixels before the sum.
   Full `512x512x192x192` headed Chrome signoff on a real NVIDIA Blackwell
   WebGPU adapter matched corrected-frame integer checksums exactly against the

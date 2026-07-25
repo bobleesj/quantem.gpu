@@ -55,6 +55,8 @@ def test_webgpu_compute_source_tracks_vi_and_dpc_kernels() -> None:
     assert "enc.copyBufferToBuffer(ch.buffer, byteOffset, rb, 0, byteLength)" in source
     assert "const bad = this.badPx.length ? new Set(this.badPx) : null;" in source
     assert "bad?.has(i) ? 0" in source
+    assert "if (mode == 3u) { return data[gp]; }" in source
+    assert "const values = new Uint32Array(mapped, 0, this.detSize);" in source
     assert "subgroupAdd" in source
 
 
@@ -70,6 +72,8 @@ def test_webgpu_showptycho_source_tracks_ssb_engine() -> None:
     assert "const SUPPORTED_SSB_SIZES = [128, 256, 512, 1024]" in source
     assert "makeSsbShader" in source
     assert "WebGPU SSB buffers are not ready after setup" in source
+    assert 'encoding="u4" remains reserved for packed 4-bit' in source
+    assert 'raw === "<u4" || raw === ">u4" || raw === "|u4"' in source
 
 
 def test_webgpu_h5reader_keeps_single_pass_block_metadata_parse() -> None:
@@ -93,6 +97,8 @@ def test_webgpu_h5reader_keeps_single_pass_block_metadata_parse() -> None:
     assert "export function readBslz4SelectedBlockMetadata" in source
     assert "QBSLZ4S1" in source
     assert "QH5IDX01" in source
+    assert '"<u4" is an HDF5/NumPy source-dtype spelling' in source
+    assert "/(^|[<>|])u4|uint32|int32/" in source
 
 
 def test_webgpu_bslz4_uses_fused_integer_to_uint8_decoder() -> None:
@@ -101,8 +107,12 @@ def test_webgpu_bslz4_uses_fused_integer_to_uint8_decoder() -> None:
     source = source_text("bslz4.ts")
 
     assert 'type IntegralSrcDtype = "uint8" | "uint16" | "uint32";' in source
+    assert 'type SourceDtype = "uint8" | "uint16" | "uint32" | "float32";' in source
+    assert 'type DecodeDtype = "uint8" | "uint16" | "uint32" | "float32";' in source
     assert "export interface Bslz4BatchProfile" in source
     assert "variant: string;" in source
+    assert "function validateDecodeDtypes" in source
+    assert "WebGPU dtype='uint32' requires a uint32 source." in source
     assert 'const fused = dtype === "uint8" && srcDtype !== "float32";' in source
     assert "BSLZ4_LOW8_ONLY" in source
     assert "BSLZ4_COOP_LOW8" in source
@@ -128,6 +138,7 @@ def test_webgpu_bslz4_uses_fused_integer_to_uint8_decoder() -> None:
     assert "profile.gpuWaitMs" in source
     assert 'const nbits = srcDtype === "uint32" ? 32 : srcDtype === "uint16" ? 16 : 8;' in source
     assert 'fused ? fusedBuild(device, s, srcDtype as IntegralSrcDtype, raws![i])' in source
+    assert "mode: f32 ? 2 : nativeU32 ? 3 : u8 ? 1 : 0" in source
     assert 'PASS1+PASS2_U8SRC' in source
     assert "export interface Bslz4MaskedSumSpec" in source
     assert "sourceStartScan?: number;" in source
@@ -209,8 +220,15 @@ def test_webgpu_local_h5_source_tracks_show4dstem_loader_contract() -> None:
     assert "decoded.buffers.forEach((buffer) => buffer.destroy())" in source
     assert "badPixelClearSpecs(badPixels" in source
     assert "Detector shape ${vol.detRows}x${vol.detCols} is not divisible by detBin=${detBin}" in source
-    assert "uint32 needs real-acquisition parity before enablement" in source
-    assert 'low8Only ? "uint8"' in source
+    assert 'type DecodeDtypeRequest = DecodeDtype | "u1" | "u2" | "u4" | "u32" | "uint4" | "native" | "auto";' in source
+    assert "decodeDtype?: DecodeDtypeRequest;" in source
+    assert "normalizeDecodeDtypeRequest" in source
+    assert 'if (token === "u32") return "uint32";' in source
+    assert "WebGPU decodeDtype='u4' means packed 4-bit counts" in source
+    assert "WebGPU decodeDtype='uint32' requires a uint32 HDF5 source." in source
+    assert "if (mode == 3u)" in source
+    assert "Product-first WebGPU masked sums currently use the low-8 decode" in source
+    assert "load the native uint32 stack with decodeDtype='native'" in source
     assert "detBinMs" in source
     assert "badPixels: detBin > 1 ? new Uint32Array(0) : badPixels" in source
 

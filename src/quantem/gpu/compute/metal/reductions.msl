@@ -30,6 +30,21 @@ kernel void masked_sum_u8(
     out[gid] = s;
 }
 
+kernel void masked_sum_u32(
+    device const uint*   data    [[buffer(0)]],  // (nframes, ndet) uint32, flat
+    device ulong*        out     [[buffer(2)]],  // (nframes,) uint64
+    device const uchar*  mask    [[buffer(1)]],  // (ndet,) 0/1
+    constant uint&       ndet    [[buffer(3)]],
+    constant uint&       nframes [[buffer(4)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= nframes) return;
+    device const uint* frame = data + (ulong)gid * ndet;
+    ulong s = 0ul;
+    for (uint i = 0; i < ndet; i++) s += mask[i] ? (ulong)frame[i] : 0ul;
+    out[gid] = s;
+}
+
 kernel void detector_sum_u16(
     device const ushort* data    [[buffer(0)]],   // (nframes, ndet) uint16
     device atomic_int*   out     [[buffer(1)]],   // (ndet,) int32, accumulated
@@ -204,6 +219,22 @@ kernel void mean_dp_sum_u8(
     out[pix] = s;
 }
 
+kernel void mean_dp_sum_u32(
+    device const uint*   data          [[buffer(0)]],  // raw (nframes, ndet)
+    device const uint*   frame_indices [[buffer(1)]],  // local frame indices
+    device ulong*        out           [[buffer(2)]],  // (ndet,) uint64 sum
+    constant uint&       ndet          [[buffer(3)]],
+    constant uint&       nindices      [[buffer(4)]],
+    uint pix [[thread_position_in_grid]]
+) {
+    if (pix >= ndet) return;
+    ulong s = 0ul;
+    for (uint i = 0; i < nindices; i++) {
+        s += (ulong)data[(ulong)frame_indices[i] * ndet + pix];
+    }
+    out[pix] = s;
+}
+
 kernel void mean_dp_sum_prefix_u16(
     device const ushort* data          [[buffer(0)]],  // row-prefix (nframes, ndet)
     device const uint*   frame_indices [[buffer(1)]],  // local frame indices
@@ -265,6 +296,29 @@ kernel void rowspan_sum_u8(
         uint end = ends[sp];
         for (uint pix = start; pix <= end; pix++) {
             s += (int)frame[pix];
+        }
+    }
+    out[gid] = s;
+}
+
+kernel void rowspan_sum_u32(
+    device const uint*   data    [[buffer(0)]],  // raw (nframes, ndet)
+    device const uint*   starts  [[buffer(1)]],  // inclusive flat span starts
+    device const uint*   ends    [[buffer(2)]],  // inclusive flat span ends
+    device ulong*        out     [[buffer(3)]],  // (nframes,) uint64
+    constant uint&       nspans  [[buffer(4)]],
+    constant uint&       ndet    [[buffer(5)]],
+    constant uint&       nframes [[buffer(6)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= nframes) return;
+    device const uint* frame = data + (ulong)gid * ndet;
+    ulong s = 0ul;
+    for (uint sp = 0; sp < nspans; sp++) {
+        uint start = starts[sp];
+        uint end = ends[sp];
+        for (uint pix = start; pix <= end; pix++) {
+            s += (ulong)frame[pix];
         }
     }
     out[gid] = s;
@@ -420,6 +474,24 @@ kernel void radial_cumsum_u8(
     for (uint b = 0; b < nbins; b++) o[b] = 0;
     for (uint i = 0; i < ndet; i++) o[radbin[i]] += (int)frame[i];
     int acc = 0;
+    for (uint b = 0; b < nbins; b++) { acc += o[b]; o[b] = acc; }
+}
+
+kernel void radial_cumsum_u32(
+    device const uint*   data    [[buffer(0)]],   // (nframes, ndet) uint32
+    device const int*    radbin  [[buffer(1)]],   // (ndet,) radial bin per pixel
+    device ulong*        out     [[buffer(2)]],   // (nframes, nbins) uint64 cumsum
+    constant uint&       ndet    [[buffer(3)]],
+    constant uint&       nbins   [[buffer(4)]],
+    constant uint&       nframes [[buffer(5)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= nframes) return;
+    device const uint* frame = data + (ulong)gid * ndet;
+    device ulong* o = out + (ulong)gid * nbins;
+    for (uint b = 0; b < nbins; b++) o[b] = 0ul;
+    for (uint i = 0; i < ndet; i++) o[radbin[i]] += (ulong)frame[i];
+    ulong acc = 0ul;
     for (uint b = 0; b < nbins; b++) { acc += o[b]; o[b] = acc; }
 }
 
@@ -587,5 +659,29 @@ kernel void com_u8(
         }
     }
     float invI = sI > 0 ? 1.0f / (float)sI : 0.0f;
+    out[gid] = float2((float)sx * invI, (float)sy * invI);
+}
+
+kernel void com_u32(
+    device const uint*   data    [[buffer(0)]],   // (nframes, ndet) uint32, flat
+    device const uchar*  mask    [[buffer(1)]],   // (ndet,) 0/1
+    device float2*       out     [[buffer(2)]],   // (nframes,) (CoMx, CoMy)
+    constant uint&       ndet    [[buffer(3)]],
+    constant uint&       detcols [[buffer(4)]],
+    constant uint&       nframes [[buffer(5)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= nframes) return;
+    device const uint* frame = data + (ulong)gid * ndet;
+    ulong sI = 0ul, sx = 0ul, sy = 0ul;
+    for (uint i = 0; i < ndet; i++) {
+        if (mask[i]) {
+            ulong v = (ulong)frame[i];
+            sI += v;
+            sx += v * (ulong)(i % detcols);
+            sy += v * (ulong)(i / detcols);
+        }
+    }
+    float invI = sI > 0ul ? 1.0f / (float)sI : 0.0f;
     out[gid] = float2((float)sx * invI, (float)sy * invI);
 }

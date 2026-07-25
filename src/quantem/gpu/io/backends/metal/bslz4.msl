@@ -441,6 +441,24 @@ kernel void zero_bad_pixels_u16(
     }
 }
 
+kernel void zero_bad_pixels_u32(
+    device uint*        data    [[buffer(0)]],  // (nframes, ndet) uint32
+    device const uint*  bad_pix [[buffer(1)]],  // flat detector indices
+    constant uint&      ndet    [[buffer(2)]],
+    constant uint&      nbad    [[buffer(3)]],
+    constant uint&      nframes [[buffer(4)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    uint total = nframes * nbad;
+    if (gid >= total) return;
+    uint frame = gid / nbad;
+    uint bad_i = gid - frame * nbad;
+    uint pix = bad_pix[bad_i];
+    if (pix < ndet) {
+        data[(ulong)frame * ndet + pix] = 0u;
+    }
+}
+
 kernel void clip_u16_to_u8(
     device const ushort* in  [[buffer(0)]],
     device uchar*        out [[buffer(1)]],
@@ -449,6 +467,16 @@ kernel void clip_u16_to_u8(
 ) {
     if (gid >= n) return;
     out[gid] = (uchar)min((uint)in[gid], 255u);
+}
+
+kernel void clip_u32_to_u8(
+    device const uint* in   [[buffer(0)]],
+    device uchar*      out  [[buffer(1)]],
+    constant uint&     n    [[buffer(2)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= n) return;
+    out[gid] = (uchar)min(in[gid], 255u);
 }
 
 kernel void narrow_u32_to_u16_masked(

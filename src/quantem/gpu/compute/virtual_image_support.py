@@ -13,6 +13,11 @@ import numpy as np
 
 
 VirtualImageBackend = Literal["cuda", "mps", "webgpu", "torch", "cpu"]
+_INTEGER_DTYPES = (
+    np.dtype("uint8"),
+    np.dtype("uint16"),
+    np.dtype("uint32"),
+)
 
 
 @dataclass(frozen=True)
@@ -95,13 +100,18 @@ def _cuda_mask_paths(
     dtype: np.dtype | None,
     bf_radius: float,
 ) -> dict[str, str]:
-    if det_shape is None or dtype is None or dtype not in (np.dtype("uint8"), np.dtype("uint16")):
+    if det_shape is None or dtype is None or dtype not in _INTEGER_DTYPES:
         return {}
     n_det = int(det_shape[0] * det_shape[1])
     bf = _detector_mask_pixels(det_shape, 0.0, bf_radius)
     adf = _detector_mask_pixels(det_shape, bf_radius, bf_radius * 2.0)
     df_selected = n_det - bf
     paths: dict[str, str] = {}
+    if dtype == np.dtype("uint32"):
+        paths["BF"] = "cuda_rawkernel_selected_u64_to_f32"
+        paths["ADF"] = "cuda_rawkernel_selected_u64_to_f32"
+        paths["DF"] = "cuda_rawkernel_total_minus_complement_u64_to_f32"
+        return paths
     paths["BF"] = "cuda_rawkernel_selected" if _uint32_accum_safe(bf, dtype) else "fallback"
     paths["ADF"] = "cuda_rawkernel_selected" if _uint32_accum_safe(adf, dtype) else "fallback"
     paths["DF"] = (
@@ -162,11 +172,19 @@ def virtual_image_kernel_support(
     notes: list[str] = []
 
     if selected_backend == "cuda":
-        available = dtype_np in (np.dtype("uint8"), np.dtype("uint16")) and det_shape is not None
+        available = dtype_np in _INTEGER_DTYPES and det_shape is not None
         if shape is not None and len(shape) not in (3, 4):
             notes.append("CUDA virtual-image kernels expect 3D or 4D 4D-STEM data.")
-        if dtype_np not in (np.dtype("uint8"), np.dtype("uint16")):
-            notes.append("CUDA RawKernel path currently supports resident uint8/uint16 arrays.")
+        if dtype_np == np.dtype("uint32"):
+            notes.append(
+                "CUDA uint32 selected sums use uint64 internal accumulation "
+                "and return float32 product maps for display."
+            )
+        elif dtype_np not in _INTEGER_DTYPES:
+            notes.append(
+                "CUDA RawKernel path currently supports resident uint8, "
+                "uint16, and uint32 arrays."
+            )
         mask_paths = _cuda_mask_paths(det_shape, dtype_np, bf_radius)
         return VirtualImageKernelSupport(
             backend="cuda",
@@ -184,12 +202,18 @@ def virtual_image_kernel_support(
 
     if selected_backend == "mps":
         available = (
-            dtype_np in (np.dtype("uint8"), np.dtype("uint16"))
+            dtype_np in _INTEGER_DTYPES
             and det_shape is not None
         )
-        if dtype_np not in (np.dtype("uint8"), np.dtype("uint16")):
+        if dtype_np == np.dtype("uint32"):
             notes.append(
-                "MPS MetalVirtualImage currently targets uint8/uint16 "
+                "MPS uint32 chunks use uint64 selected-sum accumulators; "
+                "fast detector-bin sidecars are disabled until the requested "
+                "bin fits the source count range."
+            )
+        elif dtype_np not in _INTEGER_DTYPES:
+            notes.append(
+                "MPS MetalVirtualImage currently targets uint8, uint16, and uint32 "
                 "chunk-backed data."
             )
         return VirtualImageKernelSupport(
@@ -214,13 +238,29 @@ def virtual_image_kernel_support(
 
     if selected_backend == "webgpu":
         available = (
-            dtype_np in (np.dtype("uint8"), np.dtype("uint16"), np.dtype("float32"))
+            dtype_np in (
+                np.dtype("uint8"),
+                np.dtype("uint16"),
+                np.dtype("uint32"),
+                np.dtype("float32"),
+            )
             and det_shape is not None
         )
-        if dtype_np not in (np.dtype("uint8"), np.dtype("uint16"), np.dtype("float32")):
+        if dtype_np == np.dtype("uint32"):
+            notes.append(
+                "WebGPU native uint32 full-stack interaction uses mode 3. "
+                "Product-first low8 sidecars are intentionally disabled for "
+                "uint32 unless a future exact uint32 product-first reducer is used."
+            )
+        elif dtype_np not in (
+            np.dtype("uint8"),
+            np.dtype("uint16"),
+            np.dtype("uint32"),
+            np.dtype("float32"),
+        ):
             notes.append(
                 "Show4DSTEM WebGPU masked-sum supports uint8, uint16, "
-                "and float32 packed data."
+                "uint32, and float32 packed data."
             )
         notes.append(
             "Browser adapter must be verified at runtime; SwiftShader is not "

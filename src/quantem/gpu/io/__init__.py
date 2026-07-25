@@ -7,6 +7,7 @@ _HDF5_EXPORTS = {
     "H5Writer",
     "LoadResult",
     "MasterReadiness",
+    "resample_scan_crop",
     "bin",
     "discover_masters",
     "find_emd_sibling",

@@ -20,6 +20,9 @@ from __future__ import annotations
 
 import os
 import re
+import hashlib
+import pickle
+import tempfile
 from dataclasses import dataclass
 from typing import Any, Literal, NamedTuple
 
@@ -41,8 +44,15 @@ from numba import njit, prange
 
 from .constants import BLOCK_SIZE
 from .save import H5Writer, save, wait_for_saves
+from quantem.gpu.uint4 import is_packed_uint4, pack_uint4_cupy
 
 ScanOrder = Literal["row-major", "serpentine"]
+_MASTER_FRAME_SOURCE_CACHE: dict[tuple[str, tuple[str, ...], bool], tuple[list[dict[str, Any]], Any]] = {}
+_FRAME_SOURCE_CACHE_ENV = "QUANTEM_GPU_HDF5_FRAME_SOURCE_CACHE_DIR"
+_TRUST_FRAME_SOURCE_CACHE_ENV = "QUANTEM_GPU_HDF5_TRUST_FRAME_SOURCE_CACHE"
+_PREPARED_SCAN_CROP_CACHE_ENV = "QUANTEM_GPU_HDF5_PREPARED_SCAN_CROP_CACHE_DIR"
+_SCAN_CROP_MAX_GAP_ENV = "QUANTEM_GPU_HDF5_SCAN_CROP_MAX_GAP_BYTES"
+_PREPARED_SCAN_CROP_CACHE_VERSION = 1
 
 
 # Lazy bitshuffle+LZ4 kernel proxies. The kernels compile only on first CALL
@@ -70,10 +80,12 @@ _clip_u16_to_u8_kernel = _lazy_kernel("clip_u16_to_u8_kernel")
 _clip_u32_to_u8_kernel = _lazy_kernel("clip_u32_to_u8_kernel")
 _clip_u16_to_u8_count_kernel = _lazy_kernel("clip_u16_to_u8_count_kernel")
 _clip_u32_to_u8_count_kernel = _lazy_kernel("clip_u32_to_u8_count_kernel")
+_RESAMPLE_SCAN_CROP_KERNELS: dict[str, Any] = {}
 
 __version__ = "0.0.3"
 __all__ = [
     "load", "load_scan_indices", "random_scan_indices", "load_parallel", "disk_of", "group_by_disk", "save", "H5Writer", "LoadResult", "wait_for_saves", "bin",
+    "resample_scan_crop",
     "discover_masters", "inspect_master_readiness", "is_master_ready",
     "MasterReadiness", "find_emd_sibling", "get_metadata", "read_emd_metadata",
     "read_pixel_mask", "__version__",
@@ -374,6 +386,120 @@ def _normalize_scan_region(
     return row_start, row_stop, col_start, col_stop
 
 
+def _looks_like_single_scan_region(scan_region) -> bool:
+    """Return True when scan_region is one ``(row0, row1, col0, col1)`` tuple."""
+    if not isinstance(scan_region, (tuple, list)) or len(scan_region) != 4:
+        return False
+    return not any(isinstance(item, (tuple, list, np.ndarray)) for item in scan_region)
+
+
+def _scan_regions_by_file(scan_region, n_files: int) -> tuple[list, str]:
+    """Normalize a shared or per-file scan-region argument for a master series."""
+    if _looks_like_single_scan_region(scan_region):
+        return [scan_region] * int(n_files), "shared"
+    if not isinstance(scan_region, (tuple, list)) or len(scan_region) != int(n_files):
+        raise TypeError(
+            "For load([masters], scan_region=...), pass either one "
+            "(row_start, row_stop, col_start, col_stop) region or one such "
+            "region per master."
+        )
+    regions = list(scan_region)
+    for index, region in enumerate(regions):
+        if not _looks_like_single_scan_region(region):
+            raise TypeError(
+                "Each per-master scan_region entry must be "
+                "(row_start, row_stop, col_start, col_stop); "
+                f"entry {index} is invalid."
+            )
+    return regions, "per_file"
+
+
+def _scan_shifts_by_file(scan_shift_row_col, n_files: int) -> np.ndarray:
+    """Normalize one or per-file scan shifts as ``(row_shift, col_shift)``."""
+    shifts = np.asarray(scan_shift_row_col, dtype=np.float32)
+    if shifts.shape == (2,):
+        return np.tile(shifts.reshape(1, 2), (int(n_files), 1))
+    if shifts.shape == (int(n_files), 2):
+        return shifts.astype(np.float32, copy=False)
+    raise TypeError(
+        "scan_shift_row_col must be one (row_shift, col_shift) pair or an "
+        f"(n_files, 2) array; got shape {shifts.shape} for {n_files} files."
+    )
+
+
+def _scan_region_dict(
+    region: tuple[int, int, int, int],
+) -> dict[str, int | list[int]]:
+    """Return JSON-friendly scan-region metadata."""
+    row_start, row_stop, col_start, col_stop = (int(value) for value in region)
+    return {
+        "row_start": row_start,
+        "row_stop": row_stop,
+        "col_start": col_start,
+        "col_stop": col_stop,
+        "shape": [row_stop - row_start, col_stop - col_start],
+    }
+
+
+def _normalize_detector_region(
+    detector_region,
+    detector_shape: tuple[int, int],
+) -> tuple[int, int, int, int]:
+    """Validate a detector-space region as ``(row_start, row_stop, col_start, col_stop)``."""
+    if not isinstance(detector_region, (tuple, list)) or len(detector_region) != 4:
+        raise TypeError(
+            "detector_region must be "
+            "(row_start, row_stop, col_start, col_stop)"
+        )
+    try:
+        row_start, row_stop, col_start, col_stop = (
+            int(value) for value in detector_region
+        )
+    except (TypeError, ValueError) as exc:
+        raise TypeError(
+            "detector_region must be "
+            "(row_start, row_stop, col_start, col_stop)"
+        ) from exc
+
+    detector_rows, detector_cols = (int(value) for value in detector_shape)
+    if not (0 <= row_start < row_stop <= detector_rows):
+        raise ValueError(
+            "detector row region "
+            f"[{row_start}, {row_stop}) is outside detector height {detector_rows}"
+        )
+    if not (0 <= col_start < col_stop <= detector_cols):
+        raise ValueError(
+            "detector column region "
+            f"[{col_start}, {col_stop}) is outside detector width {detector_cols}"
+        )
+    return row_start, row_stop, col_start, col_stop
+
+
+def _detector_region_dict(
+    region: tuple[int, int, int, int],
+) -> dict[str, int | list[int]]:
+    """Return JSON-friendly detector-region metadata."""
+    row_start, row_stop, col_start, col_stop = (int(value) for value in region)
+    return {
+        "row_start": row_start,
+        "row_stop": row_stop,
+        "col_start": col_start,
+        "col_stop": col_stop,
+        "shape": [row_stop - row_start, col_stop - col_start],
+    }
+
+
+def _slice_detector_region(data, region: tuple[int, int, int, int], *, compact: bool):
+    """Slice detector rows/columns, optionally returning compact storage."""
+    row_start, row_stop, col_start, col_stop = (int(value) for value in region)
+    sliced = data[..., row_start:row_stop, col_start:col_stop]
+    if not compact:
+        return sliced
+    if cp is not None and isinstance(sliced, cp.ndarray):
+        return cp.ascontiguousarray(sliced)
+    return np.ascontiguousarray(sliced)
+
+
 def _scan_region_frame_indices(
     scan_region: tuple[int, int, int, int],
     scan_shape: tuple[int, int],
@@ -395,6 +521,228 @@ def _scan_region_frame_indices(
         physical_cols = cols if int(row) % 2 == 0 else (scan_c - 1 - cols)
         frame_indices[out_row] = int(row) * scan_c + physical_cols
     return frame_indices.reshape(-1)
+
+
+def _resample_scan_crop_kernel(dtype: np.dtype):
+    """Return a CUDA kernel for bilinear scan-space resampling."""
+    if cp is None:  # pragma: no cover - CUDA-only helper
+        raise RuntimeError("scan-crop resampling requires CuPy/CUDA")
+    dtype = np.dtype(dtype)
+    ctype_by_dtype = {
+        np.dtype(np.uint8): "unsigned char",
+        np.dtype(np.uint16): "unsigned short",
+        np.dtype(np.uint32): "unsigned int",
+        np.dtype(np.float32): "float",
+    }
+    ctype = ctype_by_dtype.get(dtype)
+    if ctype is None:
+        raise TypeError(
+            "scan-crop resampling supports uint8, uint16, uint32, "
+            f"and float32 decoded crops; got {dtype}."
+        )
+    key = dtype.str
+    kernel = _RESAMPLE_SCAN_CROP_KERNELS.get(key)
+    if kernel is not None:
+        return kernel
+    name = f"quantem_resample_scan_crop_{dtype.name.replace('float', 'f')}"
+    code = f"""
+    extern "C" __global__
+    void {name}(
+        const {ctype}* __restrict__ src,
+        float* __restrict__ dst,
+        const long long n,
+        const int src_rows,
+        const int src_cols,
+        const int det_rows,
+        const int det_cols,
+        const int out_rows,
+        const int out_cols,
+        const long long src_stride_row,
+        const long long src_stride_col,
+        const long long src_stride_det_row,
+        const long long src_stride_det_col,
+        const float source_row_start,
+        const float source_col_start,
+        const float target_row_start,
+        const float target_col_start,
+        const float shift_row,
+        const float shift_col
+    ) {{
+        long long index = (long long)blockDim.x * blockIdx.x + threadIdx.x;
+        if (index >= n) {{
+            return;
+        }}
+
+        int det_col = (int)(index % det_cols);
+        long long tmp = index / det_cols;
+        int det_row = (int)(tmp % det_rows);
+        tmp /= det_rows;
+        int out_col = (int)(tmp % out_cols);
+        int out_row = (int)(tmp / out_cols);
+
+        float src_row = target_row_start + (float)out_row + shift_row - source_row_start;
+        float src_col = target_col_start + (float)out_col + shift_col - source_col_start;
+        float max_row = src_rows > 1 ? (float)src_rows - 1.001f : 0.0f;
+        float max_col = src_cols > 1 ? (float)src_cols - 1.001f : 0.0f;
+        src_row = fminf(fmaxf(src_row, 0.0f), max_row);
+        src_col = fminf(fmaxf(src_col, 0.0f), max_col);
+
+        int r0 = (int)floorf(src_row);
+        int c0 = (int)floorf(src_col);
+        int r1 = r0 + 1 < src_rows ? r0 + 1 : src_rows - 1;
+        int c1 = c0 + 1 < src_cols ? c0 + 1 : src_cols - 1;
+        float wr = src_row - (float)r0;
+        float wc = src_col - (float)c0;
+
+        long long base00 = (long long)r0 * src_stride_row
+            + (long long)c0 * src_stride_col
+            + (long long)det_row * src_stride_det_row
+            + (long long)det_col * src_stride_det_col;
+        long long base01 = (long long)r0 * src_stride_row
+            + (long long)c1 * src_stride_col
+            + (long long)det_row * src_stride_det_row
+            + (long long)det_col * src_stride_det_col;
+        long long base10 = (long long)r1 * src_stride_row
+            + (long long)c0 * src_stride_col
+            + (long long)det_row * src_stride_det_row
+            + (long long)det_col * src_stride_det_col;
+        long long base11 = (long long)r1 * src_stride_row
+            + (long long)c1 * src_stride_col
+            + (long long)det_row * src_stride_det_row
+            + (long long)det_col * src_stride_det_col;
+
+        float p00 = (float)src[base00];
+        float p01 = (float)src[base01];
+        float p10 = (float)src[base10];
+        float p11 = (float)src[base11];
+        dst[index] =
+            (1.0f - wr) * ((1.0f - wc) * p00 + wc * p01)
+            + wr * ((1.0f - wc) * p10 + wc * p11);
+    }}
+    """
+    kernel = cp.RawKernel(code, name)
+    _RESAMPLE_SCAN_CROP_KERNELS[key] = kernel
+    return kernel
+
+
+def _resample_scan_crop_cuda(
+    data: "cp.ndarray",
+    *,
+    source_scan_region: tuple[int, int, int, int],
+    target_scan_region: tuple[int, int, int, int],
+    scan_shift_row_col,
+    scan_resample_dtype: type | np.dtype = np.float32,
+) -> "cp.ndarray":
+    """Resample a decoded scan crop into one target specimen-coordinate crop."""
+    if cp is None:  # pragma: no cover - CUDA-only helper
+        raise RuntimeError("scan-crop resampling requires CuPy/CUDA")
+    if not isinstance(data, cp.ndarray):
+        raise TypeError("scan-crop resampling requires a CuPy input array")
+    if data.ndim != 4:
+        raise ValueError(
+            "scan-crop resampling expects decoded data with shape "
+            "(scan_row, scan_col, detector_row, detector_col)"
+        )
+    output_dtype = np.dtype(scan_resample_dtype)
+    if output_dtype != np.dtype(np.float32):
+        raise TypeError(
+            "scan_resample_dtype currently supports only np.float32 because "
+            "subpixel scan resampling creates fractional detector counts."
+        )
+    row_start, row_stop, col_start, col_stop = (
+        int(value) for value in target_scan_region
+    )
+    out_rows = int(row_stop - row_start)
+    out_cols = int(col_stop - col_start)
+    src_rows, src_cols, det_rows, det_cols = (int(value) for value in data.shape)
+    itemsize = int(data.dtype.itemsize)
+    src_stride_row, src_stride_col, src_stride_det_row, src_stride_det_col = (
+        int(stride // itemsize) for stride in data.strides
+    )
+    shifts = np.asarray(scan_shift_row_col, dtype=np.float32)
+    if shifts.shape != (2,):
+        raise TypeError("one decoded crop expects one (row_shift, col_shift) pair")
+    out = cp.empty((out_rows, out_cols, det_rows, det_cols), dtype=cp.float32)
+    n = int(out.size)
+    if n == 0:
+        return out
+    kernel = _resample_scan_crop_kernel(np.dtype(data.dtype))
+    threads = 256
+    blocks = (n + threads - 1) // threads
+    source_row_start, _source_row_stop, source_col_start, _source_col_stop = (
+        int(value) for value in source_scan_region
+    )
+    kernel(
+        (blocks,),
+        (threads,),
+        (
+            data,
+            out,
+            np.int64(n),
+            np.int32(src_rows),
+            np.int32(src_cols),
+            np.int32(det_rows),
+            np.int32(det_cols),
+            np.int32(out_rows),
+            np.int32(out_cols),
+            np.int64(src_stride_row),
+            np.int64(src_stride_col),
+            np.int64(src_stride_det_row),
+            np.int64(src_stride_det_col),
+            np.float32(source_row_start),
+            np.float32(source_col_start),
+            np.float32(row_start),
+            np.float32(col_start),
+            np.float32(shifts[0]),
+            np.float32(shifts[1]),
+        ),
+    )
+    return out
+
+
+def resample_scan_crop(
+    data: "cp.ndarray",
+    *,
+    source_scan_region: tuple[int, int, int, int],
+    target_scan_region: tuple[int, int, int, int],
+    scan_shift_row_col,
+    output_dtype: type | np.dtype = np.float32,
+) -> "cp.ndarray":
+    """Resample a decoded CUDA scan crop into specimen coordinates.
+
+    Parameters
+    ----------
+    data
+        Decoded CuPy array with shape
+        ``(scan_row, scan_col, detector_row, detector_col)``. This function
+        does not read HDF5; use :func:`load` for loading.
+    source_scan_region
+        Source scan bounds of ``data`` in full-frame scan coordinates, as
+        ``(row_start, row_stop, col_start, col_stop)``.
+    target_scan_region
+        Requested output specimen-coordinate bounds, also in ``(row, col)``
+        order.
+    scan_shift_row_col
+        Per-frame scan shift ``(row_shift, col_shift)`` that maps specimen
+        coordinates into the source frame.
+    output_dtype
+        Output dtype. Only ``np.float32`` is currently supported because
+        subpixel alignment creates fractional detector counts.
+
+    Returns
+    -------
+    cupy.ndarray
+        Resampled float32 array with shape
+        ``(target_rows, aligned_cols, detector_row, detector_col)``.
+    """
+
+    return _resample_scan_crop_cuda(
+        data,
+        source_scan_region=source_scan_region,
+        target_scan_region=target_scan_region,
+        scan_shift_row_col=scan_shift_row_col,
+        scan_resample_dtype=output_dtype,
+    )
 
 
 def _scan_positions_to_frame_indices(
@@ -1516,6 +1864,378 @@ def _prepare_master(
     }
 
 
+def _file_stat_signature(path: str) -> dict[str, Any]:
+    """Return the small file signature needed to validate an IO metadata cache."""
+    stat = os.stat(path)
+    return {
+        "path": os.path.abspath(path),
+        "size": int(stat.st_size),
+        "mtime_ns": int(stat.st_mtime_ns),
+    }
+
+
+def _frame_source_cache_path(
+    filepath: str,
+    chunk_names: list[str],
+    *,
+    apply_mask: bool,
+) -> str | None:
+    """Return the optional private disk-cache path for source chunk metadata."""
+    cache_dir = os.environ.get(_FRAME_SOURCE_CACHE_ENV)
+    if not cache_dir:
+        return None
+    os.makedirs(cache_dir, exist_ok=True)
+    payload = repr(
+        (
+            os.path.abspath(filepath),
+            tuple(str(name) for name in chunk_names),
+            bool(apply_mask),
+        )
+    ).encode("utf-8")
+    key = hashlib.sha256(payload).hexdigest()
+    return os.path.join(cache_dir, f"{key}.pkl")
+
+
+def _master_frame_source_refs(
+    filepath: str,
+    chunk_names: list[str],
+    *,
+    apply_mask: bool,
+) -> tuple[list[tuple[str, str]], Any, dict[str, Any]]:
+    """Read master links and mask without iterating detector-frame chunks."""
+    master_dir = os.path.dirname(os.path.abspath(filepath))
+    data_refs: list[tuple[str, str]] = []
+    pixel_mask = None
+    with h5py.File(filepath, "r") as f:
+        data_group = f["entry/data"]
+        for chunk_name in chunk_names:
+            link = data_group.get(chunk_name, getlink=True)
+            if isinstance(link, h5py.ExternalLink):
+                data_path = os.path.join(master_dir, link.filename)
+                dataset_path = link.path or "entry/data/data"
+            else:
+                ds = data_group[chunk_name]
+                data_path = ds.file.filename
+                dataset_path = ds.name
+            data_refs.append((os.path.abspath(data_path), str(dataset_path)))
+        if apply_mask:
+            mask_path = "entry/instrument/detector/detectorSpecific/pixel_mask"
+            if mask_path in f:
+                pixel_mask = f[mask_path][:]
+    signature = {
+        "master": _file_stat_signature(filepath),
+        "sources": [
+            {
+                **_file_stat_signature(data_path),
+                "dataset_path": dataset_path,
+            }
+            for data_path, dataset_path in data_refs
+        ],
+        "chunk_names": [str(name) for name in chunk_names],
+        "apply_mask": bool(apply_mask),
+    }
+    return data_refs, pixel_mask, signature
+
+
+def _load_frame_source_disk_cache(
+    cache_path: str,
+    *,
+    signature: dict[str, Any] | None,
+) -> tuple[list[dict[str, Any]], Any] | None:
+    """Load cached frame-source metadata when every file signature still matches."""
+    try:
+        with open(cache_path, "rb") as handle:
+            cached = pickle.load(handle)
+    except FileNotFoundError:
+        return None
+    except Exception:
+        return None
+    if signature is not None and cached.get("signature") != signature:
+        return None
+    source_infos = []
+    for info in cached.get("source_infos", []):
+        item = dict(info)
+        item["dtype"] = np.dtype(item["dtype"])
+        item["frame_shape"] = tuple(int(v) for v in item["frame_shape"])
+        item["chunk_infos"] = [
+            (int(offset), int(size)) for offset, size in item["chunk_infos"]
+        ]
+        source_infos.append(item)
+    if not source_infos:
+        return None
+    return source_infos, cached.get("pixel_mask")
+
+
+def _write_frame_source_disk_cache(
+    cache_path: str,
+    *,
+    signature: dict[str, Any],
+    source_infos: list[dict[str, Any]],
+    pixel_mask: Any,
+) -> None:
+    """Write cached frame-source metadata atomically for future worker processes."""
+    serial_infos = []
+    for info in source_infos:
+        item = dict(info)
+        item["dtype"] = np.dtype(item["dtype"]).str
+        item["frame_shape"] = [int(v) for v in item["frame_shape"]]
+        item["chunk_infos"] = [
+            (int(offset), int(size)) for offset, size in item["chunk_infos"]
+        ]
+        serial_infos.append(item)
+    payload = {
+        "signature": signature,
+        "source_infos": serial_infos,
+        "pixel_mask": pixel_mask,
+    }
+    cache_dir = os.path.dirname(cache_path)
+    fd, tmp_path = tempfile.mkstemp(prefix=".frame_source_", suffix=".tmp", dir=cache_dir)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            pickle.dump(payload, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        os.replace(tmp_path, cache_path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+
+def _scan_crop_max_gap_bytes() -> int:
+    """Return the compressed-span merge gap for private scan-crop profiling."""
+    raw = os.environ.get(_SCAN_CROP_MAX_GAP_ENV)
+    if raw is None or str(raw).strip() == "":
+        return 4096
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"{_SCAN_CROP_MAX_GAP_ENV} must be a non-negative integer byte count"
+        ) from exc
+    if value < 0:
+        raise ValueError(
+            f"{_SCAN_CROP_MAX_GAP_ENV} must be a non-negative integer byte count"
+        )
+    return value
+
+
+def _prepared_scan_crop_cache_dir(
+    filepath: str,
+    scan_region: tuple[int, int, int, int],
+    *,
+    scan_shape: tuple[int, int],
+    scan_order: str,
+    apply_mask: bool,
+) -> str | None:
+    """Return the optional private cache directory for one prepared scan crop."""
+    cache_root = os.environ.get(_PREPARED_SCAN_CROP_CACHE_ENV)
+    if not cache_root:
+        return None
+    os.makedirs(cache_root, exist_ok=True)
+    payload = repr(
+        (
+            _PREPARED_SCAN_CROP_CACHE_VERSION,
+            os.path.abspath(filepath),
+            tuple(int(v) for v in scan_region),
+            tuple(int(v) for v in scan_shape),
+            str(scan_order),
+            bool(apply_mask),
+        )
+    ).encode("utf-8")
+    key = hashlib.sha256(payload).hexdigest()
+    return os.path.join(cache_root, key)
+
+
+def _load_prepared_scan_crop_disk_cache(
+    cache_dir: str,
+    *,
+    signature: dict[str, Any],
+) -> dict | None:
+    """Load a prepared compressed scan crop from RAM/disk cache."""
+    meta_path = os.path.join(cache_dir, "meta.pkl")
+    read_path = os.path.join(cache_dir, "read_buffer.u8")
+    try:
+        with open(meta_path, "rb") as handle:
+            cached = pickle.load(handle)
+    except FileNotFoundError:
+        return None
+    except Exception:
+        return None
+    if cached.get("version") != _PREPARED_SCAN_CROP_CACHE_VERSION:
+        return None
+    if cached.get("signature") != signature:
+        return None
+    prepared = dict(cached.get("prepared") or {})
+    read_size = int(prepared.get("read_buffer_nbytes", 0))
+    if read_size <= 0:
+        return None
+    try:
+        read_buffer = np.memmap(read_path, mode="r", dtype=np.uint8, shape=(read_size,))
+    except OSError:
+        return None
+    prepared["read_buffer"] = read_buffer
+    prepared["chunk_offsets"] = np.asarray(prepared["chunk_offsets"], dtype=np.uint64)
+    prepared["block_starts"] = np.asarray(prepared["block_starts"], dtype=np.uint32)
+    prepared["block_counts"] = np.asarray(prepared["block_counts"], dtype=np.uint32)
+    prepared["block_offsets"] = np.asarray(prepared["block_offsets"], dtype=np.uint32)
+    prepared["selected_frame_indices"] = np.asarray(
+        prepared["selected_frame_indices"],
+        dtype=np.int64,
+    )
+    prepared["frame_shape"] = tuple(int(v) for v in prepared["frame_shape"])
+    prepared["dtype"] = np.dtype(prepared["dtype"])
+    prepared["pixel_mask"] = cached.get("pixel_mask")
+    prepared["read_gap_bytes"] = int(prepared.get("read_gap_bytes", 0))
+    source_prepare_timing_s = dict(prepared.get("prepare_timing_s") or {})
+    prepared["prepare_timing_s"] = {}
+    prepared["prepared_cache"] = {
+        "status": "hit",
+        "cache_dir": cache_dir,
+        "read_buffer_nbytes": int(read_size),
+        "source_prepare_timing_s": source_prepare_timing_s,
+    }
+    return prepared
+
+
+def _write_prepared_scan_crop_disk_cache(
+    cache_dir: str,
+    *,
+    signature: dict[str, Any],
+    prepared: dict,
+) -> None:
+    """Write a prepared compressed scan crop for reuse by fresh workers."""
+    os.makedirs(cache_dir, exist_ok=True)
+    read_buffer = np.asarray(prepared["read_buffer"], dtype=np.uint8)
+    read_size = int(read_buffer.size)
+    read_path = os.path.join(cache_dir, "read_buffer.u8")
+    tmp_read_path = os.path.join(cache_dir, f"read_buffer.u8.{os.getpid()}.tmp")
+    tmp_meta_path = os.path.join(cache_dir, f"meta.pkl.{os.getpid()}.tmp")
+    meta_path = os.path.join(cache_dir, "meta.pkl")
+    serial_prepared = {
+        "read_buffer_nbytes": read_size,
+        "chunk_offsets": np.asarray(prepared["chunk_offsets"], dtype=np.uint64),
+        "block_starts": np.asarray(prepared["block_starts"], dtype=np.uint32),
+        "block_counts": np.asarray(prepared["block_counts"], dtype=np.uint32),
+        "block_offsets": np.asarray(prepared["block_offsets"], dtype=np.uint32),
+        "total_frames": int(prepared["total_frames"]),
+        "frame_shape": [int(v) for v in prepared["frame_shape"]],
+        "frame_bytes": int(prepared["frame_bytes"]),
+        "dtype": np.dtype(prepared["dtype"]).str,
+        "n_chunk_files": int(prepared.get("n_chunk_files", 0)),
+        "selected_frame_indices": np.asarray(
+            prepared.get("selected_frame_indices", []),
+            dtype=np.int64,
+        ),
+        "total_compressed_bytes": int(prepared.get("total_compressed_bytes", read_size)),
+        "read_span_count": int(prepared.get("read_span_count", 0)),
+        "read_gap_bytes": int(prepared.get("read_gap_bytes", 0)),
+        "prepare_timing_s": dict(prepared.get("prepare_timing_s") or {}),
+    }
+    payload = {
+        "version": _PREPARED_SCAN_CROP_CACHE_VERSION,
+        "signature": signature,
+        "prepared": serial_prepared,
+        "pixel_mask": prepared.get("pixel_mask"),
+    }
+    try:
+        read_buffer.tofile(tmp_read_path)
+        with open(tmp_meta_path, "wb") as handle:
+            pickle.dump(payload, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        os.replace(tmp_read_path, read_path)
+        os.replace(tmp_meta_path, meta_path)
+    except Exception:
+        for path in (tmp_read_path, tmp_meta_path):
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+
+def _get_master_frame_sources(
+    filepath: str,
+    chunk_names: list[str],
+    *,
+    apply_mask: bool,
+) -> tuple[list[dict[str, Any]], Any]:
+    """Return cached detector-frame chunk offsets for one master."""
+    abs_path = os.path.abspath(filepath)
+    key = (abs_path, tuple(chunk_names), bool(apply_mask))
+    cached = _MASTER_FRAME_SOURCE_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    disk_cache_path = _frame_source_cache_path(
+        filepath,
+        chunk_names,
+        apply_mask=apply_mask,
+    )
+    if (
+        disk_cache_path is not None
+        and os.environ.get(_TRUST_FRAME_SOURCE_CACHE_ENV, "").lower()
+        in {"1", "true", "yes", "on"}
+    ):
+        cached = _load_frame_source_disk_cache(
+            disk_cache_path,
+            signature=None,
+        )
+        if cached is not None:
+            _MASTER_FRAME_SOURCE_CACHE[key] = cached
+            return cached
+
+    data_refs, pixel_mask, signature = _master_frame_source_refs(
+        filepath,
+        chunk_names,
+        apply_mask=apply_mask,
+    )
+    if disk_cache_path is not None:
+        cached = _load_frame_source_disk_cache(
+            disk_cache_path,
+            signature=signature,
+        )
+        if cached is not None:
+            _MASTER_FRAME_SOURCE_CACHE[key] = cached
+            return cached
+
+    source_infos: list[dict[str, Any]] = []
+    for data_path, dataset_path in data_refs:
+        with h5py.File(data_path, "r") as df:
+            ds = df[dataset_path]
+            if ds.ndim != 3:
+                raise ValueError(
+                    "load(..., scan_region=...) currently supports flattened "
+                    f"3D detector chunks; got {ds.shape} in {data_path}"
+                )
+            if ds.chunks is None or int(ds.chunks[0]) != 1:
+                raise ValueError(
+                    "load(..., scan_region=...) requires one detector frame per "
+                    f"HDF5 chunk; got chunks={ds.chunks} in {data_path}"
+                )
+            chunk_infos = []
+            ds.id.chunk_iter(
+                lambda info: chunk_infos.append((info.byte_offset, info.size))
+            )
+            source_infos.append(
+                {
+                    "path": data_path,
+                    "dataset_path": dataset_path,
+                    "n_frames": int(ds.shape[0]),
+                    "frame_shape": tuple(int(v) for v in ds.shape[1:]),
+                    "dtype": ds.dtype,
+                    "chunk_infos": chunk_infos,
+                }
+            )
+    cached = (source_infos, pixel_mask)
+    _MASTER_FRAME_SOURCE_CACHE[key] = cached
+    if disk_cache_path is not None:
+        _write_frame_source_disk_cache(
+            disk_cache_path,
+            signature=signature,
+            source_infos=source_infos,
+            pixel_mask=pixel_mask,
+        )
+    return cached
+
+
 def _prepare_master_frames(
     filepath: str,
     chunk_names: list[str],
@@ -1531,59 +2251,23 @@ def _prepare_master_frames(
     """
     import bisect
     import ctypes
+    import time
     from concurrent.futures import ThreadPoolExecutor
 
+    t_total = time.perf_counter()
     selected = np.asarray(frame_indices, dtype=np.int64).reshape(-1)
     if selected.size == 0:
         raise ValueError("frame_indices must contain at least one frame")
     if np.any(selected < 0):
         raise ValueError("frame_indices must be non-negative")
 
-    master_dir = os.path.dirname(os.path.abspath(filepath))
-    source_infos: list[dict[str, Any]] = []
-    pixel_mask = None
-    with h5py.File(filepath, "r") as f:
-        data_group = f["entry/data"]
-        for chunk_name in chunk_names:
-            link = data_group.get(chunk_name, getlink=True)
-            if isinstance(link, h5py.ExternalLink):
-                data_path = os.path.join(master_dir, link.filename)
-                dataset_path = link.path or "entry/data/data"
-            else:
-                ds = data_group[chunk_name]
-                data_path = ds.file.filename
-                dataset_path = ds.name
-
-            with h5py.File(data_path, "r") as df:
-                ds = df[dataset_path]
-                if ds.ndim != 3:
-                    raise ValueError(
-                        "load(..., scan_region=...) currently supports flattened "
-                        f"3D detector chunks; got {ds.shape} in {data_path}"
-                    )
-                if ds.chunks is None or int(ds.chunks[0]) != 1:
-                    raise ValueError(
-                        "load(..., scan_region=...) requires one detector frame per "
-                        f"HDF5 chunk; got chunks={ds.chunks} in {data_path}"
-                    )
-                chunk_infos = []
-                ds.id.chunk_iter(
-                    lambda info: chunk_infos.append((info.byte_offset, info.size))
-                )
-                source_infos.append(
-                    {
-                        "path": data_path,
-                        "dataset_path": dataset_path,
-                        "n_frames": int(ds.shape[0]),
-                        "frame_shape": tuple(int(v) for v in ds.shape[1:]),
-                        "dtype": ds.dtype,
-                        "chunk_infos": chunk_infos,
-                    }
-                )
-        if apply_mask:
-            mask_path = "entry/instrument/detector/detectorSpecific/pixel_mask"
-            if mask_path in f:
-                pixel_mask = f[mask_path][:]
+    t_sources = time.perf_counter()
+    source_infos, pixel_mask = _get_master_frame_sources(
+        filepath,
+        chunk_names,
+        apply_mask=apply_mask,
+    )
+    source_seconds = time.perf_counter() - t_sources
 
     if not source_infos:
         raise ValueError(f"No detector data chunks found in {filepath}")
@@ -1600,6 +2284,7 @@ def _prepare_master_frames(
             f"Requested frame {int(selected.max())}, but only {total_available} frames are available"
         )
 
+    t_plan = time.perf_counter()
     chunk_offsets_arr = np.empty(selected.size, dtype=np.uint64)
     chunk_sizes_arr = np.empty(selected.size, dtype=np.uint32)
     entries_by_source: dict[int, list[tuple[int, int, int]]] = {}
@@ -1617,7 +2302,7 @@ def _prepare_master_frames(
             (order_pos, int(byte_offset), int(chunk_size))
         )
 
-    max_gap_bytes = 4096
+    max_gap_bytes = _scan_crop_max_gap_bytes()
     read_plan_by_source: dict[int, list[tuple[int, int, int]]] = {}
     cursor = 0
     for source_idx, entries in entries_by_source.items():
@@ -1650,9 +2335,12 @@ def _prepare_master_frames(
                 span_end = next_end
                 span_entries = [entry]
         flush_span()
+    plan_seconds = time.perf_counter() - t_plan
 
     total_compressed = int(cursor)
+    t_alloc = time.perf_counter()
     read_buffer = _alloc_pinned_fast(total_compressed)
+    alloc_seconds = time.perf_counter() - t_alloc
     libc = _get_libc()
 
     def read_exact_at(fd: int, dst_offset: int, nbytes: int, file_offset: int) -> None:
@@ -1693,18 +2381,21 @@ def _prepare_master_frames(
             os.close(fd)
 
     worker_count = min(12, max(1, len(read_plan_by_source)))
+    t_read = time.perf_counter()
     if worker_count > 1:
         with ThreadPoolExecutor(max_workers=worker_count) as pool:
             list(pool.map(read_source, read_plan_by_source.items()))
     else:
         for item in read_plan_by_source.items():
             read_source(item)
+    read_seconds = time.perf_counter() - t_read
 
     frame_bytes = int(np.prod(frame_shape) * np.dtype(dtype).itemsize)
     n_blocks_per_frame = (frame_bytes + BLOCK_SIZE - 1) // BLOCK_SIZE
     block_starts_flat = np.zeros(selected.size * n_blocks_per_frame, dtype=np.uint32)
     block_counts = np.zeros(selected.size, dtype=np.uint32)
     block_offsets_arr = np.zeros(selected.size + 1, dtype=np.uint32)
+    t_headers = time.perf_counter()
     _parse_headers_bulk(
         read_buffer, chunk_sizes_arr, chunk_offsets_arr,
         block_starts_flat, block_counts,
@@ -1712,6 +2403,8 @@ def _prepare_master_frames(
     )
     block_offsets_arr[1:selected.size + 1] = np.cumsum(block_counts[:selected.size])
     total_blocks = int(block_offsets_arr[selected.size])
+    header_seconds = time.perf_counter() - t_headers
+    total_seconds = time.perf_counter() - t_total
 
     return {
         "read_buffer": read_buffer[:total_compressed],
@@ -1726,6 +2419,19 @@ def _prepare_master_frames(
         "pixel_mask": pixel_mask,
         "n_chunk_files": len(source_infos),
         "selected_frame_indices": selected,
+        "total_compressed_bytes": int(total_compressed),
+        "read_span_count": int(
+            sum(len(reads) for reads in read_plan_by_source.values())
+        ),
+        "read_gap_bytes": int(max_gap_bytes),
+        "prepare_timing_s": {
+            "source_index": float(source_seconds),
+            "read_plan": float(plan_seconds),
+            "pinned_alloc": float(alloc_seconds),
+            "compressed_read": float(read_seconds),
+            "header_parse": float(header_seconds),
+            "total": float(total_seconds),
+        },
     }
 
 
@@ -1803,12 +2509,21 @@ def _decompress_prepared(
     _streaming_auto = streaming_upload is None
 
     # --- Decide final dtype -------------------------------------------------
+    uint4_mode = _is_uint4_load_dtype(output_dtype)
+    if uint4_mode and int(det_bin) > 1:
+        raise ValueError(
+            "dtype='u4' means packed 4-bit detector counts (0..15) and cannot "
+            "be combined with det_bin>1 because binned detector pixels can "
+            "exceed 15. Use dtype='uint8' or dtype='uint16' for binned loads."
+        )
     if output_dtype is not None:
         # Honor the project's browse vocabulary: "u8"/"uint8" mean 8-BIT unsigned
         # (the screening dtype the public load(dtype="u8") advertises). numpy's
         # np.dtype("u8") is uint64 (8 BYTES) — passing the browse token straight
         # to np.dtype would silently 8× the output and OOM. Map it explicitly.
-        if isinstance(output_dtype, str) and output_dtype in ("u8", "uint8"):
+        if uint4_mode:
+            final_dtype = np.dtype(np.uint8)
+        elif isinstance(output_dtype, str) and output_dtype in ("u8", "uint8"):
             final_dtype = np.dtype(np.uint8)
         else:
             final_dtype = np.dtype(output_dtype)
@@ -1936,7 +2651,7 @@ def _decompress_prepared(
     # uint8 saturates counts above 255. The binned path still counts exact
     # saturation. The no-bin hot path uses a faster fused clip/cast kernel;
     # load(dtype="u8") tells the caller that values >255 saturate.
-    _clip_warn = final_dtype == np.uint8
+    _clip_warn = final_dtype == np.uint8 and not uint4_mode
     _clipped = cp.zeros((), dtype=cp.uint64) if _clip_warn else None
 
     t_decomp0 = time.perf_counter()
@@ -2064,7 +2779,7 @@ def _decompress_prepared(
         if _has_mask:
             batch_view[:, _bad_row, _bad_col] = 0
 
-        # 5. If narrowing: verify the (masked) batch values fit uint16.
+        # 5. If narrowing: verify the (masked) batch values fit uint16/uint4.
         if narrow_mode:
             batch_max = int(batch_view.max().get())
             if batch_max >= 65536:
@@ -2078,6 +2793,19 @@ def _decompress_prepared(
                     f"have max value {batch_max} >= 65536; uint16 cannot "
                     f"represent this data. Retry with auto_narrow=False "
                     f"(requires ~2× more final-buffer VRAM)."
+                )
+        if uint4_mode:
+            batch_max = int(batch_view.max().get())
+            if batch_max > 15:
+                del lz4_scratch, shuf_scratch, result
+                del compressed_gpu, chunk_offsets_gpu, block_starts_gpu
+                del block_counts_gpu, block_offsets_gpu
+                cp.get_default_memory_pool().free_all_blocks()
+                raise ValueError(
+                    "dtype='u4' requires every corrected detector count to fit "
+                    f"in 0..15; batch frames [{start}, {end}) have max value "
+                    f"{batch_max}. Use dtype='uint8' or dtype='uint16' for "
+                    "this dataset."
                 )
 
         # 6. Bin batch in-place (streaming) and/or copy with dtype cast
@@ -2093,7 +2821,7 @@ def _decompress_prepared(
             ).sum(axis=(2, 4))
             if final_dtype == source_dtype:
                 result[start:end] = binned_batch
-            elif final_dtype == np.uint8:
+            elif final_dtype == np.uint8 and not uint4_mode:
                 # browse uint8: clip@255 per batch into the uint8 output, so the
                 # full uint16 block is never materialized (peak = uint8 out + one
                 # batch + scratch). clip keeps it linear -> virtual-image sums correct.
@@ -2104,6 +2832,8 @@ def _decompress_prepared(
             del binned_batch
         elif final_dtype == source_dtype:
             result[start:end] = batch_view
+        elif final_dtype == np.uint8 and uint4_mode:
+            result[start:end] = batch_view.astype(cp.uint8)
         elif final_dtype == np.uint8:
             if not _clip_to_uint8(batch_view, result[start:end]):
                 _clipped += (batch_view > 255).sum(dtype=cp.uint64)
@@ -2124,6 +2854,9 @@ def _decompress_prepared(
                 f"to keep full counts."
             )
 
+    if uint4_mode:
+        result = pack_uint4_cupy(result)
+
     # --- Release scratches + compressed; keep only result ------------------
     del lz4_scratch, shuf_scratch
     del compressed_gpu, chunk_offsets_gpu, block_starts_gpu
@@ -2140,7 +2873,9 @@ def _decompress_prepared(
         total_output = total_frames * frame_bytes
         throughput = total_output / t_total / 1e9
         final_label = (
-            f"uint32 → uint16 (auto_narrow)"
+            "packed uint4"
+            if uint4_mode
+            else f"uint32 → uint16 (auto_narrow)"
             if narrow_mode
             else str(np.dtype(source_dtype))
         )
@@ -2854,7 +3589,7 @@ def _load_master_optimized(
     # Enough chunk files to overlap disk read with GPU decompress (group
     # pipeline). Below 8, the single bulk read is already fast and the per-group
     # split isn't worth it.
-    if len(chunk_names) >= 8:
+    if len(chunk_names) >= 8 and not _is_uint4_load_dtype(output_dtype):
         data, pixel_mask = _load_master_pipelined(
             filepath, chunk_names, apply_mask=apply_mask,
             auto_narrow=auto_narrow, det_bin=det_bin,
@@ -2874,12 +3609,15 @@ def _load_master_optimized(
     )
     t_total = time.perf_counter() - t0
     if verbose:
-        total_output = result.size * result.dtype.itemsize
+        total_output = result.nbytes if is_packed_uint4(result) else (
+            result.size * result.dtype.itemsize
+        )
         t_gpu = t_total - t_cpu
         throughput = total_output / t_total / 1e9
         size_gb = total_output / 1e9
         narrowed = (
-            result.dtype != prepared["dtype"]
+            not is_packed_uint4(result)
+            and result.dtype != prepared["dtype"]
             and np.dtype(prepared["dtype"]) == np.dtype(np.uint32)
         )
         narrow_note = "  (uint32 → uint16 auto-narrowed)" if narrowed else ""
@@ -3185,6 +3923,12 @@ def _load_view(
     def _one(path):
         meta = get_metadata(str(path))
         mps_chunk_output_dtype = None
+        if _is_uint4_load_dtype(output_dtype):
+            raise NotImplementedError(
+                "dtype='u4' means packed 4-bit detector counts (0..15). "
+                f"Packed uint4 load is currently implemented for CUDA; "
+                f"backend={backend!r} was selected."
+            )
         if backend == "mps" and output_dtype is not None:
             if isinstance(output_dtype, str) and output_dtype in ("u8", "uint8"):
                 mps_chunk_output_dtype = np.dtype(np.uint8)
@@ -3196,7 +3940,7 @@ def _load_view(
             and (
                 output_dtype is None
                 or mps_chunk_output_dtype
-                in (np.dtype(np.uint8), np.dtype(np.uint16))
+                in (np.dtype(np.uint8), np.dtype(np.uint16), np.dtype(np.uint32))
             )
         ):
             if _normalize_scan_order(scan_order) != "row-major":
@@ -3236,6 +3980,12 @@ def _load_view(
         if auto_narrow and data.dtype == np.uint32 and int(data.max()) < 65536:
             data = data.astype(np.uint16)
         if output_dtype is not None:
+            if _is_uint4_load_dtype(output_dtype):
+                raise NotImplementedError(
+                    "dtype='u4' means packed 4-bit detector counts (0..15). "
+                    f"Packed uint4 load is currently implemented for CUDA; "
+                    f"backend={backend!r} was selected."
+                )
             out_dtype = np.dtype(output_dtype)
             if out_dtype == np.dtype(np.uint8) and data.dtype != np.uint8:
                 data = np.minimum(data, 255).astype(np.uint8)
@@ -3363,6 +4113,16 @@ def _is_uint8_browse_dtype(dtype: str | None) -> bool:
     return isinstance(dtype, str) and dtype.lower() in ("u8", "uint8")
 
 
+def _is_uint32_load_dtype(dtype: str | None) -> bool:
+    """Return True when the public dtype requests native 4-byte unsigned data."""
+    return isinstance(dtype, str) and dtype.lower() in ("u32", "uint32")
+
+
+def _is_uint4_load_dtype(dtype: str | None) -> bool:
+    """Return True when the public dtype requests packed 4-bit unsigned data."""
+    return isinstance(dtype, str) and dtype.lower() in ("u4", "uint4")
+
+
 def _load_scan_crop_impl(
     filepath: str,
     scan_region: tuple[int, int, int, int] | list[int],
@@ -3375,6 +4135,10 @@ def _load_scan_crop_impl(
     verbose: bool = True,
     auto_narrow: bool = True,
     output_dtype: type | np.dtype | None = None,
+    target_scan_region: tuple[int, int, int, int] | list[int] | None = None,
+    scan_shift_row_col=None,
+    scan_resample_dtype: type | np.dtype = np.float32,
+    detector_region: tuple[int, int, int, int] | list[int] | None = None,
 ) -> LoadResult:
     """Load only a rectangular scan region from a raw HDF5 master.
 
@@ -3392,6 +4156,9 @@ def _load_scan_crop_impl(
         crop in normal ``(row, col)`` order.
     det_bin
         Optional detector binning factor. The scan region is never binned.
+    detector_region
+        Optional detector crop as ``(row_start, row_stop, col_start, col_stop)``
+        in the decoded detector grid after ``det_bin``.
 
     Returns
     -------
@@ -3413,11 +4180,22 @@ def _load_scan_crop_impl(
             "load(..., scan_region=...) supports accelerated crop-first IO on CUDA and "
             f"MPS; backend={resolved_backend!r} was selected."
         )
+    if target_scan_region is not None and resolved_backend != "cuda":
+        raise RuntimeError(
+            "target_scan_region= is currently implemented for backend='cuda' "
+            "only; MPS needs a separate Metal sampler."
+        )
+    if (target_scan_region is None) != (scan_shift_row_col is None):
+        raise ValueError(
+            "target_scan_region= and scan_shift_row_col= must be passed together."
+        )
     if not os.path.isfile(filepath):
         raise FileNotFoundError(f"HDF5 file not found: {filepath}")
 
     t0 = time.perf_counter()
+    t_meta = time.perf_counter()
     meta = get_metadata(filepath)
+    meta_seconds = time.perf_counter() - t_meta
     full_scan_shape = scan_shape if scan_shape is not None else meta.get("scan_shape")
     if full_scan_shape is None:
         raise ValueError(
@@ -3448,13 +4226,16 @@ def _load_scan_crop_impl(
                     f"{filepath} has no entry/data/data or data_###### detector chunks"
                 )
 
+    t_prepare = time.perf_counter()
     prepared = _prepare_master_frames(
         filepath,
         chunk_names,
         frame_indices,
         apply_mask=apply_mask,
     )
+    prepare_seconds = time.perf_counter() - t_prepare
     pixel_mask = prepared.get("pixel_mask")
+    t_decode = time.perf_counter()
     if resolved_backend == "cuda":
         data = _decompress_prepared(
             prepared,
@@ -3465,11 +4246,6 @@ def _load_scan_crop_impl(
             output_dtype=output_dtype,
         )
     else:
-        if output_dtype is not None and np.dtype(output_dtype) != np.dtype(prepared["dtype"]):
-            raise ValueError(
-                "MPS crop-first IO currently returns the native detector dtype; "
-                "load without dtype='u8' or cast the small returned crop explicitly."
-            )
         from quantem.gpu.io.backends.mps import load_prepared_frames
 
         data = load_prepared_frames(
@@ -3477,9 +4253,42 @@ def _load_scan_crop_impl(
             det_bin=det_bin,
             pixel_mask=pixel_mask if apply_mask else None,
             verbose=False,
+            output_dtype=output_dtype,
         )
+    decode_seconds = time.perf_counter() - t_decode
     det_r, det_c = (int(data.shape[-2]), int(data.shape[-1]))
     data = data.reshape(patch_h, patch_w, det_r, det_c)
+    decoded_detector_shape = (det_r, det_c)
+    output_detector_region = (0, det_r, 0, det_c)
+    if detector_region is not None:
+        output_detector_region = _normalize_detector_region(
+            detector_region,
+            decoded_detector_shape,
+        )
+        data = _slice_detector_region(
+            data,
+            output_detector_region,
+            compact=target_scan_region is None,
+        )
+    source_scan_region = (row_start, row_stop, col_start, col_stop)
+    output_scan_region = source_scan_region
+    if target_scan_region is not None:
+        target_region = _normalize_scan_region(target_scan_region, full_scan_shape)
+        t_resample = time.perf_counter()
+        data = _resample_scan_crop_cuda(
+            data,
+            source_scan_region=source_scan_region,
+            target_scan_region=target_region,
+            scan_shift_row_col=np.asarray(scan_shift_row_col, dtype=np.float32),
+            scan_resample_dtype=scan_resample_dtype,
+        )
+        resample_seconds = time.perf_counter() - t_resample
+        output_scan_region = target_region
+        row_start, row_stop, col_start, col_stop = output_scan_region
+        patch_h = int(row_stop - row_start)
+        patch_w = int(col_stop - col_start)
+    else:
+        resample_seconds = 0.0
 
     if pixel_mask is not None:
         meta["pixel_mask"] = pixel_mask
@@ -3488,15 +4297,33 @@ def _load_scan_crop_impl(
     meta["scan_shape"] = (patch_h, patch_w)
     meta["scan_order"] = order
     meta["n_frames"] = int(patch_h * patch_w)
-    meta["scan_region"] = {
-        "row_start": int(row_start),
-        "row_stop": int(row_stop),
-        "col_start": int(col_start),
-        "col_stop": int(col_stop),
-        "shape": [patch_h, patch_w],
-    }
+    meta["scan_region"] = _scan_region_dict(output_scan_region)
+    meta["decoded_detector_shape"] = decoded_detector_shape
+    meta["output_detector_shape"] = tuple(int(value) for value in data.shape[-2:])
+    meta["detector_region"] = _detector_region_dict(output_detector_region)
+    if target_scan_region is not None:
+        meta["source_scan_region"] = _scan_region_dict(source_scan_region)
+        meta["scan_resampling"] = {
+            "mode": "bilinear",
+            "target_scan_region": _scan_region_dict(output_scan_region),
+            "source_scan_region": _scan_region_dict(source_scan_region),
+            "scan_shift_row_col": [
+                float(np.asarray(scan_shift_row_col, dtype=np.float32)[0]),
+                float(np.asarray(scan_shift_row_col, dtype=np.float32)[1]),
+            ],
+            "scan_resample_dtype": str(np.dtype(scan_resample_dtype)),
+        }
     meta["det_bin"] = int(det_bin)
     meta["backend"] = resolved_backend
+    meta["prepare_seconds"] = float(prepare_seconds)
+    meta["decode_seconds"] = float(decode_seconds)
+    meta["resample_seconds"] = float(resample_seconds)
+    meta["load_seconds"] = float(time.perf_counter() - t0)
+    meta["total_compressed_bytes"] = int(prepared.get("total_compressed_bytes", 0))
+    meta["read_span_count"] = int(prepared.get("read_span_count", 0))
+    meta["read_gap_bytes"] = int(prepared.get("read_gap_bytes", 0))
+    if "prepare_timing_s" in prepared:
+        meta["prepare_timing_s"] = dict(prepared["prepare_timing_s"])
     if verbose:
         size_gb = data.nbytes / 1e9
         print(
@@ -3504,6 +4331,500 @@ def _load_scan_crop_impl(
             f"[{row_start}:{row_stop}, {col_start}:{col_stop}] "
             f"-> {tuple(data.shape)} ({size_gb:.2f} GB) "
             f"in {time.perf_counter() - t0:.2f}s"
+        )
+    return LoadResult(data, meta)
+
+
+def _prepare_scan_crop_one(
+    filepath: str,
+    scan_region: tuple[int, int, int, int] | list[int],
+    *,
+    scan_shape: tuple[int, int] | None = None,
+    scan_order: str = "row-major",
+    apply_mask: bool = True,
+) -> dict:
+    """Prepare one rectangular crop for later serial GPU decode."""
+    import time
+
+    if not os.path.isfile(filepath):
+        raise FileNotFoundError(f"HDF5 file not found: {filepath}")
+
+    t0 = time.perf_counter()
+    t_meta = time.perf_counter()
+    meta = get_metadata(filepath)
+    meta_seconds = time.perf_counter() - t_meta
+    full_scan_shape = scan_shape if scan_shape is not None else meta.get("scan_shape")
+    if full_scan_shape is None:
+        raise ValueError(
+            "scan_shape is required because the HDF5 metadata did not expose a "
+            "square scan grid"
+        )
+    full_scan_shape = tuple(int(v) for v in full_scan_shape)
+    order = _normalize_scan_order(scan_order)
+    row_start, row_stop, col_start, col_stop = _normalize_scan_region(
+        scan_region, full_scan_shape
+    )
+    patch_h = int(row_stop - row_start)
+    patch_w = int(col_stop - col_start)
+    frame_indices = _scan_region_frame_indices(
+        (row_start, row_stop, col_start, col_stop),
+        full_scan_shape,
+        order,
+    )
+    t_discover = time.perf_counter()
+    chunk_names = _discover_chunk_names(filepath)
+    discover_seconds = time.perf_counter() - t_discover
+    if not chunk_names:
+        with h5py.File(filepath, "r") as f:
+            data_group = f.get("entry/data")
+            if data_group is not None and "data" in data_group:
+                chunk_names = ["data"]
+            else:
+                raise ValueError(
+                    f"{filepath} has no entry/data/data or data_###### detector chunks"
+                )
+
+    prepared_cache_dir = _prepared_scan_crop_cache_dir(
+        filepath,
+        (row_start, row_stop, col_start, col_stop),
+        scan_shape=full_scan_shape,
+        scan_order=order,
+        apply_mask=apply_mask,
+    )
+    prepared_cache_status = "disabled"
+    prepared_signature = None
+    if prepared_cache_dir is not None:
+        prepared_cache_status = "miss"
+        prepared_signature = _master_frame_source_refs(
+            filepath,
+            chunk_names,
+            apply_mask=apply_mask,
+        )[2]
+        prepared = _load_prepared_scan_crop_disk_cache(
+            prepared_cache_dir,
+            signature=prepared_signature,
+        )
+        if prepared is not None:
+            frame_prepare_seconds = time.perf_counter() - t0
+            prepared["prepare_timing_s"] = {
+                "prepared_cache_hit": float(frame_prepare_seconds),
+                "total": float(frame_prepare_seconds),
+            }
+            return {
+                "filepath": filepath,
+                "meta": meta,
+                "prepared": prepared,
+                "full_scan_shape": full_scan_shape,
+                "scan_order": order,
+                "scan_region_tuple": (row_start, row_stop, col_start, col_stop),
+                "patch_shape": (patch_h, patch_w),
+                "prepare_seconds": time.perf_counter() - t0,
+                "prepare_outer_timing_s": {
+                    "metadata": float(meta_seconds),
+                    "chunk_discovery": float(discover_seconds),
+                    "frame_prepare": float(frame_prepare_seconds),
+                },
+                "prepared_cache": {
+                    "status": "hit",
+                    "cache_dir": prepared_cache_dir,
+                },
+            }
+
+    t_frames = time.perf_counter()
+    prepared = _prepare_master_frames(
+        filepath,
+        chunk_names,
+        frame_indices,
+        apply_mask=apply_mask,
+    )
+    frame_prepare_seconds = time.perf_counter() - t_frames
+    if prepared_cache_dir is not None and prepared_signature is not None:
+        _write_prepared_scan_crop_disk_cache(
+            prepared_cache_dir,
+            signature=prepared_signature,
+            prepared=prepared,
+        )
+    return {
+        "filepath": filepath,
+        "meta": meta,
+        "prepared": prepared,
+        "full_scan_shape": full_scan_shape,
+        "scan_order": order,
+        "scan_region_tuple": (row_start, row_stop, col_start, col_stop),
+        "patch_shape": (patch_h, patch_w),
+        "prepare_seconds": time.perf_counter() - t0,
+        "prepare_outer_timing_s": {
+            "metadata": float(meta_seconds),
+            "chunk_discovery": float(discover_seconds),
+            "frame_prepare": float(frame_prepare_seconds),
+        },
+        "prepared_cache": {
+            "status": prepared_cache_status,
+            "cache_dir": prepared_cache_dir,
+        },
+    }
+
+
+def _decode_scan_crop_prepared(
+    prepared_item: dict,
+    *,
+    backend: str,
+    det_bin: int,
+    apply_mask: bool,
+    verbose: bool,
+    auto_narrow: bool,
+    output_dtype: type | np.dtype | None,
+    target_scan_region: tuple[int, int, int, int] | list[int] | None = None,
+    scan_shift_row_col=None,
+    scan_resample_dtype: type | np.dtype = np.float32,
+    detector_region: tuple[int, int, int, int] | list[int] | None = None,
+) -> LoadResult:
+    """Decode one prepared rectangular crop on the selected backend."""
+    import time
+
+    t0 = time.perf_counter()
+    filepath = prepared_item["filepath"]
+    meta = dict(prepared_item["meta"])
+    prepared = prepared_item["prepared"]
+    pixel_mask = prepared.get("pixel_mask")
+    if backend == "cuda":
+        data = _decompress_prepared(
+            prepared,
+            verbose=False,
+            auto_narrow=auto_narrow,
+            det_bin=det_bin,
+            streaming_bin=(int(det_bin) > 1),
+            output_dtype=output_dtype,
+        )
+    else:
+        from quantem.gpu.io.backends.mps import load_prepared_frames
+
+        data = load_prepared_frames(
+            prepared,
+            det_bin=det_bin,
+            pixel_mask=pixel_mask if apply_mask else None,
+            verbose=False,
+            output_dtype=output_dtype,
+        )
+    det_r, det_c = (int(data.shape[-2]), int(data.shape[-1]))
+    patch_h, patch_w = (int(v) for v in prepared_item["patch_shape"])
+    data = data.reshape(patch_h, patch_w, det_r, det_c)
+    decoded_detector_shape = (det_r, det_c)
+    output_detector_region = (0, det_r, 0, det_c)
+    if detector_region is not None:
+        output_detector_region = _normalize_detector_region(
+            detector_region,
+            decoded_detector_shape,
+        )
+        data = _slice_detector_region(
+            data,
+            output_detector_region,
+            compact=target_scan_region is None,
+        )
+
+    row_start, row_stop, col_start, col_stop = (
+        int(v) for v in prepared_item["scan_region_tuple"]
+    )
+    source_scan_region = (row_start, row_stop, col_start, col_stop)
+    output_scan_region = source_scan_region
+    if target_scan_region is not None:
+        if backend != "cuda":
+            raise RuntimeError(
+                "target_scan_region= is currently implemented for backend='cuda' "
+                "only; MPS needs a separate Metal sampler."
+            )
+        target_region = _normalize_scan_region(
+            target_scan_region,
+            tuple(int(v) for v in prepared_item["full_scan_shape"]),
+        )
+        t_resample = time.perf_counter()
+        data = _resample_scan_crop_cuda(
+            data,
+            source_scan_region=source_scan_region,
+            target_scan_region=target_region,
+            scan_shift_row_col=np.asarray(scan_shift_row_col, dtype=np.float32),
+            scan_resample_dtype=scan_resample_dtype,
+        )
+        resample_seconds = time.perf_counter() - t_resample
+        output_scan_region = target_region
+        row_start, row_stop, col_start, col_stop = output_scan_region
+        patch_h = int(row_stop - row_start)
+        patch_w = int(col_stop - col_start)
+    else:
+        resample_seconds = 0.0
+    if pixel_mask is not None:
+        meta["pixel_mask"] = pixel_mask
+    meta["full_scan_shape"] = tuple(int(v) for v in prepared_item["full_scan_shape"])
+    meta["full_n_frames"] = int(meta["full_scan_shape"][0] * meta["full_scan_shape"][1])
+    meta["scan_shape"] = (patch_h, patch_w)
+    meta["scan_order"] = prepared_item["scan_order"]
+    meta["n_frames"] = int(patch_h * patch_w)
+    meta["scan_region"] = _scan_region_dict(output_scan_region)
+    meta["decoded_detector_shape"] = decoded_detector_shape
+    meta["output_detector_shape"] = tuple(int(value) for value in data.shape[-2:])
+    meta["detector_region"] = _detector_region_dict(output_detector_region)
+    if target_scan_region is not None:
+        shift = np.asarray(scan_shift_row_col, dtype=np.float32)
+        meta["source_scan_region"] = _scan_region_dict(source_scan_region)
+        meta["scan_resampling"] = {
+            "mode": "bilinear",
+            "target_scan_region": _scan_region_dict(output_scan_region),
+            "source_scan_region": _scan_region_dict(source_scan_region),
+            "scan_shift_row_col": [float(shift[0]), float(shift[1])],
+            "scan_resample_dtype": str(np.dtype(scan_resample_dtype)),
+        }
+    meta["det_bin"] = int(det_bin)
+    meta["backend"] = backend
+    meta["prepare_seconds"] = float(prepared_item["prepare_seconds"])
+    if "prepare_outer_timing_s" in prepared_item:
+        meta["prepare_outer_timing_s"] = dict(prepared_item["prepare_outer_timing_s"])
+    if "prepared_cache" in prepared_item:
+        meta["prepared_cache"] = dict(prepared_item["prepared_cache"])
+    elif "prepared_cache" in prepared:
+        meta["prepared_cache"] = dict(prepared["prepared_cache"])
+    meta["decode_seconds"] = float(time.perf_counter() - t0 - resample_seconds)
+    meta["resample_seconds"] = float(resample_seconds)
+    meta["load_seconds"] = float(
+        meta["prepare_seconds"] + meta["decode_seconds"] + meta["resample_seconds"]
+    )
+    meta["total_compressed_bytes"] = int(prepared.get("total_compressed_bytes", 0))
+    meta["read_span_count"] = int(prepared.get("read_span_count", 0))
+    meta["read_gap_bytes"] = int(prepared.get("read_gap_bytes", 0))
+    if "prepare_timing_s" in prepared:
+        meta["prepare_timing_s"] = dict(prepared["prepare_timing_s"])
+    if verbose:
+        size_gb = data.nbytes / 1e9
+        print(
+            f"  {os.path.basename(filepath)} region "
+            f"[{row_start}:{row_stop}, {col_start}:{col_stop}] "
+            f"-> {tuple(data.shape)} ({size_gb:.2f} GB) "
+            f"in {float(meta['load_seconds']):.2f}s"
+        )
+    return LoadResult(data, meta)
+
+
+def _load_scan_crop_series_impl(
+    filepath: list[str] | tuple[str, ...],
+    scan_region,
+    *,
+    backend: str = "cuda",
+    scan_shape: tuple[int, int] | None = None,
+    scan_order: str = "row-major",
+    det_bin: int = 1,
+    apply_mask: bool = True,
+    verbose: bool = True,
+    auto_narrow: bool = True,
+    output_dtype: type | np.dtype | None = None,
+    stack: bool = True,
+    prep_workers: int | None = None,
+    target_scan_region: tuple[int, int, int, int] | list[int] | None = None,
+    scan_shift_row_col=None,
+    scan_resample_dtype: type | np.dtype = np.float32,
+    detector_region: tuple[int, int, int, int] | list[int] | None = None,
+) -> LoadResult:
+    """Load rectangular scan regions from many HDF5 masters.
+
+    ``scan_region`` may be one shared ``(row_start, row_stop, col_start,
+    col_stop)`` tuple or a list with one such tuple per master. The per-master
+    form is useful for drift-aware time series loading because each frame can
+    read only its own source crop before later resampling into a common
+    specimen-coordinate ROI.
+    """
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    from .backends import resolve_backend
+
+    paths = list(filepath)
+    if not paths:
+        raise ValueError("filepath list must contain at least one HDF5 master")
+    resolved_backend = resolve_backend(backend)
+    if target_scan_region is not None and resolved_backend != "cuda":
+        raise RuntimeError(
+            "target_scan_region= is currently implemented for backend='cuda' "
+            "only; MPS needs a separate Metal sampler."
+        )
+    if (target_scan_region is None) != (scan_shift_row_col is None):
+        raise ValueError(
+            "target_scan_region= and scan_shift_row_col= must be passed together."
+        )
+    t0 = time.perf_counter()
+    scan_regions, scan_region_mode = _scan_regions_by_file(scan_region, len(paths))
+    scan_shifts = (
+        _scan_shifts_by_file(scan_shift_row_col, len(paths))
+        if target_scan_region is not None
+        else None
+    )
+    worker_count = _normalize_prep_workers(prep_workers, len(paths))
+    t_prepare0 = time.perf_counter()
+    if worker_count > 1:
+        with ThreadPoolExecutor(max_workers=worker_count) as pool:
+            prepared_items = list(
+                pool.map(
+                    lambda item: _prepare_scan_crop_one(
+                        os.fspath(item[0]),
+                        item[1],
+                        scan_shape=scan_shape,
+                        scan_order=scan_order,
+                        apply_mask=apply_mask,
+                    ),
+                    zip(paths, scan_regions),
+                )
+            )
+    else:
+        prepared_items = [
+            _prepare_scan_crop_one(
+                os.fspath(path),
+                scan_regions[index],
+                scan_shape=scan_shape,
+                scan_order=scan_order,
+                apply_mask=apply_mask,
+            )
+            for index, path in enumerate(paths)
+        ]
+    prepare_wall_seconds = time.perf_counter() - t_prepare0
+    per_file_meta = []
+    arrays = []
+    out = None
+    t_decode0 = time.perf_counter()
+    for index, prepared_item in enumerate(prepared_items):
+        result = _decode_scan_crop_prepared(
+            prepared_item,
+            backend=resolved_backend,
+            det_bin=det_bin,
+            apply_mask=apply_mask,
+            verbose=verbose and len(paths) == 1,
+            auto_narrow=auto_narrow,
+            output_dtype=output_dtype,
+            target_scan_region=target_scan_region,
+            scan_shift_row_col=(
+                None if scan_shifts is None else scan_shifts[int(index)]
+            ),
+            scan_resample_dtype=scan_resample_dtype,
+            detector_region=detector_region,
+        )
+        per_file_meta.append(result.metadata)
+        decoded = result.data
+        if stack:
+            if out is None:
+                if cp is not None and isinstance(decoded, cp.ndarray):
+                    out = cp.empty((len(paths), *decoded.shape), dtype=decoded.dtype)
+                else:
+                    out = np.empty((len(paths), *decoded.shape), dtype=decoded.dtype)
+            if tuple(decoded.shape) != tuple(out.shape[1:]):
+                raise ValueError(
+                    "Per-file scan-region loads have different output shapes; "
+                    "pass stack=False for variable-length batches."
+                )
+            out[index] = decoded
+        else:
+            arrays.append(decoded)
+        del decoded, result
+        if resolved_backend == "cuda" and cp is not None:
+            cp.get_default_memory_pool().free_all_blocks()
+            cp.get_default_pinned_memory_pool().free_all_blocks()
+    decode_wall_seconds = time.perf_counter() - t_decode0
+
+    data = out if stack else arrays
+    first = per_file_meta[0]
+    prepare_timing_s: dict[str, float] = {}
+    for item in per_file_meta:
+        for key, value in (item.get("prepare_timing_s") or {}).items():
+            prepare_timing_s[key] = prepare_timing_s.get(key, 0.0) + float(value)
+    meta = {
+        "backend": resolved_backend,
+        "det_bin": int(det_bin),
+        "full_scan_shape": first.get("full_scan_shape"),
+        "scan_shape": first.get("scan_shape"),
+        "scan_order": first.get("scan_order"),
+        "scan_region": first.get("scan_region"),
+        "source_scan_region": first.get("source_scan_region"),
+        "scan_resampling": first.get("scan_resampling"),
+        "scan_region_mode": scan_region_mode,
+        "scan_regions": [item.get("scan_region") for item in per_file_meta],
+        "source_scan_regions": [
+            item.get("source_scan_region", item.get("scan_region"))
+            for item in per_file_meta
+        ],
+        "scan_resamplings": [item.get("scan_resampling") for item in per_file_meta],
+        "decoded_detector_shape": first.get("decoded_detector_shape"),
+        "output_detector_shape": first.get("output_detector_shape"),
+        "detector_region": first.get("detector_region"),
+        "detector_regions": [item.get("detector_region") for item in per_file_meta],
+        "n_files": len(paths),
+        "file_paths": [os.fspath(path) for path in paths],
+        "file_names": [os.path.basename(os.fspath(path)) for path in paths],
+        "n_frames": int(sum(int(item.get("n_frames", 0)) for item in per_file_meta)),
+        "prepare_seconds_per_file": [
+            float(item.get("prepare_seconds", 0.0)) for item in per_file_meta
+        ],
+        "decode_seconds_per_file": [
+            float(item.get("decode_seconds", 0.0)) for item in per_file_meta
+        ],
+        "resample_seconds_per_file": [
+            float(item.get("resample_seconds", 0.0)) for item in per_file_meta
+        ],
+        "load_seconds_per_file": [
+            float(item.get("load_seconds", 0.0)) for item in per_file_meta
+        ],
+        "prepare_seconds": float(prepare_wall_seconds),
+        "decode_seconds": float(decode_wall_seconds),
+        "load_seconds": float(time.perf_counter() - t0),
+        "total_compressed_bytes": int(
+            sum(int(item.get("total_compressed_bytes", 0)) for item in per_file_meta)
+        ),
+        "read_span_count": int(
+            sum(int(item.get("read_span_count", 0)) for item in per_file_meta)
+        ),
+        "read_gap_bytes": (
+            int(per_file_meta[0].get("read_gap_bytes", 0))
+            if per_file_meta
+            else 0
+        ),
+        "prepare_timing_s": prepare_timing_s,
+        "prep_workers": int(worker_count),
+        "prepared_cache": {
+            "hit_count": int(
+                sum(
+                    1
+                    for item in per_file_meta
+                    if (item.get("prepared_cache") or {}).get("status") == "hit"
+                )
+            ),
+            "miss_count": int(
+                sum(
+                    1
+                    for item in per_file_meta
+                    if (item.get("prepared_cache") or {}).get("status") == "miss"
+                )
+            ),
+            "disabled_count": int(
+                sum(
+                    1
+                    for item in per_file_meta
+                    if (item.get("prepared_cache") or {}).get("status") == "disabled"
+                )
+            ),
+        },
+        "per_file_metadata": per_file_meta,
+    }
+    if verbose and len(paths) > 1:
+        size_gb = (
+            sum(arr.nbytes for arr in data) / 1e9
+            if isinstance(data, list)
+            else data.nbytes / 1e9
+        )
+        if scan_region_mode == "shared":
+            region = meta["scan_region"]
+            region_text = (
+                f"[{region['row_start']}:{region['row_stop']}, "
+                f"{region['col_start']}:{region['col_stop']}]"
+            )
+        else:
+            region_text = "per-file regions"
+        print(
+            f"  {len(paths)} masters scan_region {region_text} "
+            f"-> {size_gb:.2f} GB in {time.perf_counter() - t0:.2f}s"
         )
     return LoadResult(data, meta)
 
@@ -3616,11 +4937,6 @@ def _decode_scan_indices_prepared(
             output_dtype=output_dtype,
         )
     else:
-        if output_dtype is not None and np.dtype(output_dtype) != np.dtype(prepared["dtype"]):
-            raise ValueError(
-                "MPS scan-index IO currently returns the native detector dtype; "
-                "load without dtype='u8' or cast the small returned batch explicitly."
-            )
         from quantem.gpu.io.backends.mps import load_prepared_frames
 
         data = load_prepared_frames(
@@ -3628,6 +4944,7 @@ def _decode_scan_indices_prepared(
             det_bin=det_bin,
             pixel_mask=pixel_mask if apply_mask else None,
             verbose=False,
+            output_dtype=output_dtype,
         )
 
     data = _take_requested_scan_order(data, inverse)
@@ -3824,20 +5141,25 @@ def load_scan_indices(
             output_dtype=output_dtype,
         )
         per_file_meta.append(result.metadata)
+        decoded = result.data
         if stack and len(paths) > 1:
             if out is None:
-                if cp is not None and isinstance(result.data, cp.ndarray):
-                    out = cp.empty((len(paths), *result.data.shape), dtype=result.data.dtype)
+                if cp is not None and isinstance(decoded, cp.ndarray):
+                    out = cp.empty((len(paths), *decoded.shape), dtype=decoded.dtype)
                 else:
-                    out = np.empty((len(paths), *result.data.shape), dtype=result.data.dtype)
-            if tuple(result.data.shape) != tuple(out.shape[1:]):
+                    out = np.empty((len(paths), *decoded.shape), dtype=decoded.dtype)
+            if tuple(decoded.shape) != tuple(out.shape[1:]):
                 raise ValueError(
                     "Per-file scan-index loads have different output shapes; "
                     "pass stack=False for variable-length batches."
                 )
-            out[i] = result.data
+            out[i] = decoded
         else:
-            arrays.append(result.data)
+            arrays.append(decoded)
+        del decoded, result
+        if resolved_backend == "cuda" and cp is not None:
+            cp.get_default_memory_pool().free_all_blocks()
+            cp.get_default_pinned_memory_pool().free_all_blocks()
 
     data = out if stack and len(paths) > 1 else arrays[0] if len(paths) == 1 else arrays
     if len(paths) == 1:
@@ -3904,6 +5226,18 @@ def load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = Tru
     * ``load(master)`` → one ``LoadResult``.
     * ``load(master, scan_region=(r0, r1, c0, c1))`` → one cropped
       ``LoadResult`` without loading the full scan first.
+    * ``load([masters], scan_region=(r0, r1, c0, c1), stack=True)`` → the same
+      cropped scan region from each master stacked into one 5D result.
+    * ``load([masters], scan_region=[region0, region1, ...], stack=False)`` →
+      one cropped scan region per master, useful for drift-aware time series
+      loading without a batch-union rectangle.
+    * ``load([masters], scan_region=[source0, source1, ...],
+      target_scan_region=(r0, r1, c0, c1), scan_shift_row_col=shifts)`` →
+      read the per-master source crops and return one shared specimen-coordinate
+      specimen-coordinate stack. Subpixel resampling is CUDA-only and returns
+      float32 counts.
+    * ``load(master, scan_region=(...), detector_region=(dr0, dr1, dc0, dc1))``
+      → crop scan and detector evidence in one load call.
     * ``load(master, scan_indices=positions)`` → one stochastic sparse
       ``LoadResult`` in the caller-provided scan-position order.
     * ``load(master, random_positions=1000, seed=42)`` → one stochastic sparse
@@ -3919,7 +5253,10 @@ def load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = Tru
 
     Also recommends / applies the smallest lossless browse dtype: ``dtype=None``
     prints the recommendation; ``dtype='u8'`` clips@255 + casts; ``dtype='auto'``
-    picks uint8 only if lossless.
+    picks uint8 only if lossless; ``dtype='uint32'`` / ``'u32'`` keeps native
+    four-byte unsigned detector counts when the file stores them. ``dtype='u4'``
+    requests CUDA packed 4-bit output (two 0..15 counts per byte) and raises if
+    any corrected detector count exceeds 15.
     """
     is_seq = isinstance(filepath, (list, tuple))
     verbose = kwargs.get("verbose", True)
@@ -3936,6 +5273,18 @@ def load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = Tru
         # Without this, list loads can silently materialize uint16 first and
         # only cast later, defeating the U8 memory/speed contract.
         kwargs["output_dtype"] = np.uint8
+    requested_u4 = _is_uint4_load_dtype(dtype)
+    if requested_u4:
+        existing = kwargs.get("output_dtype")
+        if existing is not None and not _is_uint4_load_dtype(existing):
+            raise ValueError(
+                "Pass either dtype='u4' or a different output_dtype=, not both. "
+                "dtype='u4' means packed 4-bit counts."
+            )
+        kwargs["output_dtype"] = "uint4"
+    requested_u32 = _is_uint32_load_dtype(dtype)
+    if requested_u32 and kwargs.get("output_dtype") is None:
+        kwargs["output_dtype"] = np.uint32
     if sum(x is not None for x in (scan_region, scan_indices, random_positions)) > 1:
         raise ValueError(
             "Pass only one of scan_region=, scan_indices=, or random_positions=."
@@ -4046,15 +5395,10 @@ def load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = Tru
                 "dataset_path arguments; crop-first loading is supported for "
                 "4D-STEM master files."
             )
-        if is_seq:
+        if gpus is not None:
             raise ValueError(
-                "load(..., scan_region=...) expects one master path. For many "
-                "masters, call load(path, scan_region=...) for each crop."
-            )
-        if gpus is not None or not stack:
-            raise ValueError(
-                "load(..., scan_region=...) returns one cropped LoadResult; "
-                "do not combine it with gpus= or stack=False."
+                "load(..., scan_region=...) does not accept gpus=. Use "
+                "CUDA_VISIBLE_DEVICES for the current crop-first path."
             )
         backend = kwargs.pop("backend", "auto")
         from .backends import resolve_backend
@@ -4073,6 +5417,10 @@ def load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = Tru
             "verbose",
             "auto_narrow",
             "output_dtype",
+            "target_scan_region",
+            "scan_shift_row_col",
+            "scan_resample_dtype",
+            "detector_region",
         }
         extra = sorted(set(kwargs) - allowed)
         if extra:
@@ -4087,14 +5435,65 @@ def load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = Tru
         region_verbose = kwargs.pop("verbose", True)
         region_auto_narrow = kwargs.pop("auto_narrow", True)
         region_output_dtype = kwargs.pop("output_dtype", None)
+        region_target_scan_region = kwargs.pop("target_scan_region", None)
+        region_scan_shift_row_col = kwargs.pop("scan_shift_row_col", None)
+        region_scan_resample_dtype = kwargs.pop("scan_resample_dtype", np.float32)
+        region_detector_region = kwargs.pop("detector_region", None)
+        if region_detector_region is not None and _is_uint4_load_dtype(
+            region_output_dtype
+        ):
+            raise ValueError(
+                "detector_region= is not supported with dtype='u4' because "
+                "uint4 output packs detector columns into bytes. Use uint8/uint16 "
+                "for detector-region loading."
+            )
+        if (region_target_scan_region is None) != (
+            region_scan_shift_row_col is None
+        ):
+            raise ValueError(
+                "target_scan_region= and scan_shift_row_col= must be passed together."
+            )
+        if region_target_scan_region is not None and resolved_backend != "cuda":
+            raise RuntimeError(
+                "target_scan_region= is currently implemented for backend='cuda' "
+                "only; MPS needs a separate Metal sampler."
+            )
+        if is_seq:
+            return _load_scan_crop_series_impl(
+                list(filepath),
+                scan_region,
+                backend=resolved_backend,
+                scan_shape=region_scan_shape,
+                scan_order=region_scan_order,
+                det_bin=region_det_bin,
+                apply_mask=region_apply_mask,
+                verbose=region_verbose,
+                auto_narrow=region_auto_narrow,
+                output_dtype=region_output_dtype,
+                stack=stack,
+                prep_workers=prep_workers,
+                target_scan_region=region_target_scan_region,
+                scan_shift_row_col=region_scan_shift_row_col,
+                scan_resample_dtype=region_scan_resample_dtype,
+                detector_region=region_detector_region,
+            )
+        if not stack:
+            raise ValueError(
+                "load(..., scan_region=...) with one master returns one cropped "
+                "LoadResult; stack=False is only meaningful for a list of masters."
+            )
         if region_scan_shape is not None:
             full_scan_shape = tuple(int(v) for v in region_scan_shape)
             normalized_region = _normalize_scan_region(scan_region, full_scan_shape)
-            if normalized_region == (
-                0,
-                int(full_scan_shape[0]),
-                0,
-                int(full_scan_shape[1]),
+            if (
+                region_target_scan_region is None
+                and region_detector_region is None
+                and normalized_region == (
+                    0,
+                    int(full_scan_shape[0]),
+                    0,
+                    int(full_scan_shape[1]),
+                )
             ):
                 return _load_impl(
                     filepath,
@@ -4118,6 +5517,10 @@ def load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = Tru
             verbose=region_verbose,
             auto_narrow=region_auto_narrow,
             output_dtype=region_output_dtype,
+            target_scan_region=region_target_scan_region,
+            scan_shift_row_col=region_scan_shift_row_col,
+            scan_resample_dtype=region_scan_resample_dtype,
+            detector_region=region_detector_region,
         )
     if is_seq and (gpus is not None or not stack):
         # N separate GPU-placed datasets (parallel read, serial decode).
@@ -4534,6 +5937,32 @@ def _load_impl(
     # a non-cuda box gets an honest error instead of a cupy ImportError crash.
     from .backends import resolve_backend
     backend = resolve_backend(backend)
+    packed_uint4_output = _is_uint4_load_dtype(output_dtype)
+    if packed_uint4_output:
+        if int(det_bin) > 1:
+            raise ValueError(
+                "dtype='u4' means packed 4-bit detector counts (0..15) and "
+                "cannot be combined with det_bin>1 because binned detector "
+                "pixels can exceed 15. Use dtype='uint8' or dtype='uint16' "
+                "for binned loads."
+            )
+        if backend != "cuda":
+            raise NotImplementedError(
+                "dtype='u4' packed HDF5 output is implemented for CUDA. "
+                f"backend={backend!r} was selected."
+            )
+        if devices is not None:
+            raise NotImplementedError(
+                "dtype='u4' packed output is not enabled for devices= sharded "
+                "stacked loads yet. Use gpus=... with stack=False to load "
+                "per-master packed results, or use dtype='uint8'."
+            )
+        if isinstance(filepath, (list, tuple)):
+            raise NotImplementedError(
+                "dtype='u4' packed output is currently one master per "
+                "LoadResult. Use gpus=... with stack=False for a list of "
+                "packed results, or use dtype='uint8' for stacked browsing."
+            )
     if row_prefix and backend != "mps":
         raise ValueError("row_prefix=True is only supported with backend='mps'.")
     if series_type is not None and series_type != "generic" and series is None:
@@ -4855,7 +6284,11 @@ def _load_impl(
             raw_data = ds[:]
             data = cp.asarray(raw_data)
             if output_dtype is not None:
-                data = data.astype(output_dtype)
+                data = (
+                    pack_uint4_cupy(data)
+                    if _is_uint4_load_dtype(output_dtype)
+                    else data.astype(output_dtype)
+                )
             t1 = time.perf_counter()
             if verbose:
                 size_gb = data.nbytes / 1e9
@@ -4871,7 +6304,11 @@ def _load_impl(
     if len(shape) >= 4:
         data = _load_gpu_decompressed(filepath, dataset_path, shape, dtype, verbose)
         if output_dtype is not None:
-            data = data.astype(output_dtype)
+            data = (
+                pack_uint4_cupy(data)
+                if _is_uint4_load_dtype(output_dtype)
+                else data.astype(output_dtype)
+            )
         t1 = time.perf_counter()
         if verbose:
             size_gb = data.nbytes / 1e9
@@ -4897,7 +6334,7 @@ def _load_impl(
         )
 
     data = _default_decompressor.load(filepath, dataset_path)
-    if output_dtype is not None:
+    if output_dtype is not None and not _is_uint4_load_dtype(output_dtype):
         data = data.astype(output_dtype)
 
     # Free decompressor buffers - they hold ~12 GB of GPU memory
@@ -4921,6 +6358,8 @@ def _load_impl(
     # Bin detector if requested
     if det_bin > 1:
         data = bin(data, factor=det_bin)
+    if _is_uint4_load_dtype(output_dtype):
+        data = pack_uint4_cupy(data)
 
     # Unflatten scan dimension - uses explicit scan_shape if passed,
     # else auto-derives from metadata (ntrigger for square scans).

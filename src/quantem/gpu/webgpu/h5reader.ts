@@ -243,12 +243,17 @@ export function readH5Volume(buffer: ArrayBuffer, name: string, framesPerChunk?:
   const ds = findStack(file);
   const [nFrames, detRows, detCols] = ds.shape;
   // Arina writes uint8/uint16/uint32 detector data depending on bit-depth; jsfive reports
-  // "|u1"/"<u2"/"<u4". A MAPED-merged stack is float32 ("<f4"). The element byte width drives
+  // "|u1"/"<u2"/"<u4". Here "<u4" is an HDF5/NumPy source-dtype spelling
+  // for four-byte unsigned data; it is not the public decodeDtype="u4"
+  // packed-count request. A MAPED-merged stack is float32 ("<f4"). The element byte width drives
   // the bitshuffle plane count (8/16/32) - float32 is 4-byte, so it de-bitshuffles exactly
   // like uint32 (32 planes); only the display reinterprets the decoded 4 bytes as f32.
   const dt = String(ds.dtype);
   const srcDtype: "uint8" | "uint16" | "uint32" | "float32" =
-    /f4|float32/.test(dt) ? "float32" : /u1|int8/.test(dt) ? "uint8" : /u4|int32/.test(dt) ? "uint32" : "uint16";
+    /f4|float32/.test(dt) ? "float32"
+      : /(^|[<>|])u1|uint8|int8/.test(dt) ? "uint8"
+      : /(^|[<>|])u4|uint32|int32/.test(dt) ? "uint32"
+      : "uint16";
   const offsets = frameOffsets(ds);
   return readH5VolumeFromFrameIndex(buffer, name, { detRows, detCols, nFrames, srcDtype, frameOffsets: offsets }, framesPerChunk);
 }

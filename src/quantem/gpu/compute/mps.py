@@ -18,7 +18,7 @@ from numba import njit, prange
 
 
 # Raw Metal masked-sum kernels: one thread per scan position, reading resident
-# uint8/uint16 detector chunks in place. No torch and no dtype cast during
+# uint8/uint16/uint32 detector chunks in place. No torch and no dtype cast during
 # Show4DSTEM BF/DF/ADF interaction.
 import pathlib as _pathlib
 _MASKED_SUM_MSL = (_pathlib.Path(__file__).parent / 'metal' / 'reductions.msl').read_text()
@@ -199,14 +199,28 @@ class MetalVirtualImage:
         self._Metal = Metal
         self.chunks = chunks
         self._dtype = np.dtype(chunks[0].dtype)
-        if self._dtype not in (np.dtype(np.uint8), np.dtype(np.uint16)):
+        if self._dtype not in (
+            np.dtype(np.uint8),
+            np.dtype(np.uint16),
+            np.dtype(np.uint32),
+        ):
             raise TypeError(
-                "MetalVirtualImage supports uint8 and uint16 chunk-backed "
+                "MetalVirtualImage supports uint8, uint16, and uint32 chunk-backed "
                 f"data, got {self._dtype}."
             )
         if row_prefix and self._dtype != np.dtype(np.uint16):
             raise ValueError("row_prefix=True requires uint16 MPS chunks.")
-        suffix = "u8" if self._dtype == np.dtype(np.uint8) else "u16"
+        suffix = {
+            np.dtype(np.uint8): "u8",
+            np.dtype(np.uint16): "u16",
+            np.dtype(np.uint32): "u32",
+        }[self._dtype]
+        self._sum_dtype = (
+            np.dtype(np.uint64)
+            if self._dtype == np.dtype(np.uint32)
+            else np.dtype(np.int32)
+        )
+        self._sum_itemsize = int(self._sum_dtype.itemsize)
         self.det = tuple(int(x) for x in chunks[0].shape[1:])
         self.ndet = self.det[0] * self.det[1]
         self.n = int(sum(int(c.shape[0]) for c in chunks))
@@ -220,16 +234,20 @@ class MetalVirtualImage:
             raise RuntimeError(f"masked_sum kernel compile failed: {err}")
         self._pipe, _ = dev.newComputePipelineStateWithFunction_error_(
             lib.newFunctionWithName_(f"masked_sum_{suffix}"), None)
-        self._detsum_pipe, _ = dev.newComputePipelineStateWithFunction_error_(
-            lib.newFunctionWithName_(f"detector_sum_{suffix}"), None)
+        self._detsum_pipe = None
+        if self._dtype != np.dtype(np.uint32):
+            self._detsum_pipe, _ = dev.newComputePipelineStateWithFunction_error_(
+                lib.newFunctionWithName_(f"detector_sum_{suffix}"), None)
         self._detsum_prefix_pipe, _ = dev.newComputePipelineStateWithFunction_error_(
             lib.newFunctionWithName_("detector_sum_prefix_u16"), None)
         self._row_overflow_pipe, _ = dev.newComputePipelineStateWithFunction_error_(
             lib.newFunctionWithName_("row_sum_overflow_u16"), None)
         self._row_prefix_pipe, _ = dev.newComputePipelineStateWithFunction_error_(
             lib.newFunctionWithName_("row_prefix_u16_inplace"), None)
-        self._bin_pipe, _ = dev.newComputePipelineStateWithFunction_error_(
-            lib.newFunctionWithName_(f"bin_detector_{suffix}"), None)
+        self._bin_pipe = None
+        if self._dtype != np.dtype(np.uint32):
+            self._bin_pipe, _ = dev.newComputePipelineStateWithFunction_error_(
+                lib.newFunctionWithName_(f"bin_detector_{suffix}"), None)
         self._mean_dp_pipe, _ = dev.newComputePipelineStateWithFunction_error_(
             lib.newFunctionWithName_(f"mean_dp_sum_{suffix}"), None)
         self._mean_dp_prefix_pipe, _ = dev.newComputePipelineStateWithFunction_error_(
@@ -254,10 +272,13 @@ class MetalVirtualImage:
             lib.newFunctionWithName_("radial_cumsum_dual_prefix_tg_u16"), None)
         self._com_pipe, _ = dev.newComputePipelineStateWithFunction_error_(
             lib.newFunctionWithName_(f"com_{suffix}"), None)
-        # one int32 output buffer per chunk (reused every recompute)
-        self._out_mtls = [_mps._metal_buffer_alloc(int(c.shape[0]) * 4)
+        # One output buffer per chunk, reused every recompute. uint32 detector
+        # frames can overflow 32-bit selected sums, so use uint64 there.
+        self._out_mtls = [_mps._metal_buffer_alloc(
+            int(c.shape[0]) * self._sum_itemsize
+        )
                           for c in chunks]
-        self._out_nps = [_mps._numpy_view(self._out_mtls[i], np.int32,
+        self._out_nps = [_mps._numpy_view(self._out_mtls[i], self._sum_dtype,
                                           int(c.shape[0]))
                          for i, c in enumerate(chunks)]
         # CoM output: float2 (CoMx, CoMy) per frame per chunk (8 bytes/frame)
@@ -281,7 +302,7 @@ class MetalVirtualImage:
         # mask buffer (one detector frame, written per recompute)
         self._mask_mtl = _mps._metal_buffer_alloc(self.ndet)
         self._mask_np = _mps._numpy_view(self._mask_mtl, np.uint8, self.ndet)
-        self._full = np.empty(self.n, dtype=np.int32)
+        self._full = np.empty(self.n, dtype=self._sum_dtype)
         self._row_prefix = bool(row_prefix)
         self._row_prefix_warmed = False
         self._row_prefix_numba_warmed = False
@@ -306,10 +327,10 @@ class MetalVirtualImage:
             nidx_np = _mps._numpy_view(nidx_mtl, np.uint32, 1)
             self._roi_nidx_mtls.append(nidx_mtl)
             self._roi_nidx_nps.append(nidx_np)
-            sum_mtl = _mps._metal_buffer_alloc(self.ndet * 4)
+            sum_mtl = _mps._metal_buffer_alloc(self.ndet * self._sum_itemsize)
             self._roi_sum_mtls.append(sum_mtl)
             self._roi_sum_nps.append(
-                _mps._numpy_view(sum_mtl, np.uint32, self.ndet)
+                _mps._numpy_view(sum_mtl, self._sum_dtype, self.ndet)
             )
         self._roi_accum = np.empty(self.ndet, dtype=np.uint64)
         self._roi_mean = np.empty(self.ndet, dtype=np.float32)
@@ -347,6 +368,13 @@ class MetalVirtualImage:
         if verbose:
             print(f"Building detector-bin{binf} virtual-image cache")
         t0 = time.perf_counter()
+        if self._dtype == np.dtype(np.uint32):
+            raise ValueError(
+                "fast detector-bin sidecars for native uint32 MPS chunks are "
+                "not enabled because a binned pixel can exceed uint32. Load "
+                "with output_dtype=np.uint16 after a count-range check, or use "
+                "native no-bin uint32 products."
+            )
         out_shape = (self.det[0] // binf, self.det[1] // binf)
         outndet = out_shape[0] * out_shape[1]
         out_chunks = []
@@ -849,15 +877,15 @@ class MetalVirtualImage:
             self._radial_floor_radbin_np[:] = floorbin
 
         out_count = self.n * nbins
-        out_nbytes = out_count * 4
+        out_nbytes = out_count * self._sum_itemsize
         if self._radial_out_mtl is None or self._radial_out_mtl.length() < out_nbytes:
             self._radial_out_mtl = self._mps._metal_buffer_alloc(out_nbytes)
             self._radial_out_np = self._mps._numpy_view(
-                self._radial_out_mtl, np.int32, out_count
+                self._radial_out_mtl, self._sum_dtype, out_count
             )
         else:
             self._radial_out_np = self._mps._numpy_view(
-                self._radial_out_mtl, np.int32, out_count
+                self._radial_out_mtl, self._sum_dtype, out_count
             )
         if self._row_prefix:
             if (
@@ -887,7 +915,7 @@ class MetalVirtualImage:
             enc.setComputePipelineState_(pipe)
             for ci in group:
                 nf = int(self.chunks[ci].shape[0])
-                out_offset = self._offsets[ci] * nbins * 4
+                out_offset = self._offsets[ci] * nbins * self._sum_itemsize
                 enc.setBuffer_offset_atIndex_(self.chunks[ci]._mtl, 0, 0)
                 enc.setBuffer_offset_atIndex_(self._radial_radbin_mtl, 0, 1)
                 if self._row_prefix:
@@ -976,6 +1004,11 @@ class MetalVirtualImage:
         atomic-adds into the shared output. ~1.7s for the full 19.3 GB (vs ~13 s
         for a host numpy reduce). Used once, at auto-center.
         """
+        if self._dtype == np.dtype(np.uint32):
+            acc = np.zeros(self.det, dtype=np.uint64)
+            for chunk in self.chunks:
+                acc += np.asarray(chunk).sum(axis=0, dtype=np.uint64)
+            return acc.astype(np.float32)
         Metal = self._Metal
         mps = self._mps
         ds_out = mps._metal_buffer_alloc(self.ndet * 4)

@@ -273,12 +273,29 @@ file -> quantem.gpu (load + decompress + to_device) -> arrays
   Metal loaders keep data chunk-backed and avoid materializing one giant
   Torch-MPS tensor, which matters because Torch-MPS can hit 32-bit indexing /
   `>2^31` element limits and unified-memory pressure on full 4D-STEM stacks.
-  BF/DF/DPC, Metal bitshuffle/LZ4 IO, MPS `uint8` browse loads, SSB
+  BF/DF/DPC, Metal bitshuffle/LZ4 IO, MPS `uint8` browse and native `uint32`
+  loads, SSB
   preview/free-fit, and movie rendering run through Apple GPU paths where
   implemented.
 - `cpu`: h5py/hdf5plugin reference decode for availability and reference agreement.
 - `webgpu`: canonical browser-compute sources shipped in `quantem.gpu.webgpu`;
   widget bundles them into anywidget JavaScript and exported HTML.
+
+### Count dtypes
+
+Use explicit names for detector-count storage:
+
+```python
+from quantem.gpu import load
+
+native_u32 = load("scan_master.h5", dtype="uint32").data  # four-byte source counts
+packed_u4 = load("scan_master.h5", dtype="u4").data       # CUDA only, values 0..15
+```
+
+`dtype="u4"` never means NumPy's four-byte `<u4` dtype. It means packed
+4-bit detector counts, two pixels per byte, and CUDA raises if any corrected
+count exceeds 15. Use `dtype="uint32"` or `dtype="u32"` for native four-byte
+detector sources.
 
 ### Feature matrix
 
@@ -290,10 +307,10 @@ complete; `Gap` means the backend does not implement that capability yet.
 |---|---|---|---|---|
 | Device report and explicit selection | Done | Done | NA | WebGPU adapter selection happens in the browser; software adapters are rejected for timing claims. |
 | HDF5 master metadata and discovery | Done | Done | Done | One shared API should serve widget and live callers. |
-| Full HDF5 bitshuffle/LZ4 load/decompress | Done | Done | Done | CUDA uses CuPy/CUDA kernels; MPS uses Metal chunk-backed unified memory; WebGPU uses browser local-file HDF5 plus WGSL decode. WebGPU strict full-stack no-bin `1024x1024x192x192` browse is intentionally rejected as a memory-policy path; use product-first, crop, or explicit bin. |
+| Full HDF5 bitshuffle/LZ4 load/decompress | Done | Done | Done | CUDA uses CuPy/CUDA kernels; MPS uses Metal chunk-backed unified memory; WebGPU uses browser local-file HDF5 plus WGSL decode. Native `uint8`/`uint16`/`uint32` detector sources are supported; `load(..., dtype='uint32')` or `dtype='u32'` requests four-byte unsigned output. `load(..., dtype='u4')` means true packed 4-bit counts (`0..15`), not NumPy `<u4`; CUDA returns a packed two-counts-per-byte array after an exact range audit. MPS/WebGPU HDF5 packed `u4` output is a named gap and raises honestly. WebGPU strict full-stack no-bin `1024x1024x192x192` browse is intentionally rejected as a memory-policy path; use product-first, crop, or explicit bin. |
 | `load(..., scan_region=...)` crop-first IO | Done | Done | Done | CUDA/MPS crop during load; WebGPU slices frame windows before upload/decode. |
 | Detector bin during load, min-memory | Done | Done | Done | WebGPU has an explicit count-preserving `detBin` load option in the local-H5 source; full `512x512x192x192` `detBin=2/4/8` headed parity is exact on a real NVIDIA WebGPU adapter, including native non-low8 `uint16` `detBin=2`. |
-| BF/DF/ADF resident kernels | Done | Done | Done | CUDA RawKernel, MPS Metal, and WebGPU WGSL selected reducers are implemented. |
+| BF/DF/ADF resident kernels | Done | Done | Done | CUDA RawKernel, MPS Metal, and WebGPU WGSL selected reducers are implemented for `uint8`/`uint16`/`uint32` resident data; CUDA also has packed `uint4` selected/dense reducers and CoM kernels. |
 | Dense DF/ADF strategy | Done | Done | Done | Uses cached full-detector total minus complement when that is cheaper than scanning dense masks. |
 | CoM/DPC resident kernels | Done | Done | Done | CUDA and MPS have fused moment kernels; WebGPU row/col DPC has full no-bin headed signoff on real hardware. |
 | iDPC | Done | Done | Done | WebGPU has a fixed-rotation browser iDPC solver using paired DPC buffers and a dual-real FFT. It matches the Python reference within float32 FFT tolerance, not bit-exact. |

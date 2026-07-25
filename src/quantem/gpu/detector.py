@@ -15,9 +15,10 @@ collection angles in **mrad**::
 build a boolean detector mask and call :func:`masked_sum` - the same fast
 reduction that Show4DSTEM and live Browse use. The probe (disk center + size)
 auto-fits from the mean diffraction pattern. MacBook (MPS) runs the raw-Metal
-masked-sum over chunked uint8/uint16 buffers; CUDA runs the CuPy RawKernel
-reducer for resident uint8/uint16 arrays; Torch/NumPy are fallback paths for
-small or unsupported arrays. **No binning** on either GPU path.
+masked-sum over chunked uint8/uint16/uint32 buffers; CUDA runs the CuPy
+RawKernel reducer for resident uint8/uint16/uint32 arrays; Torch/NumPy are
+fallback paths for small or unsupported arrays. **No binning** on either GPU
+path.
 
 The lower-level :func:`virtual` function (below) is mode-based
 (DP/BF/ABF/ADF/HAADF/DF, bands measured in the auto-detected disk radius) and is
@@ -27,6 +28,8 @@ mainly the reference path the parity tests pin; ``ds.bf()`` etc. are the API.
 from __future__ import annotations
 
 import numpy as np
+
+from quantem.gpu.uint4 import is_packed_uint4
 
 
 def _is_cupy_array(data) -> bool:
@@ -41,6 +44,8 @@ def _unwrap_core_4dstem(data):
     """Return numeric data from LoadResult or quantem.core Dataset4dstem."""
     if hasattr(data, "_fields") and "data" in getattr(data, "_fields", ()):
         return data.data
+    if is_packed_uint4(data):
+        return data
     if _is_cupy_array(data) or _is_torch_tensor(data) or isinstance(data, np.ndarray):
         return data
     tensor = getattr(data, "_tensor", None)
@@ -145,6 +150,10 @@ def _resolve_backend(data):
     data = _unwrap_core_4dstem(data)
     if hasattr(data, "_fields") and "data" in getattr(data, "_fields", ()):
         data = data.data
+    if is_packed_uint4(data):
+        from quantem.gpu.compute.backends import compute_backend
+
+        return compute_backend(data)
     if hasattr(data, "chunks"):
         from quantem.gpu.compute.backends import compute_backend
         from quantem.gpu.compute.mps import ChunkedFrames

@@ -4,6 +4,7 @@ import sys
 import types
 
 import numpy as np
+import pytest
 
 
 def test_calibration_products_cache_roundtrip(tmp_path) -> None:
@@ -346,6 +347,13 @@ def test_calibration_memory_plan_scales_to_one_full_chunk() -> None:
     )
     assert huge_plan.chunk_rows == 1024
     assert huge_plan.chunk_count == 1
+
+
+def test_calibration_products_reject_packed_uint4_output_dtype() -> None:
+    from quantem.gpu.calibration import _calibration_output_dtype
+
+    with pytest.raises(ValueError, match="packed 4-bit raw detector counts"):
+        _calibration_output_dtype("u4")
 
 
 def test_calibration_memory_plan_user_chunk_rows_override() -> None:

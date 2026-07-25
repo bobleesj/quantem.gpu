@@ -31,6 +31,14 @@ from .detector import (
     virtual_image,
 )
 from .dpc import DPCResult, center_of_mass, com, dpc, idpc
+from .uint4 import (
+    PackedUInt4Array,
+    is_packed_uint4,
+    pack_uint4_cupy,
+    pack_uint4_numpy,
+    unpack_uint4_cupy,
+    unpack_uint4_numpy,
+)
 
 try:
     __version__ = version("quantem.gpu")
@@ -82,6 +90,7 @@ __all__ = [
     "Preview",
     "Parallax",
     "ParallaxResult",
+    "PackedUInt4Array",
     "adf",
     "auto_probe",
     "bf",
@@ -99,6 +108,7 @@ __all__ = [
     "dpc",
     "dp_mean",
     "idpc",
+    "is_packed_uint4",
     "load",
     "load_calibration_products",
     "load_scan_indices",
@@ -106,6 +116,8 @@ __all__ = [
     "mean_dp",
     "movie",
     "parallax",
+    "pack_uint4_cupy",
+    "pack_uint4_numpy",
     "random_scan_indices",
     "select_device",
     "ssb",
@@ -114,6 +126,8 @@ __all__ = [
     "ssb_fit_mps",
     "ssb_preview_mps",
     "ssb_series",
+    "unpack_uint4_cupy",
+    "unpack_uint4_numpy",
     "virtual",
     "virtual_image",
     "virtual_image_kernel_support",

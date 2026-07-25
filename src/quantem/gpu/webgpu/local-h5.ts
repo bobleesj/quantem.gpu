@@ -30,6 +30,8 @@ import {
 } from "./h5reader";
 
 type SourceDtype = "uint8" | "uint16" | "uint32" | "float32";
+type DecodeDtype = "uint8" | "uint16" | "uint32" | "float32";
+type DecodeDtypeRequest = DecodeDtype | "u1" | "u2" | "u4" | "u32" | "uint4" | "native" | "auto";
 
 export interface LocalH5GpuChunk {
   buffer: GPUBuffer;
@@ -58,7 +60,7 @@ export interface LocalH5LoadProfile {
   compressedGB: number;
   decodeCompressedMB: number;
   sourceDtype: SourceDtype | "unknown";
-  decodeDtype: "uint8" | "uint16" | "float32";
+  decodeDtype: DecodeDtype;
   detBin: number;
   sourceDetRows: number;
   sourceDetCols: number;
@@ -113,6 +115,7 @@ export interface LocalH5LoadOptions {
   groupSize?: number;
   workerCount?: number;
   detBin?: number;
+  decodeDtype?: DecodeDtypeRequest;
 }
 
 export interface LocalH5MaskedSumOptions extends LocalH5LoadOptions {
@@ -725,6 +728,25 @@ function parseEmbeddedBadPixels(raw: string | undefined): Uint32Array | null {
   }
 }
 
+function normalizeDecodeDtypeRequest(value: unknown): DecodeDtypeRequest | "" {
+  const token = String(value || "").toLowerCase();
+  if (token === "u1") return "uint8";
+  if (token === "u2") return "uint16";
+  if (token === "u32") return "uint32";
+  if (token === "u4" || token === "uint4") return "uint4";
+  if (
+    token === "uint8"
+    || token === "uint16"
+    || token === "uint32"
+    || token === "float32"
+    || token === "native"
+    || token === "auto"
+  ) {
+    return token;
+  }
+  return "";
+}
+
 function safeInt(value: number | undefined, fallback: number, min: number, max: number): number {
   const raw = Number(value);
   return Math.max(min, Math.min(max, Number.isFinite(raw) ? Math.round(raw) : fallback));
@@ -855,6 +877,9 @@ const DETECTOR_BIN_WGSL = `
 @group(0) @binding(2) var<uniform> cfg: vec4<u32>;   // nScan, srcRows, srcCols, detBin
 @group(0) @binding(3) var<uniform> cfg2: vec4<u32>;  // outDetSize, srcDetSize, mode, outCols
 fn sample(idx: u32, mode: u32) -> f32 {
+  if (mode == 3u) {
+    return f32(src[idx]);
+  }
   if (mode == 1u) {
     let word = src[idx >> 2u];
     return f32((word >> ((idx & 3u) * 8u)) & 255u);
@@ -939,6 +964,9 @@ function badPixelClearSpecs(badPixels: Uint32Array, detSize: number, mode: numbe
       word = idx >> 1;
       const shift = (idx & 1) * 16;
       mask = (~(0xffff << shift)) >>> 0;
+    } else if (mode === 3) {
+      word = idx;
+      mask = 0;
     }
     clear.set(word, (clear.get(word) ?? 0xffffffff) & mask);
   }
@@ -1105,7 +1133,7 @@ export async function loadShow4DSTEMLocalH5Master(
   let frameIndexFiles = 0;
   let blockIndexFiles = 0;
   let sourceDtype: SourceDtype | "unknown" = "unknown";
-  let decodeDtype: "uint8" | "uint16" | "float32" = "uint8";
+  let decodeDtype: DecodeDtype = "uint8";
   let decompressMs = 0;
   let detBinMs = 0;
   const decodeProfile: Bslz4BatchProfile = {
@@ -1189,17 +1217,46 @@ export async function loadShow4DSTEMLocalH5Master(
       if (detBin > 1 && (vol.detRows % detBin !== 0 || vol.detCols % detBin !== 0)) {
         throw new Error(`Detector shape ${vol.detRows}x${vol.detCols} is not divisible by detBin=${detBin}.`);
       }
-      if (detBin > 1 && vol.srcDtype === "uint32") {
-        throw new Error("WebGPU detector-bin load currently supports uint8, uint16, and float32 sources; uint32 needs real-acquisition parity before enablement.");
-      }
       // Count-audited low8 browse sources can be detector-binned directly from
       // the same lossless low8 decode. This preserves the explicit detBin
       // evidence policy while avoiding the slower full uint16 intermediate.
+      const requestedDecode = normalizeDecodeDtypeRequest(options.decodeDtype);
+      if (requestedDecode === "uint4") {
+        throw new Error(
+          "WebGPU decodeDtype='u4' means packed 4-bit counts (0..15), not "
+          + "four-byte uint32. Packed uint4 HDF5 decode is not enabled yet; "
+          + "use decodeDtype='u32'/'uint32' for native four-byte sources."
+        );
+      }
+      const nativeDecode = requestedDecode === "native" || requestedDecode === "auto";
+      if (requestedDecode === "uint32" && vol.srcDtype !== "uint32") {
+        throw new Error("WebGPU decodeDtype='uint32' requires a uint32 HDF5 source.");
+      }
+      if (requestedDecode === "uint16" && vol.srcDtype === "uint32") {
+        throw new Error("WebGPU uint32 source decode cannot narrow to uint16 in-browser; use decodeDtype='native' or dtype='uint8' browse clipping.");
+      }
+      if (requestedDecode === "float32" && vol.srcDtype !== "float32") {
+        throw new Error("WebGPU decodeDtype='float32' requires a float32 HDF5 source.");
+      }
       decodeDtype = detBin > 1
-        ? (vol.srcDtype === "float32" ? "float32" : low8Only ? "uint8" : vol.srcDtype === "uint16" ? "uint16" : "uint8")
-        : vol.srcDtype === "float32"
-          ? "float32"
-          : "uint8";
+        ? (
+          vol.srcDtype === "float32"
+            ? "float32"
+            : vol.srcDtype === "uint32"
+              ? "uint32"
+              : low8Only && requestedDecode !== "uint16" && !nativeDecode
+                ? "uint8"
+                : vol.srcDtype
+        )
+        : requestedDecode === "uint32"
+          ? "uint32"
+          : requestedDecode === "uint16" && vol.srcDtype === "uint16"
+            ? "uint16"
+            : nativeDecode && vol.srcDtype !== "float32"
+              ? vol.srcDtype
+              : vol.srcDtype === "float32"
+                ? "float32"
+                : "uint8";
       sourceDetRows = vol.detRows;
       sourceDetCols = vol.detCols;
       outputDetRows = detBin > 1 ? vol.detRows / detBin : vol.detRows;
@@ -1380,6 +1437,13 @@ export async function loadShow4DSTEMLocalH5MaskedSum(
       if (vol.srcDtype === "float32") {
         throw new Error("Product-first WebGPU selected-block masked sums currently require integer bslz4 sources.");
       }
+      if (vol.srcDtype === "uint32") {
+        throw new Error(
+          "Product-first WebGPU masked sums currently use the low-8 decode path; "
+          + "load the native uint32 stack with decodeDtype='native' for exact "
+          + "uint32 BF/ADF/DPC interaction."
+        );
+      }
       sourceDtype = vol.srcDtype;
       compressedBytes += vol.chunk.compressed.byteLength;
       const sourceStartScan = sidecarSelection.spans[i]?.startScan ?? frames;
@@ -1397,6 +1461,13 @@ export async function loadShow4DSTEMLocalH5MaskedSum(
       }
       if (vol.srcDtype === "float32") {
         throw new Error("Product-first WebGPU HDF5 masked sums currently require integer bslz4 sources; use the full-stack float32 path.");
+      }
+      if (vol.srcDtype === "uint32") {
+        throw new Error(
+          "Product-first WebGPU HDF5 masked sums currently use the low-8 decode "
+          + "path; load the native uint32 stack with decodeDtype='native' for "
+          + "exact uint32 BF/ADF/DPC interaction."
+        );
       }
       sourceDtype = vol.srcDtype;
       const spec = vol.chunks[0];

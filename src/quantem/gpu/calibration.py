@@ -15,6 +15,17 @@ import numpy as np
 _CACHE_VERSION = 1
 
 
+def _calibration_output_dtype(output_dtype) -> np.dtype:
+    """Return a NumPy dtype for product caches, rejecting packed raw-stack tokens."""
+    if isinstance(output_dtype, str) and output_dtype.lower() in {"u4", "uint4"}:
+        raise ValueError(
+            "output_dtype='u4' means packed 4-bit raw detector counts and is "
+            "not valid for derived calibration products. Use output_dtype=np.uint8, "
+            "np.uint16, or np.float32."
+        )
+    return np.dtype(output_dtype)
+
+
 @dataclass
 class CalibrationProducts:
     """Small calibration products for instant UI and ptychography setup."""
@@ -273,7 +284,7 @@ def calibration_memory_plan(
     return _calibration_memory_plan_for_shapes(
         scan_shape,
         detector_shape,
-        np.dtype(output_dtype).itemsize,
+        _calibration_output_dtype(output_dtype).itemsize,
         memory_budget_gb,
     )
 
@@ -447,7 +458,7 @@ def _build_cuda_calibration_products(
         "rotation_deg": float(rotation_deg),
         "use_transpose": bool(use_transpose),
         "backend": "cuda",
-        "dtype": str(np.dtype(output_dtype)),
+        "dtype": str(_calibration_output_dtype(output_dtype)),
         "memory_budget_gb": float(memory_plan.memory_budget_gb),
         "memory_budget_source": memory_plan.memory_budget_source,
         "chunk_rows_source": memory_plan.chunk_rows_source,
@@ -482,11 +493,11 @@ def _metadata_dtype(metadata: dict[str, Any], fallback) -> np.dtype:
     """Return the native detector dtype from metadata when it is available."""
     dtype = metadata.get("dtype")
     if dtype is None:
-        return np.dtype(fallback)
+        return _calibration_output_dtype(fallback)
     try:
         return np.dtype(dtype)
     except TypeError:
-        return np.dtype(fallback)
+        return _calibration_output_dtype(fallback)
 
 
 def _metal_buffer_for(array):
@@ -804,7 +815,7 @@ def load_calibration_products(
     plan_dtype = (
         _metadata_dtype(metadata, output_dtype)
         if resolved_backend == "mps"
-        else np.dtype(output_dtype)
+        else _calibration_output_dtype(output_dtype)
     )
     plan = _calibration_memory_plan_for_shapes(
         scan_shape,

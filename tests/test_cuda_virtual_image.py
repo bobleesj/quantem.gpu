@@ -22,7 +22,7 @@ def _mask(det_shape: tuple[int, int], radius: float, *, invert: bool = False) ->
     return ~disk if invert else disk
 
 
-@pytest.mark.parametrize("dtype", [np.uint8, np.uint16])
+@pytest.mark.parametrize("dtype", [np.uint8, np.uint16, np.uint32])
 def test_cuda_masked_sum_matches_cupy_selected_sum(dtype) -> None:
     cp = _cupy_with_device()
     from quantem.gpu.compute.cuda import cuda_masked_sum
@@ -43,7 +43,7 @@ def test_cuda_masked_sum_matches_cupy_selected_sum(dtype) -> None:
     cp.testing.assert_array_equal(got, expected)
 
 
-@pytest.mark.parametrize("dtype", [np.uint8, np.uint16])
+@pytest.mark.parametrize("dtype", [np.uint8, np.uint16, np.uint32])
 def test_cuda_sum_all_matches_cupy_row_sum(dtype) -> None:
     cp = _cupy_with_device()
     from quantem.gpu.compute.cuda import cuda_sum_all_uint64
@@ -58,7 +58,7 @@ def test_cuda_sum_all_matches_cupy_row_sum(dtype) -> None:
     cp.testing.assert_array_equal(got, expected)
 
 
-@pytest.mark.parametrize("dtype", [np.uint8, np.uint16])
+@pytest.mark.parametrize("dtype", [np.uint8, np.uint16, np.uint32])
 def test_cuda_center_of_mass_matches_reference(dtype) -> None:
     cp = _cupy_with_device()
     from quantem.gpu.compute.cuda import cuda_center_of_mass
@@ -133,10 +133,22 @@ def test_cuda_virtual_image_kernel_source_uses_warp_and_fused_dense_path() -> No
 
     assert "__shfl_down_sync" in _CUDA_VI_CODE
     assert "selected_sum_f32_u16_16f" in _CUDA_VI_CODE
+    assert "selected_sum_f32_u32_16f" in _CUDA_VI_CODE
     assert "selected_sum_from_total_f32_u16_16f" in _CUDA_VI_CODE
+    assert "selected_sum_from_total_f32_u32_16f" in _CUDA_VI_CODE
+    assert "selected_sum_f32_uint4_16f" in _CUDA_VI_CODE
+    assert "selected_sum_from_total_f32_uint4_16f" in _CUDA_VI_CODE
     assert "total_sum_u16_4f" in _CUDA_VI_CODE
+    assert "total_sum_u32_4f" in _CUDA_VI_CODE
+    assert "total_sum_uint4_4f" in _CUDA_VI_CODE
     assert "center_of_mass_full_u16_4f" in _CUDA_VI_CODE
+    assert "center_of_mass_full_u32_4f" in _CUDA_VI_CODE
+    assert "center_of_mass_full_uint4_4f" in _CUDA_VI_CODE
     assert "center_of_mass_selected_u16_4f" in _CUDA_VI_CODE
+    assert "center_of_mass_selected_u32_4f" in _CUDA_VI_CODE
+    assert "center_of_mass_selected_uint4_4f" in _CUDA_VI_CODE
+    assert "frame_uint4_to_u8" in _CUDA_VI_CODE
+    assert "mean_dp_uint4" in _CUDA_VI_CODE
 
 
 def test_cupy_compute_backend_dispatches_to_cuda_kernel_backend() -> None:
@@ -184,5 +196,68 @@ def test_cuda_compute_backend_caches_full_center_of_mass() -> None:
 
     assert cached_col is got_col
     assert cached_row is got_row
+    np.testing.assert_allclose(got_row.reshape(4, 5), expected_row, rtol=0, atol=1e-6)
+    np.testing.assert_allclose(got_col.reshape(4, 5), expected_col, rtol=0, atol=1e-6)
+
+
+def test_cuda_packed_uint4_backend_matches_unpacked_uint8_reference() -> None:
+    cp = _cupy_with_device()
+    from quantem.gpu.compute.backends import CudaPackedUInt4Compute, compute_backend
+    from quantem.gpu.uint4 import pack_uint4_cupy
+
+    rng = np.random.default_rng(43)
+    data_np = rng.integers(0, 16, size=(4, 5, 13, 11), dtype=np.uint8)
+    data = cp.asarray(data_np)
+    packed = pack_uint4_cupy(data)
+    backend = compute_backend(packed)
+
+    assert isinstance(backend, CudaPackedUInt4Compute)
+    assert packed.nbytes == data_np.size // 2
+
+    sparse_mask = _mask((13, 11), 3.25)
+    dense_mask = ~sparse_mask
+    sparse_expected = (
+        data.reshape(-1, 13 * 11)[:, cp.asarray(sparse_mask.reshape(-1))]
+        .sum(axis=1, dtype=cp.uint64)
+        .astype(cp.float32)
+        .reshape(4, 5)
+        .get()
+    )
+    dense_expected = (
+        data.reshape(-1, 13 * 11)[:, cp.asarray(dense_mask.reshape(-1))]
+        .sum(axis=1, dtype=cp.uint64)
+        .astype(cp.float32)
+        .reshape(4, 5)
+        .get()
+    )
+
+    np.testing.assert_array_equal(backend.masked_sum(sparse_mask), sparse_expected)
+    np.testing.assert_array_equal(backend.masked_sum(dense_mask), dense_expected)
+    np.testing.assert_array_equal(backend.frame(7), data_np.reshape(-1, 13, 11)[7])
+    np.testing.assert_allclose(
+        backend.mean_dp(),
+        data.sum(axis=(0, 1), dtype=cp.uint64).astype(cp.float32).get() / 20.0,
+        rtol=0,
+        atol=0,
+    )
+    np.testing.assert_array_equal(
+        backend.reduce_frames(np.asarray([0, 3, 7]), reduce="sum"),
+        data.reshape(-1, 13, 11)[[0, 3, 7]]
+        .sum(axis=0, dtype=cp.uint64)
+        .astype(cp.float32)
+        .get(),
+    )
+
+    rows = cp.arange(13, dtype=cp.float64)[:, None]
+    cols = cp.arange(11, dtype=cp.float64)[None, :]
+    total = cp.maximum(data.sum(axis=(2, 3), dtype=cp.float64), 1e-10)
+    expected_row = cp.asnumpy(
+        ((data * rows).sum(axis=(2, 3), dtype=cp.float64) / total).astype(cp.float32)
+    )
+    expected_col = cp.asnumpy(
+        ((data * cols).sum(axis=(2, 3), dtype=cp.float64) / total).astype(cp.float32)
+    )
+
+    got_col, got_row = backend.center_of_mass()
     np.testing.assert_allclose(got_row.reshape(4, 5), expected_row, rtol=0, atol=1e-6)
     np.testing.assert_allclose(got_col.reshape(4, 5), expected_col, rtol=0, atol=1e-6)
