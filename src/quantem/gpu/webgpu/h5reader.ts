@@ -281,7 +281,10 @@ export function readH5VolumeFromFrameIndex(
   // Block geometry from the first chunk's 12-byte header: bytes 8-11 (BE) are the per-block
   // uncompressed byte count; blockElems = that / element bytes.
   const { blockElems, nBlocksPerFrame } = validateBslz4ChunkHeader(fileBytes, offsets[0], srcBytes, detSize, name);
-  const defaultFramesPerChunk = Math.max(1, Math.floor((1024 * 1024 * 1024) / detSize));
+  // Bound the DECODED chunk at ~1 GiB for the widest lossless output this source can
+  // request (native srcBytes/px, e.g. uint16 -> 2 B/px). Sizing by 1 B/px let a native
+  // uint16 decode silently produce 2 GiB chunk buffers on merged single-file stacks.
+  const defaultFramesPerChunk = Math.max(1, Math.floor((1024 * 1024 * 1024) / (detSize * srcBytes)));
   const frameStep = Math.max(1, Math.floor(framesPerChunk || defaultFramesPerChunk));
   const chunks: Bslz4Spec[] = [];
   const chunkScanCounts: number[] = [];

@@ -516,6 +516,76 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
   }
 }`;
 
+// FUSED frame-cooperative NATIVE uint16 decode: the lossless counterpart of
+// FUSED_FRAME_COOP_LOW8. Same one-workgroup-per-frame LZ4 loop, but it decodes the
+// FULL bitshuffle block (__BB__ = 2x blockElems bytes: low8 stops at the low 8
+// planes, which silently WRAPS counts >255 - fatal for high-count data), then
+// reconstructs all 16 bit planes and packs 2 pixels per u32 (mode 0). Inherent
+// cost vs low8: ~2x the LZ4 bytes resolved and 2x the output stores; that is the
+// dtype's floor, not kernel inefficiency.
+const FUSED_FRAME_U16_WGSL = `
+@group(0) @binding(0) var<storage,read> raw: array<u32>;
+@group(0) @binding(1) var<storage,read> blkMeta: array<u32>;   // coff,clen per block
+@group(0) @binding(2) var<storage,read_write> stack: array<u32>;  // uint16-packed (2/u32)
+@group(0) @binding(3) var<uniform> cfg: vec4<u32>;   // nFrames, gridX, nBlk, framePix
+var<workgroup> sh: array<atomic<u32>, __SH_WORDS__>;
+fn rraw(i:u32)->u32{return (raw[i>>2u]>>((i&3u)*8u))&0xffu;}
+fn rsh(i:u32)->u32{return (atomicLoad(&sh[i>>2u])>>((i&3u)*8u))&0xffu;}
+fn wsh(i:u32,v:u32){atomicOr(&sh[i>>2u], (v&0xffu)<<((i&3u)*8u));}
+@compute @workgroup_size(__WG__)
+fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>){
+  let frm = wid.y*cfg.y + wid.x; let lx = lid.x;
+  if(frm>=cfg.x){return;}
+  for(var blk=0u; blk<cfg.z; blk=blk+1u){
+    for(var w=lx; w<__SH_WORDS__; w=w+__WG__){ atomicStore(&sh[w], 0u); }
+    workgroupBarrier();
+    let g = frm*cfg.z + blk;
+    let coff=blkMeta[g*2u]; let cend=coff+blkMeta[g*2u+1u];
+    var ci=coff; var di=0u; var working=true;
+    loop{
+      if(!working){break;}
+      let tok=rraw(ci); ci=ci+1u; var nlit=tok>>4u;
+      if(nlit==15u){loop{let bb=rraw(ci);ci=ci+1u;nlit=nlit+bb;if(bb!=255u){break;}}}
+      let litCopy=min(nlit,__BB__-di);
+      for(var k=lx; k<litCopy; k=k+__WG__){ wsh(di+k,rraw(ci+k)); }
+      ci=ci+nlit; di=di+nlit;
+      workgroupBarrier();
+      if(ci>=cend || di>=__BB__){
+        working=false;
+      } else {
+        let off=rraw(ci)|(rraw(ci+1u)<<8u); ci=ci+2u; var ml=4u+(tok&0xfu);
+        if((tok&0xfu)==15u){loop{let bb=rraw(ci);ci=ci+1u;ml=ml+bb;if(bb!=255u){break;}}}
+        let matchCopy=min(ml,__BB__-di);
+        for(var j=lx; j<matchCopy; j=j+__WG__){ wsh(di+j,rsh(di-off+(j%off))); }
+        di=di+ml;
+        workgroupBarrier();
+        if(ci>=cend || di>=__BB__){ working=false; }
+      }
+    }
+    workgroupBarrier();
+    let pixBase = frm*cfg.w + blk*__BE__;
+    let blockPix = min(__BE__, cfg.w - min(cfg.w, blk*__BE__));
+    let groupsThis = (blockPix + 7u) >> 3u;
+    let oBase = pixBase >> 1u;
+    for(var lg=lx; lg<groupsThis; lg=lg+__WG__){
+      var v0:u32=0u; var v1:u32=0u; var v2:u32=0u; var v3:u32=0u; var v4:u32=0u; var v5:u32=0u; var v6:u32=0u; var v7:u32=0u;
+      for(var b:u32=0u;b<16u;b=b+1u){
+        let byte=rsh(lg + b*__NPB__); let bit=1u<<b;
+        if((byte&1u)!=0u){v0=v0|bit;} if((byte&2u)!=0u){v1=v1|bit;}
+        if((byte&4u)!=0u){v2=v2|bit;} if((byte&8u)!=0u){v3=v3|bit;}
+        if((byte&16u)!=0u){v4=v4|bit;} if((byte&32u)!=0u){v5=v5|bit;}
+        if((byte&64u)!=0u){v6=v6|bit;} if((byte&128u)!=0u){v7=v7|bit;}
+      }
+      let o=oBase + lg*4u;
+      stack[o]=v0|(v1<<16u);
+      stack[o+1u]=v2|(v3<<16u);
+      stack[o+2u]=v4|(v5<<16u);
+      stack[o+3u]=v6|(v7<<16u);
+    }
+    workgroupBarrier();
+  }
+}`;
+
 // FUSED frame-cooperative low-8 decode with packed-word shared memory
 // (EXPERIMENTAL V-J): each lane owns full u32 words while copying LZ4 literal
 // and match bytes into shared memory. This avoids the byte-granular workgroup
@@ -1122,6 +1192,20 @@ function getFusedFrameLow8Pipe(device: GPUDevice, blockElems: number): GPUComput
   return p;
 }
 
+const FUSED_FRAME_U16_PIPE_CACHE = new Map<string, GPUComputePipeline>();
+function getFusedFrameU16Pipe(device: GPUDevice, blockElems: number): GPUComputePipeline {
+  const wgSize = bslz4FrameWorkgroupSize();
+  const code = FUSED_FRAME_U16_WGSL
+    .replace(/__NPB__/g, `${blockElems / 8}u`)
+    .replace(/__SH_WORDS__/g, `${Math.ceil(blockElems / 2)}u`)   // full block: 2x blockElems bytes / 4
+    .replace(/__WG__/g, `${wgSize}u`)
+    .replace(/__BB__/g, `${blockElems * 2}u`)
+    .replace(/__BE__/g, `${blockElems}u`);
+  let p = FUSED_FRAME_U16_PIPE_CACHE.get(code);
+  if (!p) { p = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code }), entryPoint: "main" } }); FUSED_FRAME_U16_PIPE_CACHE.set(code, p); }
+  return p;
+}
+
 type IntegralSrcDtype = "uint8" | "uint16" | "uint32";
 
 // One fused decode job: upload the raw bytes + block table, dispatch one workgroup per
@@ -1156,6 +1240,36 @@ function buildFusedJob(device: GPUDevice, spec: Bslz4Spec, srcDtype: IntegralSrc
     { binding: 2, resource: { buffer: stack } }, { binding: 3, resource: { buffer: cfg } } ] });
   return {
     stack, mode: 1,
+    record(enc) { const pass = enc.beginComputePass(); pass.setPipeline(pipe); pass.setBindGroup(0, bg); pass.dispatchWorkgroups(gx, gy); pass.end(); },
+    releaseTemps() { releaseRaw(rawBuf); metaBuf.destroy(); cfg.destroy(); },
+  };
+}
+
+// Fused NATIVE uint16 job: same I/O contract as buildFusedJob but the stack packs
+// 2 px/u32 (mode 0) and dispatch is one workgroup per frame (frame-cooperative).
+function buildFusedJobU16(device: GPUDevice, spec: Bslz4Spec, preRaw?: GPUBuffer | RawInput): DecodeJob {
+  const { compressed, blockMeta, nFrames, nBlocksPerFrame, blockElems, detSize } = spec;
+  const stackWords = Math.ceil(nFrames * detSize / 2);
+  let rawBuf: GPUBuffer | RawInput;
+  if (preRaw) { rawBuf = preRaw; }
+  else {
+    const rawSize = Math.ceil(compressed.byteLength / 4) * 4;
+    const buffer = device.createBuffer({ size: rawSize, usage: GPUBufferUsage.STORAGE, mappedAtCreation: true });
+    copyWide(buffer.getMappedRange(), compressed);
+    buffer.unmap();
+    rawBuf = rawInput(buffer, rawSize);
+  }
+  const metaBuf = device.createBuffer({ size: blockMeta.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(metaBuf, 0, blockMeta.buffer as ArrayBuffer, blockMeta.byteOffset, blockMeta.byteLength);
+  const stack = device.createBuffer({ size: stackWords * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+  const gx = Math.min(nFrames, MAX_WG), gy = Math.ceil(nFrames / MAX_WG);
+  const cfg = uniform(device, [nFrames, gx, nBlocksPerFrame, detSize]);
+  const pipe = getFusedFrameU16Pipe(device, blockElems);
+  const bg = device.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries: [
+    { binding: 0, resource: rawBinding(rawBuf) }, { binding: 1, resource: { buffer: metaBuf } },
+    { binding: 2, resource: { buffer: stack } }, { binding: 3, resource: { buffer: cfg } } ] });
+  return {
+    stack, mode: 0,
     record(enc) { const pass = enc.beginComputePass(); pass.setPipeline(pipe); pass.setBindGroup(0, bg); pass.dispatchWorkgroups(gx, gy); pass.end(); },
     releaseTemps() { releaseRaw(rawBuf); metaBuf.destroy(); cfg.destroy(); },
   };
@@ -2178,7 +2292,10 @@ export async function decodeBslz4Batch(specs: Bslz4Spec[], dtype: DecodeDtype = 
   const device = await getGPUDevice();
   if (!device) return null;
   const f32 = srcDtype === "float32";
-  const fused = dtype === "uint8" && srcDtype !== "float32";   // integer -> uint8 fast path
+  // Fused single-kernel paths: integer -> uint8 (clip/low8 family) and the lossless
+  // native uint16 -> uint16 frame-cooperative kernel. Everything else is two-pass.
+  const fusedU16 = dtype === "uint16" && srcDtype === "uint16";
+  const fused = (dtype === "uint8" && srcDtype !== "float32") || fusedU16;
   const low8 = bslz4Low8Only();
   const coopLow8 = bslz4CoopLow8();
   const frameLow8 = bslz4FrameLow8();
@@ -2204,7 +2321,7 @@ export async function decodeBslz4Batch(specs: Bslz4Spec[], dtype: DecodeDtype = 
           ? "stagingPipeline"
           : "staging";
   const buffers: GPUBuffer[] = []; let mode = 0;
-  const decodeVariant = f32 ? "fused-f32" : fused ? (low8 ? (singleParseLow8 ? "fused-frame-singleparse-low8-experimental" : frameSerialLow8 ? "fused-frame-serial-low8-experimental" : u32Low8 ? "fused-frame-u32-low8-experimental" : wordLow8 ? `fused-frame-word-low8-experimental-wg${frameWg}` : frameLow8 ? `fused-frame-coop-low8-experimental-fpw${framesPerWg}-wg${frameWg}` : coopLow8 ? "fused-coop-low8-experimental" : "fused-low8-experimental") : parallel ? "fused-parallel-experimental" : "fused-clip-u8") : "two-pass";
+  const decodeVariant = f32 ? "fused-f32" : fusedU16 ? `fused-frame-coop-u16-wg${bslz4FrameWorkgroupSize()}` : fused ? (low8 ? (singleParseLow8 ? "fused-frame-singleparse-low8-experimental" : frameSerialLow8 ? "fused-frame-serial-low8-experimental" : u32Low8 ? "fused-frame-u32-low8-experimental" : wordLow8 ? `fused-frame-word-low8-experimental-wg${frameWg}` : frameLow8 ? `fused-frame-coop-low8-experimental-fpw${framesPerWg}-wg${frameWg}` : coopLow8 ? "fused-coop-low8-experimental" : "fused-low8-experimental") : parallel ? "fused-parallel-experimental" : "fused-clip-u8") : "two-pass";
   const profile: Bslz4BatchProfile = {
     variant: `${decodeVariant}/${uploadRoute}`,
     groups: 0,
@@ -2228,7 +2345,7 @@ export async function decodeBslz4Batch(specs: Bslz4Spec[], dtype: DecodeDtype = 
     const raws = combined ? combined.raws : uploaded!.rawBufs;
     const uploadMs = performance.now() - tUpload;
     const tBuild = performance.now();
-    const jobs = groupSpecs.map((s, i) => f32 ? buildFusedJobF32(device, s, raws[i]) : fusedBuild(device, s, srcDtype as IntegralSrcDtype, raws[i]));
+    const jobs = groupSpecs.map((s, i) => f32 ? buildFusedJobF32(device, s, raws[i]) : fusedU16 ? buildFusedJobU16(device, s, raws[i]) : fusedBuild(device, s, srcDtype as IntegralSrcDtype, raws[i]));
     return { specs: groupSpecs, jobs, uploadMs, uploadCopyWaitMs: uploaded?.copyWaitMs ?? 0, buildMs: performance.now() - tBuild, releaseUpload: combined?.release };
   };
   const submitPreparedGroup = (prepared: PreparedDecodeGroup): { done: Promise<number> } => {
@@ -2297,7 +2414,7 @@ export async function decodeBslz4Batch(specs: Bslz4Spec[], dtype: DecodeDtype = 
     }
     profile.uploadMs += performance.now() - tUpload;
     const tBuild = performance.now();
-    const jobs = groupSpecs.map((s, i) => f32 ? buildFusedJobF32(device, s, raws![i]) : fused ? fusedBuild(device, s, srcDtype as IntegralSrcDtype, raws![i]) : buildDecodeJob(device, s, dtype, srcDtype));
+    const jobs = groupSpecs.map((s, i) => f32 ? buildFusedJobF32(device, s, raws![i]) : fusedU16 ? buildFusedJobU16(device, s, raws![i]) : fused ? fusedBuild(device, s, srcDtype as IntegralSrcDtype, raws![i]) : buildDecodeJob(device, s, dtype, srcDtype));
     const enc = device.createCommandEncoder();
     recordUploadCopies?.(enc);
     for (const j of jobs) j.record(enc);
@@ -2325,8 +2442,11 @@ export async function decodeBslz4ToStack(spec: Bslz4Spec, dtype: DecodeDtype = "
   const device = await getGPUDevice();
   if (!device) return null;
   const fusedOk = dtype === "uint8" && srcDtype !== "float32";
+  const fusedU16Ok = dtype === "uint16" && srcDtype === "uint16";
   const job = srcDtype === "float32"
     ? buildFusedJobF32(device, spec)
+    : fusedU16Ok
+    ? buildFusedJobU16(device, spec)
     : fusedOk
     ? (bslz4Low8Only() ? buildFusedJob(device, spec, srcDtype as IntegralSrcDtype) : bslz4Parallel() ? buildFusedJobD(device, spec, srcDtype as IntegralSrcDtype, undefined) : buildFusedJob(device, spec, srcDtype as IntegralSrcDtype))
     : buildDecodeJob(device, spec, dtype, srcDtype);
