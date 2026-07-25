@@ -71,3 +71,45 @@ zero-copy Metal chunk path: per-tilt load 1.26-1.63 s for 19.3 GB native uint16
 counts preserved (max 1913/1913/1873/1954). PASS. (The 18-35 s BF-VI in that
 harness is a numpy CPU sum in the test script, not the MPS VI kernels - do not
 read it as widget interaction speed.)
+
+## NVIDIA WebGPU cross-check (same tilt, discrete Blackwell-class GPU)
+
+Question: is the remaining gap to the CUDA 450 ms reference kernel code or data
+path? Ran the identical pages on the acquisition box's headed Chrome (Vulkan
+NVIDIA adapter, fresh profile, parity gate first).
+
+| Path | GPU decode wait | Page total | Parity |
+|---|---|---|---|
+| u16, NVIDIA | 572-675 ms | 2.7-3.2 s | EXACT |
+| clip8, NVIDIA | 308-574 ms | 2.4-3.4 s | EXACT (see caveat) |
+| u16, Apple GPU | 592-693 ms | 1.2-1.5 s | EXACT |
+| clip8, Apple GPU | 528-652 ms | 1.2-1.3 s | EXACT |
+| CUDA reference (same NVIDIA box) | | 0.45 s total | |
+
+Conclusions:
+- GPU decode wait is nearly IDENTICAL across a discrete NVIDIA GPU and an
+  Apple integrated GPU: the frame-cooperative kernel is latency-bound (serial
+  LZ4 token loop + workgroup barriers), not bandwidth-bound. More silicon does
+  not help; only a kernel redesign would.
+- The browser page total on NVIDIA is WORSE than on the laptop because the
+  compressed bytes cross PCIe through Chrome's staging path (upload 0.8-2.3 s);
+  unified memory on the laptop avoids this entirely.
+- Verdict: WGSL kernel work is COMPLETE for now. GPU-side decode (0.3-0.7 s)
+  is already CUDA-class next to CUDA's 0.45 s whole-load; the total-time gap is
+  browser data-path orchestration, not shader math.
+- Caveat / open item: one non-reproducible clip8 parity MISMATCH occurred on
+  the NVIDIA box while a previous Chrome instance still held ~19 GB of decoded
+  buffers - suspicious of silent device-loss corruption under VRAM pressure.
+  Clean runs are exact (5/5 across both platforms). Follow-up: wrap decode
+  submissions in pushErrorScope and fail loudly instead of returning data from
+  an invalidated device.
+
+## Conference bundle e2e (laptop)
+
+Double-click `.command` bundle (vendored viewer, range server, no network, no
+grant click): 4 tilt panels visible at once (group=all) with a 3-volume LRU
+(58 GB resident, 4th pages in on scrub), native uint16 everywhere. 10-minute
+large-BF (r=90 circle) soak: 103 recompute cycles, zero console errors, JS
+heap flat 22-40 MB, late-chunk checksum parity EXACT after fixing a widget bug
+that dropped every chunk but the first of multi-chunk HDF5 data files (latent
+until 87k-frame files; virtual images showed data only in thin scan bands).
