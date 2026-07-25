@@ -112,6 +112,36 @@ class MPSChunked4DSTEM:
     def nbytes(self) -> int:
         return int(sum(int(c.nbytes) for c in self.chunks))
 
+    def free_chunk(self, index: int) -> None:
+        """Release one chunk's Metal buffer, for readers copying chunk by chunk.
+
+        A caller assembling a single contiguous tensor otherwise holds the whole
+        decoded tilt twice at once (~19 GB each at no-bin). Freeing each chunk as
+        soon as it has been copied keeps only one chunk live beside the output.
+        The chunk must not be read again afterwards.
+        """
+        chunk = self.chunks[index]
+        _release_metal_buffer(getattr(chunk, "_mtl", None))
+        self.chunks[index] = None
+
+    def free(self) -> None:
+        """Release the Metal buffers backing this load.
+
+        PyObjC never frees a ``newBufferWithLength_options_`` buffer on its own,
+        so a caller that copies the chunks elsewhere and drops this object would
+        otherwise strand ~19 GB per no-bin tilt for the life of the process.
+
+        This is explicit rather than a ``__del__`` because the chunks are handed
+        out zero-copy: a viewer keeps reading them for as long as it is on screen,
+        and releasing on garbage collection would pull the memory out from under
+        it. Call this only once nothing reads the arrays any more.
+        """
+        for chunk in list(self.chunks) + list(self.fast_chunks or []):
+            if chunk is not None:
+                _release_metal_buffer(getattr(chunk, "_mtl", None))
+        self.chunks = []
+        self.fast_chunks = None
+
 
 @dataclass(frozen=True)
 class _ChunkReadPlan:
@@ -157,8 +187,15 @@ def _read_pixel_mask(master_path: str) -> np.ndarray | None:
 def clear_mps_cache() -> None:
     """Drop reusable MPS decoder buffers while keeping cheap chunk-layout plans."""
     global _cached_dec, _cached_dec_key
+    if _cached_dec is not None:
+        # Unlinking alone would only drop the Python wrapper; the Metal buffers
+        # need the explicit release or the scratch stays allocated for good.
+        _cached_dec.free()
     _cached_dec = None
     _cached_dec_key = None
+    for dec in list(_decompressor_cache.values()):
+        dec.free()
+    _decompressor_cache.clear()
 
 
 def _format_gib(nbytes: int | float | None) -> str:
@@ -569,6 +606,57 @@ def _metal_buffer_alloc(nbytes):
     return buf
 
 
+def _buffer_key(buf) -> int:
+    """Identity of an MTLBuffer, stable across separate PyObjC wrappers.
+
+    Two wrappers for the same buffer are different Python objects, so ``id()``
+    would let a handed-out buffer be released as if it were spare scratch.
+    """
+    return int(buf.__c_void_p__().value)
+
+
+def _release_metal_buffer(buf) -> None:
+    """Hand an MTLBuffer's memory back to the system.
+
+    PyObjC does not release buffers created by ``newBufferWithLength_options_``
+    when the Python wrapper is collected: ``del``, ``gc.collect()``, an
+    autorelease pool and ``setPurgeableState_`` all leave the allocation in
+    place, so an explicit ``release()`` is the only thing that frees it. Without
+    this a single no-bin tilt load retains ~45 GB forever, and a handful of
+    tilts exhausts even a 128 GB Mac.
+
+    Releasing twice is a no-op rather than an over-release, because a buffer can
+    be reachable from a returned array and a scratch pool at the same time.
+    """
+    if buf is None:
+        return
+    try:
+        buf.release()
+    except (AttributeError, ValueError):
+        pass
+
+
+class _MtlOwner:
+    """Sole owner of one MTLBuffer, releasing it when the last user goes away.
+
+    Metal buffers cannot carry a weakref, so the lifetime has to hang off a
+    plain Python object. Every array reading the buffer references the same
+    owner, so the release happens exactly once, after the final view is gone.
+    """
+
+    __slots__ = ("buf",)
+
+    def __init__(self, buf):
+        self.buf = buf
+
+    def release(self) -> None:
+        buf, self.buf = self.buf, None
+        _release_metal_buffer(buf)
+
+    def __del__(self):
+        self.release()
+
+
 def _numpy_view(mtl_buf, dtype, count):
     """Get a writable numpy view of a Metal buffer (zero-copy, unified memory)."""
     mv = mtl_buf.contents().as_buffer(mtl_buf.length())
@@ -579,11 +667,23 @@ class _MtlArray(np.ndarray):
     """ndarray that keeps its backing Metal buffer alive via ``_mtl``.
 
     The binned load returns a zero-copy view into a Metal unified-memory
-    buffer (no host memcpy). This subclass holds a reference to that buffer so
-    it is not freed while the array is in use; the buffer is allocated fresh
-    per load so the view can never be aliased by a later decompress.
+    buffer (no host memcpy). This subclass holds an ``_MtlOwner`` for that
+    buffer so it is not freed while the array is in use; the buffer is
+    allocated fresh per load so the view can never be aliased by a later
+    decompress.
+
+    ``__array_finalize__`` carries the owner onto every slice and reshape.
+    Without it a view kept the memory readable but dropped the owner, so the
+    buffer could be released out from under a live view.
     """
     _mtl = None
+    _row_prefix = False
+
+    def __array_finalize__(self, obj):
+        if obj is None:
+            return
+        self._mtl = getattr(obj, "_mtl", None)
+        self._row_prefix = getattr(obj, "_row_prefix", False)
 
 
 def _normalize_output_dtype(output_dtype: type | np.dtype | str | None) -> np.dtype | None:
@@ -636,7 +736,7 @@ def _cast_mtl_integer_to_u8(src: np.ndarray) -> _MtlArray:
         out = src.view(_MtlArray)
         out._mtl = src._mtl
         return out
-    if src_dtype not in (np.dtype(np.uint16), np.dtype(np.uint32)) or not hasattr(src, "_mtl"):
+    if src_dtype not in (np.dtype(np.uint16), np.dtype(np.uint32)) or getattr(src, "_mtl", None) is None:
         raise TypeError(
             "MPS uint8 output requires a Metal-backed uint16 or uint32 source array."
         )
@@ -775,7 +875,13 @@ class MPSDecompressor:
         )
 
     def drop_output_pool_refs(self) -> None:
-        """Release returned/output chunk references but keep reusable scratch."""
+        """Hand output buffers to the returned arrays, keeping reusable scratch.
+
+        This is an ownership transfer, not a free: the buffers listed here are
+        already referenced by the ``_MtlArray`` chunks being returned, so the
+        decompressor must forget them or it would release memory the caller is
+        still reading.
+        """
         self._chunk_out_pool = []
         self._chunk_u8_pool = []
         self._chunk_u16_pool = []
@@ -783,6 +889,42 @@ class MPSDecompressor:
         self._out_mtl = None
         self._out_np = None
         self._out_nbytes = 0
+
+    def free(self) -> None:
+        """Release every Metal buffer this decompressor still owns.
+
+        The scratch buffers are the other half of the per-load leak: they are
+        several times the size of one decoded tilt and PyObjC never frees them,
+        so a decompressor that falls out of the cache would otherwise keep its
+        allocation for the life of the process.
+        """
+        release = _release_metal_buffer
+        for name, value in list(vars(self).items()):
+            # Match any "_mtl" attribute, not only those ending in it: the
+            # double-buffered and read-ahead slots are _lz4_mtl_b, _comp_mtl_c
+            # and friends, and they hold most of the scratch (_lz4_mtl_b alone
+            # is 7.4 GB at no-bin). Missing them leaked ~10 GB per tilt.
+            if "_mtl" not in name and not name.endswith("_pool"):
+                continue
+            if isinstance(value, list):
+                for buf in value:
+                    release(buf)
+                setattr(self, name, [])
+            else:
+                release(value)
+                setattr(self, name, None)
+        # The numpy views point at freed memory now, so drop them together.
+        for name in [n for n in vars(self) if n.endswith("_np")]:
+            setattr(self, name, None)
+
+    def __del__(self):
+        # At interpreter shutdown module globals are already torn down, so the
+        # helpers this needs may be gone. Nothing is worth reporting then: the
+        # process is exiting and the OS reclaims the buffers anyway.
+        try:
+            self.free()
+        except (TypeError, AttributeError, NameError):
+            pass
 
     def _read_ahead_buffer(self):
         """Return a third compressed-input metadata slot for load pipelining."""
@@ -1688,7 +1830,7 @@ class MPSDecompressor:
                 mtl = out_mtls[oi]
             view = _numpy_view(mtl, final_dtype, nf * frame_elems)
             arr = view.reshape((nf,) + frame_shape).view(_MtlArray)
-            arr._mtl = mtl  # keep the unified buffer alive on the array
+            arr._mtl = mtl  # buffer lives as long as the array does
             arr._row_prefix = bool(row_prefix)
             out_views[oi] = arr
 
@@ -2214,6 +2356,25 @@ def load_master_chunked(
         fast_det_bin=fast_det_bin,
         output_dtype=output_dtype,
     )
+    # The returned arrays own their buffers (released by MPSChunked4DSTEM.free).
+    # Anything still sitting in a pool is scratch this load allocated and never
+    # handed out; dropping the pool alone strands it forever, because PyObjC does
+    # not release a Metal buffer when its Python wrapper is collected. That was
+    # ~10 GB per no-bin tilt, which is what stopped a seven-tilt merge fitting.
+    handed_out = set()
+    for group in (result if isinstance(result, tuple) else (result,)):
+        for chunk in group or ():
+            buf = getattr(chunk, "_mtl", None)
+            if buf is not None:
+                handed_out.add(_buffer_key(buf))
+    for pool_name in (
+        "_chunk_out_pool", "_chunk_u8_pool", "_chunk_u16_pool",
+        "_chunk_fast_pool", "_chunk_narrow_scratch_pool",
+    ):
+        for buf in getattr(dec, pool_name, ()) or ():
+            if _buffer_key(buf) not in handed_out:
+                _release_metal_buffer(buf)
+        setattr(dec, pool_name, [])
     dec.drop_output_pool_refs()
     return result
 
