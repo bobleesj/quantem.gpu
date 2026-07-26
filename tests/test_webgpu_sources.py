@@ -74,6 +74,15 @@ def test_webgpu_showptycho_source_tracks_ssb_engine() -> None:
     assert "WebGPU SSB buffers are not ready after setup" in source
     assert 'encoding="u4" remains reserved for packed 4-bit' in source
     assert 'raw === "<u4" || raw === ">u4" || raw === "|u4"' in source
+    active_selector = source[
+        source.index("function collectActiveBfIndices("):
+        source.index("function packGeometry", source.index("function collectActiveBfIndices("))
+    ]
+    assert "for (let i = 0; i < cal.num_bf; i++)" in active_selector
+    assert active_selector.index("for (let i = 0; i < cal.num_bf; i++)") < active_selector.index("const count =")
+    assert "Math.floor((i + 0.5) * stride)" in active_selector
+    assert "if (computeLoss) {" in source
+    assert "if (computeLoss && bfCount === this.cal.num_bf)" not in source
 
 
 def test_webgpu_h5reader_keeps_single_pass_block_metadata_parse() -> None:

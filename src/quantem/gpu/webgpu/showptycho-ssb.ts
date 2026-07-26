@@ -1693,14 +1693,21 @@ function bfGeometryFromCoord(cal: SsbCal, kx: number, ky: number): [number, numb
 }
 
 function collectActiveBfIndices(cal: SsbCal, numBf: number, rotationDeg?: number): Uint32Array {
-  const count = Math.max(1, Math.min(cal.num_bf, Math.round(numBf)));
   const active: number[] = [];
-  for (let i = 0; i < count; i++) {
+  for (let i = 0; i < cal.num_bf; i++) {
     const [kx, ky] = rotateBfCoord(cal, cal.kx_bf[i], cal.ky_bf[i], rotationDeg);
     const [, , , aperture] = bfGeometryFromCoord(cal, kx, ky);
     if (aperture !== 0) active.push(i);
   }
-  return new Uint32Array(active);
+  if (active.length === 0) return new Uint32Array();
+  const count = Math.max(1, Math.min(active.length, Math.round(numBf)));
+  if (count >= active.length) return new Uint32Array(active);
+  const selected = new Uint32Array(count);
+  const stride = active.length / count;
+  for (let i = 0; i < count; i++) {
+    selected[i] = active[Math.min(active.length - 1, Math.floor((i + 0.5) * stride))];
+  }
+  return selected;
 }
 
 function packGeometry(cal: SsbCal, indices: Uint32Array, rotationDeg?: number): { geom: Float32Array; trig: Float32Array } {
@@ -2817,7 +2824,7 @@ export class ShowPtychoWebGPUSSB {
       const gpuMs = performance.now() - t0;
       const phase = await readF32(device, buffers.phase, this.plane);
       let loss: number | null = null;
-      if (computeLoss && bfCount === this.cal.num_bf) {
+      if (computeLoss) {
         const variance = await readF32(device, buffers.variance, this.plane);
         let sum = 0;
         for (let i = 0; i < variance.length; i++) sum += variance[i];
