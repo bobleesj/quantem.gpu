@@ -609,6 +609,39 @@ extern "C" __global__ void bitshuffle_fwd_tail_32(
     block_base[(uint64_t)bit * bitplane_bytes + byte_in_plane] = packed;
 }
 
+extern "C" __global__ void bitshuffle_fwd_8(
+    const uint8_t* __restrict__ in,
+    uint8_t* __restrict__ out,
+    const uint32_t frame_bytes,
+    const uint64_t total_bytes
+) {
+    const uint64_t elem = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (elem >= total_bytes) return;
+
+    const uint32_t byte_in_frame = elem % frame_bytes;
+    const uint64_t frame_id = elem / frame_bytes;
+    const uint32_t block_8kb = byte_in_frame / 8192;
+    const uint32_t block_start = block_8kb * 8192;
+    uint32_t block_bytes = frame_bytes - block_start;
+    if (block_bytes > 8192) block_bytes = 8192;
+
+    const uint32_t byte_in_block = byte_in_frame - block_start;
+    const uint32_t bitplane_bytes = block_bytes / 8;
+    const uint32_t bit = byte_in_block / bitplane_bytes;
+    const uint32_t byte_in_plane = byte_in_block - bit * bitplane_bytes;
+    const uint64_t input_base = frame_id * frame_bytes + block_start + byte_in_plane * 8;
+
+    uint8_t packed = 0;
+    #pragma unroll 8
+    for (int k = 0; k < 8; k++) {
+        const uint8_t val = in[input_base + k];
+        if (val & (1U << bit)) {
+            packed |= (1U << k);
+        }
+    }
+    out[elem] = packed;
+}
+
 // =============================================================================
 // LZ4 Compression Kernel (Optimized)
 // =============================================================================
@@ -1083,6 +1116,7 @@ _KERNEL_FUNCS = {
     "bitshuffle_tail_kernel_u16": "shuf_tail_16_batched",
     "bitshuffle_tail_kernel_u32": "shuf_tail_32_batched",
     "bitshuffle_fwd_kernel": "bitshuffle_fwd_8192_32",
+    "bitshuffle_fwd_kernel_u8": "bitshuffle_fwd_8",
     "bitshuffle_fwd_kernel_u16": "bitshuffle_fwd_8192_16",
     "bitshuffle_fwd_tail_kernel_u16": "bitshuffle_fwd_tail_16",
     "bitshuffle_fwd_tail_kernel_u32": "bitshuffle_fwd_tail_32",

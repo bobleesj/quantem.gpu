@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import h5py
 import numpy as np
+import pytest
 
 from quantem.gpu.io import (
     save_compressed_arina_h5,
@@ -130,4 +131,40 @@ def test_save_compressed_arina_h5_uint8_display_export(tmp_path):
         np.testing.assert_array_equal(
             dset[:],
             np.array([[[0, 13], [255, 255]]], dtype=np.uint8),
+        )
+
+
+def test_cuda_save_uint8_display_export(tmp_path):
+    cp = pytest.importorskip("cupy")
+
+    try:
+        cp.cuda.runtime.getDeviceCount()
+    except cp.cuda.runtime.CUDARuntimeError as exc:
+        pytest.skip(f"CUDA runtime is not available: {exc}")
+
+    from quantem.gpu.io.save import save
+
+    data = np.array(
+        [
+            [[[0.2, 12.6, 255.4, 400.0], [2.5, 3.5, -4.0, 4.49]]],
+            [[[7.1, 8.9, 9.2, 10.8], [11.0, 12.2, 13.6, 14.4]]],
+        ],
+        dtype=np.float32,
+    )
+
+    master = tmp_path / "cuda_browse_master.h5"
+    save(
+        str(master),
+        cp.asarray(data),
+        dtype="u8",
+        batch_size=1,
+        frames_per_file=1,
+    )
+
+    with h5py.File(tmp_path / "cuda_browse_data_000001.h5", "r") as handle:
+        dset = handle["entry/data/data"]
+        assert dset.dtype == np.dtype("uint8")
+        np.testing.assert_array_equal(
+            dset[:],
+            np.array([[[0, 13, 255, 255], [2, 4, 0, 4]]], dtype=np.uint8),
         )

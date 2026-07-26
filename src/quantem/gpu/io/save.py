@@ -41,6 +41,7 @@ def _lazy_kernel(_name):
 
 
 _bitshuffle_fwd_kernel = _lazy_kernel("bitshuffle_fwd_kernel")
+_bitshuffle_fwd_kernel_u8 = _lazy_kernel("bitshuffle_fwd_kernel_u8")
 _bitshuffle_fwd_kernel_u16 = _lazy_kernel("bitshuffle_fwd_kernel_u16")
 _bitshuffle_fwd_tail_kernel_u16 = _lazy_kernel("bitshuffle_fwd_tail_kernel_u16")
 _bitshuffle_fwd_tail_kernel_u32 = _lazy_kernel("bitshuffle_fwd_tail_kernel_u32")
@@ -250,7 +251,19 @@ def _compress_batch(data_gpu, n_8kb, frame_bytes):
             )
 
     shuffled = cp.empty(n * frame_bytes, dtype=cp.uint8)
-    if itemsize == 2:
+    if itemsize == 1:
+        data_u8 = data_gpu.reshape(n, -1).view(cp.uint8)
+        total_bytes = np.uint64(n * frame_bytes)
+        _bitshuffle_fwd_kernel_u8(
+            ((int(total_bytes) + 255) // 256,), (256,),
+            (
+                data_u8,
+                shuffled,
+                np.uint32(frame_bytes),
+                total_bytes,
+            ),
+        )
+    elif itemsize == 2:
         data_u16 = data_gpu.reshape(n, -1).view(cp.uint16)
         for start in range(0, n, cuda_max_z):
             end = min(start + cuda_max_z, n)
@@ -347,10 +360,16 @@ def _mps_bitshuffle_fwd_u16_kernel():
         uint byte_in_frame = elem % FRAME_BYTES;
         uint frame = elem / FRAME_BYTES;
         uint block = byte_in_frame / 8192;
-        uint byte_in_block = byte_in_frame - block * 8192;
-        uint bit = byte_in_block / BITPLANE_BYTES;
-        uint byte_in_plane = byte_in_block - bit * BITPLANE_BYTES;
-        uint input_base = block * (BLOCK_ELEMS) + byte_in_plane * 8;
+        uint block_start = block * 8192;
+        uint block_bytes = FRAME_BYTES - block_start;
+        if (block_bytes > 8192) {
+            block_bytes = 8192;
+        }
+        uint byte_in_block = byte_in_frame - block_start;
+        uint bitplane_bytes = block_bytes / OUT_BITS;
+        uint bit = byte_in_block / bitplane_bytes;
+        uint byte_in_plane = byte_in_block - bit * bitplane_bytes;
+        uint input_base = block_start / OUT_BYTES + byte_in_plane * 8;
 
         uchar packed = 0;
         for (uint k = 0; k < 8; k++) {
@@ -359,6 +378,17 @@ def _mps_bitshuffle_fwd_u16_kernel():
             uint val = 0;
             if (OUTPUT_FLOAT != 0) {
                 val = as_type<uint>(src_f32[ulong(frame) * FRAME_ELEMS + input_idx]);
+            } else if (OUT_BITS == 8) {
+                if (INPUT_FLOAT != 0) {
+                    float x = src_f32[ulong(frame) * FRAME_ELEMS + input_idx];
+                    x = clamp(rint(x), 0.0f, 255.0f);
+                    val = uint(x);
+                } else if (INPUT_U8 != 0) {
+                    val = uint(src_u8[ulong(frame) * FRAME_ELEMS + input_idx]);
+                } else {
+                    uint x = uint(src_u16[ulong(frame) * FRAME_ELEMS + input_idx]);
+                    val = x > 255u ? 255u : x;
+                }
             } else if (INPUT_FLOAT != 0) {
                 float x = src_f32[ulong(frame) * FRAME_ELEMS + input_idx];
                 x = clamp(rint(x), 0.0f, 65535.0f);
@@ -374,7 +404,7 @@ def _mps_bitshuffle_fwd_u16_kernel():
     """
     return mx.fast.metal_kernel(
         name="quantem_bslz4_fwd_u16",
-        input_names=["src_u16", "src_f32"],
+        input_names=["src_u8", "src_u16", "src_f32"],
         output_names=["out"],
         source=source,
         ensure_row_contiguous=True,
@@ -399,13 +429,20 @@ def _mps_lz4_compress_kernel():
 
         if (tid != 0) return;
 
-        const device uchar* in = shuffled + ulong(chunk) * BLOCK_SIZE;
+        uint frame = chunk / BLOCKS_PER_FRAME;
+        uint block = chunk - frame * BLOCKS_PER_FRAME;
+        uint block_start = block * BLOCK_SIZE;
+        uint chunk_size = FRAME_BYTES - block_start;
+        if (chunk_size > BLOCK_SIZE) {
+            chunk_size = BLOCK_SIZE;
+        }
+        const device uchar* in = shuffled + ulong(frame) * FRAME_BYTES + block_start;
         device uchar* outp = out + ulong(chunk) * MAX_OUT;
         uint in_pos = 0;
         uint out_pos = 0;
         uint anchor = 0;
 
-        while (in_pos < BLOCK_SIZE - 12) {
+        while (chunk_size > 12 && in_pos < chunk_size - 12) {
             uint seq = uint(in[ulong(in_pos)])
                      | (uint(in[ulong(in_pos + 1)]) << 8)
                      | (uint(in[ulong(in_pos + 2)]) << 16)
@@ -421,11 +458,11 @@ def _mps_lz4_compress_kernel():
                           | (uint(in[ulong(match_pos + 2)]) << 16)
                           | (uint(in[ulong(match_pos + 3)]) << 24);
                 if (seq == mseq) {
-                    while (in_pos + mlen < BLOCK_SIZE
+                    while (in_pos + mlen < chunk_size
                            && in[ulong(in_pos + mlen)] == in[ulong(match_pos + mlen)]) {
                         mlen++;
                     }
-                    uint max_mlen = BLOCK_SIZE - in_pos - 5;
+                    uint max_mlen = chunk_size - in_pos - 5;
                     if (mlen > max_mlen) {
                         mlen = max_mlen;
                     }
@@ -472,7 +509,7 @@ def _mps_lz4_compress_kernel():
             }
         }
 
-        uint literal_len = BLOCK_SIZE - anchor;
+        uint literal_len = chunk_size - anchor;
         if (literal_len > 0) {
             uchar token = uchar((literal_len >= 15 ? 15 : literal_len) << 4);
             outp[out_pos++] = token;
@@ -502,41 +539,58 @@ def _mps_lz4_compress_kernel():
 
 
 def _compress_batch_mps(data_mps, n_8kb, frame_bytes, output_dtype):
-    """Compress a torch MPS uint16/float32 batch to HDF5 bslz4 chunks."""
+    """Compress a torch MPS uint8/uint16/float32 batch to HDF5 bslz4 chunks."""
     import mlx.core as mx
 
     if not hasattr(data_mps, "device") or data_mps.device.type != "mps":
         raise TypeError("_compress_batch_mps expects a torch tensor on MPS")
     output_dtype = np.dtype(output_dtype)
-    if data_mps.dtype not in (torch.uint16, torch.float32):
-        raise TypeError(f"MPS compressed save supports uint16/float32, got {data_mps.dtype}")
-    if output_dtype not in (np.dtype(np.uint16), np.dtype(np.float32)):
-        raise TypeError(f"MPS compressed save supports uint16/float32 output, got {output_dtype}")
+    if data_mps.dtype not in (torch.uint8, torch.uint16, torch.float32):
+        raise TypeError(
+            "MPS compressed save supports uint8/uint16/float32 input, "
+            f"got {data_mps.dtype}"
+        )
+    if output_dtype not in (np.dtype(np.uint8), np.dtype(np.uint16), np.dtype(np.float32)):
+        raise TypeError(
+            "MPS compressed save supports uint8/uint16/float32 output, "
+            f"got {output_dtype}"
+        )
     if output_dtype == np.dtype(np.float32) and data_mps.dtype != torch.float32:
         raise TypeError("MPS float32 compressed save requires float32 input data")
-    if frame_bytes % BLOCK_SIZE:
-        raise ValueError("MPS compressed save currently requires frame_bytes to be a multiple of 8192")
+    if data_mps.dtype == torch.uint8 and output_dtype != np.dtype(np.uint8):
+        raise TypeError("MPS uint8 input can only be saved as uint8")
+    itemsize = int(output_dtype.itemsize)
+    tail_bytes = frame_bytes % BLOCK_SIZE
+    if tail_bytes:
+        tail_items = tail_bytes // itemsize
+        if tail_bytes % itemsize or tail_items % 8:
+            raise ValueError(
+                "MPS bitshuffle/LZ4 save supports partial final blocks only "
+                "when the partial detector frame contains a multiple of 8 "
+                f"elements; got frame_bytes={frame_bytes}, output dtype={output_dtype}."
+            )
 
     n = int(data_mps.shape[0])
-    itemsize = int(output_dtype.itemsize)
     frame_elems = frame_bytes // itemsize
     total = n * frame_bytes
     data_mps = data_mps.reshape(n, -1).contiguous()
+    empty_u8 = mx.zeros((1,), dtype=mx.uint8)
     empty_u16 = mx.zeros((1,), dtype=mx.uint16)
     empty_f32 = mx.zeros((1,), dtype=mx.float32)
+    src_u8 = mx.from_dlpack(data_mps) if data_mps.dtype == torch.uint8 else empty_u8
     src_u16 = mx.from_dlpack(data_mps) if data_mps.dtype == torch.uint16 else empty_u16
     src_f32 = mx.from_dlpack(data_mps) if data_mps.dtype == torch.float32 else empty_f32
 
     bitshuffle = _mps_bitshuffle_fwd_u16_kernel()
     shuffled = bitshuffle(
-        inputs=[src_u16, src_f32],
+        inputs=[src_u8, src_u16, src_f32],
         template=[
             ("TOTAL", total),
             ("FRAME_BYTES", frame_bytes),
             ("FRAME_ELEMS", frame_elems),
             ("OUT_BITS", itemsize * 8),
-            ("BITPLANE_BYTES", BLOCK_SIZE // (itemsize * 8)),
-            ("BLOCK_ELEMS", BLOCK_SIZE // itemsize),
+            ("OUT_BYTES", itemsize),
+            ("INPUT_U8", 1 if data_mps.dtype == torch.uint8 else 0),
             ("INPUT_FLOAT", 1 if data_mps.dtype == torch.float32 else 0),
             ("OUTPUT_FLOAT", 1 if output_dtype == np.dtype(np.float32) else 0),
         ],
@@ -555,6 +609,8 @@ def _compress_batch_mps(data_mps, n_8kb, frame_bytes, output_dtype):
         template=[
             ("N_CHUNKS", n_blocks),
             ("BLOCK_SIZE", BLOCK_SIZE),
+            ("FRAME_BYTES", frame_bytes),
+            ("BLOCKS_PER_FRAME", n_8kb),
             ("MAX_OUT", max_out),
             ("THREADS", 32),
         ],
@@ -682,6 +738,46 @@ def _cast_host_for_save(block, dtype):
     else:
         arr = arr.astype(dtype)
     return np.ascontiguousarray(arr)
+
+
+def _is_mps_chunked_frames(data) -> bool:
+    """Return True for the chunk-backed MPS loader result."""
+    return (
+        hasattr(data, "chunks")
+        and hasattr(data, "n_frames")
+        and hasattr(data, "detector_shape")
+        and hasattr(data, "dtype")
+    )
+
+
+def _mps_frame_batch(flat, start: int, end: int):
+    """Return ``flat[start:end]`` as a torch MPS tensor for compressed save."""
+    if torch is not None and torch.is_tensor(flat):
+        return flat[start:end]
+    if not _is_mps_chunked_frames(flat):
+        raise TypeError("_mps_frame_batch expects a torch MPS tensor or MPS chunked frames")
+
+    pieces = []
+    pos = 0
+    for chunk in flat.chunks:
+        if chunk is None:
+            raise RuntimeError(
+                "Cannot save from MPS chunked frames after a chunk has been freed."
+            )
+        chunk_n = int(chunk.shape[0])
+        chunk_start = pos
+        chunk_end = pos + chunk_n
+        pos = chunk_end
+        if chunk_end <= start or chunk_start >= end:
+            continue
+        lo = max(start, chunk_start) - chunk_start
+        hi = min(end, chunk_end) - chunk_start
+        pieces.append(torch.from_numpy(np.asarray(chunk[lo:hi])))
+
+    if not pieces:
+        raise IndexError(f"empty MPS chunked batch for frames [{start}, {end})")
+    batch = pieces[0] if len(pieces) == 1 else torch.cat(pieces, dim=0)
+    return batch.to("mps", non_blocking=True)
 
 
 def write_compressed_h5_dataset(
@@ -832,10 +928,12 @@ def save_compressed_arina_h5(
     use_mps_backend = (
         compression_backend in {"auto", "mps"}
         and compression in {"lz4", "bslz4", "bitshuffle_lz4"}
-        and dtype in (np.dtype(np.uint16), np.dtype(np.float32))
+        and dtype in (np.dtype(np.uint8), np.dtype(np.uint16), np.dtype(np.float32))
         and torch is not None
-        and torch.is_tensor(flat)
-        and flat.device.type == "mps"
+        and (
+            (torch.is_tensor(flat) and flat.device.type == "mps")
+            or _is_mps_chunked_frames(flat)
+        )
     )
     if compression_backend == "mps" and not use_mps_backend:
         raise ValueError(
@@ -868,7 +966,7 @@ def save_compressed_arina_h5(
                 for batch_start in range(start, end, batch_size):
                     batch_end = min(batch_start + batch_size, end)
                     packed, chunk_starts, chunk_sizes = _compress_batch_mps(
-                        flat[batch_start:batch_end],
+                        _mps_frame_batch(flat, batch_start, batch_end),
                         n_8kb,
                         frame_bytes,
                         dtype,
