@@ -164,6 +164,38 @@ search on the cached CoM maps is about `0.027 s` median. Ptychography sweeps
 should reuse this calibration cache rather than recomputing BF/DF/rotation for
 every trial.
 
+## HDF5 IO Backend Status
+
+`quantem.gpu` treats Arina-style HDF5 as a backend contract, not just a file
+extension. A standard 4D-STEM save has a `*_master.h5` file with external
+`*_data_000001.h5` links, payload at `/entry/data/data`, one diffraction
+pattern per chunk `(1, det_row, det_col)`, and Bitshuffle/LZ4 filter `32008`.
+
+Current real-data status for full no-bin `512x512x192x192` detector data:
+
+| Workflow | CUDA | MPS / Apple GPU | CPU / HDF5 filter | Notes |
+| --- | ---: | ---: | ---: | --- |
+| Load/decode `uint16` Arina H5 | Done | Done | Reference | CUDA and MPS preserve native integer evidence. |
+| Save Arina H5, `uint16` | Done | Done, `~3.9-4.1 s` | Done, `~30.4 s` | MPS uses Metal Bitshuffle/LZ4 kernels plus HDF5 `write_direct_chunk`; random-sample agreement vs decoded reference was exact. |
+| Save Arina H5, `float32` | Done | Done, `~6.8 s` | Done | MPS stores lossless float32 Bitshuffle+LZ4 chunks; synthetic round trip is exact. |
+| Save Arina H5, `uint8` | Display only | Gap for MPS kernel | Done, `~19.3 s` | `uint8` is checked only against an explicit clipped/rounded display reference. It is not scientific agreement when counts exceed 255. |
+| 1-2 s full save target | Partial | Gap | Gap | MPS compression is GPU-side now, but Python/HDF5 direct-chunk overhead over 262,144 chunks plus ~1.2 GB written still keeps full `uint16` save near 4 s. |
+
+Use `save_compressed_arina_h5()` for portable master/data-file exports:
+
+```python
+from quantem.gpu.io import save_compressed_arina_h5
+
+save_compressed_arina_h5(
+    "merged_master.h5",
+    merged_mps_tensor,
+    scan_shape=(512, 512),
+    dtype="u16",
+    compression="lz4",
+    compression_backend="auto",  # uses MPS kernels for MPS uint16/float32 tensors
+)
+```
+
 Compute common BF, DF, ADF, and DPC images directly through `quantem.gpu`:
 
 ```python
