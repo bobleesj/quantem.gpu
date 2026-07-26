@@ -59,6 +59,8 @@ _COMPRESSION_CODECS = ("lz4", "zstd", "blosc2_zstd")
 _DEFAULT_CLEVELS = {"zstd": 3, "blosc2_zstd": 5}
 _DEFAULT_BATCH_SIZE = 512
 _MPS_DEFAULT_BATCH_SIZE = 4096
+_MPS_LZ4_HASH_SIZE = 2048
+_MPS_LZ4_HASH_SHIFT = 21
 
 
 # =========================================================================
@@ -423,8 +425,8 @@ def _mps_lz4_compress_kernel():
         uint tid = thread_position_in_threadgroup.x;
         if (chunk >= N_CHUNKS) return;
 
-        threadgroup ushort hash_table[4096];
-        for (uint i = tid; i < 4096; i += THREADS) {
+        threadgroup ushort hash_table[HASH_SIZE];
+        for (uint i = tid; i < HASH_SIZE; i += THREADS) {
             hash_table[i] = ushort(0xffff);
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -445,11 +447,64 @@ def _mps_lz4_compress_kernel():
         uint anchor = 0;
 
         while (chunk_size > 12 && in_pos < chunk_size - 12) {
+            uchar run_value = in[ulong(in_pos)];
+            if (in[ulong(in_pos + 1)] == run_value
+                    && in[ulong(in_pos + 2)] == run_value
+                    && in[ulong(in_pos + 3)] == run_value) {
+                uint run_len = 4;
+                while (in_pos + run_len < chunk_size
+                       && in[ulong(in_pos + run_len)] == run_value) {
+                    run_len++;
+                }
+                uint match_start = in_pos + 1;
+                uint max_match = chunk_size - match_start - 5;
+                uint mlen = run_len - 1;
+                if (mlen > max_match) {
+                    mlen = max_match;
+                }
+                if (mlen >= 4) {
+                    uint literal_len = match_start - anchor;
+                    uint ml = mlen - 4;
+                    uchar token = uchar((literal_len >= 15 ? 15 : literal_len) << 4)
+                                | uchar(ml >= 15 ? 15 : ml);
+                    outp[out_pos++] = token;
+
+                    if (literal_len >= 15) {
+                        uint rem = literal_len - 15;
+                        while (rem >= 255) {
+                            outp[out_pos++] = uchar(255);
+                            rem -= 255;
+                        }
+                        outp[out_pos++] = uchar(rem);
+                    }
+
+                    for (uint i = 0; i < literal_len; i++) {
+                        outp[out_pos++] = in[ulong(anchor + i)];
+                    }
+
+                    outp[out_pos++] = uchar(1);
+                    outp[out_pos++] = uchar(0);
+
+                    if (ml >= 15) {
+                        uint rem = ml - 15;
+                        while (rem >= 255) {
+                            outp[out_pos++] = uchar(255);
+                            rem -= 255;
+                        }
+                        outp[out_pos++] = uchar(rem);
+                    }
+
+                    in_pos = match_start + mlen;
+                    anchor = in_pos;
+                    continue;
+                }
+            }
+
             uint seq = uint(in[ulong(in_pos)])
                      | (uint(in[ulong(in_pos + 1)]) << 8)
                      | (uint(in[ulong(in_pos + 2)]) << 16)
                      | (uint(in[ulong(in_pos + 3)]) << 24);
-            uint h = (seq * 2654435761u) >> 20;
+            uint h = (seq * 2654435761u) >> HASH_SHIFT;
             uint match_pos = uint(hash_table[h]);
             hash_table[h] = ushort(in_pos);
 
@@ -615,6 +670,8 @@ def _compress_batch_mps(data_mps, n_8kb, frame_bytes, output_dtype):
             ("BLOCKS_PER_FRAME", n_8kb),
             ("MAX_OUT", max_out),
             ("THREADS", 32),
+            ("HASH_SIZE", _MPS_LZ4_HASH_SIZE),
+            ("HASH_SHIFT", _MPS_LZ4_HASH_SHIFT),
         ],
         grid=(n_blocks * 32, 1, 1),
         threadgroup=(32, 1, 1),
