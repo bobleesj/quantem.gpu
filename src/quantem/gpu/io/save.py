@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import queue
 import threading
+from collections.abc import Mapping
 from pathlib import Path
 
 # cupy guarded so `import quantem.gpu.io` (which pulls this module) works on a
@@ -391,6 +392,233 @@ def _default_save_dtype(data_dtype):
         f"Unsupported input dtype {data_dtype}; pass dtype=np.float32, "
         "np.uint16, or np.uint32 explicitly."
     )
+
+
+def _portable_h5_filters(compression, compression_level, shuffle):
+    if compression is None:
+        return {}
+    compression = str(compression).lower()
+    if compression in {"lz4", "bslz4", "bitshuffle_lz4"}:
+        return hdf5plugin.Bitshuffle(cname="lz4")
+    if compression == "zstd":
+        level = 3 if compression_level is None else int(compression_level)
+        return hdf5plugin.Bitshuffle(cname="zstd", clevel=level)
+    if compression == "gzip":
+        if compression_level is None:
+            compression_level = 4
+        return {
+            "compression": "gzip",
+            "compression_opts": int(compression_level),
+            "shuffle": bool(shuffle),
+        }
+    if compression == "lzf":
+        return {"compression": "lzf", "shuffle": bool(shuffle)}
+    raise ValueError(
+        "portable compressed HDF5 supports compression='lz4', 'zstd', "
+        "'gzip', 'lzf', or None"
+    )
+
+
+def _to_host_array(block):
+    if cp is not None and isinstance(block, cp.ndarray):
+        return cp.asnumpy(block)
+    if hasattr(block, "detach") and hasattr(block, "cpu"):
+        return block.detach().cpu().numpy()
+    return np.asarray(block)
+
+
+def _cast_host_for_save(block, dtype):
+    arr = _to_host_array(block)
+    if arr.dtype == dtype:
+        return np.ascontiguousarray(arr)
+    if np.issubdtype(arr.dtype, np.floating) and np.issubdtype(dtype, np.integer):
+        lo, hi = int(np.iinfo(dtype).min), int(np.iinfo(dtype).max)
+        arr = np.clip(np.rint(arr), lo, hi).astype(dtype)
+    else:
+        arr = arr.astype(dtype)
+    return np.ascontiguousarray(arr)
+
+
+def write_compressed_h5_dataset(
+    handle,
+    name: str,
+    data,
+    *,
+    dtype="u16",
+    chunks: tuple[int, ...] | None = None,
+    batch_size: int | None = None,
+    compression: str | None = "lz4",
+    compression_level: int | None = 4,
+    shuffle: bool = True,
+    metadata: Mapping | None = None,
+):
+    """Write one array to an open HDF5 file with portable compression.
+
+    This is the CPU/MPS counterpart to the CUDA bitshuffle writer in
+    :func:`save`. It streams along axis 0, so an MPS ``torch.Tensor`` can be
+    exported without materializing a second full host copy. Floating inputs
+    saved to integer dtypes are rounded with ``rint`` and clipped before cast.
+    """
+    dtype = _normalize_save_dtype(dtype)
+    shape = tuple(int(x) for x in data.shape)
+    if not shape:
+        raise ValueError("write_compressed_h5_dataset expects an array, got scalar data")
+    if batch_size is None:
+        batch_size = int(chunks[0]) if chunks is not None else 1
+    batch_size = int(batch_size)
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+    if chunks is None:
+        chunks = (min(batch_size, shape[0]), *shape[1:])
+    dset = handle.create_dataset(
+        name,
+        shape=shape,
+        dtype=dtype,
+        chunks=chunks,
+        **_portable_h5_filters(compression, compression_level, shuffle),
+    )
+    if metadata:
+        for key, value in metadata.items():
+            dset.attrs[key] = value
+    for start in range(0, shape[0], batch_size):
+        end = min(start + batch_size, shape[0])
+        dset[start:end] = _cast_host_for_save(data[start:end], dtype)
+    return dset
+
+
+def save_compressed_h5(
+    filepath: str | Path,
+    datasets,
+    *,
+    dtype="u16",
+    metadata: Mapping | None = None,
+    dataset_metadata: Mapping[str, Mapping] | None = None,
+    chunks: tuple[int, ...] | None = None,
+    batch_size: int | None = None,
+    compression: str | None = "lz4",
+    compression_level: int | None = 4,
+    shuffle: bool = True,
+) -> None:
+    """Save one or more arrays to a single portable compressed HDF5 file.
+
+    Parameters mirror :func:`write_compressed_h5_dataset`. ``datasets`` may be
+    either one array, saved as ``"data"``, or a mapping of dataset names to
+    arrays. This writer is intended for MPS/CPU handoff artifacts where a
+    normal HDF5 file is more useful than a CUDA-only fast-save path.
+    """
+    filepath = Path(filepath)
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+    if not isinstance(datasets, Mapping):
+        datasets = {"data": datasets}
+    tmp = filepath.with_suffix(filepath.suffix + ".tmp")
+    with h5py.File(tmp, "w") as handle:
+        _metadata_attrs(handle, metadata)
+        for name, data in datasets.items():
+            write_compressed_h5_dataset(
+                handle,
+                str(name),
+                data,
+                dtype=dtype,
+                chunks=chunks,
+                batch_size=batch_size,
+                compression=compression,
+                compression_level=compression_level,
+                shuffle=shuffle,
+                metadata=None if dataset_metadata is None else dataset_metadata.get(str(name)),
+            )
+    tmp.replace(filepath)
+
+
+def save_compressed_arina_h5(
+    filepath: str | Path,
+    data,
+    *,
+    scan_shape: tuple[int, int] | None = None,
+    metadata: Mapping | None = None,
+    dtype="u16",
+    batch_size: int = 512,
+    frames_per_file: int = 32768,
+    compression: str | None = "lz4",
+    compression_level: int | None = 4,
+    shuffle: bool = True,
+    source_master: str | None = None,
+) -> None:
+    """Save 4D-STEM as Arina-style master/data HDF5 using portable filters.
+
+    This uses the same master-file/external-data layout as :class:`H5Writer`:
+    ``*_master.h5`` links to ``*_data_000001.h5`` files containing
+    ``/entry/data/data`` with shape ``(n_frames, det_row, det_col)`` and HDF5
+    chunks ``(1, det_row, det_col)``. Unlike :func:`save`, it does not require
+    CUDA/CuPy and can stream MPS ``torch.Tensor`` data to host in batches.
+    """
+    filepath = Path(filepath)
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+    dtype = _normalize_save_dtype(dtype)
+    shape = tuple(int(x) for x in data.shape)
+    if len(shape) == 4:
+        inferred_scan = shape[:2]
+        if scan_shape is not None and tuple(scan_shape) != inferred_scan:
+            raise ValueError(f"scan_shape={scan_shape} does not match data shape {inferred_scan}")
+        scan_shape = inferred_scan
+        n_frames = shape[0] * shape[1]
+        det_shape = shape[2:]
+        flat = data.reshape(n_frames, *det_shape)
+    elif len(shape) == 3:
+        if scan_shape is None:
+            raise ValueError("scan_shape is required for 3D frame stacks")
+        n_frames = shape[0]
+        det_shape = shape[1:]
+        flat = data
+    else:
+        raise ValueError("save_compressed_arina_h5 expects 3D frames or 4D-STEM data")
+
+    det_row, det_col = (int(det_shape[0]), int(det_shape[1]))
+    frames_per_file = int(frames_per_file)
+    batch_size = int(batch_size)
+    if frames_per_file <= 0 or batch_size <= 0:
+        raise ValueError("frames_per_file and batch_size must be positive")
+
+    prefix = _master_prefix(filepath)
+    data_files = []
+    frame_ranges = []
+    for file_index, start in enumerate(range(0, n_frames, frames_per_file), start=1):
+        end = min(start + frames_per_file, n_frames)
+        data_path = filepath.with_name(f"{prefix}_data_{file_index:06d}.h5")
+        data_files.append(data_path)
+        frame_ranges.append((start + 1, end))
+        tmp_data = data_path.with_suffix(data_path.suffix + ".tmp")
+        with h5py.File(tmp_data, "w") as handle:
+            dset = handle.create_dataset(
+                "entry/data/data",
+                shape=(end - start, det_row, det_col),
+                dtype=dtype,
+                chunks=(1, det_row, det_col),
+                **_portable_h5_filters(compression, compression_level, shuffle),
+            )
+            dset.attrs["image_nr_low"] = np.uint64(start + 1)
+            dset.attrs["image_nr_high"] = np.uint64(end)
+            out_offset = 0
+            for batch_start in range(start, end, batch_size):
+                batch_end = min(batch_start + batch_size, end)
+                dset[out_offset:out_offset + (batch_end - batch_start)] = (
+                    _cast_host_for_save(flat[batch_start:batch_end], dtype)
+                )
+                out_offset += batch_end - batch_start
+        tmp_data.replace(data_path)
+
+    tmp_master = filepath.with_suffix(filepath.suffix + ".tmp")
+    _write_master_file(
+        tmp_master,
+        data_files,
+        frame_ranges,
+        scan_shape,
+        det_shape,
+        dtype,
+        metadata,
+        source_master,
+    )
+    tmp_master.replace(filepath)
+
 
 def _metadata_attrs(f, metadata):
     if metadata is None:

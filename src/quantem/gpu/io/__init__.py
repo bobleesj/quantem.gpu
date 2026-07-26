@@ -22,8 +22,15 @@ _HDF5_EXPORTS = {
     "read_emd_metadata",
     "read_pixel_mask",
     "random_scan_indices",
-    "save",
     "wait_for_saves",
+}
+
+_SAVE_EXPORTS = {
+    "save",
+    "save_compressed_arina_h5",
+    "save_compressed_h5",
+    "wait_for_saves",
+    "write_compressed_h5_dataset",
 }
 
 _BACKEND_EXPORTS = {"detect_backend", "resolve_backend"}
@@ -36,12 +43,17 @@ _MPS_MULTI_EXPORTS = {
     "load_macbook_datasets",
 }
 
-__all__ = sorted(_HDF5_EXPORTS | _BACKEND_EXPORTS | _MPS_EXPORTS | _MPS_MULTI_EXPORTS)
+__all__ = sorted(_HDF5_EXPORTS | _SAVE_EXPORTS | _BACKEND_EXPORTS | _MPS_EXPORTS | _MPS_MULTI_EXPORTS)
 
 
 def __getattr__(name: str):
     if name in _HDF5_EXPORTS:
         module = import_module("quantem.gpu.io.hdf5")
+        value = getattr(module, name)
+        globals()[name] = value
+        return value
+    if name in _SAVE_EXPORTS:
+        module = import_module("quantem.gpu.io.save")
         value = getattr(module, name)
         globals()[name] = value
         return value
