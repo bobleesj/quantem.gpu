@@ -57,6 +57,8 @@ _pack_h5_chunks_kernel = _lazy_kernel("pack_h5_chunks_kernel")
 # more than write throughput.
 _COMPRESSION_CODECS = ("lz4", "zstd", "blosc2_zstd")
 _DEFAULT_CLEVELS = {"zstd": 3, "blosc2_zstd": 5}
+_DEFAULT_BATCH_SIZE = 512
+_MPS_DEFAULT_BATCH_SIZE = 4096
 
 
 # =========================================================================
@@ -877,7 +879,7 @@ def save_compressed_arina_h5(
     scan_shape: tuple[int, int] | None = None,
     metadata: Mapping | None = None,
     dtype="u16",
-    batch_size: int = 512,
+    batch_size: int = _DEFAULT_BATCH_SIZE,
     frames_per_file: int = 32768,
     compression: str | None = "lz4",
     compression_level: int | None = 4,
@@ -940,6 +942,8 @@ def save_compressed_arina_h5(
             "compression_backend='mps' requires an MPS torch.Tensor and "
             "compression='lz4'."
         )
+    if use_mps_backend and batch_size == _DEFAULT_BATCH_SIZE:
+        batch_size = _MPS_DEFAULT_BATCH_SIZE
 
     prefix = _master_prefix(filepath)
     data_files = []
@@ -961,6 +965,8 @@ def save_compressed_arina_h5(
             dset.attrs["image_nr_low"] = np.uint64(start + 1)
             dset.attrs["image_nr_high"] = np.uint64(end)
             if use_mps_backend:
+                _raise_write_error()
+                _ensure_writer_thread()
                 frame_bytes = det_row * det_col * dtype.itemsize
                 n_8kb = (frame_bytes + BLOCK_SIZE - 1) // BLOCK_SIZE
                 for batch_start in range(start, end, batch_size):
@@ -971,14 +977,18 @@ def save_compressed_arina_h5(
                         frame_bytes,
                         dtype,
                     )
-                    _write_batch_to_h5(
-                        dset,
-                        packed,
-                        chunk_starts,
-                        chunk_sizes,
-                        batch_start - start,
-                        batch_end - batch_start,
-                    )
+                    _write_queue.put((
+                        _write_batch_to_h5,
+                        (
+                            dset,
+                            packed,
+                            chunk_starts,
+                            chunk_sizes,
+                            batch_start - start,
+                            batch_end - batch_start,
+                        ),
+                    ))
+                wait_for_saves()
             else:
                 out_offset = 0
                 for batch_start in range(start, end, batch_size):

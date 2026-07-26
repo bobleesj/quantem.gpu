@@ -176,10 +176,10 @@ Current real-data status for full no-bin `512x512x192x192` detector data:
 | Workflow | CUDA | MPS / Apple GPU | CPU / HDF5 filter | Notes |
 | --- | ---: | ---: | ---: | --- |
 | Load/decode `uint16` Arina H5 | Done | Done | Reference | CUDA and MPS preserve native integer evidence. |
-| Save Arina H5, `uint16` | Done | Done, `~3.9-4.6 s` | Done, `~30.4 s` | MPS uses Metal Bitshuffle/LZ4 kernels plus HDF5 `write_direct_chunk`; random-sample agreement vs decoded reference was exact. The `~4.6 s` path streams from chunk-backed MPS loads without a second full raw copy. |
+| Save Arina H5, `uint16` | Done | Done, `~3.16 s` | Done, `~30.4 s` | MPS uses Metal Bitshuffle/LZ4 kernels plus async HDF5 `write_direct_chunk`; random-sample agreement vs decoded reference was exact. The path streams from chunk-backed MPS loads without a second full raw copy. |
 | Save Arina H5, `float32` | Done | Done, `~6.8 s` | Done | MPS stores lossless float32 Bitshuffle+LZ4 chunks; synthetic round trip is exact. |
-| Save Arina H5, `uint8` | Display-only GPU path | Done, `~3.65 s` | Done, `~19.3 s` | MPS/CUDA use GPU Bitshuffle/LZ4 for clipped display exports; Phil full real-data sampled agreement was exact against `min(uint16, 255)`. It is not scientific agreement when counts exceed 255. |
-| 1-2 s full save target | Partial | Partial | Gap | MPS compression is GPU-side now, but Python/HDF5 direct-chunk overhead over 262,144 chunks plus ~1.1-1.2 GB written still keeps full saves above 3 s. |
+| Save Arina H5, `uint8` | Display-only GPU path | Done, `~1.9-2.0 s` | Done, `~19.3 s` | MPS/CUDA use GPU Bitshuffle/LZ4 for clipped display exports; Phil full real-data sampled agreement was exact against `min(uint16, 255)`. It is not scientific agreement when counts exceed 255. |
+| 1-2 s full save target | Partial | Done for `uint8`; partial for `uint16` | Gap | MPS async write overlap puts full no-bin display save at the 2 s edge. Exact `uint16` is still about 3.2 s because compression/materialization dominates after the ~1 s HDF5 write floor is overlapped. |
 
 Use `save_compressed_arina_h5()` for portable master/data-file exports:
 
