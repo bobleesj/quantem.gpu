@@ -705,6 +705,278 @@ def _mps_lz4_rle_compress_kernel():
     )
 
 
+@lru_cache(maxsize=1)
+def _native_mps_u16_save_pipelines():
+    import Metal
+    from .backends import mps as mps_backend
+
+    source = r"""
+        #include <metal_stdlib>
+        using namespace metal;
+
+        kernel void bshuf_u16_save(
+            const device ushort* src [[buffer(0)]],
+            device uchar* out [[buffer(1)]],
+            constant uint& src_frame_offset [[buffer(2)]],
+            constant uint& n_frames [[buffer(3)]],
+            constant uint& frame_bytes [[buffer(4)]],
+            uint gid [[thread_position_in_grid]]
+        ) {
+            uint total = n_frames * frame_bytes;
+            if (gid >= total) return;
+
+            uint byte_in_frame = gid % frame_bytes;
+            uint frame = gid / frame_bytes;
+            uint block = byte_in_frame / 8192u;
+            uint block_start = block * 8192u;
+            uint block_bytes = frame_bytes - block_start;
+            if (block_bytes > 8192u) block_bytes = 8192u;
+
+            uint byte_in_block = byte_in_frame - block_start;
+            uint bitplane_bytes = block_bytes / 16u;
+            uint bit = byte_in_block / bitplane_bytes;
+            uint byte_in_plane = byte_in_block - bit * bitplane_bytes;
+            uint input_base = block_start / 2u + byte_in_plane * 8u;
+            ulong frame_base = ulong(src_frame_offset + frame) * ulong(frame_bytes / 2u);
+
+            uchar packed = 0;
+            for (uint k = 0; k < 8; k++) {
+                ushort val = src[frame_base + input_base + k];
+                if ((uint(val) & (1u << bit)) != 0u) {
+                    packed |= uchar(1u << k);
+                }
+            }
+            out[gid] = packed;
+        }
+
+        kernel void lz4_rle_save(
+            const device uchar* shuffled [[buffer(0)]],
+            device uchar* out [[buffer(1)]],
+            device uint* sizes [[buffer(2)]],
+            constant uint& n_chunks [[buffer(3)]],
+            constant uint& frame_bytes [[buffer(4)]],
+            constant uint& blocks_per_frame [[buffer(5)]],
+            constant uint& max_out [[buffer(6)]],
+            uint chunk [[threadgroup_position_in_grid]],
+            uint tid [[thread_position_in_threadgroup]]
+        ) {
+            if (chunk >= n_chunks || tid != 0) return;
+
+            uint frame = chunk / blocks_per_frame;
+            uint block = chunk - frame * blocks_per_frame;
+            uint block_start = block * 8192u;
+            uint chunk_size = frame_bytes - block_start;
+            if (chunk_size > 8192u) chunk_size = 8192u;
+
+            const device uchar* in = shuffled + ulong(frame) * ulong(frame_bytes) + block_start;
+            device uchar* outp = out + ulong(chunk) * ulong(max_out);
+            uint in_pos = 0;
+            uint out_pos = 0;
+            uint anchor = 0;
+
+            while (chunk_size > 12u && in_pos < chunk_size - 12u) {
+                uchar run_value = in[in_pos];
+                if (in[in_pos + 1] == run_value
+                        && in[in_pos + 2] == run_value
+                        && in[in_pos + 3] == run_value
+                        && in_pos + 6u < chunk_size) {
+                    uint run_len = 4;
+                    while (in_pos + run_len < chunk_size
+                           && in[in_pos + run_len] == run_value) {
+                        run_len++;
+                    }
+                    uint match_start = in_pos + 1u;
+                    uint max_match = chunk_size - match_start - 5u;
+                    uint mlen = run_len - 1u;
+                    if (mlen > max_match) mlen = max_match;
+                    if (mlen >= 4u) {
+                        uint literal_len = match_start - anchor;
+                        uint ml = mlen - 4u;
+                        uchar token = uchar((literal_len >= 15u ? 15u : literal_len) << 4)
+                                    | uchar(ml >= 15u ? 15u : ml);
+                        outp[out_pos++] = token;
+
+                        if (literal_len >= 15u) {
+                            uint rem = literal_len - 15u;
+                            while (rem >= 255u) {
+                                outp[out_pos++] = uchar(255);
+                                rem -= 255u;
+                            }
+                            outp[out_pos++] = uchar(rem);
+                        }
+
+                        for (uint i = 0; i < literal_len; i++) {
+                            outp[out_pos++] = in[anchor + i];
+                        }
+
+                        outp[out_pos++] = uchar(1);
+                        outp[out_pos++] = uchar(0);
+
+                        if (ml >= 15u) {
+                            uint rem = ml - 15u;
+                            while (rem >= 255u) {
+                                outp[out_pos++] = uchar(255);
+                                rem -= 255u;
+                            }
+                            outp[out_pos++] = uchar(rem);
+                        }
+
+                        in_pos = match_start + mlen;
+                        anchor = in_pos;
+                        continue;
+                    }
+                }
+                in_pos++;
+            }
+
+            uint literal_len = chunk_size - anchor;
+            if (literal_len > 0u) {
+                uchar token = uchar((literal_len >= 15u ? 15u : literal_len) << 4);
+                outp[out_pos++] = token;
+                if (literal_len >= 15u) {
+                    uint rem = literal_len - 15u;
+                    while (rem >= 255u) {
+                        outp[out_pos++] = uchar(255);
+                        rem -= 255u;
+                    }
+                    outp[out_pos++] = uchar(rem);
+                }
+                for (uint i = 0; i < literal_len; i++) {
+                    outp[out_pos++] = in[anchor + i];
+                }
+            }
+            sizes[chunk] = out_pos;
+        }
+    """
+    library, err = mps_backend._device.newLibraryWithSource_options_error_(
+        source, Metal.MTLCompileOptions.alloc().init(), None
+    )
+    if err:
+        raise RuntimeError(f"Metal save shader compile error: {err}")
+    bitshuffle, err = mps_backend._device.newComputePipelineStateWithFunction_error_(
+        library.newFunctionWithName_("bshuf_u16_save"), None
+    )
+    if err:
+        raise RuntimeError(f"Metal save bitshuffle pipeline error: {err}")
+    lz4, err = mps_backend._device.newComputePipelineStateWithFunction_error_(
+        library.newFunctionWithName_("lz4_rle_save"), None
+    )
+    if err:
+        raise RuntimeError(f"Metal save LZ4 pipeline error: {err}")
+    return Metal, mps_backend, bitshuffle, lz4
+
+
+class _NativeMPSU16ChunkCompressor:
+    """Reusable native Metal compressor for chunk-backed uint16 MPS frames."""
+
+    def __init__(self, max_frames: int, frame_bytes: int, n_8kb: int):
+        self.Metal, self.mps_backend, self.bitshuffle, self.lz4 = (
+            _native_mps_u16_save_pipelines()
+        )
+        self.max_frames = int(max_frames)
+        self.frame_bytes = int(frame_bytes)
+        self.n_8kb = int(n_8kb)
+        self.max_out = int(_MPS_LZ4_MAX_OUT)
+        self.max_blocks = self.max_frames * self.n_8kb
+        self.shuffled = self.mps_backend._metal_buffer_alloc(
+            self.max_frames * self.frame_bytes
+        )
+        self.comp = self.mps_backend._metal_buffer_alloc(self.max_blocks * self.max_out)
+        self.sizes = self.mps_backend._metal_buffer_alloc(self.max_blocks * 4)
+        self.comp_np = self.mps_backend._numpy_view(
+            self.comp, np.uint8, self.max_blocks * self.max_out
+        )
+        self.sizes_np = self.mps_backend._numpy_view(
+            self.sizes, np.uint32, self.max_blocks
+        )
+        self.offsets = np.arange(self.max_blocks, dtype=np.int64) * self.max_out
+        self._start_buf, self._start_np = self._u32_buffer()
+        self._n_buf, self._n_np = self._u32_buffer()
+        self._frame_bytes_buf, self._frame_bytes_np = self._u32_buffer(self.frame_bytes)
+        self._n_chunks_buf, self._n_chunks_np = self._u32_buffer()
+        self._n_8kb_buf, self._n_8kb_np = self._u32_buffer(self.n_8kb)
+        self._max_out_buf, self._max_out_np = self._u32_buffer(self.max_out)
+        self._buffers = [
+            self.shuffled,
+            self.comp,
+            self.sizes,
+            self._start_buf,
+            self._n_buf,
+            self._frame_bytes_buf,
+            self._n_chunks_buf,
+            self._n_8kb_buf,
+            self._max_out_buf,
+        ]
+
+    def _u32_buffer(self, value: int = 0):
+        buf = self.mps_backend._metal_buffer_alloc(4)
+        view = self.mps_backend._numpy_view(buf, np.uint32, 1)
+        view[0] = np.uint32(value)
+        return buf, view
+
+    def close(self) -> None:
+        for buf in self._buffers:
+            self.mps_backend._release_metal_buffer(buf)
+        self._buffers = []
+
+    def __del__(self):
+        try:
+            self.close()
+        except (AttributeError, NameError, TypeError):
+            pass
+
+    def compress(self, chunk, frame_offset: int, n_frames: int):
+        n_frames = int(n_frames)
+        if n_frames > self.max_frames:
+            raise ValueError(
+                f"native MPS compressor was allocated for {self.max_frames} "
+                f"frames, got {n_frames}."
+            )
+        n_blocks = n_frames * self.n_8kb
+        self._start_np[0] = np.uint32(frame_offset)
+        self._n_np[0] = np.uint32(n_frames)
+        self._n_chunks_np[0] = np.uint32(n_blocks)
+
+        cmd = self.mps_backend._queue.commandBuffer()
+        enc = cmd.computeCommandEncoder()
+        enc.setComputePipelineState_(self.bitshuffle)
+        enc.setBuffer_offset_atIndex_(chunk._mtl, 0, 0)
+        enc.setBuffer_offset_atIndex_(self.shuffled, 0, 1)
+        enc.setBuffer_offset_atIndex_(self._start_buf, 0, 2)
+        enc.setBuffer_offset_atIndex_(self._n_buf, 0, 3)
+        enc.setBuffer_offset_atIndex_(self._frame_bytes_buf, 0, 4)
+        enc.dispatchThreadgroups_threadsPerThreadgroup_(
+            self.Metal.MTLSizeMake(
+                (n_frames * self.frame_bytes + 255) // 256, 1, 1
+            ),
+            self.Metal.MTLSizeMake(256, 1, 1),
+        )
+        enc.setComputePipelineState_(self.lz4)
+        enc.setBuffer_offset_atIndex_(self.shuffled, 0, 0)
+        enc.setBuffer_offset_atIndex_(self.comp, 0, 1)
+        enc.setBuffer_offset_atIndex_(self.sizes, 0, 2)
+        enc.setBuffer_offset_atIndex_(self._n_chunks_buf, 0, 3)
+        enc.setBuffer_offset_atIndex_(self._frame_bytes_buf, 0, 4)
+        enc.setBuffer_offset_atIndex_(self._n_8kb_buf, 0, 5)
+        enc.setBuffer_offset_atIndex_(self._max_out_buf, 0, 6)
+        enc.dispatchThreadgroups_threadsPerThreadgroup_(
+            self.Metal.MTLSizeMake(n_blocks, 1, 1),
+            self.Metal.MTLSizeMake(32, 1, 1),
+        )
+        enc.endEncoding()
+        cmd.commit()
+        cmd.waitUntilCompleted()
+
+        return _pack_chunks(
+            self.comp_np,
+            self.sizes_np[:n_blocks].copy(),
+            self.offsets[:n_blocks],
+            n_frames,
+            self.n_8kb,
+            self.frame_bytes,
+        )
+
+
 def _compress_batch_mps(data_mps, n_8kb, frame_bytes, output_dtype):
     """Compress a torch MPS uint8/uint16/float32 batch to HDF5 bslz4 chunks."""
     import mlx.core as mx
@@ -964,6 +1236,27 @@ def _mps_frame_batch(flat, start: int, end: int):
     return batch.to("mps", non_blocking=True)
 
 
+def _mps_chunk_batch(flat, start: int, end: int):
+    """Return one backing MPS chunk plus local frame offset, or None."""
+    if not _is_mps_chunked_frames(flat):
+        return None
+    pos = 0
+    for chunk in flat.chunks:
+        if chunk is None:
+            raise RuntimeError(
+                "Cannot save from MPS chunked frames after a chunk has been freed."
+            )
+        chunk_n = int(chunk.shape[0])
+        chunk_start = pos
+        chunk_end = pos + chunk_n
+        pos = chunk_end
+        if start >= chunk_start and end <= chunk_end:
+            return chunk, start - chunk_start, end - start
+        if start < chunk_end and end > chunk_end:
+            return None
+    return None
+
+
 def write_compressed_h5_dataset(
     handle,
     name: str,
@@ -1126,6 +1419,13 @@ def save_compressed_arina_h5(
         )
     if use_mps_backend and batch_size == _DEFAULT_BATCH_SIZE:
         batch_size = _MPS_DEFAULT_BATCH_SIZE
+    use_native_mps_u16 = (
+        use_mps_backend
+        and _is_mps_chunked_frames(flat)
+        and dtype == np.dtype(np.uint16)
+        and np.dtype(flat.dtype) == np.dtype(np.uint16)
+    )
+    native_mps_compressor = None
 
     prefix = _master_prefix(filepath)
     data_files = []
@@ -1151,14 +1451,31 @@ def save_compressed_arina_h5(
                 _ensure_writer_thread()
                 frame_bytes = det_row * det_col * dtype.itemsize
                 n_8kb = (frame_bytes + BLOCK_SIZE - 1) // BLOCK_SIZE
+                if use_native_mps_u16 and native_mps_compressor is None:
+                    native_mps_compressor = _NativeMPSU16ChunkCompressor(
+                        batch_size, frame_bytes, n_8kb
+                    )
                 for batch_start in range(start, end, batch_size):
                     batch_end = min(batch_start + batch_size, end)
-                    packed, chunk_starts, chunk_sizes = _compress_batch_mps(
-                        _mps_frame_batch(flat, batch_start, batch_end),
-                        n_8kb,
-                        frame_bytes,
-                        dtype,
+                    native_batch = (
+                        _mps_chunk_batch(flat, batch_start, batch_end)
+                        if use_native_mps_u16
+                        else None
                     )
+                    if native_batch is None:
+                        packed, chunk_starts, chunk_sizes = _compress_batch_mps(
+                            _mps_frame_batch(flat, batch_start, batch_end),
+                            n_8kb,
+                            frame_bytes,
+                            dtype,
+                        )
+                    else:
+                        chunk, chunk_start, chunk_n = native_batch
+                        packed, chunk_starts, chunk_sizes = native_mps_compressor.compress(
+                            chunk,
+                            chunk_start,
+                            chunk_n,
+                        )
                     _write_queue.put((
                         _write_batch_to_h5,
                         (
@@ -1180,6 +1497,9 @@ def save_compressed_arina_h5(
                     )
                     out_offset += batch_end - batch_start
         tmp_data.replace(data_path)
+
+    if native_mps_compressor is not None:
+        native_mps_compressor.close()
 
     tmp_master = filepath.with_suffix(filepath.suffix + ".tmp")
     _write_master_file(
