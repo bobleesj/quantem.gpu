@@ -103,7 +103,25 @@ Committed path:
 | `5a4716d` | Tuned the MPS LZ4 hash table and added repeated-byte fast paths for bitshuffled data. | Full `uint8` display save reached `~1.36-1.56 s`; exact `uint16` save reached `~2.17 s`. |
 | `6a47810` | Added a repeated-byte speed encoder for the exact-count MPS path. | Exact `uint16` reached the `~2.03-2.10 s` edge, with a modest file-size tradeoff. |
 | `54ed193` | Added native Metal chunk-backed `uint16` compressor that reads `_MtlArray` Metal buffers directly, avoiding torch/MLX staging. | Exact `uint16` full no-bin save reached `1.80-1.96 s`; sampled agreement exact versus the source `uint16` master. |
-| pending | Re-tuned the native MPS save default batch from 4096 to 2048 after a full-data sweep. | Exact `uint16` full no-bin save reached `1.69-1.80 s`; 4096 measured `1.81-1.86 s`, and 8192 measured `1.91-2.00 s`. The default-path confirmation measured `1.753 s`. |
+| `3061501` | Re-tuned the native MPS save default batch from 4096 to 2048 after a full-data sweep. | Exact `uint16` full no-bin save reached `1.69-1.80 s`; 4096 measured `1.81-1.86 s`, and 8192 measured `1.91-2.00 s`. The default-path confirmation measured `1.753 s`. |
+| `83bb608` | Made `quantem.gpu.io.save(..., backend="auto")` the public HDF5 save entry point. | Public API validation on Phil used the same full no-bin MPS source and saved in `1.91 s` with exact decoded sample agreement. |
+
+Implementation checklist:
+
+| Item | Status | Evidence / next action |
+| --- | --- | --- |
+| Public load entry point | Done | `quantem.gpu.io.load(..., backend="cuda"|"mps"|"cpu")` remains the canonical read path. |
+| Public save entry point | Done | `quantem.gpu.io.save(..., backend="auto", dtype=...)` dispatches CUDA, MPS/Metal, or the reference writer from input data. |
+| One public compression method | Done | User-facing docs present Bitshuffle/LZ4 only; alternate codecs stay in lower-level compatibility helpers. |
+| MPS exact `uint16` compressed save | Done | Native Metal chunk-backed path, full no-bin save `1.69-1.96 s`, exact decoded sample agreement. |
+| MPS `uint8` display compressed save | Done | Full no-bin save `1.42-1.55 s`, exact agreement against `min(uint16, 255)`. |
+| MPS `float32` compressed save | Done | Implemented and covered by synthetic exact round-trip; slower than integer save and not the demo default. |
+| CUDA compressed save | Done | Existing CUDA writer remains the CUDA path for CuPy arrays. |
+| Portable fallback save | Done | CPU-style backend choices use the portable compressed writer. |
+| Public API collision guard | Done | Regression test keeps `quantem.gpu.io.save(...)` callable after the `quantem.gpu.io.save` submodule is imported. |
+| Same-real-MAPED CUDA-vs-MPS save timing | Open | Needed before publishing exact cross-backend save-speed claims. |
+| End-to-end seven-tilt stream/merge/save under 20 s | Open | Save stage is inside target; remaining work is alignment/merge pipeline overlap and single-pass acquisition staging. |
+| WebGPU HDF5 writing | Deferred | Browser writing is not part of the microscope MAPED path; keep WebGPU focused on review/product-first workflows for now. |
 
 Final Phil full-run results:
 
