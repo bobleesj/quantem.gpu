@@ -61,6 +61,8 @@ _DEFAULT_BATCH_SIZE = 512
 _MPS_DEFAULT_BATCH_SIZE = 4096
 _MPS_LZ4_HASH_SIZE = 2048
 _MPS_LZ4_HASH_SHIFT = 21
+_MPS_LZ4_MAX_OUT = BLOCK_SIZE + 1024
+_MPS_LZ4_ENCODER = "auto"
 
 
 # =========================================================================
@@ -595,6 +597,114 @@ def _mps_lz4_compress_kernel():
     )
 
 
+@lru_cache(maxsize=1)
+def _mps_lz4_rle_compress_kernel():
+    import mlx.core as mx
+
+    source = r"""
+        uint chunk = thread_position_in_grid.x / THREADS;
+        uint tid = thread_position_in_threadgroup.x;
+        if (chunk >= N_CHUNKS || tid != 0) return;
+
+        uint frame = chunk / BLOCKS_PER_FRAME;
+        uint block = chunk - frame * BLOCKS_PER_FRAME;
+        uint block_start = block * BLOCK_SIZE;
+        uint chunk_size = FRAME_BYTES - block_start;
+        if (chunk_size > BLOCK_SIZE) {
+            chunk_size = BLOCK_SIZE;
+        }
+        const device uchar* in = shuffled + ulong(frame) * FRAME_BYTES + block_start;
+        device uchar* outp = out + ulong(chunk) * MAX_OUT;
+        uint in_pos = 0;
+        uint out_pos = 0;
+        uint anchor = 0;
+
+        while (chunk_size > 12 && in_pos < chunk_size - 12) {
+            uchar run_value = in[ulong(in_pos)];
+            if (in[ulong(in_pos + 1)] == run_value
+                    && in[ulong(in_pos + 2)] == run_value
+                    && in[ulong(in_pos + 3)] == run_value
+                    && in_pos + 6 < chunk_size) {
+                uint run_len = 4;
+                while (in_pos + run_len < chunk_size
+                       && in[ulong(in_pos + run_len)] == run_value) {
+                    run_len++;
+                }
+                uint match_start = in_pos + 1;
+                uint max_match = chunk_size - match_start - 5;
+                uint mlen = run_len - 1;
+                if (mlen > max_match) {
+                    mlen = max_match;
+                }
+                if (mlen >= 4) {
+                    uint literal_len = match_start - anchor;
+                    uint ml = mlen - 4;
+                    uchar token = uchar((literal_len >= 15 ? 15 : literal_len) << 4)
+                                | uchar(ml >= 15 ? 15 : ml);
+                    outp[out_pos++] = token;
+
+                    if (literal_len >= 15) {
+                        uint rem = literal_len - 15;
+                        while (rem >= 255) {
+                            outp[out_pos++] = uchar(255);
+                            rem -= 255;
+                        }
+                        outp[out_pos++] = uchar(rem);
+                    }
+
+                    for (uint i = 0; i < literal_len; i++) {
+                        outp[out_pos++] = in[ulong(anchor + i)];
+                    }
+
+                    outp[out_pos++] = uchar(1);
+                    outp[out_pos++] = uchar(0);
+
+                    if (ml >= 15) {
+                        uint rem = ml - 15;
+                        while (rem >= 255) {
+                            outp[out_pos++] = uchar(255);
+                            rem -= 255;
+                        }
+                        outp[out_pos++] = uchar(rem);
+                    }
+
+                    in_pos = match_start + mlen;
+                    anchor = in_pos;
+                    continue;
+                }
+            }
+            in_pos++;
+        }
+
+        uint literal_len = chunk_size - anchor;
+        if (literal_len > 0) {
+            uchar token = uchar((literal_len >= 15 ? 15 : literal_len) << 4);
+            outp[out_pos++] = token;
+            if (literal_len >= 15) {
+                uint rem = literal_len - 15;
+                while (rem >= 255) {
+                    outp[out_pos++] = uchar(255);
+                    rem -= 255;
+                }
+                outp[out_pos++] = uchar(rem);
+            }
+            for (uint i = 0; i < literal_len; i++) {
+                outp[out_pos++] = in[ulong(anchor + i)];
+            }
+        }
+
+        sizes[chunk] = out_pos;
+    """
+    return mx.fast.metal_kernel(
+        name="quantem_bslz4_lz4_rle_encode",
+        input_names=["shuffled"],
+        output_names=["out", "sizes"],
+        source=source,
+        ensure_row_contiguous=True,
+        compile_options={"math_mode": "fast"},
+    )
+
+
 def _compress_batch_mps(data_mps, n_8kb, frame_bytes, output_dtype):
     """Compress a torch MPS uint8/uint16/float32 batch to HDF5 bslz4 chunks."""
     import mlx.core as mx
@@ -658,12 +768,24 @@ def _compress_batch_mps(data_mps, n_8kb, frame_bytes, output_dtype):
     )[0]
     mx.eval(shuffled)
 
-    max_out = BLOCK_SIZE * 2
+    max_out = _MPS_LZ4_MAX_OUT
     n_blocks = n * n_8kb
-    lz4 = _mps_lz4_compress_kernel()
-    comp_buf, sizes = lz4(
-        inputs=[shuffled],
-        template=[
+    encoder = _MPS_LZ4_ENCODER
+    if encoder == "auto":
+        encoder = "rle" if output_dtype == np.dtype(np.uint16) else "hash"
+    if encoder == "rle":
+        lz4 = _mps_lz4_rle_compress_kernel()
+        template = [
+            ("N_CHUNKS", n_blocks),
+            ("BLOCK_SIZE", BLOCK_SIZE),
+            ("FRAME_BYTES", frame_bytes),
+            ("BLOCKS_PER_FRAME", n_8kb),
+            ("MAX_OUT", max_out),
+            ("THREADS", 32),
+        ]
+    else:
+        lz4 = _mps_lz4_compress_kernel()
+        template = [
             ("N_CHUNKS", n_blocks),
             ("BLOCK_SIZE", BLOCK_SIZE),
             ("FRAME_BYTES", frame_bytes),
@@ -672,7 +794,10 @@ def _compress_batch_mps(data_mps, n_8kb, frame_bytes, output_dtype):
             ("THREADS", 32),
             ("HASH_SIZE", _MPS_LZ4_HASH_SIZE),
             ("HASH_SHIFT", _MPS_LZ4_HASH_SHIFT),
-        ],
+        ]
+    comp_buf, sizes = lz4(
+        inputs=[shuffled],
+        template=template,
         grid=(n_blocks * 32, 1, 1),
         threadgroup=(32, 1, 1),
         output_shapes=[(n_blocks * max_out,), (n_blocks,)],

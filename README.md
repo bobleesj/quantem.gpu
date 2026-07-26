@@ -176,10 +176,10 @@ Current real-data status for full no-bin `512x512x192x192` detector data:
 | Workflow | CUDA | MPS / Apple GPU | CPU / HDF5 filter | Notes |
 | --- | ---: | ---: | ---: | --- |
 | Load/decode `uint16` Arina H5 | Done | Done | Reference | CUDA and MPS preserve native integer evidence. |
-| Save Arina H5, `uint16` | Done | Done, `~2.17-2.45 s` | Done, `~30.4 s` | MPS uses Metal Bitshuffle/LZ4 kernels plus async HDF5 `write_direct_chunk`; random-sample agreement vs decoded reference was exact. The path streams from chunk-backed MPS loads without a second full raw copy. |
+| Save Arina H5, `uint16` | Done | Done, `~2.03-2.10 s` | Done, `~30.4 s` | MPS uses Metal Bitshuffle/LZ4 kernels plus async HDF5 `write_direct_chunk`; random-sample agreement vs decoded reference was exact. The fastest path uses a repeated-byte LZ4 encoder from chunk-backed MPS loads, avoiding a second full raw copy, with a modest file-size tradeoff. |
 | Save Arina H5, `float32` | Done | Done, `~6.8 s` | Done | MPS stores lossless float32 Bitshuffle+LZ4 chunks; synthetic round trip is exact. |
-| Save Arina H5, `uint8` | Display-only GPU path | Done, `~1.36-1.56 s` | Done, `~19.3 s` | MPS/CUDA use GPU Bitshuffle/LZ4 for clipped display exports; Phil full real-data sampled agreement was exact against `min(uint16, 255)`. It is not scientific agreement when counts exceed 255. |
-| 1-2 s full save target | Partial | Done for `uint8`; near-target for `uint16` | Gap | MPS async write overlap plus repeated-byte LZ4 fast paths put full no-bin display save inside the target band. Exact `uint16` is still just above 2 s because LZ4 compression remains the dominant cost. |
+| Save Arina H5, `uint8` | Display-only GPU path | Done, `~1.36-1.57 s` | Done, `~19.3 s` | MPS/CUDA use GPU Bitshuffle/LZ4 for clipped display exports; Phil full real-data sampled agreement was exact against `min(uint16, 255)`. It is not scientific agreement when counts exceed 255. |
+| 1-2 s full save target | Partial | Done for `uint8`; edge for `uint16` | Gap | MPS async write overlap plus repeated-byte LZ4 fast paths put full no-bin display save inside the target band. Exact `uint16` now sits at the 2 s edge; further wins likely need a native Metal encoder reading directly from chunk-backed Metal buffers. |
 
 Use `save_compressed_arina_h5()` for portable master/data-file exports:
 
