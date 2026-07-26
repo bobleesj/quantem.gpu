@@ -427,6 +427,82 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   out[i] = total[i] - subtract[i];
 }`;
 
+const maskedSignedDeltaSrc = (sg: boolean) => `
+${sg ? "enable subgroups;" : ""}
+@group(0) @binding(0) var<storage,read> data: array<u32>;
+@group(0) @binding(1) var<storage,read> idx: array<u32>;   // detector index | high-bit remove flag
+@group(0) @binding(2) var<storage,read_write> vi: array<f32>;
+@group(0) @binding(3) var<uniform> u: vec4<u32>;   // startScan, nScanInChunk, detSize, mode
+@group(0) @binding(4) var<uniform> u2: vec4<u32>;  // gridX, 0, 0, 0
+${SAMPLE}
+var<workgroup> part: array<f32, ${WGSZ}>;
+@compute @workgroup_size(${WGSZ})
+fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {
+  let sl = wid.y * u2.x + wid.x; let tid = lid.x;
+  let n = arrayLength(&idx); let base = sl * u.z; var sum: f32 = 0.0;
+  if (sl < u.y) {
+    for (var j = tid; j < n; j = j + ${WGSZ}u) {
+      let encoded = idx[j];
+      let p = encoded & 0x7fffffffu;
+      let sign = select(1.0, -1.0, (encoded & 0x80000000u) != 0u);
+      sum = sum + sign * sampleF(base + p, u.w);
+    }
+  }
+${sg
+  ? `  sum = subgroupAdd(sum);
+  if (subgroupElect()) { part[tid / ${SGSZ}u] = sum; }
+  workgroupBarrier();
+  if (tid == 0u && sl < u.y) {
+    var total = 0.0; for (var w = 0u; w < ${WGSZ / SGSZ}u; w = w + 1u) { total = total + part[w]; }
+    vi[u.x + sl] = total;
+  }`
+  : `  part[tid] = sum; workgroupBarrier();
+  for (var s: u32 = ${WGSZ / 2}u; s > 0u; s = s >> 1u) { if (tid < s) { part[tid] = part[tid] + part[tid + s]; } workgroupBarrier(); }
+  if (tid == 0u && sl < u.y) { vi[u.x + sl] = part[0]; }`}
+}`;
+
+const maskedSignedDeltaU8PackedSrc = () => `
+@group(0) @binding(0) var<storage,read> data: array<u32>;
+@group(0) @binding(1) var<storage,read> entries: array<vec2<u32>>; // detector u32 word, 2-bit lane coeffs
+@group(0) @binding(2) var<storage,read_write> vi: array<f32>;
+@group(0) @binding(3) var<uniform> u: vec4<u32>;   // startScan, nScanInChunk, detSize, detWords
+@group(0) @binding(4) var<uniform> u2: vec4<u32>;
+fn laneSignedValue(word: u32, coeffs: u32, lane: u32) -> f32 {
+  let coeff = (coeffs >> (lane * 2u)) & 3u;
+  if (coeff == 0u) { return 0.0; }
+  let sample = f32((word >> (lane * 8u)) & 0xffu);
+  if (coeff == 2u) { return -sample; }
+  return sample;
+}
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let sl = gid.x;
+  if (sl >= u.y) { return; }
+  let n = arrayLength(&entries); let wordBase = sl * u.w; var sum: f32 = 0.0;
+  for (var j = 0u; j < n; j = j + 1u) {
+    let entry = entries[j];
+    let word = data[wordBase + entry.x];
+    let coeffs = entry.y;
+    sum = sum + laneSignedValue(word, coeffs, 0u);
+    sum = sum + laneSignedValue(word, coeffs, 1u);
+    sum = sum + laneSignedValue(word, coeffs, 2u);
+    sum = sum + laneSignedValue(word, coeffs, 3u);
+  }
+  vi[u.x + sl] = sum;
+}`;
+
+const APPLY_SIGNED_DELTA_WGSL = `
+@group(0) @binding(0) var<storage,read> previous: array<f32>;
+@group(0) @binding(1) var<storage,read> delta: array<f32>;
+@group(0) @binding(2) var<storage,read_write> out: array<f32>;
+@group(0) @binding(3) var<uniform> u: vec4<u32>; // scanCount, 0, 0, 0
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let i = gid.x;
+  if (i >= u.x) { return; }
+  out[i] = previous[i] + delta[i];
+}`;
+
 const MAX_WG = 65535;   // max workgroups per dispatch dimension; >this needs a 2D grid
 
 interface Chunk { buffer: GPUBuffer; startScan: number; nScan: number; }
@@ -510,6 +586,9 @@ export class Show4DSTEMCompute {
     normalize: GPUComputePipeline;
   };
   private subtractPipe: GPUComputePipeline;
+  private maskedSignedDeltaPipe: GPUComputePipeline;
+  private maskedSignedDeltaU8PackedPipe: GPUComputePipeline;
+  private applySignedDeltaPipe: GPUComputePipeline;
   private reduceFramesPipe: GPUComputePipeline;
   private frameAtPipe: GPUComputePipeline;
   private chunks: Chunk[];
@@ -546,6 +625,9 @@ export class Show4DSTEMCompute {
       normalize: device.createComputePipeline({ layout: "auto", compute: { module: fftModule, entryPoint: "normalize2D" } }),
     };
     this.subtractPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: SUBTRACT_FROM_TOTAL_WGSL }), entryPoint: "main" } });
+    this.maskedSignedDeltaPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: maskedSignedDeltaSrc(sg) }), entryPoint: "main" } });
+    this.maskedSignedDeltaU8PackedPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: maskedSignedDeltaU8PackedSrc() }), entryPoint: "main" } });
+    this.applySignedDeltaPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: APPLY_SIGNED_DELTA_WGSL }), entryPoint: "main" } });
     this.reduceFramesPipe = device.createComputePipeline({ layout: "auto", compute: { module: rf, entryPoint: "main" } });
     this.frameAtPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: FRAME_WGSL }), entryPoint: "main" } });
   }
@@ -957,6 +1039,230 @@ export class Show4DSTEMCompute {
     return this.maskedSumBufferFromIndices(selected.idx, selected.n);
   }
 
+  // Multi-volume GPU-resident virtual images: one shared detector-index upload,
+  // one command encoder, one compute pass, and one queue submit for every
+  // visible tilt. This keeps seven-tilt compare interaction from paying seven
+  // JavaScript/API submission paths while preserving the exact masked sum.
+  static maskedSumBuffersBatch(computes: Show4DSTEMCompute[], mask: Uint32Array): { buffers: GPUBuffer[]; n: number; path: "batched-submit" } {
+    const owner = computes[0];
+    if (!owner) return { buffers: [], n: 0, path: "batched-submit" };
+    const device = owner.device;
+    for (const compute of computes) {
+      if (compute.device !== device) throw new Error("Batched masked sums require all volumes on the same WebGPU device.");
+      if (compute.scanCount !== owner.scanCount || compute.detSize !== owner.detSize || compute.mode !== owner.mode) {
+        throw new Error("Batched masked sums require matching scan shape, detector shape, and dtype.");
+      }
+      if (compute.badPixelKey() !== owner.badPixelKey()) {
+        throw new Error("Batched masked sums require matching detector bad-pixel masks.");
+      }
+    }
+    const selected = owner.detectorIndices(mask);
+    const buffers = computes.map(() =>
+      device.createBuffer({ size: owner.scanCount * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC }),
+    );
+    if (selected.n === 0) return { buffers, n: selected.n, path: "batched-submit" };
+
+    const idxBuf = owner.upload(selected.idx, GPUBufferUsage.STORAGE);
+    const enc = device.createCommandEncoder();
+    const pass = enc.beginComputePass();
+    pass.setPipeline(owner.maskedSumPipe);
+    const layout = owner.maskedSumPipe.getBindGroupLayout(0);
+    for (let i = 0; i < computes.length; i++) {
+      const compute = computes[i];
+      const vi = buffers[i];
+      for (const cd of compute.sumDims()) {
+        const bind = device.createBindGroup({ layout, entries: [
+          { binding: 0, resource: { buffer: cd.chunk } }, { binding: 1, resource: { buffer: idxBuf } },
+          { binding: 2, resource: { buffer: vi } }, { binding: 3, resource: { buffer: cd.dims } }, { binding: 4, resource: { buffer: cd.dims2 } } ] });
+        pass.setBindGroup(0, bind); pass.dispatchWorkgroups(cd.gx, cd.gy);
+      }
+    }
+    pass.end();
+    device.queue.submit([enc.finish()]);
+    owner.retireBuffers([idxBuf]);
+    return { buffers, n: selected.n, path: "batched-submit" };
+  }
+
+  static maskedSumDeltaBuffersBatch(
+    computes: Show4DSTEMCompute[],
+    previous: GPUBuffer[],
+    addedMask: Uint32Array,
+    removedMask: Uint32Array,
+  ): { buffers: GPUBuffer[]; path: "delta" | "delta-u8-packed"; addedPixels: number; removedPixels: number; packedWords?: number } {
+    const owner = computes[0];
+    if (!owner || computes.length === 0) return { buffers: [], path: "delta", addedPixels: 0, removedPixels: 0 };
+    if (previous.length !== computes.length) {
+      throw new Error("Delta masked sums require one previous VI buffer per volume.");
+    }
+    owner.assertBatchCompatible(computes);
+    if (owner.mode === 1 && owner.detSize % 4 === 0) {
+      const packed = owner.detectorU8PackedDeltaEntries(addedMask, removedMask);
+      if (packed.addedPixels + packed.removedPixels === 0) {
+        return {
+          buffers: previous.map((buffer) => owner.copyScanBuffer(buffer)),
+          path: "delta-u8-packed",
+          addedPixels: 0,
+          removedPixels: 0,
+          packedWords: 0,
+        };
+      }
+      const entryBuf = owner.upload(packed.entries, GPUBufferUsage.STORAGE);
+      const deltaBuffers = computes.map(() =>
+        owner.device.createBuffer({ size: owner.scanCount * 4, usage: GPUBufferUsage.STORAGE }),
+      );
+      const outputs = computes.map(() =>
+        owner.device.createBuffer({ size: owner.scanCount * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC }),
+      );
+      const dims = owner.uniform([owner.scanCount, 0, 0, 0]);
+      const enc = owner.device.createCommandEncoder();
+      const pass = enc.beginComputePass();
+      pass.setPipeline(owner.maskedSignedDeltaU8PackedPipe);
+      const deltaLayout = owner.maskedSignedDeltaU8PackedPipe.getBindGroupLayout(0);
+      for (let i = 0; i < computes.length; i++) {
+        const compute = computes[i];
+        const vi = deltaBuffers[i];
+        for (const cd of compute.u8PackedDeltaDims()) {
+          const bind = owner.device.createBindGroup({ layout: deltaLayout, entries: [
+            { binding: 0, resource: { buffer: cd.chunk } },
+            { binding: 1, resource: { buffer: entryBuf } },
+            { binding: 2, resource: { buffer: vi } },
+            { binding: 3, resource: { buffer: cd.dims } },
+            { binding: 4, resource: { buffer: cd.dims2 } },
+          ] });
+          pass.setBindGroup(0, bind);
+          pass.dispatchWorkgroups(cd.gx, cd.gy);
+        }
+      }
+      pass.setPipeline(owner.applySignedDeltaPipe);
+      const applyLayout = owner.applySignedDeltaPipe.getBindGroupLayout(0);
+      for (let i = 0; i < computes.length; i++) {
+        const bind = owner.device.createBindGroup({ layout: applyLayout, entries: [
+          { binding: 0, resource: { buffer: previous[i] } },
+          { binding: 1, resource: { buffer: deltaBuffers[i] } },
+          { binding: 2, resource: { buffer: outputs[i] } },
+          { binding: 3, resource: { buffer: dims } },
+        ] });
+        pass.setBindGroup(0, bind);
+        pass.dispatchWorkgroups(Math.ceil(owner.scanCount / 256));
+      }
+      pass.end();
+      owner.device.queue.submit([enc.finish()]);
+      owner.retireBuffers([entryBuf, ...deltaBuffers, dims]);
+      return {
+        buffers: outputs,
+        path: "delta-u8-packed",
+        addedPixels: packed.addedPixels,
+        removedPixels: packed.removedPixels,
+        packedWords: packed.n,
+      };
+    }
+    const added = owner.detectorIndices(addedMask);
+    const removed = owner.detectorIndices(removedMask);
+    if (added.n + removed.n === 0) {
+      return {
+        buffers: previous.map((buffer) => owner.copyScanBuffer(buffer)),
+        path: "delta",
+        addedPixels: 0,
+        removedPixels: 0,
+      };
+    }
+    const encoded = new Uint32Array(Math.max(1, added.n + removed.n));
+    encoded.set(added.idx.subarray(0, added.n), 0);
+    for (let i = 0; i < removed.n; i++) {
+      encoded[added.n + i] = removed.idx[i] | 0x80000000;
+    }
+    const idxBuf = owner.upload(encoded.subarray(0, Math.max(1, added.n + removed.n)), GPUBufferUsage.STORAGE);
+    const deltaBuffers = computes.map(() =>
+      owner.device.createBuffer({ size: owner.scanCount * 4, usage: GPUBufferUsage.STORAGE }),
+    );
+    const outputs = computes.map(() =>
+      owner.device.createBuffer({ size: owner.scanCount * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC }),
+    );
+    const dims = owner.uniform([owner.scanCount, 0, 0, 0]);
+    const enc = owner.device.createCommandEncoder();
+    const pass = enc.beginComputePass();
+    pass.setPipeline(owner.maskedSignedDeltaPipe);
+    const deltaLayout = owner.maskedSignedDeltaPipe.getBindGroupLayout(0);
+    for (let i = 0; i < computes.length; i++) {
+      const compute = computes[i];
+      const vi = deltaBuffers[i];
+      for (const cd of compute.sumDims()) {
+        const bind = owner.device.createBindGroup({ layout: deltaLayout, entries: [
+          { binding: 0, resource: { buffer: cd.chunk } },
+          { binding: 1, resource: { buffer: idxBuf } },
+          { binding: 2, resource: { buffer: vi } },
+          { binding: 3, resource: { buffer: cd.dims } },
+          { binding: 4, resource: { buffer: cd.dims2 } },
+        ] });
+        pass.setBindGroup(0, bind);
+        pass.dispatchWorkgroups(cd.gx, cd.gy);
+      }
+    }
+    pass.setPipeline(owner.applySignedDeltaPipe);
+    const applyLayout = owner.applySignedDeltaPipe.getBindGroupLayout(0);
+    for (let i = 0; i < computes.length; i++) {
+      const bind = owner.device.createBindGroup({ layout: applyLayout, entries: [
+        { binding: 0, resource: { buffer: previous[i] } },
+        { binding: 1, resource: { buffer: deltaBuffers[i] } },
+        { binding: 2, resource: { buffer: outputs[i] } },
+        { binding: 3, resource: { buffer: dims } },
+      ] });
+      pass.setBindGroup(0, bind);
+      pass.dispatchWorkgroups(Math.ceil(owner.scanCount / 256));
+    }
+    pass.end();
+    owner.device.queue.submit([enc.finish()]);
+    owner.retireBuffers([idxBuf, ...deltaBuffers, dims]);
+    return { buffers: outputs, path: "delta", addedPixels: added.n, removedPixels: removed.n };
+  }
+
+  private assertBatchCompatible(computes: Show4DSTEMCompute[]): void {
+    for (const compute of computes) {
+      if (compute.device !== this.device) throw new Error("Batched masked sums require all volumes on the same WebGPU device.");
+      if (compute.scanCount !== this.scanCount || compute.detSize !== this.detSize || compute.mode !== this.mode) {
+        throw new Error("Batched masked sums require matching scan shape, detector shape, and dtype.");
+      }
+      if (compute.badPixelKey() !== this.badPixelKey()) {
+        throw new Error("Batched masked sums require matching detector bad-pixel masks.");
+      }
+    }
+  }
+
+  private detectorU8PackedDeltaEntries(
+    addedMask: Uint32Array,
+    removedMask: Uint32Array,
+  ): { entries: Uint32Array; n: number; addedPixels: number; removedPixels: number } {
+    const bad = this.badPx.length ? new Set(this.badPx) : null;
+    const wordCoeffs = new Uint32Array(Math.ceil(this.detSize / 4));
+    let addedPixels = 0;
+    let removedPixels = 0;
+    for (let k = 0; k < this.detSize; k++) {
+      if (bad && bad.has(k)) continue;
+      const add = addedMask[k] !== 0;
+      const remove = removedMask[k] !== 0;
+      if (add === remove) continue;
+      const coeff = add ? 1 : 2;
+      const word = k >> 2;
+      const lane = k & 3;
+      wordCoeffs[word] |= coeff << (lane * 2);
+      if (add) addedPixels++;
+      else removedPixels++;
+    }
+    let n = 0;
+    for (let word = 0; word < wordCoeffs.length; word++) {
+      if (wordCoeffs[word] !== 0) n++;
+    }
+    const entries = new Uint32Array(Math.max(2, n * 2));
+    let out = 0;
+    for (let word = 0; word < wordCoeffs.length; word++) {
+      const coeffs = wordCoeffs[word];
+      if (coeffs === 0) continue;
+      entries[out++] = word;
+      entries[out++] = coeffs;
+    }
+    return { entries: entries.subarray(0, Math.max(2, n * 2)), n, addedPixels, removedPixels };
+  }
+
   private maskedSumBufferFromIndices(idx: Uint32Array, n: number): { buffer: GPUBuffer; n: number } {
     const device = this.device;
     const vi = device.createBuffer({ size: this.scanCount * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
@@ -979,15 +1285,49 @@ export class Show4DSTEMCompute {
   // Per-chunk maskedSum dispatch params (chunk buffer, dims uniforms, 2D grid). These never change
   // for a dataset, so build them ONCE and reuse across every drag frame instead of allocating +
   // destroying ~2 uniform buffers per chunk per frame (~3300 buffer creates/s during a drag).
-  private sumDimsCache: { chunk: GPUBuffer; dims: GPUBuffer; dims2: GPUBuffer; gx: number; gy: number }[] | null = null;
+  private sumDimsCache: {
+    chunk: GPUBuffer;
+    dims: GPUBuffer;
+    dims2: GPUBuffer;
+    startScan: number;
+    nScan: number;
+    gx: number;
+    gy: number;
+  }[] | null = null;
   private sumDims() {
     if (!this.sumDimsCache) {
       this.sumDimsCache = this.chunks.map((ch) => {
         const gx = Math.min(ch.nScan, MAX_WG), gy = Math.ceil(ch.nScan / MAX_WG);
-        return { chunk: ch.buffer, dims: this.uniform([ch.startScan, ch.nScan, this.detSize, this.mode]), dims2: this.uniform([gx, 0, 0, 0]), gx, gy };
+        return {
+          chunk: ch.buffer,
+          dims: this.uniform([ch.startScan, ch.nScan, this.detSize, this.mode]),
+          dims2: this.uniform([gx, 0, 0, 0]),
+          startScan: ch.startScan,
+          nScan: ch.nScan,
+          gx,
+          gy,
+        };
       });
     }
     return this.sumDimsCache;
+  }
+
+  private u8PackedDeltaDimsCache: { chunk: GPUBuffer; dims: GPUBuffer; dims2: GPUBuffer; gx: number; gy: number }[] | null = null;
+  private u8PackedDeltaDims() {
+    if (!this.u8PackedDeltaDimsCache) {
+      const detWords = this.detSize / 4;
+      this.u8PackedDeltaDimsCache = this.chunks.map((ch) => {
+        const gx = Math.ceil(ch.nScan / 256), gy = 1;
+        return {
+          chunk: ch.buffer,
+          dims: this.uniform([ch.startScan, ch.nScan, this.detSize, detWords]),
+          dims2: this.uniform([gx, 0, 0, 0]),
+          gx,
+          gy,
+        };
+      });
+    }
+    return this.u8PackedDeltaDimsCache;
   }
 
   private comDimsCache: { detCols: number; rows: { chunk: GPUBuffer; dims: GPUBuffer; dims2: GPUBuffer; gx: number; gy: number }[] } | null = null;
@@ -1249,6 +1589,7 @@ export class Show4DSTEMCompute {
     for (const entry of this.dpcBufferCache.values()) entry.buffer.destroy();
     this.dpcBufferCache.clear();
     if (this.sumDimsCache) { for (const cd of this.sumDimsCache) { cd.dims.destroy(); cd.dims2.destroy(); } this.sumDimsCache = null; }
+    if (this.u8PackedDeltaDimsCache) { for (const cd of this.u8PackedDeltaDimsCache) { cd.dims.destroy(); cd.dims2.destroy(); } this.u8PackedDeltaDimsCache = null; }
     if (this.comDimsCache) { for (const cd of this.comDimsCache.rows) { cd.dims.destroy(); cd.dims2.destroy(); } this.comDimsCache = null; }
   }
 }
