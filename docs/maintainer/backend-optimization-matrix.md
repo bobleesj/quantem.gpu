@@ -79,6 +79,49 @@ and optimizer state, not the full acquisition.
 
 ## Current Measured Checkpoints
 
+### MPS compressed-save sprint, 2026-07-26
+
+Target workflow: full no-bin `512x512x192x192` MAPED output on Phil/Apple GPU,
+standard Arina master/data HDF5 layout, one frame per HDF5 chunk, Bitshuffle/LZ4
+filter `32008`, no detector binning, no scan crop, and no preview cache standing
+in for raw detector evidence.
+
+Committed path:
+
+| Commit | Change | Full-data result |
+| --- | --- | --- |
+| `80df488` | Added MPS/CUDA `uint8` compressed-save support and MPS partial-block handling for `192x192 uint8` frames. | Full `uint8` display export moved from CPU/HDF5 `~19.3 s` to MPS GPU path `~3.65 s`, sampled agreement exact against `min(uint16, 255)`. |
+| `8f6cd74` | Overlapped MPS compression with HDF5 `write_direct_chunk` and auto-tuned MPS batch size to 4096 frames. | Full `uint8` display save reached about `2.0 s`; exact `uint16` save reached about `3.16 s`. |
+| `5a4716d` | Tuned the MPS LZ4 hash table and added repeated-byte fast paths for bitshuffled data. | Full `uint8` display save reached `~1.36-1.56 s`; exact `uint16` save reached `~2.17 s`. |
+| `6a47810` | Added a repeated-byte speed encoder for the exact-count MPS path. | Exact `uint16` reached the `~2.03-2.10 s` edge, with a modest file-size tradeoff. |
+| `54ed193` | Added native Metal chunk-backed `uint16` compressor that reads `_MtlArray` Metal buffers directly, avoiding torch/MLX staging. | Exact `uint16` full no-bin save reached `1.80-1.96 s`; sampled agreement exact versus the source `uint16` master. |
+| pending | Re-tuned the native MPS save default batch from 4096 to 2048 after a full-data sweep. | Exact `uint16` full no-bin save reached `1.69-1.80 s`; 4096 measured `1.81-1.86 s`, and 8192 measured `1.91-2.00 s`. The default-path confirmation measured `1.753 s`. |
+
+Final Phil full-run results:
+
+| Path | Load | Save | Load + best save | Output size | Agreement gate |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `uint16` exact, chunk-backed MPS source | `0.81-0.98 s` in final runs | `1.69-1.96 s`; default path `1.753 s` | `2.58 s` default-path load + save | `1.205 GB` | 4096 random frame/pixel samples exact in the earlier full gate; default-path 512 decoded samples also exact, mismatches `0`. |
+| `uint8` display, chunk-backed MPS `dtype='u8'` source | `0.62 s` in the final run | `1.42-1.55 s` | `2.05 s` | `1.078 GB` | 4096 random frame/pixel samples exact versus `min(uint16, 255)`; mismatches `0`. |
+
+Backend gap/use-case summary:
+
+| Backend | Current best role | Save/write status | Remaining gap |
+| --- | --- | --- | --- |
+| CUDA | Workstation/reference GPU path. | `uint8`, `uint16`, and `float32` GPU HDF5 save paths are available. | Need a same-real-MAPED timing run to publish exact CUDA-vs-MPS save numbers. |
+| MPS | Phil and microscope-local Mac workflow. | Full no-bin `uint8` and exact `uint16` saves are inside the 1-2 s save target. | Further wins are likely load/save pipeline overlap, lower file-size tuning, or moving more MAPED merge output directly into chunk-backed Metal buffers. |
+| WebGPU | Browser review, local-file interaction, and front-end products. | HDF5 writing is intentionally a gap. | Useful later for browser-only export/share without Python; not needed for the current microscope MAPED processing path. |
+
+Bounded experiments from this sprint:
+
+| Hypothesis | Result | Decision |
+| --- | --- | --- |
+| Feed `_MtlArray` chunks directly to MLX via DLPack to avoid torch staging. | Correct, but full `uint16` save regressed to about `2.25-2.34 s`; MLX contiguity/materialization erased the transfer win. | Do not use direct-MLX staging as the default. |
+| Native Metal compressor with per-batch scratch allocation. | Correct, but compress+pack took about `6.8 s` because scratch buffers and constants were allocated every batch. | Reuse scratch buffers instead. |
+| Native Metal compressor with reusable scratch. | Compress+pack for all full `uint16` batches measured about `1.84 s`; public save measured `1.80-1.96 s` with HDF5 writes overlapped. | Promote for chunk-backed MPS `uint16` saves. |
+| Native Metal batch-size sweep. | Full-data saves measured 2048 frames/batch at `1.69-1.80 s`, 4096 at `1.81-1.86 s`, and 8192 at `1.91-2.00 s`. | Use 2048 as the MPS save default. |
+| RLE-only LZ4 encoder for exact `uint16`. | Faster than the hash encoder, but output grew from about `1.16 GB` to `1.20 GB`. | Accept for the speed path because output remains portable standard LZ4 and keeps the demo under 2 s. |
+
 | Workflow | Backend | Shape / BF policy | Result | Status |
 | --- | --- | --- | --- | --- |
 | BF virtual image | CUDA | full `512x512x192x192` real data | `4.96 ms -> 1.35 ms`, max abs error `0` | Strong. |

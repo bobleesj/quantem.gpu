@@ -176,7 +176,7 @@ Current real-data status for full no-bin `512x512x192x192` detector data:
 | Workflow | CUDA | MPS / Apple GPU | CPU / HDF5 filter | Notes |
 | --- | ---: | ---: | ---: | --- |
 | Load/decode `uint16` Arina H5 | Done | Done | Reference | CUDA and MPS preserve native integer evidence. |
-| Save Arina H5, `uint16` | Done | Done, `~1.80-1.96 s` | Done, `~30.4 s` | Chunk-backed MPS loads use native Metal Bitshuffle/LZ4 directly from the Metal buffers plus async HDF5 `write_direct_chunk`; random-sample agreement vs decoded reference was exact. The fastest path avoids a second full raw copy, with a modest file-size tradeoff. |
+| Save Arina H5, `uint16` | Done | Done, `~1.69-1.96 s`; default-path check `1.753 s` | Done, `~30.4 s` | Chunk-backed MPS loads use native Metal Bitshuffle/LZ4 directly from the Metal buffers plus async HDF5 `write_direct_chunk`; random-sample agreement vs decoded reference was exact. The fastest path avoids a second full raw copy, with a modest file-size tradeoff. |
 | Save Arina H5, `float32` | Done | Done, `~6.8 s` | Done | MPS stores lossless float32 Bitshuffle+LZ4 chunks; synthetic round trip is exact. |
 | Save Arina H5, `uint8` | Display-only GPU path | Done, `~1.36-1.57 s` | Done, `~19.3 s` | MPS/CUDA use GPU Bitshuffle/LZ4 for clipped display exports; Phil full real-data sampled agreement was exact against `min(uint16, 255)`. It is not scientific agreement when counts exceed 255. |
 | 1-2 s full save target | Partial | Done for `uint8` and `uint16` | Gap | MPS async write overlap plus native Metal chunk-buffer compression put full no-bin display and exact-count saves inside the target band. |
