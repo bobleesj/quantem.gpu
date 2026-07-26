@@ -109,3 +109,25 @@ def test_save_compressed_arina_h5_uses_master_data_layout(tmp_path):
         assert dset.shape == (2, 4, 5)
         assert dset.chunks == (1, 4, 5)
         np.testing.assert_array_equal(dset[:], data.reshape(6, 4, 5)[4:].astype(np.uint16))
+
+
+def test_save_compressed_arina_h5_uint8_display_export(tmp_path):
+    data = np.array([[[0.2, 12.6], [255.4, 400.0]]], dtype=np.float32)
+
+    master = tmp_path / "browse_master.h5"
+    save_compressed_arina_h5(
+        master,
+        data,
+        scan_shape=(1, 1),
+        dtype="u8",
+        compression_backend="hdf5",
+    )
+
+    data_file = tmp_path / "browse_data_000001.h5"
+    with h5py.File(data_file, "r") as handle:
+        dset = handle["entry/data/data"]
+        assert dset.dtype == np.dtype("uint8")
+        np.testing.assert_array_equal(
+            dset[:],
+            np.array([[[0, 13], [255, 255]]], dtype=np.uint8),
+        )
