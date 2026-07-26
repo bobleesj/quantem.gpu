@@ -145,11 +145,11 @@ async function readSourceBytes(url: string, byteOffset?: number, byteLength?: nu
 }
 
 // ---------------------------------------------------------------------------
-// Folder save write-back. Saved review states (JPEG + saves.json) persist
+// Folder snapshot write-back. Saved review states (JPEG + snapshots.json) persist
 // INSIDE the export folder so they survive relaunch from both the no-server
 // double-click path (via the readwrite directory handle) and the CLI-served
 // path (via PUT/DELETE handled by serve_sidecar_range.py). Writes are
-// restricted to the saves/ subfolder on both transports.
+// restricted to the snapshots/ subfolder on both transports.
 // ---------------------------------------------------------------------------
 export function showPtychoFolderWritable(): boolean {
   if (localDirHandle) return true;
@@ -161,32 +161,47 @@ export function showPtychoFolderWritable(): boolean {
   }
 }
 
-async function savesDirHandle(): Promise<FileSystemDirectoryHandle> {
+function validateSnapshotWritePath(path: string, operation: "write" | "delete"): string {
+  if (path === "snapshots/snapshots.json") {
+    if (operation === "delete") throw new Error("folder deletes cannot remove snapshots/snapshots.json");
+    return path.slice("snapshots/".length);
+  }
+  const name = path.slice("snapshots/".length);
+  const isSnapshotImage = path.startsWith("snapshots/snapshot_")
+    && !name.includes("/")
+    && (name.endsWith(".jpg") || name.endsWith(".jpeg"));
+  if (!isSnapshotImage) {
+    throw new Error("folder writes are restricted to snapshots/snapshots.json and snapshots/snapshot_*.jpg");
+  }
+  return name;
+}
+
+async function snapshotsDirHandle(): Promise<FileSystemDirectoryHandle> {
   if (!localDirHandle) throw new Error("no local directory handle");
-  return localDirHandle.getDirectoryHandle("saves", { create: true });
+  return localDirHandle.getDirectoryHandle("snapshots", { create: true });
 }
 
 export async function writeShowPtychoFolderFile(path: string, body: Blob | string): Promise<void> {
   const clean = normaliseSourcePath(path);
-  if (!clean.startsWith("saves/")) throw new Error("folder writes are restricted to saves/");
+  const name = validateSnapshotWritePath(clean, "write");
   if (localDirHandle) {
-    const dir = await savesDirHandle();
-    const handle = await dir.getFileHandle(clean.slice("saves/".length), { create: true });
+    const dir = await snapshotsDirHandle();
+    const handle = await dir.getFileHandle(name, { create: true });
     const writable = await handle.createWritable();
     await writable.write(body);
     await writable.close();
     return;
   }
   const res = await fetch(clean, { method: "PUT", body });
-  if (!res.ok) throw new Error(`${clean}: HTTP ${res.status} (serve_sidecar_range.py supports saves/ writes; plain servers do not)`);
+  if (!res.ok) throw new Error(`${clean}: HTTP ${res.status} (serve_sidecar_range.py supports snapshots/ writes; plain servers do not)`);
 }
 
 export async function deleteShowPtychoFolderFile(path: string): Promise<void> {
   const clean = normaliseSourcePath(path);
-  if (!clean.startsWith("saves/")) throw new Error("folder deletes are restricted to saves/");
+  const name = validateSnapshotWritePath(clean, "delete");
   if (localDirHandle) {
-    const dir = await savesDirHandle();
-    await dir.removeEntry(clean.slice("saves/".length));
+    const dir = await snapshotsDirHandle();
+    await dir.removeEntry(name);
     return;
   }
   const res = await fetch(clean, { method: "DELETE" });
