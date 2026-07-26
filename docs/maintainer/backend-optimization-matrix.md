@@ -86,6 +86,14 @@ standard Arina master/data HDF5 layout, one frame per HDF5 chunk, Bitshuffle/LZ4
 filter `32008`, no detector binning, no scan crop, and no preview cache standing
 in for raw detector evidence.
 
+Public API rule: notebooks and user workflows should call `quantem.gpu.io.save`
+with `backend="auto"`, `dtype=...`, and the default Bitshuffle/LZ4 compression.
+`save_compressed_arina_h5` remains as the lower-level compatibility hook for
+tests and backend-specific maintenance. A Phil public-API validation using
+`from quantem.gpu import io; io.save(..., backend="auto", dtype="u16")`
+measured `1.91 s` save, `3.14 s` load+save, `1.205 GB` output, and `512/512`
+exact decoded samples on the full no-bin MAPED master.
+
 Committed path:
 
 | Commit | Change | Full-data result |

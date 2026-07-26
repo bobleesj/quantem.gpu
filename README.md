@@ -181,18 +181,17 @@ Current real-data status for full no-bin `512x512x192x192` detector data:
 | Save Arina H5, `uint8` | Display-only GPU path | Done, `~1.36-1.57 s` | Done, `~19.3 s` | MPS/CUDA use GPU Bitshuffle/LZ4 for clipped display exports; Phil full real-data sampled agreement was exact against `min(uint16, 255)`. It is not scientific agreement when counts exceed 255. |
 | 1-2 s full save target | Partial | Done for `uint8` and `uint16` | Gap | MPS async write overlap plus native Metal chunk-buffer compression put full no-bin display and exact-count saves inside the target band. |
 
-Use `save_compressed_arina_h5()` for portable master/data-file exports:
+Use `save()` for portable master/data-file exports:
 
 ```python
-from quantem.gpu.io import save_compressed_arina_h5
+from quantem.gpu import io
 
-save_compressed_arina_h5(
+io.save(
     "merged_master.h5",
     merged_mps_tensor,
     scan_shape=(512, 512),
     dtype="u16",
-    compression="lz4",
-    compression_backend="auto",  # uses MPS kernels for MPS uint8/uint16/float32 tensors
+    backend="auto",  # CUDA, MPS/Metal, or CPU/HDF5 from the input data
 )
 ```
 

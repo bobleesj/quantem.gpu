@@ -134,6 +134,56 @@ def test_save_compressed_arina_h5_uint8_display_export(tmp_path):
         )
 
 
+def test_save_public_api_routes_numpy_to_arina_h5(tmp_path):
+    from quantem.gpu.io.save import save
+
+    data = np.array(
+        [
+            [[[0.2, 12.6], [255.4, 400.0]]],
+            [[[2.5, 3.5], [-4.0, 4.49]]],
+        ],
+        dtype=np.float32,
+    )
+
+    master = tmp_path / "public_master.h5"
+    save(
+        master,
+        data,
+        dtype="u16",
+        backend="auto",
+        frames_per_file=1,
+    )
+
+    with h5py.File(master, "r") as handle:
+        assert handle.attrs["scan_shape"].tolist() == [2, 1]
+        group = handle["entry/data"]
+        assert isinstance(group.get("data_000001", getlink=True), h5py.ExternalLink)
+
+    with h5py.File(tmp_path / "public_data_000001.h5", "r") as handle:
+        dset = handle["entry/data/data"]
+        assert dset.dtype == np.dtype("uint16")
+        np.testing.assert_array_equal(
+            dset[:],
+            np.array([[[0, 13], [255, 400]]], dtype=np.uint16),
+        )
+
+
+def test_save_public_api_rejects_cuda_backend_for_numpy(tmp_path):
+    from quantem.gpu.io.save import save
+
+    data = np.zeros((1, 1, 2, 2), dtype=np.uint16)
+
+    with pytest.raises(ValueError, match="backend='cuda' requires"):
+        save(tmp_path / "wrong_master.h5", data, backend="cuda")
+
+
+def test_io_save_package_attribute_remains_callable_after_submodule_import():
+    import quantem.gpu.io as io
+    import quantem.gpu.io.save  # noqa: F401
+
+    assert callable(io.save)
+
+
 def test_cuda_save_uint8_display_export(tmp_path):
     cp = pytest.importorskip("cupy")
 

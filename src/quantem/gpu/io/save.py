@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import queue
+import sys
 import threading
+import types
 from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
@@ -1206,6 +1208,45 @@ def _is_mps_chunked_frames(data) -> bool:
     )
 
 
+def _is_cuda_array(data) -> bool:
+    """Return True for CuPy/CUDA arrays without importing CUDA on CPU/Mac hosts."""
+    return cp is not None and isinstance(data, cp.ndarray)
+
+
+def _is_mps_array(data) -> bool:
+    """Return True for MPS tensor or chunk-backed MPS loader outputs."""
+    return (
+        _is_mps_chunked_frames(data)
+        or (
+            torch is not None
+            and torch.is_tensor(data)
+            and getattr(data, "device", None) is not None
+            and data.device.type == "mps"
+        )
+    )
+
+
+def _infer_save_dtype(data):
+    """Return the default output dtype for a public save call."""
+    if _is_mps_chunked_frames(data):
+        return _default_save_dtype(data.dtype)
+    if torch is not None and torch.is_tensor(data):
+        torch_to_numpy = {
+            torch.uint8: np.uint8,
+            torch.uint16: np.uint16,
+            torch.uint32: np.uint32,
+            torch.float32: np.float32,
+        }
+        try:
+            return _default_save_dtype(torch_to_numpy[data.dtype])
+        except KeyError as exc:
+            raise ValueError(
+                f"Unsupported input dtype {data.dtype}; pass dtype='u16', "
+                "'u8', 'u32', or 'f32' explicitly."
+            ) from exc
+    return _default_save_dtype(np.asarray(data).dtype)
+
+
 def _mps_frame_batch(flat, start: int, end: int):
     """Return ``flat[start:end]`` as a torch MPS tensor for compressed save."""
     if torch is not None and torch.is_tensor(flat):
@@ -1823,20 +1864,22 @@ def save(
     scan_shape: tuple[int, int] | None = None,
     metadata: dict | None = None,
     dtype: type | np.dtype | None = None,
-    batch_size: int = 4096,
+    batch_size: int | None = None,
     wait: bool = True,
     verbose: bool = False,
     source_master: str | None = None,
     frames_per_file: int = 32768,
+    format: str = "arina-h5",
+    backend: str = "auto",
     compression: str = "lz4",
     compression_level: int = 0,
 ) -> None:
     """Save 4D-STEM data as an Arina-style bitshuffle+LZ4 HDF5 set.
 
     Output: a master HDF5 file pointing to ``*_data_NNNNNN.h5`` external files
-    with per-frame HDF5 chunks. Matches Arina row/column native chunking. By
-    default uses GPU bitshuffle+LZ4 (the fastest path); pass ``compression=``
-    to switch codecs.
+    with per-frame HDF5 chunks. Matches Arina row/column native chunking. The
+    public compression method is Bitshuffle/LZ4; ``backend="auto"`` chooses the
+    CUDA, MPS/Metal, or CPU/HDF5 implementation from the input data.
 
     Drift-correction recipe (the canonical use case)
     ------------------------------------------------
@@ -1936,10 +1979,17 @@ def save(
         bilinear-merged float32 inputs, pass "u16" explicitly** (10×
         smaller, 4× faster, sub-noise-floor error).
     batch_size : int
-        Frames compressed per GPU pass. 4096 is the sweet spot for 192² det.
-    compression : {"lz4", "zstd", "blosc2_zstd"}
-        ``lz4`` (default, GPU pipeline) is fastest. ``zstd``/``blosc2_zstd``
-        run on CPU, give a few extra % ratio at 5-20× the wall time.
+        Frames compressed per GPU pass. ``None`` uses the backend default.
+    format : {"arina-h5"}
+        Output container. ``"arina-h5"`` writes the QuantEM/Arina-style
+        master/data layout.
+    backend : {"auto", "cuda", "mps", "cpu", "hdf5"}
+        Compression/write backend. ``"auto"`` keeps CUDA CuPy arrays on CUDA,
+        MPS tensors and chunk-backed MPS loads on Metal, and NumPy arrays on
+        the HDF5 reference path.
+    compression : {"lz4", "bslz4", "bitshuffle_lz4"}
+        Bitshuffle/LZ4 compression. Other codecs are retained only for
+        lower-level compatibility helpers.
     compression_level : int
         Codec level. 0 = codec default. Ignored for LZ4.
     metadata : dict | None
@@ -1954,6 +2004,50 @@ def save(
     import time
 
     t0 = time.perf_counter()
+    normalized_format = str(format).lower().replace("_", "-")
+    if normalized_format not in {"arina-h5", "arina", "h5"}:
+        raise ValueError("save() currently supports format='arina-h5'")
+    normalized_backend = str(backend).lower()
+    if normalized_backend == "metal":
+        normalized_backend = "mps"
+    if normalized_backend not in {"auto", "cuda", "mps", "cpu", "hdf5"}:
+        raise ValueError("backend must be 'auto', 'cuda', 'mps', 'cpu', or 'hdf5'")
+
+    if normalized_backend == "auto":
+        if _is_cuda_array(data):
+            normalized_backend = "cuda"
+        elif _is_mps_array(data):
+            normalized_backend = "mps"
+        else:
+            normalized_backend = "hdf5"
+
+    if normalized_backend in {"mps", "cpu", "hdf5"}:
+        compression_backend = "mps" if normalized_backend == "mps" else "hdf5"
+        save_compressed_arina_h5(
+            filepath,
+            data,
+            scan_shape=scan_shape,
+            metadata=metadata,
+            dtype=_infer_save_dtype(data) if dtype is None else dtype,
+            batch_size=_DEFAULT_BATCH_SIZE if batch_size is None else int(batch_size),
+            frames_per_file=frames_per_file,
+            compression=compression,
+            compression_level=None if compression_level == 0 else compression_level,
+            source_master=source_master,
+            compression_backend=compression_backend,
+        )
+        if verbose:
+            elapsed = time.perf_counter() - t0
+            print(f"Saved {filepath} [{normalized_backend}/{compression}] in {elapsed:.2f}s")
+        return
+
+    if not _is_cuda_array(data):
+        raise ValueError(
+            "backend='cuda' requires a CuPy CUDA array. Use backend='auto', "
+            "'mps', or 'cpu' for non-CUDA inputs."
+        )
+
+    cuda_batch_size = 4096 if batch_size is None else int(batch_size)
     data_gpu, dtype, scan_shape = _prepare_save_data(data, dtype, scan_shape)
     n_frames, det_row, det_col = (int(x) for x in data_gpu.shape)
 
@@ -1970,8 +2064,8 @@ def save(
         compression_level=compression_level,
     )
     try:
-        for start in range(0, n_frames, int(batch_size)):
-            writer.write(data_gpu[start:start + int(batch_size)])
+        for start in range(0, n_frames, cuda_batch_size):
+            writer.write(data_gpu[start:start + cuda_batch_size])
     finally:
         writer.close(wait=wait)
 
@@ -1986,3 +2080,20 @@ def save(
             f"Saved {filepath} [{codec}]: {raw / 1e9:.2f} GB -> "
             f"{file_size / 1e9:.2f} GB ({raw / file_size:.1f}x) in {elapsed:.2f}s"
         )
+
+
+# Keep ``quantem.gpu.io.save(...)`` bound to the public function even though this
+# implementation module is also named ``quantem.gpu.io.save``.
+_parent_module = sys.modules.get(__package__)
+if _parent_module is not None:  # pragma: no branch
+    setattr(_parent_module, "save", save)
+
+
+class _CallableSaveModule(types.ModuleType):
+    """Allow the implementation submodule to behave like the public function."""
+
+    def __call__(self, *args, **kwargs):
+        return save(*args, **kwargs)
+
+
+sys.modules[__name__].__class__ = _CallableSaveModule
