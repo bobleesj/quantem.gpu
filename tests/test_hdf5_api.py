@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import types
+from types import SimpleNamespace
 from pathlib import Path
 
 import numpy as np
@@ -134,6 +135,48 @@ def test_mps_output_dtype_u4_does_not_alias_to_uint32() -> None:
 
     assert 'token in {"u4", "uint4"}' in source
     assert "not NumPy's four-byte '<u4' dtype" in source
+
+
+def test_mps_multi_dataset_loader_threads_output_dtype(monkeypatch) -> None:
+    """C1: lazy MPS browse loads, expect requested uint8 dtype to reach load."""
+    from quantem.gpu.io import hdf5, mps_multi
+    import quantem.gpu.compute.mps as mps_compute
+
+    calls = []
+
+    def fake_load(path, **kwargs):
+        calls.append({"path": path, "kwargs": kwargs})
+        return SimpleNamespace(row_prefix=False, metadata={}), {}
+
+    class FakeChunkedFrames:
+        def __init__(self, data, *, row_prefix=False):
+            self.data = data
+            self.row_prefix = row_prefix
+
+    class FakeMultiChunkedFrames:
+        def __init__(self, datasets, *, n_total, names):
+            self.datasets = list(datasets)
+            self.n_total = n_total
+            self.names = names
+            self.n_ready = len(datasets)
+            self.on_ready = None
+
+    monkeypatch.setattr(hdf5, "load", fake_load)
+    monkeypatch.setattr(mps_compute, "ChunkedFrames", FakeChunkedFrames)
+    monkeypatch.setattr(mps_compute, "MultiChunkedFrames", FakeMultiChunkedFrames)
+
+    lazy = mps_multi.load_mps_datasets(
+        ["tilt_0_master.h5", "tilt_1_master.h5"],
+        det_bin=4,
+        output_dtype=np.uint8,
+        verbose=False,
+    )
+
+    assert lazy.det_bin == 4
+    assert calls[0]["path"] == "tilt_0_master.h5"
+    assert calls[0]["kwargs"]["backend"] == "mps"
+    assert calls[0]["kwargs"]["det_bin"] == 4
+    assert calls[0]["kwargs"]["output_dtype"] is np.uint8
 
 
 def test_get_libc_returns_none_when_posix_fadvise_is_unavailable(monkeypatch) -> None:

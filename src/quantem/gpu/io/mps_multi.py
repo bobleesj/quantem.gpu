@@ -837,6 +837,7 @@ def load_mps_datasets(
     *,
     det_bin: int = 4,
     scan_size: int | None = None,
+    output_dtype: type | np.dtype | str | None = None,
     verbose: bool = True,
     skip_mps_memory_check: bool | None = None,
     validate_master: Callable[[str], None] | None = None,
@@ -874,7 +875,7 @@ def load_mps_datasets(
             backend="mps",
             det_bin=det_bin,
             verbose=False,
-            output_dtype=np.uint16,
+            output_dtype=output_dtype,
             skip_mps_memory_check=skip_mps_memory_check,
         )
         row_prefix = bool(getattr(data, "row_prefix", False)
@@ -904,6 +905,7 @@ def load_4dstem_macbook(
     *,
     det_bin: int = 4,
     scan_size: int | None = None,
+    output_dtype: type | np.dtype | str | None = None,
     verbose: bool = True,
     skip_mps_memory_check: bool | None = None,
     **viewer_kwargs,
@@ -921,6 +923,7 @@ def load_4dstem_macbook(
         masters,
         det_bin=det_bin,
         scan_size=scan_size,
+        output_dtype=output_dtype,
         verbose=verbose,
         skip_mps_memory_check=skip_mps_memory_check,
     )

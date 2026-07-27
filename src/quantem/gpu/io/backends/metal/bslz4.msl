@@ -437,7 +437,7 @@ kernel void zero_bad_pixels_u16(
     uint bad_i = gid - frame * nbad;
     uint pix = bad_pix[bad_i];
     if (pix < ndet) {
-        data[(ulong)frame * ndet + pix] = 0;
+        data[ulong(frame) * ulong(ndet) + ulong(pix)] = 0;
     }
 }
 
@@ -455,7 +455,7 @@ kernel void zero_bad_pixels_u32(
     uint bad_i = gid - frame * nbad;
     uint pix = bad_pix[bad_i];
     if (pix < ndet) {
-        data[(ulong)frame * ndet + pix] = 0u;
+        data[ulong(frame) * ulong(ndet) + ulong(pix)] = uint(0);
     }
 }
 
@@ -476,7 +476,8 @@ kernel void clip_u32_to_u8(
     uint gid [[thread_position_in_grid]]
 ) {
     if (gid >= n) return;
-    out[gid] = (uchar)min(in[gid], 255u);
+    uint value = in[gid];
+    out[gid] = uchar(value > 255u ? 255u : value);
 }
 
 kernel void narrow_u32_to_u16_masked(

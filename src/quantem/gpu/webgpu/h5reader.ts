@@ -29,6 +29,8 @@ export interface H5MasterInfo {
   badPixels: number[];
   detectorShape?: [number, number];
   totalFrames?: number;
+  dataFileIndexes?: number[];
+  dataFileCount?: number;
 }
 
 export interface H5VolumeFrameIndex {
@@ -226,13 +228,52 @@ function readScalarNumber(file: any, path: string): number | undefined {
   }
 }
 
+function readDataFileIndexes(buffer: ArrayBuffer): number[] {
+  const bytes = new Uint8Array(buffer);
+  const found = new Set<number>();
+  const isDigit = (b: number): boolean => b >= 48 && b <= 57;
+  for (let i = 0; i + 15 <= bytes.byteLength; i++) {
+    if (
+      bytes[i] !== 95      // _
+      || bytes[i + 1] !== 100 // d
+      || bytes[i + 2] !== 97  // a
+      || bytes[i + 3] !== 116 // t
+      || bytes[i + 4] !== 97  // a
+      || bytes[i + 5] !== 95  // _
+    ) {
+      continue;
+    }
+    if (
+      !isDigit(bytes[i + 6])
+      || !isDigit(bytes[i + 7])
+      || !isDigit(bytes[i + 8])
+      || !isDigit(bytes[i + 9])
+      || !isDigit(bytes[i + 10])
+      || !isDigit(bytes[i + 11])
+      || bytes[i + 12] !== 46 // .
+      || bytes[i + 13] !== 104 // h
+      || bytes[i + 14] !== 53 // 5
+    ) {
+      continue;
+    }
+    let value = 0;
+    for (let d = 0; d < 6; d++) value = value * 10 + (bytes[i + 6 + d] - 48);
+    if (value > 0) found.add(value);
+  }
+  return Array.from(found).sort((a, b) => a - b);
+}
+
 export function readH5MasterInfo(buffer: ArrayBuffer, name = "master"): H5MasterInfo {
   const file = new jsfive.File(buffer, name);
   const mask = readPixelMask(file);
   const ntrigger = readScalarNumber(file, "entry/instrument/detector/detectorSpecific/ntrigger");
   const nimages = readScalarNumber(file, "entry/instrument/detector/detectorSpecific/nimages");
   const totalFrames = ntrigger ?? (nimages !== undefined && nimages > 1 ? nimages : undefined);
-  return { ...mask, totalFrames };
+  const dataFileIndexes = readDataFileIndexes(buffer);
+  const dataFileCount = dataFileIndexes.length
+    ? Math.max(...dataFileIndexes)
+    : undefined;
+  return { ...mask, totalFrames, dataFileIndexes, dataFileCount };
 }
 
 // Parse one Arina/HDF5 file's raw chunks into chunked Bslz4Spec(s). framesPerChunk bounds

@@ -511,31 +511,40 @@ _clip_u32_to_u8_fn = _library.newFunctionWithName_("clip_u32_to_u8")
 _narrow_u32_to_u16_masked_fn = _library.newFunctionWithName_("narrow_u32_to_u16_masked")
 _row_prefix_masked_u16_fn = _library.newFunctionWithName_("row_prefix_masked_u16")
 _row_prefix_u16_fn = _library.newFunctionWithName_("row_prefix_u16")
-_h5lz4dc_pipeline, _ = _device.newComputePipelineStateWithFunction_error_(_h5lz4dc_fn, None)
-_shuf32_pipeline, _ = _device.newComputePipelineStateWithFunction_error_(_shuf32_fn, None)
-_shuf16_pipeline, _ = _device.newComputePipelineStateWithFunction_error_(_shuf16_fn, None)
-_bin_u16_pipeline, _ = _device.newComputePipelineStateWithFunction_error_(_bin_u16_fn, None)
-_bin_u32_pipeline, _ = _device.newComputePipelineStateWithFunction_error_(_bin_u32_fn, None)
-_bin_tiled_u16_pipeline, _ = _device.newComputePipelineStateWithFunction_error_(_bin_tiled_u16_fn, None)
-_zero_bad_u16_pipeline, _ = _device.newComputePipelineStateWithFunction_error_(_zero_bad_u16_fn, None)
-_zero_bad_u32_pipeline, _ = _device.newComputePipelineStateWithFunction_error_(_zero_bad_u32_fn, None)
-_clip_u16_to_u8_pipeline, _ = _device.newComputePipelineStateWithFunction_error_(
-    _clip_u16_to_u8_fn, None
+
+
+def _make_pipeline(fn, name: str):
+    if fn is None:
+        available = ", ".join(str(item) for item in _library.functionNames())
+        raise RuntimeError(
+            f"Metal shader function {name!r} is missing from the compiled "
+            f"MPS IO library. Available functions: {available}"
+        )
+    pipeline, error = _device.newComputePipelineStateWithFunction_error_(fn, None)
+    if pipeline is None or error:
+        raise RuntimeError(f"Metal compute pipeline {name!r} compile error: {error}")
+    return pipeline
+
+
+_h5lz4dc_pipeline = _make_pipeline(_h5lz4dc_fn, "h5lz4dc_batched")
+_shuf32_pipeline = _make_pipeline(_shuf32_fn, "shuf_8192_32_batched")
+_shuf16_pipeline = _make_pipeline(_shuf16_fn, "shuf_8192_16_batched")
+_bin_u16_pipeline = _make_pipeline(_bin_u16_fn, "bin_sum_u16")
+_bin_u32_pipeline = _make_pipeline(_bin_u32_fn, "bin_sum_u32")
+_bin_tiled_u16_pipeline = _make_pipeline(_bin_tiled_u16_fn, "bin_sum_tiled_u16")
+_zero_bad_u16_pipeline = _make_pipeline(_zero_bad_u16_fn, "zero_bad_pixels_u16")
+_zero_bad_u32_pipeline = _make_pipeline(_zero_bad_u32_fn, "zero_bad_pixels_u32")
+_clip_u16_to_u8_pipeline = _make_pipeline(_clip_u16_to_u8_fn, "clip_u16_to_u8")
+_clip_u32_to_u8_pipeline = _make_pipeline(_clip_u32_to_u8_fn, "clip_u32_to_u8")
+_narrow_u32_to_u16_masked_pipeline = _make_pipeline(
+    _narrow_u32_to_u16_masked_fn,
+    "narrow_u32_to_u16_masked",
 )
-_clip_u32_to_u8_pipeline, _ = _device.newComputePipelineStateWithFunction_error_(
-    _clip_u32_to_u8_fn, None
+_row_prefix_masked_u16_pipeline = _make_pipeline(
+    _row_prefix_masked_u16_fn,
+    "row_prefix_masked_u16",
 )
-_narrow_u32_to_u16_masked_pipeline, _ = (
-    _device.newComputePipelineStateWithFunction_error_(
-        _narrow_u32_to_u16_masked_fn, None
-    )
-)
-_row_prefix_masked_u16_pipeline, _ = _device.newComputePipelineStateWithFunction_error_(
-    _row_prefix_masked_u16_fn, None
-)
-_row_prefix_u16_pipeline, _ = _device.newComputePipelineStateWithFunction_error_(
-    _row_prefix_u16_fn, None
-)
+_row_prefix_u16_pipeline = _make_pipeline(_row_prefix_u16_fn, "row_prefix_u16")
 _queue = _device.newCommandQueue()
 
 

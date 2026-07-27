@@ -100,6 +100,12 @@ def test_webgpu_h5reader_keeps_single_pass_block_metadata_parse() -> None:
     assert "export interface Bslz4SelectedBlockVolume" in source
     assert "export interface Bslz4SelectedBlockMetadata" in source
     assert "export interface H5BlockIndexMetadata" in source
+    assert "dataFileIndexes?: number[];" in source
+    assert "dataFileCount?: number;" in source
+    assert "function readDataFileIndexes(buffer: ArrayBuffer): number[]" in source
+    assert "bytes[i + 12] !== 46" in source
+    assert "const dataFileIndexes = readDataFileIndexes(buffer);" in source
+    assert "const dataFileCount = dataFileIndexes.length" in source
     assert "export function readH5VolumeFromBlockIndex" in source
     assert "export function readH5BlockIndexMetadata" in source
     assert "export function readBslz4SelectedBlockVolume" in source
@@ -122,7 +128,7 @@ def test_webgpu_bslz4_uses_fused_integer_to_uint8_decoder() -> None:
     assert "variant: string;" in source
     assert "function validateDecodeDtypes" in source
     assert "WebGPU dtype='uint32' requires a uint32 source." in source
-    assert 'const fused = dtype === "uint8" && srcDtype !== "float32";' in source
+    assert 'const fused = (dtype === "uint8" && srcDtype !== "float32") || fusedU16;' in source
     assert "BSLZ4_LOW8_ONLY" in source
     assert "BSLZ4_COOP_LOW8" in source
     assert "BSLZ4_FRAME_LOW8" in source
