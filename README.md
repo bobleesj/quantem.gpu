@@ -247,6 +247,19 @@ reductions, DPC row/col reducers, and fixed-rotation iDPC; `quantem.widget`
 bundles these sources for browser/offline HTML use while keeping the widget
 package focused on UI.
 
+`quantem.gpu` is intentionally a compute and IO library, not the user-facing
+Show4DSTEM command package. Use `quantem.widget` for CLI launchers such as:
+
+```bash
+quantem show4dstem /data/session --backend mps --count 7 --bin 1 --dtype u8
+quantem show4dstem /data/session --backend cuda --count 7 --devices 0,1 --bin 1 --dtype u8
+quantem show4dstem /data/session --backend webgpu --html --count 7 --bin 1 --dtype u8
+```
+
+`--devices 0,1` is CUDA placement. WebGPU runs inside the browser on one
+selected adapter and consumes the `quantem.gpu.webgpu` sources bundled by
+`quantem.widget`.
+
 Build it locally with:
 
 ```bash

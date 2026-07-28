@@ -35,6 +35,19 @@ compute sources live in `quantem.gpu.webgpu` and are bundled by
 claims must log a real adapter; SwiftShader or another software adapter is only
 a smoke test.
 
+The Show4DSTEM command-line entry points live in `quantem.widget`, while
+`quantem.gpu` owns the reusable load/decode/reduction kernels:
+
+```bash
+quantem show4dstem /data/session --backend mps --count 7 --bin 1 --dtype u8
+quantem show4dstem /data/session --backend cuda --count 7 --devices 0,1 --bin 1 --dtype u8
+quantem show4dstem /data/session --backend webgpu --html --count 7 --bin 1 --dtype u8
+```
+
+CUDA can use explicit `--devices 0,1` placement through the widget CLI. WebGPU
+does not expose CUDA-style multi-GPU placement; the browser chooses one hardware
+adapter for the page.
+
 ## Backend coverage
 
 CUDA and MPS are the primary production backends. CPU exists for reference,

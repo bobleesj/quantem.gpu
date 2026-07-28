@@ -10,6 +10,17 @@ import { decodeBslz4ToStack } from "./bslz4";
 import { getGPUDevice } from "./device";
 
 function be32(b: Uint8Array, o: number): number { return ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0; }
+type LazySourceDtype = "uint8" | "uint16" | "uint32" | "float32";
+
+function lazySourceDtype(value: unknown): LazySourceDtype {
+  return value === "uint8" || value === "uint16" || value === "uint32" || value === "float32"
+    ? value
+    : "uint16";
+}
+
+function bytesPerLazyPixel(dtype: LazySourceDtype): number {
+  return dtype === "uint8" ? 1 : dtype === "uint16" ? 2 : 4;
+}
 
 // One thread per scan position sums the detector's radial-bin range from the profile.
 const DERIVE_WGSL = `
@@ -37,7 +48,11 @@ const CMAP_WGSL = `
   return vec4<f32>(v, v * v, 1. - v, 1.);   // inferno-ish
 }`;
 
-export interface LazyMeta { SR: number; SC: number; D: number; NB: number; nFrames: number; files: string[]; }
+export interface LazyMeta {
+  SR: number; SC: number; D: number; NB: number; nFrames: number; files: string[];
+  sourceDtype?: LazySourceDtype;
+  badPixels?: number[];
+}
 
 export class LazyShow4DSTEM {
   readonly mode = 2;                 // float32, so sampleF / display treat frames as f32
@@ -71,7 +86,14 @@ export class LazyShow4DSTEM {
     const viBuf = device.createBuffer({ size: meta.SR * meta.SC * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
     const cfgBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     const pipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: DERIVE_WGSL }), entryPoint: "main" } });
-    return new LazyShow4DSTEM(device, meta, base, idx, binOfPixel, profBuf, viBuf, cfgBuf, pipe, com);
+    const created = new LazyShow4DSTEM(device, meta, base, idx, binOfPixel, profBuf, viBuf, cfgBuf, pipe, com);
+    if (Array.isArray(meta.badPixels) && meta.badPixels.length) {
+      const bad = meta.badPixels
+        .map((value) => Math.trunc(Number(value)))
+        .filter((value) => Number.isFinite(value) && value >= 0 && value < created.detSize);
+      created.badPx = new Uint32Array(bad);
+    }
+    return created;
   }
 
   // Virtual image for a detector mask. The mask is a 0/1 weight per DETECTOR PIXEL (length =
@@ -108,14 +130,35 @@ export class LazyShow4DSTEM {
     const cached = this.cache.get(scanIdx); if (cached) return cached;
     const o = scanIdx * 3, fi = this.idx[o], off = this.idx[o + 1], len = this.idx[o + 2];
     const ch = new Uint8Array(await (await fetch(this.base + this.meta.files[fi], { headers: { Range: `bytes=${off}-${off + len - 1}` } })).arrayBuffer());
-    const bb = be32(ch, 8), be = bb / 4, nBlk = Math.ceil(this.detSize / be); const m: number[] = []; let pos = 12;
+    const sourceDtype = lazySourceDtype(this.meta.sourceDtype);
+    const bb = be32(ch, 8), be = bb / bytesPerLazyPixel(sourceDtype), nBlk = Math.ceil(this.detSize / be); const m: number[] = []; let pos = 12;
     for (let b = 0; b < nBlk; b++) { const c = be32(ch, pos); m.push(pos + 4, c); pos += 4 + c; }
-    const res = await decodeBslz4ToStack({ compressed: ch, blockMeta: new Uint32Array(m), nFrames: 1, nBlocksPerFrame: nBlk, blockElems: be, detSize: this.detSize }, "float32", "float32");
+    const res = await decodeBslz4ToStack({ compressed: ch, blockMeta: new Uint32Array(m), nFrames: 1, nBlocksPerFrame: nBlk, blockElems: be, detSize: this.detSize }, sourceDtype, sourceDtype);
     if (!res) return new Float32Array(this.detSize);
-    const rb = res.device.createBuffer({ size: this.detSize * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
-    const enc = res.device.createCommandEncoder(); enc.copyBufferToBuffer(res.buffer, 0, rb, 0, this.detSize * 4);
+    const byteLength = this.detSize * bytesPerLazyPixel(sourceDtype);
+    const rb = res.device.createBuffer({ size: Math.max(4, Math.ceil(byteLength / 4) * 4), usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+    const enc = res.device.createCommandEncoder(); enc.copyBufferToBuffer(res.buffer, 0, rb, 0, byteLength);
     res.device.queue.submit([enc.finish()]); await res.device.queue.onSubmittedWorkDone();
-    await rb.mapAsync(GPUMapMode.READ); const v = new Float32Array(rb.getMappedRange().slice(0)); rb.unmap(); rb.destroy(); res.buffer.destroy();
+    await rb.mapAsync(GPUMapMode.READ);
+    const mapped = rb.getMappedRange();
+    let v: Float32Array;
+    if (sourceDtype === "float32") {
+      v = new Float32Array(mapped.slice(0, byteLength));
+    } else {
+      v = new Float32Array(this.detSize);
+      if (sourceDtype === "uint8") {
+        const raw = new Uint8Array(mapped, 0, this.detSize);
+        for (let i = 0; i < raw.length; i++) v[i] = raw[i];
+      } else if (sourceDtype === "uint16") {
+        const raw = new Uint16Array(mapped, 0, this.detSize);
+        for (let i = 0; i < raw.length; i++) v[i] = raw[i];
+      } else {
+        const raw = new Uint32Array(mapped, 0, this.detSize);
+        for (let i = 0; i < raw.length; i++) v[i] = raw[i];
+      }
+    }
+    rb.unmap(); rb.destroy(); res.buffer.destroy();
+    for (const bp of this.badPx) v[bp] = 0;
     this.cache.set(scanIdx, v); if (this.cache.size > 200) this.cache.delete(this.cache.keys().next().value as number);
     return v;
   }
