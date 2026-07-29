@@ -4,7 +4,8 @@ Use `quantem.gpu` for heavy IO and compute, then hand arrays or reduced images
 to `quantem.widget` for display.
 
 ```python
-from quantem.widget import Show4DSTEM, load
+from quantem.gpu import load
+from quantem.widget import Show4DSTEM
 
 result = load(
     "scan_master.h5",

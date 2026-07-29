@@ -5,7 +5,7 @@ Use `quantem.gpu` for common BF/DF/ADF image reductions from 4D-STEM data.
 ```python
 from quantem.gpu import adf, bf, df, load, mean_dp
 
-result = load("scan_master.h5", backend="auto", det_bin=4)
+result = load("scan_master.h5", backend="auto", det_bin=1)
 data = result.data
 
 bright = bf(data)
@@ -38,4 +38,5 @@ patch_bf = bf(patch)
 ```
 
 Keep the detector geometry with saved results. At minimum record BF disk
-center/radius, detector mask units, backend, and `det_bin`.
+center/radius, detector mask units, backend, and `det_bin`. Use `det_bin=2` or
+`4` only for an explicitly labeled preview or memory-limited run.

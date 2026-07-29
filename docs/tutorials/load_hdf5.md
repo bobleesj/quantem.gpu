@@ -9,7 +9,7 @@ from quantem.gpu import load
 result = load(
     "scan_master.h5",
     backend="auto",
-    det_bin=4,
+    det_bin=1,
 )
 
 data = result.data
@@ -17,6 +17,10 @@ metadata = result.metadata
 print(data.shape, data.dtype)
 print(metadata.get("scan_shape"), metadata.get("detector_shape"))
 ```
+
+`det_bin=1` keeps native detector sampling. Use `det_bin=2` or `4` only when
+you intentionally want a detector-reduced preview or a smaller resident array;
+record that choice in reports.
 
 On CUDA, `data` is a device array. On MPS, data may be a chunk-backed object
 that keeps the heavy detector frames device-owned for product computation. CPU is
@@ -69,7 +73,7 @@ returning data to the solver.
 
 For multi-file sparse batches, keep `prep_workers` explicit. More workers can
 help on storage that scales with concurrent payload reads, but they can also be
-slower for scattered compressed HDF5 sidecars. On one real-data 40-master
+slower for scattered compressed HDF5 payload files. On one real-data 40-master
 `512x512x192x192` test with 1000 random positions per master, `prep_workers=1`
 was fastest for true cold scattered reads (`8.90 s`), while `2`, `4`, and `8`
 workers measured `8.98 s`, `9.47 s`, and `9.97 s`. Warm-cache repeats were much
@@ -105,9 +109,10 @@ chunk-backed Metal reductions. The default BF-disk estimate comes from the first
 decoded row chunk; set `sample_positions>0` only when a separate random probe
 sample is worth the extra HDF5 pass. That build step is not the interactive
 launch path. After the cache exists, the UI reads small BF/DF/CoM arrays and
-fitted parameters from the `.npz` sidecar, which is the path intended for
-sub-`0.5 s` screen opens. Existing caches can be read from CUDA, MPS, or
-CPU-facing code.
+fitted parameters from the `.npz` product cache, which is the path intended for
+sub-`0.5 s` screen opens. This cache is derived metadata and reduced images; it
+is not the normal Show4DSTEM WebGPU HDF5 folder export. Existing caches can be
+read from CUDA, MPS, or CPU-facing code.
 
 Keep load parameters explicit in reports:
 

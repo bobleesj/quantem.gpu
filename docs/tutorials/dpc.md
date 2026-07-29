@@ -6,7 +6,7 @@ DPC phase from loaded 4D-STEM data.
 ```python
 from quantem.gpu import dpc, load
 
-result = load("scan_master.h5", backend="auto", det_bin=4)
+result = load("scan_master.h5", backend="auto", det_bin=1)
 dpc_result = dpc(result.data)
 
 print(dpc_result.rotation_deg)
@@ -38,4 +38,6 @@ For parity reports, compare:
 - `use_transpose`
 
 Use real data for signoff. Small synthetic arrays are useful for unit tests, but
-they are not enough to prove production DPC behavior.
+they are not enough to prove production DPC behavior. If you use detector
+binning for a memory-limited preview, record it and do not present the result as
+native-detector agreement.

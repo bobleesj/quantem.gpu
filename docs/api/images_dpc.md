@@ -24,7 +24,7 @@ Typical workflow:
 ```python
 from quantem.gpu import adf, bf, dpc, load
 
-data = load("scan_master.h5", backend="auto", det_bin=4).data
+data = load("scan_master.h5", backend="auto", det_bin=1).data
 bf_image = bf(data)
 adf_image = adf(data, inner=40, outer=90, unit="px")
 dpc_result = dpc(data)
@@ -36,5 +36,9 @@ chunk-backed MPS data where supported.
 For a screen page or exported viewer that needs BF/DF/CoM/DPC products on
 launch, prefer `load_calibration_products()` and reuse the product cache instead
 of reloading and reducing the full raw HDF5 volume on every open.
+
+Use `det_bin=2` or `4` only for explicitly labeled preview or memory-limited
+runs. Native-detector agreement and scientific-count claims should start from
+`det_bin=1` and a count-preserving dtype.
 
 For visual review, hand the reduced image to `quantem.widget.Show2D`.

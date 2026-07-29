@@ -16,7 +16,7 @@ from quantem.gpu.io import discover_masters, get_metadata, is_master_ready
 Use `load()` for full-field or crop-first HDF5 loading:
 
 ```python
-full = load("scan_master.h5", backend="auto", det_bin=4)
+full = load("scan_master.h5", backend="auto", det_bin=1)
 crop = load("scan_master.h5", backend="cuda", scan_region=(0, 32, 0, 32))
 ```
 
@@ -25,7 +25,7 @@ Important keyword arguments:
 | Argument | Meaning |
 |---|---|
 | `backend` | `"auto"`, `"cuda"`, `"mps"`, or `"cpu"` |
-| `det_bin` | detector binning factor |
+| `det_bin` | detector binning factor; `1` keeps native detector sampling |
 | `dtype` | optional browse dtype such as `"u8"` when supported |
 | `scan_region` | `(row_start, row_stop, col_start, col_stop)` crop |
 | `scan_indices` | caller-provided stochastic scan positions |
@@ -75,8 +75,8 @@ discard the raw chunk, then feed stochastic HDF5 batches to the solver.
 
 ## Cached calibration products
 
-Use `load_calibration_products()` for screen launch, Show4DSTEM sidecar setup,
-or ptychography calibration setup when BF/DF/CoM/rotation should appear
+Use `load_calibration_products()` for screen launch, product-cache setup, or
+ptychography calibration setup when BF/DF/CoM/rotation should appear
 immediately:
 
 ```python
@@ -99,9 +99,10 @@ crop loader. For chunked builds, the default BF-disk probe estimate uses the
 first decoded row chunk; `sample_positions>0` opts into a separate random
 scan-position sample when that is preferred over minimum latency. On a cache
 hit, it loads only the small `.npz` product cache and is the path expected to
-meet a sub-`0.5 s` screen/UI launch budget. Cache hits are backend-neutral;
-existing caches can be loaded from CUDA, MPS, or CPU-facing code without probing
-the build backend.
+meet a sub-`0.5 s` screen/UI launch budget. This is derived product data, not a
+replacement for the normal HDF5-backed Show4DSTEM WebGPU export. Cache hits are
+backend-neutral; existing caches can be loaded from CUDA, MPS, or CPU-facing
+code without probing the build backend.
 
 For a real `1024x1024x192x192 uint16` compressed master, representative
 cache-miss timings on one 96 GB NVIDIA workstation GPU were:
