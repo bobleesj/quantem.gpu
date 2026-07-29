@@ -8,10 +8,15 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-REALDATA_MASTER_ENV = "QUANTEM_GPU_SSB_MASTER"
+from tests.ssb_precision import (
+    LOSS_ATOL,
+    LOSS_RTOL,
+    PHASE_ATOL,
+    PHASE_RTOL,
+    PRECISION,
+)
 
-FLOAT32_REF_RTOL = 1e-5
-FLOAT32_REF_ATOL = 1e-6
+REALDATA_MASTER_ENV = "QUANTEM_GPU_SSB_MASTER"
 
 
 def _cupy():
@@ -211,7 +216,7 @@ def _make_engine(
     bf_center: tuple[float, float] = (15.5, 15.5),
 ):
     cp = _cupy()
-    from quantem.gpu.ssb.engine import SSBEngine
+    from quantem.gpu.ssb.compute.cuda.engine import SSBEngine
 
     if g_qk is None:
         rng = np.random.default_rng(1234)
@@ -244,6 +249,47 @@ def _make_engine(
     return engine
 
 
+def test_ssb_engine_restores_subset_and_writes_exact_source(tmp_path):
+    """CUDA internals own temporary BF subsets and exact source writing."""
+
+    engine = _make_engine(size=128, num_bf=7)
+    assert engine.scan_shape == (128, 128)
+    assert engine.detector_shape == (32, 32)
+
+    state = engine.export_state()
+    assert state.scan_shape == (128, 128)
+    assert state.brightfield.detector_shape == (32, 32)
+    assert state.brightfield.detected_radius_px == pytest.approx(42.8)
+
+    subset = engine.prepare_bf_subset(3)
+    with subset:
+        assert engine.num_bf == 3
+    assert engine.num_bf == 7
+    subset.close()
+
+    engine.set_optimizer_objective_mode("exact")
+    assert engine.uses_optimizer_reconstruct_fallback
+    engine.set_optimizer_objective_mode("native")
+    assert not engine.uses_optimizer_reconstruct_fallback
+    with pytest.raises(ValueError, match="objective_mode"):
+        engine.set_optimizer_objective_mode("preview")
+
+    cp = _cupy()
+    data = cp.arange(128 * 128 * 32 * 32, dtype=cp.uint8).reshape(
+        128, 128, 32, 32
+    )
+    source_path = engine.write_exact_bf_source(
+        data,
+        tmp_path / "exact_bf_columns",
+    )
+    columns = np.memmap(source_path, dtype=np.uint8, mode="r", shape=(7, 128 * 128))
+    rows = cp.asnumpy(engine.bf_inds_row)
+    cols = cp.asnumpy(engine.bf_inds_col)
+    expected = cp.asnumpy(data.reshape(-1, 32, 32)[:, rows, cols].T)
+    np.testing.assert_array_equal(columns, expected)
+    assert engine.export_state().bf_source_path == source_path
+
+
 def _expand_hermitian_cp(half_gqk):
     cp = _cupy()
     num_bf, n, stored_cols = half_gqk.shape
@@ -259,7 +305,7 @@ def _expand_hermitian_cp(half_gqk):
 
 def test_cuda_128_rejects_mismatched_bf_count() -> None:
     cp = _cupy()
-    from quantem.gpu.ssb.engine import SSBEngine
+    from quantem.gpu.ssb.compute.cuda.engine import SSBEngine
 
     q = cp.fft.fftfreq(128, d=0.5).astype(cp.float32)
     q_row, q_col = cp.meshgrid(q, q, indexing="ij")
@@ -280,6 +326,13 @@ def test_cuda_128_rejects_mismatched_bf_count() -> None:
         )
 
 
+def test_cuda_engine_uses_shared_float32_precision_contract() -> None:
+    """CUDA advertises the shared numeric storage contract."""
+    engine = _make_engine()
+
+    assert engine.precision == PRECISION
+
+
 def test_cuda_128_engine_matches_explicit_cupy_reference() -> None:
     cp = _cupy()
     engine = _make_engine()
@@ -288,11 +341,16 @@ def test_cuda_128_engine_matches_explicit_cupy_reference() -> None:
     phase, loss = engine.reconstruct_with_loss(c10, c12, phi12)
     ref_phase, ref_loss = _reference_phase_loss(engine, c10, c12, phi12)
 
-    cp.testing.assert_allclose(phase, ref_phase, rtol=2e-4, atol=2e-4)
+    cp.testing.assert_allclose(
+        phase,
+        ref_phase,
+        rtol=PHASE_RTOL,
+        atol=PHASE_ATOL,
+    )
     assert loss == pytest.approx(
         ref_loss,
-        rel=FLOAT32_REF_RTOL,
-        abs=FLOAT32_REF_ATOL,
+        rel=LOSS_RTOL,
+        abs=LOSS_ATOL,
     )
 
 
@@ -415,7 +473,7 @@ def test_cuda_fourier_sum_object_accepts_hermitian_gqk(size: int, num_bf: int) -
 
 def test_extract_gqk_hermitian_storage_keeps_nonredundant_columns() -> None:
     cp = _cupy()
-    from quantem.gpu.ssb.reconstruction import SSB
+    from quantem.gpu.ssb.compute.cuda.backend import CudaSSBBackend
 
     data = cp.arange(8 * 8 * 6 * 6, dtype=cp.uint16).reshape(8, 8, 6, 6)
     bf_rows = cp.asarray([2, 2, 3, 3], dtype=cp.int32)
@@ -439,11 +497,11 @@ def test_extract_gqk_hermitian_storage_keeps_nonredundant_columns() -> None:
 
 def test_ssb_rejects_persistent_full_gqk_storage() -> None:
     cp = _cupy()
-    from quantem.gpu.ssb import SSB
+    from quantem.gpu.ssb.compute.cuda.backend import CudaSSBBackend
 
     data = cp.zeros((128, 128, 8, 8), dtype=cp.uint16)
     with pytest.raises(ValueError, match="gqk_storage='full' was removed"):
-        SSB(
+        CudaSSBBackend(
             data,
             voltage_kV=300,
             semiangle=21.4,
@@ -489,7 +547,7 @@ def test_cuda_phase_loss_accepts_hermitian_gqk(size: int, num_bf: int) -> None:
 
 def test_ssb_default_hermitian_result_matches_full_storage_end_to_end() -> None:
     cp = _cupy()
-    from quantem.gpu.ssb import SSB
+    from quantem.gpu.ssb.compute.cuda.backend import CudaSSBBackend
 
     rng = np.random.default_rng(123)
     data = rng.poisson(4.0, size=(128, 128, 16, 16)).astype(np.uint16)
@@ -505,12 +563,18 @@ def test_ssb_default_hermitian_result_matches_full_storage_end_to_end() -> None:
         aberrations={"C10": -120.0, "C12": 55.0, "phi12": math.radians(17.0)},
     )
 
-    herm = SSB(cp.asarray(data), **kwargs)
+    herm = CudaSSBBackend(cp.asarray(data), **kwargs)
     assert herm.gqk_storage == "herm"
     assert herm.G_qk.shape[2] == 65
     assert herm.G_qk.nbytes == len(herm.bf_inds_row) * 128 * 65 * 8
 
     herm_result = herm.result()
+    from quantem.gpu.ssb.compute import SSBProtocol
+
+    assert isinstance(herm, SSBProtocol)
+    assert herm_result.backend == "cuda"
+    assert herm_result.num_bf == len(herm.bf_inds_row)
+    assert herm_result.aberrations == herm.aberrations
     accel = herm._get_accelerator()
     full_engine = _make_engine(
         size=128,
@@ -546,7 +610,7 @@ def test_ssb_default_hermitian_result_matches_full_storage_end_to_end() -> None:
 
 def test_ssb_hermitian_storage_preserves_half_plane_for_phase_reconstruction() -> None:
     cp = _cupy()
-    from quantem.gpu.ssb import SSB
+    from quantem.gpu.ssb.compute.cuda.backend import CudaSSBBackend
 
     rng = np.random.default_rng(124)
     data = rng.poisson(4.0, size=(128, 128, 16, 16)).astype(np.uint16)
@@ -561,8 +625,12 @@ def test_ssb_hermitian_storage_preserves_half_plane_for_phase_reconstruction() -
         bf_radius=3,
     )
 
-    herm = SSB(cp.asarray(data), **kwargs)
-    herm_phase = herm._reconstruct(C10=-120.0, C12=55.0, phi12=math.radians(17.0))
+    herm = CudaSSBBackend(cp.asarray(data), **kwargs)
+    herm_phase = herm.reconstruct_phase(
+        C10=-120.0,
+        C12=55.0,
+        phi12=math.radians(17.0),
+    )
     accel = herm._get_accelerator()
     full_engine = _make_engine(
         size=128,
@@ -592,7 +660,7 @@ def test_ssb_hermitian_storage_preserves_half_plane_for_phase_reconstruction() -
 def test_ssb_default_hermitian_optimize_keeps_half_plane() -> None:
     cp = _cupy()
     pytest.importorskip("optuna")
-    from quantem.gpu.ssb import SSB
+    from quantem.gpu.ssb.compute.cuda.backend import CudaSSBBackend
 
     rng = np.random.default_rng(125)
     data = rng.poisson(4.0, size=(128, 128, 16, 16)).astype(np.uint16)
@@ -600,7 +668,7 @@ def test_ssb_default_hermitian_optimize_keeps_half_plane() -> None:
     bf = (yy - 8) ** 2 + (xx - 8) ** 2 <= 4 ** 2
     data[..., bf] += 80
 
-    ssb = SSB(
+    ssb = CudaSSBBackend(
         cp.asarray(data),
         voltage_kV=300,
         semiangle=21.4,
@@ -639,8 +707,8 @@ def test_cuda_128_variance_loss_batch_matches_reference() -> None:
 
 def test_cuda_1024_variance_batch_uses_full_staging_buffers() -> None:
     cp = _cupy()
-    from quantem.gpu.ssb.engine import _pk_kernel, _variance_from_sums_batch_kernel
-    from quantem.gpu.ssb.fft_common import CustomFFTBase
+    from quantem.gpu.ssb.compute.cuda.engine import _pk_kernel, _variance_from_sums_batch_kernel
+    from quantem.gpu.ssb.compute.cuda.kernels.common import CustomFFTBase
 
     engine = _make_engine(size=1024, num_bf=4)
     c = engine._cache
@@ -718,7 +786,7 @@ def test_cuda_1024_variance_batch_uses_full_staging_buffers() -> None:
 
 def test_cuda_256_variance_kernel_matches_staged_cupy_reference() -> None:
     cp = _cupy()
-    from quantem.gpu.ssb.engine import _pk_kernel
+    from quantem.gpu.ssb.compute.cuda.engine import _pk_kernel
 
     engine = _make_engine(size=256, num_bf=37)
     c = engine._cache
@@ -805,7 +873,7 @@ def test_cuda_256_variance_kernel_matches_staged_cupy_reference() -> None:
 def test_cuda_128_realdata_crop_matches_explicit_cupy_reference() -> None:
     cp = _cupy()
     from quantem.gpu.io.hdf5 import load
-    from quantem.gpu.ssb import SSB
+    from quantem.gpu.ssb.compute.cuda.backend import CudaSSBBackend
 
     _clean_gpu()
     path = _realdata_master()
@@ -815,7 +883,7 @@ def test_cuda_128_realdata_crop_matches_explicit_cupy_reference() -> None:
         backend="cuda",
         verbose=False,
     )
-    ssb = SSB(
+    ssb = CudaSSBBackend(
         loaded.data,
         scan_shape=(128, 128),
         voltage_kV=300,
@@ -843,7 +911,7 @@ def test_cuda_128_realdata_crop_matches_explicit_cupy_reference() -> None:
 
 def test_ssb_roi96_auto_pads_to_128_not_256() -> None:
     cp = _cupy()
-    from quantem.gpu.ssb import SSB
+    from quantem.gpu.ssb.compute.cuda.backend import CudaSSBBackend
 
     rng = np.random.default_rng(5)
     data = rng.poisson(4.0, size=(96, 96, 16, 16)).astype(np.uint16)
@@ -851,7 +919,7 @@ def test_ssb_roi96_auto_pads_to_128_not_256() -> None:
     bf = (yy - 8) ** 2 + (xx - 8) ** 2 <= 4 ** 2
     data[..., bf] += 100
 
-    ssb = SSB(
+    ssb = CudaSSBBackend(
         cp.asarray(data),
         voltage_kV=300,
         semiangle=21.4,

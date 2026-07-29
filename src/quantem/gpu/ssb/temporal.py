@@ -11,11 +11,14 @@ import math
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import cupy as cp
 
 from quantem.gpu.ssb.results import SSBResult
+
+if TYPE_CHECKING:
+    from quantem.gpu.ssb.workflow import SSB
 
 PhaseReference = Literal["first", "none"]
 
@@ -222,6 +225,7 @@ def join_object_waves(
     joined = cp.tensordot(weights_cp, aligned, axes=(0, 0)).astype(cp.complex64)
     result = SSBResult(
         object_wave=joined,
+        backend="cuda",
         loss=None,
         elapsed=time.perf_counter() - t0,
         num_bf=None,
@@ -237,39 +241,24 @@ def join_object_waves(
 
 
 def _reconstruct_objects_from_ssb_frames(
-    ssb_frames: Sequence[object],
+    ssb_frames: Sequence["SSB"],
     *,
     aberrations: dict[str, float] | None,
     rotation_angle_deg: float | None,
 ) -> list[cp.ndarray]:
     objects: list[cp.ndarray] = []
     for ssb in ssb_frames:
-        coefs = dict(getattr(ssb, "aberrations", {}) or {})
+        coefs = dict(ssb.aberrations)
         if aberrations is not None:
             coefs.update(aberrations)
-        rotation_rad = (
-            math.radians(rotation_angle_deg)
-            if rotation_angle_deg is not None
-            else getattr(ssb, "_rotation_angle_rad", None)
-        )
-        reconstruct_object = getattr(ssb, "_reconstruct_object", None)
-        if reconstruct_object is None:
-            raise TypeError(
-                "ssb_frames must contain objects with a _reconstruct_object method"
-            )
-        objects.append(
-            reconstruct_object(
-                coefs.get("C10"),
-                coefs.get("C12"),
-                coefs.get("phi12"),
-                rotation_rad,
-            )
-        )
+        if rotation_angle_deg is not None:
+            ssb.set_rotation(rotation_angle_deg)
+        objects.append(cp.asarray(ssb.reconstruct(coefs).object_wave))
     return objects
 
 
 def ssb_time_series(
-    ssb_frames: Sequence[object],
+    ssb_frames: Sequence["SSB"],
     shifts: Sequence[Sequence[float]] | cp.ndarray | None = None,
     *,
     weights: Sequence[float] | cp.ndarray | None = None,
@@ -318,7 +307,7 @@ def ssb_time_series(
     aligned = _align_object_wave_stack(stack, shifts_cp, phase_reference)
 
     first = ssb_frames[0]
-    scan_sampling = getattr(first, "scan_sampling", None)
+    scan_sampling = first.scan_sampling_A
     if isinstance(scan_sampling, tuple):
         scan_sampling_A = float(scan_sampling[0])
     elif scan_sampling is not None:
@@ -328,24 +317,24 @@ def ssb_time_series(
 
     return SSBTimeSeriesResult(
         object_waves=aligned,
-        aberrations=dict(aberrations or getattr(first, "aberrations", {}) or {}),
+        aberrations=dict(aberrations or first.aberrations),
         rotation_angle_deg=(
             float(rotation_angle_deg)
             if rotation_angle_deg is not None
-            else math.degrees(float(getattr(first, "_rotation_angle_rad", 0.0) or 0.0))
+            else float(first.rotation_angle_deg)
         ),
         shifts=shifts_cp,
         weights=weights_cp,
         phase_reference=phase_reference,
         elapsed=time.perf_counter() - t0,
-        voltage_kV=getattr(first, "voltage_kV", None),
-        semiangle_mrad=getattr(first, "semiangle_mrad", None),
+        voltage_kV=first.voltage_kV,
+        semiangle_mrad=first.semiangle_mrad,
         scan_sampling_A=scan_sampling_A,
     )
 
 
 def ssb_time_average(
-    ssb_frames: Sequence[object],
+    ssb_frames: Sequence["SSB"],
     shifts: Sequence[Sequence[float]] | cp.ndarray | None = None,
     *,
     weights: Sequence[float] | cp.ndarray | None = None,
@@ -397,16 +386,14 @@ def ssb_time_average(
         return_aligned_stack=return_aligned_stack,
     )
     result = joined[0] if return_aligned_stack else joined
-    result.aberrations = dict(aberrations or getattr(ssb_frames[0], "aberrations", {}) or {})
+    result.aberrations = dict(aberrations or ssb_frames[0].aberrations)
     if rotation_angle_deg is not None:
         result.rotation_angle_deg = float(rotation_angle_deg)
     else:
-        result.rotation_angle_deg = math.degrees(
-            float(getattr(ssb_frames[0], "_rotation_angle_rad", 0.0) or 0.0)
-        )
-    result.voltage_kV = getattr(ssb_frames[0], "voltage_kV", None)
-    result.semiangle_mrad = getattr(ssb_frames[0], "semiangle_mrad", None)
-    scan_sampling = getattr(ssb_frames[0], "scan_sampling", None)
+        result.rotation_angle_deg = float(ssb_frames[0].rotation_angle_deg)
+    result.voltage_kV = ssb_frames[0].voltage_kV
+    result.semiangle_mrad = ssb_frames[0].semiangle_mrad
+    scan_sampling = ssb_frames[0].scan_sampling_A
     if isinstance(scan_sampling, tuple):
         result.scan_sampling_A = float(scan_sampling[0])
     elif scan_sampling is not None:

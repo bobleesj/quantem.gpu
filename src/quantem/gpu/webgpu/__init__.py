@@ -10,14 +10,22 @@ from importlib.resources import files
 from importlib.resources.abc import Traversable
 
 WEBGPU_SOURCE_NAMES: tuple[str, ...] = (
-    "bslz4.ts",
-    "compute.ts",
-    "device.ts",
-    "fft-shader.ts",
-    "h5reader.ts",
-    "lazy.ts",
-    "local-h5.ts",
-    "showptycho-ssb.ts",
+    "webgpu/bslz4.ts",
+    "webgpu/compute.ts",
+    "webgpu/device.ts",
+    "webgpu/fft-shader.ts",
+    "webgpu/h5reader.ts",
+    "webgpu/lazy.ts",
+    "webgpu/local-h5.ts",
+    "ssb/compute/webgpu/backend.ts",
+    "ssb/compute/webgpu/optimizer.ts",
+    "ssb/compute/webgpu/protocol.ts",
+    "ssb/compute/webgpu/kernels/common.ts",
+    "ssb/compute/webgpu/kernels/fft128.ts",
+    "ssb/compute/webgpu/kernels/fft256.ts",
+    "ssb/compute/webgpu/kernels/fft512.ts",
+    "ssb/compute/webgpu/kernels/fft1024.ts",
+    "ssb/compute/webgpu/kernels/index.ts",
 )
 
 __all__ = [
@@ -38,7 +46,7 @@ def source_path(name: str) -> Traversable:
     if name not in WEBGPU_SOURCE_NAMES:
         allowed = ", ".join(WEBGPU_SOURCE_NAMES)
         raise ValueError(f"Unknown WebGPU source {name!r}; expected one of: {allowed}.")
-    return files(__package__).joinpath(name)
+    return files("quantem.gpu").joinpath(name)
 
 
 def source_text(name: str) -> str:

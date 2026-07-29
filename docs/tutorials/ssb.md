@@ -1,54 +1,37 @@
 # Ptychographic SSB
 
-Ptychographic SSB reconstruction is compute-only in `quantem.gpu`. The engine
-should not contain any widget UI. Display, export, and interactions stay in
-`quantem.widget`.
+Ptychographic SSB reconstruction is compute-only in quantem.gpu. Widget UI,
+HTML export, and interactions stay in quantem.widget.
 
-The high-level API is available from `quantem.gpu.ssb`:
+The same API selects CUDA or MPS without changing scientific parameters:
 
-```python
-from quantem.gpu.ssb import ssb
+~~~python
+from quantem.gpu import SSB
 
-result = ssb(
-    data,
+workflow = SSB.open(
+    "scan_master.h5",
+    backend="mps",
     voltage_kV=300,
     semiangle_mrad=21.4,
     scan_sampling_A=0.5,
 )
+result = workflow.run(trials=200, refinement="nelder-mead")
+~~~
 
-object_wave = result.object_wave
-phase = result.phase
-```
+Changing backend to cuda preserves the full-BF exact objective, parameter
+units, and the single `SSBResult` type. Browser WebGPU uses the same serialized plan through
+the canonical `quantem showptycho` CLI; unsupported fit capability fails
+explicitly.
 
-Display the reconstructed phase or amplitude with widget views:
+Display the shared result with the widget layer:
 
-```python
+~~~python
 from quantem.widget import Show2D
 
 Show2D(result.phase)
-Show2D(abs(result.object_wave))
-```
+Show2D(result.amplitude)
+~~~
 
-For Apple Silicon MPS data, use the MPS entry points when testing the Mac path:
-
-```python
-from quantem.gpu import load
-from quantem.gpu.ssb import ssb_fit_mps, ssb_preview_mps
-
-loaded = load("scan_master.h5", backend="mps", det_bin=1)
-preview = ssb_preview_mps(loaded.data)
-fit = ssb_fit_mps(loaded.data)
-```
-
-Parity expectations:
-
-- CUDA remains the reference path for production SSB parity.
-- MPS fixed-preview and optimizer paths must be compared against CUDA on the
-  same real data and the same BF-pixel selection.
-- Do not use fast-mode shortcuts for signoff.
-- Reports should include phase images, difference maps, loss, C10, C12, phi12,
-  load time, fit time, and BF pixel count.
-
-Temporal or joined ptychographic SSB work should stay on a separate
-verification track until it has real time-series metrics showing whether it
-improves over per-frame SSB or a simple complex/phase average.
+Parity reports must use the same detector selection and include object-phase
+difference maps, full-BF loss, C10, C12, phi12, load time, fit time, and BF
+pixel count. Approximate preview modes are not calibration signoff.

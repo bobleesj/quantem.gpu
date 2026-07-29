@@ -1,0 +1,138 @@
+{
+  "schema_version": 2,
+  "name": "Reference-512 native automatic full-BF MPS",
+  "hardware": {
+    "system_class": "reference Apple Silicon laptop",
+    "model": "MacBook Pro Mac17,2",
+    "chip": "Apple M5",
+    "gpu_cores": 10,
+    "unified_memory_gb": 24
+  },
+  "source": {
+    "reference_id": "reference-512-full-bf-v1",
+    "scan_shape": [512, 512],
+    "detector_shape": [192, 192],
+    "raw_dtype": "uint16",
+    "bf_companion_dtype": "uint8",
+    "bf_companion_bytes": 2342780928,
+    "bf_companion_max_count": 53,
+    "bf_evidence_revision": "v1"
+  },
+  "brightfield": {
+    "policy": "automatic_full_disk",
+    "logical_pixels": 8937,
+    "aperture_active_pixels": 2464,
+    "center_row_col": [94.88451385498047, 96.35952758789062],
+    "radius_px": 53.35992814757164
+  },
+  "microscope": {
+    "voltage_kV": 300.0,
+    "semiangle_mrad": 30.0,
+    "scan_sampling_A": 0.264,
+    "det_sampling_mrad_px": 1.0909090909090908,
+    "rotation_angle_deg": 158.88268568029937
+  },
+  "optimizer": {
+    "objective": "full_bf_phase_variance",
+    "trials": 200,
+    "seed": 42,
+    "refinement": "nelder-mead",
+    "start_aberrations": {
+      "C10": 0.0,
+      "C12": 50.0,
+      "phi12": 0.0
+    },
+    "refinement_physical_calls": 30,
+    "recorded_evaluations": 231
+  },
+  "precision": {
+    "detector_counts": "exact_integer",
+    "real_dtype": "float32",
+    "complex_dtype": "complex64"
+  },
+  "expected": {
+    "C10": 73.18188621458395,
+    "C12": 14.020962948808993,
+    "phi12": 0.4700365259977606,
+    "loss": 0.04469207674264908
+  },
+  "performance": {
+    "baseline": {
+      "cold_raw_wall_to_html_seconds": 62.26,
+      "cold_raw_source_load_seconds": 1.9479898329591379,
+      "cold_raw_bf_source_write_seconds": 5.790530957980081,
+      "cold_raw_fit_seconds": 44.76244116702583,
+      "prepared_wall_to_html_seconds": [
+        47.66,
+        48.12,
+        46.36,
+        46.75,
+        44.7
+      ],
+      "prepared_fit_seconds": [
+        38.85358395904768,
+        38.27859424997587,
+        37.57236204203218,
+        37.936990916961804,
+        37.562031292007305
+      ],
+      "prepared_wall_median_seconds": 46.75,
+      "prepared_fit_median_seconds": 37.936990916961804
+    },
+    "retained": {
+      "topology": "packed_column_boundary_fusion",
+      "quiet_best_fit_seconds": 23.05768,
+      "quiet_best_process_wall_seconds": 24.16,
+      "clean_signoff_fit_seconds": 24.06464,
+      "clean_signoff_process_wall_seconds": 25.26,
+      "clean_signoff_stage_seconds": {
+        "preparation": 0.9053,
+        "initial_loss": 0.185,
+        "optuna_200": 19.5473,
+        "nelder_mead": 3.2257,
+        "final_object": 0.0512,
+        "final_phase_loss": 0.144
+      },
+      "thermal_soak_fit_seconds": [
+        24.289,
+        24.528,
+        24.406,
+        24.648,
+        25.221
+      ],
+      "thermal_soak_fit_median_seconds": 24.528,
+      "community_signoff": {
+        "date": "2026-07-28",
+        "profile": "apple_m5_24gb_full_bf_exact_200_nm",
+        "fit_seconds": 24.42230095807463,
+        "process_wall_seconds": 25.56,
+        "stage_seconds": {
+          "preparation": 0.902606250019744,
+          "initial_loss": 0.20262425008695573,
+          "optuna_200": 19.829271416994743,
+          "nelder_mead": 3.2797967499354854,
+          "final_object": 0.051053375005722046,
+          "final_phase_loss": 0.14766645804047585
+        },
+        "peak_memory_bytes": 10823322048,
+        "swaps": 0,
+        "recorded_evaluations": 231,
+        "refinement_physical_calls": 30
+      },
+      "trial_trace_sha256": "cb2b35cacaabd01ac473df91875383dc5f633dbb53bf5ebb27627c80fd0168c1"
+    },
+    "webgpu": {
+      "adapter": "apple metal-3",
+      "software_adapter": false,
+      "setup_seconds": 1.2911,
+      "initial_phase_gpu_ms": 62.0,
+      "committed_phase_loss_gpu_p50_ms": 257.5,
+      "committed_phase_loss_gpu_p95_ms": 261.0,
+      "committed_phase_loss_ui_p50_ms": 261.0,
+      "committed_phase_loss_ui_p95_ms": 264.5
+    },
+    "expected_prepared_process_wall_seconds": [24.0, 26.0],
+    "investigate_sustained_fit_above_seconds": 27.0,
+    "long_term_wall_target_seconds": 20.0
+  }
+}

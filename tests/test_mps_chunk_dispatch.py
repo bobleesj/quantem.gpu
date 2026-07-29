@@ -15,6 +15,53 @@ class _ChunkSource:
     chunks = [object()]
 
 
+def test_chunked_frames_carries_decode_side_detector_sum(monkeypatch):
+    from types import SimpleNamespace
+
+    from quantem.gpu.compute import mps
+
+    class FakeVI:
+        def __init__(self, chunks, row_prefix=False):
+            self.chunks = chunks
+
+    monkeypatch.setattr(mps, "MetalVirtualImage", FakeVI)
+    monkeypatch.setattr(mps, "default_fast_bin", lambda: 2)
+    detector_sum = np.asarray([[3, 5], [7, 11]], dtype=np.uint32)
+    source = SimpleNamespace(
+        chunks=[np.zeros((1, 2, 2), dtype=np.uint8)],
+        metadata={},
+        det_bin=1,
+        detector_sum=detector_sum,
+        fast_chunks=None,
+        fast_det_bin=None,
+        row_prefix=False,
+    )
+
+    frames = mps.ChunkedFrames(source)
+
+    assert frames.detector_sum is detector_sum
+
+
+def test_mps_float32_columns_forward_direct_output():
+    from quantem.gpu.compute.mps import ChunkedFrames
+
+    expected = np.empty((2, 4), dtype=np.float32)
+    rows = np.array([1, 2])
+    cols = np.array([3, 4])
+
+    class FakeVI:
+        def gather_columns_float32(self, got_rows, got_cols, *, out=None):
+            np.testing.assert_array_equal(got_rows, rows)
+            np.testing.assert_array_equal(got_cols, cols)
+            assert out is expected
+            return out
+
+    frames = object.__new__(ChunkedFrames)
+    frames.vi = FakeVI()
+
+    assert frames.columns_float32_into(rows, cols, expected) is expected
+
+
 def test_masked_sum_dispatches_chunk_source_through_gpu_compute(monkeypatch):
     from quantem.gpu import detector
     from quantem.gpu.compute import backends

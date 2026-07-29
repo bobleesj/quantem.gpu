@@ -11,7 +11,7 @@ from functools import lru_cache
 import cupy as cp
 import numpy as np
 
-from .fft_common import CustomFFTBase, build_cuda_code
+from .common import CustomFFTBase, build_cuda_code
 
 _TWIDDLE_DECL = '__constant__ float2 TWIDDLE_1024[1024];'
 

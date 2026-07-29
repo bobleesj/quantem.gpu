@@ -1,20 +1,30 @@
 /// <reference types="@webgpu/types" />
 
-import { getGPUDevice, getGPUInfo, isSoftwareGPUAdapter } from "./device";
-import { readH5MasterInfo, readH5Volume } from "./h5reader";
-import { decodeBslz4ToStack, type Bslz4Spec } from "./bslz4";
+import { getGPUDevice, getGPUInfo, isSoftwareGPUAdapter } from "../../../webgpu/device";
+import { readH5MasterInfo, readH5Volume } from "../../../webgpu/h5reader";
+import { decodeBslz4ToStack, type Bslz4Spec } from "../../../webgpu/bslz4";
+import {
+  getWebGPUFFTConfig,
+  SUPPORTED_SSB_SIZES,
+  type SupportedSsbSize,
+} from "./kernels";
+import type {
+  SSBOptimizationResult,
+  WebGPUOptimizationOptions,
+  WebGPUReconstructionOptions,
+  SSBProtocol,
+} from "./protocol";
+import { fit } from "./optimizer";
 
-const SUPPORTED_SSB_SIZES = [128, 256, 512, 1024] as const;
 const MAX_BF_WORKGROUPS_PER_SUBMIT = 256;
 const MAX_GQK_CHUNK_BYTES = 1024 * 1024 * 1024;
 // Resident G(q,k) budget. Caps how many BF pixels the session keeps resident
 // so a full-BF drag on a big scan cannot device-lost a small GPU. Override:
-// globalThis.__QUANTEM_SHOWPTYCHO_GQK_BUDGET_GB__ = 8.
-const FULL_STACK_GPU_BUDGET_BYTES = 4.5 * 1024 * 1024 * 1024;
-const GQK_GPU_BUDGET_BYTES = FULL_STACK_GPU_BUDGET_BYTES;
+// globalThis.__QUANTEM_SSB_GQK_BUDGET_GB__ = 8.
+const GQK_GPU_BUDGET_BYTES = 4.5 * 1024 * 1024 * 1024;
 
 function gqkBudgetBytes(): number {
-  const raw = (globalThis as { __QUANTEM_SHOWPTYCHO_GQK_BUDGET_GB__?: number }).__QUANTEM_SHOWPTYCHO_GQK_BUDGET_GB__;
+  const raw = (globalThis as { __QUANTEM_SSB_GQK_BUDGET_GB__?: number }).__QUANTEM_SSB_GQK_BUDGET_GB__;
   if (Number.isFinite(raw) && Number(raw) > 0) return Number(raw) * 1024 * 1024 * 1024;
   return GQK_GPU_BUDGET_BYTES;
 }
@@ -22,36 +32,15 @@ const REDUCE_BF_GROUP = 32;
 const BF_COLUMN_UNPACK_WORKGROUP_X = 32;
 const BF_COLUMN_UNPACK_WORKGROUP_Y = 8;
 
-type SupportedSsbSize = typeof SUPPORTED_SSB_SIZES[number];
-
 function supportedSsbSize(n: number): SupportedSsbSize | null {
-  return (SUPPORTED_SSB_SIZES as readonly number[]).includes(n) ? n as SupportedSsbSize : null;
+  return getWebGPUFFTConfig(n)?.size ?? null;
 }
 
-// Resident G(q,k) storage mode.
-// Public contract:
-// - "herm" is Exact mode. It stores the Hermitian half-plane, which is
-//   bit-identical to the old n x n storage for real-count scan FFTs.
-// - "herm16" is compact preview. It keeps the same half-plane and block-quantizes
-//   each BF pixel to snorm16 with one f32 scale.
-type GqkMode = "herm" | "herm16";
+// The Hermitian half-plane is lossless for the FFT of real detector counts and
+// halves resident G(q,k) storage without changing float32 precision.
+type GqkMode = "herm";
 
 function resolveGqkMode(): GqkMode {
-  const g = globalThis as { __QUANTEM_SHOWPTYCHO_GQK_MODE__?: string; location?: Location };
-  let raw = g.__QUANTEM_SHOWPTYCHO_GQK_MODE__ || "";
-  try {
-    const fromUrl = new URLSearchParams(g.location?.search || "").get("gqk");
-    if (fromUrl) raw = fromUrl;
-  } catch { /* no location in workers */ }
-  const key = raw.trim().toLowerCase();
-  if (
-    key === "herm16" || key === "i16" || key === "quant"
-    || key === "preview" || key === "compact"
-  ) return "herm16";
-  if (key === "herm" || key === "exact" || key === "half") return "herm";
-  // Default: Hermitian half-plane. Measured bit-exact against the old n x n path
-  // (real-input scan FFT gives G(-q) = conj(G(q)) down to f32 rounding) and
-  // faster per reconstruct (half the G(q,k) read bandwidth) at 2x less VRAM.
   return "herm";
 }
 
@@ -59,8 +48,8 @@ function storedPlaneFor(n: number): number {
   return n * (n / 2 + 1);
 }
 
-function gqkBytesPerValue(mode: GqkMode): number {
-  return mode === "herm16" ? 4 : 8;
+function gqkBytesPerValue(_mode: GqkMode): number {
+  return 8;
 }
 
 // ---------------------------------------------------------------------------
@@ -79,7 +68,7 @@ function normaliseSourcePath(path: string): string {
 
 let localDirHandle: FileSystemDirectoryHandle | null = null;
 
-export function setShowPtychoLocalDirectory(handle: FileSystemDirectoryHandle): void {
+export function setSSBLocalDirectory(handle: FileSystemDirectoryHandle): void {
   localDirHandle = handle;
   localSourceResolver = async (path: string) => {
     const parts = normaliseSourcePath(path).split("/").filter(Boolean);
@@ -90,7 +79,7 @@ export function setShowPtychoLocalDirectory(handle: FileSystemDirectoryHandle): 
   };
 }
 
-export function setShowPtychoLocalFiles(files: ArrayLike<File>): void {
+export function setSSBLocalFiles(files: ArrayLike<File>): void {
   const byPath = new Map<string, File>();
   const byName = new Map<string, File>();
   for (let i = 0; i < files.length; i++) {
@@ -112,11 +101,11 @@ export function setShowPtychoLocalFiles(files: ArrayLike<File>): void {
   };
 }
 
-export function showPtychoHasLocalSource(): boolean {
+export function ssbHasLocalSource(): boolean {
   return localSourceResolver !== null;
 }
 
-export function showPtychoNeedsLocalSource(): boolean {
+export function ssbNeedsLocalSource(): boolean {
   try {
     return globalThis.location?.protocol === "file:" && !localSourceResolver;
   } catch {
@@ -148,10 +137,10 @@ async function readSourceBytes(url: string, byteOffset?: number, byteLength?: nu
 // Folder snapshot write-back. Saved review states (JPEG + snapshots.json) persist
 // INSIDE the export folder so they survive relaunch from both the no-server
 // double-click path (via the readwrite directory handle) and the CLI-served
-// path (via PUT/DELETE handled by serve_sidecar_range.py). Writes are
+// path (via PUT/DELETE handled by the exported project server). Writes are
 // restricted to the snapshots/ subfolder on both transports.
 // ---------------------------------------------------------------------------
-export function showPtychoFolderWritable(): boolean {
+export function ssbFolderWritable(): boolean {
   if (localDirHandle) return true;
   try {
     const proto = globalThis.location?.protocol || "";
@@ -181,7 +170,7 @@ async function snapshotsDirHandle(): Promise<FileSystemDirectoryHandle> {
   return localDirHandle.getDirectoryHandle("snapshots", { create: true });
 }
 
-export async function writeShowPtychoFolderFile(path: string, body: Blob | string): Promise<void> {
+export async function writeSSBFolderFile(path: string, body: Blob | string): Promise<void> {
   const clean = normaliseSourcePath(path);
   const name = validateSnapshotWritePath(clean, "write");
   if (localDirHandle) {
@@ -193,10 +182,10 @@ export async function writeShowPtychoFolderFile(path: string, body: Blob | strin
     return;
   }
   const res = await fetch(clean, { method: "PUT", body });
-  if (!res.ok) throw new Error(`${clean}: HTTP ${res.status} (serve_sidecar_range.py supports snapshots/ writes; plain servers do not)`);
+  if (!res.ok) throw new Error(`${clean}: HTTP ${res.status} (open this project with its .command launcher or the QuantEM CLI to enable snapshot writes)`);
 }
 
-export async function deleteShowPtychoFolderFile(path: string): Promise<void> {
+export async function deleteSSBFolderFile(path: string): Promise<void> {
   const clean = normaliseSourcePath(path);
   const name = validateSnapshotWritePath(clean, "delete");
   if (localDirHandle) {
@@ -208,7 +197,7 @@ export async function deleteShowPtychoFolderFile(path: string): Promise<void> {
   if (!res.ok) throw new Error(`${clean}: HTTP ${res.status}`);
 }
 
-export async function readShowPtychoFolderJson<T>(path: string): Promise<T | null> {
+export async function readSSBFolderJson<T>(path: string): Promise<T | null> {
   try {
     const bytes = await readSourceBytes(path);
     return JSON.parse(new TextDecoder().decode(bytes)) as T;
@@ -217,7 +206,7 @@ export async function readShowPtychoFolderJson<T>(path: string): Promise<T | nul
   }
 }
 
-export async function readShowPtychoFolderBytes(path: string): Promise<Uint8Array> {
+export async function readSSBFolderBytes(path: string): Promise<Uint8Array> {
   return readSourceBytes(path);
 }
 
@@ -241,6 +230,10 @@ type SsbCal = {
   sin2phi_k: number[];
   rotation_angle_deg?: number;
   rotation_angle_rad?: number;
+  precision: {
+    real_dtype: "float32";
+    complex_dtype: "complex64";
+  };
 };
 
 type H5SsbSource = {
@@ -274,7 +267,6 @@ type H5ChunkIndexSource = {
 };
 
 type SsbSource =
-  | { kind: "g-bf"; bytes: Uint8Array | null; url: string | null }
   | { kind: "hdf5"; source: H5SsbSource }
   | { kind: "bf-columns"; source: BfColumnSsbSource };
 
@@ -283,13 +275,11 @@ type SsbBuffers = {
   paramsChunks: GPUBuffer[];
   aberrations: GPUBuffer;
   gqkChunks: GPUBuffer[];
-  gqkScales: GPUBuffer | null;
   gqkMode: GqkMode;
   gqkResidentBytes: number;
   chunkBfCounts: number[];
   chunkCapacity: number;
   dispatchChunkCapacity: number;
-  fullStack: boolean;
   stage: GPUBuffer;
   phaseStack: GPUBuffer;
   partialSum: GPUBuffer;
@@ -414,10 +404,7 @@ function makeSsbShader(n: SupportedSsbSize, mode: GqkMode): string {
   const half = n / 2;
   const halfW = half + 1;
   const storedPlane = storedPlaneFor(n);
-  const gqkDecl = mode === "herm16"
-    ? `@group(0) @binding(1) var<storage, read> gqk: array<u32>;
-@group(0) @binding(13) var<storage, read> gqkScale: array<f32>;`
-    : "@group(0) @binding(1) var<storage, read> gqk: array<vec2<f32>>;";
+  const gqkDecl = "@group(0) @binding(1) var<storage, read> gqk: array<vec2<f32>>;";
   const fetchBody = `  var r = row;
   var c = x;
   var conj_sign = 1.0;
@@ -427,9 +414,7 @@ function makeSsbShader(n: SupportedSsbSize, mode: GqkMode): string {
     conj_sign = -1.0;
   }
   let idx = local_bf * ${storedPlane}u + r * ${halfW}u + c;
-${mode === "herm16"
-      ? `  let v = unpack2x16snorm(gqk[idx]) * gqkScale[bf_global];`
-      : "  let v = gqk[idx];"}
+  let v = gqk[idx];
   return vec2<f32>(v.x, v.y * conj_sign);`;
   return `
 ${makeFftConstants(n)}
@@ -451,7 +436,7 @@ struct Params {
   dc_im: f32,
   inv_n2: f32,
   chunk_bf: u32,
-  full_stack: u32,
+  _reserved_storage_mode: u32,
   partial_groups: u32,
   compute_loss: u32,
   active_bf: u32,
@@ -573,7 +558,7 @@ fn ssbRows(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) 
   if (bf >= params.active_bf) { return; }
   let bg = bfGeom[bf];
   if (bg.w == 0.0) { return; }
-  let storage_bf = select(local_bf, bf, params.full_stack != 0u);
+  let storage_bf = local_bf;
   let base = (storage_bf * params.plane) + row * ${n}u;
   let bt = bfTrig[bf];
   var chi_k: f32;
@@ -609,7 +594,7 @@ fn ssbCols(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) 
   if (bf >= params.active_bf) { return; }
   let bg = bfGeom[bf];
   if (bg.w == 0.0) { return; }
-  let storage_bf = select(local_bf, bf, params.full_stack != 0u);
+  let storage_bf = local_bf;
   for (var off = 0u; off < ${n}u; off = off + ${workgroupSize}u) {
     let y = off + tid;
     if (y < ${n}u) {
@@ -643,7 +628,7 @@ fn reducePartialGroups(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (params.compute_loss != 0u) {
     for (var bf = start_bf; bf < end_bf; bf = bf + 1u) {
       if (bfGeom[bf].w != 0.0) {
-        let storage_bf = select(bf - params.bf_offset, bf, params.full_stack != 0u);
+        let storage_bf = bf - params.bf_offset;
         let a = phaseStack[storage_bf * params.plane + idx];
         sum += a;
         sumsq += a * a;
@@ -652,7 +637,7 @@ fn reducePartialGroups(@builtin(global_invocation_id) gid: vec3<u32>) {
   } else {
     for (var bf = start_bf; bf < end_bf; bf = bf + 1u) {
       if (bfGeom[bf].w != 0.0) {
-        let storage_bf = select(bf - params.bf_offset, bf, params.full_stack != 0u);
+        let storage_bf = bf - params.bf_offset;
         sum += phaseStack[storage_bf * params.plane + idx];
       }
     }
@@ -960,13 +945,8 @@ function makeGqkTransformShader(n: SupportedSsbSize, mode: GqkMode): string {
   const half = n / 2;
   const halfW = half + 1;
   const storedPlane = n * halfW;
-  const dstDecl = mode === "herm16"
-    ? "@group(0) @binding(1) var<storage, read_write> dst: array<u32>;"
-    : "@group(0) @binding(1) var<storage, read_write> dst: array<vec2<f32>>;";
-  const writeBody = mode === "herm16"
-    ? `let s = max(scales[tp.bf_offset + bf], 1e-30);
-    dst[bf * ${storedPlane}u + row * ${halfW}u + c] = pack2x16snorm(clamp(v / s, vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, 1.0)));`
-    : `dst[bf * ${storedPlane}u + row * ${halfW}u + c] = v;`;
+  const dstDecl = "@group(0) @binding(1) var<storage, read_write> dst: array<vec2<f32>>;";
+  const writeBody = `dst[bf * ${storedPlane}u + row * ${halfW}u + c] = v;`;
   return `
 struct TransformParams {
   chunk_bf: u32,
@@ -976,30 +956,7 @@ struct TransformParams {
 };
 @group(0) @binding(0) var<storage, read> src: array<vec2<f32>>;
 ${dstDecl}
-@group(0) @binding(2) var<storage, read_write> scales: array<f32>;
 @group(0) @binding(3) var<uniform> tp: TransformParams;
-var<workgroup> wg_max: array<f32, 256>;
-
-@compute @workgroup_size(256)
-fn scaleMax(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {
-  let bf = wid.z;
-  if (bf >= tp.chunk_bf) { return; }
-  var m = 0.0;
-  // Scan the half-plane only: the mirrored half has identical magnitudes.
-  for (var i = lid.x; i < ${storedPlane}u; i = i + 256u) {
-    let row = i / ${halfW}u;
-    let c = i - row * ${halfW}u;
-    let v = src[bf * ${n * n}u + row * ${n}u + c];
-    m = max(m, max(abs(v.x), abs(v.y)));
-  }
-  wg_max[lid.x] = m;
-  workgroupBarrier();
-  for (var stride = 128u; stride > 0u; stride = stride >> 1u) {
-    if (lid.x < stride) { wg_max[lid.x] = max(wg_max[lid.x], wg_max[lid.x + stride]); }
-    workgroupBarrier();
-  }
-  if (lid.x == 0u) { scales[tp.bf_offset + bf] = max(wg_max[0u], 1e-30); }
-}
 
 @compute @workgroup_size(256)
 fn compact(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -1016,7 +973,6 @@ fn compact(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 type GqkTransformResult = {
   chunks: GPUBuffer[];
-  scales: GPUBuffer | null;
   residentBytes: number;
 };
 
@@ -1030,23 +986,14 @@ async function transformGqkChunks(
   mode: GqkMode,
   gqkChunks: GPUBuffer[],
   chunkBfCounts: number[],
-  activeBfCount: number,
 ): Promise<GqkTransformResult> {
   const storedPlane = storedPlaneFor(n);
   const bytesPer = gqkBytesPerValue(mode);
   const module = device.createShaderModule({
     code: makeGqkTransformShader(n, mode),
-    label: `ShowPtycho gqk transform ${mode} ${n}`,
+    label: `SSB gqk transform ${mode} ${n}`,
   });
-  const scalePipe = mode === "herm16"
-    ? device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "scaleMax" } })
-    : null;
   const compactPipe = device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "compact" } });
-  const scales = device.createBuffer({
-    size: Math.max(4, activeBfCount * 4),
-    usage: GPUBufferUsage.STORAGE,
-    label: "showptycho gqk scales",
-  });
   const out: GPUBuffer[] = [];
   let residentBytes = 0;
   let bfOffset = 0;
@@ -1055,36 +1002,20 @@ async function transformGqkChunks(
     const dst = device.createBuffer({
       size: chunkBf * storedPlane * bytesPer,
       usage: GPUBufferUsage.STORAGE,
-      label: `showptycho gqk ${mode} chunk ${i}`,
+      label: `ssb gqk ${mode} chunk ${i}`,
     });
-    const params = uniformU32(device, [chunkBf, bfOffset, 0, 0], `showptycho gqk transform params ${i}`);
+    const params = uniformU32(device, [chunkBf, bfOffset, 0, 0], `ssb gqk transform params ${i}`);
     const enc = device.createCommandEncoder();
-    if (scalePipe) {
-      const bind = device.createBindGroup({
-        layout: scalePipe.getBindGroupLayout(0),
-        entries: [
-          { binding: 0, resource: { buffer: gqkChunks[i] } },
-          { binding: 2, resource: { buffer: scales } },
-          { binding: 3, resource: { buffer: params } },
-        ],
-      });
-      const pass = enc.beginComputePass({ label: "showptycho gqk scaleMax" });
-      pass.setPipeline(scalePipe);
-      pass.setBindGroup(0, bind);
-      pass.dispatchWorkgroups(1, 1, chunkBf);
-      pass.end();
-    }
     const compactEntries: GPUBindGroupEntry[] = [
       { binding: 0, resource: { buffer: gqkChunks[i] } },
       { binding: 1, resource: { buffer: dst } },
       { binding: 3, resource: { buffer: params } },
     ];
-    if (mode === "herm16") compactEntries.push({ binding: 2, resource: { buffer: scales } });
     const compactBind = device.createBindGroup({
       layout: compactPipe.getBindGroupLayout(0),
       entries: compactEntries,
     });
-    const pass = enc.beginComputePass({ label: "showptycho gqk compact" });
+    const pass = enc.beginComputePass({ label: "ssb gqk compact" });
     pass.setPipeline(compactPipe);
     pass.setBindGroup(0, compactBind);
     pass.dispatchWorkgroups(Math.ceil(storedPlane / 256), 1, chunkBf);
@@ -1097,11 +1028,7 @@ async function transformGqkChunks(
     residentBytes += chunkBf * storedPlane * bytesPer;
     bfOffset += chunkBf;
   }
-  if (mode !== "herm16") {
-    scales.destroy();
-    return { chunks: out, scales: null, residentBytes };
-  }
-  return { chunks: out, scales, residentBytes: residentBytes + activeBfCount * 4 };
+  return { chunks: out, residentBytes };
 }
 
 
@@ -1131,7 +1058,7 @@ function dataUrlsFromSource(source: H5SsbSource): string[] {
 function detectorFlatPixels(cal: SsbCal, activeIndices: Uint32Array): Uint32Array {
   const detCols = Number(cal.detector_shape?.[1] || 0);
   if (!detCols || !cal.bf_rows || !cal.bf_cols) {
-    throw new Error("Compressed-source ShowPtycho needs detector_shape plus bf_rows/bf_cols in cal.json.");
+    throw new Error("Compressed-source SSB needs detector_shape plus bf_rows/bf_cols in cal.json.");
   }
   const out = new Uint32Array(activeIndices.length);
   for (let i = 0; i < activeIndices.length; i++) {
@@ -1184,7 +1111,7 @@ async function buildH5GqkChunks(
     message: "Preparing WebGPU kernels",
     detail: `Building HDF5 gather and FFT kernels for ${n}x${n}`,
   });
-  const module = device.createShaderModule({ code: makeH5GqkShader(n), label: `ShowPtycho HDF5 gather+FFT ${n}` });
+  const module = device.createShaderModule({ code: makeH5GqkShader(n), label: `SSB HDF5 gather+FFT ${n}` });
   const gatherPipe = device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "gather" } });
   const rowsPipe = device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "fftRows" } });
   const colsPipe = device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "fftCols" } });
@@ -1199,16 +1126,16 @@ async function buildH5GqkChunks(
     gqkChunks.push(device.createBuffer({
       size: bytes,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
-      label: `showptycho transient hdf5 G(q,k) ${bfOffset}`,
+      label: `ssb transient hdf5 G(q,k) ${bfOffset}`,
     }));
     chunkBfCounts.push(chunkBf);
     bfIndexBuffers.push(makeBufferFromU32(
       device,
       activeFlat.subarray(bfOffset, bfOffset + chunkBf),
       GPUBufferUsage.STORAGE,
-      `showptycho hdf5 bf index ${bfOffset}`,
+      `ssb hdf5 bf index ${bfOffset}`,
     ));
-    fftParamBuffers.push(uniformU32(device, [chunkBf, plane, 0, 0], `showptycho hdf5 fft params ${bfOffset}`));
+    fftParamBuffers.push(uniformU32(device, [chunkBf, plane, 0, 0], `ssb hdf5 fft params ${bfOffset}`));
   }
 
   const dataUrls = dataUrlsFromSource(source);
@@ -1227,17 +1154,17 @@ async function buildH5GqkChunks(
       detail: "Checking master HDF5 file and hot-pixel table",
     });
     const masterBytes = await readSourceBytes(source.masterUrl);
-    const info = readH5MasterInfo(masterBytes.buffer.slice(masterBytes.byteOffset, masterBytes.byteOffset + masterBytes.byteLength) as ArrayBuffer, "showptycho-master");
+    const info = readH5MasterInfo(masterBytes.buffer.slice(masterBytes.byteOffset, masterBytes.byteOffset + masterBytes.byteLength) as ArrayBuffer, "ssb-master");
     badPixels = info.badPixels.length;
   } catch (err) {
-    console.warn("[showptycho] could not read HDF5 master metadata", err);
+    console.warn("[ssb] could not read HDF5 master metadata", err);
   }
 
   const decodeDtype = source.decodeDtype || "uint16";
   const finiteDataUrlCount = source.dataUrls && source.dataUrls.length > 0 ? source.dataUrls.length : undefined;
   const disableIndexedPrefetch =
     typeof globalThis !== "undefined"
-    && (globalThis as { __QUANTEM_SHOWPTYCHO_DISABLE_H5_PREFETCH__?: boolean }).__QUANTEM_SHOWPTYCHO_DISABLE_H5_PREFETCH__ === true;
+    && (globalThis as { __QUANTEM_SSB_DISABLE_H5_PREFETCH__?: boolean }).__QUANTEM_SSB_DISABLE_H5_PREFETCH__ === true;
   const indexedPrefetchWindow = disableIndexedPrefetch ? 1 : h5IndexedPrefetchWindow();
   const decodeAndGather = async (
     h5Chunk: Bslz4Spec,
@@ -1280,7 +1207,7 @@ async function buildH5GqkChunks(
       const params = uniformU32(
         device,
         [sourceFrames, scanChunk.nFrames, detSize, dec.mode, chunkBf, plane, 0, 0],
-        `showptycho hdf5 gather params ${fileIndex}-${chunkIndex}-${i}`,
+        `ssb hdf5 gather params ${fileIndex}-${chunkIndex}-${i}`,
       );
       gatherTemps.push(params);
       const bind = device.createBindGroup({
@@ -1474,7 +1401,7 @@ async function buildH5GqkChunks(
       total: finiteDataUrlCount,
       sourceFrames,
     });
-    const vol = readH5Volume(buf, `showptycho-data-${fileIndex}`);
+    const vol = readH5Volume(buf, `ssb-data-${fileIndex}`);
     parseMs += performance.now() - parseT;
     if (vol.detSize !== Number(cal.detector_shape?.[0] || 0) * Number(cal.detector_shape?.[1] || 0)) {
       throw new Error(
@@ -1537,12 +1464,12 @@ async function buildH5GqkChunks(
   bfIndexBuffers.forEach(b => b.destroy());
   fftParamBuffers.forEach(b => b.destroy());
   console.log(
-    `[showptycho] HDF5 source prepared ${activeSourceIndices.length} BF from ${sourceFrames} frames `
+    `[ssb] HDF5 source prepared ${activeSourceIndices.length} BF from ${sourceFrames} frames `
     + `compressed ${(fetchBytes / 1e9).toFixed(2)} GB, hot px ${badPixels}, `
     + `fetch ${fetchMs.toFixed(1)} ms wall ${fetchWallMs.toFixed(1)} ms parse ${parseMs.toFixed(1)} ms decode ${decodeMs.toFixed(1)} ms `
     + `gather ${gatherMs.toFixed(1)} ms fft ${fftMs.toFixed(1)} ms total ${(performance.now() - t0).toFixed(1)} ms`,
   );
-  (globalThis as unknown as { __showptychoH5Profile?: unknown }).__showptychoH5Profile = {
+  (globalThis as unknown as { __ssbH5Profile?: unknown }).__ssbH5Profile = {
     compressedGB: +(fetchBytes / 1e9).toFixed(3),
     sourceFrames,
     activeBf: activeSourceIndices.length,
@@ -1578,7 +1505,6 @@ function makeParams(
   bfCount?: number,
   bfOffset = 0,
   chunkBf?: number,
-  fullStack = false,
   computeLoss = true,
   activeBfCount = bfCount,
   fullAberration = false,
@@ -1603,7 +1529,7 @@ function makeParams(
   f[14] = cal.dc_value[1];
   f[15] = 1 / plane;
   u[16] = Math.max(1, Math.min(u[0], Math.round(chunkBf || u[0])));
-  u[17] = fullStack ? 1 : 0;
+  u[17] = 0;
   u[18] = Math.max(1, Math.ceil(Math.max(1, Math.round(activeBfCount || u[0])) / REDUCE_BF_GROUP));
   u[19] = computeLoss ? 1 : 0;
   u[20] = Math.max(1, Math.round(activeBfCount || u[0]));
@@ -1746,10 +1672,6 @@ async function readF32(device: GPUDevice, buffer: GPUBuffer, length: number): Pr
   return out;
 }
 
-function bytesFromDataView(view: DataView): Uint8Array {
-  return new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
-}
-
 async function fetchRangeBytes(url: string, byteOffset: number, byteLength: number): Promise<Uint8Array> {
   const bytes = await readSourceBytes(url, byteOffset, byteLength);
   if (bytes.byteLength < byteLength) {
@@ -1838,7 +1760,7 @@ function h5DecodeChunkTargetBytes(maxStorageBindingSize?: number): number {
 
 function h5IndexedPrefetchWindow(): number {
   const raw = typeof globalThis !== "undefined"
-    ? (globalThis as { __QUANTEM_SHOWPTYCHO_H5_PREFETCH_WINDOW__?: number }).__QUANTEM_SHOWPTYCHO_H5_PREFETCH_WINDOW__
+    ? (globalThis as { __QUANTEM_SSB_H5_PREFETCH_WINDOW__?: number }).__QUANTEM_SSB_H5_PREFETCH_WINDOW__
     : undefined;
   if (Number.isFinite(raw)) return Math.max(1, Math.min(6, Math.floor(Number(raw))));
   return 1;
@@ -1878,9 +1800,8 @@ function makeIndexedBslz4Spec(
   };
 }
 
-async function fetchPackedActiveBfBytes(
-  fullBytes: Uint8Array | null,
-  url: string | null,
+async function fetchPackedBfColumnBytes(
+  url: string,
   activeIndices: Uint32Array,
   activeOffset: number,
   activeCount: number,
@@ -1901,12 +1822,7 @@ async function fetchPackedActiveBfBytes(
     }
     const srcByteOffset = srcStart * bytesPerBf;
     const runBytes = runBf * bytesPerBf;
-    if (fullBytes && fullBytes.byteLength >= srcByteOffset + runBytes) {
-      out.set(fullBytes.subarray(srcByteOffset, srcByteOffset + runBytes), dstBf * bytesPerBf);
-    } else {
-      if (!url) throw new Error("Missing BF-G WebGPU payload");
-      out.set(await fetchRangeBytes(url, srcByteOffset, runBytes), dstBf * bytesPerBf);
-    }
+    out.set(await fetchRangeBytes(url, srcByteOffset, runBytes), dstBf * bytesPerBf);
     dstBf += runBf;
   }
   return out;
@@ -1966,7 +1882,7 @@ async function buildBfColumnGqkChunks(
     percent: 10,
     sourceFrames: plane,
   });
-  const module = device.createShaderModule({ code: makeH5GqkShader(n), label: `ShowPtycho BF-column gather+FFT ${n}` });
+  const module = device.createShaderModule({ code: makeH5GqkShader(n), label: `SSB BF-column gather+FFT ${n}` });
   const unpackPipe = device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "bfColumnsToGqk" } });
   const rowsPipe = device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "fftRows" } });
   const colsPipe = device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "fftCols" } });
@@ -1980,10 +1896,10 @@ async function buildBfColumnGqkChunks(
     gqkChunks.push(device.createBuffer({
       size: chunkBf * plane * 8,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
-      label: `showptycho transient bf-column G(q,k) ${bfOffset}`,
+      label: `ssb transient bf-column G(q,k) ${bfOffset}`,
     }));
     chunkBfCounts.push(chunkBf);
-    fftParamBuffers.push(uniformU32(device, [chunkBf, plane, 0, 0], `showptycho bf-column fft params ${bfOffset}`));
+    fftParamBuffers.push(uniformU32(device, [chunkBf, plane, 0, 0], `ssb bf-column fft params ${bfOffset}`));
   }
 
   let fetchBytes = 0;
@@ -2002,7 +1918,7 @@ async function buildBfColumnGqkChunks(
       sourceFrames: plane,
     });
     const fetchT = performance.now();
-    const packed = await fetchPackedActiveBfBytes(null, source.url, activeSourceIndices, bfOffset, chunkBf, bytesPerBf);
+    const packed = await fetchPackedBfColumnBytes(source.url, activeSourceIndices, bfOffset, chunkBf, bytesPerBf);
     fetchMs += performance.now() - fetchT;
     fetchBytes += packed.byteLength;
     const gatherT = performance.now();
@@ -2010,12 +1926,12 @@ async function buildBfColumnGqkChunks(
       device,
       packed,
       GPUBufferUsage.STORAGE,
-      `showptycho bf-column packed ${bfOffset}`,
+      `ssb bf-column packed ${bfOffset}`,
     );
     const params = uniformU32(
       device,
       [0, 0, 0, mode, chunkBf, plane, 0, 0],
-      `showptycho bf-column unpack params ${bfOffset}`,
+      `ssb bf-column unpack params ${bfOffset}`,
     );
     const bind = device.createBindGroup({
       layout: unpackPipe.getBindGroupLayout(0),
@@ -2026,7 +1942,7 @@ async function buildBfColumnGqkChunks(
       ],
     });
     const enc = device.createCommandEncoder();
-    const pass = enc.beginComputePass({ label: "showptycho bf-column unpack" });
+    const pass = enc.beginComputePass({ label: "ssb bf-column unpack" });
     pass.setPipeline(unpackPipe);
     pass.setBindGroup(0, bind);
     pass.dispatchWorkgroups(
@@ -2094,11 +2010,11 @@ async function buildBfColumnGqkChunks(
   fftParamBuffers.forEach(b => b.destroy());
   const totalMs = performance.now() - t0;
   console.log(
-    `[showptycho] BF-column source prepared ${activeSourceIndices.length} BF from ${plane} scan positions `
+    `[ssb] BF-column source prepared ${activeSourceIndices.length} BF from ${plane} scan positions `
     + `read ${(fetchBytes / 1e9).toFixed(2)} GB ${source.encoding || source.dtype || "uint16"}, `
     + `fetch ${fetchMs.toFixed(1)} ms unpack ${gatherMs.toFixed(1)} ms fft ${fftMs.toFixed(1)} ms total ${totalMs.toFixed(1)} ms`,
   );
-  (globalThis as unknown as { __showptychoBfColumnProfile?: unknown }).__showptychoBfColumnProfile = {
+  (globalThis as unknown as { __ssbBfColumnProfile?: unknown }).__ssbBfColumnProfile = {
     transport: "bf_columns",
     encodedGB: +(fetchBytes / 1e9).toFixed(3),
     sourceFrames: plane,
@@ -2144,7 +2060,7 @@ function chooseChunkCapacity(nbf: number, plane: number, device: GPUDevice): num
   const maxBytes = Math.max(1, Math.min(safeStorage, safeBuffer, MAX_GQK_CHUNK_BYTES));
   const maxByComplexBuffer = Math.max(1, Math.floor(maxBytes / (plane * 8)));
   const override = typeof globalThis !== "undefined"
-    ? (globalThis as { __QUANTEM_SHOWPTYCHO_CHUNK_BF_CAP__?: number }).__QUANTEM_SHOWPTYCHO_CHUNK_BF_CAP__
+    ? (globalThis as { __QUANTEM_SSB_CHUNK_BF_CAP__?: number }).__QUANTEM_SSB_CHUNK_BF_CAP__
     : undefined;
   const diagnosticCap = Number.isFinite(override) ? Math.max(1, Math.floor(Number(override))) : Number.MAX_SAFE_INTEGER;
   const raw = Math.max(1, Math.min(nbf, MAX_BF_WORKGROUPS_PER_SUBMIT, maxByComplexBuffer, diagnosticCap));
@@ -2152,14 +2068,12 @@ function chooseChunkCapacity(nbf: number, plane: number, device: GPUDevice): num
   return Math.max(REDUCE_BF_GROUP, Math.floor(raw / REDUCE_BF_GROUP) * REDUCE_BF_GROUP);
 }
 
-function canUseFullStack(nbf: number, plane: number, device: GPUDevice): boolean {
-  // The full-stack path keeps one giant stage/phase stack and is disabled for
-  // the browser review contract; chunking remains safer for multi-GB folders.
-  void nbf; void plane; void device;
-  return false;
-}
-
-export class ShowPtychoWebGPUSSB {
+export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
+  readonly backend = "webgpu" as const;
+  readonly precision = {
+    real_dtype: "float32",
+    complex_dtype: "complex64",
+  } as const;
   private cal: SsbCal;
   private n: SupportedSsbSize;
   private plane: number;
@@ -2176,26 +2090,30 @@ export class ShowPtychoWebGPUSSB {
   private geometryRotationDeg: number | null = null;
   private onProgress: WebGPUProgressHandler | null = null;
 
-  constructor(calJson: string, gBfSource: DataView | string | { kind: "hdf5" | "bf_columns"; json: string }) {
+  constructor(
+    calJson: string,
+    detectorSource: { kind: "hdf5" | "bf_columns"; json: string },
+  ) {
     if (!globalThis.isSecureContext || !navigator.gpu) {
       throw new Error(
-        "ShowPtycho WebGPU folder needs browser WebGPU. Open it from http://127.0.0.1, localhost, or HTTPS; LAN-IP HTTP pages cannot use WebGPU.",
+        "SSB WebGPU folder needs browser WebGPU. Open it from http://127.0.0.1, localhost, or HTTPS; LAN-IP HTTP pages cannot use WebGPU.",
       );
     }
     this.cal = JSON.parse(calJson) as SsbCal;
+    if (
+      this.cal.precision?.real_dtype !== "float32"
+      || this.cal.precision?.complex_dtype !== "complex64"
+    ) {
+      throw new Error(
+        "SSB WebGPU requires the quantem.gpu float32/complex64 SSB precision contract.",
+      );
+    }
     const ny = Number(this.cal.g_shape?.[1] || 0);
     const nx = Number(this.cal.g_shape?.[2] || 0);
-    // Accept legacy square (n x n) and rfft half-plane (n x n/2+1)
-    // calibration shapes - CUDA/MPS backends store Hermitian-half G_qk and export
-    // that shape. The viewer only derives the scan size n here; it rebuilds
-    // its own G(q,k) from the folder source, so the backend layout is
-    // irrelevant beyond n. Flattened scan positions (N, det, det) are already
-    // squared by the loaders before g_shape is written.
-    const squareN = ny === nx ? ny : (nx === ny / 2 + 1 ? ny : 0);
-    const n = supportedSsbSize(squareN);
+    const n = supportedSsbSize(ny === nx ? ny : 0);
     if (!n) {
       throw new Error(
-        `WebGPU SSB supports square ${SUPPORTED_SSB_SIZES.join("/")} G(k) or rfft half-plane G(k), got ${this.cal.g_shape?.join("x")}`,
+        `WebGPU SSB supports square ${SUPPORTED_SSB_SIZES.join("/")} scan grids, got ${this.cal.g_shape?.join("x")}`,
       );
     }
     this.n = n;
@@ -2204,25 +2122,39 @@ export class ShowPtychoWebGPUSSB {
       1,
       Math.min(this.cal.num_bf, Math.round(Number(this.cal.num_bf || 1))),
     );
-    if (typeof gBfSource === "string") {
-      this.source = { kind: "g-bf", bytes: null, url: gBfSource };
-    } else if (gBfSource && typeof gBfSource === "object" && "kind" in gBfSource && gBfSource.kind === "hdf5") {
-      const parsed = JSON.parse(gBfSource.json) as H5SsbSource | BfColumnSsbSource;
+    if (detectorSource.kind === "hdf5") {
+      const parsed = JSON.parse(detectorSource.json) as H5SsbSource | BfColumnSsbSource;
       this.source = parsed.kind === "bf_columns"
         ? { kind: "bf-columns", source: parsed as BfColumnSsbSource }
         : { kind: "hdf5", source: parsed as H5SsbSource };
-    } else if (gBfSource && typeof gBfSource === "object" && "kind" in gBfSource && gBfSource.kind === "bf_columns") {
-      this.source = { kind: "bf-columns", source: JSON.parse(gBfSource.json) as BfColumnSsbSource };
     } else {
-      this.source = { kind: "g-bf", bytes: bytesFromDataView(gBfSource as DataView), url: null };
+      this.source = {
+        kind: "bf-columns",
+        source: JSON.parse(detectorSource.json) as BfColumnSsbSource,
+      };
     }
   }
 
   get readyLabel(): string {
     const src = this.source.kind === "hdf5"
       ? "compressed HDF5 source"
-      : this.source.kind === "bf-columns" ? "detector BF columns" : "BF-G cache";
+      : "detector BF columns";
     return `WebGPU SSB ready: ${this.n}x${this.n}, ${this.cal.num_bf} BF pixels, ${src}`;
+  }
+
+  async prepare(): Promise<void> {
+    await this.prepareBfCount(this.cal.num_bf);
+  }
+
+  async fit(
+    options: WebGPUOptimizationOptions,
+  ): Promise<SSBOptimizationResult> {
+    return fit(options);
+  }
+
+  close(): void {
+    this.resetGpuBuffers();
+    this.device = null;
   }
 
   setProgressHandler(handler: WebGPUProgressHandler | null): void {
@@ -2276,7 +2208,6 @@ export class ShowPtychoWebGPUSSB {
   private resetGpuBuffers(): void {
     if (this.buffers) {
       this.buffers.gqkChunks.forEach(buffer => buffer.destroy());
-      this.buffers.gqkScales?.destroy();
       this.buffers.paramsChunks.forEach(buffer => buffer.destroy());
       this.buffers.params.destroy();
       this.buffers.aberrations.destroy();
@@ -2316,40 +2247,35 @@ export class ShowPtychoWebGPUSSB {
     });
     const device = this.device || await getGPUDevice();
     if (!device) throw new Error("WebGPU device unavailable");
+    const fftConfig = getWebGPUFFTConfig(n);
+    if (!fftConfig) throw new Error(`Missing WebGPU SSB FFT configuration for ${n}.`);
     if (
-      device.limits.maxComputeInvocationsPerWorkgroup < Math.min(n, 256)
-      || device.limits.maxComputeWorkgroupSizeX < Math.min(n, 256)
+      device.limits.maxComputeInvocationsPerWorkgroup < fftConfig.workgroupSize
+      || device.limits.maxComputeWorkgroupSizeX < fftConfig.workgroupSize
     ) {
       throw new Error(
         `WebGPU adapter supports workgroup x=${device.limits.maxComputeWorkgroupSizeX}, `
         + `invocations=${device.limits.maxComputeInvocationsPerWorkgroup}; `
-        + `${n}x${n} SSB needs ${Math.min(n, 256)} threads plus ${(n * 8 / 1024).toFixed(1)} KB workgroup storage.`,
+        + `${n}x${n} SSB needs ${fftConfig.workgroupSize} threads plus ${(n * 8 / 1024).toFixed(1)} KB workgroup storage.`,
       );
     }
     this.device = device;
     const nbf = Math.max(1, Math.min(this.cal.num_bf, Math.round(capacity)));
     let activeSourceIndices = collectActiveBfIndices(this.cal, nbf, rotationDeg);
-    // GPU-memory clamp: resident G(q,k) is activeBf x storedPlane x bytesPer.
-    // Cap the active set so one full-BF drag cannot exceed the budget and
-    // device-lost the tab on a small GPU. Uniform stride keeps BF coverage.
+    // Full-BF scientific runs must use the identical detector evidence on
+    // every backend. A memory budget may reject a run, but it must never
+    // silently replace the exact objective with a uniformly strided subset.
     const clampMode = resolveGqkMode();
     const perBfBytes = storedPlaneFor(n) * gqkBytesPerValue(clampMode);
     const budgetMaxBf = Math.max(1, Math.floor(gqkBudgetBytes() / perBfBytes));
     if (activeSourceIndices.length > budgetMaxBf) {
-      const stride = activeSourceIndices.length / budgetMaxBf;
-      const clamped = new Uint32Array(budgetMaxBf);
-      for (let i = 0; i < budgetMaxBf; i++) clamped[i] = activeSourceIndices[Math.floor(i * stride)];
-      console.warn(
-        `[showptycho] BF clamped ${activeSourceIndices.length} -> ${budgetMaxBf} by GPU budget `
-        + `(${(gqkBudgetBytes() / 1e9).toFixed(1)} GB, ${(perBfBytes / 1e6).toFixed(1)} MB/BF in ${clampMode} mode)`,
+      throw new Error(
+        `Exact full-BF WebGPU SSB needs ${activeSourceIndices.length} active BF pixels, `
+        + `but the ${(gqkBudgetBytes() / 1e9).toFixed(1)} GB GPU budget fits ${budgetMaxBf} `
+        + `(${(perBfBytes / 1e6).toFixed(1)} MB/BF in ${clampMode} mode). `
+        + "Use a GPU with sufficient memory or an explicitly labeled preview; "
+        + "scientific fitting never subsamples automatically.",
       );
-      this.emitProgress({
-        stage: "pipeline",
-        message: `BF capped at ${budgetMaxBf} by GPU memory budget`,
-        detail: `${(gqkBudgetBytes() / 1e9).toFixed(1)} GB budget, ${(perBfBytes / 1e6).toFixed(1)} MB per BF pixel (${clampMode})`,
-        activeBf: budgetMaxBf,
-      });
-      activeSourceIndices = clamped;
     }
     const nonzeroBfCount = activeSourceIndices.length;
     const activeIndices = nonzeroBfCount > 0 ? activeSourceIndices : new Uint32Array([0]);
@@ -2357,22 +2283,19 @@ export class ShowPtychoWebGPUSSB {
     const bytesPerBf = plane * Float32Array.BYTES_PER_ELEMENT * 2;
     const expectedBytes = nbf * bytesPerBf;
     const activeBytes = activeBfCount * bytesPerBf;
-    const fullStack = canUseFullStack(nbf, plane, device);
-    const storageChunkCapacity = fullStack ? activeBfCount : chooseChunkCapacity(activeBfCount, plane, device);
-    const dispatchChunkCapacity = fullStack
-      ? Math.min(activeBfCount, MAX_BF_WORKGROUPS_PER_SUBMIT)
-      : storageChunkCapacity;
+    const storageChunkCapacity = chooseChunkCapacity(activeBfCount, plane, device);
+    const dispatchChunkCapacity = storageChunkCapacity;
     const dispatchCount = Math.ceil(activeBfCount / dispatchChunkCapacity);
     const partialGroups = Math.ceil(activeBfCount / REDUCE_BF_GROUP);
     console.log(
-      `[showptycho] WebGPU SSB setup start ${nbf}/${this.cal.num_bf} BF `
+      `[ssb] WebGPU SSB setup start ${nbf}/${this.cal.num_bf} BF `
       + `${(expectedBytes / 1e6).toFixed(1)} MB source; `
       + `${nonzeroBfCount}/${nbf} active aperture BF `
       + `${(activeBytes / 1e6).toFixed(1)} MB upload `
-      + `${fullStack ? "full-stack" : `in chunks of ${storageChunkCapacity}`}`,
+      + `in chunks of ${storageChunkCapacity}`,
     );
     console.log(
-      `[showptycho] WebGPU limits buffer=${device.limits.maxBufferSize} `
+      `[ssb] WebGPU limits buffer=${device.limits.maxBufferSize} `
       + `storageBinding=${device.limits.maxStorageBufferBindingSize} `
       + `storageBuffers=${device.limits.maxStorageBuffersPerShaderStage}`,
     );
@@ -2397,7 +2320,7 @@ export class ShowPtychoWebGPUSSB {
       );
     }
     const gqkStorageMode = resolveGqkMode();
-    const module = device.createShaderModule({ code: makeSsbShader(n, gqkStorageMode), label: `ShowPtycho SSB WGSL ${n} ${gqkStorageMode}` });
+    const module = device.createShaderModule({ code: makeSsbShader(n, gqkStorageMode), label: `SSB SSB WGSL ${n} ${gqkStorageMode}` });
     const pipelines: SsbPipelines = {
       rows: device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "ssbRows" } }),
       cols: device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "ssbCols" } }),
@@ -2441,79 +2364,52 @@ export class ShowPtychoWebGPUSSB {
       );
       gqkChunks = built.gqkChunks;
       chunkBfCounts = built.chunkBfCounts;
-    } else {
-      for (let bfOffset = 0; bfOffset < activeBfCount; bfOffset += storageChunkCapacity) {
-        const chunkBf = Math.min(storageChunkCapacity, activeBfCount - bfOffset);
-        const chunkBytes = chunkBf * bytesPerBf;
-        const gBytes = await fetchPackedActiveBfBytes(this.source.bytes, this.source.url, activeSourceIndices, bfOffset, chunkBf, bytesPerBf);
-        if (gBytes.byteLength !== chunkBytes) {
-          throw new Error(
-            `G(k) chunk is ${(gBytes.byteLength / 1e6).toFixed(1)} MB; `
-            + `expected ${(chunkBytes / 1e6).toFixed(1)} MB for ${chunkBf}x${n}x${n} complex64.`,
-          );
-        }
-        this.emitProgress({
-          stage: "fetch",
-          message: "Reading BF-G cache",
-          detail: `${bfOffset + chunkBf}/${activeBfCount} BF pixels uploaded`,
-          current: bfOffset + chunkBf,
-          total: activeBfCount,
-          percent: Math.min(85, ((bfOffset + chunkBf) / activeBfCount) * 75),
-          activeBf: activeBfCount,
-          elapsedMs: performance.now() - setupT0,
-        });
-        gqkChunks.push(makeBufferFromBytes(device, gBytes, GPUBufferUsage.STORAGE, `showptycho g_bf chunk ${bfOffset}`));
-        chunkBfCounts.push(chunkBf);
-        const sourceStart = nonzeroBfCount > 0 ? activeSourceIndices[bfOffset] : 0;
-        const sourceEnd = nonzeroBfCount > 0 ? activeSourceIndices[bfOffset + chunkBf - 1] : 0;
-        console.log(
-          `[showptycho] WebGPU SSB setup chunk ${gqkChunks.length} active ${bfOffset}-${bfOffset + chunkBf - 1} `
-          + `source ${sourceStart}-${sourceEnd} `
-          + `uploaded in ${(performance.now() - setupT0).toFixed(1)} ms`,
-        );
-      }
     }
-    const transformed = await transformGqkChunks(device, n, gqkStorageMode, gqkChunks, chunkBfCounts, activeBfCount);
+    const transformed = await transformGqkChunks(
+      device,
+      n,
+      gqkStorageMode,
+      gqkChunks,
+      chunkBfCounts,
+    );
     gqkChunks = transformed.chunks;
     console.log(
-      `[showptycho] gqk mode ${gqkStorageMode}: resident ${(transformed.residentBytes / 1e9).toFixed(2)} GB `
+      `[ssb] gqk mode ${gqkStorageMode}: resident ${(transformed.residentBytes / 1e9).toFixed(2)} GB `
       + `for ${chunkBfCounts.reduce((acc, bf) => acc + bf, 0)} active BF pixels`,
     );
     const buffers: SsbBuffers = {
-      params: device.createBuffer({ size: 96, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, label: "showptycho ssb params" }),
+      params: device.createBuffer({ size: 96, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, label: "ssb ssb params" }),
       paramsChunks: Array.from({ length: dispatchCount }, (_, index) => device.createBuffer({
         size: 96,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-        label: `showptycho ssb params chunk ${index}`,
+        label: `ssb ssb params chunk ${index}`,
       })),
       aberrations: makeBufferFromF32(
         device,
         packAberrations(0, 0, 0).data,
         GPUBufferUsage.STORAGE,
-        "showptycho aberrations",
+        "ssb aberrations",
       ),
       gqkChunks,
-      gqkScales: transformed.scales,
       gqkMode: gqkStorageMode,
       gqkResidentBytes: transformed.residentBytes,
       chunkBfCounts,
       chunkCapacity: storageChunkCapacity,
       dispatchChunkCapacity,
-      fullStack,
-      stage: device.createBuffer({ size: storageChunkCapacity * plane * 8, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, label: "showptycho ssb stage" }),
-      phaseStack: device.createBuffer({ size: storageChunkCapacity * plane * 4, usage: GPUBufferUsage.STORAGE, label: "showptycho phase stack" }),
-      partialSum: device.createBuffer({ size: partialGroups * plane * 4, usage: GPUBufferUsage.STORAGE, label: "showptycho phase partial sum" }),
-      partialSumSq: device.createBuffer({ size: partialGroups * plane * 4, usage: GPUBufferUsage.STORAGE, label: "showptycho phase partial sumsq" }),
+      stage: device.createBuffer({ size: storageChunkCapacity * plane * 8, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, label: "ssb ssb stage" }),
+      phaseStack: device.createBuffer({ size: storageChunkCapacity * plane * 4, usage: GPUBufferUsage.STORAGE, label: "ssb phase stack" }),
+      partialSum: device.createBuffer({ size: partialGroups * plane * 4, usage: GPUBufferUsage.STORAGE, label: "ssb phase partial sum" }),
+      partialSumSq: device.createBuffer({ size: partialGroups * plane * 4, usage: GPUBufferUsage.STORAGE, label: "ssb phase partial sumsq" }),
       partialGroups,
       activeBfCount,
       nonzeroBfCount,
       activeSourceIndices: activeIndices,
-      phase: device.createBuffer({ size: plane * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC, label: "showptycho phase" }),
-      variance: device.createBuffer({ size: plane * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC, label: "showptycho variance" }),
-      bfGeom: makeBufferFromF32(device, geom, GPUBufferUsage.STORAGE, "showptycho bf geometry"),
-      bfTrig: makeBufferFromF32(device, trig, GPUBufferUsage.STORAGE, "showptycho bf trig"),
-      qx: makeBufferFromF32(device, new Float32Array(this.cal.qx_1d), GPUBufferUsage.STORAGE, "showptycho qx"),
-      qy: makeBufferFromF32(device, new Float32Array(this.cal.qy_1d), GPUBufferUsage.STORAGE, "showptycho qy"),
+      phase: device.createBuffer({ size: plane * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC, label: "ssb phase" }),
+      variance: device.createBuffer({ size: plane * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC, label: "ssb variance" }),
+      bfGeom: makeBufferFromF32(device, geom, GPUBufferUsage.STORAGE, "ssb bf geometry"),
+      bfTrig: makeBufferFromF32(device, trig, GPUBufferUsage.STORAGE, "ssb bf trig"),
+      qx: makeBufferFromF32(device, new Float32Array(this.cal.qx_1d), GPUBufferUsage.STORAGE, "ssb qx"),
+      qy: makeBufferFromF32(device, new Float32Array(this.cal.qy_1d), GPUBufferUsage.STORAGE, "ssb qy"),
     };
     const chunkBufferIndex = (index: number) => {
       const bfOffset = index * buffers.dispatchChunkCapacity;
@@ -2532,9 +2428,6 @@ export class ShowPtychoWebGPUSSB {
           { binding: 6, resource: { buffer: buffers.qy } },
           { binding: 12, resource: { buffer: buffers.aberrations } },
         ];
-        if (buffers.gqkMode === "herm16" && buffers.gqkScales) {
-          entries.push({ binding: 13, resource: { buffer: buffers.gqkScales } });
-        }
         return device.createBindGroup({
           layout: pipelines.rows.getBindGroupLayout(0),
           entries,
@@ -2580,9 +2473,6 @@ export class ShowPtychoWebGPUSSB {
           { binding: 6, resource: { buffer: buffers.qy } },
           { binding: 12, resource: { buffer: buffers.aberrations } },
         ];
-        if (buffers.gqkMode === "herm16" && buffers.gqkScales) {
-          entries.push({ binding: 13, resource: { buffer: buffers.gqkScales } });
-        }
         return device.createBindGroup({ layout: pipelines.objSum.getBindGroupLayout(0), entries });
       }),
       objFftRows: device.createBindGroup({
@@ -2613,7 +2503,7 @@ export class ShowPtychoWebGPUSSB {
     this.loadedBfCount = nbf;
     this.geometryRotationDeg = rotationDeg == null || !Number.isFinite(rotationDeg) ? baseRotationDeg(this.cal) : Number(rotationDeg);
     console.log(
-      `[showptycho] WebGPU SSB setup ready ${nbf}/${this.cal.num_bf} BF `
+      `[ssb] WebGPU SSB setup ready ${nbf}/${this.cal.num_bf} BF `
       + `(${nonzeroBfCount} active) in ${(performance.now() - setupT0).toFixed(1)} ms`,
     );
     this.emitProgress({
@@ -2658,15 +2548,11 @@ export class ShowPtychoWebGPUSSB {
   async reconstruct(
     c10: number,
     c12: number,
-    phi12Deg: number,
-    options: {
-      preview?: boolean;
-      bfCount?: number;
-      computeLoss?: boolean;
-      rotationDeg?: number;
-      higherOrder?: Record<string, number>;
-    } = {},
+    phi12: number,
+    options: WebGPUReconstructionOptions = {},
   ): Promise<WebGPUSSBResult> {
+    // Public aberration units match Python CUDA/MPS: nm, nm, radians.
+    const phi12Deg = phi12 * 180 / Math.PI;
     const bfCount = this.clampBfCount(options.bfCount, options.preview);
     const computeLoss = options.computeLoss ?? bfCount === this.cal.num_bf;
     const rotationDeg = options.rotationDeg == null || !Number.isFinite(options.rotationDeg)
@@ -2685,10 +2571,6 @@ export class ShowPtychoWebGPUSSB {
       device.queue.writeBuffer(buffers.aberrations, 0, aberrations.data as unknown as BufferSource);
       const t0 = performance.now();
       const enc = device.createCommandEncoder();
-      if (buffers.fullStack) {
-        // Current canUseFullStack() returns false; the chunked path below is the
-        // maintained path for multi-GB browser folders.
-      }
       // Object-redraw fast path (ported from the CUDA SSB engine): sum
       // corrected G over BF pixels in Fourier space, one iFFT, angle once -
       // skips two FFT passes + atan2 per BF pixel. Displays angle(mean(obj)),
@@ -2707,9 +2589,9 @@ export class ShowPtychoWebGPUSSB {
           device.queue.writeBuffer(
             buffers.paramsChunks[chunkIndex],
             0,
-            makeParams(this.cal, this.n, c10, c12, phi12Deg, bfCount, bfOffset, chunkBf, buffers.fullStack, false, buffers.activeBfCount, aberrations.active),
+            makeParams(this.cal, this.n, c10, c12, phi12Deg, bfCount, bfOffset, chunkBf, false, buffers.activeBfCount, aberrations.active),
           );
-          const pass = enc.beginComputePass({ label: "showptycho ssb obj sum" });
+          const pass = enc.beginComputePass({ label: "ssb ssb obj sum" });
           pass.setPipeline(pipelines.objSum);
           pass.setBindGroup(0, bindGroups.objSum[chunkIndex]);
           pass.dispatchWorkgroups(Math.ceil(this.plane / 256));
@@ -2718,14 +2600,14 @@ export class ShowPtychoWebGPUSSB {
         device.queue.writeBuffer(
           buffers.params,
           0,
-          makeParams(this.cal, this.n, c10, c12, phi12Deg, bfCount, 0, 1, buffers.fullStack, false, buffers.activeBfCount, aberrations.active),
+          makeParams(this.cal, this.n, c10, c12, phi12Deg, bfCount, 0, 1, false, buffers.activeBfCount, aberrations.active),
         );
-        let pass = enc.beginComputePass({ label: "showptycho ssb obj fft rows" });
+        let pass = enc.beginComputePass({ label: "ssb ssb obj fft rows" });
         pass.setPipeline(pipelines.objFftRows);
         pass.setBindGroup(0, bindGroups.objFftRows);
         pass.dispatchWorkgroups(1, this.n);
         pass.end();
-        pass = enc.beginComputePass({ label: "showptycho ssb obj fft cols" });
+        pass = enc.beginComputePass({ label: "ssb ssb obj fft cols" });
         pass.setPipeline(pipelines.objFftCols);
         pass.setBindGroup(0, bindGroups.objFftCols);
         pass.dispatchWorkgroups(1, this.n);
@@ -2774,23 +2656,22 @@ export class ShowPtychoWebGPUSSB {
             bfCount,
             bfOffset,
             chunkBf,
-            buffers.fullStack,
             computeLoss,
             buffers.activeBfCount,
             aberrations.active,
           ),
         );
-        let pass = enc.beginComputePass({ label: "showptycho ssb rows" });
+        let pass = enc.beginComputePass({ label: "ssb ssb rows" });
         pass.setPipeline(pipelines.rows);
         pass.setBindGroup(0, bindGroups.rows[chunkIndex]);
         pass.dispatchWorkgroups(1, this.n, chunkBf);
         pass.end();
-        pass = enc.beginComputePass({ label: "showptycho ssb cols" });
+        pass = enc.beginComputePass({ label: "ssb ssb cols" });
         pass.setPipeline(pipelines.cols);
         pass.setBindGroup(0, bindGroups.cols[chunkIndex]);
         pass.dispatchWorkgroups(1, this.n, chunkBf);
         pass.end();
-        pass = enc.beginComputePass({ label: "showptycho ssb reduce chunk" });
+        pass = enc.beginComputePass({ label: "ssb ssb reduce chunk" });
         pass.setPipeline(pipelines.reducePartial);
         pass.setBindGroup(0, bindGroups.reducePartial[chunkIndex]);
         pass.dispatchWorkgroups(Math.ceil(Math.ceil(chunkBf / REDUCE_BF_GROUP) * this.plane / 256));
@@ -2808,13 +2689,12 @@ export class ShowPtychoWebGPUSSB {
           bfCount,
           0,
           1,
-          buffers.fullStack,
           computeLoss,
           buffers.activeBfCount,
           aberrations.active,
         ),
       );
-      const pass = enc.beginComputePass({ label: "showptycho ssb reduce" });
+      const pass = enc.beginComputePass({ label: "ssb ssb reduce" });
       pass.setPipeline(pipelines.finalizeGroups);
       pass.setBindGroup(0, bindGroups.finalizeGroups);
       pass.dispatchWorkgroups(Math.ceil(this.plane / 256));

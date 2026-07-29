@@ -14,7 +14,7 @@ import math
 import numpy as np
 import cupy as cp
 
-from quantem.gpu.ssb.engine import SSBEngine
+from .engine import SSBEngine
 
 # =========================================================================
 #  Core batch evaluation
@@ -398,7 +398,7 @@ def batch_nelder_mead(
 
 def _eval_single(accel: SSBEngine, x: np.ndarray) -> float:
     """Evaluate one optimizer point without duplicating exact fallback work."""
-    if getattr(accel, "uses_optimizer_reconstruct_fallback", False):
+    if accel.uses_optimizer_reconstruct_fallback:
         return float(accel.variance_loss(float(x[0]), float(x[1]), float(x[2])))
     c10_arr = np.full(4, x[0], dtype=np.float32)
     c12_arr = np.full(4, x[1], dtype=np.float32)

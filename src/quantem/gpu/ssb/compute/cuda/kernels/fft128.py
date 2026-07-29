@@ -7,7 +7,7 @@ CUDA reference-equivalent row mask pinned for the MPS reference path.
 
 from functools import lru_cache
 
-from .fft_common import CustomFFTBase, build_cuda_code
+from .common import CustomFFTBase, build_cuda_code
 
 _TWIDDLE_DECL = '__constant__ float2 TWIDDLE_128[128];'
 

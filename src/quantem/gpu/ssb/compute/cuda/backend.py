@@ -1,31 +1,7 @@
-"""
-GPU-accelerated Single-Sideband (SSB) ptychographic reconstruction.
+"""Private CUDA compute implementation for the public SSB workflow."""
 
-All operations use CuPy exclusively for GPU compute.
-Example:
-    from quantem.gpu.ssb import SSB
-
-    semiangle = 21.9  # mrad
-    bf_radius = 30    # pixels
-    det_sampling = (2 * semiangle) / bf_radius  # mrad/px
-
-    ssb = SSB(data_4d, energy=300e3, semiangle=semiangle,
-              scan_sampling=0.5, det_sampling=det_sampling)
-
-    # Optimize aberrations (Optuna + Grid refinement)
-    ssb.optimize()
-
-    # Reconstruct complex object, then extract phase/amplitude
-    obj = ssb.reconstruct_object()
-    phase = cp.angle(obj)
-    amplitude = cp.abs(obj)
-    print(ssb.aberrations)  # {C10, C12, phi12} in nm/radians
-"""
-
-import copy
 import gc
 import math
-import pathlib
 import time
 import numpy as np
 from itertools import product
@@ -33,7 +9,8 @@ from typing import Literal, Self
 
 import cupy as cp
 
-from quantem.gpu.ssb.engine import SSBEngine
+from .engine import SSBEngine
+from ..protocol import SSBExportState, SSBPrecision
 from quantem.gpu.ssb.optics.physics import electron_wavelength_angstrom
 from quantem.gpu.ssb.results import SSBResult
 
@@ -75,9 +52,6 @@ def spatial_frequencies(
     This is specialized for SSB ptychography and returns 1D arrays by default
     (for efficiency), or rotated 2D arrays if rotation_angle_rad is specified.
 
-    For general 2D frequency grids without rotation, see
-    quantem.gpu.ssb.image.freq_grid_2d which always returns 2D meshgrids.
-
     Parameters
     ----------
     gpts : tuple[int, int]
@@ -93,9 +67,6 @@ def spatial_frequencies(
         1D frequency arrays in inverse-Angstrom (if rotation_angle_rad is None),
         or 2D rotated arrays (if rotation_angle_rad is specified).
 
-    See Also
-    --------
-    quantem.gpu.ssb.image.freq_grid_2d : General 2D frequency grid utility.
     """
     k_row = cp.fft.fftfreq(gpts[0], sampling[0]).astype(cp.float32)
     k_col = cp.fft.fftfreq(gpts[1], sampling[1]).astype(cp.float32)
@@ -114,9 +85,9 @@ def spatial_frequencies(
 #  SSB - GPU-accelerated single-sideband reconstruction
 # =========================================================================
 
-class SSB:
+class CudaSSBBackend:
     """
-    GPU-accelerated Single-Sideband (SSB) ptychographic reconstruction.
+    CUDA compute backend for Single-Sideband ptychographic reconstruction.
 
     SSB reconstructs the complex transmission function of a sample from
     4D-STEM data. Each bright-field (BF) pixel sees the sample through a
@@ -124,13 +95,9 @@ class SSB:
     phase at each BF pixel and averaging, SSB recovers the object's phase
     and amplitude at the scan resolution.
 
-    Typical workflow::
-
-        ssb = SSB(data, voltage_kV=300, semiangle=21.9, scan_sampling=0.5)
-        ssb.optimize(n_trials=200)  # find aberrations (global search)
-        ssb.refine()                # polish aberrations (local search)
-        result = ssb.result()       # reconstruct phase
-        result.show()               # display
+    This class is private compute infrastructure. Scientist code constructs
+    :class:`quantem.gpu.SSB`, which owns public units, validation, fitting, and
+    shared result types.
 
     Parameters
     ----------
@@ -163,7 +130,7 @@ class SSB:
 
     Troubleshooting
     ---------------
-    **Out of memory**: Use ``SSB(..., bf_radius=30)`` to reduce BF pixel
+    **Out of memory**: Use the public workflow's ``bf_radius`` option to reduce BF pixel
     count. Default Hermitian ``G_qk`` storage costs roughly
     ``scan_row × (scan_col/2 + 1) × 8`` bytes per BF pixel; phase/loss
     workflows fetch the missing half-plane on demand inside the CUDA kernels.
@@ -195,6 +162,8 @@ class SSB:
         "phi12_deg": 13,
     }
     _MAX_GRID_BATCH_SIZE = 16
+    backend = "cuda"
+    precision = SSBPrecision()
 
     def __init__(
         self,
@@ -206,7 +175,7 @@ class SSB:
         voltage_kV: float | None = None,
         energy: float | None = None,
         scan_shape: tuple[int, int] | None = None,
-        bf_intensity_threshold: float = 0.5,
+        bf_intensity_threshold: float = 0.0,
         bf_radius: int | None = None,
         aberrations: dict[str, float] | None = None,
         rotation_angle_deg: float = 0.0,
@@ -309,7 +278,7 @@ class SSB:
         # Auto-detect det_sampling from BF radius
         if det_sampling is None:
             from quantem.gpu.detector import detect_bf_radius
-            from quantem.gpu.ssb.preprocess import dp_mean
+            from quantem.gpu.detector import dp_mean
             mean_dp = dp_mean(data)
             if gain is not None:
                 mean_dp = mean_dp.astype(cp.float32, copy=False) * gain
@@ -391,6 +360,8 @@ class SSB:
         self._refine_method: str | None = None
         self._refine_nfev: int | None = None
         self._n_trials: int | None = None
+        self._optuna_trials: list[dict] = []
+        self._optimizer_objective_mode = "exact"
 
     # =====================================================================
     #  VRAM estimation and management
@@ -405,7 +376,6 @@ class SSB:
         """
         stream_bf = 512  # default streaming chunk size
         scan_row, scan_col = self._scan_shape
-        num_bf = len(self.bf_inds_row)
         # staging buffer: batch × stream_bf × scan_row × scan_col × complex64
         staging_bytes = batch_size * stream_bf * scan_row * scan_col * 8
         # pk_buffer: batch × stream_bf × complex64
@@ -462,11 +432,21 @@ class SSB:
         Accepts raw integer or float GPU data. Uses ``dp_mean`` with an
         integer accumulator so no float32 copy of the 4D block is made.
         """
-        from quantem.gpu.ssb.preprocess import dp_mean
-        mean_dp = dp_mean(data)
+        frames = data.reshape(-1, data.shape[-2], data.shape[-1])
+        sum_dtype = (
+            cp.uint64
+            if np.issubdtype(data.dtype, np.integer)
+            else cp.float64
+        )
+        mean_dp = (
+            frames.sum(axis=0, dtype=sum_dtype).astype(cp.float32)
+            / int(frames.shape[0])
+        )
         if detector_gain is not None:
             mean_dp = mean_dp.astype(cp.float32, copy=False) * detector_gain
-        return SSB._compute_bf_mask_from_mean_dp(mean_dp, threshold, bf_radius)
+        return CudaSSBBackend._compute_bf_mask_from_mean_dp(
+            mean_dp, threshold, bf_radius
+        )
 
     @staticmethod
     def _compute_bf_mask_from_mean_dp(
@@ -485,26 +465,58 @@ class SSB:
                 f"{threshold:.2f}. Check that the data "
                 f"contains a visible BF disk, or lower the threshold."
             )
-        weights = mean_dp[bf_inds_row, bf_inds_col].astype(cp.float32)
-        weight_sum = float(weights.sum().get())
-        if weight_sum > 0:
-            center_row = float((bf_inds_row.astype(cp.float32) * weights).sum().get() / weight_sum)
-            center_col = float((bf_inds_col.astype(cp.float32) * weights).sum().get() / weight_sum)
-        else:
-            center_row = float(bf_inds_row.mean().get())
-            center_col = float(bf_inds_col.mean().get())
-
-        if bf_radius is not None:
-            dist_sq = (bf_inds_row.astype(cp.float32) - center_row) ** 2 + \
-                      (bf_inds_col.astype(cp.float32) - center_col) ** 2
-            within = dist_sq <= bf_radius ** 2
-            bf_inds_row = bf_inds_row[within]
-            bf_inds_col = bf_inds_col[within]
-            if len(bf_inds_row) == 0:
-                raise ValueError(
-                    f"No bright-field pixels within bf_radius={bf_radius}. "
-                    f"Increase bf_radius or check detector geometry."
+        if bf_radius is None:
+            probe_mask = mean_dp > mean_dp.mean() + mean_dp.std()
+            probe_total = int(probe_mask.sum().get())
+            if probe_total > 0:
+                probe = probe_mask.astype(cp.float32)
+                row_coords = cp.arange(
+                    mean_dp.shape[0], dtype=cp.float32
+                ).reshape(-1, 1)
+                col_coords = cp.arange(
+                    mean_dp.shape[1], dtype=cp.float32
+                ).reshape(1, -1)
+                center_row = float(
+                    ((row_coords * probe).sum() / probe_total).get()
                 )
+                center_col = float(
+                    ((col_coords * probe).sum() / probe_total).get()
+                )
+                selected_radius = math.sqrt(probe_total / math.pi)
+            else:
+                center_row = mean_dp.shape[0] / 2.0
+                center_col = mean_dp.shape[1] / 2.0
+                selected_radius = min(mean_dp.shape) * 0.25
+        else:
+            weights = mean_dp[bf_inds_row, bf_inds_col].astype(cp.float32)
+            weight_sum = float(weights.sum().get())
+            if weight_sum > 0:
+                center_row = float(
+                    (
+                        bf_inds_row.astype(cp.float32) * weights
+                    ).sum().get() / weight_sum
+                )
+                center_col = float(
+                    (
+                        bf_inds_col.astype(cp.float32) * weights
+                    ).sum().get() / weight_sum
+                )
+            else:
+                center_row = float(bf_inds_row.mean().get())
+                center_col = float(bf_inds_col.mean().get())
+            selected_radius = float(bf_radius)
+
+        dist_sq = (bf_inds_row.astype(cp.float32) - center_row) ** 2 + (
+            bf_inds_col.astype(cp.float32) - center_col
+        ) ** 2
+        within = dist_sq <= selected_radius ** 2
+        bf_inds_row = bf_inds_row[within]
+        bf_inds_col = bf_inds_col[within]
+        if len(bf_inds_row) == 0:
+            raise ValueError(
+                f"No bright-field pixels within bf_radius={selected_radius}. "
+                "Increase bf_radius or check detector geometry."
+            )
 
         return bf_inds_row, bf_inds_col, (center_row, center_col)
 
@@ -549,7 +561,6 @@ class SSB:
         target_chunk_bytes = 2 * 1024 ** 3
         chunk_bf = max(1, min(num_bf, target_chunk_bytes // bytes_per_bf))
 
-        dc_accum = 0j
         for bf_start in range(0, num_bf, chunk_bf):
             bf_end = min(bf_start + chunk_bf, num_bf)
             row_chunk = bf_inds_row[bf_start:bf_end]
@@ -595,44 +606,6 @@ class SSB:
             phi12 = self.aberrations.get("phi12", 0.0)
         return C10, C12, phi12
 
-    def _subset_for_radius(self, radius: int) -> "SSB":
-        """Create a lightweight SSB clone using a BF pixel subset.
-
-        Reuses the existing G_qk by selecting only the rows whose BF pixels
-        fall within the given radius. No data re-loading or FFT needed.
-        """
-        dist_sq = (
-            (self.bf_inds_row.astype(cp.float32) - self.bf_center[0]) ** 2
-            + (self.bf_inds_col.astype(cp.float32) - self.bf_center[1]) ** 2
-        )
-        within = dist_sq <= radius ** 2
-        if int(within.sum()) == 0:
-            raise ValueError(
-                f"No BF pixels within radius={radius}. "
-                f"Available: {self.bf_inds_row.shape[0]} pixels."
-            )
-
-        # Shallow copy shares all arrays, then override what differs
-        clone = copy.copy(self)
-        clone.aberrations = self.aberrations.copy()
-        if bool(within.all()):
-            # All pixels selected - reuse parent arrays directly (no copy)
-            clone.dc_value = self.dc_value
-        else:
-            clone.bf_inds_row = self.bf_inds_row[within]
-            clone.bf_inds_col = self.bf_inds_col[within]
-            clone.G_qk = self.G_qk[within]
-            clone.dc_value = complex(clone.G_qk[:, 0, 0].mean().get())
-        clone._best_loss = float('inf')
-        clone._accelerator = None
-        clone._elapsed_optimize = 0.0
-        clone._elapsed_grid = 0.0
-        clone._elapsed_refine = 0.0
-        clone._refine_method = None
-        clone._refine_nfev = None
-        clone._n_trials = None
-        return clone
-
     def _get_accelerator(self) -> SSBEngine:
         """Get or create CuPy accelerator."""
         if self._accelerator is None:
@@ -652,9 +625,84 @@ class SSB:
             )
         return self._accelerator
 
-    # =====================================================================
-    #  Core computation
-    # =====================================================================
+    @property
+    def scan_shape(self) -> tuple[int, int]:
+        """Reconstruction grid shape in public ``(row, col)`` order."""
+
+        return tuple(int(value) for value in self._scan_shape)
+
+    @property
+    def detector_shape(self) -> tuple[int, int]:
+        """Detector grid shape in public ``(row, col)`` order."""
+
+        return tuple(int(value) for value in self.gpts)
+
+    @property
+    def num_bf(self) -> int:
+        """Number of pixels in the complete detected bright-field disk."""
+
+        return int(self.bf_inds_row.size)
+
+    def cache_rotation(self, rotation_rad: float) -> None:
+        """Prepare CUDA geometry for one scan-to-detector rotation."""
+
+        self._rotation_angle_rad = float(rotation_rad)
+        self._get_accelerator().cache_rotation(self._rotation_angle_rad)
+
+    def reconstruct(self, c10: float, c12: float, phi12: float):
+        """Return the exact full-BF phase reconstructed on CUDA."""
+
+        return self._get_accelerator().reconstruct(c10, c12, phi12)
+
+    def reconstruct_with_loss(
+        self,
+        c10: float,
+        c12: float,
+        phi12: float,
+    ):
+        """Return the phase and exact full-BF variance loss from CUDA."""
+
+        return self._get_accelerator().reconstruct_with_loss(c10, c12, phi12)
+
+    def reconstruct_full(self, mags_m, angles_rad):
+        """Return a CUDA phase for the full aberration vector."""
+
+        return self._get_accelerator().reconstruct_full(mags_m, angles_rad)
+
+    def reconstruct_full_with_loss(self, mags_m, angles_rad):
+        """Return a CUDA phase and loss for the full aberration vector."""
+
+        return self._get_accelerator().reconstruct_full_with_loss(
+            mags_m,
+            angles_rad,
+        )
+
+    @staticmethod
+    def phase_to_numpy(phase) -> np.ndarray:
+        """Copy one reconstructed phase image to host float32."""
+
+        return cp.asnumpy(phase).astype(np.float32, copy=False)
+
+    def preview_context(self, num_bf: int):
+        """Prepare a reusable reduced-BF CUDA preview context."""
+
+        return self._get_accelerator().prepare_bf_subset(int(num_bf))
+
+    def browser_state(self) -> SSBExportState:
+        """Return compact state for browser WebGPU integration."""
+
+        return self._get_accelerator().export_state()
+
+    def export_brightfield(
+        self,
+        data,
+        path_stem,
+    ) -> tuple[object, float]:
+        """Write exact detector counts in detector-major BF columns."""
+
+        engine = self._get_accelerator()
+        path = engine.write_exact_bf_source(data, path_stem)
+        return path, engine.bf_source_write_seconds
 
     def _prepare_accel(
         self,
@@ -671,7 +719,7 @@ class SSB:
         accel.cache_rotation(rotation_angle_rad)
         return accel, C10, C12, phi12
 
-    def _reconstruct(
+    def reconstruct_phase(
         self,
         C10: float | None = None,
         C12: float | None = None,
@@ -682,303 +730,12 @@ class SSB:
         accel, C10, C12, phi12 = self._prepare_accel(C10, C12, phi12, rotation_angle_rad)
         return accel.reconstruct(C10, C12, phi12)
 
-    def optimize_full(
-        self,
-        aberrations: dict[str, float | tuple[float, float]] | None = None,
-        n_trials: int = 100,
-        seed: int = 42,
-        verbose: bool = True,
-        rotation_angle_deg: float | None = None,
-    ) -> Self:
-        """
-        Optuna TPE search over any subset of the 14 Krivanek aberrations.
-
-        This is the higher-order analogue of :meth:`optimize`.  Unlike the
-        legacy 3-param search, which uses the fast batched variance kernel,
-        this driver evaluates one 14-coef configuration per trial using
-        ``SSBEngine.variance_loss_full`` (the same scalar variance metric
-        the 3-param path minimizes, so losses are directly comparable).
-
-        Convergence usually takes fewer trials than full 3-param TPE because
-        you typically lock most higher-order coefs and only search 2-4 of
-        them at a time (e.g. ``{"C30": (-2000, 2000)}`` while C10/C12/phi12
-        are already refined).  ``n_trials=100`` is a reasonable default.
-
-        Parameters
-        ----------
-        aberrations : dict, optional
-            Mapping from Krivanek name to either:
-
-            - A scalar (float) - lock the coefficient to that value
-              (magnitude in nm for engine-convention units, angle in radians).
-            - A ``(low, high)`` tuple - search magnitude uniformly in [low, high]
-              for m = 0 aberrations (C10, C30, C50), or magnitude in [0, high]
-              + angle in [-π/2, π/2] for m ≠ 0 (so we search the 2D space).
-            - For explicit angle search, pass ``"<name>_angle"`` with a
-              ``(low_deg, high_deg)`` tuple.
-
-            Missing names default to locked-at-zero.  For example::
-
-                ssb.optimize_full({
-                    "C10": (-400, 400),              # free: ±400 nm
-                    "C12": (0, 100),                 # free: 0-100 nm mag
-                    "phi12": (-math.pi/2, math.pi/2),# free: rad
-                    "C30": (-2000, 2000),            # free: ±2000 nm
-                    "C32_mag": (0, 500),             # free mag
-                    "C32_angle": (-90, 90),          # free angle in DEG
-                })
-        n_trials : int, default 100
-            Number of Optuna trials.
-        seed : int, default 42
-            TPE random seed.
-        verbose : bool, default True
-            Print a tqdm progress bar.
-        rotation_angle_deg : float, optional
-            Scan rotation override.  Default uses the engine's current rotation.
-
-        Returns
-        -------
-        SSB
-            Self (for chaining: ``ssb.optimize_full({...}).result()``).
-        """
-        import optuna
-        from quantem.gpu.ssb.optics.aberration import ABERRATION_INDICES, N_ABERRATIONS
-
-        if aberrations is None:
-            aberrations = {
-                "C10": tuple(self._DEFAULT_OPTIMIZE_RANGES["C10_nm"]),
-                "C12": (0.0, self._DEFAULT_OPTIMIZE_RANGES["C12_nm"][1]),
-                "phi12": (math.radians(-90.0), math.radians(90.0)),
-            }
-        # Build layout once: maps canonical name → (index, has_angle_flag).
-        layout = {name: (i, has_ang) for i, (_, _, name, has_ang) in enumerate(ABERRATION_INDICES)}
-
-        # Parse the request into three dicts: locked magnitudes, locked angles,
-        # and free params (name → (low, high) to sample each trial).
-        locked_mag: dict[str, float] = {}
-        locked_ang: dict[str, float] = {}
-        free_mag: dict[str, tuple[float, float]] = {}
-        free_ang_deg: dict[str, tuple[float, float]] = {}
-
-        for key, spec in aberrations.items():
-            if key.endswith("_angle"):
-                base = key[:-len("_angle")]
-                if base not in layout:
-                    raise ValueError(f"Unknown aberration angle key '{key}'")
-                if isinstance(spec, (tuple, list)):
-                    free_ang_deg[base] = (float(spec[0]), float(spec[1]))
-                else:
-                    locked_ang[base] = math.radians(float(spec))
-            elif key.endswith("_mag"):
-                base = key[:-len("_mag")]
-                if base not in layout:
-                    raise ValueError(f"Unknown aberration magnitude key '{key}'")
-                if isinstance(spec, (tuple, list)):
-                    free_mag[base] = (float(spec[0]), float(spec[1]))
-                else:
-                    locked_mag[base] = float(spec)
-            else:
-                # Bare name: refers to the magnitude for m ≠ 0 aberrations and
-                # to the coefficient for m = 0 aberrations.
-                if key not in layout:
-                    if key == "phi12":
-                        # Special shorthand: phi12 is angle of C12.
-                        if isinstance(spec, (tuple, list)):
-                            free_ang_deg["C12"] = (
-                                math.degrees(float(spec[0])),
-                                math.degrees(float(spec[1])),
-                            )
-                        else:
-                            locked_ang["C12"] = float(spec)
-                        continue
-                    raise ValueError(f"Unknown aberration key '{key}'")
-                if isinstance(spec, (tuple, list)):
-                    free_mag[key] = (float(spec[0]), float(spec[1]))
-                else:
-                    locked_mag[key] = float(spec)
-
-        rotation_angle_rad = (
-            math.radians(rotation_angle_deg)
-            if rotation_angle_deg is not None
-            else self._rotation_angle_rad
-        )
-        accel = self._get_accelerator()
-        accel.cache_rotation(rotation_angle_rad)
-
-        # Warm-up call so the CUDA kernels are JIT-compiled and memory pools
-        # are pre-allocated before we start measuring trial times.
-        zero_m = cp.zeros(N_ABERRATIONS, dtype=cp.float32)
-        zero_a = cp.zeros(N_ABERRATIONS, dtype=cp.float32)
-        _ = accel.variance_loss_full(zero_m, zero_a)
-        cp.cuda.Device().synchronize()
-
-        # Pre-allocate mags/angs arrays reused across trials (avoid cp alloc per trial).
-        mags = cp.zeros(N_ABERRATIONS, dtype=cp.float32)
-        angs = cp.zeros(N_ABERRATIONS, dtype=cp.float32)
-
-        def objective(trial: "optuna.Trial") -> float:
-            mags[:] = 0.0
-            angs[:] = 0.0
-            for name, val in locked_mag.items():
-                mags[layout[name][0]] = cp.float32(val)
-            for name, val in locked_ang.items():
-                angs[layout[name][0]] = cp.float32(val)
-            for name, (lo, hi) in free_mag.items():
-                v = trial.suggest_float(f"{name}_mag", lo, hi)
-                mags[layout[name][0]] = cp.float32(v)
-            for name, (lo_deg, hi_deg) in free_ang_deg.items():
-                v_deg = trial.suggest_float(f"{name}_angle_deg", lo_deg, hi_deg)
-                angs[layout[name][0]] = cp.float32(math.radians(v_deg))
-            return float(accel.variance_loss_full(mags, angs))
-
-        optuna.logging.set_verbosity(optuna.logging.WARNING)
-        sampler = optuna.samplers.TPESampler(seed=seed)
-        study = optuna.create_study(direction="minimize", sampler=sampler)
-        t0 = time.perf_counter()
-        if verbose:
-            try:
-                from tqdm.auto import tqdm
-                pbar = tqdm(total=n_trials, desc="optimize_full", leave=True)
-                def _cb(study, trial):
-                    pbar.update(1)
-                    pbar.set_postfix_str(f"best={study.best_value:.6g}")
-                study.optimize(objective, n_trials=n_trials, callbacks=[_cb])
-                pbar.close()
-            except ImportError:
-                study.optimize(objective, n_trials=n_trials)
-        else:
-            study.optimize(objective, n_trials=n_trials)
-        elapsed = time.perf_counter() - t0
-
-        # Write best values back into self.aberrations.  Keep legacy
-        # C10/C12/phi12 keys populated so `result()` and downstream code
-        # that reads those three still works; add higher-order names as
-        # additional keys so ``reconstruct_full(self.aberrations)`` can
-        # reproduce the result.
-        best = study.best_params
-        for name, (_, has_ang) in layout.items():
-            if name in free_mag:
-                key = f"{name}_mag"
-                if has_ang:
-                    val = best.get(key, 0.0)
-                    self.aberrations[name] = float(val)
-                else:
-                    self.aberrations[name] = float(best.get(key, 0.0))
-            elif name in locked_mag:
-                self.aberrations[name] = float(locked_mag[name])
-            if has_ang:
-                if name in free_ang_deg:
-                    ang_key = f"{name}_angle_deg"
-                    self.aberrations[f"phi{name[1:]}"] = math.radians(best.get(ang_key, 0.0))
-                elif name in locked_ang:
-                    self.aberrations[f"phi{name[1:]}"] = float(locked_ang[name])
-        # Also sync C10/C12/phi12 (legacy keys) so .result() and .refine() still work
-        if "C10" in self.aberrations:
-            pass  # already written above
-        else:
-            self.aberrations["C10"] = 0.0
-        if "C12" not in self.aberrations:
-            self.aberrations["C12"] = 0.0
-        if "phi12" not in self.aberrations:
-            self.aberrations["phi12"] = 0.0
-
-        self._best_loss = float(study.best_value)
-        self._n_trials = n_trials
-        self._elapsed_optimize = elapsed
-        # Preserve the compact trial list that ShowPtycho reads.  We pack every
-        # trial's (loss, free params) so ShowPtycho can show the
-        # higher-order search history.
-        self._optuna_trials = [
-            {"loss": float(t.value) if t.value is not None else float("inf"),
-             "params": dict(t.params)}
-            for t in study.trials
-        ]
-        if verbose:
-            print(f"  optimize_full: best loss={self._best_loss:.6f}, {elapsed:.1f}s")
-        return self
-
-    def reconstruct_full(
-        self,
-        aberrations: dict[str, float | tuple[float, float]] | None = None,
-        rotation_angle_deg: float | None = None,
-    ) -> cp.ndarray:
-        """
-        Reconstruct mean phase with all 14 Krivanek aberrations.
-
-        Unlike :meth:`result` which only supports C10/C12/phi12 (the trio
-        Optuna optimizes over), this method accepts the full 14-coefficient
-        Krivanek set.  Intended for the explorer UI and for validating
-        reconstructions against manually-specified higher-order values.
-
-        The legacy 2-term path (:meth:`result`, :meth:`optimize`) is
-        unchanged.  At the default ``aberrations=None`` this produces the
-        same phase as ``SSB.result()`` at float32 precision.
-
-        Parameters
-        ----------
-        aberrations : dict, optional
-            Mapping from aberration name to value.  Keys are a subset of
-            ``{"C10", "C12", "C21", "C23", "C30", "C32", "C34", "C41",
-            "C43", "C45", "C50", "C52", "C54", "C56"}``.  Each value may be:
-
-            - A scalar (magnitude in meters for ``C*0`` / ``Cn0``); orientation
-              angle defaults to 0.
-            - A ``(magnitude_m, angle_rad)`` tuple for m ≠ 0 aberrations.
-
-            Missing keys default to ``(0.0, 0.0)``.  If ``None``, this
-            reconstructs with every coefficient at zero and should match
-            ``result()`` with zero aberrations.
-        rotation_angle_deg : float, optional
-            Scan rotation override.  If None, uses the engine's current
-            rotation angle.
-
-        Returns
-        -------
-        cp.ndarray
-            Mean phase image (ny, nx), float32, on GPU.
-        """
-        from quantem.gpu.ssb.optics.aberration import ABERRATION_INDICES, N_ABERRATIONS
-
-        mags = cp.zeros(N_ABERRATIONS, dtype=cp.float32)
-        angs = cp.zeros(N_ABERRATIONS, dtype=cp.float32)
-        if aberrations is not None:
-            name_to_idx = {name: i for i, (_, _, name, _) in enumerate(ABERRATION_INDICES)}
-            for name, val in aberrations.items():
-                if name not in name_to_idx:
-                    raise ValueError(
-                        f"Unknown aberration '{name}'.  Valid names: "
-                        f"{sorted(name_to_idx)}"
-                    )
-                idx = name_to_idx[name]
-                has_angle = ABERRATION_INDICES[idx][3]
-                if has_angle and isinstance(val, (tuple, list)):
-                    mags[idx] = cp.float32(val[0])
-                    angs[idx] = cp.float32(val[1])
-                elif has_angle and not isinstance(val, (tuple, list)):
-                    # Scalar for an m ≠ 0 aberration: treat as magnitude only
-                    mags[idx] = cp.float32(val)
-                else:
-                    # Rotationally symmetric (m = 0) - scalar magnitude
-                    if isinstance(val, (tuple, list)):
-                        mags[idx] = cp.float32(val[0])
-                    else:
-                        mags[idx] = cp.float32(val)
-
-        rotation_angle_rad = (
-            math.radians(rotation_angle_deg)
-            if rotation_angle_deg is not None
-            else self._rotation_angle_rad
-        )
-        accel = self._get_accelerator()
-        accel.cache_rotation(rotation_angle_rad)
-        return accel.reconstruct_full(mags, angs)
-
     def _ho_arrays_from_aberrations(self) -> "tuple[cp.ndarray, cp.ndarray, bool]":
         """Pack ``self.aberrations`` into (mags, angles_rad, any_active) arrays
         shaped for ``SSBEngine.reconstruct_full``.
 
         Reads the widget's save format: ``C10``/``C12``/``phi12`` for the
-        legacy trio (phi12 already in radians), and for higher orders:
+        shared trio (phi12 already in radians), and for higher orders:
           - ``Cn0`` stored as a scalar (nm)          → single slot
           - ``Cnm_mag`` + ``Cnm_angle`` (nm + DEG)   → split slots
         Angles get converted to radians.  Returns ``any_active=True`` iff any
@@ -1050,7 +807,7 @@ class SSB:
                 phase = accel.reconstruct_full(mags, angs)
                 obj = cp.exp(1j * phase.astype(cp.float32)).astype(cp.complex64)
             else:
-                obj = self._reconstruct_object()
+                obj = self.reconstruct_object()
         except cp.cuda.memory.OutOfMemoryError:
             num_bf = len(self.bf_inds_row)
             free_gb = cp.cuda.runtime.memGetInfo()[0] / 1e9
@@ -1074,8 +831,10 @@ class SSB:
             loss = None
         elapsed = self._elapsed_optimize + self._elapsed_grid + self._elapsed_refine
         scan_sampling_scalar = self.scan_sampling[0] if isinstance(self.scan_sampling, tuple) else self.scan_sampling
+        brightfield = self.browser_state().brightfield
         return SSBResult(
             object_wave=obj,
+            backend="cuda",
             aberrations=self.aberrations.copy(),
             rotation_angle_deg=math.degrees(self._rotation_angle_rad),
             loss=loss,
@@ -1088,242 +847,87 @@ class SSB:
             voltage_kV=self.voltage_kV,
             semiangle_mrad=self.semiangle_mrad,
             scan_sampling_A=scan_sampling_scalar,
-            optuna_trials=getattr(self, "_optuna_trials", None),
+            bf_center=brightfield.center_row_col,
+            bf_radius=brightfield.radius_px,
+            detected_bf_radius=brightfield.detected_radius_px,
+            optuna_trials=self._optuna_trials,
         )
 
-    def _defocus_sweep(
+    def fit(
         self,
-        c10_range_nm: tuple[float, float] = (-100, 100),
-        n_steps: int = 21,
-    ) -> "DefocusSweepResult":
-        """Sweep defocus (C10) around current aberrations.
-
-        Reconstructs phase images at evenly-spaced C10 values while keeping
-        C12 and phi12 fixed at the current stored values. Returns a result
-        object that can be passed directly to ``Show3D``.
-
-        Parameters
-        ----------
-        c10_range_nm : tuple[float, float]
-            Min and max defocus in nm (default ``(-100, 100)``).
-        n_steps : int
-            Number of defocus values (default 21).
-
-        Returns
-        -------
-        DefocusSweepResult
-        """
-        from quantem.gpu.ssb.results import DefocusSweepResult
-
-        t0 = time.perf_counter()
-        c12 = self.aberrations["C12"]
-        phi12 = self.aberrations["phi12"]
-        c10_values = np.linspace(c10_range_nm[0], c10_range_nm[1], n_steps)
-
-        accel = self._get_accelerator()
-        accel.cache_rotation(self._rotation_angle_rad)
-
-        # Batch variance losses (4 at a time) - much faster than sequential
-        c12_arr = np.full(len(c10_values), c12, dtype=np.float32)
-        phi12_arr = np.full(len(c10_values), phi12, dtype=np.float32)
-        losses = np.empty(len(c10_values), dtype=np.float32)
-        for i in range(0, len(c10_values), 4):
-            batch = c10_values[i:i+4]
-            batch_losses = accel.variance_loss_batch(
-                batch.astype(np.float32),
-                c12_arr[i:i+4],
-                phi12_arr[i:i+4],
-            )
-            losses[i:i+len(batch)] = cp.asnumpy(batch_losses[:len(batch)])
-
-        # Reconstruct phase images (sequential - each needs full BF buffer)
-        images = []
-        for c10 in c10_values:
-            images.append(cp.asnumpy(self._reconstruct(C10=c10, C12=c12, phi12=phi12)))
-        images = np.stack(images)
-
-        best_idx = int(np.argmin(losses))
-        return DefocusSweepResult(
-            c10_values_nm=c10_values,
-            losses=losses,
-            images=images,
-            best_c10_nm=float(c10_values[best_idx]),
-            best_loss=float(losses[best_idx]),
-            elapsed=time.perf_counter() - t0,
-            labels=[f"C10={c10:.1f} nm" for c10 in c10_values],
-        )
-
-    def bf_radius_sweep(
-        self,
-        radii: list[int] | None = None,
         *,
-        optimize_aberrations: dict[str, tuple[float, float]] | None = None,
-        n_trials: int = 200,
-        verbose: bool = True,
-    ) -> "BFRadiusSweepResult":
-        """
-        Optimize aberrations independently at multiple BF radii.
+        trials: int,
+        refinement: str | None,
+        search_ranges: dict[str, tuple[float, float] | float] | None,
+        refine_lock: list[str] | None,
+        seed: int,
+        verbose: bool,
+    ) -> SSBResult:
+        """Run the shared exact optimization contract on CUDA."""
 
-        Each BF radius includes a different number of bright-field pixels,
-        capturing different spatial frequency bands. Smaller radii are
-        robust but low-resolution; larger radii resolve finer features but
-        need more accurate aberration correction.
+        if trials:
+            self.optimize(
+                aberrations=search_ranges,
+                n_trials=int(trials),
+                seed=int(seed),
+                verbose=verbose,
+                objective_mode="exact",
+            )
+        if refinement == "nelder-mead":
+            self.refine(
+                verbose=verbose,
+                lock=refine_lock,
+                objective_mode="exact",
+            )
+        return self.result()
 
-        Processes largest radius first, then progressively subsets the
-        BF pixels down - each step frees the previous G_qk so VRAM usage
-        *decreases* as radii shrink.
+    def reconstruct_result(
+        self,
+        aberrations: dict[str, float],
+    ) -> SSBResult:
+        """Reconstruct the CUDA complex object at fixed aberrations."""
 
-        The returned ``BFRadiusSweepResult`` has ``.show()`` for side-by-side
-        comparison and ``.average()`` to combine the best reconstructions.
+        self.aberrations.update(aberrations)
+        return self.result()
 
-        Parameters
-        ----------
-        radii : list[int], optional
-            BF radii to sweep in pixels. If None, auto-generates ~5 radii
-            from 15 to the full BF disk radius.
-        n_trials : int, default 50
-            Optuna trials per radius. 50-200 recommended.
-        verbose : bool, default True
-            Print progress per radius.
+    def preview(
+        self,
+        aberrations: dict[str, float],
+        *,
+        compute_loss: bool,
+        higher_order_magnitudes: np.ndarray | None,
+        higher_order_angles: np.ndarray | None,
+    ) -> tuple[np.ndarray, float | None]:
+        """Return one transient float32 phase and optional exact loss."""
 
-        Returns
-        -------
-        BFRadiusSweepResult
-            Contains phase images, losses, and ``SSBResult`` at each radius.
-        """
-        from quantem.gpu.ssb.results import BFRadiusSweepResult
-
-        t0 = time.perf_counter()
-
-        if optimize_aberrations is None:
-            optimize_aberrations = self._DEFAULT_OPTIMIZE_RANGES.copy()
-
-        # Compute max BF radius from current instance
-        dist_sq = (
-            (self.bf_inds_row.astype(cp.float32) - self.bf_center[0]) ** 2
-            + (self.bf_inds_col.astype(cp.float32) - self.bf_center[1]) ** 2
-        )
-        max_bf_radius = int(cp.sqrt(dist_sq.max()).get())
-
-        if radii is None:
-            # Generate radii from 15 up to max, stepping by ~10-15
-            radii = list(range(15, max_bf_radius, max(5, max_bf_radius // 5)))
-            if radii[-1] != max_bf_radius:
-                radii.append(max_bf_radius)
-            if verbose:
-                print(f"  Auto radii: {radii}")
-        else:
-            # Warn if any requested radius exceeds the parent's BF disk
-            too_large = [r for r in radii if r > max_bf_radius]
-            if too_large:
-                print(
-                    f"  Warning: radii {too_large} exceed max BF radius {max_bf_radius}. "
-                    f"Clamping to {max_bf_radius}."
+        if higher_order_magnitudes is not None:
+            if compute_loss:
+                phase, loss = self.reconstruct_full_with_loss(
+                    higher_order_magnitudes, higher_order_angles
                 )
-                radii = sorted(set(min(r, max_bf_radius) for r in radii))
-
-        sweep_results: dict[int, SSBResult] = {}
-        sweep_phases: list[np.ndarray] = []
-        sweep_losses: list[float] = []
-        sweep_labels: list[str] = []
-
-        # Free parent engine buffers to maximize VRAM for sweep
-        if self._accelerator is not None:
-            self._accelerator.clear_batch_caches()
-            self._accelerator._release_scalar_buffers()
-            cp.get_default_memory_pool().free_all_blocks()
-
-        # Process largest → smallest: each radius subsets from the previous
-        # one, so we never hold two large G_qk copies simultaneously.
-        radii_descending = sorted(radii, reverse=True)
-        prev_aberrations = self.aberrations.copy()
-        current_ssb = self  # start from parent (largest BF set)
-
-        from quantem.gpu.ssb.batch_optuna import batch_nelder_mead
-
-        for i, r in enumerate(radii_descending):
-            ssb_r = current_ssb._subset_for_radius(r)
-            ssb_r.aberrations = prev_aberrations.copy()
-            num_bf_r = len(ssb_r.bf_inds_row)
-            # Free previous G_qk immediately after subsetting
-            if current_ssb is not self:
-                current_ssb.free()
-                del current_ssb
             else:
-                # First iteration: free parent engine buffers only
-                self._free_buffers()
-            current_ssb = ssb_r
-            cp.get_default_memory_pool().free_all_blocks()
-            if verbose:
-                vram_free, vram_total = cp.cuda.runtime.memGetInfo()
-                free_gb, total_gb = vram_free / 1e9, vram_total / 1e9
-                print(f"  [{i+1}/{len(radii)}] radius={r} ({num_bf_r} BF pixels)  "
-                      f"VRAM: {free_gb:.1f} GB available of {total_gb:.1f} GB")
-            ssb_r.optimize(
-                aberrations=optimize_aberrations,
-                n_trials=n_trials,
-                verbose=False,
-            )
-            # Quick refine with loose tolerance for radius comparison
-            accel_r = ssb_r._get_accelerator()
-            accel_r.cache_rotation(ssb_r._rotation_angle_rad)
-            x0 = np.array([ssb_r.aberrations["C10"], ssb_r.aberrations["C12"], ssb_r.aberrations["phi12"]])
-            best_x, best_loss, _ = batch_nelder_mead(accel_r, x0, xatol=1.0, fatol=1e-5)
-            ssb_r.aberrations["C10"] = float(best_x[0])
-            ssb_r.aberrations["C12"] = float(best_x[1])
-            ssb_r.aberrations["phi12"] = float(best_x[2])
-            ssb_r._best_loss = float(best_loss)
-            ssb_r._free_buffers()
-            result_r = ssb_r.result()
-            prev_aberrations = result_r.aberrations.copy()
-            sweep_results[r] = result_r
-            sweep_phases.append(cp.asnumpy(result_r.phase))
-            sweep_losses.append(result_r.loss)
-            aberr = result_r.aberrations
-            sweep_labels.append(
-                f'r={r} | C10={aberr["C10"]:.0f}nm '
-                f'C12={aberr["C12"]:.0f}nm | loss={result_r.loss:.6f}'
-            )
-            if verbose:
-                print(
-                    f'  C10={aberr["C10"]:.1f}nm, '
-                    f'C12={aberr["C12"]:.1f}nm, loss={result_r.loss:.6f}'
+                phase = self.reconstruct_full(
+                    higher_order_magnitudes, higher_order_angles
                 )
-            # Free engine but keep G_qk for next subset
-            ssb_r._accelerator = None
-            cp.get_default_memory_pool().free_all_blocks()
+                loss = None
+        elif compute_loss:
+            phase, loss = self.reconstruct_with_loss(
+                aberrations["C10"], aberrations["C12"], aberrations["phi12"]
+            )
+        else:
+            phase = self.reconstruct(
+                aberrations["C10"], aberrations["C12"], aberrations["phi12"]
+            )
+            loss = None
+        array = self.phase_to_numpy(phase)
+        return array, None if loss is None else float(loss)
 
-        # Free the last intermediate
-        if current_ssb is not self:
-            current_ssb.free()
-            del current_ssb
-            cp.get_default_memory_pool().free_all_blocks()
+    def close(self) -> None:
+        """Release CUDA-owned session state."""
 
-        # Reorder results back to ascending radius order
-        sweep_phases_ordered = []
-        sweep_losses_ordered = []
-        sweep_labels_ordered = []
-        for r in radii:
-            idx = radii_descending.index(r)
-            sweep_phases_ordered.append(sweep_phases[idx])
-            sweep_losses_ordered.append(sweep_losses[idx])
-            sweep_labels_ordered.append(sweep_labels[idx])
+        self.free()
 
-        losses_arr = np.array(sweep_losses_ordered)
-        best_idx = int(np.argmin(losses_arr))
-
-        return BFRadiusSweepResult(
-            radii=radii,
-            results=sweep_results,
-            images=np.stack(sweep_phases_ordered),
-            losses=losses_arr,
-            best_radius=radii[best_idx],
-            best_loss=float(losses_arr[best_idx]),
-            elapsed=time.perf_counter() - t0,
-            labels=sweep_labels_ordered,
-        )
-
-    def _reconstruct_object(
+    def reconstruct_object(
         self,
         C10: float | None = None,
         C12: float | None = None,
@@ -1360,6 +964,7 @@ class SSB:
         seed: int = 42,
         verbose: bool = True,
         bf_subsample: float | None = None,
+        objective_mode: Literal["native", "exact"] = "exact",
     ) -> Self:
         """
         Global search for aberration parameters using Optuna TPE.
@@ -1394,7 +999,7 @@ class SSB:
             Print the tqdm progress bar and VRAM status header.
         bf_subsample : float or None, default None
             Fraction of BF pixels to use, in (0, 1]. None uses the full
-            BF disk (legacy, bit-identical to prior behavior). A ratio like
+            BF disk. A ratio like
             0.25 runs the optimizer on every 4th BF pixel (uniform stride)
             and is ~3-4x faster on large-BF datasets with aberration reference agreement
             within 0.05 nm on C10/C12. Small BF disks (< 2000 pixels) and
@@ -1402,6 +1007,11 @@ class SSB:
             with matching loss, so only set this when you can validate the
             result against a full-BF run. See
             ``docs/bf_subsampling_case_study.md``.
+        objective_mode : {"exact", "native"}, default "exact"
+            ``"exact"`` evaluates every candidate through the full-BF
+            phase-variance reconstruction. ``"native"`` is an explicit
+            performance-study mode using the CUDA size-specific candidate
+            evaluator; it is never selected by default for calibration.
 
         Returns
         -------
@@ -1409,9 +1019,16 @@ class SSB:
             Self (for chaining: ``ssb.optimize().refine()``).
         """
         t0 = time.perf_counter()
+        if objective_mode not in {"native", "exact"}:
+            raise ValueError(
+                "objective_mode must be 'native' or 'exact'; "
+                f"got {objective_mode!r}."
+            )
         if aberrations is None:
             aberrations = dict(self._DEFAULT_OPTIMIZE_RANGES)
         accel = self._get_accelerator()
+        accel.set_optimizer_objective_mode(objective_mode)
+        self._optimizer_objective_mode = objective_mode
         accel.cache_rotation(self._rotation_angle_rad)
         _ = accel.variance_loss(0, 50, 0)
         cp.cuda.Device().synchronize()
@@ -1432,7 +1049,7 @@ class SSB:
             else:
                 print(f"Optimizing aberrations ({n_trials} trials, {full_num_bf} BF pixels)")
             print(f"  VRAM: {free_gb:.1f} GB available of {total_gb:.1f} GB, {opt_gb:.1f} GB needed")
-        from quantem.gpu.ssb.batch_optuna import batch_optimize
+        from .optimizer import batch_optimize
         def _run_optimize():
             return batch_optimize(
                 accel,
@@ -1500,6 +1117,7 @@ class SSB:
         fatol: float = 1e-8,
         lock: list[str] | None = None,
         bf_subsample: float | None = None,
+        objective_mode: Literal["native", "exact"] | None = None,
     ) -> Self:
         """
         Local refinement using GPU-batched Nelder-Mead.
@@ -1542,6 +1160,9 @@ class SSB:
             stays comparable to a full-BF run. Same stability caveats as
             in ``optimize()``: avoid on small BF disks and flat-loss
             samples. See ``docs/bf_subsampling_case_study.md``.
+        objective_mode : {"native", "exact"} or None, optional
+            Objective used by Nelder-Mead. ``None`` reuses the mode selected
+            by the preceding :meth:`optimize` call.
 
         Returns
         -------
@@ -1550,6 +1171,15 @@ class SSB:
         """
         t0 = time.perf_counter()
         accel = self._get_accelerator()
+        if objective_mode is None:
+            objective_mode = self._optimizer_objective_mode
+        if objective_mode not in {"native", "exact"}:
+            raise ValueError(
+                "objective_mode must be 'native' or 'exact'; "
+                f"got {objective_mode!r}."
+            )
+        accel.set_optimizer_objective_mode(objective_mode)
+        self._optimizer_objective_mode = objective_mode
         accel.cache_rotation(self._rotation_angle_rad)
         lock = set(lock or [])
         # Build lists of free (optimized) and fixed (locked) params
@@ -1567,15 +1197,16 @@ class SSB:
         if free_keys != all_keys:
             locked = ", ".join(sorted(lock)) or "unknown"
             raise ValueError(
-                "GPU-only SSB nmead does not support locked refinement yet "
-                f"(locked: {locked}). Use unlocked --ssb-refine nmead, "
+                "GPU-only SSB Nelder-Mead does not support locked refinement yet "
+                f"(locked: {locked}). Use no locked aberrations with "
+                "refinement='nelder-mead', "
                 "locked SSB reference mode, or add a GPU-batched locked refiner."
             )
 
-        from quantem.gpu.ssb.batch_optuna import batch_nelder_mead
+        from .optimizer import batch_nelder_mead
 
         def _run_batched():
-            exact_fallback = getattr(accel, "uses_optimizer_reconstruct_fallback", False)
+            exact_fallback = accel.uses_optimizer_reconstruct_fallback
             sparse_1024 = (
                 tuple(int(v) for v in self._scan_shape) == (1024, 1024)
                 and not exact_fallback
@@ -1585,7 +1216,7 @@ class SSB:
             effective_max_iter = 80 if sparse_1024 else 300
             if exact_fallback and xatol == 0.1 and fatol == 1e-8:
                 # The exact full-IFFT objective is smooth enough on held-out dataset
-                # 512 full BF that the legacy sparse tolerances over-solve the
+                # 512 full BF that tighter generic tolerances over-solve the
                 # phase by hundreds of evals. These defaults preserve the
                 # phase image to <1e-3 rad p99.9 in the real-data signoff while
                 # avoiding an invisible 200+ eval tail.
@@ -1619,11 +1250,7 @@ class SSB:
         else:
             self._best_loss = float(best_loss)
         nfev = int(n_evals)
-        method = (
-            "gpu-full-ifft-nmead"
-            if getattr(accel, "uses_optimizer_reconstruct_fallback", False)
-            else "gpu-batched-nmead"
-        )
+        method = "nelder-mead"
         elapsed = time.perf_counter() - t0
         self._elapsed_refine = elapsed
         self._refine_method = method
@@ -1760,30 +1387,3 @@ class SSB:
             self.aberrations["C12"],
             self.aberrations["phi12"],
         ))
-
-    # =====================================================================
-    #  Interactive UI handoff (Jupyter)
-    # =====================================================================
-
-    def explore(
-        self,
-        c10_range: tuple[float, float] | None = None,
-        c12_range: tuple[float, float] | None = None,
-        phi12_range: tuple[float, float] | None = None,
-        rotation_range: tuple[float, float] | None = None,
-        drag_bf: int = 2000,
-        save_dir: "str | pathlib.Path | None" = None,
-        source_file: "str | None" = None,
-        size: int = 800,
-        fft_on: bool = False,
-        calibration: "str | pathlib.Path | object | None" = None,
-    ) -> None:
-        """Interactive SSB tuning is owned by the UI layer.
-
-        ``quantem.gpu`` owns the compute engine only. Use ``ShowPtycho`` from
-        ``quantem.widget`` for anywidget interaction.
-        """
-        raise RuntimeError(
-            "SSB.explore() is a UI feature and is not part of quantem.gpu. "
-            "Use quantem.widget.ShowPtycho(ssb) for interactive tuning."
-        )

@@ -21,8 +21,6 @@ def test_quantem_gpu_root_import_without_cupy() -> None:
 
         import quantem.gpu as qg
         import quantem.gpu.io as qgio
-        import quantem.gpu.ssb.mps as ssb_mps
-        import quantem.gpu.ssb.preprocess as ssb_preprocess
 
         report = qg.device_report("cpu")
         assert report.selected == "cpu"
@@ -30,17 +28,18 @@ def test_quantem_gpu_root_import_without_cupy() -> None:
         assert qg.calibration_memory_plan.__module__ == "quantem.gpu.calibration"
         assert qg.load_calibration_products.__module__ == "quantem.gpu.calibration"
         assert qg.dp_mean.__module__ == "quantem.gpu.detector"
-        assert qg.bf_df_dpc.__module__ == "quantem.gpu.ssb.preprocess"
         assert qg.load_scan_indices.__module__ == "quantem.gpu.io.hdf5"
         assert "load_scan_region" not in qg.__all__
         assert not hasattr(qg, "load_scan_region")
         assert "load_scan_region" not in qgio.__all__
         assert not hasattr(qgio, "load_scan_region")
         assert qg.random_scan_indices.__module__ == "quantem.gpu.io.hdf5"
-        assert qg.ssb_fit_mps.__module__ == "quantem.gpu.ssb.mps"
-        assert qg.ssb_preview_mps.__module__ == "quantem.gpu.ssb.mps"
-        assert ssb_mps.ssb_preview.__module__ == "quantem.gpu.ssb.mps"
-        assert ssb_preprocess.Preview.__module__ == "quantem.gpu.ssb.preprocess"
+        assert qg.SSB.__module__ == "quantem.gpu.ssb.workflow"
+        assert qg.ssb.__name__ == "quantem.gpu.ssb"
+        assert not any(
+            name.lower().endswith(("_cuda", "_mps", "_webgpu"))
+            for name in qg.__all__
+        )
         assert "load_mps_4dstem" in qgio.__all__
         print("ok")
         """

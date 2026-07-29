@@ -40,9 +40,6 @@ import numpy as np
 from .aberration import ABERRATION_INDICES
 from .physics import wavelength_A_from_kV
 
-# Alias for backward compatibility
-ABERRATION_INFO = ABERRATION_INDICES
-
 # Coefficient labels in order (25 total)
 COEFF_LABELS = []
 for n, m, name, has_angle in ABERRATION_INDICES:
@@ -341,7 +338,7 @@ def compute_shifts_from_aberrations(
     # Accumulate shifts
     Sx_A = cp.zeros_like(u)
     Sy_A = cp.zeros_like(v)
-    for i, (n, m, name, has_angle) in enumerate(ABERRATION_INFO):
+    for i, (n, m, name, has_angle) in enumerate(ABERRATION_INDICES):
         factor = 1.0 / (n + 1)
         # 'a' component
         key_a = name if m == 0 else f"{name}_a"
@@ -461,7 +458,7 @@ class AberrationFitter:
         ])
         # Build design matrix columns
         columns_du, columns_dv = [], []
-        for i, (n, m, name, has_angle) in enumerate(ABERRATION_INFO):
+        for i, (n, m, name, has_angle) in enumerate(ABERRATION_INDICES):
             factor = 1.0 / (n + 1)
             columns_du.append(factor * dPc_du[i])
             columns_dv.append(factor * dPc_dv[i])

@@ -3899,6 +3899,7 @@ def _load_view(
     auto_narrow: bool = True,
     output_dtype=None,
     row_prefix: bool = False,
+    precompute_detector_sum: bool = False,
     skip_mps_memory_check: bool | None = None,
 ):
     """View/screen load path for the non-cuda backends (cpu, mps).
@@ -3957,6 +3958,7 @@ def _load_view(
                 row_prefix=row_prefix,
                 det_bin=det_bin,
                 output_dtype=mps_chunk_output_dtype,
+                precompute_detector_sum=precompute_detector_sum,
                 skip_mps_memory_check=skip_mps_memory_check,
             )
             meta.update(data.metadata)
@@ -5757,6 +5759,7 @@ def _load_impl(
     units=None,
     backend: str = "auto",
     row_prefix: bool = False,
+    precompute_detector_sum: bool = False,
     skip_mps_memory_check: bool | None = None,
 ) -> "LoadResult":
     """Load bitshuffle+LZ4 compressed HDF5 data directly to GPU.
@@ -6011,6 +6014,7 @@ def _load_impl(
             scan_shape=scan_shape, scan_order=scan_order, det_bin=det_bin, verbose=verbose,
             auto_narrow=auto_narrow, output_dtype=output_dtype,
             row_prefix=row_prefix,
+            precompute_detector_sum=precompute_detector_sum,
             skip_mps_memory_check=skip_mps_memory_check,
         )
 

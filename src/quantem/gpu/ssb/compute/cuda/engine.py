@@ -6,9 +6,16 @@ for maximum throughput.
 """
 
 import math
+import pathlib
+import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
+from types import TracebackType
 import numpy as np
 import cupy as cp
+
+from ..protocol import SSBExportState, SSBPrecision
+from ...bf_selector import BrightfieldDisk
 
 # Mean phase kernel: avoids materializing a full phase buffer.
 _mean_phase_kernel = cp.RawKernel(r'''
@@ -225,7 +232,7 @@ _pk_kernel = cp.ElementwiseKernel(
 
 # Full-aberration pk kernel.  Computes pk = aperture(k) * exp(-i·χ(k)) for all
 # 14 Krivanek aberrations up to 5th order.  Used by SSBEngine.reconstruct_full
-# for explorer manual higher-order slider drag.  The legacy _pk_kernel above is
+# for explorer manual higher-order slider drag.  The three-parameter _pk_kernel above is
 # NOT modified and continues to serve the optimization hot path.
 #
 # mags[14] and angles[14] layout matches aberration.ABERRATION_INDICES:
@@ -295,6 +302,103 @@ _pk_kernel_full = cp.ElementwiseKernel(
     name="pk_kernel_full",
 )
 
+
+class _PreparedCudaBfSubset:
+    """Reusable CUDA-owned state for an explicitly approximate drag preview."""
+
+    def __init__(self, engine: "SSBEngine", num_bf: int) -> None:
+        self._engine = engine
+        full_num_bf = engine.num_bf
+        count = max(1, min(int(num_bf), full_num_bf))
+        step = max(1, full_num_bf // count)
+        indices = cp.arange(0, full_num_bf, step, dtype=cp.int64)[:count]
+        cache = dict(engine._cache)
+        for key in (
+            "kx_bf",
+            "ky_bf",
+            "alpha_k2_1d",
+            "cos2phi_k_1d",
+            "sin2phi_k_1d",
+            "aperture_k_1d",
+        ):
+            if key in cache:
+                cache[key] = cp.ascontiguousarray(engine._cache[key][indices])
+        cache["num_bf"] = int(indices.size)
+        ny, nx = engine.scan_shape
+        self._subset = {
+            "G_qk": engine.G_qk[indices],
+            "bf_inds_row": engine.bf_inds_row[indices],
+            "bf_inds_col": engine.bf_inds_col[indices],
+            "cache": cache,
+            "pk_buffer": cp.empty((int(indices.size),), dtype=cp.complex64),
+            "result_buffer": cp.empty(
+                (int(indices.size), ny, nx), dtype=cp.complex64
+            ),
+            "mean_phase_buffer": cp.empty((ny, nx), dtype=cp.float32),
+        }
+        self._full = {
+            "G_qk": engine.G_qk,
+            "bf_inds_row": engine.bf_inds_row,
+            "bf_inds_col": engine.bf_inds_col,
+            "cache": engine._cache,
+            "pk_buffer": engine._pk_buffer,
+            "result_buffer": engine._result_buffer,
+            "mean_phase_buffer": engine._mean_phase_buffer,
+        }
+        self._active = False
+
+    @property
+    def num_bf(self) -> int:
+        """Number of BF pixels retained by this prepared subset."""
+
+        return int(self._subset["cache"]["num_bf"])
+
+    def __enter__(self) -> "_PreparedCudaBfSubset":
+        if self._active:
+            raise RuntimeError("The prepared SSB BF subset is already active.")
+        engine = self._engine
+        subset = self._subset
+        engine.G_qk = subset["G_qk"]
+        engine.bf_inds_row = subset["bf_inds_row"]
+        engine.bf_inds_col = subset["bf_inds_col"]
+        engine._cache = subset["cache"]
+        engine._pk_buffer = subset["pk_buffer"]
+        engine._result_buffer = subset["result_buffer"]
+        engine._corrected_buffer = None
+        engine._mean_phase_buffer = subset["mean_phase_buffer"]
+        self._active = True
+        return self
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        _exc_value: BaseException | None,
+        _traceback: TracebackType | None,
+    ) -> None:
+        engine = self._engine
+        if not self._active:
+            return
+        self._subset["result_buffer"] = engine._result_buffer
+        self._subset["mean_phase_buffer"] = engine._mean_phase_buffer
+        full = self._full
+        engine.G_qk = full["G_qk"]
+        engine.bf_inds_row = full["bf_inds_row"]
+        engine.bf_inds_col = full["bf_inds_col"]
+        engine._cache = full["cache"]
+        engine._pk_buffer = full["pk_buffer"]
+        engine._result_buffer = full["result_buffer"]
+        engine._corrected_buffer = None
+        engine._mean_phase_buffer = full["mean_phase_buffer"]
+        self._active = False
+
+    def close(self) -> None:
+        """Release the subset buffers after restoring full-BF state."""
+
+        if self._active:
+            self.__exit__(None, None, None)
+        self._subset.clear()
+        self._full.clear()
+
 class SSBEngine:
     """
     CuPy-accelerated SSB computation with fused CUDA kernels.
@@ -303,6 +407,9 @@ class SSBEngine:
     Pre-computes rotation-dependent quantities and caches them for
     fast aberration-dependent gamma factor computation.
     """
+
+    backend = "cuda"
+    precision = SSBPrecision()
 
     def __init__(
         self,
@@ -361,6 +468,11 @@ class SSBEngine:
         self._loss_sumsq_scalar = None
         # Custom FFT (initialized in cache_rotation)
         self._custom_fft = None
+        self._force_exact_optimizer = False
+        self._bf_source_path: pathlib.Path | None = None
+        self._bf_source_dtype: np.dtype | None = None
+        self._bf_source_max_value: int | None = None
+        self._bf_source_write_seconds: float | None = None
         self._colvar_group = 32
         # Batch caches
         self._batch_cache: dict[int, dict[str, object]] = {}
@@ -392,12 +504,212 @@ class SSBEngine:
     @property
     def num_bf(self) -> int:
         """Number of bright-field pixels."""
-        return int(self._cache["num_bf"])
+        return int(self.bf_inds_row.size)
+
+    @property
+    def scan_shape(self) -> tuple[int, int]:
+        """Reconstruction grid shape in public ``(row, col)`` order."""
+
+        return int(self.q_row.shape[0]), int(self.q_row.shape[1])
 
     @property
     def detector_shape(self) -> tuple[int, int]:
         """Detector grid shape (n_k_row, n_k_col)."""
-        return int(self._cache["ny"]), int(self._cache["nx"])
+
+        return int(self.gpts[0]), int(self.gpts[1])
+
+    @property
+    def bf_source_write_seconds(self) -> float:
+        """Duration of the most recent exact BF-source write."""
+
+        if self._bf_source_write_seconds is None:
+            raise RuntimeError("No exact BF source has been written yet.")
+        return self._bf_source_write_seconds
+
+    def export_state(self) -> SSBExportState:
+        """Return backend-neutral host metadata for a WebGPU consumer."""
+
+        cache = self._cache
+        rows = cp.asnumpy(self.bf_inds_row).astype(np.int32, copy=False)
+        cols = cp.asnumpy(self.bf_inds_col).astype(np.int32, copy=False)
+        center = (float(self.bf_center[0]), float(self.bf_center[1]))
+        distance_sq = (rows.astype(np.float64) - center[0]) ** 2
+        distance_sq += (cols.astype(np.float64) - center[1]) ** 2
+        radius = float(np.sqrt(distance_sq).max()) + 1e-3
+        detector_sampling = 0.5 * (
+            float(self.angular_sampling[0]) + float(self.angular_sampling[1])
+        )
+        detected_radius = 2.0 * float(self.semiangle_cutoff) / detector_sampling
+        selection = BrightfieldDisk(
+            rows=rows,
+            cols=cols,
+            center_row_col=center,
+            radius_px=radius,
+            detected_radius_px=detected_radius,
+            detector_shape=self.detector_shape,
+        )
+
+        return SSBExportState(
+            backend="cuda",
+            scan_shape=self.scan_shape,
+            brightfield=selection,
+            kx_bf=cp.asnumpy(cache["kx_bf"]),
+            ky_bf=cp.asnumpy(cache["ky_bf"]),
+            qx_1d=cp.asnumpy(cache["qx_1d"]),
+            qy_1d=cp.asnumpy(cache["qy_1d"]),
+            aperture_k=cp.asnumpy(cache["aperture_k_1d"]),
+            alpha_k2=cp.asnumpy(cache["alpha_k2_1d"]),
+            cos2phi_k=cp.asnumpy(cache["cos2phi_k_1d"]),
+            sin2phi_k=cp.asnumpy(cache["sin2phi_k_1d"]),
+            wavelength_A=float(self.wavelength),
+            semiangle_rad=float(cache["semiangle_rad"]),
+            angular_sampling_rad=(
+                float(cache["ang_y_rad"]),
+                float(cache["ang_x_rad"]),
+            ),
+            sampling_A=(float(self.sampling[0]), float(self.sampling[1])),
+            dc_value=complex(self._dc_value_host),
+            bf_source_path=self._bf_source_path,
+            bf_source_dtype=self._bf_source_dtype,
+            bf_source_max_value=self._bf_source_max_value,
+        )
+
+    def write_exact_bf_source(
+        self,
+        data,
+        path_stem: str | pathlib.Path,
+    ) -> pathlib.Path:
+        """Write selected exact detector counts directly from CUDA memory.
+
+        The detector-major ``[bf, scan]`` companion is the browser transport,
+        not a derived Fourier cache. Integer counts remain exact; uint16 is
+        narrowed to uint8 only when the entire loaded detector block is known
+        to fit losslessly.
+        """
+
+        write_start = time.perf_counter()
+        data = cp.asarray(data)
+        cp.cuda.Device(int(data.device.id)).use()
+        if data.ndim != 4 or tuple(int(value) for value in data.shape[:2]) != self.scan_shape:
+            raise ValueError(
+                "CUDA BF-source data must match the engine scan shape; "
+                f"got {tuple(data.shape)}, expected {self.scan_shape} + detector."
+            )
+        if data.dtype not in {cp.dtype(cp.uint8), cp.dtype(cp.uint16)}:
+            raise TypeError(
+                "Exact CUDA BF-source export supports uint8 or uint16 counts; "
+                f"got {data.dtype}."
+            )
+        max_value = int(cp.max(data).get())
+        out_dtype = np.dtype(np.uint8 if max_value <= 255 else np.uint16)
+        suffix = ".u8" if out_dtype == np.dtype(np.uint8) else ".u16"
+        path = pathlib.Path(path_stem).with_suffix(suffix).expanduser().resolve()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.unlink(missing_ok=True)
+
+        num_bf = self.num_bf
+        plane = int(self.scan_shape[0] * self.scan_shape[1])
+        detector_shape = self.detector_shape
+        flat = data.reshape(plane, *detector_shape)
+        input_type = "unsigned char" if data.dtype == cp.uint8 else "unsigned short"
+        output_type = "unsigned char" if out_dtype == np.dtype(np.uint8) else "unsigned short"
+        gather_transpose = cp.RawKernel(
+            rf"""
+            extern "C" __global__ void gather_transpose(
+                const {input_type}* input,
+                const int* bf_linear,
+                {output_type}* output,
+                const long long num_scan,
+                const int bf_offset,
+                const int num_bf,
+                const long long detector_pixels)
+            {{
+                __shared__ {output_type} tile[32][33];
+                const int local_bf = blockIdx.x * 32 + threadIdx.x;
+                const int bf = bf_offset + local_bf;
+                const long long scan =
+                    (long long)blockIdx.y * 32 + threadIdx.y;
+
+                #pragma unroll
+                for (int offset = 0; offset < 32; offset += 8) {{
+                    if (local_bf < num_bf && scan + offset < num_scan) {{
+                        tile[threadIdx.y + offset][threadIdx.x] =
+                            ({output_type})input[
+                                (scan + offset) * detector_pixels + bf_linear[bf]
+                            ];
+                    }}
+                }}
+                __syncthreads();
+
+                const long long output_scan =
+                    (long long)blockIdx.y * 32 + threadIdx.x;
+                const int output_bf = blockIdx.x * 32 + threadIdx.y;
+                #pragma unroll
+                for (int offset = 0; offset < 32; offset += 8) {{
+                    if (output_scan < num_scan && output_bf + offset < num_bf) {{
+                        output[(output_bf + offset) * num_scan + output_scan] =
+                            tile[threadIdx.x][threadIdx.y + offset];
+                    }}
+                }}
+            }}
+            """,
+            "gather_transpose",
+        )
+        bf_linear = (
+            self.bf_inds_row.astype(cp.int32) * int(detector_shape[1])
+            + self.bf_inds_col.astype(cp.int32)
+        )
+        chunk_capacity = min(num_bf, 256)
+        device_columns = cp.empty((chunk_capacity, plane), dtype=out_dtype)
+        host_columns = [
+            np.empty((chunk_capacity, plane), dtype=out_dtype),
+            np.empty((chunk_capacity, plane), dtype=out_dtype),
+        ]
+        pending: list[Future[None] | None] = [None, None]
+        with path.open("wb") as stream, ThreadPoolExecutor(max_workers=1) as writer:
+            for chunk_index, bf_offset in enumerate(
+                range(0, num_bf, chunk_capacity)
+            ):
+                slot = chunk_index % len(host_columns)
+                if pending[slot] is not None:
+                    pending[slot].result()
+                chunk_bf = min(chunk_capacity, num_bf - bf_offset)
+                gather_transpose(
+                    ((chunk_bf + 31) // 32, (plane + 31) // 32),
+                    (32, 8),
+                    (
+                        flat,
+                        bf_linear,
+                        device_columns,
+                        np.int64(plane),
+                        bf_offset,
+                        chunk_bf,
+                        np.int64(detector_shape[0] * detector_shape[1]),
+                    ),
+                )
+                host_chunk = host_columns[slot][:chunk_bf]
+                device_columns[:chunk_bf].get(out=host_chunk)
+                pending[slot] = writer.submit(host_chunk.tofile, stream)
+            for future in pending:
+                if future is not None:
+                    future.result()
+
+        self._bf_source_path = path
+        self._bf_source_dtype = out_dtype
+        self._bf_source_max_value = max_value
+        self._bf_source_write_seconds = time.perf_counter() - write_start
+        return path
+
+    def prepare_bf_subset(self, num_bf: int) -> _PreparedCudaBfSubset:
+        """Prepare a reusable deterministic BF subset for drag previews."""
+
+        return _PreparedCudaBfSubset(self, num_bf)
+
+    @staticmethod
+    def phase_to_numpy(phase) -> np.ndarray:
+        """Copy one reconstructed phase image from CUDA to host float32."""
+
+        return cp.asnumpy(phase).astype(np.float32, copy=False)
 
     def clear_batch_caches(self) -> None:
         """Release batch and chunk caches to free GPU VRAM."""
@@ -583,24 +895,14 @@ class SSBEngine:
         self._cached_rotation_rad = rotation_angle_rad
         # Initialize custom FFT based on scan size
         if self._custom_fft is None:
-            if ny == 128 and nx == 128:
-                from .fft128 import get_custom_fft_128
-                self._custom_fft = get_custom_fft_128()
-            elif ny == 1024 and nx == 1024:
-                from .fft1024 import get_custom_fft_1024
-                self._custom_fft = get_custom_fft_1024()
-            elif ny == 512 and nx == 512:
-                from .fft512 import get_custom_fft_512
-                self._custom_fft = get_custom_fft_512()
-            elif ny == 256 and nx == 256:
-                from .fft256 import get_custom_fft_256
-                self._custom_fft = get_custom_fft_256()
-            else:
+            if ny != nx:
                 raise ValueError(
-                    "SSB CUDA backend supports 128x128, 256x256, 512x512, "
-                    "and 1024x1024 "
-                    f"scan, got {ny}x{nx}"
+                    "CUDA SSB requires a square scan grid; "
+                    f"got {ny}x{nx}."
                 )
+            from .kernels import get_fft_kernel
+
+            self._custom_fft = get_fft_kernel(ny)
             self._colvar_group = int(self._custom_fft._colvar_group)
         # Work buffers. _result_buffer is (num_bf, ny, nx) complex64 and
         # only used by the reconstruct path - optimize/refine use separate
@@ -911,7 +1213,7 @@ class SSBEngine:
         14 Krivanek coefficients instead of the 2-term C10/C12 formula.
         Result lands in ``self._corrected_buffer``.
         """
-        from .fft_common import pack_aberration_coefs
+        from .kernels.common import pack_aberration_coefs
         c = self._cache
         num_bf = int(c["num_bf"])
         ny = int(c["ny"])
@@ -962,14 +1264,16 @@ class SSBEngine:
         -----
         For scans with full staging buffer >6 GB (e.g. held-out dataset 512²), falls
         back to a chunked BF-axis loop.  The col-accumulate optimization used
-        in the legacy chunked path is 2-term-only, so this path always
+        in the two-term chunked path is 2-term-only, so this path always
         materializes each chunk before phase reduction.
         """
+        mags_m = cp.asarray(mags_m, dtype=cp.float32)
+        angles_rad = cp.asarray(angles_rad, dtype=cp.float32)
         c = self._cache
         num_bf = int(c["num_bf"])
         ny = int(c["ny"])
         nx = int(c["nx"])
-        if getattr(self._custom_fft, "_size", None) == 128:
+        if self._custom_fft._size == 128:
             raise NotImplementedError(
                 "128x128 CUDA SSB currently supports C10/C12/phi12 only; "
                 "higher-order reconstruction needs a size-specific full-aberration path."
@@ -1001,7 +1305,7 @@ class SSBEngine:
         performed via CuPy per chunk (no dedicated col-accumulate kernel for
         the 14-coef path yet - that belongs to a future perf pass).
         """
-        from .fft_common import pack_aberration_coefs
+        from .kernels.common import pack_aberration_coefs
         c = self._cache
         num_bf = int(c["num_bf"])
         ny = int(c["ny"])
@@ -1057,15 +1361,16 @@ class SSBEngine:
             var/pix    = mean_bf(angle²) - mean²
             loss       = mean over pixels of var/pix
 
-        Used by :meth:`variance_loss_full` as the Optuna objective for
-        higher-order aberration optimization.  Falls back to a chunked
-        path for scans whose full staging buffer > 6 GB.
+        Falls back to a chunked path for scans whose full staging buffer is
+        larger than 6 GB.
         """
+        mags_m = cp.asarray(mags_m, dtype=cp.float32)
+        angles_rad = cp.asarray(angles_rad, dtype=cp.float32)
         c = self._cache
         num_bf = int(c["num_bf"])
         ny = int(c["ny"])
         nx = int(c["nx"])
-        if getattr(self._custom_fft, "_size", None) == 128:
+        if self._custom_fft._size == 128:
             raise NotImplementedError(
                 "128x128 CUDA SSB currently supports C10/C12/phi12 only; "
                 "higher-order loss needs a size-specific full-aberration path."
@@ -1103,7 +1408,7 @@ class SSBEngine:
         variance from the pooled statistics.  Bit-identical to the
         non-chunked path (just sum-then-divide instead of divide-then-sum).
         """
-        from .fft_common import pack_aberration_coefs
+        from .kernels.common import pack_aberration_coefs
         c = self._cache
         num_bf = int(c["num_bf"])
         ny = int(c["ny"])
@@ -1151,18 +1456,6 @@ class SSBEngine:
         var_per_pixel = phase_sumsq / float(num_bf) - mean_phase ** 2
         loss = float(cp.mean(var_per_pixel))
         return mean_phase, loss
-
-    def variance_loss_full(
-        self, mags_m: cp.ndarray, angles_rad: cp.ndarray,
-    ) -> float:
-        """Scalar variance loss at the given 14-coef configuration.
-
-        Thin wrapper around ``reconstruct_full_with_loss`` that discards
-        the phase image.  This is the objective function used by the
-        :meth:`SSB.optimize_full` Optuna driver.
-        """
-        _, loss = self.reconstruct_full_with_loss(mags_m, angles_rad)
-        return loss
 
     # =====================================================================
     #  Fused reconstruct + variance loss (single pipeline pass)
@@ -1472,7 +1765,19 @@ class SSBEngine:
     @property
     def uses_optimizer_reconstruct_fallback(self) -> bool:
         """Whether optimizer losses use sequential full-IFFT reconstruction."""
-        return bool(getattr(self._custom_fft, "_optimizer_uses_reconstruct_fallback", False))
+        return self._force_exact_optimizer or bool(
+            self._custom_fft._optimizer_uses_reconstruct_fallback
+        )
+
+    def set_optimizer_objective_mode(self, mode: str) -> None:
+        """Select the native batched or exact full-IFFT optimizer objective."""
+
+        if mode not in {"native", "exact"}:
+            raise ValueError(
+                "SSB optimizer objective_mode must be 'native' or 'exact'; "
+                f"got {mode!r}."
+            )
+        self._force_exact_optimizer = mode == "exact"
 
     def _variance_loss_batch_reconstruct_fallback(
         self,

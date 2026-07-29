@@ -81,7 +81,7 @@ and optimizer state, not the full acquisition.
 
 ### MPS compressed-save sprint, 2026-07-26
 
-Target workflow: full no-bin `512x512x192x192` MAPED output on Phil/Apple GPU,
+Target workflow: full no-bin `512x512x192x192` MAPED output on Apple Silicon,
 standard Arina master/data HDF5 layout, one frame per HDF5 chunk, Bitshuffle/LZ4
 filter `32008`, no detector binning, no scan crop, and no preview cache standing
 in for raw detector evidence.
@@ -89,7 +89,7 @@ in for raw detector evidence.
 Public API rule: notebooks and user workflows should call `quantem.gpu.io.save`
 with `backend="auto"`, `dtype=...`, and the default Bitshuffle/LZ4 compression.
 `save_compressed_arina_h5` remains as the lower-level compatibility hook for
-tests and backend-specific maintenance. A Phil public-API validation using
+tests and backend-specific maintenance. An Apple Silicon public-API validation using
 `from quantem.gpu import io; io.save(..., backend="auto", dtype="u16")`
 measured `1.91 s` save, `3.14 s` load+save, `1.205 GB` output, and `512/512`
 exact decoded samples on the full no-bin MAPED master.
@@ -104,7 +104,7 @@ Committed path:
 | `6a47810` | Added a repeated-byte speed encoder for the exact-count MPS path. | Exact `uint16` reached the `~2.03-2.10 s` edge, with a modest file-size tradeoff. |
 | `54ed193` | Added native Metal chunk-backed `uint16` compressor that reads `_MtlArray` Metal buffers directly, avoiding torch/MLX staging. | Exact `uint16` full no-bin save reached `1.80-1.96 s`; sampled agreement exact versus the source `uint16` master. |
 | `3061501` | Re-tuned the native MPS save default batch from 4096 to 2048 after a full-data sweep. | Exact `uint16` full no-bin save reached `1.69-1.80 s`; 4096 measured `1.81-1.86 s`, and 8192 measured `1.91-2.00 s`. The default-path confirmation measured `1.753 s`. |
-| `83bb608` | Made `quantem.gpu.io.save(..., backend="auto")` the public HDF5 save entry point. | Public API validation on Phil used the same full no-bin MPS source and saved in `1.91 s` with exact decoded sample agreement. |
+| `83bb608` | Made `quantem.gpu.io.save(..., backend="auto")` the public HDF5 save entry point. | Public API validation on the reference MPS host used the same full no-bin source and saved in `1.91 s` with exact decoded sample agreement. |
 
 Implementation checklist:
 
@@ -123,7 +123,7 @@ Implementation checklist:
 | End-to-end seven-tilt stream/merge/save under 20 s | Open | Save stage is inside target; remaining work is alignment/merge pipeline overlap and single-pass acquisition staging. |
 | WebGPU HDF5 writing | Deferred | Browser writing is not part of the microscope MAPED path; keep WebGPU focused on review/product-first workflows for now. |
 
-Final Phil full-run results:
+Final Apple Silicon full-run results:
 
 | Path | Load | Save | Load + best save | Output size | Agreement gate |
 | --- | ---: | ---: | ---: | ---: | --- |
@@ -135,7 +135,7 @@ Backend gap/use-case summary:
 | Backend | Current best role | Save/write status | Remaining gap |
 | --- | --- | --- | --- |
 | CUDA | Workstation/reference GPU path. | `uint8`, `uint16`, and `float32` GPU HDF5 save paths are available. | Need a same-real-MAPED timing run to publish exact CUDA-vs-MPS save numbers. |
-| MPS | Phil and microscope-local Mac workflow. | Full no-bin `uint8` and exact `uint16` saves are inside the 1-2 s save target. | Further wins are likely load/save pipeline overlap, lower file-size tuning, or moving more MAPED merge output directly into chunk-backed Metal buffers. |
+| MPS | Apple Silicon and microscope-local Mac workflow. | Full no-bin `uint8` and exact `uint16` saves are inside the 1-2 s save target. | Further wins are likely load/save pipeline overlap, lower file-size tuning, or moving more MAPED merge output directly into chunk-backed Metal buffers. |
 | WebGPU | Browser review, local-file interaction, and front-end products. | HDF5 writing is intentionally a gap. | Useful later for browser-only export/share without Python; not needed for the current microscope MAPED processing path. |
 
 Bounded experiments from this sprint:
@@ -190,9 +190,9 @@ Bounded experiments from this sprint:
 | WebGPU corrected-frame checksum gate | WebGPU on Apple GPU | full `512x512x192x192`, first/middle/last detector frames after bad-pixel correction | selected-frame `sum/min/max/n` exactly matches CUDA for all three scan indices | Strong browser HDF5 parse/decode/chunk-order/dtype/bad-pixel parity gate without reading the full 9.7 GB stack back to CPU. |
 | SSB exact phase/loss | CUDA | real `512x512` full-BF field | mean about `32.5 ms`, p50 about `32.2 ms`, p95 about `33.3 ms` | Meets 30 FPS with small p95 margin. |
 | SSB exact phase/loss | CUDA | synthetic `1024x1024`, full-BF style | about `198 ms`, `5 FPS` | Not interactive yet. |
-| SSB exact phase/loss | MPS | real `512x512`, radius-30 BF, prepared Hermitian `G_qk` on Apple GPU | fresh Phil `origin/main` probe: phase-only mean `76.67 ms`, p50 `76.88 ms`, p95 `78.98 ms`; phase+loss mean `76.28 ms`, p50 `76.52 ms`, p95 `77.41 ms`; loss `0.2932657` | Correct and reviewable at about `13 FPS`, but still not CUDA-like. Object-wave steering for the same BF policy measured `10.86 ms` mean. |
-| SSB exact phase/loss | MPS | real `512x512`, full active BF mask, prepared Hermitian `G_qk` on Apple GPU | fresh Phil `origin/main` probe: phase-only mean `481.15 ms`, p50 `476.32 ms`, p95 `509.44 ms`; phase+loss mean `528.90 ms`, p50 `537.58 ms`, p95 `557.51 ms`; loss `0.0885396` | Correct but slow. This is the large-BF policy that still needs a deeper MPS row/column FFT topology. |
-| SSB exact phase/loss | MPS | synthetic full-BF-style `1024x1024`, `8809` BF | fresh Phil source-tree probe: object median `142.7 ms`; exact phase+loss median `669.1 ms` with `37.02 GB` Hermitian `G_qk` | Needs deeper MPS topology for large exact phase/loss; chunk tuning alone is not enough. |
+| SSB exact phase/loss | MPS | real `512x512`, radius-30 BF, prepared Hermitian `G_qk` on Apple GPU | fresh Apple Silicon `origin/main` probe: phase-only mean `76.67 ms`, p50 `76.88 ms`, p95 `78.98 ms`; phase+loss mean `76.28 ms`, p50 `76.52 ms`, p95 `77.41 ms`; loss `0.2932657` | Correct and reviewable at about `13 FPS`, but still not CUDA-like. Object-wave steering for the same BF policy measured `10.86 ms` mean. |
+| SSB exact phase/loss | MPS | real `512x512`, full active BF mask, prepared Hermitian `G_qk` on Apple GPU | fresh Apple Silicon `origin/main` probe: phase-only mean `481.15 ms`, p50 `476.32 ms`, p95 `509.44 ms`; phase+loss mean `528.90 ms`, p50 `537.58 ms`, p95 `557.51 ms`; loss `0.0885396` | Correct but slow. This is the large-BF policy that still needs a deeper MPS row/column FFT topology. |
+| SSB exact phase/loss | MPS | synthetic full-BF-style `1024x1024`, `8809` BF | fresh Apple Silicon source-tree probe: object median `142.7 ms`; exact phase+loss median `669.1 ms` with `37.02 GB` Hermitian `G_qk` | Needs deeper MPS topology for large exact phase/loss; chunk tuning alone is not enough. |
 
 ## Required Agreement Gates
 
@@ -274,7 +274,7 @@ speed:
    still needs either enough free WebGPU VRAM for a true full-stack run or an
    explicit documented memory-policy rejection.
 15. SSB MPS `512/1024` exact phase/loss topology: optimize row/column FFT work;
-   chunk-size-only changes are not enough. Fresh Phil `origin/main` probes show
+   chunk-size-only changes are not enough. Fresh Apple Silicon `origin/main` probes show
    radius-30 `512` exact phase/loss around `76 ms`, full-active-BF `512` around
    `529 ms`, and full-BF-sized synthetic `1024` around `669 ms`; the usable
    object-wave steering path is a separate quantity.

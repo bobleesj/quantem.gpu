@@ -134,8 +134,8 @@ __device__ __forceinline__ float4 compute_geometry(
     // Most SSB live-control points are strictly inside the soft aperture.
     // Since denom <= max(ang_y, ang_x), alpha <= semiangle - 0.5*max_ang
     // proves edge >= 1 and therefore aperture == 1 exactly.  Taking this
-    // branch skips the second sqrt/div path while falling back to the legacy
-    // expression near the edge so the scientific objective is unchanged.
+    // branch skips the second sqrt/div path while falling back to the complete
+    // edge expression so the scientific objective is unchanged.
     float max_ang = fmaxf(ang_y_rad, ang_x_rad);
     float inner = (semiangle_rad - 0.5f * max_ang) / wavelength;
     float aperture = 1.0f;
@@ -471,7 +471,7 @@ __device__ __forceinline__ float chi_full(
 }
 
 // Full-aberration gamma multiplication.  Takes the same G_qk + pk inputs as
-// the legacy gamma_mul_pk_onthefly but replaces the 2-term inline χ with
+// the three-parameter gamma_mul_pk_onthefly but replaces the 2-term inline χ with
 // chi_full above.  Called by the "full" variants of the fused FFT kernels.
 __device__ __forceinline__ float2 gamma_mul_pk_onthefly_full(
     float qx, float qy,
@@ -703,6 +703,8 @@ class CustomFFTBase:
         batch_shared_mem: int = 0,
     ) -> None:
         self._size = size
+        self._fourier_sum = None
+        self._optimizer_uses_reconstruct_fallback = False
         options = ("--std=c++11", "--use_fast_math", "--maxrregcount=96", "-Xptxas=-dlcm=ca")
         self._module = cp.RawModule(
             code=cuda_code,
@@ -963,7 +965,7 @@ class CustomFFTBase:
         Size-specific subclasses register ``self._fourier_sum`` when this
         path is available.
         """
-        fourier_sum = getattr(self, "_fourier_sum", None)
+        fourier_sum = self._fourier_sum
         if fourier_sum is None:
             raise RuntimeError("corrected Fourier sum kernel not available")
         N = self._size

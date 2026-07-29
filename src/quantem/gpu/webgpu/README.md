@@ -1,7 +1,8 @@
 # quantem.gpu WebGPU Sources
 
-This directory is the canonical source home for reusable QuantEM WebGPU
-browser-compute code.
+This directory contains generic reusable QuantEM WebGPU browser infrastructure.
+Algorithm-specific SSB code lives beside the CUDA and MPS implementations under
+`quantem/gpu/ssb/compute/webgpu`.
 
 `quantem.widget` still bundles the code into anywidget JavaScript and exported
 HTML, because browsers cannot import Python package modules directly. The
@@ -26,8 +27,9 @@ Current status:
 
 - `compute.ts` contains the Show4DSTEM WebGPU virtual-image engine, including
   selected-index BF/DF/ADF and masked CoM kernels.
-- `showptycho-ssb.ts` contains the ShowPtycho WebGPU SSB engine and imports
-  shared device, HDF5, and bitshuffle/LZ4 helpers from this package.
+- `../ssb/compute/webgpu/backend.ts` contains the backend-neutral WebGPU SSB
+  engine and imports shared device, HDF5, and bitshuffle/LZ4 helpers from this
+  package.
 - BF/DF/ADF has a GPU-resident `maskedSumBuffer` path, including cached
   full-detector total minus complement for dense DF/ADF masks.
 - CoM/DPC has GPU-resident `maskedCoMBuffer` and `maskedDpcBuffer` source

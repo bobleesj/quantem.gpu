@@ -300,6 +300,129 @@ kernel void shuf_8192_16_batched(
     out[ulong(frame_id) * ulong(frame_u16s) + group_id * 32 + lane] = result;
 }
 
+// Lossless-browse variant: unshuffle uint16 and saturate directly to uint8.
+// This avoids materializing and rereading a full uint16 scratch stack when no
+// bad-pixel operation must run between unshuffle and narrowing.
+kernel void shuf_8192_16_to_u8_batched(
+    const device uint*  in   [[buffer(0)]],
+    device uchar*       out  [[buffer(1)]],
+    constant uint&      frame_u16s        [[buffer(2)]],
+    constant uint&      groups_per_block  [[buffer(3)]],
+    constant uint&      total_groups      [[buffer(4)]],
+    uint3 tpig       [[threadgroup_position_in_grid]],
+    uint  lane       [[thread_index_in_simdgroup]],
+    uint  sg_id      [[simdgroup_index_in_threadgroup]]
+) {
+    uint frame_id = tpig.x;
+    uint group_id = tpig.z * 32 + sg_id;
+    if (group_id >= total_groups) return;
+
+    uint block_id = group_id / groups_per_block;
+    uint group_in_block = group_id % groups_per_block;
+    const device uint* block_in = in + ulong(frame_id) * ulong(frame_u16s / 2)
+                                     + block_id * 2048;
+    threadgroup uint planes[32][16];
+    if (lane < 16)
+        planes[sg_id][lane] = block_in[lane * groups_per_block + group_in_block];
+    simdgroup_barrier(mem_flags::mem_threadgroup);
+
+    ushort result = 0;
+    for (int j = 0; j < 16; j++)
+        if (planes[sg_id][j] & (1U << lane))
+            result |= ushort(1U << j);
+    out[ulong(frame_id) * ulong(frame_u16s) + group_id * 32 + lane]
+        = uchar(min(result, ushort(255)));
+}
+
+// Dead-pixel-corrected lossless-browse variant. The detector mask is shared by
+// every frame, so the unshuffle lane can zero a bad pixel before writing the
+// clipped uint8 result. This preserves mask-before-narrow semantics without a
+// full uint16 scratch stack and separate zero/clip dispatches.
+kernel void shuf_8192_16_to_u8_masked_batched(
+    const device uint*  in    [[buffer(0)]],
+    device uchar*       out   [[buffer(1)]],
+    constant uint&      frame_u16s        [[buffer(2)]],
+    constant uint&      groups_per_block  [[buffer(3)]],
+    constant uint&      total_groups      [[buffer(4)]],
+    const device uchar* mask  [[buffer(5)]],
+    uint3 tpig       [[threadgroup_position_in_grid]],
+    uint  lane       [[thread_index_in_simdgroup]],
+    uint  sg_id      [[simdgroup_index_in_threadgroup]]
+) {
+    uint frame_id = tpig.x;
+    uint group_id = tpig.z * 32 + sg_id;
+    if (group_id >= total_groups) return;
+
+    uint block_id = group_id / groups_per_block;
+    uint group_in_block = group_id % groups_per_block;
+    const device uint* block_in = in + ulong(frame_id) * ulong(frame_u16s / 2)
+                                     + block_id * 2048;
+    threadgroup uint planes[32][16];
+    if (lane < 16)
+        planes[sg_id][lane] = block_in[lane * groups_per_block + group_in_block];
+    simdgroup_barrier(mem_flags::mem_threadgroup);
+
+    ushort result = 0;
+    for (int j = 0; j < 16; j++)
+        if (planes[sg_id][j] & (1U << lane))
+            result |= ushort(1U << j);
+    uint detector_index = group_id * 32 + lane;
+    out[ulong(frame_id) * ulong(frame_u16s) + detector_index]
+        = mask[detector_index] ? uchar(0) : uchar(min(result, ushort(255)));
+}
+
+// Optional decode-side detector sum. Each source chunk gets an independent
+// output plane, so concurrently executing decode command buffers never race.
+kernel void detector_sum_u8_decode_partial(
+    device const uchar* data     [[buffer(0)]],
+    device uint*        partial  [[buffer(1)]],
+    constant uint&      ndet     [[buffer(2)]],
+    constant uint&      nframes  [[buffer(3)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    constexpr uint frames_per_block = 1024u;
+    uint block = gid / ndet;
+    uint pix = gid - block * ndet;
+    uint frame_start = block * frames_per_block;
+    if (pix >= ndet || frame_start >= nframes) return;
+    uint frame_stop = min(frame_start + frames_per_block, nframes);
+    uint sum = 0u;
+    for (uint fr = frame_start; fr < frame_stop; ++fr) {
+        sum += uint(data[(ulong)fr * ndet + pix]);
+    }
+    partial[(ulong)block * ndet + pix] = sum;
+}
+
+kernel void detector_sum_u8_decode_merge(
+    device const uint* partial [[buffer(0)]],
+    device uint*       out     [[buffer(1)]],
+    constant uint&     ndet    [[buffer(2)]],
+    constant uint&     nblocks [[buffer(3)]],
+    uint pix [[thread_position_in_grid]]
+) {
+    if (pix >= ndet) return;
+    uint sum = 0u;
+    for (uint block = 0; block < nblocks; ++block) {
+        sum += partial[(ulong)block * ndet + pix];
+    }
+    out[pix] = sum;
+}
+
+kernel void detector_sum_u8_decode_final(
+    device const uint* chunk_sums [[buffer(0)]],
+    device uint*       out        [[buffer(1)]],
+    constant uint&     ndet       [[buffer(2)]],
+    constant uint&     nchunks    [[buffer(3)]],
+    uint pix [[thread_position_in_grid]]
+) {
+    if (pix >= ndet) return;
+    uint sum = 0u;
+    for (uint chunk = 0; chunk < nchunks; ++chunk) {
+        sum += chunk_sums[(ulong)chunk * ndet + pix];
+    }
+    out[pix] = sum;
+}
+
 // =====================================================================
 // Kernel 3: Detector binning — integer SUM, mask-aware, native uint16 out.
 // quantem.live diverges from the widget here: it sums (not means) and keeps

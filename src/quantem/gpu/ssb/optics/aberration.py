@@ -47,7 +47,6 @@ C56          (5,6)  6-fold astig    u⁶-15u⁴v²+15u²v⁴-v⁶      6u⁵v-20
 
 import math
 import cupy as cp
-from .physics import keV_to_wavelength_nm
 
 
 # =============================================================================
@@ -60,7 +59,7 @@ N_ABERRATIONS = 14
 _N_VALUES = cp.array([1, 1, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 5], dtype=cp.int32)
 _M_VALUES = cp.array([0, 2, 1, 3, 0, 2, 4, 1, 3, 5, 0, 2, 4, 6], dtype=cp.int32)
 
-# Legacy list form for backward compatibility
+# Public coefficient layout used by fitting and packed GPU kernels.
 ABERRATION_INDICES = [
     # (n, m, name, has_angle)
     (1, 0, 'C10', False),   # Defocus

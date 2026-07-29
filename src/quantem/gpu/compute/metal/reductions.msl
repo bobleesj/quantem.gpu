@@ -71,6 +71,49 @@ kernel void detector_sum_u8(
     atomic_fetch_add_explicit(&out[pix], s, memory_order_relaxed);
 }
 
+kernel void detector_sum_u8_block_partial(
+    device const uchar* data     [[buffer(0)]],
+    device int*         partial  [[buffer(1)]],
+    constant uint&      ndet     [[buffer(2)]],
+    constant uint&      nframes  [[buffer(3)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    constexpr uint frames_per_block = 1024u;
+    uint pixel_groups = ndet / 4u;
+    uint block = gid / pixel_groups;
+    uint pixel_group = gid - block * pixel_groups;
+    uint pix = pixel_group * 4u;
+    uint frame_start = block * frames_per_block;
+    if (pix + 3u >= ndet || frame_start >= nframes) return;
+    uint frame_stop = min(frame_start + frames_per_block, nframes);
+    int4 sums = int4(0);
+    for (uint fr = frame_start; fr < frame_stop; ++fr) {
+        uchar4 values = *reinterpret_cast<device const uchar4*>(
+            data + (ulong)fr * ndet + pix
+        );
+        sums += int4(values);
+    }
+    device int4* out = reinterpret_cast<device int4*>(
+        partial + (ulong)block * ndet + pix
+    );
+    *out = sums;
+}
+
+kernel void detector_sum_u8_block_merge(
+    device const int* partial    [[buffer(0)]],
+    device atomic_int* out       [[buffer(1)]],
+    constant uint& ndet          [[buffer(2)]],
+    constant uint& nblocks       [[buffer(3)]],
+    uint pix [[thread_position_in_grid]]
+) {
+    if (pix >= ndet) return;
+    int sum = 0;
+    for (uint block = 0; block < nblocks; ++block) {
+        sum += partial[(ulong)block * ndet + pix];
+    }
+    atomic_fetch_add_explicit(&out[pix], sum, memory_order_relaxed);
+}
+
 kernel void detector_sum_prefix_u16(
     device const ushort* data    [[buffer(0)]],   // row-prefix (nframes, ndet)
     device atomic_int*   out     [[buffer(1)]],   // (ndet,) int32, accumulated
@@ -90,6 +133,67 @@ kernel void detector_sum_prefix_u16(
     }
     atomic_fetch_add_explicit(&out[pix], s, memory_order_relaxed);
 }
+
+#define GATHER_COLUMNS_F32_TILED(NAME, TYPE) \
+kernel void NAME( \
+    device const TYPE* data       [[buffer(0)]], \
+    device const uint* indices    [[buffer(1)]], \
+    device float* out             [[buffer(2)]], \
+    constant uint& ndet           [[buffer(3)]], \
+    constant uint& nframes        [[buffer(4)]], \
+    constant uint& total_frames   [[buffer(5)]], \
+    constant uint& frame_offset   [[buffer(6)]], \
+    constant uint& npixels        [[buffer(7)]], \
+    uint2 group [[threadgroup_position_in_grid]], \
+    uint2 local [[thread_position_in_threadgroup]] \
+) { \
+    threadgroup float tile[16][17]; \
+    uint load_pixel = group.x * 16u + local.x; \
+    uint load_frame = group.y * 16u + local.y; \
+    float value = 0.0f; \
+    if (load_pixel < npixels && load_frame < nframes) { \
+        value = (float)data[(ulong)load_frame * ndet + indices[load_pixel]]; \
+    } \
+    tile[local.y][local.x] = value; \
+    threadgroup_barrier(mem_flags::mem_threadgroup); \
+    uint store_pixel = group.x * 16u + local.y; \
+    uint store_frame = group.y * 16u + local.x; \
+    if (store_pixel < npixels && store_frame < nframes) { \
+        out[(ulong)store_pixel * total_frames + frame_offset + store_frame] = \
+            tile[local.x][local.y]; \
+    } \
+}
+
+GATHER_COLUMNS_F32_TILED(gather_columns_f32_tiled_u8, uchar)
+GATHER_COLUMNS_F32_TILED(gather_columns_f32_tiled_u16, ushort)
+GATHER_COLUMNS_F32_TILED(gather_columns_f32_tiled_u32, uint)
+
+kernel void gather_columns_f32_prefix_u16(
+    device const ushort* data     [[buffer(0)]],
+    device const uint* indices    [[buffer(1)]],
+    device float* out             [[buffer(2)]],
+    constant uint& ndet           [[buffer(3)]],
+    constant uint& nframes        [[buffer(4)]],
+    constant uint& total_frames   [[buffer(5)]],
+    constant uint& frame_offset   [[buffer(6)]],
+    constant uint& npixels        [[buffer(7)]],
+    constant uint& detcols        [[buffer(8)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    uint total = nframes * npixels;
+    if (gid >= total) return;
+    uint pixel = gid / nframes;
+    uint frame = gid - pixel * nframes;
+    uint idx = indices[pixel];
+    uint col = idx % detcols;
+    device const ushort* src = data + (ulong)frame * ndet;
+    uint right = (uint)src[idx];
+    uint left = col == 0u ? 0u : (uint)src[idx - 1u];
+    out[(ulong)pixel * total_frames + frame_offset + frame] =
+        (float)(right - left);
+}
+
+#undef GATHER_COLUMNS_F32_TILED
 kernel void row_sum_overflow_u16(
     device const ushort* data      [[buffer(0)]],  // raw (nframes, rows, cols)
     device atomic_uint*  overflow  [[buffer(1)]],  // set to 1 if any row > 65535

@@ -12,9 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 import gc
 import os
 import time
-import threading
 import numpy as np
-from numba import njit, prange
 
 
 # Raw Metal masked-sum kernels: one thread per scan position, reading resident
@@ -32,39 +30,7 @@ _MASKED_SUM_MSL = (_pathlib.Path(__file__).parent / 'metal' / 'reductions.msl').
 _CHUNKS_PER_CMDBUF = 13
 _COMMAND_BUFFER_BYTES = 9_500_000_000
 _DEFAULT_COMPACT_TARGET_BYTES = 3_600_000_000
-_PREFIX_NUMBA_MAX_SPANS = 128
 _RADIAL_INTERACTION_IDLE_DELAY = 0.75
-
-
-@njit(parallel=True, nogil=True, cache=True)
-def _row_prefix_sum_chunk_numba(
-    chunk: np.ndarray,
-    left_rows: np.ndarray,
-    left_cols: np.ndarray,
-    right_rows: np.ndarray,
-    right_cols: np.ndarray,
-    out: np.ndarray,
-):
-    """Exact row-prefix span sum over one chunk.
-
-    The input is a numpy view of a shared Metal buffer. On a memory-pressured
-    MacBook, this CPU-side parallel path is steadier than the Metal gather for
-    compact BF/DF masks while still reading the same zero-copy no-bin data.
-    """
-    nframes = chunk.shape[0]
-    nspans = right_rows.shape[0]
-    for frame in prange(nframes):
-        total = 0
-        for sp in range(nspans):
-            rr = right_rows[sp]
-            rc = right_cols[sp]
-            val = int(chunk[frame, rr, rc])
-            lr = left_rows[sp]
-            if lr >= 0:
-                lc = left_cols[sp]
-                val -= int(chunk[frame, lr, lc])
-            total += val
-        out[frame] = total
 
 
 def _chunk_nbytes(chunk) -> int:
@@ -136,16 +102,6 @@ def _upsample_bin_dp(dp: np.ndarray, out_shape: tuple[int, int],
     return np.repeat(np.repeat(arr, binf, axis=0), binf, axis=1)[
         : out_shape[0], : out_shape[1]
     ]
-
-
-def _bin2_mask(mask: np.ndarray) -> np.ndarray:
-    """Back-compat: bin2 mask downsample (see :func:`_bin_mask`)."""
-    return _bin_mask(mask, 2)
-
-
-def _upsample_bin2_dp(dp: np.ndarray, out_shape: tuple[int, int]) -> np.ndarray:
-    """Back-compat: bin2 DP upsample (see :func:`_upsample_bin_dp`)."""
-    return _upsample_bin_dp(dp, out_shape, 2)
 
 
 def _torch_dtype(torch, dtype: np.dtype):
@@ -235,11 +191,35 @@ class MetalVirtualImage:
         self._pipe, _ = dev.newComputePipelineStateWithFunction_error_(
             lib.newFunctionWithName_(f"masked_sum_{suffix}"), None)
         self._detsum_pipe = None
+        self._detsum_u8_partial_pipe = None
+        self._detsum_u8_merge_pipe = None
         if self._dtype != np.dtype(np.uint32):
             self._detsum_pipe, _ = dev.newComputePipelineStateWithFunction_error_(
                 lib.newFunctionWithName_(f"detector_sum_{suffix}"), None)
+        if self._dtype == np.dtype(np.uint8) and self.ndet % 4 == 0:
+            self._detsum_u8_partial_pipe, _ = (
+                dev.newComputePipelineStateWithFunction_error_(
+                    lib.newFunctionWithName_("detector_sum_u8_block_partial"), None
+                )
+            )
+            self._detsum_u8_merge_pipe, _ = (
+                dev.newComputePipelineStateWithFunction_error_(
+                    lib.newFunctionWithName_("detector_sum_u8_block_merge"), None
+                )
+            )
         self._detsum_prefix_pipe, _ = dev.newComputePipelineStateWithFunction_error_(
             lib.newFunctionWithName_("detector_sum_prefix_u16"), None)
+        self._gather_columns_tiled_pipe, _ = (
+            dev.newComputePipelineStateWithFunction_error_(
+                lib.newFunctionWithName_(f"gather_columns_f32_tiled_{suffix}"),
+                None,
+            )
+        )
+        self._gather_columns_prefix_pipe, _ = (
+            dev.newComputePipelineStateWithFunction_error_(
+                lib.newFunctionWithName_("gather_columns_f32_prefix_u16"), None
+            )
+        )
         self._row_overflow_pipe, _ = dev.newComputePipelineStateWithFunction_error_(
             lib.newFunctionWithName_("row_sum_overflow_u16"), None)
         self._row_prefix_pipe, _ = dev.newComputePipelineStateWithFunction_error_(
@@ -299,13 +279,18 @@ class MetalVirtualImage:
             b = _mps._metal_buffer_alloc(4)
             _mps._numpy_view(b, np.uint32, 1)[0] = int(c.shape[0])
             self._nf_mtls.append(b)
+        self._detsum_u8_partial_mtl = None
+        if self._detsum_u8_partial_pipe is not None:
+            max_blocks = (max(int(c.shape[0]) for c in chunks) + 1023) // 1024
+            self._detsum_u8_partial_mtl = _mps._metal_buffer_alloc(
+                max_blocks * self.ndet * np.dtype(np.int32).itemsize
+            )
         # mask buffer (one detector frame, written per recompute)
         self._mask_mtl = _mps._metal_buffer_alloc(self.ndet)
         self._mask_np = _mps._numpy_view(self._mask_mtl, np.uint8, self.ndet)
         self._full = np.empty(self.n, dtype=self._sum_dtype)
         self._row_prefix = bool(row_prefix)
         self._row_prefix_warmed = False
-        self._row_prefix_numba_warmed = False
         self._overflow_mtl = _mps._metal_buffer_alloc(4)
         self._overflow_np = _mps._numpy_view(self._overflow_mtl, np.uint32, 1)
         self._nspans_mtl = _mps._metal_buffer_alloc(4)
@@ -609,7 +594,6 @@ class MetalVirtualImage:
         cmds[-1].waitUntilCompleted()
         self._row_prefix = True
         self._row_prefix_warmed = False
-        self._warm_row_prefix_numba()
         if verbose:
             print(
                 "Prepared exact row-prefix interaction layout in "
@@ -719,53 +703,6 @@ class MetalVirtualImage:
                 ends.append(row * ncols + int(seg[-1]))
         return np.asarray(starts, dtype=np.uint32), np.asarray(ends, dtype=np.uint32)
 
-    def _warm_row_prefix_numba(self):
-        if self._row_prefix_numba_warmed:
-            return
-        scratch = np.empty(1, dtype=np.int32)
-        _row_prefix_sum_chunk_numba(
-            np.asarray(self.chunks[0][:1]),
-            np.asarray([-1], dtype=np.int64),
-            np.asarray([0], dtype=np.int64),
-            np.asarray([0], dtype=np.int64),
-            np.asarray([0], dtype=np.int64),
-            scratch,
-        )
-        self._row_prefix_numba_warmed = True
-
-    def _masked_sum_prefix_numba(
-        self,
-        starts: np.ndarray,
-        ends: np.ndarray,
-    ) -> np.ndarray:
-        detcols = int(self.det[1])
-        right_flat = ends.astype(np.int64, copy=False)
-        right_rows = right_flat // detcols
-        right_cols = right_flat - right_rows * detcols
-        left_flat = starts.astype(np.int64, copy=True)
-        row_start = (starts % self.det[1]) == 0
-        left_flat[~row_start] -= 1
-        left_rows = np.empty_like(left_flat)
-        left_cols = np.zeros_like(left_flat)
-        left_rows[row_start] = -1
-        left_rows[~row_start] = left_flat[~row_start] // detcols
-        left_cols[~row_start] = (
-            left_flat[~row_start] - left_rows[~row_start] * detcols
-        )
-        self._warm_row_prefix_numba()
-        for ci, chunk in enumerate(self.chunks):
-            _row_prefix_sum_chunk_numba(
-                np.asarray(chunk),
-                left_rows,
-                left_cols,
-                right_rows,
-                right_cols,
-                self._out_nps[ci],
-            )
-        for ci in range(len(self.chunks)):
-            self._full[self._offsets[ci]:self._offsets[ci + 1]] = self._out_nps[ci]
-        return self._full
-
     def _masked_sum_prefix(self, mask2d: np.ndarray) -> np.ndarray:
         Metal = self._Metal
         starts, ends = self._mask_spans(mask2d)
@@ -773,8 +710,6 @@ class MetalVirtualImage:
         if nspans == 0:
             self._full.fill(0)
             return self._full
-        if nspans <= _PREFIX_NUMBA_MAX_SPANS:
-            return self._masked_sum_prefix_numba(starts, ends)
         self._ensure_span_buffers(nspans)
         lefts = starts.astype(np.uint32, copy=True)
         row_start = (starts % self.det[1]) == 0
@@ -1005,10 +940,11 @@ class MetalVirtualImage:
         for a host numpy reduce). Used once, at auto-center.
         """
         if self._dtype == np.dtype(np.uint32):
-            acc = np.zeros(self.det, dtype=np.uint64)
-            for chunk in self.chunks:
-                acc += np.asarray(chunk).sum(axis=0, dtype=np.uint64)
-            return acc.astype(np.float32)
+            raise NotImplementedError(
+                "MPS uint32 detector_sum has no overflow-safe native Metal "
+                "reducer. CPU fallback is disabled; load a validated uint16/u8 "
+                "representation or implement a Metal uint64 merge pass."
+            )
         Metal = self._Metal
         mps = self._mps
         ds_out = mps._metal_buffer_alloc(self.ndet * 4)
@@ -1021,24 +957,189 @@ class MetalVirtualImage:
         for group in _chunk_groups(self.chunks):
             cmd = mps._queue.commandBuffer()
             enc = cmd.computeCommandEncoder()
-            enc.setComputePipelineState_(
-                self._detsum_prefix_pipe if self._row_prefix else self._detsum_pipe)
+            tiled_u8 = (
+                self._detsum_u8_partial_pipe is not None and not self._row_prefix
+            )
+            if not tiled_u8:
+                enc.setComputePipelineState_(
+                    self._detsum_prefix_pipe
+                    if self._row_prefix
+                    else self._detsum_pipe
+                )
             for ci in group:
-                enc.setBuffer_offset_atIndex_(self.chunks[ci]._mtl, 0, 0)
-                enc.setBuffer_offset_atIndex_(ds_out, 0, 1)
-                enc.setBuffer_offset_atIndex_(self._ndet_mtl, 0, 2)
-                if self._row_prefix:
-                    enc.setBuffer_offset_atIndex_(self._detcols_mtl, 0, 3)
-                    enc.setBuffer_offset_atIndex_(self._nf_mtls[ci], 0, 4)
-                else:
+                if tiled_u8:
+                    nframes = int(self.chunks[ci].shape[0])
+                    nblocks = (nframes + 1023) // 1024
+                    pixel_groups = self.ndet // 4
+                    enc.setComputePipelineState_(self._detsum_u8_partial_pipe)
+                    enc.setBuffer_offset_atIndex_(self.chunks[ci]._mtl, 0, 0)
+                    enc.setBuffer_offset_atIndex_(
+                        self._detsum_u8_partial_mtl, 0, 1
+                    )
+                    enc.setBuffer_offset_atIndex_(self._ndet_mtl, 0, 2)
                     enc.setBuffer_offset_atIndex_(self._nf_mtls[ci], 0, 3)
+                    total = pixel_groups * nblocks
+                    enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                        Metal.MTLSizeMake((total + 255) // 256, 1, 1),
+                        Metal.MTLSizeMake(256, 1, 1),
+                    )
+                    enc.memoryBarrierWithScope_(Metal.MTLBarrierScopeBuffers)
+                    enc.setComputePipelineState_(self._detsum_u8_merge_pipe)
+                    enc.setBuffer_offset_atIndex_(
+                        self._detsum_u8_partial_mtl, 0, 0
+                    )
+                    enc.setBuffer_offset_atIndex_(ds_out, 0, 1)
+                    enc.setBuffer_offset_atIndex_(self._ndet_mtl, 0, 2)
+                    enc.setBytes_length_atIndex_(
+                        np.asarray([nblocks], dtype=np.uint32).tobytes(), 4, 3
+                    )
+                else:
+                    enc.setBuffer_offset_atIndex_(self.chunks[ci]._mtl, 0, 0)
+                    enc.setBuffer_offset_atIndex_(ds_out, 0, 1)
+                    enc.setBuffer_offset_atIndex_(self._ndet_mtl, 0, 2)
+                    if self._row_prefix:
+                        enc.setBuffer_offset_atIndex_(self._detcols_mtl, 0, 3)
+                        enc.setBuffer_offset_atIndex_(self._nf_mtls[ci], 0, 4)
+                    else:
+                        enc.setBuffer_offset_atIndex_(self._nf_mtls[ci], 0, 3)
                 enc.dispatchThreadgroups_threadsPerThreadgroup_(
                     Metal.MTLSizeMake((self.ndet + 255) // 256, 1, 1),
-                    Metal.MTLSizeMake(256, 1, 1))
+                    Metal.MTLSizeMake(256, 1, 1),
+                )
             enc.endEncoding()
             cmd.commit()
             cmd.waitUntilCompleted()
         return ds_np.reshape(self.det).astype(np.float32)
+
+    def gather_columns_float32(
+        self,
+        rows: np.ndarray,
+        cols: np.ndarray,
+        *,
+        out: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """Gather detector columns on Metal into BF-major float32 storage.
+
+        A provided ``out`` allocation is wrapped as a no-copy Metal buffer.
+        This lets SSB gather directly into MLX-owned unified memory.
+        """
+        rows = np.asarray(rows, dtype=np.int64).reshape(-1)
+        cols = np.asarray(cols, dtype=np.int64).reshape(-1)
+        if rows.shape != cols.shape:
+            raise ValueError("rows and cols must have matching shapes.")
+        if rows.size == 0:
+            return np.empty((0, self.n), dtype=np.float32)
+        if (
+            int(rows.min()) < 0
+            or int(rows.max()) >= self.det[0]
+            or int(cols.min()) < 0
+            or int(cols.max()) >= self.det[1]
+        ):
+            raise IndexError("detector column index out of bounds")
+
+        indices = (rows * self.det[1] + cols).astype(np.uint32, copy=False)
+        Metal = self._Metal
+        output_shape = (int(indices.size), self.n)
+        output_nbytes = (
+            int(np.prod(output_shape)) * np.dtype(np.float32).itemsize
+        )
+        owns_output = out is None
+        if owns_output:
+            output_mtl = self._mps._metal_buffer_alloc(output_nbytes)
+            output_np = self._mps._numpy_view(
+                output_mtl,
+                np.float32,
+                int(indices.size) * self.n,
+            )
+            output = output_np.reshape(*output_shape).view(
+                self._mps._MtlArray
+            )
+            output._mtl = output_mtl
+        else:
+            output = np.asarray(out)
+            if output.dtype != np.float32 or output.shape != output_shape:
+                raise ValueError(
+                    "MPS column gather output must be a C-contiguous float32 "
+                    f"array with shape {output_shape}; got {output.dtype} "
+                    f"with shape {output.shape}."
+                )
+            if not output.flags.c_contiguous or not output.flags.writeable:
+                raise ValueError(
+                    "MPS column gather output must be writable and C-contiguous."
+                )
+            wrap_buffer = getattr(
+                self._mps._device,
+                "newBufferWithBytesNoCopy_length_options_deallocator_",
+            )
+            output_mtl = wrap_buffer(
+                output,
+                output_nbytes,
+                Metal.MTLResourceStorageModeShared,
+                None,
+            )
+            if output_mtl is None:
+                raise RuntimeError(
+                    "Metal could not wrap the provided unified-memory output. "
+                    "Use an MLX-allocated float32 destination."
+                )
+        indices_mtl = self._mps._metal_buffer_alloc(int(indices.nbytes))
+        indices_np = self._mps._numpy_view(
+            indices_mtl,
+            np.uint32,
+            int(indices.size),
+        )
+        indices_np[:] = indices
+        pipe = (
+            self._gather_columns_prefix_pipe
+            if self._row_prefix
+            else self._gather_columns_tiled_pipe
+        )
+        npixels_bytes = np.asarray([indices.size], dtype=np.uint32).tobytes()
+        total_frames_bytes = np.asarray([self.n], dtype=np.uint32).tobytes()
+        commands = []
+        for group in _chunk_groups(self.chunks):
+            command = self._mps._queue.commandBuffer()
+            encoder = command.computeCommandEncoder()
+            encoder.setComputePipelineState_(pipe)
+            for ci in group:
+                nframes = int(self.chunks[ci].shape[0])
+                encoder.setBuffer_offset_atIndex_(self.chunks[ci]._mtl, 0, 0)
+                encoder.setBuffer_offset_atIndex_(indices_mtl, 0, 1)
+                encoder.setBuffer_offset_atIndex_(output_mtl, 0, 2)
+                encoder.setBuffer_offset_atIndex_(self._ndet_mtl, 0, 3)
+                encoder.setBuffer_offset_atIndex_(self._nf_mtls[ci], 0, 4)
+                encoder.setBytes_length_atIndex_(total_frames_bytes, 4, 5)
+                frame_offset = np.asarray(
+                    [self._offsets[ci]],
+                    dtype=np.uint32,
+                ).tobytes()
+                encoder.setBytes_length_atIndex_(frame_offset, 4, 6)
+                encoder.setBytes_length_atIndex_(npixels_bytes, 4, 7)
+                if self._row_prefix:
+                    encoder.setBuffer_offset_atIndex_(self._detcols_mtl, 0, 8)
+                if self._row_prefix:
+                    total = nframes * int(indices.size)
+                    encoder.dispatchThreadgroups_threadsPerThreadgroup_(
+                        Metal.MTLSizeMake((total + 255) // 256, 1, 1),
+                        Metal.MTLSizeMake(256, 1, 1),
+                    )
+                else:
+                    encoder.dispatchThreadgroups_threadsPerThreadgroup_(
+                        Metal.MTLSizeMake(
+                            (int(indices.size) + 15) // 16,
+                            (nframes + 15) // 16,
+                            1,
+                        ),
+                        Metal.MTLSizeMake(16, 16, 1),
+                    )
+            encoder.endEncoding()
+            command.commit()
+            commands.append(command)
+        commands[-1].waitUntilCompleted()
+        indices_mtl.release()
+        if not owns_output:
+            output_mtl.release()
+        return output
 
 
 class ChunkedFrames:
@@ -1056,6 +1157,7 @@ class ChunkedFrames:
         metadata = {}
         det_bin = 1
         fast_chunks = None
+        detector_sum = None
         # Scrub sidecar bin factor: bin4 on a 24 GB Mac (fits + ~4x fewer
         # detector pixels per virtual-image sum = higher scrub FPS), bin2 on
         # bigger boxes. An explicit fast_det_bin in the load metadata wins.
@@ -1066,6 +1168,7 @@ class ChunkedFrames:
                 getattr(chunks, "det_bin", metadata.get("det_bin", 1)) or 1
             )
             fast_chunks = getattr(chunks, "fast_chunks", None)
+            detector_sum = getattr(chunks, "detector_sum", None)
             fast_det_bin = int(
                 getattr(chunks, "fast_det_bin",
                         metadata.get("fast_det_bin", fast_det_bin)) or fast_det_bin
@@ -1085,6 +1188,7 @@ class ChunkedFrames:
         self.chunks = chunks
         self.metadata = metadata
         self.det_bin = det_bin
+        self.detector_sum = detector_sum
         self._np_dtype = np.dtype(chunks[0].dtype)
         self._det = tuple(int(x) for x in chunks[0].shape[1:])
         self._frame_elems = self._det[0] * self._det[1]
@@ -1185,6 +1289,20 @@ class ChunkedFrames:
             with ThreadPoolExecutor(max_workers=workers) as executor:
                 list(executor.map(fill_chunk, range(len(self.chunks))))
         return out_scan_major.T
+
+    def columns_float32(
+        self,
+        rows,
+        cols,
+        *,
+        out: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """Gather detector columns with the resident Metal float32 kernel."""
+        return self.vi.gather_columns_float32(rows, cols, out=out)
+
+    def columns_float32_into(self, rows, cols, out: np.ndarray) -> np.ndarray:
+        """Gather columns directly into caller-owned unified GPU memory."""
+        return self.vi.gather_columns_float32(rows, cols, out=out)
 
     def ensure_fast_interaction(self, *, verbose: bool = True) -> MetalVirtualImage:
         """Prepare the detector-bin``fast_bin`` sidecar for fast virtual images.

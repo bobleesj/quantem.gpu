@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -72,15 +73,23 @@ def test_ssb_time_average_reconstructs_frames_with_shared_calibration() -> None:
         def __init__(self, wave):
             self.wave = wave
             self.aberrations = {"C10": 1.0, "C12": 2.0, "phi12": 0.0}
-            self._rotation_angle_rad = 0.0
+            self.rotation_angle_deg = 0.0
             self.voltage_kV = 300
             self.semiangle_mrad = 21.4
-            self.scan_sampling = (0.5, 0.5)
+            self.scan_sampling_A = (0.5, 0.5)
             self.calls = []
 
-        def _reconstruct_object(self, C10, C12, phi12, rotation_angle_rad):
-            self.calls.append((C10, C12, phi12, rotation_angle_rad))
-            return self.wave
+        def set_rotation(self, rotation_angle_deg):
+            self.rotation_angle_deg = rotation_angle_deg
+
+        def reconstruct(self, aberrations):
+            self.calls.append((
+                aberrations["C10"],
+                aberrations["C12"],
+                aberrations["phi12"],
+                math.radians(self.rotation_angle_deg),
+            ))
+            return SimpleNamespace(object_wave=self.wave)
 
     frames = [FakeSSB(base), FakeSSB(shifted)]
     result = ssb_time_average(
@@ -115,13 +124,17 @@ def test_ssb_time_series_preserves_per_frame_objects_and_can_average() -> None:
         def __init__(self, wave):
             self.wave = wave
             self.aberrations = {"C10": 1.0, "C12": 2.0, "phi12": 0.0}
-            self._rotation_angle_rad = 0.0
+            self.rotation_angle_deg = 0.0
             self.voltage_kV = 300
             self.semiangle_mrad = 21.4
-            self.scan_sampling = (0.5, 0.5)
+            self.scan_sampling_A = (0.5, 0.5)
 
-        def _reconstruct_object(self, C10, C12, phi12, rotation_angle_rad):
-            return self.wave
+        def set_rotation(self, rotation_angle_deg):
+            self.rotation_angle_deg = rotation_angle_deg
+
+        def reconstruct(self, aberrations):
+            del aberrations
+            return SimpleNamespace(object_wave=self.wave)
 
     frames = [FakeSSB(base), FakeSSB(shifted_changed)]
     shifts = [(0.0, 0.0), (-1.0, 0.5)]

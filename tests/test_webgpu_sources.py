@@ -8,11 +8,14 @@ def test_webgpu_sources_are_shipped_and_readable() -> None:
 
     names = webgpu.source_names()
 
-    assert "compute.ts" in names
-    assert "bslz4.ts" in names
-    assert "device.ts" in names
-    assert "local-h5.ts" in names
-    assert "showptycho-ssb.ts" in names
+    assert "webgpu/compute.ts" in names
+    assert "webgpu/bslz4.ts" in names
+    assert "webgpu/device.ts" in names
+    assert "webgpu/local-h5.ts" in names
+    assert "ssb/compute/webgpu/backend.ts" in names
+    assert "ssb/compute/webgpu/optimizer.ts" in names
+    for size in (128, 256, 512, 1024):
+        assert f"ssb/compute/webgpu/kernels/fft{size}.ts" in names
     for name in names:
         text = webgpu.source_text(name)
         assert text.strip()
@@ -21,7 +24,7 @@ def test_webgpu_sources_are_shipped_and_readable() -> None:
 def test_webgpu_compute_source_tracks_vi_and_dpc_kernels() -> None:
     from quantem.gpu.webgpu import source_text
 
-    source = source_text("compute.ts")
+    source = source_text("webgpu/compute.ts")
 
     assert "const maskedSumSrc" in source
     assert "export function buildDetectorMask" in source
@@ -60,18 +63,25 @@ def test_webgpu_compute_source_tracks_vi_and_dpc_kernels() -> None:
     assert "subgroupAdd" in source
 
 
-def test_webgpu_showptycho_source_tracks_ssb_engine() -> None:
+def test_webgpu_backend_source_tracks_ssb_engine() -> None:
     from quantem.gpu.webgpu import source_text
 
-    source = source_text("showptycho-ssb.ts")
+    source = source_text("ssb/compute/webgpu/backend.ts")
 
-    assert 'from "./device"' in source
-    assert 'from "./h5reader"' in source
-    assert 'from "./bslz4"' in source
-    assert "export class ShowPtychoWebGPUSSB" in source
-    assert "const SUPPORTED_SSB_SIZES = [128, 256, 512, 1024]" in source
+    assert 'from "../../../webgpu/device"' in source
+    assert 'from "../../../webgpu/h5reader"' in source
+    assert 'from "../../../webgpu/bslz4"' in source
+    assert "export class WebGPUSSBBackend" in source
+    assert 'real_dtype: "float32"' in source
+    assert 'complex_dtype: "complex64"' in source
+    assert "requires the quantem.gpu float32/complex64 SSB precision contract" in source
+    registry = source_text("ssb/compute/webgpu/kernels/index.ts")
+    assert "SUPPORTED_SSB_SIZES = [128, 256, 512, 1024]" in registry
     assert "makeSsbShader" in source
     assert "WebGPU SSB buffers are not ready after setup" in source
+    assert "scientific fitting never subsamples automatically" in source
+    assert "BF clamped" not in source
+    assert "const phi12Deg = phi12 * 180 / Math.PI" in source
     assert 'encoding="u4" remains reserved for packed 4-bit' in source
     assert 'raw === "<u4" || raw === ">u4" || raw === "|u4"' in source
     active_selector = source[
@@ -88,7 +98,7 @@ def test_webgpu_showptycho_source_tracks_ssb_engine() -> None:
 def test_webgpu_h5reader_keeps_single_pass_block_metadata_parse() -> None:
     from quantem.gpu.webgpu import source_text
 
-    source = source_text("h5reader.ts")
+    source = source_text("webgpu/h5reader.ts")
 
     assert "unsupported HDF5 chunk codec or uncompressed detector chunks" in source
     assert "validateBslz4ChunkHeader" in source
@@ -119,7 +129,7 @@ def test_webgpu_h5reader_keeps_single_pass_block_metadata_parse() -> None:
 def test_webgpu_bslz4_uses_fused_integer_to_uint8_decoder() -> None:
     from quantem.gpu.webgpu import source_text
 
-    source = source_text("bslz4.ts")
+    source = source_text("webgpu/bslz4.ts")
 
     assert 'type IntegralSrcDtype = "uint8" | "uint16" | "uint32";' in source
     assert 'type SourceDtype = "uint8" | "uint16" | "uint32" | "float32";' in source
@@ -188,7 +198,7 @@ def test_webgpu_bslz4_uses_fused_integer_to_uint8_decoder() -> None:
 def test_webgpu_local_h5_source_tracks_show4dstem_loader_contract() -> None:
     from quantem.gpu.webgpu import source_text
 
-    source = source_text("local-h5.ts")
+    source = source_text("webgpu/local-h5.ts")
 
     assert "export function setShow4DSTEMLocalFiles" in source
     assert "export function show4DSTEMHasLocalFiles" in source

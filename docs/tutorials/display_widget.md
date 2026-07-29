@@ -32,16 +32,23 @@ Ptychographic SSB compute should stay in `quantem.gpu.ssb`; interactive display
 should stay in `quantem.widget.ShowPtycho`.
 
 ```python
-from quantem.gpu.ssb import ssb
+from quantem.gpu import SSB
 from quantem.widget import Show2D
 
-result = ssb(data, voltage_kV=300, semiangle_mrad=21.4, scan_sampling_A=0.5)
+workflow = SSB.from_array(
+    data,
+    backend="mps",
+    voltage_kV=300,
+    semiangle_mrad=21.4,
+    scan_sampling_A=0.5,
+)
+result = workflow.run(trials=200, refinement="nelder-mead")
 
 Show2D(result.phase)
 Show2D(abs(result.object_wave))
 ```
 
-For interactive ptychography tuning, construct the compute object with
-`quantem.gpu.ssb.SSB` and pass it to `quantem.widget.ShowPtycho(ssb)`. The
+For interactive ptychography tuning, pass the same workflow or shared result
+to `quantem.widget.ShowPtycho`. The
 widget owns controls, previews, and export; this package owns the reconstruction
 math and backend policy.

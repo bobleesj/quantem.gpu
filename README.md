@@ -178,7 +178,7 @@ Current real-data status for full no-bin `512x512x192x192` detector data:
 | Load/decode `uint16` Arina H5 | Done | Done | Reference | CUDA and MPS preserve native integer evidence. |
 | Save Arina H5, `uint16` | Done | Done, `~1.69-1.96 s`; default-path check `1.753 s` | Done, `~30.4 s` | Chunk-backed MPS loads use native Metal Bitshuffle/LZ4 directly from the Metal buffers plus async HDF5 `write_direct_chunk`; random-sample agreement vs decoded reference was exact. The fastest path avoids a second full raw copy, with a modest file-size tradeoff. |
 | Save Arina H5, `float32` | Done | Done, `~6.8 s` | Done | MPS stores lossless float32 Bitshuffle+LZ4 chunks; synthetic round trip is exact. |
-| Save Arina H5, `uint8` | Display-only GPU path | Done, `~1.36-1.57 s` | Done, `~19.3 s` | MPS/CUDA use GPU Bitshuffle/LZ4 for clipped display exports; Phil full real-data sampled agreement was exact against `min(uint16, 255)`. It is not scientific agreement when counts exceed 255. |
+| Save Arina H5, `uint8` | Display-only GPU path | Done, `~1.36-1.57 s` | Done, `~19.3 s` | MPS/CUDA use GPU Bitshuffle/LZ4 for clipped display exports; full real-data MPS sampled agreement was exact against `min(uint16, 255)`. It is not scientific agreement when counts exceed 255. |
 | 1-2 s full save target | Partial | Done for `uint8` and `uint16` | Gap | MPS async write overlap plus native Metal chunk-buffer compression put full no-bin display and exact-count saves inside the target band. |
 
 Use `save()` for portable master/data-file exports:
@@ -373,7 +373,7 @@ kernel families are:
 | HDF5 bitshuffle/LZ4 decode | `quantem.gpu.io.backends.cuda` | `quantem.gpu.io.backends.mps` | `quantem.gpu.webgpu.bslz4` and `local-h5.ts` | Corrected-frame checksum parity and load-stage timing. |
 | BF/DF/ADF masked sums | `quantem.gpu.compute.cuda` / `detector` | `quantem.gpu.compute.mps` | `quantem.gpu.webgpu.compute` / `local-h5.ts` | Exact integer product parity and first/warm interaction timing. |
 | CoM/DPC | `quantem.gpu.compute.cuda` / `dpc` | `quantem.gpu.compute.mps` / `dpc` | `quantem.gpu.webgpu.compute` | Row/col CoM and centered DPC parity within `1e-5`. |
-| SSB object, phase, loss | `quantem.gpu.ssb.cuda` | `quantem.gpu.ssb.mps` | `quantem.gpu.webgpu.showptycho-ssb` | Same BF policy, same aberrations, phase/loss parity, and interactive redraw timing. |
+| SSB object, phase, loss | `quantem.gpu.ssb.compute.cuda` | `quantem.gpu.ssb.compute.mps` | `quantem.gpu.ssb.compute.webgpu` | Same BF policy, same aberrations, phase/loss parity, and interactive redraw timing. |
 | Movie rendering | `quantem.gpu.movie.cuda` | `quantem.gpu.movie.mps` | NA | Frame parity and encoded movie smoke tests. |
 
 ### Backend performance snapshot
@@ -452,18 +452,16 @@ Implemented in this package:
   `virtual_image`, and BF disk detection copied from the widget/live paths with
   reference checks
 - `quantem.gpu.dpc` CoM/DPC/iDPC copied from the widget path with reference checks
-- `quantem.gpu.ssb` SSB engine/API copied from the live compute path, with
-  real-data reference agreement and speed tests against the legacy live implementation
+- `quantem.gpu.SSB`, the single backend-neutral SSB workflow above private
+  CUDA, MPS, and WebGPU compute implementations
 - `quantem.gpu.compute` MPS chunk-backed virtual-image and CoM/DPC compute
   copied from widget Metal kernels; Linux CI has dispatch guardrails, and true
   Metal runtime reference agreement must run on macOS
-- `quantem.gpu.ssb.mps.ssb_preview` / `quantem.gpu.ssb_preview_mps` and
-  `quantem.gpu.ssb.mps.ssb_fit` / `quantem.gpu.ssb_fit_mps`, optional
-  MLX-backed MPS SSB preview/free-fit paths for chunk-backed Mac data.
+- MLX/Metal SSB compute for chunk-backed Mac data, returning the same
+  `SSBFitResult` and `SSBResult` contracts as CUDA
 - Active `quantem.gpu`, `quantem.widget`, and `quantem.live` source trees route
   migrated load and compute paths through `quantem.gpu`. The remaining unique
-  ptychography CLI/fused-kernel internals still need a separate backend-folding
-  pass.
+  ptychography paths through the shared workflow contract.
 
 Out of scope for phase 1:
 

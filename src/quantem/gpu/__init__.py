@@ -31,6 +31,10 @@ from .detector import (
     virtual_image,
 )
 from .dpc import DPCResult, center_of_mass, com, dpc, idpc
+from .ssb import (
+    SSB,
+    SSBResult,
+)
 from .uint4 import (
     PackedUInt4Array,
     is_packed_uint4,
@@ -45,22 +49,6 @@ try:
 except PackageNotFoundError:
     __version__ = "0.0.1rc5"
 
-_SSB_EXPORTS = {
-    "DefocusSweepResult",
-    "SSB",
-    "SSBResult",
-    "SSBTimeSeriesResult",
-    "VirtualImageKernelSupport",
-    "defocus_sweep",
-    "ssb",
-    "ssb_time_average",
-    "ssb_time_series",
-    "ssb_fit_mps",
-    "ssb_preview_mps",
-    "ssb_series",
-    "bf_df_dpc",
-    "Preview",
-}
 _IO_EXPORTS = {
     "load",
     "load_scan_indices",
@@ -79,22 +67,19 @@ _LAZY_MODULE_EXPORTS = {
 
 __all__ = [
     "DPCResult",
-    "DefocusSweepResult",
     "CalibrationMemoryPlan",
     "CalibrationProducts",
     "DeviceReport",
     "BFImage",
     "SSB",
     "SSBResult",
-    "SSBTimeSeriesResult",
-    "Preview",
     "Parallax",
     "ParallaxResult",
     "PackedUInt4Array",
+    "VirtualImageKernelSupport",
     "adf",
     "auto_probe",
     "bf",
-    "bf_df_dpc",
     "calibration_products_cache_path",
     "calibration_memory_plan",
     "center_of_mass",
@@ -103,7 +88,6 @@ __all__ = [
     "detector_mask",
     "detect_bf_radius",
     "df",
-    "defocus_sweep",
     "device_report",
     "dpc",
     "dp_mean",
@@ -120,12 +104,6 @@ __all__ = [
     "pack_uint4_numpy",
     "random_scan_indices",
     "select_device",
-    "ssb",
-    "ssb_time_average",
-    "ssb_time_series",
-    "ssb_fit_mps",
-    "ssb_preview_mps",
-    "ssb_series",
     "unpack_uint4_cupy",
     "unpack_uint4_numpy",
     "virtual",
@@ -137,12 +115,7 @@ __all__ = [
 
 
 def __getattr__(name: str):
-    """Load CUDA-only SSB exports lazily so CPU/MPS imports stay lightweight."""
-    if name in _SSB_EXPORTS:
-        module = import_module("quantem.gpu.ssb")
-        value = getattr(module, name)
-        globals()[name] = value
-        return value
+    """Load optional IO, parallax, and module exports lazily."""
     if name in _IO_EXPORTS:
         module = import_module("quantem.gpu.io")
         value = getattr(module, name)

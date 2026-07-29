@@ -444,26 +444,24 @@ class MetalRawBackend:
         return vi.reshape(self.scan_shape).astype(np.float32, copy=False)
 
     def mean_dp(self) -> np.ndarray:
-        if np.dtype(getattr(self._cf, "_np_dtype", np.uint16)) != np.dtype(np.uint16):
-            acc = np.zeros(self.det_shape, dtype=np.uint64)
-            for chunk in self._cf.chunks:
-                acc += np.asarray(chunk).sum(axis=0, dtype=np.uint64)
-            return acc.astype(np.float32) / self.n_frames
+        detector_sum = getattr(self._cf, "detector_sum", None)
+        if detector_sum is not None:
+            return np.asarray(detector_sum, dtype=np.float32) / self.n_frames
         return np.asarray(self._cf.vi.detector_sum(), dtype=np.float32) / self.n_frames
 
     def reduce_frames(self, scan_indices: np.ndarray, reduce: str = "mean") -> np.ndarray:
         idx = np.asarray(scan_indices, dtype=np.uint32)
         if reduce == "mean":
             return np.asarray(self._cf.vi.mean_frames(idx), dtype=np.float32)
-        # sum / max: mean_frames gives the average; scale for sum, fall back to
-        # per-frame max (rare path - the widget's max accumulates frames directly).
+        # sum: mean_frames gives the GPU-computed average, then scales the small
+        # returned diffraction pattern. Max requires a dedicated Metal kernel.
         if reduce == "sum":
             return np.asarray(self._cf.vi.mean_frames(idx), dtype=np.float32) * len(idx)
-        dp = None
-        for i in idx:
-            f = np.asarray(self._cf.frame(int(i)), dtype=np.float32)
-            dp = f if dp is None else np.maximum(dp, f)
-        return dp if dp is not None else np.zeros(self.det_shape, dtype=np.float32)
+        raise NotImplementedError(
+            "MPS reduce_frames(reduce='max') has no Metal kernel. CPU fallback "
+            "is disabled; use reduce='mean' or reduce='sum', or implement the "
+            "native Metal max reducer."
+        )
 
     def center_of_mass(self, det_mask: np.ndarray | None = None):
         """Per-scan-position CoM (DPC vector field) on the raw Metal kernel.

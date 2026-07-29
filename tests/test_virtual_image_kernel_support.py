@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 
 def test_cuda_virtual_image_support_includes_future_1024_uint8_shape() -> None:
@@ -113,6 +114,8 @@ def test_mps_integer_reduction_kernel_sources_are_present() -> None:
         "detector_sum_u8",
         "bin_detector_u8",
         "mean_dp_sum_u8",
+        "detector_sum_u8_block_partial",
+        "detector_sum_u8_block_merge",
         "rowspan_sum_u8",
         "radial_cumsum_u8",
         "com_u8",
@@ -125,6 +128,89 @@ def test_mps_integer_reduction_kernel_sources_are_present() -> None:
         assert f"kernel void {name}" in source
 
 
+def test_mps_u8_mean_dp_uses_resident_metal_detector_sum() -> None:
+    """Lossless-u8 MPS data must not fall back to a host chunk reduction."""
+    from types import SimpleNamespace
+
+    from quantem.gpu.compute.backends import MetalRawBackend
+
+    detector_sum = np.asarray([[8, 16], [24, 32]], dtype=np.float32)
+    backend = MetalRawBackend.__new__(MetalRawBackend)
+    backend._cf = SimpleNamespace(
+        _np_dtype=np.dtype(np.uint8),
+        vi=SimpleNamespace(detector_sum=lambda: detector_sum),
+        chunks=[np.zeros((4, 2, 2), dtype=np.uint8)],
+    )
+    backend.det_shape = (2, 2)
+    backend.n_frames = 4
+
+    np.testing.assert_array_equal(
+        backend.mean_dp(),
+        np.asarray([[2, 4], [6, 8]], dtype=np.float32),
+    )
+
+
+def test_mps_mean_dp_reuses_exact_decode_side_detector_sum() -> None:
+    """A decode-side sum must bypass the later full-stack Metal pass."""
+    from types import SimpleNamespace
+
+    from quantem.gpu.compute.backends import MetalRawBackend
+
+    detector_sum = np.asarray([[8, 16], [24, 32]], dtype=np.uint32)
+
+    def unexpected_reduction():
+        raise AssertionError("resident detector sum was not reused")
+
+    backend = MetalRawBackend.__new__(MetalRawBackend)
+    backend._cf = SimpleNamespace(
+        detector_sum=detector_sum,
+        vi=SimpleNamespace(detector_sum=unexpected_reduction),
+    )
+    backend.n_frames = 4
+
+    np.testing.assert_array_equal(
+        backend.mean_dp(),
+        np.asarray([[2, 4], [6, 8]], dtype=np.float32),
+    )
+
+
+def test_mps_mean_dp_has_no_host_chunk_fallback() -> None:
+    """Unsupported MPS dtypes must raise in Metal code, never reduce on CPU."""
+    from types import SimpleNamespace
+
+    from quantem.gpu.compute.backends import MetalRawBackend
+
+    def unsupported_detector_sum():
+        raise NotImplementedError("native Metal reducer required")
+
+    backend = MetalRawBackend.__new__(MetalRawBackend)
+    backend._cf = SimpleNamespace(
+        _np_dtype=np.dtype(np.uint32),
+        vi=SimpleNamespace(detector_sum=unsupported_detector_sum),
+        chunks=[np.ones((4, 2, 2), dtype=np.uint32)],
+    )
+    backend.det_shape = (2, 2)
+    backend.n_frames = 4
+
+    with pytest.raises(NotImplementedError, match="native Metal reducer"):
+        backend.mean_dp()
+
+
+def test_mps_production_reductions_do_not_route_to_numba() -> None:
+    """Row-prefix and detector reductions must remain on the Metal backend."""
+    source = Path("src/quantem/gpu/compute/mps.py").read_text(encoding="utf-8")
+    backend_source = Path("src/quantem/gpu/compute/backends.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "from numba import" not in source
+    assert "_masked_sum_prefix_numba" not in source
+    assert "gather_columns_float32" in source
+    assert "for chunk in self._cf.chunks" not in backend_source
+    assert "MPS reduce_frames(reduce='max') has no Metal kernel" in backend_source
+    assert "raise NotImplementedError" in backend_source
+
+
 def test_mps_integer_chunked_load_source_contract_is_present() -> None:
     msl = Path("src/quantem/gpu/io/backends/metal/bslz4.msl").read_text(
         encoding="utf-8"
@@ -135,14 +221,27 @@ def test_mps_integer_chunked_load_source_contract_is_present() -> None:
     )
 
     assert "kernel void clip_u16_to_u8" in msl
+    assert "kernel void shuf_8192_16_to_u8_batched" in msl
+    assert "kernel void shuf_8192_16_to_u8_masked_batched" in msl
     assert "kernel void zero_bad_pixels_u32" in msl
     assert "kernel void clip_u32_to_u8" in msl
     assert "output_dtype=mps_chunk_output_dtype" in hdf5_source
     assert "output_dtype=np.uint8" in mps_source
     assert "np.uint32" in mps_source
     assert "cast_u8_out_mtl" in mps_source
-    assert "if output_u8 or output_u16_narrow:" in mps_source
+    assert "fused_u8_load" in mps_source
+    assert "_shuf16_u8_pipeline" in mps_source
+    assert "_shuf16_u8_masked_pipeline" in mps_source
+    assert "memoryBarrierWithScope_(Metal.MTLBarrierScopeBuffers)" in mps_source
     assert "scratch_idx = ci % D" in mps_source
+    assert "compact: bool = True" in mps_source
+    assert "compact_target_gb: float = 1.5" in mps_source
+    assert "and fast_det_bin is None" in mps_source
+    assert (
+        "grouping_frame_bytes = final_frame_bytes if output_u8 else frame_bytes"
+        in mps_source
+    )
+    assert "cast_u8_out_mtl = u8_out_mtls[oi]" in mps_source
     assert "dec.drop_output_pool_refs()" in mps_source
 
 
