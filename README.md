@@ -183,9 +183,12 @@ io.save(
     merged_mps_tensor,
     scan_shape=(512, 512),
     dtype="u16",
-    backend="auto",  # CUDA, MPS/Metal, or CPU/HDF5 from the input data
+    backend="auto",  # infer CUDA or MPS/Metal from the resident array
 )
 ```
+
+NumPy reference writes require `backend="cpu"` explicitly; `auto` never
+silently selects the CPU scientific path.
 
 Compute common BF, DF, ADF, and DPC images through their scientific domains:
 
@@ -199,20 +202,10 @@ dpc_result = dpc.run(data)
 custom = detector.virtual(data, mode="BF")
 ```
 
-Check whether a large planned virtual-image workflow has a custom GPU kernel
-before allocating the array:
-
-```python
-from quantem.gpu.detector.compute.support import virtual_image_kernel_support
-
-support = virtual_image_kernel_support(
-    backend="cuda",
-    shape=(1024, 1024, 192, 192),
-    dtype="uint8",
-    bf_radius=30,
-)
-print(support.resident_gib, support.mask_paths)
-```
+Kernel authors can audit large virtual-image plans with the private coverage
+helper described in the
+[maintainer checklist](docs/maintainer/virtual-image-kernel-checklist.md).
+Scientist-facing code should stay on `quantem.gpu.detector`.
 
 ## Documentation
 
@@ -254,7 +247,7 @@ python -m pip install -e ".[docs]"
 jupyter-book build docs
 ```
 
-Use the widget display migration branch with this release candidate:
+Install the matching GPU release candidate before testing widget integration:
 
 ```bash
 python -m pip install \
@@ -281,15 +274,16 @@ viewer
 - GPU IO and decompression: bitshuffle/LZ4 HDF5 chunk decode, chunk assembly,
   load-to-device, pinned/zero-copy host transfer paths, and detector masking
   during decode.
-- Heavy compute: virtual images, BF/DF/DPC, reductions, and later SSB engines.
+- Heavy compute: virtual images, BF/DF/DPC, reductions, and SSB fitting,
+  reconstruction, and preview.
 - Device policy: explicit `cuda`, `mps`, and browser `webgpu` selection with
   no silent CPU scientific fallback.
 
 `quantem.widget` owns frontend behavior: anywidget UI, export, interaction, and
 display. It should call `quantem.gpu` for accelerated load and compute.
 
-`quantem.live` apps, CLI, and dashboard should move to `quantem.gpu` over time
-instead of keeping second permanent copies of load/decompress/math paths.
+`quantem.live` apps, CLI, and dashboard call these public APIs rather than
+keeping second permanent copies of load/decompress/math paths.
 
 Dependency arrow:
 
@@ -301,14 +295,14 @@ file -> quantem.gpu (load + decompress + to_device) -> arrays
 ## Backends
 
 - `cuda`: CuPy RawKernel bitshuffle/LZ4 decompression, GPU arrays, and
-  CUDA/NVENC MP4 rendering. This is the phase-1 migrated hot path.
+  CUDA/NVENC MP4 rendering.
 - `mps`: Apple Silicon Metal/MLX paths for MacBook-scale 4D-STEM. The raw
   Metal loaders keep data chunk-backed and avoid materializing one giant
   Torch-MPS tensor, which matters because Torch-MPS can hit 32-bit indexing /
   `>2^31` element limits and unified-memory pressure on full 4D-STEM stacks.
   BF/DF/DPC, Metal bitshuffle/LZ4 IO, MPS `uint8` browse and native `uint32`
-  loads, SSB
-  preview/free-fit, and movie rendering run through Apple GPU paths where
+  loads, SSB fit/reconstruction/preview, and movie rendering run through Apple
+  GPU paths where
   implemented.
 - `cpu`: test-only h5py/hdf5plugin reference decode.
 - `webgpu`: domain-owned browser sources bundled by the widget into anywidget
@@ -347,13 +341,13 @@ complete; `Gap` means the backend does not implement that capability yet.
 | Dense DF/ADF strategy | Done | Done | Done | Uses cached full-detector total minus complement when that is cheaper than scanning dense masks. |
 | CoM/DPC resident kernels | Done | Done | Done | CUDA and MPS have fused moment kernels; WebGPU row/col DPC has full no-bin headed signoff on real hardware. |
 | iDPC | Done | Done | Done | WebGPU has a fixed-rotation browser iDPC solver using paired DPC buffers and a dual-real FFT. It matches the Python reference within float32 FFT tolerance, not bit-exact. |
-| Ptychographic SSB preview/object steering | Done | Done | Partial | CUDA and MPS are implemented; WebGPU SSB source lives under `quantem.gpu.ssb.compute.webgpu` and is bundled by the widget. |
-| Ptychographic SSB optimizer/free-fit | Done | Done | Partial | MPS supports current parity shapes but large exact phase/loss remains slower than CUDA. |
+| Ptychographic SSB preview | Done | Done | Partial | CUDA and MPS are implemented; WebGPU SSB source lives under `quantem.gpu.ssb.compute.webgpu` and is bundled by the widget. |
+| Ptychographic SSB fit/reconstruction | Done | Done | Partial | MPS supports current parity shapes but large exact phase/loss remains slower than CUDA. |
 | GIF/MP4 movie rendering | Done | Done | NA | CUDA/NVENC and Metal/VideoToolbox paths live here; widget owns buttons/export UI. |
 | Browser source ownership | Done | Done | Done | TypeScript/WGSL source lives beside each device, IO, detector, DPC, or SSB domain; widget bundles it. |
 
-Before adding another custom kernel, run `virtual_image_kernel_support(...)` for
-the target shape/dtype and update the maintainer matrices with the same backend,
+Before adding another custom kernel, follow the private coverage check in the
+maintainer checklist and update the maintainer matrices with the same backend,
 shape, dtype, parity metric, timing split, and memory footprint. The supported
 kernel families are:
 
@@ -370,7 +364,7 @@ kernel families are:
 These public-safe numbers summarize the current full-size Show4DSTEM load and
 browser product work without raw file paths or project-specific dataset names.
 The full-stack rows use `512x512x192x192` HDF5 evidence. CUDA reference timing
-was measured in `cuda-env` on an NVIDIA RTX PRO 6000 Blackwell GPU. WebGPU
+was measured in an isolated environment on an NVIDIA RTX PRO 6000 Blackwell GPU. WebGPU
 timing used real Chrome WebGPU on Apple Metal or NVIDIA Blackwell as listed,
 with software adapters rejected.
 
@@ -405,14 +399,14 @@ Current status:
 
 | Backend | `128` | `256` | `512` | `1024` | Status |
 |---|---:|---:|---:|---:|---|
-| CUDA object / phase / loss | object `4.83 ms`; phase+loss `9.65 ms` | object `2.17 ms`; phase+loss `20.89 ms` | real full-BF phase+loss `31.27 ms` / `32.0 FPS`; synthetic phase+loss `27.46 ms` | object `40.90 ms`; phase+loss `190.88 ms` / `5.2 FPS` | CUDA 512 full-BF real-field phase/loss passes 30 FPS on GPU1. 1024 exact phase/loss uses split-512 row/column FFTs and is about `2x` faster than the old exact path, but still misses the 10/30 FPS target. |
-| MPS Hermitian preview/free-fit | object `2.45 ms`; phase+loss `~8.3 ms` | object `8.62 ms`; phase `32.75 ms`; phase+loss `~34-35 ms` | radius-30 real field: object `10.86 ms`, phase+loss `76.28 ms`; full active real field: object `55.20 ms`, phase+loss `528.90 ms` | object `143 ms`; exact phase+loss `~669 ms` for full-BF-sized synthetic `G_qk` | Implemented on a Mac MPS machine for prepared Hermitian `G_qk`. Full-BF 128 is real-time, 256 phase-only reaches 30 FPS, 512 radius-30 object-wave steering is real-time, and larger exact phase/loss remains much slower than CUDA. |
+| CUDA object / phase / loss | object `4.83 ms`; phase+loss `9.65 ms` | object `2.17 ms`; phase+loss `20.89 ms` | real full-BF phase+loss `31.27 ms` / `32.0 FPS`; synthetic phase+loss `27.46 ms` | object `40.90 ms`; phase+loss `190.88 ms` / `5.2 FPS` | CUDA 512 full-BF real-field phase/loss passes 30 FPS on the reference GPU. 1024 exact phase/loss uses split-512 row/column FFTs and is about `2x` faster than the old exact path, but still misses the 10/30 FPS target. |
+| MPS Hermitian preview | object `2.45 ms`; phase+loss `~8.3 ms` | object `8.62 ms`; phase `32.75 ms`; phase+loss `~34-35 ms` | radius-30 real field: object `10.86 ms`, phase+loss `76.28 ms`; full active real field: object `55.20 ms`, phase+loss `528.90 ms` | object `143 ms`; exact phase+loss `~669 ms` for full-BF-sized synthetic `G_qk` | Implemented on an Apple Silicon MPS machine for prepared Hermitian `G_qk`. Full-BF 128 is real-time, 256 phase-only reaches 30 FPS, 512 radius-30 object-wave steering is real-time, and larger exact phase/loss remains much slower than CUDA. |
 | WebGPU phase/loss widget path | supported | supported | supported | supported | Browser runtime bundled by `quantem.widget`; reusable TypeScript/WGSL source is owned by each scientific domain, with SSB implementation files under `quantem.gpu.ssb.compute.webgpu`. |
 
 Do not treat this table as a reason to downsample or crop. Full-resolution
 claims must keep the BF policy, scan size, and scientific objective unchanged.
 
-## Phase-1 Status
+## Current implementation status
 
 Implemented in this package:
 
@@ -427,42 +421,26 @@ Implemented in this package:
   are sorted and de-duplicated before CUDA/MPS GPU decompression.
 - `quantem.gpu.io.load(..., random_positions=...)` for one-line global random
   HDF5 minibatches with
-  reproducible seeds and explicit multi-file HDF5 preparation workers when a
-  measured storage path benefits from concurrent readers.
+  reproducible seeds and an internal bounded multi-file preparation scheduler.
 - CUDA bitshuffle/LZ4 kernels and pinned-buffer HDF5 master load path
 - MPS Metal bitshuffle/LZ4 kernels, chunk-backed zero-copy load path, memory
-  guard, crop-first sparse decode, lazy multi-dataset loader, and
-  `load_mps_4dstem`
+  guard, crop-first sparse decode, and lazy multi-dataset loader behind
+  `quantem.gpu.io.load()`
 - `quantem.gpu.io.inspect()` and `quantem.gpu.io.discover()` for header-only
   readiness checks and acquisition-folder discovery.
-- `quantem.gpu.detector` BF/DF/ADF, `mean_dp`, `masked_sum`, `dp_mean`,
-  `virtual_image`, and BF disk detection copied from the widget/live paths with
-  reference checks
-- `quantem.gpu.dpc` CoM/DPC/iDPC copied from the widget path with reference checks
+- `quantem.gpu.detector` BF/DF/ADF, `mean_dp`, `masked_sum`, `virtual`, and
+  automatic BF disk detection with reference checks
+- `quantem.gpu.dpc` CoM/DPC/iDPC with reference checks
 - `quantem.gpu.SSB`, the single backend-neutral SSB workflow above private
   CUDA, MPS, and WebGPU compute implementations
-- domain-owned CUDA, MPS, and WebGPU compute implementations
-  copied from widget Metal kernels; Linux CI has dispatch guardrails, and true
-  Metal runtime reference agreement must run on macOS
-- MLX/Metal SSB compute for chunk-backed Mac data, returning the same
-  `SSBFitResult` and `SSBResult` contracts as CUDA
+- domain-owned CUDA, MPS, and WebGPU compute implementations; Linux CI has
+  dispatch guardrails, and true Metal runtime reference agreement runs on macOS
+- MLX/Metal SSB compute for chunk-backed Mac data, returning the same single
+  `SSBResult` contract as CUDA
 - Active `quantem.gpu`, `quantem.widget`, and `quantem.live` source trees route
-  migrated load and compute paths through `quantem.gpu`. The remaining unique
-  ptychography paths through the shared workflow contract.
+  migrated load and compute paths through `quantem.gpu`; ptychography callers
+  use the shared workflow contract.
 
-Out of scope for phase 1:
-
-- Ptychographic SSB UI work beyond the compute handoff
-- Full `quantem.live` CLI/dashboard migration, though SSB/detector production
-  call sites have started routing directly through `quantem.gpu`
-- Rewriting every `quantem.widget.io` helper
-- Paper scripts or denoise sweeps
-
-## Next Phases
-
-- Phase 2: complete product migration coverage, including macOS MPS runtime
-  reference agreement and broader real-data product reference agreement.
-- Phase 3: broaden SSB real-data reference agreement, including full CUDA-engine optimizer
-  reference agreement and dashboard integration for the MPS MLX fit path.
-- Phase 4: move live CLI/dashboard callers onto `quantem.gpu`.
-- Phase 5: fold remaining ptychography internals under `quantem.gpu` backends.
+Widget and live packages may retain UI and acquisition orchestration, but new
+backend compute belongs here. Remaining work broadens real-data parity coverage
+and WebGPU fit capability without adding a second public API.

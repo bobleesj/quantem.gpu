@@ -95,8 +95,12 @@ products = screening.prepare(
     memory_budget_gb=12,
 )
 
-print(products.loaded_from_cache)
-print(products.bf.shape, products.df.shape, products.rotation_deg)
+print(products.from_cache)
+print(
+    products.bright_field.shape,
+    products.dark_field.shape,
+    products.rotation_deg,
+)
 ```
 
 The first cache build still reads the raw HDF5 evidence and streams the detector
@@ -113,7 +117,7 @@ read from CUDA, MPS, or CPU-facing code.
 Keep load parameters explicit in reports:
 
 - `backend`
-- `loaded_from_cache` for calibration products
+- `from_cache` for calibration products
 - `det_bin`
 - `dtype`
 - `scan_region`, if used

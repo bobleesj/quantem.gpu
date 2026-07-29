@@ -25,7 +25,7 @@ The target ownership split is:
 |---|---|
 | `quantem.gpu` | HDF5 GPU IO/decompress, load-to-device, BF/DF/DPC compute, SSB compute, movie rendering helpers, device policy |
 | `quantem.widget` | anywidget front end, controls, interaction, display, and user-facing export buttons |
-| `quantem.live` | app/dashboard orchestration that calls `quantem.gpu` over time |
+| `quantem.live` | app/dashboard orchestration that calls `quantem.gpu` |
 
 ## Display ptychographic SSB results
 

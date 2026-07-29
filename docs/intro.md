@@ -24,8 +24,7 @@ file -> quantem.gpu (load + decompress + to_device) -> arrays
 
 ## Current release candidate
 
-The current release candidate used by the widget display migration branch is
-`quantem.gpu==0.0.1rc5`.
+The current release candidate is `quantem.gpu==0.0.1rc5`.
 
 ```bash
 python -m pip install \

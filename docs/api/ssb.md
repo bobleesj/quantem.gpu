@@ -23,6 +23,31 @@ the exact float32 phase-variance objective. `result` is the single
 `phase` and `amplitude`. A backend that cannot honor the request fails
 explicitly.
 
+Use `reconstruct()` when aberrations are already known and no optimizer should
+run:
+
+~~~python
+fixed = workflow.reconstruct(
+    {"C10": 12.5, "C12": 3.0, "phi12": 0.25},
+)
+~~~
+
+Interactive controls call `preview()` with the same complete aberration
+mapping. It returns a transient phase array and, when requested, its exact
+loss; it does not create a second public result type:
+
+~~~python
+phase, loss = workflow.preview(
+    {"C10": 12.5, "C12": 3.0, "phi12": 0.25},
+    compute_loss=True,
+)
+~~~
+
+`SSB.open()` loads one source, while `SSB.from_array()` accepts an existing
+backend-resident detector array. Both require `voltage_kV`, `semiangle_mrad`,
+and `scan_sampling_A`. Use the context-manager form for long-running or
+repeated workflows so GPU buffers are released deterministically.
+
 See [the maintainer architecture](../maintainer/ssb-architecture.md) for the
 backend boundary, CLI contract, and parity gates.
 

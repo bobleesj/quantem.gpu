@@ -5,7 +5,7 @@
 | Backend | Purpose | Notes |
 |---|---|---|
 | `cuda` | NVIDIA GPU IO, decompression, reductions, and SSB reference paths | Uses CuPy/CUDA kernels where available. |
-| `mps` | Apple Silicon Metal/MLX paths | Used for MacBook chunk-backed loading, BF/DF/DPC images, and MPS SSB preview/free-fit paths. |
+| `mps` | Apple Silicon Metal/MLX paths | Used for chunk-backed loading, BF/DF/DPC images, and SSB fit/reconstruction/preview paths. |
 | `cpu` | Test/reference implementation | Available only when explicitly requested by a test or reference comparison. |
 
 Check the selected backend:
@@ -68,8 +68,8 @@ complete; `Gap` means the backend does not implement that capability yet.
 | CoM/DPC resident kernels | Done | Done | Done | Reference | WebGPU row/col DPC has full no-bin headed signoff on real hardware. |
 | Cached BF/DF/CoM/rotation products | Done | Done | Product-first Done / cache-read Done | Cache-read Done | CUDA and MPS build the raw-HDF5 product cache; WebGPU owns browser selected-block product caches and can read prepared cache products. |
 | iDPC | Done | Done | Done | Reference | WebGPU fixed-rotation iDPC is implemented with paired DPC buffers and a dual-real FFT; parity is float32 FFT tolerance, not bit-exact. |
-| Ptychographic SSB preview/object steering | Done | Done | Partial | Reference | WebGPU SSB source lives under `quantem.gpu.ssb.compute.webgpu` and is bundled by the widget; the full browser matrix is not complete. |
-| Ptychographic SSB optimizer/free-fit | Done | Done | Partial | Not target | MPS supports current parity shapes; large exact phase/loss is still slower than CUDA. |
+| Ptychographic SSB preview | Done | Done | Partial | Reference | WebGPU SSB source lives under `quantem.gpu.ssb.compute.webgpu` and is bundled by the widget; the full browser matrix is not complete. |
+| Ptychographic SSB fit/reconstruction | Done | Done | Partial | Not target | MPS supports current parity shapes; large exact phase/loss is still slower than CUDA. |
 | GIF/MP4 movie rendering | Done | Done | NA | Fallback | CUDA/NVENC and Metal/VideoToolbox paths live here; widget owns UI buttons. |
 | Browser source ownership | Done | Done | Done | NA | Reusable TypeScript/WGSL source lives beside each scientific domain. |
 
@@ -88,7 +88,7 @@ Blackwell as listed.
 |---|---|---:|---:|---|
 | HDF5 load/decompress | CUDA, RTX PRO 6000 Blackwell | full `512` | `450 ms` | 946-run warm reference; resident stack `9.66 GB`. |
 | HDF5 load/decompress | CUDA, RTX PRO 6000 Blackwell | true full `1024` | `4.704 s` | Real acquisition, no bin/crop, `uint16` output, selected corrected frames bit-exact, resident stack `77.31 GB`. |
-| Stochastic HDF5 ptycho mini-batch | CUDA, RTX PRO 6000 Blackwell | 40 masters x 1000 global random positions, detector `192` | cold `8.90 s` at `prep_workers=1`; warm `1.0-1.6 s` | Native `uint16`, no detector bin, output `2.95 GB`; `prep_workers=8` was slower in cold and warm tests, so tune per storage path. |
+| Stochastic HDF5 ptycho mini-batch | CUDA, RTX PRO 6000 Blackwell | 40 masters x 1000 global random positions, detector `192` | cold `8.90 s`; warm `1.0-1.6 s` | Native `uint16`, no detector bin, output `2.95 GB`; the public API uses an internal bounded single-reader preparation scheduler. |
 | BF/DF/CoM/rotation cache build | CUDA, RTX PRO 6000 Blackwell | true full `1024`, detector `192`, 12 GB cap | `12.31 s` first build; `11.76 s` streaming raw HDF5; `18 ms` rotation search | Native `uint16`, no detector bin, chunk resident under budget, cache output `16.93 MB`; BF/DF/CoM use custom CUDA kernels. This is a cache-build step, not the screen launch path. |
 | BF/DF/CoM/rotation cache build | MPS, Apple Metal | full `512`, detector `192`, 64-row chunks | `3.96 s` cache build; median chunk load `317 ms`; median chunk reduce `29 ms` | Mean DP/BF/DF bit-exact versus CUDA; CoM row/col max abs error `7.63e-6`; rotation matched. |
 | BF/DF/CoM/rotation cache hit | Any backend-facing caller | true full `1024`, detector `192` products | `6.8-8.0 ms` local cache read | Reads the small `.npz` product cache and is the path intended for sub-`0.5 s` UI launch. Cache hits do not initialize CUDA. |

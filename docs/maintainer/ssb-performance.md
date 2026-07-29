@@ -2245,8 +2245,10 @@ versus `3072` BF at `265.31 ms` mean / `311.79 ms` p95 in that same run.
 
 ## Exact object redraw path
 
-`SSB.result()` displays the complex object wave and then exposes its phase.
-For that object path, the inverse FFT can move outside the BF average:
+The historical engine `result()` path displayed the complex object wave and
+then exposed its phase. The public workflow now reaches the same object path
+through `SSB.reconstruct()` or `SSB.preview()`. For that object path, the
+inverse FFT can move outside the BF average:
 
 ```text
 mean_bf(ifft2(corrected_bf)) == ifft2(mean_bf(corrected_bf))
@@ -2315,7 +2317,7 @@ Implementation status from the 2026-07-17 pass:
   the remaining floor is FFT topology rather than the removed `sumsq` writes.
 - `_extract_gqk(...)` builds the half-plane directly after the BF-stack FFT,
   avoiding a persistent full `G_qk` allocation.
-- Reference checks validate default Hermitian end-to-end `SSB(...).result()` against
+- Reference checks validate the public Hermitian reconstruction path against
   explicit canonical full storage. A raw `cp.fft.fft2` redundant half-plane can
   differ from exact conjugate symmetry at the expected fp32 arithmetic-noise
   floor, so full storage is canonicalized from the half-plane rather than using

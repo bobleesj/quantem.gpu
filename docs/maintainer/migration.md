@@ -20,7 +20,7 @@
 - HTML/notebook export.
 - Display wrappers around arrays and reduced images from `quantem.gpu`.
 
-`quantem.live` should call `quantem.gpu` for product and SSB compute instead of
+`quantem.live` calls `quantem.gpu` for product and SSB compute instead of
 keeping second copies.
 
 ## Release checks

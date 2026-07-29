@@ -43,7 +43,7 @@ objective silently.
 
 | Layer | Owns | Must not own |
 | --- | --- | --- |
-| `quantem.gpu.SSB` | validation, public units, backend selection, optimize/reconstruct lifecycle, shared results | device kernels, widget rendering, CLI parsing |
+| `quantem.gpu.SSB` | validation, public units, backend selection, fit/reconstruct/preview lifecycle, shared results | device kernels, widget rendering, CLI parsing |
 | CUDA/MPS backend modules | preparation, device buffers, exact objective, reconstruction kernels | public parameter names, result schemas, CLI behavior |
 | WebGPU adapter | browser transport and WebGPU execution of the same serialized scientific plan | silent preview substitution or different units |
 | `quantem.widget` | `quantem showptycho` parser, HTML/widget rendering, provenance presentation | backend-specific fit orchestration |
@@ -112,5 +112,5 @@ quantem/gpu/ssb/compute/
 Shared generators remain in each backend's `kernels/common` module, but one
 deterministic registry selects the size implementation. Shape dispatch must not
 be scattered through UI or optimizer code. SSB-specific WebGPU code lives under
-`ssb/compute/webgpu`; only generic browser device, HDF5, and decoder utilities
-remain under `quantem/gpu/webgpu`.
+`ssb/compute/webgpu`; generic browser device utilities live under `device`, and
+HDF5/decoder utilities live under `io/backends/webgpu`.

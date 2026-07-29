@@ -40,4 +40,4 @@ html:
 repository:
   url: https://github.com/bobleesj/quantem.gpu
   path_to_book: docs
-  branch: quantem-gpu-phase1
+  branch: main
