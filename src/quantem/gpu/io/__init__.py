@@ -8,7 +8,7 @@ I/O domain.
 
 from .discover import discover
 from .inspect import inspect
-from .load import LoadResult, load
+from .load import load
 from .save import save
 
 __all__ = ["discover", "inspect", "load", "save"]

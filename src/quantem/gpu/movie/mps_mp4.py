@@ -161,8 +161,6 @@ def _layout(
     gap = max(0, int(gap))
     label_height = max(0, int(label_height))
     total_width = n_cols * width + (n_cols - 1) * gap
-    cell_height = height + label_height
-    total_height = n_rows * cell_height + (n_rows - 1) * gap
     scale = 1.0
     if max_width is not None and total_width > int(max_width):
         scale = int(max_width) / total_width

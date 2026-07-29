@@ -335,10 +335,6 @@ class MetalVirtualImage:
     def row_prefix_enabled(self) -> bool:
         return self._row_prefix
 
-    def bin2_chunks(self, *, verbose: bool = True) -> list:
-        """Back-compat: detector-bin2 sidecar (see :meth:`bin_chunks`)."""
-        return self.bin_chunks(2, verbose=verbose)
-
     def bin_chunks(self, binf: int = 2, *, verbose: bool = True) -> list:
         """Build a detector-binf uint16 sidecar for fast live interaction.
 

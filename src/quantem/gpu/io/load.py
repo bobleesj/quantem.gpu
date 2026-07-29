@@ -19,6 +19,7 @@ import pickle
 import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal, NamedTuple
 
 # cupy is the CUDA toolkit, absent on a Mac / plain laptop. Guard it so this
@@ -1285,11 +1286,10 @@ def find_emd_sibling(master_path) -> "Path | None":
 # GPU CLASSES AND FUNCTIONS
 # =============================================================================
 #
-# Kernels are imported from bitshuffle.py (compiled at import time)
+# CUDA kernels are resolved lazily from ``io.backends.cuda.decoder``.
 #
 
-# NOTE: CUDA kernel source (~500 lines) lives in bitshuffle.py
-# See bitshuffle._CUDA_LZ4_SOURCE for the raw CUDA C++ code
+# The CUDA source lives in ``io.backends.cuda.decoder``.
 
 
 class GPUDecompressor:
@@ -2559,7 +2559,6 @@ def _decompress_prepared(
     # instead of full file (~12 GB for 1024² Arina). Bit-equivalent output,
     # peak VRAM drops by ~sizeof(read_buffer), wall time same-or-faster
     # because per-batch H2D overlaps with prior batch's kernel work.
-    t_xfer0 = time.perf_counter()
     block_starts_gpu = cp.asarray(block_starts_flat)
     block_counts_gpu = cp.asarray(block_counts)
     block_offsets_gpu = cp.asarray(block_offsets_arr)
@@ -2599,8 +2598,6 @@ def _decompress_prepared(
         compressed_gpu = cp.empty(len(read_buffer), dtype=cp.uint8)
         compressed_gpu.set(read_buffer)
         chunk_offsets_gpu = cp.asarray(chunk_offsets_arr)
-    t_xfer = time.perf_counter() - t_xfer0
-
     # --- Per-batch scratch buffers (reused across iterations) --------------
     batch_scratch_bytes = max_batch * frame_bytes
     lz4_scratch = cp.empty(batch_scratch_bytes, dtype=cp.uint8)
@@ -2642,13 +2639,10 @@ def _decompress_prepared(
     _clip_warn = final_dtype == np.uint8 and not uint4_mode
     _clipped = cp.zeros((), dtype=cp.uint64) if _clip_warn else None
 
-    t_decomp0 = time.perf_counter()
     n_batches = (total_frames + max_batch - 1) // max_batch
     for batch_idx, start in enumerate(range(0, total_frames, max_batch)):
         end = min(start + max_batch, total_frames)
         batch_n = end - start
-        batch_bytes = batch_n * frame_bytes
-
         # Streaming upload (double-buffered async): this batch's bytes are
         # already in flight on the copy stream; wait for them, then prefetch
         # the next batch into the spare buffer so its H2D overlaps this
@@ -2830,7 +2824,6 @@ def _decompress_prepared(
             result[start:end] = batch_view.astype(final_dtype)
 
     cp.cuda.Device().synchronize()
-    t_decomp = time.perf_counter() - t_decomp0
     # For paths where we kept an exact saturation count, warn if pixels clipped.
     if _clip_warn:
         n_clipped = int(_clipped)
@@ -2863,7 +2856,7 @@ def _decompress_prepared(
         final_label = (
             "packed uint4"
             if uint4_mode
-            else f"uint32 → uint16 (auto_narrow)"
+            else "uint32 → uint16 (auto_narrow)"
             if narrow_mode
             else str(np.dtype(source_dtype))
         )
@@ -3589,7 +3582,6 @@ def _load_master_optimized(
                   f"in {t_total:.2f}s (disk‖gpu group pipeline)")
         return data, pixel_mask
     prepared = _prepare_master(filepath, chunk_names, apply_mask)
-    t_cpu = time.perf_counter() - t0
     result = _decompress_prepared(
         prepared, verbose=False, auto_narrow=auto_narrow,
         det_bin=det_bin, streaming_bin=streaming_bin,
@@ -3600,7 +3592,6 @@ def _load_master_optimized(
         total_output = result.nbytes if is_packed_uint4(result) else (
             result.size * result.dtype.itemsize
         )
-        t_gpu = t_total - t_cpu
         throughput = total_output / t_total / 1e9
         size_gb = total_output / 1e9
         narrowed = (
@@ -4028,9 +4019,7 @@ def _load_scan_crop_impl(
         raise FileNotFoundError(f"HDF5 file not found: {filepath}")
 
     t0 = time.perf_counter()
-    t_meta = time.perf_counter()
     meta = get_metadata(filepath)
-    meta_seconds = time.perf_counter() - t_meta
     full_scan_shape = scan_shape if scan_shape is not None else meta.get("scan_shape")
     if full_scan_shape is None:
         raise ValueError(
@@ -5365,7 +5354,6 @@ def _load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = Tr
             print("  Loaded in uint8 for browsing - values >255 saturate to 255. "
                   "Reconstruction uses raw uint16.")
         return result
-    sel = (dtype or "").lower()
     if requested_u8:
         # decode-DIRECT to uint8 whenever the backend supports output_dtype:
         # the batched decoder clips@255 into a uint8 output, so the full uint16
@@ -5554,18 +5542,6 @@ def disk_of(path) -> str:
         return parent if parent and parent != "block" else _os.path.basename(real)
     except OSError:
         return "?"
-
-
-def group_by_disk(paths) -> dict:
-    """``{disk: [paths on it]}`` — the cross-disk layout at a glance.
-
-    More distinct disks = more aggregate read bandwidth available to
-    internal scheduler. Spreading hot datasets across the keys unlocks parallel I/O.
-    """
-    out: dict = {}
-    for p in paths:
-        out.setdefault(disk_of(p), []).append(str(p))
-    return out
 
 
 def _disk_interleaved_indices(paths) -> list[int]:
@@ -6756,9 +6732,6 @@ def bin(
         "For multi-file data, use load(..., det_bin=2) instead."
     )
 
-
-
-bin2d = bin
 
 
 def _read_frame_count(filepath: str) -> int | None:

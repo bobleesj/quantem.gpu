@@ -88,8 +88,8 @@ in for raw detector evidence.
 
 Public API rule: notebooks and user workflows should call `quantem.gpu.io.save`
 with `backend="auto"`, `dtype=...`, and the default Bitshuffle/LZ4 compression.
-`save_compressed_arina_h5` remains as the lower-level compatibility hook for
-tests and backend-specific maintenance. An Apple Silicon public-API validation using
+`save_compressed_arina_h5` is the internal portable writer used by the public
+CPU/MPS paths and directly exercised by backend maintenance tests. An Apple Silicon public-API validation using
 `from quantem.gpu import io; io.save(..., backend="auto", dtype="u16")`
 measured `1.91 s` save, `3.14 s` load+save, `1.205 GB` output, and `512/512`
 exact decoded samples on the full no-bin MAPED master.
@@ -112,7 +112,7 @@ Implementation checklist:
 | --- | --- | --- |
 | Public load entry point | Done | `quantem.gpu.io.load(..., backend="auto")` selects CUDA or MPS; CPU is an explicit reference path. |
 | Public save entry point | Done | `quantem.gpu.io.save(..., backend="auto", dtype=...)` dispatches only from a CUDA/MPS-resident input; CPU is explicit. |
-| One public compression method | Done | User-facing docs present Bitshuffle/LZ4 only; alternate codecs stay in lower-level compatibility helpers. |
+| One public compression method | Done | User-facing docs present Bitshuffle/LZ4 only; alternate codecs stay in internal archival helpers. |
 | MPS exact `uint16` compressed save | Done | Native Metal chunk-backed path, full no-bin save `1.69-1.96 s`, exact decoded sample agreement. |
 | MPS `uint8` display compressed save | Done | Full no-bin save `1.42-1.55 s`, exact agreement against `min(uint16, 255)`. |
 | MPS `float32` compressed save | Done | Implemented and covered by synthetic exact round-trip; slower than integer save and not the demo default. |

@@ -10,8 +10,8 @@ detector - one pass over the (no-bin) 4D block:
   - CUDA: CuPy-backed GPU CoM for resident arrays.
   - CPU/Torch: reference fallback with the same formula.
 Everything after CoM (rotation alignment, Fourier integration) is small-field
-math on the ``(scan_row, scan_col)`` CoM, ported 1:1 from quantem.live's
-``engine.dpc`` so results match the dashboard.
+math on the ``(scan_row, scan_col)`` CoM. This module is the canonical owner of
+that math across GPU workflows and dashboards.
 
 Usage::
 
@@ -30,7 +30,7 @@ import numpy as np
 from .results import DPCResult
 
 
-# --- small-field math (ported 1:1 from quantem.live.engine.dpc, cp -> np) ---
+# --- canonical backend-independent small-field math ---
 
 
 def _freq_grid_2d(shape):

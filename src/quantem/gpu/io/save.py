@@ -2004,7 +2004,7 @@ def save(
         the CPU reference writer silently.
     compression : {"lz4", "bslz4", "bitshuffle_lz4"}
         Bitshuffle/LZ4 compression. Other codecs are retained only for
-        lower-level compatibility helpers.
+        internal archival helpers.
     compression_level : int
         Codec level. 0 = codec default. Ignored for LZ4.
     metadata : dict | None

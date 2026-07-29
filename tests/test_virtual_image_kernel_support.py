@@ -6,6 +6,15 @@ import numpy as np
 import pytest
 
 
+def test_removed_detector_compute_aliases_stay_absent() -> None:
+    from quantem.gpu.detector.compute import backends
+    from quantem.gpu.detector.compute.mps.kernels import MetalVirtualImage
+
+    assert not hasattr(backends, "TorchCompute")
+    assert not hasattr(backends, "MetalCompute")
+    assert not hasattr(MetalVirtualImage, "bin2_chunks")
+
+
 def test_cuda_virtual_image_support_includes_future_1024_uint8_shape() -> None:
     from quantem.gpu.detector.compute.support import virtual_image_kernel_support
 

@@ -14,8 +14,6 @@ Backends conform to the ``ComputeBackend`` protocol (see ``backend.py``):
                          proxy lifecycle (see capabilities tuple).
     CudaKernelCompute  — resident CUDA virtual-image drag path.
 
-``TorchCompute`` / ``MetalCompute`` are kept as aliases for one release.
-
 ``compute_backend(data)`` duck-types the data source and returns the right
 backend so callers (widget + web Browse) never branch on hardware themselves.
 
@@ -473,7 +471,7 @@ class MetalRawBackend:
         to return absolute full-res detector px; the constant half-pixel bin offset
         cancels under the DPC zero-mean. Falls back to full-res ``vi`` until the
         sidecar builds. Returns ``(com_col, com_row)`` flat ``(N,)`` float32 - the
-        same contract as ``TorchCompute`` so DPC is single-source across backends.
+        same contract as ``TorchBackend`` so DPC is single-source across backends.
         """
         if det_mask is None and self._com_cache is not None:
             return self._com_cache  # eager-built in _build_fast -> instant DPC
@@ -651,11 +649,6 @@ class MetalRawBackend:
     def set_multi_ready_callback(self, cb) -> None:
         if hasattr(self._cf, "on_ready"):
             self._cf.on_ready = cb
-
-
-# Back-compat aliases (one-release deprecation).
-TorchCompute = TorchBackend
-MetalCompute = MetalRawBackend
 
 
 # ---

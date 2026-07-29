@@ -4,14 +4,10 @@ Pure h5py + hdf5plugin: the bitshuffle+LZ4 HDF5 filter is registered at import
 (hdf5plugin), so slicing a dataset transparently decompresses on the CPU — no
 custom kernel, works on any platform with no GPU. Returns a numpy array.
 
-This is the universal fallback for the view/screen path on a non-CUDA box
-(a Mac without Metal, a plain laptop). Slower than the cuda/mps kernels but
-produces bit-identical raw frames (it reads the same compressed chunks).
-
-Ported from the legacy quantem.widget `_load_arina_cpu`, with one deliberate change:
-detector binning uses an **integer sum** (uint64 accumulator) to match the
-cuda backend's reduction, not the old widget float mean — so a binned cpu load and a
-binned cuda load agree numerically.
+This is the explicit CPU reference backend; accelerated ``backend="auto"``
+selection never chooses it. It is slower than CUDA/MPS but produces bit-identical
+raw frames. Detector binning uses an integer sum with a uint64 accumulator to
+match the accelerated backend contract.
 """
 from __future__ import annotations
 

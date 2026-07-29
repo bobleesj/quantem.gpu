@@ -5,8 +5,7 @@ compute shaders decompress directly into unified-memory NumPy arrays so
 ``quantem.widget`` and ``quantem.live`` can display or compute from the chunks
 without owning a second permanent IO implementation.
 
-The implementation was copied from the tested legacy
-``quantem.widget.kernels.io.mps`` path, then moved here as the active backend.
+This module is the canonical Apple-GPU I/O backend.
 Detector binning keeps the native unsigned integer dtype and uses integer-sum
 bins, matching the CUDA raw-frame contract.
 
@@ -19,6 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
+import pathlib
 import time
 import warnings
 from typing import ClassVar
@@ -33,10 +33,8 @@ __all__ = [
     "MPSChunked4DSTEM",
     "MPSMasterPlan",
     "clear_mps_cache",
-    "load_arina",
     "load_master",
     "load_master_chunked",
-    "load_master_torch",
     "load_mps_4dstem",
     "load_prepared_frames",
     "plan_master",
@@ -450,16 +448,18 @@ def load_master(
     native uint16 dtype, dead-pixel mask applied BEFORE binning, integer-sum
     detector binning (host-side) when det_bin > 1.
 
-    No-bin uses the widget full-stack decompressor (needs the stack in RAM).
+    No-bin uses the eager full-stack decompressor (needs the stack in RAM).
     det_bin > 1 uses a fused GPU LZ4+bitshuffle+integer-sum-bin (mask-aware,
     uint16, double-buffered) that keeps only the binned result in memory and
     matches the cuda integer-sum bin bit-for-bit.
     """
-    det_shape, dtype, _ntrigger, chunk_files, chunk_n_frames = _parse_master(filepath)
-    det_row, det_col = det_shape
+    plan = plan_master(filepath)
+    det_shape = plan.detector_shape
+    dtype = plan.dtype
+    chunk_n_frames = plan.chunk_n_frames
 
     if det_bin <= 1:
-        # No-bin: the verbatim widget full-stack decompressor. Native uint16,
+        # No-bin: the eager full-stack decompressor. Native uint16,
         # bit-identical to cuda. Needs the whole stack in RAM (e.g. 19.3 GB),
         # so on a memory-constrained Mac this is for small stacks; use det_bin
         # > 1 for big ones (the streaming path below).
@@ -483,8 +483,7 @@ def load_master(
 # ---------------------------------------------------------------------------
 # Metal Shading Language kernels
 # ---------------------------------------------------------------------------
-import pathlib as _pathlib
-_METAL_SOURCE = (_pathlib.Path(__file__).parent / 'kernels' / 'bslz4.msl').read_text()
+_METAL_SOURCE = (pathlib.Path(__file__).parent / "kernels" / "bslz4.msl").read_text()
 
 # ---------------------------------------------------------------------------
 # Compile Metal kernels at import time
@@ -806,11 +805,6 @@ def _cast_mtl_integer_to_u8(src: np.ndarray) -> _MtlArray:
     return _mtl_array_from_buffer(out_mtl, np.dtype(np.uint8), tuple(src.shape))
 
 
-def _cast_mtl_u16_to_u8(src: np.ndarray) -> _MtlArray:
-    """Backward-compatible name for integer-to-uint8 Metal clipping."""
-    return _cast_mtl_integer_to_u8(src)
-
-
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -857,8 +851,8 @@ class MPSDecompressor:
         self._lz4_mtl_extra: list = []
         # The chunked decoder writes unshuffled values directly to its output
         # buffers (and the fused uint8 path writes bytes directly). Keep the
-        # legacy load()/binned scratch lazy to avoid reserving one full GPU
-        # batch here when those paths are not used.
+        # eager-load/binned scratch lazy to avoid reserving one full GPU batch
+        # when only the direct chunked pipeline is used.
         self._shuf_mtl = None
         self._result_np = None
         self._shuf_nbytes = gpu_output
@@ -1011,7 +1005,7 @@ class MPSDecompressor:
         self._out_nbytes = nbytes
 
     def _ensure_shuf_buffer(self) -> None:
-        """Allocate legacy unshuffle scratch on first use."""
+        """Allocate the active eager-load/binned unshuffle scratch lazily."""
         if self._shuf_mtl is None:
             self._shuf_mtl = _metal_buffer_alloc(self._shuf_nbytes)
             self._result_np = _numpy_view(
@@ -1560,7 +1554,11 @@ class MPSDecompressor:
         runs at the GPU decompress floor instead of paying a float32 memcpy
         tax. Bit-identical to a cuda integer-sum bin.
         """
-        det_shape, dtype, _nt, chunk_files, chunk_n_frames = _parse_master(master_path)
+        plan = plan_master(master_path)
+        det_shape = plan.detector_shape
+        dtype = plan.dtype
+        chunk_files = plan.chunk_files
+        chunk_n_frames = plan.chunk_n_frames
         det_row, det_col = det_shape
         frame_bytes = int(np.prod(det_shape) * np.dtype(dtype).itemsize)
         elem_size = np.dtype(dtype).itemsize
@@ -1689,7 +1687,6 @@ class MPSDecompressor:
              self._comp_mtl_b, self._co_mtl_b, self._bs_mtl_b, self._bc_mtl_b,
              self._bo_mtl_b),
         ]
-        t_setup = time.perf_counter()
         # Read first chunk into buffer A
         comp_np, co_np, bs_np, bc_np, bo_np, csizes, \
             comp_mtl, co_mtl, bs_mtl, bc_mtl, bo_mtl = bufs[0]
@@ -2740,7 +2737,7 @@ def load_mps_4dstem(
             verbose=False,
         )
         if final_dtype == np.dtype(np.uint8):
-            arr = _cast_mtl_u16_to_u8(arr)
+            arr = _cast_mtl_integer_to_u8(arr)
         chunks = [arr]
     else:
         result = load_master_chunked(
@@ -2950,452 +2947,3 @@ def plan_master(master_path: str) -> MPSMasterPlan:
     plan = _parse_master_uncached(master_path)
     _master_plan_cache[key] = plan
     return plan
-
-
-def _parse_master(master_path):
-    """Compatibility tuple for older callers."""
-    plan = plan_master(master_path)
-    return (
-        plan.detector_shape,
-        plan.dtype,
-        plan.ntrigger,
-        list(plan.chunk_files),
-        list(plan.chunk_n_frames),
-    )
-
-
-def load_arina(
-    master_path: str,
-    det_bin: int = 1,
-    scan_shape: tuple[int, int] | None = None,
-) -> np.ndarray:
-    """Load an arina 4D-STEM dataset with Metal GPU decompression.
-
-    Decompresses bitshuffle+LZ4 data on the GPU and optionally bins the
-    detector axes on the fly. With binning, only the smaller binned result
-    is kept in memory, so datasets larger than RAM can be loaded.
-
-    Parameters
-    ----------
-    master_path : str
-        Path to the arina master HDF5 file.
-    det_bin : int, optional
-        Detector binning factor (applied to both axes), by default 1.
-    scan_shape : tuple of (int, int), optional
-        Reshape into (scan_rows, scan_cols, det_rows, det_cols). If None
-        and det_bin > 1, inferred as (sqrt(n), sqrt(n)) from ntrigger.
-
-    Returns
-    -------
-    np.ndarray
-        If scan_shape: (scan_rows, scan_cols, det_rows, det_cols) float32.
-        Otherwise: (n_frames, det_rows, det_cols) in original dtype.
-
-    Examples
-    --------
-    >>> data = load_arina("SnMoS2s_001_master.h5")
-    >>> data.shape
-    (262144, 192, 192)
-
-    >>> data = load_arina("SnMoS2s_001_master.h5", det_bin=2)
-    >>> data.shape
-    (512, 512, 96, 96)
-    """
-    t0 = time.perf_counter()
-    det_shape, dtype, ntrigger, chunk_files, chunk_n_frames = _parse_master(
-        master_path
-    )
-    total_frames = sum(chunk_n_frames)
-    det_row, det_col = det_shape
-    elem_size = np.dtype(dtype).itemsize
-    frame_bytes = int(np.prod(det_shape) * elem_size)
-    n_blocks_per_frame = (frame_bytes + 8191) // 8192
-    max_chunk_frames = max(chunk_n_frames)
-    dec = _get_decompressor(frame_bytes, max_frames=max_chunk_frames)
-    gpu_batch = dec.gpu_batch
-    # Compute output shape
-    if det_bin > 1:
-        out_det_row = det_row // det_bin
-        out_det_col = det_col // det_bin
-        out_dtype = np.float32
-    else:
-        out_det_row, out_det_col = det_row, det_col
-        out_dtype = dtype
-    # Warmup numba JIT (skip if already warmed)
-    if not getattr(dec, '_jit_warm', False):
-        dec.load(chunk_files[0], n_frames=1, verbose=False)
-        dec._jit_warm = True
-    if det_bin > 1:
-        # GPU pipeline: LZ4 → bitshuffle → bin, sub-batched to fit in GPU mem
-        out_frame_bytes = out_det_row * out_det_col * 4  # float32
-        # Batch-sized Metal output buffer (not total — copy to numpy per batch)
-        batch_out_bytes = gpu_batch * out_frame_bytes
-        dec._ensure_output_buffer(batch_out_bytes)
-        # Allocate numpy output array
-        output = np.empty((total_frames, out_det_row, out_det_col),
-                          dtype=np.float32)
-        # Warmup binned GPU pipeline (triggers Metal lazy buffer mapping)
-        if not getattr(dec, '_bin_warm', False):
-            bufs_0 = (dec._comp_np, dec._co_np, dec._bs_np, dec._bc_np,
-                       dec._bo_np, dec._chunk_sizes,
-                       dec._comp_mtl, dec._co_mtl, dec._bs_mtl, dec._bc_mtl,
-                       dec._bo_mtl)
-            comp_np_w, co_np_w, bs_np_w, bc_np_w, bo_np_w, csizes_w, \
-                comp_mtl_w, co_mtl_w, bs_mtl_w, bc_mtl_w, bo_mtl_w = bufs_0
-            dec._read_chunk(chunk_files[0], comp_np_w, co_np_w, csizes_w)
-            _parse_headers(comp_np_w, csizes_w, co_np_w, bs_np_w, bc_np_w,
-                           1, n_blocks_per_frame)
-            bo_np_w[0] = 0
-            bo_np_w[1] = int(bc_np_w[0])
-            cmd_w = dec._submit_gpu_binned(
-                1, frame_bytes, elem_size, 0,
-                det_row, det_col, det_bin,
-                comp_mtl_w, co_mtl_w, bs_mtl_w, bc_mtl_w, bo_mtl_w,
-                int(bc_np_w[0]),
-            )
-            cmd_w.waitUntilCompleted()
-            dec._bin_warm = True
-        bufs = [
-            (dec._comp_np, dec._co_np, dec._bs_np, dec._bc_np,
-             dec._bo_np, dec._chunk_sizes,
-             dec._comp_mtl, dec._co_mtl, dec._bs_mtl, dec._bc_mtl,
-             dec._bo_mtl),
-            (dec._comp_np_b, dec._co_np_b, dec._bs_np_b, dec._bc_np_b,
-             dec._bo_np_b, dec._chunk_sizes_b,
-             dec._comp_mtl_b, dec._co_mtl_b, dec._bs_mtl_b, dec._bc_mtl_b,
-             dec._bo_mtl_b),
-        ]
-        # Read first chunk
-        comp_np, co_np, bs_np, bc_np, bo_np, csizes, \
-            comp_mtl, co_mtl, bs_mtl, bc_mtl, bo_mtl = bufs[0]
-        dec._read_chunk(chunk_files[0], comp_np, co_np, csizes)
-        _parse_headers(comp_np, csizes, co_np, bs_np, bc_np,
-                       chunk_n_frames[0], n_blocks_per_frame)
-        bo_np[0] = 0
-        bo_np[1 : chunk_n_frames[0] + 1] = np.cumsum(bc_np[:chunk_n_frames[0]])
-        frame_offset = 0
-        n_chunks = len(chunk_files)
-        total_batches = sum((nf + gpu_batch - 1) // gpu_batch
-                            for nf in chunk_n_frames)
-        pbar = tqdm(total=total_batches, desc="GPU", leave=False) \
-            if total_batches > 1 else None
-        for ci in range(n_chunks):
-            cur = bufs[ci % 2]
-            comp_np, co_np, bs_np, bc_np, bo_np, csizes, \
-                comp_mtl, co_mtl, bs_mtl, bc_mtl, bo_mtl = cur
-            nf = chunk_n_frames[ci]
-            max_blk = int(bc_np[:nf].max())
-            # Process chunk in sub-batches of gpu_batch
-            for b_start in range(0, nf, gpu_batch):
-                b_end = min(b_start + gpu_batch, nf)
-                nb = b_end - b_start
-                cmd = dec._submit_gpu_binned(
-                    nb, frame_bytes, elem_size, 0,
-                    det_row, det_col, det_bin,
-                    comp_mtl, co_mtl, bs_mtl, bc_mtl, bo_mtl,
-                    max_blk, meta_frame_offset=b_start,
-                )
-                # Overlap: read next chunk while last batch of current runs
-                if b_start + gpu_batch >= nf and ci + 1 < n_chunks:
-                    nxt = bufs[(ci + 1) % 2]
-                    comp_np_n, co_np_n, bs_np_n, bc_np_n, bo_np_n, \
-                        csizes_n, *_ = nxt
-                    dec._read_chunk(chunk_files[ci + 1], comp_np_n, co_np_n,
-                                    csizes_n)
-                    nf_next = chunk_n_frames[ci + 1]
-                    _parse_headers(comp_np_n, csizes_n, co_np_n, bs_np_n,
-                                   bc_np_n, nf_next, n_blocks_per_frame)
-                    bo_np_n = nxt[4]
-                    bo_np_n[0] = 0
-                    bo_np_n[1 : nf_next + 1] = np.cumsum(bc_np_n[:nf_next])
-                cmd.waitUntilCompleted()
-                # Copy batch result from Metal buffer to numpy output
-                src = dec._out_np[:nb * out_frame_bytes]
-                output[frame_offset:frame_offset + nb] = (
-                    src.view(np.float32).reshape(nb, out_det_row, out_det_col)
-                )
-                frame_offset += nb
-                if pbar:
-                    pbar.update(1)
-        if pbar:
-            pbar.close()
-    else:
-        # No binning — use load_master for double-buffered raw decompression
-        output = dec.load_master(chunk_files[0].replace(
-            "_data_000001.h5", "_master.h5"
-        ))
-    # Free the batch output Metal buffer (kept buffers are small: ~1.5 GB)
-    dec._out_mtl = None
-    dec._out_np = None
-    dec._out_nbytes = 0
-    t_total = time.perf_counter()
-    # Infer scan shape
-    if scan_shape is None and det_bin > 1:
-        side = int(total_frames ** 0.5)
-        if side * side == total_frames:
-            scan_shape = (side, side)
-    if scan_shape is not None:
-        output = output.reshape(*scan_shape, out_det_row, out_det_col)
-    print(
-        f"load_arina: {total_frames} frames, "
-        f"det ({det_row},{det_col}) → ({out_det_row},{out_det_col}), "
-        f"{t_total - t0:.2f}s"
-    )
-    return output
-
-
-# ---------------------------------------------------------------------------
-# Torch-native MPS decompressor (no-bin path)
-# ---------------------------------------------------------------------------
-# Dispatches the SAME Metal kernels (_METAL_SOURCE) through
-# torch.mps.compile_shader with torch MPS tensors as buffers, instead of the
-# PyObjC command-buffer path above. The output is a LIST of per-chunk torch MPS
-# uint16 tensors (one MPS tensor cannot exceed ~14.3 GB on a 24 GB Mac, and the
-# full no-bin stack is 19.3 GB, so a single tensor is impossible — the list is
-# the contract). Bit-identical to h5py ground truth.
-#
-# Performance (a 512²×192² logic dataset, 262144x192x192 uint16 = 19.3 GB, warm cache,
-# M5 24 GB): ~2.6 s end-to-end vs ~4.6 s for the serial PyObjC path. The win
-# comes from two structural changes mirrored from the CUDA _load_master_pipelined:
-#   1. disk read ‖ GPU decode — ONE producer thread reads + header-parses chunk
-#      N+1 (CPU/disk, GIL released) into a free host slot while the main thread
-#      GPU-decodes chunk N in order, so wall ≈ read(chunk0) + max(rest_read,
-#      all_gpu) instead of the serial sum.
-#   2. zero-copy host→GPU — the producer reads compressed bytes straight into an
-#      MPS unified-memory tensor's numpy view (Apple unified memory), so the
-#      compressed payload (the big buffer) never pays a separate .to("mps") copy.
-# A SINGLE producer (not a pool) is deliberate: numba's parallel=True
-# _parse_headers is NOT threadsafe when called from multiple Python threads
-# ("The workqueue threading layer is not threadsafe"), so the read+parse stage
-# must be serialized. One producer suffices: read+parse projects to ~0.8 s for
-# all 27 chunks, comfortably under the ~1.7 s GPU floor, so it hides fully.
-# The remaining floor is GPU compute (~1.7 s warm: LZ4 ~1.1 s + bitshuffle
-# ~0.6 s). Driving below ~1.7 s requires LZ4-kernel surgery (two-phase block
-# parse / LZ4+bitshuffle fusion) in _METAL_SOURCE; the structural wins above
-# are independent of that and bit-exact today.
-
-_torch_lib_cache: dict[str, object] = {}
-
-
-def _torch_shader_lib():
-    """Compile (once) the Metal kernels via torch.mps.compile_shader.
-
-    Cached per LZ4_Y substitution. Reuses the exact _METAL_SOURCE the PyObjC
-    path uses, so the torch-dispatched kernels are byte-identical.
-    """
-    import torch.mps as _tmps
-    key = str(_LZ4_Y)
-    if key not in _torch_lib_cache:
-        _torch_lib_cache[key] = _tmps.compile_shader(
-            _METAL_SOURCE.replace("LZ4_BLOCKS_PER_TG", key)
-        )
-    return _torch_lib_cache[key]
-
-
-def load_master_torch(
-    master_path: str,
-    *,
-    pixel_mask: "np.ndarray | None" = None,
-    nbuf: int = 5,
-    verbose: bool = True,
-) -> "list":
-    """Decompress an arina master to a LIST of per-chunk torch MPS uint16
-    tensors on the Apple GPU, no detector binning.
-
-    Each list element is a ``torch.Tensor`` on device ``mps`` with shape
-    ``(chunk_frames, det_row, det_col)`` and native uint16 dtype. Concatenate
-    on the caller side only if the result fits (19.3 GB exceeds the 14.3 GB
-    single-tensor limit on a 24 GB Mac, which is why this returns a list).
-
-    Mirrors the CUDA ``_load_master_pipelined`` design: ONE producer thread
-    reads + header-parses chunk N+1 (CPU/disk, GIL released) into a free host
-    slot whose compressed buffer is an MPS unified-memory tensor's numpy view
-    (zero host→GPU copy), while the main thread GPU-decodes chunk N in order.
-    Bit-exact to h5py ``entry/data/data``.
-
-    A single producer (not a pool) is required because numba's ``parallel=True``
-    ``_parse_headers`` is not threadsafe across Python threads. One producer
-    suffices: read+parse hides fully under the GPU decode.
-
-    Parameters
-    ----------
-    master_path : str
-        Path to the arina master HDF5 file.
-    pixel_mask : np.ndarray or None, optional
-        Dead-pixel mask (nonzero = dead). When given, dead pixels are zeroed in
-        every frame (matches the cuda raw-frame contract).
-    nbuf : int, optional
-        Host buffer slots, by default 3 (1 GPU-decoding + 1 reading + 1 ready).
-    verbose : bool, optional
-        Print wall time, by default True.
-    """
-    import threading
-    import queue
-    import torch
-    import torch.mps
-
-    t0 = time.perf_counter()
-    lib = _torch_shader_lib()
-    det_shape, dtype, _ntrigger, chunk_files, chunk_n_frames = _parse_master(master_path)
-    det_row, det_col = det_shape
-    elem_size = int(np.dtype(dtype).itemsize)
-    frame_bytes = int(np.prod(det_shape) * elem_size)
-    frame_u16s = frame_bytes // 2
-    n_blocks_per_frame = (frame_bytes + 8191) // 8192
-    groups_per_block = 8192 // (elem_size * 32)
-    groups_per_frame = n_blocks_per_frame * groups_per_block
-    tg_count = (groups_per_frame + 31) // 32
-    dev = torch.device("mps")
-    n_chunks = len(chunk_files)
-    max_frames = max(chunk_n_frames)
-    nbuf = max(2, min(nbuf, n_chunks))
-    dec = _get_decompressor(frame_bytes, max_frames=max_frames)
-    comp_cap = dec._comp_np.shape[0]
-
-    class _Slot:
-        __slots__ = ("comp_t", "comp_np", "co", "cs", "bs", "bc", "bo")
-
-        def __init__(self):
-            # CPU staging buffer the producer reads disk into; copied to an MPS
-            # tensor per chunk in _gpu. MPS tensors are NOT host-writable, so a
-            # true zero-copy numpy view (comp_t.numpy()) is impossible — the
-            # per-chunk H2D copy (~0.39s) is hidden under the GPU decode by the
-            # producer/consumer overlap.
-            self.comp_np = np.empty(comp_cap, dtype=np.uint8)
-            self.co = np.empty(max_frames, np.uint32)
-            self.cs = np.empty(max_frames, np.uint32)
-            self.bs = np.empty(max_frames * n_blocks_per_frame, np.uint32)
-            self.bc = np.empty(max_frames, np.uint32)
-            self.bo = np.empty(max_frames + 1, np.uint32)
-
-    slots = [_Slot() for _ in range(nbuf)]
-
-    def _read_parse(ci, s):
-        nf = chunk_n_frames[ci]
-        dec._read_chunk(chunk_files[ci], s.comp_np, s.co, s.cs)
-        _parse_headers(s.comp_np, s.cs, s.co, s.bs, s.bc, nf, n_blocks_per_frame)
-        s.bo[0] = 0
-        s.bo[1 : nf + 1] = np.cumsum(s.bc[:nf])
-        return nf, int(s.co[nf - 1] + s.cs[nf - 1]), int(s.bc[:nf].max())
-
-    def _gpu_enqueue(nf, total_comp, max_blk, s, bad_t):
-        # Enqueue (async) the H2D copies + LZ4 + bitshuffle for one chunk. NO
-        # per-chunk sync: MPS commands stay ordered on the queue and the GPU runs
-        # them back-to-back while the read+parse threads fill ahead. The slot's
-        # CPU staging buffers must stay un-reused until a later wave sync.
-        comp_t = torch.from_numpy(s.comp_np[:total_comp]).to(dev)
-        co_t = torch.from_numpy(s.co[:nf]).to(dev)
-        bs_t = torch.from_numpy(s.bs[: nf * n_blocks_per_frame]).to(dev)
-        bc_t = torch.from_numpy(s.bc[:nf]).to(dev)
-        bo_t = torch.from_numpy(s.bo[: nf + 1]).to(dev)
-        lz4 = torch.empty(nf * frame_bytes, dtype=torch.uint8, device=dev)
-        out = torch.empty(nf * frame_u16s, dtype=torch.uint16, device=dev)
-        zblk = (max_blk + _LZ4_Y - 1) // _LZ4_Y
-        lib.h5lz4dc_batched(
-            comp_t, co_t, bs_t, bc_t, bo_t, 8192, frame_bytes, lz4,
-            threads=(nf * 32, _LZ4_Y, zblk), group_size=(32, _LZ4_Y, 1),
-        )
-        lib.shuf_8192_16_batched(
-            lz4.view(torch.uint16), out, frame_u16s, groups_per_block,
-            groups_per_frame,
-            threads=(nf * 32, 32, tg_count), group_size=(32, 32, 1),
-        )
-        out = out.view(nf, det_row, det_col)
-        if bad_t is not None:
-            out[:, bad_t] = 0  # zero dead pixels (enqueued, matches cuda)
-        return out
-
-    # Three-stage pipeline: read thread -> parse thread -> GPU consumer. read(N+1)
-    # overlaps parse(N) overlaps GPU(N-1), so the producer wall = max(read, parse)
-    # instead of read+parse, and it all hides under the GPU decode floor.
-    free_q: "queue.Queue" = queue.Queue()
-    for i in range(nbuf):
-        free_q.put(i)
-    parse_q: "queue.Queue" = queue.Queue()
-    ready_q: "queue.Queue" = queue.Queue()
-    _SENT = object()
-
-    prof = {"read": 0.0, "read_wait": 0.0, "parse": 0.0, "parse_wait": 0.0,
-            "gpu": 0.0, "sync": 0.0, "cons_wait": 0.0}
-
-    def _read_thread():
-        for ci in range(n_chunks):
-            _w = time.perf_counter()
-            slot_idx = free_q.get()
-            prof["read_wait"] += time.perf_counter() - _w
-            s = slots[slot_idx]
-            nf = chunk_n_frames[ci]
-            _t = time.perf_counter()
-            dec._read_chunk(chunk_files[ci], s.comp_np, s.co, s.cs)
-            prof["read"] += time.perf_counter() - _t
-            parse_q.put((ci, slot_idx, nf))
-        parse_q.put(_SENT)
-
-    def _parse_thread():
-        while True:
-            _w = time.perf_counter()
-            item = parse_q.get()
-            prof["parse_wait"] += time.perf_counter() - _w
-            if item is _SENT:
-                ready_q.put(_SENT)
-                return
-            ci, slot_idx, nf = item
-            s = slots[slot_idx]
-            _t = time.perf_counter()
-            _parse_headers(s.comp_np, s.cs, s.co, s.bs, s.bc, nf, n_blocks_per_frame)
-            s.bo[0] = 0
-            s.bo[1 : nf + 1] = np.cumsum(s.bc[:nf])
-            prof["parse"] += time.perf_counter() - _t
-            ready_q.put((ci, slot_idx, nf, int(s.co[nf - 1] + s.cs[nf - 1]),
-                         int(s.bc[:nf].max())))
-
-    threading.Thread(target=_read_thread, daemon=True).start()
-    threading.Thread(target=_parse_thread, daemon=True).start()
-
-    if pixel_mask is not None:
-        bad = np.asarray(pixel_mask) != 0
-        bad_t = (
-            torch.from_numpy(bad).to(dev)
-            if bad.shape == (det_row, det_col)
-            else None
-        )
-    else:
-        bad_t = None
-
-    # Wave sync: hold up to nbuf-1 chunks' GPU work in flight, then sync once and
-    # release that whole wave of slots. GPU saturated across the wave; one sync
-    # per nbuf-1 chunks instead of per chunk.
-    outputs: "list" = []
-    wave: "list" = []  # slot_idx held until next sync
-    while True:
-        _w = time.perf_counter()
-        item = ready_q.get()
-        prof["cons_wait"] += time.perf_counter() - _w
-        if item is _SENT:
-            break
-        ci, slot_idx, nf, total_comp, max_blk = item
-        _t = time.perf_counter()
-        outputs.append(_gpu_enqueue(nf, total_comp, max_blk, slots[slot_idx], bad_t))
-        prof["gpu"] += time.perf_counter() - _t
-        wave.append(slot_idx)
-        if len(wave) >= nbuf - 1:
-            _t = time.perf_counter()
-            torch.mps.synchronize()  # GPU done reading this wave's staging
-            prof["sync"] += time.perf_counter() - _t
-            for si in wave:
-                free_q.put(si)
-            wave = []
-    _t = time.perf_counter()
-    torch.mps.synchronize()  # drain final wave
-    prof["sync"] += time.perf_counter() - _t
-    for si in wave:
-        free_q.put(si)
-    if verbose:
-        total_frames = sum(chunk_n_frames)
-        gb = total_frames * frame_bytes / 1e9
-        print(
-            f"load_master_torch: {total_frames} frames, {gb:.1f} GB, "
-            f"{len(outputs)} MPS tensors, {time.perf_counter() - t0:.2f}s"
-        )
-        print("  PROF " + "  ".join(f"{k}={v:.2f}" for k, v in prof.items()))
-    return outputs

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import inspect as python_inspect
+from importlib.resources import files
 from importlib.util import find_spec
 from types import SimpleNamespace
 
@@ -30,8 +31,18 @@ def test_io_exports_only_scientist_workflows() -> None:
 
 
 def test_removed_io_paths_do_not_exist() -> None:
+    from importlib import import_module
+
     assert find_spec("quantem.gpu.io.hdf5") is None
     assert find_spec("quantem.gpu.uint4") is None
+    assert not hasattr(import_module("quantem.gpu.io.load"), "bin2d")
+
+    mps_source = files("quantem.gpu").joinpath(
+        "io/backends/mps/decoder.py"
+    ).read_text(encoding="utf-8")
+    assert "def load_arina(" not in mps_source
+    assert "def load_master_torch(" not in mps_source
+    assert "def _parse_master(" not in mps_source
 
 
 def test_auto_backend_never_selects_cpu(monkeypatch) -> None:

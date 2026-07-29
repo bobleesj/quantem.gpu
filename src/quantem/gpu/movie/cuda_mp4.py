@@ -225,8 +225,6 @@ def _layout(
     gap = max(0, int(gap))
     label_height = max(0, int(label_height))
     total_width = n_cols * width + (n_cols - 1) * gap
-    cell_height = height + label_height
-    total_height = n_rows * cell_height + (n_rows - 1) * gap
     scale = 1.0
     if max_width is not None and total_width > int(max_width):
         scale = int(max_width) / total_width
@@ -322,7 +320,6 @@ def save_mp4(
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     stacks_gpu = [cp.asarray(np.asarray(stack, dtype=np.float32)) for stack in stacks]
-    ptrs = cp.asarray([stack.data.ptr for stack in stacks_gpu], dtype=cp.uintp)
     vmin = cp.asarray([lo for lo, _hi in limits], dtype=cp.float32)
     scale = cp.asarray([255.0 / max(hi - lo, 1e-6) for lo, hi in limits], dtype=cp.float32)
     label_masks: list[list[LabelMask]] = [[] for _ in range(frames)]
