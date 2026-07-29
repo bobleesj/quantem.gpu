@@ -1,10 +1,10 @@
 # Load an HDF5 master
 
-Use `quantem.gpu.load()` for bitshuffle/LZ4 HDF5 4D-STEM masters. The returned
+Use `quantem.gpu.io.load()` for bitshuffle/LZ4 HDF5 4D-STEM masters. The returned
 object is a `LoadResult` with `data` and `metadata`.
 
 ```python
-from quantem.gpu import load
+from quantem.gpu.io import load
 
 result = load(
     "scan_master.h5",
@@ -41,7 +41,7 @@ For iterative ptychography, load only the scan positions needed for the next
 optimizer step:
 
 ```python
-from quantem.gpu import load
+from quantem.gpu.io import load
 
 batch = load(
     master_paths,
@@ -71,13 +71,9 @@ sorts and de-duplicates HDF5 frame indices for compressed reads, runs the GPU
 bitshuffle/LZ4 decompressor, and restores the requested stochastic order before
 returning data to the solver.
 
-For multi-file sparse batches, keep `prep_workers` explicit. More workers can
-help on storage that scales with concurrent payload reads, but they can also be
-slower for scattered compressed HDF5 payload files. On one real-data 40-master
-`512x512x192x192` test with 1000 random positions per master, `prep_workers=1`
-was fastest for true cold scattered reads (`8.90 s`), while `2`, `4`, and `8`
-workers measured `8.98 s`, `9.47 s`, and `9.97 s`. Warm-cache repeats were much
-faster at about `1.0-1.6 s`, but `8` workers still regressed.
+Multi-file sparse batches use an internal bounded preparation scheduler. The
+public workflow stays focused on scientific selection rather than storage-worker
+tuning.
 
 This lets reconstruction code run no-bin `192x192` detector ptychography on
 24 GB GPUs by keeping only mini-batches in VRAM. A full
@@ -122,5 +118,4 @@ Keep load parameters explicit in reports:
 - `dtype`
 - `scan_region`, if used
 - `scan_indices` or `random_positions`, if used
-- `prep_workers`, if not default
 - public-safe file label, scan shape, detector shape, and timing

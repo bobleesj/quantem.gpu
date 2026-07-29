@@ -556,7 +556,7 @@ def _require_mlx():
 def _as_chunked_frames(data):
     from quantem.gpu.detector.compute.mps.kernels import ChunkedFrames
     from quantem.gpu.io.backends.mps import MPSChunked4DSTEM
-    from quantem.gpu.io.hdf5 import LoadResult
+    from quantem.gpu.io.load import LoadResult
 
     if isinstance(data, (MpsBfColumnFrames, ChunkedFrames, _ArrayFrames)):
         return data
@@ -568,7 +568,7 @@ def _as_chunked_frames(data):
         return _ArrayFrames(data)
     raise TypeError(
         "MPS SSB preview expects chunk-backed MPS data from "
-        "`quantem.gpu.io.hdf5.load(..., backend='mps')` or a crop-first "
+        "`quantem.gpu.io.load.load(..., backend='mps')` or a crop-first "
         "3D/4D MPS/NumPy array."
     )
 

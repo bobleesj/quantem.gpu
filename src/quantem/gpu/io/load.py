@@ -4,16 +4,10 @@ GPU-accelerated HDF5 loading for 4D-STEM diffraction data.
 This module provides high-performance bitshuffle+LZ4 decompression
 using CUDA kernels, achieving 4-8x speedup over CPU.
 
-Public API
-----------
-load : Load HDF5 data to GPU with auto-detection of file format.
-bin : Bin data on GPU along detector, scan, or all axes.
-
 Examples
 --------
->>> from quantem.gpu.io import load, bin
+>>> from quantem.gpu.io import load
 >>> data = load('/path/to/file.h5').data
->>> binned = bin(data, factor=2)
 """
 
 from __future__ import annotations
@@ -23,6 +17,7 @@ import re
 import hashlib
 import pickle
 import tempfile
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, NamedTuple
 
@@ -43,8 +38,7 @@ import numpy as np
 from numba import njit, prange
 
 from .constants import BLOCK_SIZE
-from .save import H5Writer, save, wait_for_saves
-from quantem.gpu.uint4 import is_packed_uint4, pack_uint4_cupy
+from quantem.gpu.io.uint4 import is_packed_uint4, pack_uint4_cupy
 
 ScanOrder = Literal["row-major", "serpentine"]
 _MASTER_FRAME_SOURCE_CACHE: dict[tuple[str, tuple[str, ...], bool], tuple[list[dict[str, Any]], Any]] = {}
@@ -64,7 +58,7 @@ def _lazy_kernel(_name):
 
     def _call(*args, **kwargs):
         if not _cache:
-            from . import bitshuffle as _bs
+            from .backends.cuda import decoder as _bs
             _cache.append(getattr(_bs, _name))
         return _cache[0](*args, **kwargs)
 
@@ -83,13 +77,7 @@ _clip_u32_to_u8_count_kernel = _lazy_kernel("clip_u32_to_u8_count_kernel")
 _RESAMPLE_SCAN_CROP_KERNELS: dict[str, Any] = {}
 
 __version__ = "0.0.3"
-__all__ = [
-    "load", "load_scan_indices", "random_scan_indices", "load_parallel", "disk_of", "group_by_disk", "save", "H5Writer", "LoadResult", "wait_for_saves", "bin",
-    "resample_scan_crop",
-    "discover_masters", "inspect_master_readiness", "is_master_ready",
-    "MasterReadiness", "find_emd_sibling", "get_metadata", "read_emd_metadata",
-    "read_pixel_mask", "__version__",
-]
+__all__ = ["load"]
 
 
 @dataclass(frozen=True)
@@ -3679,7 +3667,7 @@ def _load_sharded(
                              apply_mask=apply_mask, scan_shape=scan_shape,
                              scan_order=scan_order,
                              det_bin=det_bin, verbose=False,
-                             auto_narrow=auto_narrow, output_dtype=output_dtype)
+                             auto_narrow=auto_narrow, dtype=output_dtype)
                 except (FileNotFoundError, OSError, ValueError) as e:
                     if verbose:
                         print(f"  gpu{dev} [{idx+1}/{n_files}] SKIPPED: {e}")
@@ -3731,161 +3719,6 @@ def _load_sharded(
     return LoadResult(shards, meta)
 
 
-def _load_as_dataset5dstem(
-    filepath, *, dataset_path, apply_mask, scan_shape, scan_order, det_bin,
-    verbose, auto_narrow, output_dtype, devices, series_type, series, sampling,
-    units,
-):
-    """Load (born-sharded across ``devices`` when given) and wrap into one
-    ``Dataset5dstem`` - a multi-tilt / time series presented as a single logical
-    dataset whose frames may live on different GPUs.
-
-    The per-frame cupy arrays are handed to torch via ``from_dlpack`` (zero-copy,
-    each stays on its card), so the series occupies the same VRAM the raw load
-    did, just wrapped. ``Dataset5dstem.from_frames`` keeps them as a series of
-    frames when they span devices, or stacks them when they share one.
-    """
-    try:
-        import torch
-    except ImportError as exc:
-        raise ImportError("series_type= needs torch installed.") from exc
-    try:
-        # Temporary compatibility: Dataset5dstem still lives in quantem.widget
-        # during phase 1. It is imported only when callers request series_type=.
-        from quantem.widget.data import Dataset5dstem
-    except ImportError as exc:
-        raise ImportError(
-            "series_type= could not import the temporary "
-            "quantem.widget.data.Dataset5dstem compatibility wrapper."
-        ) from exc
-
-    if devices is not None and isinstance(filepath, (list, tuple)):
-        import concurrent.futures
-        import time
-
-        filepaths = list(filepath)
-        if devices == "all":
-            devices = list(range(cp.cuda.runtime.getDeviceCount()))
-        devices = [int(d) for d in devices]
-        assign = _assign_indices_to_devices(filepaths, devices)
-        if verbose:
-            bin_str = f", det_bin={det_bin}" if det_bin > 1 else ""
-            print(f"Loading {len(filepaths)} files as Dataset5dstem frames across GPUs {devices}{bin_str}")
-        frames: list[torch.Tensor | None] = [None] * len(filepaths)
-        meta_box: dict[int, dict] = {}
-        skipped: list[int] = []
-
-        def worker(dev: int):
-            idxs = assign[dev]
-            if not idxs:
-                return
-            with cp.cuda.Device(dev):
-                anchor = None
-                for idx in idxs:
-                    try:
-                        result = load(
-                            filepaths[idx],
-                            dataset_path=dataset_path,
-                            apply_mask=apply_mask,
-                            scan_shape=scan_shape,
-                            scan_order=scan_order,
-                            det_bin=det_bin,
-                            verbose=False,
-                            auto_narrow=auto_narrow,
-                            output_dtype=output_dtype,
-                            device=dev,
-                        )
-                    except (FileNotFoundError, OSError, ValueError) as exc:
-                        if verbose:
-                            print(f"  gpu{dev} [{idx + 1}/{len(filepaths)}] SKIPPED: {exc}")
-                        skipped.append(idx)
-                        continue
-                    data = result.data
-                    if data.ndim == 5 and data.shape[0] == 1:
-                        data = data[0]
-                    if data.ndim != 4:
-                        if verbose:
-                            print(f"  gpu{dev} [{idx + 1}/{len(filepaths)}] SKIPPED: expected 4D frame, got {data.shape}")
-                        skipped.append(idx)
-                        continue
-                    if anchor is None:
-                        anchor = tuple(data.shape)
-                    elif tuple(data.shape) != anchor:
-                        if verbose:
-                            print(f"  gpu{dev} [{idx + 1}/{len(filepaths)}] SKIPPED: shape mismatch")
-                        skipped.append(idx)
-                        continue
-                    frames[idx] = torch.from_dlpack(data)
-                    meta_box.setdefault(dev, result.metadata)
-                    del data, result
-                    cp.get_default_memory_pool().free_all_blocks()
-
-        t0 = time.perf_counter()
-        try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=len(devices)) as pool:
-                list(pool.map(worker, devices))
-        except Exception:
-            import gc
-
-            for idx in range(len(frames)):
-                frames[idx] = None
-            gc.collect()
-            for dev in devices:
-                with torch.cuda.device(dev):
-                    torch.cuda.empty_cache()
-                with cp.cuda.Device(dev):
-                    cp.get_default_memory_pool().free_all_blocks()
-            raise
-        loaded = [(idx, frame) for idx, frame in enumerate(frames) if frame is not None]
-        if not loaded:
-            raise FileNotFoundError(f"All {len(filepaths)} files failed to load")
-        loaded_indices = [idx for idx, _frame in loaded]
-        loaded_frames = [frame for _idx, frame in loaded]
-        series_subset = None if series is None else np.asarray(series)[loaded_indices]
-        dataset = Dataset5dstem.from_frames(
-            loaded_frames,
-            sampling=sampling,
-            units=units,
-            series_type=series_type,
-            series=series_subset,
-        )
-        if verbose:
-            dt = time.perf_counter() - t0
-            per_device: dict[str, float] = {}
-            for frame in loaded_frames:
-                gib = frame.element_size() * frame.nelement() / (1 << 30)
-                per_device[str(frame.device)] = per_device.get(str(frame.device), 0.0) + gib
-            per = " ".join(f"{device}:{gib:.0f}GiB" for device, gib in sorted(per_device.items()))
-            skip = f" (skipped {len(skipped)})" if skipped else ""
-            print(f"  Done: {len(loaded_frames)} files{skip} as Dataset5dstem frames "
-                  f"[{per}] total {dataset.nbytes / (1 << 30):.1f} GiB in {dt:.2f}s")
-        return dataset
-
-    result = load(
-        filepath, dataset_path=dataset_path, apply_mask=apply_mask,
-        scan_shape=scan_shape, scan_order=scan_order, det_bin=det_bin, verbose=verbose,
-        auto_narrow=auto_narrow, output_dtype=output_dtype, devices=devices,
-    )
-    data, meta = result.data, result.metadata
-
-    if isinstance(data, dict):  # born-sharded: {device: stacked cupy}
-        shard_order = meta["shard_order"]
-        n_total = sum(len(v) for v in shard_order.values())
-        frames: list = [None] * n_total
-        for dev, global_indices in shard_order.items():
-            stack = data[dev]
-            for local, global_idx in enumerate(global_indices):
-                frames[global_idx] = torch.from_dlpack(stack[local])
-    elif data.ndim == 5:  # multi-file, one device: (n_files, scan, scan, k, k)
-        frames = [torch.from_dlpack(data[i]) for i in range(data.shape[0])]
-    else:  # single 4D acquisition → a length-1 series
-        frames = [torch.from_dlpack(data)]
-
-    return Dataset5dstem.from_frames(
-        frames, sampling=sampling, units=units, series_type=series_type, series=series,
-    )
-
-
 def _load_view(
     filepath,
     backend: str,
@@ -3915,9 +3748,9 @@ def _load_view(
     import time
 
     if backend == "cpu":
-        from .backends import cpu as _be
+        from .backends.cpu import reference as _be
     elif backend == "mps":
-        from .backends import mps as _be
+        from .backends.mps import decoder as _be
     else:  # pragma: no cover - guarded upstream
         raise ValueError(f"_load_view does not handle backend={backend!r}")
 
@@ -4248,7 +4081,7 @@ def _load_scan_crop_impl(
             output_dtype=output_dtype,
         )
     else:
-        from quantem.gpu.io.backends.mps import load_prepared_frames
+        from quantem.gpu.io.backends.mps.decoder import load_prepared_frames
 
         data = load_prepared_frames(
             prepared,
@@ -4499,7 +4332,7 @@ def _decode_scan_crop_prepared(
             output_dtype=output_dtype,
         )
     else:
-        from quantem.gpu.io.backends.mps import load_prepared_frames
+        from quantem.gpu.io.backends.mps.decoder import load_prepared_frames
 
         data = load_prepared_frames(
             prepared,
@@ -4939,7 +4772,7 @@ def _decode_scan_indices_prepared(
             output_dtype=output_dtype,
         )
     else:
-        from quantem.gpu.io.backends.mps import load_prepared_frames
+        from quantem.gpu.io.backends.mps.decoder import load_prepared_frames
 
         data = load_prepared_frames(
             prepared,
@@ -5218,7 +5051,7 @@ def load_scan_indices(
     return LoadResult(data, meta)
 
 
-def load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = True,
+def _load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = True,
          max_concurrent=None, scan_region=None, scan_indices=None,
          random_positions: int | None = None, seed=None,
          replace: bool = False, same_random_positions: bool = False,
@@ -5556,12 +5389,160 @@ def load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = Tru
     return result
 
 
+def load(
+    source: str | os.PathLike[str] | Sequence[str | os.PathLike[str]],
+    *,
+    dtype: str | type | np.dtype | None = None,
+    backend: str = "auto",
+    dataset_path: str | None = None,
+    scan_shape: tuple[int, int] | None = None,
+    scan_order: ScanOrder = "row-major",
+    scan_region: (
+        tuple[int, int, int, int]
+        | Sequence[tuple[int, int, int, int]]
+        | None
+    ) = None,
+    detector_region: tuple[int, int, int, int] | None = None,
+    target_scan_region: tuple[int, int, int, int] | None = None,
+    scan_shift_row_col: (
+        tuple[float, float]
+        | Sequence[tuple[float, float]]
+        | np.ndarray
+        | None
+    ) = None,
+    scan_resample_dtype: type | np.dtype = np.float32,
+    scan_indices: Sequence[int] | Sequence[tuple[int, int]] | np.ndarray | None = None,
+    index_mode: str = "scan",
+    random_positions: int | None = None,
+    seed: int | None = None,
+    replace: bool = False,
+    same_random_positions: bool = False,
+    det_bin: int = 1,
+    apply_mask: bool = True,
+    auto_narrow: bool = True,
+    stack: bool = True,
+    device: int | str | None = None,
+    devices: list[int] | str | None = None,
+    verbose: bool = True,
+) -> LoadResult | list[LoadResult]:
+    """Load one or more 4D-STEM sources through an accelerated backend.
+
+    All spatial arguments use ``(row, col)`` order. ``dtype`` is the only
+    output-precision control; use ``"u8"`` only when the count range proves it
+    lossless, and use ``"u16"`` or the native dtype for scientific workflows.
+    ``backend="auto"`` selects CUDA or MPS and never selects CPU silently.
+
+    Parameters
+    ----------
+    source
+        One master/data HDF5 path, a folder, or a list of master paths.
+    dtype
+        Requested output dtype, such as ``"u8"``, ``"u16"``, ``"u32"``,
+        ``"f32"``, ``"u4"``, ``"native"``, or ``"auto"``.
+    backend
+        ``"auto"``, ``"cuda"``, ``"mps"``, or explicit reference ``"cpu"``.
+    scan_shape
+        Optional full scan shape as ``(row, col)``.
+    scan_region, detector_region
+        Optional bounds as ``(row_start, row_stop, col_start, col_stop)``.
+    target_scan_region, scan_shift_row_col
+        Shared target crop and per-source row/column shifts for drift-aware
+        multi-file loading.
+    devices
+        CUDA devices for a multi-GPU load. With ``stack=True`` the result may
+        be sharded by device; with ``stack=False`` each source is returned
+        separately.
+
+    Returns
+    -------
+    LoadResult or list[LoadResult]
+        Data stays backend-resident. MPS list/folder loads return a common
+        multi-frame detector object in ``LoadResult.data`` while background
+        decoding fills its dataset slots.
+    """
+    token = dtype.lower() if isinstance(dtype, str) else None
+    output_dtype = None
+    dtype_aliases = {
+        "u16": np.dtype(np.uint16),
+        "uint16": np.dtype(np.uint16),
+        "f32": np.dtype(np.float32),
+        "float32": np.dtype(np.float32),
+    }
+    if token in dtype_aliases:
+        output_dtype = dtype_aliases[token]
+    elif dtype is not None and token not in {
+        "auto",
+        "native",
+        "u8",
+        "uint8",
+        "u32",
+        "uint32",
+        "u4",
+        "uint4",
+    }:
+        output_dtype = np.dtype(dtype)
+
+    if detector_region is not None and scan_region is None:
+        raise ValueError("detector_region= requires scan_region=.")
+    if (
+        target_scan_region is not None or scan_shift_row_col is not None
+    ) and scan_region is None:
+        raise ValueError(
+            "target_scan_region= and scan_shift_row_col= require scan_region=."
+        )
+
+    common = {
+        "backend": backend,
+        "scan_shape": scan_shape,
+        "scan_order": scan_order,
+        "det_bin": det_bin,
+        "apply_mask": apply_mask,
+        "auto_narrow": auto_narrow,
+        "verbose": verbose,
+    }
+    if output_dtype is not None:
+        common["output_dtype"] = output_dtype
+    if dataset_path is not None:
+        if scan_region is not None or scan_indices is not None or random_positions is not None:
+            raise ValueError(
+                "dataset_path= is only supported for complete-source loads."
+            )
+        common["dataset_path"] = dataset_path
+
+    if scan_region is not None:
+        common.update(
+            detector_region=detector_region,
+            target_scan_region=target_scan_region,
+            scan_shift_row_col=scan_shift_row_col,
+            scan_resample_dtype=scan_resample_dtype,
+        )
+    elif scan_indices is not None or random_positions is not None:
+        common["index_mode"] = index_mode
+    else:
+        common.update(device=device, devices=devices)
+
+    return _load(
+        source,
+        dtype=dtype if isinstance(dtype, str) else None,
+        gpus=devices if not stack else None,
+        stack=stack,
+        scan_region=scan_region,
+        scan_indices=scan_indices,
+        random_positions=random_positions,
+        seed=seed,
+        replace=replace,
+        same_random_positions=same_random_positions,
+        prep_workers=None,
+        **common,
+    )
+
+
 def disk_of(path) -> str:
     """The physical disk a path lives on, e.g. ``"nvme1n1"``.
 
     Two paths with the same ``disk_of`` share one drive (loading them in parallel
     gives no gain — the disk is the floor); different ``disk_of`` = independent
-    disks whose read bandwidth ADDS under :func:`load_parallel`. Resolves the file's
+    disks whose read bandwidth adds during internal parallel loading. Resolves the file's
     ``st_dev`` to its block device via ``/sys/dev/block`` and strips the partition.
     Returns ``"?"`` if the path is unreadable.
     """
@@ -5579,7 +5560,7 @@ def group_by_disk(paths) -> dict:
     """``{disk: [paths on it]}`` — the cross-disk layout at a glance.
 
     More distinct disks = more aggregate read bandwidth available to
-    :func:`load_parallel`. Spreading hot datasets across the keys unlocks parallel IO.
+    internal scheduler. Spreading hot datasets across the keys unlocks parallel I/O.
     """
     out: dict = {}
     for p in paths:
@@ -5629,8 +5610,7 @@ def _load_many_parallel(masters, *, gpus=None, max_concurrent=None, verbose=Fals
     """Load many masters with concurrent READS + SERIAL GPU decode, placing each
     master on a chosen GPU. The data-feeding path for joint reconstruction.
 
-    Reached via ``load([masters], gpus=...)`` (or ``stack=False``); ``load_parallel``
-    is a thin back-compat alias. See :func:`load`.
+    Reached via ``load([masters], devices=..., stack=False)``. See :func:`load`.
 
     A producer pool reads + header-parses masters concurrently (host/IO only, the
     GIL is released during ``os.readv``); a single consumer decodes them one at a
@@ -5731,16 +5711,6 @@ def _load_many_parallel(masters, *, gpus=None, max_concurrent=None, verbose=Fals
     return results
 
 
-def load_parallel(masters, *, gpus=None, max_concurrent=None, verbose=False, **load_kwargs):
-    """Back-compat alias for ``load(masters, gpus=..., stack=False)``.
-
-    Prefer the single entry point: ``load([masters], gpus=[0, 1])`` returns the same
-    list of GPU-placed datasets. Kept so existing call sites keep working.
-    """
-    return load(list(masters), gpus=gpus, stack=False, max_concurrent=max_concurrent,
-                verbose=verbose, **load_kwargs)
-
-
 def _load_impl(
     filepath: str | list[str],
     dataset_path: str | None = None,
@@ -5753,10 +5723,6 @@ def _load_impl(
     output_dtype: type | np.dtype | None = None,
     device: int | str | None = None,
     devices: list[int] | str | None = None,
-    series_type: str | None = None,
-    series=None,
-    sampling=None,
-    units=None,
     backend: str = "auto",
     row_prefix: bool = False,
     precompute_detector_sum: bool = False,
@@ -5968,27 +5934,17 @@ def _load_impl(
             )
     if row_prefix and backend != "mps":
         raise ValueError("row_prefix=True is only supported with backend='mps'.")
-    if series_type is not None and series_type != "generic" and series is None:
-        raise ValueError(
-            f"series= is required for series_type={series_type!r} (Arina h5 does not store the "
-            f"{series_type} axis); pass the per-frame coordinate, e.g. series=[0, 5, 12, 30]."
-        )
     if backend != "cuda":
         # These features are intrinsically CUDA (multi-GPU sharding, GPU
         # pinning, the torch-from-dlpack 5D dataset wrap). Name the fix.
-        if series_type is not None:
-            raise ValueError(
-                f"series_type= requires backend='cuda'; got {backend!r}."
-            )
         if device is not None or devices is not None:
             raise ValueError(
                 f"device=/devices= multi-GPU requires backend='cuda'; got {backend!r}."
             )
-        # MPS multi-dataset: a 4-5 dataset 5D Metal stack is 12s+ to decode and
-        # may not fit 24 GB unified memory, so eager stacking is the wrong model
-        # on Apple Silicon. Return a lazy handle - dataset 0 decoded now, 1..N
-        # filled in the background once Show4DSTEM(handle) builds the viewer.
-        # (CUDA stacks eagerly below; big VRAM gives instant dataset switch.)
+        # MPS multi-dataset: dataset 0 is decoded synchronously and the
+        # remaining datasets fill one common detector-input object in the
+        # background. The scheduling owner stays attached to ``data``; widget
+        # code sees only the common GPU-frame protocol.
         if backend == "mps" and (
             isinstance(filepath, (list, tuple))
             or (isinstance(filepath, (str, os.PathLike))
@@ -6000,15 +5956,28 @@ def _load_impl(
                     "multi-dataset loads yet. Load one CUDA dataset, use "
                     "scan_region=..., or use det_bin>1."
                 )
-            from quantem.gpu.io.mps_multi import load_mps_datasets
+            from quantem.gpu.io.backends.mps.series import load_mps_datasets
 
-            return load_mps_datasets(
+            owner = load_mps_datasets(
                 filepath,
                 det_bin=det_bin,
-                scan_size=None,
+                scan_shape=scan_shape,
+                output_dtype=output_dtype,
                 verbose=verbose,
                 skip_mps_memory_check=skip_mps_memory_check,
             )
+            data = owner.data
+            data._io_owner = owner
+            owner.start()
+            metadata = dict(getattr(data, "metadata", {}) or {})
+            metadata.update(
+                backend="mps",
+                file_names=list(owner.names),
+                n_files=len(owner.names),
+                scan_shape=tuple(int(value) for value in data.shape[1:3]),
+                detector_shape=tuple(int(value) for value in data.shape[-2:]),
+            )
+            return LoadResult(data, metadata)
         return _load_view(
             filepath, backend, dataset_path=dataset_path, apply_mask=apply_mask,
             scan_shape=scan_shape, scan_order=scan_order, det_bin=det_bin, verbose=verbose,
@@ -6016,22 +5985,6 @@ def _load_impl(
             row_prefix=row_prefix,
             precompute_detector_sum=precompute_detector_sum,
             skip_mps_memory_check=skip_mps_memory_check,
-        )
-
-    # series_type set → return a Dataset5dstem (a multi-tilt / time series),
-    # not a raw LoadResult. Load normally (born-sharded across `devices` when
-    # given), then wrap the per-frame tensors into one logical 5D dataset. Bare
-    # load (series_type=None) returns LoadResult exactly as before, so no
-    # existing caller changes.
-    if series_type is not None:
-        # Arina h5 does NOT store the tilt/time axis, so the per-frame coordinate
-        # has to come from the caller. Without it a non-'generic' series would have
-        # no axis to plot against - fail early with a copy-paste fix.
-        return _load_as_dataset5dstem(
-            filepath, dataset_path=dataset_path, apply_mask=apply_mask,
-            scan_shape=scan_shape, scan_order=scan_order, det_bin=det_bin, verbose=verbose,
-            auto_narrow=auto_narrow, output_dtype=output_dtype, devices=devices,
-            series_type=series_type, series=series, sampling=sampling, units=units,
         )
 
     # Pin all cupy allocations to `device` for this call. Recurse without
@@ -6121,7 +6074,7 @@ def _load_impl(
                     r = load(fp, dataset_path=dataset_path, apply_mask=apply_mask,
                              scan_shape=effective_shape, scan_order=scan_order, det_bin=det_bin,
                              verbose=False, auto_narrow=auto_narrow,
-                             output_dtype=output_dtype)
+                             dtype=output_dtype)
                     fmeta, d = r.metadata, r.data
                 else:
                     d = _decompress_prepared(
@@ -6650,7 +6603,7 @@ def bin(
 
     Examples
     --------
-    >>> from quantem.gpu.io import bin
+    >>> from quantem.gpu.io.load import bin
     >>> stack = bin(stack, factor=4, axes="detector", reduction="sum")  # (N,H,W)
     >>> binned = bin(cupy_4d, factor=2, axes="detector")
     """

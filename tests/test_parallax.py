@@ -184,7 +184,7 @@ def test_parallax_real_env_crop_recovers_aberrations_when_available() -> None:
     cp = pytest.importorskip("cupy")
     from quantem.gpu import parallax
     from quantem.gpu.detector import auto_probe
-    from quantem.gpu.io.hdf5 import load
+    from quantem.gpu.io import load
 
     master_env = "QUANTEM_GPU_PARALLAX_MASTER"
     master_raw = os.environ.get(master_env)

@@ -4,7 +4,7 @@ import h5py
 import numpy as np
 import pytest
 
-from quantem.gpu.io import (
+from quantem.gpu.io.save import (
     save_compressed_arina_h5,
     save_compressed_h5,
     write_compressed_h5_dataset,
@@ -135,7 +135,7 @@ def test_save_compressed_arina_h5_uint8_display_export(tmp_path):
 
 
 def test_save_public_api_routes_numpy_to_arina_h5(tmp_path):
-    from quantem.gpu.io.save import save
+    from quantem.gpu.io import save
 
     data = np.array(
         [
@@ -146,13 +146,16 @@ def test_save_public_api_routes_numpy_to_arina_h5(tmp_path):
     )
 
     master = tmp_path / "public_master.h5"
-    save(
+    result = save(
         master,
         data,
         dtype="u16",
-        backend="auto",
+        backend="cpu",
         frames_per_file=1,
+        wait=False,
     )
+    assert result.complete is True
+    assert result.wait() is result
 
     with h5py.File(master, "r") as handle:
         assert handle.attrs["scan_shape"].tolist() == [2, 1]
@@ -169,7 +172,7 @@ def test_save_public_api_routes_numpy_to_arina_h5(tmp_path):
 
 
 def test_save_public_api_rejects_cuda_backend_for_numpy(tmp_path):
-    from quantem.gpu.io.save import save
+    from quantem.gpu.io import save
 
     data = np.zeros((1, 1, 2, 2), dtype=np.uint16)
 
@@ -192,7 +195,7 @@ def test_cuda_save_uint8_display_export(tmp_path):
     except cp.cuda.runtime.CUDARuntimeError as exc:
         pytest.skip(f"CUDA runtime is not available: {exc}")
 
-    from quantem.gpu.io.save import save
+    from quantem.gpu.io import save
 
     data = np.array(
         [

@@ -227,7 +227,8 @@ class SSB:
                 source_load_seconds = float(frames.load_seconds)
                 break
         if data is None:
-            from quantem.gpu.io.hdf5 import LoadResult, load
+            from quantem.gpu.io import load
+            from quantem.gpu.io.load import LoadResult
 
             load_started = time.perf_counter()
             loaded = load(
@@ -235,9 +236,6 @@ class SSB:
                 backend=selected,
                 det_bin=1,
                 dtype=dtype,
-                precompute_detector_sum=(
-                    selected == "mps" and str(dtype).lower() in {"u8", "uint8"}
-                ),
                 verbose=verbose,
             )
             if not isinstance(loaded, LoadResult):

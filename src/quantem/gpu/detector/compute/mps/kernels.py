@@ -9,6 +9,7 @@ widget/UI dependency.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Callable
 import gc
 import os
 import time
@@ -149,7 +150,7 @@ class MetalVirtualImage:
 
     def __init__(self, chunks: list, *, row_prefix: bool = False):
         import Metal
-        from quantem.gpu.io.backends import mps as _mps
+        from quantem.gpu.io.backends.mps import decoder as _mps
 
         self._mps = _mps
         self._Metal = Metal
@@ -363,7 +364,7 @@ class MetalVirtualImage:
         out_shape = (self.det[0] // binf, self.det[1] // binf)
         outndet = out_shape[0] * out_shape[1]
         out_chunks = []
-        from quantem.gpu.io.backends import mps as _mps
+        from quantem.gpu.io.backends.mps import decoder as _mps
 
         for chunk in self.chunks:
             nf = int(chunk.shape[0])
@@ -1195,11 +1196,12 @@ class ChunkedFrames:
         self._n = int(sum(int(c.shape[0]) for c in chunks))
         self.shape = (self._n, *self._det)
         self.ndim = 3
-        self.dtype = _torch_dtype(torch, self._np_dtype)
+        self.dtype = self._np_dtype
+        self.torch_dtype = _torch_dtype(torch, self._np_dtype)
         # Heavy compute stays in raw Metal buffers; torch is only used by the
         # base widget for small masks/traits. Keeping these helper tensors on
         # CPU avoids MPS allocator startup cost and high-watermark pressure.
-        self.device = torch.device("cpu")
+        self.device = "mps"
         self._offsets = [0]
         for c in chunks:
             self._offsets.append(self._offsets[-1] + int(c.shape[0]))
@@ -1365,6 +1367,75 @@ class MultiChunkedFrames(ChunkedFrames):
 
     _is_gpu_frames = True
 
+    def _io_lifecycle(self):
+        owner = getattr(self, "_io_owner", None)
+        if owner is None:
+            raise RuntimeError(
+                "This MPS multi-dataset object is not attached to an I/O "
+                "lifecycle owner. Create it with quantem.gpu.io.load()."
+            )
+        return owner
+
+    def poll(
+        self,
+        folder: str | os.PathLike[str],
+        *,
+        pattern: str = "*_master.h5",
+        recursive: bool = True,
+        scan_shape: tuple[int, int] | None = None,
+        ready_only: bool = True,
+        async_: bool = True,
+        require_stable: bool = False,
+    ) -> list[int]:
+        """Discover and enqueue completed masters from an acquisition folder."""
+        return self._io_lifecycle().poll(
+            folder,
+            pattern=pattern,
+            recursive=recursive,
+            scan_shape=scan_shape,
+            ready_only=ready_only,
+            async_=async_,
+            require_stable=require_stable,
+        )
+
+    def watch(
+        self,
+        folder: str | os.PathLike[str],
+        *,
+        interval: float = 2.0,
+        pattern: str = "*_master.h5",
+        recursive: bool = True,
+        scan_shape: tuple[int, int] | None = None,
+        ready_only: bool = True,
+        async_: bool = True,
+    ) -> "MultiChunkedFrames":
+        """Start recurring acquisition-folder discovery and decode."""
+        self._io_lifecycle().watch(
+            folder,
+            interval=interval,
+            pattern=pattern,
+            recursive=recursive,
+            scan_shape=scan_shape,
+            ready_only=ready_only,
+            async_=async_,
+        )
+        return self
+
+    def stop(self) -> None:
+        """Stop folder watching and join the owned decode worker."""
+        self._io_lifecycle().stop()
+
+    def set_status_callback(
+        self,
+        callback: Callable[[str, str], None] | None,
+    ) -> None:
+        """Receive lifecycle state updates as ``callback(state, detail)``."""
+        self._io_lifecycle().set_status_callback(callback)
+
+    def close(self) -> None:
+        """Close the I/O lifecycle and suppress future decode callbacks."""
+        self._io_lifecycle().close()
+
     def __init__(self, datasets: "list[ChunkedFrames]", n_total: int | None = None,
                  names: "list[str] | None" = None):
         """``datasets`` must hold at least dataset 0 (decoded). ``n_total`` sizes
@@ -1387,12 +1458,29 @@ class MultiChunkedFrames(ChunkedFrames):
         self._frame_elems = d0._frame_elems
         self.det_bin = d0.det_bin
         self._torch = d0._torch
-        scan = int(round(d0._n ** 0.5))
-        self._scan = (scan, scan)
-        self.shape = (n_total, scan, scan, *self._det)
+        stored_scan = d0.metadata.get("scan_shape")
+        if stored_scan is None:
+            scan = int(round(d0._n ** 0.5))
+            if scan * scan != d0._n:
+                raise ValueError(
+                    "Non-square MPS scans require metadata['scan_shape'] in "
+                    "(row, col) order."
+                )
+            stored_scan = (scan, scan)
+        self._scan = tuple(int(value) for value in stored_scan)
+        if len(self._scan) != 2 or self._scan[0] * self._scan[1] != d0._n:
+            raise ValueError(
+                f"scan_shape {self._scan} does not match {d0._n} stored frames."
+            )
+        self.shape = (n_total, *self._scan, *self._det)
         self.ndim = 5
         self.dtype = d0.dtype
         self.device = d0.device
+
+    @property
+    def scan_shape(self) -> tuple[int, int]:
+        """Return the active acquisition scan shape as ``(row, col)``."""
+        return tuple(int(value) for value in self.shape[1:3])
 
     def _validate_compatible_dataset(self, frames: "ChunkedFrames") -> None:
         det = tuple(getattr(frames, "_det", ()))
@@ -1400,10 +1488,14 @@ class MultiChunkedFrames(ChunkedFrames):
             raise ValueError(
                 f"Dataset detector shape {det} does not match existing {tuple(self._det)}"
             )
-        scan = int(round(int(getattr(frames, "_n", 0)) ** 0.5))
-        if (scan, scan) != tuple(self._scan):
+        stored_scan = frames.metadata.get("scan_shape")
+        if stored_scan is None:
+            scan = int(round(int(getattr(frames, "_n", 0)) ** 0.5))
+            stored_scan = (scan, scan)
+        scan_shape = tuple(int(value) for value in stored_scan)
+        if scan_shape != tuple(self._scan):
             raise ValueError(
-                f"Dataset scan shape {(scan, scan)} does not match existing {tuple(self._scan)}"
+                f"Dataset scan shape {scan_shape} does not match existing {tuple(self._scan)}"
             )
 
     def set_dataset(self, idx: int, frames: "ChunkedFrames") -> None:

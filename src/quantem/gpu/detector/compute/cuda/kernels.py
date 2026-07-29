@@ -1152,7 +1152,7 @@ def cuda_center_of_mass(data: Any, det_mask: Any | None = None) -> tuple[Any, An
 
 
 def _flatten_uint4(data: Any) -> tuple[Any, tuple[int, ...], tuple[int, int], int, int] | None:
-    from quantem.gpu.uint4 import is_packed_uint4
+    from quantem.gpu.io.uint4 import is_packed_uint4
 
     if not is_packed_uint4(data) or data.backend != "cuda":
         return None

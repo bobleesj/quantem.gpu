@@ -9,22 +9,16 @@ background GPU-worker thread decodes datasets 1..N-1 into the live container.
 Sliding to a not-yet-decoded dataset shows the last ready one until its slot
 fills (auto-updates). A progress line prints ``[k/N loaded]`` as each finishes.
 
-``load([...])`` returns a :class:`LazyMPSDatasets` handle (dataset 0 already
-decoded); ``Show4DSTEM(handle)`` builds the viewer and starts the background
-fill. One dedicated worker owns every Metal decode (the command queue is serial
-- one owner is the safe + correct model). Memory is the same as loading all
-upfront (~1.2 GB each at bin4); lazy hides the TIME, not the footprint. Run
-``discover_masters(folder)`` and inspect representative metadata before loading
-the full stack.
+``load([...])`` returns a :class:`LazyMPSDatasets` handle with dataset 0 already
+decoded. Calling :meth:`LazyMPSDatasets.start` queues the remaining datasets on
+one dedicated worker, the safe ownership model for the serial Metal command
+queue. The handle exposes data state only and never imports a widget.
 
 CUDA / CPU never reach this module: ``load([...])`` eager-stacks into one 5D
 array there (big VRAM, instant dataset switch). Only MPS is lazy.
 
-Usage::
-
-    from quantem.gpu import load
-    from quantem.widget import Show4DSTEM
-    Show4DSTEM(load(master_paths, det_bin=4))   # dataset 0 shows now; slide across
+The returned data object is UI-agnostic; callers pass it to their chosen
+scientific or visualization layer.
 """
 from __future__ import annotations
 
@@ -56,11 +50,13 @@ class LazyMPSDatasets:
     """MPS lazy multi-dataset handle returned by ``load([masters])``.
 
     Holds dataset 0 (already decoded) plus the spec to decode 1..N-1 on demand.
-    :func:`quantem.widget.Show4DSTEM` consumes it: builds the 5D viewer over the
-    live :class:`MultiChunkedFrames` container, then starts one background worker
-    that fills the remaining datasets. Browsing is instant; the slider only spans
-    decoded datasets and grows as each lands.
+    The live :class:`MultiChunkedFrames` container is available through both
+    ``data`` and ``multi``. UI packages may render that state, but I/O owns no
+    viewer construction or widget imports.
     """
+
+    _is_gpu_frames = True
+    device = "mps"
 
     def __init__(
         self,
@@ -106,17 +102,29 @@ class LazyMPSDatasets:
         self._watch_stop: threading.Event | None = None
         self._watch_thread: threading.Thread | None = None
 
-    def build_viewer(self, **viewer_kwargs):
-        """Show dataset 0 now and queue 1..N-1 on one owned FIFO worker."""
-        from quantem.widget.show4dstem_mps import Show4DSTEM_MACBOOK
+    @property
+    def data(self):
+        """Return the backend-owned multi-dataset state."""
+        return self.multi
 
-        verbose = bool(viewer_kwargs.pop("verbose", self.verbose))
-        viewer_kwargs.setdefault("frame_dim_label", "Dataset")
-        viewer_kwargs.setdefault("frame_labels", list(self.names))
-        viewer = Show4DSTEM_MACBOOK(self.multi, verbose=verbose, **viewer_kwargs)
-        # Also bind non-folder ``Show4DSTEM(load([masters]))`` viewers so their
-        # close/free lifecycle joins this owned initial-fill worker.
-        viewer._mps_folder_live = self
+    @property
+    def shape(self):
+        return self.multi.shape
+
+    @property
+    def dtype(self):
+        return self.multi.dtype
+
+    @property
+    def scan_shape(self) -> tuple[int, int]:
+        return tuple(int(value) for value in self.multi.shape[1:3])
+
+    @property
+    def chunks(self):
+        return self.multi.chunks
+
+    def start(self) -> "LazyMPSDatasets":
+        """Queue all undecoded initial datasets on the owned FIFO worker."""
         for idx in range(1, len(self.masters)):
             self._queue_master(
                 self.masters[idx],
@@ -125,7 +133,7 @@ class LazyMPSDatasets:
                 async_=True,
                 validate=False,
             )
-        return viewer
+        return self
 
     @property
     def pending_masters(self) -> tuple[str, ...]:
@@ -476,13 +484,13 @@ class LazyMPSDatasets:
                 self._refresh_activity_status()
         return added
 
-    def poll_master_folder(
+    def poll(
         self,
         folder,
         *,
         pattern: str = "*_master.h5",
         recursive: bool = True,
-        scan_size: int | None = None,
+        scan_shape: tuple[int, int] | None = None,
         ready_only: bool = True,
         async_: bool = True,
         require_stable: bool = False,
@@ -491,11 +499,11 @@ class LazyMPSDatasets:
         if not self._poll_lock.acquire(blocking=False):
             return []
         try:
-            return self._poll_master_folder_once(
+            return self._poll_once(
                 folder,
                 pattern=pattern,
                 recursive=recursive,
-                scan_size=scan_size,
+                scan_shape=scan_shape,
                 ready_only=ready_only,
                 async_=async_,
                 require_stable=require_stable,
@@ -503,30 +511,34 @@ class LazyMPSDatasets:
         finally:
             self._poll_lock.release()
 
-    def _poll_master_folder_once(
+    def _poll_once(
         self,
         folder,
         *,
         pattern: str = "*_master.h5",
         recursive: bool = True,
-        scan_size: int | None = None,
+        scan_shape: tuple[int, int] | None = None,
         ready_only: bool = True,
         async_: bool = True,
         require_stable: bool = False,
     ) -> list[int]:
         """Discover ready master files in *folder* and append new acquisitions.
 
-        Parameters mirror :func:`quantem.gpu.io.discover_masters`. When
+        Parameters mirror :func:`quantem.gpu.io.discover`. When
         ``ready_only`` is true, partially written masters are ignored until their
         linked data files are present.
         """
-        from quantem.gpu.io.hdf5 import (
+        from quantem.gpu.io.load import (
             discover_masters,
             inspect_master_readiness,
             is_master_ready,
         )
 
-        scan_shape = (int(scan_size), int(scan_size)) if scan_size else None
+        scan_shape = (
+            tuple(int(value) for value in scan_shape)
+            if scan_shape is not None
+            else None
+        )
         with self._lock:
             watch_thread = self._watch_thread
             watching = bool(
@@ -646,14 +658,14 @@ class LazyMPSDatasets:
         self._refresh_activity_status()
         return added
 
-    def watch_master_folder(
+    def watch(
         self,
         folder,
         *,
         interval: float = 2.0,
         pattern: str = "*_master.h5",
         recursive: bool = True,
-        scan_size: int | None = None,
+        scan_shape: tuple[int, int] | None = None,
         ready_only: bool = True,
         async_: bool = True,
     ) -> "LazyMPSDatasets":
@@ -661,7 +673,7 @@ class LazyMPSDatasets:
 
         The existing Show4DSTEM viewer stays mounted; newly completed masters
         are appended to the dataset slider as they decode. Call
-        :meth:`stop_watch` before starting a different watcher.
+        :meth:`stop` before starting a different watcher.
         """
         interval = float(interval)
         if not math.isfinite(interval) or interval <= 0:
@@ -670,7 +682,7 @@ class LazyMPSDatasets:
                 f"{interval!r}."
             )
         if self._watch_thread is not None:
-            self.stop_watch()
+            self.stop()
         if self._closed:
             raise RuntimeError("This MPS folder source has been closed.")
         self._ensure_decode_worker()
@@ -686,11 +698,11 @@ class LazyMPSDatasets:
             try:
                 while not stop.wait(interval):
                     try:
-                        added = self.poll_master_folder(
+                        added = self.poll(
                             folder,
                             pattern=pattern,
                             recursive=recursive,
-                            scan_size=scan_size,
+                            scan_shape=scan_shape,
                             ready_only=ready_only,
                             async_=async_,
                             require_stable=True,
@@ -763,7 +775,7 @@ class LazyMPSDatasets:
         self._refresh_activity_status()
         return self
 
-    def stop_watch(self) -> None:
+    def stop(self) -> None:
         """Stop and join both folder discovery and the owned decode worker."""
         was_started = bool(self._watch_started)
         stop = getattr(self, "_watch_stop", None)
@@ -814,9 +826,9 @@ class LazyMPSDatasets:
                 return False
             jobs[0].done.wait(remaining)
 
-    def shutdown(self) -> None:
+    def close(self) -> None:
         """Permanently stop this handle and suppress future viewer callbacks."""
-        self.stop_watch()
+        self.stop()
         with self._lock:
             self._closed = True
             self._accept_decode_results = False
@@ -836,7 +848,7 @@ def load_mps_datasets(
     masters,
     *,
     det_bin: int = 4,
-    scan_size: int | None = None,
+    scan_shape: tuple[int, int] | None = None,
     output_dtype: type | np.dtype | str | None = None,
     verbose: bool = True,
     skip_mps_memory_check: bool | None = None,
@@ -845,18 +857,16 @@ def load_mps_datasets(
     """Decode dataset 0, return a lazy handle over all N (MPS only).
 
     ``masters`` is either a folder (every ``*_master.h5`` in it is discovered +
-    sorted, no hardcoding) or an explicit list of master paths. ``scan_size``
-    (e.g. 512 or 256) keeps only masters whose scan is that NxN size - a mixed
-    folder holding both 512 and 256 acquisitions is filtered to one, so the 5D
-    stack is uniform. Reads HDF5 headers only, no decode, for discovery.
+    sorted, no hardcoding) or an explicit list of master paths. ``scan_shape``
+    keeps only masters with the requested ``(row, col)`` shape, so the 5D stack
+    is uniform. Reads HDF5 headers only, no decode, for discovery.
     """
-    from quantem.gpu.io.hdf5 import discover_masters, load
+    from quantem.gpu.io.load import discover_masters, load
     # MPS imports kept inside this function so CUDA / CPU never pull pyobjc Metal.
     from quantem.gpu.detector.compute.mps.kernels import ChunkedFrames, MultiChunkedFrames
 
     # folder -> auto-discover (optionally filtered to one scan size); list -> as given
     if isinstance(masters, (str, os.PathLike)) and os.path.isdir(os.path.expanduser(str(masters))):
-        scan_shape = (int(scan_size), int(scan_size)) if scan_size else None
         masters = discover_masters(os.path.expanduser(str(masters)),
                                    scan_shape=scan_shape, verbose=False)
     masters = [str(m) for m in masters]
@@ -873,10 +883,10 @@ def load_mps_datasets(
         data, _meta = load(
             path,
             backend="mps",
+            scan_shape=scan_shape,
             det_bin=det_bin,
             verbose=False,
-            output_dtype=output_dtype,
-            skip_mps_memory_check=skip_mps_memory_check,
+            dtype=output_dtype,
         )
         row_prefix = bool(getattr(data, "row_prefix", False)
                           or getattr(data, "metadata", {}).get("row_prefix", False))
@@ -898,40 +908,3 @@ def load_mps_datasets(
         verbose=verbose,
         validate_master=validate_master,
     )
-
-
-def load_4dstem_macbook(
-    masters,
-    *,
-    det_bin: int = 4,
-    scan_size: int | None = None,
-    output_dtype: type | np.dtype | str | None = None,
-    verbose: bool = True,
-    skip_mps_memory_check: bool | None = None,
-    **viewer_kwargs,
-):
-    """Convenience wrapper: build the MPS lazy handle AND return a mounted Show4DSTEM viewer.
-
-    Same discovery + decode behavior as :func:`load_mps_datasets`, but
-    additionally hands the returned :class:`LazyMPSDatasets` to
-    :func:`Show4DSTEM` so a caller who wants "one line, see it now" doesn't have
-    to construct the viewer separately. Extra keyword arguments are forwarded to
-    the viewer.
-    """
-    from quantem.widget import Show4DSTEM
-    lazy = load_mps_datasets(
-        masters,
-        det_bin=det_bin,
-        scan_size=scan_size,
-        output_dtype=output_dtype,
-        verbose=verbose,
-        skip_mps_memory_check=skip_mps_memory_check,
-    )
-    return Show4DSTEM(lazy, **viewer_kwargs)
-
-
-# Compatibility aliases for one migration cycle. The public package name is
-# quantem.gpu, but existing widget call sites still refer to the original
-# MacBook-oriented helper names.
-LazyMacbookDatasets = LazyMPSDatasets
-load_macbook_datasets = load_mps_datasets

@@ -872,7 +872,7 @@ def test_cuda_256_variance_kernel_matches_staged_cupy_reference() -> None:
 
 def test_cuda_128_realdata_crop_matches_explicit_cupy_reference() -> None:
     cp = _cupy()
-    from quantem.gpu.io.hdf5 import load
+    from quantem.gpu.io import load
     from quantem.gpu.ssb.compute.cuda.backend import CudaSSBBackend
 
     _clean_gpu()

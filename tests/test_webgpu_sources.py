@@ -129,7 +129,7 @@ def test_webgpu_h5reader_keeps_single_pass_block_metadata_parse() -> None:
 
 def test_webgpu_bslz4_uses_fused_integer_to_uint8_decoder() -> None:
 
-    source = source_text("webgpu/bslz4.ts")
+    source = source_text("io/backends/webgpu/bslz4.ts")
 
     assert 'type IntegralSrcDtype = "uint8" | "uint16" | "uint32";' in source
     assert 'type SourceDtype = "uint8" | "uint16" | "uint32" | "float32";' in source
@@ -197,7 +197,7 @@ def test_webgpu_bslz4_uses_fused_integer_to_uint8_decoder() -> None:
 
 def test_webgpu_local_h5_source_tracks_show4dstem_loader_contract() -> None:
 
-    source = source_text("webgpu/local-h5.ts")
+    source = source_text("io/backends/webgpu/local-h5.ts")
 
     assert "export function setShow4DSTEMLocalFiles" in source
     assert "export function show4DSTEMHasLocalFiles" in source
@@ -257,7 +257,9 @@ def test_webgpu_local_h5_source_tracks_show4dstem_loader_contract() -> None:
     assert "badPixels: detBin > 1 ? new Uint32Array(0) : badPixels" in source
 
 
-def test_webgpu_source_rejects_unknown_names() -> None:
+def test_webgpu_has_no_top_level_compatibility_namespace() -> None:
+    import quantem.gpu as gpu
 
-    with pytest.raises(ValueError, match="Unknown WebGPU source"):
-        source_text("missing.ts")
+    assert "webgpu" not in gpu.__all__
+    with pytest.raises(AttributeError):
+        getattr(gpu, "webgpu")

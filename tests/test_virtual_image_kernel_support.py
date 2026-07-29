@@ -212,11 +212,11 @@ def test_mps_production_reductions_do_not_route_to_numba() -> None:
 
 
 def test_mps_integer_chunked_load_source_contract_is_present() -> None:
-    msl = Path("src/quantem/gpu/io/backends/metal/bslz4.msl").read_text(
+    msl = Path("src/quantem/gpu/io/backends/mps/kernels/bslz4.msl").read_text(
         encoding="utf-8"
     )
-    hdf5_source = Path("src/quantem/gpu/io/hdf5.py").read_text(encoding="utf-8")
-    mps_source = Path("src/quantem/gpu/io/backends/mps.py").read_text(
+    load_source = Path("src/quantem/gpu/io/load.py").read_text(encoding="utf-8")
+    mps_source = Path("src/quantem/gpu/io/backends/mps/decoder.py").read_text(
         encoding="utf-8"
     )
 
@@ -225,7 +225,7 @@ def test_mps_integer_chunked_load_source_contract_is_present() -> None:
     assert "kernel void shuf_8192_16_to_u8_masked_batched" in msl
     assert "kernel void zero_bad_pixels_u32" in msl
     assert "kernel void clip_u32_to_u8" in msl
-    assert "output_dtype=mps_chunk_output_dtype" in hdf5_source
+    assert "output_dtype=mps_chunk_output_dtype" in load_source
     assert "output_dtype=np.uint8" in mps_source
     assert "np.uint32" in mps_source
     assert "cast_u8_out_mtl" in mps_source

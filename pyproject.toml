@@ -65,12 +65,12 @@ docs = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/quantem"]
 artifacts = [
-    "src/quantem/gpu/io/backends/metal/*.msl",
+    "src/quantem/gpu/io/backends/mps/kernels/*.msl",
+    "src/quantem/gpu/io/backends/webgpu/*.ts",
     "src/quantem/gpu/detector/compute/mps/metal/*.msl",
     "src/quantem/gpu/device/*.ts",
     "src/quantem/gpu/detector/compute/webgpu/*.ts",
     "src/quantem/gpu/dpc/compute/webgpu/*.ts",
-    "src/quantem/gpu/io/backends/webgpu/*.ts",
     "src/quantem/gpu/ssb/compute/webgpu/*.ts",
     "src/quantem/gpu/ssb/compute/webgpu/kernels/*.ts",
 ]

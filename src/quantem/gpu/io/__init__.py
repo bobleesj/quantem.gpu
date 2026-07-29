@@ -1,79 +1,14 @@
-"""Accelerated IO APIs for QuantEM STEM data."""
-from __future__ import annotations
+"""Accelerated 4D-STEM storage workflows.
 
-from importlib import import_module
+The public API intentionally contains four operations: :func:`load`,
+:func:`save`, :func:`inspect`, and :func:`discover`. Device decoders, metadata
+parsers, scheduling helpers, and storage representations remain private to the
+I/O domain.
+"""
 
-_HDF5_EXPORTS = {
-    "H5Writer",
-    "LoadResult",
-    "MasterReadiness",
-    "resample_scan_crop",
-    "bin",
-    "discover_masters",
-    "find_emd_sibling",
-    "get_metadata",
-    "inspect_master_readiness",
-    "is_master_ready",
-    "load",
-    "load_scan_indices",
-    "load_parallel",
-    "disk_of",
-    "group_by_disk",
-    "read_emd_metadata",
-    "read_pixel_mask",
-    "random_scan_indices",
-    "wait_for_saves",
-}
+from .discover import discover
+from .inspect import inspect
+from .load import load
+from .save import save
 
-_SAVE_EXPORTS = {
-    "save",
-    "save_compressed_arina_h5",
-    "save_compressed_h5",
-    "wait_for_saves",
-    "write_compressed_h5_dataset",
-}
-
-_BACKEND_EXPORTS = {"detect_backend", "resolve_backend"}
-
-_MPS_EXPORTS = {"MPSChunked4DSTEM", "clear_mps_cache", "load_mps_4dstem"}
-_MPS_MULTI_EXPORTS = {
-    "LazyMPSDatasets",
-    "LazyMacbookDatasets",
-    "load_mps_datasets",
-    "load_macbook_datasets",
-}
-
-__all__ = sorted(_HDF5_EXPORTS | _SAVE_EXPORTS | _BACKEND_EXPORTS | _MPS_EXPORTS | _MPS_MULTI_EXPORTS)
-
-
-def __getattr__(name: str):
-    if name in _HDF5_EXPORTS:
-        module = import_module("quantem.gpu.io.hdf5")
-        value = getattr(module, name)
-        globals()[name] = value
-        return value
-    if name in _SAVE_EXPORTS:
-        module = import_module("quantem.gpu.io.save")
-        value = getattr(module, name)
-        globals()[name] = value
-        return value
-    if name in _BACKEND_EXPORTS:
-        module = import_module("quantem.gpu.io.backends")
-        value = getattr(module, name)
-        globals()[name] = value
-        return value
-    if name in _MPS_EXPORTS:
-        module = import_module("quantem.gpu.io.backends.mps")
-        value = getattr(module, name)
-        globals()[name] = value
-        return value
-    if name in _MPS_MULTI_EXPORTS:
-        module = import_module("quantem.gpu.io.mps_multi")
-        value = getattr(module, name)
-        globals()[name] = value
-        return value
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-def __dir__() -> list[str]:
-    return sorted(set(globals()) | set(__all__))
+__all__ = ["discover", "inspect", "load", "save"]

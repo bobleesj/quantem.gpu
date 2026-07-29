@@ -58,7 +58,7 @@ Load a scan crop from an HDF5 master file. On CUDA this returns a CuPy array
 without loading the full scan first.
 
 ```python
-from quantem.gpu import load
+from quantem.gpu.io import load
 
 result = load(
     "scan_master.h5",
@@ -78,7 +78,7 @@ decompression.
 
 ```python
 import numpy as np
-from quantem.gpu import load
+from quantem.gpu.io import load
 
 single = load(
     "scan_master.h5",
@@ -97,7 +97,6 @@ series = load(
     master_paths[:40],
     scan_indices=per_frame,
     scan_shape=(512, 512),
-    prep_workers=4,
 )
 print(series.data.shape)  # (40, 1000, 192, 192)
 
@@ -109,15 +108,8 @@ random_series = load(
 )
 ```
 
-For multi-master stochastic batches, `prep_workers=` controls how many HDF5
-masters are prepared in parallel before the GPU bitshuffle/LZ4 decoder runs.
-Benchmark this on the storage path you will use. On one real-data 40-master
-`512x512x192x192` random-position benchmark, a true cold scattered read took
-about `8.90 s` with the default single worker; `2`, `4`, and `8` workers were
-not faster (`8.98 s`, `9.47 s`, `9.97 s`). With the OS page cache warm, the
-same 40 x 1000-position native-`uint16` batch loads in about `1.0-1.6 s`, and
-`8` workers still regresses. Use more workers only when local measurement shows
-that the payload files live on storage that scales with concurrent reads.
+Multi-master stochastic loading uses an internal bounded preparation scheduler.
+The public API intentionally does not expose storage-worker tuning.
 
 This sparse path is designed for no-bin ptychography on modest VRAM. A full
 `1024x1024x192x192 uint16` acquisition is about `77 GB` and cannot be resident
@@ -281,7 +273,7 @@ Then existing widget calls continue to work while the heavy load and compute
 paths route through `quantem.gpu`:
 
 ```python
-from quantem.gpu import load
+from quantem.gpu.io import load
 from quantem.widget import Show4DSTEM
 
 result = load("scan_master.h5", scan_region=(0, 32, 0, 32))
@@ -333,7 +325,7 @@ file -> quantem.gpu (load + decompress + to_device) -> arrays
 Use explicit names for detector-count storage:
 
 ```python
-from quantem.gpu import load
+from quantem.gpu.io import load
 
 native_u32 = load("scan_master.h5", dtype="uint32").data  # four-byte source counts
 packed_u4 = load("scan_master.h5", dtype="u4").data       # CUDA only, values 0..15
@@ -373,7 +365,7 @@ kernel families are:
 
 | Kernel family | CUDA source | MPS source | WebGPU source | Required gate |
 |---|---|---|---|---|
-| HDF5 bitshuffle/LZ4 decode | `quantem.gpu.io.backends.cuda` | `quantem.gpu.io.backends.mps` | `quantem.gpu.webgpu.bslz4` and `local-h5.ts` | Corrected-frame checksum parity and load-stage timing. |
+| HDF5 bitshuffle/LZ4 decode | `quantem.gpu.io.backends.cuda` | `quantem.gpu.io.backends.mps` | `quantem.gpu.io.backends.webgpu` and `local-h5.ts` | Corrected-frame checksum parity and load-stage timing. |
 | BF/DF/ADF masked sums | `quantem.gpu.compute.cuda` / `detector` | `quantem.gpu.compute.mps` | `quantem.gpu.webgpu.compute` / `local-h5.ts` | Exact integer product parity and first/warm interaction timing. |
 | CoM/DPC | `quantem.gpu.compute.cuda` / `dpc` | `quantem.gpu.compute.mps` / `dpc` | `quantem.gpu.webgpu.compute` | Row/col CoM and centered DPC parity within `1e-5`. |
 | SSB object, phase, loss | `quantem.gpu.ssb.compute.cuda` | `quantem.gpu.ssb.compute.mps` | `quantem.gpu.ssb.compute.webgpu` | Same BF policy, same aberrations, phase/loss parity, and interactive redraw timing. |
@@ -432,25 +424,23 @@ Implemented in this package:
 
 - `import quantem.gpu`
 - `quantem.gpu.device_report()` and `quantem.gpu.select_device()`
-- `quantem.gpu.io.hdf5.load()`, copied from the proven `quantem.widget` HDF5
-  loader and kept API-compatible for the migrated slice
-- `quantem.gpu.io.hdf5.load(..., scan_region=(row_start, row_stop, col_start,
-  col_stop))` for CUDA and MPS scan-ROI HDF5 loading without materializing the
-  full scan first.
-- `quantem.gpu.io.hdf5.load(..., scan_indices=...)` and
-  `load_scan_indices()` for PyTorch/DataLoader-style stochastic scan batches:
+- `quantem.gpu.io.load()` as the single CUDA/MPS HDF5 load entry point.
+- `quantem.gpu.io.load(..., scan_region=(row_start, row_stop, col_start,
+  col_stop))` for scan-ROI loading without materializing the full scan first.
+- `quantem.gpu.io.load(..., scan_indices=...)` for
+  PyTorch/DataLoader-style stochastic scan batches:
   random positions are returned in requested order, while compressed HDF5 chunks
   are sorted and de-duplicated before CUDA/MPS GPU decompression.
-- `quantem.gpu.io.hdf5.load(..., random_positions=...)` and
-  `random_scan_indices()` for one-line global random HDF5 minibatches with
+- `quantem.gpu.io.load(..., random_positions=...)` for one-line global random
+  HDF5 minibatches with
   reproducible seeds and explicit multi-file HDF5 preparation workers when a
   measured storage path benefits from concurrent readers.
 - CUDA bitshuffle/LZ4 kernels and pinned-buffer HDF5 master load path
 - MPS Metal bitshuffle/LZ4 kernels, chunk-backed zero-copy load path, memory
   guard, crop-first sparse decode, lazy multi-dataset loader, and
   `load_mps_4dstem`
-- `quantem.widget.io.hdf5` shim in the migration worktree, re-exporting the new
-  `quantem.gpu.io.hdf5` API for one release
+- `quantem.gpu.io.inspect()` and `quantem.gpu.io.discover()` for header-only
+  readiness checks and acquisition-folder discovery.
 - `quantem.gpu.detector` BF/DF/ADF, `mean_dp`, `masked_sum`, `dp_mean`,
   `virtual_image`, and BF disk detection copied from the widget/live paths with
   reference checks

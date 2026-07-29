@@ -4,7 +4,7 @@ Use `load(..., scan_region=...)` when a reconstruction, denoise workflow, or
 screening step needs only a rectangular scan patch.
 
 ```python
-from quantem.gpu import load
+from quantem.gpu.io import load
 
 result = load(
     "scan_master.h5",

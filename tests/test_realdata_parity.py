@@ -45,7 +45,7 @@ def test_realdata_detector_products_are_exact_and_gpu_backed() -> None:
     """Real-data parity for the public detector workflow."""
     cp = _cupy()
     from quantem.gpu import detector
-    from quantem.gpu.io.hdf5 import load
+    from quantem.gpu.io import load
 
     _require_vram(12.0)
     path = _realdata_master()

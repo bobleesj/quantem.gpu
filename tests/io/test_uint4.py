@@ -5,7 +5,7 @@ import pytest
 
 
 def test_pack_uint4_numpy_round_trips_even_and_odd_shapes() -> None:
-    from quantem.gpu.uint4 import pack_uint4_numpy, unpack_uint4_numpy
+    from quantem.gpu.io.uint4 import pack_uint4_numpy, unpack_uint4_numpy
 
     even = np.arange(24, dtype=np.uint8).reshape(2, 3, 4) % 16
     odd = np.arange(15, dtype=np.uint8).reshape(3, 5) % 16
@@ -21,7 +21,7 @@ def test_pack_uint4_numpy_round_trips_even_and_odd_shapes() -> None:
 
 
 def test_pack_uint4_numpy_rejects_values_above_15() -> None:
-    from quantem.gpu.uint4 import pack_uint4_numpy
+    from quantem.gpu.io.uint4 import pack_uint4_numpy
 
     data = np.asarray([0, 15, 16], dtype=np.uint8)
 
@@ -30,7 +30,7 @@ def test_pack_uint4_numpy_rejects_values_above_15() -> None:
 
 
 def test_packed_uint4_reshape_keeps_buffer_and_checks_size() -> None:
-    from quantem.gpu.uint4 import pack_uint4_numpy
+    from quantem.gpu.io.uint4 import pack_uint4_numpy
 
     packed = pack_uint4_numpy(np.arange(16, dtype=np.uint8))
     reshaped = packed.reshape(2, 2, 4)

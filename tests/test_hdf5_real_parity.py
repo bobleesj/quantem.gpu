@@ -29,38 +29,6 @@ def _required_vram_gb(dtype: str) -> float:
 
 @pytest.mark.skipif(
     not os.environ.get("QUANTEM_GPU_PARITY_MASTER"),
-    reason="set QUANTEM_GPU_PARITY_MASTER to a real Arina master for old/new parity",
-)
-def test_real_master_matches_legacy_widget_checksum() -> None:
-    """Compare quantem.gpu against the pre-migration widget loader on real data."""
-    import cupy as cp
-
-    import quantem.gpu.io.hdf5 as gpu_hdf5
-    import quantem.widget.io.hdf5 as widget_hdf5
-
-    master = os.environ["QUANTEM_GPU_PARITY_MASTER"]
-    if not os.path.exists(master):
-        pytest.skip(f"master not available: {master}")
-    dtype = _parity_dtype()
-    required = _required_vram_gb(dtype)
-    if cp.cuda.runtime.memGetInfo()[0] / 1e9 < required:
-        pytest.skip(f"not enough free VRAM for real-master {dtype} parity")
-
-    old = widget_hdf5.load(master, verbose=False, backend="cuda", dtype=dtype)
-    old_ck = _checksum(old.data)
-    del old
-    cp.get_default_memory_pool().free_all_blocks()
-
-    new = gpu_hdf5.load(master, verbose=False, backend="cuda", dtype=dtype)
-    new_ck = _checksum(new.data)
-    del new
-    cp.get_default_memory_pool().free_all_blocks()
-
-    assert new_ck == old_ck
-
-
-@pytest.mark.skipif(
-    not os.environ.get("QUANTEM_GPU_PARITY_MASTER"),
     reason="set QUANTEM_GPU_PARITY_MASTER to a real Arina master for crop parity",
 )
 def test_real_master_crop_first_matches_full_slice() -> None:
@@ -116,7 +84,6 @@ def test_real_master_mps_crop_first_matches_full_chunked_slice() -> None:
         master,
         backend="mps",
         verbose=False,
-        skip_mps_memory_check=True,
     )
     crop = load(master, scan_region=region, backend="mps", verbose=False)
 

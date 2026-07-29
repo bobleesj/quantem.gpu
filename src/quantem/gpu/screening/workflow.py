@@ -300,10 +300,10 @@ def _memory_plan(
     output_dtype=np.uint16,
 ) -> MemoryPlan:
     """Return the streaming memory plan without reading detector frames."""
-    from quantem.gpu.io.hdf5 import get_metadata
+    from quantem.gpu.io import inspect as inspect_source
 
     master_path = Path(master).expanduser()
-    metadata = get_metadata(str(master_path))
+    metadata = inspect_source(str(master_path)).metadata
     if scan_shape is None:
         scan_shape = tuple(int(v) for v in metadata.get("scan_shape") or ())
     if len(scan_shape) != 2:
@@ -337,10 +337,10 @@ def _build_cuda_products(
     from quantem.gpu.detector.compute.cuda.kernels import cuda_center_of_mass, cuda_masked_sum
     from quantem.gpu.detector import auto_probe, detector_mask, mean_dp
     from quantem.gpu.dpc.workflow import find_optimal_rotation
-    from quantem.gpu.io.hdf5 import get_metadata
+    from quantem.gpu.io import inspect as inspect_source
 
     t0 = time.perf_counter()
-    metadata = get_metadata(str(master))
+    metadata = inspect_source(str(master)).metadata
     detector_shape = tuple(int(v) for v in metadata.get("detector_shape") or ())
     if len(detector_shape) != 2:
         raise ValueError("Could not determine detector_shape from HDF5 metadata")
@@ -601,10 +601,10 @@ def _build_mps_products(
     from quantem.gpu.io import load
     from quantem.gpu.detector import auto_probe, detector_mask
     from quantem.gpu.dpc.workflow import find_optimal_rotation
-    from quantem.gpu.io.hdf5 import get_metadata
+    from quantem.gpu.io import inspect as inspect_source
 
     t0 = time.perf_counter()
-    metadata = get_metadata(str(master))
+    metadata = inspect_source(str(master)).metadata
     detector_shape = tuple(int(v) for v in metadata.get("detector_shape") or ())
     if len(detector_shape) != 2:
         raise ValueError("Could not determine detector_shape from HDF5 metadata")
@@ -818,7 +818,7 @@ def prepare(
     chunk-backed Metal reductions. The raw HDF5 master remains the evidence
     source for stochastic ptychography batches.
     """
-    from quantem.gpu.io.hdf5 import get_metadata
+    from quantem.gpu.io import inspect as inspect_source
 
     master_path = Path(source).expanduser()
     if not master_path.exists():
@@ -830,7 +830,7 @@ def prepare(
         if products is not None:
             return _with_rotation(products, rotation_angle_deg)
 
-    metadata = get_metadata(str(master_path))
+    metadata = inspect_source(str(master_path)).metadata
     if scan_shape is None:
         scan_shape = tuple(int(v) for v in metadata.get("scan_shape") or ())
     if len(scan_shape) != 2:

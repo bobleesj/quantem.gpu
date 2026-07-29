@@ -203,7 +203,7 @@ def test_cuda_compute_backend_caches_full_center_of_mass() -> None:
 def test_cuda_packed_uint4_backend_matches_unpacked_uint8_reference() -> None:
     cp = _cupy_with_device()
     from quantem.gpu.detector.compute.backends import CudaPackedUInt4Compute, compute_backend
-    from quantem.gpu.uint4 import pack_uint4_cupy
+    from quantem.gpu.io.uint4 import pack_uint4_cupy
 
     rng = np.random.default_rng(43)
     data_np = rng.integers(0, 16, size=(4, 5, 13, 11), dtype=np.uint8)

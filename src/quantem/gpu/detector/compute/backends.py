@@ -77,7 +77,7 @@ import threading
 import numpy as np
 
 from quantem.gpu.detector.compute.protocol import ComputeBackend  # noqa: F401
-from quantem.gpu.uint4 import is_packed_uint4
+from quantem.gpu.io.uint4 import is_packed_uint4
 
 # Cap transient float32 memory per reduction chunk (matches the widget budget).
 _CHUNK_BYTE_BUDGET = 600 * 1024 * 1024

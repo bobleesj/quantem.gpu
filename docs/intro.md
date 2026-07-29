@@ -40,7 +40,7 @@ load with `quantem.gpu` and display the result with `quantem.widget`.
 
 When using or extending this package, keep these rules first:
 
-- Use `quantem.gpu.load(...)` for 4D-STEM HDF5 load/decompress work. Use
+- Use `quantem.gpu.io.load(...)` for 4D-STEM HDF5 load/decompress work. Use
   `scan_region=(row_start, row_stop, col_start, col_stop)` for crop-first IO.
 - Put reusable CUDA, MPS/Metal, and WebGPU kernels in `quantem.gpu`, then have
   `quantem.widget` bundle or call them. Widget should keep UI, display, and

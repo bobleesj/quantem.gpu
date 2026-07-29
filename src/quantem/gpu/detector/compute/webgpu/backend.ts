@@ -13,8 +13,8 @@
 //
 // Stack ships as uint8 (clip(0,255): real detector counts are often 0-~200, so
 // the value IS the count after a count-range audit), uint16, uint32, or float32.
-import { getGPUDevice } from "./device";
-import { decodeBslz4ToStack, decodeBslz4Batch, type Bslz4Spec } from "./bslz4";
+import { getGPUDevice } from "../../../device/webgpu";
+import { decodeBslz4ToStack, decodeBslz4Batch, type Bslz4Spec } from "../../../io/backends/webgpu/bslz4";
 import { FFT_2D_SHADER } from "../../../dpc/compute/webgpu/fft";
 import {
   DPC_COMPONENT_PAIR_WGSL,

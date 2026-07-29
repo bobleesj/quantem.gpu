@@ -2,9 +2,8 @@
 from __future__ import annotations
 
 import queue
-import sys
 import threading
-import types
+from dataclasses import dataclass
 from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
@@ -28,6 +27,21 @@ from numba import njit, prange
 from .constants import BLOCK_SIZE
 
 
+@dataclass
+class SaveResult:
+    """Deterministic completion handle returned by :func:`quantem.gpu.io.save`."""
+
+    path: str
+    backend: str
+    complete: bool = False
+
+    def wait(self) -> "SaveResult":
+        """Wait for queued writes, surface errors, and return this result."""
+        wait_for_saves()
+        self.complete = True
+        return self
+
+
 # Lazy bitshuffle+LZ4 forward/compress kernel proxies (see hdf5.py for the
 # rationale). Compile only on first call, inside the cuda save path.
 def _lazy_kernel(_name):
@@ -35,7 +49,7 @@ def _lazy_kernel(_name):
 
     def _call(*args, **kwargs):
         if not _cache:
-            from . import bitshuffle as _bs
+            from .backends.cuda import decoder as _bs
             _cache.append(getattr(_bs, _name))
         return _cache[0](*args, **kwargs)
 
@@ -710,7 +724,7 @@ def _mps_lz4_rle_compress_kernel():
 @lru_cache(maxsize=1)
 def _native_mps_u16_save_pipelines():
     import Metal
-    from .backends import mps as mps_backend
+    from .backends.mps import decoder as mps_backend
 
     source = r"""
         #include <metal_stdlib>
@@ -1859,11 +1873,11 @@ def _prepare_save_data(data, dtype, scan_shape):
 
 
 def save(
-    filepath: str,
+    filepath: str | Path,
     data: "np.ndarray | cp.ndarray",
     scan_shape: tuple[int, int] | None = None,
     metadata: dict | None = None,
-    dtype: type | np.dtype | None = None,
+    dtype: str | type | np.dtype | None = None,
     batch_size: int | None = None,
     wait: bool = True,
     verbose: bool = False,
@@ -1873,13 +1887,14 @@ def save(
     backend: str = "auto",
     compression: str = "lz4",
     compression_level: int = 0,
-) -> None:
+) -> SaveResult:
     """Save 4D-STEM data as an Arina-style bitshuffle+LZ4 HDF5 set.
 
     Output: a master HDF5 file pointing to ``*_data_NNNNNN.h5`` external files
     with per-frame HDF5 chunks. Matches Arina row/column native chunking. The
     public compression method is Bitshuffle/LZ4; ``backend="auto"`` chooses the
-    CUDA, MPS/Metal, or CPU/HDF5 implementation from the input data.
+    CUDA or MPS/Metal implementation from the input data. The CPU reference
+    writer is available only when requested explicitly.
 
     Drift-correction recipe (the canonical use case)
     ------------------------------------------------
@@ -1983,10 +1998,10 @@ def save(
     format : {"arina-h5"}
         Output container. ``"arina-h5"`` writes the QuantEM/Arina-style
         master/data layout.
-    backend : {"auto", "cuda", "mps", "cpu", "hdf5"}
-        Compression/write backend. ``"auto"`` keeps CUDA CuPy arrays on CUDA,
-        MPS tensors and chunk-backed MPS loads on Metal, and NumPy arrays on
-        the HDF5 reference path.
+    backend : {"auto", "cuda", "mps", "cpu"}
+        Compression/write backend. ``"auto"`` keeps CUDA CuPy arrays on CUDA
+        and MPS tensors or chunk-backed MPS loads on Metal. It never selects
+        the CPU reference writer silently.
     compression : {"lz4", "bslz4", "bitshuffle_lz4"}
         Bitshuffle/LZ4 compression. Other codecs are retained only for
         lower-level compatibility helpers.
@@ -2008,10 +2023,8 @@ def save(
     if normalized_format not in {"arina-h5", "arina", "h5"}:
         raise ValueError("save() currently supports format='arina-h5'")
     normalized_backend = str(backend).lower()
-    if normalized_backend == "metal":
-        normalized_backend = "mps"
-    if normalized_backend not in {"auto", "cuda", "mps", "cpu", "hdf5"}:
-        raise ValueError("backend must be 'auto', 'cuda', 'mps', 'cpu', or 'hdf5'")
+    if normalized_backend not in {"auto", "cuda", "mps", "cpu"}:
+        raise ValueError("backend must be 'auto', 'cuda', 'mps', or 'cpu'")
 
     if normalized_backend == "auto":
         if _is_cuda_array(data):
@@ -2019,9 +2032,13 @@ def save(
         elif _is_mps_array(data):
             normalized_backend = "mps"
         else:
-            normalized_backend = "hdf5"
+            raise RuntimeError(
+                "backend='auto' could not infer an accelerated writer from the "
+                "input. Pass a CuPy CUDA array or MPS tensor, or request "
+                "backend='cpu' explicitly for the reference writer."
+            )
 
-    if normalized_backend in {"mps", "cpu", "hdf5"}:
+    if normalized_backend in {"mps", "cpu"}:
         compression_backend = "mps" if normalized_backend == "mps" else "hdf5"
         save_compressed_arina_h5(
             filepath,
@@ -2039,7 +2056,8 @@ def save(
         if verbose:
             elapsed = time.perf_counter() - t0
             print(f"Saved {filepath} [{normalized_backend}/{compression}] in {elapsed:.2f}s")
-        return
+        result = SaveResult(str(filepath), normalized_backend, complete=True)
+        return result.wait() if wait else result
 
     if not _is_cuda_array(data):
         raise ValueError(
@@ -2080,20 +2098,5 @@ def save(
             f"Saved {filepath} [{codec}]: {raw / 1e9:.2f} GB -> "
             f"{file_size / 1e9:.2f} GB ({raw / file_size:.1f}x) in {elapsed:.2f}s"
         )
-
-
-# Keep ``quantem.gpu.io.save(...)`` bound to the public function even though this
-# implementation module is also named ``quantem.gpu.io.save``.
-_parent_module = sys.modules.get(__package__)
-if _parent_module is not None:  # pragma: no branch
-    setattr(_parent_module, "save", save)
-
-
-class _CallableSaveModule(types.ModuleType):
-    """Allow the implementation submodule to behave like the public function."""
-
-    def __call__(self, *args, **kwargs):
-        return save(*args, **kwargs)
-
-
-sys.modules[__name__].__class__ = _CallableSaveModule
+    result = SaveResult(str(filepath), "cuda", complete=bool(wait))
+    return result.wait() if wait else result

@@ -3,7 +3,8 @@
 Use `quantem.gpu` for common BF/DF/ADF image reductions from 4D-STEM data.
 
 ```python
-from quantem.gpu import adf, bf, df, load, mean_dp
+from quantem.gpu import adf, bf, df, mean_dp
+from quantem.gpu.io import load
 
 result = load("scan_master.h5", backend="auto", det_bin=1)
 data = result.data

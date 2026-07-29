@@ -33,7 +33,7 @@ def test_owner_releases_buffer_when_dropped():
     both are undone: the explicit release, then the dropped Python reference.
     Dropping the reference alone is what leaked ~45 GB per tilt load.
     """
-    from quantem.gpu.io.backends import mps as be
+    from quantem.gpu.io.backends.mps import decoder as be
 
     nbytes = 1 << 30
     baseline = _allocated_bytes()
@@ -50,7 +50,7 @@ def test_release_is_idempotent():
     Buffers are reachable from a returned array and a scratch pool at the same
     time, so a double release would be a use-after-free rather than a leak.
     """
-    from quantem.gpu.io.backends import mps as be
+    from quantem.gpu.io.backends.mps import decoder as be
 
     owner = be._MtlOwner(be._metal_buffer_alloc(1 << 20))
     owner.release()
@@ -65,7 +65,7 @@ def test_mtl_array_view_keeps_buffer_alive():
     That was invisible while every buffer leaked; once release works it is a
     use-after-free, so views must carry the owner.
     """
-    from quantem.gpu.io.backends import mps as be
+    from quantem.gpu.io.backends.mps import decoder as be
 
     buf = be._metal_buffer_alloc(4096)
     arr = be._mtl_array_from_buffer(buf, np.uint16, (32, 32))
@@ -76,7 +76,7 @@ def test_mtl_array_view_keeps_buffer_alive():
 
 def test_compressed_buffer_bound_uses_file_metadata(tmp_path):
     """Sizing compressed input must not pre-scan every HDF5 chunk layout."""
-    from quantem.gpu.io.backends import mps as be
+    from quantem.gpu.io.backends.mps import decoder as be
 
     small = tmp_path / "small.h5"
     large = tmp_path / "large.h5"
@@ -98,7 +98,7 @@ def test_repeated_load_does_not_accumulate():
     """Loading tilts one at a time must not grow memory without bound."""
     import glob
 
-    from quantem.widget import load
+    from quantem.gpu.io import load
 
     masters = sorted(glob.glob(os.path.join(MAPED_TEST_DIR, "*_master.h5")))[:3]
     if len(masters) < 2:

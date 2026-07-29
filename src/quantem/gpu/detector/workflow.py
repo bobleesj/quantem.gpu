@@ -3,7 +3,7 @@
 Primary API - place a virtual detector on 4D-STEM data and get its image, with
 collection angles in **mrad**::
 
-    from quantem.gpu.io.hdf5 import load
+    from quantem.gpu.io import load
     from quantem.widget import Show2D
     data = load("master.h5")
     Show2D(bf(data))                       # bright field (the bright disk)
@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from quantem.gpu.uint4 import is_packed_uint4
+from quantem.gpu.io.uint4 import is_packed_uint4
 
 
 class DetectorSession:

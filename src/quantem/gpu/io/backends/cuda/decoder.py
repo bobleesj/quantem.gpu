@@ -1101,9 +1101,10 @@ extern "C" __global__ void clip_u32_to_u8_kernel(
 # COMPILED KERNELS
 # =============================================================================
 
-# Kernel names are exposed as module attributes (e.g. ``bitshuffle.h5lz4dc_kernel``)
+# Kernel names are exposed as module attributes (for example,
+# ``decoder.h5lz4dc_kernel``)
 # but the CUDA module is compiled LAZILY on first access, not at import. This
-# keeps `import quantem.gpu.io.bitshuffle` working on a non-CUDA box (the
+# keeps importing the IO namespace working on a non-CUDA box (the
 # compile needs cupy + a GPU); only a caller that actually decompresses on the
 # cuda backend triggers the compile. The compiled functions are cached after
 # the first access, so there is no per-launch overhead — the lookup cost is

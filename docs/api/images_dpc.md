@@ -22,7 +22,8 @@ from quantem.gpu import (
 Typical workflow:
 
 ```python
-from quantem.gpu import adf, bf, dpc, load
+from quantem.gpu import adf, bf, dpc
+from quantem.gpu.io import load
 
 data = load("scan_master.h5", backend="auto", det_bin=1).data
 bf_image = bf(data)

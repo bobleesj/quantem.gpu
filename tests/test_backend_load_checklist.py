@@ -131,7 +131,7 @@ def test_rejected_low6_decoder_is_documented_but_not_shipped() -> None:
     assert "low6 code is not shipped" in text
 
     for source_path in (
-        Path("src/quantem/gpu/webgpu/bslz4.ts"),
+        Path("src/quantem/gpu/io/backends/webgpu/bslz4.ts"),
         Path("src/quantem/gpu/detector/compute/webgpu/backend.ts"),
     ):
         source = source_path.read_text(encoding="utf-8")
@@ -143,7 +143,7 @@ def test_rejected_low6_decoder_is_documented_but_not_shipped() -> None:
 def test_rejected_subgroup_token_decoder_is_documented_but_not_shipped() -> None:
     checklist = CHECKLIST.read_text(encoding="utf-8")
     matrix = MATRIX.read_text(encoding="utf-8")
-    source = Path("src/quantem/gpu/webgpu/bslz4.ts").read_text(encoding="utf-8")
+    source = Path("src/quantem/gpu/io/backends/webgpu/bslz4.ts").read_text(encoding="utf-8")
 
     assert "subgroup-token" in checklist
     assert "subgroup token parser" in matrix

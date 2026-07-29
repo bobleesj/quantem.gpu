@@ -4,7 +4,8 @@
 DPC phase from loaded 4D-STEM data.
 
 ```python
-from quantem.gpu import dpc, load
+from quantem.gpu import dpc
+from quantem.gpu.io import load
 
 result = load("scan_master.h5", backend="auto", det_bin=1)
 dpc_result = dpc(result.data)

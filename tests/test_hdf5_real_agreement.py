@@ -118,7 +118,8 @@ def test_real_mps_sparse_det_bin_matches_no_bin_sum() -> None:
     Metal = pytest.importorskip("Metal")
     import numpy as np
 
-    from quantem.gpu.io import load, random_scan_indices
+    from quantem.gpu.io import load
+    from quantem.gpu.io.load import random_scan_indices
 
     if Metal.MTLCreateSystemDefaultDevice() is None:
         pytest.skip("Metal device is not available")

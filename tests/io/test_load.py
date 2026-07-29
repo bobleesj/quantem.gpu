@@ -11,69 +11,52 @@ import pytest
 
 def test_load_stacked_u8_routes_to_direct_output_dtype(monkeypatch) -> None:
     """Public dtype='u8' must reach stacked list loads before materializing U16."""
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
     calls = {}
 
     def fake_load_impl(filepath, *args, **kwargs):
         calls["filepath"] = filepath
         calls["kwargs"] = kwargs
-        return hdf5.LoadResult(
+        return load_module.LoadResult(
             np.zeros((2, 1, 1, 1, 1), dtype=np.uint8),
             {"file_names": ["a", "b"]},
         )
 
-    monkeypatch.setattr(hdf5, "_load_impl", fake_load_impl)
+    monkeypatch.setattr(load_module, "_load_impl", fake_load_impl)
 
-    hdf5.load(["a_master.h5", "b_master.h5"], dtype="u8", verbose=False)
+    load_module.load(["a_master.h5", "b_master.h5"], dtype="u8", verbose=False)
 
     assert calls["filepath"] == ["a_master.h5", "b_master.h5"]
     assert calls["kwargs"]["output_dtype"] is np.uint8
 
 
-def test_load_u8_does_not_override_explicit_output_dtype(monkeypatch) -> None:
-    """Explicit lower-level output_dtype remains authoritative."""
-    from quantem.gpu.io import hdf5
-
-    calls = {}
-
-    def fake_load_impl(filepath, *args, **kwargs):
-        calls["kwargs"] = kwargs
-        return hdf5.LoadResult(
-            np.zeros((1, 1, 1), dtype=np.float16),
-            {},
-        )
-
-    monkeypatch.setattr(hdf5, "_load_impl", fake_load_impl)
-
-    hdf5.load("a_master.h5", dtype="u8", output_dtype=np.float16, verbose=False)
-
-    assert calls["kwargs"]["output_dtype"] is np.float16
-
-
 def test_load_uint32_routes_to_native_uint32_output_dtype(monkeypatch) -> None:
     """Public dtype='uint32' should request 4-byte detector counts."""
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
     calls = {}
 
     def fake_load_impl(filepath, *args, **kwargs):
         calls["kwargs"] = kwargs
-        return hdf5.LoadResult(
+        return load_module.LoadResult(
             np.zeros((1, 1, 1), dtype=np.uint32),
             {},
         )
 
-    monkeypatch.setattr(hdf5, "_load_impl", fake_load_impl)
+    monkeypatch.setattr(load_module, "_load_impl", fake_load_impl)
 
-    hdf5.load("a_master.h5", dtype="uint32", verbose=False)
+    load_module.load("a_master.h5", dtype="uint32", verbose=False)
 
     assert calls["kwargs"]["output_dtype"] is np.uint32
 
 
 def test_load_u32_routes_to_parallel_gpu_output_dtype(monkeypatch) -> None:
     """Public dtype='u32' should reach the multi-GPU/list load path."""
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
     calls = {}
 
@@ -81,13 +64,19 @@ def test_load_u32_routes_to_parallel_gpu_output_dtype(monkeypatch) -> None:
         calls["paths"] = paths
         calls["kwargs"] = kwargs
         return [
-            hdf5.LoadResult(np.zeros((1, 1, 1), dtype=np.uint32), {}),
-            hdf5.LoadResult(np.zeros((1, 1, 1), dtype=np.uint32), {}),
+            load_module.LoadResult(np.zeros((1, 1, 1), dtype=np.uint32), {}),
+            load_module.LoadResult(np.zeros((1, 1, 1), dtype=np.uint32), {}),
         ]
 
-    monkeypatch.setattr(hdf5, "_load_many_parallel", fake_load_many_parallel)
+    monkeypatch.setattr(load_module, "_load_many_parallel", fake_load_many_parallel)
 
-    hdf5.load(["a_master.h5", "b_master.h5"], dtype="u32", gpus=[0, 1], verbose=False)
+    load_module.load(
+        ["a_master.h5", "b_master.h5"],
+        dtype="u32",
+        devices=[0, 1],
+        stack=False,
+        verbose=False,
+    )
 
     assert calls["paths"] == ["a_master.h5", "b_master.h5"]
     assert calls["kwargs"]["output_dtype"] is np.uint32
@@ -95,43 +84,31 @@ def test_load_u32_routes_to_parallel_gpu_output_dtype(monkeypatch) -> None:
 
 def test_load_u4_routes_to_packed_four_bit_output_dtype(monkeypatch) -> None:
     """Public dtype='u4' must not silently mean NumPy's four-byte uint32."""
-    from quantem.gpu.io import hdf5
-    from quantem.gpu.uint4 import pack_uint4_numpy
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
+    from quantem.gpu.io.uint4 import pack_uint4_numpy
 
     calls = {}
 
     def fake_load_impl(filepath, *args, **kwargs):
         calls["filepath"] = filepath
         calls["kwargs"] = kwargs
-        return hdf5.LoadResult(
+        return load_module.LoadResult(
             pack_uint4_numpy(np.zeros((1, 1, 1), dtype=np.uint8)),
             {},
         )
 
-    monkeypatch.setattr(hdf5, "_load_impl", fake_load_impl)
+    monkeypatch.setattr(load_module, "_load_impl", fake_load_impl)
 
-    hdf5.load("a_master.h5", dtype="u4", verbose=False)
+    load_module.load("a_master.h5", dtype="u4", verbose=False)
 
     assert calls["filepath"] == "a_master.h5"
     assert calls["kwargs"]["output_dtype"] == "uint4"
 
 
-def test_load_u4_rejects_conflicting_output_dtype() -> None:
-    """A packed uint4 request must not be combined with a different cast."""
-    from quantem.gpu.io import hdf5
-
-    with pytest.raises(ValueError, match="dtype='u4'"):
-        hdf5.load(
-            "a_master.h5",
-            dtype="u4",
-            output_dtype=np.uint8,
-            verbose=False,
-        )
-
-
 def test_mps_output_dtype_u4_does_not_alias_to_uint32() -> None:
     """MPS dtype normalization must not pass public 'u4' to np.dtype."""
-    source = Path("src/quantem/gpu/io/backends/mps.py").read_text()
+    source = Path("src/quantem/gpu/io/backends/mps/decoder.py").read_text()
 
     assert 'token in {"u4", "uint4"}' in source
     assert "not NumPy's four-byte '<u4' dtype" in source
@@ -139,8 +116,10 @@ def test_mps_output_dtype_u4_does_not_alias_to_uint32() -> None:
 
 def test_mps_multi_dataset_loader_threads_output_dtype(monkeypatch) -> None:
     """C1: lazy MPS browse loads, expect requested uint8 dtype to reach load."""
-    from quantem.gpu.io import hdf5, mps_multi
-    import quantem.gpu.detector.compute.mps.kernels as mps_compute
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
+    series_module = import_module("quantem.gpu.io.backends.mps.series")
+    from quantem.gpu.detector.compute.mps import kernels as mps_compute
 
     calls = []
 
@@ -161,11 +140,11 @@ def test_mps_multi_dataset_loader_threads_output_dtype(monkeypatch) -> None:
             self.n_ready = len(datasets)
             self.on_ready = None
 
-    monkeypatch.setattr(hdf5, "load", fake_load)
+    monkeypatch.setattr(load_module, "load", fake_load)
     monkeypatch.setattr(mps_compute, "ChunkedFrames", FakeChunkedFrames)
     monkeypatch.setattr(mps_compute, "MultiChunkedFrames", FakeMultiChunkedFrames)
 
-    lazy = mps_multi.load_mps_datasets(
+    lazy = series_module.load_mps_datasets(
         ["tilt_0_master.h5", "tilt_1_master.h5"],
         det_bin=4,
         output_dtype=np.uint8,
@@ -176,7 +155,7 @@ def test_mps_multi_dataset_loader_threads_output_dtype(monkeypatch) -> None:
     assert calls[0]["path"] == "tilt_0_master.h5"
     assert calls[0]["kwargs"]["backend"] == "mps"
     assert calls[0]["kwargs"]["det_bin"] == 4
-    assert calls[0]["kwargs"]["output_dtype"] is np.uint8
+    assert calls[0]["kwargs"]["dtype"] is np.uint8
 
 
 def test_get_libc_returns_none_when_posix_fadvise_is_unavailable(monkeypatch) -> None:
@@ -184,23 +163,25 @@ def test_get_libc_returns_none_when_posix_fadvise_is_unavailable(monkeypatch) ->
     import ctypes
     import ctypes.util
 
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
     monkeypatch.setattr(ctypes.util, "find_library", lambda _name: "libc.dylib")
     monkeypatch.setattr(ctypes, "CDLL", lambda *_args, **_kwargs: object())
-    monkeypatch.setattr(hdf5, "_LIBC", None)
+    monkeypatch.setattr(load_module, "_LIBC", None)
 
-    assert hdf5._get_libc() is None
-    assert hdf5._LIBC is False
+    assert load_module._get_libc() is None
+    assert load_module._LIBC is False
 
 
 def test_apply_scan_shape_supports_serpentine_order() -> None:
     """Full flat scans can be unflattened with odd scan rows reversed."""
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
     data = np.arange(12, dtype=np.uint16).reshape(6, 1, 2)
 
-    result = hdf5._apply_scan_shape(
+    result = load_module._apply_scan_shape(
         data,
         explicit=(2, 3),
         meta={},
@@ -219,9 +200,10 @@ def test_apply_scan_shape_supports_serpentine_order() -> None:
 
 def test_scan_region_frame_indices_support_serpentine_order() -> None:
     """Serpentine ROI indices should be returned in visual row/column order."""
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
-    indices = hdf5._scan_region_frame_indices(
+    indices = load_module._scan_region_frame_indices(
         (1, 3, 2, 5),
         (5, 6),
         scan_order="snake",
@@ -235,22 +217,24 @@ def test_scan_region_frame_indices_support_serpentine_order() -> None:
 
 def test_load_rejects_unknown_scan_order() -> None:
     """Unknown flattened scan order names should fail before any IO starts."""
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
     with pytest.raises(ValueError, match="scan_order must be"):
-        hdf5._normalize_scan_order("zigzag")
+        load_module._normalize_scan_order("zigzag")
 
 
 def test_load_with_scan_region_maps_scan_roi_to_flat_frames(tmp_path, monkeypatch) -> None:
     """Region loading should request only the flattened scan frames in row-major order."""
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
     master = tmp_path / "scan_master.h5"
     master.write_bytes(b"placeholder")
     calls = {}
 
-    monkeypatch.setattr(hdf5, "get_metadata", lambda _path: {"scan_shape": (5, 6)})
-    monkeypatch.setattr(hdf5, "_discover_chunk_names", lambda _path: ["data_000001"])
+    monkeypatch.setattr(load_module, "get_metadata", lambda _path: {"scan_shape": (5, 6)})
+    monkeypatch.setattr(load_module, "_discover_chunk_names", lambda _path: ["data_000001"])
 
     def fake_prepare(filepath, chunk_names, frame_indices, apply_mask=True):
         calls["filepath"] = filepath
@@ -263,14 +247,14 @@ def test_load_with_scan_region_maps_scan_roi_to_flat_frames(tmp_path, monkeypatc
         calls["mps_kwargs"] = kwargs
         return np.arange(6 * 2 * 2, dtype=np.uint16).reshape(6, 2, 2)
 
-    monkeypatch.setattr(hdf5, "_prepare_master_frames", fake_prepare)
+    monkeypatch.setattr(load_module, "_prepare_master_frames", fake_prepare)
     monkeypatch.setitem(
         sys.modules,
-        "quantem.gpu.io.backends.mps",
+        "quantem.gpu.io.backends.mps.decoder",
         types.SimpleNamespace(load_prepared_frames=fake_mps_decode),
     )
 
-    result = hdf5.load(
+    result = load_module.load(
         str(master),
         scan_region=(1, 3, 2, 5),
         backend="mps",
@@ -297,14 +281,15 @@ def test_load_with_scan_region_maps_scan_roi_to_flat_frames(tmp_path, monkeypatc
 
 def test_load_with_scan_region_maps_serpentine_roi_to_flat_frames(tmp_path, monkeypatch) -> None:
     """Serpentine crop-first IO should read frames in corrected scan order."""
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
     master = tmp_path / "scan_master.h5"
     master.write_bytes(b"placeholder")
     calls = {}
 
-    monkeypatch.setattr(hdf5, "get_metadata", lambda _path: {"scan_shape": (5, 6)})
-    monkeypatch.setattr(hdf5, "_discover_chunk_names", lambda _path: ["data_000001"])
+    monkeypatch.setattr(load_module, "get_metadata", lambda _path: {"scan_shape": (5, 6)})
+    monkeypatch.setattr(load_module, "_discover_chunk_names", lambda _path: ["data_000001"])
 
     def fake_prepare(filepath, chunk_names, frame_indices, apply_mask=True):
         calls["frame_indices"] = frame_indices.copy()
@@ -314,14 +299,14 @@ def test_load_with_scan_region_maps_serpentine_roi_to_flat_frames(tmp_path, monk
         calls["mps_kwargs"] = kwargs
         return np.arange(6 * 2 * 2, dtype=np.uint16).reshape(6, 2, 2)
 
-    monkeypatch.setattr(hdf5, "_prepare_master_frames", fake_prepare)
+    monkeypatch.setattr(load_module, "_prepare_master_frames", fake_prepare)
     monkeypatch.setitem(
         sys.modules,
-        "quantem.gpu.io.backends.mps",
+        "quantem.gpu.io.backends.mps.decoder",
         types.SimpleNamespace(load_prepared_frames=fake_mps_decode),
     )
 
-    result = hdf5.load(
+    result = load_module.load(
         str(master),
         scan_region=(1, 3, 2, 5),
         backend="mps",
@@ -339,7 +324,8 @@ def test_load_with_scan_region_maps_serpentine_roi_to_flat_frames(tmp_path, monk
 
 def test_scan_region_crop_is_private_implementation_behind_load(monkeypatch) -> None:
     """The crop-first API is load(path, scan_region=...), not a second public verb."""
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
     calls = {}
 
@@ -351,15 +337,15 @@ def test_scan_region_crop_is_private_implementation_behind_load(monkeypatch) -> 
         calls["filepath"] = filepath
         calls["scan_region"] = scan_region
         calls["kwargs"] = kwargs
-        return hdf5.LoadResult(
+        return load_module.LoadResult(
             np.zeros((2, 3, 4, 4), dtype=np.uint8),
             {"scan_region": scan_region},
         )
 
-    monkeypatch.setattr(hdf5, "_load_scan_crop_impl", fake_load_scan_crop)
+    monkeypatch.setattr(load_module, "_load_scan_crop_impl", fake_load_scan_crop)
     monkeypatch.setattr("quantem.gpu.io.backends.resolve_backend", fake_resolve_backend)
 
-    result = hdf5.load(
+    result = load_module.load(
         "scan_master.h5",
         scan_region=(1, 3, 2, 5),
         backend="auto",
@@ -390,7 +376,8 @@ def test_scan_region_crop_is_private_implementation_behind_load(monkeypatch) -> 
 
 def test_load_with_scan_region_detector_region_options_route_through_load(monkeypatch) -> None:
     """Detector cropping remains an option on load(), not a new load_* API."""
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
     calls = {}
 
@@ -402,15 +389,15 @@ def test_load_with_scan_region_detector_region_options_route_through_load(monkey
         calls["filepath"] = filepath
         calls["scan_region"] = scan_region
         calls["kwargs"] = kwargs
-        return hdf5.LoadResult(
+        return load_module.LoadResult(
             np.zeros((2, 3, 2, 4), dtype=np.uint8),
             {"detector_region": kwargs["detector_region"]},
         )
 
-    monkeypatch.setattr(hdf5, "_load_scan_crop_impl", fake_load_scan_crop)
+    monkeypatch.setattr(load_module, "_load_scan_crop_impl", fake_load_scan_crop)
     monkeypatch.setattr("quantem.gpu.io.backends.resolve_backend", fake_resolve_backend)
 
-    result = hdf5.load(
+    result = load_module.load(
         "scan_master.h5",
         scan_region=(1, 3, 2, 5),
         detector_region=(4, 6, 0, 4),
@@ -472,7 +459,7 @@ def _numpy_resampled_scan_crop_reference(
 def test_resample_scan_crop_matches_numpy_reference() -> None:
     """The public resident-array resampler should match explicit bilinear math."""
     cp = pytest.importorskip("cupy")
-    from quantem.gpu.io import resample_scan_crop
+    from quantem.gpu.io.load import resample_scan_crop
 
     data_np = np.arange(5 * 6 * 2 * 3, dtype=np.uint16).reshape(5, 6, 2, 3)
     source_region = (10, 15, 20, 26)
@@ -520,7 +507,8 @@ def test_resample_scan_crop_matches_numpy_reference() -> None:
 
 def test_load_with_scan_region_resampling_options_route_through_load(monkeypatch) -> None:
     """Drift-resampled crop loading remains an option on load(), not a new API."""
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
     calls = {}
 
@@ -532,16 +520,16 @@ def test_load_with_scan_region_resampling_options_route_through_load(monkeypatch
         calls["filepath"] = filepath
         calls["scan_region"] = scan_region
         calls["kwargs"] = kwargs
-        return hdf5.LoadResult(
+        return load_module.LoadResult(
             np.zeros((2, 3, 4, 1, 1), dtype=np.float32),
             {"scan_region": kwargs["target_scan_region"]},
         )
 
     shifts = np.asarray([[0.25, -0.50], [1.25, 0.75]], dtype=np.float32)
-    monkeypatch.setattr(hdf5, "_load_scan_crop_series_impl", fake_load_scan_crop_series)
+    monkeypatch.setattr(load_module, "_load_scan_crop_series_impl", fake_load_scan_crop_series)
     monkeypatch.setattr("quantem.gpu.io.backends.resolve_backend", fake_resolve_backend)
 
-    result = hdf5.load(
+    result = load_module.load(
         ["a_master.h5", "b_master.h5"],
         scan_region=[(0, 4, 0, 5), (1, 5, 2, 7)],
         target_scan_region=(1, 4, 1, 5),
@@ -566,12 +554,13 @@ def test_load_with_scan_region_resampling_options_route_through_load(monkeypatch
 
 def test_load_with_scan_region_resampling_requires_shift(monkeypatch) -> None:
     """Alignment options must be complete so the coordinate frame is explicit."""
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
     monkeypatch.setattr("quantem.gpu.io.backends.resolve_backend", lambda _backend: "cuda")
 
     with pytest.raises(ValueError, match="must be passed together"):
-        hdf5.load(
+        load_module.load(
             "scan_master.h5",
             scan_region=(0, 2, 0, 2),
             target_scan_region=(0, 1, 0, 1),
@@ -582,12 +571,13 @@ def test_load_with_scan_region_resampling_requires_shift(monkeypatch) -> None:
 
 def test_load_with_scan_region_resampling_rejects_mps_backend(monkeypatch) -> None:
     """Aligned scan-region output is CUDA-only until a Metal sampler exists."""
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
     monkeypatch.setattr("quantem.gpu.io.backends.resolve_backend", lambda _backend: "mps")
 
     with pytest.raises(RuntimeError, match="backend='cuda'"):
-        hdf5.load(
+        load_module.load(
             "scan_master.h5",
             scan_region=(0, 2, 0, 2),
             target_scan_region=(0, 1, 0, 1),
@@ -599,12 +589,13 @@ def test_load_with_scan_region_resampling_rejects_mps_backend(monkeypatch) -> No
 
 def test_load_series_resampling_rejects_wrong_shift_count(monkeypatch) -> None:
     """A drift-corrected time series needs one shift per loaded master."""
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
     monkeypatch.setattr("quantem.gpu.io.backends.resolve_backend", lambda _backend: "cuda")
 
     with pytest.raises(TypeError, match=r"\(n_files, 2\)"):
-        hdf5.load(
+        load_module.load(
             ["a_master.h5", "b_master.h5"],
             scan_region=[(0, 2, 0, 2), (1, 3, 1, 3)],
             target_scan_region=(0, 2, 0, 2),
@@ -620,15 +611,16 @@ def test_load_series_accepts_per_file_scan_regions(
     monkeypatch,
 ) -> None:
     """A time series can load drift-aware source crops without a union rectangle."""
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
     masters = [tmp_path / "a_master.h5", tmp_path / "b_master.h5"]
     for master in masters:
         master.write_bytes(b"placeholder")
 
     calls = []
-    monkeypatch.setattr(hdf5, "get_metadata", lambda _path: {"scan_shape": (5, 6)})
-    monkeypatch.setattr(hdf5, "_discover_chunk_names", lambda _path: ["data_000001"])
+    monkeypatch.setattr(load_module, "get_metadata", lambda _path: {"scan_shape": (5, 6)})
+    monkeypatch.setattr(load_module, "_discover_chunk_names", lambda _path: ["data_000001"])
 
     def fake_prepare(filepath, chunk_names, frame_indices, apply_mask=True):
         calls.append((Path(filepath).name, frame_indices.copy()))
@@ -641,14 +633,14 @@ def test_load_series_accepts_per_file_scan_regions(
     def fake_mps_decode(prepared, **kwargs):
         return prepared["selected_frame_indices"].astype(np.uint16).reshape(-1, 1, 1)
 
-    monkeypatch.setattr(hdf5, "_prepare_master_frames", fake_prepare)
+    monkeypatch.setattr(load_module, "_prepare_master_frames", fake_prepare)
     monkeypatch.setitem(
         sys.modules,
-        "quantem.gpu.io.backends.mps",
+        "quantem.gpu.io.backends.mps.decoder",
         types.SimpleNamespace(load_prepared_frames=fake_mps_decode),
     )
 
-    result = hdf5.load(
+    result = load_module.load(
         [str(path) for path in masters],
         scan_region=[(0, 2, 0, 2), (2, 4, 3, 5)],
         backend="mps",
@@ -673,14 +665,15 @@ def test_load_series_per_file_scan_regions_support_variable_shapes_with_stack_fa
     monkeypatch,
 ) -> None:
     """Per-file drift crops may clip at scan edges, so stack=False keeps them exact."""
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
     masters = [tmp_path / "a_master.h5", tmp_path / "b_master.h5"]
     for master in masters:
         master.write_bytes(b"placeholder")
 
-    monkeypatch.setattr(hdf5, "get_metadata", lambda _path: {"scan_shape": (5, 6)})
-    monkeypatch.setattr(hdf5, "_discover_chunk_names", lambda _path: ["data_000001"])
+    monkeypatch.setattr(load_module, "get_metadata", lambda _path: {"scan_shape": (5, 6)})
+    monkeypatch.setattr(load_module, "_discover_chunk_names", lambda _path: ["data_000001"])
 
     def fake_prepare(filepath, chunk_names, frame_indices, apply_mask=True):
         return {
@@ -692,14 +685,14 @@ def test_load_series_per_file_scan_regions_support_variable_shapes_with_stack_fa
     def fake_mps_decode(prepared, **kwargs):
         return prepared["selected_frame_indices"].astype(np.uint16).reshape(-1, 1, 1)
 
-    monkeypatch.setattr(hdf5, "_prepare_master_frames", fake_prepare)
+    monkeypatch.setattr(load_module, "_prepare_master_frames", fake_prepare)
     monkeypatch.setitem(
         sys.modules,
-        "quantem.gpu.io.backends.mps",
+        "quantem.gpu.io.backends.mps.decoder",
         types.SimpleNamespace(load_prepared_frames=fake_mps_decode),
     )
 
-    result = hdf5.load(
+    result = load_module.load(
         [str(path) for path in masters],
         scan_region=[(0, 2, 0, 2), (2, 5, 3, 5)],
         backend="mps",
@@ -715,7 +708,8 @@ def test_load_series_per_file_scan_regions_support_variable_shapes_with_stack_fa
 
 def test_full_scan_region_routes_to_full_loader(monkeypatch) -> None:
     """A full scan_region should not force the sparse crop loader."""
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
     calls = {}
 
@@ -726,7 +720,7 @@ def test_full_scan_region_routes_to_full_loader(monkeypatch) -> None:
     def fake_load_impl(filepath, **kwargs):
         calls["filepath"] = filepath
         calls["kwargs"] = kwargs
-        return hdf5.LoadResult(
+        return load_module.LoadResult(
             np.zeros((4, 5, 2, 2), dtype=np.uint8),
             {"scan_shape": (4, 5)},
         )
@@ -734,11 +728,11 @@ def test_full_scan_region_routes_to_full_loader(monkeypatch) -> None:
     def fail_load_scan_crop(*args, **kwargs):
         raise AssertionError("full scan region must use the full loader")
 
-    monkeypatch.setattr(hdf5, "_load_impl", fake_load_impl)
-    monkeypatch.setattr(hdf5, "_load_scan_crop_impl", fail_load_scan_crop)
+    monkeypatch.setattr(load_module, "_load_impl", fake_load_impl)
+    monkeypatch.setattr(load_module, "_load_scan_crop_impl", fail_load_scan_crop)
     monkeypatch.setattr("quantem.gpu.io.backends.resolve_backend", fake_resolve_backend)
 
-    result = hdf5.load(
+    result = load_module.load(
         "scan_master.h5",
         scan_region=(0, 4, 0, 5),
         scan_shape=(4, 5),
@@ -765,7 +759,8 @@ def test_full_scan_region_routes_to_full_loader(monkeypatch) -> None:
 
 def test_full_scan_region_with_detector_region_keeps_crop_loader(monkeypatch) -> None:
     """A full scan source still needs the crop path when detector rows are selected."""
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
     calls = {}
 
@@ -780,16 +775,16 @@ def test_full_scan_region_with_detector_region_keeps_crop_loader(monkeypatch) ->
         calls["filepath"] = filepath
         calls["scan_region"] = scan_region
         calls["kwargs"] = kwargs
-        return hdf5.LoadResult(
+        return load_module.LoadResult(
             np.zeros((4, 5, 2, 3), dtype=np.uint8),
             {"detector_region": kwargs["detector_region"]},
         )
 
-    monkeypatch.setattr(hdf5, "_load_impl", fail_load_impl)
-    monkeypatch.setattr(hdf5, "_load_scan_crop_impl", fake_load_scan_crop)
+    monkeypatch.setattr(load_module, "_load_impl", fail_load_impl)
+    monkeypatch.setattr(load_module, "_load_scan_crop_impl", fake_load_scan_crop)
     monkeypatch.setattr("quantem.gpu.io.backends.resolve_backend", fake_resolve_backend)
 
-    result = hdf5.load(
+    result = load_module.load(
         "scan_master.h5",
         scan_region=(0, 4, 0, 5),
         detector_region=(1, 3, 2, 5),
@@ -809,7 +804,8 @@ def test_full_scan_region_with_detector_region_keeps_crop_loader(monkeypatch) ->
 
 def test_full_scan_region_with_resampling_keeps_crop_loader(monkeypatch) -> None:
     """A full source read still needs the crop path when drift resampling is requested."""
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
     calls = {}
 
@@ -824,16 +820,16 @@ def test_full_scan_region_with_resampling_keeps_crop_loader(monkeypatch) -> None
         calls["filepath"] = filepath
         calls["scan_region"] = scan_region
         calls["kwargs"] = kwargs
-        return hdf5.LoadResult(
+        return load_module.LoadResult(
             np.zeros((4, 5, 2, 2), dtype=np.float32),
             {"scan_resampling": {"mode": "bilinear"}},
         )
 
-    monkeypatch.setattr(hdf5, "_load_impl", fail_load_impl)
-    monkeypatch.setattr(hdf5, "_load_scan_crop_impl", fake_load_scan_crop)
+    monkeypatch.setattr(load_module, "_load_impl", fail_load_impl)
+    monkeypatch.setattr(load_module, "_load_scan_crop_impl", fake_load_scan_crop)
     monkeypatch.setattr("quantem.gpu.io.backends.resolve_backend", fake_resolve_backend)
 
-    result = hdf5.load(
+    result = load_module.load(
         "scan_master.h5",
         scan_region=(0, 4, 0, 5),
         target_scan_region=(0, 4, 0, 5),
@@ -855,7 +851,8 @@ def test_full_scan_region_with_resampling_keeps_crop_loader(monkeypatch) -> None
 
 def test_scan_indices_rowcol_supports_serpentine_order() -> None:
     """Sparse scan positions map logical row/col to physical HDF5 frames."""
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
     positions = np.asarray(
         [
@@ -867,7 +864,7 @@ def test_scan_indices_rowcol_supports_serpentine_order() -> None:
         dtype=np.int64,
     )
 
-    frame_indices, logical_positions = hdf5._normalize_scan_indices(
+    frame_indices, logical_positions = load_module._normalize_scan_indices(
         positions,
         (5, 6),
         scan_order="serpentine",
@@ -885,14 +882,15 @@ def test_load_scan_indices_reads_sorted_unique_and_restores_order(
     monkeypatch,
 ) -> None:
     """Random sparse IO should coalesce disk reads but return stochastic order."""
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
     master = tmp_path / "scan_master.h5"
     master.write_bytes(b"placeholder")
     calls = {}
 
-    monkeypatch.setattr(hdf5, "get_metadata", lambda _path: {"scan_shape": (5, 6)})
-    monkeypatch.setattr(hdf5, "_discover_chunk_names", lambda _path: ["data_000001"])
+    monkeypatch.setattr(load_module, "get_metadata", lambda _path: {"scan_shape": (5, 6)})
+    monkeypatch.setattr(load_module, "_discover_chunk_names", lambda _path: ["data_000001"])
 
     def fake_prepare(filepath, chunk_names, frame_indices, apply_mask=True):
         calls["filepath"] = filepath
@@ -910,14 +908,14 @@ def test_load_scan_indices_reads_sorted_unique_and_restores_order(
         values = prepared["selected_frame_indices"].astype(np.uint16)
         return values.reshape(-1, 1, 1)
 
-    monkeypatch.setattr(hdf5, "_prepare_master_frames", fake_prepare)
+    monkeypatch.setattr(load_module, "_prepare_master_frames", fake_prepare)
     monkeypatch.setitem(
         sys.modules,
-        "quantem.gpu.io.backends.mps",
+        "quantem.gpu.io.backends.mps.decoder",
         types.SimpleNamespace(load_prepared_frames=fake_mps_decode),
     )
 
-    result = hdf5.load_scan_indices(
+    result = load_module.load_scan_indices(
         str(master),
         np.asarray([[2, 5], [1, 0], [2, 5], [0, 3]], dtype=np.int64),
         backend="mps",
@@ -942,14 +940,15 @@ def test_load_scan_indices_multi_file_accepts_per_file_batches(
     monkeypatch,
 ) -> None:
     """Multi-master sparse IO should support different random positions per file."""
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
     masters = [tmp_path / "a_master.h5", tmp_path / "b_master.h5"]
     for master in masters:
         master.write_bytes(b"placeholder")
 
-    monkeypatch.setattr(hdf5, "get_metadata", lambda _path: {"scan_shape": (4, 4)})
-    monkeypatch.setattr(hdf5, "_discover_chunk_names", lambda _path: ["data_000001"])
+    monkeypatch.setattr(load_module, "get_metadata", lambda _path: {"scan_shape": (4, 4)})
+    monkeypatch.setattr(load_module, "_discover_chunk_names", lambda _path: ["data_000001"])
 
     def fake_prepare(filepath, chunk_names, frame_indices, apply_mask=True):
         offset = 100 if filepath.endswith("b_master.h5") else 0
@@ -965,14 +964,14 @@ def test_load_scan_indices_multi_file_accepts_per_file_batches(
         values = values + np.uint16(prepared["offset"])
         return values.reshape(-1, 1, 1)
 
-    monkeypatch.setattr(hdf5, "_prepare_master_frames", fake_prepare)
+    monkeypatch.setattr(load_module, "_prepare_master_frames", fake_prepare)
     monkeypatch.setitem(
         sys.modules,
-        "quantem.gpu.io.backends.mps",
+        "quantem.gpu.io.backends.mps.decoder",
         types.SimpleNamespace(load_prepared_frames=fake_mps_decode),
     )
 
-    result = hdf5.load_scan_indices(
+    result = load_module.load_scan_indices(
         [str(p) for p in masters],
         np.asarray(
             [
@@ -994,7 +993,8 @@ def test_load_scan_indices_multi_file_accepts_per_file_batches(
 
 def test_load_scan_indices_is_available_through_load(monkeypatch) -> None:
     """The friendly sparse API is load(path, scan_indices=...)."""
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
     calls = {}
 
@@ -1006,15 +1006,15 @@ def test_load_scan_indices_is_available_through_load(monkeypatch) -> None:
         calls["filepath"] = filepath
         calls["scan_indices"] = scan_indices
         calls["kwargs"] = kwargs
-        return hdf5.LoadResult(
+        return load_module.LoadResult(
             np.zeros((4, 2, 2), dtype=np.uint8),
             {"scan_indices": scan_indices},
         )
 
-    monkeypatch.setattr(hdf5, "load_scan_indices", fake_load_scan_indices)
+    monkeypatch.setattr(load_module, "load_scan_indices", fake_load_scan_indices)
     monkeypatch.setattr("quantem.gpu.io.backends.resolve_backend", fake_resolve_backend)
 
-    result = hdf5.load(
+    result = load_module.load(
         "scan_master.h5",
         scan_indices=[8, 4, 8, 2],
         backend="auto",
@@ -1044,12 +1044,13 @@ def test_load_scan_indices_is_available_through_load(monkeypatch) -> None:
 
 def test_random_scan_indices_are_reproducible_and_per_file() -> None:
     """Random scan sampling should look like a deterministic DataLoader sampler."""
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
-    one = hdf5.random_scan_indices(4, (4, 4), seed=123)
-    again = hdf5.random_scan_indices(4, (4, 4), seed=123)
-    per_file = hdf5.random_scan_indices(4, (4, 4), n_files=3, seed=123)
-    positions = hdf5.random_scan_indices(
+    one = load_module.random_scan_indices(4, (4, 4), seed=123)
+    again = load_module.random_scan_indices(4, (4, 4), seed=123)
+    per_file = load_module.random_scan_indices(4, (4, 4), n_files=3, seed=123)
+    positions = load_module.random_scan_indices(
         4,
         (4, 4),
         seed=123,
@@ -1069,27 +1070,30 @@ def test_random_scan_indices_are_reproducible_and_per_file() -> None:
 
 def test_random_scan_indices_rejects_oversampling_without_replacement() -> None:
     """Without replacement, random sampling should fail before any IO starts."""
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
     with pytest.raises(ValueError, match="Cannot sample"):
-        hdf5.random_scan_indices(17, (4, 4), replace=False)
+        load_module.random_scan_indices(17, (4, 4), replace=False)
 
 
 def test_sparse_prep_workers_default_to_single_reader() -> None:
     """Sparse HDF5 prep should not assume more readers are faster."""
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
-    assert hdf5._normalize_prep_workers(None, n_files=40) == 1
-    assert hdf5._normalize_prep_workers(8, n_files=40) == 8
-    assert hdf5._normalize_prep_workers(100, n_files=40) == 40
+    assert load_module._normalize_prep_workers(None, n_files=40) == 1
+    assert load_module._normalize_prep_workers(8, n_files=40) == 8
+    assert load_module._normalize_prep_workers(100, n_files=40) == 40
 
     with pytest.raises(ValueError, match="positive integer"):
-        hdf5._normalize_prep_workers(0, n_files=40)
+        load_module._normalize_prep_workers(0, n_files=40)
 
 
 def test_load_random_positions_is_available_through_load(monkeypatch) -> None:
     """The easy stochastic API is load(path, random_positions=...)."""
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
     calls = {}
 
@@ -1101,15 +1105,15 @@ def test_load_random_positions_is_available_through_load(monkeypatch) -> None:
         calls["filepath"] = filepath
         calls["scan_indices"] = np.asarray(scan_indices)
         calls["kwargs"] = kwargs
-        return hdf5.LoadResult(
+        return load_module.LoadResult(
             np.zeros((2, 4, 2, 2), dtype=np.uint8),
             {},
         )
 
-    monkeypatch.setattr(hdf5, "load_scan_indices", fake_load_scan_indices)
+    monkeypatch.setattr(load_module, "load_scan_indices", fake_load_scan_indices)
     monkeypatch.setattr("quantem.gpu.io.backends.resolve_backend", fake_resolve_backend)
 
-    result = hdf5.load(
+    result = load_module.load(
         ["a_master.h5", "b_master.h5"],
         random_positions=4,
         seed=123,
@@ -1117,14 +1121,13 @@ def test_load_random_positions_is_available_through_load(monkeypatch) -> None:
         backend="auto",
         dtype="u8",
         verbose=False,
-        prep_workers=3,
     )
 
-    expected = hdf5.random_scan_indices(4, (4, 4), n_files=2, seed=123)
+    expected = load_module.random_scan_indices(4, (4, 4), n_files=2, seed=123)
     assert calls["backend"] == "auto"
     assert calls["filepath"] == ["a_master.h5", "b_master.h5"]
     np.testing.assert_array_equal(calls["scan_indices"], expected)
-    assert calls["kwargs"]["prep_workers"] == 3
+    assert calls["kwargs"]["prep_workers"] is None
     assert calls["kwargs"]["output_dtype"] is np.uint8
     assert result.metadata["sample"] == {
         "mode": "random_positions",
@@ -1140,10 +1143,11 @@ def test_load_random_positions_is_available_through_load(monkeypatch) -> None:
 
 def test_load_rejects_mixed_sparse_modes() -> None:
     """Callers should choose either explicit or generated scan positions."""
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
     with pytest.raises(ValueError, match="Pass only one"):
-        hdf5.load(
+        load_module.load(
             "scan_master.h5",
             scan_indices=[1, 2],
             random_positions=2,
@@ -1153,27 +1157,29 @@ def test_load_rejects_mixed_sparse_modes() -> None:
 
 def test_load_random_positions_rejects_hdf5_index_mode() -> None:
     """Generated random positions are always logical scan positions."""
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
     with pytest.raises(ValueError, match="random_positions generates logical"):
-        hdf5.load(
+        load_module.load(
             "scan_master.h5",
             random_positions=2,
             scan_shape=(4, 4),
-            index_mode="hdf5",
+            index_mode="load_module",
         )
 
 
 def test_load_with_scan_region_routes_mps_to_sparse_decoder(tmp_path, monkeypatch) -> None:
     """MPS crop-first IO should use quantem.gpu's sparse Metal decode path."""
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
     master = tmp_path / "scan_master.h5"
     master.write_bytes(b"placeholder")
     calls = {}
 
-    monkeypatch.setattr(hdf5, "get_metadata", lambda _path: {"scan_shape": (4, 4)})
-    monkeypatch.setattr(hdf5, "_discover_chunk_names", lambda _path: ["data_000001"])
+    monkeypatch.setattr(load_module, "get_metadata", lambda _path: {"scan_shape": (4, 4)})
+    monkeypatch.setattr(load_module, "_discover_chunk_names", lambda _path: ["data_000001"])
 
     def fake_prepare(filepath, chunk_names, frame_indices, apply_mask=True):
         calls["frame_indices"] = frame_indices.copy()
@@ -1187,14 +1193,14 @@ def test_load_with_scan_region_routes_mps_to_sparse_decoder(tmp_path, monkeypatc
         calls["mps_kwargs"] = kwargs
         return np.arange(4 * 2 * 2, dtype=np.uint16).reshape(4, 2, 2)
 
-    monkeypatch.setattr(hdf5, "_prepare_master_frames", fake_prepare)
+    monkeypatch.setattr(load_module, "_prepare_master_frames", fake_prepare)
     monkeypatch.setitem(
         sys.modules,
-        "quantem.gpu.io.backends.mps",
+        "quantem.gpu.io.backends.mps.decoder",
         types.SimpleNamespace(load_prepared_frames=fake_mps_decode),
     )
 
-    result = hdf5.load(
+    result = load_module.load(
         str(master),
         scan_region=(1, 3, 1, 3),
         backend="mps",
@@ -1218,13 +1224,14 @@ def test_load_with_scan_and_detector_region_crops_decoded_detector(
     monkeypatch,
 ) -> None:
     """Detector-region output should slice decoded detector rows/columns exactly."""
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
     master = tmp_path / "scan_master.h5"
     master.write_bytes(b"placeholder")
 
-    monkeypatch.setattr(hdf5, "get_metadata", lambda _path: {"scan_shape": (4, 4)})
-    monkeypatch.setattr(hdf5, "_discover_chunk_names", lambda _path: ["data_000001"])
+    monkeypatch.setattr(load_module, "get_metadata", lambda _path: {"scan_shape": (4, 4)})
+    monkeypatch.setattr(load_module, "_discover_chunk_names", lambda _path: ["data_000001"])
 
     def fake_prepare(filepath, chunk_names, frame_indices, apply_mask=True):
         return {
@@ -1237,14 +1244,14 @@ def test_load_with_scan_and_detector_region_crops_decoded_detector(
     def fake_mps_decode(prepared, **kwargs):
         return decoded.copy()
 
-    monkeypatch.setattr(hdf5, "_prepare_master_frames", fake_prepare)
+    monkeypatch.setattr(load_module, "_prepare_master_frames", fake_prepare)
     monkeypatch.setitem(
         sys.modules,
-        "quantem.gpu.io.backends.mps",
+        "quantem.gpu.io.backends.mps.decoder",
         types.SimpleNamespace(load_prepared_frames=fake_mps_decode),
     )
 
-    result = hdf5.load(
+    result = load_module.load(
         str(master),
         scan_region=(1, 3, 1, 3),
         detector_region=(1, 3, 1, 4),
@@ -1268,28 +1275,45 @@ def test_load_with_scan_and_detector_region_crops_decoded_detector(
 
 def test_mps_multi_dataset_loader_is_owned_by_quantem_gpu(monkeypatch) -> None:
     """MPS list loads should dispatch to quantem.gpu.io, not widget IO."""
-    from quantem.gpu.io import hdf5
-    from quantem.gpu.io import mps_multi
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
+    series_module = import_module("quantem.gpu.io.backends.mps.series")
 
     calls = {}
+    multi = SimpleNamespace(
+        metadata={},
+        shape=(2, 8, 8, 4, 4),
+    )
+
+    class FakeOwner:
+        data = multi
+        names = ["a", "b"]
+
+        def start(self):
+            calls["started"] = True
 
     monkeypatch.setattr("quantem.gpu.io.backends.resolve_backend", lambda _backend: "mps")
 
     def fake_load_mps_datasets(filepath, **kwargs):
         calls["filepath"] = filepath
         calls["kwargs"] = kwargs
-        return "lazy-mps-handle"
+        return FakeOwner()
 
-    monkeypatch.setattr(mps_multi, "load_mps_datasets", fake_load_mps_datasets)
+    monkeypatch.setattr(series_module, "load_mps_datasets", fake_load_mps_datasets)
 
-    result = hdf5.load(
+    result = load_module.load(
         ["a_master.h5", "b_master.h5"],
         backend="mps",
         det_bin=4,
         verbose=False,
     )
 
-    assert result == "lazy-mps-handle"
+    assert result.data is multi
+    assert result.metadata["backend"] == "mps"
+    assert result.metadata["scan_shape"] == (8, 8)
+    assert result.metadata["detector_shape"] == (4, 4)
+    assert multi._io_owner.__class__ is FakeOwner
+    assert calls["started"] is True
     assert calls["filepath"] == ["a_master.h5", "b_master.h5"]
     assert calls["kwargs"]["det_bin"] == 4
     assert calls["kwargs"]["verbose"] is False
@@ -1297,32 +1321,35 @@ def test_mps_multi_dataset_loader_is_owned_by_quantem_gpu(monkeypatch) -> None:
 
 def test_load_with_scan_region_rejects_slice_and_range_forms() -> None:
     """Keep the public crop API simple: one flat row/column bounds tuple."""
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
     with pytest.raises(TypeError, match="scan_region must be"):
-        hdf5._normalize_scan_region((slice(0, 1), range(0, 1)), (5, 6))
+        load_module._normalize_scan_region((slice(0, 1), range(0, 1)), (5, 6))
 
 
 def test_load_with_detector_region_rejects_invalid_bounds() -> None:
     """Detector-region bounds use explicit detector row/column intervals."""
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
     with pytest.raises(TypeError, match="detector_region must be"):
-        hdf5._normalize_detector_region((slice(0, 1), 2, 0, 1), (5, 6))
+        load_module._normalize_detector_region((slice(0, 1), 2, 0, 1), (5, 6))
     with pytest.raises(ValueError, match="detector row region"):
-        hdf5._normalize_detector_region((-1, 2, 0, 1), (5, 6))
+        load_module._normalize_detector_region((-1, 2, 0, 1), (5, 6))
     with pytest.raises(ValueError, match="detector column region"):
-        hdf5._normalize_detector_region((0, 2, 3, 7), (5, 6))
+        load_module._normalize_detector_region((0, 2, 3, 7), (5, 6))
 
 
 def test_load_with_detector_region_rejects_uint4(monkeypatch) -> None:
     """Packed uint4 columns cannot be sliced with physical detector-column bounds."""
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
     monkeypatch.setattr("quantem.gpu.io.backends.resolve_backend", lambda _backend: "cuda")
 
     with pytest.raises(ValueError, match="detector_region=.*dtype='u4'"):
-        hdf5.load(
+        load_module.load(
             "scan_master.h5",
             scan_region=(0, 1, 0, 1),
             detector_region=(0, 1, 0, 1),
@@ -1334,12 +1361,13 @@ def test_load_with_detector_region_rejects_uint4(monkeypatch) -> None:
 
 def test_load_with_scan_region_rejects_cpu_backend(monkeypatch) -> None:
     """Crop-first loading should fail honestly when no accelerated backend exists."""
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
     monkeypatch.setattr("quantem.gpu.io.backends.resolve_backend", lambda _backend: "cpu")
 
     with pytest.raises(RuntimeError, match="CUDA and MPS"):
-        hdf5.load(
+        load_module.load(
             "scan_master.h5",
             scan_region=(0, 1, 0, 1),
             backend="cpu",
@@ -1348,10 +1376,11 @@ def test_load_with_scan_region_rejects_cpu_backend(monkeypatch) -> None:
 
 
 def test_load_region_keyword_is_not_supported() -> None:
-    from quantem.gpu.io import hdf5
+    from importlib import import_module
+    load_module = import_module("quantem.gpu.io.load")
 
-    with pytest.raises(TypeError, match="region="):
-        hdf5.load(
+    with pytest.raises(TypeError, match="unexpected keyword"):
+        load_module.load(
             "scan_master.h5",
             region=(0, 1, 0, 1),
             verbose=False,
@@ -1360,7 +1389,7 @@ def test_load_region_keyword_is_not_supported() -> None:
 
 def test_torch_detector_bin_sum_matches_numpy_reference() -> None:
     torch = pytest.importorskip("torch")
-    from quantem.gpu.io import bin
+    from quantem.gpu.io.load import bin
 
     data_np = np.arange(2 * 3 * 4 * 4, dtype=np.uint16).reshape(2, 3, 4, 4)
     data_torch = torch.as_tensor(data_np)

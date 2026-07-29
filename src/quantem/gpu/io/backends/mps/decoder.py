@@ -21,6 +21,7 @@ from dataclasses import dataclass
 import os
 import time
 import warnings
+from typing import ClassVar
 import Metal
 import h5py
 import hdf5plugin  # noqa: F401 - registers bitshuffle filter
@@ -92,6 +93,9 @@ class MPSChunked4DSTEM:
     fast_chunks: list | None = None
     fast_det_bin: int | None = None
     detector_sum: np.ndarray | None = None
+
+    _is_gpu_frames: ClassVar[bool] = True
+    device: ClassVar[str] = "mps"
 
     @property
     def detector_shape(self) -> tuple[int, int]:
@@ -480,7 +484,7 @@ def load_master(
 # Metal Shading Language kernels
 # ---------------------------------------------------------------------------
 import pathlib as _pathlib
-_METAL_SOURCE = (_pathlib.Path(__file__).parent / 'metal' / 'bslz4.msl').read_text()
+_METAL_SOURCE = (_pathlib.Path(__file__).parent / 'kernels' / 'bslz4.msl').read_text()
 
 # ---------------------------------------------------------------------------
 # Compile Metal kernels at import time
@@ -2395,7 +2399,7 @@ class MPSDecompressor:
         """Decompress selected prepared HDF5 chunks into an MPS-backed array.
 
         ``prepared`` is the sparse frame plan returned by
-        :func:`quantem.gpu.io.hdf5._prepare_master_frames`. The compressed bytes
+        :func:`quantem.gpu.io.load._prepare_master_frames`. The compressed bytes
         are copied into unified-memory Metal buffers and decoded with the same
         LZ4/bitshuffle kernels as full-Master MPS loads.
         """
