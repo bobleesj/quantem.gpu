@@ -16,7 +16,7 @@ with SSB.open(
     scan_sampling_A=(0.5, 0.5),
     rotation_angle_deg=-8.2,
 ) as ssb:
-    result = ssb.run(trials=200, refinement="nelder-mead")
+    result = ssb.fit(trials=200, refinement="nelder-mead")
 ```
 
 The public units are fixed: kV, mrad, angstrom, nanometres for C10/C12,
@@ -81,7 +81,7 @@ The CLI flow is fixed:
 2. call `SSB.open()`, which automatically chooses the fastest exact storage;
 3. detect the complete bright-field disk once, or load its exact persisted
    `(row, col)` selection from a BF-column companion;
-4. call `run()`, which optimizes and reconstructs;
+4. call `fit()`, which optimizes and reconstructs;
 5. save the shared result and provenance;
 6. hand the result to ShowPtycho for rendering.
 

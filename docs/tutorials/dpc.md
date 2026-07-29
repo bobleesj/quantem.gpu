@@ -1,14 +1,13 @@
 # Compute CoM, DPC, and iDPC
 
-`quantem.gpu.dpc()` computes center of mass, rotation alignment, and integrated
+`quantem.gpu.dpc.run()` computes center of mass, rotation alignment, and integrated
 DPC phase from loaded 4D-STEM data.
 
 ```python
-from quantem.gpu import dpc
-from quantem.gpu.io import load
+from quantem.gpu import dpc, io
 
-result = load("scan_master.h5", backend="auto", det_bin=1)
-dpc_result = dpc(result.data)
+result = io.load("scan_master.h5", backend="auto", det_bin=1)
+dpc_result = dpc.run(result.data)
 
 print(dpc_result.rotation_deg)
 print(dpc_result.use_transpose)

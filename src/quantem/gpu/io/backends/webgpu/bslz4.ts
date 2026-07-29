@@ -15,7 +15,7 @@
 //   block decompresses to blockElemBytes = blockElems * elemBytes, holds
 //   nbits = elemBytes*8 bit-planes of planeBytes = blockElems/8 each.
 
-import { getGPUDevice, onGPULost } from "./device";
+import { getGPUDevice, onGPULost } from "../../../device/webgpu";
 
 type Bslz4Globals = {
   __BSLZ4_PARALLEL?: boolean;

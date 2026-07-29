@@ -225,18 +225,18 @@ def read_pixel_mask(filepath):
 # =========================================================================
 
 class LoadResult(NamedTuple):
-    """Result from load() containing data and metadata.
+    """Loaded detector data and acquisition metadata.
 
     Attributes
     ----------
-    data : cp.ndarray
-        The loaded data as a CuPy array on GPU. Shape is 4D
-        ``(scan_r, scan_c, det_r, det_c)`` when ``scan_shape`` is known
-        (auto-derived from the HDF5 file or passed explicitly), else 3D
-        ``(n_frames, det_r, det_c)``.
-    metadata : dict
-        Acquisition and detector metadata from the HDF5 file. See
-        :func:`get_metadata` for the full spec. The dict mixes two layers:
+    data
+        Backend-native detector data. CUDA returns a CuPy array; MPS may
+        return a chunk-backed Metal frame source. Shape is normally
+        ``(scan_row, scan_col, detector_row, detector_col)`` when the scan
+        shape is known, otherwise ``(frame, detector_row, detector_col)``.
+    metadata
+        Acquisition and detector metadata from the HDF5 source. The mapping
+        includes these normalized fields:
 
         **Derived, named fields** (always present; value is ``None`` when
         the source field is missing):

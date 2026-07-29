@@ -18,7 +18,7 @@ import {
   type Bslz4MaskedSumProfile,
   type Bslz4MaskedSumSpec,
 } from "./bslz4";
-import { getGPUInfo, isSoftwareGPUAdapter } from "./device";
+import { getGPUInfo, isSoftwareGPUAdapter } from "../../../device/webgpu";
 import {
   readBslz4SelectedBlockMetadata,
   readBslz4SelectedBlockVolume,

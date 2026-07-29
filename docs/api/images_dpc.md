@@ -1,45 +1,27 @@
-# BF, DF, ADF, and DPC API
+# Detector and DPC API
 
-Top-level image and DPC imports:
+The public API is grouped by scientific domain:
 
 ```python
-from quantem.gpu import (
-    adf,
-    auto_probe,
-    bf,
-    center_of_mass,
-    com,
-    detector_mask,
-    df,
-    dpc,
-    idpc,
-    load_calibration_products,
-    masked_sum,
-    mean_dp,
+from quantem.gpu import detector, dpc, io, screening
+
+loaded = io.load("scan_master.h5", backend="auto", det_bin=1)
+data = loaded.data
+
+bright_field = detector.bf(data)
+annular_dark_field = detector.adf(
+    data,
+    inner=40,
+    outer=90,
+    unit="px",
 )
+dpc_result = dpc.run(data)
 ```
 
-Typical workflow:
+For a screen page or exported viewer that needs BF, DF, CoM, and DPC products
+at launch, use `screening.prepare()` and reuse its small cache rather than
+reducing the full HDF5 volume on every open.
 
-```python
-from quantem.gpu import adf, bf, dpc
-from quantem.gpu.io import load
-
-data = load("scan_master.h5", backend="auto", det_bin=1).data
-bf_image = bf(data)
-adf_image = adf(data, inner=40, outer=90, unit="px")
-dpc_result = dpc(data)
-```
-
-These functions accept loaded arrays, `LoadResult`-style objects, and migrated
-chunk-backed MPS data where supported.
-
-For a screen page or exported viewer that needs BF/DF/CoM/DPC products on
-launch, prefer `load_calibration_products()` and reuse the product cache instead
-of reloading and reducing the full raw HDF5 volume on every open.
-
-Use `det_bin=2` or `4` only for explicitly labeled preview or memory-limited
-runs. Native-detector agreement and scientific-count claims should start from
-`det_bin=1` and a count-preserving dtype.
-
-For visual review, hand the reduced image to `quantem.widget.Show2D`.
+Native-detector agreement and scientific-count claims should start from
+`det_bin=1` and a count-preserving dtype. Display reduced products with
+`quantem.widget.Show2D`.

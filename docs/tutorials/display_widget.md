@@ -43,7 +43,7 @@ workflow = SSB.from_array(
     semiangle_mrad=21.4,
     scan_sampling_A=0.5,
 )
-result = workflow.run(trials=200, refinement="nelder-mead")
+result = workflow.fit(trials=200, refinement="nelder-mead")
 
 Show2D(result.phase)
 Show2D(abs(result.object_wave))

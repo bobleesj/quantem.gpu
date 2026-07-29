@@ -6,14 +6,15 @@ the public functions scientists and downstream packages should call first.
 ```python
 import quantem.gpu as qgpu
 
-qgpu.device_report()
+qgpu.device.detect()
 ```
 
 Main namespaces:
 
-- `quantem.gpu.io` for HDF5 load/decompress/save helpers.
-- `quantem.gpu` top-level exports for BF, DF, ADF, and DPC images.
-- `quantem.gpu.ssb` for SSB compute APIs.
+- `quantem.gpu.io` for HDF5 discovery, inspection, loading, and saving.
+- `quantem.gpu.detector` for BF, DF, ADF, and virtual-detector images.
+- `quantem.gpu.dpc` and `quantem.gpu.parallax` for their scientific workflows.
+- `quantem.gpu.SSB` for SSB fitting and reconstruction.
 
 The API is still release-candidate level. Prefer public functions documented
 here over internal backend modules.

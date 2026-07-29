@@ -15,7 +15,7 @@ workflow = SSB.open(
     semiangle_mrad=21.4,
     scan_sampling_A=0.5,
 )
-result = workflow.run(trials=200, refinement="nelder-mead")
+result = workflow.fit(trials=200, refinement="nelder-mead")
 ~~~
 
 Changing backend to cuda preserves the full-BF exact objective, parameter

@@ -136,7 +136,7 @@ def _legacy_cupy_selected(data, det_mask: np.ndarray) -> np.ndarray:
 
 
 def _new_cuda_backend(data, det_mask: np.ndarray, backend=None) -> np.ndarray:
-    from quantem.gpu.compute.backends import compute_backend
+    from quantem.gpu.detector.compute.backends import compute_backend
 
     if backend is None:
         backend = compute_backend(data)
@@ -288,8 +288,8 @@ def main() -> None:
     args = _parse_args()
     cp = _cupy()
     import torch
-    from quantem.gpu.compute.backends import TorchBackend, compute_backend
-    from quantem.gpu.io.hdf5 import load
+    from quantem.gpu.detector.compute.backends import TorchBackend, compute_backend
+    from quantem.gpu.io import load
 
     masters = _discover_masters(args)
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -322,19 +322,19 @@ def main() -> None:
 
         for mask_name, det_mask in masks.items():
             old_torch = _time_call(
-                lambda m=det_mask: legacy_torch_backend.masked_sum(m),
+                lambda m=det_mask, b=legacy_torch_backend: b.masked_sum(m),
                 reps=args.reps,
                 warmup=args.warmup,
                 memory_kind="torch",
             )
             old_cupy = _time_call(
-                lambda m=det_mask: _legacy_cupy_selected(data, m),
+                lambda m=det_mask, d=data: _legacy_cupy_selected(d, m),
                 reps=args.reps,
                 warmup=args.warmup,
                 memory_kind="cupy",
             )
             new_cuda = _time_call(
-                lambda m=det_mask: _new_cuda_backend(data, m, backend),
+                lambda m=det_mask, d=data, b=backend: _new_cuda_backend(d, m, b),
                 reps=args.reps,
                 warmup=args.warmup,
                 memory_kind="cupy",

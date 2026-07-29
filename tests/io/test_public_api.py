@@ -37,11 +37,12 @@ def test_removed_io_paths_do_not_exist() -> None:
 def test_auto_backend_never_selects_cpu(monkeypatch) -> None:
     from quantem.gpu.io.backends import protocol
 
-    monkeypatch.setattr(protocol, "_has_cuda", lambda: False)
-    monkeypatch.setattr(protocol, "_nvidia_gpu_present", lambda: False)
-    monkeypatch.setattr(protocol, "_has_mps", lambda: False)
+    def no_accelerator() -> None:
+        raise RuntimeError("No QuantEM GPU backend is available")
 
-    with pytest.raises(RuntimeError, match="never selected by backend='auto'"):
+    monkeypatch.setattr(protocol, "detect", no_accelerator)
+
+    with pytest.raises(RuntimeError, match="No QuantEM GPU backend"):
         protocol.detect_backend()
     assert protocol.resolve_backend("cpu") == "cpu"
 

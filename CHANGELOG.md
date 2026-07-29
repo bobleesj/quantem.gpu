@@ -6,6 +6,11 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- Organize public compute around strict scientific domains: `io`, `detector`,
+  `dpc`, `parallax`, `screening`, `device`, and `SSB`. CUDA, MPS, and WebGPU
+  implementations now live below each domain's `compute` or `backends`
+  directory; deleted flat APIs and the top-level WebGPU package are not kept as
+  compatibility aliases.
 - Add native four-byte unsigned (`dtype='uint32'` / `u32`) load and virtual-image
   support across CUDA, MPS, and WebGPU, and add CUDA packed `dtype='u4'`
   output for true 4-bit counts (`0..15`). CUDA and MPS selected sums use wider
@@ -15,13 +20,13 @@ new `rcN` heading when that rc is published to TestPyPI.
   instead of silently dropping high bits. Public `dtype='u4'` now means packed
   two-counts-per-byte storage with exact range audit and CUDA BF/DF/CoM kernels;
   it no longer aliases NumPy's four-byte `<u4` storage token.
-- Add MPS cache-miss generation for `load_calibration_products()`. CUDA still
+- Add MPS cache-miss generation for `screening.prepare()`. CUDA still
   uses the RawKernel reduction path; MPS now streams raw HDF5 row chunks through
   chunk-backed Metal BF/DF/CoM reducers, records timing/memory metadata, and
   matched CUDA on local anonymized real-data agreement: mean DP/BF/DF exact,
   CoM max abs error `7.63e-6`, and matched rotation/radius.
 - Add WebGPU GPU-resident DPC row/col and iDPC reducers to the canonical
-  `quantem.gpu.webgpu` Show4DSTEM engine. The browser path now computes CoM,
+  domain-owned Show4DSTEM WebGPU engine. The browser path now computes CoM,
   global CoM mean, centered DPC components, and fixed-rotation iDPC in WGSL,
   with direct browser agreement against NumPy/CUDA references and a local
   anonymized full-512 no-bin real-data NVIDIA WebGPU stress run. The latest headed signoff
@@ -55,7 +60,8 @@ new `rcN` heading when that rc is published to TestPyPI.
   browser product benchmark now validates fixture existence, mounted file
   count, required reference arrays, and product-debug hooks before reporting
   timings.
-- Refresh the MPS SSB performance status from Phil source-tree probes: radius-30
+- Refresh the MPS SSB performance status on a 24 GB Apple M5 reference laptop:
+  radius-30
   `512x512` object steering is real-time (`10.86 ms` mean), radius-30 exact
   phase/loss is reviewable but not CUDA-like (`76.28 ms` mean), and full-active
   `512x512` exact phase/loss remains slow (`528.90 ms` mean). The docs now keep
@@ -64,7 +70,7 @@ new `rcN` heading when that rc is published to TestPyPI.
   load/decode signoffs: no hidden bin/crop, `uint16` output, selected
   corrected frames bit-exact against direct HDF5, `77.31 GB` resident,
   `4.704 s` wall on CUDA and `4.617 s` wall through the chunk-backed MPS path.
-- Keep Show4DSTEM browser VI/DPC ownership in `quantem.gpu.webgpu`: detector
+- Keep Show4DSTEM browser VI/DPC ownership beside the detector and DPC domains: detector
   and scan mask builders now live with the canonical WebGPU compute source, and
   the widget source-contract tests verify the frontend does not reintroduce
   local BF/DF/DPC mask helper implementations.
@@ -72,7 +78,7 @@ new `rcN` heading when that rc is published to TestPyPI.
   4D-STEM data, wire `compute_backend(cupy_array)` to it, and add exact parity
   tests against the old CuPy selected-pixel reduction. Add a
   `virtual_image_kernel_support()` probe plus a maintainer checklist covering
-  CUDA, MPS, and `quantem.gpu.webgpu` browser paths, including the future
+  CUDA, MPS, and WebGPU browser paths, including the future
   `1024x1024x192x192 uint8` target. The CUDA path now uses warp-shuffle
   selected-pixel reducers, a custom total-count reducer, fused dense
   `total - complement` output, and per-viewer detector-index caching. On a
@@ -91,16 +97,15 @@ new `rcN` heading when that rc is published to TestPyPI.
   use the backend cache.
 - Clarify the cross-backend CoM/DPC product-kernel tracker: MPS uses raw Metal
   `com_u8`/`com_u16`, while WebGPU already has WGSL masked CoM source under
-  `quantem.gpu.webgpu` but still needs the same GPU-resident buffer/cache
+  the DPC domain but still needs the same GPU-resident buffer/cache
   parity path as virtual-image dragging.
-- Add `quantem.gpu.webgpu` as the canonical source package for reusable
-  WebGPU/TypeScript browser compute. The existing Show4DSTEM WebGPU engine and
-  ShowPtycho SSB browser engine are copied there as package data, with helpers
-  for widget build scripts to read the shipped sources.
+- Add canonical reusable WebGPU/TypeScript browser compute beside each
+  scientific domain. The Show4DSTEM and ShowPtycho browser engines are shipped
+  as package data for widget builds.
 - Fix MPS SSB fixed-aberration loss reporting for cached 512x512 geometry. The
   cached path now treats the 512 column-kernel sum-of-squares as a scalar, so
   real-data MPS fixed phase/loss and sparse optimizer parity pass against the
-  CUDA reference artifacts on Phil.
+  CUDA reference artifacts.
 - Add MPS Metal uint8 virtual-image kernels and route
   `load(..., backend="mps", dtype="u8")` through chunk-backed Metal IO, so
   Show4DSTEM browse loads do not materialize a giant Torch-MPS tensor.
@@ -109,7 +114,7 @@ new `rcN` heading when that rc is published to TestPyPI.
   kernel strategy.
 - Make CUDA SSB batch variance deterministic for sparse 256/512/1024 row
   transforms, clarify the ShowPtycho UI handoff, and document that WebGPU/WGSL
-  runs in the browser while reusable source lives in `quantem.gpu.webgpu`.
+  runs in the browser while reusable source lives beside its scientific domain.
 
 ## rc5 - 2026-07-14
 
@@ -136,7 +141,8 @@ new `rcN` heading when that rc is published to TestPyPI.
 - Match MPS SSB fixed-preview phase output to CUDA's mean-of-per-BF-phase
   contract, tighten real-data phase parity thresholds, and add a fused
   MLX/Metal correction kernel that reduces MPS sparse objective timing from
-  about 26 ms/candidate to about 7 ms/candidate on Phil.
+  about 26 ms/candidate to about 7 ms/candidate on a 24 GB Apple M5 reference
+  laptop.
 
 ## rc2 - 2026-07-14
 

@@ -83,13 +83,13 @@ buffers.
 
 ## Cached products for fast screen launch
 
-Use `load_calibration_products()` when the user-facing path needs BF, DF, CoM,
+Use `screening.prepare()` when the user-facing path needs BF, DF, CoM,
 and DPC/rotation products immediately:
 
 ```python
-from quantem.gpu import load_calibration_products
+from quantem.gpu import screening
 
-products = load_calibration_products(
+products = screening.prepare(
     "scan_master.h5",
     backend="auto",
     memory_budget_gb=12,

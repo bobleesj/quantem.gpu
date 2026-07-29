@@ -14,7 +14,7 @@ workflow = SSB.open(
     semiangle_mrad=30,
     scan_sampling_A=(0.264, 0.264),
 )
-result = workflow.run(trials=200, refinement="nelder-mead")
+result = workflow.fit(trials=200, refinement="nelder-mead")
 ~~~
 
 The default fit always uses the automatically detected full bright field and
@@ -33,7 +33,7 @@ Nelder-Mead. The retained MPS implementation reaches a quiet best of
 `23.058 s` fit / `24.16 s` process wall; a five-run thermal soak measured
 `24.289-25.221 s` fit (median `24.528 s`). Every run returned the exact values
 and complete trial hash recorded in
-[the performance contract](../maintainer/ssb-performance.md#canonical-anonymized-reference-512-mps-regression-contract-2026-07-27).
+[the performance contract](../maintainer/ssb-performance.md).
 
 Signoff expectations:
 

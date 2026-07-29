@@ -6,34 +6,31 @@
 |---|---|---|
 | `cuda` | NVIDIA GPU IO, decompression, reductions, and SSB reference paths | Uses CuPy/CUDA kernels where available. |
 | `mps` | Apple Silicon Metal/MLX paths | Used for MacBook chunk-backed loading, BF/DF/DPC images, and MPS SSB preview/free-fit paths. |
-| `cpu` | Portable reference fallback | Useful for metadata, availability, and parity checks; not the target for heavy workflows. |
+| `cpu` | Test/reference implementation | Available only when explicitly requested by a test or reference comparison. |
 
 Check the selected backend:
 
 ```python
 import quantem.gpu as qgpu
 
-report = qgpu.device_report()
-print(report.selected)
-print(report.cuda_available, report.cuda_device_count, report.cuda_error)
-print(report.mps_available, report.mps_error)
+backend = qgpu.device.detect()
+print(backend)
 ```
 
 Request a backend explicitly when you need honest failure:
 
 ```python
-qgpu.select_device("cuda")  # raises if CUDA is unavailable
-qgpu.select_device("mps")   # raises if MPS is unavailable
+qgpu.device.resolve("cuda")  # raises if CUDA is unavailable
+qgpu.device.resolve("mps")   # raises if MPS is unavailable
 ```
 
 Use `backend="auto"` for normal scripts and `backend="cuda"` or
 `backend="mps"` in parity/performance tests.
 
 WebGPU is a browser runtime, not a Python device backend. Reusable browser
-compute sources are exposed through `quantem.gpu.webgpu` and are bundled by
+compute sources live beside their scientific domains and are bundled by
 `quantem.widget` for anywidget and exported-HTML use. SSB-specific WebGPU
-implementation files live under `quantem.gpu.ssb.compute.webgpu` and are
-exported through that registry. Browser performance claims must log a real
+implementation files live under `quantem.gpu.ssb.compute.webgpu`. Browser performance claims must log a real
 adapter; SwiftShader or another software adapter is only a smoke test.
 
 The Show4DSTEM command-line entry points live in `quantem.widget`, while
@@ -52,8 +49,8 @@ CUDA GPUs.
 
 ## Backend coverage
 
-CUDA and MPS are the primary production backends. CPU exists for reference,
-availability, and small fallback workflows.
+CUDA and MPS are the native production backends. CPU is test/reference only
+and is never selected as a silent scientific fallback.
 
 Status terms: `Done` means implemented with real-data parity and performance
 evidence; `Partial` means source exists but the full signoff matrix is not
@@ -71,10 +68,10 @@ complete; `Gap` means the backend does not implement that capability yet.
 | CoM/DPC resident kernels | Done | Done | Done | Reference | WebGPU row/col DPC has full no-bin headed signoff on real hardware. |
 | Cached BF/DF/CoM/rotation products | Done | Done | Product-first Done / cache-read Done | Cache-read Done | CUDA and MPS build the raw-HDF5 product cache; WebGPU owns browser selected-block product caches and can read prepared cache products. |
 | iDPC | Done | Done | Done | Reference | WebGPU fixed-rotation iDPC is implemented with paired DPC buffers and a dual-real FFT; parity is float32 FFT tolerance, not bit-exact. |
-| Ptychographic SSB preview/object steering | Done | Done | Partial | Reference | WebGPU SSB source lives under `quantem.gpu.ssb.compute.webgpu` and is widget-bundled through `quantem.gpu.webgpu`; the full browser matrix is not complete. |
+| Ptychographic SSB preview/object steering | Done | Done | Partial | Reference | WebGPU SSB source lives under `quantem.gpu.ssb.compute.webgpu` and is bundled by the widget; the full browser matrix is not complete. |
 | Ptychographic SSB optimizer/free-fit | Done | Done | Partial | Not target | MPS supports current parity shapes; large exact phase/loss is still slower than CUDA. |
 | GIF/MP4 movie rendering | Done | Done | NA | Fallback | CUDA/NVENC and Metal/VideoToolbox paths live here; widget owns UI buttons. |
-| Browser source ownership | Done | Done | Done | NA | Reusable TypeScript/WGSL source is exposed through `quantem.gpu.webgpu`. |
+| Browser source ownership | Done | Done | Done | NA | Reusable TypeScript/WGSL source lives beside each scientific domain. |
 
 The rule for new heavy work is: implement the compute or IO path in
 `quantem.gpu`, then let widget/live call it.
@@ -115,7 +112,7 @@ source, tests, documentation, and measured evidence land together.
 | Kernel family | CUDA source | MPS source | WebGPU source | Required gate |
 |---|---|---|---|---|
 | HDF5 bitshuffle/LZ4 decode | `quantem.gpu.io.backends.cuda` | `quantem.gpu.io.backends.mps` | `quantem.gpu.io.backends.webgpu` | Corrected-frame checksum parity and load-stage timing. |
-| BF/DF/ADF masked sums | `quantem.gpu.compute.cuda` / `detector` | `quantem.gpu.compute.mps` | `quantem.gpu.webgpu.compute` / `local-h5.ts` | Exact integer product parity and first/warm interaction timing. |
-| CoM/DPC | `quantem.gpu.compute.cuda` / `dpc` | `quantem.gpu.compute.mps` / `dpc` | `quantem.gpu.webgpu.compute` | Row/col CoM and centered DPC parity within `1e-5`. |
+| BF/DF/ADF masked sums | `quantem.gpu.detector.compute.cuda` / `detector` | `quantem.gpu.detector.compute.mps` | `quantem.gpu.detector.compute.webgpu` / `local-h5.ts` | Exact integer product parity and first/warm interaction timing. |
+| CoM/DPC | `quantem.gpu.dpc.compute.cuda` | `quantem.gpu.dpc.compute.mps` | `quantem.gpu.dpc.compute.webgpu` | Row/col CoM and centered DPC parity within `1e-5`. |
 | SSB object, phase, loss | `quantem.gpu.ssb.compute.cuda` | `quantem.gpu.ssb.compute.mps` | `quantem.gpu.ssb.compute.webgpu` | Same complete BF disk, aberrations, float32/complex64 parity, and interactive redraw timing. |
 | Movie rendering | `quantem.gpu.movie.cuda` | `quantem.gpu.movie.mps` | NA | Frame parity and encoded movie smoke tests. |

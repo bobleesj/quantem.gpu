@@ -399,7 +399,7 @@ function makeFftStages(n: SupportedSsbSize): string {
   return lines.join("\n");
 }
 
-function makeSsbShader(n: SupportedSsbSize, mode: GqkMode): string {
+function makeSsbShader(n: SupportedSsbSize): string {
   const workgroupSize = Math.min(n, 256);
   const half = n / 2;
   const halfW = half + 1;
@@ -941,7 +941,7 @@ fn fftCols(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) 
 }
 
 
-function makeGqkTransformShader(n: SupportedSsbSize, mode: GqkMode): string {
+function makeGqkTransformShader(n: SupportedSsbSize): string {
   const half = n / 2;
   const halfW = half + 1;
   const storedPlane = n * halfW;
@@ -990,7 +990,7 @@ async function transformGqkChunks(
   const storedPlane = storedPlaneFor(n);
   const bytesPer = gqkBytesPerValue(mode);
   const module = device.createShaderModule({
-    code: makeGqkTransformShader(n, mode),
+    code: makeGqkTransformShader(n),
     label: `SSB gqk transform ${mode} ${n}`,
   });
   const compactPipe = device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "compact" } });
@@ -2320,7 +2320,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
       );
     }
     const gqkStorageMode = resolveGqkMode();
-    const module = device.createShaderModule({ code: makeSsbShader(n, gqkStorageMode), label: `SSB SSB WGSL ${n} ${gqkStorageMode}` });
+    const module = device.createShaderModule({ code: makeSsbShader(n), label: `SSB SSB WGSL ${n} ${gqkStorageMode}` });
     const pipelines: SsbPipelines = {
       rows: device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "ssbRows" } }),
       cols: device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "ssbCols" } }),

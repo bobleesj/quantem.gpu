@@ -2933,7 +2933,7 @@ as a supported scientist workflow.
 | --- | --- | --- | --- | --- |
 | CUDA object redraw | Implemented. High-BF exact fallback mean `4.81 ms`, p95 `5.08 ms`, `208.1 FPS`. | Implemented. Mean `1.74 ms`, p95 `1.78 ms`, `575.2 FPS`. | Implemented. Mean `6.97 ms`, p95 `7.30 ms`, `143.5 FPS`. | Implemented. Older full-BF mean `56.22 ms`, p95 `62.20 ms`, `17.8 FPS`; current pass measured `3000` BF mean `12.41 ms`, p95 `12.60 ms`, `80.6 FPS`. |
 | MPS Hermitian preview/free-fit | Implemented on a Mac MPS machine. Sparse `3.60 ms` / exact `4.02 ms` at `128` BF. | Implemented on a Mac MPS machine. Sparse `10.25 ms` / exact `10.68 ms` at `96` BF. | Implemented on a Mac MPS machine. Sparse `28.27 ms` / exact `33.26 ms` at `64` BF. | Implemented on a Mac MPS machine. Sparse `44.66 ms` / exact `50.39 ms` at `24` BF. |
-| WebGPU phase/loss path | Real BF30 crop agreement passed against CUDA on NVIDIA WebGPU: phase max abs `1.42e-7`, FFT log-mag max abs `4.89e-6`, loss diff `2.37e-8`; warm full-BF WGSL `3.3 ms`, FFT `2.7 ms`. | Implemented through `quantem.gpu.webgpu` source bundled by `quantem.widget`. Synthetic browser reference agreement passed; real CUDA-reference agreement artifact still needed. | Implemented through `quantem.gpu.webgpu` source bundled by `quantem.widget`. Real 512 full-BF drive measured mean `31.4 ms` GPU and `41.8 ms` UI for C10 changes at `9070/9070` BF; real CUDA-reference agreement artifact still needed. | Implemented through `quantem.gpu.webgpu` source bundled by `quantem.widget`. Real 1024 BF-column load passes on Mac Chrome Metal. Full active-BF controls work but remain about `168-170 ms` UI/GPU, about `5.9 FPS`, below the 30 FPS target; real CUDA-reference agreement artifact still needed. |
+| WebGPU phase/loss path | Real BF30 crop agreement passed against CUDA on NVIDIA WebGPU: phase max abs `1.42e-7`, FFT log-mag max abs `4.89e-6`, loss diff `2.37e-8`; warm full-BF WGSL `3.3 ms`, FFT `2.7 ms`. | Implemented in domain-owned WebGPU source bundled by `quantem.widget`. Synthetic browser reference agreement passed; real CUDA-reference agreement artifact still needed. | Implemented in domain-owned WebGPU source bundled by `quantem.widget`. Real 512 full-BF drive measured mean `31.4 ms` GPU and `41.8 ms` UI for C10 changes at `9070/9070` BF; real CUDA-reference agreement artifact still needed. | Implemented in domain-owned WebGPU source bundled by `quantem.widget`. Real 1024 BF-column load passes on Mac Chrome Metal. Full active-BF controls work but remain about `168-170 ms` UI/GPU, about `5.9 FPS`, below the 30 FPS target; real CUDA-reference agreement artifact still needed. |
 
 Interpretation:
 
@@ -2946,7 +2946,7 @@ Interpretation:
   prepared-data MPS evidence, not as CUDA object Fourier-sum reference agreement or full-BF
   real-data signoff.
 - WebGPU executes inside the browser bundle, but reusable SSB TypeScript/WGSL
-  source now lives in `quantem.gpu.webgpu` and is synced into
+  source now lives beside the SSB domain and is synced into
   `quantem.widget` before bundling. Use `quantem.gpu` native CUDA/MPS SSB
   outputs as the reference for browser agreement checks.
 - Current WebGPU real-data signoff is strongest at `128x128` BF30. The
@@ -4373,6 +4373,6 @@ are not yet equivalent to CUDA full-BF real-data signoff.
 Action: keep extending the 12-cell matrix with real-data MPS and WebGPU runs.
 For MPS, measure the same BF policies used by scientists on a Mac MPS machine and
 validate against CUDA-reference fixtures. For WebGPU, keep reusable WGSL/browser
-kernel sources in `quantem.gpu.webgpu`, bundle them through `quantem.widget`,
+kernel sources beside their scientific domains, bundle them through `quantem.widget`,
 reference-check against native `quantem.gpu` outputs, and do not use
 SwiftShader performance numbers.

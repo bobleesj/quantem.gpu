@@ -56,7 +56,7 @@ import quantem.gpu as qgpu
 
 print(md.version("quantem.gpu"))
 print(qgpu.__version__)
-print(qgpu.device_report())
+print(qgpu.device.detect())
 ```
 
 The distribution version and `qgpu.__version__` should match.
