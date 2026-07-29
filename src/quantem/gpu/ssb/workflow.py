@@ -7,12 +7,13 @@ from __future__ import annotations
 
 import math
 import time
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Literal
 
 import numpy as np
 
-from quantem.gpu.device import select_device
+from quantem.gpu.device import resolve
 
 from .compute.protocol import SSBProtocol
 from .results import SSBResult
@@ -91,7 +92,7 @@ def _resolve_backend(
             f"Unknown SSB backend {backend!r}. Use 'auto', 'cuda', 'mps', or "
             "'webgpu'."
         )
-    selected = select_device(requested)
+    selected = resolve(requested)
     if selected == "cpu":
         raise RuntimeError(
             "SSB requires CUDA, MPS, or browser WebGPU. CPU is test-only and "
@@ -410,6 +411,7 @@ class SSB:
         compute_loss: bool = True,
         higher_order_magnitudes: np.ndarray | None = None,
         higher_order_angles: np.ndarray | None = None,
+        context: AbstractContextManager | None = None,
     ) -> tuple[np.ndarray, float | None]:
         """Reconstruct a transient phase image for an interactive viewer."""
 
@@ -433,12 +435,21 @@ class SSB:
             magnitudes.shape != (14,) or angles is None or angles.shape != (14,)
         ):
             raise ValueError("Higher-order SSB arrays must each have shape (14,).")
-        return self._backend_protocol.preview(
-            coefs,
-            compute_loss=compute_loss,
-            higher_order_magnitudes=magnitudes,
-            higher_order_angles=angles,
-        )
+        backend = self._backend_protocol
+        if context is None:
+            return backend.preview(
+                coefs,
+                compute_loss=compute_loss,
+                higher_order_magnitudes=magnitudes,
+                higher_order_angles=angles,
+            )
+        with context:
+            return backend.preview(
+                coefs,
+                compute_loss=compute_loss,
+                higher_order_magnitudes=magnitudes,
+                higher_order_angles=angles,
+            )
 
     def preview_context(self, num_bf: int):
         """Prepare a backend-owned reduced-BF interaction context."""

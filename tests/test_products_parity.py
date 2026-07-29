@@ -30,7 +30,7 @@ def test_virtual_modes_match_legacy_widget() -> None:
 
 def test_bf_adf_df_match_legacy_widget_with_pixel_units() -> None:
     widget_detector = pytest.importorskip("quantem.widget.detector")
-    from quantem.gpu import adf, bf, df
+    from quantem.gpu.detector import adf, bf, df
 
     data = _synthetic_4dstem()
     center = (3.5, 3.5)
@@ -107,32 +107,33 @@ def test_center_of_mass_numpy_fallback_applies_mask() -> None:
     assert not np.allclose(got_col, full_col)
 
 
-def test_cupy_dp_mean_and_virtual_image_match_manual_sum() -> None:
+def test_cupy_detector_products_match_manual_sum() -> None:
     cp = pytest.importorskip("cupy")
-    from quantem.gpu import dp_mean, virtual_image
+    from quantem.gpu import detector
 
     data_np = _synthetic_4dstem()
     data = cp.asarray(data_np)
 
-    mean = dp_mean(data)
+    mean = detector.mean_dp(data)
     np.testing.assert_allclose(
-        cp.asnumpy(mean),
+        mean,
         data_np.reshape(-1, 8, 8).mean(axis=0).astype(np.float32),
         rtol=1e-6,
         atol=1e-6,
     )
 
-    out = virtual_image(data, center_row=3.5, center_col=3.5, radius=2.5)
+    mask = detector.detector_mask((3.5, 3.5), 0.0, 2.5, (8, 8))
+    out = detector.masked_sum(data, mask)
     rows = np.arange(8, dtype=np.float32)[:, None]
     cols = np.arange(8, dtype=np.float32)[None, :]
     mask = (rows - 3.5) ** 2 + (cols - 3.5) ** 2 <= 2.5**2
     expected = (data_np * mask).sum(axis=(2, 3)).astype(np.float32)
-    np.testing.assert_array_equal(cp.asnumpy(out), expected)
+    np.testing.assert_array_equal(out, expected)
 
 
-def test_detect_bf_radius_on_gaussian_cupy_dp() -> None:
+def test_auto_probe_on_gaussian_dp() -> None:
     cp = pytest.importorskip("cupy")
-    from quantem.gpu import detect_bf_radius
+    from quantem.gpu.detector import auto_probe
 
     det = 64
     y, x = cp.mgrid[:det, :det]
@@ -140,7 +141,7 @@ def test_detect_bf_radius_on_gaussian_cupy_dp() -> None:
     r2 = (y - center) ** 2 + (x - center) ** 2
     dp = cp.exp(-r2 / (2 * 8.0**2)).astype(cp.float32)
 
-    (row, col), radius = detect_bf_radius(dp)
+    (row, col), radius = auto_probe(cp.asnumpy(dp))
 
     assert radius > 0
     assert abs(row - center) < 3

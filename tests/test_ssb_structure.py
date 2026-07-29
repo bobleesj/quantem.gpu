@@ -57,7 +57,7 @@ def test_ssb_auto_backend_never_falls_back_to_cpu(monkeypatch) -> None:
 
     from quantem.gpu.ssb import workflow
 
-    monkeypatch.setattr(workflow, "select_device", lambda requested: "cpu")
+    monkeypatch.setattr(workflow, "resolve", lambda requested: "cpu")
 
     with pytest.raises(RuntimeError, match="CPU is test-only"):
         workflow._resolve_backend("auto")

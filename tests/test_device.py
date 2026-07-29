@@ -2,23 +2,26 @@ from __future__ import annotations
 
 import pytest
 
-from quantem.gpu import device_report, select_device
+from quantem.gpu import device
+from quantem.gpu.device import backend
 
 
-def test_select_device_cpu_is_always_available() -> None:
-    assert select_device("cpu") == "cpu"
+def test_detect_prefers_cuda(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(backend, "_cuda_probe", lambda: (True, None))
+    monkeypatch.setattr(backend, "_mps_probe", lambda: (True, None))
+
+    assert device.detect() == "cuda"
 
 
-def test_device_report_has_backend_fields() -> None:
-    report = device_report()
-
-    assert report.selected in {"cuda", "mps", "cpu"}
-    assert isinstance(report.cuda_available, bool)
-    assert isinstance(report.cuda_device_count, int)
-    assert isinstance(report.mps_available, bool)
-    assert report.cpu_available is True
+def test_resolve_keeps_explicit_webgpu() -> None:
+    assert device.resolve("webgpu") == "webgpu"
 
 
-def test_unknown_device_backend_errors() -> None:
-    with pytest.raises(ValueError, match="Unknown device backend"):
-        select_device("vulkan")
+def test_no_cpu_scientific_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(backend, "_cuda_probe", lambda: (False, "missing CUDA"))
+    monkeypatch.setattr(backend, "_mps_probe", lambda: (False, "missing MPS"))
+
+    with pytest.raises(RuntimeError, match="No QuantEM GPU backend"):
+        device.detect()
+    with pytest.raises(ValueError, match="Unknown GPU backend"):
+        device.resolve("cpu")

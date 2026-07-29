@@ -5,24 +5,24 @@ from __future__ import annotations
 from importlib import import_module
 
 _EXPORTS = {
-    "wavelength_A_from_kV": ("quantem.gpu.ssb.optics.physics", "wavelength_A_from_kV"),
-    "wavelength_m_from_kV": ("quantem.gpu.ssb.optics.physics", "wavelength_m_from_kV"),
-    "keV_to_wavelength_nm": ("quantem.gpu.ssb.optics.physics", "keV_to_wavelength_nm"),
+    "wavelength_A_from_kV": ("quantem.gpu.optics.physics", "wavelength_A_from_kV"),
+    "wavelength_m_from_kV": ("quantem.gpu.optics.physics", "wavelength_m_from_kV"),
+    "keV_to_wavelength_nm": ("quantem.gpu.optics.physics", "keV_to_wavelength_nm"),
     "convergence_angle_to_k_max": (
-        "quantem.gpu.ssb.optics.physics",
+        "quantem.gpu.optics.physics",
         "convergence_angle_to_k_max",
     ),
-    "chi_polar": ("quantem.gpu.ssb.optics.aberration", "chi_polar"),
-    "chi_cartesian": ("quantem.gpu.ssb.optics.aberration", "chi_cartesian"),
-    "ABERRATION_INDICES": ("quantem.gpu.ssb.optics.aberration", "ABERRATION_INDICES"),
-    "N_ABERRATIONS": ("quantem.gpu.ssb.optics.aberration", "N_ABERRATIONS"),
-    "fit_aberrations": ("quantem.gpu.ssb.optics.aberration_fitting", "fit_aberrations"),
+    "chi_polar": ("quantem.gpu.optics.aberration", "chi_polar"),
+    "chi_cartesian": ("quantem.gpu.optics.aberration", "chi_cartesian"),
+    "ABERRATION_INDICES": ("quantem.gpu.optics.aberration", "ABERRATION_INDICES"),
+    "N_ABERRATIONS": ("quantem.gpu.optics.aberration", "N_ABERRATIONS"),
+    "fit_aberrations": ("quantem.gpu.optics.aberration_fitting", "fit_aberrations"),
     "compute_shifts_from_aberrations": (
-        "quantem.gpu.ssb.optics.aberration_fitting",
+        "quantem.gpu.optics.aberration_fitting",
         "compute_shifts_from_aberrations",
     ),
-    "AberrationFitter": ("quantem.gpu.ssb.optics.aberration_fitting", "AberrationFitter"),
-    "COEFF_LABELS": ("quantem.gpu.ssb.optics.aberration_fitting", "COEFF_LABELS"),
+    "AberrationFitter": ("quantem.gpu.optics.aberration_fitting", "AberrationFitter"),
+    "COEFF_LABELS": ("quantem.gpu.optics.aberration_fitting", "COEFF_LABELS"),
 }
 
 __all__ = [

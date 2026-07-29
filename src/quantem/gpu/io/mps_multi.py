@@ -852,7 +852,7 @@ def load_mps_datasets(
     """
     from quantem.gpu.io.hdf5 import discover_masters, load
     # MPS imports kept inside this function so CUDA / CPU never pull pyobjc Metal.
-    from quantem.gpu.compute.mps import ChunkedFrames, MultiChunkedFrames
+    from quantem.gpu.detector.compute.mps.kernels import ChunkedFrames, MultiChunkedFrames
 
     # folder -> auto-discover (optionally filtered to one scan size); list -> as given
     if isinstance(masters, (str, os.PathLike)) and os.path.isdir(os.path.expanduser(str(masters))):

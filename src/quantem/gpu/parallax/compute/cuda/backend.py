@@ -29,10 +29,7 @@ import math
 import time
 import cupy as cp
 
-from quantem.gpu.parallax_results import BFImage, ParallaxResult
-
-__all__ = ["BFImage", "Parallax", "ParallaxResult", "parallax"]
-
+from ...results import BFImage, ParallaxResult
 
 def circular_mask(
     shape: tuple[int, int],
@@ -56,7 +53,7 @@ def _validate_scan_shape(data: cp.ndarray, scan_shape: tuple[int, int]) -> None:
         )
 
 
-def parallax(
+def run_cuda(
     data,
     scan_shape: tuple[int, int],
     *,
@@ -76,7 +73,7 @@ def parallax(
     ``(scan_row, scan_col, det_row, det_col)`` data and keeps the computation on
     CUDA via CuPy.
     """
-    from quantem.gpu.detector import detect_bf_radius
+    from quantem.gpu.detector.compute.cuda.probe import detect_bf_radius
 
     t0 = time.perf_counter()
     data = cp.asarray(data, dtype=cp.float32)
@@ -91,7 +88,7 @@ def parallax(
             bf_radius = int(round(detected_radius))
         if verbose:
             print(f"[parallax] Auto-detected center={center}, bf_radius={bf_radius}")
-    obj = Parallax(
+    obj = CudaParallaxBackend(
         data,
         scan_shape,
         center=center,
@@ -123,7 +120,7 @@ def parallax(
 #  Core class
 # =========================================================================
 
-class Parallax:
+class CudaParallaxBackend:
     """
     Parallax reconstruction from 4D-STEM data.
 
@@ -178,7 +175,7 @@ class Parallax:
         self._bf_stack: cp.ndarray | None = None
         self._shifts: list[tuple[float, float]] | None = None
         if verbose:
-            print(f"[Parallax] Initialized:")
+            print("[Parallax] Initialized:")
             print(f"  Center: {center}")
             print(f"  Radius: {self.bf_radius} px")
             print(f"  BF positions: {self.n_positions:,}")
@@ -342,7 +339,7 @@ class Parallax:
         stack: cp.ndarray,
     ) -> list[tuple[float, float]]:
         """Batched DFT upsample cross-correlation for a stack of BF images."""
-        from quantem.gpu.image.dft_upsample import cross_correlation_shift_batch_cp
+        from .correlation import cross_correlation_shift_batch_cp
         ref = stack[self.center_idx]
         shifts_gpu = cross_correlation_shift_batch_cp(ref, stack, upsample_factor=4)
         shifts_np = cp.asnumpy(shifts_gpu)
@@ -371,7 +368,7 @@ class Parallax:
         list[tuple[float, float]]
             Refined shifts (drow, dcol) for each BF image.
         """
-        from quantem.gpu.parallax_utils import align_vbf_stack_multiscale_cp
+        from .alignment import align_vbf_stack_multiscale_cp
         if self._bf_stack is None:
             self.extract_bf_images()
         bf_mask = self._dp_mask
@@ -500,8 +497,8 @@ class Parallax:
         dict[str, float]
             Aberration coefficients in Ångströms
         """
-        from quantem.gpu.ssb.optics.aberration_fitting import fit_aberrations_svd_polar
-        from quantem.gpu.ssb.optics.physics import wavelength_A_from_kV
+        from quantem.gpu.optics.aberration_fitting import fit_aberrations_svd_polar
+        from quantem.gpu.optics.physics import wavelength_A_from_kV
         import numpy as np
         wavelength = wavelength_A_from_kV(voltage_kV)
         shifts_np = np.array(shifts, dtype=np.float64) * delta_r_A

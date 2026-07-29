@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextlib import AbstractContextManager
 import pathlib
 from typing import Literal, Protocol, runtime_checkable
 
@@ -100,7 +101,7 @@ class SSBProtocol(Protocol):
         higher_order_angles: np.ndarray | None,
     ) -> tuple[np.ndarray, float | None]: ...
 
-    def preview_context(self, num_bf: int) -> object | None: ...
+    def preview_context(self, num_bf: int) -> AbstractContextManager | None: ...
 
     def browser_state(self) -> SSBExportState: ...
 

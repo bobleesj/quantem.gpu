@@ -7,7 +7,7 @@ import pytest
 
 
 def test_cuda_virtual_image_support_includes_future_1024_uint8_shape() -> None:
-    from quantem.gpu.compute import virtual_image_kernel_support
+    from quantem.gpu.detector.compute.support import virtual_image_kernel_support
 
     support = virtual_image_kernel_support(
         backend="cuda",
@@ -30,7 +30,7 @@ def test_cuda_virtual_image_support_includes_future_1024_uint8_shape() -> None:
 
 
 def test_virtual_image_support_tracks_mps_and_webgpu_contracts() -> None:
-    from quantem.gpu.compute import virtual_image_kernel_support
+    from quantem.gpu.detector.compute.support import virtual_image_kernel_support
 
     mps_u16 = virtual_image_kernel_support(
         backend="mps",
@@ -38,7 +38,7 @@ def test_virtual_image_support_tracks_mps_and_webgpu_contracts() -> None:
         dtype=np.uint16,
     )
     assert mps_u16.custom_kernel is True
-    assert mps_u16.kernel == "quantem.gpu.compute.mps MetalVirtualImage"
+    assert mps_u16.kernel == "quantem.gpu.detector.compute.mps.kernels MetalVirtualImage"
     assert mps_u16.mask_paths == {
         "BF": "mps_metal_selected",
         "ADF": "mps_metal_selected",
@@ -69,7 +69,7 @@ def test_virtual_image_support_tracks_mps_and_webgpu_contracts() -> None:
         dtype=np.uint8,
     )
     assert webgpu_u8.custom_kernel is True
-    assert "quantem.gpu.webgpu" in webgpu_u8.kernel
+    assert "quantem.gpu.detector.compute.webgpu" in webgpu_u8.kernel
     assert webgpu_u8.mask_paths["BF"] == "webgpu_wgsl_selected"
     assert any("SwiftShader" in note for note in webgpu_u8.notes)
 
@@ -84,7 +84,7 @@ def test_virtual_image_support_tracks_mps_and_webgpu_contracts() -> None:
 
 
 def test_cuda_virtual_image_support_includes_uint32_path() -> None:
-    from quantem.gpu.compute import virtual_image_kernel_support
+    from quantem.gpu.detector.compute.support import virtual_image_kernel_support
 
     support = virtual_image_kernel_support(
         backend="cuda",
@@ -105,7 +105,7 @@ def test_cuda_virtual_image_support_includes_uint32_path() -> None:
 
 
 def test_mps_integer_reduction_kernel_sources_are_present() -> None:
-    source = Path("src/quantem/gpu/compute/metal/reductions.msl").read_text(
+    source = Path("src/quantem/gpu/detector/compute/mps/metal/reductions.msl").read_text(
         encoding="utf-8"
     )
 
@@ -132,7 +132,7 @@ def test_mps_u8_mean_dp_uses_resident_metal_detector_sum() -> None:
     """Lossless-u8 MPS data must not fall back to a host chunk reduction."""
     from types import SimpleNamespace
 
-    from quantem.gpu.compute.backends import MetalRawBackend
+    from quantem.gpu.detector.compute.backends import MetalRawBackend
 
     detector_sum = np.asarray([[8, 16], [24, 32]], dtype=np.float32)
     backend = MetalRawBackend.__new__(MetalRawBackend)
@@ -154,7 +154,7 @@ def test_mps_mean_dp_reuses_exact_decode_side_detector_sum() -> None:
     """A decode-side sum must bypass the later full-stack Metal pass."""
     from types import SimpleNamespace
 
-    from quantem.gpu.compute.backends import MetalRawBackend
+    from quantem.gpu.detector.compute.backends import MetalRawBackend
 
     detector_sum = np.asarray([[8, 16], [24, 32]], dtype=np.uint32)
 
@@ -178,7 +178,7 @@ def test_mps_mean_dp_has_no_host_chunk_fallback() -> None:
     """Unsupported MPS dtypes must raise in Metal code, never reduce on CPU."""
     from types import SimpleNamespace
 
-    from quantem.gpu.compute.backends import MetalRawBackend
+    from quantem.gpu.detector.compute.backends import MetalRawBackend
 
     def unsupported_detector_sum():
         raise NotImplementedError("native Metal reducer required")
@@ -198,8 +198,8 @@ def test_mps_mean_dp_has_no_host_chunk_fallback() -> None:
 
 def test_mps_production_reductions_do_not_route_to_numba() -> None:
     """Row-prefix and detector reductions must remain on the Metal backend."""
-    source = Path("src/quantem/gpu/compute/mps.py").read_text(encoding="utf-8")
-    backend_source = Path("src/quantem/gpu/compute/backends.py").read_text(
+    source = Path("src/quantem/gpu/detector/compute/mps/kernels.py").read_text(encoding="utf-8")
+    backend_source = Path("src/quantem/gpu/detector/compute/backends.py").read_text(
         encoding="utf-8"
     )
 
@@ -246,7 +246,7 @@ def test_mps_integer_chunked_load_source_contract_is_present() -> None:
 
 
 def test_mps_dense_mask_uses_total_minus_complement_contract() -> None:
-    source = Path("src/quantem/gpu/compute/backends.py").read_text(encoding="utf-8")
+    source = Path("src/quantem/gpu/detector/compute/backends.py").read_text(encoding="utf-8")
 
     assert "_total_cache" in source
     assert "_fast_total_cache" in source

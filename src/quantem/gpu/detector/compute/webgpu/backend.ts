@@ -15,7 +15,17 @@
 // the value IS the count after a count-range audit), uint16, uint32, or float32.
 import { getGPUDevice } from "./device";
 import { decodeBslz4ToStack, decodeBslz4Batch, type Bslz4Spec } from "./bslz4";
-import { FFT_2D_SHADER } from "./fft-shader";
+import { FFT_2D_SHADER } from "../../../dpc/compute/webgpu/fft";
+import {
+  DPC_COMPONENT_PAIR_WGSL,
+  DPC_COMPONENT_WGSL,
+  DPC_MEAN_WGSL,
+  DPC_OUTPUT_MEAN_WGSL,
+  DPC_OUTPUT_ULP_CORRECT_WGSL,
+  IDPC_EXTRACT_WGSL,
+  IDPC_PACK_WGSL,
+  IDPC_POISSON_WGSL,
+} from "../../../dpc/compute/webgpu/kernels";
 
 // `mode`: 0 = uint16 (2 samples/u32), 1 = uint8 (4/u32), 2 = float32
 // bit-pattern, 3 = uint32 (1/u32). `sample(gp)` reads an integer detector value
@@ -213,208 +223,6 @@ ${sg
 // CoM -> DPC mean reduction. One workgroup reduces the scan-position CoM arrays
 // to their global row/col means. DPC display is then centered without pulling the
 // two full CoM maps back to JavaScript.
-const DPC_MEAN_WGSL = `
-@group(0) @binding(0) var<storage,read> com: array<f32>;       // [row...][col...]
-@group(0) @binding(1) var<storage,read_write> mean: array<f32>; // mean[0]=row, mean[1]=col
-@group(0) @binding(2) var<uniform> u: vec4<u32>;                // scanCount, 0, 0, 0
-var<workgroup> partRow: array<f32, 256>;
-var<workgroup> partCol: array<f32, 256>;
-@compute @workgroup_size(256)
-fn main(@builtin(local_invocation_id) lid: vec3<u32>) {
-  let tid = lid.x; let n = u.x;
-  var rowSum = 0.0; var colSum = 0.0;
-  var rowComp = 0.0; var colComp = 0.0;
-  for (var i = tid; i < n; i = i + 256u) {
-    let rowY = com[i] - rowComp;
-    let rowT = rowSum + rowY;
-    rowComp = (rowT - rowSum) - rowY;
-    rowSum = rowT;
-    let colY = com[n + i] - colComp;
-    let colT = colSum + colY;
-    colComp = (colT - colSum) - colY;
-    colSum = colT;
-  }
-  partRow[tid] = rowSum; partCol[tid] = colSum; workgroupBarrier();
-  for (var s = 128u; s > 0u; s = s >> 1u) {
-    if (tid < s) {
-      partRow[tid] = partRow[tid] + partRow[tid + s];
-      partCol[tid] = partCol[tid] + partCol[tid + s];
-    }
-    workgroupBarrier();
-  }
-  if (tid == 0u) {
-    let denom = max(f32(n), 1.0);
-    mean[0] = partRow[0] / denom;
-    mean[1] = partCol[0] / denom;
-  }
-}`;
-
-// Select one centered DPC component for display. component=0 -> row/Y, 1 -> col/X.
-const DPC_COMPONENT_WGSL = `
-@group(0) @binding(0) var<storage,read> com: array<f32>;
-@group(0) @binding(1) var<storage,read> mean: array<f32>;
-@group(0) @binding(2) var<storage,read_write> out: array<f32>;
-@group(0) @binding(3) var<uniform> u: vec4<u32>; // scanCount, component, 0, 0
-@compute @workgroup_size(256)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-  let i = gid.x; let n = u.x;
-  if (i >= n) { return; }
-  if (u.y == 0u) {
-    out[i] = com[i] - mean[0];
-  } else {
-    out[i] = com[n + i] - mean[1];
-  }
-}`;
-
-const DPC_COMPONENT_PAIR_WGSL = `
-@group(0) @binding(0) var<storage,read> com: array<f32>;
-@group(0) @binding(1) var<storage,read> mean: array<f32>;
-@group(0) @binding(2) var<storage,read_write> rowOut: array<f32>;
-@group(0) @binding(3) var<storage,read_write> colOut: array<f32>;
-@group(0) @binding(4) var<uniform> u: vec4<u32>; // scanCount, 0, 0, 0
-@compute @workgroup_size(256)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-  let i = gid.x;
-  let n = u.x;
-  if (i >= n) { return; }
-  rowOut[i] = com[i] - mean[0];
-  colOut[i] = com[n + i] - mean[1];
-}`;
-
-// Mean reduction for one already-centered DPC component. The first DPC centering
-// matches the backend semantics; this pass lets the next shader choose the same
-// one-ulp rounding side as the NumPy/CUDA reference without a CPU readback.
-const DPC_OUTPUT_MEAN_WGSL = `
-@group(0) @binding(0) var<storage,read> values: array<f32>;
-@group(0) @binding(1) var<storage,read_write> mean: array<f32>;
-@group(0) @binding(2) var<uniform> u: vec4<u32>; // scanCount, 0, 0, 0
-var<workgroup> part: array<f32, 256>;
-@compute @workgroup_size(256)
-fn main(@builtin(local_invocation_id) lid: vec3<u32>) {
-  let tid = lid.x;
-  let n = u.x;
-  var sum = 0.0;
-  var comp = 0.0;
-  for (var i = tid; i < n; i = i + 256u) {
-    let y = values[i] - comp;
-    let t = sum + y;
-    comp = (t - sum) - y;
-    sum = t;
-  }
-  part[tid] = sum;
-  workgroupBarrier();
-  for (var s = 128u; s > 0u; s = s >> 1u) {
-    if (tid < s) {
-      part[tid] = part[tid] + part[tid + s];
-    }
-    workgroupBarrier();
-  }
-  if (tid == 0u) {
-    mean[0] = part[0] / max(f32(n), 1.0);
-  }
-}`;
-
-const DPC_OUTPUT_ULP_CORRECT_WGSL = `
-@group(0) @binding(0) var<storage,read_write> values: array<f32>;
-@group(0) @binding(1) var<storage,read> residualMean: array<f32>;
-@group(0) @binding(2) var<storage,read> dpcMean: array<f32>;
-@group(0) @binding(3) var<uniform> u: vec4<u32>; // scanCount, component, 0, 0
-fn oneUlpBelowDelta(value: f32) -> f32 {
-  if (value <= 0.0) { return 0.0; }
-  let bits = bitcast<u32>(value);
-  if (bits == 0u) { return 0.0; }
-  return value - bitcast<f32>(bits - 1u);
-}
-@compute @workgroup_size(256)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-  let i = gid.x;
-  if (i >= u.x) { return; }
-  let delta = select(0.0, oneUlpBelowDelta(dpcMean[u.y]), residualMean[0] < 0.0);
-  values[i] = values[i] + delta;
-}`;
-
-// Pack centered DPC row/col maps into one complex dual-real FFT input for iDPC.
-// flags bit 0 selects the transpose convention used by the Python DPC solver.
-const IDPC_PACK_WGSL = `
-struct PackParams {
-  n: u32,
-  flags: u32,
-  _pad0: u32,
-  _pad1: u32,
-  rot: vec4<f32>, // cos(theta), sin(theta), 0, 0
-}
-@group(0) @binding(0) var<storage,read> rowDpc: array<f32>;
-@group(0) @binding(1) var<storage,read> colDpc: array<f32>;
-@group(0) @binding(2) var<storage,read_write> gradFft: array<vec2<f32>>;
-@group(0) @binding(3) var<uniform> u: PackParams;
-@compute @workgroup_size(256)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-  let i = gid.x;
-  if (i >= u.n) { return; }
-  let row = rowDpc[i];
-  let col = colDpc[i];
-  var gradRow: f32;
-  var gradCol: f32;
-  if ((u.flags & 1u) != 0u) {
-    gradRow = u.rot.y * col + u.rot.x * row;
-    gradCol = u.rot.x * col - u.rot.y * row;
-  } else {
-    gradRow = u.rot.x * row - u.rot.y * col;
-    gradCol = u.rot.y * row + u.rot.x * col;
-  }
-  gradFft[i] = vec2<f32>(gradRow, gradCol);
-}`;
-
-const IDPC_POISSON_WGSL = `
-@group(0) @binding(0) var<storage,read> gradFft: array<vec2<f32>>;
-@group(0) @binding(1) var<storage,read_write> phaseFft: array<vec2<f32>>;
-@group(0) @binding(2) var<uniform> u: vec4<u32>; // width, height, n, 0
-fn freq(i: u32, n: u32) -> f32 {
-  if (i < (n + 1u) / 2u) {
-    return f32(i) / f32(n);
-  }
-  return -f32(n - i) / f32(n);
-}
-@compute @workgroup_size(256)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-  let i = gid.x;
-  if (i >= u.z) { return; }
-  if (i == 0u) {
-    phaseFft[i] = vec2<f32>(0.0, 0.0);
-    return;
-  }
-  let row = i / u.x;
-  let col = i - row * u.x;
-  let mirrorRow = (u.y - row) % u.y;
-  let mirrorCol = (u.x - col) % u.x;
-  let mirror = mirrorRow * u.x + mirrorCol;
-  let z = gradFft[i];
-  let zMirrorConj = vec2<f32>(gradFft[mirror].x, -gradFft[mirror].y);
-  let rowF = 0.5 * (z + zMirrorConj);
-  let diff = z - zMirrorConj;
-  let colF = vec2<f32>(0.5 * diff.y, -0.5 * diff.x);
-  let k0 = freq(row, u.y);
-  let k1 = freq(col, u.x);
-  let k2 = k0 * k0 + k1 * k1;
-  let g = rowF * k0 + colF * k1;
-  let scale = 0.25 / k2;
-  phaseFft[i] = vec2<f32>(g.y * scale, -g.x * scale);
-}`;
-
-const IDPC_EXTRACT_WGSL = `
-@group(0) @binding(0) var<storage,read> phaseComplex: array<vec2<f32>>;
-@group(0) @binding(1) var<storage,read_write> phase: array<f32>;
-@group(0) @binding(2) var<uniform> u: vec4<u32>; // n, 0, 0, 0
-@compute @workgroup_size(256)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-  let i = gid.x;
-  if (i >= u.x) { return; }
-  phase[i] = -phaseComplex[i].x;
-}`;
-
-// Dense DF/ADF helper: out = full-detector total - complement sum. This mirrors
-// CUDA/MPS dense-mask behavior so dragging a large annulus reads the smaller
-// complement after the per-scan total image is cached.
 const SUBTRACT_FROM_TOTAL_WGSL = `
 @group(0) @binding(0) var<storage,read> total: array<f32>;
 @group(0) @binding(1) var<storage,read> subtract: array<f32>;
@@ -669,7 +477,7 @@ export function buildScanMask(model: TraitReader, scanRows: number, scanCols: nu
   return mask;
 }
 
-export class Show4DSTEMCompute {
+export class DetectorCompute {
   private device: GPUDevice;
   private maskedSumPipe: GPUComputePipeline;
   private maskedComPipe: GPUComputePipeline;
@@ -1030,8 +838,8 @@ export class Show4DSTEMCompute {
   }
 
   // Single decompressed stack -> one chunk (the common, fits-in-one-buffer case).
-  static async create(stack: Uint8Array, scanCount: number, detSize: number): Promise<Show4DSTEMCompute | null> {
-    return Show4DSTEMCompute.createChunked([{ bytes: stack, startScan: 0, nScan: scanCount }], scanCount, detSize);
+  static async create(stack: Uint8Array, scanCount: number, detSize: number): Promise<DetectorCompute | null> {
+    return DetectorCompute.createChunked([{ bytes: stack, startScan: 0, nScan: scanCount }], scanCount, detSize);
   }
 
   // Decompress a native HDF5 bitshuffle+LZ4 (bslz4) stack on the GPU and wrap the
@@ -1040,18 +848,18 @@ export class Show4DSTEMCompute {
   // 0-255, lowest-memory browse), "uint16", "uint32", or "float32". The decoded buffer is packed in
   // [scanPos][detPixel] order matching sample() for that mode, so masked_sum /
   // reduceFrames run on it unchanged.
-  static async createFromBslz4(spec: Bslz4Spec, dtype: "uint8" | "uint16" | "uint32" | "float32" = "uint8", srcDtype: "uint8" | "uint16" | "uint32" | "float32" = "uint16"): Promise<Show4DSTEMCompute | null> {
+  static async createFromBslz4(spec: Bslz4Spec, dtype: "uint8" | "uint16" | "uint32" | "float32" = "uint8", srcDtype: "uint8" | "uint16" | "uint32" | "float32" = "uint16"): Promise<DetectorCompute | null> {
     const decoded = await decodeBslz4ToStack(spec, dtype, srcDtype);
     if (!decoded) return null;
     const chunks: Chunk[] = [{ buffer: decoded.buffer, startScan: 0, nScan: spec.nFrames }];
-    return new Show4DSTEMCompute(decoded.device, chunks, spec.nFrames, spec.detSize, decoded.mode);
+    return new DetectorCompute(decoded.device, chunks, spec.nFrames, spec.detSize, decoded.mode);
   }
 
   // Wrap already-decoded GPU stack buffers as a compute (no decode). Lets a caller pipeline
   // parse + decode itself (decode group N while parsing group N+1) and hand the finished
   // chunk buffers here. mode: 1 = uint8, 0 = uint16, 2 = float32, 3 = uint32.
-  static fromGpuChunks(device: GPUDevice, chunks: { buffer: GPUBuffer; startScan: number; nScan: number }[], scanCount: number, detSize: number, mode: number): Show4DSTEMCompute {
-    return new Show4DSTEMCompute(device, chunks, scanCount, detSize, mode);
+  static fromGpuChunks(device: GPUDevice, chunks: { buffer: GPUBuffer; startScan: number; nScan: number }[], scanCount: number, detSize: number, mode: number): DetectorCompute {
+    return new DetectorCompute(device, chunks, scanCount, detSize, mode);
   }
 
   // Chunked bslz4: decode each scan-row chunk's compressed bytes into its OWN GPU
@@ -1062,18 +870,18 @@ export class Show4DSTEMCompute {
     chunkSpecs: (Bslz4Spec & { startScan: number; nScan: number })[],
     scanCount: number, detSize: number, dtype: "uint8" | "uint16" | "uint32" | "float32" = "uint8",
     srcDtype: "uint8" | "uint16" | "uint32" | "float32" = "uint16",
-  ): Promise<Show4DSTEMCompute | null> {
+  ): Promise<DetectorCompute | null> {
     // Batch the per-chunk decodes (one submit + await per group) so the GPU overlaps
     // upload and compute instead of draining after every chunk.
     const decoded = await decodeBslz4Batch(chunkSpecs, dtype, srcDtype);
     if (!decoded) return null;
     const chunks: Chunk[] = decoded.buffers.map((buffer, i) => ({ buffer, startScan: chunkSpecs[i].startScan, nScan: chunkSpecs[i].nScan }));
-    return new Show4DSTEMCompute(decoded.device, chunks, scanCount, detSize, decoded.mode);
+    return new DetectorCompute(decoded.device, chunks, scanCount, detSize, decoded.mode);
   }
 
   // N chunks, each {bytes, startScan, nScan}. Each chunk's bytes hold its scan
   // range's frames contiguously. dtype inferred from total bytes vs total pixels.
-  static async createChunked(chunkSpecs: { bytes: Uint8Array; startScan: number; nScan: number }[], scanCount: number, detSize: number, mode?: number): Promise<Show4DSTEMCompute | null> {
+  static async createChunked(chunkSpecs: { bytes: Uint8Array; startScan: number; nScan: number }[], scanCount: number, detSize: number, mode?: number): Promise<DetectorCompute | null> {
     const device = await getGPUDevice();
     if (!device) return null;
     const totalBytes = chunkSpecs.reduce((a, c) => a + c.bytes.byteLength, 0);
@@ -1085,7 +893,7 @@ export class Show4DSTEMCompute {
       device.queue.writeBuffer(buffer, 0, c.bytes.buffer as ArrayBuffer, c.bytes.byteOffset, c.bytes.byteLength);
       return { buffer, startScan: c.startScan, nScan: c.nScan };
     });
-    return new Show4DSTEMCompute(device, chunks, scanCount, detSize, sourceMode);
+    return new DetectorCompute(device, chunks, scanCount, detSize, sourceMode);
   }
 
   // Virtual image: f32[scanCount]. Each chunk writes its disjoint VI slice.
@@ -1150,7 +958,7 @@ export class Show4DSTEMCompute {
   // one command encoder, one compute pass, and one queue submit for every
   // visible tilt. This keeps seven-tilt compare interaction from paying seven
   // JavaScript/API submission paths while preserving the exact masked sum.
-  static maskedSumBuffersBatch(computes: Show4DSTEMCompute[], mask: Uint32Array): { buffers: GPUBuffer[]; n: number; path: "batched-submit" } {
+  static maskedSumBuffersBatch(computes: DetectorCompute[], mask: Uint32Array): { buffers: GPUBuffer[]; n: number; path: "batched-submit" } {
     const owner = computes[0];
     if (!owner) return { buffers: [], n: 0, path: "batched-submit" };
     const device = owner.device;
@@ -1191,7 +999,7 @@ export class Show4DSTEMCompute {
   }
 
   static maskedSumDeltaBuffersBatch(
-    computes: Show4DSTEMCompute[],
+    computes: DetectorCompute[],
     previous: GPUBuffer[],
     addedMask: Uint32Array,
     removedMask: Uint32Array,
@@ -1342,7 +1150,7 @@ export class Show4DSTEMCompute {
     return { buffers: outputs, path: "delta", addedPixels: added.n, removedPixels: removed.n };
   }
 
-  static prepareU8WordMajorBatch(computes: Show4DSTEMCompute[]): { scheduled: number; available: boolean; path: "u8-word-major" } {
+  static prepareU8WordMajorBatch(computes: DetectorCompute[]): { scheduled: number; available: boolean; path: "u8-word-major" } {
     const owner = computes[0];
     if (!owner || computes.length === 0) return { scheduled: 0, available: false, path: "u8-word-major" };
     owner.assertBatchCompatible(computes);
@@ -1358,7 +1166,7 @@ export class Show4DSTEMCompute {
     return { scheduled, available: true, path: "u8-word-major" };
   }
 
-  private assertBatchCompatible(computes: Show4DSTEMCompute[]): void {
+  private assertBatchCompatible(computes: DetectorCompute[]): void {
     for (const compute of computes) {
       if (compute.device !== this.device) throw new Error("Batched masked sums require all volumes on the same WebGPU device.");
       if (compute.scanCount !== this.scanCount || compute.detSize !== this.detSize || compute.mode !== this.mode) {
@@ -1806,130 +1614,3 @@ export class Show4DSTEMCompute {
   }
 }
 
-export class Show4DSTEMCpuCompute {
-  readonly scanCount: number;
-  readonly detSize: number;
-  readonly mode: number;
-  badPx: Uint32Array = new Uint32Array(0);
-  private stack: Uint8Array;
-
-  private constructor(stack: Uint8Array, scanCount: number, detSize: number, mode: number) {
-    this.stack = stack;
-    this.scanCount = scanCount;
-    this.detSize = detSize;
-    this.mode = mode;
-  }
-
-  static create(stack: Uint8Array, scanCount: number, detSize: number, mode?: number): Show4DSTEMCpuCompute {
-    const expectedU8 = scanCount * detSize;
-    const inferredMode = stack.byteLength <= expectedU8 ? 1 : 0;
-    return new Show4DSTEMCpuCompute(stack, scanCount, detSize, mode ?? inferredMode);
-  }
-
-  async frameAt(scanIdx: number): Promise<Float32Array> {
-    const out = new Float32Array(this.detSize);
-    const base = Math.max(0, Math.min(this.scanCount - 1, scanIdx | 0)) * this.detSize;
-    for (let k = 0; k < this.detSize; k++) out[k] = this.sample(base + k);
-    for (const bp of this.badPx) out[bp] = 0;
-    return out;
-  }
-
-  async maskedSum(mask: Uint32Array): Promise<Float32Array> {
-    const bad = this.badPx.length ? new Set(this.badPx) : null;
-    const idx: number[] = [];
-    for (let k = 0; k < this.detSize; k++) {
-      if (mask[k] !== 0 && !(bad && bad.has(k))) idx.push(k);
-    }
-    const out = new Float32Array(this.scanCount);
-    if (idx.length === 0) return out;
-    for (let scan = 0; scan < this.scanCount; scan++) {
-      const base = scan * this.detSize;
-      let sum = 0;
-      for (let j = 0; j < idx.length; j++) sum += this.sample(base + idx[j]);
-      out[scan] = sum;
-    }
-    return out;
-  }
-
-  async maskedCoM(mask: Uint32Array, detCols: number): Promise<{ comY: Float32Array; comX: Float32Array }> {
-    const bad = this.badPx.length ? new Set(this.badPx) : null;
-    const idx: number[] = [];
-    for (let k = 0; k < this.detSize; k++) {
-      if (mask[k] !== 0 && !(bad && bad.has(k))) idx.push(k);
-    }
-    const comY = new Float32Array(this.scanCount);
-    const comX = new Float32Array(this.scanCount);
-    if (idx.length === 0) return { comY, comX };
-    for (let scan = 0; scan < this.scanCount; scan++) {
-      const base = scan * this.detSize;
-      let wsum = 0;
-      let ysum = 0;
-      let xsum = 0;
-      for (let j = 0; j < idx.length; j++) {
-        const p = idx[j];
-        const v = this.sample(base + p);
-        wsum += v;
-        ysum += Math.floor(p / detCols) * v;
-        xsum += (p % detCols) * v;
-      }
-      if (wsum > 0) {
-        comY[scan] = ysum / wsum;
-        comX[scan] = xsum / wsum;
-      }
-    }
-    return { comY, comX };
-  }
-
-  async maskedDpc(mask: Uint32Array, detCols: number, component: "row" | "col" | 0 | 1): Promise<Float32Array> {
-    const { comY, comX } = await this.maskedCoM(mask, detCols);
-    const values = component === "row" || component === 0 ? comY : comX;
-    let mean = 0;
-    for (let i = 0; i < values.length; i++) mean += values[i];
-    mean /= Math.max(1, values.length);
-    const out = new Float32Array(values.length);
-    for (let i = 0; i < values.length; i++) out[i] = values[i] - mean;
-    return out;
-  }
-
-  async reduceFrames(scanMask: Uint32Array, mean = true): Promise<Float32Array> {
-    const out = new Float32Array(this.detSize);
-    let n = 0;
-    for (let scan = 0; scan < this.scanCount; scan++) {
-      if (!scanMask[scan]) continue;
-      n++;
-      const base = scan * this.detSize;
-      for (let k = 0; k < this.detSize; k++) out[k] += this.sample(base + k);
-    }
-    if (mean && n > 0) {
-      for (let k = 0; k < this.detSize; k++) out[k] /= n;
-    }
-    for (const bp of this.badPx) out[bp] = 0;
-    return out;
-  }
-
-  dispose() {
-    // CPU fallback owns no browser resources.
-  }
-
-  private sample(globalPixel: number): number {
-    if (this.mode === 1) return this.stack[globalPixel] ?? 0;
-    if (this.mode === 3) {
-      const i = globalPixel * 4;
-      return (
-        (this.stack[i] ?? 0)
-        | ((this.stack[i + 1] ?? 0) << 8)
-        | ((this.stack[i + 2] ?? 0) << 16)
-        | ((this.stack[i + 3] ?? 0) << 24)
-      ) >>> 0;
-    }
-    if (this.mode === 2) {
-      return new DataView(
-        this.stack.buffer,
-        this.stack.byteOffset + globalPixel * 4,
-        4,
-      ).getFloat32(0, true);
-    }
-    const i = globalPixel * 2;
-    return (this.stack[i] ?? 0) | ((this.stack[i + 1] ?? 0) << 8);
-  }
-}

@@ -4,7 +4,7 @@ Electron microscopy physics calculations.
 Provides fundamental constants and calculations for electron wavelength,
 relativistic corrections, and convergence angles specific to electron microscopy.
 
-For general unit conversions (rad/deg, Å/nm/μm/mm), see quantem.gpu.ssb.optics.units
+For general unit conversions (rad/deg, Å/nm/μm/mm), see quantem.gpu.optics.units
 """
 
 import math

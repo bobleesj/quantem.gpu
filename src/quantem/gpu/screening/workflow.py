@@ -12,41 +12,42 @@ from typing import Any
 import numpy as np
 
 
-_CACHE_VERSION = 1
+_CACHE_VERSION = 2
 
 
-def _calibration_output_dtype(output_dtype) -> np.dtype:
+def _screening_output_dtype(output_dtype) -> np.dtype:
     """Return a NumPy dtype for product caches, rejecting packed raw-stack tokens."""
     if isinstance(output_dtype, str) and output_dtype.lower() in {"u4", "uint4"}:
         raise ValueError(
             "output_dtype='u4' means packed 4-bit raw detector counts and is "
-            "not valid for derived calibration products. Use output_dtype=np.uint8, "
+            "not valid for derived screening products. Use output_dtype=np.uint8, "
             "np.uint16, or np.float32."
         )
     return np.dtype(output_dtype)
 
 
 @dataclass
-class CalibrationProducts:
-    """Small calibration products for instant UI and ptychography setup."""
+class ScreeningResult:
+    """Small screening products for instant UI and ptychography setup."""
 
     mean_dp: np.ndarray
-    bf: np.ndarray
-    df: np.ndarray
+    bright_field: np.ndarray
+    dark_field: np.ndarray
+    dpc_phase: np.ndarray
     com_row: np.ndarray
     com_col: np.ndarray
-    center: tuple[float, float]
-    radius_px: float
+    probe_center: tuple[float, float]
+    probe_radius: float
     rotation_deg: float
-    use_transpose: bool
+    transposed: bool
     metadata: dict[str, Any]
     cache_path: Path | None = None
-    loaded_from_cache: bool = False
+    from_cache: bool = False
     elapsed_s: float = 0.0
 
 
 @dataclass(frozen=True)
-class CalibrationMemoryPlan:
+class MemoryPlan:
     """Memory plan for streaming BF/DF/CoM/rotation cache generation."""
 
     memory_budget_gb: float
@@ -63,7 +64,7 @@ class CalibrationMemoryPlan:
     cuda_total_gb: float | None = None
 
 
-def calibration_products_cache_path(
+def _cache_path(
     master: str | Path,
     cache_dir: str | Path | None = None,
 ) -> Path:
@@ -73,7 +74,7 @@ def calibration_products_cache_path(
         cache_root = master_path.parent / ".quantem_gpu_cache"
     else:
         cache_root = Path(cache_dir).expanduser()
-    return cache_root / f"{master_path.stem}.calibration-products-v1.npz"
+    return cache_root / f"{master_path.stem}.screening-v2.npz"
 
 
 def _source_fingerprint(master: Path) -> dict[str, Any]:
@@ -104,21 +105,21 @@ def _read_metadata_array(array: np.ndarray) -> dict[str, Any]:
     return json.loads(str(array.reshape(())))
 
 
-def _save_calibration_products(products: CalibrationProducts, path: Path) -> None:
+def _save_cache(products: ScreeningResult, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     metadata = dict(products.metadata)
     np.savez(
         path,
         metadata_json=_metadata_array(metadata),
         mean_dp=np.asarray(products.mean_dp, dtype=np.float32),
-        bf=np.asarray(products.bf, dtype=np.float32),
-        df=np.asarray(products.df, dtype=np.float32),
+        bright_field=np.asarray(products.bright_field, dtype=np.float32),
+        dark_field=np.asarray(products.dark_field, dtype=np.float32),
         com_row=np.asarray(products.com_row, dtype=np.float32),
         com_col=np.asarray(products.com_col, dtype=np.float32),
     )
 
 
-def _load_calibration_products_cache(path: Path, master: Path) -> CalibrationProducts | None:
+def _prepare_cache(path: Path, master: Path) -> ScreeningResult | None:
     if not path.exists():
         return None
     t0 = time.perf_counter()
@@ -127,22 +128,51 @@ def _load_calibration_products_cache(path: Path, master: Path) -> CalibrationPro
         if not _cache_matches(metadata, master):
             return None
         params = metadata.get("parameters", {})
-        products = CalibrationProducts(
+        products = ScreeningResult(
             mean_dp=np.asarray(data["mean_dp"], dtype=np.float32),
-            bf=np.asarray(data["bf"], dtype=np.float32),
-            df=np.asarray(data["df"], dtype=np.float32),
+            bright_field=np.asarray(data["bright_field"], dtype=np.float32),
+            dark_field=np.asarray(data["dark_field"], dtype=np.float32),
+            dpc_phase=_dpc_phase(
+                np.asarray(data["com_row"], dtype=np.float32),
+                np.asarray(data["com_col"], dtype=np.float32),
+                float(params["rotation_deg"]),
+                bool(params["transposed"]),
+            ),
             com_row=np.asarray(data["com_row"], dtype=np.float32),
             com_col=np.asarray(data["com_col"], dtype=np.float32),
-            center=tuple(float(v) for v in params["center"]),
-            radius_px=float(params["radius_px"]),
+            probe_center=tuple(float(v) for v in params["center"]),
+            probe_radius=float(params["radius_px"]),
             rotation_deg=float(params["rotation_deg"]),
-            use_transpose=bool(params["use_transpose"]),
+            transposed=bool(params["transposed"]),
             metadata=metadata,
             cache_path=path,
-            loaded_from_cache=True,
+            from_cache=True,
             elapsed_s=time.perf_counter() - t0,
         )
     return products
+
+
+def _dpc_phase(
+    com_row: np.ndarray,
+    com_col: np.ndarray,
+    rotation_deg: float,
+    transposed: bool,
+) -> np.ndarray:
+    """Return the float32 iDPC phase for a prepared CoM field."""
+
+    from quantem.gpu.dpc import integrate
+
+    source_row = com_col if transposed else com_row
+    source_col = com_row if transposed else com_col
+    angle = np.radians(rotation_deg)
+    cosine = float(np.cos(angle))
+    sine = float(np.sin(angle))
+    aligned_row = (cosine * source_row - sine * source_col).astype(np.float32)
+    aligned_col = (sine * source_row + cosine * source_col).astype(np.float32)
+    gradient_row, gradient_col = (
+        (aligned_col, aligned_row) if transposed else (aligned_row, aligned_col)
+    )
+    return integrate(gradient_row, gradient_col)
 
 
 def _clear_cuda_pools() -> None:
@@ -195,12 +225,12 @@ def _resolve_memory_budget_gb(
     return budget, "auto_cuda", free_gb, total_gb
 
 
-def _calibration_memory_plan_for_shapes(
+def _memory_plan_for_shapes(
     scan_shape: tuple[int, int],
     detector_shape: tuple[int, int],
     itemsize: int,
     memory_budget_gb: float | None,
-) -> CalibrationMemoryPlan:
+) -> MemoryPlan:
     """Choose scan-row chunks and report the effective memory budget."""
     scan_cols = int(scan_shape[1])
     bytes_per_row = scan_cols * int(detector_shape[0]) * int(detector_shape[1]) * int(itemsize)
@@ -217,7 +247,7 @@ def _calibration_memory_plan_for_shapes(
     chunk_rows = max(1, min(int(scan_shape[0]), rows))
     chunk_count = int(math.ceil(int(scan_shape[0]) / chunk_rows))
     chunk_resident_gb = float(chunk_rows * bytes_per_row) / 1e9
-    return CalibrationMemoryPlan(
+    return MemoryPlan(
         memory_budget_gb=float(budget_gb),
         memory_budget_source=source,
         raw_target_gb=float(target_raw_bytes) / 1e9,
@@ -233,10 +263,10 @@ def _calibration_memory_plan_for_shapes(
     )
 
 
-def _calibration_memory_plan_with_chunk_rows(
-    plan: CalibrationMemoryPlan,
+def _memory_plan_with_chunk_rows(
+    plan: MemoryPlan,
     chunk_rows: int,
-) -> CalibrationMemoryPlan:
+) -> MemoryPlan:
     """Return ``plan`` with an explicit user chunk-row override applied."""
     rows = int(max(1, min(int(chunk_rows), plan.scan_shape[0])))
     itemsize = np.dtype(plan.dtype).itemsize
@@ -246,7 +276,7 @@ def _calibration_memory_plan_with_chunk_rows(
         * int(plan.detector_shape[1])
         * int(itemsize)
     )
-    return CalibrationMemoryPlan(
+    return MemoryPlan(
         memory_budget_gb=plan.memory_budget_gb,
         memory_budget_source=plan.memory_budget_source,
         raw_target_gb=plan.raw_target_gb,
@@ -262,13 +292,13 @@ def _calibration_memory_plan_with_chunk_rows(
     )
 
 
-def calibration_memory_plan(
+def _memory_plan(
     master: str | Path,
     *,
     scan_shape: tuple[int, int] | None = None,
     memory_budget_gb: float | None = None,
     output_dtype=np.uint16,
-) -> CalibrationMemoryPlan:
+) -> MemoryPlan:
     """Return the streaming memory plan without reading detector frames."""
     from quantem.gpu.io.hdf5 import get_metadata
 
@@ -277,19 +307,19 @@ def calibration_memory_plan(
     if scan_shape is None:
         scan_shape = tuple(int(v) for v in metadata.get("scan_shape") or ())
     if len(scan_shape) != 2:
-        raise ValueError("scan_shape=(rows, cols) is required for calibration products")
+        raise ValueError("scan_shape=(rows, cols) is required for screening products")
     detector_shape = tuple(int(v) for v in metadata.get("detector_shape") or ())
     if len(detector_shape) != 2:
         raise ValueError("Could not determine detector_shape from HDF5 metadata")
-    return _calibration_memory_plan_for_shapes(
+    return _memory_plan_for_shapes(
         scan_shape,
         detector_shape,
-        _calibration_output_dtype(output_dtype).itemsize,
+        _screening_output_dtype(output_dtype).itemsize,
         memory_budget_gb,
     )
 
 
-def _build_cuda_calibration_products(
+def _build_cuda_products(
     master: Path,
     *,
     scan_shape: tuple[int, int],
@@ -298,15 +328,15 @@ def _build_cuda_calibration_products(
     seed: int | None,
     rotation_steps: int,
     output_dtype,
-    memory_plan: CalibrationMemoryPlan,
+    memory_plan: MemoryPlan,
     verbose: bool,
-) -> CalibrationProducts:
+) -> ScreeningResult:
     import cupy as cp
 
-    from quantem.gpu import load
-    from quantem.gpu.compute.cuda import cuda_center_of_mass, cuda_masked_sum
+    from quantem.gpu.io import load
+    from quantem.gpu.detector.compute.cuda.kernels import cuda_center_of_mass, cuda_masked_sum
     from quantem.gpu.detector import auto_probe, detector_mask, mean_dp
-    from quantem.gpu.dpc import find_optimal_rotation
+    from quantem.gpu.dpc.workflow import find_optimal_rotation
     from quantem.gpu.io.hdf5 import get_metadata
 
     t0 = time.perf_counter()
@@ -394,7 +424,7 @@ def _build_cuda_calibration_products(
             probe_source = "full_scan" if full_scan_single_chunk else "first_chunk"
         reduce_t0 = time.perf_counter()
         if dp is None or center is None or radius is None or bf_mask is None or df_mask is None:
-            raise RuntimeError("Calibration masks were not initialized")
+            raise RuntimeError("Screening masks were not initialized")
         bf_gpu = cuda_masked_sum(data, bf_mask)
         df_gpu = cuda_masked_sum(data, df_mask)
         row_gpu, col_gpu = cuda_center_of_mass(data, None)
@@ -421,7 +451,7 @@ def _build_cuda_calibration_products(
     com_row -= float(com_row.mean())
     com_col -= float(com_col.mean())
     rotation_t0 = time.perf_counter()
-    _, _, rotation_deg, use_transpose = find_optimal_rotation(
+    _, _, rotation_deg, transposed = find_optimal_rotation(
         com_row,
         com_col,
         rotation_steps=rotation_steps,
@@ -456,35 +486,41 @@ def _build_cuda_calibration_products(
         "center": [float(center[0]), float(center[1])],
         "radius_px": float(radius),
         "rotation_deg": float(rotation_deg),
-        "use_transpose": bool(use_transpose),
+        "transposed": bool(transposed),
         "backend": "cuda",
-        "dtype": str(_calibration_output_dtype(output_dtype)),
+        "dtype": str(_screening_output_dtype(output_dtype)),
         "memory_budget_gb": float(memory_plan.memory_budget_gb),
         "memory_budget_source": memory_plan.memory_budget_source,
         "chunk_rows_source": memory_plan.chunk_rows_source,
         "chunk_count": int(memory_plan.chunk_count),
         "chunk_resident_gb": float(memory_plan.chunk_resident_gb),
     }
-    return CalibrationProducts(
+    return ScreeningResult(
         mean_dp=np.asarray(dp, dtype=np.float32),
-        bf=bf_map,
-        df=df_map,
+        bright_field=bf_map,
+        dark_field=df_map,
+        dpc_phase=_dpc_phase(
+            com_row,
+            com_col,
+            float(rotation_deg),
+            bool(transposed),
+        ),
         com_row=com_row.astype(np.float32, copy=False),
         com_col=com_col.astype(np.float32, copy=False),
-        center=(float(center[0]), float(center[1])),
-        radius_px=float(radius),
+        probe_center=(float(center[0]), float(center[1])),
+        probe_radius=float(radius),
         rotation_deg=float(rotation_deg),
-        use_transpose=bool(use_transpose),
+        transposed=bool(transposed),
         metadata={
             "version": _CACHE_VERSION,
             "source": _source_fingerprint(master),
             "parameters": params,
             "timing": timing,
             "memory": asdict(memory_plan),
-            "mode": "cached-calibration-products",
+            "mode": "cached-screening-products",
             "note": "BF/DF/CoM/rotation products are derived from raw HDF5; raw HDF5 remains the ptychography evidence source.",
         },
-        loaded_from_cache=False,
+        from_cache=False,
         elapsed_s=elapsed_s,
     )
 
@@ -493,11 +529,11 @@ def _metadata_dtype(metadata: dict[str, Any], fallback) -> np.dtype:
     """Return the native detector dtype from metadata when it is available."""
     dtype = metadata.get("dtype")
     if dtype is None:
-        return _calibration_output_dtype(fallback)
+        return _screening_output_dtype(fallback)
     try:
         return np.dtype(dtype)
     except TypeError:
-        return _calibration_output_dtype(fallback)
+        return _screening_output_dtype(fallback)
 
 
 def _metal_buffer_for(array):
@@ -526,10 +562,10 @@ def _mps_chunked_frames_for(data):
     mtl = _metal_buffer_for(data)
     if mtl is None:
         raise RuntimeError(
-            "MPS calibration products require Metal-backed load output; got "
+            "MPS screening products require Metal-backed load output; got "
             f"{type(data).__name__}. Use backend='cuda' or backend='mps'."
         )
-    from quantem.gpu.compute.mps import ChunkedFrames
+    from quantem.gpu.detector.compute.mps.kernels import ChunkedFrames
     from quantem.gpu.io.backends import mps as _mps
 
     arr = data
@@ -550,7 +586,7 @@ def _mps_mean_dp(frames) -> np.ndarray:
     return np.asarray(frames.vi.detector_sum(), dtype=np.float32) / int(frames.vi.n)
 
 
-def _build_mps_calibration_products(
+def _build_mps_products(
     master: Path,
     *,
     scan_shape: tuple[int, int],
@@ -558,13 +594,13 @@ def _build_mps_calibration_products(
     sample_positions: int,
     seed: int | None,
     rotation_steps: int,
-    memory_plan: CalibrationMemoryPlan,
+    memory_plan: MemoryPlan,
     verbose: bool,
     skip_mps_memory_check: bool | None,
-) -> CalibrationProducts:
-    from quantem.gpu import load
+) -> ScreeningResult:
+    from quantem.gpu.io import load
     from quantem.gpu.detector import auto_probe, detector_mask
-    from quantem.gpu.dpc import find_optimal_rotation
+    from quantem.gpu.dpc.workflow import find_optimal_rotation
     from quantem.gpu.io.hdf5 import get_metadata
 
     t0 = time.perf_counter()
@@ -651,7 +687,7 @@ def _build_mps_calibration_products(
             probe_source = "full_scan" if full_scan_single_chunk else "first_chunk"
         reduce_t0 = time.perf_counter()
         if dp is None or center is None or radius is None or bf_mask is None or df_mask is None:
-            raise RuntimeError("Calibration masks were not initialized")
+            raise RuntimeError("Screening masks were not initialized")
         bf_flat = np.asarray(frames.vi.masked_sum(bf_mask), dtype=np.float32).copy()
         df_flat = np.asarray(frames.vi.masked_sum(df_mask), dtype=np.float32).copy()
         ccol_flat, crow_flat = frames.vi.center_of_mass(None)
@@ -681,7 +717,7 @@ def _build_mps_calibration_products(
     com_row -= float(com_row.mean())
     com_col -= float(com_col.mean())
     rotation_t0 = time.perf_counter()
-    _, _, rotation_deg, use_transpose = find_optimal_rotation(
+    _, _, rotation_deg, transposed = find_optimal_rotation(
         com_row,
         com_col,
         rotation_steps=rotation_steps,
@@ -717,7 +753,7 @@ def _build_mps_calibration_products(
         "center": [float(center[0]), float(center[1])],
         "radius_px": float(radius),
         "rotation_deg": float(rotation_deg),
-        "use_transpose": bool(use_transpose),
+        "transposed": bool(transposed),
         "backend": "mps",
         "dtype": str(source_dtype),
         "memory_budget_gb": float(memory_plan.memory_budget_gb),
@@ -726,47 +762,53 @@ def _build_mps_calibration_products(
         "chunk_count": int(memory_plan.chunk_count),
         "chunk_resident_gb": float(memory_plan.chunk_resident_gb),
     }
-    return CalibrationProducts(
+    return ScreeningResult(
         mean_dp=np.asarray(dp, dtype=np.float32),
-        bf=bf_map,
-        df=df_map,
+        bright_field=bf_map,
+        dark_field=df_map,
+        dpc_phase=_dpc_phase(
+            com_row,
+            com_col,
+            float(rotation_deg),
+            bool(transposed),
+        ),
         com_row=com_row.astype(np.float32, copy=False),
         com_col=com_col.astype(np.float32, copy=False),
-        center=(float(center[0]), float(center[1])),
-        radius_px=float(radius),
+        probe_center=(float(center[0]), float(center[1])),
+        probe_radius=float(radius),
         rotation_deg=float(rotation_deg),
-        use_transpose=bool(use_transpose),
+        transposed=bool(transposed),
         metadata={
             "version": _CACHE_VERSION,
             "source": _source_fingerprint(master),
             "parameters": params,
             "timing": timing,
             "memory": asdict(memory_plan),
-            "mode": "cached-calibration-products",
+            "mode": "cached-screening-products",
             "note": "BF/DF/CoM/rotation products are derived from raw HDF5; raw HDF5 remains the ptychography evidence source.",
         },
-        loaded_from_cache=False,
+        from_cache=False,
         elapsed_s=elapsed_s,
     )
 
 
-def load_calibration_products(
-    master: str | Path,
+def prepare(
+    source: str | Path,
     *,
-    backend: str = "cuda",
+    backend: str = "auto",
     scan_shape: tuple[int, int] | None = None,
+    rotation_angle_deg: float | None = None,
     cache: bool = True,
     cache_dir: str | Path | None = None,
-    force: bool = False,
+    refresh: bool = False,
     memory_budget_gb: float | None = None,
     chunk_rows: int | None = None,
     sample_positions: int = 0,
     seed: int | None = 0,
     rotation_steps: int = 90,
-    output_dtype=np.uint16,
-    skip_mps_memory_check: bool | None = None,
+    dtype=np.uint16,
     verbose: bool = False,
-) -> CalibrationProducts:
+) -> ScreeningResult:
     """Load or build cached BF/DF/CoM/rotation products for one HDF5 master.
 
     Cached products are intended for instant UI launch and ptychography
@@ -778,53 +820,49 @@ def load_calibration_products(
     """
     from quantem.gpu.io.hdf5 import get_metadata
 
-    master_path = Path(master).expanduser()
+    master_path = Path(source).expanduser()
     if not master_path.exists():
         raise FileNotFoundError(f"HDF5 master not found: {master_path}")
 
-    cache_path = calibration_products_cache_path(master_path, cache_dir)
-    if cache and not force:
-        products = _load_calibration_products_cache(cache_path, master_path)
+    cache_path = _cache_path(master_path, cache_dir)
+    if cache and not refresh:
+        products = _prepare_cache(cache_path, master_path)
         if products is not None:
-            return products
+            return _with_rotation(products, rotation_angle_deg)
 
     metadata = get_metadata(str(master_path))
     if scan_shape is None:
         scan_shape = tuple(int(v) for v in metadata.get("scan_shape") or ())
     if len(scan_shape) != 2:
-        raise ValueError("scan_shape=(rows, cols) is required for calibration products")
+        raise ValueError("scan_shape=(rows, cols) is required for screening products")
     detector_shape = tuple(int(v) for v in metadata.get("detector_shape") or ())
     if len(detector_shape) != 2:
         raise ValueError("Could not determine detector_shape from HDF5 metadata")
     if int(sample_positions) < 0:
         raise ValueError("sample_positions must be non-negative")
 
-    from quantem.gpu.io.backends import resolve_backend
+    from quantem.gpu import device
 
-    resolved_backend = resolve_backend(backend)
+    resolved_backend = device.resolve(backend)
     if resolved_backend not in {"cuda", "mps"}:
         raise RuntimeError(
-            "load_calibration_products cache generation requires backend='cuda' "
+            "prepare cache generation requires backend='cuda' "
             f"or backend='mps'; backend={resolved_backend!r} was selected. "
             "Existing caches can still be read by CPU-facing callers."
         )
-    if skip_mps_memory_check is not None and resolved_backend != "mps":
-        raise ValueError(
-            "skip_mps_memory_check only applies to backend='mps' cache generation."
-        )
     plan_dtype = (
-        _metadata_dtype(metadata, output_dtype)
+        _metadata_dtype(metadata, dtype)
         if resolved_backend == "mps"
-        else _calibration_output_dtype(output_dtype)
+        else _screening_output_dtype(dtype)
     )
-    plan = _calibration_memory_plan_for_shapes(
+    plan = _memory_plan_for_shapes(
         scan_shape,
         detector_shape,
         plan_dtype.itemsize,
         memory_budget_gb,
     )
     if chunk_rows is not None:
-        plan = _calibration_memory_plan_with_chunk_rows(plan, int(chunk_rows))
+        plan = _memory_plan_with_chunk_rows(plan, int(chunk_rows))
     if verbose:
         budget = f"{plan.memory_budget_gb:.1f} GB ({plan.memory_budget_source})"
         cuda = (
@@ -833,26 +871,26 @@ def load_calibration_products(
             else f", cuda_free={plan.cuda_free_gb:.1f}/{plan.cuda_total_gb:.1f} GB"
         )
         print(
-            "Calibration memory plan: "
+            "Screening memory plan: "
             f"budget={budget}, chunk_rows={plan.chunk_rows}, "
             f"chunks={plan.chunk_count}, raw_chunk={plan.chunk_resident_gb:.2f} GB"
             f"{cuda}"
         )
 
     if resolved_backend == "cuda":
-        products = _build_cuda_calibration_products(
+        products = _build_cuda_products(
             master_path,
             scan_shape=scan_shape,
             chunk_rows=int(plan.chunk_rows),
             sample_positions=int(sample_positions),
             seed=seed,
             rotation_steps=int(rotation_steps),
-            output_dtype=output_dtype,
+            output_dtype=dtype,
             memory_plan=plan,
             verbose=verbose,
         )
     else:
-        products = _build_mps_calibration_products(
+        products = _build_mps_products(
             master_path,
             scan_shape=scan_shape,
             chunk_rows=int(plan.chunk_rows),
@@ -861,9 +899,28 @@ def load_calibration_products(
             rotation_steps=int(rotation_steps),
             memory_plan=plan,
             verbose=verbose,
-            skip_mps_memory_check=skip_mps_memory_check,
+            skip_mps_memory_check=False,
         )
     products.cache_path = cache_path if cache else None
     if cache:
-        _save_calibration_products(products, cache_path)
-    return products
+        _save_cache(products, cache_path)
+    return _with_rotation(products, rotation_angle_deg)
+
+
+def _with_rotation(
+    result: ScreeningResult,
+    rotation_angle_deg: float | None,
+) -> ScreeningResult:
+    """Apply an explicit DPC rotation without touching the raw evidence."""
+
+    if rotation_angle_deg is None:
+        return result
+    result.rotation_deg = float(rotation_angle_deg)
+    result.transposed = False
+    result.dpc_phase = _dpc_phase(
+        result.com_row,
+        result.com_col,
+        result.rotation_deg,
+        False,
+    )
+    return result

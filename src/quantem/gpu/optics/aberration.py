@@ -129,8 +129,8 @@ def chi_polar(
     Examples
     --------
     >>> import cupy as cp
-    >>> from quantem.gpu.ssb.optics.aberration import chi_polar
-    >>> from quantem.gpu.ssb.optics.physics import wavelength_m_from_kV
+    >>> from quantem.gpu.optics.aberration import chi_polar
+    >>> from quantem.gpu.optics.physics import wavelength_m_from_kV
     >>> 
     >>> # Define aberrations in SI units (meters)
     >>> mags_m = cp.zeros(14, dtype=cp.float32)

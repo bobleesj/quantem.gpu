@@ -1,8 +1,8 @@
 /// <reference types="@webgpu/types" />
 
-import { getGPUDevice, getGPUInfo, isSoftwareGPUAdapter } from "../../../webgpu/device";
-import { readH5MasterInfo, readH5Volume } from "../../../webgpu/h5reader";
-import { decodeBslz4ToStack, type Bslz4Spec } from "../../../webgpu/bslz4";
+import { getGPUDevice, getGPUInfo, isSoftwareGPUAdapter } from "../../../device/webgpu";
+import { readH5MasterInfo, readH5Volume } from "../../../io/backends/webgpu/h5reader";
+import { decodeBslz4ToStack, type Bslz4Spec } from "../../../io/backends/webgpu/bslz4";
 import {
   getWebGPUFFTConfig,
   SUPPORTED_SSB_SIZES,

@@ -32,6 +32,167 @@ import numpy as np
 from quantem.gpu.uint4 import is_packed_uint4
 
 
+class DetectorSession:
+    """Prepared, cache-owning detector compute session.
+
+    Widget and live callers use this backend-neutral object instead of
+    importing CUDA or Metal implementation modules.
+    """
+
+    def __init__(self, data) -> None:
+        self._backend = _resolve_backend(data)
+
+    @property
+    def scan_shape(self) -> tuple[int, int]:
+        """Scan shape in public ``(row, col)`` order."""
+
+        return tuple(int(value) for value in self._backend.scan_shape)
+
+    @property
+    def detector_shape(self) -> tuple[int, int]:
+        """Detector shape in public ``(row, col)`` order."""
+
+        return tuple(int(value) for value in self._backend.det_shape)
+
+    @property
+    def num_frames(self) -> int:
+        """Number of scan frames in the prepared data."""
+
+        return int(self._backend.n_frames)
+
+    def frame(self, index: int) -> np.ndarray:
+        """Return one detector frame."""
+
+        return np.asarray(self._backend.frame(int(index)))
+
+    def reduce_frames(self, indices, mode: str = "mean") -> np.ndarray:
+        """Reduce selected scan frames with ``mean``, ``sum``, or ``max``."""
+
+        return np.asarray(self._backend.reduce_frames(indices, reduce=mode))
+
+    def mean_dp(self) -> np.ndarray:
+        """Return the float32 mean diffraction pattern."""
+
+        return _reduced_to_numpy(self._backend.mean_dp())
+
+    def masked_sum(self, mask) -> np.ndarray:
+        """Return a float32 virtual-detector image for one detector mask."""
+
+        return _reduced_to_numpy(self._backend.masked_sum(mask)).reshape(
+            self.scan_shape
+        )
+
+    def center_of_mass(self, mask=None) -> tuple[np.ndarray, np.ndarray]:
+        """Return mean-subtracted detector CoM in ``(row, col)`` order."""
+
+        com_col, com_row = self._backend.center_of_mass(mask)
+        row = _reduced_to_numpy(com_row).reshape(self.scan_shape)
+        col = _reduced_to_numpy(com_col).reshape(self.scan_shape)
+        return row, col
+
+    @property
+    def supports_fast(self) -> bool:
+        """Whether this session provides an accelerated interaction sidecar."""
+
+        return "fast_sidecar" in self._backend.capabilities
+
+    @property
+    def fast_ready(self) -> bool:
+        """Whether the interaction sidecar is ready."""
+
+        return self.supports_fast and bool(self._backend.has_fast)
+
+    @property
+    def fast_bin(self) -> int:
+        """Detector binning used only by the optional interaction sidecar."""
+
+        return int(self._backend.fast_bin) if self.supports_fast else 1
+
+    def prepare_fast(self, *, verbose: bool = False) -> bool:
+        """Prepare the optional interaction sidecar."""
+
+        if not self.supports_fast:
+            return False
+        return bool(self._backend.ensure_fast_sidecar(verbose=verbose))
+
+    def cache_fast_presets(self, masks: dict[str, np.ndarray]) -> dict:
+        """Cache named interaction masks when supported."""
+
+        if not self.supports_fast:
+            return {}
+        return self._backend.cache_fast_presets(masks)
+
+    def radial_ready(self, center: tuple[float, float]) -> bool:
+        """Return whether exact radial reductions are prepared at ``center``."""
+
+        if "radial_cache" not in self._backend.capabilities:
+            return False
+        return bool(self._backend.radial_cache_ready(*center))
+
+    def prepare_radial(
+        self,
+        center: tuple[float, float],
+        *,
+        idle_delay_s: float = 0.75,
+    ) -> None:
+        """Prepare exact radial reductions around ``(row, col)``."""
+
+        if "radial_cache" not in self._backend.capabilities:
+            return
+        self._backend.ensure_radial_cache(
+            *center,
+            idle_delay_s=float(idle_delay_s),
+        )
+
+    def radial_sum(
+        self,
+        center: tuple[float, float],
+        outer_radius: float,
+        *,
+        inner_radius: float = 0.0,
+        build: bool = False,
+    ) -> np.ndarray | None:
+        """Return an exact cached annular sum, or ``None`` while unavailable."""
+
+        if "radial_cache" not in self._backend.capabilities:
+            return None
+        result = self._backend.radial_masked_sum(
+            center_row=float(center[0]),
+            center_col=float(center[1]),
+            outer_radius=float(outer_radius),
+            inner_radius=float(inner_radius),
+            build=bool(build),
+        )
+        return None if result is None else np.asarray(result, dtype=np.float32)
+
+    @property
+    def radial_building(self) -> bool:
+        """Whether exact radial cache construction is active."""
+
+        if "radial_cache" not in self._backend.capabilities:
+            return False
+        return bool(self._backend.radial_building)
+
+    @property
+    def radial_error(self) -> str | None:
+        """Return the radial cache error, if any."""
+
+        if "radial_cache" not in self._backend.capabilities:
+            return None
+        return self._backend.radial_error
+
+    def close(self) -> None:
+        """Release this session's ownership of backend caches."""
+
+        self._backend = None
+
+
+def prepare(data) -> DetectorSession:
+    """Prepare one backend-neutral detector session."""
+
+    return DetectorSession(data)
+
+
 def _is_cupy_array(data) -> bool:
     return type(data).__module__.split(".", 1)[0] == "cupy"
 
@@ -90,6 +251,8 @@ class _ArrayComputeBackend:
         self.data = _unwrap_core_4dstem(data)
         self.flat, self.scan_shape = _flatten_scan(self.data)
         self.n_frames = int(self.flat.shape[0])
+        self.det_shape = tuple(int(value) for value in self.flat.shape[-2:])
+        self.capabilities = ()
 
     def mean_dp(self):
         if _is_cupy_array(self.flat):
@@ -107,6 +270,19 @@ class _ArrayComputeBackend:
             / self.n_frames
         )
 
+    def frame(self, index: int) -> np.ndarray:
+        return _reduced_to_numpy(self.flat[int(index)])
+
+    def reduce_frames(self, scan_indices, reduce: str = "mean") -> np.ndarray:
+        selected = self.flat[np.asarray(scan_indices, dtype=np.intp)]
+        if reduce == "mean":
+            return _reduced_to_numpy(selected.mean(axis=0))
+        if reduce == "sum":
+            return _reduced_to_numpy(selected.sum(axis=0, dtype=np.uint64))
+        if reduce == "max":
+            return _reduced_to_numpy(selected.max(axis=0))
+        raise ValueError(f"Unknown frame reduction {reduce!r}; use mean, sum, or max.")
+
     def masked_sum(self, det_mask):
         mask_np = np.asarray(det_mask, dtype=bool)
         if mask_np.shape != tuple(int(x) for x in self.flat.shape[-2:]):
@@ -116,7 +292,7 @@ class _ArrayComputeBackend:
             )
         if _is_cupy_array(self.flat):
             import cupy as cp
-            from quantem.gpu.compute.cuda import cuda_masked_sum
+            from quantem.gpu.detector.compute.cuda.kernels import cuda_masked_sum
 
             out = cuda_masked_sum(self.data, mask_np)
             if out is not None:
@@ -144,6 +320,23 @@ class _ArrayComputeBackend:
             .reshape(self.scan_shape)
         )
 
+    def center_of_mass(self, det_mask=None):
+        mask = np.ones(self.det_shape, dtype=bool)
+        if det_mask is not None:
+            mask = np.asarray(det_mask, dtype=bool)
+            if mask.shape != self.det_shape:
+                raise ValueError(
+                    f"det_mask shape {mask.shape} does not match {self.det_shape}."
+                )
+        flat = np.asarray(self.flat, dtype=np.float64)
+        weighted = flat * mask
+        denominator = np.maximum(weighted.sum(axis=(1, 2)), 1e-10)
+        rows = np.arange(self.det_shape[0], dtype=np.float64)[None, :, None]
+        cols = np.arange(self.det_shape[1], dtype=np.float64)[None, None, :]
+        com_row = (weighted * rows).sum(axis=(1, 2)) / denominator
+        com_col = (weighted * cols).sum(axis=(1, 2)) / denominator
+        return com_col.astype(np.float32), com_row.astype(np.float32)
+
 
 def _resolve_backend(data):
     """Return the array compute backend for this data."""
@@ -151,12 +344,16 @@ def _resolve_backend(data):
     if hasattr(data, "_fields") and "data" in getattr(data, "_fields", ()):
         data = data.data
     if is_packed_uint4(data):
-        from quantem.gpu.compute.backends import compute_backend
+        from quantem.gpu.detector.compute.backends import compute_backend
+
+        return compute_backend(data)
+    if _is_cupy_array(data) or _is_torch_tensor(data):
+        from quantem.gpu.detector.compute.backends import compute_backend
 
         return compute_backend(data)
     if hasattr(data, "chunks"):
-        from quantem.gpu.compute.backends import compute_backend
-        from quantem.gpu.compute.mps import ChunkedFrames
+        from quantem.gpu.detector.compute.backends import compute_backend
+        from quantem.gpu.detector.compute.mps.kernels import ChunkedFrames
 
         if not getattr(data, "_is_gpu_frames", False):
             data = ChunkedFrames(data)
@@ -165,17 +362,8 @@ def _resolve_backend(data):
 
 
 def _scan_shape(data, backend) -> tuple[int, int]:
-    if hasattr(data, "_fields") and "data" in getattr(data, "_fields", ()):
-        data = data.data
-    data = _unwrap_core_4dstem(data)
-    if hasattr(backend, "scan_shape"):
-        return tuple(int(x) for x in backend.scan_shape)
-    shape = getattr(data, "shape", None)
-    if shape is not None and len(shape) >= 4:
-        return int(shape[0]), int(shape[1])
-    n = int(getattr(backend, "n_frames"))
-    sr = int(round(n ** 0.5))
-    return sr, n // sr
+    del data
+    return tuple(int(value) for value in backend.scan_shape)
 
 
 def _semiangle_mrad(data):
@@ -355,273 +543,3 @@ def virtual(data, mode="BF", *, center=None, bf_radius=None, inner=None, outer=N
         bf_radius = bf_radius if bf_radius is not None else r_auto
     mask = _detector_mask(mode, center, bf_radius, dp.shape, inner, outer)
     return masked_sum(data, mask)
-
-
-# --- Migrated from quantem.live.engine.preprocess.brightfield ---
-def detect_bf_radius(
-    mean_dp: cp.ndarray,
-    threshold_ratio: float = 0.1
-) -> tuple[tuple[int, int], int]:
-    """
-    Detect BF disk center and radius from mean diffraction pattern.
-
-    Runs entirely on GPU. Uses intensity thresholding for center-of-mass
-    and radial profile analysis for the half-max radius.
-
-    Parameters
-    ----------
-    mean_dp : cp.ndarray
-        Mean diffraction pattern with shape (k_row, k_col).
-    threshold_ratio : float
-        Fraction of max intensity for thresholding (default: 0.1).
-
-    Returns
-    -------
-    tuple[tuple[int, int], int]
-        ((row_center, col_center), radius) - center coordinates and
-        radius in pixels.
-
-    Raises
-    ------
-    ValueError
-        If the diffraction pattern is empty, all-zero, or contains
-        only NaN/Inf values.
-    """
-    import cupy as cp
-    if mean_dp.ndim != 2:
-        raise ValueError(
-            f"Expected 2D diffraction pattern, got {mean_dp.ndim}D "
-            f"with shape {mean_dp.shape}"
-        )
-    n_k_row, n_k_col = mean_dp.shape
-    if n_k_row == 0 or n_k_col == 0:
-        raise ValueError(
-            f"Diffraction pattern has zero-size dimension: shape {mean_dp.shape}"
-        )
-    dp = mean_dp.astype(cp.float32)
-    dp_max = float(cp.nanmax(dp))
-    if not np.isfinite(dp_max) or dp_max <= 0:
-        raise ValueError(
-            "Diffraction pattern has no positive finite values - "
-            "cannot detect BF disk. Check that your data is loaded correctly."
-        )
-    # Threshold to find BF disk
-    threshold = threshold_ratio * dp_max
-    mask = dp > threshold
-    if not bool(cp.any(mask)):
-        raise ValueError(
-            f"No pixels above threshold ({threshold_ratio:.0%} of max intensity). "
-            f"The diffraction pattern may be too noisy or empty."
-        )
-    # Center of mass on GPU
-    mask_f = mask.astype(cp.float32)
-    total = float(mask_f.sum())
-    row_coords = cp.arange(n_k_row, dtype=cp.float32).reshape(-1, 1)
-    col_coords = cp.arange(n_k_col, dtype=cp.float32).reshape(1, -1)
-    row_center_f = float((row_coords * mask_f).sum() / total)
-    col_center_f = float((col_coords * mask_f).sum() / total)
-    if not (np.isfinite(row_center_f) and np.isfinite(col_center_f)):
-        raise ValueError(
-            "Center-of-mass calculation returned NaN - "
-            "diffraction pattern may be degenerate."
-        )
-    row_center = max(0, min(int(round(row_center_f)), n_k_row - 1))
-    col_center = max(0, min(int(round(col_center_f)), n_k_col - 1))
-    # Radial profile on GPU
-    dr = cp.arange(n_k_row, dtype=cp.float32) - row_center
-    dc = cp.arange(n_k_col, dtype=cp.float32) - col_center
-    DR, DC = cp.meshgrid(dr, dc, indexing='ij')
-    R = cp.sqrt(DR**2 + DC**2)
-    # Integer-binned radial profile (vectorized, no Python loop)
-    max_r = min(row_center, col_center, n_k_row - row_center, n_k_col - col_center)
-    if max_r < 2:
-        return (row_center, col_center), max(1, min(n_k_row, n_k_col) // 4)
-    R_int = cp.rint(R).astype(cp.int32).ravel()
-    dp_flat = dp.ravel()
-    profile = cp.zeros(max_r, dtype=cp.float32)
-    counts = cp.zeros(max_r, dtype=cp.float32)
-    valid = R_int < max_r
-    cp.add.at(profile, R_int[valid], dp_flat[valid])
-    cp.add.at(counts, R_int[valid], cp.ones_like(dp_flat[valid]))
-    nonzero = counts > 0
-    profile[nonzero] /= counts[nonzero]
-    # Gaussian smooth the profile on GPU (1D convolution)
-    if int(profile.size) > 5:
-        sigma = 2.0
-        ksize = int(6 * sigma + 1) | 1  # ensure odd
-        x = cp.arange(ksize, dtype=cp.float32) - ksize // 2
-        kernel = cp.exp(-0.5 * (x / sigma) ** 2)
-        kernel /= kernel.sum()
-        # Pad and convolve
-        padded = cp.pad(profile, ksize // 2, mode='edge')
-        profile_smooth = cp.convolve(padded, kernel, mode='valid')[:profile.size]
-        center_intensity = float(profile_smooth[:5].mean())
-        half_max = center_intensity * 0.5
-        below_half = cp.where(profile_smooth < half_max)[0]
-        if below_half.size > 0:
-            radius = int(below_half[0])
-        else:
-            radius = int(profile.size) // 2
-    else:
-        radius = min(n_k_row, n_k_col) // 4
-    radius = max(1, radius)
-    return (row_center, col_center), radius
-
-
-# --- Migrated from quantem.live.engine.preprocess (dp_mean + virtual_image) ---
-def dp_mean(data: cp.ndarray) -> cp.ndarray:
-    """
-    Compute mean diffraction pattern on GPU.
-
-    Uses integer reduction (``uint64`` accumulator) so there is no
-    intermediate float32 copy of the full 4D array. For 512x512 x 192x192
-    this saves ~38 GB of transient VRAM compared with
-    ``data.astype(float32).mean(axis=0)``.
-
-    Parameters
-    ----------
-    data : cp.ndarray
-        3D ``(N, det_row, det_col)`` or 4D ``(scan_row, scan_col, det_row, det_col)``.
-
-    Returns
-    -------
-    cp.ndarray
-        2D array (det_row, det_col), float32.
-    """
-    import cupy as cp
-    if data.ndim == 3:
-        n = data.shape[0]
-        return data.sum(axis=0, dtype=cp.uint64).astype(cp.float32) / n
-    scan_row, scan_col = data.shape[0], data.shape[1]
-    n = scan_row * scan_col
-    return data.reshape(n, *data.shape[2:]).sum(axis=0, dtype=cp.uint64).astype(cp.float32) / n
-
-
-
-
-def virtual_image(
-    data: cp.ndarray,
-    center_row: float,
-    center_col: float,
-    radius: float | None = None,
-    inner_radius: float | None = None,
-    outer_radius: float | None = None,
-    chunk_size: int | None = None,
-) -> cp.ndarray:
-    """
-    Compute a virtual image by summing masked detector pixels.
-
-    Uses fancy indexing + integer reduction so we only allocate a copy of
-    the masked pixels, not the entire detector. For a 512x512 scan with a
-    BF mask of ~9000 pixels, peak VRAM is ~5 GB instead of ~40 GB.
-
-    For large scans / wide annuli (e.g. DF outer=6.0 on 512², where the
-    masked-pixels copy can still be GB-scale), the scan dimension is
-    chunked. The chunk size is auto-tuned: an initial conservative
-    estimate runs chunk 0, the actual peak allocation is measured, then
-    remaining chunks are retuned. Uses the CLAUDE.md "Adaptive GPU
-    chunking" pattern (estimate → measure → retune → safety factor 0.5).
-
-    Parameters
-    ----------
-    data : cp.ndarray
-        3D ``(N, det_row, det_col)`` or 4D ``(scan_row, scan_col, det_row, det_col)``.
-        For 3D input, returns 2D ``(n, n)`` if the scan is square, else 1D.
-    center_row, center_col : float
-        Center of the detector mask in pixels.
-    radius : float, optional
-        Radius for circular (BF) mask.
-    inner_radius, outer_radius : float, optional
-        Radii for annular (DF) mask.
-    chunk_size : int, optional
-        Override the auto-tuned chunk size. ``None`` → auto. Pass a large
-        value (or ``data.shape[0]``) to disable chunking.
-
-    Returns
-    -------
-    cp.ndarray
-        2D ``(scan_row, scan_col)`` for 4D input, or 2D ``(n, n)`` for 3D
-        input (auto-detected square scan).
-    """
-    import cupy as cp
-    import math
-
-    det_row, det_col = data.shape[-2], data.shape[-1]
-
-    k_row = cp.arange(det_row, dtype=cp.float32)
-    k_col = cp.arange(det_col, dtype=cp.float32)
-    k_row, k_col = cp.meshgrid(k_row, k_col, indexing='ij')
-    dist = cp.sqrt((k_row - center_row) ** 2 + (k_col - center_col) ** 2)
-
-    if radius is not None:
-        mask = dist <= radius
-    elif inner_radius is not None and outer_radius is not None:
-        mask = (dist >= inner_radius) & (dist <= outer_radius)
-    else:
-        raise ValueError("Provide either radius (BF) or inner_radius + outer_radius (DF)")
-
-    from quantem.gpu.compute.cuda import cuda_masked_sum
-
-    raw_out = cuda_masked_sum(data, mask)
-    if raw_out is not None:
-        return raw_out
-
-    # Fallback: grab only the masked pixels and sum with an integer accumulator.
-    indices = cp.where(mask.ravel())[0]
-    data_2d = data.reshape(-1, det_row * det_col)  # view, no copy
-    n_total = int(data_2d.shape[0])
-    n_masked = int(indices.size)
-
-    # Initial chunk-size estimate. The transient on each chunk is the
-    # fancy-index copy: chunk × n_masked × dtype_bytes. Aim to use ~25%
-    # of free memory per chunk so a concurrent allocation (e.g. another
-    # tab loading data) doesn't push us over.
-    itemsize = int(data.dtype.itemsize)
-    if chunk_size is None:
-        try:
-            free_bytes, _ = cp.cuda.runtime.memGetInfo()
-            budget = max(64 * 1024 * 1024, int(free_bytes * 0.25))
-            est_per_pos = max(1, n_masked * itemsize)
-            chunk_size = max(1024, min(n_total, budget // est_per_pos))
-        except Exception:  # noqa: BLE001 — fall back to one shot
-            chunk_size = n_total
-    chunk_size = max(1, min(chunk_size, n_total))
-
-    # One-shot path when the whole scan fits in a single chunk.
-    if chunk_size >= n_total:
-        vi_1d = data_2d[:, indices].sum(axis=-1, dtype=cp.uint64).astype(cp.float32)
-    else:
-        # Pre-allocate output (small, just N_scan floats).
-        vi_1d = cp.empty(n_total, dtype=cp.float32)
-        i = 0
-        while i < n_total:
-            end = min(i + chunk_size, n_total)
-            if i == 0:
-                cp.cuda.runtime.deviceSynchronize()
-                cp.get_default_memory_pool().free_all_blocks()
-            chunk_acc = data_2d[i:end, indices].sum(axis=-1, dtype=cp.uint64)
-            vi_1d[i:end] = chunk_acc.astype(cp.float32)
-            del chunk_acc
-            # After the first chunk, measure actual per-position cost and
-            # retune subsequent chunks. The peak alloc divided by the chunk
-            # we just ran gives the realized cost; pick 0.5× free / cost
-            # for the next chunks (safety factor for fragmentation).
-            if i == 0:
-                try:
-                    pool = cp.get_default_memory_pool()
-                    free_bytes, _ = cp.cuda.runtime.memGetInfo()
-                    used_now = int(pool.used_bytes())
-                    realized_per_pos = max(1, used_now // max(1, end - i))
-                    new_chunk = max(1024, int(free_bytes * 0.5 / realized_per_pos))
-                    chunk_size = min(n_total, new_chunk)
-                except Exception:  # noqa: BLE001
-                    pass
-            i = end
-
-    if data.ndim == 4:
-        return vi_1d.reshape(data.shape[0], data.shape[1])
-    n = data.shape[0]
-    side = int(math.isqrt(n))
-    if side * side == n:
-        return vi_1d.reshape(side, side)
-    return vi_1d

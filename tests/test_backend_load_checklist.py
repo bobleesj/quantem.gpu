@@ -132,7 +132,7 @@ def test_rejected_low6_decoder_is_documented_but_not_shipped() -> None:
 
     for source_path in (
         Path("src/quantem/gpu/webgpu/bslz4.ts"),
-        Path("src/quantem/gpu/webgpu/compute.ts"),
+        Path("src/quantem/gpu/detector/compute/webgpu/backend.ts"),
     ):
         source = source_path.read_text(encoding="utf-8")
         assert "PACKED6" not in source

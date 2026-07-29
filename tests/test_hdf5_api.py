@@ -140,7 +140,7 @@ def test_mps_output_dtype_u4_does_not_alias_to_uint32() -> None:
 def test_mps_multi_dataset_loader_threads_output_dtype(monkeypatch) -> None:
     """C1: lazy MPS browse loads, expect requested uint8 dtype to reach load."""
     from quantem.gpu.io import hdf5, mps_multi
-    import quantem.gpu.compute.mps as mps_compute
+    import quantem.gpu.detector.compute.mps.kernels as mps_compute
 
     calls = []
 

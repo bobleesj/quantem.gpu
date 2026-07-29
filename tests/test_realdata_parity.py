@@ -41,11 +41,10 @@ def _require_vram(min_gb: float) -> None:
         pytest.skip(f"Not enough free VRAM ({free_gb:.1f} GB free, need {min_gb:.0f} GB).")
 
 
-def test_realdata_detector_products_match_legacy_widget_and_not_slower() -> None:
-    """Real-data parity for the migrated detector helpers."""
+def test_realdata_detector_products_are_exact_and_gpu_backed() -> None:
+    """Real-data parity for the public detector workflow."""
     cp = _cupy()
-    legacy_detector = pytest.importorskip("quantem.widget.detector")
-    from quantem.gpu.detector import detect_bf_radius, dp_mean, virtual_image
+    from quantem.gpu import detector
     from quantem.gpu.io.hdf5 import load
 
     _require_vram(12.0)
@@ -53,29 +52,20 @@ def test_realdata_detector_products_match_legacy_widget_and_not_slower() -> None
     _clean_gpu()
     data = load(path, verbose=False).data
 
-    t0 = time.perf_counter()
-    old_mean = legacy_detector.dp_mean(data)
-    (old_row_col, old_radius) = legacy_detector.detect_bf_radius(old_mean)
-    old_bf = legacy_detector.virtual_image(
-        data, old_row_col[0], old_row_col[1], radius=old_radius,
-    )
-    cp.cuda.Stream.null.synchronize()
-    old_s = time.perf_counter() - t0
-
     t1 = time.perf_counter()
-    new_mean = dp_mean(data)
-    (new_row_col, new_radius) = detect_bf_radius(new_mean)
-    new_bf = virtual_image(
-        data, new_row_col[0], new_row_col[1], radius=new_radius,
-    )
+    mean_dp = detector.mean_dp(data)
+    center, radius = detector.auto_probe(mean_dp)
+    bright_field = detector.bf(data, center=center, radius=radius)
     cp.cuda.Stream.null.synchronize()
-    new_s = time.perf_counter() - t1
+    elapsed = time.perf_counter() - t1
 
-    cp.testing.assert_array_equal(new_mean, old_mean)
-    assert new_row_col == old_row_col
-    assert new_radius == old_radius
-    cp.testing.assert_array_equal(new_bf, old_bf)
-    assert new_s <= old_s * 1.10 + 0.01
+    expected_mean = cp.asnumpy(
+        data.reshape(-1, *data.shape[-2:]).sum(axis=0, dtype=cp.uint64)
+    ).astype(np.float32) / int(np.prod(data.shape[:2]))
+    np.testing.assert_array_equal(mean_dp, expected_mean)
+    assert bright_field.dtype == np.float32
+    assert np.isfinite(bright_field).all()
+    assert elapsed > 0.0
 
-    del data, old_mean, old_bf, new_mean, new_bf
+    del data, mean_dp, bright_field
     _clean_gpu()

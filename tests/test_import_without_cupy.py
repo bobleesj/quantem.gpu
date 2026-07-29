@@ -20,27 +20,21 @@ def test_quantem_gpu_root_import_without_cupy() -> None:
         sys.meta_path.insert(0, BlockCupy())
 
         import quantem.gpu as qg
-        import quantem.gpu.io as qgio
-
-        report = qg.device_report("cpu")
-        assert report.selected == "cpu"
-        assert qg.CalibrationMemoryPlan.__module__ == "quantem.gpu.calibration"
-        assert qg.calibration_memory_plan.__module__ == "quantem.gpu.calibration"
-        assert qg.load_calibration_products.__module__ == "quantem.gpu.calibration"
-        assert qg.dp_mean.__module__ == "quantem.gpu.detector"
-        assert qg.load_scan_indices.__module__ == "quantem.gpu.io.hdf5"
-        assert "load_scan_region" not in qg.__all__
-        assert not hasattr(qg, "load_scan_region")
-        assert "load_scan_region" not in qgio.__all__
-        assert not hasattr(qgio, "load_scan_region")
-        assert qg.random_scan_indices.__module__ == "quantem.gpu.io.hdf5"
+        assert qg.detector.__name__ == "quantem.gpu.detector"
+        assert qg.device.__name__ == "quantem.gpu.device"
+        assert qg.dpc.__name__ == "quantem.gpu.dpc"
+        assert qg.io.__name__ == "quantem.gpu.io"
+        assert qg.parallax.__name__ == "quantem.gpu.parallax"
+        assert qg.screening.__name__ == "quantem.gpu.screening"
         assert qg.SSB.__module__ == "quantem.gpu.ssb.workflow"
-        assert qg.ssb.__name__ == "quantem.gpu.ssb"
+        assert "load" not in qg.__all__
+        assert "bf" not in qg.__all__
+        assert "dpc" in qg.__all__
+        assert "webgpu" not in qg.__all__
         assert not any(
             name.lower().endswith(("_cuda", "_mps", "_webgpu"))
             for name in qg.__all__
         )
-        assert "load_mps_4dstem" in qgio.__all__
         print("ok")
         """
     )

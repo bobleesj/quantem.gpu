@@ -154,3 +154,35 @@ def test_public_ssb_exports_are_backend_neutral() -> None:
         "SSB",
         "SSBResult",
     }
+
+
+def test_preview_context_is_consumed_by_public_workflow() -> None:
+    """Live previews never need backend-private context handling."""
+
+    from quantem.gpu import SSB
+
+    events: list[str] = []
+
+    class Context:
+        def __enter__(self):
+            events.append("enter")
+            return self
+
+        def __exit__(self, *_args):
+            events.append("exit")
+
+    class Session(SSB):
+        @property
+        def _backend_protocol(self):
+            return self._test_backend
+
+    session = Session.__new__(Session)
+    session._test_backend = _Backend()
+    phase, loss = session.preview(
+        {"C10": 0.0, "C12": 0.0, "phi12": 0.0},
+        context=Context(),
+    )
+
+    assert events == ["enter", "exit"]
+    assert phase.dtype == np.float32
+    assert loss is None

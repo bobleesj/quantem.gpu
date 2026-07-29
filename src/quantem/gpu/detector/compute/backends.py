@@ -76,7 +76,7 @@ import threading
 
 import numpy as np
 
-from quantem.gpu.compute.backend import ComputeBackend  # noqa: F401
+from quantem.gpu.detector.compute.protocol import ComputeBackend  # noqa: F401
 from quantem.gpu.uint4 import is_packed_uint4
 
 # Cap transient float32 memory per reduction chunk (matches the widget budget).
@@ -424,7 +424,7 @@ class MetalRawBackend:
             # Sidecar ready: downsample the detector mask to the actual sidecar
             # bin factor (bin2 on large-memory Macs, bin4 on small ones), then
             # reduce on the smaller resident Metal buffer.
-            from quantem.gpu.compute.mps import _bin_mask
+            from quantem.gpu.detector.compute.mps.kernels import _bin_mask
 
             mask = _bin_mask(
                 np.ascontiguousarray(det_mask),
@@ -480,7 +480,7 @@ class MetalRawBackend:
         cf = self._cf
         fv = getattr(cf, "fast_vi", None)
         if self._auto_fast and fv is not None:
-            from quantem.gpu.compute.mps import _bin_mask
+            from quantem.gpu.detector.compute.mps.kernels import _bin_mask
 
             binf = self.fast_bin
             m = (
@@ -523,7 +523,7 @@ class MetalRawBackend:
         fv = getattr(cf, "fast_vi", None)
         if fv is None:
             return {}
-        from quantem.gpu.compute.mps import _bin_mask
+        from quantem.gpu.detector.compute.mps.kernels import _bin_mask
         out: dict[str, np.ndarray] = {}
         for name, mask in masks.items():
             vi = fv.masked_sum(_bin_mask(np.ascontiguousarray(mask), self.fast_bin))
@@ -706,7 +706,7 @@ class CudaKernelCompute:
 
     def _total_counts_uint64(self):
         if self._total_cache_uint64 is None:
-            from quantem.gpu.compute.cuda import cuda_sum_all_uint64
+            from quantem.gpu.detector.compute.cuda.kernels import cuda_sum_all_uint64
 
             self._total_cache_uint64 = cuda_sum_all_uint64(self._data)
         return self._total_cache_uint64
@@ -728,7 +728,7 @@ class CudaKernelCompute:
 
     def masked_sum(self, det_mask: np.ndarray) -> np.ndarray:
         import cupy as cp
-        from quantem.gpu.compute.cuda import (
+        from quantem.gpu.detector.compute.cuda.kernels import (
             cuda_selected_sum,
             cuda_selected_sum_from_total,
         )
@@ -780,7 +780,7 @@ class CudaKernelCompute:
         return out.reshape(self.det_shape).get()
 
     def center_of_mass(self, det_mask: np.ndarray | None = None):
-        from quantem.gpu.compute.cuda import cuda_center_of_mass
+        from quantem.gpu.detector.compute.cuda.kernels import cuda_center_of_mass
 
         if det_mask is None and self._com_cache is not None:
             return self._com_cache
@@ -825,7 +825,7 @@ class CudaPackedUInt4Compute:
         self._mask_index_cache = OrderedDict()
 
     def frame(self, idx: int) -> np.ndarray:
-        from quantem.gpu.compute.cuda import cuda_frame_uint4_to_u8
+        from quantem.gpu.detector.compute.cuda.kernels import cuda_frame_uint4_to_u8
 
         frame = cuda_frame_uint4_to_u8(self._data, int(idx))
         if frame is None:
@@ -834,7 +834,7 @@ class CudaPackedUInt4Compute:
 
     def _total_counts_uint64(self):
         if self._total_cache_uint64 is None:
-            from quantem.gpu.compute.cuda import cuda_sum_all_uint64_uint4
+            from quantem.gpu.detector.compute.cuda.kernels import cuda_sum_all_uint64_uint4
 
             self._total_cache_uint64 = cuda_sum_all_uint64_uint4(self._data)
         return self._total_cache_uint64
@@ -856,7 +856,7 @@ class CudaPackedUInt4Compute:
 
     def masked_sum(self, det_mask: np.ndarray) -> np.ndarray:
         import cupy as cp
-        from quantem.gpu.compute.cuda import (
+        from quantem.gpu.detector.compute.cuda.kernels import (
             cuda_selected_sum_from_total_uint4,
             cuda_selected_sum_uint4,
         )
@@ -889,7 +889,7 @@ class CudaPackedUInt4Compute:
         return out.get().astype(np.float32, copy=False)
 
     def mean_dp(self) -> np.ndarray:
-        from quantem.gpu.compute.cuda import cuda_mean_dp_uint4
+        from quantem.gpu.detector.compute.cuda.kernels import cuda_mean_dp_uint4
 
         out = cuda_mean_dp_uint4(self._data)
         if out is None:
@@ -898,7 +898,7 @@ class CudaPackedUInt4Compute:
 
     def reduce_frames(self, scan_indices: np.ndarray, reduce: str = "mean") -> np.ndarray:
         import cupy as cp
-        from quantem.gpu.compute.cuda import cuda_frame_uint4_to_u8
+        from quantem.gpu.detector.compute.cuda.kernels import cuda_frame_uint4_to_u8
 
         idx = np.asarray(scan_indices, dtype=np.int64).reshape(-1)
         n_det = int(self.det_shape[0] * self.det_shape[1])
@@ -920,7 +920,7 @@ class CudaPackedUInt4Compute:
         return out.reshape(self.det_shape).get()
 
     def center_of_mass(self, det_mask: np.ndarray | None = None):
-        from quantem.gpu.compute.cuda import cuda_center_of_mass_uint4
+        from quantem.gpu.detector.compute.cuda.kernels import cuda_center_of_mass_uint4
 
         if det_mask is None and self._com_cache is not None:
             return self._com_cache

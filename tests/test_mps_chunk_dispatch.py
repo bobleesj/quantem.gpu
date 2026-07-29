@@ -18,7 +18,7 @@ class _ChunkSource:
 def test_chunked_frames_carries_decode_side_detector_sum(monkeypatch):
     from types import SimpleNamespace
 
-    from quantem.gpu.compute import mps
+    from quantem.gpu.detector.compute.mps import kernels as mps
 
     class FakeVI:
         def __init__(self, chunks, row_prefix=False):
@@ -43,7 +43,7 @@ def test_chunked_frames_carries_decode_side_detector_sum(monkeypatch):
 
 
 def test_mps_float32_columns_forward_direct_output():
-    from quantem.gpu.compute.mps import ChunkedFrames
+    from quantem.gpu.detector.compute.mps.kernels import ChunkedFrames
 
     expected = np.empty((2, 4), dtype=np.float32)
     rows = np.array([1, 2])
@@ -64,8 +64,8 @@ def test_mps_float32_columns_forward_direct_output():
 
 def test_masked_sum_dispatches_chunk_source_through_gpu_compute(monkeypatch):
     from quantem.gpu import detector
-    from quantem.gpu.compute import backends
-    from quantem.gpu.compute import mps
+    from quantem.gpu.detector.compute import backends
+    from quantem.gpu.detector.compute.mps import kernels as mps
 
     calls: list[object] = []
 
@@ -99,24 +99,18 @@ def test_masked_sum_dispatches_chunk_source_through_gpu_compute(monkeypatch):
 
 def test_center_of_mass_dispatches_chunk_source_through_gpu_compute(monkeypatch):
     dpc = importlib.import_module("quantem.gpu.dpc")
-    from quantem.gpu.compute import mps
+    from quantem.gpu import detector
 
-    class FakeVI:
-        n = 4
-        det = (2, 2)
+    class FakeSession:
+        scan_shape = (2, 2)
 
         def center_of_mass(self, mask):
-            assert mask.shape == self.det
-            com_col = np.array([10.0, 11.0, 12.0, 13.0], dtype=np.float32)
+            assert mask.shape == (2, 2)
             com_row = np.array([20.0, 21.0, 22.0, 23.0], dtype=np.float32)
-            return com_col, com_row
+            com_col = np.array([10.0, 11.0, 12.0, 13.0], dtype=np.float32)
+            return com_row.reshape(2, 2), com_col.reshape(2, 2)
 
-    class FakeChunkedFrames:
-        def __init__(self, source):
-            self.source = source
-            self.vi = FakeVI()
-
-    monkeypatch.setattr(mps, "ChunkedFrames", FakeChunkedFrames)
+    monkeypatch.setattr(detector, "prepare", lambda _source: FakeSession())
 
     mask = np.ones((2, 2), dtype=bool)
     com_row, com_col = dpc.center_of_mass(_ChunkSource(), mask=mask)
@@ -127,8 +121,8 @@ def test_center_of_mass_dispatches_chunk_source_through_gpu_compute(monkeypatch)
 
 
 def test_mps_fast_sidecar_center_of_mass_uses_configured_bin(monkeypatch):
-    from quantem.gpu.compute.backends import MetalRawBackend
-    from quantem.gpu.compute import mps
+    from quantem.gpu.detector.compute.backends import MetalRawBackend
+    from quantem.gpu.detector.compute.mps import kernels as mps
 
     received = {}
 

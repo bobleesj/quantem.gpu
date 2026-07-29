@@ -1,30 +1,35 @@
 from __future__ import annotations
 
+from importlib.resources import files
+
 import pytest
 
 
+def source_text(name: str) -> str:
+    """Read one domain-owned WebGPU source resource."""
+
+    return files("quantem.gpu").joinpath(name).read_text(encoding="utf-8")
+
+
 def test_webgpu_sources_are_shipped_and_readable() -> None:
-    from quantem.gpu import webgpu
-
-    names = webgpu.source_names()
-
-    assert "webgpu/compute.ts" in names
-    assert "webgpu/bslz4.ts" in names
-    assert "webgpu/device.ts" in names
-    assert "webgpu/local-h5.ts" in names
-    assert "ssb/compute/webgpu/backend.ts" in names
-    assert "ssb/compute/webgpu/optimizer.ts" in names
-    for size in (128, 256, 512, 1024):
-        assert f"ssb/compute/webgpu/kernels/fft{size}.ts" in names
+    names = [
+        "device/webgpu.ts",
+        "detector/compute/webgpu/backend.ts",
+        "dpc/compute/webgpu/fft.ts",
+        "dpc/compute/webgpu/kernels.ts",
+        "ssb/compute/webgpu/backend.ts",
+        "ssb/compute/webgpu/optimizer.ts",
+        *(f"ssb/compute/webgpu/kernels/fft{size}.ts" for size in (128, 256, 512, 1024)),
+    ]
     for name in names:
-        text = webgpu.source_text(name)
+        text = source_text(name)
         assert text.strip()
 
 
 def test_webgpu_compute_source_tracks_vi_and_dpc_kernels() -> None:
-    from quantem.gpu.webgpu import source_text
-
-    source = source_text("webgpu/compute.ts")
+    detector_source = source_text("detector/compute/webgpu/backend.ts")
+    dpc_source = source_text("dpc/compute/webgpu/kernels.ts")
+    source = detector_source + "\n" + dpc_source
 
     assert "const maskedSumSrc" in source
     assert "export function buildDetectorMask" in source
@@ -40,7 +45,7 @@ def test_webgpu_compute_source_tracks_vi_and_dpc_kernels() -> None:
     assert "const DPC_COMPONENT_WGSL" in source
     assert "const DPC_COMPONENT_PAIR_WGSL" in source
     assert "const DPC_OUTPUT_ULP_CORRECT_WGSL" in source
-    assert 'import { FFT_2D_SHADER } from "./fft-shader";' in source
+    assert 'import { FFT_2D_SHADER } from "../../../dpc/compute/webgpu/fft";' in detector_source
     assert "const IDPC_PACK_WGSL" in source
     assert "const IDPC_POISSON_WGSL" in source
     assert "const IDPC_EXTRACT_WGSL" in source
@@ -64,13 +69,11 @@ def test_webgpu_compute_source_tracks_vi_and_dpc_kernels() -> None:
 
 
 def test_webgpu_backend_source_tracks_ssb_engine() -> None:
-    from quantem.gpu.webgpu import source_text
-
     source = source_text("ssb/compute/webgpu/backend.ts")
 
-    assert 'from "../../../webgpu/device"' in source
-    assert 'from "../../../webgpu/h5reader"' in source
-    assert 'from "../../../webgpu/bslz4"' in source
+    assert 'from "../../../device/webgpu"' in source
+    assert 'from "../../../io/backends/webgpu/h5reader"' in source
+    assert 'from "../../../io/backends/webgpu/bslz4"' in source
     assert "export class WebGPUSSBBackend" in source
     assert 'real_dtype: "float32"' in source
     assert 'complex_dtype: "complex64"' in source
@@ -96,9 +99,7 @@ def test_webgpu_backend_source_tracks_ssb_engine() -> None:
 
 
 def test_webgpu_h5reader_keeps_single_pass_block_metadata_parse() -> None:
-    from quantem.gpu.webgpu import source_text
-
-    source = source_text("webgpu/h5reader.ts")
+    source = source_text("io/backends/webgpu/h5reader.ts")
 
     assert "unsupported HDF5 chunk codec or uncompressed detector chunks" in source
     assert "validateBslz4ChunkHeader" in source
@@ -127,7 +128,6 @@ def test_webgpu_h5reader_keeps_single_pass_block_metadata_parse() -> None:
 
 
 def test_webgpu_bslz4_uses_fused_integer_to_uint8_decoder() -> None:
-    from quantem.gpu.webgpu import source_text
 
     source = source_text("webgpu/bslz4.ts")
 
@@ -196,7 +196,6 @@ def test_webgpu_bslz4_uses_fused_integer_to_uint8_decoder() -> None:
 
 
 def test_webgpu_local_h5_source_tracks_show4dstem_loader_contract() -> None:
-    from quantem.gpu.webgpu import source_text
 
     source = source_text("webgpu/local-h5.ts")
 
@@ -259,7 +258,6 @@ def test_webgpu_local_h5_source_tracks_show4dstem_loader_contract() -> None:
 
 
 def test_webgpu_source_rejects_unknown_names() -> None:
-    from quantem.gpu.webgpu import source_text
 
     with pytest.raises(ValueError, match="Unknown WebGPU source"):
         source_text("missing.ts")

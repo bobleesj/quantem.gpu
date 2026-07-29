@@ -25,7 +25,7 @@ def _mask(det_shape: tuple[int, int], radius: float, *, invert: bool = False) ->
 @pytest.mark.parametrize("dtype", [np.uint8, np.uint16, np.uint32])
 def test_cuda_masked_sum_matches_cupy_selected_sum(dtype) -> None:
     cp = _cupy_with_device()
-    from quantem.gpu.compute.cuda import cuda_masked_sum
+    from quantem.gpu.detector.compute.cuda.kernels import cuda_masked_sum
 
     rng = np.random.default_rng(31)
     data_np = rng.integers(0, 200, size=(5, 6, 12, 10), dtype=dtype)
@@ -46,7 +46,7 @@ def test_cuda_masked_sum_matches_cupy_selected_sum(dtype) -> None:
 @pytest.mark.parametrize("dtype", [np.uint8, np.uint16, np.uint32])
 def test_cuda_sum_all_matches_cupy_row_sum(dtype) -> None:
     cp = _cupy_with_device()
-    from quantem.gpu.compute.cuda import cuda_sum_all_uint64
+    from quantem.gpu.detector.compute.cuda.kernels import cuda_sum_all_uint64
 
     rng = np.random.default_rng(33)
     data_np = rng.integers(0, 200, size=(4, 5, 13, 11), dtype=dtype)
@@ -61,7 +61,7 @@ def test_cuda_sum_all_matches_cupy_row_sum(dtype) -> None:
 @pytest.mark.parametrize("dtype", [np.uint8, np.uint16, np.uint32])
 def test_cuda_center_of_mass_matches_reference(dtype) -> None:
     cp = _cupy_with_device()
-    from quantem.gpu.compute.cuda import cuda_center_of_mass
+    from quantem.gpu.detector.compute.cuda.kernels import cuda_center_of_mass
 
     rng = np.random.default_rng(35)
     data_np = rng.integers(0, 200, size=(4, 5, 13, 11), dtype=dtype)
@@ -84,7 +84,7 @@ def test_cuda_center_of_mass_matches_reference(dtype) -> None:
 
 def test_cuda_center_of_mass_masked_matches_reference() -> None:
     cp = _cupy_with_device()
-    from quantem.gpu.compute.cuda import cuda_center_of_mass
+    from quantem.gpu.detector.compute.cuda.kernels import cuda_center_of_mass
 
     rng = np.random.default_rng(39)
     data_np = rng.integers(0, 60000, size=(3, 4, 10, 12), dtype=np.uint16)
@@ -110,7 +110,7 @@ def test_cuda_center_of_mass_masked_matches_reference() -> None:
 
 def test_cuda_dense_mask_uses_integer_complement_and_matches_cupy() -> None:
     cp = _cupy_with_device()
-    from quantem.gpu.compute.cuda import cuda_masked_sum
+    from quantem.gpu.detector.compute.cuda.kernels import cuda_masked_sum
 
     rng = np.random.default_rng(37)
     data_np = rng.integers(0, 60000, size=(4, 4, 16, 16), dtype=np.uint16)
@@ -129,7 +129,7 @@ def test_cuda_dense_mask_uses_integer_complement_and_matches_cupy() -> None:
 
 
 def test_cuda_virtual_image_kernel_source_uses_warp_and_fused_dense_path() -> None:
-    from quantem.gpu.compute.cuda import _CUDA_VI_CODE
+    from quantem.gpu.detector.compute.cuda.kernels import _CUDA_VI_CODE
 
     assert "__shfl_down_sync" in _CUDA_VI_CODE
     assert "selected_sum_f32_u16_16f" in _CUDA_VI_CODE
@@ -153,7 +153,7 @@ def test_cuda_virtual_image_kernel_source_uses_warp_and_fused_dense_path() -> No
 
 def test_cupy_compute_backend_dispatches_to_cuda_kernel_backend() -> None:
     cp = _cupy_with_device()
-    from quantem.gpu.compute.backends import CudaKernelCompute, compute_backend
+    from quantem.gpu.detector.compute.backends import CudaKernelCompute, compute_backend
 
     data = cp.ones((4, 4, 12, 12), dtype=cp.uint16)
     backend = compute_backend(data)
@@ -175,7 +175,7 @@ def test_cupy_compute_backend_dispatches_to_cuda_kernel_backend() -> None:
 
 def test_cuda_compute_backend_caches_full_center_of_mass() -> None:
     cp = _cupy_with_device()
-    from quantem.gpu.compute.backends import CudaKernelCompute, compute_backend
+    from quantem.gpu.detector.compute.backends import CudaKernelCompute, compute_backend
 
     rng = np.random.default_rng(41)
     data_np = rng.integers(0, 200, size=(4, 5, 13, 11), dtype=np.uint16)
@@ -202,7 +202,7 @@ def test_cuda_compute_backend_caches_full_center_of_mass() -> None:
 
 def test_cuda_packed_uint4_backend_matches_unpacked_uint8_reference() -> None:
     cp = _cupy_with_device()
-    from quantem.gpu.compute.backends import CudaPackedUInt4Compute, compute_backend
+    from quantem.gpu.detector.compute.backends import CudaPackedUInt4Compute, compute_backend
     from quantem.gpu.uint4 import pack_uint4_cupy
 
     rng = np.random.default_rng(43)

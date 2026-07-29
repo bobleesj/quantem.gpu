@@ -11,7 +11,7 @@ import math
 import cupy as cp
 import numpy as np
 
-from quantem.gpu.image.dft_upsample import cross_correlation_shift_cp, cross_correlation_shift_batch_cp
+from .correlation import cross_correlation_shift_cp, cross_correlation_shift_batch_cp
 
 
 # =========================================================================

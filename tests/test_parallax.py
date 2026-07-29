@@ -40,18 +40,19 @@ def test_parallax_public_names_are_lazy() -> None:
     import quantem.gpu as qg
 
     assert "parallax" in qg.__all__
-    assert "Parallax" in qg.__all__
-    assert "ParallaxResult" in qg.__all__
+    assert qg.parallax.__all__ == ["ParallaxResult", "run"]
+    assert "Parallax" not in qg.__all__
+    assert "ParallaxResult" not in qg.__all__
 
 
 def test_parallax_synthetic_end_to_end() -> None:
     cp = pytest.importorskip("cupy")
-    from quantem.gpu import ParallaxResult, parallax
+    from quantem.gpu import parallax
 
     data_np, center, radius = _synthetic_parallax_cube()
     data = cp.asarray(data_np)
 
-    result = parallax(
+    result = parallax.run(
         data,
         scan_shape=data_np.shape[:2],
         center=center,
@@ -61,7 +62,7 @@ def test_parallax_synthetic_end_to_end() -> None:
         verbose=False,
     )
 
-    assert isinstance(result, ParallaxResult)
+    assert isinstance(result, parallax.ParallaxResult)
     assert tuple(int(v) for v in result.image.shape) == data_np.shape[:2]
     assert tuple(int(v) for v in result.density.shape) == data_np.shape[:2]
     assert len(result.shifts) == int(np.count_nonzero(
@@ -76,8 +77,8 @@ def test_parallax_synthetic_end_to_end() -> None:
 
 def test_parallax_aberration_fit_recovers_known_coefficients() -> None:
     pytest.importorskip("cupy")
-    from quantem.gpu.ssb.optics.aberration_fitting import fit_aberrations_svd_polar
-    from quantem.gpu.ssb.optics.physics import wavelength_A_from_kV
+    from quantem.gpu.optics.aberration_fitting import fit_aberrations_svd_polar
+    from quantem.gpu.optics.physics import wavelength_A_from_kV
 
     gpts = (16, 16)
     center = (8, 8)
@@ -120,7 +121,7 @@ def test_parallax_aberration_fit_end_to_end() -> None:
     data_np, center, radius = _synthetic_parallax_cube(scan_shape=(10, 10))
     data = cp.asarray(data_np)
 
-    result = parallax(
+    result = parallax.run(
         data,
         scan_shape=data_np.shape[:2],
         center=center,
@@ -139,7 +140,7 @@ def test_parallax_aberration_fit_end_to_end() -> None:
 
 
 def test_parallax_result_converts_aberrations_for_ssb() -> None:
-    from quantem.gpu import ParallaxResult
+    from quantem.gpu.parallax import ParallaxResult
 
     result = ParallaxResult(
         image=np.zeros((2, 2), dtype=np.float32),
@@ -166,7 +167,7 @@ def test_parallax_result_converts_aberrations_for_ssb() -> None:
 
 
 def test_parallax_result_rejects_missing_ssb_conversion_inputs() -> None:
-    from quantem.gpu import ParallaxResult
+    from quantem.gpu.parallax import ParallaxResult
 
     result = ParallaxResult(
         image=np.zeros((2, 2), dtype=np.float32),
@@ -182,7 +183,7 @@ def test_parallax_result_rejects_missing_ssb_conversion_inputs() -> None:
 def test_parallax_real_env_crop_recovers_aberrations_when_available() -> None:
     cp = pytest.importorskip("cupy")
     from quantem.gpu import parallax
-    from quantem.gpu.detector import detect_bf_radius
+    from quantem.gpu.detector import auto_probe
     from quantem.gpu.io.hdf5 import load
 
     master_env = "QUANTEM_GPU_PARALLAX_MASTER"
@@ -203,11 +204,11 @@ def test_parallax_real_env_crop_recovers_aberrations_when_available() -> None:
         output_dtype=np.float32,
     )
     data = loaded.data
-    center, radius = detect_bf_radius(data.mean(axis=(0, 1)))
+    center, radius = auto_probe(data.mean(axis=(0, 1)))
     center = tuple(int(v) for v in center)
     radius = int(radius)
 
-    got = parallax(
+    got = parallax.run(
         data,
         scan_shape=scan_shape,
         center=center,

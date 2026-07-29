@@ -155,7 +155,7 @@ def virtual_image_kernel_support(
     backend
         ``"auto"``, ``"cuda"``, ``"mps"``, ``"webgpu"``, ``"torch"``, or
         ``"cpu"``. ``"webgpu"`` reports the Show4DSTEM browser WGSL contract
-        shipped in ``quantem.gpu.webgpu`` and bundled by ``quantem.widget``.
+        shipped in ``quantem.gpu.detector.compute.webgpu`` and bundled by ``quantem.widget``.
     shape, dtype
         Optional shape-only probe. Use this for large future systems such as
         ``shape=(1024, 1024, 192, 192), dtype=np.uint8``.
@@ -190,7 +190,7 @@ def virtual_image_kernel_support(
             backend="cuda",
             available=bool(available),
             custom_kernel=bool(available),
-            kernel="quantem.gpu.compute.cuda RawKernel selected-sum",
+            kernel="quantem.gpu.detector.compute.cuda.kernels RawKernel selected-sum",
             dtype=dtype_name,
             shape=shape,
             scan_shape=scan_shape,
@@ -220,7 +220,7 @@ def virtual_image_kernel_support(
             backend="mps",
             available=bool(available),
             custom_kernel=bool(available),
-            kernel="quantem.gpu.compute.mps MetalVirtualImage",
+            kernel="quantem.gpu.detector.compute.mps.kernels MetalVirtualImage",
             dtype=dtype_name,
             shape=shape,
             scan_shape=scan_shape,
@@ -270,7 +270,7 @@ def virtual_image_kernel_support(
             backend="webgpu",
             available=bool(available),
             custom_kernel=bool(available),
-            kernel="quantem.gpu.webgpu Show4DSTEMCompute WGSL selected-index reducer",
+            kernel="quantem.gpu.detector.compute.webgpu DetectorCompute WGSL selected-index reducer",
             dtype=dtype_name,
             shape=shape,
             scan_shape=scan_shape,

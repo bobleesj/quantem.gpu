@@ -31,20 +31,20 @@ def _nvidia_gpu_present() -> bool:
     real CUDA box apart from a GPU-less one even when cupy is missing — that
     distinction is what lets us REFUSE a silent CPU fallback on a CUDA box.
     """
-    from quantem.gpu.device import _nvidia_gpu_present as _probe
+    from quantem.gpu.device.backend import _nvidia_gpu_present as _probe
 
     return _probe()
 
 
 def _has_cuda() -> bool:
-    from quantem.gpu.device import _cuda_probe
+    from quantem.gpu.device.backend import _cuda_probe
 
-    available, _count, _error = _cuda_probe()
+    available, _error = _cuda_probe()
     return available
 
 
 def _has_mps() -> bool:
-    from quantem.gpu.device import _mps_probe
+    from quantem.gpu.device.backend import _mps_probe
 
     available, _error = _mps_probe()
     return available

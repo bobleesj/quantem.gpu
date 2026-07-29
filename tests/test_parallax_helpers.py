@@ -12,15 +12,15 @@ import pytest
 cp = pytest.importorskip("cupy")
 torch = pytest.importorskip("torch")
 
-from quantem.gpu.image.dft_upsample import (
+from quantem.gpu.parallax.compute.cuda.correlation import (
     cross_correlation_shift_cp,
     dft_upsample_cp,
 )
-from quantem.gpu.parallax_utils import (
+from quantem.gpu.parallax.compute.cuda.alignment import (
     _bin_mapping_only,
     synchronize_shifts_cp,
 )
-from quantem.gpu.ssb.optics.aberration_fitting import fit_aberrations_svd_polar
+from quantem.gpu.optics.aberration_fitting import fit_aberrations_svd_polar
 
 
 QUANTEM_SRC_ENV = "QUANTEM_ORIGINAL_SRC"

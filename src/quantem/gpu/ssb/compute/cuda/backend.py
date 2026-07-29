@@ -11,7 +11,7 @@ import cupy as cp
 
 from .engine import SSBEngine
 from ..protocol import SSBExportState, SSBPrecision
-from quantem.gpu.ssb.optics.physics import electron_wavelength_angstrom
+from quantem.gpu.optics.physics import electron_wavelength_angstrom
 from quantem.gpu.ssb.results import SSBResult
 
 # =========================================================================
@@ -277,9 +277,10 @@ class CudaSSBBackend:
 
         # Auto-detect det_sampling from BF radius
         if det_sampling is None:
-            from quantem.gpu.detector import detect_bf_radius
-            from quantem.gpu.detector import dp_mean
-            mean_dp = dp_mean(data)
+            from quantem.gpu.detector.compute.cuda.probe import detect_bf_radius
+            from quantem.gpu.detector.compute.cuda.probe import mean_dp as mean_dp_cuda
+
+            mean_dp = mean_dp_cuda(data)
             if gain is not None:
                 mean_dp = mean_dp.astype(cp.float32, copy=False) * gain
             _, detected_bf_radius = detect_bf_radius(mean_dp)
@@ -331,7 +332,7 @@ class CudaSSBBackend:
 
         # BF mask -> G_qk extraction. Raw data stays in its native dtype
         # (usually uint16). _compute_bf_mask reduces over scan axes via
-        # dp_mean (integer accumulator); _extract_gqk fancy-indexes the
+        # integer mean-DP reduction (integer accumulator); _extract_gqk fancy-indexes the
         # masked BF pixels before casting to complex64, so the float cast
         # only touches the BF disk instead of the full 4D block.
         self.bf_inds_row, self.bf_inds_col, self.bf_center = self._compute_bf_mask(
@@ -429,7 +430,7 @@ class CudaSSBBackend:
     ) -> tuple[cp.ndarray, cp.ndarray, tuple[float, float]]:
         """Compute bright-field mask indices and center from mean diffraction pattern.
 
-        Accepts raw integer or float GPU data. Uses ``dp_mean`` with an
+        Accepts raw integer or float GPU data. Uses ``integer mean-DP reduction`` with an
         integer accumulator so no float32 copy of the 4D block is made.
         """
         frames = data.reshape(-1, data.shape[-2], data.shape[-1])

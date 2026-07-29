@@ -6,7 +6,7 @@ import pytest
 
 def test_find_optimal_rotation_matches_batch_reference() -> None:
     """The curl-score search should match the old full-stack search."""
-    from quantem.gpu.dpc import (
+    from quantem.gpu.dpc.workflow import (
         _curl_batch,
         _rotate_vector_batch,
         find_optimal_rotation,

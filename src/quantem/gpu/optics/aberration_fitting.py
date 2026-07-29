@@ -4,7 +4,7 @@ Aberration fitting from pixel shifts (CuPy GPU implementation).
 Recovers aberration coefficients from measured real-space shifts by solving
 a linear least-squares problem.
 
-This module complements :mod:`quantem.gpu.ssb.optics.aberration`, which computes
+This module complements :mod:`quantem.gpu.optics.aberration`, which computes
 the forward model (aberration phase χ from coefficients). This module solves
 the inverse problem (coefficients from measured shifts).
 
@@ -31,7 +31,7 @@ for numerical stability when fitting high-order aberrations.
 
 See Also
 --------
-quantem.gpu.ssb.optics.aberration : Forward model (χ from coefficients)
+quantem.gpu.optics.aberration : Forward model (χ from coefficients)
 """
 
 import cupy as cp
@@ -272,7 +272,7 @@ def fit_aberrations(
     Examples
     --------
     >>> import cupy as cp
-    >>> from quantem.gpu.ssb.optics.aberration_fitting import fit_aberrations
+    >>> from quantem.gpu.optics.aberration_fitting import fit_aberrations
     >>> 
     >>> # Experimental parameters
     >>> voltage_kV = 300

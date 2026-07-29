@@ -23,7 +23,7 @@ import numpy as np
 
 from quantem.gpu.detector import auto_probe, mean_dp
 from quantem.gpu.ssb.results import SSBResult
-from quantem.gpu.ssb.optics.physics import electron_wavelength_angstrom
+from quantem.gpu.optics.physics import electron_wavelength_angstrom
 from quantem.gpu.ssb.bf_selector import BrightfieldDisk
 
 
@@ -554,7 +554,7 @@ def _require_mlx():
 
 
 def _as_chunked_frames(data):
-    from quantem.gpu.compute.mps import ChunkedFrames
+    from quantem.gpu.detector.compute.mps.kernels import ChunkedFrames
     from quantem.gpu.io.backends.mps import MPSChunked4DSTEM
     from quantem.gpu.io.hdf5 import LoadResult
 
@@ -580,7 +580,7 @@ def _selected_columns_stack(
     scan_shape: tuple[int, int],
 ) -> np.ndarray:
     """Return selected detector columns as ``(num_bf, scan_y, scan_x)``."""
-    from quantem.gpu.compute.mps import ChunkedFrames
+    from quantem.gpu.detector.compute.mps.kernels import ChunkedFrames
 
     if isinstance(frames, (MpsBfColumnFrames, ChunkedFrames)):
         flat = frames.columns_float32(rows, cols)
@@ -730,7 +730,7 @@ def _default_phase_col_k_bf(
 
 
 def _scan_shape(frames) -> tuple[int, int]:
-    from quantem.gpu.compute.mps import ChunkedFrames
+    from quantem.gpu.detector.compute.mps.kernels import ChunkedFrames
 
     if isinstance(frames, (MpsBfColumnFrames, _ArrayFrames)):
         shape = frames.scan_shape
@@ -853,7 +853,7 @@ def _detect_bf_radius_numpy(
     mean_dp_array: np.ndarray,
     threshold_ratio: float = 0.1,
 ) -> tuple[tuple[int, int], int]:
-    """NumPy mirror of :func:`quantem.gpu.detector.detect_bf_radius`."""
+    """NumPy mirror of :func:`quantem.gpu.detector.compute.cuda.probe.detect_bf_radius`."""
     dp = np.asarray(mean_dp_array, dtype=np.float32)
     if dp.ndim != 2:
         raise ValueError(f"Expected 2D diffraction pattern, got shape {dp.shape}.")
@@ -4053,7 +4053,7 @@ def _prepare_selection(
     if scan_shape[0] in MPS_FFT_CONFIGS:
         get_fft_config(scan_shape[0])
     mx = _require_mlx()
-    from quantem.gpu.compute.mps import ChunkedFrames
+    from quantem.gpu.detector.compute.mps.kernels import ChunkedFrames
 
     bf_row = selection.rows
     bf_col = selection.cols
