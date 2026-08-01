@@ -17,6 +17,18 @@ def test_resolve_keeps_explicit_webgpu() -> None:
     assert device.resolve("webgpu") == "webgpu"
 
 
+def test_profile_is_non_printing_and_reports_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(backend, "_cuda_probe", lambda: (False, "missing CUDA"))
+    monkeypatch.setattr(backend, "_mps_probe", lambda: (False, "missing MPS"))
+
+    result = device.profile()
+
+    assert result["backend"] in {"cuda", "mps", "cpu"}
+    assert result["device"] in {"cuda:0", "mps", "cpu"}
+    assert result["host"]
+    assert result["python"]
+
+
 def test_no_cpu_scientific_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(backend, "_cuda_probe", lambda: (False, "missing CUDA"))
     monkeypatch.setattr(backend, "_mps_probe", lambda: (False, "missing MPS"))

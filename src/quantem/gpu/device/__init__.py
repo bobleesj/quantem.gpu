@@ -1,5 +1,5 @@
 """GPU device discovery."""
 
-from .backend import detect, resolve
+from .backend import detect, profile, resolve
 
-__all__ = ["detect", "resolve"]
+__all__ = ["detect", "profile", "resolve"]

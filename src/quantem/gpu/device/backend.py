@@ -12,6 +12,54 @@ DeviceName = Literal["cuda", "mps", "webgpu"]
 NativeDeviceName = Literal["cuda", "mps"]
 
 
+def profile() -> dict[str, str | bool | None]:
+    """Return a notebook-friendly summary of the active compute environment.
+
+    The function is diagnostic only: it never raises when no accelerator is
+    available and it does not print. In a notebook, use ``profile()`` as the
+    final expression of a cell to render the host, Python environment, and
+    resolved CUDA/MPS/CPU backend.
+    """
+    cuda_available = False
+    mps_available = False
+    cuda_name: str | None = None
+    try:
+        import torch
+
+        cuda_available = bool(torch.cuda.is_available())
+        if cuda_available:
+            cuda_name = str(torch.cuda.get_device_name(0))
+        mps_available = bool(torch.backends.mps.is_available())
+        torch_version = str(torch.__version__)
+    except Exception:  # noqa: BLE001 - diagnostics must remain non-blocking
+        torch_version = None
+
+    if cuda_available:
+        backend = "cuda"
+        device = "cuda:0"
+        device_name = cuda_name
+    elif mps_available:
+        backend = "mps"
+        device = "mps"
+        device_name = "Apple Metal (MPS)"
+    else:
+        backend = "cpu"
+        device = "cpu"
+        device_name = "CPU"
+
+    return {
+        "host": platform.node(),
+        "platform": platform.platform(),
+        "python": sys.executable,
+        "torch": torch_version,
+        "backend": backend,
+        "device": device,
+        "device_name": device_name,
+        "cuda_available": cuda_available,
+        "mps_available": mps_available,
+    }
+
+
 def _nvidia_gpu_present() -> bool:
     return sys.platform.startswith("linux") and os.path.exists("/dev/nvidia0")
 
