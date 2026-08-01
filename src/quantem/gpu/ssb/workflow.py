@@ -156,6 +156,7 @@ class SSB:
         self.semiangle_mrad = float(semiangle_mrad)
         self.scan_sampling_A = scan_sampling_A
         self.det_sampling = det_sampling
+        self._aberrations_explicit = aberrations is not None
         self.aberrations = _validate_aberrations(aberrations)
         self.rotation_angle_deg = float(rotation_angle_deg)
         self.bf_intensity_threshold = float(bf_intensity_threshold)
@@ -319,7 +320,9 @@ class SSB:
                 scan_shape=self._scan_shape,
                 bf_intensity_threshold=self.bf_intensity_threshold,
                 bf_radius=self.bf_radius,
-                aberrations=self.aberrations,
+                aberrations=(
+                    self.aberrations if self._aberrations_explicit else None
+                ),
                 rotation_angle_deg=self.rotation_angle_deg,
             )
         return self._cuda_session
@@ -344,7 +347,9 @@ class SSB:
                     bf_center=None,
                     bf_radius=self.bf_radius,
                     rotation_angle_deg=self.rotation_angle_deg,
-                    aberrations=self.aberrations,
+                    aberrations=(
+                        self.aberrations if self._aberrations_explicit else None
+                    ),
                 )
             backend = self._mps_backend
         if not isinstance(backend, SSBProtocol):
@@ -379,6 +384,7 @@ class SSB:
         )
         result.source_path = self.source_path
         self.aberrations = dict(result.aberrations)
+        self._aberrations_explicit = True
         self.rotation_angle_deg = float(result.rotation_angle_deg)
         self.best_loss = (
             float(result.loss) if result.loss is not None else float("inf")

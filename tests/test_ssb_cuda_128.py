@@ -479,7 +479,7 @@ def test_extract_gqk_hermitian_storage_keeps_nonredundant_columns() -> None:
     bf_rows = cp.asarray([2, 2, 3, 3], dtype=cp.int32)
     bf_cols = cp.asarray([2, 3, 2, 3], dtype=cp.int32)
 
-    herm_gqk, herm_dc = SSB._extract_gqk(
+    herm_gqk, herm_dc = CudaSSBBackend._extract_gqk(
         data,
         bf_rows,
         bf_cols,
@@ -540,8 +540,8 @@ def test_cuda_phase_loss_accepts_hermitian_gqk(size: int, num_bf: int) -> None:
     cp.testing.assert_allclose(
         herm_engine.variance_loss_batch(c10_batch, c12_batch, phi_batch),
         full_engine.variance_loss_batch(c10_batch, c12_batch, phi_batch),
-        rtol=FLOAT32_REF_RTOL,
-        atol=FLOAT32_REF_ATOL,
+        rtol=LOSS_RTOL,
+        atol=LOSS_ATOL,
     )
 
 
@@ -700,8 +700,8 @@ def test_cuda_128_variance_loss_batch_matches_reference() -> None:
     cp.testing.assert_allclose(
         got,
         cp.asarray(expected, dtype=cp.float32),
-        rtol=FLOAT32_REF_RTOL,
-        atol=FLOAT32_REF_ATOL,
+        rtol=LOSS_RTOL,
+        atol=LOSS_ATOL,
     )
 
 
@@ -779,8 +779,8 @@ def test_cuda_1024_variance_batch_uses_full_staging_buffers() -> None:
     cp.testing.assert_allclose(
         got,
         expected,
-        rtol=FLOAT32_REF_RTOL,
-        atol=FLOAT32_REF_ATOL,
+        rtol=LOSS_RTOL,
+        atol=LOSS_ATOL,
     )
 
 
@@ -865,8 +865,8 @@ def test_cuda_256_variance_kernel_matches_staged_cupy_reference() -> None:
     cp.testing.assert_allclose(
         got,
         expected,
-        rtol=FLOAT32_REF_RTOL,
-        atol=FLOAT32_REF_ATOL,
+        rtol=LOSS_RTOL,
+        atol=LOSS_ATOL,
     )
 
 
@@ -901,8 +901,8 @@ def test_cuda_128_realdata_crop_matches_explicit_cupy_reference() -> None:
 
     assert loss == pytest.approx(
         ref_loss,
-        rel=FLOAT32_REF_RTOL,
-        abs=FLOAT32_REF_ATOL,
+        rel=LOSS_RTOL,
+        abs=LOSS_ATOL,
     )
     cp.testing.assert_allclose(phase, ref_phase, rtol=2e-4, atol=2e-4)
     del ssb, loaded, phase, ref_phase

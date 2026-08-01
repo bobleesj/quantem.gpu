@@ -91,6 +91,33 @@ def test_public_ssb_has_one_backend_neutral_signature() -> None:
     assert constructor.parameters["backend"].default == "auto"
 
 
+def test_default_aberrations_remain_distinct_from_an_explicit_zero_start(
+    monkeypatch,
+) -> None:
+    """Backends may apply their canonical fit start only when none was given."""
+    from quantem.gpu.ssb import workflow
+
+    monkeypatch.setattr(workflow, "_resolve_backend", lambda _backend: "mps")
+    data = np.zeros((2, 2, 2, 2), dtype=np.uint8)
+    common = {
+        "backend": "mps",
+        "voltage_kV": 300.0,
+        "semiangle_mrad": 30.0,
+        "scan_sampling_A": 1.0,
+    }
+
+    default = workflow.SSB.from_array(data, **common)
+    explicit = workflow.SSB.from_array(
+        data,
+        aberrations={"C10": 0.0, "C12": 0.0, "phi12": 0.0},
+        **common,
+    )
+
+    assert default.aberrations == explicit.aberrations
+    assert not default._aberrations_explicit
+    assert explicit._aberrations_explicit
+
+
 def test_ssb_result_owns_optimization_and_reconstruction_metadata() -> None:
     """C2: one result owns both optimization and object-wave output."""
     from quantem.gpu import SSBResult

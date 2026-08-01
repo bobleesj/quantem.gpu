@@ -3,6 +3,248 @@
 This page records the native CUDA, MPS, and WebGPU SSB performance contracts
 so future work starts from measured behavior, not from memory.
 
+## 128 GB Apple M5 Max exact MPS checkpoint, 2026-07-31
+
+The main lesson is that the 128 GB Apple M5 Max benefits from one large paired
+row pack, but the retained two-pass 2-D FFT is already near the machine's
+unified-memory roof. Pack and launch tuning plus an exact SIMD column transpose
+lowered the exact end-to-end fit from the clean `8.014 s` baseline to
+`7.062 s`; reaching `5 s` without changing BF evidence, float32/complex64
+precision, optimizer requests, or the exact objective still requires
+eliminating or losslessly reducing the global row-IFFT write/read.
+
+This checkpoint used an anonymized native `512x512` full-BF reference, its
+exact BF-column companion, `9,074` logical BF pixels / `2,476` compact active
+storage planes, start `(C10, C12, phi12) = (0, 50, 0)`, 200 seed-0 Optuna
+candidates, unchanged Nelder-Mead refinement, and an independent final
+reconstruction. The accepted run returned 244 recorded objective requests,
+43 physical refinement evaluations, float32 phase, complex64 object wave, and:
+
+- `C10 = -73.36156674812457 nm`
+- `C12 = 22.00675049098775 nm`
+- `phi12 = -0.1211768239269985 rad`
+- `loss = 0.0458005927503109`
+
+The accepted warmed signoff measured `7.062 s` fit elapsed after `SSB.open()`:
+
+| Stage | Time |
+| --- | ---: |
+| Preparation | `0.503 s` |
+| Initial exact loss | `0.123 s` |
+| Optuna, 200 exact candidates | `5.077 s` |
+| Nelder-Mead, 43 physical evaluations | `1.243 s` |
+| Final object | `0.015 s` |
+| Final exact phase/loss | `0.101 s` |
+
+The retained high-memory policy keeps every original 512-logical-BF reduction
+boundary. On the 128 GB M5 Max it forms one storage pack with a limit of 2,476 active planes
+and reuses one aligned 2,496-plane allocation class. Two full fits measured
+the one-pack Optuna stage at `5.067/5.068 s`; the immediate four-pack warm
+reference was `5.156 s`. All 244 parameter/loss records and the final exact
+phase and object arrays matched their frozen SHA-256 hashes. Because the paired
+row intermediate is about 10.5 GB, this policy is restricted to an Apple M5
+Max with at least 120 GiB. M5 Max systems with 96-119 GiB retain the measured
+716/720 four-pack policy; other Macs keep the established 300-plane pack and
+288/320 allocation classes. Scalar initial/refinement calls retain the
+lower-pressure 300-plane policy on every host.
+
+An instrumented public-workflow repeat measured `13,107,233,400` bytes
+(`13.11 GB`, `12.21 GiB`) peak active MPS allocation. After the fit, active
+scientific arrays were `2.61 GB`; MLX also retained `21.05 GB` in its
+reclaimable allocator cache. The cache value is not additional live working
+data, so the measured 512 working-set requirement is the `13.11 GB` peak.
+
+The M5 Max column FFT now keeps the first radix-8 transpose in SIMD registers,
+eliminating one threadgroup-memory exchange without reordering a radix or
+twiddle multiply. The full 200-trial gate retained the frozen 244-record trace,
+exact phase, and complex object hashes. Applying the same transform to the row
+FFT changed low phase bits and was rejected; the optimization is column-only.
+
+Target-specific follow-ups were exact but rejected after alternating A/B:
+
+- Reinterpreting complex row loads or stores as explicit `float2` was neutral;
+  Metal already coalesces the component accesses.
+- A 650 MB precomputed zero-support byte mask covered `25.63%` of sites but
+  regressed paired loss from `46.86-46.90 ms` to `49.15-49.20 ms`.
+- A 16 KiB cross-SIMDgroup column exchange retained exact FFT values but
+  regressed the pair from `46.88-46.95 ms` to `52.72-52.83 ms`.
+- Sequentially processing two four-row blocks per row threadgroup was exact
+  but `0.23-0.38 ms` slower. Skipping MLX's contiguous-input guard and packing
+  two shuffle operands into `float4` were timing-neutral.
+- Nearby one-pack strides from 2,476 through 2,560 planes overlapped around
+  `46.9-47.2 ms`; the 2,496-plane class remains the smaller aligned choice.
+
+Exact-parity gates rejected several tempting shortcuts:
+
+- Removing the compact-storage column active guard and mask moved 26 of 244
+  objective records by one float32 ULP. The final endpoint happened to match,
+  but that is not full scientific parity, so the specialization was removed.
+- Paired row-group heights 1/2/4 retained four rows as fastest; eight exceeded
+  Metal's 32 KiB threadgroup-memory limit. Column groups 4 and 2 were slower
+  than the retained eight-column group.
+- Conservative support culling, branch-free row specialization, two-stream
+  scalar candidates, paired graph depths 2/5, and flattened BF-row dispatch
+  were exact or endpoint-equivalent but slower.
+- Raising Nelder-Mead `xatol` from `0.1` through `0.15` still required all 43
+  physical evaluations. Values `0.2-0.5` stopped at 29-31 evaluations but
+  returned different fitted coordinates and a worse loss, so no tolerance or
+  early-stop shortcut was retained. The final accepted best first appeared at
+  evaluation 35; the remaining eight calls are convergence evidence, not a
+  large optimization reserve.
+- A cache microscope monotonically improved from 8-BF to 640-BF row
+  intermediates (`129.6`, `97.6`, `83.8`, `71.0`, `59.2`, `55.3`, and
+  `53.1 ms` warm). This M5 Max therefore exposes no cache-resident microtile tier for
+  this exact evaluator.
+
+The timing profile measured the final paired path at about `46.9 ms` and 44
+scalar calls at `28.52 ms` median. Optuna ask/tell overhead was only `0.192 s`;
+the evaluator, not Python, is the bottleneck. A paired call moves roughly
+23 GB of `G_qk` and row-intermediate traffic, putting the observed path near
+the M5 Max memory-bandwidth roof. The final two clean signoffs ran on AC power at
+45% and charging; they measured `7.126/7.062 s` fit elapsed and reproduced all
+three frozen hashes. A separate fresh-process `/usr/bin/time` gate measured
+`7.87 s` true end-to-end wall including Python startup and source open; its fit
+elapsed was `7.067 s` and it reproduced the same hashes.
+
+### 128 GB Apple M5 Max size-scaling follow-up, 2026-08-01
+
+The same 200-trial seed-0 Optuna plus unchanged Nelder-Mead contract was run at
+128, 256, 512, and 1024. The 512 row is the anonymized native full-BF reference.
+No native reference acquisitions exist for the other sizes on this host, so those
+rows deterministically Fourier-crop or zero-pad the frozen prepared
+evidence. They are native-size kernel microscopes, not acquisition benchmarks.
+
+The reproducible harness is
+[`scripts/benchmark_ssb_mps_scaling.py`](../../scripts/benchmark_ssb_mps_scaling.py),
+and the compact machine-readable signoff is
+[`ssb-mps-scaling-2026-08-01.json`](ssb-mps-scaling-2026-08-01.json).
+The harness records the full fit before repeated pair/parity probes. The
+production-engine thermal diagnostic ran 512 immediately after the long 1024
+signoff and inflated its prepared fit from `6.677 s` to `9.996 s`. That sample
+remains in the JSON and is not a retained regression number.
+
+The latest independent prepared-evidence signoffs are:
+
+| Scan | Evidence | Fit elapsed | Fit peak active | 4x-ladder target | Gap |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 128x128 | Fourier-resized microscope | `0.836 s` | `0.840 GB` / `0.782 GiB` | `0.417 s` | `2.00x` target |
+| 256x256 | Fourier-resized microscope | `2.136 s` | `3.354 GB` / `3.124 GiB` | `1.669 s` | `1.28x` target |
+| 512x512 | Anonymized native full BF | `6.677 s` prepared; public fit `7.062 s` | `13.108 GB` / `12.208 GiB` | `6.677 s` reference | Reference |
+| 1024x1024 | Fourier-resized microscope | `46.104 s` | `15.301 GB` / `14.250 GiB` | `26.707 s` | `1.73x` target |
+
+The same-scope ladder fixes the prepared native 512 result at `6.676722 s` and
+applies a factor of four per halving or doubling: `0.417295`, `1.669181`,
+`6.676722`, and `26.706890 s`. The originally requested public-fit anchor of
+`7.062 s` gives the looser `0.441375/1.7655/7.062/28.248 s` ladder. Both
+scoreboards leave 128, 256, and 1024 unmet. Actual prepared-fit ratios are
+`2.55x`, `3.13x`, and `6.91x` from each row to the next. This is an engineering
+target rather than a physical scaling law: the adaptive workflows requested
+39, 33, 43, and 81 refinement evaluations respectively, so they do not
+execute equal numbers of kernels.
+
+The prepared fit begins after exact `G_qk` construction. The native public
+512 fit includes that preparation and remains `7.062 s`; a fresh process was
+`7.87 s` including Python startup and source open. Because this host has no native
+128, 256, or 1024 acquisitions, their source-open timings first prepare the
+native 512 evidence and then resize it. Those fixture walls are recorded in
+JSON but are not presented as native end-to-end acquisition performance.
+
+| Scan | Pair median | Pair p95 | Optuna | Refinement | Physical refine calls |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 128x128 | `5.086 ms` | `5.491 ms` | `0.699 s` | `0.096 s` | 39 |
+| 256x256 | `15.890 ms` | `16.430 ms` | `1.771 s` | `0.293 s` | 33 |
+| 512x512 | `47.562 ms` | `48.619 ms` | `5.145 s` | `1.244 s` | 43 |
+| 1024x1024 | `360.590 ms` | `363.263 ms` | `30.341 s` | `14.989 s` | 81 |
+
+The pair distributions run after each full fit and therefore describe a
+sustained thermally saturated state. The separate clean 1024 pair checkpoint
+is about `274 ms`. Every signoff retained all 9,074 logical BF pixels, 2,476
+compact active planes, float32/complex64 precision, 200 seed-0 Optuna trials,
+and unchanged Nelder-Mead. Each size also passed 20 randomized candidate-pair
+comparisons bit-for-bit against frozen engine SHA-256 `1e13cf83...` and
+reproduced its endpoint, loss, phase hash, and object hash.
+
+The 1024 fit-only peak starts after the resized prepared evidence is resident.
+The one-time resize harness peaked at `26.02 GB` / `24.24 GiB` because it
+briefly coexists with the native 512 reference; that coexistence is a fixture
+construction artifact, not part of the SSB fit.
+
+The retained 1024 optimization extends the exact two-candidate fused path to
+that size, sharing candidate-invariant geometry and `G_qk` reads in the row
+stage. Its column consumer also computes the first pure radix-4 butterfly in
+registers before publishing the unchanged outputs to threadgroup memory. This
+removes one shared-memory round trip and barrier per BF column FFT without
+changing the radix arithmetic. Full fit elapsed fell from `53.532 s` to
+`48.742 s` (`8.9%`), with Optuna falling from `37.512 s` to `31.866 s`.
+The later production fit-first signoff measured `46.104 s`; this is a cleaner
+thermal and benchmark-order measurement of the same retained kernel, not
+another code speedup.
+The endpoint, final loss, all 282 objective records, 81 physical refinement
+evaluations, phase SHA-256, and complex-object SHA-256 remained identical.
+Twenty additional randomized candidate pairs matched the pre-change losses
+bit-for-bit.
+
+A second exact 1024 tuning on 2026-08-01 reduced the row producer from two
+rows per threadgroup to one. In a sustained 31-sample alternating A/B, the
+paired evaluator fell from `428.505 ms` to `417.394 ms` (`2.66%`) and the
+scalar evaluator fell from `171.861 ms` to `168.538 ms` (`1.97%`). Both gates
+also passed 20 randomized inputs bit-for-bit. Two opposite-order complete fits
+reproduced the same 282-record trace, 81 refinement calls, endpoint, loss, and
+phase/object hashes. A later symmetric reference/candidate/candidate/reference
+gate measured reference `87.170/65.625 s` and candidate `68.951/63.581 s`; the
+closest late pair favored the candidate by `3.1%`. Those absolute walls were
+thermally saturated and external Mac load changed during the sequence, so they
+confirm that the kernel win reaches the full workflow but do not replace the
+clean `46.104 s` record. An independent current-tree candidate fit measured
+`46.793 s` with exact hashes. The retained change is therefore a real relative
+improvement, but no lower absolute 1024 baseline is claimed from this campaign.
+
+Synchronized stage profiling explains why launch tuning alone is now small:
+one quiet 1024 pair spends about `120 ms` in the row producer and `160 ms` in
+the column consumer, with only about `3 ms` in ordered accumulation and final
+reduction. The logical minimum traffic is about `93.5 GB` per pair (`10.4 GB`
+of shared Hermitian evidence plus `41.5 GB` written and `41.5 GB` read for the
+two row intermediates). The column stage is therefore the largest remaining
+kernel target, while the 81 scalar refinement calls explain roughly seven
+seconds of the worse-than-fourfold 512-to-1024 scaling.
+
+Rejected 1024 variants are absent from production. Larger or smaller column
+BF groups were up to about `4%` faster in isolation but changed float32 phase
+accumulation; a 256-BF logical chunk also changed loss ULPs. A packed pair
+column kernel, two-column threadgroups, two retained submission chunks, and
+MLX's built-in `ifft2` all regressed wall time. Moving the first radix-4
+butterfly into the row producer was exact but did not produce a stable
+end-to-end gain, so that more complicated source path was removed.
+
+The final scaling campaign also removed these tempting variants:
+
+- Register-first 128/256 stages improved isolated pairs by about `21%/12%`,
+  but alternating in-process complete fits were neutral or slower.
+- A blocked row handoff improved one 1024 pair by `4.7%`, then regressed a
+  same-state complete fit from `56.09 s` to `84.15 s`.
+- Address-only blocked row layouts with 32-, 16-, and 8-column tiles remained
+  bit-exact but were neutral or slower in alternating pair tests. Removing the
+  final radix barrier and changing the column threadgroup width were likewise
+  exact but slower.
+- A larger 1024 SIMD-resident radix-4 prefix improved pairs by about `10%`,
+  but one of the randomized losses moved by one float32 ULP.
+- Constant 1024 twiddles preserved 20 randomized pairs exactly but slowed the
+  pair by `1.8%`. Row-geometry hoisting was exact over 60 pairs but neutral in
+  complete A/B fits.
+- Candidate-parallel 256 column dispatch preserved 40 randomized pairs but
+  was `14.5%` slower. Two-BF barrier batching at 128 and a more aggressive
+  two-stage SIMD prefix each failed by one float32 ULP.
+- A 32-lane, all-register 512 column FFT compiled, but its one-BF component
+  output was not bit-identical and the full exact loss became NaN. The probe
+  was removed in full before production signoff; no timing from it is counted.
+
+The 4x targets are therefore recorded as targets, not claimed results. At 512,
+about `4.7 s` of the quiet run is already the 100 exact candidate-pair
+evaluations. At 1024, the latest fit still spends `30.341 s` in Optuna and
+`14.989 s` in refinement. Both remaining gaps require a deeper lossless
+decomposition that avoids the global row-IFFT write/read, not fewer trials,
+reduced BF evidence, altered precision, or looser convergence.
+
 ## Canonical anonymized Reference-512 MPS regression contract, 2026-07-27
 
 The machine-readable source of truth is

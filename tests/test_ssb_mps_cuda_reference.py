@@ -438,20 +438,134 @@ def test_mps_tiled_row_intermediate_preserves_exact_column_result() -> None:
     )
 
 
-def test_mps_exact_pair_row_storage_uses_bounded_classes() -> None:
+def test_mps_exact_pair_row_storage_uses_bounded_classes(monkeypatch) -> None:
     """Exact pair packs reuse aligned classes without accepting oversized packs."""
-    from quantem.gpu.ssb.compute.mps.engine import (
-        _exact_pair_row_storage_bf_512,
+    from quantem.gpu.ssb.compute.mps import engine
+
+    monkeypatch.setattr(
+        engine,
+        "_exact_pair_row_policy_512",
+        lambda _batch=2: (300, (288, 320)),
+    )
+    storage_class = engine._exact_pair_row_storage_bf_512
+
+    assert storage_class(176) == 288
+    assert storage_class(256) == 288
+    assert storage_class(257) == 288
+    assert storage_class(288) == 288
+    assert storage_class(289) == 320
+    assert storage_class(300) == 320
+    with pytest.raises(ValueError, match="321 BF planes"):
+        storage_class(321)
+
+
+def test_mps_exact_pair_row_storage_uses_high_memory_class(monkeypatch) -> None:
+    """Large-memory Macs may reduce launches without changing BF boundaries."""
+    from quantem.gpu.ssb.compute.mps import engine
+
+    monkeypatch.setattr(
+        engine,
+        "_exact_pair_row_policy_512",
+        lambda _batch=2: (716, (720,)),
     )
 
-    assert _exact_pair_row_storage_bf_512(176) == 288
-    assert _exact_pair_row_storage_bf_512(256) == 288
-    assert _exact_pair_row_storage_bf_512(257) == 288
-    assert _exact_pair_row_storage_bf_512(288) == 288
-    assert _exact_pair_row_storage_bf_512(289) == 320
-    assert _exact_pair_row_storage_bf_512(300) == 320
-    with pytest.raises(ValueError, match="321 BF planes"):
-        _exact_pair_row_storage_bf_512(321)
+    assert engine._exact_pair_row_storage_bf_512(321) == 720
+    assert engine._exact_pair_row_storage_bf_512(720) == 720
+    with pytest.raises(ValueError, match="721 BF planes"):
+        engine._exact_pair_row_storage_bf_512(721)
+
+
+def test_mps_exact_pair_row_policy_selects_m5_max(monkeypatch) -> None:
+    """The measured topology must not spread to unmeasured high-memory chips."""
+    from quantem.gpu.ssb.compute.mps import engine
+
+    monkeypatch.setattr(
+        engine,
+        "_apple_hardware_profile",
+        lambda: (128 * 1024**3, "Apple M5 Max"),
+    )
+    engine._exact_pair_row_policy_512.cache_clear()
+    try:
+        assert engine._exact_pair_row_policy_512(2) == (2476, (2496,))
+        assert engine._exact_pair_row_policy_512(1) == (300, (288, 320))
+        monkeypatch.setattr(
+            engine,
+            "_apple_hardware_profile",
+            lambda: (96 * 1024**3, "Apple M5 Max"),
+        )
+        engine._exact_pair_row_policy_512.cache_clear()
+        assert engine._exact_pair_row_policy_512(2) == (716, (720,))
+        monkeypatch.setattr(
+            engine,
+            "_apple_hardware_profile",
+            lambda: (128 * 1024**3, "Apple M4 Max"),
+        )
+        engine._exact_pair_row_policy_512.cache_clear()
+        assert engine._exact_pair_row_policy_512(2) == (300, (288, 320))
+    finally:
+        engine._exact_pair_row_policy_512.cache_clear()
+
+
+def test_mps_simd_column_stage_is_scoped_to_m5_max(monkeypatch) -> None:
+    """The register transpose stays on its measured hardware family."""
+    from quantem.gpu.ssb.compute.mps import engine
+
+    monkeypatch.setattr(
+        engine,
+        "_apple_hardware_profile",
+        lambda: (128 * 1024**3, "Apple M5 Max"),
+    )
+    assert engine._use_simd_radix8_col_stage_512()
+
+    monkeypatch.setattr(
+        engine,
+        "_apple_hardware_profile",
+        lambda: (128 * 1024**3, "Apple M4 Max"),
+    )
+    assert not engine._use_simd_radix8_col_stage_512()
+
+
+def test_mps_exact_pair_keeps_512_logical_boundaries_on_large_memory_hosts() -> None:
+    """High-memory phase chunks must not overflow pair row storage classes."""
+    from quantem.gpu.ssb.compute.mps.engine import (
+        _EXACT_PAIR_LOGICAL_BOUNDARY_BF_512,
+    )
+
+    assert min(4096, _EXACT_PAIR_LOGICAL_BOUNDARY_BF_512) == 512
+
+
+def test_mps_1024_candidate_pair_uses_fused_exact_path(monkeypatch) -> None:
+    """Native 1024 Optuna pairs must share geometry and evidence reads."""
+    from types import SimpleNamespace
+
+    from quantem.gpu.ssb.compute.mps import engine
+
+    expected = np.asarray([0.125, 0.25], dtype=np.float32)
+
+    def fused(prepared, **kwargs):
+        assert prepared.scan_shape == (1024, 1024)
+        assert kwargs["packed_columns"] is False
+        return expected
+
+    monkeypatch.setattr(
+        engine,
+        "_reconstruct_prepared_small_batch_exact_loss_fused",
+        fused,
+    )
+    prepared = SimpleNamespace(
+        scan_shape=(1024, 1024),
+        alpha_k2=None,
+    )
+
+    result = engine._reconstruct_prepared_batch_exact_loss(
+        prepared,
+        C10=np.asarray([1.0, 2.0], dtype=np.float32),
+        C12=np.asarray([3.0, 4.0], dtype=np.float32),
+        phi12=np.asarray([0.1, 0.2], dtype=np.float32),
+        chunk_bf=512,
+    )
+
+    np.testing.assert_array_equal(result, expected)
 
 
 def test_mps_column_subrange_matches_standalone_storage() -> None:

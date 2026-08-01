@@ -1,0 +1,202 @@
+{
+  "schema": "quantem.ssb.mps.scaling.signoff.v1",
+  "date": "2026-08-01",
+  "machine": {
+    "chip": "Apple M5 Max",
+    "physical_memory_bytes": 137438953472,
+    "mlx": "0.32.0",
+    "python": "3.13.13"
+  },
+  "source": {
+    "label": "anonymized native 512 full-BF reference",
+    "native_scan_shape": [512, 512],
+    "logical_bf": 9074,
+    "stored_bf": 2476
+  },
+  "contract": {
+    "precision": {
+      "real": "float32",
+      "complex": "complex64"
+    },
+    "optuna_trials": 200,
+    "seed": 0,
+    "refinement": "nelder-mead",
+    "reference_engine_sha256": "1e13cf83c6d00bdd8f561b806008e5cff6b92bcfb95f83aaaa947b666fb10837",
+    "randomized_bit_exact_pair_checks_per_size": 20
+  },
+  "measurement_scope": {
+    "signoffs": "prepared_evidence_optimization",
+    "public_native_512_fit_seconds": 7.062,
+    "public_native_512_process_wall_seconds": 7.87,
+    "note": "Only 512 has a native acquisition. The other sizes are Fourier-resized kernel microscopes, so no native end-to-end acquisition claim is made for them."
+  },
+  "four_x_targets": {
+    "public_512_anchor": {
+      "reference_fit_seconds": 7.062,
+      "128": 0.441375,
+      "256": 1.7655,
+      "512": 7.062,
+      "1024": 28.248
+    },
+    "prepared_512_anchor": {
+      "reference_fit_seconds": 6.676722375006648,
+      "128": 0.4172951484379155,
+      "256": 1.669180593751662,
+      "512": 6.676722375006648,
+      "1024": 26.70688950002659
+    }
+  },
+  "signoffs": [
+    {
+      "size": 128,
+      "date_utc": "2026-08-01T16:57:01.273388+00:00",
+      "evidence": "fourier_resized_microscope",
+      "fit_seconds": 0.8363170410011662,
+      "fit_wall_seconds": 0.8508539169997675,
+      "fit_peak_active_bytes": 839956628,
+      "pair_median_seconds": 0.0050863539981946815,
+      "pair_p95_seconds": 0.005491195898139267,
+      "optuna_seconds": 0.6986454170037177,
+      "refinement_seconds": 0.09615891700377688,
+      "refinement_evaluations": 39,
+      "records": 240,
+      "loss": 0.013543525710701942,
+      "aberrations": {
+        "C10": -21.54113130573985,
+        "C12": 4.867826734444589,
+        "phi12": -0.06604599676507825
+      },
+      "phase_sha256": "0a82d2562c984a13f685d705a6b23056426cb66135b49d7a69e792fb0a62e39f",
+      "object_sha256": "fb63e1c8721a76fcd736c16363d48f158aa5d5aca179163c1886fd3b5f951897",
+      "target_met": false
+    },
+    {
+      "size": 256,
+      "date_utc": "2026-08-01T16:57:14.361141+00:00",
+      "evidence": "fourier_resized_microscope",
+      "fit_seconds": 2.13628100000642,
+      "fit_wall_seconds": 2.152006625001377,
+      "fit_peak_active_bytes": 3354412180,
+      "pair_median_seconds": 0.015889791498921113,
+      "pair_p95_seconds": 0.016430125000260885,
+      "optuna_seconds": 1.7707723749990691,
+      "refinement_seconds": 0.2928739580020192,
+      "refinement_evaluations": 33,
+      "records": 234,
+      "loss": 0.028604159131646156,
+      "aberrations": {
+        "C10": -30.10375544313157,
+        "C12": 14.846583461933143,
+        "phi12": -1.5756104677624165
+      },
+      "phase_sha256": "d7646d1974608ae5edc00737392de41954311a4b08a8bbab222c27d33594c439",
+      "object_sha256": "e0260482b9269b424fdb488d70e7b20b3d3557791e987b5821fffbe79e379e4e",
+      "target_met": false
+    },
+    {
+      "size": 512,
+      "date_utc": "2026-08-01T16:57:32.753890+00:00",
+      "evidence": "native",
+      "fit_seconds": 6.676722375006648,
+      "fit_wall_seconds": 6.691809750001994,
+      "fit_peak_active_bytes": 13108314728,
+      "pair_median_seconds": 0.04756175050351885,
+      "pair_p95_seconds": 0.0486189770494093,
+      "optuna_seconds": 5.1448142919980455,
+      "refinement_seconds": 1.243883042006928,
+      "refinement_evaluations": 43,
+      "records": 244,
+      "loss": 0.0458005927503109,
+      "aberrations": {
+        "C10": -73.36156674812457,
+        "C12": 22.00675049098775,
+        "phi12": -0.1211768239269985
+      },
+      "phase_sha256": "6af87c03377e5ec9f6bf18a78ed3ceeb738fff2f720ac844187e56f718309013",
+      "object_sha256": "6d5fd4cad980bda023099b95898d3a975b55e64ef45a1e4cc818049576314d21",
+      "target_met": true,
+      "target_note": "This is the same-scope prepared-evidence reference. The accepted public fit remains 7.062 s because it includes preparation."
+    },
+    {
+      "size": 1024,
+      "date_utc": "2026-08-01T17:00:09.899966+00:00",
+      "evidence": "fourier_resized_microscope",
+      "fit_seconds": 46.10416100000293,
+      "fit_wall_seconds": 46.12384912499692,
+      "fit_peak_active_bytes": 15301320364,
+      "setup_wall_seconds": 1.009939374998794,
+      "warm_source_open_through_fit_seconds": 47.14008341700537,
+      "pair_median_seconds": 0.36059033349738456,
+      "pair_p95_seconds": 0.36326310815275065,
+      "optuna_seconds": 30.34052504200372,
+      "refinement_seconds": 14.988607833001879,
+      "refinement_evaluations": 81,
+      "records": 282,
+      "loss": 0.05139942094683647,
+      "aberrations": {
+        "C10": -111.17522335130332,
+        "C12": 61.01784257512888,
+        "phi12": -0.3743199184116386
+      },
+      "phase_sha256": "9a3610ece6217bef679fe53496d28848666381f0724221e8da331de4a9b4e519",
+      "object_sha256": "63c8060f1c402edcfdbffa2363bbff5a8c4f1df2a6ea34582ff87a1a685e2bc3",
+      "target_met": false,
+      "pair_note": "Pair distribution ran after the complete fit and is thermally saturated; the retained pre-fit clean pair is about 0.274 s."
+    }
+  ],
+  "optimization_follow_up": {
+    "date_utc": "2026-08-01T18:06:18.325303+00:00",
+    "size": 1024,
+    "change": "Use one row per producer threadgroup instead of two in the exact 1024 fused loss evaluator.",
+    "precision": {
+      "real": "float32",
+      "complex": "complex64"
+    },
+    "paired_evaluator": {
+      "alternating_samples_per_engine": 31,
+      "reference_median_seconds": 0.4285052920022281,
+      "candidate_median_seconds": 0.4173937500017928,
+      "speedup": 1.0266212467253943,
+      "randomized_bit_exact_checks": 20
+    },
+    "scalar_evaluator": {
+      "alternating_samples_per_engine": 31,
+      "reference_median_seconds": 0.17186129200126743,
+      "candidate_median_seconds": 0.16853808299492812,
+      "speedup": 1.0197178521749255,
+      "randomized_bit_exact_checks": 20
+    },
+    "full_fit_parity": {
+      "opposite_orders_tested": true,
+      "records": 282,
+      "refinement_evaluations": 81,
+      "loss": 0.05139942094683647,
+      "aberrations": {
+        "C10": -111.17522335130332,
+        "C12": 61.01784257512888,
+        "phi12": -0.3743199184116386
+      },
+      "phase_sha256": "9a3610ece6217bef679fe53496d28848666381f0724221e8da331de4a9b4e519",
+      "object_sha256": "63c8060f1c402edcfdbffa2363bbff5a8c4f1df2a6ea34582ff87a1a685e2bc3",
+      "independent_candidate_seconds": 46.79334045800351,
+      "symmetric_reference_seconds": [87.17050333299994, 65.62495491700247],
+      "symmetric_candidate_seconds": [68.95059674999357, 63.58075241700135],
+      "timing_note": "The closest late full-fit pair favored the candidate by 3.1%, but the Mac had severe, changing external load. These are parity/relative gates and do not replace the independent 46.104 s clean record."
+    },
+    "profile": {
+      "paired_row_producer_seconds": 0.12,
+      "paired_column_consumer_seconds": 0.16,
+      "paired_ordered_accumulation_seconds": 0.003,
+      "logical_minimum_traffic_bytes": 93486000000
+    },
+    "target_met": false
+  },
+  "thermal_diagnostic": {
+    "size": 512,
+    "fit_seconds": 9.995512040994072,
+    "pair_median_seconds": 0.06905562500469387,
+    "preceded_by_1024_signoff": true,
+    "quiet_prepared_fit_seconds": 6.676722375006648,
+    "conclusion": "A production-engine 512 run immediately after the long 1024 signoff was 50% slower. Sequential matrix runs are thermal diagnostics; independent processes provide the retained signoffs."
+  }
+}

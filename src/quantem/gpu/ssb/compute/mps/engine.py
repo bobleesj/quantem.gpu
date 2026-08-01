@@ -29,7 +29,68 @@ from quantem.gpu.ssb.bf_selector import BrightfieldDisk
 
 _EXACT_ROW_PACK_STORAGE_BF_512 = 300
 _EXACT_ROW_STORAGE_CLASSES_BF_512 = (288, 320)
+# Keep the logical reduction boundaries used by the exact 512 pair path
+# independent of the high-memory phase-loss chunk default.  On 96+ GB Macs
+# that default is 4096 BF; with compact inactive-plane storage a single such
+# boundary can still contain more than the retained 288/320-plane row
+# allocation classes.  The pair kernel may pack adjacent 512-boundary slices,
+# but must not merge a larger logical boundary or change reduction order.
+_EXACT_PAIR_LOGICAL_BOUNDARY_BF_512 = 512
 _EXACT_SCALAR_ROW_PACK_DEPTH_512 = 5
+
+
+@lru_cache(maxsize=1)
+def _apple_hardware_profile() -> tuple[int, str]:
+    """Return total memory and Apple chip name without repeated subprocesses."""
+    try:
+        total = int(
+            subprocess.run(
+                ["sysctl", "-n", "hw.memsize"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+                check=False,
+            ).stdout.strip()
+        )
+    except Exception:
+        total = 0
+    try:
+        chip = subprocess.run(
+            ["sysctl", "-n", "machdep.cpu.brand_string"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        ).stdout.strip()
+    except Exception:
+        chip = ""
+    return total, chip
+
+
+@lru_cache(maxsize=2)
+def _exact_pair_row_policy_512(batch: int = 2) -> tuple[int, tuple[int, ...]]:
+    """Return the measured 512 pair-pack policy for this hardware class."""
+
+    total, chip = _apple_hardware_profile()
+    if chip == "Apple M5 Max" and int(batch) == 2:
+        if total >= 120 * 1024**3:
+            # The measured 128 GB M5 Max is fastest when one 2,496-plane allocation
+            # can hold the fixture's 2,476 compact planes. Every original
+            # 512-logical-BF reduction range remains separate in the column
+            # output, so launch consolidation does not alter summation order.
+            return 2476, (2496,)
+        if total >= 96 * 1024**3:
+            # Lower-memory M5 Max systems retain the measured four-pack policy.
+            # A 716-plane greedy limit uses one stable 720-plane class.
+            return 716, (720,)
+    return _EXACT_ROW_PACK_STORAGE_BF_512, _EXACT_ROW_STORAGE_CLASSES_BF_512
+
+
+def _use_simd_radix8_col_stage_512() -> bool:
+    """Use the exact register transpose on the measured M5 Max target."""
+
+    _total, chip = _apple_hardware_profile()
+    return chip == "Apple M5 Max"
 
 
 @dataclass
@@ -120,15 +181,20 @@ def _bf_storage_chunk_packs(
     return packs
 
 
-def _exact_pair_row_storage_bf_512(chunk_bf: int) -> int:
+def _exact_pair_row_storage_bf_512(
+    chunk_bf: int,
+    storage_classes: tuple[int, ...] | None = None,
+) -> int:
     """Return the smallest retained allocation class for one exact pair pack."""
     chunk_bf = int(chunk_bf)
-    for storage_class in _EXACT_ROW_STORAGE_CLASSES_BF_512:
+    if storage_classes is None:
+        _pack_limit, storage_classes = _exact_pair_row_policy_512()
+    for storage_class in storage_classes:
         if chunk_bf <= storage_class:
             return storage_class
     raise ValueError(
         f"Exact 512 pair pack of {chunk_bf} BF planes exceeds "
-        f"the {_EXACT_ROW_STORAGE_CLASSES_BF_512[-1]}-plane storage class."
+        f"the {storage_classes[-1]}-plane storage class."
     )
 
 
@@ -1162,6 +1228,36 @@ def _phase_cols_small_reduced_kernel(
         "sq0 + sq1 + sq2 + sq3;"
         if compute_loss else ""
     )
+    first_stage = """
+            srow[rev0] = float2(z0.real, z0.imag);
+            srow[rev1] = float2(z1.real, z1.imag);
+            srow[rev2] = float2(z2.real, z2.imag);
+            srow[rev3] = float2(z3.real, z3.imag);
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+    """
+    radix4_start = 4
+    register_first_stage = n == 1024
+    if register_first_stage:
+        # At 1024, the four values loaded by one thread map to one first-stage
+        # butterfly after digit reversal. Compute that unchanged butterfly in
+        # registers, then publish its outputs for stage two.
+        first_stage = """
+            float2 x0 = float2(z0.real, z0.imag);
+            float2 x1 = CMUL(TW(0u), float2(z1.real, z1.imag));
+            float2 x2 = CMUL(TW(0u), float2(z2.real, z2.imag));
+            float2 x3 = CMUL(TW(0u), float2(z3.real, z3.imag));
+            float2 t0 = CADD(x0, x2);
+            float2 t1 = CSUB(x0, x2);
+            float2 t2 = CADD(x1, x3);
+            float2 t3 = CSUB(x1, x3);
+            float2 it3 = CMULI(t3);
+            srow[rev0] = CADD(t0, t2);
+            srow[rev1] = CADD(t1, it3);
+            srow[rev2] = CSUB(t0, t2);
+            srow[rev3] = CSUB(t1, it3);
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+        """
+        radix4_start = 16
     final_stage = ""
     if has_final:
         final_stage = f"""
@@ -1229,13 +1325,9 @@ def _phase_cols_small_reduced_kernel(
             auto z1 = row_ifft[base + (size_t)pos1 * (size_t)N];
             auto z2 = row_ifft[base + (size_t)pos2 * (size_t)N];
             auto z3 = row_ifft[base + (size_t)pos3 * (size_t)N];
-            srow[rev0] = float2(z0.real, z0.imag);
-            srow[rev1] = float2(z1.real, z1.imag);
-            srow[rev2] = float2(z2.real, z2.imag);
-            srow[rev3] = float2(z3.real, z3.imag);
-            threadgroup_barrier(mem_flags::mem_threadgroup);
+            {first_stage}
 
-            for (uint m = 4u; m <= {radix4_max}u; m <<= 2) {{
+            for (uint m = {radix4_start}u; m <= {radix4_max}u; m <<= 2) {{
                 uint quarter = m >> 2;
                 uint j = tid % quarter;
                 uint k = tid / quarter;
@@ -1295,7 +1387,8 @@ def _phase_cols_small_reduced_kernel(
     return mx.fast.metal_kernel(
         name=(
             f"ssb_phase_cols{n}_{name_suffix}_n{int(num_bf)}_"
-            f"k{int(k_bf)}_c{int(cols_per_group)}_b{int(batch)}"
+            f"k{int(k_bf)}_c{int(cols_per_group)}_b{int(batch)}_"
+            f"f1{int(register_first_stage)}"
         ),
         input_names=["row_ifft", "twiddle"],
         output_names=output_names,
@@ -1563,10 +1656,11 @@ def _phase_cols_small_scalar_loss_batch_from_row_ifft(
     if (
         len(shape) != 4
         or shape[-2] != shape[-1]
-        or shape[-1] not in (128, 256)
+        or shape[-1] not in (128, 256, 1024)
     ):
         raise ValueError(
-            "Expected batched row-IFFT shape (batch, BF, 128/256, 128/256), "
+            "Expected batched row-IFFT shape "
+            "(batch, BF, 128/256/1024, 128/256/1024), "
             f"got {shape}."
         )
     batch, num_bf, n, _ = shape
@@ -2143,6 +2237,7 @@ def _phase_cols512_radix8_batch_kernel(
 ):
     """Build the 64-thread radix-8 exact phase/loss column kernel."""
     mx = _require_mlx()
+    simd_radix8 = _use_simd_radix8_col_stage_512()
     storage_num_bf = int(num_bf if storage_num_bf is None else storage_num_bf)
     bf_offset = int(bf_offset)
     range_setup = """
@@ -2239,6 +2334,44 @@ def _phase_cols512_radix8_batch_kernel(
             float2 r6=float2(row_ifft[i6].real,row_ifft[i6].imag);
             float2 r7=float2(row_ifft[i7].real,row_ifft[i7].imag);
         """
+    simd_macros = ""
+    simd_undefs = ""
+    radix_stage12 = """
+            RADIX8(r0,r1,r2,r3,r4,r5,r6,r7);
+            s[logical]=r0; s[logical+1u]=r1; s[logical+2u]=r2; s[logical+3u]=r3;
+            s[logical+4u]=r4; s[logical+5u]=r5; s[logical+6u]=r6; s[logical+7u]=r7;
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+
+            r0=s[base2]; r1=CMUL(TW(s2*8u),s[base2+8u]);
+            r2=CMUL(TW(s2*16u),s[base2+16u]); r3=CMUL(TW(s2*24u),s[base2+24u]);
+            r4=CMUL(TW(s2*32u),s[base2+32u]); r5=CMUL(TW(s2*40u),s[base2+40u]);
+            r6=CMUL(TW(s2*48u),s[base2+48u]); r7=CMUL(TW(s2*56u),s[base2+56u]);
+            RADIX8(r0,r1,r2,r3,r4,r5,r6,r7);
+            s[base2]=r0; s[base2+8u]=r1; s[base2+16u]=r2; s[base2+24u]=r3;
+            s[base2+32u]=r4; s[base2+40u]=r5; s[base2+48u]=r6; s[base2+56u]=r7;
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+    """
+    if simd_radix8:
+        simd_macros = """
+        #define XPOSE_PAIR(a,b,m) { float2 _xa=(a), _xb=(b); float2 _sa=simd_shuffle_xor(_xa,(ushort)(m)); float2 _sb=simd_shuffle_xor(_xb,(ushort)(m)); bool _hi=(tid & (m)) != 0u; (a)=_hi?_sb:_xa; (b)=_hi?_xb:_sa; }
+        #define XPOSE8(a0,a1,a2,a3,a4,a5,a6,a7) { XPOSE_PAIR(a0,a1,1u); XPOSE_PAIR(a2,a3,1u); XPOSE_PAIR(a4,a5,1u); XPOSE_PAIR(a6,a7,1u); XPOSE_PAIR(a0,a2,2u); XPOSE_PAIR(a1,a3,2u); XPOSE_PAIR(a4,a6,2u); XPOSE_PAIR(a5,a7,2u); XPOSE_PAIR(a0,a4,4u); XPOSE_PAIR(a1,a5,4u); XPOSE_PAIR(a2,a6,4u); XPOSE_PAIR(a3,a7,4u); }
+        """
+        simd_undefs = """
+        #undef XPOSE_PAIR
+        #undef XPOSE8
+        """
+        radix_stage12 = """
+            RADIX8(r0,r1,r2,r3,r4,r5,r6,r7);
+            XPOSE8(r0,r1,r2,r3,r4,r5,r6,r7);
+            r1=CMUL(TW(s2*8u),r1);
+            r2=CMUL(TW(s2*16u),r2); r3=CMUL(TW(s2*24u),r3);
+            r4=CMUL(TW(s2*32u),r4); r5=CMUL(TW(s2*40u),r5);
+            r6=CMUL(TW(s2*48u),r6); r7=CMUL(TW(s2*56u),r7);
+            RADIX8(r0,r1,r2,r3,r4,r5,r6,r7);
+            s[base2]=r0; s[base2+8u]=r1; s[base2+16u]=r2; s[base2+24u]=r3;
+            s[base2+32u]=r4; s[base2+40u]=r5; s[base2+48u]=r6; s[base2+56u]=r7;
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+        """
     source = f"""
         #define CADD(a, b) float2((a).x + (b).x, (a).y + (b).y)
         #define CSUB(a, b) float2((a).x - (b).x, (a).y - (b).y)
@@ -2265,6 +2398,7 @@ def _phase_cols512_radix8_batch_kernel(
             (x2)=CADD(u2,iu6); (x6)=CSUB(u2,iu6); \
             (x3)=CADD(u3,w3u7); (x7)=CSUB(u3,w3u7); \
         }}
+        {simd_macros}
 
         constexpr uint BATCH = {int(batch)}u;
         constexpr uint NUM_BF = {int(num_bf)}u;
@@ -2297,19 +2431,7 @@ def _phase_cols512_radix8_batch_kernel(
                 continue;
             }}
             {row_ifft_load}
-            RADIX8(r0,r1,r2,r3,r4,r5,r6,r7);
-            s[logical]=r0; s[logical+1u]=r1; s[logical+2u]=r2; s[logical+3u]=r3;
-            s[logical+4u]=r4; s[logical+5u]=r5; s[logical+6u]=r6; s[logical+7u]=r7;
-            threadgroup_barrier(mem_flags::mem_threadgroup);
-
-            r0=s[base2]; r1=CMUL(TW(s2*8u),s[base2+8u]);
-            r2=CMUL(TW(s2*16u),s[base2+16u]); r3=CMUL(TW(s2*24u),s[base2+24u]);
-            r4=CMUL(TW(s2*32u),s[base2+32u]); r5=CMUL(TW(s2*40u),s[base2+40u]);
-            r6=CMUL(TW(s2*48u),s[base2+48u]); r7=CMUL(TW(s2*56u),s[base2+56u]);
-            RADIX8(r0,r1,r2,r3,r4,r5,r6,r7);
-            s[base2]=r0; s[base2+8u]=r1; s[base2+16u]=r2; s[base2+24u]=r3;
-            s[base2+32u]=r4; s[base2+40u]=r5; s[base2+48u]=r6; s[base2+56u]=r7;
-            threadgroup_barrier(mem_flags::mem_threadgroup);
+            {radix_stage12}
 
             r0=s[tid]; r1=CMUL(TW(tid),s[tid+64u]);
             r2=CMUL(TW(tid*2u),s[tid+128u]); r3=CMUL(TW(tid*3u),s[tid+192u]);
@@ -2348,11 +2470,13 @@ def _phase_cols512_radix8_batch_kernel(
         #undef W8_1
         #undef W8_3
         #undef RADIX8
+        {simd_undefs}
     """
     return mx.fast.metal_kernel(
         name=(
             f"ssb_phase_cols512_radix8_batch_n{batch}_bf{num_bf}_"
-            f"k{k_bf}_t{int(tiled_input)}_s{storage_num_bf}_o{bf_offset}{range_name}"
+            f"k{k_bf}_t{int(tiled_input)}_s{storage_num_bf}_o{bf_offset}"
+            f"_x{int(simd_radix8)}{range_name}"
         ),
         input_names=["row_ifft", "active_bf", "twiddle"],
         output_names=["sum_out", "sumsq_tile"],
@@ -3250,8 +3374,11 @@ def _row_ifft_small_batch_from_dynamic_geometry(
 ):
     """Share small-scan geometry and G reads across an exact candidate pair."""
     mx = prepared.mx
-    if prepared.scan_shape not in ((128, 128), (256, 256)):
-        raise ValueError("Batched fused MPS row IFFT supports 128x128 or 256x256.")
+    if prepared.scan_shape not in ((128, 128), (256, 256), (1024, 1024)):
+        raise ValueError(
+            "Batched fused MPS row IFFT supports 128x128, 256x256, "
+            "or 1024x1024."
+        )
     batch = int(c10.shape[0])
     if batch not in (1, 2):
         raise ValueError("Batched fused small MPS row IFFT supports at most a pair.")
@@ -4552,6 +4679,7 @@ def _reconstruct_prepared_small_batch_exact_loss_fused(
     )
 
     storage_chunks = list(_bf_storage_chunks(prepared, chunk_bf))
+    submission_depth = 1 if prepared.scan_shape == (1024, 1024) else 6
     for chunk_index, (start, stop) in enumerate(storage_chunks):
         row_ifft = _row_ifft_small_batch_from_dynamic_geometry(
             prepared,
@@ -4574,9 +4702,13 @@ def _reconstruct_prepared_small_batch_exact_loss_fused(
         )
         phase_sum = phase_sum + chunk_sum
         phase_sumsq = phase_sumsq + chunk_sumsq
-        # Submit six sparse BF chunks per evaluation barrier. This keeps the
-        # exact sequential float32 additions while bounding live row storage.
-        if chunk_index % 6 == 5 or chunk_index + 1 == len(storage_chunks):
+        # Keep sequential float32 additions while bounding live row storage.
+        # A 1024 pair row buffer is about 8 GiB, so submit each chunk before
+        # constructing the next; smaller sizes retain the measured depth six.
+        if (
+            chunk_index % submission_depth == submission_depth - 1
+            or chunk_index + 1 == len(storage_chunks)
+        ):
             mx.eval(phase_sum, phase_sumsq)
 
     mean_phase = phase_sum / prepared.num_bf
@@ -4611,7 +4743,7 @@ def _reconstruct_prepared_batch_exact_loss(
 
     batch = int(c10_np.size)
     if (
-        prepared.scan_shape in ((128, 128), (256, 256))
+        prepared.scan_shape in ((128, 128), (256, 256), (1024, 1024))
         and prepared.alpha_k2 is None
         and batch == 2
     ):
@@ -4703,11 +4835,15 @@ def _reconstruct_prepared_batch_exact_loss(
     )
     active_bf_all = (mx.abs(pk_all[0]) > 0.0).astype(mx.uint8)
     mx.eval(active_bf_all)
-
+    pair_logical_chunk_bf = min(
+        chunk_bf,
+        _EXACT_PAIR_LOGICAL_BOUNDARY_BF_512,
+    )
+    row_pack_limit, row_storage_classes = _exact_pair_row_policy_512(batch)
     storage_packs = _bf_storage_chunk_packs(
         prepared,
-        chunk_bf,
-        max_storage_bf=_EXACT_ROW_PACK_STORAGE_BF_512,
+        pair_logical_chunk_bf,
+        max_storage_bf=row_pack_limit,
     )
 
     for pack_index, pack in enumerate(storage_packs):
@@ -4722,10 +4858,13 @@ def _reconstruct_prepared_batch_exact_loss(
             cos2phi12=cos2phi12_values,
             sin2phi12=sin2phi12_values,
             pk_override=pk_all[:, start:stop],
-            # Reuse a few bounded allocation sizes instead of retaining all
-            # ten real sparse-pack shapes. Only the written prefix is consumed.
+            # Reuse bounded allocation sizes instead of retaining every real
+            # sparse-pack shape. Only the written prefix is consumed.
             storage_bf=(
-                _exact_pair_row_storage_bf_512(stop - start)
+                _exact_pair_row_storage_bf_512(
+                    stop - start,
+                    row_storage_classes,
+                )
                 if batch == 2
                 else None
             ),
