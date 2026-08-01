@@ -231,8 +231,9 @@ class LoadResult(NamedTuple):
     Attributes
     ----------
     data
-        Backend-native detector data. CUDA returns a CuPy array; MPS may
-        return a chunk-backed Metal frame source. Shape is normally
+        Backend-native detector data by default. CUDA returns a CuPy array;
+        MPS may return a chunk-backed Metal frame source. With
+        ``output="torch"``, this is a Torch tensor. Shape is normally
         ``(scan_row, scan_col, detector_row, detector_col)`` when the scan
         shape is known, otherwise ``(frame, detector_row, detector_col)``.
     metadata
@@ -278,6 +279,42 @@ class LoadResult(NamedTuple):
 
     data: cp.ndarray
     metadata: dict
+
+
+def _to_torch_data(data):
+    """Convert one backend-native load payload to a Torch tensor."""
+    import torch
+
+    if isinstance(data, torch.Tensor):
+        return data
+    chunks = getattr(data, "chunks", None)
+    if chunks is not None:
+        target = getattr(data, "device", None) or "cpu"
+        frames = torch.cat(
+            [torch.as_tensor(np.asarray(chunk), device=target) for chunk in chunks],
+            dim=0,
+        )
+        scan_shape = getattr(data, "scan_shape", None)
+        if scan_shape is not None:
+            frames = frames.reshape(*scan_shape, *frames.shape[1:])
+        return frames
+    if hasattr(data, "__dlpack__"):
+        return torch.from_dlpack(data)
+    return torch.as_tensor(np.asarray(data))
+
+
+def _convert_load_output(result, output: str):
+    """Convert a load result or result list according to ``output``."""
+    if output == "native":
+        return result
+    if output != "torch":
+        raise ValueError("output must be 'native' or 'torch'")
+    if isinstance(result, list):
+        return [
+            LoadResult(_to_torch_data(item.data), item.metadata)
+            for item in result
+        ]
+    return LoadResult(_to_torch_data(result.data), result.metadata)
 
 
 def _apply_scan_shape(
@@ -5408,6 +5445,7 @@ def load(
     det_bin: int = 1,
     apply_mask: bool = True,
     auto_narrow: bool = True,
+    output: str = "native",
     stack: bool = True,
     device: int | str | None = None,
     devices: list[int] | str | None = None,
@@ -5419,6 +5457,8 @@ def load(
     output-precision control; use ``"u8"`` only when the count range proves it
     lossless, and use ``"u16"`` or the native dtype for scientific workflows.
     ``backend="auto"`` selects CUDA or MPS and never selects CPU silently.
+    ``output="native"`` preserves the backend-native payload; use
+    ``output="torch"`` when the consumer expects a Torch tensor.
 
     Parameters
     ----------
@@ -5429,6 +5469,10 @@ def load(
         ``"f32"``, ``"u4"``, ``"native"``, or ``"auto"``.
     backend
         ``"auto"``, ``"cuda"``, ``"mps"``, or explicit reference ``"cpu"``.
+    output
+        ``"native"`` (default) returns the backend-native array or chunked
+        source. ``"torch"`` converts the loaded result to a Torch tensor,
+        assembling chunked MPS data when necessary.
     scan_shape
         Optional full scan shape as ``(row, col)``.
     scan_region, detector_region
@@ -5448,6 +5492,9 @@ def load(
         multi-frame detector object in ``LoadResult.data`` while background
         decoding fills its dataset slots.
     """
+    if output not in {"native", "torch"}:
+        raise ValueError("output must be 'native' or 'torch'")
+
     token = dtype.lower() if isinstance(dtype, str) else None
     output_dtype = None
     dtype_aliases = {
@@ -5509,7 +5556,7 @@ def load(
     else:
         common.update(device=device, devices=devices)
 
-    return _load(
+    result = _load(
         source,
         dtype=dtype if isinstance(dtype, str) else None,
         gpus=devices if not stack else None,
@@ -5523,6 +5570,7 @@ def load(
         prep_workers=None,
         **common,
     )
+    return _convert_load_output(result, output)
 
 
 def disk_of(path) -> str:

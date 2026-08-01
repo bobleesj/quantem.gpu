@@ -53,6 +53,42 @@ def test_load_uint32_routes_to_native_uint32_output_dtype(monkeypatch) -> None:
     assert calls["kwargs"]["output_dtype"] is np.uint32
 
 
+def test_load_output_torch_converts_single_and_list_results(monkeypatch) -> None:
+    """The public output selector should return Torch without changing native defaults."""
+    from importlib import import_module
+
+    load_module = import_module("quantem.gpu.io.load")
+
+    def fake_load_impl(filepath, *args, **kwargs):
+        if isinstance(filepath, list):
+            return [
+                load_module.LoadResult(np.ones((1, 2), dtype=np.uint16), {}),
+                load_module.LoadResult(np.zeros((1, 2), dtype=np.uint16), {}),
+            ]
+        return load_module.LoadResult(np.ones((1, 2), dtype=np.uint16), {})
+
+    monkeypatch.setattr(load_module, "_load_impl", fake_load_impl)
+
+    single = load_module.load("scan_master.h5", output="torch", verbose=False)
+    assert single.data.__class__.__module__.startswith("torch")
+    assert tuple(single.data.shape) == (1, 2)
+
+    many = load_module.load(
+        ["a_master.h5", "b_master.h5"],
+        output="torch",
+        verbose=False,
+    )
+    assert all(item.data.__class__.__module__.startswith("torch") for item in many)
+
+
+def test_load_rejects_unknown_output(monkeypatch) -> None:
+    from importlib import import_module
+
+    load_module = import_module("quantem.gpu.io.load")
+    with pytest.raises(ValueError, match="output must be 'native' or 'torch'"):
+        load_module.load("scan_master.h5", output="numpy", verbose=False)
+
+
 def test_load_u32_routes_to_parallel_gpu_output_dtype(monkeypatch) -> None:
     """Public dtype='u32' should reach the multi-GPU/list load path."""
     from importlib import import_module

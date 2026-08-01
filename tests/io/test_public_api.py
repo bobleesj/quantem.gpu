@@ -21,6 +21,7 @@ def test_io_exports_only_scientist_workflows() -> None:
 
     load_parameters = python_inspect.signature(gpu.io.load).parameters
     assert "dtype" in load_parameters
+    assert "output" in load_parameters
     assert "output_dtype" not in load_parameters
     assert "prep_workers" not in load_parameters
     assert all(
