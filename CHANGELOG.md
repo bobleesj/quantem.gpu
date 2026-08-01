@@ -6,6 +6,11 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- Add drift-aware sparse ptychography batches to `quantem.gpu.io.load()`: a
+  shared random position set can be paired with one dense integer or
+  fractional `(row, col)` drift field per source, matching the scan grid.
+  Raw diffraction patterns remain unchanged and corrected float32 probe
+  positions are recorded in `metadata["drift_batch"]`.
 - Add `load(..., output="torch")` for direct Torch tensors on CUDA, MPS, and
   CPU, including recursive conversion of multi-dataset results. Add the
   notebook-friendly `quantem.gpu.device.profile()` diagnostic for reporting

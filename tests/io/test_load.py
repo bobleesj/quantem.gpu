@@ -1113,6 +1113,117 @@ def test_random_scan_indices_rejects_oversampling_without_replacement() -> None:
         load_module.random_scan_indices(17, (4, 4), replace=False)
 
 
+def test_drift_scan_positions_preserves_integer_and_fractional_vectors() -> None:
+    """Dense drift fields produce float probe positions without resampling."""
+    from importlib import import_module
+
+    load_module = import_module("quantem.gpu.io.load")
+    nominal = np.asarray([[1, 2], [3, 4]], dtype=np.int64)
+    drift = np.zeros((2, 6, 7, 2), dtype=np.float32)
+    drift[0, 1, 2] = [1, -2]
+    drift[0, 3, 4] = [1, -2]
+    drift[1, 1, 2] = [0.4, 0.6]
+    drift[1, 3, 4] = [0.4, 0.6]
+
+    got = load_module._drift_scan_positions(nominal, drift, scan_shape=(6, 7))
+
+    assert got.shape == (2, 2, 2)
+    assert got.dtype == np.float32
+    np.testing.assert_allclose(
+        got,
+        np.asarray(
+            [
+                [[2.0, 0.0], [4.0, 2.0]],
+                [[1.4, 2.6], [3.4, 4.6]],
+            ],
+            dtype=np.float32,
+        ),
+    )
+
+
+def test_load_sparse_batch_attaches_drift_positions(monkeypatch) -> None:
+    """A shared sparse batch records per-frame corrected probe positions."""
+    from importlib import import_module
+
+    load_module = import_module("quantem.gpu.io.load")
+    calls = {}
+
+    monkeypatch.setattr(
+        load_module,
+        "load_scan_indices",
+        lambda filepath, scan_indices, **kwargs: (
+            calls.update(scan_indices=np.asarray(scan_indices))
+            or load_module.LoadResult(np.zeros((2, 3, 2, 2), dtype=np.uint16), {})
+        ),
+    )
+    monkeypatch.setattr(
+        load_module,
+        "get_metadata",
+        lambda _path: {"scan_shape": (8, 8)},
+    )
+
+    drift_fields = np.zeros((2, 8, 8, 2), dtype=np.float32)
+    drift_fields[0, :, :, :] = [1.0, 0.0]
+    drift_fields[1, :, :, :] = [0.5, -0.25]
+    result = load_module.load(
+        ["frame0.h5", "frame1.h5"],
+        random_positions=2,
+        same_random_positions=True,
+        seed=4,
+        scan_shape=(8, 8),
+        drift=drift_fields,
+        backend="cuda",
+        verbose=False,
+    )
+
+    np.testing.assert_array_equal(calls["scan_indices"], result.metadata["sample"]["scan_indices"])
+    drift_meta = result.metadata["drift_batch"]
+    assert drift_meta["field_shape"] == [2, 8, 8, 2]
+    assert np.asarray(drift_meta["corrected_positions"]).shape == (2, 2, 2)
+    np.testing.assert_allclose(
+        np.asarray(drift_meta["corrected_positions"])
+        - np.asarray(drift_meta["nominal_positions"]),
+        np.broadcast_to(
+            np.asarray([[1.0, 0.0], [0.5, -0.25]], dtype=np.float32)[:, None, :],
+            (2, 2, 2),
+        ),
+    )
+
+
+def test_drift_batch_example_has_forty_frames_and_shared_positions() -> None:
+    """The 40-frame joint example keeps one position set and float drift."""
+    from importlib import import_module
+
+    load_module = import_module("quantem.gpu.io.load")
+    positions = np.asarray([[r, r] for r in range(10)], dtype=np.int64)
+    vectors = np.zeros((40, 16, 16, 2), dtype=np.float32)
+    vectors[..., 0] = np.arange(40, dtype=np.float32)[:, None, None] * 0.25
+    vectors[..., 1] = -np.arange(40, dtype=np.float32)[:, None, None] * 0.125
+
+    corrected = load_module._drift_scan_positions(
+        positions, vectors, scan_shape=(16, 16)
+    )
+
+    assert corrected.shape == (40, 10, 2)
+    assert corrected.dtype == np.float32
+    np.testing.assert_allclose(corrected[0], positions)
+    np.testing.assert_allclose(corrected[4, 3], [4.0, 2.5])
+    np.testing.assert_allclose(corrected[39, 9], [18.75, 4.125])
+
+
+def test_drift_scan_positions_rejects_wrong_field_size() -> None:
+    """Every source field must match the logical scan dimensions exactly."""
+    from importlib import import_module
+
+    load_module = import_module("quantem.gpu.io.load")
+    with pytest.raises(ValueError, match="does not match scan_shape"):
+        load_module._drift_scan_positions(
+            np.asarray([[1, 1]], dtype=np.int64),
+            np.zeros((1, 4, 4, 2), dtype=np.float32),
+            scan_shape=(5, 5),
+        )
+
+
 def test_sparse_prep_workers_default_to_single_reader() -> None:
     """Sparse HDF5 prep should not assume more readers are faster."""
     from importlib import import_module

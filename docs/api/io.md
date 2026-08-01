@@ -81,6 +81,29 @@ while `scan_indices=` accepts positions selected by an external sampler. The
 loader sorts and de-duplicates storage reads, decodes on the GPU, and restores
 the requested stochastic order.
 
+For joint time-series ptychography, keep one shared random batch and attach the
+per-frame drift vectors without resampling the raw diffraction patterns:
+
+```python
+batch = io.load(
+    master_paths,                       # e.g. 40 frame masters
+    random_positions=1000,
+    same_random_positions=True,
+    scan_shape=(512, 512),
+    drift=drift_fields,                 # shape (40, 512, 512, 2)
+    output="torch",
+)
+positions = batch.metadata["drift_batch"]["corrected_positions"]
+```
+
+`drift_fields[f, r, c]` supplies the row/column shift for frame `f` at scan
+position `(r, c)`. `positions` remains float32 for fractional shifts such as
+`0.4` or `-0.6`.
+The detector patterns are unchanged; the reconstruction forward model consumes
+these corrected probe positions. Integer and fractional drift use the same
+API. Use `scan_shift_row_col=` with `scan_region=` only when an explicitly
+resampled scan-space stack is desired.
+
 ## `save`
 
 Save backend-resident arrays without routing through a host reference writer:

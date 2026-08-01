@@ -1045,6 +1045,63 @@ def random_scan_indices(
     return np.stack([rows, cols], axis=-1).astype(np.int64, copy=False)
 
 
+def _drift_scan_positions(
+    scan_positions,
+    drift,
+    *,
+    scan_shape: tuple[int, int] | None = None,
+) -> np.ndarray:
+    """Apply one dense drift field to each frame's shared scan positions.
+
+    The field is sampled exactly at each selected integer scan position. Raw
+    diffraction patterns are not resampled, so fractional offsets remain
+    available to the ptychography forward model.
+    """
+    positions = np.asarray(scan_positions, dtype=np.float32)
+    raw_drift = drift
+    if hasattr(raw_drift, "detach"):
+        raw_drift = raw_drift.detach().cpu().numpy()
+    fields = np.asarray(raw_drift, dtype=np.float32)
+    shared_positions = positions.ndim == 2 and positions.shape[-1] == 2
+    if shared_positions:
+        positions = positions[None, ...]
+    elif positions.ndim != 3 or positions.shape[-1] != 2:
+        raise ValueError("scan_positions must have shape (N, 2) or (n_files, N, 2)")
+    if fields.ndim == 3 and fields.shape[-1] == 2:
+        fields = fields[None, ...]
+    elif fields.ndim == 4 and fields.shape[-1] == 2:
+        pass
+    elif fields.ndim == 4 and fields.shape[1] == 2:
+        fields = np.moveaxis(fields, 1, -1)
+    else:
+        raise ValueError(
+            "drift must have shape (frames, rows, cols, 2) or "
+            "(frames, 2, rows, cols)"
+        )
+    if shared_positions and fields.shape[0] > 1:
+        positions = np.broadcast_to(positions, (fields.shape[0], *positions.shape[1:]))
+    if fields.shape[0] != positions.shape[0]:
+        raise ValueError("drift must contain one field per source frame")
+    field_shape = tuple(int(v) for v in fields.shape[1:3])
+    if scan_shape is not None and tuple(int(v) for v in scan_shape) != field_shape:
+        raise ValueError(
+            f"drift scan shape {field_shape} does not match "
+            f"scan_shape={tuple(scan_shape)}"
+        )
+    positions_int = np.rint(positions).astype(np.int64)
+    if not np.array_equal(positions, positions_int):
+        raise ValueError("scan_positions must be integer logical scan positions")
+    if np.any(positions_int[..., 0] < 0) or np.any(positions_int[..., 0] >= field_shape[0]):
+        raise ValueError("scan_positions row is outside the drift field")
+    if np.any(positions_int[..., 1] < 0) or np.any(positions_int[..., 1] >= field_shape[1]):
+        raise ValueError("scan_positions column is outside the drift field")
+    if not np.isfinite(positions).all() or not np.isfinite(fields).all():
+        raise ValueError("scan_positions and drift must contain finite values")
+    frame_ids = np.arange(positions.shape[0])[:, None]
+    offsets = fields[frame_ids, positions_int[..., 0], positions_int[..., 1]]
+    return np.ascontiguousarray(positions + offsets, dtype=np.float32)
+
+
 def get_metadata(filepath: str) -> dict:
     """Read all scalar metadata from an HDF5 master file.
 
@@ -5442,6 +5499,7 @@ def load(
     seed: int | None = None,
     replace: bool = False,
     same_random_positions: bool = False,
+    drift: Sequence | np.ndarray | None = None,
     det_bin: int = 1,
     apply_mask: bool = True,
     auto_narrow: bool = True,
@@ -5480,6 +5538,14 @@ def load(
     target_scan_region, scan_shift_row_col
         Shared target crop and per-source row/column shifts for drift-aware
         multi-file loading.
+    drift
+        Optional dense per-source additive drift fields for a sparse
+        ptychography batch, shaped ``(n_files, scan_rows, scan_cols, 2)`` or
+        ``(n_files, 2, scan_rows, scan_cols)``. The loader keeps raw
+        diffraction patterns unchanged and records corrected floating-point
+        probe positions in ``result.metadata["drift_batch"]``. Use with
+        ``random_positions=`` or ``scan_indices=``; this is intentionally
+        separate from scan-space resampling.
     devices
         CUDA devices for a multi-GPU load. With ``stack=True`` the result may
         be sharded by device; with ``stack=False`` each source is returned
@@ -5519,6 +5585,105 @@ def load(
 
     if detector_region is not None and scan_region is None:
         raise ValueError("detector_region= requires scan_region=.")
+    if drift is not None and scan_region is not None:
+        raise ValueError(
+            "drift= belongs to sparse ptychography batches; use "
+            "scan_shift_row_col= with scan_region= for scan-space resampling."
+        )
+    generated_sample = None
+    drift_batch = None
+    if drift is not None:
+        if scan_indices is None and random_positions is None:
+            raise ValueError(
+                "drift= requires random_positions= or scan_indices=."
+            )
+        n_files = len(source) if isinstance(source, (list, tuple)) else 1
+        if (
+            n_files > 1
+            and not same_random_positions
+            and random_positions is not None
+        ):
+            raise ValueError(
+                "drift= with multiple sources requires "
+                "same_random_positions=True."
+            )
+        resolved_scan_shape = scan_shape
+        if resolved_scan_shape is None:
+            first_source = source[0] if isinstance(source, (list, tuple)) else source
+            resolved_scan_shape = get_metadata(os.fspath(first_source)).get(
+                "scan_shape"
+            )
+        if resolved_scan_shape is None:
+            raise ValueError(
+                "scan_shape= is required for drift= when source metadata "
+                "does not expose a square scan grid."
+            )
+        resolved_scan_shape = tuple(int(v) for v in resolved_scan_shape)
+        raw_drift = drift
+        if hasattr(raw_drift, "detach"):
+            raw_drift = raw_drift.detach().cpu().numpy()
+        drift_array = np.asarray(raw_drift, dtype=np.float32)
+        if drift_array.ndim == 3 and drift_array.shape[-1] == 2:
+            drift_array = drift_array[None, ...]
+        elif drift_array.ndim == 4 and drift_array.shape[1] == 2:
+            drift_array = np.moveaxis(drift_array, 1, -1)
+        if drift_array.ndim != 4 or drift_array.shape[-1] != 2:
+            raise ValueError(
+                "drift must have shape (frames, rows, cols, 2) or "
+                "(frames, 2, rows, cols)"
+            )
+        if drift_array.shape[0] != n_files:
+            raise ValueError("drift must contain one field per source frame")
+        if tuple(drift_array.shape[1:3]) != resolved_scan_shape:
+            raise ValueError(
+                f"drift scan shape {tuple(drift_array.shape[1:3])} "
+                f"does not match scan_shape={resolved_scan_shape}"
+            )
+        if not np.isfinite(drift_array).all():
+            raise ValueError("drift must contain finite values")
+        if random_positions is not None:
+            scan_indices = random_scan_indices(
+                random_positions,
+                resolved_scan_shape,
+                seed=seed,
+                replace=replace,
+                same_for_all_files=True,
+            )
+            generated_sample = {
+                "mode": "random_positions",
+                "positions_per_file": int(
+                    _normalize_random_position_count(random_positions)
+                ),
+                "scan_shape": [int(v) for v in resolved_scan_shape],
+                "seed": int(seed) if isinstance(seed, (int, np.integer)) else None,
+                "replace": bool(replace),
+                "same_random_positions": True,
+                "n_files": int(n_files),
+                "index_space": "logical_row_major_scan",
+                "scan_indices": np.asarray(scan_indices).tolist(),
+            }
+            random_positions = None
+        _, position_lists = _normalize_scan_indices_by_file(
+            scan_indices,
+            n_files,
+            resolved_scan_shape,
+            scan_order,
+            index_mode,
+        )
+        nominal_positions = np.stack(position_lists, axis=0)
+        corrected_positions = _drift_scan_positions(
+            nominal_positions,
+            drift_array,
+            scan_shape=resolved_scan_shape,
+        )
+        drift_batch = {
+            "field_shape": list(drift_array.shape),
+            "nominal_positions": nominal_positions.tolist(),
+            "corrected_positions": corrected_positions.tolist(),
+            "position_space": "logical_scan_pixels",
+            "mapping": "nominal_plus_dense_drift_field",
+            "patterns_resampled": False,
+        }
     if (
         target_scan_region is not None or scan_shift_row_col is not None
     ) and scan_region is None:
@@ -5564,12 +5729,16 @@ def load(
         scan_region=scan_region,
         scan_indices=scan_indices,
         random_positions=random_positions,
-        seed=seed,
+        seed=None if generated_sample is not None else seed,
         replace=replace,
         same_random_positions=same_random_positions,
         prep_workers=None,
         **common,
     )
+    if drift_batch is not None:
+        result.metadata["drift_batch"] = drift_batch
+        if generated_sample is not None:
+            result.metadata["sample"] = generated_sample
     return _convert_load_output(result, output)
 
 
