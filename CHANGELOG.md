@@ -6,6 +6,11 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- Add `load(..., output="torch")` for direct Torch tensors on CUDA, MPS, and
+  CPU, including recursive conversion of multi-dataset results. Add the
+  notebook-friendly `quantem.gpu.device.profile()` diagnostic for reporting
+  host, Python environment, Torch version, and the resolved compute backend
+  without manual printing.
 - Organize public compute around strict scientific domains: `io`, `detector`,
   `dpc`, `parallax`, `screening`, `device`, and `SSB`. CUDA, MPS, and WebGPU
   implementations now live below each domain's `compute` or `backends`
