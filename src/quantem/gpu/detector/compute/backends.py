@@ -206,6 +206,35 @@ class TorchBackend:
     def masked_sum(self, det_mask: np.ndarray) -> np.ndarray:
         """Virtual image: sum masked detector pixels per scan position (chunked)."""
         torch = self.torch
+        if not torch.is_floating_point(self._flat):
+            mask = torch.as_tensor(
+                np.ascontiguousarray(det_mask),
+                device=self.device,
+                dtype=torch.bool,
+            ).reshape(-1)
+            selected = torch.nonzero(mask, as_tuple=False).reshape(-1)
+            if selected.numel() == 0:
+                return np.zeros(self.scan_shape, dtype=np.float32)
+
+            # Detector counts remain integers through the reduction. Converting
+            # only the 2-D result to float32 matches the NumPy and CUDA paths.
+            flat = self._flat.reshape(self.n_frames, -1)
+            out = torch.empty(self.n_frames, dtype=torch.float32, device=self.device)
+            step = max(
+                1,
+                _SPARSE_MASK_CHUNK_BYTE_BUDGET // max(1, selected.numel() * 8),
+            )
+            for i in range(0, self.n_frames, step):
+                j = min(self.n_frames, i + step)
+                out[i:j] = (
+                    flat[i:j]
+                    .index_select(1, selected)
+                    .to(torch.int64)
+                    .sum(dim=1)
+                    .to(torch.float32)
+                )
+            return out.reshape(self.scan_shape).cpu().numpy()
+
         sparse = self._sparse_masked_sum(det_mask)
         if sparse is not None:
             return sparse
