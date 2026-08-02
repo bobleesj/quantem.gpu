@@ -9,6 +9,14 @@ import numpy as np
 import pytest
 
 
+def _mock_mps_backend(monkeypatch) -> None:
+    """Bypass host detection for unit tests with a fake MPS decoder."""
+    monkeypatch.setattr(
+        "quantem.gpu.io.backends.resolve_backend",
+        lambda _backend: "mps",
+    )
+
+
 def test_load_stacked_u8_routes_to_direct_output_dtype(monkeypatch) -> None:
     """Public dtype='u8' must reach stacked list loads before materializing U16."""
     from importlib import import_module
@@ -264,6 +272,7 @@ def test_load_with_scan_region_maps_scan_roi_to_flat_frames(tmp_path, monkeypatc
     """Region loading should request only the flattened scan frames in row-major order."""
     from importlib import import_module
     load_module = import_module("quantem.gpu.io.load")
+    _mock_mps_backend(monkeypatch)
 
     master = tmp_path / "scan_master.h5"
     master.write_bytes(b"placeholder")
@@ -319,6 +328,7 @@ def test_load_with_scan_region_maps_serpentine_roi_to_flat_frames(tmp_path, monk
     """Serpentine crop-first IO should read frames in corrected scan order."""
     from importlib import import_module
     load_module = import_module("quantem.gpu.io.load")
+    _mock_mps_backend(monkeypatch)
 
     master = tmp_path / "scan_master.h5"
     master.write_bytes(b"placeholder")
@@ -649,6 +659,7 @@ def test_load_series_accepts_per_file_scan_regions(
     """A time series can load drift-aware source crops without a union rectangle."""
     from importlib import import_module
     load_module = import_module("quantem.gpu.io.load")
+    _mock_mps_backend(monkeypatch)
 
     masters = [tmp_path / "a_master.h5", tmp_path / "b_master.h5"]
     for master in masters:
@@ -703,6 +714,7 @@ def test_load_series_per_file_scan_regions_support_variable_shapes_with_stack_fa
     """Per-file drift crops may clip at scan edges, so stack=False keeps them exact."""
     from importlib import import_module
     load_module = import_module("quantem.gpu.io.load")
+    _mock_mps_backend(monkeypatch)
 
     masters = [tmp_path / "a_master.h5", tmp_path / "b_master.h5"]
     for master in masters:
@@ -920,6 +932,7 @@ def test_load_scan_indices_reads_sorted_unique_and_restores_order(
     """Random sparse IO should coalesce disk reads but return stochastic order."""
     from importlib import import_module
     load_module = import_module("quantem.gpu.io.load")
+    _mock_mps_backend(monkeypatch)
 
     master = tmp_path / "scan_master.h5"
     master.write_bytes(b"placeholder")
@@ -978,6 +991,7 @@ def test_load_scan_indices_multi_file_accepts_per_file_batches(
     """Multi-master sparse IO should support different random positions per file."""
     from importlib import import_module
     load_module = import_module("quantem.gpu.io.load")
+    _mock_mps_backend(monkeypatch)
 
     masters = [tmp_path / "a_master.h5", tmp_path / "b_master.h5"]
     for master in masters:
@@ -1320,6 +1334,7 @@ def test_load_with_scan_region_routes_mps_to_sparse_decoder(tmp_path, monkeypatc
     """MPS crop-first IO should use quantem.gpu's sparse Metal decode path."""
     from importlib import import_module
     load_module = import_module("quantem.gpu.io.load")
+    _mock_mps_backend(monkeypatch)
 
     master = tmp_path / "scan_master.h5"
     master.write_bytes(b"placeholder")
@@ -1373,6 +1388,7 @@ def test_load_with_scan_and_detector_region_crops_decoded_detector(
     """Detector-region output should slice decoded detector rows/columns exactly."""
     from importlib import import_module
     load_module = import_module("quantem.gpu.io.load")
+    _mock_mps_backend(monkeypatch)
 
     master = tmp_path / "scan_master.h5"
     master.write_bytes(b"placeholder")
