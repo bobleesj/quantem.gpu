@@ -489,14 +489,44 @@ class MpsSSBBackend:
                 maximum = max(maximum, int(block.max()))
         columns.flush()
         del columns
+        if dtype == np.dtype(np.uint16) and maximum <= 255:
+            # Counts fit uint8, so the downcast is bit-exact and halves the
+            # bytes every browser open reads (same rule as the ShowPtycho
+            # folder exporter).
+            u8_path = Path(f"{Path(path_stem)}.u8")
+            u8_path.unlink(missing_ok=True)
+            wide = np.memmap(
+                path,
+                mode="r",
+                dtype=dtype,
+                shape=(self._selection.size, int(np.prod(self._scan_shape))),
+            )
+            narrow = np.memmap(u8_path, mode="w+", dtype=np.uint8, shape=wide.shape)
+            for start in range(0, wide.shape[0], 256):
+                stop = min(start + 256, wide.shape[0])
+                narrow[start:stop] = wide[start:stop]
+            narrow.flush()
+            del wide, narrow
+            path.unlink(missing_ok=True)
+            path = u8_path
+            dtype = np.dtype(np.uint8)
 
+        # detector_sum here can be the float64 mean_dp * N reconstruction,
+        # which is not exact integer counts; the BF-column container insists
+        # on exactness. The already-derived dc_value carries the same
+        # information, so only exact integer sums are forwarded.
+        exact_detector_sum = self._detector_sum
+        if exact_detector_sum is not None and not np.issubdtype(
+            np.asarray(exact_detector_sum).dtype, np.integer
+        ):
+            exact_detector_sum = None
         replacement = MpsBfColumnFrames(
             path,
             selection=self._selection,
             scan_shape=self._scan_shape,
             dtype=dtype,
             max_value=maximum,
-            detector_sum=self._detector_sum,
+            detector_sum=exact_detector_sum,
             dc_value=self._dc_value_override,
             verbose=False,
         )
