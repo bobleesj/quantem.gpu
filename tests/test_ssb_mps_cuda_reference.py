@@ -276,6 +276,7 @@ def test_mps_engine_implements_backend_contract_for_exact_bf_source(tmp_path) ->
     assert engine.detector_shape == (4, 4)
     assert engine.num_bf == 4
     state = engine.browser_state()
+    assert engine._prepared is None
     assert state.brightfield is selection
     assert state.bf_source_path == source.resolve()
     assert state.bf_source_dtype == np.dtype(np.uint16)

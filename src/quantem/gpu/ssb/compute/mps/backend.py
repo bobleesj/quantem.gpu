@@ -7,6 +7,9 @@ from pathlib import Path
 
 import numpy as np
 
+from quantem.gpu.detector import mean_dp
+from quantem.gpu.optics.physics import electron_wavelength_angstrom
+
 from ..protocol import SSBExportState, SSBPrecision
 from .engine import (
     MpsBfColumnFrames,
@@ -17,12 +20,21 @@ from .engine import (
     _default_object_setup_chunk_bf,
     _object_fourier_sum_dynamic,
     _prepare_selection,
+    _require_mlx,
     _reconstruct_prepared,
     _resolve_bf_selection,
     _scan_shape,
     reconstruct as reconstruct_mps,
 )
 from .optimizer import optimize as optimize_mps
+
+
+def _clear_mps_io_cache() -> None:
+    """Release reusable decoder scratch after an SSB source is closed."""
+
+    from quantem.gpu.io.backends.mps.decoder import clear_mps_cache
+
+    clear_mps_cache()
 
 
 def _bf_geometry_1d_numpy(
@@ -117,26 +129,29 @@ class MpsSSBBackend:
             if redraw_chunk_bf is not None
             else max(requested_chunk_bf, int(_default_object_redraw_chunk_bf()))
         )
-        self._selection = _resolve_bf_selection(
-            self._frames,
-            bf_intensity_threshold,
-            bf_radius,
-            center_override=bf_center,
-        )
         stored_dc = (
             self._frames.dc_value
             if isinstance(self._frames, MpsBfColumnFrames)
             else None
         )
-        detector_sum = (
-            None if stored_dc is not None else self._frames.detector_sum
+        mean_diffraction = (
+            None if stored_dc is not None else np.asarray(mean_dp(self._frames))
+        )
+        self._selection = _resolve_bf_selection(
+            self._frames,
+            bf_intensity_threshold,
+            bf_radius,
+            center_override=bf_center,
+            mean_diffraction=mean_diffraction,
         )
         self._detector_sum = (
-            None if detector_sum is None else np.asarray(detector_sum)
+            None
+            if mean_diffraction is None
+            else mean_diffraction * np.float64(np.prod(self._scan_shape))
         )
         self._dc_value_override = stored_dc
-        if self._dc_value_override is None and detector_sum is not None:
-            selected_dc = np.asarray(detector_sum)[
+        if self._dc_value_override is None and self._detector_sum is not None:
+            selected_dc = self._detector_sum[
                 self._selection.rows,
                 self._selection.cols,
             ]
@@ -276,13 +291,22 @@ class MpsSSBBackend:
         return array, None if loss is None else float(loss)
 
     def close(self) -> None:
-        """Release references to MPS preparation and source data."""
+        """Release MPS preparation, source data, and cached Metal buffers."""
 
+        source = self._source_data
         self._prepared = None
+        self._frames = None
+        self._mean_phase_buffer = None
+        self._sumsq_buffer = None
         self._fit_preview_phase = None
         self._fit_preview_loss = None
         self._fit_preview_aberrations = None
         self._source_data = None
+        release = getattr(source, "free", None)
+        if callable(release):
+            release()
+        _clear_mps_io_cache()
+        _require_mlx().clear_cache()
 
     @property
     def scan_shape(self) -> tuple[int, int]:
@@ -505,60 +529,59 @@ class MpsSSBBackend:
     def browser_state(self) -> SSBExportState:
         """Return backend-neutral host metadata for a WebGPU consumer."""
 
-        if self._prepared is None:
-            self.cache_rotation(math.radians(self._rotation_angle_deg))
-        prepared = self._prepared
-        if prepared is None:
-            raise RuntimeError("MPS SSB rotation state has not been prepared.")
+        # Browser WebGPU constructs its own exact Fourier evidence from the
+        # HDF5/BF-column source. Exporting calibration must therefore remain a
+        # metadata-only operation: building the server MPS FFT stack here
+        # duplicates tens of GiB and strands driver allocations as users move
+        # between files.
+        wavelength = float(electron_wavelength_angstrom(self._voltage_kV * 1e3))
+        semiangle_rad = self._semiangle_mrad * 1e-3
+        ang_y_rad = self._det_sampling[0] * 1e-3
+        ang_x_rad = self._det_sampling[1] * 1e-3
         qx_1d = np.fft.fftfreq(
             self._scan_shape[0], self._scan_sampling[0]
         ).astype(np.float32)
         qy_1d = np.fft.fftfreq(
             self._scan_shape[1], self._scan_sampling[1]
         ).astype(np.float32)
-        kx_bf = prepared.kx_np.astype(np.float32, copy=False)
-        ky_bf = prepared.ky_np.astype(np.float32, copy=False)
-        if prepared.bf_storage_indices_np is not None:
-            reciprocal_y = float(prepared.ang_y_rad) / float(prepared.wavelength)
-            reciprocal_x = float(prepared.ang_x_rad) / float(prepared.wavelength)
-            kx_bf = (
-                self._selection.rows.astype(np.float32)
-                - self._selection.center_row_col[0]
-            ) * reciprocal_y
-            ky_bf = (
-                self._selection.cols.astype(np.float32)
-                - self._selection.center_row_col[1]
-            ) * reciprocal_x
-            if self._rotation_angle_deg:
-                angle = math.radians(-self._rotation_angle_deg)
-                cos_a = math.cos(angle)
-                sin_a = math.sin(angle)
-                kx_bf, ky_bf = (
-                    kx_bf * cos_a + ky_bf * sin_a,
-                    -kx_bf * sin_a + ky_bf * cos_a,
-                )
-            kx_bf = np.asarray(kx_bf, dtype=np.float32)
-            ky_bf = np.asarray(ky_bf, dtype=np.float32)
+        reciprocal_y = ang_y_rad / wavelength
+        reciprocal_x = ang_x_rad / wavelength
+        kx_bf = (
+            self._selection.rows.astype(np.float32)
+            - self._selection.center_row_col[0]
+        ) * reciprocal_y
+        ky_bf = (
+            self._selection.cols.astype(np.float32)
+            - self._selection.center_row_col[1]
+        ) * reciprocal_x
+        if self._rotation_angle_deg:
+            angle = math.radians(-self._rotation_angle_deg)
+            cos_a = math.cos(angle)
+            sin_a = math.sin(angle)
+            kx_bf, ky_bf = (
+                kx_bf * cos_a + ky_bf * sin_a,
+                -kx_bf * sin_a + ky_bf * cos_a,
+            )
+        kx_bf = np.asarray(kx_bf, dtype=np.float32)
+        ky_bf = np.asarray(ky_bf, dtype=np.float32)
         alpha_k2, cos2phi_k, sin2phi_k, aperture_k = _bf_geometry_1d_numpy(
             kx_bf,
             ky_bf,
-            wavelength=float(prepared.wavelength),
-            semiangle_rad=float(prepared.semiangle_rad),
-            ang_y_rad=float(prepared.ang_y_rad),
-            ang_x_rad=float(prepared.ang_x_rad),
+            wavelength=wavelength,
+            semiangle_rad=semiangle_rad,
+            ang_y_rad=ang_y_rad,
+            ang_x_rad=ang_x_rad,
         )
         sampling_A = (
-            1.0
-            / (
-                (float(prepared.ang_y_rad) / float(prepared.wavelength))
-                * self._detector_shape[0]
-            ),
-            1.0
-            / (
-                (float(prepared.ang_x_rad) / float(prepared.wavelength))
-                * self._detector_shape[1]
-            ),
+            1.0 / (reciprocal_y * self._detector_shape[0]),
+            1.0 / (reciprocal_x * self._detector_shape[1]),
         )
+        dc_value = self._dc_value_override
+        if dc_value is None:
+            raise RuntimeError(
+                "MPS WebGPU export requires detector-sum or BF-column DC "
+                "metadata from the source loader."
+            )
         return SSBExportState(
             backend="mps",
             scan_shape=self.scan_shape,
@@ -571,14 +594,14 @@ class MpsSSBBackend:
             alpha_k2=alpha_k2,
             cos2phi_k=cos2phi_k,
             sin2phi_k=sin2phi_k,
-            wavelength_A=float(prepared.wavelength),
-            semiangle_rad=float(prepared.semiangle_rad),
+            wavelength_A=wavelength,
+            semiangle_rad=semiangle_rad,
             angular_sampling_rad=(
-                float(prepared.ang_y_rad),
-                float(prepared.ang_x_rad),
+                ang_y_rad,
+                ang_x_rad,
             ),
             sampling_A=sampling_A,
-            dc_value=complex(prepared.dc_value),
+            dc_value=complex(dc_value),
             bf_source_path=self._bf_source_path,
             bf_source_dtype=self._bf_source_dtype,
             bf_source_max_value=self._bf_source_max_value,
