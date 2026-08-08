@@ -29,4 +29,5 @@ parts:
       - file: maintainer/backend-4dstem-load-checklist
       - file: maintainer/ssb-architecture
       - file: maintainer/ssb-performance
+      - file: maintainer/webgpu-gqk-memory-history
       - file: maintainer/virtual-image-kernel-checklist
