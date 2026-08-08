@@ -167,8 +167,20 @@ def test_load_bf_columns_mps_keeps_exact_sparse_detector_source(tmp_path) -> Non
     assert frames.nbytes == columns.nbytes
 
 
-def test_mps_backend_writes_exact_integer_bf_columns(tmp_path) -> None:
-    """C1: raw MPS export must preserve every selected detector count."""
+@pytest.mark.parametrize(
+    ("offset", "expected_dtype", "expected_suffix"),
+    [
+        (0, np.dtype(np.uint8), "u8"),
+        (300, np.dtype(np.uint16), "u16"),
+    ],
+)
+def test_mps_backend_writes_exact_integer_bf_columns(
+    tmp_path,
+    offset: int,
+    expected_dtype: np.dtype,
+    expected_suffix: str,
+) -> None:
+    """C1: export uses the smallest lossless dtype without changing counts."""
     from quantem.gpu.ssb.bf_selector import BrightfieldDisk
     from quantem.gpu.ssb.compute.mps.backend import MpsSSBBackend
     from quantem.gpu.ssb.compute.mps.engine import MpsBfColumnFrames
@@ -197,7 +209,9 @@ def test_mps_backend_writes_exact_integer_bf_columns(tmp_path) -> None:
         detected_radius_px=2.0,
         detector_shape=(3, 4),
     )
-    source_values = np.arange(12 * 6, dtype=np.uint16).reshape(12, 6)
+    source_values = (
+        np.arange(12 * 6, dtype=np.uint16).reshape(12, 6) + offset
+    )
     raw_frames = RawFrames(source_values)
     detector_sum = source_values.sum(axis=1, dtype=np.uint64).reshape(3, 4)
     backend = MpsSSBBackend.__new__(MpsSSBBackend)
@@ -218,10 +232,10 @@ def test_mps_backend_writes_exact_integer_bf_columns(tmp_path) -> None:
 
     assert written is not None
     path, elapsed = written
-    assert path == (tmp_path / "bf_columns.u16").resolve()
+    assert path == (tmp_path / f"bf_columns.{expected_suffix}").resolve()
     assert elapsed >= 0.0
     expected = source_values[rows * 4 + cols]
-    actual = np.memmap(path, mode="r", dtype=np.uint16).reshape(3, 6)
+    actual = np.memmap(path, mode="r", dtype=expected_dtype).reshape(3, 6)
     np.testing.assert_array_equal(actual, expected)
     assert raw_frames.freed
     assert isinstance(backend._frames, MpsBfColumnFrames)

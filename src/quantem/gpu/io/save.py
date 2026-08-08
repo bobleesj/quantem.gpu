@@ -1029,6 +1029,10 @@ def _compress_batch_mps(data_mps, n_8kb, frame_bytes, output_dtype):
     frame_elems = frame_bytes // itemsize
     total = n * frame_bytes
     data_mps = data_mps.reshape(n, -1).contiguous()
+    # Torch and MLX use separate Metal command queues. The DLPack capsule
+    # shares storage but does not make an asynchronous Torch cat/cast visible
+    # to MLX; synchronize before the MLX bitshuffle kernel consumes it.
+    torch.mps.synchronize()
     empty_u8 = mx.zeros((1,), dtype=mx.uint8)
     empty_u16 = mx.zeros((1,), dtype=mx.uint16)
     empty_f32 = mx.zeros((1,), dtype=mx.float32)
@@ -1283,7 +1287,11 @@ def _mps_frame_batch(flat, start: int, end: int):
             continue
         lo = max(start, chunk_start) - chunk_start
         hi = min(end, chunk_end) - chunk_start
-        pieces.append(torch.from_numpy(np.asarray(chunk[lo:hi])))
+        piece = chunk[lo:hi]
+        if torch is not None and torch.is_tensor(piece):
+            pieces.append(piece)
+        else:
+            pieces.append(torch.from_numpy(np.asarray(piece)))
 
     if not pieces:
         raise IndexError(f"empty MPS chunked batch for frames [{start}, {end})")
@@ -1439,7 +1447,11 @@ def save_compressed_arina_h5(
         scan_shape = inferred_scan
         n_frames = shape[0] * shape[1]
         det_shape = shape[2:]
-        flat = data.reshape(n_frames, *det_shape)
+        flat = (
+            data
+            if _is_mps_chunked_frames(data)
+            else data.reshape(n_frames, *det_shape)
+        )
     elif len(shape) == 3:
         if scan_shape is None:
             raise ValueError("scan_shape is required for 3D frame stacks")
@@ -1478,7 +1490,18 @@ def save_compressed_arina_h5(
         use_mps_backend
         and _is_mps_chunked_frames(flat)
         and dtype == np.dtype(np.uint16)
-        and np.dtype(flat.dtype) == np.dtype(np.uint16)
+        and not (
+            torch is not None
+            and flat.chunks
+            and torch.is_tensor(flat.chunks[0])
+        )
+        and (
+            (torch is not None and flat.dtype == torch.uint16)
+            or (
+                not (torch is not None and isinstance(flat.dtype, torch.dtype))
+                and np.dtype(flat.dtype) == np.dtype(np.uint16)
+            )
+        )
     )
     native_mps_compressor = None
 
