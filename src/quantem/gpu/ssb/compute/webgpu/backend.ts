@@ -993,7 +993,10 @@ async function transformGqkChunks(
     code: makeGqkTransformShader(n),
     label: `SSB gqk transform ${mode} ${n}`,
   });
-  const compactPipe = device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "compact" } });
+  const compactPipe = await device.createComputePipelineAsync({
+    layout: "auto",
+    compute: { module, entryPoint: "compact" },
+  });
   const out: GPUBuffer[] = [];
   let residentBytes = 0;
   let bfOffset = 0;
@@ -1112,9 +1115,11 @@ async function buildH5GqkChunks(
     detail: `Building HDF5 gather and FFT kernels for ${n}x${n}`,
   });
   const module = device.createShaderModule({ code: makeH5GqkShader(n), label: `SSB HDF5 gather+FFT ${n}` });
-  const gatherPipe = device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "gather" } });
-  const rowsPipe = device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "fftRows" } });
-  const colsPipe = device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "fftCols" } });
+  const [gatherPipe, rowsPipe, colsPipe] = await Promise.all([
+    device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "gather" } }),
+    device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "fftRows" } }),
+    device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "fftCols" } }),
+  ]);
   const activeFlat = detectorFlatPixels(cal, activeSourceIndices);
   const gqkChunks: GPUBuffer[] = [];
   const chunkBfCounts: number[] = [];
@@ -1883,9 +1888,11 @@ async function buildBfColumnGqkChunks(
     sourceFrames: plane,
   });
   const module = device.createShaderModule({ code: makeH5GqkShader(n), label: `SSB BF-column gather+FFT ${n}` });
-  const unpackPipe = device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "bfColumnsToGqk" } });
-  const rowsPipe = device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "fftRows" } });
-  const colsPipe = device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "fftCols" } });
+  const [unpackPipe, rowsPipe, colsPipe] = await Promise.all([
+    device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "bfColumnsToGqk" } }),
+    device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "fftRows" } }),
+    device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "fftCols" } }),
+  ]);
   const mode = bfColumnMode(source);
   const bytesPerBf = bfColumnBytesPerBf(source, plane);
   const gqkChunks: GPUBuffer[] = [];
@@ -2321,14 +2328,25 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
     }
     const gqkStorageMode = resolveGqkMode();
     const module = device.createShaderModule({ code: makeSsbShader(n), label: `SSB SSB WGSL ${n} ${gqkStorageMode}` });
+    const [
+      rows, cols, reducePartial, finalizeGroups, objSum, objFftRows, objFftCols,
+    ] = await Promise.all([
+      device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "ssbRows" } }),
+      device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "ssbCols" } }),
+      device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "reducePartialGroups" } }),
+      device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "finalizePartialGroups" } }),
+      device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "ssbObjSum" } }),
+      device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "ssbObjFftRows" } }),
+      device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "ssbObjFftCols" } }),
+    ]);
     const pipelines: SsbPipelines = {
-      rows: device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "ssbRows" } }),
-      cols: device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "ssbCols" } }),
-      reducePartial: device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "reducePartialGroups" } }),
-      finalizeGroups: device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "finalizePartialGroups" } }),
-      objSum: device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "ssbObjSum" } }),
-      objFftRows: device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "ssbObjFftRows" } }),
-      objFftCols: device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "ssbObjFftCols" } }),
+      rows,
+      cols,
+      reducePartial,
+      finalizeGroups,
+      objSum,
+      objFftRows,
+      objFftCols,
     };
     let gqkChunks: GPUBuffer[] = [];
     let chunkBfCounts: number[] = [];

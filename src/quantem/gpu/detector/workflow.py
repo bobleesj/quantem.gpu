@@ -355,7 +355,10 @@ def _resolve_backend(data):
         from quantem.gpu.detector.compute.backends import compute_backend
         from quantem.gpu.detector.compute.mps.kernels import ChunkedFrames
 
-        if not getattr(data, "_is_gpu_frames", False):
+        # MetalRawBackend needs the ChunkedFrames contract (``.vi``); raw
+        # loader results (MPSChunked4DSTEM) carry ``_is_gpu_frames`` but not
+        # ``vi``, so duck-type on the attribute the backend actually uses.
+        if not hasattr(data, "vi"):
             data = ChunkedFrames(data)
         return compute_backend(data)
     return _ArrayComputeBackend(data)

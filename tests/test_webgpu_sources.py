@@ -96,6 +96,10 @@ def test_webgpu_backend_source_tracks_ssb_engine() -> None:
     assert "Math.floor((i + 0.5) * stride)" in active_selector
     assert "if (computeLoss) {" in source
     assert "if (computeLoss && bfCount === this.cal.num_bf)" not in source
+    # Native 512/1024 SSB shaders are large. Synchronous pipeline creation can
+    # freeze Chromium's renderer for minutes on a cold Metal shader cache.
+    assert ".createComputePipeline(" not in source
+    assert source.count(".createComputePipelineAsync(") >= 14
 
 
 def test_webgpu_h5reader_keeps_single_pass_block_metadata_parse() -> None:

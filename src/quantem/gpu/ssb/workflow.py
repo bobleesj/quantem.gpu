@@ -498,13 +498,24 @@ class SSB:
     def close(self) -> None:
         """Release backend-owned GPU state."""
 
+        data = self._data
+        self._data = None
+        backend_owned_data = (
+            self._cuda_session is not None or self._mps_backend is not None
+        )
         if self._cuda_session is not None:
             self._cuda_session.close()
             self._cuda_session = None
         if self._mps_backend is not None:
-            self._mps_backend.close()
-        self._mps_backend = None
-        self._data = None
+            backend = self._mps_backend
+            self._mps_backend = None
+            # The MPS backend's final allocator flush must run after the
+            # workflow releases its own reference to the shared source.
+            backend.close()
+        if not backend_owned_data:
+            release = getattr(data, "free", None)
+            if callable(release):
+                release()
 
     def __enter__(self) -> "SSB":
         """Return this prepared SSB session."""
