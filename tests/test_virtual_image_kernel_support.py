@@ -6,6 +6,13 @@ import numpy as np
 import pytest
 
 
+def test_mps_roi_accumulator_matches_signed_and_unsigned_kernel_sums() -> None:
+    from quantem.gpu.detector.compute.mps.kernels import _roi_accumulator_dtype
+
+    assert _roi_accumulator_dtype(np.int32) == np.dtype(np.int64)
+    assert _roi_accumulator_dtype(np.uint64) == np.dtype(np.uint64)
+
+
 def test_removed_detector_compute_aliases_stay_absent() -> None:
     from quantem.gpu.detector.compute import backends
     from quantem.gpu.detector.compute.mps.kernels import MetalVirtualImage

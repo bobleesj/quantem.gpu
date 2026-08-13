@@ -82,6 +82,14 @@ def _format_seconds(seconds: float) -> str:
     return f"{minutes}m {rem:02d}s"
 
 
+def _roi_accumulator_dtype(sum_dtype: np.dtype) -> np.dtype:
+    """Return a wide host dtype compatible with the Metal chunk sums."""
+    dtype = np.dtype(sum_dtype)
+    if np.issubdtype(dtype, np.unsignedinteger):
+        return np.dtype(np.uint64)
+    return np.dtype(np.int64)
+
+
 def _bin_mask(mask: np.ndarray, binf: int = 2) -> np.ndarray:
     """Downsample a full detector mask to the binf sidecar grid.
 
@@ -318,7 +326,10 @@ class MetalVirtualImage:
             self._roi_sum_nps.append(
                 _mps._numpy_view(sum_mtl, self._sum_dtype, self.ndet)
             )
-        self._roi_accum = np.empty(self.ndet, dtype=np.uint64)
+        self._roi_accum = np.empty(
+            self.ndet,
+            dtype=_roi_accumulator_dtype(self._sum_dtype),
+        )
         self._roi_mean = np.empty(self.ndet, dtype=np.float32)
         self._radial_center = None
         self._radial_nbins = 0
