@@ -44,6 +44,19 @@ def test_save_gif_accepts_four_dimensional_data(tmp_path: Path) -> None:
         assert img.size == (12 * 2 + 2, 10)
 
 
+def test_save_gif_renders_multiline_labels(tmp_path: Path) -> None:
+    out = movie.save_gif(
+        _stack(),
+        tmp_path / "multiline.gif",
+        labels=["TV12 n=300 r*=22.33\nλ_s=1.594 λ_t=35.58\nρ_z=-0.000005 χ²/pixel=0.9973"],
+        label_height=84,
+    )
+
+    assert out.exists()
+    with Image.open(out) as img:
+        assert img.size == (12, 10 + 84)
+
+
 def test_save_movie_dispatches_by_suffix(tmp_path: Path, monkeypatch) -> None:
     captured = {}
 

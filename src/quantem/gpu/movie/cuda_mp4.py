@@ -188,7 +188,9 @@ def _render_label_mask(cp: object, text: str, x: int, y: int, font_size: int) ->
         font = ImageFont.load_default()
 
     probe = Image.new("L", (1, 1), 0)
-    left, top, right, bottom = ImageDraw.Draw(probe).textbbox((0, 0), text, font=font)
+    left, top, right, bottom = ImageDraw.Draw(probe).multiline_textbbox(
+        (0, 0), text, font=font, spacing=2
+    )
     pad = 4
     mask_width = max(1, right - left + 2 * pad)
     mask_height = max(1, bottom - top + 2 * pad)
@@ -200,8 +202,12 @@ def _render_label_mask(cp: object, text: str, x: int, y: int, font_size: int) ->
     text_y = pad - top
     for dx in (-1, 1):
         for dy in (-1, 1):
-            black_draw.text((text_x + dx, text_y + dy), text, font=font, fill=255)
-    white_draw.text((text_x, text_y), text, font=font, fill=255)
+            black_draw.multiline_text(
+                (text_x + dx, text_y + dy), text, font=font, fill=255, spacing=2
+            )
+    white_draw.multiline_text(
+        (text_x, text_y), text, font=font, fill=255, spacing=2
+    )
     return LabelMask(
         x=x,
         y=y,
@@ -324,13 +330,16 @@ def save_mp4(
     scale = cp.asarray([255.0 / max(hi - lo, 1e-6) for lo, hi in limits], dtype=cp.float32)
     label_masks: list[list[LabelMask]] = [[] for _ in range(frames)]
     if label_height_scaled > 0:
-        font_size = max(8, int(label_height_scaled) - 8)
         for frame_idx in range(frames):
             for panel_idx in range(n_panels):
                 row, col = divmod(panel_idx, n_cols)
                 x = col * (frame_width + gap_scaled) + 4
                 y = row * (frame_height + label_height_scaled + gap_scaled) + 2
                 text = f"{names[panel_idx]} [{frame_idx + 1}/{frames}]"
+                line_count = text.count("\n") + 1
+                font_size = min(
+                    24, max(8, int(label_height_scaled) // line_count - 4)
+                )
                 label_masks[frame_idx].append(_render_label_mask(cp, text, x, y, font_size))
 
     scale_grid, stamp_label = _kernels(cp)

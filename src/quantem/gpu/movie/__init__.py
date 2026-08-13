@@ -116,8 +116,8 @@ def _to_uint8(stack: np.ndarray, lo: float, hi: float) -> np.ndarray:
     return scaled.astype(np.uint8)
 
 
-def _font(label_height: int) -> ImageFont.ImageFont:
-    size = max(10, int(label_height) - 8)
+def _font(label_height: int, lines: int = 1) -> ImageFont.ImageFont:
+    size = min(24, max(10, int(label_height) // max(1, int(lines)) - 4))
     for name in (
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "DejaVuSans-Bold.ttf",
@@ -185,7 +185,8 @@ def _movie_frames(
     gap_scaled = max(0, int(round(gap * scale)))
     label_height_scaled = max(0, int(round(label_height * scale)))
     cell_height_scaled = frame_height + label_height_scaled
-    font = _font(label_height_scaled or label_height or 18)
+    label_lines = max((name.count("\n") + 1 for name in names), default=1)
+    font = _font(label_height_scaled or label_height or 18, label_lines)
 
     frames: list[Image.Image] = []
     for frame_idx in range(n_frames):
@@ -200,11 +201,12 @@ def _movie_frames(
             y = row * (cell_height_scaled + gap_scaled)
             canvas.paste(tile, (x, y + label_height_scaled))
             if movie_idx < len(names) and label_height_scaled > 0:
-                draw.text(
+                draw.multiline_text(
                     (x + 4, y + 2),
                     f"{names[movie_idx]} [{frame_idx + 1}/{n_frames}]",
                     fill=(255, 255, 255),
                     font=font,
+                    spacing=2,
                 )
         frames.append(canvas)
     return frames
