@@ -15,6 +15,13 @@ class _ChunkSource:
     chunks = [object()]
 
 
+class _MarkedChunkSource:
+    """Public MPS IO container: GPU-owned chunks, but no compute view yet."""
+
+    chunks = [object()]
+    _is_gpu_frames = True
+
+
 def test_chunked_frames_carries_decode_side_detector_sum(monkeypatch):
     from types import SimpleNamespace
 
@@ -93,6 +100,38 @@ def test_masked_sum_dispatches_chunk_source_through_gpu_compute(monkeypatch):
     out = detector.masked_sum(_ChunkSource(), np.ones((3, 3), dtype=bool))
 
     np.testing.assert_array_equal(out, np.arange(4, dtype=np.float32).reshape(2, 2))
+    assert len(calls) == 1
+    assert isinstance(calls[0], FakeChunkedFrames)
+
+
+def test_marked_mps_io_source_is_wrapped_before_detector_compute(monkeypatch):
+    from quantem.gpu import detector
+    from quantem.gpu.detector.compute import backends
+    from quantem.gpu.detector.compute.mps import kernels as mps
+
+    calls: list[object] = []
+
+    class FakeChunkedFrames:
+        _is_gpu_frames = True
+
+        def __init__(self, source):
+            self.source = source
+            self.vi = object()
+
+    class FakeBackend:
+        def mean_dp(self):
+            return np.ones((3, 3), dtype=np.float32)
+
+    def fake_compute_backend(data):
+        calls.append(data)
+        return FakeBackend()
+
+    monkeypatch.setattr(mps, "ChunkedFrames", FakeChunkedFrames)
+    monkeypatch.setattr(backends, "compute_backend", fake_compute_backend)
+
+    out = detector.mean_dp(_MarkedChunkSource())
+
+    np.testing.assert_array_equal(out, np.ones((3, 3), dtype=np.float32))
     assert len(calls) == 1
     assert isinstance(calls[0], FakeChunkedFrames)
 

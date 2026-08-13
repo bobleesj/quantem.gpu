@@ -92,3 +92,32 @@ def test_screening_rejects_packed_uint4_products() -> None:
         assert "derived screening products" in str(error)
     else:
         raise AssertionError("packed uint4 must not be accepted for derived products")
+
+
+def test_screening_load_calls_use_public_api() -> None:
+    """Screening must only pass keywords accepted by public ``io.load``."""
+    import ast
+    import inspect
+    import textwrap
+
+    from quantem.gpu import io
+    from quantem.gpu.screening import workflow
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(workflow)))
+    accepted = set(inspect.signature(io.load).parameters)
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "load"
+    ]
+    unexpected = {
+        keyword.arg
+        for call in calls
+        for keyword in call.keywords
+        if keyword.arg is not None and keyword.arg not in accepted
+    }
+
+    assert calls
+    assert not unexpected, f"unsupported public io.load keywords: {sorted(unexpected)}"

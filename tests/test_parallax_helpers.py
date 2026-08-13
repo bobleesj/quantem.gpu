@@ -4,6 +4,7 @@ import importlib.util
 import math
 import os
 import sys
+import types
 from pathlib import Path
 
 import numpy as np
@@ -43,12 +44,45 @@ def _load_quantem_module(name: str, relpath: str):
         pytest.skip(f"could not load original QuantEM module; check {QUANTEM_SRC_ENV}.")
     mod = importlib.util.module_from_spec(spec)
     sys.modules[name] = mod
-    spec.loader.exec_module(mod)
+    try:
+        spec.loader.exec_module(mod)
+    except Exception:
+        sys.modules.pop(name, None)
+        raise
+    parent_name, _, attribute = name.rpartition(".")
+    if parent_name:
+        setattr(sys.modules[parent_name], attribute, mod)
     return mod
+
+
+def _ensure_quantem_package(name: str, relpath: str) -> None:
+    """Create one importable parent package for manually loaded references."""
+    if name in sys.modules:
+        return
+    path = _quantem_src() / relpath
+    if not path.is_dir():
+        pytest.skip(f"original QuantEM source is not available; set {QUANTEM_SRC_ENV}.")
+    package = types.ModuleType(name)
+    package.__package__ = name
+    package.__path__ = [str(path)]
+    package.__spec__ = importlib.util.spec_from_loader(
+        name,
+        loader=None,
+        is_package=True,
+    )
+    sys.modules[name] = package
+    parent_name, _, attribute = name.rpartition(".")
+    setattr(sys.modules[parent_name], attribute, package)
 
 
 def _reference_modules():
     """Return original QuantEM helpers used as migration parity references."""
+    _ensure_quantem_package("quantem.core", "quantem/core")
+    _ensure_quantem_package("quantem.core.utils", "quantem/core/utils")
+    _ensure_quantem_package(
+        "quantem.diffractive_imaging",
+        "quantem/diffractive_imaging",
+    )
     if "quantem.core.config" not in sys.modules:
         _load_quantem_module("quantem.core.config", "quantem/core/config.py")
     if "quantem.core.utils.utils" not in sys.modules:
