@@ -368,7 +368,7 @@ def _build_cuda_products(
             scan_shape=scan_shape,
             seed=seed,
             backend="cuda",
-            output_dtype=output_dtype,
+            dtype=output_dtype,
             verbose=False,
         )
         cp.cuda.Stream.null.synchronize()
@@ -396,7 +396,7 @@ def _build_cuda_products(
                 str(master),
                 scan_shape=scan_shape,
                 backend="cuda",
-                output_dtype=output_dtype,
+                dtype=output_dtype,
                 verbose=False,
             )
         else:
@@ -405,7 +405,7 @@ def _build_cuda_products(
                 scan_region=(r0, r1, 0, scan_shape[1]),
                 scan_shape=scan_shape,
                 backend="cuda",
-                output_dtype=output_dtype,
+                dtype=output_dtype,
                 verbose=False,
             )
         cp.cuda.Stream.null.synchronize()
@@ -659,9 +659,7 @@ def _build_mps_products(
                 str(master),
                 scan_shape=scan_shape,
                 backend="mps",
-                output_dtype=None,
                 verbose=False,
-                skip_mps_memory_check=skip_mps_memory_check,
             )
         else:
             result = load(
@@ -669,7 +667,6 @@ def _build_mps_products(
                 scan_region=(r0, r1, 0, scan_shape[1]),
                 scan_shape=scan_shape,
                 backend="mps",
-                output_dtype=None,
                 verbose=False,
             )
         load_s = time.perf_counter() - load_t0
