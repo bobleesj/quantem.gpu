@@ -53,6 +53,30 @@ backend = qgpu.device.detect()
 print(backend)
 ```
 
+Native macOS clients can import the same display kernels through the repository's
+Swift package. `QuantEMMetalDisplay` owns the linear/log normalization, LUT
+colormaps, `uint32` range reduction, and 256-bin histogram used by native
+QuantEM viewers:
+
+```swift
+import Metal
+import QuantEMMetalDisplay
+
+let device = MTLCreateSystemDefaultDevice()!
+let library = try QuantEMMetalDisplay.makeLibrary(device: device)
+let lut = try QuantEMMetalDisplay.makeLUTBuffer(
+    device: device,
+    colormap: .viridis
+)
+```
+
+Run its Metal parity tests and standalone display benchmark on a Mac with:
+
+```bash
+swift test
+swift run -c release quantem-metal-display-benchmark 512
+```
+
 Load a scan crop from an HDF5 master file. On CUDA this returns a CuPy array
 without loading the full scan first.
 
@@ -373,6 +397,7 @@ with software adapters rejected.
 | HDF5 load/decompress | CUDA, RTX PRO 6000 Blackwell | `512x512x192x192` | `450 ms` over 946 runs | Reference warm load; min `408 ms`, max `1159 ms`, resident stack `9.66 GB`. |
 | HDF5 load/decompress | CUDA, RTX PRO 6000 Blackwell | true `1024x1024x192x192` | `4.704 s` | Real acquisition, no bin/crop, `uint16` output, selected corrected frames bit-exact, resident stack `77.31 GB`. |
 | HDF5 load/decompress | MPS, Apple Metal | true `1024x1024x192x192` | `4.617 s` | Real acquisition, no bin/crop, chunk-backed `uint16` output, selected corrected frames bit-exact, resident stack `77.31 GB`. |
+| Native display render | Metal, Apple M5 Max | `512x512 uint32` | command-completion wall medians `0.15-0.21 ms` render; `0.14-0.19 ms` histogram | Five runs on 2026-08-13, each after 10 warmups over 100 stored-frame measurements; exact `0...4095` range, fragment endpoints, and 262,144-pixel histogram sum passed. |
 | Local HDF5 full-stack load | WebGPU, Chrome Apple Metal | `512x512x192x192` | `772 ms` over 946 runs | Corrected-frame checksum parity versus CUDA; min `726 ms`, max `879 ms`; full path still materializes the `9.7 GB` browse cube. |
 | Local HDF5 full-stack load | WebGPU, Chrome NVIDIA Blackwell | true `1024x1024x192x192`, no crop/bin | Rejected | Attempt reached about `97.2 GB` GPU memory and failed before publishing a load profile/checksum readback. Do not count strict full-stack browser browse as signed off for 1024; use product-first, true crop, or explicit detector-bin paths. |
 | Local HDF5 detector-bin load | WebGPU, Chrome NVIDIA Blackwell | full `512x512x192x192` and true `256x256` crop, `detBin=2/4/8` | full page profiles `1199/1212/1106 ms`; crop p95 `798/813/775 ms` | Corrected-frame checksum parity exact versus zero-bad-before-bin reference; crop medians `774/755/733 ms`; native non-low8 `uint16` `detBin=2` also exact at `2651 ms`. |
@@ -431,6 +456,8 @@ Implemented in this package:
 - `quantem.gpu.detector` BF/DF/ADF, `mean_dp`, `masked_sum`, `virtual`, and
   automatic BF disk detection with reference checks
 - `quantem.gpu.dpc` CoM/DPC/iDPC with reference checks
+- `QuantEMMetalDisplay`, a small Swift package for shared native Metal
+  normalization, LUT colormaps, range reduction, and histograms
 - `quantem.gpu.SSB`, the single backend-neutral SSB workflow above private
   CUDA, MPS, and WebGPU compute implementations
 - domain-owned CUDA, MPS, and WebGPU compute implementations; Linux CI has

@@ -74,6 +74,7 @@ artifacts = [
     "src/quantem/gpu/dpc/compute/webgpu/*.ts",
     "src/quantem/gpu/ssb/compute/webgpu/*.ts",
     "src/quantem/gpu/ssb/compute/webgpu/kernels/*.ts",
+    "src/quantem/gpu/display/swift/Sources/**/*",
 ]
 
 [tool.hatch.build.targets.sdist]
@@ -81,6 +82,7 @@ include = [
     "docs",
     "src/quantem/gpu",
     "tests",
+    "Package.swift",
     "README.md",
     "pyproject.toml",
 ]
