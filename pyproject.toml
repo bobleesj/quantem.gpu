@@ -37,6 +37,7 @@ dependencies = [
     "numba>=0.60",
     "numpy>=2.0.0",
     "optuna",
+    "pyyaml",
     "tqdm",
 ]
 

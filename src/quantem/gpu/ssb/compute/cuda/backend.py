@@ -267,9 +267,6 @@ class CudaSSBBackend:
                 ).copy()
                 padded[pad_top:pad_top + H, pad_left:pad_left + W] = data
                 data = padded
-            print(
-                f"  SSB auto-shape: input {H}x{W} → padded/cropped to {target}x{target}"
-            )
 
         # Handle scalar sampling values
         if isinstance(scan_sampling, (int, float)):
@@ -286,7 +283,6 @@ class CudaSSBBackend:
             _, detected_bf_radius = detect_bf_radius(mean_dp)
             det_sampling = (2 * semiangle) / detected_bf_radius
             det_sampling = (det_sampling, det_sampling)
-            print(f"  Auto-detected BF radius: {detected_bf_radius} px, det sampling: {det_sampling[0]:.4f} mrad/px")
         elif isinstance(det_sampling, (int, float)):
             det_sampling = (float(det_sampling), float(det_sampling))
         if aberrations is None:
@@ -772,7 +768,7 @@ class CudaSSBBackend:
             angs[idx] = cp.float32(math.radians(ang_deg))
         return mags, angs, any_active
 
-    def result(self) -> SSBResult:
+    def result(self, *, compute_loss: bool = True) -> SSBResult:
         """
         Reconstruct the phase image with current aberrations.
 
@@ -819,12 +815,12 @@ class CudaSSBBackend:
                 f"or restart the kernel to free stale GPU memory."
             ) from None
         try:
-            if ho_active:
-                # Loss metric is only defined for (C10, C12, phi12); report None
-                # when HO is active, matching the widget's "loss manual" convention.
-                loss = None
-            else:
+            if compute_loss and not ho_active:
                 loss = self._compute_loss()
+            else:
+                # Higher-order reconstruction and explicit no-loss calls do not
+                # evaluate the C10/C12/phi12 diagnostic loss.
+                loss = None
         except (ValueError, ZeroDivisionError, FloatingPointError):
             # Loss is a diagnostic metric; a numerical failure here should not
             # abort the reconstruction. GPU errors (MemoryError, RuntimeError)
@@ -885,11 +881,13 @@ class CudaSSBBackend:
     def reconstruct_result(
         self,
         aberrations: dict[str, float],
+        *,
+        compute_loss: bool = True,
     ) -> SSBResult:
         """Reconstruct the CUDA complex object at fixed aberrations."""
 
         self.aberrations.update(aberrations)
-        return self.result()
+        return self.result(compute_loss=compute_loss)
 
     def preview(
         self,

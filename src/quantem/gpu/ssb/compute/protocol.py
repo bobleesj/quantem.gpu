@@ -88,6 +88,8 @@ class SSBProtocol(Protocol):
     def reconstruct_result(
         self,
         aberrations: dict[str, float],
+        *,
+        compute_loss: bool = True,
     ) -> SSBResult: ...
 
     def cache_rotation(self, rotation_rad: float) -> None: ...

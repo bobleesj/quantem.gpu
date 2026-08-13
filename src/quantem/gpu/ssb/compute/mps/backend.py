@@ -229,7 +229,12 @@ class MpsSSBBackend:
         self._fit_preview_loss = float(loss)
         self._fit_preview_aberrations = dict(aberrations)
 
-    def reconstruct_result(self, aberrations: dict[str, float]):
+    def reconstruct_result(
+        self,
+        aberrations: dict[str, float],
+        *,
+        compute_loss: bool = True,
+    ):
         """Reconstruct the MPS complex object at fixed aberrations."""
 
         result = reconstruct_mps(
@@ -245,6 +250,7 @@ class MpsSSBBackend:
             bf_intensity_threshold=self._bf_intensity_threshold,
             bf_center=self._bf_center,
             bf_radius=self._bf_radius,
+            compute_loss=compute_loss,
         )
         self._aberrations = dict(aberrations)
         return result

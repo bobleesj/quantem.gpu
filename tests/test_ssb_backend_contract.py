@@ -18,7 +18,8 @@ class _Backend:
     def fit(self, **kwargs):
         raise NotImplementedError
 
-    def reconstruct_result(self, aberrations):
+    def reconstruct_result(self, aberrations, *, compute_loss=True):
+        del compute_loss
         raise NotImplementedError
 
     def preview(self, aberrations, **kwargs):
@@ -89,6 +90,37 @@ def test_public_ssb_has_one_backend_neutral_signature() -> None:
     }
     assert shared <= constructor.parameters.keys()
     assert constructor.parameters["backend"].default == "auto"
+    reconstruct = inspect.signature(SSB.reconstruct)
+    assert reconstruct.parameters["compute_loss"].default is True
+
+
+def test_mps_reconstruct_honors_compute_loss(monkeypatch) -> None:
+    """MPS must forward the public loss request to its reconstruction engine."""
+    from quantem.gpu.ssb.compute.mps import backend as mps_backend
+
+    requested = []
+
+    def reconstruct_mps(*args, **kwargs):
+        del args
+        requested.append(kwargs["compute_loss"])
+        return "result"
+
+    monkeypatch.setattr(mps_backend, "reconstruct_mps", reconstruct_mps)
+    backend = mps_backend.MpsSSBBackend.__new__(mps_backend.MpsSSBBackend)
+    backend._source_data = np.zeros((1, 1, 1, 1), dtype=np.uint8)
+    backend._voltage_kV = 300.0
+    backend._semiangle_mrad = 30.0
+    backend._scan_sampling = (1.0, 1.0)
+    backend._det_sampling = None
+    backend._rotation_angle_deg = 0.0
+    backend._bf_intensity_threshold = 0.0
+    backend._bf_center = None
+    backend._bf_radius = None
+
+    aberrations = {"C10": 0.0, "C12": 0.0, "phi12": 0.0}
+    assert backend.reconstruct_result(aberrations, compute_loss=False) == "result"
+    assert backend.reconstruct_result(aberrations, compute_loss=True) == "result"
+    assert requested == [False, True]
 
 
 def test_default_aberrations_remain_distinct_from_an_explicit_zero_start(

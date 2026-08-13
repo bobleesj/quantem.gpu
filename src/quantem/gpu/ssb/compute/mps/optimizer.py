@@ -186,8 +186,19 @@ def optimize(
             sampler=optuna.samplers.TPESampler(seed=int(seed)),
         )
 
+        from tqdm.auto import tqdm
+
         n_completed = 0
         batch_size = max(1, int(optuna_batch_size))
+        progress = tqdm(
+            total=int(n_trials),
+            desc="SSB optimize",
+            disable=not verbose,
+            bar_format=(
+                "{l_bar}{bar}| {n_fmt}/{total_fmt} "
+                "[{elapsed}<{remaining}]"
+            ),
+        )
         while n_completed < int(n_trials):
             current = min(batch_size, int(n_trials) - n_completed)
             optuna_trials = [study.ask() for _ in range(current)]
@@ -205,6 +216,8 @@ def optimize(
                 study.tell(trial, loss_value)
                 trials.append({"params": dict(params), "loss": loss_value})
             n_completed += current
+            progress.update(current)
+        progress.close()
 
         if study.best_trial is not None and float(study.best_value) < best_loss:
             params = study.best_trial.params
