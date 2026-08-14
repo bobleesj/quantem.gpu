@@ -28,12 +28,18 @@ public enum Metal4DSTEMKernels {
   public static let detectorSumU8Function = "detector_sum_u8"
   public static let detectorSumU16Function = "detector_sum_u16"
   public static let transposeScanWordsFunction = "transpose_scan_words"
+  public static let scanBinU8Function = "scan_bin_u8_to_u32_word_major"
+  public static let scanBinU16Function = "scan_bin_u16_to_u32_word_major"
+  public static let detectorProductsU32Function = "detector_products_u32_word_major"
   public static let fullSumU8Function = "full_sum_u8_word_major"
   public static let signedDeltaU8Function = "signed_delta_u8_word_major"
   public static let fullSumU16Function = "full_sum_u16_word_major"
   public static let signedDeltaU16Function = "signed_delta_u16_word_major"
+  public static let fullSumU32Function = "full_sum_u32_word_major"
+  public static let signedDeltaU32Function = "signed_delta_u32_word_major"
   public static let extractU8Function = "extract_u8_word_major_frame"
   public static let extractU16Function = "extract_u16_word_major_frame"
+  public static let extractU32Function = "extract_u32_word_major_frame"
 
   /// Compile the fused QH5IDX bitshuffle/LZ4 decode library.
   public static func makeHDF5Library(device: MTLDevice) throws -> MTLLibrary {

@@ -179,6 +179,119 @@ kernel void transpose_scan_words(
     }
 }
 
+struct ScanBinParams {
+    uint sourceRows;
+    uint sourceCols;
+    uint detectorPixels;
+    uint scanBin;
+    uint outputScanCount;
+    uint outputCols;
+    uint destinationRowOffset;
+    uint padding;
+};
+
+template <typename Sample>
+inline void scanBinToU32WordMajor(
+    device const Sample *source,
+    device uint *destination,
+    constant ScanBinParams &params,
+    uint2 position
+) {
+    uint detectorPixel = position.x;
+    uint localOutputScan = position.y;
+    uint localOutputRows = (params.sourceRows + params.scanBin - 1u) / params.scanBin;
+    uint localOutputCount = localOutputRows * params.outputCols;
+    if (detectorPixel >= params.detectorPixels || localOutputScan >= localOutputCount) return;
+
+    uint outputRow = localOutputScan / params.outputCols;
+    uint outputCol = localOutputScan - outputRow * params.outputCols;
+    uint sourceRowStart = outputRow * params.scanBin;
+    uint sourceColStart = outputCol * params.scanBin;
+    uint sourceRowStop = min(params.sourceRows, sourceRowStart + params.scanBin);
+    uint sourceColStop = min(params.sourceCols, sourceColStart + params.scanBin);
+    uint sum = 0;
+    for (uint row = sourceRowStart; row < sourceRowStop; ++row) {
+        for (uint col = sourceColStart; col < sourceColStop; ++col) {
+            ulong sourceScan = ulong(row) * params.sourceCols + col;
+            sum += uint(source[sourceScan * params.detectorPixels + detectorPixel]);
+        }
+    }
+    uint destinationScan =
+        (params.destinationRowOffset + outputRow) * params.outputCols + outputCol;
+    destination[ulong(detectorPixel) * params.outputScanCount + destinationScan] = sum;
+}
+
+// Scan binning preserves exact integer sums and writes one uint32 value per
+// detector pixel. Edge bins include every acquired scan position rather than
+// cropping incomplete bins.
+kernel void scan_bin_u8_to_u32_word_major(
+    device const uchar *source [[buffer(0)]],
+    device uint *destination [[buffer(1)]],
+    constant ScanBinParams &params [[buffer(2)]],
+    uint2 position [[thread_position_in_grid]]
+) {
+    scanBinToU32WordMajor(source, destination, params, position);
+}
+
+kernel void scan_bin_u16_to_u32_word_major(
+    device const ushort *source [[buffer(0)]],
+    device uint *destination [[buffer(1)]],
+    constant ScanBinParams &params [[buffer(2)]],
+    uint2 position [[thread_position_in_grid]]
+) {
+    scanBinToU32WordMajor(source, destination, params, position);
+}
+
+struct WordMajorDetectorParams {
+    uint scanCount;
+    uint detectorPixels;
+};
+
+// Produce BF/ABF/ADF from an exact uint32 scan-binned cache. One threadgroup
+// owns each output scan position, matching the native detector reduction.
+kernel void detector_products_u32_word_major(
+    device const uint *data [[buffer(0)]],
+    device uint *bfMap [[buffer(1)]],
+    device uint *abfMap [[buffer(2)]],
+    device uint *dfMap [[buffer(3)]],
+    constant WordMajorDetectorParams &params [[buffer(4)]],
+    device const uchar *bands [[buffer(5)]],
+    uint scan [[threadgroup_position_in_grid]],
+    uint threadIndex [[thread_index_in_threadgroup]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint threads [[threads_per_threadgroup]]
+) {
+    if (scan >= params.scanCount) return;
+    threadgroup atomic_uint sums[3];
+    if (threadIndex < 3) {
+        atomic_store_explicit(&sums[threadIndex], 0u, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    uint bf = 0;
+    uint abf = 0;
+    uint df = 0;
+    for (uint pixel = threadIndex; pixel < params.detectorPixels; pixel += threads) {
+        uint value = data[ulong(pixel) * params.scanCount + scan];
+        uchar band = bands[pixel];
+        if (band & 1u) bf += value;
+        if (band & 2u) abf += value;
+        if (band & 4u) df += value;
+    }
+    bf = simd_sum(bf);
+    abf = simd_sum(abf);
+    df = simd_sum(df);
+    if (lane == 0) {
+        atomic_fetch_add_explicit(&sums[0], bf, memory_order_relaxed);
+        atomic_fetch_add_explicit(&sums[1], abf, memory_order_relaxed);
+        atomic_fetch_add_explicit(&sums[2], df, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (threadIndex != 0) return;
+    bfMap[scan] = atomic_load_explicit(&sums[0], memory_order_relaxed);
+    abfMap[scan] = atomic_load_explicit(&sums[1], memory_order_relaxed);
+    dfMap[scan] = atomic_load_explicit(&sums[2], memory_order_relaxed);
+}
+
 // Each entry is (detector uint32 word, 2-bit coefficients for its four uint8
 // lanes). Coeff 1 includes a lane; coeff 2 subtracts it. Consecutive SIMD lanes
 // process consecutive scan positions while reading one detector-major word,
@@ -301,4 +414,59 @@ kernel void extract_u16_word_major_frame(
     if (pixel >= pixelCount) return;
     uint word = data[ulong(pixel >> 1u) * scanCount + scanIndex];
     output[pixel] = ushort((word >> ((pixel & 1u) * 16u)) & 0xffffu);
+}
+
+inline long signed_u32_word(uint word, uint coefficients) {
+    uint coefficient = coefficients & 3u;
+    if (coefficient == 1u) return long(word);
+    if (coefficient == 2u) return -long(word);
+    return 0;
+}
+
+kernel void full_sum_u32_word_major(
+    device const uint *data [[buffer(0)]],
+    device const uint2 *entries [[buffer(1)]],
+    device uint *output [[buffer(2)]],
+    constant uint &scanCount [[buffer(3)]],
+    constant uint &entryCount [[buffer(4)]],
+    uint scan [[thread_position_in_grid]]
+) {
+    if (scan >= scanCount) return;
+    long sum = 0;
+    for (uint entry = 0; entry < entryCount; ++entry) {
+        uint2 spec = entries[entry];
+        uint word = data[ulong(spec.x) * scanCount + scan];
+        sum += signed_u32_word(word, spec.y);
+    }
+    output[scan] = uint(sum);
+}
+
+kernel void signed_delta_u32_word_major(
+    device const uint *data [[buffer(0)]],
+    device const uint2 *entries [[buffer(1)]],
+    device uint *output [[buffer(2)]],
+    constant uint &scanCount [[buffer(3)]],
+    constant uint &entryCount [[buffer(4)]],
+    uint scan [[thread_position_in_grid]]
+) {
+    if (scan >= scanCount) return;
+    long delta = 0;
+    for (uint entry = 0; entry < entryCount; ++entry) {
+        uint2 spec = entries[entry];
+        uint word = data[ulong(spec.x) * scanCount + scan];
+        delta += signed_u32_word(word, spec.y);
+    }
+    output[scan] = uint(long(output[scan]) + delta);
+}
+
+kernel void extract_u32_word_major_frame(
+    device const uint *data [[buffer(0)]],
+    device uint *output [[buffer(1)]],
+    constant uint &scanIndex [[buffer(2)]],
+    constant uint &scanCount [[buffer(3)]],
+    constant uint &pixelCount [[buffer(4)]],
+    uint pixel [[thread_position_in_grid]]
+) {
+    if (pixel >= pixelCount) return;
+    output[pixel] = data[ulong(pixel) * scanCount + scanIndex];
 }
