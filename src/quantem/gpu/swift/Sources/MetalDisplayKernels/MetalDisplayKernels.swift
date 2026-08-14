@@ -3,7 +3,7 @@ import Metal
 import simd
 
 /// Display normalization applied before lookup-table colormapping.
-public enum QuantEMDisplayScale: UInt32, CaseIterable, Sendable {
+public enum MetalDisplayScale: UInt32, CaseIterable, Sendable {
     case linear = 0
     case logarithmic = 1
 
@@ -15,8 +15,8 @@ public enum QuantEMDisplayScale: UInt32, CaseIterable, Sendable {
     }
 }
 
-/// Colormaps bundled with the native QuantEM display package.
-public enum QuantEMColormap: String, CaseIterable, Sendable {
+/// Colormaps bundled with the native Metal display package.
+public enum MetalColormap: String, CaseIterable, Sendable {
     case gray
     case viridis
     case inferno
@@ -26,8 +26,8 @@ public enum QuantEMColormap: String, CaseIterable, Sendable {
     public var title: String { rawValue.capitalized }
 }
 
-/// Buffer layout shared by Swift and the QuantEM Metal display kernels.
-public struct QuantEMDisplayParameters: Sendable {
+/// Buffer layout shared by Swift and the Metal display kernels.
+public struct MetalDisplayParameters: Sendable {
     public var rows: UInt32
     public var cols: UInt32
     public var low: UInt32
@@ -43,7 +43,7 @@ public struct QuantEMDisplayParameters: Sendable {
         cols: Int,
         low: UInt32,
         high: UInt32,
-        scale: QuantEMDisplayScale,
+        scale: MetalDisplayScale,
         lutCount: Int = 256
     ) {
         precondition(rows > 0 && cols > 0, "Image rows and columns must be positive.")
@@ -58,7 +58,7 @@ public struct QuantEMDisplayParameters: Sendable {
 }
 
 /// Errors raised while loading shared display resources.
-public enum QuantEMMetalDisplayError: LocalizedError {
+public enum MetalDisplayKernelsError: LocalizedError {
     case missingResource(String)
     case invalidColormap(String)
     case libraryCompilation(String)
@@ -66,26 +66,26 @@ public enum QuantEMMetalDisplayError: LocalizedError {
 
     public var errorDescription: String? {
         switch self {
-        case .missingResource(let name): "QuantEMMetalDisplay is missing \(name)."
-        case .invalidColormap(let name): "QuantEMMetalDisplay could not decode colormap \(name)."
+        case .missingResource(let name): "MetalDisplayKernels is missing \(name)."
+        case .invalidColormap(let name): "MetalDisplayKernels could not decode colormap \(name)."
         case .libraryCompilation(let message):
-            "QuantEM display shader compilation failed: \(message)"
-        case .allocation(let message): "QuantEM display allocation failed: \(message)"
+            "Metal display shader compilation failed: \(message)"
+        case .allocation(let message): "Metal display allocation failed: \(message)"
         }
     }
 }
 
 /// Shared Metal display resources and stable shader function names.
-public enum QuantEMMetalDisplay {
-    public static let vertexFunction = "quantem_display_vertex"
-    public static let fragmentFunction = "quantem_display_fragment"
-    public static let rangeFunction = "quantem_range_u32"
-    public static let histogramFunction = "quantem_histogram_u32"
+public enum MetalDisplayKernels {
+    public static let vertexFunction = "metal_display_vertex"
+    public static let fragmentFunction = "metal_display_fragment"
+    public static let rangeFunction = "metal_range_u32"
+    public static let histogramFunction = "metal_histogram_u32"
 
     /// Compile the bundled display shader source for a Metal device.
     public static func makeLibrary(device: MTLDevice) throws -> MTLLibrary {
         guard let url = resourceURL(name: "display", extension: "metal") else {
-            throw QuantEMMetalDisplayError.missingResource("display.metal")
+            throw MetalDisplayKernelsError.missingResource("display.metal")
         }
         do {
             return try device.makeLibrary(
@@ -93,14 +93,14 @@ public enum QuantEMMetalDisplay {
                 options: nil
             )
         } catch {
-            throw QuantEMMetalDisplayError.libraryCompilation(error.localizedDescription)
+            throw MetalDisplayKernelsError.libraryCompilation(error.localizedDescription)
         }
     }
 
     /// Return one 256-entry RGBA lookup table.
-    public static func lut(_ colormap: QuantEMColormap) throws -> [SIMD4<Float>] {
+    public static func lut(_ colormap: MetalColormap) throws -> [SIMD4<Float>] {
         guard let points = controlPoints[colormap.rawValue], points.count >= 2 else {
-            throw QuantEMMetalDisplayError.invalidColormap(colormap.rawValue)
+            throw MetalDisplayKernelsError.invalidColormap(colormap.rawValue)
         }
         return (0..<256).map { index in
             let position = Float(index) / 255 * Float(points.count - 1)
@@ -120,7 +120,7 @@ public enum QuantEMMetalDisplay {
     /// Allocate a shared Metal buffer containing one RGBA lookup table.
     public static func makeLUTBuffer(
         device: MTLDevice,
-        colormap: QuantEMColormap
+        colormap: MetalColormap
     ) throws -> MTLBuffer {
         let values = try lut(colormap)
         guard let buffer = values.withUnsafeBytes({ bytes in
@@ -128,7 +128,7 @@ public enum QuantEMMetalDisplay {
                 device.makeBuffer(bytes: $0, length: bytes.count, options: .storageModeShared)
             }
         }) else {
-            throw QuantEMMetalDisplayError.allocation("256-entry \(colormap.rawValue) LUT")
+            throw MetalDisplayKernelsError.allocation("256-entry \(colormap.rawValue) LUT")
         }
         return buffer
     }

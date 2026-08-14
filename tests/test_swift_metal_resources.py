@@ -1,4 +1,15 @@
 from importlib.resources import files
+from pathlib import Path
+
+
+def test_swift_package_names_the_native_backend_explicitly() -> None:
+    package = (Path(__file__).parents[1] / "Package.swift").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'platforms: [.macOS(.v14), .iOS(.v17)]' in package
+    assert '.library(name: "Metal4DSTEMKernels"' in package
+    assert '.library(name: "MetalDisplayKernels"' in package
 
 
 def test_native_4dstem_metal_resources_are_packaged() -> None:
@@ -6,7 +17,7 @@ def test_native_4dstem_metal_resources_are_packaged() -> None:
         files("quantem.gpu")
         / "swift"
         / "Sources"
-        / "QuantEM4DSTEMMetal"
+        / "Metal4DSTEMKernels"
         / "Resources"
     )
     qh5idx = (root / "qh5idx.metal").read_text(encoding="utf-8")
@@ -24,7 +35,7 @@ def test_native_4dstem_resources_exclude_experimental_entry_points() -> None:
         files("quantem.gpu")
         / "swift"
         / "Sources"
-        / "QuantEM4DSTEMMetal"
+        / "Metal4DSTEMKernels"
         / "Resources"
     )
     qh5idx = (root / "qh5idx.metal").read_text(encoding="utf-8")

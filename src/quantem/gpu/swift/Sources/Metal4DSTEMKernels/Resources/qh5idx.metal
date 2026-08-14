@@ -8,7 +8,6 @@ using namespace metal;
 constant uint kLZ4Threads = 32;
 constant uint kInputBufferBytes = 256;
 constant uint kInputPrefetchDistance = 128;
-constant uint kLZ4BlocksPerThreadgroup = 2;
 constant uint kBslz4BlockBytes = 8192;
 
 inline void bslz4Barrier() {

@@ -1,6 +1,6 @@
 import Foundation
 import Metal
-import QuantEMMetalDisplay
+import MetalDisplayKernels
 
 enum BenchmarkError: LocalizedError {
     case unavailable(String)
@@ -18,7 +18,7 @@ private struct Measurement {
 }
 
 @main
-struct QuantEMMetalDisplayBenchmark {
+struct MetalDisplayBenchmark {
     static func main() throws {
         let side = benchmarkSide()
         let count = side * side
@@ -28,16 +28,16 @@ struct QuantEMMetalDisplayBenchmark {
         guard let queue = device.makeCommandQueue() else {
             throw BenchmarkError.unavailable("Could not create a Metal command queue.")
         }
-        let library = try QuantEMMetalDisplay.makeLibrary(device: device)
+        let library = try MetalDisplayKernels.makeLibrary(device: device)
         let rangePipeline = try computePipeline(
             device: device,
             library: library,
-            name: QuantEMMetalDisplay.rangeFunction
+            name: MetalDisplayKernels.rangeFunction
         )
         let histogramPipeline = try computePipeline(
             device: device,
             library: library,
-            name: QuantEMMetalDisplay.histogramFunction
+            name: MetalDisplayKernels.histogramFunction
         )
         let renderPipeline = try makeRenderPipeline(device: device, library: library)
         let values = (0 ..< count).map { UInt32(($0 * 17) % 4096) }
@@ -50,7 +50,7 @@ struct QuantEMMetalDisplayBenchmark {
             device.makeBuffer(length: 256 * MemoryLayout<UInt32>.stride),
             "Could not allocate the histogram buffer."
         )
-        let lutBuffer = try QuantEMMetalDisplay.makeLUTBuffer(
+        let lutBuffer = try MetalDisplayKernels.makeLUTBuffer(
             device: device,
             colormap: .viridis
         )
@@ -70,7 +70,7 @@ struct QuantEMMetalDisplayBenchmark {
             )
         }
 
-        var parameters = QuantEMDisplayParameters(
+        var parameters = MetalDisplayParameters(
             rows: side,
             cols: side,
             low: range[0],
@@ -85,7 +85,7 @@ struct QuantEMMetalDisplayBenchmark {
             lut: lutBuffer,
             texture: texture
         )
-        parameters.scaleMode = QuantEMDisplayScale.logarithmic.rawValue
+        parameters.scaleMode = MetalDisplayScale.logarithmic.rawValue
         let logMilliseconds = try benchmarkRender(
             queue: queue,
             pipeline: renderPipeline,
@@ -157,11 +157,11 @@ struct QuantEMMetalDisplayBenchmark {
     ) throws -> MTLRenderPipelineState {
         let descriptor = MTLRenderPipelineDescriptor()
         descriptor.vertexFunction = try require(
-            library.makeFunction(name: QuantEMMetalDisplay.vertexFunction),
+            library.makeFunction(name: MetalDisplayKernels.vertexFunction),
             "Missing display vertex function."
         )
         descriptor.fragmentFunction = try require(
-            library.makeFunction(name: QuantEMMetalDisplay.fragmentFunction),
+            library.makeFunction(name: MetalDisplayKernels.fragmentFunction),
             "Missing display fragment function."
         )
         descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
@@ -219,7 +219,7 @@ struct QuantEMMetalDisplayBenchmark {
         queue: MTLCommandQueue,
         pipeline: MTLRenderPipelineState,
         values: MTLBuffer,
-        parameters: inout QuantEMDisplayParameters,
+        parameters: inout MetalDisplayParameters,
         lut: MTLBuffer,
         texture: MTLTexture
     ) throws -> [Measurement] {
@@ -270,7 +270,7 @@ struct QuantEMMetalDisplayBenchmark {
         pipeline: MTLComputePipelineState,
         values: MTLBuffer,
         bins: MTLBuffer,
-        parameters: inout QuantEMDisplayParameters,
+        parameters: inout MetalDisplayParameters,
         count: Int
     ) throws -> [Measurement] {
         var measurements: [Measurement] = []

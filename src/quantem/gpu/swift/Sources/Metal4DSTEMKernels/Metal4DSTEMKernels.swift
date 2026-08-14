@@ -2,22 +2,22 @@ import Foundation
 import Metal
 
 /// Errors raised while loading shared 4D-STEM Metal resources.
-public enum QuantEM4DSTEMMetalError: LocalizedError {
+public enum Metal4DSTEMKernelsError: LocalizedError {
     case missingResource(String)
     case libraryCompilation(resource: String, message: String)
 
     public var errorDescription: String? {
         switch self {
         case .missingResource(let name):
-            "QuantEM4DSTEMMetal is missing \(name)."
+            "Metal4DSTEMKernels is missing \(name)."
         case .libraryCompilation(let resource, let message):
-            "QuantEM \(resource) Metal compilation failed: \(message)"
+            "Metal 4D-STEM \(resource) compilation failed: \(message)"
         }
     }
 }
 
 /// Shared native 4D-STEM Metal libraries and their stable function names.
-public enum QuantEM4DSTEMMetal {
+public enum Metal4DSTEMKernels {
     public static let decodeU8Function =
         "h5lz4dc_unshuffle_source_u8_qh5idx"
     public static let decodeU16Function =
@@ -55,7 +55,7 @@ public enum QuantEM4DSTEMMetal {
             subdirectory: "Resources"
         ) ?? Bundle.module.url(forResource: resource, withExtension: "metal")
         guard let url else {
-            throw QuantEM4DSTEMMetalError.missingResource("\(resource).metal")
+            throw Metal4DSTEMKernelsError.missingResource("\(resource).metal")
         }
         do {
             return try device.makeLibrary(
@@ -63,7 +63,7 @@ public enum QuantEM4DSTEMMetal {
                 options: nil
             )
         } catch {
-            throw QuantEM4DSTEMMetalError.libraryCompilation(
+            throw Metal4DSTEMKernelsError.libraryCompilation(
                 resource: resource,
                 message: error.localizedDescription
             )

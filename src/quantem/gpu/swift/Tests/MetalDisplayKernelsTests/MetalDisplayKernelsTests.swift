@@ -1,11 +1,11 @@
 import Metal
 import XCTest
-@testable import QuantEMMetalDisplay
+@testable import MetalDisplayKernels
 
-final class QuantEMMetalDisplayTests: XCTestCase {
+final class MetalDisplayKernelsTests: XCTestCase {
     func testColormapLUTsAreValid() throws {
-        for colormap in QuantEMColormap.allCases {
-            let lut = try QuantEMMetalDisplay.lut(colormap)
+        for colormap in MetalColormap.allCases {
+            let lut = try MetalDisplayKernels.lut(colormap)
             XCTAssertEqual(lut.count, 256)
             for color in lut {
                 XCTAssertTrue(color.x.isFinite)
@@ -20,19 +20,19 @@ final class QuantEMMetalDisplayTests: XCTestCase {
     }
 
     func testGrayLUTEndpoints() throws {
-        let lut = try QuantEMMetalDisplay.lut(.gray)
+        let lut = try MetalDisplayKernels.lut(.gray)
         XCTAssertEqual(lut.first, .init(0, 0, 0, 1))
         XCTAssertEqual(lut.last, .init(1, 1, 1, 1))
     }
 
     func testMetalFunctionsCompile() throws {
         let device = try metalDevice()
-        let library = try QuantEMMetalDisplay.makeLibrary(device: device)
+        let library = try MetalDisplayKernels.makeLibrary(device: device)
         let names = [
-            QuantEMMetalDisplay.vertexFunction,
-            QuantEMMetalDisplay.fragmentFunction,
-            QuantEMMetalDisplay.rangeFunction,
-            QuantEMMetalDisplay.histogramFunction,
+            MetalDisplayKernels.vertexFunction,
+            MetalDisplayKernels.fragmentFunction,
+            MetalDisplayKernels.rangeFunction,
+            MetalDisplayKernels.histogramFunction,
         ]
         for name in names {
             XCTAssertNotNil(library.makeFunction(name: name), "Missing Metal function \(name)")
@@ -42,13 +42,13 @@ final class QuantEMMetalDisplayTests: XCTestCase {
     func testLinearFragmentRendersGrayEndpoints() throws {
         let device = try metalDevice()
         let queue = try XCTUnwrap(device.makeCommandQueue())
-        let library = try QuantEMMetalDisplay.makeLibrary(device: device)
+        let library = try MetalDisplayKernels.makeLibrary(device: device)
         let descriptor = MTLRenderPipelineDescriptor()
         descriptor.vertexFunction = try XCTUnwrap(
-            library.makeFunction(name: QuantEMMetalDisplay.vertexFunction)
+            library.makeFunction(name: MetalDisplayKernels.vertexFunction)
         )
         descriptor.fragmentFunction = try XCTUnwrap(
-            library.makeFunction(name: QuantEMMetalDisplay.fragmentFunction)
+            library.makeFunction(name: MetalDisplayKernels.fragmentFunction)
         )
         descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
         let pipeline = try device.makeRenderPipelineState(descriptor: descriptor)
@@ -62,8 +62,8 @@ final class QuantEMMetalDisplayTests: XCTestCase {
         textureDescriptor.storageMode = .shared
         let texture = try XCTUnwrap(device.makeTexture(descriptor: textureDescriptor))
         let values = try makeBuffer(device: device, values: [UInt32(0), 7])
-        let lut = try QuantEMMetalDisplay.makeLUTBuffer(device: device, colormap: .gray)
-        var parameters = QuantEMDisplayParameters(
+        let lut = try MetalDisplayKernels.makeLUTBuffer(device: device, colormap: .gray)
+        var parameters = MetalDisplayParameters(
             rows: 1,
             cols: 2,
             low: 0,
@@ -103,15 +103,15 @@ final class QuantEMMetalDisplayTests: XCTestCase {
     func testRangeAndLinearHistogramParity() throws {
         let device = try metalDevice()
         let queue = try XCTUnwrap(device.makeCommandQueue())
-        let library = try QuantEMMetalDisplay.makeLibrary(device: device)
+        let library = try MetalDisplayKernels.makeLibrary(device: device)
         let rangePipeline = try device.makeComputePipelineState(
             function: XCTUnwrap(
-                library.makeFunction(name: QuantEMMetalDisplay.rangeFunction)
+                library.makeFunction(name: MetalDisplayKernels.rangeFunction)
             )
         )
         let histogramPipeline = try device.makeComputePipelineState(
             function: XCTUnwrap(
-                library.makeFunction(name: QuantEMMetalDisplay.histogramFunction)
+                library.makeFunction(name: MetalDisplayKernels.histogramFunction)
             )
         )
         let values = Array(UInt32(0) ... UInt32(7))
@@ -143,7 +143,7 @@ final class QuantEMMetalDisplayTests: XCTestCase {
         histogramEncoder.setComputePipelineState(histogramPipeline)
         histogramEncoder.setBuffer(valueBuffer, offset: 0, index: 0)
         histogramEncoder.setBuffer(binsBuffer, offset: 0, index: 1)
-        var parameters = QuantEMDisplayParameters(
+        var parameters = MetalDisplayParameters(
             rows: 1,
             cols: values.count,
             low: 0,
@@ -173,10 +173,10 @@ final class QuantEMMetalDisplayTests: XCTestCase {
     func testLogHistogramParity() throws {
         let device = try metalDevice()
         let queue = try XCTUnwrap(device.makeCommandQueue())
-        let library = try QuantEMMetalDisplay.makeLibrary(device: device)
+        let library = try MetalDisplayKernels.makeLibrary(device: device)
         let pipeline = try device.makeComputePipelineState(
             function: XCTUnwrap(
-                library.makeFunction(name: QuantEMMetalDisplay.histogramFunction)
+                library.makeFunction(name: MetalDisplayKernels.histogramFunction)
             )
         )
         let values = Array(UInt32(0) ... UInt32(7))
@@ -185,7 +185,7 @@ final class QuantEMMetalDisplayTests: XCTestCase {
             device.makeBuffer(length: 256 * MemoryLayout<UInt32>.stride)
         )
         memset(binsBuffer.contents(), 0, binsBuffer.length)
-        var parameters = QuantEMDisplayParameters(
+        var parameters = MetalDisplayParameters(
             rows: 1,
             cols: values.count,
             low: 0,

@@ -2,41 +2,41 @@
 import PackageDescription
 
 let package = Package(
-    name: "QuantEMGPU",
-    platforms: [.macOS(.v14)],
+    name: "MetalKernels",
+    platforms: [.macOS(.v14), .iOS(.v17)],
     products: [
-        .library(name: "QuantEMMetalDisplay", targets: ["QuantEMMetalDisplay"]),
-        .library(name: "QuantEM4DSTEMMetal", targets: ["QuantEM4DSTEMMetal"]),
+        .library(name: "MetalDisplayKernels", targets: ["MetalDisplayKernels"]),
+        .library(name: "Metal4DSTEMKernels", targets: ["Metal4DSTEMKernels"]),
         .executable(
-            name: "quantem-metal-display-benchmark",
-            targets: ["QuantEMMetalDisplayBenchmark"]
+            name: "metal-display-benchmark",
+            targets: ["MetalDisplayBenchmark"]
         ),
     ],
     targets: [
         .target(
-            name: "QuantEMMetalDisplay",
-            path: "src/quantem/gpu/swift/Sources/QuantEMMetalDisplay",
+            name: "MetalDisplayKernels",
+            path: "src/quantem/gpu/swift/Sources/MetalDisplayKernels",
             resources: [.copy("Resources")]
         ),
         .target(
-            name: "QuantEM4DSTEMMetal",
-            path: "src/quantem/gpu/swift/Sources/QuantEM4DSTEMMetal",
+            name: "Metal4DSTEMKernels",
+            path: "src/quantem/gpu/swift/Sources/Metal4DSTEMKernels",
             resources: [.copy("Resources")]
         ),
         .executableTarget(
-            name: "QuantEMMetalDisplayBenchmark",
-            dependencies: ["QuantEMMetalDisplay"],
-            path: "src/quantem/gpu/swift/Benchmarks/QuantEMMetalDisplayBenchmark"
+            name: "MetalDisplayBenchmark",
+            dependencies: ["MetalDisplayKernels"],
+            path: "src/quantem/gpu/swift/Benchmarks/MetalDisplayBenchmark"
         ),
         .testTarget(
-            name: "QuantEMMetalDisplayTests",
-            dependencies: ["QuantEMMetalDisplay"],
-            path: "src/quantem/gpu/swift/Tests/QuantEMMetalDisplayTests"
+            name: "MetalDisplayKernelsTests",
+            dependencies: ["MetalDisplayKernels"],
+            path: "src/quantem/gpu/swift/Tests/MetalDisplayKernelsTests"
         ),
         .testTarget(
-            name: "QuantEM4DSTEMMetalTests",
-            dependencies: ["QuantEM4DSTEMMetal"],
-            path: "src/quantem/gpu/swift/Tests/QuantEM4DSTEMMetalTests"
+            name: "Metal4DSTEMKernelsTests",
+            dependencies: ["Metal4DSTEMKernels"],
+            path: "src/quantem/gpu/swift/Tests/Metal4DSTEMKernelsTests"
         ),
     ]
 )

@@ -53,9 +53,10 @@ backend = qgpu.device.detect()
 print(backend)
 ```
 
-Native macOS clients import the same reusable kernels through the repository's
-Swift package. `QuantEMMetalDisplay` owns normalization, colormaps, range
-reduction, and histograms. `QuantEM4DSTEMMetal` owns fused QH5IDX decode,
+Native macOS and iOS clients import the same reusable kernels through the
+repository's Swift package. `MetalDisplayKernels` owns normalization,
+colormaps, range reduction, and histograms. `Metal4DSTEMKernels` owns fused
+QH5IDX decode,
 BF/ABF/DF products, mean diffraction, the detector-major resident layout, and
 interactive detector-drag kernels. Applications retain document handling,
 cache policy, SwiftUI, and Metal command orchestration; they do not copy Metal
@@ -63,14 +64,14 @@ source files.
 
 ```swift
 import Metal
-import QuantEM4DSTEMMetal
-import QuantEMMetalDisplay
+import Metal4DSTEMKernels
+import MetalDisplayKernels
 
 let device = MTLCreateSystemDefaultDevice()!
-let hdf5Library = try QuantEM4DSTEMMetal.makeHDF5Library(device: device)
-let detectorLibrary = try QuantEM4DSTEMMetal.makeDetectorLibrary(device: device)
-let displayLibrary = try QuantEMMetalDisplay.makeLibrary(device: device)
-let lut = try QuantEMMetalDisplay.makeLUTBuffer(
+let hdf5Library = try Metal4DSTEMKernels.makeHDF5Library(device: device)
+let detectorLibrary = try Metal4DSTEMKernels.makeDetectorLibrary(device: device)
+let displayLibrary = try MetalDisplayKernels.makeLibrary(device: device)
+let lut = try MetalDisplayKernels.makeLUTBuffer(
     device: device,
     colormap: .viridis
 )
@@ -80,7 +81,7 @@ Run its Metal parity tests and standalone display benchmark on a Mac with:
 
 ```bash
 swift test
-swift run -c release quantem-metal-display-benchmark 512
+swift run -c release metal-display-benchmark 512
 ```
 
 Load a scan crop from an HDF5 master file. On CUDA this returns a CuPy array
@@ -467,7 +468,7 @@ Implemented in this package:
 - `quantem.gpu.detector` BF/DF/ADF, `mean_dp`, `masked_sum`, `virtual`, and
   automatic BF disk detection with reference checks
 - `quantem.gpu.dpc` CoM/DPC/iDPC with reference checks
-- `QuantEMMetalDisplay`, a small Swift package for shared native Metal
+- `MetalDisplayKernels`, a small Swift package for shared native Metal
   normalization, LUT colormaps, range reduction, and histograms
 - `quantem.gpu.SSB`, the single backend-neutral SSB workflow above private
   CUDA, MPS, and WebGPU compute implementations

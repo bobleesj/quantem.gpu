@@ -7,10 +7,10 @@ from quantem.gpu.display import colormap_lut, colormap_names, metal_source
 def test_metal_source_exposes_display_contract():
     source = metal_source()
     for function in (
-        "quantem_display_vertex",
-        "quantem_display_fragment",
-        "quantem_range_u32",
-        "quantem_histogram_u32",
+        "metal_display_vertex",
+        "metal_display_fragment",
+        "metal_range_u32",
+        "metal_histogram_u32",
     ):
         assert function in source
 

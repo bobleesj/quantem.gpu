@@ -1,8 +1,8 @@
-"""Shared GPU display resources for QuantEM native and Python clients.
+"""Shared Metal display resources for native and Python clients.
 
 The Metal source is the canonical Apple-GPU implementation of image scaling,
 LUT colormapping, range reduction, and histogram binning. Native Swift clients
-consume the same file through the repository's ``QuantEMMetalDisplay`` Swift
+consume the same file through the repository's ``MetalDisplayKernels`` Swift
 package.
 """
 
@@ -18,18 +18,18 @@ _RESOURCE_ROOT = (
     files("quantem.gpu")
     / "swift"
     / "Sources"
-    / "QuantEMMetalDisplay"
+    / "MetalDisplayKernels"
     / "Resources"
 )
 
 
 def metal_source() -> str:
-    """Return the canonical QuantEM display Metal source."""
+    """Return the canonical Metal display source."""
     return (_RESOURCE_ROOT / "display.metal").read_text(encoding="utf-8")
 
 
 def colormap_names() -> tuple[str, ...]:
-    """Return the LUT colormaps shared with native QuantEM clients."""
+    """Return the LUT colormaps shared with native Metal clients."""
     points = json.loads(
         (_RESOURCE_ROOT / "colormaps.json").read_text(encoding="utf-8")
     )

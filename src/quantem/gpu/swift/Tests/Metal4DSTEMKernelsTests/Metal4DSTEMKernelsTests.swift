@@ -1,6 +1,6 @@
 import Metal
 import XCTest
-@testable import QuantEM4DSTEMMetal
+@testable import Metal4DSTEMKernels
 
 private struct DetectorParameters {
     var frameCount: UInt32
@@ -9,13 +9,13 @@ private struct DetectorParameters {
     var padding: UInt32 = 0
 }
 
-final class QuantEM4DSTEMMetalTests: XCTestCase {
+final class Metal4DSTEMKernelsTests: XCTestCase {
     func testHDF5FunctionsCompile() throws {
         let device = try metalDevice()
-        let library = try QuantEM4DSTEMMetal.makeHDF5Library(device: device)
+        let library = try Metal4DSTEMKernels.makeHDF5Library(device: device)
         let names = [
-            QuantEM4DSTEMMetal.decodeU8Function,
-            QuantEM4DSTEMMetal.decodeU16Function,
+            Metal4DSTEMKernels.decodeU8Function,
+            Metal4DSTEMKernels.decodeU16Function,
         ]
         for name in names {
             XCTAssertNotNil(library.makeFunction(name: name), "Missing Metal function \(name)")
@@ -24,19 +24,19 @@ final class QuantEM4DSTEMMetalTests: XCTestCase {
 
     func testDetectorFunctionsCompile() throws {
         let device = try metalDevice()
-        let library = try QuantEM4DSTEMMetal.makeDetectorLibrary(device: device)
+        let library = try Metal4DSTEMKernels.makeDetectorLibrary(device: device)
         let names = [
-            QuantEM4DSTEMMetal.detectorProductsU8Function,
-            QuantEM4DSTEMMetal.detectorProductsU16Function,
-            QuantEM4DSTEMMetal.detectorSumU8Function,
-            QuantEM4DSTEMMetal.detectorSumU16Function,
-            QuantEM4DSTEMMetal.transposeScanWordsFunction,
-            QuantEM4DSTEMMetal.fullSumU8Function,
-            QuantEM4DSTEMMetal.signedDeltaU8Function,
-            QuantEM4DSTEMMetal.fullSumU16Function,
-            QuantEM4DSTEMMetal.signedDeltaU16Function,
-            QuantEM4DSTEMMetal.extractU8Function,
-            QuantEM4DSTEMMetal.extractU16Function,
+            Metal4DSTEMKernels.detectorProductsU8Function,
+            Metal4DSTEMKernels.detectorProductsU16Function,
+            Metal4DSTEMKernels.detectorSumU8Function,
+            Metal4DSTEMKernels.detectorSumU16Function,
+            Metal4DSTEMKernels.transposeScanWordsFunction,
+            Metal4DSTEMKernels.fullSumU8Function,
+            Metal4DSTEMKernels.signedDeltaU8Function,
+            Metal4DSTEMKernels.fullSumU16Function,
+            Metal4DSTEMKernels.signedDeltaU16Function,
+            Metal4DSTEMKernels.extractU8Function,
+            Metal4DSTEMKernels.extractU16Function,
         ]
         for name in names {
             XCTAssertNotNil(library.makeFunction(name: name), "Missing Metal function \(name)")
@@ -46,9 +46,9 @@ final class QuantEM4DSTEMMetalTests: XCTestCase {
     func testDetectorProductsU16MatchIntegerReference() throws {
         let device = try metalDevice()
         let queue = try XCTUnwrap(device.makeCommandQueue())
-        let library = try QuantEM4DSTEMMetal.makeDetectorLibrary(device: device)
+        let library = try Metal4DSTEMKernels.makeDetectorLibrary(device: device)
         let function = try XCTUnwrap(
-            library.makeFunction(name: QuantEM4DSTEMMetal.detectorProductsU16Function)
+            library.makeFunction(name: Metal4DSTEMKernels.detectorProductsU16Function)
         )
         let pipeline = try device.makeComputePipelineState(function: function)
         let frameCount = 3
@@ -106,9 +106,9 @@ final class QuantEM4DSTEMMetalTests: XCTestCase {
     func testStreamingTransposeMatchesReferenceWithOffset() throws {
         let device = try metalDevice()
         let queue = try XCTUnwrap(device.makeCommandQueue())
-        let library = try QuantEM4DSTEMMetal.makeDetectorLibrary(device: device)
+        let library = try Metal4DSTEMKernels.makeDetectorLibrary(device: device)
         let function = try XCTUnwrap(
-            library.makeFunction(name: QuantEM4DSTEMMetal.transposeScanWordsFunction)
+            library.makeFunction(name: Metal4DSTEMKernels.transposeScanWordsFunction)
         )
         let pipeline = try device.makeComputePipelineState(function: function)
         let sourceScans = 67
