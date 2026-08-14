@@ -15,7 +15,7 @@ import numpy as np
 
 
 _RESOURCE_ROOT = (
-    files(__package__)
+    files("quantem.gpu")
     / "swift"
     / "Sources"
     / "QuantEMMetalDisplay"

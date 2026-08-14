@@ -74,7 +74,7 @@ artifacts = [
     "src/quantem/gpu/dpc/compute/webgpu/*.ts",
     "src/quantem/gpu/ssb/compute/webgpu/*.ts",
     "src/quantem/gpu/ssb/compute/webgpu/kernels/*.ts",
-    "src/quantem/gpu/display/swift/Sources/**/*",
+    "src/quantem/gpu/swift/Sources/**/*",
 ]
 
 [tool.hatch.build.targets.sdist]

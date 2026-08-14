@@ -53,17 +53,23 @@ backend = qgpu.device.detect()
 print(backend)
 ```
 
-Native macOS clients can import the same display kernels through the repository's
-Swift package. `QuantEMMetalDisplay` owns the linear/log normalization, LUT
-colormaps, `uint32` range reduction, and 256-bin histogram used by native
-QuantEM viewers:
+Native macOS clients import the same reusable kernels through the repository's
+Swift package. `QuantEMMetalDisplay` owns normalization, colormaps, range
+reduction, and histograms. `QuantEM4DSTEMMetal` owns fused QH5IDX decode,
+BF/ABF/DF products, mean diffraction, the detector-major resident layout, and
+interactive detector-drag kernels. Applications retain document handling,
+cache policy, SwiftUI, and Metal command orchestration; they do not copy Metal
+source files.
 
 ```swift
 import Metal
+import QuantEM4DSTEMMetal
 import QuantEMMetalDisplay
 
 let device = MTLCreateSystemDefaultDevice()!
-let library = try QuantEMMetalDisplay.makeLibrary(device: device)
+let hdf5Library = try QuantEM4DSTEMMetal.makeHDF5Library(device: device)
+let detectorLibrary = try QuantEM4DSTEMMetal.makeDetectorLibrary(device: device)
+let displayLibrary = try QuantEMMetalDisplay.makeLibrary(device: device)
 let lut = try QuantEMMetalDisplay.makeLUTBuffer(
     device: device,
     colormap: .viridis
@@ -397,6 +403,7 @@ with software adapters rejected.
 | HDF5 load/decompress | CUDA, RTX PRO 6000 Blackwell | `512x512x192x192` | `450 ms` over 946 runs | Reference warm load; min `408 ms`, max `1159 ms`, resident stack `9.66 GB`. |
 | HDF5 load/decompress | CUDA, RTX PRO 6000 Blackwell | true `1024x1024x192x192` | `4.704 s` | Real acquisition, no bin/crop, `uint16` output, selected corrected frames bit-exact, resident stack `77.31 GB`. |
 | HDF5 load/decompress | MPS, Apple Metal | true `1024x1024x192x192` | `4.617 s` | Real acquisition, no bin/crop, chunk-backed `uint16` output, selected corrected frames bit-exact, resident stack `77.31 GB`. |
+| Native macOS full-stack load | Metal, Apple M5 Max 128 GB | `512x512x192x192 uint16` | `0.944 s` median; `0.928-0.950 s` | Five fresh-process runs on 2026-08-13. Includes HDF5 mapping and fused decode, exact count audit, BF/ABF/DF and mean-DP generation, and detector-major drag-cache construction. Selected-frame hash parity passed; resident volume `19.327 GB`; bounded pipelining keeps the estimated load peak near `28.99 GB`. |
 | Native display render | Metal, Apple M5 Max | `512x512 uint32` | command-completion wall medians `0.15-0.21 ms` render; `0.14-0.19 ms` histogram | Five runs on 2026-08-13, each after 10 warmups over 100 stored-frame measurements; exact `0...4095` range, fragment endpoints, and 262,144-pixel histogram sum passed. |
 | Local HDF5 full-stack load | WebGPU, Chrome Apple Metal | `512x512x192x192` | `772 ms` over 946 runs | Corrected-frame checksum parity versus CUDA; min `726 ms`, max `879 ms`; full path still materializes the `9.7 GB` browse cube. |
 | Local HDF5 full-stack load | WebGPU, Chrome NVIDIA Blackwell | true `1024x1024x192x192`, no crop/bin | Rejected | Attempt reached about `97.2 GB` GPU memory and failed before publishing a load profile/checksum readback. Do not count strict full-stack browser browse as signed off for 1024; use product-first, true crop, or explicit detector-bin paths. |
