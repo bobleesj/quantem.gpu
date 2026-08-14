@@ -6,13 +6,10 @@ consume the same file through the repository's ``MetalDisplayKernels`` Swift
 package.
 """
 
-from __future__ import annotations
-
 import json
 from importlib.resources import files
 
 import numpy as np
-
 
 _RESOURCE_ROOT = (
     files("quantem.gpu")
@@ -21,19 +18,41 @@ _RESOURCE_ROOT = (
     / "MetalDisplayKernels"
     / "Resources"
 )
+_COLORMAP_POINTS = json.loads(
+    (_RESOURCE_ROOT / "colormaps.json").read_text(encoding="utf-8")
+)
 
 
 def metal_source() -> str:
-    """Return the canonical Metal display source."""
+    """Return the canonical shader source for native Metal display clients.
+
+    Returns
+    -------
+    str
+        Metal source containing the display, range, and histogram entry points.
+
+    Examples
+    --------
+    >>> "metal_display_fragment" in metal_source()
+    True
+    """
     return (_RESOURCE_ROOT / "display.metal").read_text(encoding="utf-8")
 
 
 def colormap_names() -> tuple[str, ...]:
-    """Return the LUT colormaps shared with native Metal clients."""
-    points = json.loads(
-        (_RESOURCE_ROOT / "colormaps.json").read_text(encoding="utf-8")
-    )
-    return tuple(points)
+    """Return the LUT colormaps available to Python and native Metal clients.
+
+    Returns
+    -------
+    tuple[str, ...]
+        Colormap names in their bundled display order.
+
+    Examples
+    --------
+    >>> "viridis" in colormap_names()
+    True
+    """
+    return tuple(_COLORMAP_POINTS)
 
 
 def colormap_lut(name: str) -> np.ndarray:
@@ -48,14 +67,17 @@ def colormap_lut(name: str) -> np.ndarray:
     -------
     numpy.ndarray
         Array shaped ``(256, 4)`` with values in ``[0, 1]``.
+
+    Examples
+    --------
+    >>> lut = colormap_lut("viridis")
+    >>> lut.shape
+    (256, 4)
     """
-    points_by_name = json.loads(
-        (_RESOURCE_ROOT / "colormaps.json").read_text(encoding="utf-8")
-    )
-    if name not in points_by_name:
-        choices = ", ".join(points_by_name)
+    if name not in _COLORMAP_POINTS:
+        choices = ", ".join(_COLORMAP_POINTS)
         raise ValueError(f"Unknown colormap {name!r}. Choose one of: {choices}.")
-    points = np.asarray(points_by_name[name], dtype=np.float32)
+    points = np.asarray(_COLORMAP_POINTS[name], dtype=np.float32)
     positions = np.linspace(0, len(points) - 1, 256, dtype=np.float32)
     lower = np.floor(positions).astype(np.intp)
     upper = np.minimum(lower + 1, len(points) - 1)

@@ -1,0 +1,52 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python 3.11
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install package
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+      - name: Run Python tests
+        run: PYTHONPATH=src pytest -q
+
+  metal:
+    name: Metal package
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check Swift formatting
+        run: >-
+          xcrun swift-format lint --strict --recursive
+          Package.swift
+          src/quantem/gpu/swift/Sources
+          src/quantem/gpu/swift/Tests
+          src/quantem/gpu/swift/Benchmarks
+      - name: Run Swift tests
+        run: swift test
+      - name: Compile Metal for iOS
+        run: |
+          xcrun -sdk iphoneos metal -c src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/detector.metal -o /tmp/quantem-detector.air
+          xcrun -sdk iphoneos metal -c src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/qh5idx.metal -o /tmp/quantem-qh5idx.air
+          xcrun -sdk iphoneos metal -c src/quantem/gpu/swift/Sources/MetalDisplayKernels/Resources/display.metal -o /tmp/quantem-display.air
+      - name: Build Swift libraries for iOS
+        run: |
+          xcodebuild -scheme Metal4DSTEMKernels -destination generic/platform=iOS -configuration Release CODE_SIGNING_ALLOWED=NO build
+          xcodebuild -scheme MetalDisplayKernels -destination generic/platform=iOS -configuration Release CODE_SIGNING_ALLOWED=NO build

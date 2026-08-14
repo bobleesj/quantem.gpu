@@ -8,6 +8,53 @@ struct DetectorParams {
     uint padding;
 };
 
+template <typename Sample>
+inline void detectorProducts(
+    device const Sample *data,
+    device uint *bfMap,
+    device uint *abfMap,
+    device uint *dfMap,
+    constant DetectorParams &params,
+    device const uchar *bands,
+    threadgroup atomic_uint *sums,
+    uint frame,
+    uint threadIndex,
+    uint lane,
+    uint threads
+) {
+    if (frame >= params.frameCount) return;
+    if (threadIndex < 3) {
+        atomic_store_explicit(&sums[threadIndex], 0u, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    device const Sample *source =
+        data + ulong(frame) * ulong(params.detectorPixels);
+    uint bf = 0;
+    uint abf = 0;
+    uint df = 0;
+    for (uint pixel = threadIndex; pixel < params.detectorPixels; pixel += threads) {
+        uint value = uint(source[pixel]);
+        uchar band = bands[pixel];
+        if (band & 1u) bf += value;
+        if (band & 2u) abf += value;
+        if (band & 4u) df += value;
+    }
+    bf = simd_sum(bf);
+    abf = simd_sum(abf);
+    df = simd_sum(df);
+    if (lane == 0) {
+        atomic_fetch_add_explicit(&sums[0], bf, memory_order_relaxed);
+        atomic_fetch_add_explicit(&sums[1], abf, memory_order_relaxed);
+        atomic_fetch_add_explicit(&sums[2], df, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (threadIndex != 0) return;
+    uint destination = params.globalFrameOffset + frame;
+    bfMap[destination] = atomic_load_explicit(&sums[0], memory_order_relaxed);
+    abfMap[destination] = atomic_load_explicit(&sums[1], memory_order_relaxed);
+    dfMap[destination] = atomic_load_explicit(&sums[2], memory_order_relaxed);
+}
+
 // Produce BF/ABF/DF while the decoded batch is hot. One threadgroup owns each
 // frame, reads contiguous detector values, and reduces eight SIMD-group sums.
 kernel void detector_products_u16(
@@ -22,56 +69,11 @@ kernel void detector_products_u16(
     uint lane [[thread_index_in_simdgroup]],
     uint threads [[threads_per_threadgroup]]
 ) {
-    if (frame >= params.frameCount) return;
     threadgroup atomic_uint sums[3];
-    if (threadIndex < 3) {
-        atomic_store_explicit(&sums[threadIndex], 0u, memory_order_relaxed);
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    device const ushort *source =
-        data + ulong(frame) * ulong(params.detectorPixels);
-    uint bf = 0;
-    uint abf = 0;
-    uint df = 0;
-    for (uint pixel = threadIndex; pixel < params.detectorPixels; pixel += threads) {
-        uint value = uint(source[pixel]);
-        uchar band = bands[pixel];
-        if (band & 1u) bf += value;
-        if (band & 2u) abf += value;
-        if (band & 4u) df += value;
-    }
-    bf = simd_sum(bf);
-    abf = simd_sum(abf);
-    df = simd_sum(df);
-    if (lane == 0) {
-        atomic_fetch_add_explicit(&sums[0], bf, memory_order_relaxed);
-        atomic_fetch_add_explicit(&sums[1], abf, memory_order_relaxed);
-        atomic_fetch_add_explicit(&sums[2], df, memory_order_relaxed);
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    if (threadIndex != 0) return;
-    uint destination = params.globalFrameOffset + frame;
-    bfMap[destination] = atomic_load_explicit(&sums[0], memory_order_relaxed);
-    abfMap[destination] = atomic_load_explicit(&sums[1], memory_order_relaxed);
-    dfMap[destination] = atomic_load_explicit(&sums[2], memory_order_relaxed);
-}
-
-// The maximum observed source count is below 2000, so summing 262,144 frames
-// into uint32 is exact for this dataset. The app independently verifies that
-// contract before treating this product as parity evidence.
-kernel void detector_sum_u16(
-    device const ushort *data [[buffer(0)]],
-    device atomic_uint *output [[buffer(1)]],
-    constant uint &detectorPixels [[buffer(2)]],
-    constant uint &frameCount [[buffer(3)]],
-    uint pixel [[thread_position_in_grid]]
-) {
-    if (pixel >= detectorPixels) return;
-    uint sum = 0;
-    for (uint frame = 0; frame < frameCount; ++frame) {
-        sum += uint(data[ulong(frame) * detectorPixels + pixel]);
-    }
-    atomic_fetch_add_explicit(&output[pixel], sum, memory_order_relaxed);
+    detectorProducts(
+        data, bfMap, abfMap, dfMap, params, bands, sums,
+        frame, threadIndex, lane, threads
+    );
 }
 
 kernel void detector_products_u8(
@@ -86,38 +88,40 @@ kernel void detector_products_u8(
     uint lane [[thread_index_in_simdgroup]],
     uint threads [[threads_per_threadgroup]]
 ) {
-    if (frame >= params.frameCount) return;
     threadgroup atomic_uint sums[3];
-    if (threadIndex < 3) {
-        atomic_store_explicit(&sums[threadIndex], 0u, memory_order_relaxed);
+    detectorProducts(
+        data, bfMap, abfMap, dfMap, params, bands, sums,
+        frame, threadIndex, lane, threads
+    );
+}
+
+template <typename Sample>
+inline void detectorSum(
+    device const Sample *data,
+    device atomic_uint *output,
+    uint detectorPixels,
+    uint frameCount,
+    uint pixel
+) {
+    if (pixel >= detectorPixels) return;
+    uint sum = 0;
+    for (uint frame = 0; frame < frameCount; ++frame) {
+        sum += uint(data[ulong(frame) * detectorPixels + pixel]);
     }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    device const uchar *source =
-        data + ulong(frame) * ulong(params.detectorPixels);
-    uint bf = 0;
-    uint abf = 0;
-    uint df = 0;
-    for (uint pixel = threadIndex; pixel < params.detectorPixels; pixel += threads) {
-        uint value = uint(source[pixel]);
-        uchar band = bands[pixel];
-        if (band & 1u) bf += value;
-        if (band & 2u) abf += value;
-        if (band & 4u) df += value;
-    }
-    bf = simd_sum(bf);
-    abf = simd_sum(abf);
-    df = simd_sum(df);
-    if (lane == 0) {
-        atomic_fetch_add_explicit(&sums[0], bf, memory_order_relaxed);
-        atomic_fetch_add_explicit(&sums[1], abf, memory_order_relaxed);
-        atomic_fetch_add_explicit(&sums[2], df, memory_order_relaxed);
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    if (threadIndex != 0) return;
-    uint destination = params.globalFrameOffset + frame;
-    bfMap[destination] = atomic_load_explicit(&sums[0], memory_order_relaxed);
-    abfMap[destination] = atomic_load_explicit(&sums[1], memory_order_relaxed);
-    dfMap[destination] = atomic_load_explicit(&sums[2], memory_order_relaxed);
+    atomic_fetch_add_explicit(&output[pixel], sum, memory_order_relaxed);
+}
+
+// The maximum observed source count is below 2000, so summing 262,144 frames
+// into uint32 is exact for this dataset. The app independently verifies that
+// contract before treating this product as parity evidence.
+kernel void detector_sum_u16(
+    device const ushort *data [[buffer(0)]],
+    device atomic_uint *output [[buffer(1)]],
+    constant uint &detectorPixels [[buffer(2)]],
+    constant uint &frameCount [[buffer(3)]],
+    uint pixel [[thread_position_in_grid]]
+) {
+    detectorSum(data, output, detectorPixels, frameCount, pixel);
 }
 
 kernel void detector_sum_u8(
@@ -127,12 +131,7 @@ kernel void detector_sum_u8(
     constant uint &frameCount [[buffer(3)]],
     uint pixel [[thread_position_in_grid]]
 ) {
-    if (pixel >= detectorPixels) return;
-    uint sum = 0;
-    for (uint frame = 0; frame < frameCount; ++frame) {
-        sum += uint(data[ulong(frame) * detectorPixels + pixel]);
-    }
-    atomic_fetch_add_explicit(&output[pixel], sum, memory_order_relaxed);
+    detectorSum(data, output, detectorPixels, frameCount, pixel);
 }
 
 // Convert scan-major packed words to detector-word-major storage once after

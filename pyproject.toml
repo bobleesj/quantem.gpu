@@ -65,6 +65,10 @@ docs = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/quantem"]
+exclude = [
+    "src/quantem/gpu/swift/Benchmarks",
+    "src/quantem/gpu/swift/Tests",
+]
 artifacts = [
     "src/quantem/gpu/io/backends/mps/kernels/*.msl",
     "src/quantem/gpu/io/backends/webgpu/*.ts",

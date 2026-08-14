@@ -101,6 +101,11 @@ jobs:
               "quantem/gpu/io/backends/mps/decoder.py",
               "quantem/gpu/io/backends/mps/kernels/bslz4.msl",
               "quantem/gpu/io/backends/webgpu/bslz4.ts",
+              "quantem/gpu/display/__init__.py",
+              "quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/detector.metal",
+              "quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/qh5idx.metal",
+              "quantem/gpu/swift/Sources/MetalDisplayKernels/Resources/colormaps.json",
+              "quantem/gpu/swift/Sources/MetalDisplayKernels/Resources/display.metal",
               "quantem/gpu/detector/workflow.py",
               "quantem/gpu/detector/compute/protocol.py",
               "quantem/gpu/detector/compute/cuda/kernels.py",
@@ -123,6 +128,18 @@ jobs:
           missing = sorted(required - names)
           if missing:
               raise SystemExit(f"{wheel} missing required files: {missing}")
+          development_prefixes = (
+              "quantem/gpu/swift/Benchmarks/",
+              "quantem/gpu/swift/Tests/",
+          )
+          development_sources = sorted(
+              name for name in names if name.startswith(development_prefixes)
+          )
+          if development_sources:
+              raise SystemExit(
+                  f"{wheel} contains development-only Swift files: "
+                  f"{development_sources}"
+              )
           license_files = {
               name.rsplit("/", 1)[-1]
               for name in names
