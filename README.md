@@ -416,6 +416,10 @@ with software adapters rejected.
 | Visible Show4DSTEM interaction | WebGPU, Chrome Apple Metal | full `512x512x192x192` local HDF5 | full load `933 ms`; drag frames `0.5-0.9 ms` | BF/ADF/DPC display interactions stay GPU-resident after load; warm cached BF/ADF/DPC hits were `0.1-0.5 ms`. |
 | DPC/iDPC display | WebGPU, Chrome NVIDIA Blackwell | full `512x512x192x192` no-bin | DPC row/col/iDPC display medians `14.9/13.2/13.2 ms` | Headed real-adapter signoff after FFT command batching; full recompute medians `13.7/19.3/22.7 ms`; corrected-frame parity passed; DPC max abs error `7.63e-6`; iDPC mean abs error `4.70e-6`, max `3.05e-5` from float32 FFT order; idle RAF `60 FPS`. Local-file timing harness runs use `--require-local-profile` so URL fallback is rejected. |
 
+The native loader's redundant-pass root cause and the prevention checklist for
+future GPU work are recorded in the
+[Native Metal HDF5 loader postmortem](docs/maintainer/native-metal-hdf5-postmortem.md).
+
 Across the 8-hour browser soak there were 5 transient Chrome/CDP socket or
 timeout harness failures among 5676 recorded rows. Successful parity rows had no
 numeric mismatch.

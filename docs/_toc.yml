@@ -27,6 +27,7 @@ parts:
       - file: maintainer/migration
       - file: maintainer/backend-optimization-matrix
       - file: maintainer/backend-4dstem-load-checklist
+      - file: maintainer/native-metal-hdf5-postmortem
       - file: maintainer/ssb-architecture
       - file: maintainer/ssb-performance
       - file: maintainer/webgpu-gqk-memory-history

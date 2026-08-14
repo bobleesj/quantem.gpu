@@ -11,6 +11,11 @@ CPU fallback can masquerade as an accelerated backend. Parity is exact integer
 match versus the CUDA reference on real data, except float CoM/DPC values where
 the acceptance tolerance is `<=1e-5`.
 
+For the pipeline-topology failure that caused a native macOS loader to decode a
+full dataset twice and then serialize a 19.327 GB transpose, see the
+[Native Metal HDF5 loader postmortem](native-metal-hdf5-postmortem.md). Its
+pass-graph and memory-traffic checklist is required for future loader work.
+
 ## Reference M5 MPS single-file checkpoint, 2026-07-25
 
 The private Reference-512 `512x512x192x192` master was fully local on a 24 GB, 10-GPU-core
