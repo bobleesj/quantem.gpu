@@ -247,6 +247,104 @@ struct WordMajorDetectorParams {
     uint detectorPixels;
 };
 
+inline uint word_major_u8_sample(
+    device const uint *data, uint pixel, uint scan, uint scanCount
+) {
+    uint word = data[ulong(pixel >> 2u) * scanCount + scan];
+    return (word >> ((pixel & 3u) * 8u)) & 0xffu;
+}
+
+inline uint word_major_u16_sample(
+    device const uint *data, uint pixel, uint scan, uint scanCount
+) {
+    uint word = data[ulong(pixel >> 1u) * scanCount + scan];
+    return (word >> ((pixel & 1u) * 16u)) & 0xffffu;
+}
+
+inline uint word_major_u32_sample(
+    device const uint *data, uint pixel, uint scan, uint scanCount
+) {
+    return data[ulong(pixel) * scanCount + scan];
+}
+
+template <uint StorageBits>
+inline void detectorCenterOfMass(
+    device const uint *data,
+    device float *rowOutput,
+    device float *columnOutput,
+    constant WordMajorDetectorParams &params,
+    uint detectorColumns,
+    threadgroup ulong *totalScratch,
+    threadgroup ulong *rowScratch,
+    threadgroup ulong *columnScratch,
+    uint scan,
+    uint threadIndex,
+    uint threads
+) {
+    if (scan >= params.scanCount) return;
+    ulong total = 0ul;
+    ulong rowMoment = 0ul;
+    ulong columnMoment = 0ul;
+    for (uint pixel = threadIndex; pixel < params.detectorPixels; pixel += threads) {
+        uint value;
+        if constexpr (StorageBits == 8u) {
+            value = word_major_u8_sample(data, pixel, scan, params.scanCount);
+        } else if constexpr (StorageBits == 16u) {
+            value = word_major_u16_sample(data, pixel, scan, params.scanCount);
+        } else {
+            value = word_major_u32_sample(data, pixel, scan, params.scanCount);
+        }
+        ulong wide = ulong(value);
+        uint row = pixel / detectorColumns;
+        uint column = pixel - row * detectorColumns;
+        total += wide;
+        rowMoment += wide * ulong(row);
+        columnMoment += wide * ulong(column);
+    }
+    totalScratch[threadIndex] = total;
+    rowScratch[threadIndex] = rowMoment;
+    columnScratch[threadIndex] = columnMoment;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint offset = threads >> 1u; offset > 0u; offset >>= 1u) {
+        if (threadIndex < offset) {
+            totalScratch[threadIndex] += totalScratch[threadIndex + offset];
+            rowScratch[threadIndex] += rowScratch[threadIndex + offset];
+            columnScratch[threadIndex] += columnScratch[threadIndex + offset];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (threadIndex == 0u) {
+        float inverse = totalScratch[0] > 0ul ? 1.0f / float(totalScratch[0]) : 0.0f;
+        rowOutput[scan] = float(rowScratch[0]) * inverse;
+        columnOutput[scan] = float(columnScratch[0]) * inverse;
+    }
+}
+
+#define DEFINE_WORD_MAJOR_COM_KERNEL(NAME, BITS)                                      \
+kernel void NAME(                                                                      \
+    device const uint *data [[buffer(0)]],                                             \
+    device float *rowOutput [[buffer(1)]],                                             \
+    device float *columnOutput [[buffer(2)]],                                          \
+    constant WordMajorDetectorParams &params [[buffer(3)]],                            \
+    constant uint &detectorColumns [[buffer(4)]],                                      \
+    uint scan [[threadgroup_position_in_grid]],                                        \
+    uint threadIndex [[thread_index_in_threadgroup]],                                  \
+    uint threads [[threads_per_threadgroup]]                                           \
+) {                                                                                    \
+    threadgroup ulong totalScratch[256];                                               \
+    threadgroup ulong rowScratch[256];                                                 \
+    threadgroup ulong columnScratch[256];                                              \
+    detectorCenterOfMass<BITS>(                                                        \
+        data, rowOutput, columnOutput, params, detectorColumns,                        \
+        totalScratch, rowScratch, columnScratch, scan, threadIndex, threads            \
+    );                                                                                 \
+}
+
+DEFINE_WORD_MAJOR_COM_KERNEL(center_of_mass_u8_word_major, 8u)
+DEFINE_WORD_MAJOR_COM_KERNEL(center_of_mass_u16_word_major, 16u)
+DEFINE_WORD_MAJOR_COM_KERNEL(center_of_mass_u32_word_major, 32u)
+
+
 // Produce BF/ABF/ADF from an exact uint32 scan-binned cache. One threadgroup
 // owns each output scan position, matching the native detector reduction.
 kernel void detector_products_u32_word_major(
@@ -356,6 +454,22 @@ kernel void extract_u8_word_major_frame(
     output[pixel] = uchar((word >> ((pixel & 3u) * 8u)) & 0xffu);
 }
 
+// Display-facing extraction always expands exact integer counts to uint32.
+// This keeps one stable Metal surface across source uint8/uint16 and exact
+// uint32 scan-sum data, avoiding an NSImage allocation on every scan drag.
+kernel void extract_u8_word_major_frame_to_u32(
+    device const uint *data [[buffer(0)]],
+    device uint *output [[buffer(1)]],
+    constant uint &scanIndex [[buffer(2)]],
+    constant uint &scanCount [[buffer(3)]],
+    constant uint &pixelCount [[buffer(4)]],
+    uint pixel [[thread_position_in_grid]]
+) {
+    if (pixel >= pixelCount) return;
+    uint word = data[ulong(pixel >> 2u) * scanCount + scanIndex];
+    output[pixel] = (word >> ((pixel & 3u) * 8u)) & 0xffu;
+}
+
 inline int signed_u16_word(uint word, uint coefficients) {
     int value = 0;
     for (uint lane = 0; lane < 2; ++lane) {
@@ -416,6 +530,19 @@ kernel void extract_u16_word_major_frame(
     output[pixel] = ushort((word >> ((pixel & 1u) * 16u)) & 0xffffu);
 }
 
+kernel void extract_u16_word_major_frame_to_u32(
+    device const uint *data [[buffer(0)]],
+    device uint *output [[buffer(1)]],
+    constant uint &scanIndex [[buffer(2)]],
+    constant uint &scanCount [[buffer(3)]],
+    constant uint &pixelCount [[buffer(4)]],
+    uint pixel [[thread_position_in_grid]]
+) {
+    if (pixel >= pixelCount) return;
+    uint word = data[ulong(pixel >> 1u) * scanCount + scanIndex];
+    output[pixel] = (word >> ((pixel & 1u) * 16u)) & 0xffffu;
+}
+
 inline long signed_u32_word(uint word, uint coefficients) {
     uint coefficient = coefficients & 3u;
     if (coefficient == 1u) return long(word);
@@ -460,6 +587,18 @@ kernel void signed_delta_u32_word_major(
 }
 
 kernel void extract_u32_word_major_frame(
+    device const uint *data [[buffer(0)]],
+    device uint *output [[buffer(1)]],
+    constant uint &scanIndex [[buffer(2)]],
+    constant uint &scanCount [[buffer(3)]],
+    constant uint &pixelCount [[buffer(4)]],
+    uint pixel [[thread_position_in_grid]]
+) {
+    if (pixel >= pixelCount) return;
+    output[pixel] = data[ulong(pixel) * scanCount + scanIndex];
+}
+
+kernel void extract_u32_word_major_frame_to_u32(
     device const uint *data [[buffer(0)]],
     device uint *output [[buffer(1)]],
     constant uint &scanIndex [[buffer(2)]],

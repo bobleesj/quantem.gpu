@@ -23,6 +23,12 @@ final class MetalDisplayKernelsTests: XCTestCase {
     XCTAssertEqual(words, [1, 2, 3, 4, 1, 5, 0, 0])
   }
 
+  func testFloatDisplayParameterLayoutMatchesMetalABI() {
+    XCTAssertEqual(MemoryLayout<MetalFloatDisplayParameters>.size, 32)
+    XCTAssertEqual(MemoryLayout<MetalFloatDisplayParameters>.stride, 32)
+    XCTAssertEqual(MemoryLayout<MetalFloatDisplayParameters>.alignment, 4)
+  }
+
   func testColormapLUTsAreValid() throws {
     for colormap in MetalColormap.allCases {
       let lut = try MetalDisplayKernels.lut(colormap)
@@ -53,6 +59,8 @@ final class MetalDisplayKernelsTests: XCTestCase {
       MetalDisplayKernels.fragmentFunction,
       MetalDisplayKernels.rangeFunction,
       MetalDisplayKernels.histogramFunction,
+      MetalDisplayKernels.floatFragmentFunction,
+      MetalDisplayKernels.floatHistogramFunction,
     ]
     for name in names {
       XCTAssertNotNil(library.makeFunction(name: name), "Missing Metal function \(name)")

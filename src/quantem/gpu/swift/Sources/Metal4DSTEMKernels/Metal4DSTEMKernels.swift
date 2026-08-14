@@ -31,6 +31,9 @@ public enum Metal4DSTEMKernels {
   public static let scanBinU8Function = "scan_bin_u8_to_u32_word_major"
   public static let scanBinU16Function = "scan_bin_u16_to_u32_word_major"
   public static let detectorProductsU32Function = "detector_products_u32_word_major"
+  public static let centerOfMassU8Function = "center_of_mass_u8_word_major"
+  public static let centerOfMassU16Function = "center_of_mass_u16_word_major"
+  public static let centerOfMassU32Function = "center_of_mass_u32_word_major"
   public static let fullSumU8Function = "full_sum_u8_word_major"
   public static let signedDeltaU8Function = "signed_delta_u8_word_major"
   public static let fullSumU16Function = "full_sum_u16_word_major"
@@ -40,6 +43,20 @@ public enum Metal4DSTEMKernels {
   public static let extractU8Function = "extract_u8_word_major_frame"
   public static let extractU16Function = "extract_u16_word_major_frame"
   public static let extractU32Function = "extract_u32_word_major_frame"
+  public static let extractU8ToU32Function =
+    "extract_u8_word_major_frame_to_u32"
+  public static let extractU16ToU32Function =
+    "extract_u16_word_major_frame_to_u32"
+  public static let extractU32ToU32Function =
+    "extract_u32_word_major_frame_to_u32"
+  public static let dpcPackFunction = "dpc_pack_complex"
+  public static let fftBitReverseRowsFunction = "fft_bit_reverse_rows"
+  public static let fftBitReverseColumnsFunction = "fft_bit_reverse_columns"
+  public static let fftButterflyRowsFunction = "fft_butterfly_rows"
+  public static let fftButterflyColumnsFunction = "fft_butterfly_columns"
+  public static let fftNormalizeFunction = "fft_normalize_2d"
+  public static let dpcPoissonFunction = "dpc_poisson_frequency"
+  public static let dpcExtractPhaseFunction = "dpc_extract_phase"
 
   /// Compile the fused QH5IDX bitshuffle/LZ4 decode library.
   public static func makeHDF5Library(device: MTLDevice) throws -> MTLLibrary {
@@ -51,12 +68,26 @@ public enum Metal4DSTEMKernels {
     try makeLibrary(resource: "detector", device: device)
   }
 
+  /// Compile the shared CoM/DPC/iDPC small-field library.
+  public static func makeDPCLibrary(device: MTLDevice) throws -> MTLLibrary {
+    try makeLibrary(resource: "dpc", device: device)
+  }
+
   private static func makeLibrary(
     resource: String,
     device: MTLDevice
   ) throws -> MTLLibrary {
+    let packagedURL = Bundle.main.resourceURL?
+      .appendingPathComponent(
+        "MetalKernels_Metal4DSTEMKernels.bundle",
+        isDirectory: true
+      )
+      .appendingPathComponent("Resources", isDirectory: true)
+      .appendingPathComponent("\(resource).metal")
     let url =
-      Bundle.module.url(
+      packagedURL.flatMap {
+        FileManager.default.fileExists(atPath: $0.path) ? $0 : nil
+      } ?? Bundle.module.url(
         forResource: resource,
         withExtension: "metal",
         subdirectory: "Resources"

@@ -12,6 +12,17 @@ struct MetalDisplayParameters {
     uint _padding1;
 };
 
+struct MetalFloatDisplayParameters {
+    uint rows;
+    uint cols;
+    float low;
+    float high;
+    uint scaleMode;
+    uint lutCount;
+    uint _padding0;
+    uint _padding1;
+};
+
 inline float metal_normalize_u32(
     uint value,
     constant MetalDisplayParameters &parameters
@@ -20,6 +31,20 @@ inline float metal_normalize_u32(
     uint clipped = clamp(value, parameters.low, high);
     float span = max(1.0f, float(high - parameters.low));
     float shifted = float(clipped - parameters.low);
+    if (parameters.scaleMode == 1u) {
+        return log(1.0f + shifted) / log(1.0f + span);
+    }
+    return shifted / span;
+}
+
+inline float metal_normalize_f32(
+    float value,
+    constant MetalFloatDisplayParameters &parameters
+) {
+    float high = max(parameters.low, parameters.high);
+    float clipped = clamp(value, parameters.low, high);
+    float span = max(1.0e-20f, high - parameters.low);
+    float shifted = clipped - parameters.low;
     if (parameters.scaleMode == 1u) {
         return log(1.0f + shifted) / log(1.0f + span);
     }
@@ -65,6 +90,27 @@ fragment float4 metal_display_fragment(
     return lut[lutIndex];
 }
 
+fragment float4 metal_display_fragment_f32(
+    MetalDisplayVertex input [[stage_in]],
+    device const float *values [[buffer(0)]],
+    constant MetalFloatDisplayParameters &parameters [[buffer(1)]],
+    device const float4 *lut [[buffer(2)]]
+) {
+    if (parameters.rows == 0u || parameters.cols == 0u || parameters.lutCount == 0u) {
+        return float4(0.0f);
+    }
+    uint col = min(parameters.cols - 1u, uint(input.uv.x * float(parameters.cols)));
+    uint row = min(parameters.rows - 1u, uint(input.uv.y * float(parameters.rows)));
+    float normalized = metal_normalize_f32(
+        values[row * parameters.cols + col], parameters
+    );
+    uint lutIndex = min(
+        parameters.lutCount - 1u,
+        uint(normalized * float(parameters.lutCount - 1u) + 0.5f)
+    );
+    return lut[lutIndex];
+}
+
 kernel void metal_range_u32(
     device const uint *values [[buffer(0)]],
     device atomic_uint *valueRange [[buffer(1)]],
@@ -86,6 +132,19 @@ kernel void metal_histogram_u32(
     uint count = parameters.rows * parameters.cols;
     if (index >= count) return;
     float normalized = metal_normalize_u32(values[index], parameters);
+    uint bin = min(255u, uint(normalized * 255.0f + 0.5f));
+    atomic_fetch_add_explicit(&bins[bin], 1u, memory_order_relaxed);
+}
+
+kernel void metal_histogram_f32(
+    device const float *values [[buffer(0)]],
+    device atomic_uint *bins [[buffer(1)]],
+    constant MetalFloatDisplayParameters &parameters [[buffer(2)]],
+    uint index [[thread_position_in_grid]]
+) {
+    uint count = parameters.rows * parameters.cols;
+    if (index >= count) return;
+    float normalized = metal_normalize_f32(values[index], parameters);
     uint bin = min(255u, uint(normalized * 255.0f + 0.5f));
     atomic_fetch_add_explicit(&bins[bin], 1u, memory_order_relaxed);
 }

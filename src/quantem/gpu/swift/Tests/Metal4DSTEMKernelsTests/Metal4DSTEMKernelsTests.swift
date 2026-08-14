@@ -51,6 +51,9 @@ final class Metal4DSTEMKernelsTests: XCTestCase {
       Metal4DSTEMKernels.scanBinU8Function,
       Metal4DSTEMKernels.scanBinU16Function,
       Metal4DSTEMKernels.detectorProductsU32Function,
+      Metal4DSTEMKernels.centerOfMassU8Function,
+      Metal4DSTEMKernels.centerOfMassU16Function,
+      Metal4DSTEMKernels.centerOfMassU32Function,
       Metal4DSTEMKernels.fullSumU8Function,
       Metal4DSTEMKernels.signedDeltaU8Function,
       Metal4DSTEMKernels.fullSumU16Function,
@@ -60,9 +63,97 @@ final class Metal4DSTEMKernelsTests: XCTestCase {
       Metal4DSTEMKernels.extractU8Function,
       Metal4DSTEMKernels.extractU16Function,
       Metal4DSTEMKernels.extractU32Function,
+      Metal4DSTEMKernels.extractU8ToU32Function,
+      Metal4DSTEMKernels.extractU16ToU32Function,
+      Metal4DSTEMKernels.extractU32ToU32Function,
     ]
     for name in names {
       XCTAssertNotNil(library.makeFunction(name: name), "Missing Metal function \(name)")
+    }
+  }
+
+  func testDPCFunctionsCompile() throws {
+    let device = try metalDevice()
+    let library = try Metal4DSTEMKernels.makeDPCLibrary(device: device)
+    let names = [
+      Metal4DSTEMKernels.dpcPackFunction,
+      Metal4DSTEMKernels.fftBitReverseRowsFunction,
+      Metal4DSTEMKernels.fftBitReverseColumnsFunction,
+      Metal4DSTEMKernels.fftButterflyRowsFunction,
+      Metal4DSTEMKernels.fftButterflyColumnsFunction,
+      Metal4DSTEMKernels.fftNormalizeFunction,
+      Metal4DSTEMKernels.dpcPoissonFunction,
+      Metal4DSTEMKernels.dpcExtractPhaseFunction,
+    ]
+    for name in names {
+      XCTAssertNotNil(library.makeFunction(name: name), "Missing Metal function \(name)")
+    }
+  }
+
+  func testWordMajorU32CenterOfMassMatchesReference() throws {
+    let device = try metalDevice()
+    let queue = try XCTUnwrap(device.makeCommandQueue())
+    let library = try Metal4DSTEMKernels.makeDetectorLibrary(device: device)
+    let pipeline = try device.makeComputePipelineState(
+      function: XCTUnwrap(
+        library.makeFunction(name: Metal4DSTEMKernels.centerOfMassU32Function)
+      )
+    )
+    let scanCount = 3
+    let detectorRows = 4
+    let detectorColumns = 5
+    let detectorPixels = detectorRows * detectorColumns
+    let values: [UInt32] = (0..<detectorPixels).flatMap { pixel in
+      (0..<scanCount).map { scan in UInt32((pixel + 2) * (scan + 1)) }
+    }
+    let source = try makeBuffer(device: device, values: values)
+    let rowOutput = try XCTUnwrap(
+      device.makeBuffer(length: scanCount * MemoryLayout<Float>.stride)
+    )
+    let columnOutput = try XCTUnwrap(
+      device.makeBuffer(length: scanCount * MemoryLayout<Float>.stride)
+    )
+    var parameters = WordMajorDetectorParameters(
+      scanCount: UInt32(scanCount),
+      detectorPixels: UInt32(detectorPixels)
+    )
+    var columns = UInt32(detectorColumns)
+    let command = try XCTUnwrap(queue.makeCommandBuffer())
+    let encoder = try XCTUnwrap(command.makeComputeCommandEncoder())
+    encoder.setComputePipelineState(pipeline)
+    encoder.setBuffer(source, offset: 0, index: 0)
+    encoder.setBuffer(rowOutput, offset: 0, index: 1)
+    encoder.setBuffer(columnOutput, offset: 0, index: 2)
+    withUnsafeBytes(of: &parameters) {
+      encoder.setBytes($0.baseAddress!, length: $0.count, index: 3)
+    }
+    withUnsafeBytes(of: &columns) {
+      encoder.setBytes($0.baseAddress!, length: $0.count, index: 4)
+    }
+    encoder.dispatchThreadgroups(
+      MTLSize(width: scanCount, height: 1, depth: 1),
+      threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
+    )
+    encoder.endEncoding()
+    try complete(command)
+
+    let expected = (0..<scanCount).map { scan -> (Float, Float) in
+      var total = 0.0
+      var rowMoment = 0.0
+      var columnMoment = 0.0
+      for pixel in 0..<detectorPixels {
+        let value = Double(values[pixel * scanCount + scan])
+        total += value
+        rowMoment += value * Double(pixel / detectorColumns)
+        columnMoment += value * Double(pixel % detectorColumns)
+      }
+      return (Float(rowMoment / total), Float(columnMoment / total))
+    }
+    let rows = floatBufferValues(rowOutput, count: scanCount)
+    let columnsOutput = floatBufferValues(columnOutput, count: scanCount)
+    for scan in 0..<scanCount {
+      XCTAssertEqual(rows[scan], expected[scan].0, accuracy: 1e-5)
+      XCTAssertEqual(columnsOutput[scan], expected[scan].1, accuracy: 1e-5)
     }
   }
 
@@ -576,6 +667,11 @@ final class Metal4DSTEMKernelsTests: XCTestCase {
 
   private func bufferValues(_ buffer: MTLBuffer, count: Int) -> [UInt32] {
     let pointer = buffer.contents().bindMemory(to: UInt32.self, capacity: count)
+    return Array(UnsafeBufferPointer(start: pointer, count: count))
+  }
+
+  private func floatBufferValues(_ buffer: MTLBuffer, count: Int) -> [Float] {
+    let pointer = buffer.contents().bindMemory(to: Float.self, capacity: count)
     return Array(UnsafeBufferPointer(start: pointer, count: count))
   }
 

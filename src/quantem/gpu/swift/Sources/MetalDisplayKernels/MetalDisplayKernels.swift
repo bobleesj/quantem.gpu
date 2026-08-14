@@ -64,6 +64,42 @@ public struct MetalDisplayParameters: Sendable {
   }
 }
 
+/// Buffer layout for row-major `float32` derived images such as CoM and DPC.
+@frozen
+public struct MetalFloatDisplayParameters: Sendable {
+  public var rows: UInt32
+  public var cols: UInt32
+  public var low: Float
+  public var high: Float
+  @usableFromInline var scaleMode: UInt32
+  public var lutCount: UInt32
+  @usableFromInline var padding0: UInt32 = 0
+  @usableFromInline var padding1: UInt32 = 0
+
+  public var scale: MetalDisplayScale {
+    get { MetalDisplayScale(rawValue: scaleMode)! }
+    set { scaleMode = newValue.rawValue }
+  }
+
+  public init(
+    rows: Int,
+    cols: Int,
+    low: Float,
+    high: Float,
+    scale: MetalDisplayScale,
+    lutCount: Int = 256
+  ) {
+    precondition(rows > 0 && cols > 0, "Image rows and columns must be positive.")
+    precondition(lutCount > 0, "LUT count must be positive.")
+    self.rows = UInt32(rows)
+    self.cols = UInt32(cols)
+    self.low = low
+    self.high = max(low, high)
+    self.scaleMode = scale.rawValue
+    self.lutCount = UInt32(lutCount)
+  }
+}
+
 /// Errors raised while loading shared display resources.
 public enum MetalDisplayKernelsError: LocalizedError {
   case missingResource(String)
@@ -91,6 +127,8 @@ public enum MetalDisplayKernels {
   public static let fragmentFunction = "metal_display_fragment"
   public static let rangeFunction = "metal_range_u32"
   public static let histogramFunction = "metal_histogram_u32"
+  public static let floatFragmentFunction = "metal_display_fragment_f32"
+  public static let floatHistogramFunction = "metal_histogram_f32"
 
   /// Compile the bundled display shader source for a Metal device.
   public static func makeLibrary(device: MTLDevice) throws -> MTLLibrary {
@@ -147,7 +185,16 @@ public enum MetalDisplayKernels {
   }
 
   private static func resourceURL(name: String, extension suffix: String) -> URL? {
-    Bundle.module.url(
+    let packagedURL = Bundle.main.resourceURL?
+      .appendingPathComponent(
+        "MetalKernels_MetalDisplayKernels.bundle",
+        isDirectory: true
+      )
+      .appendingPathComponent("Resources", isDirectory: true)
+      .appendingPathComponent("\(name).\(suffix)")
+    return packagedURL.flatMap {
+      FileManager.default.fileExists(atPath: $0.path) ? $0 : nil
+    } ?? Bundle.module.url(
       forResource: name,
       withExtension: suffix,
       subdirectory: "Resources"
