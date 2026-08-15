@@ -27,6 +27,14 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--cdp", default="http://127.0.0.1:9239")
     parser.add_argument("--html-url", required=True)
     parser.add_argument("--fixture-dir", required=True)
+    parser.add_argument(
+        "--url-source",
+        action="store_true",
+        help=(
+            "Use the HDF5 URL embedded in a served export instead of mounting "
+            "local files."
+        ),
+    )
     parser.add_argument("--master-name", default="master.h5")
     parser.add_argument("--data-template", default="data_{index:06d}.h5")
     parser.add_argument(
@@ -276,9 +284,11 @@ def _fixture_files(args: argparse.Namespace) -> list[str]:
 def _summary(runs: list[dict[str, Any]]) -> dict[str, Any]:
     totals = [int(run["profile"]["totalMs"]) for run in runs]
     walls = [int(run["wallMs"]) for run in runs]
+    parity = [run["parity"] for run in runs if isinstance(run.get("parity"), bool)]
     summary: dict[str, Any] = {
         "n": len(runs),
-        "allParity": all(bool(run.get("parity", True)) for run in runs),
+        "parityChecked": len(parity) == len(runs),
+        "allParity": all(parity) if parity else None,
         "totalProfileMsSum": sum(totals),
         "totalProfileMsMedian": statistics.median(totals),
         "totalProfileMsMin": min(totals),
@@ -454,36 +464,69 @@ def _run_one(
         prelude = _runtime_prelude(args)
         if prelude:
             target.call("Page.addScriptToEvaluateOnNewDocument", {"source": prelude})
+        wall0 = time.perf_counter()
         target.call("Page.navigate", {"url": args.html_url})
         for _ in range(120):
             if target.eval("document.readyState") == "complete":
                 break
             time.sleep(0.25)
-        node = 0
-        for _ in range(80):
-            root = target.call("DOM.getDocument", {"depth": -1})["root"]["nodeId"]
-            node = target.call("DOM.querySelector", {"nodeId": root, "selector": "input[type=file]"})["nodeId"]
-            if node:
-                break
-            time.sleep(0.25)
-        if not node:
-            title = target.eval("document.title")
-            body = target.eval("document.body ? document.body.innerText.slice(0, 500) : ''")
-            raise RuntimeError(f"file input not found; title={title!r} body={body!r}")
-        wall0 = time.perf_counter()
-        target.call("DOM.setFileInputFiles", {"nodeId": node, "files": files}, timeout=60)
-        mounted_count = target.eval(
-            """(() => {
-              const input = document.querySelector('input[type=file]');
-              input.dispatchEvent(new Event('input', { bubbles: true }));
-              input.dispatchEvent(new Event('change', { bubbles: true }));
-              return input.files.length;
-            })()"""
-        )
-        if mounted_count != len(files):
-            raise RuntimeError(
-                f"Browser mounted {mounted_count} file(s), expected {len(files)}"
+        if not args.url_source:
+            node = 0
+            for _ in range(80):
+                root = target.call("DOM.getDocument", {"depth": -1})["root"]["nodeId"]
+                node = target.call(
+                    "DOM.querySelector",
+                    {"nodeId": root, "selector": "input[type=file]"},
+                )["nodeId"]
+                if node:
+                    break
+                time.sleep(0.25)
+            if not node:
+                title = target.eval("document.title")
+                body = target.eval(
+                    "document.body ? document.body.innerText.slice(0, 500) : ''"
+                )
+                raise RuntimeError(
+                    f"file input not found; title={title!r} body={body!r}"
+                )
+            selects_directory = bool(
+                target.eval(
+                    "Boolean(document.querySelector('input[type=file]').webkitdirectory)"
+                )
             )
+            selected_paths = [args.fixture_dir] if selects_directory else files
+            target.call(
+                "DOM.setFileInputFiles",
+                {"nodeId": node, "files": selected_paths},
+                timeout=60,
+            )
+            mounted_count = target.eval(
+                """(() => {
+                  const input = document.querySelector('input[type=file]');
+                  return input.files.length;
+                })()"""
+            )
+            target.eval(
+                """(() => {
+                  const input = document.querySelector('input[type=file]');
+                  input.dispatchEvent(new Event('input', { bubbles: true }));
+                  input.dispatchEvent(new Event('change', { bubbles: true }));
+                })()"""
+            )
+            # React replaces the picker as soon as Chrome delivers a directory.
+            # In that consumed-selection state the new input is empty, while the
+            # loader has already received the original FileList. The guarded
+            # __loadprof/localFiles check below remains the authoritative proof.
+            files_mounted = (
+                mounted_count == 0 or mounted_count >= len(files)
+                if selects_directory
+                else mounted_count in (0, len(files))
+            )
+            if not files_mounted:
+                raise RuntimeError(
+                    f"Browser mounted {mounted_count} file(s), expected "
+                    f"{'at least ' if selects_directory else ''}{len(files)}"
+                )
         state = None
         while time.perf_counter() - wall0 < args.timeout_s:
             state = target.eval(
@@ -507,17 +550,14 @@ def _run_one(
             time.sleep(0.25)
         else:
             raise TimeoutError(f"load did not finish; last state={state}")
-        checksums = None
-        parity = None
-        if reference_checksums is not None:
-            middle = max(0, args.frames // 2)
-            last = max(0, args.frames - 1)
-            checksums = target.eval(
-                f"globalThis.__sh4d.rawChecksums([0,{middle},{last}])",
-                timeout=30,
-                await_promise=True,
-            )
-            parity = checksums == reference_checksums
+        middle = max(0, args.frames // 2)
+        last = max(0, args.frames - 1)
+        checksums = target.eval(
+            f"globalThis.__sh4d.rawChecksums([0,{middle},{last}])",
+            timeout=30,
+            await_promise=True,
+        )
+        parity = None if reference_checksums is None else checksums == reference_checksums
         dpc = None
         if args.dpc_reps > 0:
             dpc = target.eval(
@@ -597,6 +637,7 @@ def main() -> None:
             "dpcReps": args.dpc_reps,
             "dpcWarmup": args.dpc_warmup,
             "fpsMs": args.fps_ms,
+            "sourceMode": "url" if args.url_source else "local-files",
         },
         "runs": runs,
         "summary": _summary(runs),
