@@ -30,6 +30,7 @@ final class MetalDisplayKernelsTests: XCTestCase {
   }
 
   func testColormapLUTsAreValid() throws {
+    XCTAssertEqual(MetalColormap.allCases.count, 15)
     for colormap in MetalColormap.allCases {
       let lut = try MetalDisplayKernels.lut(colormap)
       XCTAssertEqual(lut.count, 256)

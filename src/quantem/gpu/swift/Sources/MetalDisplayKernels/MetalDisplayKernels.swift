@@ -19,11 +19,28 @@ public enum MetalDisplayScale: UInt32, CaseIterable, Sendable {
 public enum MetalColormap: String, CaseIterable, Sendable {
   case gray
   case viridis
+  case plasma
   case inferno
   case magma
+  case magenta
+  case hot
+  case hsv
   case turbo
+  case rdBu = "RdBu"
+  case cividis
+  case seismic
+  case rdBuReversed = "RdBu_r"
+  case twilight
+  case twilightShifted = "twilight_shifted"
 
-  public var title: String { rawValue.capitalized }
+  public var title: String {
+    switch self {
+    case .rdBu: "RdBu"
+    case .rdBuReversed: "RdBu reversed"
+    case .twilightShifted: "Twilight shifted"
+    default: rawValue.capitalized
+    }
+  }
 }
 
 /// Buffer layout shared by Swift and the Metal display kernels.
