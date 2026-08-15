@@ -26,6 +26,26 @@ private struct WordMajorDetectorParameters {
   var detectorPixels: UInt32
 }
 
+private struct FFT2DParameters {
+  var width: UInt32
+  var height: UInt32
+  var log2Size: UInt32
+  var stage: UInt32
+  var direction: Float
+  var rowAxis: UInt32
+}
+
+private struct Bluestein2DParameters {
+  var sourceWidth: UInt32
+  var sourceHeight: UInt32
+  var paddedWidth: UInt32
+  var paddedHeight: UInt32
+  var direction: Float
+  var scale: Float
+  var padding0: UInt32 = 0
+  var padding1: UInt32 = 0
+}
+
 private struct ResidentRebinParameters {
   var sourceRows: UInt32
   var sourceCols: UInt32
@@ -121,11 +141,119 @@ final class Metal4DSTEMKernelsTests: XCTestCase {
       Metal4DSTEMKernels.fftButterflyRowsFunction,
       Metal4DSTEMKernels.fftButterflyColumnsFunction,
       Metal4DSTEMKernels.fftNormalizeFunction,
+      Metal4DSTEMKernels.bluesteinPrepareFunction,
+      Metal4DSTEMKernels.complexMultiplyFunction,
+      Metal4DSTEMKernels.bluesteinExtractFunction,
       Metal4DSTEMKernels.dpcPoissonFunction,
       Metal4DSTEMKernels.dpcExtractPhaseFunction,
     ]
     for name in names {
       XCTAssertNotNil(library.makeFunction(name: name), "Missing Metal function \(name)")
+    }
+  }
+
+  func testBluesteinFFTMatchesDirectDFTForArbitraryShape() throws {
+    let device = try metalDevice()
+    let queue = try XCTUnwrap(device.makeCommandQueue())
+    let library = try Metal4DSTEMKernels.makeDPCLibrary(device: device)
+    let rows = 3
+    let columns = 5
+    let paddedRows = 8
+    let paddedColumns = 16
+    let values = (0..<(rows * columns)).map { index in
+      SIMD2<Float>(Float(index % 4) - 1.5, Float((index * 3) % 5) - 2)
+    }
+    let source = try makeBuffer(device: device, values: values)
+    let destination = try XCTUnwrap(
+      device.makeBuffer(
+        length: values.count * MemoryLayout<SIMD2<Float>>.stride,
+        options: .storageModeShared
+      )
+    )
+    let workspaceBytes =
+      paddedRows * paddedColumns * MemoryLayout<SIMD2<Float>>.stride
+    let signal = try XCTUnwrap(
+      device.makeBuffer(length: workspaceBytes, options: .storageModePrivate)
+    )
+    let chirp = try XCTUnwrap(
+      device.makeBuffer(length: workspaceBytes, options: .storageModePrivate)
+    )
+    let command = try XCTUnwrap(queue.makeCommandBuffer())
+    let encoder = try XCTUnwrap(command.makeComputeCommandEncoder())
+    try encodeBluesteinFFT(
+      encoder,
+      library: library,
+      device: device,
+      source: source,
+      destination: destination,
+      rows: rows,
+      columns: columns,
+      paddedRows: paddedRows,
+      paddedColumns: paddedColumns,
+      signal: signal,
+      chirp: chirp,
+      inverse: false
+    )
+    encoder.endEncoding()
+    try complete(command)
+
+    let result = destination.contents().bindMemory(
+      to: SIMD2<Float>.self,
+      capacity: values.count
+    )
+    for outputRow in 0..<rows {
+      for outputColumn in 0..<columns {
+        var expected = SIMD2<Double>(repeating: 0)
+        for inputRow in 0..<rows {
+          for inputColumn in 0..<columns {
+            let value = values[inputRow * columns + inputColumn]
+            let angle = -2 * Double.pi * (
+              Double(outputRow * inputRow) / Double(rows)
+                + Double(outputColumn * inputColumn) / Double(columns)
+            )
+            let cosine = cos(angle)
+            let sine = sin(angle)
+            expected.x += Double(value.x) * cosine - Double(value.y) * sine
+            expected.y += Double(value.x) * sine + Double(value.y) * cosine
+          }
+        }
+        let actual = result[outputRow * columns + outputColumn]
+        XCTAssertEqual(actual.x, Float(expected.x), accuracy: 2e-4)
+        XCTAssertEqual(actual.y, Float(expected.y), accuracy: 2e-4)
+      }
+    }
+
+    let recovered = try XCTUnwrap(
+      device.makeBuffer(
+        length: values.count * MemoryLayout<SIMD2<Float>>.stride,
+        options: .storageModeShared
+      )
+    )
+    let inverseCommand = try XCTUnwrap(queue.makeCommandBuffer())
+    let inverseEncoder = try XCTUnwrap(inverseCommand.makeComputeCommandEncoder())
+    try encodeBluesteinFFT(
+      inverseEncoder,
+      library: library,
+      device: device,
+      source: destination,
+      destination: recovered,
+      rows: rows,
+      columns: columns,
+      paddedRows: paddedRows,
+      paddedColumns: paddedColumns,
+      signal: signal,
+      chirp: chirp,
+      inverse: true
+    )
+    inverseEncoder.endEncoding()
+    try complete(inverseCommand)
+    let recoveredValues = recovered.contents().bindMemory(
+      to: SIMD2<Float>.self,
+      capacity: values.count
+    )
+    for index in values.indices {
+      XCTAssertEqual(recoveredValues[index].x, values[index].x, accuracy: 2e-4)
+      XCTAssertEqual(recoveredValues[index].y, values[index].y, accuracy: 2e-4)
     }
   }
 
@@ -974,5 +1102,175 @@ final class Metal4DSTEMKernelsTests: XCTestCase {
     command.waitUntilCompleted()
     if let error = command.error { throw error }
     XCTAssertEqual(command.status, .completed)
+  }
+
+  private func encodeBluesteinFFT(
+    _ encoder: MTLComputeCommandEncoder,
+    library: MTLLibrary,
+    device: MTLDevice,
+    source: MTLBuffer,
+    destination: MTLBuffer,
+    rows: Int,
+    columns: Int,
+    paddedRows: Int,
+    paddedColumns: Int,
+    signal: MTLBuffer,
+    chirp: MTLBuffer,
+    inverse: Bool
+  ) throws {
+    func pipeline(_ name: String) throws -> MTLComputePipelineState {
+      try device.makeComputePipelineState(function: XCTUnwrap(library.makeFunction(name: name)))
+    }
+    var parameters = Bluestein2DParameters(
+      sourceWidth: UInt32(columns),
+      sourceHeight: UInt32(rows),
+      paddedWidth: UInt32(paddedColumns),
+      paddedHeight: UInt32(paddedRows),
+      direction: inverse ? 1 : -1,
+      scale: inverse ? 1 / Float(rows * columns) : 1
+    )
+    encoder.setComputePipelineState(try pipeline(Metal4DSTEMKernels.bluesteinPrepareFunction))
+    encoder.setBuffer(source, offset: 0, index: 0)
+    encoder.setBuffer(signal, offset: 0, index: 1)
+    encoder.setBuffer(chirp, offset: 0, index: 2)
+    encoder.setBytes(&parameters, length: MemoryLayout<Bluestein2DParameters>.stride, index: 3)
+    encoder.dispatchThreads(
+      MTLSize(width: paddedColumns, height: paddedRows, depth: 1),
+      threadsPerThreadgroup: MTLSize(width: 16, height: 16, depth: 1)
+    )
+    encoder.memoryBarrier(scope: .buffers)
+    try encodeFFT(
+      encoder,
+      library: library,
+      device: device,
+      buffer: signal,
+      rows: paddedRows,
+      columns: paddedColumns,
+      inverse: false
+    )
+    try encodeFFT(
+      encoder,
+      library: library,
+      device: device,
+      buffer: chirp,
+      rows: paddedRows,
+      columns: paddedColumns,
+      inverse: false
+    )
+    var paddedCount = UInt32(paddedRows * paddedColumns)
+    encoder.setComputePipelineState(try pipeline(Metal4DSTEMKernels.complexMultiplyFunction))
+    encoder.setBuffer(signal, offset: 0, index: 0)
+    encoder.setBuffer(chirp, offset: 0, index: 1)
+    encoder.setBytes(&paddedCount, length: 4, index: 2)
+    encoder.dispatchThreads(
+      MTLSize(width: Int(paddedCount), height: 1, depth: 1),
+      threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
+    )
+    encoder.memoryBarrier(scope: .buffers)
+    try encodeFFT(
+      encoder,
+      library: library,
+      device: device,
+      buffer: signal,
+      rows: paddedRows,
+      columns: paddedColumns,
+      inverse: true
+    )
+    encoder.setComputePipelineState(try pipeline(Metal4DSTEMKernels.bluesteinExtractFunction))
+    encoder.setBuffer(signal, offset: 0, index: 0)
+    encoder.setBuffer(destination, offset: 0, index: 1)
+    encoder.setBytes(&parameters, length: MemoryLayout<Bluestein2DParameters>.stride, index: 2)
+    encoder.dispatchThreads(
+      MTLSize(width: columns, height: rows, depth: 1),
+      threadsPerThreadgroup: MTLSize(width: 16, height: 16, depth: 1)
+    )
+    encoder.memoryBarrier(scope: .buffers)
+  }
+
+  private func encodeFFT(
+    _ encoder: MTLComputeCommandEncoder,
+    library: MTLLibrary,
+    device: MTLDevice,
+    buffer: MTLBuffer,
+    rows: Int,
+    columns: Int,
+    inverse: Bool
+  ) throws {
+    func dispatch(
+      _ function: String,
+      width: Int,
+      height: Int,
+      log2Size: UInt32,
+      stage: UInt32,
+      rowAxis: Bool
+    ) throws {
+      let pipeline = try device.makeComputePipelineState(
+        function: XCTUnwrap(library.makeFunction(name: function))
+      )
+      var parameters = FFT2DParameters(
+        width: UInt32(columns),
+        height: UInt32(rows),
+        log2Size: log2Size,
+        stage: stage,
+        direction: inverse ? 1 : -1,
+        rowAxis: rowAxis ? 1 : 0
+      )
+      encoder.setComputePipelineState(pipeline)
+      encoder.setBuffer(buffer, offset: 0, index: 0)
+      encoder.setBytes(&parameters, length: MemoryLayout<FFT2DParameters>.stride, index: 1)
+      encoder.dispatchThreads(
+        MTLSize(width: width, height: height, depth: 1),
+        threadsPerThreadgroup: MTLSize(width: 16, height: 16, depth: 1)
+      )
+      encoder.memoryBarrier(scope: .buffers)
+    }
+    let widthStages = UInt32(columns.trailingZeroBitCount)
+    let heightStages = UInt32(rows.trailingZeroBitCount)
+    try dispatch(
+      Metal4DSTEMKernels.fftBitReverseRowsFunction,
+      width: columns,
+      height: rows,
+      log2Size: widthStages,
+      stage: 0,
+      rowAxis: true
+    )
+    for stage in 0..<widthStages {
+      try dispatch(
+        Metal4DSTEMKernels.fftButterflyRowsFunction,
+        width: columns / 2,
+        height: rows,
+        log2Size: widthStages,
+        stage: stage,
+        rowAxis: true
+      )
+    }
+    try dispatch(
+      Metal4DSTEMKernels.fftBitReverseColumnsFunction,
+      width: columns,
+      height: rows,
+      log2Size: heightStages,
+      stage: 0,
+      rowAxis: false
+    )
+    for stage in 0..<heightStages {
+      try dispatch(
+        Metal4DSTEMKernels.fftButterflyColumnsFunction,
+        width: columns,
+        height: rows / 2,
+        log2Size: heightStages,
+        stage: stage,
+        rowAxis: false
+      )
+    }
+    if inverse {
+      try dispatch(
+        Metal4DSTEMKernels.fftNormalizeFunction,
+        width: columns,
+        height: rows,
+        log2Size: heightStages,
+        stage: 0,
+        rowAxis: false
+      )
+    }
   }
 }

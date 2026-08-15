@@ -65,6 +65,9 @@ public enum Metal4DSTEMKernels {
   public static let fftButterflyRowsFunction = "fft_butterfly_rows"
   public static let fftButterflyColumnsFunction = "fft_butterfly_columns"
   public static let fftNormalizeFunction = "fft_normalize_2d"
+  public static let bluesteinPrepareFunction = "bluestein_prepare_2d"
+  public static let complexMultiplyFunction = "complex_multiply_in_place"
+  public static let bluesteinExtractFunction = "bluestein_extract_2d"
   public static let dpcPoissonFunction = "dpc_poisson_frequency"
   public static let dpcExtractPhaseFunction = "dpc_extract_phase"
 

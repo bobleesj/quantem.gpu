@@ -1561,3 +1561,39 @@ def test_torch_detector_bin_sum_matches_numpy_reference() -> None:
 
     expected = data_np.reshape(2, 3, 2, 2, 2, 2).sum(axis=(3, 5), dtype=np.uint64)
     np.testing.assert_array_equal(out.numpy(), expected.astype(np.int64))
+
+
+def test_cuda_detector_bin_default_widens_before_exact_sum() -> None:
+    from importlib import import_module
+
+    load_module = import_module("quantem.gpu.io.load")
+
+    dtype, narrow = load_module._default_decoded_output_dtype(
+        np.uint16,
+        auto_narrow=True,
+        detector_bin=2,
+    )
+
+    assert dtype == np.dtype(np.uint32)
+    assert narrow is False
+
+
+def test_torch_scan_bin_partial_keeps_incomplete_edges_exactly() -> None:
+    torch = pytest.importorskip("torch")
+    from quantem.gpu.io.load import bin
+
+    data_np = np.arange(3 * 5 * 2 * 2, dtype=np.uint16).reshape(3, 5, 2, 2)
+    out = bin(
+        torch.as_tensor(data_np),
+        factor=2,
+        axes="scan",
+        reduction="sum",
+        edge="partial",
+    )
+
+    padded = np.zeros((4, 6, 2, 2), dtype=np.uint16)
+    padded[:3, :5] = data_np
+    expected = padded.reshape(2, 2, 3, 2, 2, 2).sum(
+        axis=(1, 3), dtype=np.uint64
+    )
+    np.testing.assert_array_equal(out.numpy(), expected.astype(np.int64))

@@ -16,6 +16,36 @@ full dataset twice and then serialize a 19.327 GB transpose, see the
 [Native Metal HDF5 loader postmortem](native-metal-hdf5-postmortem.md). Its
 pass-graph and memory-traffic checklist is required for future loader work.
 
+## Exact crop/bin and arbitrary-scan gate, 2026-08-15
+
+Crop/bin implementations must use ceiling output dimensions and preserve
+partial row, column, and detector edge bins. CUDA reductions accumulate exact
+integer counts in uint64 and reject values that cannot be transported as exact
+uint32 display evidence; they must not round through float32.
+
+Native iDPC must also accept cropped scan shapes that are not powers of two.
+The retained Swift kernel uses the radix-2 path unchanged for power-of-two
+dimensions and Bluestein FFT for arbitrary dimensions. The gate includes odd
+and rectangular crops, exact selected-DP/BF/ABF/ADF agreement, and float32
+DPC/iDPC tolerance.
+
+Memory admission uses the exact output plan:
+
+~~~text
+ceil(crop rows / scan bin)
+× ceil(crop columns / scan bin)
+× ceil(detector rows / detector bin)
+× ceil(detector columns / detector bin)
+× (native bytes when unbinned, otherwise 4-byte uint32)
+~~~
+
+Do not estimate a binned plan from compressed file size, drop edge values, or
+silently retain a sum in the source uint16 dtype. Detector sums widen to uint32
+before their first output write. A backend claiming load-time scan binning must
+also reduce into the replacement volume during decode; a post-load `bin()` path
+must account for the temporary source-plus-replacement peak and must not be
+described as streaming.
+
 ## Reference M5 MPS single-file checkpoint, 2026-07-25
 
 The private Reference-512 `512x512x192x192` master was fully local on a 24 GB, 10-GPU-core
