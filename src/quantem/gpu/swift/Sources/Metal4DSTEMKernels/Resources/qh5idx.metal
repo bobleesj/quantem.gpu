@@ -263,15 +263,37 @@ kernel void h5lz4dc_unshuffle_source_u8_qh5idx(
     threadgroup_barrier(mem_flags::mem_threadgroup);
     if (block < blocksPerFrame) {
         const threadgroup uint *planes = (const threadgroup uint *)shuffledBlock;
-        for (uint group = simdgroup; group < 256; group += 8) {
-            uchar value = 0;
-            for (uint bit = 0; bit < 8; ++bit) {
-                if (planes[bit * 256 + group] & (1u << lane)) {
-                    value |= uchar(1u << bit);
+        uint detectorStart = block * 8192;
+        // Preserve the compile-time 256-word stride for every full block. Only
+        // the final partial uint8 block uses its shorter bit-plane stride.
+        if (detectorStart + 8192 <= frameElements) {
+            for (uint group = simdgroup; group < 256; group += 8) {
+                uchar value = 0;
+                for (uint bit = 0; bit < 8; ++bit) {
+                    if (planes[bit * 256 + group] & (1u << lane)) {
+                        value |= uchar(1u << bit);
+                    }
                 }
+                uint detectorIndex = detectorStart + group * 32 + lane;
+                bool valid = badPixelMask[detectorIndex] == 0;
+                if (valid) {
+                    atomic_fetch_max_explicit(
+                        &countAudit[0], uint(value), memory_order_relaxed
+                    );
+                }
+                output[ulong(frame) * frameElements + detectorIndex] =
+                    valid ? value : uchar(0);
             }
-            uint detectorIndex = block * 8192 + group * 32 + lane;
-            if (detectorIndex < frameElements) {
+        } else {
+            uint groups = (frameElements - detectorStart) / 32;
+            for (uint group = simdgroup; group < groups; group += 8) {
+                uchar value = 0;
+                for (uint bit = 0; bit < 8; ++bit) {
+                    if (planes[bit * groups + group] & (1u << lane)) {
+                        value |= uchar(1u << bit);
+                    }
+                }
+                uint detectorIndex = detectorStart + group * 32 + lane;
                 bool valid = badPixelMask[detectorIndex] == 0;
                 if (valid) {
                     atomic_fetch_max_explicit(
