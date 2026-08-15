@@ -26,6 +26,40 @@ private struct WordMajorDetectorParameters {
   var detectorPixels: UInt32
 }
 
+private struct ResidentRebinParameters {
+  var sourceRows: UInt32
+  var sourceCols: UInt32
+  var sourceScanCount: UInt32
+  var sourceDetectorRows: UInt32
+  var sourceDetectorCols: UInt32
+  var sourceRowOffset: UInt32
+  var sourceColOffset: UInt32
+  var selectedRows: UInt32
+  var selectedCols: UInt32
+  var scanBin: UInt32
+  var detectorBin: UInt32
+  var outputRows: UInt32
+  var outputCols: UInt32
+  var outputScanCount: UInt32
+  var outputDetectorRows: UInt32
+  var outputDetectorCols: UInt32
+}
+
+private struct ScanDetectorBinParameters {
+  var sourceRows: UInt32
+  var sourceCols: UInt32
+  var sourceDetectorRows: UInt32
+  var sourceDetectorCols: UInt32
+  var scanBin: UInt32
+  var detectorBin: UInt32
+  var outputScanCount: UInt32
+  var outputScanCols: UInt32
+  var outputDetectorRows: UInt32
+  var outputDetectorCols: UInt32
+  var destinationScanRowOffset: UInt32
+  var padding: UInt32 = 0
+}
+
 final class Metal4DSTEMKernelsTests: XCTestCase {
   func testHDF5FunctionsCompile() throws {
     let device = try metalDevice()
@@ -50,6 +84,11 @@ final class Metal4DSTEMKernelsTests: XCTestCase {
       Metal4DSTEMKernels.transposeScanWordsFunction,
       Metal4DSTEMKernels.scanBinU8Function,
       Metal4DSTEMKernels.scanBinU16Function,
+      Metal4DSTEMKernels.scanDetectorBinU8Function,
+      Metal4DSTEMKernels.scanDetectorBinU16Function,
+      Metal4DSTEMKernels.residentRebinU8Function,
+      Metal4DSTEMKernels.residentRebinU16Function,
+      Metal4DSTEMKernels.residentRebinU32Function,
       Metal4DSTEMKernels.detectorProductsU32Function,
       Metal4DSTEMKernels.centerOfMassU8Function,
       Metal4DSTEMKernels.centerOfMassU16Function,
@@ -388,6 +427,28 @@ final class Metal4DSTEMKernelsTests: XCTestCase {
     XCTAssertFalse(plan.isFullNative)
   }
 
+  func testLoadPlanAccountsForExactDetectorSumBinning() throws {
+    let region = try Metal4DSTEMScanRegion.full(sourceRows: 8, sourceColumns: 8)
+    let plan = try Metal4DSTEMLoadPlan(
+      sourceScanRows: 8,
+      sourceScanColumns: 8,
+      detectorRows: 5,
+      detectorColumns: 7,
+      sourceBytesPerValue: 2,
+      scanRegion: region,
+      detectorBin: 2
+    )
+
+    XCTAssertEqual(plan.outputDetectorRows, 3)
+    XCTAssertEqual(plan.outputDetectorColumns, 4)
+    XCTAssertEqual(plan.outputDetectorPixels, 12)
+    XCTAssertEqual(plan.residentBytesPerValue, MemoryLayout<UInt32>.stride)
+    XCTAssertEqual(plan.residentVolumeBytes, 64 * 12 * 4)
+    XCTAssertEqual(plan.detectorContributionCount(outputRow: 0, outputColumn: 0), 4)
+    XCTAssertEqual(plan.detectorContributionCount(outputRow: 2, outputColumn: 3), 1)
+    XCTAssertTrue(plan.provenanceLabel.contains("detector-sum bin 2×2"))
+  }
+
   func testScanBinU16MatchesIntegerReferenceIncludingEdges() throws {
     let device = try metalDevice()
     let queue = try XCTUnwrap(device.makeCommandQueue())
@@ -495,6 +556,239 @@ final class Metal4DSTEMKernelsTests: XCTestCase {
     try complete(command)
 
     XCTAssertEqual(bufferValues(destination, count: 4), [20, 16, 24, 18])
+  }
+
+  func testCombinedScanAndDetectorBinU16MatchesIntegerReference() throws {
+    let device = try metalDevice()
+    let queue = try XCTUnwrap(device.makeCommandQueue())
+    let library = try Metal4DSTEMKernels.makeDetectorLibrary(device: device)
+    let pipeline = try device.makeComputePipelineState(
+      function: XCTUnwrap(
+        library.makeFunction(name: Metal4DSTEMKernels.scanDetectorBinU16Function)
+      )
+    )
+    let scanRows = 3
+    let scanColumns = 5
+    let detectorRows = 3
+    let detectorColumns = 5
+    let detectorPixels = detectorRows * detectorColumns
+    let sourceValues: [UInt16] = (0..<(scanRows * scanColumns * detectorPixels)).map {
+      UInt16($0 + 1)
+    }
+    let source = try makeBuffer(device: device, values: sourceValues)
+    let outputScanRows = 2
+    let outputScanColumns = 3
+    let outputScans = outputScanRows * outputScanColumns
+    let outputDetectorRows = 2
+    let outputDetectorColumns = 3
+    let outputDetectorPixels = outputDetectorRows * outputDetectorColumns
+    let destination = try outputBuffer(
+      device: device,
+      count: outputScans * outputDetectorPixels
+    )
+    var parameters = ScanDetectorBinParameters(
+      sourceRows: UInt32(scanRows),
+      sourceCols: UInt32(scanColumns),
+      sourceDetectorRows: UInt32(detectorRows),
+      sourceDetectorCols: UInt32(detectorColumns),
+      scanBin: 2,
+      detectorBin: 2,
+      outputScanCount: UInt32(outputScans),
+      outputScanCols: UInt32(outputScanColumns),
+      outputDetectorRows: UInt32(outputDetectorRows),
+      outputDetectorCols: UInt32(outputDetectorColumns),
+      destinationScanRowOffset: 0
+    )
+    let command = try XCTUnwrap(queue.makeCommandBuffer())
+    let encoder = try XCTUnwrap(command.makeComputeCommandEncoder())
+    encoder.setComputePipelineState(pipeline)
+    encoder.setBuffer(source, offset: 0, index: 0)
+    encoder.setBuffer(destination, offset: 0, index: 1)
+    withUnsafeBytes(of: &parameters) {
+      encoder.setBytes($0.baseAddress!, length: $0.count, index: 2)
+    }
+    encoder.dispatchThreads(
+      MTLSize(width: outputDetectorPixels, height: outputScans, depth: 1),
+      threadsPerThreadgroup: MTLSize(width: outputDetectorPixels, height: 1, depth: 1)
+    )
+    encoder.endEncoding()
+    try complete(command)
+
+    var expected = [UInt32](repeating: 0, count: outputScans * outputDetectorPixels)
+    for outputScanRow in 0..<outputScanRows {
+      for outputScanColumn in 0..<outputScanColumns {
+        let outputScan = outputScanRow * outputScanColumns + outputScanColumn
+        for outputDetectorRow in 0..<outputDetectorRows {
+          for outputDetectorColumn in 0..<outputDetectorColumns {
+            let outputDetector =
+              outputDetectorRow * outputDetectorColumns + outputDetectorColumn
+            for scanRow
+              in (outputScanRow * 2)..<min(scanRows, (outputScanRow + 1) * 2)
+            {
+              for scanColumn
+                in (outputScanColumn * 2)..<min(scanColumns, (outputScanColumn + 1) * 2)
+              {
+                let sourceScan = scanRow * scanColumns + scanColumn
+                for detectorRow
+                  in (outputDetectorRow * 2)..<min(detectorRows, (outputDetectorRow + 1) * 2)
+                {
+                  for detectorColumn
+                    in (outputDetectorColumn * 2)..<min(
+                      detectorColumns, (outputDetectorColumn + 1) * 2
+                    )
+                  {
+                    let sourceDetector = detectorRow * detectorColumns + detectorColumn
+                    expected[outputDetector * outputScans + outputScan] += UInt32(
+                      sourceValues[sourceScan * detectorPixels + sourceDetector]
+                    )
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    XCTAssertEqual(bufferValues(destination, count: expected.count), expected)
+  }
+
+  func testResidentRebinU16MatchesCroppedIntegerReferenceIncludingEdges() throws {
+    let device = try metalDevice()
+    let queue = try XCTUnwrap(device.makeCommandQueue())
+    let library = try Metal4DSTEMKernels.makeDetectorLibrary(device: device)
+    let pipeline = try device.makeComputePipelineState(
+      function: XCTUnwrap(
+        library.makeFunction(name: Metal4DSTEMKernels.residentRebinU16Function)
+      )
+    )
+    let sourceRows = 4
+    let sourceColumns = 5
+    let sourceScans = sourceRows * sourceColumns
+    let detectorPixels = 3
+    let frameMajor: [UInt16] = (0..<(sourceScans * detectorPixels)).map {
+      UInt16($0 + 1)
+    }
+    var wordMajor = [UInt32](repeating: 0, count: 2 * sourceScans)
+    for scan in 0..<sourceScans {
+      for pixel in 0..<detectorPixels {
+        wordMajor[(pixel / 2) * sourceScans + scan] |=
+          UInt32(frameMajor[scan * detectorPixels + pixel]) << UInt32((pixel % 2) * 16)
+      }
+    }
+    let source = try makeBuffer(device: device, values: wordMajor)
+    let outputRows = 2
+    let outputColumns = 2
+    let outputScans = outputRows * outputColumns
+    let destination = try outputBuffer(
+      device: device,
+      count: outputScans * detectorPixels
+    )
+    var parameters = ResidentRebinParameters(
+      sourceRows: UInt32(sourceRows),
+      sourceCols: UInt32(sourceColumns),
+      sourceScanCount: UInt32(sourceScans),
+      sourceDetectorRows: 1,
+      sourceDetectorCols: UInt32(detectorPixels),
+      sourceRowOffset: 1,
+      sourceColOffset: 1,
+      selectedRows: 3,
+      selectedCols: 4,
+      scanBin: 2,
+      detectorBin: 1,
+      outputRows: UInt32(outputRows),
+      outputCols: UInt32(outputColumns),
+      outputScanCount: UInt32(outputScans),
+      outputDetectorRows: 1,
+      outputDetectorCols: UInt32(detectorPixels)
+    )
+    let command = try XCTUnwrap(queue.makeCommandBuffer())
+    let encoder = try XCTUnwrap(command.makeComputeCommandEncoder())
+    encoder.setComputePipelineState(pipeline)
+    encoder.setBuffer(source, offset: 0, index: 0)
+    encoder.setBuffer(destination, offset: 0, index: 1)
+    withUnsafeBytes(of: &parameters) {
+      encoder.setBytes($0.baseAddress!, length: $0.count, index: 2)
+    }
+    encoder.dispatchThreads(
+      MTLSize(width: detectorPixels, height: outputScans, depth: 1),
+      threadsPerThreadgroup: MTLSize(width: detectorPixels, height: 1, depth: 1)
+    )
+    encoder.endEncoding()
+    try complete(command)
+
+    var expected = [UInt32](repeating: 0, count: outputScans * detectorPixels)
+    for outputRow in 0..<outputRows {
+      for outputColumn in 0..<outputColumns {
+        let outputScan = outputRow * outputColumns + outputColumn
+        for pixel in 0..<detectorPixels {
+          for row in (1 + outputRow * 2)..<min(4, 1 + (outputRow + 1) * 2) {
+            for column in (1 + outputColumn * 2)..<min(5, 1 + (outputColumn + 1) * 2) {
+              expected[pixel * outputScans + outputScan] += UInt32(
+                frameMajor[(row * sourceColumns + column) * detectorPixels + pixel]
+              )
+            }
+          }
+        }
+      }
+    }
+    XCTAssertEqual(bufferValues(destination, count: expected.count), expected)
+  }
+
+  func testResidentRebinU32MatchesCoarserScanAndDetectorReference() throws {
+    let device = try metalDevice()
+    let queue = try XCTUnwrap(device.makeCommandQueue())
+    let library = try Metal4DSTEMKernels.makeDetectorLibrary(device: device)
+    let pipeline = try device.makeComputePipelineState(
+      function: XCTUnwrap(
+        library.makeFunction(name: Metal4DSTEMKernels.residentRebinU32Function)
+      )
+    )
+    let sourceRows = 3
+    let sourceColumns = 3
+    let sourceScans = sourceRows * sourceColumns
+    let detectorPixels = 2
+    let wordMajor: [UInt32] = (0..<detectorPixels).flatMap { pixel in
+      (0..<sourceScans).map { scan in UInt32(100 * pixel + scan + 1) }
+    }
+    let source = try makeBuffer(device: device, values: wordMajor)
+    let destination = try outputBuffer(device: device, count: 4)
+    var parameters = ResidentRebinParameters(
+      sourceRows: 3,
+      sourceCols: 3,
+      sourceScanCount: 9,
+      sourceDetectorRows: 1,
+      sourceDetectorCols: 2,
+      sourceRowOffset: 0,
+      sourceColOffset: 0,
+      selectedRows: 3,
+      selectedCols: 3,
+      scanBin: 2,
+      detectorBin: 2,
+      outputRows: 2,
+      outputCols: 2,
+      outputScanCount: 4,
+      outputDetectorRows: 1,
+      outputDetectorCols: 1
+    )
+    let command = try XCTUnwrap(queue.makeCommandBuffer())
+    let encoder = try XCTUnwrap(command.makeComputeCommandEncoder())
+    encoder.setComputePipelineState(pipeline)
+    encoder.setBuffer(source, offset: 0, index: 0)
+    encoder.setBuffer(destination, offset: 0, index: 1)
+    withUnsafeBytes(of: &parameters) {
+      encoder.setBytes($0.baseAddress!, length: $0.count, index: 2)
+    }
+    encoder.dispatchThreads(
+      MTLSize(width: 1, height: 4, depth: 1),
+      threadsPerThreadgroup: MTLSize(width: 1, height: 1, depth: 1)
+    )
+    encoder.endEncoding()
+    try complete(command)
+
+    XCTAssertEqual(
+      bufferValues(destination, count: 4),
+      [424, 218, 230, 118]
+    )
   }
 
   func testWordMajorU32DetectorProductsAndInteractiveUpdatesMatchReference() throws {

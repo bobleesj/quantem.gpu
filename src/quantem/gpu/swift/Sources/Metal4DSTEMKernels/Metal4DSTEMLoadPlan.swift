@@ -5,6 +5,7 @@ public enum Metal4DSTEMLoadPlanError: LocalizedError, Equatable {
   case invalidSourceShape
   case invalidScanRegion
   case invalidScanBin(Int)
+  case invalidDetectorBin(Int)
   case invalidSourceBytesPerValue(Int)
 
   public var errorDescription: String? {
@@ -15,6 +16,8 @@ public enum Metal4DSTEMLoadPlanError: LocalizedError, Equatable {
       "The scan region must be nonempty and contained within the source scan."
     case .invalidScanBin(let factor):
       "Scan bin \(factor) is unsupported. Choose 1, 2, 4, 8, or 16."
+    case .invalidDetectorBin(let factor):
+      "Detector bin \(factor) is unsupported. Choose 1, 2, or 4."
     case .invalidSourceBytesPerValue(let bytes):
       "Source values must occupy 1 or 2 bytes, not \(bytes)."
     }
@@ -70,6 +73,7 @@ public struct Metal4DSTEMScanRegion: Codable, Equatable, Hashable, Sendable {
 /// position. No detector pixels are cropped or binned by this plan.
 public struct Metal4DSTEMLoadPlan: Equatable, Hashable, Sendable {
   public static let supportedScanBins = [1, 2, 4, 8, 16]
+  public static let supportedDetectorBins = [1, 2, 4]
 
   public let sourceScanRows: Int
   public let sourceScanColumns: Int
@@ -78,6 +82,7 @@ public struct Metal4DSTEMLoadPlan: Equatable, Hashable, Sendable {
   public let sourceBytesPerValue: Int
   public let scanRegion: Metal4DSTEMScanRegion
   public let scanBin: Int
+  public let detectorBin: Int
 
   public init(
     sourceScanRows: Int,
@@ -86,7 +91,8 @@ public struct Metal4DSTEMLoadPlan: Equatable, Hashable, Sendable {
     detectorColumns: Int,
     sourceBytesPerValue: Int,
     scanRegion: Metal4DSTEMScanRegion,
-    scanBin: Int = 1
+    scanBin: Int = 1,
+    detectorBin: Int = 1
   ) throws {
     guard sourceScanRows > 0, sourceScanColumns > 0,
       detectorRows > 0, detectorColumns > 0,
@@ -98,6 +104,9 @@ public struct Metal4DSTEMLoadPlan: Equatable, Hashable, Sendable {
     }
     guard Self.supportedScanBins.contains(scanBin) else {
       throw Metal4DSTEMLoadPlanError.invalidScanBin(scanBin)
+    }
+    guard Self.supportedDetectorBins.contains(detectorBin) else {
+      throw Metal4DSTEMLoadPlanError.invalidDetectorBin(detectorBin)
     }
     guard scanRegion.rowStart >= 0,
       scanRegion.rowStop > scanRegion.rowStart,
@@ -113,6 +122,7 @@ public struct Metal4DSTEMLoadPlan: Equatable, Hashable, Sendable {
     self.sourceBytesPerValue = sourceBytesPerValue
     self.scanRegion = scanRegion
     self.scanBin = scanBin
+    self.detectorBin = detectorBin
   }
 
   public var outputScanRows: Int {
@@ -129,17 +139,30 @@ public struct Metal4DSTEMLoadPlan: Equatable, Hashable, Sendable {
 
   public var detectorPixels: Int { detectorRows * detectorColumns }
 
+  public var outputDetectorRows: Int {
+    (detectorRows + detectorBin - 1) / detectorBin
+  }
+
+  public var outputDetectorColumns: Int {
+    (detectorColumns + detectorBin - 1) / detectorBin
+  }
+
+  public var outputDetectorPixels: Int {
+    outputDetectorRows * outputDetectorColumns
+  }
+
   public var residentBytesPerValue: Int {
-    scanBin == 1 ? sourceBytesPerValue : MemoryLayout<UInt32>.stride
+    scanBin == 1 && detectorBin == 1
+      ? sourceBytesPerValue : MemoryLayout<UInt32>.stride
   }
 
   public var residentVolumeBytes: UInt64 {
-    UInt64(outputScanPositions) * UInt64(detectorPixels)
+    UInt64(outputScanPositions) * UInt64(outputDetectorPixels)
       * UInt64(residentBytesPerValue)
   }
 
   public var isFullNative: Bool {
-    scanBin == 1
+    scanBin == 1 && detectorBin == 1
       && scanRegion.rowStart == 0 && scanRegion.rowStop == sourceScanRows
       && scanRegion.columnStart == 0 && scanRegion.columnStop == sourceScanColumns
   }
@@ -148,10 +171,15 @@ public struct Metal4DSTEMLoadPlan: Equatable, Hashable, Sendable {
     let region =
       "rows \(scanRegion.rowStart)..<\(scanRegion.rowStop), columns "
       + "\(scanRegion.columnStart)..<\(scanRegion.columnStop)"
-    if scanBin == 1 {
+    if scanBin == 1 && detectorBin == 1 {
       return isFullNative ? "full native scan" : "native scan crop · \(region)"
     }
-    return "scan-sum bin \(scanBin)×\(scanBin) · \(region)"
+    var reductions: [String] = []
+    if scanBin > 1 { reductions.append("scan-sum bin \(scanBin)×\(scanBin)") }
+    if detectorBin > 1 {
+      reductions.append("detector-sum bin \(detectorBin)×\(detectorBin)")
+    }
+    return reductions.joined(separator: " · ") + " · \(region)"
   }
 
   /// Number of source scan positions summed into one output scan position.
@@ -163,6 +191,18 @@ public struct Metal4DSTEMLoadPlan: Equatable, Hashable, Sendable {
     let localColumnStart = outputColumn * scanBin
     let rows = min(scanBin, scanRegion.rows - localRowStart)
     let columns = min(scanBin, scanRegion.columns - localColumnStart)
+    return rows * columns
+  }
+
+  /// Number of source detector pixels summed into one output detector pixel.
+  public func detectorContributionCount(outputRow: Int, outputColumn: Int) -> Int {
+    guard outputRow >= 0, outputRow < outputDetectorRows,
+      outputColumn >= 0, outputColumn < outputDetectorColumns
+    else { return 0 }
+    let sourceRowStart = outputRow * detectorBin
+    let sourceColumnStart = outputColumn * detectorBin
+    let rows = min(detectorBin, detectorRows - sourceRowStart)
+    let columns = min(detectorBin, detectorColumns - sourceColumnStart)
     return rows * columns
   }
 }

@@ -30,6 +30,16 @@ public enum Metal4DSTEMKernels {
   public static let transposeScanWordsFunction = "transpose_scan_words"
   public static let scanBinU8Function = "scan_bin_u8_to_u32_word_major"
   public static let scanBinU16Function = "scan_bin_u16_to_u32_word_major"
+  public static let scanDetectorBinU8Function =
+    "scan_detector_bin_u8_to_u32_word_major"
+  public static let scanDetectorBinU16Function =
+    "scan_detector_bin_u16_to_u32_word_major"
+  public static let residentRebinU8Function =
+    "resident_rebin_u8_word_major_to_u32_word_major"
+  public static let residentRebinU16Function =
+    "resident_rebin_u16_word_major_to_u32_word_major"
+  public static let residentRebinU32Function =
+    "resident_rebin_u32_word_major_to_u32_word_major"
   public static let detectorProductsU32Function = "detector_products_u32_word_major"
   public static let centerOfMassU8Function = "center_of_mass_u8_word_major"
   public static let centerOfMassU16Function = "center_of_mass_u16_word_major"

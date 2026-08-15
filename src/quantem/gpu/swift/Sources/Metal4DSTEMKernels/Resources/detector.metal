@@ -242,6 +242,100 @@ kernel void scan_bin_u16_to_u32_word_major(
     scanBinToU32WordMajor(source, destination, params, position);
 }
 
+struct ScanDetectorBinParams {
+    uint sourceRows;
+    uint sourceCols;
+    uint sourceDetectorRows;
+    uint sourceDetectorCols;
+    uint scanBin;
+    uint detectorBin;
+    uint outputScanCount;
+    uint outputScanCols;
+    uint outputDetectorRows;
+    uint outputDetectorCols;
+    uint destinationScanRowOffset;
+    uint padding;
+};
+
+template <typename Sample>
+inline void scanDetectorBinToU32WordMajor(
+    device const Sample *source,
+    device uint *destination,
+    constant ScanDetectorBinParams &params,
+    uint2 position
+) {
+    uint outputDetectorPixel = position.x;
+    uint localOutputScan = position.y;
+    uint localOutputScanRows =
+        (params.sourceRows + params.scanBin - 1u) / params.scanBin;
+    uint localOutputScanCount = localOutputScanRows * params.outputScanCols;
+    uint outputDetectorPixels = params.outputDetectorRows * params.outputDetectorCols;
+    if (outputDetectorPixel >= outputDetectorPixels ||
+        localOutputScan >= localOutputScanCount) return;
+
+    uint outputScanRow = localOutputScan / params.outputScanCols;
+    uint outputScanCol = localOutputScan - outputScanRow * params.outputScanCols;
+    uint outputDetectorRow = outputDetectorPixel / params.outputDetectorCols;
+    uint outputDetectorCol =
+        outputDetectorPixel - outputDetectorRow * params.outputDetectorCols;
+    uint sourceScanRowStart = outputScanRow * params.scanBin;
+    uint sourceScanColStart = outputScanCol * params.scanBin;
+    uint sourceScanRowStop = min(
+        params.sourceRows, sourceScanRowStart + params.scanBin
+    );
+    uint sourceScanColStop = min(
+        params.sourceCols, sourceScanColStart + params.scanBin
+    );
+    uint sourceDetectorRowStart = outputDetectorRow * params.detectorBin;
+    uint sourceDetectorColStart = outputDetectorCol * params.detectorBin;
+    uint sourceDetectorRowStop = min(
+        params.sourceDetectorRows, sourceDetectorRowStart + params.detectorBin
+    );
+    uint sourceDetectorColStop = min(
+        params.sourceDetectorCols, sourceDetectorColStart + params.detectorBin
+    );
+    uint sourceDetectorPixels = params.sourceDetectorRows * params.sourceDetectorCols;
+    uint sum = 0u;
+    for (uint scanRow = sourceScanRowStart; scanRow < sourceScanRowStop; ++scanRow) {
+        for (uint scanCol = sourceScanColStart; scanCol < sourceScanColStop; ++scanCol) {
+            uint sourceScan = scanRow * params.sourceCols + scanCol;
+            for (uint detectorRow = sourceDetectorRowStart;
+                 detectorRow < sourceDetectorRowStop; ++detectorRow) {
+                for (uint detectorCol = sourceDetectorColStart;
+                     detectorCol < sourceDetectorColStop; ++detectorCol) {
+                    uint sourceDetectorPixel =
+                        detectorRow * params.sourceDetectorCols + detectorCol;
+                    sum += uint(
+                        source[ulong(sourceScan) * sourceDetectorPixels + sourceDetectorPixel]
+                    );
+                }
+            }
+        }
+    }
+    uint destinationScan =
+        (params.destinationScanRowOffset + outputScanRow) * params.outputScanCols
+        + outputScanCol;
+    destination[ulong(outputDetectorPixel) * params.outputScanCount + destinationScan] = sum;
+}
+
+kernel void scan_detector_bin_u8_to_u32_word_major(
+    device const uchar *source [[buffer(0)]],
+    device uint *destination [[buffer(1)]],
+    constant ScanDetectorBinParams &params [[buffer(2)]],
+    uint2 position [[thread_position_in_grid]]
+) {
+    scanDetectorBinToU32WordMajor(source, destination, params, position);
+}
+
+kernel void scan_detector_bin_u16_to_u32_word_major(
+    device const ushort *source [[buffer(0)]],
+    device uint *destination [[buffer(1)]],
+    constant ScanDetectorBinParams &params [[buffer(2)]],
+    uint2 position [[thread_position_in_grid]]
+) {
+    scanDetectorBinToU32WordMajor(source, destination, params, position);
+}
+
 struct WordMajorDetectorParams {
     uint scanCount;
     uint detectorPixels;
@@ -266,6 +360,103 @@ inline uint word_major_u32_sample(
 ) {
     return data[ulong(pixel) * scanCount + scan];
 }
+
+struct ResidentRebinParams {
+    uint sourceRows;
+    uint sourceCols;
+    uint sourceScanCount;
+    uint sourceDetectorRows;
+    uint sourceDetectorCols;
+    uint sourceRowOffset;
+    uint sourceColOffset;
+    uint selectedRows;
+    uint selectedCols;
+    uint scanBin;
+    uint detectorBin;
+    uint outputRows;
+    uint outputCols;
+    uint outputScanCount;
+    uint outputDetectorRows;
+    uint outputDetectorCols;
+};
+
+template <uint StorageBits>
+inline void residentRebinToU32WordMajor(
+    device const uint *source,
+    device uint *destination,
+    constant ResidentRebinParams &params,
+    uint2 position
+) {
+    uint outputDetectorPixel = position.x;
+    uint outputScan = position.y;
+    uint outputDetectorPixels = params.outputDetectorRows * params.outputDetectorCols;
+    if (outputDetectorPixel >= outputDetectorPixels ||
+        outputScan >= params.outputScanCount) return;
+
+    uint outputRow = outputScan / params.outputCols;
+    uint outputCol = outputScan - outputRow * params.outputCols;
+    uint selectedRowStop = params.sourceRowOffset + params.selectedRows;
+    uint selectedColStop = params.sourceColOffset + params.selectedCols;
+    uint sourceRowStart = params.sourceRowOffset + outputRow * params.scanBin;
+    uint sourceColStart = params.sourceColOffset + outputCol * params.scanBin;
+    uint sourceRowStop = min(selectedRowStop, sourceRowStart + params.scanBin);
+    uint sourceColStop = min(selectedColStop, sourceColStart + params.scanBin);
+    uint outputDetectorRow = outputDetectorPixel / params.outputDetectorCols;
+    uint outputDetectorCol =
+        outputDetectorPixel - outputDetectorRow * params.outputDetectorCols;
+    uint sourceDetectorRowStart = outputDetectorRow * params.detectorBin;
+    uint sourceDetectorColStart = outputDetectorCol * params.detectorBin;
+    uint sourceDetectorRowStop = min(
+        params.sourceDetectorRows, sourceDetectorRowStart + params.detectorBin
+    );
+    uint sourceDetectorColStop = min(
+        params.sourceDetectorCols, sourceDetectorColStart + params.detectorBin
+    );
+    uint sum = 0u;
+    for (uint row = sourceRowStart; row < sourceRowStop; ++row) {
+        for (uint col = sourceColStart; col < sourceColStop; ++col) {
+            uint scan = row * params.sourceCols + col;
+            for (uint detectorRow = sourceDetectorRowStart;
+                 detectorRow < sourceDetectorRowStop; ++detectorRow) {
+                for (uint detectorCol = sourceDetectorColStart;
+                     detectorCol < sourceDetectorColStop; ++detectorCol) {
+                    uint sourceDetectorPixel =
+                        detectorRow * params.sourceDetectorCols + detectorCol;
+                    if constexpr (StorageBits == 8u) {
+                        sum += word_major_u8_sample(
+                            source, sourceDetectorPixel, scan, params.sourceScanCount
+                        );
+                    } else if constexpr (StorageBits == 16u) {
+                        sum += word_major_u16_sample(
+                            source, sourceDetectorPixel, scan, params.sourceScanCount
+                        );
+                    } else {
+                        sum += word_major_u32_sample(
+                            source, sourceDetectorPixel, scan, params.sourceScanCount
+                        );
+                    }
+                }
+            }
+        }
+    }
+    destination[ulong(outputDetectorPixel) * params.outputScanCount + outputScan] = sum;
+}
+
+#define DEFINE_RESIDENT_REBIN_KERNEL(NAME, BITS)                                    \
+kernel void NAME(                                                                    \
+    device const uint *source [[buffer(0)]],                                         \
+    device uint *destination [[buffer(1)]],                                          \
+    constant ResidentRebinParams &params [[buffer(2)]],                              \
+    uint2 position [[thread_position_in_grid]]                                       \
+) {                                                                                  \
+    residentRebinToU32WordMajor<BITS>(source, destination, params, position);         \
+}
+
+// Rebin an already resident detector-word-major volume without a source-file
+// reread. The destination remains an exact uint32 sum, including edge bins.
+DEFINE_RESIDENT_REBIN_KERNEL(resident_rebin_u8_word_major_to_u32_word_major, 8u)
+DEFINE_RESIDENT_REBIN_KERNEL(resident_rebin_u16_word_major_to_u32_word_major, 16u)
+DEFINE_RESIDENT_REBIN_KERNEL(resident_rebin_u32_word_major_to_u32_word_major, 32u)
 
 template <uint StorageBits>
 inline void detectorCenterOfMass(
