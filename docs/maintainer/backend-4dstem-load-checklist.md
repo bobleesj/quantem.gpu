@@ -1,5 +1,63 @@
 # Backend 4D-STEM Load/Decode Checklist
 
+## Native remote browse ownership, 2026-08-15
+
+- `quantem.gpu.remote` owns the versioned native-viewer protocol, CUDA-resident
+  master cache, exact detector products, selected diffraction, and acquisition
+  readiness polling.
+- `quantem-gpu serve DATA_FOLDER --gpus auto --port P` binds to loopback only.
+  `--gpu N` remains the explicit single-device form. SSH
+  owns authentication and encryption; the HTTP service must never listen on a
+  public interface by default.
+- One resident 4D volume belongs to exactly one CUDA GPU. New datasets are
+  assigned to the least-populated device that can admit the exact transition
+  peak; cache hits stay on their original device. Per-device LRU eviction must
+  never evict an entry on another GPU, and the active dataset is preserved when
+  another device can admit the request.
+- Capabilities report `browse_gpus`, maximum single-device admission budget,
+  aggregate cache budget, and live per-device resident bytes. Do not use the
+  aggregate budget to admit one volume: the viewer does not silently shard a
+  dataset or change its arithmetic.
+- The server must import no `quantem.live` modules. Dashboard, automated SSB,
+  trial orchestration, and reports remain separate consumers.
+- Crop and detector binning go directly into `quantem.gpu.io.load`; scan
+  binning replaces the cropped resident volume and its decoded-source
+  transition peak is admitted before CUDA allocation.
+- Enter the configured CUDA device context inside every server worker thread.
+  CuPy device selection is thread-local, so loading on one worker does not make
+  later detector or transfer work on another worker safe automatically.
+- Integer detector sums and selected diffraction frames use little-endian
+  uint32 wire buffers. Float32 is reserved for scalar CoM/DPC products.
+- Acceptance requires a clean environment containing `quantem.gpu[cuda,remote]`
+  but no `quantem.live`, endpoint parity on real data, a bounded-memory failure
+  test, warm interaction timing, and one packaged Live4DSTEM SSH workflow.
+
+### Multi-GPU acceptance record, 2026-08-15
+
+The real-CUDA gate used two 96 GB RTX PRO 6000 Blackwell GPUs and two independent
+catalog entries for the same `128x128x48x48` uint16 S128 evidence. Automatic
+placement retained one complete 75,497,472-byte volume on each GPU. No volume
+was split and an existing dashboard allocation on GPU 0 was left untouched.
+
+| Check | Result |
+|---|---:|
+| Cold BF + exact load, session A | 0.366 s |
+| Cold BF + exact load, session B | 0.133 s |
+| Warm BF cache hit | 1.39 ms |
+| Warm selected diffraction, both GPUs | 1.14–1.46 ms |
+| BF versus independent CPU reference | exact, max error 0 |
+| Selected diffraction versus HDF5 reference | exact, max error 0 |
+
+The clean-install gate installed the wheel with `[cuda,remote]` into an empty
+environment with no system site packages. The 3.6 MB wheel pulled its CUDA
+runtime/compiler dependencies through the CUDA extra, initialized both GPUs,
+and launched through the packaged native app over an SSH alias. The app loaded
+session A, switched to session B through its Dataset menu, and displayed
+non-black BF, diffraction, product thumbnails, histograms, and metadata for
+both. The full Python suite passed with `287 passed, 55 skipped`; the macOS
+Swift suite passed 38 tests with the opt-in SSH test skipped, and that real
+SSH/CUDA test then passed separately in automatic multi-GPU mode.
+
 Handoff checklist for accelerated Show4DSTEM HDF5 load, decode, and product
 paths across **CUDA**, **MPS**, and **WebGPU**. Pair this with
 `backend-optimization-matrix.md`; that matrix is the measured evidence log and

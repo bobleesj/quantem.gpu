@@ -31,6 +31,33 @@ python -m pip install \
   "quantem.gpu[mps]==0.0.1rc5"
 ```
 
+For native applications that browse data on a remote CUDA workstation, the GPU
+computer needs only the CUDA driver and this compute package. It does not need
+Live4DSTEM, `quantem.live`, `quantem.widget`, or a web frontend. Install the
+small loopback-service extra once:
+
+```bash
+python -m pip install \
+  --pre --upgrade \
+  --extra-index-url https://test.pypi.org/simple/ \
+  "quantem.gpu[cuda,remote]"
+
+```
+
+In Live4DSTEM, a regular user then selects an existing SSH alias and the remote
+data folder and clicks **Connect**. The Mac app starts the service and creates
+the authenticated SSH tunnel; no server command or GPU index is required. By
+default, datasets remain whole and are distributed across all available CUDA
+GPUs for resident caching. A single GPU can still be selected for a shared
+workstation.
+
+For diagnostics, the equivalent manual command is
+`quantem-gpu serve /data/4dstem --gpus auto --port 8780`. The service listens
+only on `127.0.0.1`. It serves catalog metadata, acquisition readiness, exact
+virtual-detector images, and selected diffraction patterns. It has no web
+frontend or reconstruction scheduler; raw 4D detector data stays on the CUDA
+host.
+
 For GIF/MP4 movie rendering, include the `movie` extra. Combine extras when
 you also need a device-specific backend:
 
