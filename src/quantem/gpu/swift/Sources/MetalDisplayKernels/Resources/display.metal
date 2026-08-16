@@ -101,9 +101,11 @@ fragment float4 metal_display_fragment_f32(
     }
     uint col = min(parameters.cols - 1u, uint(input.uv.x * float(parameters.cols)));
     uint row = min(parameters.rows - 1u, uint(input.uv.y * float(parameters.rows)));
-    float normalized = metal_normalize_f32(
-        values[row * parameters.cols + col], parameters
-    );
+    float value = values[row * parameters.cols + col];
+    if (!isfinite(value)) {
+        return float4(143.0f / 255.0f, 63.0f / 255.0f, 143.0f / 255.0f, 1.0f);
+    }
+    float normalized = metal_normalize_f32(value, parameters);
     uint lutIndex = min(
         parameters.lutCount - 1u,
         uint(normalized * float(parameters.lutCount - 1u) + 0.5f)
@@ -144,7 +146,9 @@ kernel void metal_histogram_f32(
 ) {
     uint count = parameters.rows * parameters.cols;
     if (index >= count) return;
-    float normalized = metal_normalize_f32(values[index], parameters);
+    float value = values[index];
+    if (!isfinite(value)) return;
+    float normalized = metal_normalize_f32(value, parameters);
     uint bin = min(255u, uint(normalized * 255.0f + 0.5f));
     atomic_fetch_add_explicit(&bins[bin], 1u, memory_order_relaxed);
 }
