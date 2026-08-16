@@ -89,9 +89,24 @@ def _inventory(service: MAPEDProtocolService, folder: Path) -> dict[str, object]
     )
 
 
+def _wait_for_event(
+    service: MAPEDProtocolService,
+    run_id: str,
+    event_type: str,
+) -> dict[str, object]:
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        for event in service.run_event_snapshot(run_id):
+            if event["type"] == event_type:
+                return event
+        time.sleep(0.005)
+    raise AssertionError(f"MAPED run {run_id} did not emit {event_type}.")
+
+
 def _run_request(
     inventory: dict[str, object],
     *,
+    gpu_index: int = 0,
     validation: dict[str, object] | None = None,
 ) -> dict[str, object]:
     tilts = inventory["tilts"]
@@ -106,12 +121,22 @@ def _run_request(
         "backend": {
             "kind": "remote_cuda",
             "profile_id": "test-profile",
-            "gpu_index": 0,
+            "gpu_index": gpu_index,
         },
         "implementationRevision": "gpu-test-revision",
-        "orderedCalibrations": [item["calibration"] for item in tilts],
+        "orderedCalibrations": json.loads(
+            json.dumps([item["calibration"] for item in tilts])
+        ),
         "validation": validation or {"kind": "integrity_only"},
     }
+
+
+def _distinct_run_request(
+    inventory: dict[str, object], marker: str, *, gpu_index: int = 0
+) -> dict[str, object]:
+    request = _run_request(inventory, gpu_index=gpu_index)
+    request["orderedCalibrations"][0]["resolution"]["reason"] = marker
+    return request
 
 
 def _alignment(request: dict[str, object]) -> dict[str, object]:
@@ -135,6 +160,7 @@ def _outcome(
     validation: dict[str, object] | None = None,
     reference_identity: dict[str, str] | None = None,
 ) -> dict[str, object]:
+    gpu_index = int(request["backend"]["gpu_index"])
     output_path = working_directory / "merged.npy"
     np.save(output_path, np.arange(120, dtype=np.float32).reshape(4, 5, 3, 2))
     products_path = working_directory / "products.npz"
@@ -159,8 +185,8 @@ def _outcome(
         "executedDevices": [
             {
                 "backend": "cuda",
-                "deviceName": "Test CUDA 0",
-                "gpuIndex": 0,
+                "deviceName": f"Test CUDA {gpu_index}",
+                "gpuIndex": gpu_index,
                 "driverVersion": "test",
                 "runtimeVersion": "test",
                 "implementationRevision": "gpu-test-revision",
@@ -495,6 +521,296 @@ def test_cancel_terminal_waits_for_runner_stop_and_cleanup(tmp_path):
     assert events[-1]["type"] == "cancelled"
     assert "worker stopped" in events[-1]["detail"]
     assert not list(folder.glob("maped-results/.*.incomplete"))
+
+
+def test_same_gpu_runs_serialize_and_interactive_work_reports_busy(tmp_path):
+    folder = _fixture_folder(tmp_path, count=2)
+    first_entered = threading.Event()
+    second_entered = threading.Event()
+    release_first = threading.Event()
+    lock = threading.Lock()
+    active = 0
+    maximum_active = 0
+
+    def runner(request, _progress, _cancel_requested, working_directory):
+        nonlocal active, maximum_active
+        marker = request["orderedCalibrations"][0]["resolution"]["reason"]
+        with lock:
+            active += 1
+            maximum_active = max(maximum_active, active)
+        try:
+            if marker == "first-cache-identity":
+                first_entered.set()
+                assert release_first.wait(timeout=2)
+            else:
+                second_entered.set()
+            return _outcome(request, working_directory)
+        finally:
+            with lock:
+                active -= 1
+
+    service = _service(tmp_path, runner=runner)
+    inventory = _inventory(service, folder)
+    first_request = _distinct_run_request(inventory, "first-cache-identity")
+    second_request = _distinct_run_request(inventory, "second-cache-identity")
+    assert service.cache_identity(first_request) != service.cache_identity(
+        second_request
+    )
+    first = service.start_run(first_request)
+    assert first_entered.wait(timeout=2)
+    second = service.start_run(second_request)
+    queued_event = _wait_for_event(service, second["runID"], "accepted")
+    assert queued_event["queueState"] == "waiting_for_device"
+
+    first_tilt = inventory["tilts"][0]
+    interactive = {
+        "contractVersion": CONTRACT_VERSION,
+        "collectionIdentitySHA256": inventory["collectionIdentitySHA256"],
+        "backend": {
+            "kind": "remote_cuda",
+            "profile_id": "test-profile",
+            "gpu_index": 0,
+        },
+    }
+    try:
+        assert not second_entered.wait(timeout=0.1)
+        with pytest.raises(MAPEDProtocolError) as preview_error:
+            service.previews(
+                {**interactive, "datasetIDs": [first_tilt["datasetID"]]}
+            )
+        assert preview_error.value.code == "deviceBusy"
+        assert preview_error.value.stage == "load"
+
+        with pytest.raises(MAPEDProtocolError) as diffraction_error:
+            service.selected_diffraction(
+                {
+                    **interactive,
+                    "clientID": "mac-window-busy",
+                    "requestID": 1,
+                    "datasetID": first_tilt["datasetID"],
+                    "scan": {"row": 1, "column": 1},
+                    "averaging": {"width": 1, "aggregation": "mean"},
+                }
+            )
+        assert diffraction_error.value.code == "deviceBusy"
+    finally:
+        release_first.set()
+
+    assert list(service.run_events(first["runID"]))[-1]["type"] == "completed"
+    assert list(service.run_events(second["runID"]))[-1]["type"] == "completed"
+    assert second_entered.is_set()
+    assert maximum_active == 1
+
+
+def test_cancelling_queued_run_does_not_touch_active_or_completed_cache(tmp_path):
+    folder = _fixture_folder(tmp_path, count=2)
+    active_entered = threading.Event()
+    release_active = threading.Event()
+    runner_calls = []
+
+    def runner(request, _progress, _cancel_requested, working_directory):
+        marker = request["orderedCalibrations"][0]["resolution"]["reason"]
+        runner_calls.append(marker)
+        if marker == "active-cache-identity":
+            (working_directory / "active-owner.txt").write_text("still-owned")
+            active_entered.set()
+            assert release_active.wait(timeout=2)
+        return _outcome(request, working_directory)
+
+    service = _service(tmp_path, runner=runner)
+    inventory = _inventory(service, folder)
+    active_request = _distinct_run_request(inventory, "active-cache-identity")
+    queued_request = _distinct_run_request(inventory, "queued-cache-identity")
+    assert service.cache_identity(active_request) != service.cache_identity(
+        queued_request
+    )
+    active = service.start_run(active_request)
+    assert active_entered.wait(timeout=2)
+    queued = service.start_run(queued_request)
+    queued_event = _wait_for_event(service, queued["runID"], "accepted")
+    assert queued_event["queueState"] == "waiting_for_device"
+
+    cancellation = service.cancel_run(queued["runID"])
+    assert cancellation["state"] == "cancellation_requested"
+    queued_events = list(service.run_events(queued["runID"]))
+    assert queued_events[-1]["type"] == "cancelled"
+    assert "no cache files were changed" in queued_events[-1]["detail"]
+    active_work = folder / "maped-results" / f".{active['runID']}.incomplete"
+    assert (active_work / "active-owner.txt").read_text() == "still-owned"
+    assert runner_calls == ["active-cache-identity"]
+
+    release_active.set()
+    active_events = list(service.run_events(active["runID"]))
+    assert active_events[-1]["type"] == "completed"
+    identity = service.cache_identity(active_request)
+    cache = service.validate_cache(
+        {
+            "cacheIdentity": identity,
+            "cacheIdentitySHA256": sha256(
+                json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest(),
+            "validation": {"kind": "integrity_only"},
+        }
+    )
+    assert cache["state"] == "hit"
+    assert cache["receipt"]["cache"]["outputSHA256"]
+    assert not list(folder.glob("maped-results/.*.incomplete"))
+
+
+def test_different_gpus_run_independently(tmp_path):
+    folder = _fixture_folder(tmp_path, count=2)
+    entered = {0: threading.Event(), 1: threading.Event()}
+    release = threading.Event()
+    lock = threading.Lock()
+    active_gpus = set()
+    simultaneous_gpus = set()
+
+    def runner(request, _progress, _cancel_requested, working_directory):
+        gpu = int(request["backend"]["gpu_index"])
+        with lock:
+            active_gpus.add(gpu)
+            if len(active_gpus) == 2:
+                simultaneous_gpus.update(active_gpus)
+        entered[gpu].set()
+        try:
+            assert release.wait(timeout=2)
+            return _outcome(request, working_directory)
+        finally:
+            with lock:
+                active_gpus.remove(gpu)
+
+    service = _service(tmp_path, runner=runner)
+    inventory = _inventory(service, folder)
+    gpu_zero = service.start_run(_run_request(inventory, gpu_index=0))
+    gpu_one = service.start_run(_run_request(inventory, gpu_index=1))
+    try:
+        assert entered[0].wait(timeout=2)
+        assert entered[1].wait(timeout=2)
+        assert simultaneous_gpus == {0, 1}
+    finally:
+        release.set()
+
+    assert list(service.run_events(gpu_zero["runID"]))[-1]["type"] == "completed"
+    assert list(service.run_events(gpu_one["runID"]))[-1]["type"] == "completed"
+
+
+def test_interactive_cuda_work_shares_the_same_device_lease(tmp_path):
+    folder = _fixture_folder(tmp_path, count=2)
+    preview_entered = threading.Event()
+    release_preview = threading.Event()
+    preview_result = []
+
+    def previewer(_path, _gpu):
+        preview_entered.set()
+        assert release_preview.wait(timeout=2)
+        return np.ones((4, 5)), np.ones((3, 2))
+
+    service = _service(tmp_path, previewer=previewer)
+    inventory = _inventory(service, folder)
+    first_tilt = inventory["tilts"][0]
+    base = {
+        "contractVersion": CONTRACT_VERSION,
+        "collectionIdentitySHA256": inventory["collectionIdentitySHA256"],
+        "backend": {
+            "kind": "remote_cuda",
+            "profile_id": "test-profile",
+            "gpu_index": 0,
+        },
+    }
+
+    thread = threading.Thread(
+        target=lambda: preview_result.append(
+            service.previews({**base, "datasetIDs": [first_tilt["datasetID"]]})
+        )
+    )
+    thread.start()
+    assert preview_entered.wait(timeout=2)
+    try:
+        with pytest.raises(MAPEDProtocolError) as error:
+            service.selected_diffraction(
+                {
+                    **base,
+                    "clientID": "mac-window-interactive",
+                    "requestID": 1,
+                    "datasetID": first_tilt["datasetID"],
+                    "scan": {"row": 1, "column": 1},
+                    "averaging": {"width": 1, "aggregation": "mean"},
+                }
+            )
+        assert error.value.code == "deviceBusy"
+    finally:
+        release_preview.set()
+        thread.join(timeout=2)
+
+    assert not thread.is_alive()
+    assert len(preview_result) == 1
+
+
+def test_http_device_busy_failure_is_typed(tmp_path):
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from quantem.gpu.remote.server import BrowseService, create_app
+
+    folder = _fixture_folder(tmp_path, count=2)
+    run_entered = threading.Event()
+    release_run = threading.Event()
+
+    def runner(request, _progress, _cancel_requested, working_directory):
+        run_entered.set()
+        assert release_run.wait(timeout=2)
+        return _outcome(request, working_directory)
+
+    maped = _service(tmp_path, runner=runner)
+    browse = BrowseService(tmp_path, gpu=0, initialize_cuda=False)
+    browse.backend = "cuda"
+    browse.gpus = [0]
+    browse.device_name = "Test CUDA 0"
+    client = TestClient(
+        create_app(
+            tmp_path,
+            service=browse,
+            maped_service=maped,
+            implementation_revision="gpu-test-revision",
+        )
+    )
+    inventory = client.post(
+        "/api/maped/inventory",
+        json={"contractVersion": CONTRACT_VERSION, "folderPath": str(folder)},
+    ).json()
+    run = client.post("/api/maped/runs", json=_run_request(inventory))
+    assert run.status_code == 202
+    assert run_entered.wait(timeout=2)
+    try:
+        preview = client.post(
+            "/api/maped/previews",
+            json={
+                "contractVersion": CONTRACT_VERSION,
+                "collectionIdentitySHA256": inventory[
+                    "collectionIdentitySHA256"
+                ],
+                "datasetIDs": [inventory["tilts"][0]["datasetID"]],
+                "backend": {
+                    "kind": "remote_cuda",
+                    "profile_id": "test-profile",
+                    "gpu_index": 0,
+                },
+            },
+        )
+        assert preview.status_code == 409
+        assert preview.json()["detail"] == {
+            "code": "deviceBusy",
+            "message": "CUDA GPU 0 is busy with another MAPED operation.",
+            "recoverySuggestion": (
+                "Wait for the active MAPED operation to finish or choose another CUDA GPU."
+            ),
+            "stage": "load",
+        }
+    finally:
+        release_run.set()
+
+    events = list(maped.run_events(run.json()["runID"]))
+    assert events[-1]["type"] == "completed"
 
 
 def test_http_endpoints_advertise_maped_and_serve_typed_payload(tmp_path):

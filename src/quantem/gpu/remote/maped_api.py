@@ -25,7 +25,7 @@ import subprocess
 import threading
 import time
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import numpy as np
 
@@ -89,6 +89,73 @@ class _RunRecord:
     cancel_requested: threading.Event = field(default_factory=threading.Event)
     terminal: bool = False
     thread: threading.Thread | None = None
+
+
+@dataclass
+class _DeviceState:
+    condition: threading.Condition = field(default_factory=threading.Condition)
+    active_owner: str | None = None
+    waiting_owners: list[str] = field(default_factory=list)
+
+
+class _DeviceArbiter:
+    """Serialize MAPED CUDA ownership independently for each device."""
+
+    def __init__(self) -> None:
+        self._states_lock = threading.Lock()
+        self._states: dict[int, _DeviceState] = {}
+
+    def acquire_run(
+        self,
+        gpu: int,
+        owner: str,
+        cancel_requested: threading.Event,
+        on_queued: Callable[[], None],
+    ) -> bool:
+        state = self._state(gpu)
+        with state.condition:
+            state.waiting_owners.append(owner)
+            on_queued()
+            while state.active_owner is not None or state.waiting_owners[0] != owner:
+                if cancel_requested.is_set():
+                    state.waiting_owners.remove(owner)
+                    state.condition.notify_all()
+                    return False
+                state.condition.wait()
+            if cancel_requested.is_set():
+                state.waiting_owners.remove(owner)
+                state.condition.notify_all()
+                return False
+            state.waiting_owners.pop(0)
+            state.active_owner = owner
+            return True
+
+    def try_acquire_interactive(self, gpu: int, owner: str) -> bool:
+        state = self._state(gpu)
+        with state.condition:
+            if state.active_owner is not None or state.waiting_owners:
+                return False
+            state.active_owner = owner
+            return True
+
+    def release(self, gpu: int, owner: str) -> None:
+        state = self._state(gpu)
+        with state.condition:
+            if state.active_owner != owner:
+                raise RuntimeError(
+                    f"MAPED CUDA GPU {gpu} is not owned by {owner}."
+                )
+            state.active_owner = None
+            state.condition.notify_all()
+
+    def wake(self, gpu: int) -> None:
+        state = self._state(gpu)
+        with state.condition:
+            state.condition.notify_all()
+
+    def _state(self, gpu: int) -> _DeviceState:
+        with self._states_lock:
+            return self._states.setdefault(gpu, _DeviceState())
 
 
 def _canonical_bytes(value: object) -> bytes:
@@ -425,6 +492,7 @@ class MAPEDProtocolService:
         self._latest_diffraction_request: dict[str, int] = {}
         self._runs_lock = threading.Lock()
         self._runs: dict[str, _RunRecord] = {}
+        self._device_arbiter = _DeviceArbiter()
 
     def advertised_capability(self) -> dict[str, Any]:
         return {
@@ -716,29 +784,33 @@ class MAPEDProtocolService:
         unknown = [value for value in dataset_ids if value not in by_id]
         if unknown:
             raise MAPEDProtocolError(f"Unknown MAPED preview datasets: {unknown}")
-        items = []
-        for dataset_id in dataset_ids:
-            dataset = by_id[dataset_id]
-            bright_field, diffraction = self._previewer(
-                Path(dataset["masterPath"]), gpu
-            )
-            items.append(
-                {
-                    "datasetID": dataset_id,
-                    "brightField": self._store_payload(
-                        bright_field,
-                        kind="mean_bf",
-                        dataset_id=dataset_id,
-                        source_identity=dataset["sourceIdentity"],
-                    ),
-                    "meanDiffraction": self._store_payload(
-                        diffraction,
-                        kind="mean_dp",
-                        dataset_id=dataset_id,
-                        source_identity=dataset["sourceIdentity"],
-                    ),
-                }
-            )
+        owner = self._acquire_interactive(gpu, "preview")
+        try:
+            items = []
+            for dataset_id in dataset_ids:
+                dataset = by_id[dataset_id]
+                bright_field, diffraction = self._previewer(
+                    Path(dataset["masterPath"]), gpu
+                )
+                items.append(
+                    {
+                        "datasetID": dataset_id,
+                        "brightField": self._store_payload(
+                            bright_field,
+                            kind="mean_bf",
+                            dataset_id=dataset_id,
+                            source_identity=dataset["sourceIdentity"],
+                        ),
+                        "meanDiffraction": self._store_payload(
+                            diffraction,
+                            kind="mean_dp",
+                            dataset_id=dataset_id,
+                            source_identity=dataset["sourceIdentity"],
+                        ),
+                    }
+                )
+        finally:
+            self._device_arbiter.release(gpu, owner)
         return {
             "contractVersion": CONTRACT_VERSION,
             "collectionIdentitySHA256": collection["collectionIdentitySHA256"],
@@ -756,15 +828,6 @@ class MAPEDProtocolService:
             raise MAPEDProtocolError(
                 "Selected diffraction requires an integer requestID."
             ) from exc
-        with self._latest_lock:
-            previous = self._latest_diffraction_request.get(client_id, -1)
-            if request_id <= previous:
-                raise MAPEDProtocolError(
-                    "Selected diffraction request was superseded by a newer request.",
-                    code="cancelled",
-                )
-            self._latest_diffraction_request[client_id] = request_id
-
         collection_hash = str(request.get("collectionIdentitySHA256", ""))
         collection = self._collection(collection_hash)
         dataset_id = str(request.get("datasetID", ""))
@@ -804,20 +867,32 @@ class MAPEDProtocolService:
         row_stop = min(rows, row + radius + 1)
         column_start = max(0, column - radius)
         column_stop = min(columns, column + radius + 1)
-        image = self._diffraction_reader(
-            Path(dataset["masterPath"]),
-            row_start,
-            row_stop,
-            column_start,
-            column_stop,
-            gpu,
-        )
-        with self._latest_lock:
-            if self._latest_diffraction_request.get(client_id) != request_id:
-                raise MAPEDProtocolError(
-                    "Selected diffraction request was superseded by a newer request.",
-                    code="cancelled",
-                )
+        owner = self._acquire_interactive(gpu, "selected-diffraction")
+        try:
+            with self._latest_lock:
+                previous = self._latest_diffraction_request.get(client_id, -1)
+                if request_id <= previous:
+                    raise MAPEDProtocolError(
+                        "Selected diffraction request was superseded by a newer request.",
+                        code="cancelled",
+                    )
+                self._latest_diffraction_request[client_id] = request_id
+            image = self._diffraction_reader(
+                Path(dataset["masterPath"]),
+                row_start,
+                row_stop,
+                column_start,
+                column_stop,
+                gpu,
+            )
+            with self._latest_lock:
+                if self._latest_diffraction_request.get(client_id) != request_id:
+                    raise MAPEDProtocolError(
+                        "Selected diffraction request was superseded by a newer request.",
+                        code="cancelled",
+                    )
+        finally:
+            self._device_arbiter.release(gpu, owner)
         return {
             "contractVersion": CONTRACT_VERSION,
             "requestID": request_id,
@@ -838,6 +913,20 @@ class MAPEDProtocolService:
                 source_identity=dataset["sourceIdentity"],
             ),
         }
+
+    def _acquire_interactive(self, gpu: int, operation: str) -> str:
+        owner = f"{operation}:{uuid4()}"
+        if not self._device_arbiter.try_acquire_interactive(gpu, owner):
+            raise MAPEDProtocolError(
+                f"CUDA GPU {gpu} is busy with another MAPED operation.",
+                code="deviceBusy",
+                recovery=(
+                    "Wait for the active MAPED operation to finish or choose "
+                    "another CUDA GPU."
+                ),
+                stage="load",
+            )
+        return owner
 
     def payload(self, payload_id: str) -> tuple[bytes, dict[str, Any]]:
         with self._payload_lock:
@@ -1134,6 +1223,8 @@ class MAPEDProtocolService:
                 "state": "already_terminal",
             }
         record.cancel_requested.set()
+        gpu = int(record.request["backend"]["gpu_index"])
+        self._device_arbiter.wake(gpu)
         return {
             "contractVersion": CONTRACT_VERSION,
             "runID": record.run_id,
@@ -1193,13 +1284,41 @@ class MAPEDProtocolService:
 
     def _execute_run(self, record: _RunRecord) -> None:
         request = record.request
-        self._emit(
-            record,
-            {
-                "type": "accepted",
-                "mode": "automaticAlignment",
-            },
-        )
+        gpu = int(request["backend"]["gpu_index"])
+        owner = f"run:{record.run_id}"
+        if not self._device_arbiter.acquire_run(
+            gpu,
+            owner,
+            record.cancel_requested,
+            lambda: self._emit(
+                record,
+                {
+                    "type": "accepted",
+                    "mode": "automaticAlignment",
+                    "gpuIndex": gpu,
+                    "queueState": "waiting_for_device",
+                },
+            ),
+        ):
+            self._emit(
+                record,
+                {
+                    "type": "cancelled",
+                    "stage": None,
+                    "detail": (
+                        "MAPED cancelled while waiting for the CUDA device; "
+                        "no cache files were changed."
+                    ),
+                },
+            )
+            return
+        try:
+            self._execute_run_on_device(record)
+        finally:
+            self._device_arbiter.release(gpu, owner)
+
+    def _execute_run_on_device(self, record: _RunRecord) -> None:
+        request = record.request
         try:
             cache_started = time.perf_counter()
             cache = self.validate_cache(
