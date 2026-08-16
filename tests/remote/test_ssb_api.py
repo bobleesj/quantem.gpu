@@ -307,6 +307,10 @@ def test_mps_session_closes_and_server_does_not_claim_loopback_transfer(tmp_path
         "SSB",
         SimpleNamespace(open=lambda *_args, **_kwargs: FakeSession()),
     )
+    monkeypatch.setattr(
+        "quantem.gpu.remote.ssb_api.version",
+        lambda package: "test-mlx" if package == "mlx" else pytest.fail(package),
+    )
     service = SSBProtocolService(
         tmp_path,
         available_gpus=list,
