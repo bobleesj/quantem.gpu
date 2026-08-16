@@ -438,9 +438,33 @@ def test_server_source_has_no_quantem_live_dependency():
 
 def test_cli_rejects_negative_gpu_before_launching():
     with pytest.raises(SystemExit, match="--gpu must be zero or greater"):
-        main(["serve", "/data", "--gpu", "-1"])
+        main(
+            [
+                "serve",
+                "/data",
+                "--gpu",
+                "-1",
+                "--implementation-revision",
+                "test",
+            ]
+        )
 
 
 def test_cli_rejects_invalid_gpu_pool_before_launching():
     with pytest.raises(SystemExit, match="comma-separated CUDA indices"):
-        main(["serve", "/data", "--gpus", "0,nope"])
+        main(
+            [
+                "serve",
+                "/data",
+                "--gpus",
+                "0,nope",
+                "--implementation-revision",
+                "test",
+            ]
+        )
+
+
+@pytest.mark.parametrize("command", ["serve", "serve-ssb-mps"])
+def test_cli_requires_exact_implementation_revision(command):
+    with pytest.raises(SystemExit):
+        main([command, "/data"])

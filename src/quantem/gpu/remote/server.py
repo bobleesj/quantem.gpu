@@ -24,7 +24,12 @@ from typing import Any
 
 import numpy as np
 
-from .ssb_api import SSBPayloadNotReady, SSBProtocolError, SSBProtocolService
+from .ssb_api import (
+    SSBPayloadNotReady,
+    SSBPayloadUnavailable,
+    SSBProtocolError,
+    SSBProtocolService,
+)
 
 try:
     from fastapi import FastAPI, HTTPException, Response
@@ -994,6 +999,7 @@ def create_app(
     gpus: Sequence[int] | str | None = None,
     service: BrowseService | None = None,
     ssb_service: SSBProtocolService | None = None,
+    implementation_revision: str | None = None,
 ) -> FastAPI:
     """Create the loopback remote-viewer application."""
     browse = service or BrowseService(data_folder, gpu=gpu, gpus=gpus)
@@ -1001,6 +1007,8 @@ def create_app(
         data_folder,
         available_gpus=browse._available_gpus,
         device_name=browse._device_name,
+        implementation_revision=implementation_revision
+        or os.environ.get("QUANTEM_GPU_IMPLEMENTATION_REVISION", "unrecorded"),
     )
     app = FastAPI(title="QuantEM GPU Remote Browse", docs_url=None, redoc_url=None)
     app.state.browse_service = browse
@@ -1009,9 +1017,21 @@ def create_app(
     @app.get("/api/browse/capabilities")
     async def capabilities() -> dict[str, Any]:
         result = browse.capabilities()
-        result["features"]["ssb"] = SSBProtocolService.advertised_capability(
-            ssb.backend_kind
-        )
+        if ssb.backend_kind == "local_mps":
+            capability = ssb.capability()
+            device = capability["device"]
+            result = {
+                "protocol": PROTOCOL_NAME,
+                "protocol_version": PROTOCOL_VERSION,
+                "backend": "mps" if capability["ready"] else None,
+                "device_name": device["deviceName"],
+                "device_error": capability["unavailableReason"],
+                "devices": [device] if capability["ready"] else [],
+                "data_folders": [str(browse.data_folder)],
+                "features": {"ssb": capability},
+            }
+        else:
+            result["features"]["ssb"] = ssb.capability()
         return result
 
     @app.get("/api/ssb/source-identity")
@@ -1055,6 +1075,8 @@ def create_app(
             payload, descriptor = ssb.payload(job_id, generation)
         except SSBPayloadNotReady as exc:
             raise HTTPException(425, str(exc)) from exc
+        except SSBPayloadUnavailable as exc:
+            raise HTTPException(409, str(exc)) from exc
         except (SSBProtocolError, ValueError) as exc:
             raise HTTPException(404, str(exc)) from exc
         return Response(

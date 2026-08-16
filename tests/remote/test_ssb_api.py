@@ -4,12 +4,14 @@ import hashlib
 from pathlib import Path
 import threading
 import time
+from types import SimpleNamespace
+from uuid import uuid4
 
 import numpy as np
 import pytest
 
 from quantem.gpu.remote.ssb_api import (
-    SSBPayloadNotReady,
+    SSBPayloadUnavailable,
     SSBProtocolError,
     SSBProtocolService,
 )
@@ -80,6 +82,7 @@ def _service(tmp_path: Path) -> tuple[SSBProtocolService, dict]:
         available_gpus=lambda: [0],
         device_name=lambda _gpu: "Test CUDA",
         runner=runner,
+        implementation_revision="test",
     )
     return service, holder
 
@@ -94,6 +97,7 @@ def test_request_result_and_generation_bound_payload(tmp_path):
 
     assert holder["gpu"] == 0
     assert result["executedDevice"]["backend"] == "cuda"
+    assert result["executedDevice"]["implementationRevision"] == "test"
     assert result["executedBrightFieldCounts"] == {"logical": 4, "active": 3}
     assert descriptor["sha256"] == hashlib.sha256(payload).hexdigest()
     assert descriptor["byteCount"] == 16
@@ -151,6 +155,7 @@ def test_explicit_local_mps_service_never_accepts_cuda_or_reports_fallback(tmp_p
         device_name=lambda _gpu: "Apple MPS",
         runner=runner,
         backend_kind="local_mps",
+        implementation_revision="test",
     )
     identity = service.source_identity(str(master))
     local_request = _request(identity)
@@ -161,13 +166,179 @@ def test_explicit_local_mps_service_never_accepts_cuda_or_reports_fallback(tmp_p
     assert calls == [(None, "local_mps")]
     assert result["requestedBackend"] == {"kind": "local_mps"}
     assert result["executedDevice"]["backend"] == "mps"
-    capability = service.advertised_capability("local_mps")
+    capability = service.capability()
     assert capability["backendKind"] == "local_mps"
     assert capability["implicitFallback"] is False
+    assert capability["ready"] is True
+    assert capability["implementationRevision"] == "test"
+    assert capability["device"] == {
+        "backend": "mps",
+        "deviceName": "Apple MPS",
+        "gpuIndex": None,
+    }
 
     with pytest.raises(SSBProtocolError, match="local_mps"):
         service.reconstruct(_request(identity))
     assert calls == [(None, "local_mps")]
+
+
+def test_local_mps_async_result_payload_and_capability_are_explicit(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from quantem.gpu.remote.server import BrowseService, create_app
+
+    master = tmp_path / "BTO_18_master.h5"
+    master.write_bytes(b"master")
+    (tmp_path / "BTO_18_data_000001.h5").write_bytes(b"shard")
+    calls = []
+
+    def runner(_source, gpu, request):
+        calls.append((gpu, request["backend"]["kind"]))
+        return {
+            "phase": np.arange(4, dtype=np.float32).reshape(2, 2),
+            "logicalBrightFieldCount": 4,
+            "activeBrightFieldCount": 3,
+            "timings": {
+                "firstReconstructSeconds": 0.1,
+                "transferSeconds": None,
+            },
+        }
+
+    service = SSBProtocolService(
+        tmp_path,
+        available_gpus=lambda: pytest.fail("local MPS queried CUDA devices"),
+        device_name=lambda _gpu: "Apple M5 Max; MLX test",
+        runner=runner,
+        backend_kind="local_mps",
+        implementation_revision="test-revision",
+    )
+    browse = BrowseService(tmp_path, initialize_cuda=False)
+    client = TestClient(create_app(tmp_path, service=browse, ssb_service=service))
+    capability_response = client.get("/api/browse/capabilities")
+    capability = capability_response.json()
+
+    assert capability_response.status_code == 200
+    assert capability["backend"] == "mps"
+    assert capability["device_error"] is None
+    assert capability["features"] == {"ssb": service.capability()}
+    assert capability["features"]["ssb"]["implementationRevision"] == "test-revision"
+    assert capability["features"]["ssb"]["device"] == {
+        "backend": "mps",
+        "deviceName": "Apple M5 Max; MLX test",
+        "gpuIndex": None,
+    }
+
+    request = _request(service.source_identity(str(master)))
+    request["backend"] = {"kind": "local_mps"}
+    accepted = client.post("/api/ssb/jobs", json=request)
+    completed = _wait_for_terminal(service, request["jobID"])
+    payload = client.get(
+        f"/api/ssb/jobs/{request['jobID']}/phase", params={"generation": 7}
+    )
+
+    assert accepted.status_code == 202
+    assert completed["state"] == "completed"
+    assert completed["result"]["requestedBackend"] == {"kind": "local_mps"}
+    assert completed["result"]["executedDevice"]["backend"] == "mps"
+    assert completed["result"]["executedDevice"]["implementationRevision"] == "test-revision"
+    assert completed["result"]["timings"]["transferSeconds"] is None
+    assert completed["result"]["executedBrightFieldCounts"] == {
+        "logical": 4,
+        "active": 3,
+    }
+    assert payload.status_code == 200
+    assert calls == [(None, "local_mps")]
+
+
+def test_unrecorded_or_unavailable_device_is_not_ready(tmp_path):
+    master = tmp_path / "BTO_18_master.h5"
+    master.write_bytes(b"master")
+    (tmp_path / "BTO_18_data_000001.h5").write_bytes(b"shard")
+    service = SSBProtocolService(
+        tmp_path,
+        available_gpus=lambda: [0],
+        device_name=lambda _gpu: (_ for _ in ()).throw(RuntimeError("device offline")),
+        runner=lambda *_args: pytest.fail("unready service invoked runner"),
+    )
+
+    capability = service.capability()
+
+    assert capability["ready"] is False
+    assert capability["implementationRevision"] == "unrecorded"
+    assert capability["unavailableReason"] == (
+        "The exact quantem.gpu implementation revision is not recorded."
+    )
+    request = _request(service.source_identity(str(master)))
+    with pytest.raises(SSBProtocolError, match="implementation revision is not recorded"):
+        service.reconstruct(request)
+
+
+def test_mps_session_closes_and_server_does_not_claim_loopback_transfer(tmp_path, monkeypatch):
+    import quantem.gpu as quantem_gpu
+
+    master = tmp_path / "BTO_18_master.h5"
+    master.write_bytes(b"master")
+    (tmp_path / "BTO_18_data_000001.h5").write_bytes(b"shard")
+    closed = []
+
+    class FakeSession:
+        source_dtype = "uint8"
+        source_load_seconds = 0.02
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            closed.append(True)
+
+        def reconstruct(self, _aberrations, *, compute_loss, force=False):
+            assert compute_loss is True
+            assert force is False
+            return SimpleNamespace(
+                phase=np.arange(4, dtype=np.float32).reshape(2, 2),
+                loss=0.25,
+            )
+
+        def browser_state(self):
+            return SimpleNamespace(num_bf=4, active_num_bf=3)
+
+    monkeypatch.setattr(
+        quantem_gpu,
+        "SSB",
+        SimpleNamespace(open=lambda *_args, **_kwargs: FakeSession()),
+    )
+    service = SSBProtocolService(
+        tmp_path,
+        available_gpus=list,
+        device_name=lambda _gpu: "Apple M5 Max",
+        backend_kind="local_mps",
+        implementation_revision="test-revision",
+    )
+    request = _request(service.source_identity(str(master)))
+    request["backend"] = {"kind": "local_mps"}
+
+    result = service.reconstruct(request)
+
+    assert closed == [True]
+    assert result["timings"]["transferSeconds"] is None
+    assert result["executedDevice"]["implementationRevision"] == "test-revision"
+
+    class FailingSession(FakeSession):
+        def reconstruct(self, _aberrations, *, compute_loss, force=False):
+            raise RuntimeError("opaque MPS stage failed")
+
+    monkeypatch.setattr(
+        quantem_gpu,
+        "SSB",
+        SimpleNamespace(open=lambda *_args, **_kwargs: FailingSession()),
+    )
+    failed_request = _request(service.source_identity(str(master)))
+    failed_request["jobID"] = str(uuid4())
+    failed_request["backend"] = {"kind": "local_mps"}
+
+    with pytest.raises(RuntimeError, match="opaque MPS stage failed"):
+        service.reconstruct(failed_request)
+    assert closed == [True, True]
 
 
 def test_source_hash_mismatch_is_rejected_before_runner(tmp_path):
@@ -229,6 +400,109 @@ def test_async_submit_is_idempotent_and_reconnects_to_same_result(tmp_path):
         service.submit(conflicting)
 
 
+def test_async_request_is_validated_once_and_cannot_collide_with_sync(tmp_path):
+    entered = threading.Event()
+    release = threading.Event()
+
+    def runner(_source, _gpu, _request):
+        entered.set()
+        assert release.wait(timeout=2)
+        return {
+            "phase": np.arange(4, dtype=np.float32).reshape(2, 2),
+            "logicalBrightFieldCount": 4,
+            "activeBrightFieldCount": 3,
+            "implementationRevision": "test",
+            "timings": {"firstReconstructSeconds": 0.1},
+        }
+
+    master = tmp_path / "BTO_18_master.h5"
+    master.write_bytes(b"master")
+    (tmp_path / "BTO_18_data_000001.h5").write_bytes(b"shard")
+    service = SSBProtocolService(
+        tmp_path,
+        available_gpus=lambda: [0],
+        device_name=lambda _gpu: "Test CUDA",
+        runner=runner,
+        implementation_revision="test",
+    )
+    request = _request(service.source_identity(str(master)))
+    original_validate = service._validate_request
+    validations = 0
+
+    def counted_validate(value):
+        nonlocal validations
+        validations += 1
+        return original_validate(value)
+
+    service._validate_request = counted_validate
+    service.submit(request)
+    assert entered.wait(timeout=2)
+    with pytest.raises(SSBProtocolError, match="lifecycle endpoint"):
+        service.reconstruct(request)
+    release.set()
+    assert _wait_for_terminal(service, request["jobID"])["state"] == "completed"
+    assert validations == 1
+
+
+def test_distinct_jobs_on_one_gpu_never_overlap(tmp_path):
+    first_entered = threading.Event()
+    second_entered = threading.Event()
+    release_first = threading.Event()
+    counter_lock = threading.Lock()
+    calls = 0
+    active = 0
+    maximum_active = 0
+
+    def runner(_source, _gpu, _request):
+        nonlocal calls, active, maximum_active
+        with counter_lock:
+            calls += 1
+            call = calls
+            active += 1
+            maximum_active = max(maximum_active, active)
+        try:
+            if call == 1:
+                first_entered.set()
+                assert release_first.wait(timeout=2)
+            else:
+                second_entered.set()
+            return {
+                "phase": np.arange(4, dtype=np.float32).reshape(2, 2),
+                "logicalBrightFieldCount": 4,
+                "activeBrightFieldCount": 3,
+                "implementationRevision": "test",
+                "timings": {"firstReconstructSeconds": 0.1},
+            }
+        finally:
+            with counter_lock:
+                active -= 1
+
+    master = tmp_path / "BTO_18_master.h5"
+    master.write_bytes(b"master")
+    (tmp_path / "BTO_18_data_000001.h5").write_bytes(b"shard")
+    service = SSBProtocolService(
+        tmp_path,
+        available_gpus=lambda: [0],
+        device_name=lambda _gpu: "Test CUDA",
+        runner=runner,
+        implementation_revision="test",
+    )
+    identity = service.source_identity(str(master))
+    first = _request(identity)
+    second = _request(identity)
+    second["jobID"] = str(uuid4())
+
+    service.submit(first)
+    assert first_entered.wait(timeout=2)
+    service.submit(second)
+    assert not second_entered.wait(timeout=0.05)
+    release_first.set()
+    assert _wait_for_terminal(service, first["jobID"])["state"] == "completed"
+    assert _wait_for_terminal(service, second["jobID"])["state"] == "completed"
+    assert second_entered.is_set()
+    assert maximum_active == 1
+
+
 def test_cancel_during_runner_waits_for_stage_boundary_and_discards_payload(tmp_path):
     entered = threading.Event()
     release = threading.Event()
@@ -252,6 +526,7 @@ def test_cancel_during_runner_waits_for_stage_boundary_and_discards_payload(tmp_
         available_gpus=lambda: [0],
         device_name=lambda _gpu: "Test CUDA",
         runner=runner,
+        implementation_revision="test",
     )
     request = _request(service.source_identity(str(master)))
 
@@ -263,7 +538,7 @@ def test_cancel_during_runner_waits_for_stage_boundary_and_discards_payload(tmp_
     cancelled = _wait_for_terminal(service, request["jobID"])
 
     assert cancelled["state"] == "cancelled"
-    with pytest.raises(SSBPayloadNotReady):
+    with pytest.raises(SSBPayloadUnavailable):
         service.payload(request["jobID"], 7)
 
 
@@ -294,6 +569,7 @@ def test_async_http_status_cancel_and_payload_gate(tmp_path):
         available_gpus=lambda: [0],
         device_name=lambda _gpu: "Test CUDA",
         runner=runner,
+        implementation_revision="test",
     )
     request = _request(service.source_identity(str(master)))
     client = TestClient(create_app(tmp_path, ssb_service=service))
@@ -317,3 +593,6 @@ def test_async_http_status_cancel_and_payload_gate(tmp_path):
     assert cancelled.json()["state"] == "cancel_requested"
     release.set()
     assert _wait_for_terminal(service, request["jobID"])["state"] == "cancelled"
+    assert client.get(
+        f"/api/ssb/jobs/{request['jobID']}/phase", params={"generation": 7}
+    ).status_code == 409

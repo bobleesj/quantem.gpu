@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
+from importlib.metadata import version
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -33,6 +34,11 @@ def _parser() -> argparse.ArgumentParser:
         help="CUDA device pool: auto or comma-separated indices (default: auto)",
     )
     serve.add_argument("--port", type=int, default=8780, help="loopback port (default: 8780)")
+    serve.add_argument(
+        "--implementation-revision",
+        required=True,
+        help="exact immutable quantem.gpu Git revision served in provenance",
+    )
     mps = commands.add_parser(
         "serve-ssb-mps",
         help="serve explicit local MPS SSB over loopback",
@@ -43,6 +49,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     mps.add_argument("data_folder", help="folder containing *_master.h5 data")
     mps.add_argument("--port", type=int, default=8781, help="loopback port (default: 8781)")
+    mps.add_argument(
+        "--implementation-revision",
+        required=True,
+        help="exact immutable quantem.gpu Git revision served in provenance",
+    )
     return parser
 
 
@@ -77,7 +88,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     from quantem.gpu.remote import create_app
 
-    app = create_app(args.data_folder, gpus=gpus)
+    app = create_app(
+        args.data_folder,
+        gpus=gpus,
+        implementation_revision=args.implementation_revision,
+    )
     service = app.state.browse_service
     if service.backend != "cuda":
         raise SystemExit(f"CUDA unavailable: {service.device_error}")
@@ -95,7 +110,7 @@ def _serve_ssb_mps(args: argparse.Namespace) -> int:
     """Run the explicit local-MPS-only SSB loopback worker."""
 
     try:
-        import mlx
+        import mlx.core as mx
         import uvicorn
     except ImportError as exc:
         raise SystemExit(
@@ -106,12 +121,16 @@ def _serve_ssb_mps(args: argparse.Namespace) -> int:
     from quantem.gpu.remote.server import BrowseService, create_app
     from quantem.gpu.remote.ssb_api import SSBProtocolService
 
+    device_name = str(mx.device_info().get("device_name") or "").strip()
+    if not device_name:
+        raise SystemExit("Local MPS SSB unavailable: MLX did not report a Metal device.")
     browse = BrowseService(args.data_folder, initialize_cuda=False)
     ssb = SSBProtocolService(
         args.data_folder,
         available_gpus=list,
-        device_name=lambda _gpu: f"Apple Metal/MLX {mlx.__version__}",
+        device_name=lambda _gpu: f"{device_name}; MLX {version('mlx')}",
         backend_kind="local_mps",
+        implementation_revision=args.implementation_revision,
     )
     app = create_app(args.data_folder, service=browse, ssb_service=ssb)
     uvicorn.run(
