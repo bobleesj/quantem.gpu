@@ -259,13 +259,11 @@ class SSBProtocolService:
                 return
             gpu = self._requested_device(request)
             with self._device_lock(gpu):
-                if self._cancelled_at_boundary(key):
+                if not self._begin_stage(key, "validating"):
                     return
-                self._advance(key, "validating")
                 source, validated_gpu = self._validate_request(request)
-                if self._cancelled_at_boundary(key):
+                if not self._begin_stage(key, "reconstructing_first"):
                     return
-                self._advance(key, "reconstructing_first")
                 payload, descriptor, result = self._execute_validated(
                     source, validated_gpu, request
                 )
@@ -300,9 +298,17 @@ class SSBProtocolService:
             self._advance_locked(job, "cancelled")
             return True
 
-    def _advance(self, key: tuple[str, int], state: str) -> None:
+    def _begin_stage(self, key: tuple[str, int], state: str) -> bool:
+        """Atomically cancel at a boundary or enter the next opaque stage."""
+
         with self._lock:
-            self._advance_locked(self._jobs[key], state)
+            job = self._jobs[key]
+            if job["cancelRequested"]:
+                self._payloads.pop(key, None)
+                self._advance_locked(job, "cancelled")
+                return False
+            self._advance_locked(job, state)
+            return True
 
     def _device_lock(self, gpu: int | None) -> threading.Lock:
         key = (self.backend_kind, gpu)
