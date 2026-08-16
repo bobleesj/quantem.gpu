@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import hashlib
-from pathlib import Path
 import threading
 import time
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -14,35 +14,117 @@ from quantem.gpu.remote.ssb_api import (
     SSBPayloadUnavailable,
     SSBProtocolError,
     SSBProtocolService,
+    count_audit_sha256,
 )
 
 
+def _inspection(*_args, **_kwargs):
+    return SimpleNamespace(
+        ready=True,
+        reason="",
+        action="",
+        dtype="uint16",
+        detector_shape=(2, 2),
+    )
+
+
+def _execution_evidence(request: dict) -> dict:
+    return {
+        "detectorSamplingMilliradians": (1.090909, 1.090909),
+        "precision": request["precision"],
+    }
+
+
 def _request(source: dict, *, generation: int = 7) -> dict:
+    audited_element_count = 2 * 2 * 2 * 2
+    audit_evidence = count_audit_sha256(
+        source["sourceIdentitySHA256"],
+        "uint16",
+        audited_element_count,
+        53,
+        0,
+    )
     candidate = {
         "id": "raw-reference-fit",
         "calibration": {
-            "scanSamplingRowAngstrom": {"value": 0.264, "unit": "angstrom", "origin": "validated_preset"},
-            "scanSamplingColumnAngstrom": {"value": 0.264, "unit": "angstrom", "origin": "validated_preset"},
-            "accelerationVoltageKilovolts": {"value": 300, "unit": "kV", "origin": "validated_preset"},
-            "convergenceSemiangleMilliradians": {"value": 30, "unit": "mrad", "origin": "validated_preset"},
-            "scanRotationDegrees": {"value": 158.8827, "unit": "degree", "origin": "validated_preset"},
-            "c10Nanometers": {"value": 73.1336, "unit": "nm", "origin": "validated_preset"},
-            "c12Nanometers": {"value": 14.1409, "unit": "nm", "origin": "validated_preset"},
-            "phi12Radians": {"value": 0.474155, "unit": "radian", "origin": "validated_preset"},
+            "scanSamplingRowAngstrom": {
+                "value": 0.264,
+                "unit": "angstrom",
+                "origin": "validated_preset",
+            },
+            "scanSamplingColumnAngstrom": {
+                "value": 0.264,
+                "unit": "angstrom",
+                "origin": "validated_preset",
+            },
+            "detectorSamplingRowMilliradians": {
+                "value": 1.090909,
+                "unit": "mrad",
+                "origin": "validated_preset",
+            },
+            "detectorSamplingColumnMilliradians": {
+                "value": 1.090909,
+                "unit": "mrad",
+                "origin": "validated_preset",
+            },
+            "accelerationVoltageKilovolts": {
+                "value": 300,
+                "unit": "kV",
+                "origin": "validated_preset",
+            },
+            "convergenceSemiangleMilliradians": {
+                "value": 30,
+                "unit": "mrad",
+                "origin": "validated_preset",
+            },
+            "scanRotationDegrees": {
+                "value": 158.8827,
+                "unit": "degree",
+                "origin": "validated_preset",
+            },
+            "c10Nanometers": {
+                "value": 73.1336,
+                "unit": "nm",
+                "origin": "validated_preset",
+            },
+            "c12Nanometers": {
+                "value": 14.1409,
+                "unit": "nm",
+                "origin": "validated_preset",
+            },
+            "phi12Radians": {
+                "value": 0.474155,
+                "unit": "radian",
+                "origin": "validated_preset",
+            },
         },
         "evidenceSHA256": "a" * 64,
         "objective": "exact_full_bf_phase_variance",
         "loss": 0.044,
     }
     return {
-        "contractVersion": "live4dstem.ssb/v0.1",
+        "contractVersion": "live4dstem.ssb/v0.2",
         "algorithmVersion": "quantem.gpu.SSB/v0.1",
         "jobID": "5fce107b-c5fa-45fe-a6db-2096171049bb",
         "datasetGeneration": generation,
         "source": {"datasetID": "BTO_18", "datasetSchema": "test", **source},
         "scanShape": {"rows": 2, "columns": 2},
         "detectorShape": {"rows": 2, "columns": 2},
-        "precision": {"sourceDType": "uint8", "realDType": "float32", "complexDType": "complex64"},
+        "precision": {
+            "nativeSourceDType": "uint16",
+            "workingSourceDType": "uint8",
+            "losslessWorkingDTypeAudit": {
+                "scope": "complete_native_detector_source",
+                "sourceIdentitySHA256": source["sourceIdentitySHA256"],
+                "auditedElementCount": audited_element_count,
+                "maximumCount": 53,
+                "workingMaximum": 255,
+                "countsAboveWorkingMaximum": 0,
+                "evidenceSHA256": audit_evidence,
+            },
+            "realDType": "float32",
+            "complexDType": "complex64",
+        },
         "calibration": {
             "schemaVersion": "live4dstem.dataset/v0.1",
             "sourceIdentitySHA256": source["sourceIdentitySHA256"],
@@ -73,6 +155,8 @@ def _service(tmp_path: Path) -> tuple[SSBProtocolService, dict]:
             "phase": np.arange(4, dtype=np.float32).reshape(2, 2),
             "logicalBrightFieldCount": 4,
             "activeBrightFieldCount": 3,
+            "detectorSamplingMilliradians": (1.090909, 1.090909),
+            "precision": request["precision"],
             "implementationRevision": "test",
             "timings": {"firstReconstructSeconds": 0.1},
         }
@@ -82,6 +166,7 @@ def _service(tmp_path: Path) -> tuple[SSBProtocolService, dict]:
         available_gpus=lambda: [0],
         device_name=lambda _gpu: "Test CUDA",
         runner=runner,
+        source_inspector=_inspection,
         implementation_revision="test",
     )
     return service, holder
@@ -99,6 +184,11 @@ def test_request_result_and_generation_bound_payload(tmp_path):
     assert result["executedDevice"]["backend"] == "cuda"
     assert result["executedDevice"]["implementationRevision"] == "test"
     assert result["executedBrightFieldCounts"] == {"logical": 4, "active": 3}
+    assert result["executedDetectorSamplingMilliradians"] == {
+        "row": 1.090909,
+        "column": 1.090909,
+    }
+    assert result["executedPrecision"] == request["precision"]
     assert descriptor["sha256"] == hashlib.sha256(payload).hexdigest()
     assert descriptor["byteCount"] == 16
     assert result["phasePayload"]["datasetGeneration"] == 7
@@ -145,6 +235,7 @@ def test_explicit_local_mps_service_never_accepts_cuda_or_reports_fallback(tmp_p
             "phase": np.arange(4, dtype=np.float32).reshape(2, 2),
             "logicalBrightFieldCount": 4,
             "activeBrightFieldCount": 3,
+            **_execution_evidence(request),
             "implementationRevision": "test",
             "timings": {"firstReconstructSeconds": 0.1},
         }
@@ -154,6 +245,7 @@ def test_explicit_local_mps_service_never_accepts_cuda_or_reports_fallback(tmp_p
         available_gpus=lambda: pytest.fail("local MPS queried CUDA devices"),
         device_name=lambda _gpu: "Apple MPS",
         runner=runner,
+        source_inspector=_inspection,
         backend_kind="local_mps",
         implementation_revision="test",
     )
@@ -198,6 +290,7 @@ def test_local_mps_async_result_payload_and_capability_are_explicit(tmp_path):
             "phase": np.arange(4, dtype=np.float32).reshape(2, 2),
             "logicalBrightFieldCount": 4,
             "activeBrightFieldCount": 3,
+            **_execution_evidence(request),
             "timings": {
                 "firstReconstructSeconds": 0.1,
                 "transferSeconds": None,
@@ -209,6 +302,7 @@ def test_local_mps_async_result_payload_and_capability_are_explicit(tmp_path):
         available_gpus=lambda: pytest.fail("local MPS queried CUDA devices"),
         device_name=lambda _gpu: "Apple M5 Max; MLX test",
         runner=runner,
+        source_inspector=_inspection,
         backend_kind="local_mps",
         implementation_revision="test-revision",
     )
@@ -240,7 +334,10 @@ def test_local_mps_async_result_payload_and_capability_are_explicit(tmp_path):
     assert completed["state"] == "completed"
     assert completed["result"]["requestedBackend"] == {"kind": "local_mps"}
     assert completed["result"]["executedDevice"]["backend"] == "mps"
-    assert completed["result"]["executedDevice"]["implementationRevision"] == "test-revision"
+    assert (
+        completed["result"]["executedDevice"]["implementationRevision"]
+        == "test-revision"
+    )
     assert completed["result"]["timings"]["transferSeconds"] is None
     assert completed["result"]["executedBrightFieldCounts"] == {
         "logical": 4,
@@ -269,17 +366,22 @@ def test_unrecorded_or_unavailable_device_is_not_ready(tmp_path):
         "The exact quantem.gpu implementation revision is not recorded."
     )
     request = _request(service.source_identity(str(master)))
-    with pytest.raises(SSBProtocolError, match="implementation revision is not recorded"):
+    with pytest.raises(
+        SSBProtocolError, match="implementation revision is not recorded"
+    ):
         service.reconstruct(request)
 
 
-def test_mps_session_closes_and_server_does_not_claim_loopback_transfer(tmp_path, monkeypatch):
+def test_mps_session_closes_and_server_does_not_claim_loopback_transfer(
+    tmp_path, monkeypatch
+):
     import quantem.gpu as quantem_gpu
 
     master = tmp_path / "BTO_18_master.h5"
     master.write_bytes(b"master")
     (tmp_path / "BTO_18_data_000001.h5").write_bytes(b"shard")
     closed = []
+    opened = []
 
     class FakeSession:
         source_dtype = "uint8"
@@ -300,13 +402,19 @@ def test_mps_session_closes_and_server_does_not_claim_loopback_transfer(tmp_path
             )
 
         def browser_state(self):
-            return SimpleNamespace(num_bf=4, active_num_bf=3)
+            return SimpleNamespace(
+                num_bf=4,
+                active_num_bf=3,
+                angular_sampling_rad=(0.001090909, 0.001090909),
+                bf_source_dtype=np.dtype("uint8"),
+                bf_source_max_value=53,
+            )
 
-    monkeypatch.setattr(
-        quantem_gpu,
-        "SSB",
-        SimpleNamespace(open=lambda *_args, **_kwargs: FakeSession()),
-    )
+    def fake_open(*_args, **kwargs):
+        opened.append(kwargs)
+        return FakeSession()
+
+    monkeypatch.setattr(quantem_gpu, "SSB", SimpleNamespace(open=fake_open))
     monkeypatch.setattr(
         "quantem.gpu.remote.ssb_api.version",
         lambda package: "test-mlx" if package == "mlx" else pytest.fail(package),
@@ -315,6 +423,7 @@ def test_mps_session_closes_and_server_does_not_claim_loopback_transfer(tmp_path
         tmp_path,
         available_gpus=list,
         device_name=lambda _gpu: "Apple M5 Max",
+        source_inspector=_inspection,
         backend_kind="local_mps",
         implementation_revision="test-revision",
     )
@@ -324,6 +433,8 @@ def test_mps_session_closes_and_server_does_not_claim_loopback_transfer(tmp_path
     result = service.reconstruct(request)
 
     assert closed == [True]
+    assert opened[0]["dtype"] == "uint8"
+    assert opened[0]["det_sampling"] == (1.090909, 1.090909)
     assert result["timings"]["transferSeconds"] is None
     assert result["executedDevice"]["implementationRevision"] == "test-revision"
 
@@ -354,6 +465,81 @@ def test_source_hash_mismatch_is_rejected_before_runner(tmp_path):
     with pytest.raises(SSBProtocolError, match="masterSHA256"):
         service.reconstruct(request)
     assert holder == {}
+
+
+def test_detector_sampling_is_required_and_changes_request_identity(tmp_path):
+    service, holder = _service(tmp_path)
+    identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
+    request = _request(identity)
+    original_digest = service.request_sha256(request)
+    values = request["calibration"]["resolution"]["calibration"]["calibration"]
+    values.pop("detectorSamplingRowMilliradians")
+
+    with pytest.raises(SSBProtocolError, match="detector sampling"):
+        service.reconstruct(request)
+    assert holder == {}
+
+    changed = _request(identity)
+    changed_values = changed["calibration"]["resolution"]["calibration"]["calibration"]
+    changed_values["detectorSamplingRowMilliradians"]["value"] = 1.1
+    assert service.request_sha256(changed) != original_digest
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda audit: audit.update(maximumCount=256), "not proven lossless"),
+        (
+            lambda audit: audit.update(countsAboveWorkingMaximum=1),
+            "not proven lossless",
+        ),
+        (lambda audit: audit.update(auditedElementCount=15), "complete native"),
+        (lambda audit: audit.update(sourceIdentitySHA256="0" * 64), "different source"),
+        (lambda audit: audit.update(evidenceSHA256="0" * 64), "evidence digest"),
+    ],
+)
+def test_invalid_or_incomplete_uint8_audit_is_rejected_before_runner(
+    tmp_path, mutation, message
+):
+    service, holder = _service(tmp_path)
+    identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
+    request = _request(identity)
+    mutation(request["precision"]["losslessWorkingDTypeAudit"])
+
+    with pytest.raises(SSBProtocolError, match=message):
+        service.reconstruct(request)
+    assert holder == {}
+
+
+def test_header_and_executed_precision_mismatches_are_rejected(tmp_path):
+    service, _ = _service(tmp_path)
+    identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
+    request = _request(identity)
+    service._source_inspector = lambda *_args, **_kwargs: SimpleNamespace(
+        ready=True,
+        reason="",
+        action="",
+        dtype="uint32",
+        detector_shape=(2, 2),
+    )
+    with pytest.raises(SSBProtocolError, match="native source dtype mismatch"):
+        service.reconstruct(request)
+
+    def wrong_runner(_source, _gpu, request):
+        outcome = {
+            "phase": np.arange(4, dtype=np.float32).reshape(2, 2),
+            "logicalBrightFieldCount": 4,
+            "activeBrightFieldCount": 3,
+            **_execution_evidence(request),
+            "timings": {"firstReconstructSeconds": 0.1},
+        }
+        outcome["precision"] = {**request["precision"], "workingSourceDType": "uint16"}
+        return outcome
+
+    service._source_inspector = _inspection
+    service._runner = wrong_runner
+    with pytest.raises(SSBProtocolError, match="executed precision"):
+        service.reconstruct(request)
 
 
 def test_logical_and_active_brightfield_counts_are_validated_separately(tmp_path):
@@ -408,13 +594,14 @@ def test_async_request_is_validated_once_and_cannot_collide_with_sync(tmp_path):
     entered = threading.Event()
     release = threading.Event()
 
-    def runner(_source, _gpu, _request):
+    def runner(_source, _gpu, request):
         entered.set()
         assert release.wait(timeout=2)
         return {
             "phase": np.arange(4, dtype=np.float32).reshape(2, 2),
             "logicalBrightFieldCount": 4,
             "activeBrightFieldCount": 3,
+            **_execution_evidence(request),
             "implementationRevision": "test",
             "timings": {"firstReconstructSeconds": 0.1},
         }
@@ -427,6 +614,7 @@ def test_async_request_is_validated_once_and_cannot_collide_with_sync(tmp_path):
         available_gpus=lambda: [0],
         device_name=lambda _gpu: "Test CUDA",
         runner=runner,
+        source_inspector=_inspection,
         implementation_revision="test",
     )
     request = _request(service.source_identity(str(master)))
@@ -457,7 +645,7 @@ def test_distinct_jobs_on_one_gpu_never_overlap(tmp_path):
     active = 0
     maximum_active = 0
 
-    def runner(_source, _gpu, _request):
+    def runner(_source, _gpu, request):
         nonlocal calls, active, maximum_active
         with counter_lock:
             calls += 1
@@ -474,6 +662,7 @@ def test_distinct_jobs_on_one_gpu_never_overlap(tmp_path):
                 "phase": np.arange(4, dtype=np.float32).reshape(2, 2),
                 "logicalBrightFieldCount": 4,
                 "activeBrightFieldCount": 3,
+                **_execution_evidence(request),
                 "implementationRevision": "test",
                 "timings": {"firstReconstructSeconds": 0.1},
             }
@@ -489,6 +678,7 @@ def test_distinct_jobs_on_one_gpu_never_overlap(tmp_path):
         available_gpus=lambda: [0],
         device_name=lambda _gpu: "Test CUDA",
         runner=runner,
+        source_inspector=_inspection,
         implementation_revision="test",
     )
     identity = service.source_identity(str(master))
@@ -511,13 +701,14 @@ def test_cancel_during_runner_waits_for_stage_boundary_and_discards_payload(tmp_
     entered = threading.Event()
     release = threading.Event()
 
-    def runner(_source, _gpu, _request):
+    def runner(_source, _gpu, request):
         entered.set()
         assert release.wait(timeout=2)
         return {
             "phase": np.arange(4, dtype=np.float32).reshape(2, 2),
             "logicalBrightFieldCount": 4,
             "activeBrightFieldCount": 3,
+            **_execution_evidence(request),
             "implementationRevision": "test",
             "timings": {"firstReconstructSeconds": 0.1},
         }
@@ -530,6 +721,7 @@ def test_cancel_during_runner_waits_for_stage_boundary_and_discards_payload(tmp_
         available_gpus=lambda: [0],
         device_name=lambda _gpu: "Test CUDA",
         runner=runner,
+        source_inspector=_inspection,
         implementation_revision="test",
     )
     request = _request(service.source_identity(str(master)))
@@ -551,12 +743,13 @@ def test_cancel_acknowledged_before_stage_entry_never_starts_runner(tmp_path):
     release_stage_entry = threading.Event()
     runner_entered = threading.Event()
 
-    def runner(_source, _gpu, _request):
+    def runner(_source, _gpu, request):
         runner_entered.set()
         return {
             "phase": np.arange(4, dtype=np.float32).reshape(2, 2),
             "logicalBrightFieldCount": 4,
             "activeBrightFieldCount": 3,
+            **_execution_evidence(request),
             "timings": {"firstReconstructSeconds": 0.1},
         }
 
@@ -568,6 +761,7 @@ def test_cancel_acknowledged_before_stage_entry_never_starts_runner(tmp_path):
         available_gpus=lambda: [0],
         device_name=lambda _gpu: "Test CUDA",
         runner=runner,
+        source_inspector=_inspection,
         implementation_revision="test",
     )
     request = _request(service.source_identity(str(master)))
@@ -601,13 +795,14 @@ def test_async_http_status_cancel_and_payload_gate(tmp_path):
     entered = threading.Event()
     release = threading.Event()
 
-    def runner(_source, _gpu, _request):
+    def runner(_source, _gpu, request):
         entered.set()
         assert release.wait(timeout=2)
         return {
             "phase": np.arange(4, dtype=np.float32).reshape(2, 2),
             "logicalBrightFieldCount": 4,
             "activeBrightFieldCount": 3,
+            **_execution_evidence(request),
             "implementationRevision": "test",
             "timings": {"firstReconstructSeconds": 0.1},
         }
@@ -620,6 +815,7 @@ def test_async_http_status_cancel_and_payload_gate(tmp_path):
         available_gpus=lambda: [0],
         device_name=lambda _gpu: "Test CUDA",
         runner=runner,
+        source_inspector=_inspection,
         implementation_revision="test",
     )
     request = _request(service.source_identity(str(master)))
@@ -628,14 +824,15 @@ def test_async_http_status_cancel_and_payload_gate(tmp_path):
     accepted = client.post("/api/ssb/jobs", json=request)
     assert accepted.status_code == 202
     assert entered.wait(timeout=2)
-    snapshot = client.get(
-        f"/api/ssb/jobs/{request['jobID']}", params={"generation": 7}
-    )
+    snapshot = client.get(f"/api/ssb/jobs/{request['jobID']}", params={"generation": 7})
     assert snapshot.status_code == 200
     assert snapshot.json()["state"] == "reconstructing_first"
-    assert client.get(
-        f"/api/ssb/jobs/{request['jobID']}/phase", params={"generation": 7}
-    ).status_code == 425
+    assert (
+        client.get(
+            f"/api/ssb/jobs/{request['jobID']}/phase", params={"generation": 7}
+        ).status_code
+        == 425
+    )
 
     cancelled = client.delete(
         f"/api/ssb/jobs/{request['jobID']}", params={"generation": 7}
@@ -644,6 +841,9 @@ def test_async_http_status_cancel_and_payload_gate(tmp_path):
     assert cancelled.json()["state"] == "cancel_requested"
     release.set()
     assert _wait_for_terminal(service, request["jobID"])["state"] == "cancelled"
-    assert client.get(
-        f"/api/ssb/jobs/{request['jobID']}/phase", params={"generation": 7}
-    ).status_code == 409
+    assert (
+        client.get(
+            f"/api/ssb/jobs/{request['jobID']}/phase", params={"generation": 7}
+        ).status_code
+        == 409
+    )

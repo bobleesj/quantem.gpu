@@ -3,18 +3,19 @@
 from __future__ import annotations
 
 import hashlib
-from importlib.metadata import version
 import json
-from pathlib import Path
+import math
 import threading
 import time
-from typing import Any, Callable
+from collections.abc import Callable
+from importlib.metadata import version
+from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 import numpy as np
 
-
-CONTRACT_VERSION = "live4dstem.ssb/v0.1"
+CONTRACT_VERSION = "live4dstem.ssb/v0.2"
 ALGORITHM_VERSION = "quantem.gpu.SSB/v0.1"
 JOBS_CONTRACT_VERSION = "live4dstem.ssb.jobs/v0.1"
 _TERMINAL_JOB_STATES = {"completed", "cancelled", "failed", "expired"}
@@ -57,6 +58,27 @@ def _source_identity_sha256(master_hash: str, member_hashes: list[str]) -> str:
     return digest.hexdigest()
 
 
+def count_audit_sha256(
+    source_identity_sha256: str,
+    native_dtype: str,
+    audited_element_count: int,
+    maximum_count: int,
+    counts_above_working_maximum: int,
+) -> str:
+    """Return the canonical digest for a complete detector count-range audit."""
+
+    fields = (
+        "live4dstem.count-audit/v0.1",
+        source_identity_sha256.lower(),
+        np.dtype(native_dtype).name,
+        str(int(audited_element_count)),
+        str(int(maximum_count)),
+        "255",
+        str(int(counts_above_working_maximum)),
+    )
+    return hashlib.sha256("\0".join(fields).encode()).hexdigest()
+
+
 def _phase_bytes(value: object) -> bytes:
     try:
         import cupy as cp
@@ -71,6 +93,128 @@ def _phase_bytes(value: object) -> bytes:
     return phase.tobytes()
 
 
+def _calibrated_detector_sampling_mrad(request: dict[str, Any]) -> tuple[float, float]:
+    """Return required detector angular sampling in public ``(row, col)`` order."""
+
+    values = request["calibration"]["resolution"]["calibration"]["calibration"]
+    sampling = []
+    for name in (
+        "detectorSamplingRowMilliradians",
+        "detectorSamplingColumnMilliradians",
+    ):
+        field = values.get(name) or {}
+        try:
+            value = float(field.get("value", float("nan")))
+        except (TypeError, ValueError) as exc:
+            raise SSBProtocolError(
+                "SSB requires numeric calibrated detector sampling in mrad/pixel."
+            ) from exc
+        if field.get("unit") != "mrad" or not math.isfinite(value) or value <= 0.0:
+            raise SSBProtocolError(
+                "SSB requires finite positive calibrated detector sampling "
+                "for both row and column in mrad/pixel."
+            )
+        sampling.append(value)
+    return sampling[0], sampling[1]
+
+
+def _validated_precision(request: dict[str, Any]) -> dict[str, Any]:
+    """Validate the native storage and proven-lossless SSB working precision."""
+
+    precision = request.get("precision") or {}
+    if (
+        precision.get("realDType") != "float32"
+        or precision.get("complexDType") != "complex64"
+    ):
+        raise SSBProtocolError("SSB arithmetic precision must be float32/complex64.")
+    try:
+        native = np.dtype(str(precision["nativeSourceDType"])).name
+        working = np.dtype(str(precision["workingSourceDType"])).name
+    except (KeyError, TypeError) as exc:
+        raise SSBProtocolError(
+            "SSB precision must name nativeSourceDType and workingSourceDType."
+        ) from exc
+    if native not in {"uint8", "uint16", "uint32"} or working != "uint8":
+        raise SSBProtocolError(
+            "SSB v0.2 requires unsigned native detector counts and uint8 working precision."
+        )
+    audit = precision.get("losslessWorkingDTypeAudit") or {}
+    try:
+        maximum = int(audit["maximumCount"])
+        above = int(audit["countsAboveWorkingMaximum"])
+        audited_count = int(audit["auditedElementCount"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise SSBProtocolError(
+            "SSB uint8 working precision requires an exact count-range audit."
+        ) from exc
+    if (
+        audit.get("scope") != "complete_native_detector_source"
+        or audit.get("workingMaximum") != 255
+        or maximum < 0
+        or maximum > 255
+        or above != 0
+        or audited_count <= 0
+    ):
+        raise SSBProtocolError(
+            "SSB uint8 working precision is not proven lossless for all unmasked detector counts."
+        )
+    source_identity = str((request.get("source") or {}).get("sourceIdentitySHA256", ""))
+    if audit.get("sourceIdentitySHA256") != source_identity:
+        raise SSBProtocolError(
+            "SSB count audit belongs to a different source identity."
+        )
+    expected_count = math.prod(
+        int(request[shape][dimension])
+        for shape in ("scanShape", "detectorShape")
+        for dimension in ("rows", "columns")
+    )
+    if audited_count != expected_count:
+        raise SSBProtocolError(
+            "SSB count audit does not cover the complete native detector source."
+        )
+    expected_evidence = count_audit_sha256(
+        source_identity, native, audited_count, maximum, above
+    )
+    if audit.get("evidenceSHA256") != expected_evidence:
+        raise SSBProtocolError("SSB count audit evidence digest is invalid.")
+    return {
+        "nativeSourceDType": native,
+        "workingSourceDType": working,
+        "losslessWorkingDTypeAudit": {
+            "scope": "complete_native_detector_source",
+            "sourceIdentitySHA256": source_identity,
+            "auditedElementCount": audited_count,
+            "maximumCount": maximum,
+            "workingMaximum": 255,
+            "countsAboveWorkingMaximum": 0,
+            "evidenceSHA256": expected_evidence,
+        },
+        "realDType": "float32",
+        "complexDType": "complex64",
+    }
+
+
+def _executed_precision(
+    request: dict[str, Any], *, working_dtype: object, maximum_count: object
+) -> dict[str, Any]:
+    """Bind backend-observed working precision to the accepted exact audit."""
+
+    requested = _validated_precision(request)
+    try:
+        working = np.dtype(working_dtype).name
+        maximum = int(maximum_count)
+    except (TypeError, ValueError) as exc:
+        raise SSBProtocolError(
+            "The SSB backend did not report its working dtype and maximum count."
+        ) from exc
+    expected_maximum = requested["losslessWorkingDTypeAudit"]["maximumCount"]
+    if working != requested["workingSourceDType"] or maximum != expected_maximum:
+        raise SSBProtocolError(
+            "The SSB backend working precision does not match the bound lossless audit."
+        )
+    return requested
+
+
 class SSBProtocolService:
     """Validate SSB jobs and retain only validated phase payloads in memory."""
 
@@ -80,7 +224,9 @@ class SSBProtocolService:
         *,
         available_gpus: Callable[[], list[int]],
         device_name: Callable[[int | None], str],
-        runner: Callable[[Path, int | None, dict[str, Any]], dict[str, Any]] | None = None,
+        runner: Callable[[Path, int | None, dict[str, Any]], dict[str, Any]]
+        | None = None,
+        source_inspector: Callable[..., Any] | None = None,
         backend_kind: str = "remote_cuda",
         implementation_revision: str = "unrecorded",
     ) -> None:
@@ -94,6 +240,11 @@ class SSBProtocolService:
         self._runner = runner or (
             self._run_cuda if backend_kind == "remote_cuda" else self._run_mps
         )
+        if source_inspector is None:
+            from quantem.gpu.io import inspect
+
+            source_inspector = inspect
+        self._source_inspector = source_inspector
         self._lock = threading.Lock()
         self._payloads: dict[tuple[str, int], tuple[bytes, dict[str, Any]]] = {}
         self._jobs: dict[tuple[str, int], dict[str, Any]] = {}
@@ -129,6 +280,16 @@ class SSBProtocolService:
                 "gpuIndex": gpu_index,
             },
             "resultPayload": "job_generation_endpoint",
+            "precisionContract": {
+                "nativeSourceDTypes": ["uint8", "uint16", "uint32"],
+                "workingSourceDTypes": ["uint8"],
+                "uint8RequiresCompleteSourceAudit": True,
+            },
+            "requiredCalibration": {
+                "detectorSamplingOrder": ["row", "column"],
+                "detectorSamplingUnit": "mrad",
+                "implicitDetectorSampling": False,
+            },
             "jobLifecycle": {
                 "contractVersion": JOBS_CONTRACT_VERSION,
                 "cancellationMode": "stage_boundary",
@@ -185,6 +346,7 @@ class SSBProtocolService:
     def submit(self, request: dict[str, Any]) -> dict[str, Any]:
         """Accept one idempotent background job and return its current snapshot."""
 
+        request = json.loads(json.dumps(request, separators=(",", ":"), sort_keys=True))
         job_id = str(UUID(str(request["jobID"])))
         generation = int(request["datasetGeneration"])
         key = (job_id, generation)
@@ -251,9 +413,7 @@ class SSBProtocolService:
                 self._advance_locked(job, "cancel_requested")
             return self._public_snapshot(job)
 
-    def _run_submitted_job(
-        self, key: tuple[str, int], request: dict[str, Any]
-    ) -> None:
+    def _run_submitted_job(self, key: tuple[str, int], request: dict[str, Any]) -> None:
         try:
             if self._cancelled_at_boundary(key):
                 return
@@ -390,6 +550,23 @@ class SSBProtocolService:
                 "SSB active BF count changed: requested "
                 f"{requested_active}, executed {executed_active}."
             )
+        requested_sampling = _calibrated_detector_sampling_mrad(request)
+        executed_sampling = tuple(
+            float(value) for value in outcome["detectorSamplingMilliradians"]
+        )
+        if len(executed_sampling) != 2 or not np.allclose(
+            executed_sampling, requested_sampling, rtol=0.0, atol=1e-9
+        ):
+            raise SSBProtocolError(
+                "SSB detector sampling changed: requested "
+                f"{requested_sampling}, executed {executed_sampling}."
+            )
+        requested_precision = _validated_precision(request)
+        executed_precision = outcome["precision"]
+        if executed_precision != requested_precision:
+            raise SSBProtocolError(
+                "SSB executed precision or lossless count audit differs from the request."
+            )
 
         job_id = str(UUID(str(request["jobID"])))
         generation = int(request["datasetGeneration"])
@@ -409,6 +586,11 @@ class SSBProtocolService:
             "source": request["source"],
             "calibration": calibration,
             "selection": request["selection"],
+            "executedDetectorSamplingMilliradians": {
+                "row": executed_sampling[0],
+                "column": executed_sampling[1],
+            },
+            "executedPrecision": executed_precision,
             "executedBrightFieldCounts": {
                 "logical": executed_logical,
                 "active": executed_active,
@@ -468,7 +650,9 @@ class SSBProtocolService:
         try:
             master.relative_to(self.data_folder)
         except ValueError as exc:
-            raise SSBProtocolError("SSB source is outside the configured data folder.") from exc
+            raise SSBProtocolError(
+                "SSB source is outside the configured data folder."
+            ) from exc
         if not master.is_file() or not master.name.endswith("_master.h5"):
             raise SSBProtocolError(f"SSB master file was not found: {master}")
         return master
@@ -493,14 +677,11 @@ class SSBProtocolService:
             or int(selection.get("detectorBin", 0)) != 1
             or selection.get("scanCrop") is not None
         ):
-            raise SSBProtocolError("Native SSB requires full_active BF, no crop, and detector bin 1.")
-        precision = request.get("precision") or {}
-        if precision != {
-            "sourceDType": "uint8",
-            "realDType": "float32",
-            "complexDType": "complex64",
-        }:
-            raise SSBProtocolError("Unsupported SSB source or arithmetic precision.")
+            raise SSBProtocolError(
+                "Native SSB requires full_active BF, no crop, and detector bin 1."
+            )
+        precision = _validated_precision(request)
+        _calibrated_detector_sampling_mrad(request)
         source = request.get("source") or {}
         master = self._resolve_master(str(source.get("masterPath", "")))
         identity = self.source_identity(str(master))
@@ -508,7 +689,33 @@ class SSBProtocolService:
             if source.get(key) != identity[key]:
                 raise SSBProtocolError(f"SSB source identity mismatch for {key}.")
         if calibration.get("sourceIdentitySHA256") != identity["sourceIdentitySHA256"]:
-            raise SSBProtocolError("SSB calibration belongs to a different source identity.")
+            raise SSBProtocolError(
+                "SSB calibration belongs to a different source identity."
+            )
+        inspection = self._source_inspector(
+            str(master),
+            scan_shape=(
+                int(request["scanShape"]["rows"]),
+                int(request["scanShape"]["columns"]),
+            ),
+        )
+        if not inspection.ready:
+            raise SSBProtocolError(
+                f"SSB source is not ready: {inspection.reason} {inspection.action}".strip()
+            )
+        if inspection.dtype != precision["nativeSourceDType"]:
+            raise SSBProtocolError(
+                "SSB native source dtype mismatch: request declares "
+                f"{precision['nativeSourceDType']}, source is {inspection.dtype}."
+            )
+        detector_shape = (
+            int(request["detectorShape"]["rows"]),
+            int(request["detectorShape"]["columns"]),
+        )
+        if inspection.detector_shape != detector_shape:
+            raise SSBProtocolError(
+                "SSB detector shape does not match the inspected native source."
+            )
         return master, gpu
 
     def _requested_device(self, request: dict[str, Any]) -> int | None:
@@ -520,21 +727,27 @@ class SSBProtocolService:
         gpu = backend.get("gpu_index")
         if self.backend_kind == "remote_cuda":
             if gpu is None or int(gpu) not in self._available_gpus():
-                raise SSBProtocolError("The explicitly selected CUDA GPU is unavailable.")
+                raise SSBProtocolError(
+                    "The explicitly selected CUDA GPU is unavailable."
+                )
             return int(gpu)
         if gpu is not None:
             raise SSBProtocolError("local_mps does not accept a CUDA GPU index.")
         return None
 
     @staticmethod
-    def _run_cuda(source: Path, gpu: int | None, request: dict[str, Any]) -> dict[str, Any]:
+    def _run_cuda(
+        source: Path, gpu: int | None, request: dict[str, Any]
+    ) -> dict[str, Any]:
         import cupy as cp
+
         from quantem.gpu import SSB
 
         if gpu is None:
             raise SSBProtocolError("remote_cuda requires an explicit GPU index.")
 
         values = request["calibration"]["resolution"]["calibration"]["calibration"]
+        detector_sampling_mrad = _calibrated_detector_sampling_mrad(request)
         aberrations = {
             "C10": float(values["c10Nanometers"]["value"]),
             "C12": float(values["c12Nanometers"]["value"]),
@@ -545,9 +758,11 @@ class SSBProtocolService:
             session_context = SSB.open(
                 str(source),
                 backend="cuda",
-                dtype="auto",
+                dtype=request["precision"]["workingSourceDType"],
                 voltage_kV=float(values["accelerationVoltageKilovolts"]["value"]),
-                semiangle_mrad=float(values["convergenceSemiangleMilliradians"]["value"]),
+                semiangle_mrad=float(
+                    values["convergenceSemiangleMilliradians"]["value"]
+                ),
                 scan_sampling_A=(
                     float(values["scanSamplingRowAngstrom"]["value"]),
                     float(values["scanSamplingColumnAngstrom"]["value"]),
@@ -556,15 +771,12 @@ class SSBProtocolService:
                     int(request["scanShape"]["rows"]),
                     int(request["scanShape"]["columns"]),
                 ),
+                det_sampling=detector_sampling_mrad,
                 aberrations=aberrations,
                 rotation_angle_deg=float(values["scanRotationDegrees"]["value"]),
             )
             with session_context as session:
                 open_seconds = time.perf_counter() - opened
-                if session.source_dtype not in {"uint8", "u1"}:
-                    raise SSBProtocolError(
-                        "The requested uint8 SSB path was not proven lossless by quantem.gpu."
-                    )
                 started = time.perf_counter()
                 result = session.reconstruct(
                     aberrations, compute_loss=bool(request["computeLoss"])
@@ -582,6 +794,11 @@ class SSBProtocolService:
                 encoded = time.perf_counter()
                 phase = cp.asnumpy(result.phase).astype(np.float32, copy=False)
                 brightfield_state = session.browser_state()
+                precision = _executed_precision(
+                    request,
+                    working_dtype=brightfield_state.bf_source_dtype,
+                    maximum_count=brightfield_state.bf_source_max_value,
+                )
                 encode_seconds = time.perf_counter() - encoded
                 source_load_seconds = session.source_load_seconds
             runtime = cp.cuda.runtime.runtimeGetVersion()
@@ -590,6 +807,10 @@ class SSBProtocolService:
             "phase": phase,
             "logicalBrightFieldCount": brightfield_state.num_bf,
             "activeBrightFieldCount": brightfield_state.active_num_bf,
+            "detectorSamplingMilliradians": tuple(
+                float(value) * 1e3 for value in brightfield_state.angular_sampling_rad
+            ),
+            "precision": precision,
             "loss": result.loss,
             "driverVersion": str(driver),
             "runtimeVersion": str(runtime),
@@ -612,7 +833,9 @@ class SSBProtocolService:
         }
 
     @staticmethod
-    def _run_mps(source: Path, gpu: int | None, request: dict[str, Any]) -> dict[str, Any]:
+    def _run_mps(
+        source: Path, gpu: int | None, request: dict[str, Any]
+    ) -> dict[str, Any]:
         import platform
 
         import numpy as np
@@ -622,6 +845,7 @@ class SSBProtocolService:
         if gpu is not None:
             raise SSBProtocolError("local_mps cannot execute on a CUDA GPU index.")
         values = request["calibration"]["resolution"]["calibration"]["calibration"]
+        detector_sampling_mrad = _calibrated_detector_sampling_mrad(request)
         aberrations = {
             "C10": float(values["c10Nanometers"]["value"]),
             "C12": float(values["c12Nanometers"]["value"]),
@@ -631,7 +855,7 @@ class SSBProtocolService:
         session_context = SSB.open(
             str(source),
             backend="mps",
-            dtype="auto",
+            dtype=request["precision"]["workingSourceDType"],
             voltage_kV=float(values["accelerationVoltageKilovolts"]["value"]),
             semiangle_mrad=float(values["convergenceSemiangleMilliradians"]["value"]),
             scan_sampling_A=(
@@ -642,15 +866,12 @@ class SSBProtocolService:
                 int(request["scanShape"]["rows"]),
                 int(request["scanShape"]["columns"]),
             ),
+            det_sampling=detector_sampling_mrad,
             aberrations=aberrations,
             rotation_angle_deg=float(values["scanRotationDegrees"]["value"]),
         )
         with session_context as session:
             open_seconds = time.perf_counter() - opened
-            if session.source_dtype not in {"uint8", "u1"}:
-                raise SSBProtocolError(
-                    "The requested uint8 SSB path was not proven lossless by quantem.gpu."
-                )
             started = time.perf_counter()
             result = session.reconstruct(
                 aberrations, compute_loss=bool(request["computeLoss"])
@@ -668,12 +889,21 @@ class SSBProtocolService:
             encoded = time.perf_counter()
             phase = np.asarray(result.phase, dtype=np.float32)
             brightfield_state = session.browser_state()
+            precision = _executed_precision(
+                request,
+                working_dtype=brightfield_state.bf_source_dtype,
+                maximum_count=brightfield_state.bf_source_max_value,
+            )
             encode_seconds = time.perf_counter() - encoded
             source_load_seconds = session.source_load_seconds
         return {
             "phase": phase,
             "logicalBrightFieldCount": brightfield_state.num_bf,
             "activeBrightFieldCount": brightfield_state.active_num_bf,
+            "detectorSamplingMilliradians": tuple(
+                float(value) * 1e3 for value in brightfield_state.angular_sampling_rad
+            ),
+            "precision": precision,
             "loss": result.loss,
             "driverVersion": platform.mac_ver()[0],
             "runtimeVersion": version("mlx"),
