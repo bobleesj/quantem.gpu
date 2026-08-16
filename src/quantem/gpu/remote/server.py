@@ -15,6 +15,7 @@ from collections import OrderedDict
 from contextlib import nullcontext
 from datetime import datetime, timezone
 import hashlib
+import json
 import logging
 import math
 import os
@@ -24,6 +25,7 @@ from typing import Any
 
 import numpy as np
 
+from .maped_api import MAPEDProtocolError, MAPEDProtocolService
 from .ssb_api import (
     SSBPayloadNotReady,
     SSBPayloadUnavailable,
@@ -33,6 +35,7 @@ from .ssb_api import (
 
 try:
     from fastapi import FastAPI, HTTPException, Response
+    from fastapi.responses import StreamingResponse
 except ImportError as exc:  # pragma: no cover - exercised by clean-install smoke
     raise ImportError(
         "Remote viewing requires FastAPI. Install "
@@ -999,20 +1002,50 @@ def create_app(
     gpus: Sequence[int] | str | None = None,
     service: BrowseService | None = None,
     ssb_service: SSBProtocolService | None = None,
+    maped_service: MAPEDProtocolService | None = None,
     implementation_revision: str | None = None,
 ) -> FastAPI:
     """Create the loopback remote-viewer application."""
     browse = service or BrowseService(data_folder, gpu=gpu, gpus=gpus)
+    resolved_revision = (
+        implementation_revision
+        or getattr(ssb_service, "implementation_revision", None)
+        or os.environ.get("QUANTEM_GPU_IMPLEMENTATION_REVISION", "unrecorded")
+    )
     ssb = ssb_service or SSBProtocolService(
         data_folder,
         available_gpus=browse._available_gpus,
         device_name=browse._device_name,
-        implementation_revision=implementation_revision
-        or os.environ.get("QUANTEM_GPU_IMPLEMENTATION_REVISION", "unrecorded"),
+        implementation_revision=resolved_revision,
     )
+    maped = maped_service or MAPEDProtocolService(
+        data_folder,
+        available_gpus=browse._available_gpus,
+        device_name=browse._device_name,
+        implementation_revision=resolved_revision,
+    )
+    if (
+        resolved_revision != "unrecorded"
+        and maped.implementation_revision != resolved_revision
+    ):
+        raise ValueError(
+            "MAPED implementation revision does not match the served revision."
+        )
     app = FastAPI(title="QuantEM GPU Remote Browse", docs_url=None, redoc_url=None)
     app.state.browse_service = browse
     app.state.ssb_service = ssb
+    app.state.maped_service = maped
+
+    def maped_http_error(exc: MAPEDProtocolError) -> HTTPException:
+        return HTTPException(
+            exc.status_code,
+            detail={
+                "code": exc.code,
+                "message": str(exc),
+                "recoverySuggestion": exc.recovery,
+                "stage": exc.stage,
+            },
+        )
 
     @app.get("/api/browse/capabilities")
     async def capabilities() -> dict[str, Any]:
@@ -1032,7 +1065,95 @@ def create_app(
             }
         else:
             result["features"]["ssb"] = ssb.capability()
+            result["features"]["maped"] = maped.advertised_capability()
         return result
+
+    @app.post("/api/maped/inventory")
+    async def maped_inventory(request: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(maped.inventory, request)
+        except MAPEDProtocolError as exc:
+            raise maped_http_error(exc) from exc
+
+    @app.post("/api/maped/snapshot")
+    async def maped_snapshot(request: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(maped.snapshot, request)
+        except MAPEDProtocolError as exc:
+            raise maped_http_error(exc) from exc
+
+    @app.post("/api/maped/previews")
+    async def maped_previews(request: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(maped.previews, request)
+        except MAPEDProtocolError as exc:
+            raise maped_http_error(exc) from exc
+
+    @app.post("/api/maped/diffraction")
+    async def maped_diffraction(request: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(maped.selected_diffraction, request)
+        except MAPEDProtocolError as exc:
+            raise maped_http_error(exc) from exc
+
+    @app.get("/api/maped/payloads/{payload_id}")
+    async def maped_payload(payload_id: str) -> Response:
+        try:
+            payload, descriptor = maped.payload(payload_id)
+        except MAPEDProtocolError as exc:
+            raise maped_http_error(exc) from exc
+        return Response(
+            content=payload,
+            media_type="application/octet-stream",
+            headers={
+                "X-Width": str(descriptor["shape"]["columns"]),
+                "X-Height": str(descriptor["shape"]["rows"]),
+                "X-Dtype": descriptor["dtype"],
+                "X-Byte-Count": str(descriptor["byteCount"]),
+                "X-SHA256": descriptor["sha256"],
+                "X-Generation": str(descriptor["generation"]),
+                "X-Source-Identity-SHA256": descriptor["sourceIdentity"][
+                    "sourceIdentitySHA256"
+                ],
+                "Cache-Control": "no-store",
+            },
+        )
+
+    @app.post("/api/maped/cache/validate")
+    async def maped_validate_cache(request: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(maped.validate_cache, request)
+        except MAPEDProtocolError as exc:
+            raise maped_http_error(exc) from exc
+
+    @app.post("/api/maped/runs", status_code=202)
+    async def maped_start_run(request: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return maped.start_run(request)
+        except MAPEDProtocolError as exc:
+            raise maped_http_error(exc) from exc
+
+    @app.get("/api/maped/runs/{run_id}/events")
+    async def maped_run_events(
+        run_id: str, afterSequence: int = 0
+    ) -> StreamingResponse:
+        try:
+            maped.run_event_snapshot(run_id)
+        except MAPEDProtocolError as exc:
+            raise maped_http_error(exc) from exc
+
+        def stream():
+            for event in maped.run_events(run_id, after_sequence=afterSequence):
+                yield f"data: {json.dumps(event, separators=(',', ':'))}\n\n"
+
+        return StreamingResponse(stream(), media_type="text/event-stream")
+
+    @app.delete("/api/maped/runs/{run_id}", status_code=202)
+    async def maped_cancel_run(run_id: str) -> dict[str, Any]:
+        try:
+            return maped.cancel_run(run_id)
+        except MAPEDProtocolError as exc:
+            raise maped_http_error(exc) from exc
 
     @app.get("/api/ssb/source-identity")
     async def ssb_source_identity(master_path: str) -> dict[str, Any]:
