@@ -24,7 +24,7 @@ from typing import Any
 
 import numpy as np
 
-from .ssb_api import SSBProtocolError, SSBProtocolService
+from .ssb_api import SSBPayloadNotReady, SSBProtocolError, SSBProtocolService
 
 try:
     from fastapi import FastAPI, HTTPException, Response
@@ -993,16 +993,18 @@ def create_app(
     gpu: int = 0,
     gpus: Sequence[int] | str | None = None,
     service: BrowseService | None = None,
+    ssb_service: SSBProtocolService | None = None,
 ) -> FastAPI:
     """Create the loopback remote-viewer application."""
     browse = service or BrowseService(data_folder, gpu=gpu, gpus=gpus)
-    ssb = SSBProtocolService(
+    ssb = ssb_service or SSBProtocolService(
         data_folder,
         available_gpus=browse._available_gpus,
         device_name=browse._device_name,
     )
     app = FastAPI(title="QuantEM GPU Remote Browse", docs_url=None, redoc_url=None)
     app.state.browse_service = browse
+    app.state.ssb_service = ssb
 
     @app.get("/api/browse/capabilities")
     async def capabilities() -> dict[str, Any]:
@@ -1022,10 +1024,33 @@ def create_app(
         except SSBProtocolError as exc:
             raise HTTPException(409, str(exc)) from exc
 
+    @app.post("/api/ssb/jobs", status_code=202)
+    async def ssb_submit(request: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return ssb.submit(request)
+        except (SSBProtocolError, ValueError, KeyError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.get("/api/ssb/jobs/{job_id}")
+    async def ssb_job(job_id: str, generation: int) -> dict[str, Any]:
+        try:
+            return ssb.job_snapshot(job_id, generation)
+        except (SSBProtocolError, ValueError) as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @app.delete("/api/ssb/jobs/{job_id}", status_code=202)
+    async def ssb_cancel(job_id: str, generation: int) -> dict[str, Any]:
+        try:
+            return ssb.cancel_job(job_id, generation)
+        except (SSBProtocolError, ValueError) as exc:
+            raise HTTPException(404, str(exc)) from exc
+
     @app.get("/api/ssb/jobs/{job_id}/phase")
     async def ssb_phase(job_id: str, generation: int) -> Response:
         try:
             payload, descriptor = ssb.payload(job_id, generation)
+        except SSBPayloadNotReady as exc:
+            raise HTTPException(425, str(exc)) from exc
         except (SSBProtocolError, ValueError) as exc:
             raise HTTPException(404, str(exc)) from exc
         return Response(

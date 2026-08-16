@@ -15,10 +15,16 @@ import numpy as np
 
 CONTRACT_VERSION = "live4dstem.ssb/v0.1"
 ALGORITHM_VERSION = "quantem.gpu.SSB/v0.1"
+JOBS_CONTRACT_VERSION = "live4dstem.ssb.jobs/v0.1"
+_TERMINAL_JOB_STATES = {"completed", "cancelled", "failed", "expired"}
 
 
 class SSBProtocolError(ValueError):
     """One actionable request or result contract failure."""
+
+
+class SSBPayloadNotReady(SSBProtocolError):
+    """A validated job exists, but it has not published a phase payload."""
 
 
 def _sha256(path: Path) -> str:
@@ -77,6 +83,7 @@ class SSBProtocolService:
         self._runner = runner or self._run_cuda
         self._lock = threading.Lock()
         self._payloads: dict[tuple[str, int], tuple[bytes, dict[str, Any]]] = {}
+        self._jobs: dict[tuple[str, int], dict[str, Any]] = {}
 
     @staticmethod
     def advertised_capability() -> dict[str, Any]:
@@ -85,6 +92,14 @@ class SSBProtocolService:
             "contractVersion": CONTRACT_VERSION,
             "algorithmVersion": ALGORITHM_VERSION,
             "resultPayload": "job_generation_endpoint",
+            "jobLifecycle": {
+                "contractVersion": JOBS_CONTRACT_VERSION,
+                "cancellationMode": "stage_boundary",
+                "reconnectScope": "same_server_process",
+                "progress": "stage_only_indeterminate",
+                "serverRestartResume": False,
+                "resultRetention": "same_server_process",
+            },
             "stageTimingAvailability": {
                 "sourceLoad": True,
                 "firstReconstruct": True,
@@ -93,6 +108,135 @@ class SSBProtocolService:
                 "kernel": False,
             },
         }
+
+    @staticmethod
+    def request_sha256(request: dict[str, Any]) -> str:
+        """Hash one canonical scientific request for idempotent submission."""
+
+        canonical = json.dumps(request, separators=(",", ":"), sort_keys=True).encode()
+        return hashlib.sha256(canonical).hexdigest()
+
+    def submit(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Accept one idempotent background job and return its current snapshot."""
+
+        job_id = str(UUID(str(request["jobID"])))
+        generation = int(request["datasetGeneration"])
+        key = (job_id, generation)
+        request_sha = self.request_sha256(request)
+        now = time.time()
+        with self._lock:
+            existing = self._jobs.get(key)
+            if existing is not None:
+                if existing["requestSHA256"] != request_sha:
+                    raise SSBProtocolError(
+                        "The SSB job ID already belongs to a different request digest."
+                    )
+                return self._public_snapshot(existing)
+            job = {
+                "jobID": job_id,
+                "datasetGeneration": generation,
+                "requestSHA256": request_sha,
+                "sourceIdentitySHA256": request["source"]["sourceIdentitySHA256"],
+                "selection": request["selection"],
+                "requestedBackend": request["backend"],
+                "sequence": 0,
+                "state": "accepted",
+                "progress": {"stage": "accepted", "determinate": False},
+                "acceptedAt": now,
+                "updatedAt": now,
+                "result": None,
+                "error": None,
+                "cancelRequested": False,
+            }
+            self._jobs[key] = job
+            snapshot = self._public_snapshot(job)
+        threading.Thread(
+            target=self._run_submitted_job,
+            args=(key, request),
+            name=f"ssb-{job_id}",
+            daemon=True,
+        ).start()
+        return snapshot
+
+    def job_snapshot(self, job_id: str, generation: int) -> dict[str, Any]:
+        """Return the latest same-process snapshot for reconnect polling."""
+
+        key = (str(UUID(job_id)), int(generation))
+        with self._lock:
+            job = self._jobs.get(key)
+            if job is None:
+                raise SSBProtocolError("No SSB job exists for this ID and generation.")
+            return self._public_snapshot(job)
+
+    def cancel_job(self, job_id: str, generation: int) -> dict[str, Any]:
+        """Request cancellation at the next honest worker stage boundary."""
+
+        key = (str(UUID(job_id)), int(generation))
+        with self._lock:
+            job = self._jobs.get(key)
+            if job is None:
+                raise SSBProtocolError("No SSB job exists for this ID and generation.")
+            if job["state"] not in _TERMINAL_JOB_STATES | {"cancel_requested"}:
+                job["cancelRequested"] = True
+                self._advance_locked(job, "cancel_requested")
+            return self._public_snapshot(job)
+
+    def _run_submitted_job(
+        self, key: tuple[str, int], request: dict[str, Any]
+    ) -> None:
+        try:
+            if self._cancelled_at_boundary(key):
+                return
+            self._advance(key, "validating")
+            self._validate_request(request)
+            if self._cancelled_at_boundary(key):
+                return
+            self._advance(key, "reconstructing_first")
+            result = self.reconstruct(request)
+            if self._cancelled_at_boundary(key):
+                with self._lock:
+                    self._payloads.pop(key, None)
+                return
+            with self._lock:
+                job = self._jobs[key]
+                job["result"] = result
+                self._advance_locked(job, "completed")
+        except Exception as exc:  # noqa: BLE001 - worker errors become typed snapshots
+            with self._lock:
+                job = self._jobs[key]
+                if job["cancelRequested"]:
+                    self._payloads.pop(key, None)
+                    self._advance_locked(job, "cancelled")
+                else:
+                    job["error"] = {
+                        "message": str(exc),
+                        "recovery": "Verify the source, calibration, backend, and retry.",
+                    }
+                    self._advance_locked(job, "failed")
+
+    def _cancelled_at_boundary(self, key: tuple[str, int]) -> bool:
+        with self._lock:
+            job = self._jobs[key]
+            if not job["cancelRequested"]:
+                return False
+            self._payloads.pop(key, None)
+            self._advance_locked(job, "cancelled")
+            return True
+
+    def _advance(self, key: tuple[str, int], state: str) -> None:
+        with self._lock:
+            self._advance_locked(self._jobs[key], state)
+
+    @staticmethod
+    def _advance_locked(job: dict[str, Any], state: str) -> None:
+        job["sequence"] += 1
+        job["state"] = state
+        job["progress"] = {"stage": state, "determinate": False}
+        job["updatedAt"] = time.time()
+
+    @staticmethod
+    def _public_snapshot(job: dict[str, Any]) -> dict[str, Any]:
+        return {key: value for key, value in job.items() if key != "cancelRequested"}
 
     def source_identity(self, master_path: str) -> dict[str, Any]:
         master = self._resolve_master(master_path)
@@ -186,7 +330,12 @@ class SSBProtocolService:
         key = (str(UUID(job_id)), int(generation))
         with self._lock:
             stored = self._payloads.get(key)
+            job = self._jobs.get(key)
         if stored is None:
+            if job is not None and job["state"] not in {"completed", "expired"}:
+                raise SSBPayloadNotReady(
+                    "The SSB job has not completed a validated phase payload."
+                )
             raise SSBProtocolError(
                 "No validated SSB phase exists for this job and dataset generation."
             )

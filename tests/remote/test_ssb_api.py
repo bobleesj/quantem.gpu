@@ -2,11 +2,17 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+import threading
+import time
 
 import numpy as np
 import pytest
 
-from quantem.gpu.remote.ssb_api import SSBProtocolError, SSBProtocolService
+from quantem.gpu.remote.ssb_api import (
+    SSBPayloadNotReady,
+    SSBProtocolError,
+    SSBProtocolService,
+)
 
 
 def _request(source: dict, *, generation: int = 7) -> dict:
@@ -147,3 +153,126 @@ def test_logical_and_active_brightfield_counts_are_validated_separately(tmp_path
     wrong_active["selection"]["activeBrightFieldCount"] = 2
     with pytest.raises(SSBProtocolError, match="active BF count changed"):
         service.reconstruct(wrong_active)
+
+
+def _wait_for_terminal(service, job_id, generation=7):
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        snapshot = service.job_snapshot(job_id, generation)
+        if snapshot["state"] in {"completed", "cancelled", "failed"}:
+            return snapshot
+        time.sleep(0.005)
+    raise AssertionError("SSB job did not reach a terminal state")
+
+
+def test_async_submit_is_idempotent_and_reconnects_to_same_result(tmp_path):
+    service, _ = _service(tmp_path)
+    identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
+    request = _request(identity)
+
+    accepted = service.submit(request)
+    duplicate = service.submit(request)
+    completed = _wait_for_terminal(service, request["jobID"])
+
+    assert accepted["state"] == "accepted"
+    assert duplicate["requestSHA256"] == accepted["requestSHA256"]
+    assert completed["state"] == "completed"
+    assert completed["sequence"] > accepted["sequence"]
+    assert completed["result"]["phase"]["sha256"]
+    assert service.job_snapshot(request["jobID"], 7) == completed
+
+    conflicting = _request(identity)
+    conflicting["jobID"] = request["jobID"]
+    conflicting["computeLoss"] = False
+    with pytest.raises(SSBProtocolError, match="different request digest"):
+        service.submit(conflicting)
+
+
+def test_cancel_during_runner_waits_for_stage_boundary_and_discards_payload(tmp_path):
+    entered = threading.Event()
+    release = threading.Event()
+
+    def runner(_source, _gpu, _request):
+        entered.set()
+        assert release.wait(timeout=2)
+        return {
+            "phase": np.arange(4, dtype=np.float32).reshape(2, 2),
+            "logicalBrightFieldCount": 4,
+            "activeBrightFieldCount": 3,
+            "implementationRevision": "test",
+            "timings": {"firstReconstructSeconds": 0.1},
+        }
+
+    master = tmp_path / "BTO_18_master.h5"
+    master.write_bytes(b"master")
+    (tmp_path / "BTO_18_data_000001.h5").write_bytes(b"shard")
+    service = SSBProtocolService(
+        tmp_path,
+        available_gpus=lambda: [0],
+        device_name=lambda _gpu: "Test CUDA",
+        runner=runner,
+    )
+    request = _request(service.source_identity(str(master)))
+
+    service.submit(request)
+    assert entered.wait(timeout=2)
+    requested = service.cancel_job(request["jobID"], 7)
+    assert requested["state"] == "cancel_requested"
+    release.set()
+    cancelled = _wait_for_terminal(service, request["jobID"])
+
+    assert cancelled["state"] == "cancelled"
+    with pytest.raises(SSBPayloadNotReady):
+        service.payload(request["jobID"], 7)
+
+
+def test_async_http_status_cancel_and_payload_gate(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from quantem.gpu.remote.server import create_app
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def runner(_source, _gpu, _request):
+        entered.set()
+        assert release.wait(timeout=2)
+        return {
+            "phase": np.arange(4, dtype=np.float32).reshape(2, 2),
+            "logicalBrightFieldCount": 4,
+            "activeBrightFieldCount": 3,
+            "implementationRevision": "test",
+            "timings": {"firstReconstructSeconds": 0.1},
+        }
+
+    master = tmp_path / "BTO_18_master.h5"
+    master.write_bytes(b"master")
+    (tmp_path / "BTO_18_data_000001.h5").write_bytes(b"shard")
+    service = SSBProtocolService(
+        tmp_path,
+        available_gpus=lambda: [0],
+        device_name=lambda _gpu: "Test CUDA",
+        runner=runner,
+    )
+    request = _request(service.source_identity(str(master)))
+    client = TestClient(create_app(tmp_path, ssb_service=service))
+
+    accepted = client.post("/api/ssb/jobs", json=request)
+    assert accepted.status_code == 202
+    assert entered.wait(timeout=2)
+    snapshot = client.get(
+        f"/api/ssb/jobs/{request['jobID']}", params={"generation": 7}
+    )
+    assert snapshot.status_code == 200
+    assert snapshot.json()["state"] == "reconstructing_first"
+    assert client.get(
+        f"/api/ssb/jobs/{request['jobID']}/phase", params={"generation": 7}
+    ).status_code == 425
+
+    cancelled = client.delete(
+        f"/api/ssb/jobs/{request['jobID']}", params={"generation": 7}
+    )
+    assert cancelled.status_code == 202
+    assert cancelled.json()["state"] == "cancel_requested"
+    release.set()
+    assert _wait_for_terminal(service, request["jobID"])["state"] == "cancelled"
