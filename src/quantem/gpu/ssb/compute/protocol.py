@@ -51,6 +51,12 @@ class SSBExportState:
 
         return self.brightfield.size
 
+    @property
+    def active_num_bf(self) -> int:
+        """Number of selected BF pixels with nonzero probe aperture weight."""
+
+        return int(np.count_nonzero(np.asarray(self.aperture_k) > 0.0))
+
 
 @runtime_checkable
 class SSBProtocol(Protocol):

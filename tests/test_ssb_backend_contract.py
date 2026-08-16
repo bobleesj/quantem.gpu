@@ -174,6 +174,43 @@ def test_ssb_result_owns_optimization_and_reconstruction_metadata() -> None:
     assert result.phase.dtype == np.float32
 
 
+def test_export_state_separates_logical_and_aperture_active_bf_counts() -> None:
+    """Logical BF membership and nonzero probe support are distinct evidence."""
+    from quantem.gpu.ssb.bf_selector import BrightfieldDisk
+    from quantem.gpu.ssb.compute.protocol import SSBExportState
+
+    selection = BrightfieldDisk(
+        rows=np.asarray([0, 1, 2], dtype=np.int32),
+        cols=np.asarray([1, 1, 1], dtype=np.int32),
+        center_row_col=(1.0, 1.0),
+        radius_px=1.1,
+        detected_radius_px=1.1,
+        detector_shape=(3, 3),
+    )
+    values = np.ones(3, dtype=np.float32)
+    state = SSBExportState(
+        backend="mps",
+        scan_shape=(2, 2),
+        brightfield=selection,
+        kx_bf=values,
+        ky_bf=values,
+        qx_1d=np.ones(2, dtype=np.float32),
+        qy_1d=np.ones(2, dtype=np.float32),
+        aperture_k=np.asarray([1.0, 0.0, 0.25], dtype=np.float32),
+        alpha_k2=values,
+        cos2phi_k=values,
+        sin2phi_k=values,
+        wavelength_A=0.02,
+        semiangle_rad=0.03,
+        angular_sampling_rad=(0.001, 0.001),
+        sampling_A=(0.264, 0.264),
+        dc_value=0j,
+    )
+
+    assert state.num_bf == 3
+    assert state.active_num_bf == 2
+
+
 def test_float32_precision_contract_is_strict_and_backend_neutral() -> None:
     """C3: every backend advertises immutable float32 storage."""
     from quantem.gpu.ssb.compute import SSBPrecision

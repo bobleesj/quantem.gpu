@@ -29,6 +29,23 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _source_identity_sha256(master_hash: str, member_hashes: list[str]) -> str:
+    """Return the Live4DSTEM dataset-v0.1 ordered source digest.
+
+    The byte stream is the UTF-8 dataset schema, a NUL separator, the lowercase
+    hexadecimal master digest, then one NUL plus lowercase hexadecimal digest
+    for every member in acquisition order. Paths and JSON serialization never
+    participate in the identity.
+    """
+    digest = hashlib.sha256()
+    digest.update(b"live4dstem.dataset/v0.1\0")
+    digest.update(master_hash.lower().encode())
+    for value in member_hashes:
+        digest.update(b"\0")
+        digest.update(value.lower().encode())
+    return digest.hexdigest()
+
+
 def _phase_bytes(value: object) -> bytes:
     try:
         import cupy as cp
@@ -83,19 +100,11 @@ class SSBProtocolService:
         members = sorted(master.parent.glob(f"{stem}_data_*.h5"))
         master_hash = _sha256(master)
         member_hashes = [_sha256(path) for path in members]
-        canonical = json.dumps(
-            {
-                "master": master_hash,
-                "members": member_hashes,
-            },
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode()
         return {
             "masterPath": str(master),
             "masterSHA256": master_hash,
             "orderedMemberSHA256": member_hashes,
-            "sourceIdentitySHA256": hashlib.sha256(canonical).hexdigest(),
+            "sourceIdentitySHA256": _source_identity_sha256(master_hash, member_hashes),
         }
 
     def reconstruct(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -108,11 +117,19 @@ class SSBProtocolService:
         ]
         if len(phase) != shape[0] * shape[1] * 4:
             raise SSBProtocolError("SSB phase byte count does not match scan shape.")
+        requested_logical = int(request["selection"]["logicalBrightFieldCount"])
+        executed_logical = int(outcome["logicalBrightFieldCount"])
+        if executed_logical != requested_logical:
+            raise SSBProtocolError(
+                "SSB logical BF count changed: requested "
+                f"{requested_logical}, executed {executed_logical}."
+            )
         requested_active = int(request["selection"]["activeBrightFieldCount"])
-        if int(outcome["activeBrightFieldCount"]) != requested_active:
+        executed_active = int(outcome["activeBrightFieldCount"])
+        if executed_active != requested_active:
             raise SSBProtocolError(
                 "SSB active BF count changed: requested "
-                f"{requested_active}, executed {outcome['activeBrightFieldCount']}."
+                f"{requested_active}, executed {executed_active}."
             )
 
         job_id = str(UUID(str(request["jobID"])))
@@ -136,6 +153,10 @@ class SSBProtocolService:
             "source": request["source"],
             "calibration": calibration,
             "selection": request["selection"],
+            "executedBrightFieldCounts": {
+                "logical": executed_logical,
+                "active": executed_active,
+            },
             "requestedBackend": request["backend"],
             "executedDevice": {
                 "backend": "cuda",
@@ -267,12 +288,14 @@ class SSBProtocolService:
                 warm_seconds = time.perf_counter() - started
             encoded = time.perf_counter()
             phase = cp.asnumpy(result.phase).astype(np.float32, copy=False)
+            brightfield_state = session.browser_state()
             encode_seconds = time.perf_counter() - encoded
             runtime = cp.cuda.runtime.runtimeGetVersion()
             driver = cp.cuda.runtime.driverGetVersion()
         return {
             "phase": phase,
-            "activeBrightFieldCount": result.num_bf,
+            "logicalBrightFieldCount": brightfield_state.num_bf,
+            "activeBrightFieldCount": brightfield_state.active_num_bf,
             "loss": result.loss,
             "driverVersion": str(driver),
             "runtimeVersion": str(runtime),

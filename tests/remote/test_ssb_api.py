@@ -63,6 +63,7 @@ def _service(tmp_path: Path) -> tuple[SSBProtocolService, dict]:
         holder.update(gpu=gpu, request=request)
         return {
             "phase": np.arange(4, dtype=np.float32).reshape(2, 2),
+            "logicalBrightFieldCount": 4,
             "activeBrightFieldCount": 3,
             "implementationRevision": "test",
             "timings": {"firstReconstructSeconds": 0.1},
@@ -87,11 +88,25 @@ def test_request_result_and_generation_bound_payload(tmp_path):
 
     assert holder["gpu"] == 0
     assert result["executedDevice"]["backend"] == "cuda"
+    assert result["executedBrightFieldCounts"] == {"logical": 4, "active": 3}
     assert descriptor["sha256"] == hashlib.sha256(payload).hexdigest()
     assert descriptor["byteCount"] == 16
     assert result["phasePayload"]["datasetGeneration"] == 7
     with pytest.raises(SSBProtocolError, match="No validated"):
         service.payload(request["jobID"], 8)
+
+
+def test_source_identity_matches_live4dstem_dataset_v0_1_digest(tmp_path):
+    service, _ = _service(tmp_path)
+    identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
+    expected = hashlib.sha256()
+    expected.update(b"live4dstem.dataset/v0.1\0")
+    expected.update(identity["masterSHA256"].encode())
+    for value in identity["orderedMemberSHA256"]:
+        expected.update(b"\0")
+        expected.update(value.encode())
+
+    assert identity["sourceIdentitySHA256"] == expected.hexdigest()
 
 
 def test_unresolved_calibration_and_mps_selection_are_rejected(tmp_path):
@@ -117,3 +132,18 @@ def test_source_hash_mismatch_is_rejected_before_runner(tmp_path):
     with pytest.raises(SSBProtocolError, match="masterSHA256"):
         service.reconstruct(request)
     assert holder == {}
+
+
+def test_logical_and_active_brightfield_counts_are_validated_separately(tmp_path):
+    service, _ = _service(tmp_path)
+    identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
+
+    wrong_logical = _request(identity)
+    wrong_logical["selection"]["logicalBrightFieldCount"] = 5
+    with pytest.raises(SSBProtocolError, match="logical BF count changed"):
+        service.reconstruct(wrong_logical)
+
+    wrong_active = _request(identity)
+    wrong_active["selection"]["activeBrightFieldCount"] = 2
+    with pytest.raises(SSBProtocolError, match="active BF count changed"):
+        service.reconstruct(wrong_active)
