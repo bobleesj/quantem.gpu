@@ -542,6 +542,53 @@ def test_cancel_during_runner_waits_for_stage_boundary_and_discards_payload(tmp_
         service.payload(request["jobID"], 7)
 
 
+def test_cancel_acknowledged_before_stage_entry_never_starts_runner(tmp_path):
+    stage_entry_pending = threading.Event()
+    release_stage_entry = threading.Event()
+    runner_entered = threading.Event()
+
+    def runner(_source, _gpu, _request):
+        runner_entered.set()
+        return {
+            "phase": np.arange(4, dtype=np.float32).reshape(2, 2),
+            "logicalBrightFieldCount": 4,
+            "activeBrightFieldCount": 3,
+            "timings": {"firstReconstructSeconds": 0.1},
+        }
+
+    master = tmp_path / "BTO_18_master.h5"
+    master.write_bytes(b"master")
+    (tmp_path / "BTO_18_data_000001.h5").write_bytes(b"shard")
+    service = SSBProtocolService(
+        tmp_path,
+        available_gpus=lambda: [0],
+        device_name=lambda _gpu: "Test CUDA",
+        runner=runner,
+        implementation_revision="test",
+    )
+    request = _request(service.source_identity(str(master)))
+    original_begin_stage = service._begin_stage
+
+    def blocked_begin_stage(key, state):
+        if state == "reconstructing_first":
+            stage_entry_pending.set()
+            assert release_stage_entry.wait(timeout=2)
+        return original_begin_stage(key, state)
+
+    service._begin_stage = blocked_begin_stage
+    service.submit(request)
+    assert stage_entry_pending.wait(timeout=2)
+
+    acknowledged = service.cancel_job(request["jobID"], 7)
+    assert acknowledged["state"] == "cancel_requested"
+    release_stage_entry.set()
+    terminal = _wait_for_terminal(service, request["jobID"])
+
+    assert terminal["state"] == "cancelled"
+    assert terminal["sequence"] > acknowledged["sequence"]
+    assert runner_entered.is_set() is False
+
+
 def test_async_http_status_cancel_and_payload_gate(tmp_path):
     from fastapi.testclient import TestClient
 
