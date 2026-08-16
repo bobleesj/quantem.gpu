@@ -57,14 +57,14 @@ def _request(source: dict, *, generation: int = 7) -> dict:
                 "unit": "angstrom",
                 "origin": "validated_preset",
             },
-            "detectorSamplingRowMilliradians": {
+            "detectorSamplingRowMilliradiansPerPixel": {
                 "value": 1.090909,
-                "unit": "mrad",
+                "unit": "mrad/pixel",
                 "origin": "validated_preset",
             },
-            "detectorSamplingColumnMilliradians": {
+            "detectorSamplingColumnMilliradiansPerPixel": {
                 "value": 1.090909,
-                "unit": "mrad",
+                "unit": "mrad/pixel",
                 "origin": "validated_preset",
             },
             "accelerationVoltageKilovolts": {
@@ -473,7 +473,7 @@ def test_detector_sampling_is_required_and_changes_request_identity(tmp_path):
     request = _request(identity)
     original_digest = service.request_sha256(request)
     values = request["calibration"]["resolution"]["calibration"]["calibration"]
-    values.pop("detectorSamplingRowMilliradians")
+    values.pop("detectorSamplingRowMilliradiansPerPixel")
 
     with pytest.raises(SSBProtocolError, match="detector sampling"):
         service.reconstruct(request)
@@ -481,7 +481,7 @@ def test_detector_sampling_is_required_and_changes_request_identity(tmp_path):
 
     changed = _request(identity)
     changed_values = changed["calibration"]["resolution"]["calibration"]["calibration"]
-    changed_values["detectorSamplingRowMilliradians"]["value"] = 1.1
+    changed_values["detectorSamplingRowMilliradiansPerPixel"]["value"] = 1.1
     assert service.request_sha256(changed) != original_digest
 
 

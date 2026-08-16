@@ -99,8 +99,8 @@ def _calibrated_detector_sampling_mrad(request: dict[str, Any]) -> tuple[float, 
     values = request["calibration"]["resolution"]["calibration"]["calibration"]
     sampling = []
     for name in (
-        "detectorSamplingRowMilliradians",
-        "detectorSamplingColumnMilliradians",
+        "detectorSamplingRowMilliradiansPerPixel",
+        "detectorSamplingColumnMilliradiansPerPixel",
     ):
         field = values.get(name) or {}
         try:
@@ -109,7 +109,11 @@ def _calibrated_detector_sampling_mrad(request: dict[str, Any]) -> tuple[float, 
             raise SSBProtocolError(
                 "SSB requires numeric calibrated detector sampling in mrad/pixel."
             ) from exc
-        if field.get("unit") != "mrad" or not math.isfinite(value) or value <= 0.0:
+        if (
+            field.get("unit") != "mrad/pixel"
+            or not math.isfinite(value)
+            or value <= 0.0
+        ):
             raise SSBProtocolError(
                 "SSB requires finite positive calibrated detector sampling "
                 "for both row and column in mrad/pixel."
@@ -287,7 +291,7 @@ class SSBProtocolService:
             },
             "requiredCalibration": {
                 "detectorSamplingOrder": ["row", "column"],
-                "detectorSamplingUnit": "mrad",
+                "detectorSamplingUnit": "mrad/pixel",
                 "implicitDetectorSampling": False,
             },
             "jobLifecycle": {
