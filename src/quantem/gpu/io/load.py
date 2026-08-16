@@ -6828,7 +6828,10 @@ def bin(
     >>> stack = bin(stack, factor=4, axes="detector", reduction="sum")  # (N,H,W)
     >>> binned = bin(cupy_4d, factor=2, axes="detector")
     """
-    import torch
+    try:
+        import torch
+    except ImportError:
+        torch = None
 
     if reduction not in ("sum", "mean"):
         raise ValueError(f"reduction must be 'sum' or 'mean', got {reduction!r}")
@@ -6837,7 +6840,7 @@ def bin(
     if edge == "partial" and reduction == "mean":
         raise ValueError("edge='partial' supports exact sum reduction only")
 
-    is_torch = isinstance(data, torch.Tensor)
+    is_torch = torch is not None and isinstance(data, torch.Tensor)
     is_cupy = cp is not None and isinstance(data, cp.ndarray)
     if not is_torch and not is_cupy:
         kind = type(data).__name__

@@ -95,6 +95,7 @@ include = [
     "tests",
     "Package.swift",
     "README.md",
+    "environment-remote-cuda.yml",
     "pyproject.toml",
 ]
 

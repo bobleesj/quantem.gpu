@@ -1,0 +1,10 @@
+name: quantem-gpu-remote
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip>=24
+  - pip:
+      - --pre
+      - --extra-index-url https://test.pypi.org/simple/
+      - quantem.gpu[cuda,remote]>=0.0.1rc7

@@ -114,8 +114,23 @@ def _file_signature(master: Path) -> tuple[tuple[str, int, int], ...]:
     paths = [master]
     stem = master.name.removesuffix("_master.h5")
     paths.extend(sorted(master.parent.glob(f"{stem}_data_*.h5")))
+    try:
+        import h5py
+
+        with h5py.File(master, "r") as handle:
+            data_group = handle.get("entry/data")
+            if data_group is not None:
+                for name in data_group:
+                    link = data_group.get(name, getlink=True)
+                    if isinstance(link, h5py.ExternalLink):
+                        linked = Path(link.filename)
+                        if not linked.is_absolute():
+                            linked = master.parent / linked
+                        paths.append(linked.absolute())
+    except (OSError, KeyError, TypeError, ValueError):
+        pass
     signature: list[tuple[str, int, int]] = []
-    for path in paths:
+    for path in dict.fromkeys(paths):
         try:
             stat = path.stat()
         except OSError:
@@ -348,6 +363,7 @@ class BrowseService:
                     {
                         "name": master.name,
                         "shape": [*scan_shape, *detector_shape],
+                        "dtype": inspection.dtype,
                         "cal": "ok" if scan_sampling is not None else "un",
                         "size": _format_size(size),
                         "size_bytes": size,
@@ -472,11 +488,19 @@ class BrowseService:
         detector_rows = math.ceil(detector_rows / det_bin)
         detector_columns = math.ceil(detector_columns / det_bin)
         source_positions = scan_rows * scan_columns
-        decoded_itemsize = 2 if det_bin == 1 else 4
+        try:
+            source_itemsize = int(np.dtype(inspection.dtype).itemsize)
+        except TypeError:
+            source_itemsize = 2
+        # The loader normally narrows over-allocated uint32 Arina counts to
+        # uint16 in the decode pass. Admission still reserves the native
+        # itemsize so a real count above 65535 can remain exact without an
+        # unexpected out-of-memory failure.
+        decoded_itemsize = source_itemsize if det_bin == 1 else 4
         decoded_bytes = source_positions * detector_rows * detector_columns * decoded_itemsize
         output_rows = math.ceil(scan_rows / scan_bin)
         output_columns = math.ceil(scan_columns / scan_bin)
-        resident_itemsize = 2 if det_bin == 1 and scan_bin == 1 else 4
+        resident_itemsize = decoded_itemsize if scan_bin == 1 else 4
         resident_bytes = (
             output_rows
             * output_columns

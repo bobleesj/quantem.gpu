@@ -19,7 +19,12 @@ from quantem.gpu.remote.server import (
 )
 
 
-def _master(root: Path, name: str = "sample_00_master.h5") -> Path:
+def _master(
+    root: Path,
+    name: str = "sample_00_master.h5",
+    *,
+    dtype: type[np.unsignedinteger] = np.uint16,
+) -> Path:
     h5py = pytest.importorskip("h5py")
     session = root / "arina" / "20260815_session"
     session.mkdir(parents=True, exist_ok=True)
@@ -27,7 +32,7 @@ def _master(root: Path, name: str = "sample_00_master.h5") -> Path:
     with h5py.File(path, "w") as handle:
         handle.create_dataset(
             "entry/data/data",
-            data=np.arange(4 * 4 * 4, dtype=np.uint16).reshape(4, 4, 4),
+            data=np.arange(4 * 4 * 4, dtype=dtype).reshape(4, 4, 4),
         )
         specific = handle.create_group("entry/instrument/detector/detectorSpecific")
         specific.create_dataset("ntrigger", data=4)
@@ -43,6 +48,28 @@ def _service(root: Path) -> BrowseService:
     service.device_name = "Test CUDA"
     service.cache_budget_bytes = 1 << 30
     return service
+
+
+def _externally_linked_master(root: Path) -> tuple[Path, Path]:
+    h5py = pytest.importorskip("h5py")
+    session = root / "arina" / "20260815_linked"
+    session.mkdir(parents=True, exist_ok=True)
+    shard = session / "detector_payload.h5"
+    with h5py.File(shard, "w") as handle:
+        handle.create_dataset(
+            "entry/data/data",
+            data=np.arange(4 * 4 * 4, dtype=np.uint16).reshape(4, 4, 4),
+        )
+    master = session / "sample_master.h5"
+    with h5py.File(master, "w") as handle:
+        data = handle.create_group("entry/data")
+        data["data_000001"] = h5py.ExternalLink(shard.name, "/entry/data/data")
+        specific = handle.create_group("entry/instrument/detector/detectorSpecific")
+        specific.create_dataset("ntrigger", data=4)
+        specific.create_dataset("nimages", data=1)
+        specific.create_dataset("x_pixels_in_detector", data=4)
+        specific.create_dataset("y_pixels_in_detector", data=4)
+    return master, shard
 
 
 def _multi_service(root: Path) -> BrowseService:
@@ -206,6 +233,17 @@ def test_catalog_and_acquisition_status_use_quantem_gpu_inspection(tmp_path):
     assert status["ready_token"]
 
 
+def test_catalog_follows_nonstandard_external_shard_names(tmp_path):
+    master, shard = _externally_linked_master(tmp_path)
+    service = _service(tmp_path)
+
+    catalog = service.refresh_catalog()
+    item = catalog["sessions"][0]["files"][0]
+
+    assert item["loadable"] is True
+    assert item["size_bytes"] == master.stat().st_size + shard.stat().st_size
+
+
 def test_exact_virtual_image_and_selected_diffraction_share_resident_plan(tmp_path):
     master = _master(tmp_path)
     service = _service(tmp_path)
@@ -315,6 +353,18 @@ def test_oversized_plan_is_rejected_before_loading(tmp_path, monkeypatch):
 
     assert response.status_code == 413
     assert "Crop the scan region" in response.text
+
+
+def test_uint32_plan_reserves_exact_native_counts(tmp_path):
+    master = _master(tmp_path, dtype=np.uint32)
+    service = _service(tmp_path)
+    service.refresh_catalog()
+
+    resident_bytes, peak_bytes = service._plan_bytes(master, 1, 1, None)
+
+    assert resident_bytes == 2 * 2 * 4 * 4 * np.dtype(np.uint32).itemsize
+    assert peak_bytes == resident_bytes
+    assert service.sessions()["sessions"][0]["files"][0]["dtype"] == "uint32"
 
 
 def test_wire_image_preserves_counts_above_float32_precision():

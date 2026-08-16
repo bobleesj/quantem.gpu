@@ -33,14 +33,23 @@ python -m pip install \
 
 For native applications that browse data on a remote CUDA workstation, the GPU
 computer needs only the CUDA driver and this compute package. It does not need
-Live4DSTEM, `quantem.live`, `quantem.widget`, or a web frontend. Install the
-small loopback-service extra once:
+Live4DSTEM, `quantem.live`, `quantem.widget`, or a web frontend. The recommended
+setup is one self-contained Conda environment:
+
+```bash
+conda env create -f environment-remote-cuda.yml
+```
+
+The environment is named `quantem-gpu-remote`. Live4DSTEM finds its
+`quantem-gpu` executable in standard Miniforge, Miniconda, and Anaconda
+locations even when a non-interactive SSH session has not activated Conda.
+The equivalent manual installation is:
 
 ```bash
 python -m pip install \
   --pre --upgrade \
   --extra-index-url https://test.pypi.org/simple/ \
-  "quantem.gpu[cuda,remote]"
+  "quantem.gpu[cuda,remote]>=0.0.1rc7"
 
 ```
 
