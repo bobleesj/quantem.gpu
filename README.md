@@ -65,7 +65,9 @@ For diagnostics, the equivalent manual command is
 only on `127.0.0.1`. It serves catalog metadata, acquisition readiness, exact
 virtual-detector images, and selected diffraction patterns. It has no web
 frontend or reconstruction scheduler; raw 4D detector data stays on the CUDA
-host.
+host. Catalog discovery is recursive: every session carries its complete path
+relative to the selected data root, so identically named folders in different
+projects remain distinct.
 
 For GIF/MP4 movie rendering, include the `movie` extra. Combine extras when
 you also need a device-specific backend:

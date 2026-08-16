@@ -151,6 +151,15 @@ def _session_identity(root: Path, session_dir: Path) -> tuple[str, str]:
     return session_dir.parent.name, session_dir.name
 
 
+def _session_path(root: Path, session_dir: Path) -> str:
+    """Return one stable POSIX folder path relative to the served root."""
+    try:
+        relative = session_dir.relative_to(root)
+    except ValueError:
+        relative = Path(session_dir.name)
+    return relative.as_posix() or "."
+
+
 class BrowseService:
     """Own a CUDA device pool, one raw-data root, and bounded viewer caches.
 
@@ -329,15 +338,28 @@ class BrowseService:
         return None
 
     def refresh_catalog(self) -> dict[str, Any]:
-        grouped: dict[tuple[str, str], list[Path]] = {}
+        grouped: dict[str, tuple[str, str, list[Path]]] = {}
         session_paths: dict[str, Path] = {}
+        legacy_paths: dict[str, Path | None] = {}
         for master in self._master_paths():
             source, date = _session_identity(self.data_folder, master.parent)
-            grouped.setdefault((source, date), []).append(master)
-            session_paths[f"{source}/{date}"] = master.parent
+            path = _session_path(self.data_folder, master.parent)
+            if path not in grouped:
+                grouped[path] = (source, date, [])
+            grouped[path][2].append(master)
+            session_paths[path] = master.parent
+            legacy_path = f"{source}/{date}"
+            if legacy_path not in legacy_paths:
+                legacy_paths[legacy_path] = master.parent
+            elif legacy_paths[legacy_path] != master.parent:
+                legacy_paths[legacy_path] = None
+
+        for path, directory in legacy_paths.items():
+            if directory is not None:
+                session_paths.setdefault(path, directory)
 
         sessions: list[dict[str, Any]] = []
-        for (source, date), masters in sorted(grouped.items()):
+        for path, (source, date, masters) in sorted(grouped.items()):
             files: list[dict[str, Any]] = []
             for master in sorted(masters):
                 try:
@@ -379,7 +401,9 @@ class BrowseService:
                     }
                 )
             if files:
-                sessions.append({"source": source, "date": date, "files": files})
+                sessions.append(
+                    {"path": path, "source": source, "date": date, "files": files}
+                )
 
         payload = {
             "data_folder": str(self.data_folder),
@@ -467,6 +491,20 @@ class BrowseService:
         scan_region: tuple[int, int, int, int] | None,
     ) -> tuple:
         return (str(path), int(det_bin), int(scan_bin), scan_region)
+
+    def _normalize_scan_region(
+        self,
+        path: Path,
+        scan_region: tuple[int, int, int, int] | None,
+    ) -> tuple[int, int, int, int] | None:
+        """Treat an explicit full scan as the loader's uncropped path."""
+        if scan_region is None:
+            return None
+        inspection = self._inspect(path)
+        if inspection.scan_shape is None:
+            return scan_region
+        rows, columns = (int(value) for value in inspection.scan_shape)
+        return None if scan_region == (0, rows, 0, columns) else scan_region
 
     def _plan_bytes(
         self,
@@ -714,6 +752,7 @@ class BrowseService:
         if self.backend != "cuda" or not self._available_gpus():
             raise HTTPException(503, f"CUDA unavailable: {self.device_error}")
         path = self.resolve_master(session, filename)
+        scan_region = self._normalize_scan_region(path, scan_region)
         key = self._plan_key(path, det_bin, scan_bin, scan_region)
         with self._master_lock:
             cached = self._master_cache.get(key)
@@ -891,6 +930,7 @@ class BrowseService:
         scan_region: tuple[int, int, int, int] | None,
     ) -> np.ndarray:
         path = self.resolve_master(session, filename)
+        scan_region = self._normalize_scan_region(path, scan_region)
         key = self._plan_key(path, det_bin, scan_bin, scan_region)
         with self._master_lock:
             entry = self._master_cache.get(key)

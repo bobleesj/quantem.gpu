@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 pytest.importorskip("fastapi")
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from quantem.gpu import detector
@@ -24,11 +25,12 @@ def _master(
     name: str = "sample_00_master.h5",
     *,
     dtype: type[np.unsignedinteger] = np.uint16,
+    session: str = "arina/20260815_session",
 ) -> Path:
     h5py = pytest.importorskip("h5py")
-    session = root / "arina" / "20260815_session"
-    session.mkdir(parents=True, exist_ok=True)
-    path = session / name
+    session_path = root / session
+    session_path.mkdir(parents=True, exist_ok=True)
+    path = session_path / name
     with h5py.File(path, "w") as handle:
         handle.create_dataset(
             "entry/data/data",
@@ -154,6 +156,31 @@ def test_multi_gpu_cache_places_whole_datasets_and_reuses_hits(tmp_path, monkeyp
     ]
 
 
+def test_full_scan_region_uses_the_uncropped_loader_path(tmp_path, monkeypatch):
+    master = _master(tmp_path)
+    service = _multi_service(tmp_path)
+    service.refresh_catalog()
+    loaded_regions = []
+    monkeypatch.setattr(service, "_plan_bytes", lambda *_args: (40, 60))
+
+    def fake_load(_path, _det_bin, _scan_bin, scan_region, gpu):
+        loaded_regions.append(scan_region)
+        return {"gpu": gpu, "data": np.zeros(10, dtype=np.uint32)}
+
+    monkeypatch.setattr(service, "_load_entry", fake_load)
+
+    key, _ = service.entry(
+        "arina/20260815_session",
+        master.name,
+        det_bin=1,
+        scan_bin=1,
+        scan_region=(0, 2, 0, 2),
+    )
+
+    assert key[-1] is None
+    assert loaded_regions == [None]
+
+
 def test_multi_gpu_lru_evicts_only_the_selected_device(tmp_path, monkeypatch):
     files = [_master(tmp_path, f"sample_{index:02d}_master.h5") for index in range(3)]
     service = _multi_service(tmp_path)
@@ -225,12 +252,39 @@ def test_catalog_and_acquisition_status_use_quantem_gpu_inspection(tmp_path):
     assert catalog["complete"] is True
     assert catalog["sessions"][0]["source"] == "arina"
     assert catalog["sessions"][0]["date"] == "20260815_session"
+    assert catalog["sessions"][0]["path"] == "arina/20260815_session"
     assert catalog["sessions"][0]["files"][0]["name"] == master.name
     assert catalog["sessions"][0]["files"][0]["shape"] == [2, 2, 4, 4]
     assert catalog["sessions"][0]["files"][0]["loadable"] is True
     assert status["pending"] == []
     assert status["history"][0]["path"] == str(master)
     assert status["ready_token"]
+
+
+def test_catalog_preserves_nested_paths_that_share_the_same_leaf_names(tmp_path):
+    first = _master(
+        tmp_path,
+        "first_master.h5",
+        session="collaborator-a/project/shared-session",
+    )
+    second = _master(
+        tmp_path,
+        "second_master.h5",
+        session="collaborator-b/project/shared-session",
+    )
+    service = _service(tmp_path)
+
+    catalog = service.refresh_catalog()
+
+    assert [item["path"] for item in catalog["sessions"]] == [
+        "collaborator-a/project/shared-session",
+        "collaborator-b/project/shared-session",
+    ]
+    assert service.resolve_master(catalog["sessions"][0]["path"], first.name) == first
+    assert service.resolve_master(catalog["sessions"][1]["path"], second.name) == second
+    with pytest.raises(HTTPException) as error:
+        service.resolve_master("project/shared-session", first.name)
+    assert error.value.status_code == 404
 
 
 def test_catalog_follows_nonstandard_external_shard_names(tmp_path):
