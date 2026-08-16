@@ -24,6 +24,8 @@ from typing import Any
 
 import numpy as np
 
+from .ssb_api import SSBProtocolError, SSBProtocolService
+
 try:
     from fastapi import FastAPI, HTTPException, Response
 except ImportError as exc:  # pragma: no cover - exercised by clean-install smoke
@@ -300,6 +302,7 @@ class BrowseService:
                 "acquisition_events": True,
                 "exact_integer_images": True,
                 "multi_gpu_residency": len(devices) > 1,
+                "ssb": SSBProtocolService.advertised_capability(),
             },
         }
 
@@ -993,12 +996,49 @@ def create_app(
 ) -> FastAPI:
     """Create the loopback remote-viewer application."""
     browse = service or BrowseService(data_folder, gpu=gpu, gpus=gpus)
+    ssb = SSBProtocolService(
+        data_folder,
+        available_gpus=browse._available_gpus,
+        device_name=browse._device_name,
+    )
     app = FastAPI(title="QuantEM GPU Remote Browse", docs_url=None, redoc_url=None)
     app.state.browse_service = browse
 
     @app.get("/api/browse/capabilities")
     async def capabilities() -> dict[str, Any]:
         return browse.capabilities()
+
+    @app.get("/api/ssb/source-identity")
+    async def ssb_source_identity(master_path: str) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(ssb.source_identity, master_path)
+        except SSBProtocolError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.post("/api/ssb/reconstruct")
+    async def ssb_reconstruct(request: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(ssb.reconstruct, request)
+        except SSBProtocolError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.get("/api/ssb/jobs/{job_id}/phase")
+    async def ssb_phase(job_id: str, generation: int) -> Response:
+        try:
+            payload, descriptor = ssb.payload(job_id, generation)
+        except (SSBProtocolError, ValueError) as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return Response(
+            content=payload,
+            media_type="application/octet-stream",
+            headers={
+                "X-Width": str(descriptor["shape"]["columns"]),
+                "X-Height": str(descriptor["shape"]["rows"]),
+                "X-Dtype": descriptor["dtype"],
+                "X-SHA256": descriptor["sha256"],
+                "Cache-Control": "no-store",
+            },
+        )
 
     @app.get("/api/browse/sessions")
     async def sessions(refresh: bool = False) -> dict[str, Any]:
