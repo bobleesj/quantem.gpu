@@ -199,22 +199,20 @@ def _validated_precision(request: dict[str, Any]) -> dict[str, Any]:
 
 
 def _executed_precision(
-    request: dict[str, Any], *, working_dtype: object, maximum_count: object
+    request: dict[str, Any], *, working_dtype: object
 ) -> dict[str, Any]:
-    """Bind backend-observed working precision to the accepted exact audit."""
+    """Bind the opened session's working dtype to the accepted exact audit."""
 
     requested = _validated_precision(request)
     try:
         working = np.dtype(working_dtype).name
-        maximum = int(maximum_count)
     except (TypeError, ValueError) as exc:
         raise SSBProtocolError(
-            "The SSB backend did not report its working dtype and maximum count."
+            "The SSB backend did not report its opened working dtype."
         ) from exc
-    expected_maximum = requested["losslessWorkingDTypeAudit"]["maximumCount"]
-    if working != requested["workingSourceDType"] or maximum != expected_maximum:
+    if working != requested["workingSourceDType"]:
         raise SSBProtocolError(
-            "The SSB backend working precision does not match the bound lossless audit."
+            "The SSB backend working dtype does not match the bound lossless audit."
         )
     return requested
 
@@ -800,8 +798,7 @@ class SSBProtocolService:
                 brightfield_state = session.browser_state()
                 precision = _executed_precision(
                     request,
-                    working_dtype=brightfield_state.bf_source_dtype,
-                    maximum_count=brightfield_state.bf_source_max_value,
+                    working_dtype=session.source_dtype,
                 )
                 encode_seconds = time.perf_counter() - encoded
                 source_load_seconds = session.source_load_seconds
@@ -895,8 +892,7 @@ class SSBProtocolService:
             brightfield_state = session.browser_state()
             precision = _executed_precision(
                 request,
-                working_dtype=brightfield_state.bf_source_dtype,
-                maximum_count=brightfield_state.bf_source_max_value,
+                working_dtype=session.source_dtype,
             )
             encode_seconds = time.perf_counter() - encoded
             source_load_seconds = session.source_load_seconds

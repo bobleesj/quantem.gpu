@@ -406,8 +406,8 @@ def test_mps_session_closes_and_server_does_not_claim_loopback_transfer(
                 num_bf=4,
                 active_num_bf=3,
                 angular_sampling_rad=(0.001090909, 0.001090909),
-                bf_source_dtype=np.dtype("uint8"),
-                bf_source_max_value=53,
+                bf_source_dtype=None,
+                bf_source_max_value=None,
             )
 
     def fake_open(*_args, **kwargs):
@@ -435,6 +435,7 @@ def test_mps_session_closes_and_server_does_not_claim_loopback_transfer(
     assert closed == [True]
     assert opened[0]["dtype"] == "uint8"
     assert opened[0]["det_sampling"] == (1.090909, 1.090909)
+    assert result["executedPrecision"] == request["precision"]
     assert result["timings"]["transferSeconds"] is None
     assert result["executedDevice"]["implementationRevision"] == "test-revision"
 
