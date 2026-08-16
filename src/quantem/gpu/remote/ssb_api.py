@@ -74,23 +74,31 @@ class SSBProtocolService:
         data_folder: str | Path,
         *,
         available_gpus: Callable[[], list[int]],
-        device_name: Callable[[int], str],
-        runner: Callable[[Path, int, dict[str, Any]], dict[str, Any]] | None = None,
+        device_name: Callable[[int | None], str],
+        runner: Callable[[Path, int | None, dict[str, Any]], dict[str, Any]] | None = None,
+        backend_kind: str = "remote_cuda",
     ) -> None:
+        if backend_kind not in {"remote_cuda", "local_mps"}:
+            raise ValueError("backend_kind must be remote_cuda or local_mps")
         self.data_folder = Path(data_folder).expanduser().resolve()
         self._available_gpus = available_gpus
         self._device_name = device_name
-        self._runner = runner or self._run_cuda
+        self.backend_kind = backend_kind
+        self._runner = runner or (
+            self._run_cuda if backend_kind == "remote_cuda" else self._run_mps
+        )
         self._lock = threading.Lock()
         self._payloads: dict[tuple[str, int], tuple[bytes, dict[str, Any]]] = {}
         self._jobs: dict[tuple[str, int], dict[str, Any]] = {}
 
     @staticmethod
-    def advertised_capability() -> dict[str, Any]:
+    def advertised_capability(backend_kind: str = "remote_cuda") -> dict[str, Any]:
         return {
             "name": "ssb",
             "contractVersion": CONTRACT_VERSION,
             "algorithmVersion": ALGORITHM_VERSION,
+            "backendKind": backend_kind,
+            "implicitFallback": False,
             "resultPayload": "job_generation_endpoint",
             "jobLifecycle": {
                 "contractVersion": JOBS_CONTRACT_VERSION,
@@ -303,7 +311,7 @@ class SSBProtocolService:
             },
             "requestedBackend": request["backend"],
             "executedDevice": {
-                "backend": "cuda",
+                "backend": "cuda" if self.backend_kind == "remote_cuda" else "mps",
                 "deviceName": self._device_name(gpu),
                 "gpuIndex": gpu,
                 "driverVersion": outcome.get("driverVersion"),
@@ -351,17 +359,23 @@ class SSBProtocolService:
             raise SSBProtocolError(f"SSB master file was not found: {master}")
         return master
 
-    def _validate_request(self, request: dict[str, Any]) -> tuple[Path, int]:
+    def _validate_request(self, request: dict[str, Any]) -> tuple[Path, int | None]:
         if request.get("contractVersion") != CONTRACT_VERSION:
             raise SSBProtocolError("Unsupported SSB contract version.")
         if request.get("algorithmVersion") != ALGORITHM_VERSION:
             raise SSBProtocolError("Unsupported SSB algorithm version.")
         backend = request.get("backend") or {}
-        if backend.get("kind") != "remote_cuda":
-            raise SSBProtocolError("This endpoint requires explicit remote_cuda selection.")
+        if backend.get("kind") != self.backend_kind:
+            raise SSBProtocolError(
+                f"This endpoint requires explicit {self.backend_kind} selection."
+            )
         gpu = backend.get("gpu_index")
-        if gpu is None or int(gpu) not in self._available_gpus():
-            raise SSBProtocolError("The explicitly selected CUDA GPU is unavailable.")
+        if self.backend_kind == "remote_cuda":
+            if gpu is None or int(gpu) not in self._available_gpus():
+                raise SSBProtocolError("The explicitly selected CUDA GPU is unavailable.")
+            gpu = int(gpu)
+        elif gpu is not None:
+            raise SSBProtocolError("local_mps does not accept a CUDA GPU index.")
         calibration = request.get("calibration") or {}
         resolution = calibration.get("resolution") or {}
         if resolution.get("state") != "valid":
@@ -388,12 +402,15 @@ class SSBProtocolService:
                 raise SSBProtocolError(f"SSB source identity mismatch for {key}.")
         if calibration.get("sourceIdentitySHA256") != identity["sourceIdentitySHA256"]:
             raise SSBProtocolError("SSB calibration belongs to a different source identity.")
-        return master, int(gpu)
+        return master, gpu
 
     @staticmethod
-    def _run_cuda(source: Path, gpu: int, request: dict[str, Any]) -> dict[str, Any]:
+    def _run_cuda(source: Path, gpu: int | None, request: dict[str, Any]) -> dict[str, Any]:
         import cupy as cp
         from quantem.gpu import SSB
+
+        if gpu is None:
+            raise SSBProtocolError("remote_cuda requires an explicit GPU index.")
 
         values = request["calibration"]["resolution"]["calibration"]["calibration"]
         aberrations = {
@@ -459,6 +476,85 @@ class SSBProtocolService:
                 "resultEncodeSeconds": encode_seconds,
                 "sshRequestToFirstByteSeconds": None,
                 "transferSeconds": None,
+                "clientDecodeSeconds": None,
+                "paintSeconds": None,
+                "inputToPaintSeconds": None,
+                "sessionOpenSeconds": open_seconds,
+            },
+        }
+
+    @staticmethod
+    def _run_mps(source: Path, gpu: int | None, request: dict[str, Any]) -> dict[str, Any]:
+        import platform
+
+        import mlx
+        import numpy as np
+
+        from quantem.gpu import SSB
+
+        if gpu is not None:
+            raise SSBProtocolError("local_mps cannot execute on a CUDA GPU index.")
+        values = request["calibration"]["resolution"]["calibration"]["calibration"]
+        aberrations = {
+            "C10": float(values["c10Nanometers"]["value"]),
+            "C12": float(values["c12Nanometers"]["value"]),
+            "phi12": float(values["phi12Radians"]["value"]),
+        }
+        opened = time.perf_counter()
+        session = SSB.open(
+            str(source),
+            backend="mps",
+            dtype="auto",
+            voltage_kV=float(values["accelerationVoltageKilovolts"]["value"]),
+            semiangle_mrad=float(values["convergenceSemiangleMilliradians"]["value"]),
+            scan_sampling_A=(
+                float(values["scanSamplingRowAngstrom"]["value"]),
+                float(values["scanSamplingColumnAngstrom"]["value"]),
+            ),
+            scan_shape=(
+                int(request["scanShape"]["rows"]),
+                int(request["scanShape"]["columns"]),
+            ),
+            aberrations=aberrations,
+            rotation_angle_deg=float(values["scanRotationDegrees"]["value"]),
+        )
+        open_seconds = time.perf_counter() - opened
+        if session.source_dtype not in {"uint8", "u1"}:
+            raise SSBProtocolError(
+                "The requested uint8 SSB path was not proven lossless by quantem.gpu."
+            )
+        started = time.perf_counter()
+        result = session.reconstruct(aberrations, compute_loss=bool(request["computeLoss"]))
+        first_seconds = time.perf_counter() - started
+        warm_seconds = None
+        if request.get("measureWarm", False):
+            started = time.perf_counter()
+            result = session.reconstruct(
+                aberrations, compute_loss=bool(request["computeLoss"]), force=True
+            )
+            warm_seconds = time.perf_counter() - started
+        encoded = time.perf_counter()
+        phase = np.asarray(result.phase, dtype=np.float32)
+        brightfield_state = session.browser_state()
+        encode_seconds = time.perf_counter() - encoded
+        return {
+            "phase": phase,
+            "logicalBrightFieldCount": brightfield_state.num_bf,
+            "activeBrightFieldCount": brightfield_state.active_num_bf,
+            "loss": result.loss,
+            "driverVersion": platform.mac_ver()[0],
+            "runtimeVersion": mlx.__version__,
+            "implementationRevision": "live4dstem-ssb-protocol-v0.1",
+            "timings": {
+                "sourceReadSeconds": session.source_load_seconds,
+                "sourceDecodeSeconds": None,
+                "gQKConstructionSeconds": None,
+                "kernelSeconds": None,
+                "firstReconstructSeconds": first_seconds,
+                "warmReconstructSeconds": warm_seconds,
+                "resultEncodeSeconds": encode_seconds,
+                "sshRequestToFirstByteSeconds": None,
+                "transferSeconds": 0.0,
                 "clientDecodeSeconds": None,
                 "paintSeconds": None,
                 "inputToPaintSeconds": None,

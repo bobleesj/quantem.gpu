@@ -1008,7 +1008,11 @@ def create_app(
 
     @app.get("/api/browse/capabilities")
     async def capabilities() -> dict[str, Any]:
-        return browse.capabilities()
+        result = browse.capabilities()
+        result["features"]["ssb"] = SSBProtocolService.advertised_capability(
+            ssb.backend_kind
+        )
+        return result
 
     @app.get("/api/ssb/source-identity")
     async def ssb_source_identity(master_path: str) -> dict[str, Any]:

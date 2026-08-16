@@ -129,6 +129,47 @@ def test_unresolved_calibration_and_mps_selection_are_rejected(tmp_path):
         service.reconstruct(request)
 
 
+def test_explicit_local_mps_service_never_accepts_cuda_or_reports_fallback(tmp_path):
+    master = tmp_path / "BTO_18_master.h5"
+    master.write_bytes(b"master")
+    (tmp_path / "BTO_18_data_000001.h5").write_bytes(b"shard")
+    calls = []
+
+    def runner(_source, gpu, request):
+        calls.append((gpu, request["backend"]["kind"]))
+        return {
+            "phase": np.arange(4, dtype=np.float32).reshape(2, 2),
+            "logicalBrightFieldCount": 4,
+            "activeBrightFieldCount": 3,
+            "implementationRevision": "test",
+            "timings": {"firstReconstructSeconds": 0.1},
+        }
+
+    service = SSBProtocolService(
+        tmp_path,
+        available_gpus=lambda: pytest.fail("local MPS queried CUDA devices"),
+        device_name=lambda _gpu: "Apple MPS",
+        runner=runner,
+        backend_kind="local_mps",
+    )
+    identity = service.source_identity(str(master))
+    local_request = _request(identity)
+    local_request["backend"] = {"kind": "local_mps"}
+
+    result = service.reconstruct(local_request)
+
+    assert calls == [(None, "local_mps")]
+    assert result["requestedBackend"] == {"kind": "local_mps"}
+    assert result["executedDevice"]["backend"] == "mps"
+    capability = service.advertised_capability("local_mps")
+    assert capability["backendKind"] == "local_mps"
+    assert capability["implicitFallback"] is False
+
+    with pytest.raises(SSBProtocolError, match="local_mps"):
+        service.reconstruct(_request(identity))
+    assert calls == [(None, "local_mps")]
+
+
 def test_source_hash_mismatch_is_rejected_before_runner(tmp_path):
     service, holder = _service(tmp_path)
     identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
