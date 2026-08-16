@@ -37,7 +37,7 @@ except ImportError as exc:  # pragma: no cover - exercised by clean-install smok
 PROTOCOL_NAME = "quantem-gpu-browse"
 PROTOCOL_VERSION = 1
 _SCAN_BINS = {1, 2, 4, 8, 16}
-_CACHE_FRACTION = 0.55
+_CUDA_CACHE_FRACTION = 0.80
 _MAX_MASTER_ENTRIES = 8
 _MAX_IMAGE_ENTRIES = 64
 
@@ -196,6 +196,7 @@ class BrowseService:
         self.aggregate_cache_budget_bytes = 0
         self._devices: dict[int, Any] = {}
         self._device_names: dict[int, str] = {}
+        self._total_memory_bytes: dict[int, int] = {}
         self._cache_budgets: dict[int, int] = {}
 
         self._catalog_lock = threading.Lock()
@@ -238,7 +239,8 @@ class BrowseService:
                         cp.get_default_memory_pool().free_all_blocks()
                     self._devices[gpu] = device
                     self._device_names[gpu] = str(name) if name else f"CUDA GPU {gpu}"
-                    self._cache_budgets[gpu] = int(total * _CACHE_FRACTION)
+                    self._total_memory_bytes[gpu] = total
+                    self._cache_budgets[gpu] = int(total * _CUDA_CACHE_FRACTION)
                 except (RuntimeError, MemoryError) as exc:
                     errors.append(f"GPU {gpu}: {type(exc).__name__}: {exc}")
             self.gpus = list(self._devices)
@@ -263,6 +265,7 @@ class BrowseService:
                 {
                     "index": gpu,
                     "name": self._device_name(gpu),
+                    "total_memory_bytes": self._total_memory_bytes.get(gpu),
                     "cache_budget_bytes": self._budget_for(gpu),
                     "free_bytes": self._free_bytes(gpu),
                     "resident_bytes": self._resident_bytes(gpu),
@@ -281,8 +284,12 @@ class BrowseService:
             "device_error": self.device_error,
             "browse_gpu": self.gpu if self.backend == "cuda" else None,
             "browse_gpus": [device["index"] for device in devices],
+            "cache_fraction": _CUDA_CACHE_FRACTION,
             "cache_budget_bytes": self.cache_budget_bytes,
             "aggregate_cache_budget_bytes": aggregate_budget,
+            "largest_device_memory_bytes": max(
+                self._total_memory_bytes.values(), default=None
+            ),
             "devices": devices,
             "data_folders": [str(self.data_folder)],
             "features": {

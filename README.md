@@ -60,6 +60,14 @@ default, datasets remain whole and are distributed across all available CUDA
 GPUs for resident caching. A single GPU can still be selected for a shared
 workstation.
 
+The remote viewer reserves up to 80% of each CUDA GPU for exact resident
+4D-STEM data. The remaining 20% is left for CUDA contexts, decode scratch,
+display products, and other allocations. A single dataset remains on one GPU;
+the aggregate capacity of several GPUs is used to cache different datasets,
+not to split one volume. Live free VRAM is checked again before every load, so
+the service will choose another configured GPU or reject the plan rather than
+overcommit a busy device.
+
 For diagnostics, the equivalent manual command is
 `quantem-gpu serve /data/4dstem --gpus auto --port 8780`. The service listens
 only on `127.0.0.1`. It serves catalog metadata, acquisition readiness, exact

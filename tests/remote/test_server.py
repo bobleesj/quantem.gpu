@@ -112,6 +112,7 @@ def test_capabilities_identify_quantem_gpu_protocol(tmp_path):
     assert payload["backend"] == "cuda"
     assert payload["browse_gpu"] == 2
     assert payload["browse_gpus"] == [2]
+    assert payload["cache_fraction"] == pytest.approx(0.80)
     assert payload["data_folders"] == [str(tmp_path)]
     assert payload["features"]["exact_integer_images"] is True
     assert payload["features"]["multi_gpu_residency"] is False
