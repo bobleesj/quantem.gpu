@@ -16,12 +16,14 @@ import pytest
 from quantem.gpu.remote.ssb_api import (
     ALGORITHM_VERSION,
     INTERACTIVE_CONTRACT_VERSION,
+    PREPARE_CONTRACT_V0_1,
     PREPARE_CONTRACT_VERSION,
     SSBPayloadNotReady,
     SSBPayloadUnavailable,
     SSBProtocolError,
     SSBProtocolService,
     _fit_history_counts,
+    _source_identity_sha256,
     count_audit_sha256,
     selection_descriptor_sha256,
 )
@@ -206,10 +208,33 @@ def _request(
 
 def _prepare_request(source: dict, *, backend: dict | None = None) -> dict:
     reconstruction = _request(source)
+    selected_backend = backend or {
+        "kind": "remote_cuda",
+        "profile_id": "mjgoat",
+        "gpu_index": 0,
+    }
+    expected_identity = {
+        key: source[key]
+        for key in (
+            "datasetSchema",
+            "masterSHA256",
+            "orderedMemberSHA256",
+            "sourceIdentitySHA256",
+        )
+    }
+    source_locator = {
+        "kind": "configured_root_identity",
+        "expectedIdentity": expected_identity,
+    }
+    if selected_backend["kind"] == "local_mps":
+        source_locator = {
+            "kind": "local_path",
+            "masterPath": source["masterPath"],
+            "expectedIdentity": expected_identity,
+        }
     return {
         "contractVersion": PREPARE_CONTRACT_VERSION,
-        "masterPath": source["masterPath"],
-        "expectedSourceIdentitySHA256": source["sourceIdentitySHA256"],
+        "sourceLocator": source_locator,
         "calibration": reconstruction["calibration"],
         "selection": {
             "policy": "full_active",
@@ -217,8 +242,7 @@ def _prepare_request(source: dict, *, backend: dict | None = None) -> dict:
             "scanCrop": None,
         },
         "precision": reconstruction["precision"],
-        "backend": backend
-        or {"kind": "remote_cuda", "profile_id": "mjgoat", "gpu_index": 0},
+        "backend": selected_backend,
     }
 
 
@@ -533,6 +557,90 @@ def test_prepare_returns_source_bound_selection_and_roundtrips(tmp_path):
     assert result["selection"] == descriptor["selection"]
 
 
+def test_remote_prepare_resolves_one_complete_identity_without_client_path(tmp_path):
+    service, _ = _service(tmp_path)
+    identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
+    request = _prepare_request(identity)
+
+    assert "masterPath" not in request
+    assert "masterPath" not in request["sourceLocator"]
+    descriptor = service.prepare(request)
+
+    assert descriptor["source"] == identity
+    assert descriptor["contractVersion"] == PREPARE_CONTRACT_VERSION
+
+
+def test_remote_prepare_rejects_missing_and_ambiguous_complete_identity(tmp_path):
+    service, _ = _service(tmp_path)
+    identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
+    missing = json.loads(json.dumps(identity))
+    missing["masterSHA256"] = "0" * 64
+    missing["sourceIdentitySHA256"] = _source_identity_sha256(
+        missing["masterSHA256"], missing["orderedMemberSHA256"]
+    )
+    request = _prepare_request(missing)
+    with pytest.raises(SSBProtocolError, match="No configured-root"):
+        service.prepare(request)
+
+    duplicate = tmp_path / "duplicate"
+    duplicate.mkdir()
+    (duplicate / "BTO_18_master.h5").write_bytes(b"master")
+    (duplicate / "BTO_18_data_000001.h5").write_bytes(b"shard")
+    with pytest.raises(SSBProtocolError, match="ambiguous"):
+        service.prepare(_prepare_request(identity))
+
+
+def test_remote_prepare_rejects_client_path_and_inconsistent_identity(tmp_path):
+    service, _ = _service(tmp_path)
+    identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
+    request = _prepare_request(identity)
+    request["sourceLocator"]["masterPath"] = "/Users/phil/BTO_18_master.h5"
+    with pytest.raises(SSBProtocolError, match="rejects client paths"):
+        service.prepare(request)
+
+    request = _prepare_request(identity)
+    request["sourceLocator"]["expectedIdentity"]["orderedMemberSHA256"] = ["f" * 64]
+    with pytest.raises(SSBProtocolError, match="digest is inconsistent"):
+        service.prepare(request)
+
+
+def test_remote_prepare_never_resolves_a_symlink_outside_configured_root(tmp_path):
+    root = tmp_path / "served"
+    outside = tmp_path / "outside"
+    root.mkdir()
+    outside.mkdir()
+    outside_master = outside / "BTO_18_master.h5"
+    outside_master.write_bytes(b"master")
+    (outside / "BTO_18_data_000001.h5").write_bytes(b"shard")
+    service, _ = _service(root)
+    identity = service.source_identity(str(root / "BTO_18_master.h5"))
+    (root / "linked_master.h5").symlink_to(outside_master)
+    (root / "BTO_18_master.h5").unlink()
+    (root / "BTO_18_data_000001.h5").unlink()
+
+    with pytest.raises(SSBProtocolError, match="No configured-root"):
+        service.prepare(_prepare_request(identity))
+
+
+def test_prepare_v0_1_remains_explicitly_compatible(tmp_path):
+    service, _ = _service(tmp_path)
+    identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
+    request = _prepare_request(identity)
+    request.update(
+        contractVersion=PREPARE_CONTRACT_V0_1,
+        masterPath=identity["masterPath"],
+        expectedSourceIdentitySHA256=identity["sourceIdentitySHA256"],
+    )
+    request.pop("sourceLocator")
+
+    descriptor = service.prepare(request)
+
+    assert descriptor["contractVersion"] == PREPARE_CONTRACT_V0_1
+    reconstruction = _request(identity)
+    reconstruction["preparedSelection"] = descriptor
+    service.reconstruct(reconstruction)
+
+
 def test_prepare_descriptor_keeps_exact_calibration_after_tolerated_backend_rounding(
     tmp_path,
 ):
@@ -589,6 +697,7 @@ def test_prepare_http_capability_and_unresolved_calibration_are_explicit(tmp_pat
     assert holder["prepareCalls"] == [{"gpu": 0, "backend": "remote_cuda"}]
     assert capability["preparation"] == {
         "contractVersion": PREPARE_CONTRACT_VERSION,
+        "compatibleContractVersions": [PREPARE_CONTRACT_V0_1],
         "endpoint": "/api/ssb/prepare",
         "method": "POST",
         "productStatus": "beta",
@@ -599,6 +708,13 @@ def test_prepare_http_capability_and_unresolved_calibration_are_explicit(tmp_pat
         "workingPrecision": "lossless_uint8_complete_source_audit",
         "requiresExplicitBackend": True,
         "implicitFallback": False,
+    }
+    assert capability["sourceResolution"] == {
+        "contractVersion": "live4dstem.ssb.source-resolution/v0.1",
+        "mode": "configured_root_exact_identity",
+        "remoteClientPathAccepted": False,
+        "missingIsError": True,
+        "ambiguousIsError": True,
     }
     assert capability["fixedReconstructionControls"] == {
         "aberrations": [

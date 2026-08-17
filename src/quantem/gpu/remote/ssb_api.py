@@ -25,7 +25,9 @@ logger = logging.getLogger("quantem.gpu.remote.ssb")
 CONTRACT_VERSION = "live4dstem.ssb/v0.2"
 ALGORITHM_VERSION = "quantem.gpu.SSB/v0.1"
 JOBS_CONTRACT_VERSION = "live4dstem.ssb.jobs/v0.1"
-PREPARE_CONTRACT_VERSION = "live4dstem.ssb.prepare/v0.1"
+PREPARE_CONTRACT_V0_1 = "live4dstem.ssb.prepare/v0.1"
+PREPARE_CONTRACT_VERSION = "live4dstem.ssb.prepare/v0.2"
+SOURCE_RESOLUTION_CONTRACT_VERSION = "live4dstem.ssb.source-resolution/v0.1"
 INTERACTIVE_CONTRACT_V0_1 = "live4dstem.ssb.interactive/v0.1"
 INTERACTIVE_CONTRACT_VERSION = "live4dstem.ssb.interactive/v0.2"
 INTERACTIVE_EVALUATION_PHASE = "exact_full_bf_object_phase"
@@ -125,7 +127,7 @@ def selection_descriptor_sha256(descriptor: dict[str, Any]) -> str:
     canonical.pop("selectionSHA256", None)
     payload = json.dumps(canonical, separators=(",", ":"), sort_keys=True).encode()
     digest = hashlib.sha256()
-    digest.update(PREPARE_CONTRACT_VERSION.encode())
+    digest.update(str(descriptor.get("contractVersion", "")).encode())
     digest.update(b"\0")
     digest.update(payload)
     return digest.hexdigest()
@@ -400,6 +402,7 @@ class SSBProtocolService:
             "resultPayload": "job_generation_endpoint",
             "preparation": {
                 "contractVersion": PREPARE_CONTRACT_VERSION,
+                "compatibleContractVersions": [PREPARE_CONTRACT_V0_1],
                 "endpoint": "/api/ssb/prepare",
                 "method": "POST",
                 "productStatus": "beta",
@@ -410,6 +413,13 @@ class SSBProtocolService:
                 "workingPrecision": "lossless_uint8_complete_source_audit",
                 "requiresExplicitBackend": True,
                 "implicitFallback": False,
+            },
+            "sourceResolution": {
+                "contractVersion": SOURCE_RESOLUTION_CONTRACT_VERSION,
+                "mode": "configured_root_exact_identity",
+                "remoteClientPathAccepted": False,
+                "missingIsError": True,
+                "ambiguousIsError": True,
             },
             "precisionContract": {
                 "nativeSourceDTypes": ["uint8", "uint16", "uint32"],
@@ -1603,11 +1613,98 @@ class SSBProtocolService:
         master_hash = _sha256(master)
         member_hashes = [_sha256(path) for path in members]
         return {
+            "datasetSchema": "live4dstem.dataset/v0.1",
             "masterPath": str(master),
             "masterSHA256": master_hash,
             "orderedMemberSHA256": member_hashes,
             "sourceIdentitySHA256": _source_identity_sha256(master_hash, member_hashes),
         }
+
+    @staticmethod
+    def _expected_source_identity(value: Any) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            raise SSBProtocolError("SSB source locator requires an immutable expected identity.")
+        expected = {
+            "datasetSchema": value.get("datasetSchema"),
+            "masterSHA256": value.get("masterSHA256"),
+            "orderedMemberSHA256": value.get("orderedMemberSHA256"),
+            "sourceIdentitySHA256": value.get("sourceIdentitySHA256"),
+        }
+        if expected["datasetSchema"] != "live4dstem.dataset/v0.1":
+            raise SSBProtocolError("Unsupported SSB source identity schema.")
+        member_hashes = expected["orderedMemberSHA256"]
+        if not isinstance(member_hashes, list):
+            raise SSBProtocolError("SSB expected source identity requires ordered member hashes.")
+        digests = [expected["masterSHA256"], *member_hashes, expected["sourceIdentitySHA256"]]
+        if any(
+            not isinstance(digest, str)
+            or len(digest) != 64
+            or digest != digest.lower()
+            or any(character not in "0123456789abcdef" for character in digest)
+            for digest in digests
+        ):
+            raise SSBProtocolError("SSB expected source identity contains an invalid SHA-256 digest.")
+        if _source_identity_sha256(expected["masterSHA256"], member_hashes) != expected[
+            "sourceIdentitySHA256"
+        ]:
+            raise SSBProtocolError("SSB expected source identity digest is inconsistent.")
+        return expected
+
+    def _resolve_configured_root_identity(
+        self, expected: dict[str, Any]
+    ) -> tuple[Path, dict[str, Any]]:
+        matches: list[tuple[Path, dict[str, Any]]] = []
+        for candidate in sorted(self.data_folder.rglob("*_master.h5")):
+            resolved = candidate.resolve()
+            try:
+                resolved.relative_to(self.data_folder)
+            except ValueError:
+                continue
+            identity = self.source_identity(str(resolved))
+            if all(identity[key] == expected[key] for key in expected):
+                matches.append((resolved, identity))
+        if not matches:
+            raise SSBProtocolError(
+                "No configured-root SSB source matches the complete immutable identity."
+            )
+        if len(matches) != 1:
+            raise SSBProtocolError("Configured-root SSB source identity is ambiguous.")
+        return matches[0]
+
+    def _prepare_source(
+        self, request: dict[str, Any]
+    ) -> tuple[Path, dict[str, Any], str]:
+        version = request.get("contractVersion")
+        if version == PREPARE_CONTRACT_V0_1:
+            master = self._resolve_master(str(request.get("masterPath", "")))
+            identity = self.source_identity(str(master))
+            expected_digest = request.get("expectedSourceIdentitySHA256")
+            if expected_digest is not None and str(expected_digest).lower() != identity[
+                "sourceIdentitySHA256"
+            ]:
+                raise SSBProtocolError("SSB source identity changed before preparation.")
+            return master, identity, PREPARE_CONTRACT_V0_1
+        if version != PREPARE_CONTRACT_VERSION:
+            raise SSBProtocolError("Unsupported SSB prepare contract version.")
+        locator = request.get("sourceLocator") or {}
+        expected = self._expected_source_identity(locator.get("expectedIdentity"))
+        kind = locator.get("kind")
+        if self.backend_kind == "remote_cuda":
+            if kind != "configured_root_identity" or "masterPath" in locator:
+                raise SSBProtocolError(
+                    "remote_cuda requires configured_root_identity and rejects client paths."
+                )
+            master, identity = self._resolve_configured_root_identity(expected)
+            return master, identity, PREPARE_CONTRACT_VERSION
+        if kind != "local_path":
+            raise SSBProtocolError("local_mps requires an explicit local_path source locator.")
+        master = self._resolve_master(str(locator.get("masterPath", "")))
+        identity = self.source_identity(str(master))
+        if any(identity[key] != expected[key] for key in expected):
+            raise SSBProtocolError(
+                "Local SSB source does not match the complete immutable identity."
+            )
+        return master, identity, PREPARE_CONTRACT_VERSION
 
     def prepare(self, request: dict[str, Any]) -> dict[str, Any]:
         """Prepare one source-bound SSB selection without reconstructing a phase."""
@@ -1616,17 +1713,8 @@ class SSBProtocolService:
             raise SSBProtocolError(
                 "The SSB service implementation revision is not recorded; restart it with an exact revision."
             )
-        if request.get("contractVersion") != PREPARE_CONTRACT_VERSION:
-            raise SSBProtocolError("Unsupported SSB prepare contract version.")
         gpu = self._requested_device(request)
-        master = self._resolve_master(str(request.get("masterPath", "")))
-        identity = self.source_identity(str(master))
-        expected_identity = request.get("expectedSourceIdentitySHA256")
-        if (
-            expected_identity is not None
-            and str(expected_identity).lower() != identity["sourceIdentitySHA256"]
-        ):
-            raise SSBProtocolError("SSB source identity changed before preparation.")
+        master, identity, prepare_version = self._prepare_source(request)
 
         calibration = request.get("calibration") or {}
         calibration_binding = _calibration_binding(
@@ -1702,7 +1790,7 @@ class SSBProtocolService:
             )
 
         descriptor = {
-            "contractVersion": PREPARE_CONTRACT_VERSION,
+            "contractVersion": prepare_version,
             "productStatus": "beta",
             "workflow": "direct_ptychography",
             "algorithmVersion": ALGORITHM_VERSION,
@@ -1738,7 +1826,10 @@ class SSBProtocolService:
             raise SSBProtocolError(
                 "SSB reconstruction requires a server-prepared selection descriptor."
             )
-        if descriptor.get("contractVersion") != PREPARE_CONTRACT_VERSION:
+        if descriptor.get("contractVersion") not in {
+            PREPARE_CONTRACT_V0_1,
+            PREPARE_CONTRACT_VERSION,
+        }:
             raise SSBProtocolError("Unsupported SSB prepared selection version.")
         if descriptor.get("productStatus") != "beta" or descriptor.get("workflow") != (
             "direct_ptychography"
