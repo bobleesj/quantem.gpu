@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import threading
 import time
 from contextlib import nullcontext
@@ -258,6 +259,40 @@ def _service(
     class FakeSession:
         source_dtype = "uint8"
 
+        def fit(
+            self,
+            *,
+            trials,
+            refinement,
+            search_ranges,
+            seed,
+            force,
+            verbose,
+        ):
+            holder.setdefault("sessionFits", []).append(
+                {
+                    "trials": trials,
+                    "refinement": refinement,
+                    "searchRanges": search_ranges,
+                    "seed": seed,
+                    "force": force,
+                    "verbose": verbose,
+                }
+            )
+            gate = holder.get("fitGate")
+            if gate is not None:
+                holder["fitStarted"].set()
+                gate.wait(timeout=5)
+            fitted = {"C10": 73.0, "C12": 14.0, "phi12": 0.47}
+            return SimpleNamespace(
+                phase=np.full((2, 2), 73.0, dtype=np.float32),
+                aberrations=fitted,
+                loss=0.04,
+                timings={"optuna_seconds": 0.2},
+                n_trials=trials,
+                optuna_trials=[{"params": fitted, "loss": 0.04}] * trials,
+            )
+
         def set_rotation(self, value):
             holder.setdefault("rotations", []).append(float(value))
 
@@ -352,6 +387,35 @@ def _interactive_request(opened, *, control_generation=1, job_id=None):
             "scanRotation": 158.9,
         },
         "computeLoss": True,
+    }
+
+
+def _fit_request(opened, *, control_generation=1, job_id=None):
+    session = opened["session"]
+    binding = session["binding"]
+    return {
+        "contractVersion": "live4dstem.ssb.fit/v0.1",
+        "sessionID": session["sessionID"],
+        "jobID": job_id or str(uuid4()),
+        "datasetGeneration": opened["initialResult"]["datasetGeneration"],
+        "controlGeneration": control_generation,
+        "sessionBindingSHA256": binding["sessionBindingSHA256"],
+        "sourceIdentitySHA256": binding["sourceIdentitySHA256"],
+        "selectionSHA256": binding["selectionSHA256"],
+        "backend": binding["backend"],
+        "optimizerTrials": 200,
+        "seed": 42,
+        "objective": "exact_full_active_bf_phase_variance_float32",
+        "searchRanges": {
+            "C10Nanometers": {"minimum": -400.0, "maximum": 400.0},
+            "C12Nanometers": {"minimum": 0.0, "maximum": 100.0},
+            "phi12Radians": {
+                "minimum": -math.pi / 2.0,
+                "maximum": math.pi / 2.0,
+            },
+        },
+        "fixedScanRotationDegrees": 158.8827,
+        "refinement": None,
     }
 
 
@@ -621,6 +685,23 @@ def test_interactive_http_roundtrip_and_shutdown_close(tmp_path):
         )
         assert phase.status_code == 200
         assert phase.headers["X-SHA256"] == hashlib.sha256(phase.content).hexdigest()
+        fit_request = _fit_request(opened, control_generation=2)
+        fit_accepted = client.post(
+            "/api/ssb/interactive/fits", json=fit_request
+        )
+        assert fit_accepted.status_code == 202
+        for _ in range(200):
+            fit_snapshot = client.get(
+                f"/api/ssb/interactive/jobs/{fit_request['jobID']}",
+                params={"generation": fit_request["datasetGeneration"]},
+            ).json()
+            if fit_snapshot["state"] == "completed":
+                break
+            time.sleep(0.005)
+        assert fit_snapshot["state"] == "completed"
+        assert fit_snapshot["result"]["initialAberrationFit"][
+            "persistedAsDatasetCalibration"
+        ] is False
 
     assert holder["sessionCloses"] == 1
 
@@ -644,6 +725,155 @@ def test_interactive_warm_same_controls_has_exact_phase_and_loss_parity(tmp_path
     assert completed["result"]["timings"]["sessionOpenSeconds"] is None
     assert completed["result"]["timings"]["sourceReadSeconds"] is None
     assert completed["result"]["timings"]["warmReconstructSeconds"] is not None
+
+
+def test_initial_fit_uses_exact_common_200_trial_contract_and_slider_seed(tmp_path):
+    service, holder = _service(tmp_path)
+    identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
+    opened = _open_interactive(service, identity)
+    request = _fit_request(opened)
+
+    accepted = service.submit_interactive_fit(request)
+    completed = _wait_interactive(service, request)
+    payload, descriptor = service.interactive_payload(
+        request["jobID"], request["datasetGeneration"]
+    )
+
+    assert accepted["state"] == "accepted"
+    assert holder["sessionOpens"] == [{"gpu": 0, "backend": "remote_cuda"}]
+    assert holder["sessionFits"] == [
+        {
+            "trials": 200,
+            "refinement": None,
+            "searchRanges": {
+                "C10_nm": (-400.0, 400.0),
+                "C12_nm": (0.0, 100.0),
+                "phi12_deg": (-90.0, 90.0),
+            },
+            "seed": 42,
+            "force": True,
+            "verbose": False,
+        }
+    ]
+    assert completed["state"] == "completed"
+    evidence = completed["result"]["initialAberrationFit"]
+    assert evidence["specification"] == accepted["fitSpecification"]
+    assert evidence["optimizerTrialsCompleted"] == 200
+    assert evidence["recordedTrialHistoryCount"] == 200
+    assert evidence["totalObjectiveEvaluationCount"] is None
+    assert evidence["fittedControls"] == {
+        "C10": 73.0,
+        "C12": 14.0,
+        "phi12": 0.47,
+        "scanRotation": 158.8827,
+    }
+    assert evidence["sliderSeed"] == evidence["fittedControls"]
+    assert evidence["operatorAcceptanceRequired"] is True
+    assert evidence["persistedAsDatasetCalibration"] is False
+    assert completed["result"]["requestedBackend"] == request["backend"]
+    assert completed["result"]["executedDevice"]["backend"] == "cuda"
+    assert descriptor["sha256"] == hashlib.sha256(payload).hexdigest()
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda request: request.update(optimizerTrials=199), "exactly 200"),
+        (
+            lambda request: request["searchRanges"].update(
+                C21Nanometers={"minimum": -1.0, "maximum": 1.0}
+            ),
+            "higher-order",
+        ),
+        (
+            lambda request: request.update(fixedScanRotationDegrees=159.0),
+            "stay fixed",
+        ),
+        (
+            lambda request: request.update(
+                backend={"kind": "local_mps"}
+            ),
+            "backend or device",
+        ),
+    ],
+)
+def test_initial_fit_rejects_budget_higher_order_rotation_and_fallback(
+    tmp_path, mutation, message
+):
+    service, holder = _service(tmp_path)
+    identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
+    opened = _open_interactive(service, identity)
+    request = _fit_request(opened)
+    mutation(request)
+
+    with pytest.raises(SSBProtocolError, match=message):
+        service.submit_interactive_fit(request)
+    assert holder.get("sessionFits") is None
+
+
+def test_initial_fit_latest_wins_and_stage_boundary_cancel(tmp_path):
+    service, holder = _service(tmp_path)
+    identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
+    opened = _open_interactive(service, identity)
+    holder["fitGate"] = threading.Event()
+    holder["fitStarted"] = threading.Event()
+    first = _fit_request(opened, control_generation=1)
+    second = _fit_request(opened, control_generation=2)
+
+    service.submit_interactive_fit(first)
+    assert holder["fitStarted"].wait(timeout=2)
+    service.submit_interactive_fit(second)
+    service.cancel_interactive_job(second["jobID"], second["datasetGeneration"])
+    holder["fitGate"].set()
+
+    first_done = _wait_interactive(service, first)
+    second_done = _wait_interactive(service, second)
+    assert first_done["state"] == "superseded"
+    assert second_done["state"] == "cancelled"
+    assert len(holder["sessionFits"]) == 1
+    with pytest.raises(SSBPayloadUnavailable):
+        service.interactive_payload(first["jobID"], first["datasetGeneration"])
+    with pytest.raises(SSBPayloadUnavailable):
+        service.interactive_payload(second["jobID"], second["datasetGeneration"])
+
+
+def test_initial_fit_rejects_stale_dataset_generation(tmp_path):
+    service, holder = _service(tmp_path)
+    identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
+    opened = _open_interactive(service, identity)
+    request = _fit_request(opened)
+    request["datasetGeneration"] += 1
+
+    with pytest.raises(SSBProtocolError, match="dataset generation"):
+        service.submit_interactive_fit(request)
+    assert holder.get("sessionFits") is None
+
+
+def test_initial_fit_capability_is_backend_honest() -> None:
+    cuda = SSBProtocolService.advertised_capability(
+        backend_kind="remote_cuda",
+        implementation_revision="revision",
+        device_name="CUDA Device",
+        gpu_index=0,
+    )["initialAberrationFit"]
+    mps = SSBProtocolService.advertised_capability(
+        backend_kind="local_mps",
+        implementation_revision="revision",
+        device_name="Apple GPU",
+    )["initialAberrationFit"]
+
+    assert cuda["optimizerTrials"] == mps["optimizerTrials"] == 200
+    assert cuda["objective"] == mps["objective"]
+    assert cuda["searchRanges"] == mps["searchRanges"]
+    assert cuda["scanRotation"] == mps["scanRotation"] == "fixed_to_retained_session"
+    assert cuda["candidateBatchSize"] == 4
+    assert mps["candidateBatchSize"] == 2
+    assert cuda["totalObjectiveEvaluations"] == "not_exposed_by_public_backend"
+    assert mps["totalObjectiveEvaluations"] == "not_exposed_by_public_backend"
+    assert cuda["retainedSessionBehavior"] == "reuses_prepared_accelerator"
+    assert mps["retainedSessionBehavior"] == "reprepares_from_retained_source_object"
+    assert cuda["sourceReopen"] is mps["sourceReopen"] is False
+    assert cuda["implicitFallback"] is mps["implicitFallback"] is False
 
 
 @pytest.mark.parametrize(

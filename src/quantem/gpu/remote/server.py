@@ -1216,6 +1216,13 @@ def create_app(
         except (SSBProtocolError, KeyError, TypeError, ValueError) as exc:
             raise HTTPException(409, str(exc)) from exc
 
+    @app.post("/api/ssb/interactive/fits", status_code=202)
+    async def ssb_submit_interactive_fit(request: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return ssb.submit_interactive_fit(request)
+        except (SSBProtocolError, KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+
     @app.get("/api/ssb/interactive/jobs/{job_id}")
     async def ssb_interactive_job(job_id: str, generation: int) -> dict[str, Any]:
         try:

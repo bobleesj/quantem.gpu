@@ -21,6 +21,7 @@ ALGORITHM_VERSION = "quantem.gpu.SSB/v0.1"
 JOBS_CONTRACT_VERSION = "live4dstem.ssb.jobs/v0.1"
 PREPARE_CONTRACT_VERSION = "live4dstem.ssb.prepare/v0.1"
 INTERACTIVE_CONTRACT_VERSION = "live4dstem.ssb.interactive/v0.1"
+FIT_CONTRACT_VERSION = "live4dstem.ssb.fit/v0.1"
 _TERMINAL_JOB_STATES = {
     "completed",
     "cancelled",
@@ -406,6 +407,38 @@ class SSBProtocolService:
                 "reconnectScope": "same_server_process",
                 "serverRestartResume": False,
             },
+            "initialAberrationFit": {
+                "supported": True,
+                "contractVersion": FIT_CONTRACT_VERSION,
+                "endpoint": "/api/ssb/interactive/fits",
+                "optimizer": "optuna_tpe",
+                "optimizerTrials": 200,
+                "objective": "exact_full_active_bf_phase_variance_float32",
+                "searchRanges": {
+                    "C10Nanometers": {"minimum": -400.0, "maximum": 400.0},
+                    "C12Nanometers": {"minimum": 0.0, "maximum": 100.0},
+                    "phi12Radians": {
+                        "minimum": -math.pi / 2.0,
+                        "maximum": math.pi / 2.0,
+                    },
+                },
+                "seedRequired": True,
+                "scanRotation": "fixed_to_retained_session",
+                "refinement": None,
+                "higherOrderAberrations": False,
+                "candidateBatchSize": 4 if backend_kind == "remote_cuda" else 2,
+                "totalObjectiveEvaluations": "not_exposed_by_public_backend",
+                "retainedSessionBehavior": (
+                    "reuses_prepared_accelerator"
+                    if backend_kind == "remote_cuda"
+                    else "reprepares_from_retained_source_object"
+                ),
+                "sourceReopen": False,
+                "resultPersistence": "operator_acceptance_required",
+                "cancellationMode": "stage_boundary",
+                "reconnectScope": "same_server_process",
+                "implicitFallback": False,
+            },
             "jobLifecycle": {
                 "contractVersion": JOBS_CONTRACT_VERSION,
                 "cancellationMode": "stage_boundary",
@@ -656,6 +689,158 @@ class SSBProtocolService:
             "phi12": float(values["phi12Radians"]["value"]),
             "scanRotation": float(values["scanRotationDegrees"]["value"]),
         }
+
+    @staticmethod
+    def _fit_specification(
+        request: dict[str, Any], retained: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Validate one deterministic, fixed-rotation 200-trial fit request."""
+
+        if request.get("contractVersion") != FIT_CONTRACT_VERSION:
+            raise SSBProtocolError("Unsupported initial SSB fit contract.")
+        if int(request.get("optimizerTrials", 0)) != 200:
+            raise SSBProtocolError("Initial SSB fit requires exactly 200 optimizer trials.")
+        if request.get("objective") != "exact_full_active_bf_phase_variance_float32":
+            raise SSBProtocolError("Initial SSB fit requires the exact full-active-BF objective.")
+        if request.get("refinement") is not None:
+            raise SSBProtocolError(
+                "Initial SSB fit refinement must be null so the budget remains 200 trials."
+            )
+        seed = int(request["seed"])
+        ranges = request.get("searchRanges") or {}
+        expected = {"C10Nanometers", "C12Nanometers", "phi12Radians"}
+        if set(ranges) != expected:
+            raise SSBProtocolError(
+                "Initial SSB fit ranges must contain exactly C10, C12, and phi12; "
+                "higher-order aberrations are unavailable."
+            )
+        normalized: dict[str, dict[str, float]] = {}
+        for name in sorted(expected):
+            value = ranges[name]
+            if set(value) != {"minimum", "maximum"}:
+                raise SSBProtocolError(f"{name} requires minimum and maximum.")
+            minimum = float(value["minimum"])
+            maximum = float(value["maximum"])
+            if not math.isfinite(minimum) or not math.isfinite(maximum) or minimum >= maximum:
+                raise SSBProtocolError(f"{name} requires a finite increasing range.")
+            normalized[name] = {"minimum": minimum, "maximum": maximum}
+        fixed_rotation = float(request["fixedScanRotationDegrees"])
+        session_rotation = SSBProtocolService._initial_controls(
+            retained["baseRequest"]
+        )["scanRotation"]
+        if not math.isclose(fixed_rotation, session_rotation, rel_tol=0.0, abs_tol=1e-12):
+            raise SSBProtocolError(
+                "Initial SSB fit scan rotation must stay fixed to the retained session."
+            )
+        return {
+            "optimizer": "optuna_tpe",
+            "optimizerTrials": 200,
+            "seed": seed,
+            "objective": "exact_full_active_bf_phase_variance_float32",
+            "searchRanges": normalized,
+            "fixedScanRotationDegrees": fixed_rotation,
+            "refinement": None,
+        }
+
+    def _session_fit_outcome(
+        self,
+        session: Any,
+        gpu: int | None,
+        request: dict[str, Any],
+        specification: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Run one public backend fit without reopening the retained source."""
+
+        ranges = specification["searchRanges"]
+        backend_ranges = {
+            "C10_nm": (
+                ranges["C10Nanometers"]["minimum"],
+                ranges["C10Nanometers"]["maximum"],
+            ),
+            "C12_nm": (
+                ranges["C12Nanometers"]["minimum"],
+                ranges["C12Nanometers"]["maximum"],
+            ),
+            "phi12_deg": tuple(
+                math.degrees(ranges["phi12Radians"][bound])
+                for bound in ("minimum", "maximum")
+            ),
+        }
+        with self._session_device_context(gpu):
+            started = time.perf_counter()
+            result = session.fit(
+                trials=200,
+                refinement=None,
+                search_ranges=backend_ranges,
+                seed=specification["seed"],
+                force=True,
+                verbose=False,
+            )
+            fit_seconds = time.perf_counter() - started
+            state = session.browser_state()
+            encode_started = time.perf_counter()
+            phase_value = result.phase
+            transfer = getattr(phase_value, "get", None)
+            phase = np.asarray(
+                transfer() if callable(transfer) else phase_value,
+                dtype=np.float32,
+            )
+            encode_seconds = time.perf_counter() - encode_started
+        fitted = {
+            "C10": float(result.aberrations["C10"]),
+            "C12": float(result.aberrations["C12"]),
+            "phi12": float(result.aberrations["phi12"]),
+            "scanRotation": specification["fixedScanRotationDegrees"],
+        }
+        trial_history = list(result.optuna_trials or ())
+        fit_evidence = {
+            "specification": specification,
+            "fittedControls": fitted,
+            "sliderSeed": fitted,
+            "loss": None if result.loss is None else float(result.loss),
+            "optimizerTrialsCompleted": int(result.n_trials),
+            "recordedTrialHistoryCount": len(trial_history),
+            "totalObjectiveEvaluationCount": None,
+            "totalObjectiveEvaluationCountReason": (
+                "Public CUDA and MPS fit APIs perform backend-specific baseline, "
+                "warm-up, and final-loss evaluations outside the 200 Optuna trials."
+            ),
+            "candidateBatchSize": 4 if self.backend_kind == "remote_cuda" else 2,
+            "operatorAcceptanceRequired": True,
+            "persistedAsDatasetCalibration": False,
+            "backendTimings": dict(result.timings or {}),
+        }
+        outcome = {
+            "phase": phase,
+            "logicalBrightFieldCount": state.num_bf,
+            "activeBrightFieldCount": state.active_num_bf,
+            "detectorSamplingMilliradians": tuple(
+                float(value) * 1e3 for value in state.angular_sampling_rad
+            ),
+            "precision": _executed_precision(
+                request, working_dtype=session.source_dtype
+            ),
+            "loss": result.loss,
+            "driverVersion": None,
+            "runtimeVersion": None,
+            "timings": {
+                "sourceReadSeconds": None,
+                "sourceDecodeSeconds": None,
+                "gQKConstructionSeconds": None,
+                "kernelSeconds": None,
+                "firstReconstructSeconds": None,
+                "warmReconstructSeconds": None,
+                "resultEncodeSeconds": encode_seconds,
+                "sshRequestToFirstByteSeconds": None,
+                "transferSeconds": None,
+                "clientDecodeSeconds": None,
+                "paintSeconds": None,
+                "inputToPaintSeconds": None,
+                "sessionOpenSeconds": None,
+                "initialAberrationFitSeconds": fit_seconds,
+            },
+        }
+        return outcome, fit_evidence
 
     def _session_outcome(
         self,
@@ -1017,6 +1202,136 @@ class SSBProtocolService:
                         result["interactiveSession"] = self._session_snapshot(retained)
                         result["interactiveControls"] = job["controls"]
                         result["controlGeneration"] = job["controlGeneration"]
+                        self._refresh_result_provenance(result)
+                        self._interactive_payloads[key] = (payload, descriptor)
+                        job["result"] = result
+                        self._advance_locked(job, "completed")
+        except Exception as exc:  # noqa: BLE001
+            with self._lock:
+                job = self._interactive_jobs[key]
+                if job["cancelRequested"]:
+                    self._advance_locked(job, "cancelled")
+                else:
+                    job["error"] = {"message": str(exc)}
+                    self._advance_locked(job, "failed")
+
+    def submit_interactive_fit(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Submit a fixed-rotation initial fit against one retained session."""
+
+        self._expire_interactive_sessions()
+        session_id = str(UUID(str(request["sessionID"])))
+        job_id = str(UUID(str(request["jobID"])))
+        generation = int(request["datasetGeneration"])
+        control_generation = int(request["controlGeneration"])
+        key = (job_id, generation)
+        with self._lock:
+            retained = self._retained_sessions.get(session_id)
+            if retained is None:
+                raise SSBProtocolError("The retained SSB session is missing or expired.")
+            if request.get("sessionBindingSHA256") != retained["binding"][
+                "sessionBindingSHA256"
+            ]:
+                raise SSBProtocolError("The initial SSB fit session binding changed.")
+            if request.get("sourceIdentitySHA256") != retained["binding"][
+                "sourceIdentitySHA256"
+            ] or request.get("selectionSHA256") != retained["binding"][
+                "selectionSHA256"
+            ]:
+                raise SSBProtocolError("The initial SSB fit source or selection changed.")
+            if request.get("backend") != retained["backend"]:
+                raise SSBProtocolError("The initial SSB fit backend or device changed.")
+            if generation != int(retained["baseRequest"]["datasetGeneration"]):
+                raise SSBProtocolError("The initial SSB fit dataset generation changed.")
+            if control_generation <= retained["latestControlGeneration"]:
+                raise SSBProtocolError(
+                    "Initial SSB fit controlGeneration must increase monotonically."
+                )
+            if key in self._interactive_jobs:
+                raise SSBProtocolError("The initial SSB fit job ID is already in use.")
+            specification = self._fit_specification(request, retained)
+            retained["latestControlGeneration"] = control_generation
+            retained["expiresAt"] = self._clock() + self._session_lease_seconds
+            now = self._clock()
+            job = {
+                "contractVersion": FIT_CONTRACT_VERSION,
+                "operation": "initial_aberration_fit",
+                "sessionID": session_id,
+                "jobID": job_id,
+                "datasetGeneration": generation,
+                "controlGeneration": control_generation,
+                "sessionBindingSHA256": request["sessionBindingSHA256"],
+                "sourceIdentitySHA256": request["sourceIdentitySHA256"],
+                "selectionSHA256": request["selectionSHA256"],
+                "requestedBackend": request["backend"],
+                "fitSpecification": specification,
+                "sequence": 0,
+                "state": "accepted",
+                "progress": {"stage": "accepted", "determinate": False},
+                "acceptedAt": now,
+                "updatedAt": now,
+                "result": None,
+                "error": None,
+                "cancelRequested": False,
+            }
+            self._interactive_jobs[key] = job
+            snapshot = self._public_snapshot(job)
+        threading.Thread(
+            target=self._run_interactive_fit,
+            args=(key,),
+            name=f"ssb-fit-{job_id}",
+            daemon=True,
+        ).start()
+        return snapshot
+
+    def _run_interactive_fit(self, key: tuple[str, int]) -> None:
+        """Execute one serialized, stage-boundary-cancellable retained fit."""
+
+        try:
+            with self._lock:
+                job = self._interactive_jobs[key]
+                session_id = job["sessionID"]
+                retained = self._retained_sessions.get(session_id)
+                if retained is None:
+                    raise SSBProtocolError("The retained SSB session expired.")
+                gpu = retained["gpu"]
+            with self._device_lock(gpu):
+                with self._lock:
+                    job = self._interactive_jobs[key]
+                    retained = self._retained_sessions.get(session_id)
+                    if retained is None or job["cancelRequested"]:
+                        self._advance_locked(job, "cancelled")
+                        return
+                    if job["controlGeneration"] != retained["latestControlGeneration"]:
+                        self._advance_locked(job, "superseded")
+                        return
+                    self._advance_locked(job, "fitting_initial_aberrations")
+                    base_request = json.loads(json.dumps(retained["baseRequest"]))
+                    session = retained["session"]
+                    specification = job["fitSpecification"]
+                base_request["jobID"] = key[0]
+                outcome, fit_evidence = self._session_fit_outcome(
+                    session, gpu, base_request, specification
+                )
+                payload_path = (
+                    f"/api/ssb/interactive/jobs/{key[0]}/phase"
+                    f"?generation={key[1]}"
+                )
+                payload, descriptor, result = self._validated_result(
+                    outcome, gpu, base_request, payload_path=payload_path
+                )
+                with self._lock:
+                    job = self._interactive_jobs[key]
+                    retained = self._retained_sessions.get(session_id)
+                    if job["cancelRequested"]:
+                        self._advance_locked(job, "cancelled")
+                    elif retained is None:
+                        self._advance_locked(job, "expired")
+                    elif job["controlGeneration"] != retained["latestControlGeneration"]:
+                        self._advance_locked(job, "superseded")
+                    else:
+                        result["interactiveSession"] = self._session_snapshot(retained)
+                        result["controlGeneration"] = job["controlGeneration"]
+                        result["initialAberrationFit"] = fit_evidence
                         self._refresh_result_provenance(result)
                         self._interactive_payloads[key] = (payload, descriptor)
                         job["result"] = result
