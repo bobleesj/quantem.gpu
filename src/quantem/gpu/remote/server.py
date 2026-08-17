@@ -1202,6 +1202,13 @@ def create_app(
         except (SSBProtocolError, ValueError) as exc:
             raise HTTPException(404, str(exc)) from exc
 
+    @app.get("/api/ssb/interactive/sessions/{session_id}")
+    async def ssb_interactive_session(session_id: str) -> dict[str, Any]:
+        try:
+            return ssb.interactive_session_snapshot(session_id)
+        except (SSBProtocolError, ValueError) as exc:
+            raise HTTPException(404, str(exc)) from exc
+
     @app.post("/api/ssb/interactive/jobs", status_code=202)
     async def ssb_submit_interactive(request: dict[str, Any]) -> dict[str, Any]:
         try:

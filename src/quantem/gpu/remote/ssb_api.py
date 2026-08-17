@@ -12,7 +12,7 @@ from contextlib import nullcontext
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import numpy as np
 
@@ -718,14 +718,25 @@ class SSBProtocolService:
 
         if request.get("contractVersion") != INTERACTIVE_CONTRACT_VERSION:
             raise SSBProtocolError("Unsupported interactive SSB session contract.")
+        session_id = str(UUID(str(request["sessionID"])))
         initial = json.loads(json.dumps(request.get("initialRequest") or {}))
         source, gpu = self._validate_request(initial)
         binding = self._interactive_binding(initial, gpu)
-        session_id = str(uuid4())
         device_key = (self.backend_kind, gpu)
         self._expire_interactive_sessions()
         with self._device_lock(gpu):
             with self._lock:
+                existing = self._retained_sessions.get(session_id)
+                if existing is not None:
+                    if existing["binding"] != binding:
+                        raise SSBProtocolError(
+                            "The retained SSB session ID belongs to a different binding."
+                        )
+                    return {
+                        "contractVersion": INTERACTIVE_CONTRACT_VERSION,
+                        "session": self._session_snapshot(existing),
+                        "initialResult": existing["initialResult"],
+                    }
                 if device_key in self._device_sessions:
                     raise SSBProtocolError(
                         "The selected device already has a retained SSB session."
@@ -764,11 +775,13 @@ class SSBProtocolService:
                     "latestControlGeneration": 0,
                     "createdAt": now,
                     "expiresAt": now + self._session_lease_seconds,
+                    "initialResult": None,
                 }
                 key = (job_id, generation)
                 result["interactiveSession"] = self._session_snapshot(retained)
                 result["interactiveControls"] = controls
                 self._refresh_result_provenance(result)
+                retained["initialResult"] = result
                 initial_job = {
                     "contractVersion": INTERACTIVE_CONTRACT_VERSION,
                     "sessionID": session_id,
@@ -808,6 +821,17 @@ class SSBProtocolService:
                     with self._session_device_context(gpu):
                         context.__exit__(None, None, None)
                 raise
+
+    def interactive_session_snapshot(self, session_id: str) -> dict[str, Any]:
+        """Return one same-process retained-session snapshot for reconnect."""
+
+        self._expire_interactive_sessions()
+        session_id = str(UUID(session_id))
+        with self._lock:
+            retained = self._retained_sessions.get(session_id)
+            if retained is None:
+                raise SSBProtocolError("No retained SSB session exists for this ID.")
+            return self._session_snapshot(retained)
 
     @staticmethod
     def _session_snapshot(retained: dict[str, Any]) -> dict[str, Any]:

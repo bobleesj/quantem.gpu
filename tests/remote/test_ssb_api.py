@@ -326,6 +326,7 @@ def _open_interactive(service, identity):
     return service.open_interactive_session(
         {
             "contractVersion": INTERACTIVE_CONTRACT_VERSION,
+            "sessionID": str(uuid4()),
             "initialRequest": initial,
         }
     )
@@ -583,15 +584,25 @@ def test_interactive_http_roundtrip_and_shutdown_close(tmp_path):
     app = create_app(tmp_path, service=browse, ssb_service=service)
 
     with TestClient(app) as client:
+        open_request = {
+            "contractVersion": INTERACTIVE_CONTRACT_VERSION,
+            "sessionID": str(uuid4()),
+            "initialRequest": initial,
+        }
         opened_response = client.post(
-            "/api/ssb/interactive/sessions",
-            json={
-                "contractVersion": INTERACTIVE_CONTRACT_VERSION,
-                "initialRequest": initial,
-            },
+            "/api/ssb/interactive/sessions", json=open_request
         )
         assert opened_response.status_code == 201
         opened = opened_response.json()
+        repeated = client.post("/api/ssb/interactive/sessions", json=open_request)
+        assert repeated.status_code == 201
+        assert repeated.json() == opened
+        assert len(holder["sessionOpens"]) == 1
+        reconnected = client.get(
+            f"/api/ssb/interactive/sessions/{opened['session']['sessionID']}"
+        )
+        assert reconnected.status_code == 200
+        assert reconnected.json() == opened["session"]
         request = _interactive_request(opened)
         submitted = client.post("/api/ssb/interactive/jobs", json=request)
         assert submitted.status_code == 202
