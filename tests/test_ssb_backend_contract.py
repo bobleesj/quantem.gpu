@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -95,32 +96,130 @@ def test_public_ssb_has_one_backend_neutral_signature() -> None:
 
 
 def test_mps_reconstruct_honors_compute_loss(monkeypatch) -> None:
-    """MPS must forward the public loss request to its reconstruction engine."""
+    """MPS must reuse retained evidence and compute loss only when requested."""
     from quantem.gpu.ssb.compute.mps import backend as mps_backend
 
     requested = []
+    prepared = object()
 
-    def reconstruct_mps(*args, **kwargs):
-        del args
+    def object_wave(candidate, **_kwargs):
+        assert candidate is prepared
+        return np.ones((2, 2), dtype=np.complex64)
+
+    def reconstruct(candidate, **kwargs):
+        assert candidate is prepared
         requested.append(kwargs["compute_loss"])
-        return "result"
+        return None, 0.25, np.zeros((2, 2), dtype=np.float32)
 
-    monkeypatch.setattr(mps_backend, "reconstruct_mps", reconstruct_mps)
+    class FakeMlx:
+        @staticmethod
+        def clear_cache():
+            requested.append("clear")
+
+    monkeypatch.setattr(mps_backend, "_object_fourier_sum_dynamic", object_wave)
+    monkeypatch.setattr(mps_backend, "_reconstruct_prepared", reconstruct)
+    monkeypatch.setattr(mps_backend, "_require_mlx", lambda: FakeMlx)
     backend = mps_backend.MpsSSBBackend.__new__(mps_backend.MpsSSBBackend)
-    backend._source_data = np.zeros((1, 1, 1, 1), dtype=np.uint8)
+    backend._prepared = prepared
+    backend._chunk_bf = 4
+    backend._phase_chunk_bf = 2
     backend._voltage_kV = 300.0
     backend._semiangle_mrad = 30.0
     backend._scan_sampling = (1.0, 1.0)
-    backend._det_sampling = None
     backend._rotation_angle_deg = 0.0
-    backend._bf_intensity_threshold = 0.0
-    backend._bf_center = None
-    backend._bf_radius = None
+    backend._selection = SimpleNamespace(
+        size=3,
+        center_row_col=(1.0, 1.0),
+        radius_px=1.0,
+        detected_radius_px=1.0,
+    )
 
     aberrations = {"C10": 0.0, "C12": 0.0, "phi12": 0.0}
-    assert backend.reconstruct_result(aberrations, compute_loss=False) == "result"
-    assert backend.reconstruct_result(aberrations, compute_loss=True) == "result"
-    assert requested == [False, True]
+    without_loss = backend.reconstruct_result(aberrations, compute_loss=False)
+    with_loss = backend.reconstruct_result(aberrations, compute_loss=True)
+    assert without_loss.loss is None
+    assert with_loss.loss == 0.25
+    assert requested == ["clear", True, "clear"]
+
+
+def test_mps_rotation_retargets_geometry_without_repreparing_source(monkeypatch) -> None:
+    """Changed rotation must retain the existing source FFT evidence object."""
+    from quantem.gpu.ssb.compute.mps import backend as mps_backend
+
+    prepared = object()
+    calls = []
+    monkeypatch.setattr(
+        mps_backend,
+        "_retarget_prepared_rotation",
+        lambda candidate, **kwargs: calls.append((candidate, kwargs)),
+    )
+
+    class FakeMlx:
+        @staticmethod
+        def clear_cache():
+            calls.append("clear")
+
+    monkeypatch.setattr(mps_backend, "_require_mlx", lambda: FakeMlx)
+    backend = mps_backend.MpsSSBBackend.__new__(mps_backend.MpsSSBBackend)
+    backend._prepared = prepared
+    backend._rotation_angle_deg = 0.0
+    backend._selection = object()
+    backend._fit_preview_phase = np.ones((1,), dtype=np.float32)
+    backend._fit_preview_loss = 1.0
+    backend._fit_preview_aberrations = {"C10": 1.0}
+
+    backend.cache_rotation(np.deg2rad(3.0))
+
+    assert backend._prepared is prepared
+    assert calls[0][0] is prepared
+    assert calls[0][1]["selection"] is backend._selection
+    assert np.isclose(calls[0][1]["rotation_angle_deg"], 3.0)
+    assert calls[1] == "clear"
+    assert backend._fit_preview_phase is None
+
+
+def test_mps_rotation_geometry_keeps_exact_source_fft_identity() -> None:
+    """Rotation changes k geometry while retaining the exact prepared G(q,k)."""
+    from quantem.gpu.ssb.compute.mps.engine import _retarget_prepared_rotation
+
+    class FakeMlx:
+        float32 = np.float32
+
+        array = staticmethod(np.asarray)
+        sqrt = staticmethod(np.sqrt)
+        where = staticmethod(np.where)
+        clip = staticmethod(np.clip)
+
+        @staticmethod
+        def eval(*_values):
+            pass
+
+    source_fft = object()
+    prepared = SimpleNamespace(
+        mx=FakeMlx,
+        g_qk=source_fft,
+        qx=np.zeros((1, 2, 1), dtype=np.float32),
+        qy=np.zeros((1, 1, 2), dtype=np.float32),
+        wavelength=1.0,
+        semiangle_rad=1.0,
+        ang_y_rad=1.0,
+        ang_x_rad=1.0,
+        alpha_k2=None,
+        bf_storage_indices_np=None,
+    )
+    selection = SimpleNamespace(
+        rows=np.asarray([2], dtype=np.int32),
+        cols=np.asarray([1], dtype=np.int32),
+        center_row_col=(1.0, 1.0),
+    )
+
+    _retarget_prepared_rotation(
+        prepared, selection=selection, rotation_angle_deg=90.0
+    )
+
+    assert prepared.g_qk is source_fft
+    np.testing.assert_allclose(prepared.kx_np, [0.0], atol=1e-7)
+    np.testing.assert_allclose(prepared.ky_np, [1.0], atol=1e-7)
 
 
 def test_default_aberrations_remain_distinct_from_an_explicit_zero_start(
@@ -244,7 +343,7 @@ def test_backend_specific_fit_entry_points_are_not_public() -> None:
 def test_public_ssb_exports_are_backend_neutral() -> None:
     """C6: root SSB exports contain no transport or implementation types."""
 
-    import quantem.gpu.ssb as ssb
+    from quantem.gpu import ssb
 
     assert set(ssb.__all__) == {
         "SSB",

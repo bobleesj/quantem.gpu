@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
+import os
+import resource
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -15,6 +19,8 @@ from typing import Any
 from uuid import UUID
 
 import numpy as np
+
+logger = logging.getLogger("quantem.gpu.remote.ssb")
 
 CONTRACT_VERSION = "live4dstem.ssb/v0.2"
 ALGORITHM_VERSION = "quantem.gpu.SSB/v0.1"
@@ -307,6 +313,7 @@ class SSBProtocolService:
         session_opener: Callable[[Path, int | None, dict[str, Any]], tuple[Any, Any]]
         | None = None,
         session_device_context: Callable[[int | None], Any] | None = None,
+        runtime_diagnostics: Callable[[], dict[str, Any]] | None = None,
         clock: Callable[[], float] = time.time,
         session_lease_seconds: float = 300.0,
         backend_kind: str = "remote_cuda",
@@ -340,6 +347,7 @@ class SSBProtocolService:
             if backend_kind == "remote_cuda"
             else lambda _gpu: nullcontext()
         )
+        self._runtime_diagnostics = runtime_diagnostics or self._default_runtime_diagnostics
         self._clock = clock
         self._session_lease_seconds = float(session_lease_seconds)
         if self._session_lease_seconds <= 0.0:
@@ -663,6 +671,36 @@ class SSBProtocolService:
     @staticmethod
     def _public_snapshot(job: dict[str, Any]) -> dict[str, Any]:
         return {key: value for key, value in job.items() if key != "cancelRequested"}
+
+    def _default_runtime_diagnostics(self) -> dict[str, Any]:
+        """Return bounded process/allocator evidence without synchronizing compute."""
+
+        peak_rss = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        if sys.platform != "darwin":
+            peak_rss *= 1024
+        diagnostics: dict[str, Any] = {
+            "processID": os.getpid(),
+            "processPeakRSSBytes": peak_rss,
+            "mlxActiveBytes": None,
+            "mlxPeakBytes": None,
+            "mlxCacheBytes": None,
+        }
+        if self.backend_kind != "local_mps":
+            return diagnostics
+        try:
+            import mlx.core as mx
+
+            for field, name in (
+                ("mlxActiveBytes", "get_active_memory"),
+                ("mlxPeakBytes", "get_peak_memory"),
+                ("mlxCacheBytes", "get_cache_memory"),
+            ):
+                getter = getattr(mx, name, None)
+                if callable(getter):
+                    diagnostics[field] = int(getter())
+        except Exception:
+            logger.exception("Could not sample retained MPS allocator state")
+        return diagnostics
 
     def _interactive_binding(
         self, request: dict[str, Any], gpu: int | None
@@ -997,6 +1035,7 @@ class SSBProtocolService:
                 key = (job_id, generation)
                 result["interactiveSession"] = self._session_snapshot(retained)
                 result["interactiveControls"] = controls
+                result["runtimeMemory"] = self._runtime_diagnostics()
                 self._refresh_result_provenance(result)
                 retained["initialResult"] = result
                 initial_job = {
@@ -1234,11 +1273,17 @@ class SSBProtocolService:
                         result["interactiveSession"] = self._session_snapshot(retained)
                         result["interactiveControls"] = job["controls"]
                         result["controlGeneration"] = job["controlGeneration"]
+                        result["runtimeMemory"] = self._runtime_diagnostics()
                         self._refresh_result_provenance(result)
                         self._interactive_payloads[key] = (payload, descriptor)
                         job["result"] = result
                         self._advance_locked(job, "completed")
-        except Exception as exc:  # noqa: BLE001
+        except BaseException as exc:
+            logger.exception(
+                "Retained SSB reconstruction failed for job=%s generation=%s",
+                key[0],
+                key[1],
+            )
             with self._lock:
                 job = self._interactive_jobs[key]
                 if job["cancelRequested"]:
@@ -1364,11 +1409,17 @@ class SSBProtocolService:
                         result["interactiveSession"] = self._session_snapshot(retained)
                         result["controlGeneration"] = job["controlGeneration"]
                         result["initialAberrationFit"] = fit_evidence
+                        result["runtimeMemory"] = self._runtime_diagnostics()
                         self._refresh_result_provenance(result)
                         self._interactive_payloads[key] = (payload, descriptor)
                         job["result"] = result
                         self._advance_locked(job, "completed")
-        except Exception as exc:  # noqa: BLE001
+        except BaseException as exc:
+            logger.exception(
+                "Retained SSB fit failed for job=%s generation=%s",
+                key[0],
+                key[1],
+            )
             with self._lock:
                 job = self._interactive_jobs[key]
                 if job["cancelRequested"]:

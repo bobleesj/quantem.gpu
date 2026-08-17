@@ -313,6 +313,8 @@ def _service(
             if gate is not None and len(holder["sessionReconstructs"]) > 1:
                 holder["warmStarted"].set()
                 gate.wait(timeout=5)
+            if holder.get("warmBaseException") and len(holder["sessionReconstructs"]) > 1:
+                raise SystemExit("simulated worker termination")
             value = float(aberrations["C10"])
             return SimpleNamespace(
                 phase=np.full((2, 2), value, dtype=np.float32),
@@ -351,6 +353,13 @@ def _service(
         preparer=preparer,
         session_opener=session_opener,
         session_device_context=lambda _gpu: nullcontext(),
+        runtime_diagnostics=lambda: {
+            "processID": 123,
+            "processPeakRSSBytes": 456,
+            "mlxActiveBytes": None,
+            "mlxPeakBytes": None,
+            "mlxCacheBytes": None,
+        },
         source_inspector=_inspection,
         clock=clock,
         session_lease_seconds=session_lease_seconds,
@@ -632,6 +641,8 @@ def test_interactive_session_reuses_one_open_and_publishes_bound_result(tmp_path
     assert result["executedPrecision"] == opened["initialResult"]["executedPrecision"]
     assert descriptor["sha256"] == hashlib.sha256(payload).hexdigest()
     assert result["phase"]["sha256"] == descriptor["sha256"]
+    assert result["runtimeMemory"]["processID"] > 0
+    assert result["runtimeMemory"]["processPeakRSSBytes"] > 0
     assert opened["session"]["binding"]["device"] == {
         "backend": "cuda",
         "deviceName": "Test CUDA",
@@ -642,6 +653,24 @@ def test_interactive_session_reuses_one_open_and_publishes_bound_result(tmp_path
     assert provenance == hashlib.sha256(
         json.dumps(canonical_result, separators=(",", ":"), sort_keys=True).encode()
     ).hexdigest()
+
+
+def test_interactive_worker_logs_base_exception_and_publishes_failure(
+    tmp_path, caplog
+):
+    service, holder = _service(tmp_path)
+    identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
+    opened = _open_interactive(service, identity)
+    request = _interactive_request(opened)
+    holder["warmBaseException"] = True
+
+    with caplog.at_level("ERROR", logger="quantem.gpu.remote.ssb"):
+        service.submit_interactive(request)
+        completed = _wait_interactive(service, request)
+
+    assert completed["state"] == "failed"
+    assert completed["error"] == {"message": "simulated worker termination"}
+    assert "Retained SSB reconstruction failed" in caplog.text
 
 
 def test_interactive_http_roundtrip_and_shutdown_close(tmp_path):
