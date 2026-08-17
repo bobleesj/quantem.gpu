@@ -9,7 +9,7 @@ from .ssb import SSB, SSBResult
 try:
     __version__ = version("quantem.gpu")
 except PackageNotFoundError:
-    __version__ = "0.0.1rc5"
+    __version__ = "0.0.1rc6"
 
 
 _NAMESPACES = {

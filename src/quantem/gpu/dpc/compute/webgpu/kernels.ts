@@ -67,6 +67,19 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   colOut[i] = com[n + i] - mean[1];
 }`;
 
+/** Magnitude of an already-centered row/column DPC pair. */
+export const DPC_MAGNITUDE_WGSL = `
+@group(0) @binding(0) var<storage,read> rowDpc: array<f32>;
+@group(0) @binding(1) var<storage,read> colDpc: array<f32>;
+@group(0) @binding(2) var<storage,read_write> magnitude: array<f32>;
+@group(0) @binding(3) var<uniform> u: vec4<u32>; // scanCount, 0, 0, 0
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let i = gid.x;
+  if (i >= u.x) { return; }
+  magnitude[i] = length(vec2<f32>(rowDpc[i], colDpc[i]));
+}`;
+
 // Mean reduction for one already-centered DPC component. The first DPC centering
 // matches the backend semantics; this pass lets the next shader choose the same
 // one-ulp rounding side as the NumPy/CUDA reference without a CPU readback.

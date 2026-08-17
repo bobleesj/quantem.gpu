@@ -68,7 +68,7 @@ final class MetalDisplayKernelsTests: XCTestCase {
     }
   }
 
-  func testLinearFragmentRendersGrayEndpoints() throws {
+  func testLinearFragmentRendersExactGrayLUTIndices() throws {
     let device = try metalDevice()
     let queue = try XCTUnwrap(device.makeCommandQueue())
     let library = try MetalDisplayKernels.makeLibrary(device: device)
@@ -83,20 +83,20 @@ final class MetalDisplayKernelsTests: XCTestCase {
     let pipeline = try device.makeRenderPipelineState(descriptor: descriptor)
     let textureDescriptor = MTLTextureDescriptor.texture2DDescriptor(
       pixelFormat: .bgra8Unorm,
-      width: 2,
+      width: 5,
       height: 1,
       mipmapped: false
     )
     textureDescriptor.usage = .renderTarget
     textureDescriptor.storageMode = .shared
     let texture = try XCTUnwrap(device.makeTexture(descriptor: textureDescriptor))
-    let values = try makeBuffer(device: device, values: [UInt32(0), 7])
+    let values = try makeBuffer(device: device, values: Array(UInt32(0)...4))
     let lut = try MetalDisplayKernels.makeLUTBuffer(device: device, colormap: .gray)
     var parameters = MetalDisplayParameters(
       rows: 1,
-      cols: 2,
+      cols: 5,
       low: 0,
-      high: 7,
+      high: 4,
       scale: .linear
     )
     let pass = MTLRenderPassDescriptor()
@@ -119,14 +119,93 @@ final class MetalDisplayKernelsTests: XCTestCase {
     commandBuffer.waitUntilCompleted()
     XCTAssertEqual(commandBuffer.status, .completed)
 
-    var pixels = [UInt8](repeating: 0, count: 8)
+    var pixels = [UInt8](repeating: 0, count: 20)
     texture.getBytes(
       &pixels,
-      bytesPerRow: 8,
-      from: MTLRegionMake2D(0, 0, 2, 1),
+      bytesPerRow: 20,
+      from: MTLRegionMake2D(0, 0, 5, 1),
       mipmapLevel: 0
     )
-    XCTAssertEqual(pixels, [0, 0, 0, 255, 255, 255, 255, 255])
+    XCTAssertEqual(
+      pixels,
+      [
+        0, 0, 0, 255,
+        63, 63, 63, 255,
+        127, 127, 127, 255,
+        191, 191, 191, 255,
+        255, 255, 255, 255,
+      ]
+    )
+  }
+
+  func testSignedLogFloatFragmentRendersExactGrayLUTIndices() throws {
+    let device = try metalDevice()
+    let queue = try XCTUnwrap(device.makeCommandQueue())
+    let library = try MetalDisplayKernels.makeLibrary(device: device)
+    let descriptor = MTLRenderPipelineDescriptor()
+    descriptor.vertexFunction = try XCTUnwrap(
+      library.makeFunction(name: MetalDisplayKernels.vertexFunction)
+    )
+    descriptor.fragmentFunction = try XCTUnwrap(
+      library.makeFunction(name: MetalDisplayKernels.floatFragmentFunction)
+    )
+    descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
+    let pipeline = try device.makeRenderPipelineState(descriptor: descriptor)
+    let textureDescriptor = MTLTextureDescriptor.texture2DDescriptor(
+      pixelFormat: .bgra8Unorm,
+      width: 5,
+      height: 1,
+      mipmapped: false
+    )
+    textureDescriptor.usage = .renderTarget
+    textureDescriptor.storageMode = .shared
+    let texture = try XCTUnwrap(device.makeTexture(descriptor: textureDescriptor))
+    let values = try makeBuffer(device: device, values: [Float(-7), -3, 0, 3, 7])
+    let lut = try MetalDisplayKernels.makeLUTBuffer(device: device, colormap: .gray)
+    var parameters = MetalFloatDisplayParameters(
+      rows: 1,
+      cols: 5,
+      low: -7,
+      high: 7,
+      scale: .logarithmic
+    )
+    let pass = MTLRenderPassDescriptor()
+    pass.colorAttachments[0].texture = texture
+    pass.colorAttachments[0].loadAction = .dontCare
+    pass.colorAttachments[0].storeAction = .store
+    let commandBuffer = try XCTUnwrap(queue.makeCommandBuffer())
+    let encoder = try XCTUnwrap(
+      commandBuffer.makeRenderCommandEncoder(descriptor: pass)
+    )
+    encoder.setRenderPipelineState(pipeline)
+    encoder.setFragmentBuffer(values, offset: 0, index: 0)
+    withUnsafeBytes(of: &parameters) { bytes in
+      encoder.setFragmentBytes(bytes.baseAddress!, length: bytes.count, index: 1)
+    }
+    encoder.setFragmentBuffer(lut, offset: 0, index: 2)
+    encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+    encoder.endEncoding()
+    commandBuffer.commit()
+    commandBuffer.waitUntilCompleted()
+    XCTAssertEqual(commandBuffer.status, .completed)
+
+    var pixels = [UInt8](repeating: 0, count: 20)
+    texture.getBytes(
+      &pixels,
+      bytesPerRow: 20,
+      from: MTLRegionMake2D(0, 0, 5, 1),
+      mipmapLevel: 0
+    )
+    XCTAssertEqual(
+      pixels,
+      [
+        0, 0, 0, 255,
+        42, 42, 42, 255,
+        127, 127, 127, 255,
+        212, 212, 212, 255,
+        255, 255, 255, 255,
+      ]
+    )
   }
 
   func testRangeAndLinearHistogramParity() throws {
@@ -236,9 +315,106 @@ final class MetalDisplayKernelsTests: XCTestCase {
     XCTAssertEqual(commandBuffer.status, .completed)
 
     let bins = binsBuffer.contents().bindMemory(to: UInt32.self, capacity: 256)
-    for index in [0, 85, 135, 170, 197, 220, 239, 255] {
+    for index in [0, 85, 135, 170, 198, 220, 239, 255] {
       XCTAssertEqual(bins[index], 1, "Unexpected log count in bin \(index)")
     }
+  }
+
+  func testSignedLogFloatHistogramParity() throws {
+    let device = try metalDevice()
+    let queue = try XCTUnwrap(device.makeCommandQueue())
+    let library = try MetalDisplayKernels.makeLibrary(device: device)
+    let pipeline = try device.makeComputePipelineState(
+      function: XCTUnwrap(
+        library.makeFunction(name: MetalDisplayKernels.floatHistogramFunction)
+      )
+    )
+    let values: [Float] = [-7, -3, 0, 3, 7]
+    let valueBuffer = try makeBuffer(device: device, values: values)
+    let binsBuffer = try XCTUnwrap(
+      device.makeBuffer(length: 256 * MemoryLayout<UInt32>.stride)
+    )
+    memset(binsBuffer.contents(), 0, binsBuffer.length)
+    var parameters = MetalFloatDisplayParameters(
+      rows: 1,
+      cols: values.count,
+      low: -7,
+      high: 7,
+      scale: .logarithmic
+    )
+    let commandBuffer = try XCTUnwrap(queue.makeCommandBuffer())
+    let encoder = try XCTUnwrap(commandBuffer.makeComputeCommandEncoder())
+    encoder.setComputePipelineState(pipeline)
+    encoder.setBuffer(valueBuffer, offset: 0, index: 0)
+    encoder.setBuffer(binsBuffer, offset: 0, index: 1)
+    withUnsafeBytes(of: &parameters) { bytes in
+      encoder.setBytes(bytes.baseAddress!, length: bytes.count, index: 2)
+    }
+    dispatch(encoder, pipeline: pipeline, count: values.count)
+    encoder.endEncoding()
+    commandBuffer.commit()
+    commandBuffer.waitUntilCompleted()
+    XCTAssertEqual(commandBuffer.status, .completed)
+
+    let bins = binsBuffer.contents().bindMemory(to: UInt32.self, capacity: 256)
+    for index in [0, 42, 128, 213, 255] {
+      XCTAssertEqual(bins[index], 1, "Unexpected signed-log count in bin \(index)")
+    }
+  }
+
+  func testFloatHistogramConstantAndNonfiniteParity() throws {
+    let device = try metalDevice()
+    let queue = try XCTUnwrap(device.makeCommandQueue())
+    let library = try MetalDisplayKernels.makeLibrary(device: device)
+    let pipeline = try device.makeComputePipelineState(
+      function: XCTUnwrap(
+        library.makeFunction(name: MetalDisplayKernels.floatHistogramFunction)
+      )
+    )
+
+    func histogram(_ values: [Float], low: Float, high: Float) throws -> [UInt32] {
+      let valueBuffer = try makeBuffer(device: device, values: values)
+      let binsBuffer = try XCTUnwrap(
+        device.makeBuffer(length: 256 * MemoryLayout<UInt32>.stride)
+      )
+      memset(binsBuffer.contents(), 0, binsBuffer.length)
+      var parameters = MetalFloatDisplayParameters(
+        rows: 1,
+        cols: values.count,
+        low: low,
+        high: high,
+        scale: .linear
+      )
+      let commandBuffer = try XCTUnwrap(queue.makeCommandBuffer())
+      let encoder = try XCTUnwrap(commandBuffer.makeComputeCommandEncoder())
+      encoder.setComputePipelineState(pipeline)
+      encoder.setBuffer(valueBuffer, offset: 0, index: 0)
+      encoder.setBuffer(binsBuffer, offset: 0, index: 1)
+      withUnsafeBytes(of: &parameters) { bytes in
+        encoder.setBytes(bytes.baseAddress!, length: bytes.count, index: 2)
+      }
+      dispatch(encoder, pipeline: pipeline, count: values.count)
+      encoder.endEncoding()
+      commandBuffer.commit()
+      commandBuffer.waitUntilCompleted()
+      XCTAssertEqual(commandBuffer.status, .completed)
+      let bins = binsBuffer.contents().bindMemory(to: UInt32.self, capacity: 256)
+      return Array(UnsafeBufferPointer(start: bins, count: 256))
+    }
+
+    let constant = try histogram([-7, 0, 7], low: 3, high: 3)
+    XCTAssertEqual(constant.reduce(0, +), 3)
+    XCTAssertEqual(constant[128], 3)
+
+    let nonfinite = try histogram(
+      [.nan, -.infinity, .infinity, -1, 0, 1],
+      low: -1,
+      high: 1
+    )
+    XCTAssertEqual(nonfinite.reduce(0, +), 3)
+    XCTAssertEqual(nonfinite[0], 1)
+    XCTAssertEqual(nonfinite[128], 1)
+    XCTAssertEqual(nonfinite[255], 1)
   }
 
   private func metalDevice() throws -> MTLDevice {

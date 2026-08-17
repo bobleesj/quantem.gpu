@@ -1,9 +1,9 @@
-"""Shared Metal display resources for native and Python clients.
+"""Shared scientific image-display resources for every GPU client.
 
-The Metal source is the canonical Apple-GPU implementation of image scaling,
-LUT colormapping, range reduction, and histogram binning. Native Swift clients
-consume the same file through the repository's ``MetalDisplayKernels`` Swift
-package.
+The bundled colormap control points are the single source used by Python,
+CUDA, Metal/Swift, and WebGPU. Native Swift clients consume the Metal source
+through the repository's ``MetalDisplayKernels`` package; browser clients
+bundle the TypeScript/WGSL sources from :mod:`quantem.gpu.display.webgpu`.
 """
 
 import json
@@ -40,7 +40,7 @@ def metal_source() -> str:
 
 
 def colormap_names() -> tuple[str, ...]:
-    """Return the LUT colormaps available to Python and native Metal clients.
+    """Return the LUT colormaps available to every display backend.
 
     Returns
     -------

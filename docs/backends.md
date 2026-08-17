@@ -114,5 +114,6 @@ source, tests, documentation, and measured evidence land together.
 | HDF5 bitshuffle/LZ4 decode | `quantem.gpu.io.backends.cuda` | `quantem.gpu.io.backends.mps` | `quantem.gpu.io.backends.webgpu` | Corrected-frame checksum parity and load-stage timing. |
 | BF/DF/ADF masked sums | `quantem.gpu.detector.compute.cuda` / `detector` | `quantem.gpu.detector.compute.mps` | `quantem.gpu.detector.compute.webgpu` / `local-h5.ts` | Exact integer product parity and first/warm interaction timing. |
 | CoM/DPC | `quantem.gpu.dpc.compute.cuda` | `quantem.gpu.dpc.compute.mps` | `quantem.gpu.dpc.compute.webgpu` | Row/col CoM and centered DPC parity within `1e-5`. |
+| Display colormap/histogram/log/FFT | `quantem.gpu.display.cuda` | `MetalDisplayKernels` | `quantem.gpu.display.webgpu` | Exact uint8 RGBA and 256-bin counts for linear/signed-log float32 fixtures; FFT agreement within the stated float precision. |
 | SSB object, phase, loss | `quantem.gpu.ssb.compute.cuda` | `quantem.gpu.ssb.compute.mps` | `quantem.gpu.ssb.compute.webgpu` | Same complete BF disk, aberrations, float32/complex64 parity, and interactive redraw timing. |
 | Movie rendering | `quantem.gpu.movie.cuda` | `quantem.gpu.movie.mps` | NA | Frame parity and encoded movie smoke tests. |

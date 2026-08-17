@@ -23,32 +23,66 @@ struct MetalFloatDisplayParameters {
     uint _padding1;
 };
 
+inline float metal_signed_log1p(float value) {
+    return copysign(log(1.0f + abs(value)), value);
+}
+
 inline float metal_normalize_u32(
     uint value,
     constant MetalDisplayParameters &parameters
 ) {
     uint high = max(parameters.low, parameters.high);
+    if (high == parameters.low) return 0.5f;
     uint clipped = clamp(value, parameters.low, high);
-    float span = max(1.0f, float(high - parameters.low));
-    float shifted = float(clipped - parameters.low);
+    float low = float(parameters.low);
+    float highValue = float(high);
+    float displayValue = float(clipped);
     if (parameters.scaleMode == 1u) {
-        return log(1.0f + shifted) / log(1.0f + span);
+        low = log(1.0f + low);
+        highValue = log(1.0f + highValue);
+        displayValue = log(1.0f + displayValue);
     }
-    return shifted / span;
+    return clamp(
+        (displayValue - low) / max(1.0e-30f, highValue - low),
+        0.0f,
+        1.0f
+    );
 }
 
 inline float metal_normalize_f32(
     float value,
     constant MetalFloatDisplayParameters &parameters
 ) {
-    float high = max(parameters.low, parameters.high);
-    float clipped = clamp(value, parameters.low, high);
-    float span = max(1.0e-20f, high - parameters.low);
-    float shifted = clipped - parameters.low;
+    if (isnan(value)) return 0.0f;
+    if (isinf(value)) return value > 0.0f ? 1.0f : 0.0f;
+    float low = parameters.low;
+    float high = max(low, parameters.high);
+    if (!(high > low)) return 0.5f;
+    float displayValue = value;
     if (parameters.scaleMode == 1u) {
-        return log(1.0f + shifted) / log(1.0f + span);
+        displayValue = metal_signed_log1p(displayValue);
+        low = metal_signed_log1p(low);
+        high = metal_signed_log1p(high);
     }
-    return shifted / span;
+    float span = high - low;
+    float normalized;
+    if (isinf(span)) {
+        float negativeMagnitude = -low;
+        float center;
+        if (negativeMagnitude <= high) {
+            float ratio = negativeMagnitude / high;
+            center = ratio / (1.0f + ratio);
+        } else {
+            float ratio = high / negativeMagnitude;
+            center = 1.0f / (1.0f + ratio);
+        }
+        normalized = displayValue >= 0.0f
+            ? center + (1.0f - center) * (displayValue / high)
+            : center * (1.0f - displayValue / low);
+    } else {
+        normalized = (displayValue - low) / span;
+    }
+    return clamp(normalized, 0.0f, 1.0f);
 }
 
 struct MetalDisplayVertex {
@@ -85,7 +119,7 @@ fragment float4 metal_display_fragment(
     float normalized = metal_normalize_u32(values[row * parameters.cols + col], parameters);
     uint lutIndex = min(
         parameters.lutCount - 1u,
-        uint(normalized * float(parameters.lutCount - 1u) + 0.5f)
+        uint(normalized * float(parameters.lutCount - 1u))
     );
     return lut[lutIndex];
 }
@@ -106,7 +140,7 @@ fragment float4 metal_display_fragment_f32(
     );
     uint lutIndex = min(
         parameters.lutCount - 1u,
-        uint(normalized * float(parameters.lutCount - 1u) + 0.5f)
+        uint(normalized * float(parameters.lutCount - 1u))
     );
     return lut[lutIndex];
 }
@@ -132,7 +166,7 @@ kernel void metal_histogram_u32(
     uint count = parameters.rows * parameters.cols;
     if (index >= count) return;
     float normalized = metal_normalize_u32(values[index], parameters);
-    uint bin = min(255u, uint(normalized * 255.0f + 0.5f));
+    uint bin = min(255u, uint(normalized * 256.0f));
     atomic_fetch_add_explicit(&bins[bin], 1u, memory_order_relaxed);
 }
 
@@ -144,7 +178,9 @@ kernel void metal_histogram_f32(
 ) {
     uint count = parameters.rows * parameters.cols;
     if (index >= count) return;
-    float normalized = metal_normalize_f32(values[index], parameters);
-    uint bin = min(255u, uint(normalized * 255.0f + 0.5f));
+    float value = values[index];
+    if (!isfinite(value)) return;
+    float normalized = metal_normalize_f32(value, parameters);
+    uint bin = min(255u, uint(normalized * 256.0f));
     atomic_fetch_add_explicit(&bins[bin], 1u, memory_order_relaxed);
 }

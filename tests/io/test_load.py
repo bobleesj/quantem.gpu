@@ -1175,6 +1175,10 @@ def test_load_sparse_batch_attaches_drift_positions(monkeypatch) -> None:
         "get_metadata",
         lambda _path: {"scan_shape": (8, 8)},
     )
+    monkeypatch.setattr(
+        "quantem.gpu.io.backends.resolve_backend",
+        lambda _backend: "cuda",
+    )
 
     drift_fields = np.zeros((2, 8, 8, 2), dtype=np.float32)
     drift_fields[0, :, :, :] = [1.0, 0.0]

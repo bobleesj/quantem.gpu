@@ -24,7 +24,7 @@ export function getGPUDevice(): Promise<GPUDevice | null> {
 }
 
 async function createGPUDevice(): Promise<GPUDevice | null> {
-  if (!navigator.gpu) return null;
+  if (typeof navigator === "undefined" || !navigator.gpu) return null;
   try {
     const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
     if (!adapter) return null;
@@ -66,4 +66,28 @@ export function getGPUInfo(): string { return gpuInfo; }
 
 export function isSoftwareGPUAdapter(): boolean {
   return /swiftshader|llvmpipe|software|subzero/i.test(gpuInfo);
+}
+
+/** Error raised when browser scientific compute cannot run on hardware WebGPU. */
+export class WebGPUUnavailableError extends Error {
+  constructor(operation: string, detail?: string) {
+    super(
+      `${operation} requires a hardware WebGPU adapter. ` +
+      `${detail || "Enable WebGPU in a supported browser and reload the widget."}`,
+    );
+    this.name = "WebGPUUnavailableError";
+  }
+}
+
+/** Resolve the shared hardware device or fail without a scientific CPU fallback. */
+export async function requireHardwareGPUDevice(operation: string): Promise<GPUDevice> {
+  const device = await getGPUDevice();
+  if (!device) throw new WebGPUUnavailableError(operation);
+  if (isSoftwareGPUAdapter()) {
+    throw new WebGPUUnavailableError(
+      operation,
+      `The selected adapter (${getGPUInfo()}) is software-rendered; choose a browser/GPU with hardware WebGPU.`,
+    );
+  }
+  return device;
 }

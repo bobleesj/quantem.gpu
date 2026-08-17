@@ -898,8 +898,10 @@ final class Metal4DSTEMKernelsTests: XCTestCase {
     )
     deltaEncoder.endEncoding()
     try complete(deltaCommand)
-    let deltaExpected = (0..<scanCount).map {
-      values[2 * scanCount + $0] + values[3 * scanCount + $0]
+    let deltaExpected: [UInt32] = (0..<scanCount).map { scanIndex in
+      let firstOffset = 2 * scanCount + scanIndex
+      let secondOffset = 3 * scanCount + scanIndex
+      return values[firstOffset] + values[secondOffset]
     }
     XCTAssertEqual(bufferValues(output, count: scanCount), deltaExpected)
 
