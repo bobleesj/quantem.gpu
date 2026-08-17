@@ -794,6 +794,212 @@ int qh5_inspect_master(
   return status;
 }
 
+typedef struct {
+  char *group_name;
+  int allocation_failed;
+} qh5_velox_search;
+
+static herr_t qh5_velox_image_callback(
+  hid_t image_root,
+  const char *name,
+  const H5L_info2_t *link_info,
+  void *context_pointer
+) {
+  (void)link_info;
+  qh5_velox_search *search = context_pointer;
+  hid_t group = H5Gopen2(image_root, name, H5P_DEFAULT);
+  if (group < 0) return 0;
+  hid_t data = H5Dopen2(group, "Data", H5P_DEFAULT);
+  hid_t metadata = H5Dopen2(group, "Metadata", H5P_DEFAULT);
+  hid_t space = data >= 0 ? H5Dget_space(data) : -1;
+  hsize_t dimensions[3] = {0, 0, 0};
+  int rank = space >= 0 ? H5Sget_simple_extent_dims(space, dimensions, NULL) : -1;
+  if (space >= 0) H5Sclose(space);
+  if (data >= 0) H5Dclose(data);
+  if (metadata >= 0) H5Dclose(metadata);
+  H5Gclose(group);
+  if (rank != 3 || dimensions[0] == 0 || dimensions[1] == 0 || dimensions[2] != 1
+      || metadata < 0) return 0;
+  search->group_name = qh5_copy_string(name);
+  if (search->group_name == NULL) {
+    search->allocation_failed = 1;
+    return -1;
+  }
+  return 1;
+}
+
+static int qh5_prepare_velox_image_unlocked(
+  const char *source_path,
+  const char *raw_output_path,
+  qh5_velox_image_info *info,
+  char **error_message
+) {
+  if (source_path == NULL || info == NULL) {
+    return qh5_fail(error_message, "Invalid native Velox EMD request");
+  }
+  memset(info, 0, sizeof(*info));
+  if (error_message != NULL) *error_message = NULL;
+  H5Eset_auto2(H5E_DEFAULT, NULL, NULL);
+
+  hid_t file = H5Fopen(source_path, H5F_ACC_RDONLY, H5P_DEFAULT);
+  if (file < 0) return qh5_fail(error_message, "Could not open Velox EMD file %s", source_path);
+  hid_t image_root = H5Gopen2(file, "/Data/Image", H5P_DEFAULT);
+  if (image_root < 0) {
+    H5Fclose(file);
+    return qh5_fail(error_message, "The EMD file has no Velox Data/Image group");
+  }
+
+  qh5_velox_search search = {.group_name = NULL, .allocation_failed = 0};
+  hsize_t index = 0;
+  herr_t iteration = H5Literate2(
+    image_root,
+    H5_INDEX_NAME,
+    H5_ITER_INC,
+    &index,
+    qh5_velox_image_callback,
+    &search
+  );
+  if (iteration < 0 || search.allocation_failed) {
+    H5Gclose(image_root);
+    H5Fclose(file);
+    free(search.group_name);
+    return qh5_fail(error_message, "Could not inspect Velox Data/Image entries");
+  }
+  if (search.group_name == NULL) {
+    H5Gclose(image_root);
+    H5Fclose(file);
+    return qh5_fail(
+      error_message,
+      "The EMD file has no supported 2-D Velox image and Metadata JSON pair"
+    );
+  }
+
+  hid_t group = H5Gopen2(image_root, search.group_name, H5P_DEFAULT);
+  hid_t data = group >= 0 ? H5Dopen2(group, "Data", H5P_DEFAULT) : -1;
+  hid_t metadata = group >= 0 ? H5Dopen2(group, "Metadata", H5P_DEFAULT) : -1;
+  int status = 0;
+  hsize_t dimensions[3] = {0, 0, 0};
+  hid_t data_space = data >= 0 ? H5Dget_space(data) : -1;
+  int rank = data_space >= 0
+    ? H5Sget_simple_extent_dims(data_space, dimensions, NULL) : -1;
+  if (data_space >= 0) H5Sclose(data_space);
+  if (rank != 3 || dimensions[0] == 0 || dimensions[1] == 0 || dimensions[2] != 1) {
+    status = qh5_fail(error_message, "Velox scalar image must have shape (row, column, 1)");
+  }
+
+  hid_t data_type = status == 0 ? H5Dget_type(data) : -1;
+  size_t source_bytes = data_type >= 0 ? H5Tget_size(data_type) : 0;
+  if (status == 0
+      && (data_type < 0 || H5Tget_class(data_type) != H5T_INTEGER
+          || H5Tget_sign(data_type) != H5T_SGN_NONE
+          || (source_bytes != 1 && source_bytes != 2))) {
+    status = qh5_fail(
+      error_message,
+      "Live4DSTEM supports uint8/uint16 Velox scalar images; this image uses an unsupported dtype"
+    );
+  }
+  if (data_type >= 0) H5Tclose(data_type);
+
+  hid_t metadata_space = status == 0 ? H5Dget_space(metadata) : -1;
+  hssize_t metadata_points = metadata_space >= 0
+    ? H5Sget_simple_extent_npoints(metadata_space) : -1;
+  if (metadata_space >= 0) H5Sclose(metadata_space);
+  unsigned char *metadata_bytes = NULL;
+  if (status == 0 && (metadata_points <= 0 || (uint64_t)metadata_points >= SIZE_MAX)) {
+    status = qh5_fail(error_message, "Velox Metadata JSON is empty or too large");
+  }
+  if (status == 0) {
+    metadata_bytes = calloc((size_t)metadata_points + 1, 1);
+    if (metadata_bytes == NULL
+        || H5Dread(
+          metadata,
+          H5T_NATIVE_UCHAR,
+          H5S_ALL,
+          H5S_ALL,
+          H5P_DEFAULT,
+          metadata_bytes
+        ) < 0) {
+      status = qh5_fail(error_message, "Could not read Velox Metadata JSON");
+    }
+  }
+
+  if (status == 0 && raw_output_path != NULL) {
+    if (dimensions[0] > SIZE_MAX / dimensions[1]
+        || dimensions[0] * dimensions[1] > SIZE_MAX / source_bytes) {
+      status = qh5_fail(error_message, "The Velox scalar image is too large");
+    } else {
+      size_t byte_count = (size_t)(dimensions[0] * dimensions[1] * source_bytes);
+      void *values = malloc(byte_count);
+      hid_t memory_type = source_bytes == 1 ? H5T_STD_U8LE : H5T_STD_U16LE;
+      if (values == NULL
+          || H5Dread(data, memory_type, H5S_ALL, H5S_ALL, H5P_DEFAULT, values) < 0) {
+        free(values);
+        status = qh5_fail(error_message, "Could not read the Velox scalar image");
+      } else {
+        FILE *output = fopen(raw_output_path, "wb");
+        int write_failed = output == NULL;
+        if (!write_failed && fwrite(values, 1, byte_count, output) != byte_count) {
+          write_failed = 1;
+        }
+        if (!write_failed && fflush(output) != 0) write_failed = 1;
+        if (output != NULL && fclose(output) != 0) write_failed = 1;
+        if (write_failed) {
+          remove(raw_output_path);
+          status = qh5_fail(error_message, "Could not write the native Velox image cache");
+        }
+        free(values);
+      }
+    }
+  }
+
+  if (status == 0) {
+    size_t path_length = strlen("Data/Image//Metadata") + strlen(search.group_name) + 1;
+    info->metadata_path = malloc(path_length);
+    if (info->metadata_path == NULL) {
+      status = qh5_fail(error_message, "Could not allocate Velox metadata provenance");
+    } else {
+      snprintf(
+        info->metadata_path,
+        path_length,
+        "Data/Image/%s/Metadata",
+        search.group_name
+      );
+      info->rows = dimensions[0];
+      info->columns = dimensions[1];
+      info->source_bytes = (uint32_t)source_bytes;
+      info->metadata_json = (char *)metadata_bytes;
+      metadata_bytes = NULL;
+    }
+  }
+
+  free(metadata_bytes);
+  if (metadata >= 0) H5Dclose(metadata);
+  if (data >= 0) H5Dclose(data);
+  if (group >= 0) H5Gclose(group);
+  H5Gclose(image_root);
+  H5Fclose(file);
+  free(search.group_name);
+  if (status != 0) qh5_free_velox_image_info(info);
+  return status;
+}
+
+int qh5_prepare_velox_image(
+  const char *source_path,
+  const char *raw_output_path,
+  qh5_velox_image_info *info,
+  char **error_message
+) {
+  pthread_mutex_lock(&qh5_hdf5_lock);
+  int status = qh5_prepare_velox_image_unlocked(
+    source_path,
+    raw_output_path,
+    info,
+    error_message
+  );
+  pthread_mutex_unlock(&qh5_hdf5_lock);
+  return status;
+}
+
 void qh5_free_chunks(qh5_chunk_info *chunks) {
   free(chunks);
 }
@@ -809,6 +1015,13 @@ void qh5_free_master_info(qh5_master_info *info) {
   free(info->metadata);
   for (size_t index = 0; index < info->external_file_count; index++) free(info->external_files[index]);
   free(info->external_files);
+  memset(info, 0, sizeof(*info));
+}
+
+void qh5_free_velox_image_info(qh5_velox_image_info *info) {
+  if (info == NULL) return;
+  free(info->metadata_json);
+  free(info->metadata_path);
   memset(info, 0, sizeof(*info));
 }
 

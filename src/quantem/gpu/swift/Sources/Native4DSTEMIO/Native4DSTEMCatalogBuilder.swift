@@ -32,6 +32,9 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
     source: URL,
     mode: Native4DSTEMCatalogMode
   ) throws -> Native4DSTEMDataset {
+    if isEMD(source) {
+      return try prepareVeloxDataset(source: source, mode: mode)
+    }
     let dataFiles = try dataFiles(for: source)
     let missing = dataFiles.filter { !FileManager.default.fileExists(atPath: $0.path) }
     guard missing.isEmpty else {
@@ -42,6 +45,9 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
     let signatureFiles = (FileManager.default.fileExists(atPath: source.path) ? [source] : [])
       + dataFiles
     let signature = try nativeDatasetSignature(for: signatureFiles)
+    let hashes = mode == .indexed
+      ? try nativeSourceHashes(master: isMaster(source) ? source : nil, dataFiles: dataFiles)
+      : nil
     let indexRoot = cacheDirectory.appendingPathComponent(signature, isDirectory: true)
     var indexFiles: [String] = []
     var stacks: [NativeHDF5Stack] = []
@@ -129,8 +135,206 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
       kPixelSizeCol: master.reciprocalSampling?.column,
       kPixelUnit: master.reciprocalSampling == nil ? nil : "mrad",
       acquisitionDate: master.acquisitionDate,
-      metadata: master.metadata
+      metadata: master.metadata,
+      schemaIdentity: "live4dstem.dataset/v0.1",
+      sourceIdentitySHA256: hashes?.aggregate,
+      masterSHA256: hashes?.master,
+      orderedMemberSHA256: hashes?.members,
+      sourceScanCalibration: nil,
+      scalarImageRawPath: nil
     )
+  }
+
+  private func prepareVeloxDataset(
+    source: URL,
+    mode: Native4DSTEMCatalogMode
+  ) throws -> Native4DSTEMDataset {
+    let signature = try nativeDatasetSignature(for: [source])
+    let indexRoot = cacheDirectory.appendingPathComponent(signature, isDirectory: true)
+    let temporary = indexRoot.appendingPathComponent(
+      ".\(source.deletingPathExtension().lastPathComponent).\(UUID().uuidString).tmp"
+    )
+    let before = try nativeFileIdentity(for: source)
+    if mode == .indexed {
+      try FileManager.default.createDirectory(at: indexRoot, withIntermediateDirectories: true)
+    }
+    defer { try? FileManager.default.removeItem(at: temporary) }
+    let image = try NativeHDF5Bridge.prepareVeloxImage(
+      at: source,
+      rawOutput: mode == .indexed ? temporary : nil
+    )
+    let typedRawPath = indexRoot.appendingPathComponent(
+      "\(source.deletingPathExtension().lastPathComponent).\(image.sourceDtype).raw"
+    )
+    if mode == .indexed {
+      if FileManager.default.fileExists(atPath: typedRawPath.path) {
+        _ = try FileManager.default.replaceItemAt(typedRawPath, withItemAt: temporary)
+      } else {
+        try FileManager.default.moveItem(at: temporary, to: typedRawPath)
+      }
+    }
+    let calibration = try veloxCalibration(
+      metadataJSON: image.metadataJSON,
+      rows: image.rows,
+      columns: image.columns,
+      evidencePath: image.metadataPath
+    )
+    let hashes = mode == .indexed
+      ? try nativeSourceHashes(master: nil, dataFiles: [source]) : nil
+    let after = try nativeFileIdentity(for: source)
+    guard before.device == after.device,
+      before.inode == after.inode,
+      before.bytes == after.bytes,
+      before.modificationNanoseconds == after.modificationNanoseconds
+    else {
+      throw Native4DSTEMIOError.invalidData(
+        "The EMD source changed while it was being prepared; retry"
+      )
+    }
+    guard let sourceBytes = Int(exactly: after.bytes) else {
+      throw Native4DSTEMIOError.invalidData("\(source.lastPathComponent) is too large")
+    }
+    return Native4DSTEMDataset(
+      id: signature,
+      label: source.deletingPathExtension().lastPathComponent,
+      masterPath: nil,
+      dataFiles: [source.path],
+      indexFiles: [],
+      scanRows: image.rows,
+      scanCols: image.columns,
+      detectorRows: 1,
+      detectorCols: 1,
+      sourceDtype: image.sourceDtype,
+      sourceBytes: sourceBytes,
+      badPixelIndices: [],
+      kPixelSizeRow: nil,
+      kPixelSizeCol: nil,
+      kPixelUnit: nil,
+      acquisitionDate: nil,
+      metadata: [
+        "sourceFormat": "Velox EMD scalar image",
+        "metadataEvidence": image.metadataPath,
+      ],
+      schemaIdentity: "live4dstem.dataset/v0.1",
+      sourceIdentitySHA256: hashes?.aggregate,
+      masterSHA256: nil,
+      orderedMemberSHA256: hashes?.members,
+      sourceScanCalibration: calibration,
+      scalarImageRawPath: typedRawPath.path
+    )
+  }
+
+  private func veloxCalibration(
+    metadataJSON: String,
+    rows: Int,
+    columns: Int,
+    evidencePath: String
+  ) throws -> Native4DSTEMScanCalibration {
+    guard let data = metadataJSON.data(using: .utf8),
+      let document = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else {
+      throw Native4DSTEMIOError.invalidData("Velox Metadata JSON is invalid")
+    }
+    let unitX = try stringValue(document, path: ["BinaryResult", "PixelUnitX"])
+      .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    let unitY = try stringValue(document, path: ["BinaryResult", "PixelUnitY"])
+      .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    guard unitX == "m", unitY == "m" else {
+      throw Native4DSTEMIOError.invalidData(
+        "Velox PixelSize needs explicit metre PixelUnitX and PixelUnitY values"
+      )
+    }
+    let rowMeters = try positiveDouble(
+      document,
+      path: ["BinaryResult", "PixelSize", "height"]
+    )
+    let columnMeters = try positiveDouble(
+      document,
+      path: ["BinaryResult", "PixelSize", "width"]
+    )
+    let scanRows = try integerValue(document, path: ["Scan", "ScanSize", "height"])
+    let scanColumns = try integerValue(document, path: ["Scan", "ScanSize", "width"])
+    guard scanRows == rows, scanColumns == columns else {
+      throw Native4DSTEMIOError.invalidData(
+        "Velox Scan.ScanSize does not match the image dimensions"
+      )
+    }
+    let rowField = try positiveDouble(
+      document,
+      path: ["Optics", "FullScanFieldOfView", "y"]
+    )
+    let columnField = try positiveDouble(
+      document,
+      path: ["Optics", "FullScanFieldOfView", "x"]
+    )
+    guard approximatelyEqual(rowMeters * Double(rows), rowField) else {
+      throw Native4DSTEMIOError.invalidData(
+        "Velox row PixelSize and FullScanFieldOfView disagree"
+      )
+    }
+    guard approximatelyEqual(columnMeters * Double(columns), columnField) else {
+      throw Native4DSTEMIOError.invalidData(
+        "Velox column PixelSize and FullScanFieldOfView disagree"
+      )
+    }
+    return Native4DSTEMScanCalibration(
+      rowSamplingAngstrom: rowMeters * 1e10,
+      columnSamplingAngstrom: columnMeters * 1e10,
+      origin: .sourceMetadata,
+      evidence:
+        "\(evidencePath) · BinaryResult.PixelSize + PixelUnitX/Y; cross-checked against Optics.FullScanFieldOfView"
+    )
+  }
+
+  private func value(_ document: [String: Any], path: [String]) -> Any? {
+    var current: Any = document
+    for key in path {
+      guard let object = current as? [String: Any], let next = object[key] else {
+        return nil
+      }
+      current = next
+    }
+    return current
+  }
+
+  private func stringValue(_ document: [String: Any], path: [String]) throws -> String {
+    guard let result = value(document, path: path) as? String else {
+      throw Native4DSTEMIOError.invalidData(
+        "Velox \(path.joined(separator: ".")) is missing"
+      )
+    }
+    return result
+  }
+
+  private func positiveDouble(_ document: [String: Any], path: [String]) throws -> Double {
+    let raw = value(document, path: path)
+    let result = (raw as? NSNumber)?.doubleValue ?? (raw as? String).flatMap(Double.init)
+    guard let result else {
+      throw Native4DSTEMIOError.invalidData(
+        "Velox \(path.joined(separator: ".")) is missing or not numeric"
+      )
+    }
+    guard result.isFinite, result > 0 else {
+      throw Native4DSTEMIOError.invalidData(
+        "Velox \(path.joined(separator: ".")) must be finite and positive"
+      )
+    }
+    return result
+  }
+
+  private func integerValue(_ document: [String: Any], path: [String]) throws -> Int {
+    let raw = value(document, path: path)
+    let result = (raw as? NSNumber)?.intValue ?? (raw as? String).flatMap(Int.init)
+    guard let result else {
+      throw Native4DSTEMIOError.invalidData(
+        "Velox \(path.joined(separator: ".")) is missing"
+      )
+    }
+    return result
+  }
+
+  private func approximatelyEqual(_ left: Double, _ right: Double) -> Bool {
+    abs(left - right) <= max(1e-15, 1e-6 * max(abs(left), abs(right)))
   }
 
   private func masters(for input: URL) throws -> [URL] {
@@ -147,12 +351,12 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
         throw Native4DSTEMIOError.invalidData("Could not inspect folder \(input.path)")
       }
       let masters = enumerator.compactMap { $0 as? URL }
-        .filter { isMaster($0) }
+        .filter { isMaster($0) || isEMD($0) }
         .map(nativeCanonicalURL)
         .sorted { $0.path < $1.path }
       guard !masters.isEmpty else {
         throw Native4DSTEMIOError.invalidData(
-          "No recognized *_master.h5 files were found under \(input.path)"
+          "No recognized *_master.h5 or Velox .emd files were found under \(input.path)"
         )
       }
       return masters
@@ -249,6 +453,10 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
 
   private func isMaster(_ url: URL) -> Bool {
     url.lastPathComponent.lowercased().hasSuffix("_master.h5")
+  }
+
+  private func isEMD(_ url: URL) -> Bool {
+    url.pathExtension.lowercased() == "emd"
   }
 
   private func shardStem(_ filename: String) -> String? {

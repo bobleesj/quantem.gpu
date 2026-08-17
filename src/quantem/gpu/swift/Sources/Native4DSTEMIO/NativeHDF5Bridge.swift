@@ -26,6 +26,16 @@ struct NativeHDF5Master {
   let metadata: [String: String]
 }
 
+struct NativeVeloxImage {
+  let rows: Int
+  let columns: Int
+  let sourceBytes: Int
+  let metadataJSON: String
+  let metadataPath: String
+
+  var sourceDtype: String { sourceBytes == 1 ? "uint8" : "uint16" }
+}
+
 enum NativeHDF5Bridge {
   static func inspectStack(at url: URL, includeChunks: Bool) throws -> NativeHDF5Stack {
     var rawStack = qh5_stack_info()
@@ -114,6 +124,37 @@ enum NativeHDF5Bridge {
       reciprocalSampling: reciprocalSampling,
       acquisitionDate: raw.acquisition_date.map { String(cString: $0) },
       metadata: metadata
+    )
+  }
+
+  static func prepareVeloxImage(
+    at url: URL,
+    rawOutput: URL?
+  ) throws -> NativeVeloxImage {
+    var raw = qh5_velox_image_info()
+    var errorMessage: UnsafeMutablePointer<CChar>?
+    let status = url.path.withCString { sourcePath in
+      if let rawOutput {
+        return rawOutput.path.withCString { outputPath in
+          qh5_prepare_velox_image(sourcePath, outputPath, &raw, &errorMessage)
+        }
+      }
+      return qh5_prepare_velox_image(sourcePath, nil, &raw, &errorMessage)
+    }
+    defer {
+      qh5_free_velox_image_info(&raw)
+      qh5_free_error(errorMessage)
+    }
+    guard status == 0 else { throw hdf5Error(errorMessage) }
+    guard let metadataJSON = raw.metadata_json, let metadataPath = raw.metadata_path else {
+      throw Native4DSTEMIOError.hdf5("Native Velox inspection returned incomplete metadata")
+    }
+    return NativeVeloxImage(
+      rows: try exactInt(raw.rows, label: "Velox image rows"),
+      columns: try exactInt(raw.columns, label: "Velox image columns"),
+      sourceBytes: Int(raw.source_bytes),
+      metadataJSON: String(cString: metadataJSON),
+      metadataPath: String(cString: metadataPath)
     )
   }
 

@@ -46,6 +46,14 @@ typedef struct {
   size_t external_file_count;
 } qh5_master_info;
 
+typedef struct {
+  uint64_t rows;
+  uint64_t columns;
+  uint32_t source_bytes;
+  char *metadata_json;
+  char *metadata_path;
+} qh5_velox_image_info;
+
 int qh5_inspect_stack(
   const char *path,
   int include_chunks,
@@ -63,8 +71,16 @@ int qh5_inspect_master(
   char **error_message
 );
 
+int qh5_prepare_velox_image(
+  const char *source_path,
+  const char *raw_output_path,
+  qh5_velox_image_info *info,
+  char **error_message
+);
+
 void qh5_free_chunks(qh5_chunk_info *chunks);
 void qh5_free_master_info(qh5_master_info *info);
+void qh5_free_velox_image_info(qh5_velox_image_info *info);
 void qh5_free_error(char *error_message);
 
 #ifdef __cplusplus

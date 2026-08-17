@@ -5,6 +5,29 @@ public enum Native4DSTEMCatalogMode: Sendable, Equatable {
   case indexed
 }
 
+public enum Native4DSTEMCalibrationOrigin: String, Codable, Equatable, Sendable {
+  case sourceMetadata = "source_metadata"
+}
+
+public struct Native4DSTEMScanCalibration: Codable, Sendable {
+  public let rowSamplingAngstrom: Double
+  public let columnSamplingAngstrom: Double
+  public let origin: Native4DSTEMCalibrationOrigin
+  public let evidence: String
+
+  public init(
+    rowSamplingAngstrom: Double,
+    columnSamplingAngstrom: Double,
+    origin: Native4DSTEMCalibrationOrigin,
+    evidence: String
+  ) {
+    self.rowSamplingAngstrom = rowSamplingAngstrom
+    self.columnSamplingAngstrom = columnSamplingAngstrom
+    self.origin = origin
+    self.evidence = evidence
+  }
+}
+
 public struct Native4DSTEMCatalog: Codable, Sendable {
   public let version: Int
   public let input: String
@@ -49,6 +72,12 @@ public struct Native4DSTEMDataset: Codable, Identifiable, Sendable {
   public let kPixelUnit: String?
   public let acquisitionDate: String?
   public let metadata: [String: String]?
+  public let schemaIdentity: String?
+  public let sourceIdentitySHA256: String?
+  public let masterSHA256: String?
+  public let orderedMemberSHA256: [String]?
+  public let sourceScanCalibration: Native4DSTEMScanCalibration?
+  public let scalarImageRawPath: String?
 
   public init(
     id: String,
@@ -67,7 +96,13 @@ public struct Native4DSTEMDataset: Codable, Identifiable, Sendable {
     kPixelSizeCol: Double?,
     kPixelUnit: String?,
     acquisitionDate: String?,
-    metadata: [String: String]?
+    metadata: [String: String]?,
+    schemaIdentity: String? = nil,
+    sourceIdentitySHA256: String? = nil,
+    masterSHA256: String? = nil,
+    orderedMemberSHA256: [String]? = nil,
+    sourceScanCalibration: Native4DSTEMScanCalibration? = nil,
+    scalarImageRawPath: String? = nil
   ) {
     self.id = id
     self.label = label
@@ -86,6 +121,12 @@ public struct Native4DSTEMDataset: Codable, Identifiable, Sendable {
     self.kPixelUnit = kPixelUnit
     self.acquisitionDate = acquisitionDate
     self.metadata = metadata
+    self.schemaIdentity = schemaIdentity
+    self.sourceIdentitySHA256 = sourceIdentitySHA256
+    self.masterSHA256 = masterSHA256
+    self.orderedMemberSHA256 = orderedMemberSHA256
+    self.sourceScanCalibration = sourceScanCalibration
+    self.scalarImageRawPath = scalarImageRawPath
   }
 }
 
@@ -97,7 +138,7 @@ public enum Native4DSTEMIOError: LocalizedError, Sendable {
   public var errorDescription: String? {
     switch self {
     case .noDatasets:
-      return "No recognized 4D-STEM HDF5 datasets were found. Choose a folder containing ARINA or Samsung *_master.h5 files."
+      return "No recognized datasets were found. Choose a folder containing ARINA/Samsung *_master.h5 or Velox .emd files."
     case .invalidData(let message), .hdf5(let message):
       return message
     }

@@ -80,6 +80,48 @@ final class Native4DSTEMIOTests: XCTestCase {
     XCTAssertEqual(readLE32(index, at: 12), 10)
   }
 
+  func testVeloxEMDCalibrationAndExactScalarCache() throws {
+    let source = try XCTUnwrap(
+      Bundle.module.url(
+        forResource: "fixture_velox",
+        withExtension: "emd",
+        subdirectory: "Fixtures"
+      )
+    )
+    let cache = FileManager.default.temporaryDirectory
+      .appendingPathComponent("Native4DSTEMIOVeloxTests-\(UUID().uuidString)", isDirectory: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: cache) }
+    let builder = Native4DSTEMCatalogBuilder(cacheDirectory: cache)
+
+    let discovery = try builder.prepare(input: source, mode: .catalogOnly)
+    let discovered = try XCTUnwrap(discovery.datasets.first)
+    XCTAssertEqual(discovered.scanRows, 2)
+    XCTAssertEqual(discovered.scanCols, 3)
+    XCTAssertEqual(discovered.detectorRows, 1)
+    XCTAssertEqual(discovered.detectorCols, 1)
+    XCTAssertEqual(discovered.sourceDtype, "uint16")
+    XCTAssertEqual(discovered.sourceScanCalibration?.rowSamplingAngstrom, 1)
+    XCTAssertEqual(discovered.sourceScanCalibration?.columnSamplingAngstrom, 2)
+    XCTAssertEqual(discovered.sourceScanCalibration?.origin, .sourceMetadata)
+    XCTAssertTrue(
+      discovered.sourceScanCalibration?.evidence.contains("FullScanFieldOfView") == true
+    )
+    XCTAssertNil(discovered.sourceIdentitySHA256)
+    XCTAssertFalse(
+      FileManager.default.fileExists(atPath: try XCTUnwrap(discovered.scalarImageRawPath))
+    )
+
+    let indexed = try builder.prepare(input: source).datasets[0]
+    XCTAssertEqual(indexed.id, discovered.id)
+    XCTAssertEqual(indexed.sourceIdentitySHA256?.count, 64)
+    XCTAssertEqual(indexed.orderedMemberSHA256?.count, 1)
+    let raw = try Data(contentsOf: URL(fileURLWithPath: try XCTUnwrap(indexed.scalarImageRawPath)))
+    XCTAssertEqual(
+      raw,
+      Data([1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6, 0])
+    )
+  }
+
   func testFolderMasterAndShardResolveToSameDataset() throws {
     let fixture = try copiedFixture()
     let builder = Native4DSTEMCatalogBuilder(cacheDirectory: fixture.cache)
