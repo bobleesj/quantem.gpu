@@ -26,7 +26,12 @@ CONTRACT_VERSION = "live4dstem.ssb/v0.2"
 ALGORITHM_VERSION = "quantem.gpu.SSB/v0.1"
 JOBS_CONTRACT_VERSION = "live4dstem.ssb.jobs/v0.1"
 PREPARE_CONTRACT_VERSION = "live4dstem.ssb.prepare/v0.1"
-INTERACTIVE_CONTRACT_VERSION = "live4dstem.ssb.interactive/v0.1"
+INTERACTIVE_CONTRACT_V0_1 = "live4dstem.ssb.interactive/v0.1"
+INTERACTIVE_CONTRACT_VERSION = "live4dstem.ssb.interactive/v0.2"
+INTERACTIVE_EVALUATION_PHASE = "exact_full_bf_object_phase"
+INTERACTIVE_EVALUATION_PHASE_AND_LOSS = (
+    "exact_full_bf_object_phase_and_loss"
+)
 FIT_CONTRACT_VERSION = "live4dstem.ssb.fit/v0.1"
 FIT_EVIDENCE_VERSION = "live4dstem.ssb.fit.evidence/v0.2"
 _TERMINAL_JOB_STATES = {
@@ -426,8 +431,15 @@ class SSBProtocolService:
                 "higherOrderAberrations": False,
                 "preparedSessionWarmReconstruct": True,
                 "contractVersion": INTERACTIVE_CONTRACT_VERSION,
+                "compatibleRequestVersions": [INTERACTIVE_CONTRACT_V0_1],
                 "sessionEndpoint": "/api/ssb/interactive/sessions",
                 "jobEndpoint": "/api/ssb/interactive/jobs",
+                "evaluations": [
+                    INTERACTIVE_EVALUATION_PHASE,
+                    INTERACTIVE_EVALUATION_PHASE_AND_LOSS,
+                ],
+                "settleBinding": "exact_prior_preview_control_generation",
+                "saveEvidenceRequiresLossState": "settled",
                 "sessionLeaseSeconds": 300,
                 "cancellationMode": "stage_boundary",
                 "reconnectScope": "same_server_process",
@@ -741,6 +753,54 @@ class SSBProtocolService:
         return result
 
     @staticmethod
+    def _interactive_evaluation(
+        request: dict[str, Any],
+    ) -> tuple[str, int | None]:
+        """Resolve explicit v0.2 evaluation or the tested v0.1 compatibility form."""
+        version = request.get("contractVersion")
+        if version == INTERACTIVE_CONTRACT_V0_1:
+            if "evaluation" in request or "settlesControlGeneration" in request:
+                raise SSBProtocolError(
+                    "Interactive v0.1 requests use computeLoss, not v0.2 evaluation fields."
+                )
+            evaluation = (
+                INTERACTIVE_EVALUATION_PHASE_AND_LOSS
+                if bool(request.get("computeLoss", True))
+                else INTERACTIVE_EVALUATION_PHASE
+            )
+            return evaluation, None
+        if version != INTERACTIVE_CONTRACT_VERSION:
+            raise SSBProtocolError("Unsupported interactive SSB job contract.")
+        if "computeLoss" in request:
+            raise SSBProtocolError(
+                "Interactive v0.2 replaces computeLoss with the evaluation enum."
+            )
+        evaluation = request.get("evaluation")
+        if evaluation not in {
+            INTERACTIVE_EVALUATION_PHASE,
+            INTERACTIVE_EVALUATION_PHASE_AND_LOSS,
+        }:
+            raise SSBProtocolError("Interactive v0.2 requires a supported evaluation.")
+        settles = request.get("settlesControlGeneration")
+        if evaluation == INTERACTIVE_EVALUATION_PHASE:
+            if settles is not None:
+                raise SSBProtocolError(
+                    "Phase-only preview settlesControlGeneration must be null."
+                )
+            return evaluation, None
+        if settles is None:
+            raise SSBProtocolError(
+                "Phase-and-loss settle requires settlesControlGeneration."
+            )
+        settles = int(settles)
+        control_generation = int(request["controlGeneration"])
+        if settles < 0 or settles >= control_generation:
+            raise SSBProtocolError(
+                "settlesControlGeneration must identify an earlier preview generation."
+            )
+        return evaluation, settles
+
+    @staticmethod
     def _initial_controls(request: dict[str, Any]) -> dict[str, float]:
         values = request["calibration"]["resolution"]["calibration"]["calibration"]
         return {
@@ -919,14 +979,16 @@ class SSBProtocolService:
         request: dict[str, Any],
         controls: dict[str, float],
         *,
+        evaluation: str,
         initial: bool = False,
     ) -> dict[str, Any]:
+        compute_loss = evaluation == INTERACTIVE_EVALUATION_PHASE_AND_LOSS
         with self._session_device_context(gpu):
             started = time.perf_counter()
             session.set_rotation(controls["scanRotation"])
             result = session.reconstruct(
                 {name: controls[name] for name in ("C10", "C12", "phi12")},
-                compute_loss=bool(request.get("computeLoss", True)),
+                compute_loss=compute_loss,
                 force=True,
             )
             reconstruct_seconds = time.perf_counter() - started
@@ -938,6 +1000,11 @@ class SSBProtocolService:
                 dtype=np.float32,
             )
             encode_seconds = time.perf_counter() - encode_started
+        if compute_loss:
+            if result.loss is None or not math.isfinite(float(result.loss)):
+                raise SSBProtocolError("Settled interactive SSB loss must be finite.")
+        elif result.loss is not None:
+            raise SSBProtocolError("Phase-only interactive SSB must not compute loss.")
         return {
             "phase": phase,
             "logicalBrightFieldCount": state.num_bf,
@@ -971,7 +1038,10 @@ class SSBProtocolService:
     def open_interactive_session(self, request: dict[str, Any]) -> dict[str, Any]:
         """Open one retained source-bound session and run its initial reconstruction."""
 
-        if request.get("contractVersion") != INTERACTIVE_CONTRACT_VERSION:
+        if request.get("contractVersion") not in {
+            INTERACTIVE_CONTRACT_VERSION,
+            INTERACTIVE_CONTRACT_V0_1,
+        }:
             raise SSBProtocolError("Unsupported interactive SSB session contract.")
         session_id = str(UUID(str(request["sessionID"])))
         initial = json.loads(json.dumps(request.get("initialRequest") or {}))
@@ -1003,7 +1073,12 @@ class SSBProtocolService:
                 open_seconds = time.perf_counter() - open_started
                 controls = self._initial_controls(initial)
                 outcome = self._session_outcome(
-                    session, gpu, initial, controls, initial=True
+                    session,
+                    gpu,
+                    initial,
+                    controls,
+                    evaluation=INTERACTIVE_EVALUATION_PHASE_AND_LOSS,
+                    initial=True,
                 )
                 outcome["timings"]["sessionOpenSeconds"] = open_seconds
                 outcome["timings"]["sourceReadSeconds"] = getattr(
@@ -1035,6 +1110,10 @@ class SSBProtocolService:
                 key = (job_id, generation)
                 result["interactiveSession"] = self._session_snapshot(retained)
                 result["interactiveControls"] = controls
+                result["evaluation"] = INTERACTIVE_EVALUATION_PHASE_AND_LOSS
+                result["settlesControlGeneration"] = None
+                result["lossState"] = "settled"
+                result["saveEvidenceEligible"] = True
                 result["runtimeMemory"] = self._runtime_diagnostics()
                 self._refresh_result_provenance(result)
                 retained["initialResult"] = result
@@ -1049,6 +1128,9 @@ class SSBProtocolService:
                     "selectionSHA256": binding["selectionSHA256"],
                     "requestedBackend": initial["backend"],
                     "controls": controls,
+                    "evaluation": INTERACTIVE_EVALUATION_PHASE_AND_LOSS,
+                    "settlesControlGeneration": None,
+                    "lossState": "settled",
                     "sequence": 1,
                     "state": "completed",
                     "progress": {"stage": "completed", "determinate": False},
@@ -1157,8 +1239,7 @@ class SSBProtocolService:
     def submit_interactive(self, request: dict[str, Any]) -> dict[str, Any]:
         """Submit one latest-wins warm reconstruction against a retained session."""
 
-        if request.get("contractVersion") != INTERACTIVE_CONTRACT_VERSION:
-            raise SSBProtocolError("Unsupported interactive SSB job contract.")
+        evaluation, settles_control_generation = self._interactive_evaluation(request)
         self._expire_interactive_sessions()
         session_id = str(UUID(str(request["sessionID"])))
         job_id = str(UUID(str(request["jobID"])))
@@ -1188,13 +1269,38 @@ class SSBProtocolService:
                 raise SSBProtocolError(
                     "Interactive SSB controlGeneration must increase monotonically."
                 )
+            if (
+                request.get("contractVersion") == INTERACTIVE_CONTRACT_VERSION
+                and evaluation == INTERACTIVE_EVALUATION_PHASE_AND_LOSS
+            ):
+                if settles_control_generation != retained["latestControlGeneration"]:
+                    raise SSBProtocolError(
+                        "Interactive settle targets a stale preview control generation."
+                    )
+                preview = next(
+                    (
+                        candidate
+                        for candidate in self._interactive_jobs.values()
+                        if candidate.get("sessionID") == session_id
+                        and candidate.get("controlGeneration")
+                        == settles_control_generation
+                        and candidate.get("evaluation")
+                        == INTERACTIVE_EVALUATION_PHASE
+                        and candidate.get("state") == "completed"
+                    ),
+                    None,
+                )
+                if preview is None or preview.get("controls") != controls:
+                    raise SSBProtocolError(
+                        "Interactive settle requires the exact completed preview controls."
+                    )
             if key in self._interactive_jobs:
                 raise SSBProtocolError("The interactive SSB job ID is already in use.")
             retained["latestControlGeneration"] = control_generation
             retained["expiresAt"] = self._clock() + self._session_lease_seconds
             now = self._clock()
             job = {
-                "contractVersion": INTERACTIVE_CONTRACT_VERSION,
+                "contractVersion": request["contractVersion"],
                 "sessionID": session_id,
                 "jobID": job_id,
                 "datasetGeneration": generation,
@@ -1204,6 +1310,13 @@ class SSBProtocolService:
                 "selectionSHA256": request["selectionSHA256"],
                 "requestedBackend": request["backend"],
                 "controls": controls,
+                "evaluation": evaluation,
+                "settlesControlGeneration": settles_control_generation,
+                "lossState": (
+                    "settled"
+                    if evaluation == INTERACTIVE_EVALUATION_PHASE_AND_LOSS
+                    else "pending_exact_phase_variance"
+                ),
                 "sequence": 0,
                 "state": "accepted",
                 "progress": {"stage": "accepted", "determinate": False},
@@ -1247,11 +1360,15 @@ class SSBProtocolService:
                     base_request = json.loads(json.dumps(retained["baseRequest"]))
                     session = retained["session"]
                 base_request["jobID"] = key[0]
+                base_request["computeLoss"] = (
+                    job["evaluation"] == INTERACTIVE_EVALUATION_PHASE_AND_LOSS
+                )
                 outcome = self._session_outcome(
                     session,
                     gpu,
                     base_request,
-                    self._interactive_jobs[key]["controls"],
+                    job["controls"],
+                    evaluation=job["evaluation"],
                 )
                 payload_path = (
                     f"/api/ssb/interactive/jobs/{key[0]}/phase"
@@ -1273,6 +1390,12 @@ class SSBProtocolService:
                         result["interactiveSession"] = self._session_snapshot(retained)
                         result["interactiveControls"] = job["controls"]
                         result["controlGeneration"] = job["controlGeneration"]
+                        result["evaluation"] = job["evaluation"]
+                        result["settlesControlGeneration"] = job[
+                            "settlesControlGeneration"
+                        ]
+                        result["lossState"] = job["lossState"]
+                        result["saveEvidenceEligible"] = job["lossState"] == "settled"
                         result["runtimeMemory"] = self._runtime_diagnostics()
                         self._refresh_result_provenance(result)
                         self._interactive_payloads[key] = (payload, descriptor)

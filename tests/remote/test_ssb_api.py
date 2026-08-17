@@ -369,7 +369,9 @@ def _service(
     return service, holder
 
 
-def _open_interactive(service, identity, *, backend=None):
+def _open_interactive(
+    service, identity, *, backend=None, contract_version=INTERACTIVE_CONTRACT_VERSION
+):
     backend = backend or {"kind": "remote_cuda", "profile_id": "mjgoat", "gpu_index": 0}
     initial = _request(identity)
     initial["jobID"] = str(uuid4())
@@ -379,7 +381,7 @@ def _open_interactive(service, identity, *, backend=None):
     )
     return service.open_interactive_session(
         {
-            "contractVersion": INTERACTIVE_CONTRACT_VERSION,
+            "contractVersion": contract_version,
             "sessionID": str(uuid4()),
             "initialRequest": initial,
         }
@@ -405,7 +407,8 @@ def _interactive_request(opened, *, control_generation=1, job_id=None):
             "phi12": 0.47,
             "scanRotation": 158.9,
         },
-        "computeLoss": True,
+        "evaluation": "exact_full_bf_object_phase",
+        "settlesControlGeneration": None,
     }
 
 
@@ -607,8 +610,15 @@ def test_prepare_http_capability_and_unresolved_calibration_are_explicit(tmp_pat
         "higherOrderAberrations": False,
         "preparedSessionWarmReconstruct": True,
         "contractVersion": INTERACTIVE_CONTRACT_VERSION,
+        "compatibleRequestVersions": ["live4dstem.ssb.interactive/v0.1"],
         "sessionEndpoint": "/api/ssb/interactive/sessions",
         "jobEndpoint": "/api/ssb/interactive/jobs",
+        "evaluations": [
+            "exact_full_bf_object_phase",
+            "exact_full_bf_object_phase_and_loss",
+        ],
+        "settleBinding": "exact_prior_preview_control_generation",
+        "saveEvidenceRequiresLossState": "settled",
         "sessionLeaseSeconds": 300,
         "cancellationMode": "stage_boundary",
         "reconnectScope": "same_server_process",
@@ -754,7 +764,7 @@ def test_interactive_http_roundtrip_and_shutdown_close(tmp_path):
     assert holder["sessionCloses"] == 1
 
 
-def test_interactive_warm_same_controls_has_exact_phase_and_loss_parity(tmp_path):
+def test_interactive_warm_same_controls_has_exact_phase_parity_without_loss(tmp_path):
     service, _ = _service(tmp_path)
     identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
     opened = _open_interactive(service, identity)
@@ -769,10 +779,110 @@ def test_interactive_warm_same_controls_has_exact_phase_and_loss_parity(tmp_path
         completed["result"]["phase"]["sha256"]
         == opened["initialResult"]["phase"]["sha256"]
     )
-    assert completed["result"]["loss"] == opened["initialResult"]["loss"]
+    assert completed["result"]["loss"] is None
+    assert completed["result"]["evaluation"] == "exact_full_bf_object_phase"
+    assert completed["result"]["lossState"] == "pending_exact_phase_variance"
+    assert completed["result"]["saveEvidenceEligible"] is False
     assert completed["result"]["timings"]["sessionOpenSeconds"] is None
     assert completed["result"]["timings"]["sourceReadSeconds"] is None
     assert completed["result"]["timings"]["warmReconstructSeconds"] is not None
+
+
+def test_interactive_v02_preview_then_exact_settle_uses_same_controls(tmp_path):
+    service, holder = _service(tmp_path)
+    identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
+    opened = _open_interactive(service, identity)
+    preview = _interactive_request(opened, control_generation=1)
+
+    accepted = service.submit_interactive(preview)
+    assert accepted["evaluation"] == "exact_full_bf_object_phase"
+    assert accepted["settlesControlGeneration"] is None
+    assert accepted["lossState"] == "pending_exact_phase_variance"
+    preview_done = _wait_interactive(service, preview)
+
+    settle = _interactive_request(opened, control_generation=2)
+    settle["controls"] = preview["controls"]
+    settle["evaluation"] = "exact_full_bf_object_phase_and_loss"
+    settle["settlesControlGeneration"] = 1
+    service.submit_interactive(settle)
+    settled = _wait_interactive(service, settle)
+
+    assert [call["computeLoss"] for call in holder["sessionReconstructs"]] == [
+        True,
+        False,
+        True,
+    ]
+    assert preview_done["result"]["loss"] is None
+    assert settled["result"]["loss"] == preview["controls"]["C10"]
+    assert (
+        settled["result"]["phase"]["sha256"]
+        == preview_done["result"]["phase"]["sha256"]
+    )
+    assert settled["result"]["evaluation"] == "exact_full_bf_object_phase_and_loss"
+    assert settled["result"]["settlesControlGeneration"] == 1
+    assert settled["result"]["lossState"] == "settled"
+    assert settled["result"]["saveEvidenceEligible"] is True
+
+
+def test_interactive_v02_rejects_stale_or_changed_preview_settle(tmp_path):
+    service, holder = _service(tmp_path)
+    identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
+    opened = _open_interactive(service, identity)
+    first = _interactive_request(opened, control_generation=1)
+    service.submit_interactive(first)
+    _wait_interactive(service, first)
+
+    changed = _interactive_request(opened, control_generation=2)
+    changed["evaluation"] = "exact_full_bf_object_phase_and_loss"
+    changed["settlesControlGeneration"] = 1
+    with pytest.raises(SSBProtocolError, match="exact completed preview controls"):
+        service.submit_interactive(changed)
+
+    second = _interactive_request(opened, control_generation=2)
+    service.submit_interactive(second)
+    _wait_interactive(service, second)
+    stale = _interactive_request(opened, control_generation=3)
+    stale["controls"] = first["controls"]
+    stale["evaluation"] = "exact_full_bf_object_phase_and_loss"
+    stale["settlesControlGeneration"] = 1
+    with pytest.raises(SSBProtocolError, match="stale preview"):
+        service.submit_interactive(stale)
+    assert len(holder["sessionReconstructs"]) == 3
+
+
+def test_interactive_v01_compute_loss_compatibility_is_explicit(tmp_path):
+    service, holder = _service(tmp_path)
+    identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
+    opened = _open_interactive(
+        service,
+        identity,
+        contract_version="live4dstem.ssb.interactive/v0.1",
+    )
+    assert opened["contractVersion"] == INTERACTIVE_CONTRACT_VERSION
+    request = _interactive_request(opened)
+    request["contractVersion"] = "live4dstem.ssb.interactive/v0.1"
+    request.pop("evaluation")
+    request.pop("settlesControlGeneration")
+    request["computeLoss"] = False
+
+    accepted = service.submit_interactive(request)
+    completed = _wait_interactive(service, request)
+
+    assert accepted["contractVersion"] == "live4dstem.ssb.interactive/v0.1"
+    assert accepted["evaluation"] == "exact_full_bf_object_phase"
+    assert holder["sessionReconstructs"][-1]["computeLoss"] is False
+    assert completed["result"]["loss"] is None
+
+    legacy_loss = _interactive_request(opened, control_generation=2)
+    legacy_loss["contractVersion"] = "live4dstem.ssb.interactive/v0.1"
+    legacy_loss.pop("evaluation")
+    legacy_loss.pop("settlesControlGeneration")
+    legacy_loss["computeLoss"] = True
+    service.submit_interactive(legacy_loss)
+    loss_completed = _wait_interactive(service, legacy_loss)
+    assert holder["sessionReconstructs"][-1]["computeLoss"] is True
+    assert loss_completed["result"]["lossState"] == "settled"
+    assert loss_completed["result"]["saveEvidenceEligible"] is True
 
 
 def test_initial_fit_uses_exact_common_200_trial_contract_and_slider_seed(tmp_path):
