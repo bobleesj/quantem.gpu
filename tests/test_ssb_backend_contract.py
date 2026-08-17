@@ -1,11 +1,95 @@
 from __future__ import annotations
 
+import builtins
+import importlib
 import inspect
 from types import SimpleNamespace
 
 import numpy as np
 
 from tests.ssb_precision import PRECISION
+
+
+def test_mps_ssb_chunked_source_never_imports_torch(monkeypatch) -> None:
+    """Packaged local MPS wraps exact chunks without the omitted Torch runtime."""
+    from quantem.gpu.detector.compute.mps import kernels as mps_kernels
+    from quantem.gpu.ssb.compute.mps.engine import _as_chunked_frames
+
+    class FakeMPSChunked4DSTEM:
+        pass
+
+    class FakeMetalVirtualImage:
+        row_prefix_enabled = False
+
+        def __init__(self, chunks, row_prefix=False):
+            self.chunks = chunks
+            self.row_prefix_enabled = row_prefix
+
+        def gather_columns_float32(self, rows, cols, *, out=None):
+            values = np.concatenate(
+                [np.asarray(chunk)[:, rows, cols] for chunk in self.chunks],
+                axis=0,
+            ).T.astype(np.float32, copy=False)
+            if out is None:
+                return values
+            out[...] = values
+            return out
+
+    monkeypatch.setattr(mps_kernels, "MetalVirtualImage", FakeMetalVirtualImage)
+    native_uint16 = np.asarray(
+        [
+            [[0, 53], [7, 11]],
+            [[13, 17], [19, 23]],
+        ],
+        dtype=np.uint16,
+    )
+    assert int(native_uint16.max()) == 53
+    assert int(np.count_nonzero(native_uint16 > 255)) == 0
+    working = native_uint16.astype(np.uint8)
+    np.testing.assert_array_equal(working.astype(np.uint16), native_uint16)
+    source = FakeMPSChunked4DSTEM()
+    source.chunks = [working]
+    source.metadata = {
+        "scan_shape": (1, 2),
+        "source_dtype": "uint16",
+        "dtype": "uint8",
+    }
+    source.det_bin = 1
+    source.fast_chunks = None
+    source.fast_det_bin = None
+    source.detector_sum = None
+    source.row_prefix = False
+    mps_io = importlib.import_module("quantem.gpu.io.backends.mps")
+    monkeypatch.setattr(
+        mps_io,
+        "MPSChunked4DSTEM",
+        FakeMPSChunked4DSTEM,
+        raising=False,
+    )
+    imported = builtins.__import__
+
+    def reject_torch(name, *args, **kwargs):
+        if name == "torch" or name.startswith("torch."):
+            raise AssertionError("the packaged local-MPS SSB path imported torch")
+        return imported(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", reject_torch)
+    frames = _as_chunked_frames(source)
+    gathered = frames.columns_float32(
+        np.asarray([0, 1], dtype=np.int32),
+        np.asarray([1, 0], dtype=np.int32),
+    )
+
+    assert frames.dtype == np.dtype(np.uint8)
+    assert frames.metadata["source_dtype"] == "uint16"
+    assert frames.metadata["dtype"] == "uint8"
+    assert frames.torch_dtype is None
+    assert isinstance(frames[0], np.ndarray)
+    np.testing.assert_array_equal(frames[0], working[0])
+    np.testing.assert_array_equal(
+        gathered,
+        np.asarray([[53, 17], [7, 19]], dtype=np.float32),
+    )
 
 
 class _Backend:
@@ -142,7 +226,9 @@ def test_mps_reconstruct_honors_compute_loss(monkeypatch) -> None:
     assert requested == ["clear", True, "clear"]
 
 
-def test_mps_rotation_retargets_geometry_without_repreparing_source(monkeypatch) -> None:
+def test_mps_rotation_retargets_geometry_without_repreparing_source(
+    monkeypatch,
+) -> None:
     """Changed rotation must retain the existing source FFT evidence object."""
     from quantem.gpu.ssb.compute.mps import backend as mps_backend
 
@@ -213,9 +299,7 @@ def test_mps_rotation_geometry_keeps_exact_source_fft_identity() -> None:
         center_row_col=(1.0, 1.0),
     )
 
-    _retarget_prepared_rotation(
-        prepared, selection=selection, rotation_angle_deg=90.0
-    )
+    _retarget_prepared_rotation(prepared, selection=selection, rotation_angle_deg=90.0)
 
     assert prepared.g_qk is source_fft
     np.testing.assert_allclose(prepared.kx_np, [0.0], atol=1e-7)
@@ -335,8 +419,7 @@ def test_backend_specific_fit_entry_points_are_not_public() -> None:
     import quantem.gpu as qg
 
     assert not any(
-        name.lower().endswith(("_cuda", "_mps", "_webgpu"))
-        for name in qg.__all__
+        name.lower().endswith(("_cuda", "_mps", "_webgpu")) for name in qg.__all__
     )
 
 

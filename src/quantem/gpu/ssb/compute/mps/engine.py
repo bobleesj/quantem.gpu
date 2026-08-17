@@ -628,7 +628,7 @@ def _as_chunked_frames(data):
     if isinstance(data, LoadResult):
         data = data.data
     if isinstance(data, MPSChunked4DSTEM):
-        return ChunkedFrames(data)
+        return ChunkedFrames(data, torch_compat=False)
     if isinstance(data, np.ndarray) and data.ndim in (3, 4):
         return _ArrayFrames(data)
     raise TypeError(
