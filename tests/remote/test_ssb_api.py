@@ -995,6 +995,9 @@ def test_interactive_v01_compute_loss_compatibility_is_explicit(tmp_path):
     assert accepted["evaluation"] == "exact_full_bf_object_phase"
     assert holder["sessionReconstructs"][-1]["computeLoss"] is False
     assert completed["result"]["loss"] is None
+    assert completed["result"]["phasePayload"]["path"].endswith(
+        f"/phase?generation={request['datasetGeneration']}"
+    )
 
     legacy_loss = _interactive_request(opened, control_generation=2)
     legacy_loss["contractVersion"] = "live4dstem.ssb.interactive/v0.1"
@@ -1006,6 +1009,19 @@ def test_interactive_v01_compute_loss_compatibility_is_explicit(tmp_path):
     assert holder["sessionReconstructs"][-1]["computeLoss"] is True
     assert loss_completed["result"]["lossState"] == "settled"
     assert loss_completed["result"]["saveEvidenceEligible"] is True
+
+
+def test_interactive_v02_payload_paths_are_canonical_path_only(tmp_path):
+    service, _ = _service(tmp_path)
+    identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
+    opened = _open_interactive(service, identity)
+    assert "?" not in opened["initialResult"]["phasePayload"]["path"]
+
+    request = _interactive_request(opened)
+    service.submit_interactive(request)
+    completed = _wait_interactive(service, request)
+
+    assert "?" not in completed["result"]["phasePayload"]["path"]
 
 
 def test_initial_fit_uses_exact_common_200_trial_contract_and_slider_seed(tmp_path):

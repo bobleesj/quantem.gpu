@@ -749,6 +749,15 @@ class SSBProtocolService:
         return binding
 
     @staticmethod
+    def _interactive_payload_path(
+        job_id: str, generation: int, contract_version: str
+    ) -> str:
+        path = f"/api/ssb/interactive/jobs/{job_id}/phase"
+        if contract_version == INTERACTIVE_CONTRACT_V0_1:
+            return f"{path}?generation={generation}"
+        return path
+
+    @staticmethod
     def _interactive_controls(request: dict[str, Any]) -> dict[str, float]:
         controls = request.get("controls") or {}
         expected = {"C10", "C12", "phi12", "scanRotation"}
@@ -1106,8 +1115,8 @@ class SSBProtocolService:
                 )
                 job_id = str(UUID(str(initial["jobID"])))
                 generation = int(initial["datasetGeneration"])
-                payload_path = (
-                    f"/api/ssb/interactive/jobs/{job_id}/phase?generation={generation}"
+                payload_path = self._interactive_payload_path(
+                    job_id, generation, request["contractVersion"]
                 )
                 payload, descriptor, result = self._validated_result(
                     outcome, gpu, initial, payload_path=payload_path
@@ -1398,8 +1407,8 @@ class SSBProtocolService:
                     job["controls"],
                     evaluation=job["evaluation"],
                 )
-                payload_path = (
-                    f"/api/ssb/interactive/jobs/{key[0]}/phase?generation={key[1]}"
+                payload_path = self._interactive_payload_path(
+                    key[0], key[1], request["contractVersion"]
                 )
                 payload, descriptor, result = self._validated_result(
                     outcome, gpu, base_request, payload_path=payload_path
@@ -1549,8 +1558,8 @@ class SSBProtocolService:
                 outcome, fit_evidence = self._session_fit_outcome(
                     session, gpu, base_request, specification
                 )
-                payload_path = (
-                    f"/api/ssb/interactive/jobs/{key[0]}/phase?generation={key[1]}"
+                payload_path = self._interactive_payload_path(
+                    key[0], key[1], INTERACTIVE_CONTRACT_VERSION
                 )
                 payload, descriptor, result = self._validated_result(
                     outcome, gpu, base_request, payload_path=payload_path
