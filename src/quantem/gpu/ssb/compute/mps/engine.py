@@ -4095,8 +4095,7 @@ def _object_fourier_sum_dynamic(
     if threadgroup_size is None:
         threadgroup_size = _default_object_redraw_threadgroup(prepared.scan_shape)
     threadgroup_size = max(1, int(threadgroup_size))
-    sparse_storage = prepared.bf_storage_indices_np is not None
-    kernel_num_bf = prepared.num_bf if sparse_storage else int(prepared.g_qk.shape[0])
+    kernel_num_bf, sparse_storage = _object_redraw_storage_topology(prepared)
     groups = (kernel_num_bf + chunk_bf - 1) // chunk_bf
     kernel = _object_fourier_sum_dynamic_kernel(
         kernel_num_bf,
@@ -4153,6 +4152,25 @@ def _object_fourier_sum_dynamic(
     object_wave = mx.fft.ifft2(fourier_sum)
     mx.eval(object_wave)
     return object_wave
+
+
+def _object_redraw_storage_topology(
+    prepared: _PreparedMpsSSB,
+) -> tuple[int, bool]:
+    """Use compact active rows directly when preparation already packed them."""
+    stored_num_bf = int(prepared.g_qk.shape[0])
+    storage_indices = prepared.bf_storage_indices_np
+    compact_active = (
+        storage_indices is not None
+        and stored_num_bf == int(storage_indices.size)
+        and stored_num_bf < int(prepared.num_bf)
+    )
+    if compact_active:
+        return stored_num_bf, False
+    if storage_indices is not None:
+        return int(prepared.num_bf), True
+    return stored_num_bf, False
+
 
 def _prepare_selection(
     frames,
