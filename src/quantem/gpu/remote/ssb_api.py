@@ -22,6 +22,7 @@ JOBS_CONTRACT_VERSION = "live4dstem.ssb.jobs/v0.1"
 PREPARE_CONTRACT_VERSION = "live4dstem.ssb.prepare/v0.1"
 INTERACTIVE_CONTRACT_VERSION = "live4dstem.ssb.interactive/v0.1"
 FIT_CONTRACT_VERSION = "live4dstem.ssb.fit/v0.1"
+FIT_EVIDENCE_VERSION = "live4dstem.ssb.fit.evidence/v0.2"
 _TERMINAL_JOB_STATES = {
     "completed",
     "cancelled",
@@ -41,6 +42,23 @@ class SSBPayloadNotReady(SSBProtocolError):
 
 class SSBPayloadUnavailable(SSBProtocolError):
     """A terminal job has no phase payload."""
+
+
+def _fit_history_counts(
+    *, backend_kind: str, optimizer_trials: int, recorded_history_count: int
+) -> tuple[int, int, int]:
+    """Validate and label the public backend's recorded fit history."""
+
+    baseline_history_count = 0 if backend_kind == "remote_cuda" else 1
+    expected_recorded_count = optimizer_trials + baseline_history_count
+    if optimizer_trials != 200 or recorded_history_count != expected_recorded_count:
+        raise SSBProtocolError(
+            "Initial SSB fit history does not match the backend's exact "
+            f"200-trial semantics: backend={backend_kind}, "
+            f"optimizer={optimizer_trials}, baseline={baseline_history_count}, "
+            f"recorded={recorded_history_count}."
+        )
+    return optimizer_trials, baseline_history_count, recorded_history_count
 
 
 def _sha256(path: Path) -> str:
@@ -410,6 +428,7 @@ class SSBProtocolService:
             "initialAberrationFit": {
                 "supported": True,
                 "contractVersion": FIT_CONTRACT_VERSION,
+                "evidenceVersion": FIT_EVIDENCE_VERSION,
                 "endpoint": "/api/ssb/interactive/fits",
                 "optimizer": "optuna_tpe",
                 "optimizerTrials": 200,
@@ -427,6 +446,9 @@ class SSBProtocolService:
                 "refinement": None,
                 "higherOrderAberrations": False,
                 "candidateBatchSize": 4 if backend_kind == "remote_cuda" else 2,
+                "optimizerTrialHistoryCount": 200,
+                "baselineHistoryCount": 0 if backend_kind == "remote_cuda" else 1,
+                "recordedHistoryCount": 200 if backend_kind == "remote_cuda" else 201,
                 "totalObjectiveEvaluations": "not_exposed_by_public_backend",
                 "retainedSessionBehavior": (
                     "reuses_prepared_accelerator"
@@ -793,13 +815,23 @@ class SSBProtocolService:
             "scanRotation": specification["fixedScanRotationDegrees"],
         }
         trial_history = list(result.optuna_trials or ())
+        optimizer_history_count, baseline_history_count, recorded_history_count = (
+            _fit_history_counts(
+                backend_kind=self.backend_kind,
+                optimizer_trials=int(result.n_trials),
+                recorded_history_count=len(trial_history),
+            )
+        )
         fit_evidence = {
+            "evidenceVersion": FIT_EVIDENCE_VERSION,
             "specification": specification,
             "fittedControls": fitted,
             "sliderSeed": fitted,
             "loss": None if result.loss is None else float(result.loss),
             "optimizerTrialsCompleted": int(result.n_trials),
-            "recordedTrialHistoryCount": len(trial_history),
+            "optimizerTrialHistoryCount": optimizer_history_count,
+            "baselineHistoryCount": baseline_history_count,
+            "recordedHistoryCount": recorded_history_count,
             "totalObjectiveEvaluationCount": None,
             "totalObjectiveEvaluationCountReason": (
                 "Public CUDA and MPS fit APIs perform backend-specific baseline, "

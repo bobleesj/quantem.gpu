@@ -21,6 +21,7 @@ from quantem.gpu.remote.ssb_api import (
     SSBPayloadUnavailable,
     SSBProtocolError,
     SSBProtocolService,
+    _fit_history_counts,
     count_audit_sha256,
     selection_descriptor_sha256,
 )
@@ -227,6 +228,7 @@ def _service(
     prepared_sampling: tuple[float, float] = (1.090909, 1.090909),
     clock=lambda: time.time(),
     session_lease_seconds: float = 300.0,
+    backend_kind: str = "remote_cuda",
 ) -> tuple[SSBProtocolService, dict]:
     master = tmp_path / "BTO_18_master.h5"
     master.write_bytes(b"master")
@@ -284,13 +286,16 @@ def _service(
                 holder["fitStarted"].set()
                 gate.wait(timeout=5)
             fitted = {"C10": 73.0, "C12": 14.0, "phi12": 0.47}
+            history = [{"params": fitted, "loss": 0.04}] * trials
+            if backend_kind == "local_mps":
+                history.insert(0, {"params": fitted, "loss": 0.05})
             return SimpleNamespace(
                 phase=np.full((2, 2), 73.0, dtype=np.float32),
                 aberrations=fitted,
                 loss=0.04,
                 timings={"optuna_seconds": 0.2},
                 n_trials=trials,
-                optuna_trials=[{"params": fitted, "loss": 0.04}] * trials,
+                optuna_trials=history,
             )
 
         def set_rotation(self, value):
@@ -350,14 +355,19 @@ def _service(
         clock=clock,
         session_lease_seconds=session_lease_seconds,
         implementation_revision="test",
+        backend_kind=backend_kind,
     )
     return service, holder
 
 
-def _open_interactive(service, identity):
+def _open_interactive(service, identity, *, backend=None):
+    backend = backend or {"kind": "remote_cuda", "profile_id": "mjgoat", "gpu_index": 0}
     initial = _request(identity)
     initial["jobID"] = str(uuid4())
-    initial["preparedSelection"] = service.prepare(_prepare_request(identity))
+    initial["backend"] = backend
+    initial["preparedSelection"] = service.prepare(
+        _prepare_request(identity, backend=backend)
+    )
     return service.open_interactive_session(
         {
             "contractVersion": INTERACTIVE_CONTRACT_VERSION,
@@ -766,9 +776,12 @@ def test_initial_fit_uses_exact_common_200_trial_contract_and_slider_seed(tmp_pa
     ]
     assert completed["state"] == "completed"
     evidence = completed["result"]["initialAberrationFit"]
+    assert evidence["evidenceVersion"] == "live4dstem.ssb.fit.evidence/v0.2"
     assert evidence["specification"] == accepted["fitSpecification"]
     assert evidence["optimizerTrialsCompleted"] == 200
-    assert evidence["recordedTrialHistoryCount"] == 200
+    assert evidence["optimizerTrialHistoryCount"] == 200
+    assert evidence["baselineHistoryCount"] == 0
+    assert evidence["recordedHistoryCount"] == 200
     assert evidence["totalObjectiveEvaluationCount"] is None
     assert evidence["fittedControls"] == {
         "C10": 73.0,
@@ -782,6 +795,92 @@ def test_initial_fit_uses_exact_common_200_trial_contract_and_slider_seed(tmp_pa
     assert completed["result"]["requestedBackend"] == request["backend"]
     assert completed["result"]["executedDevice"]["backend"] == "cuda"
     assert descriptor["sha256"] == hashlib.sha256(payload).hexdigest()
+
+
+def test_initial_fit_history_distinguishes_mps_baseline_from_optimizer_trials():
+    assert _fit_history_counts(
+        backend_kind="remote_cuda", optimizer_trials=200, recorded_history_count=200
+    ) == (200, 0, 200)
+    assert _fit_history_counts(
+        backend_kind="local_mps", optimizer_trials=200, recorded_history_count=201
+    ) == (200, 1, 201)
+    with pytest.raises(SSBProtocolError, match="baseline=1, recorded=200"):
+        _fit_history_counts(
+            backend_kind="local_mps", optimizer_trials=200, recorded_history_count=200
+        )
+
+
+def test_local_mps_fit_result_labels_one_recorded_baseline_and_200_optimizer_trials(
+    tmp_path,
+):
+    service, holder = _service(tmp_path, backend_kind="local_mps")
+    identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
+    opened = _open_interactive(service, identity, backend={"kind": "local_mps"})
+    request = _fit_request(opened)
+
+    service.submit_interactive_fit(request)
+    completed = _wait_interactive(service, request)
+
+    assert completed["state"] == "completed"
+    evidence = completed["result"]["initialAberrationFit"]
+    assert holder["sessionFits"][0]["trials"] == 200
+    assert evidence["optimizerTrialsCompleted"] == 200
+    assert evidence["optimizerTrialHistoryCount"] == 200
+    assert evidence["baselineHistoryCount"] == 1
+    assert evidence["recordedHistoryCount"] == 201
+    assert evidence["totalObjectiveEvaluationCount"] is None
+    assert completed["result"]["executedDevice"]["backend"] == "mps"
+
+
+def test_local_mps_fit_http_reports_split_history_and_payload_headers(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from quantem.gpu.remote.server import BrowseService, create_app
+
+    service, _ = _service(tmp_path, backend_kind="local_mps")
+    browse = BrowseService(tmp_path, initialize_cuda=False)
+    identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
+    backend = {"kind": "local_mps"}
+    initial = _request(identity)
+    initial["jobID"] = str(uuid4())
+    initial["backend"] = backend
+    initial["preparedSelection"] = service.prepare(
+        _prepare_request(identity, backend=backend)
+    )
+    app = create_app(tmp_path, service=browse, ssb_service=service)
+
+    with TestClient(app) as client:
+        opened_response = client.post(
+            "/api/ssb/interactive/sessions",
+            json={
+                "contractVersion": INTERACTIVE_CONTRACT_VERSION,
+                "sessionID": str(uuid4()),
+                "initialRequest": initial,
+            },
+        )
+        assert opened_response.status_code == 201
+        opened = opened_response.json()
+        request = _fit_request(opened)
+        accepted = client.post("/api/ssb/interactive/fits", json=request)
+        assert accepted.status_code == 202
+        for _ in range(200):
+            snapshot = client.get(
+                f"/api/ssb/interactive/jobs/{request['jobID']}",
+                params={"generation": request["datasetGeneration"]},
+            ).json()
+            if snapshot["state"] == "completed":
+                break
+            time.sleep(0.005)
+        assert snapshot["state"] == "completed"
+        evidence = snapshot["result"]["initialAberrationFit"]
+        assert evidence["optimizerTrialHistoryCount"] == 200
+        assert evidence["baselineHistoryCount"] == 1
+        assert evidence["recordedHistoryCount"] == 201
+        payload = client.get(snapshot["result"]["phasePayload"]["path"])
+        assert payload.status_code == 200
+        assert payload.headers["X-Dtype"] == "float32"
+        assert int(payload.headers["X-Byte-Count"]) == len(payload.content)
+        assert payload.headers["X-SHA256"] == hashlib.sha256(payload.content).hexdigest()
 
 
 @pytest.mark.parametrize(
@@ -877,6 +976,15 @@ def test_initial_fit_capability_is_backend_honest() -> None:
     assert cuda["scanRotation"] == mps["scanRotation"] == "fixed_to_retained_session"
     assert cuda["candidateBatchSize"] == 4
     assert mps["candidateBatchSize"] == 2
+    assert cuda["evidenceVersion"] == mps["evidenceVersion"] == (
+        "live4dstem.ssb.fit.evidence/v0.2"
+    )
+    assert cuda["optimizerTrialHistoryCount"] == 200
+    assert mps["optimizerTrialHistoryCount"] == 200
+    assert cuda["baselineHistoryCount"] == 0
+    assert mps["baselineHistoryCount"] == 1
+    assert cuda["recordedHistoryCount"] == 200
+    assert mps["recordedHistoryCount"] == 201
     assert cuda["totalObjectiveEvaluations"] == "not_exposed_by_public_backend"
     assert mps["totalObjectiveEvaluations"] == "not_exposed_by_public_backend"
     assert cuda["retainedSessionBehavior"] == "reuses_prepared_accelerator"
