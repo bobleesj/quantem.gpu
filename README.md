@@ -372,6 +372,7 @@ complete; `Gap` means the backend does not implement that capability yet.
 | Dense DF/ADF strategy | Done | Done | Done | Uses cached full-detector total minus complement when that is cheaper than scanning dense masks. |
 | CoM/DPC resident kernels | Done | Done | Done | CUDA and MPS have fused moment kernels; WebGPU row/col DPC has full no-bin headed signoff on real hardware. |
 | iDPC | Done | Done | Done | WebGPU has a fixed-rotation browser iDPC solver using paired DPC buffers and a dual-real FFT. It matches the Python reference within float32 FFT tolerance, not bit-exact. |
+| Display colormap/histogram/log/FFT | Done | Done | Done | One colormap table and one float32 normalization/binning contract cover CUDA, native Metal/Swift, and widget-bundled WebGPU. Exact RGBA and histogram gates include signed-log difference data; FFT uses numerical tolerance. |
 | Ptychographic SSB preview | Done | Done | Partial | CUDA and MPS are implemented; WebGPU SSB source lives under `quantem.gpu.ssb.compute.webgpu` and is bundled by the widget. |
 | Ptychographic SSB fit/reconstruction | Done | Done | Partial | MPS supports current parity shapes but large exact phase/loss remains slower than CUDA. |
 | GIF/MP4 movie rendering | Done | Done | NA | CUDA/NVENC and Metal/VideoToolbox paths live here; widget owns buttons/export UI. |
@@ -387,6 +388,7 @@ kernel families are:
 | HDF5 bitshuffle/LZ4 decode | `quantem.gpu.io.backends.cuda` | `quantem.gpu.io.backends.mps` | `quantem.gpu.io.backends.webgpu` and `local-h5.ts` | Corrected-frame checksum parity and load-stage timing. |
 | BF/DF/ADF masked sums | `quantem.gpu.detector.compute.cuda` | `quantem.gpu.detector.compute.mps` | `quantem.gpu.detector.compute.webgpu` | Exact integer product parity and first/warm interaction timing. |
 | CoM/DPC | `quantem.gpu.dpc.compute.cuda` | `quantem.gpu.dpc.compute.mps` | `quantem.gpu.dpc.compute.webgpu` | Row/col CoM and centered DPC parity within `1e-5`. |
+| Display colormap/histogram/log/FFT | `quantem.gpu.display.cuda` | `MetalDisplayKernels` | `quantem.gpu.display.webgpu` | Exact uint8 RGBA and 256-bin counts for linear/signed-log float32 fixtures; FFT agreement within the stated float precision. |
 | SSB object, phase, loss | `quantem.gpu.ssb.compute.cuda` | `quantem.gpu.ssb.compute.mps` | `quantem.gpu.ssb.compute.webgpu` | Same BF policy, same aberrations, phase/loss parity, and interactive redraw timing. |
 | Movie rendering | `quantem.gpu.movie.cuda` | `quantem.gpu.movie.mps` | NA | Frame parity and encoded movie smoke tests. |
 
@@ -471,6 +473,8 @@ Implemented in this package:
 - `quantem.gpu.dpc` CoM/DPC/iDPC with reference checks
 - `MetalDisplayKernels`, a small Swift package for shared native Metal
   normalization, LUT colormaps, range reduction, and histograms
+- `quantem.gpu.display.webgpu`, the canonical browser colormap, histogram,
+  statistics, and display-FFT source bundled by `quantem.widget`
 - `quantem.gpu.SSB`, the single backend-neutral SSB workflow above private
   CUDA, MPS, and WebGPU compute implementations
 - domain-owned CUDA, MPS, and WebGPU compute implementations; Linux CI has

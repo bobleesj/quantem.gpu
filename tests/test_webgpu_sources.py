@@ -14,6 +14,7 @@ def source_text(name: str) -> str:
 def test_webgpu_sources_are_shipped_and_readable() -> None:
     names = [
         "device/webgpu.ts",
+        "detector/geometry.ts",
         "detector/compute/webgpu/backend.ts",
         "dpc/compute/webgpu/fft.ts",
         "dpc/compute/webgpu/kernels.ts",
@@ -66,6 +67,12 @@ def test_webgpu_compute_source_tracks_vi_and_dpc_kernels() -> None:
     assert "if (mode == 3u) { return data[gp]; }" in source
     assert "const values = new Uint32Array(mapped, 0, this.detSize);" in source
     assert "subgroupAdd" in source
+
+
+def test_detector_geometry_source_is_shared() -> None:
+    geometry = source_text("detector/geometry.ts")
+    assert "export function diskMask" in geometry
+    assert "export function annulusMask" in geometry
 
 
 def test_webgpu_backend_source_tracks_ssb_engine() -> None:
