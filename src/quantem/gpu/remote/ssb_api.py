@@ -31,9 +31,7 @@ SOURCE_RESOLUTION_CONTRACT_VERSION = "live4dstem.ssb.source-resolution/v0.1"
 INTERACTIVE_CONTRACT_V0_1 = "live4dstem.ssb.interactive/v0.1"
 INTERACTIVE_CONTRACT_VERSION = "live4dstem.ssb.interactive/v0.2"
 INTERACTIVE_EVALUATION_PHASE = "exact_full_bf_object_phase"
-INTERACTIVE_EVALUATION_PHASE_AND_LOSS = (
-    "exact_full_bf_object_phase_and_loss"
-)
+INTERACTIVE_EVALUATION_PHASE_AND_LOSS = "exact_full_bf_object_phase_and_loss"
 FIT_CONTRACT_VERSION = "live4dstem.ssb.fit/v0.1"
 FIT_EVIDENCE_VERSION = "live4dstem.ssb.fit.evidence/v0.2"
 _TERMINAL_JOB_STATES = {
@@ -354,7 +352,9 @@ class SSBProtocolService:
             if backend_kind == "remote_cuda"
             else lambda _gpu: nullcontext()
         )
-        self._runtime_diagnostics = runtime_diagnostics or self._default_runtime_diagnostics
+        self._runtime_diagnostics = (
+            runtime_diagnostics or self._default_runtime_diagnostics
+        )
         self._clock = clock
         self._session_lease_seconds = float(session_lease_seconds)
         if self._session_lease_seconds <= 0.0:
@@ -829,9 +829,13 @@ class SSBProtocolService:
         if request.get("contractVersion") != FIT_CONTRACT_VERSION:
             raise SSBProtocolError("Unsupported initial SSB fit contract.")
         if int(request.get("optimizerTrials", 0)) != 200:
-            raise SSBProtocolError("Initial SSB fit requires exactly 200 optimizer trials.")
+            raise SSBProtocolError(
+                "Initial SSB fit requires exactly 200 optimizer trials."
+            )
         if request.get("objective") != "exact_full_active_bf_phase_variance_float32":
-            raise SSBProtocolError("Initial SSB fit requires the exact full-active-BF objective.")
+            raise SSBProtocolError(
+                "Initial SSB fit requires the exact full-active-BF objective."
+            )
         if request.get("refinement") is not None:
             raise SSBProtocolError(
                 "Initial SSB fit refinement must be null so the budget remains 200 trials."
@@ -851,14 +855,20 @@ class SSBProtocolService:
                 raise SSBProtocolError(f"{name} requires minimum and maximum.")
             minimum = float(value["minimum"])
             maximum = float(value["maximum"])
-            if not math.isfinite(minimum) or not math.isfinite(maximum) or minimum >= maximum:
+            if (
+                not math.isfinite(minimum)
+                or not math.isfinite(maximum)
+                or minimum >= maximum
+            ):
                 raise SSBProtocolError(f"{name} requires a finite increasing range.")
             normalized[name] = {"minimum": minimum, "maximum": maximum}
         fixed_rotation = float(request["fixedScanRotationDegrees"])
         session_rotation = SSBProtocolService._initial_controls(
             retained["baseRequest"]
         )["scanRotation"]
-        if not math.isclose(fixed_rotation, session_rotation, rel_tol=0.0, abs_tol=1e-12):
+        if not math.isclose(
+            fixed_rotation, session_rotation, rel_tol=0.0, abs_tol=1e-12
+        ):
             raise SSBProtocolError(
                 "Initial SSB fit scan rotation must stay fixed to the retained session."
             )
@@ -1097,8 +1107,7 @@ class SSBProtocolService:
                 job_id = str(UUID(str(initial["jobID"])))
                 generation = int(initial["datasetGeneration"])
                 payload_path = (
-                    f"/api/ssb/interactive/jobs/{job_id}/phase"
-                    f"?generation={generation}"
+                    f"/api/ssb/interactive/jobs/{job_id}/phase?generation={generation}"
                 )
                 payload, descriptor, result = self._validated_result(
                     outcome, gpu, initial, payload_path=payload_path
@@ -1224,7 +1233,9 @@ class SSBProtocolService:
             with self._lock:
                 retained = self._retained_sessions.pop(session_id, None)
                 if retained is None:
-                    raise SSBProtocolError("The retained SSB session is already closed.")
+                    raise SSBProtocolError(
+                        "The retained SSB session is already closed."
+                    )
                 self._device_sessions.pop((self.backend_kind, gpu), None)
             with self._session_device_context(gpu):
                 retained["context"].__exit__(None, None, None)
@@ -1260,21 +1271,29 @@ class SSBProtocolService:
         with self._lock:
             retained = self._retained_sessions.get(session_id)
             if retained is None:
-                raise SSBProtocolError("The retained SSB session is missing or expired.")
-            if request.get("sessionBindingSHA256") != retained["binding"][
-                "sessionBindingSHA256"
-            ]:
+                raise SSBProtocolError(
+                    "The retained SSB session is missing or expired."
+                )
+            if (
+                request.get("sessionBindingSHA256")
+                != retained["binding"]["sessionBindingSHA256"]
+            ):
                 raise SSBProtocolError("The interactive SSB session binding changed.")
-            if request.get("sourceIdentitySHA256") != retained["binding"][
-                "sourceIdentitySHA256"
-            ] or request.get("selectionSHA256") != retained["binding"][
-                "selectionSHA256"
-            ]:
-                raise SSBProtocolError("The interactive SSB source or selection changed.")
+            if (
+                request.get("sourceIdentitySHA256")
+                != retained["binding"]["sourceIdentitySHA256"]
+                or request.get("selectionSHA256")
+                != retained["binding"]["selectionSHA256"]
+            ):
+                raise SSBProtocolError(
+                    "The interactive SSB source or selection changed."
+                )
             if request.get("backend") != retained["backend"]:
                 raise SSBProtocolError("The interactive SSB backend or device changed.")
             if generation != int(retained["baseRequest"]["datasetGeneration"]):
-                raise SSBProtocolError("The interactive SSB dataset generation changed.")
+                raise SSBProtocolError(
+                    "The interactive SSB dataset generation changed."
+                )
             if control_generation <= retained["latestControlGeneration"]:
                 raise SSBProtocolError(
                     "Interactive SSB controlGeneration must increase monotonically."
@@ -1294,8 +1313,7 @@ class SSBProtocolService:
                         if candidate.get("sessionID") == session_id
                         and candidate.get("controlGeneration")
                         == settles_control_generation
-                        and candidate.get("evaluation")
-                        == INTERACTIVE_EVALUATION_PHASE
+                        and candidate.get("evaluation") == INTERACTIVE_EVALUATION_PHASE
                         and candidate.get("state") == "completed"
                     ),
                     None,
@@ -1381,8 +1399,7 @@ class SSBProtocolService:
                     evaluation=job["evaluation"],
                 )
                 payload_path = (
-                    f"/api/ssb/interactive/jobs/{key[0]}/phase"
-                    f"?generation={key[1]}"
+                    f"/api/ssb/interactive/jobs/{key[0]}/phase?generation={key[1]}"
                 )
                 payload, descriptor, result = self._validated_result(
                     outcome, gpu, base_request, payload_path=payload_path
@@ -1394,7 +1411,9 @@ class SSBProtocolService:
                         self._advance_locked(job, "cancelled")
                     elif retained is None:
                         self._advance_locked(job, "expired")
-                    elif job["controlGeneration"] != retained["latestControlGeneration"]:
+                    elif (
+                        job["controlGeneration"] != retained["latestControlGeneration"]
+                    ):
                         self._advance_locked(job, "superseded")
                     else:
                         result["interactiveSession"] = self._session_snapshot(retained)
@@ -1437,21 +1456,29 @@ class SSBProtocolService:
         with self._lock:
             retained = self._retained_sessions.get(session_id)
             if retained is None:
-                raise SSBProtocolError("The retained SSB session is missing or expired.")
-            if request.get("sessionBindingSHA256") != retained["binding"][
-                "sessionBindingSHA256"
-            ]:
+                raise SSBProtocolError(
+                    "The retained SSB session is missing or expired."
+                )
+            if (
+                request.get("sessionBindingSHA256")
+                != retained["binding"]["sessionBindingSHA256"]
+            ):
                 raise SSBProtocolError("The initial SSB fit session binding changed.")
-            if request.get("sourceIdentitySHA256") != retained["binding"][
-                "sourceIdentitySHA256"
-            ] or request.get("selectionSHA256") != retained["binding"][
-                "selectionSHA256"
-            ]:
-                raise SSBProtocolError("The initial SSB fit source or selection changed.")
+            if (
+                request.get("sourceIdentitySHA256")
+                != retained["binding"]["sourceIdentitySHA256"]
+                or request.get("selectionSHA256")
+                != retained["binding"]["selectionSHA256"]
+            ):
+                raise SSBProtocolError(
+                    "The initial SSB fit source or selection changed."
+                )
             if request.get("backend") != retained["backend"]:
                 raise SSBProtocolError("The initial SSB fit backend or device changed.")
             if generation != int(retained["baseRequest"]["datasetGeneration"]):
-                raise SSBProtocolError("The initial SSB fit dataset generation changed.")
+                raise SSBProtocolError(
+                    "The initial SSB fit dataset generation changed."
+                )
             if control_generation <= retained["latestControlGeneration"]:
                 raise SSBProtocolError(
                     "Initial SSB fit controlGeneration must increase monotonically."
@@ -1523,8 +1550,7 @@ class SSBProtocolService:
                     session, gpu, base_request, specification
                 )
                 payload_path = (
-                    f"/api/ssb/interactive/jobs/{key[0]}/phase"
-                    f"?generation={key[1]}"
+                    f"/api/ssb/interactive/jobs/{key[0]}/phase?generation={key[1]}"
                 )
                 payload, descriptor, result = self._validated_result(
                     outcome, gpu, base_request, payload_path=payload_path
@@ -1536,7 +1562,9 @@ class SSBProtocolService:
                         self._advance_locked(job, "cancelled")
                     elif retained is None:
                         self._advance_locked(job, "expired")
-                    elif job["controlGeneration"] != retained["latestControlGeneration"]:
+                    elif (
+                        job["controlGeneration"] != retained["latestControlGeneration"]
+                    ):
                         self._advance_locked(job, "superseded")
                     else:
                         result["interactiveSession"] = self._session_snapshot(retained)
@@ -1623,7 +1651,9 @@ class SSBProtocolService:
     @staticmethod
     def _expected_source_identity(value: Any) -> dict[str, Any]:
         if not isinstance(value, dict):
-            raise SSBProtocolError("SSB source locator requires an immutable expected identity.")
+            raise SSBProtocolError(
+                "SSB source locator requires an immutable expected identity."
+            )
         expected = {
             "datasetSchema": value.get("datasetSchema"),
             "masterSHA256": value.get("masterSHA256"),
@@ -1634,8 +1664,14 @@ class SSBProtocolService:
             raise SSBProtocolError("Unsupported SSB source identity schema.")
         member_hashes = expected["orderedMemberSHA256"]
         if not isinstance(member_hashes, list):
-            raise SSBProtocolError("SSB expected source identity requires ordered member hashes.")
-        digests = [expected["masterSHA256"], *member_hashes, expected["sourceIdentitySHA256"]]
+            raise SSBProtocolError(
+                "SSB expected source identity requires ordered member hashes."
+            )
+        digests = [
+            expected["masterSHA256"],
+            *member_hashes,
+            expected["sourceIdentitySHA256"],
+        ]
         if any(
             not isinstance(digest, str)
             or len(digest) != 64
@@ -1643,11 +1679,16 @@ class SSBProtocolService:
             or any(character not in "0123456789abcdef" for character in digest)
             for digest in digests
         ):
-            raise SSBProtocolError("SSB expected source identity contains an invalid SHA-256 digest.")
-        if _source_identity_sha256(expected["masterSHA256"], member_hashes) != expected[
-            "sourceIdentitySHA256"
-        ]:
-            raise SSBProtocolError("SSB expected source identity digest is inconsistent.")
+            raise SSBProtocolError(
+                "SSB expected source identity contains an invalid SHA-256 digest."
+            )
+        if (
+            _source_identity_sha256(expected["masterSHA256"], member_hashes)
+            != expected["sourceIdentitySHA256"]
+        ):
+            raise SSBProtocolError(
+                "SSB expected source identity digest is inconsistent."
+            )
         return expected
 
     def _resolve_configured_root_identity(
@@ -1679,10 +1720,13 @@ class SSBProtocolService:
             master = self._resolve_master(str(request.get("masterPath", "")))
             identity = self.source_identity(str(master))
             expected_digest = request.get("expectedSourceIdentitySHA256")
-            if expected_digest is not None and str(expected_digest).lower() != identity[
-                "sourceIdentitySHA256"
-            ]:
-                raise SSBProtocolError("SSB source identity changed before preparation.")
+            if (
+                expected_digest is not None
+                and str(expected_digest).lower() != identity["sourceIdentitySHA256"]
+            ):
+                raise SSBProtocolError(
+                    "SSB source identity changed before preparation."
+                )
             return master, identity, PREPARE_CONTRACT_V0_1
         if version != PREPARE_CONTRACT_VERSION:
             raise SSBProtocolError("Unsupported SSB prepare contract version.")
@@ -1697,7 +1741,9 @@ class SSBProtocolService:
             master, identity = self._resolve_configured_root_identity(expected)
             return master, identity, PREPARE_CONTRACT_VERSION
         if kind != "local_path":
-            raise SSBProtocolError("local_mps requires an explicit local_path source locator.")
+            raise SSBProtocolError(
+                "local_mps requires an explicit local_path source locator."
+            )
         master = self._resolve_master(str(locator.get("masterPath", "")))
         identity = self.source_identity(str(master))
         if any(identity[key] != expected[key] for key in expected):
@@ -2148,9 +2194,7 @@ class SSBProtocolService:
                 int(request["scanShape"]["columns"]),
             ),
             "det_sampling": _calibrated_detector_sampling_mrad(request),
-            "aberrations": {
-                name: controls[name] for name in ("C10", "C12", "phi12")
-            },
+            "aberrations": {name: controls[name] for name in ("C10", "C12", "phi12")},
             "rotation_angle_deg": controls["scanRotation"],
         }
 
@@ -2174,7 +2218,9 @@ class SSBProtocolService:
             raise SSBProtocolError("remote_cuda requires an explicit GPU index.")
         with cp.cuda.Device(gpu):
             context = SSB.open(
-                str(source), backend="cuda", **SSBProtocolService._session_open_kwargs(request)
+                str(source),
+                backend="cuda",
+                **SSBProtocolService._session_open_kwargs(request),
             )
             try:
                 return context, context.__enter__()
@@ -2191,7 +2237,9 @@ class SSBProtocolService:
         if gpu is not None:
             raise SSBProtocolError("local_mps cannot execute on a CUDA GPU index.")
         context = SSB.open(
-            str(source), backend="mps", **SSBProtocolService._session_open_kwargs(request)
+            str(source),
+            backend="mps",
+            **SSBProtocolService._session_open_kwargs(request),
         )
         try:
             return context, context.__enter__()

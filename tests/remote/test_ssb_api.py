@@ -337,7 +337,10 @@ def _service(
             if gate is not None and len(holder["sessionReconstructs"]) > 1:
                 holder["warmStarted"].set()
                 gate.wait(timeout=5)
-            if holder.get("warmBaseException") and len(holder["sessionReconstructs"]) > 1:
+            if (
+                holder.get("warmBaseException")
+                and len(holder["sessionReconstructs"]) > 1
+            ):
                 raise SystemExit("simulated worker termination")
             value = float(aberrations["C10"])
             return SimpleNamespace(
@@ -777,14 +780,15 @@ def test_interactive_session_reuses_one_open_and_publishes_bound_result(tmp_path
     }
     canonical_result = json.loads(json.dumps(result))
     provenance = canonical_result.pop("provenanceSHA256")
-    assert provenance == hashlib.sha256(
-        json.dumps(canonical_result, separators=(",", ":"), sort_keys=True).encode()
-    ).hexdigest()
+    assert (
+        provenance
+        == hashlib.sha256(
+            json.dumps(canonical_result, separators=(",", ":"), sort_keys=True).encode()
+        ).hexdigest()
+    )
 
 
-def test_interactive_worker_logs_base_exception_and_publishes_failure(
-    tmp_path, caplog
-):
+def test_interactive_worker_logs_base_exception_and_publishes_failure(tmp_path, caplog):
     service, holder = _service(tmp_path)
     identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
     opened = _open_interactive(service, identity)
@@ -814,6 +818,7 @@ def test_interactive_http_roundtrip_and_shutdown_close(tmp_path):
     app = create_app(tmp_path, service=browse, ssb_service=service)
 
     with TestClient(app) as client:
+
         def assert_phase_payload(result):
             descriptor = result["phase"]
             payload = client.get(result["phasePayload"]["path"])
@@ -860,9 +865,7 @@ def test_interactive_http_roundtrip_and_shutdown_close(tmp_path):
         assert snapshot["state"] == "completed"
         assert_phase_payload(snapshot["result"])
         fit_request = _fit_request(opened, control_generation=2)
-        fit_accepted = client.post(
-            "/api/ssb/interactive/fits", json=fit_request
-        )
+        fit_accepted = client.post("/api/ssb/interactive/fits", json=fit_request)
         assert fit_accepted.status_code == 202
         for _ in range(200):
             fit_snapshot = client.get(
@@ -874,9 +877,12 @@ def test_interactive_http_roundtrip_and_shutdown_close(tmp_path):
             time.sleep(0.005)
         assert fit_snapshot["state"] == "completed"
         assert_phase_payload(fit_snapshot["result"])
-        assert fit_snapshot["result"]["initialAberrationFit"][
-            "persistedAsDatasetCalibration"
-        ] is False
+        assert (
+            fit_snapshot["result"]["initialAberrationFit"][
+                "persistedAsDatasetCalibration"
+            ]
+            is False
+        )
 
     assert holder["sessionCloses"] == 1
 
@@ -1136,7 +1142,9 @@ def test_local_mps_fit_http_reports_split_history_and_payload_headers(tmp_path):
         assert payload.status_code == 200
         assert payload.headers["X-Dtype"] == "float32"
         assert int(payload.headers["X-Byte-Count"]) == len(payload.content)
-        assert payload.headers["X-SHA256"] == hashlib.sha256(payload.content).hexdigest()
+        assert (
+            payload.headers["X-SHA256"] == hashlib.sha256(payload.content).hexdigest()
+        )
 
 
 @pytest.mark.parametrize(
@@ -1154,9 +1162,7 @@ def test_local_mps_fit_http_reports_split_history_and_payload_headers(tmp_path):
             "stay fixed",
         ),
         (
-            lambda request: request.update(
-                backend={"kind": "local_mps"}
-            ),
+            lambda request: request.update(backend={"kind": "local_mps"}),
             "backend or device",
         ),
     ],
@@ -1232,8 +1238,10 @@ def test_initial_fit_capability_is_backend_honest() -> None:
     assert cuda["scanRotation"] == mps["scanRotation"] == "fixed_to_retained_session"
     assert cuda["candidateBatchSize"] == 4
     assert mps["candidateBatchSize"] == 2
-    assert cuda["evidenceVersion"] == mps["evidenceVersion"] == (
-        "live4dstem.ssb.fit.evidence/v0.2"
+    assert (
+        cuda["evidenceVersion"]
+        == mps["evidenceVersion"]
+        == ("live4dstem.ssb.fit.evidence/v0.2")
     )
     assert cuda["optimizerTrialHistoryCount"] == 200
     assert mps["optimizerTrialHistoryCount"] == 200
