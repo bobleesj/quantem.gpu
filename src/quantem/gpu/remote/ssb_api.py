@@ -356,6 +356,20 @@ class SSBProtocolService:
                 "detectorSamplingUnit": "mrad/pixel",
                 "implicitDetectorSampling": False,
             },
+            "fixedReconstructionControls": {
+                "aberrations": [
+                    {"name": "C10", "unit": "nm"},
+                    {"name": "C12", "unit": "nm"},
+                    {"name": "phi12", "unit": "radian"},
+                ],
+                "scanRotation": {"name": "scanRotation", "unit": "degree"},
+                "higherOrderAberrations": False,
+                "preparedSessionWarmReconstruct": False,
+                "unavailableReason": (
+                    "The service does not retain a source-bound SSB session between "
+                    "requests; measureWarm is a within-job benchmark only."
+                ),
+            },
             "jobLifecycle": {
                 "contractVersion": JOBS_CONTRACT_VERSION,
                 "cancellationMode": "stage_boundary",

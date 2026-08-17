@@ -404,6 +404,20 @@ def test_prepare_http_capability_and_unresolved_calibration_are_explicit(tmp_pat
         "requiresExplicitBackend": True,
         "implicitFallback": False,
     }
+    assert capability["fixedReconstructionControls"] == {
+        "aberrations": [
+            {"name": "C10", "unit": "nm"},
+            {"name": "C12", "unit": "nm"},
+            {"name": "phi12", "unit": "radian"},
+        ],
+        "scanRotation": {"name": "scanRotation", "unit": "degree"},
+        "higherOrderAberrations": False,
+        "preparedSessionWarmReconstruct": False,
+        "unavailableReason": (
+            "The service does not retain a source-bound SSB session between requests; "
+            "measureWarm is a within-job benchmark only."
+        ),
+    }
 
 
 def test_prepare_descriptor_rejects_tampering_and_stale_source_or_calibration(
