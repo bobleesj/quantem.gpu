@@ -648,6 +648,18 @@ def test_interactive_http_roundtrip_and_shutdown_close(tmp_path):
     app = create_app(tmp_path, service=browse, ssb_service=service)
 
     with TestClient(app) as client:
+        def assert_phase_payload(result):
+            descriptor = result["phase"]
+            payload = client.get(result["phasePayload"]["path"])
+            assert payload.status_code == 200
+            assert payload.headers["X-Width"] == str(descriptor["shape"]["columns"])
+            assert payload.headers["X-Height"] == str(descriptor["shape"]["rows"])
+            assert payload.headers["X-Dtype"] == descriptor["dtype"]
+            assert payload.headers["X-Byte-Count"] == str(descriptor["byteCount"])
+            assert payload.headers["X-SHA256"] == descriptor["sha256"]
+            assert len(payload.content) == descriptor["byteCount"]
+            assert hashlib.sha256(payload.content).hexdigest() == descriptor["sha256"]
+
         open_request = {
             "contractVersion": INTERACTIVE_CONTRACT_VERSION,
             "sessionID": str(uuid4()),
@@ -658,6 +670,7 @@ def test_interactive_http_roundtrip_and_shutdown_close(tmp_path):
         )
         assert opened_response.status_code == 201
         opened = opened_response.json()
+        assert_phase_payload(opened["initialResult"])
         repeated = client.post("/api/ssb/interactive/sessions", json=open_request)
         assert repeated.status_code == 201
         assert repeated.json() == opened
@@ -679,12 +692,7 @@ def test_interactive_http_roundtrip_and_shutdown_close(tmp_path):
                 break
             time.sleep(0.005)
         assert snapshot["state"] == "completed"
-        phase = client.get(
-            f"/api/ssb/interactive/jobs/{request['jobID']}/phase",
-            params={"generation": request["datasetGeneration"]},
-        )
-        assert phase.status_code == 200
-        assert phase.headers["X-SHA256"] == hashlib.sha256(phase.content).hexdigest()
+        assert_phase_payload(snapshot["result"])
         fit_request = _fit_request(opened, control_generation=2)
         fit_accepted = client.post(
             "/api/ssb/interactive/fits", json=fit_request
@@ -699,6 +707,7 @@ def test_interactive_http_roundtrip_and_shutdown_close(tmp_path):
                 break
             time.sleep(0.005)
         assert fit_snapshot["state"] == "completed"
+        assert_phase_payload(fit_snapshot["result"])
         assert fit_snapshot["result"]["initialAberrationFit"][
             "persistedAsDatasetCalibration"
         ] is False
