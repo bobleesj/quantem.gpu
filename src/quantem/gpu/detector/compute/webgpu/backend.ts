@@ -14,12 +14,14 @@
 // Stack ships as uint8 (clip(0,255): real detector counts are often 0-~200, so
 // the value IS the count after a count-range audit), uint16, uint32, or float32.
 import { getGPUDevice } from "../../../device/webgpu";
+import { annulusMask, diskMask } from "../../geometry";
 import { decodeBslz4ToStack, decodeBslz4Batch, type Bslz4Spec } from "../../../io/backends/webgpu/bslz4";
 import { FFT_2D_SHADER } from "../../../dpc/compute/webgpu/fft";
 import {
   DPC_COMPONENT_PAIR_WGSL,
   DPC_COMPONENT_WGSL,
   DPC_MEAN_WGSL,
+  DPC_MAGNITUDE_WGSL,
   DPC_OUTPUT_MEAN_WGSL,
   DPC_OUTPUT_ULP_CORRECT_WGSL,
   IDPC_EXTRACT_WGSL,
@@ -425,21 +427,21 @@ interface TraitReader { get(name: string): any; }
 // cy with row, so the browser virtual image matches the native backend result
 // pixel-for-pixel.
 export function buildDetectorMask(model: TraitReader, detRows: number, detCols: number): Uint32Array {
-  const mask = new Uint32Array(detRows * detCols);
   const cx = model.get("roi_center_col");
   const cy = model.get("roi_center_row");
   const mode = model.get("roi_mode") || "circle";
   const radius = model.get("roi_radius") || 0;
   const inner = model.get("roi_radius_inner") || 0;
+  if (mode === "circle") return diskMask(detRows, detCols, cy, cx, radius);
+  if (mode === "annular") return annulusMask(detRows, detCols, cy, cx, inner, radius);
+  const mask = new Uint32Array(detRows * detCols);
   const halfW = (model.get("roi_width") || 0) / 2;
   const halfH = (model.get("roi_height") || 0) / 2;
   for (let row = 0; row < detRows; row++) {
     for (let col = 0; col < detCols; col++) {
-      const dx = col - cx, dy = row - cy, d2 = dx * dx + dy * dy;
+      const dx = col - cx, dy = row - cy;
       let inside = false;
-      if (mode === "circle") inside = d2 <= radius * radius;
-      else if (mode === "annular") inside = d2 > inner * inner && d2 <= radius * radius;
-      else if (mode === "square") inside = Math.abs(dx) <= radius && Math.abs(dy) <= radius;
+      if (mode === "square") inside = Math.abs(dx) <= radius && Math.abs(dy) <= radius;
       else if (mode === "rect") inside = Math.abs(dx) <= halfW && Math.abs(dy) <= halfH;
       else if (mode === "point") inside = Math.round(cx) === col && Math.round(cy) === row;
       mask[row * detCols + col] = inside ? 1 : 0;
@@ -484,6 +486,7 @@ export class DetectorCompute {
   private dpcMeanPipe: GPUComputePipeline;
   private dpcComponentPipe: GPUComputePipeline;
   private dpcComponentPairPipe: GPUComputePipeline;
+  private dpcMagnitudePipe: GPUComputePipeline;
   private dpcOutputMeanPipe: GPUComputePipeline;
   private dpcOutputUlpCorrectPipe: GPUComputePipeline;
   private idpcPackPipe: GPUComputePipeline;
@@ -524,6 +527,7 @@ export class DetectorCompute {
     this.dpcMeanPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: DPC_MEAN_WGSL }), entryPoint: "main" } });
     this.dpcComponentPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: DPC_COMPONENT_WGSL }), entryPoint: "main" } });
     this.dpcComponentPairPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: DPC_COMPONENT_PAIR_WGSL }), entryPoint: "main" } });
+    this.dpcMagnitudePipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: DPC_MAGNITUDE_WGSL }), entryPoint: "main" } });
     this.dpcOutputMeanPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: DPC_OUTPUT_MEAN_WGSL }), entryPoint: "main" } });
     this.dpcOutputUlpCorrectPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: DPC_OUTPUT_ULP_CORRECT_WGSL }), entryPoint: "main" } });
     this.idpcPackPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: IDPC_PACK_WGSL }), entryPoint: "main" } });
@@ -763,6 +767,44 @@ export class DetectorCompute {
       n,
       cleanup: () => this.retireBuffers([idxBuf, com, mean, rowResidualMean, colResidualMean, meanDims, rowDims, colDims]),
     };
+  }
+
+  /** Centered CoM-vector magnitude retained in a WebGPU buffer. */
+  async maskedDpcMagnitudeBuffer(
+    mask: Uint32Array,
+    detCols: number,
+  ): Promise<{ buffer: GPUBuffer; n: number }> {
+    const dpc = this.maskedDpcPairBuffers(mask, detCols);
+    await this.device.queue.onSubmittedWorkDone().catch(() => {});
+    dpc.cleanup?.();
+    const out = this.device.createBuffer({
+      size: this.scanCount * 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+    });
+    if (dpc.n > 0) {
+      const dims = this.uniform([this.scanCount, 0, 0, 0]);
+      const bind = this.device.createBindGroup({
+        layout: this.dpcMagnitudePipe.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: { buffer: dpc.row } },
+          { binding: 1, resource: { buffer: dpc.col } },
+          { binding: 2, resource: { buffer: out } },
+          { binding: 3, resource: { buffer: dims } },
+        ],
+      });
+      this.dispatch(this.dpcMagnitudePipe, bind, Math.ceil(this.scanCount / 256));
+      this.retireBuffers([dims]);
+    }
+    return { buffer: out, n: dpc.n };
+  }
+
+  /** Centered CoM-vector magnitude, computed and reduced entirely on WebGPU. */
+  async maskedDpcMagnitude(mask: Uint32Array, detCols: number): Promise<Float32Array> {
+    const { buffer, n } = await this.maskedDpcMagnitudeBuffer(mask, detCols);
+    const values = await this.readF32(buffer, this.scanCount);
+    buffer.destroy();
+    if (n === 0) values.fill(0);
+    return values;
   }
 
   // GPU-resident fixed-rotation iDPC phase. Auto-rotation is intentionally not
@@ -1613,4 +1655,3 @@ export class DetectorCompute {
     if (this.comDimsCache) { for (const cd of this.comDimsCache.rows) { cd.dims.destroy(); cd.dims2.destroy(); } this.comDimsCache = null; }
   }
 }
-

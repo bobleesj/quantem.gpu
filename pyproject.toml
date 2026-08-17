@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "quantem.gpu"
-version = "0.0.1rc5"
+version = "0.0.1rc6"
 description = "Multi-backend accelerated STEM load, decompression, and compute for QuantEM"
 readme = "README.md"
 license = "MIT"
@@ -37,6 +37,7 @@ dependencies = [
     "numba>=0.60",
     "numpy>=2.0.0",
     "optuna",
+    "pandas",
     "pyyaml",
     "tqdm",
 ]
@@ -72,8 +73,11 @@ exclude = [
 artifacts = [
     "src/quantem/gpu/io/backends/mps/kernels/*.msl",
     "src/quantem/gpu/io/backends/webgpu/*.ts",
+    "src/quantem/gpu/display/webgpu/*.ts",
+    "src/quantem/gpu/display/goldens/*.json",
     "src/quantem/gpu/detector/compute/mps/metal/*.msl",
     "src/quantem/gpu/device/*.ts",
+    "src/quantem/gpu/detector/*.ts",
     "src/quantem/gpu/detector/compute/webgpu/*.ts",
     "src/quantem/gpu/dpc/compute/webgpu/*.ts",
     "src/quantem/gpu/ssb/compute/webgpu/*.ts",
