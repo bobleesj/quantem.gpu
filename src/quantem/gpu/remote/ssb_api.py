@@ -1715,6 +1715,9 @@ class SSBProtocolService:
             )
         gpu = self._requested_device(request)
         master, identity, prepare_version = self._prepare_source(request)
+        descriptor_identity = dict(identity)
+        if prepare_version == PREPARE_CONTRACT_V0_1:
+            descriptor_identity.pop("datasetSchema", None)
 
         calibration = request.get("calibration") or {}
         calibration_binding = _calibration_binding(
@@ -1749,7 +1752,7 @@ class SSBProtocolService:
         }
         execution_request = {
             **request,
-            "source": identity,
+            "source": descriptor_identity,
             "scanShape": scan_shape,
             "detectorShape": detector_shape,
         }
@@ -1795,7 +1798,7 @@ class SSBProtocolService:
             "workflow": "direct_ptychography",
             "algorithmVersion": ALGORITHM_VERSION,
             "implementationRevision": self.implementation_revision,
-            "source": identity,
+            "source": descriptor_identity,
             "scanShape": scan_shape,
             "detectorShape": detector_shape,
             "precision": precision,

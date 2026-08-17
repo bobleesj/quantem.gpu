@@ -636,6 +636,7 @@ def test_prepare_v0_1_remains_explicitly_compatible(tmp_path):
     descriptor = service.prepare(request)
 
     assert descriptor["contractVersion"] == PREPARE_CONTRACT_V0_1
+    assert "datasetSchema" not in descriptor["source"]
     reconstruction = _request(identity)
     reconstruction["preparedSelection"] = descriptor
     service.reconstruct(reconstruction)
