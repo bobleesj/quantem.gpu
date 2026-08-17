@@ -10,17 +10,17 @@ host and all full-volume work stays in :mod:`quantem.gpu`.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
-from collections import OrderedDict
-from contextlib import nullcontext
-from datetime import datetime, timezone
 import hashlib
 import json
 import logging
 import math
 import os
-from pathlib import Path
 import threading
+from collections import OrderedDict
+from collections.abc import Sequence
+from contextlib import asynccontextmanager, nullcontext
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -1031,7 +1031,19 @@ def create_app(
         raise ValueError(
             "MAPED implementation revision does not match the served revision."
         )
-    app = FastAPI(title="QuantEM GPU Remote Browse", docs_url=None, redoc_url=None)
+    @asynccontextmanager
+    async def lifespan(_app):
+        try:
+            yield
+        finally:
+            await asyncio.to_thread(ssb.close)
+
+    app = FastAPI(
+        title="QuantEM GPU Remote Browse",
+        docs_url=None,
+        redoc_url=None,
+        lifespan=lifespan,
+    )
     app.state.browse_service = browse
     app.state.ssb_service = ssb
     app.state.maped_service = maped
@@ -1175,6 +1187,63 @@ def create_app(
             return await asyncio.to_thread(ssb.reconstruct, request)
         except SSBProtocolError as exc:
             raise HTTPException(409, str(exc)) from exc
+
+    @app.post("/api/ssb/interactive/sessions", status_code=201)
+    async def ssb_open_interactive_session(request: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(ssb.open_interactive_session, request)
+        except (SSBProtocolError, KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.delete("/api/ssb/interactive/sessions/{session_id}")
+    async def ssb_close_interactive_session(session_id: str) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(ssb.close_interactive_session, session_id)
+        except (SSBProtocolError, ValueError) as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @app.post("/api/ssb/interactive/jobs", status_code=202)
+    async def ssb_submit_interactive(request: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return ssb.submit_interactive(request)
+        except (SSBProtocolError, KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.get("/api/ssb/interactive/jobs/{job_id}")
+    async def ssb_interactive_job(job_id: str, generation: int) -> dict[str, Any]:
+        try:
+            return ssb.interactive_job_snapshot(job_id, generation)
+        except (SSBProtocolError, ValueError) as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @app.delete("/api/ssb/interactive/jobs/{job_id}", status_code=202)
+    async def ssb_cancel_interactive(job_id: str, generation: int) -> dict[str, Any]:
+        try:
+            return ssb.cancel_interactive_job(job_id, generation)
+        except (SSBProtocolError, ValueError) as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @app.get("/api/ssb/interactive/jobs/{job_id}/phase")
+    async def ssb_interactive_phase(job_id: str, generation: int) -> Response:
+        try:
+            payload, descriptor = ssb.interactive_payload(job_id, generation)
+        except SSBPayloadNotReady as exc:
+            raise HTTPException(425, str(exc)) from exc
+        except SSBPayloadUnavailable as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except (SSBProtocolError, ValueError) as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return Response(
+            content=payload,
+            media_type="application/octet-stream",
+            headers={
+                "X-Width": str(descriptor["shape"]["columns"]),
+                "X-Height": str(descriptor["shape"]["rows"]),
+                "X-Dtype": descriptor["dtype"],
+                "X-SHA256": descriptor["sha256"],
+                "Cache-Control": "no-store",
+            },
+        )
 
     @app.post("/api/ssb/jobs", status_code=202)
     async def ssb_submit(request: dict[str, Any]) -> dict[str, Any]:

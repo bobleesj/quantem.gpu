@@ -4,6 +4,7 @@ import hashlib
 import json
 import threading
 import time
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -13,7 +14,9 @@ import pytest
 
 from quantem.gpu.remote.ssb_api import (
     ALGORITHM_VERSION,
+    INTERACTIVE_CONTRACT_VERSION,
     PREPARE_CONTRACT_VERSION,
+    SSBPayloadNotReady,
     SSBPayloadUnavailable,
     SSBProtocolError,
     SSBProtocolService,
@@ -221,6 +224,8 @@ def _service(
     tmp_path: Path,
     *,
     prepared_sampling: tuple[float, float] = (1.090909, 1.090909),
+    clock=lambda: time.time(),
+    session_lease_seconds: float = 300.0,
 ) -> tuple[SSBProtocolService, dict]:
     master = tmp_path / "BTO_18_master.h5"
     master.write_bytes(b"master")
@@ -250,16 +255,120 @@ def _service(
             "detectorSamplingMilliradians": prepared_sampling,
         }
 
+    class FakeSession:
+        source_dtype = "uint8"
+
+        def set_rotation(self, value):
+            holder.setdefault("rotations", []).append(float(value))
+
+        def reconstruct(self, aberrations, *, compute_loss, force=False):
+            holder.setdefault("sessionReconstructs", []).append(
+                {
+                    "aberrations": dict(aberrations),
+                    "computeLoss": compute_loss,
+                    "force": force,
+                }
+            )
+            gate = holder.get("warmGate")
+            if gate is not None and len(holder["sessionReconstructs"]) > 1:
+                holder["warmStarted"].set()
+                gate.wait(timeout=5)
+            value = float(aberrations["C10"])
+            return SimpleNamespace(
+                phase=np.full((2, 2), value, dtype=np.float32),
+                loss=value if compute_loss else None,
+            )
+
+        def browser_state(self):
+            return SimpleNamespace(
+                num_bf=4,
+                active_num_bf=3,
+                angular_sampling_rad=(0.001090909, 0.001090909),
+            )
+
+    class FakeContext:
+        def __init__(self):
+            self.session = FakeSession()
+
+        def __enter__(self):
+            return self.session
+
+        def __exit__(self, *_args):
+            holder["sessionCloses"] = holder.get("sessionCloses", 0) + 1
+
+    def session_opener(_source, gpu, request):
+        holder.setdefault("sessionOpens", []).append(
+            {"gpu": gpu, "backend": request["backend"]["kind"]}
+        )
+        context = FakeContext()
+        return context, context.__enter__()
+
     service = SSBProtocolService(
         tmp_path,
         available_gpus=lambda: [0],
         device_name=lambda _gpu: "Test CUDA",
         runner=runner,
         preparer=preparer,
+        session_opener=session_opener,
+        session_device_context=lambda _gpu: nullcontext(),
         source_inspector=_inspection,
+        clock=clock,
+        session_lease_seconds=session_lease_seconds,
         implementation_revision="test",
     )
     return service, holder
+
+
+def _open_interactive(service, identity):
+    initial = _request(identity)
+    initial["jobID"] = str(uuid4())
+    initial["preparedSelection"] = service.prepare(_prepare_request(identity))
+    return service.open_interactive_session(
+        {
+            "contractVersion": INTERACTIVE_CONTRACT_VERSION,
+            "initialRequest": initial,
+        }
+    )
+
+
+def _interactive_request(opened, *, control_generation=1, job_id=None):
+    session = opened["session"]
+    binding = session["binding"]
+    return {
+        "contractVersion": INTERACTIVE_CONTRACT_VERSION,
+        "sessionID": session["sessionID"],
+        "jobID": job_id or str(uuid4()),
+        "datasetGeneration": opened["initialResult"]["datasetGeneration"],
+        "controlGeneration": control_generation,
+        "sessionBindingSHA256": binding["sessionBindingSHA256"],
+        "sourceIdentitySHA256": binding["sourceIdentitySHA256"],
+        "selectionSHA256": binding["selectionSHA256"],
+        "backend": binding["backend"],
+        "controls": {
+            "C10": 74.0 + control_generation,
+            "C12": 14.0,
+            "phi12": 0.47,
+            "scanRotation": 158.9,
+        },
+        "computeLoss": True,
+    }
+
+
+def _wait_interactive(service, request):
+    for _ in range(200):
+        snapshot = service.interactive_job_snapshot(
+            request["jobID"], request["datasetGeneration"]
+        )
+        if snapshot["state"] in {
+            "completed",
+            "cancelled",
+            "failed",
+            "expired",
+            "superseded",
+        }:
+            return snapshot
+        time.sleep(0.005)
+    raise AssertionError("interactive SSB job did not finish")
 
 
 def test_request_result_and_generation_bound_payload(tmp_path):
@@ -412,12 +521,239 @@ def test_prepare_http_capability_and_unresolved_calibration_are_explicit(tmp_pat
         ],
         "scanRotation": {"name": "scanRotation", "unit": "degree"},
         "higherOrderAberrations": False,
-        "preparedSessionWarmReconstruct": False,
-        "unavailableReason": (
-            "The service does not retain a source-bound SSB session between requests; "
-            "measureWarm is a within-job benchmark only."
-        ),
+        "preparedSessionWarmReconstruct": True,
+        "contractVersion": INTERACTIVE_CONTRACT_VERSION,
+        "sessionEndpoint": "/api/ssb/interactive/sessions",
+        "jobEndpoint": "/api/ssb/interactive/jobs",
+        "sessionLeaseSeconds": 300,
+        "cancellationMode": "stage_boundary",
+        "reconnectScope": "same_server_process",
+        "serverRestartResume": False,
     }
+
+
+def test_interactive_session_reuses_one_open_and_publishes_bound_result(tmp_path):
+    service, holder = _service(tmp_path)
+    identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
+
+    opened = _open_interactive(service, identity)
+    request = _interactive_request(opened)
+    service.submit_interactive(request)
+    completed = _wait_interactive(service, request)
+    payload, descriptor = service.interactive_payload(
+        request["jobID"], request["datasetGeneration"]
+    )
+
+    assert holder["sessionOpens"] == [{"gpu": 0, "backend": "remote_cuda"}]
+    assert len(holder["sessionReconstructs"]) == 2
+    assert all(call["force"] for call in holder["sessionReconstructs"])
+    assert completed["state"] == "completed"
+    result = completed["result"]
+    assert result["controlGeneration"] == 1
+    assert result["interactiveControls"] == request["controls"]
+    assert result["source"] == opened["initialResult"]["source"]
+    assert result["selection"] == opened["initialResult"]["selection"]
+    assert result["executedBrightFieldCounts"] == {"logical": 4, "active": 3}
+    assert result["executedPrecision"] == opened["initialResult"]["executedPrecision"]
+    assert descriptor["sha256"] == hashlib.sha256(payload).hexdigest()
+    assert result["phase"]["sha256"] == descriptor["sha256"]
+    assert opened["session"]["binding"]["device"] == {
+        "backend": "cuda",
+        "deviceName": "Test CUDA",
+        "gpuIndex": 0,
+    }
+    canonical_result = json.loads(json.dumps(result))
+    provenance = canonical_result.pop("provenanceSHA256")
+    assert provenance == hashlib.sha256(
+        json.dumps(canonical_result, separators=(",", ":"), sort_keys=True).encode()
+    ).hexdigest()
+
+
+def test_interactive_http_roundtrip_and_shutdown_close(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from quantem.gpu.remote.server import BrowseService, create_app
+
+    service, holder = _service(tmp_path)
+    browse = BrowseService(tmp_path, initialize_cuda=False)
+    identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
+    initial = _request(identity)
+    initial["jobID"] = str(uuid4())
+    initial["preparedSelection"] = service.prepare(_prepare_request(identity))
+    app = create_app(tmp_path, service=browse, ssb_service=service)
+
+    with TestClient(app) as client:
+        opened_response = client.post(
+            "/api/ssb/interactive/sessions",
+            json={
+                "contractVersion": INTERACTIVE_CONTRACT_VERSION,
+                "initialRequest": initial,
+            },
+        )
+        assert opened_response.status_code == 201
+        opened = opened_response.json()
+        request = _interactive_request(opened)
+        submitted = client.post("/api/ssb/interactive/jobs", json=request)
+        assert submitted.status_code == 202
+        for _ in range(200):
+            snapshot = client.get(
+                f"/api/ssb/interactive/jobs/{request['jobID']}",
+                params={"generation": request["datasetGeneration"]},
+            ).json()
+            if snapshot["state"] == "completed":
+                break
+            time.sleep(0.005)
+        assert snapshot["state"] == "completed"
+        phase = client.get(
+            f"/api/ssb/interactive/jobs/{request['jobID']}/phase",
+            params={"generation": request["datasetGeneration"]},
+        )
+        assert phase.status_code == 200
+        assert phase.headers["X-SHA256"] == hashlib.sha256(phase.content).hexdigest()
+
+    assert holder["sessionCloses"] == 1
+
+
+def test_interactive_warm_same_controls_has_exact_phase_and_loss_parity(tmp_path):
+    service, _ = _service(tmp_path)
+    identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
+    opened = _open_interactive(service, identity)
+    request = _interactive_request(opened)
+    request["controls"] = opened["initialResult"]["interactiveControls"]
+
+    service.submit_interactive(request)
+    completed = _wait_interactive(service, request)
+
+    assert completed["state"] == "completed"
+    assert (
+        completed["result"]["phase"]["sha256"]
+        == opened["initialResult"]["phase"]["sha256"]
+    )
+    assert completed["result"]["loss"] == opened["initialResult"]["loss"]
+    assert completed["result"]["timings"]["sessionOpenSeconds"] is None
+    assert completed["result"]["timings"]["sourceReadSeconds"] is None
+    assert completed["result"]["timings"]["warmReconstructSeconds"] is not None
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("sessionBindingSHA256", "0" * 64, "session binding"),
+        ("sourceIdentitySHA256", "0" * 64, "source or selection"),
+        ("selectionSHA256", "0" * 64, "source or selection"),
+        ("backend", {"kind": "local_mps"}, "backend or device"),
+    ],
+)
+def test_interactive_session_rejects_tampered_binding(tmp_path, field, value, message):
+    service, _ = _service(tmp_path)
+    identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
+    opened = _open_interactive(service, identity)
+    request = _interactive_request(opened)
+    request[field] = value
+
+    with pytest.raises(SSBProtocolError, match=message):
+        service.submit_interactive(request)
+
+
+def test_interactive_session_rejects_higher_orders_and_stale_generation(tmp_path):
+    service, _ = _service(tmp_path)
+    identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
+    opened = _open_interactive(service, identity)
+    request = _interactive_request(opened)
+    request["controls"]["C21"] = 1.0
+    with pytest.raises(SSBProtocolError, match="exactly C10"):
+        service.submit_interactive(request)
+
+    request = _interactive_request(opened)
+    request["datasetGeneration"] += 1
+    with pytest.raises(SSBProtocolError, match="dataset generation"):
+        service.submit_interactive(request)
+
+    accepted = _interactive_request(opened, control_generation=1)
+    service.submit_interactive(accepted)
+    _wait_interactive(service, accepted)
+    repeated = _interactive_request(opened, control_generation=1)
+    with pytest.raises(SSBProtocolError, match="increase monotonically"):
+        service.submit_interactive(repeated)
+
+
+def test_interactive_session_is_not_resumable_after_service_restart(tmp_path):
+    service, _ = _service(tmp_path)
+    identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
+    opened = _open_interactive(service, identity)
+    request = _interactive_request(opened)
+    restarted, _ = _service(tmp_path)
+
+    with pytest.raises(SSBProtocolError, match="missing or expired"):
+        restarted.submit_interactive(request)
+
+
+def test_interactive_session_expires_closes_and_releases_device(tmp_path):
+    now = [100.0]
+    service, holder = _service(
+        tmp_path, clock=lambda: now[0], session_lease_seconds=5.0
+    )
+    identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
+    opened = _open_interactive(service, identity)
+    with pytest.raises(SSBProtocolError, match="already has"):
+        _open_interactive(service, identity)
+
+    now[0] = 106.0
+    reopened = _open_interactive(service, identity)
+
+    assert holder["sessionCloses"] == 1
+    assert reopened["session"]["sessionID"] != opened["session"]["sessionID"]
+    closed = service.close_interactive_session(reopened["session"]["sessionID"])
+    assert closed["state"] == "closed"
+    assert holder["sessionCloses"] == 2
+
+
+def test_interactive_latest_wins_serializes_and_discards_stale_publish(tmp_path):
+    service, holder = _service(tmp_path)
+    identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
+    opened = _open_interactive(service, identity)
+    holder["warmGate"] = threading.Event()
+    holder["warmStarted"] = threading.Event()
+    first = _interactive_request(opened, control_generation=1)
+    service.submit_interactive(first)
+    assert holder["warmStarted"].wait(timeout=2)
+    second = _interactive_request(opened, control_generation=2)
+    service.submit_interactive(second)
+    time.sleep(0.02)
+    assert len(holder["sessionReconstructs"]) == 2
+    holder["warmGate"].set()
+
+    first_done = _wait_interactive(service, first)
+    second_done = _wait_interactive(service, second)
+
+    assert first_done["state"] == "superseded"
+    assert second_done["state"] == "completed"
+    with pytest.raises(SSBPayloadUnavailable, match="superseded"):
+        service.interactive_payload(first["jobID"], first["datasetGeneration"])
+
+
+def test_interactive_cancel_waits_for_opaque_stage_and_never_publishes(tmp_path):
+    service, holder = _service(tmp_path)
+    identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
+    opened = _open_interactive(service, identity)
+    holder["warmGate"] = threading.Event()
+    holder["warmStarted"] = threading.Event()
+    request = _interactive_request(opened)
+    service.submit_interactive(request)
+    assert holder["warmStarted"].wait(timeout=2)
+
+    cancelled = service.cancel_interactive_job(
+        request["jobID"], request["datasetGeneration"]
+    )
+    assert cancelled["state"] == "cancel_requested"
+    with pytest.raises(SSBPayloadNotReady):
+        service.interactive_payload(request["jobID"], request["datasetGeneration"])
+    holder["warmGate"].set()
+    done = _wait_interactive(service, request)
+
+    assert done["state"] == "cancelled"
+    with pytest.raises(SSBPayloadUnavailable, match="cancelled"):
+        service.interactive_payload(request["jobID"], request["datasetGeneration"])
 
 
 def test_prepare_descriptor_rejects_tampering_and_stale_source_or_calibration(

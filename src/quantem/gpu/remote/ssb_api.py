@@ -8,10 +8,11 @@ import math
 import threading
 import time
 from collections.abc import Callable
+from contextlib import nullcontext
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import numpy as np
 
@@ -19,7 +20,14 @@ CONTRACT_VERSION = "live4dstem.ssb/v0.2"
 ALGORITHM_VERSION = "quantem.gpu.SSB/v0.1"
 JOBS_CONTRACT_VERSION = "live4dstem.ssb.jobs/v0.1"
 PREPARE_CONTRACT_VERSION = "live4dstem.ssb.prepare/v0.1"
-_TERMINAL_JOB_STATES = {"completed", "cancelled", "failed", "expired"}
+INTERACTIVE_CONTRACT_VERSION = "live4dstem.ssb.interactive/v0.1"
+_TERMINAL_JOB_STATES = {
+    "completed",
+    "cancelled",
+    "failed",
+    "expired",
+    "superseded",
+}
 
 
 class SSBProtocolError(ValueError):
@@ -277,6 +285,11 @@ class SSBProtocolService:
         preparer: Callable[[Path, int | None, dict[str, Any]], dict[str, Any]]
         | None = None,
         source_inspector: Callable[..., Any] | None = None,
+        session_opener: Callable[[Path, int | None, dict[str, Any]], tuple[Any, Any]]
+        | None = None,
+        session_device_context: Callable[[int | None], Any] | None = None,
+        clock: Callable[[], float] = time.time,
+        session_lease_seconds: float = 300.0,
         backend_kind: str = "remote_cuda",
         implementation_revision: str = "unrecorded",
     ) -> None:
@@ -298,11 +311,31 @@ class SSBProtocolService:
 
             source_inspector = inspect
         self._source_inspector = source_inspector
+        self._session_opener = session_opener or (
+            self._open_cuda_session
+            if backend_kind == "remote_cuda"
+            else self._open_mps_session
+        )
+        self._session_device_context = session_device_context or (
+            self._cuda_device_context
+            if backend_kind == "remote_cuda"
+            else lambda _gpu: nullcontext()
+        )
+        self._clock = clock
+        self._session_lease_seconds = float(session_lease_seconds)
+        if self._session_lease_seconds <= 0.0:
+            raise ValueError("session_lease_seconds must be positive")
         self._lock = threading.Lock()
         self._payloads: dict[tuple[str, int], tuple[bytes, dict[str, Any]]] = {}
         self._jobs: dict[tuple[str, int], dict[str, Any]] = {}
         self._sync_keys: set[tuple[str, int]] = set()
         self._device_locks: dict[tuple[str, int | None], threading.Lock] = {}
+        self._retained_sessions: dict[str, dict[str, Any]] = {}
+        self._device_sessions: dict[tuple[str, int | None], str] = {}
+        self._interactive_jobs: dict[tuple[str, int], dict[str, Any]] = {}
+        self._interactive_payloads: dict[
+            tuple[str, int], tuple[bytes, dict[str, Any]]
+        ] = {}
 
     @staticmethod
     def advertised_capability(
@@ -364,11 +397,14 @@ class SSBProtocolService:
                 ],
                 "scanRotation": {"name": "scanRotation", "unit": "degree"},
                 "higherOrderAberrations": False,
-                "preparedSessionWarmReconstruct": False,
-                "unavailableReason": (
-                    "The service does not retain a source-bound SSB session between "
-                    "requests; measureWarm is a within-job benchmark only."
-                ),
+                "preparedSessionWarmReconstruct": True,
+                "contractVersion": INTERACTIVE_CONTRACT_VERSION,
+                "sessionEndpoint": "/api/ssb/interactive/sessions",
+                "jobEndpoint": "/api/ssb/interactive/jobs",
+                "sessionLeaseSeconds": 300,
+                "cancellationMode": "stage_boundary",
+                "reconnectScope": "same_server_process",
+                "serverRestartResume": False,
             },
             "jobLifecycle": {
                 "contractVersion": JOBS_CONTRACT_VERSION,
@@ -408,13 +444,17 @@ class SSBProtocolService:
             unavailable_reason = (
                 "The exact quantem.gpu implementation revision is not recorded."
             )
-        return self.advertised_capability(
+        capability = self.advertised_capability(
             self.backend_kind,
             self.implementation_revision,
             device,
             gpu,
             unavailable_reason,
         )
+        capability["fixedReconstructionControls"]["sessionLeaseSeconds"] = (
+            self._session_lease_seconds
+        )
+        return capability
 
     @staticmethod
     def request_sha256(request: dict[str, Any]) -> str:
@@ -568,6 +608,448 @@ class SSBProtocolService:
     @staticmethod
     def _public_snapshot(job: dict[str, Any]) -> dict[str, Any]:
         return {key: value for key, value in job.items() if key != "cancelRequested"}
+
+    def _interactive_binding(
+        self, request: dict[str, Any], gpu: int | None
+    ) -> dict[str, Any]:
+        prepared = request["preparedSelection"]
+        binding = {
+            "contractVersion": INTERACTIVE_CONTRACT_VERSION,
+            "sourceIdentitySHA256": request["source"]["sourceIdentitySHA256"],
+            "datasetGeneration": int(request["datasetGeneration"]),
+            "calibrationBinding": prepared["calibrationBinding"],
+            "selectionSHA256": prepared["selectionSHA256"],
+            "precision": request["precision"],
+            "backend": request["backend"],
+            "device": {
+                "backend": "cuda" if self.backend_kind == "remote_cuda" else "mps",
+                "deviceName": self._device_name(gpu),
+                "gpuIndex": gpu,
+            },
+            "implementationRevision": prepared["implementationRevision"],
+        }
+        binding["sessionBindingSHA256"] = hashlib.sha256(
+            json.dumps(binding, separators=(",", ":"), sort_keys=True).encode()
+        ).hexdigest()
+        return binding
+
+    @staticmethod
+    def _interactive_controls(request: dict[str, Any]) -> dict[str, float]:
+        controls = request.get("controls") or {}
+        expected = {"C10", "C12", "phi12", "scanRotation"}
+        if set(controls) != expected:
+            raise SSBProtocolError(
+                "Interactive SSB controls must contain exactly C10, C12, phi12, "
+                "and scanRotation."
+            )
+        result = {name: float(controls[name]) for name in expected}
+        if not all(math.isfinite(value) for value in result.values()):
+            raise SSBProtocolError("Interactive SSB controls must be finite.")
+        return result
+
+    @staticmethod
+    def _initial_controls(request: dict[str, Any]) -> dict[str, float]:
+        values = request["calibration"]["resolution"]["calibration"]["calibration"]
+        return {
+            "C10": float(values["c10Nanometers"]["value"]),
+            "C12": float(values["c12Nanometers"]["value"]),
+            "phi12": float(values["phi12Radians"]["value"]),
+            "scanRotation": float(values["scanRotationDegrees"]["value"]),
+        }
+
+    def _session_outcome(
+        self,
+        session: Any,
+        gpu: int | None,
+        request: dict[str, Any],
+        controls: dict[str, float],
+        *,
+        initial: bool = False,
+    ) -> dict[str, Any]:
+        with self._session_device_context(gpu):
+            started = time.perf_counter()
+            session.set_rotation(controls["scanRotation"])
+            result = session.reconstruct(
+                {name: controls[name] for name in ("C10", "C12", "phi12")},
+                compute_loss=bool(request.get("computeLoss", True)),
+                force=True,
+            )
+            reconstruct_seconds = time.perf_counter() - started
+            state = session.browser_state()
+            encode_started = time.perf_counter()
+            transfer = getattr(result.phase, "get", None)
+            phase = np.asarray(
+                transfer() if callable(transfer) else result.phase,
+                dtype=np.float32,
+            )
+            encode_seconds = time.perf_counter() - encode_started
+        return {
+            "phase": phase,
+            "logicalBrightFieldCount": state.num_bf,
+            "activeBrightFieldCount": state.active_num_bf,
+            "detectorSamplingMilliradians": tuple(
+                float(value) * 1e3 for value in state.angular_sampling_rad
+            ),
+            "precision": _executed_precision(
+                request, working_dtype=session.source_dtype
+            ),
+            "loss": result.loss,
+            "driverVersion": None,
+            "runtimeVersion": None,
+            "timings": {
+                "sourceReadSeconds": None,
+                "sourceDecodeSeconds": None,
+                "gQKConstructionSeconds": None,
+                "kernelSeconds": None,
+                "firstReconstructSeconds": reconstruct_seconds if initial else None,
+                "warmReconstructSeconds": None if initial else reconstruct_seconds,
+                "resultEncodeSeconds": encode_seconds,
+                "sshRequestToFirstByteSeconds": None,
+                "transferSeconds": None,
+                "clientDecodeSeconds": None,
+                "paintSeconds": None,
+                "inputToPaintSeconds": None,
+                "sessionOpenSeconds": None,
+            },
+        }
+
+    def open_interactive_session(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Open one retained source-bound session and run its initial reconstruction."""
+
+        if request.get("contractVersion") != INTERACTIVE_CONTRACT_VERSION:
+            raise SSBProtocolError("Unsupported interactive SSB session contract.")
+        initial = json.loads(json.dumps(request.get("initialRequest") or {}))
+        source, gpu = self._validate_request(initial)
+        binding = self._interactive_binding(initial, gpu)
+        session_id = str(uuid4())
+        device_key = (self.backend_kind, gpu)
+        self._expire_interactive_sessions()
+        with self._device_lock(gpu):
+            with self._lock:
+                if device_key in self._device_sessions:
+                    raise SSBProtocolError(
+                        "The selected device already has a retained SSB session."
+                    )
+            context = None
+            try:
+                open_started = time.perf_counter()
+                context, session = self._session_opener(source, gpu, initial)
+                open_seconds = time.perf_counter() - open_started
+                controls = self._initial_controls(initial)
+                outcome = self._session_outcome(
+                    session, gpu, initial, controls, initial=True
+                )
+                outcome["timings"]["sessionOpenSeconds"] = open_seconds
+                outcome["timings"]["sourceReadSeconds"] = getattr(
+                    session, "source_load_seconds", None
+                )
+                job_id = str(UUID(str(initial["jobID"])))
+                generation = int(initial["datasetGeneration"])
+                payload_path = (
+                    f"/api/ssb/interactive/jobs/{job_id}/phase"
+                    f"?generation={generation}"
+                )
+                payload, descriptor, result = self._validated_result(
+                    outcome, gpu, initial, payload_path=payload_path
+                )
+                now = self._clock()
+                retained = {
+                    "sessionID": session_id,
+                    "binding": binding,
+                    "backend": initial["backend"],
+                    "gpu": gpu,
+                    "context": context,
+                    "session": session,
+                    "baseRequest": initial,
+                    "latestControlGeneration": 0,
+                    "createdAt": now,
+                    "expiresAt": now + self._session_lease_seconds,
+                }
+                key = (job_id, generation)
+                result["interactiveSession"] = self._session_snapshot(retained)
+                result["interactiveControls"] = controls
+                self._refresh_result_provenance(result)
+                initial_job = {
+                    "contractVersion": INTERACTIVE_CONTRACT_VERSION,
+                    "sessionID": session_id,
+                    "jobID": job_id,
+                    "datasetGeneration": generation,
+                    "controlGeneration": 0,
+                    "sessionBindingSHA256": binding["sessionBindingSHA256"],
+                    "sourceIdentitySHA256": binding["sourceIdentitySHA256"],
+                    "selectionSHA256": binding["selectionSHA256"],
+                    "requestedBackend": initial["backend"],
+                    "controls": controls,
+                    "sequence": 1,
+                    "state": "completed",
+                    "progress": {"stage": "completed", "determinate": False},
+                    "acceptedAt": now,
+                    "updatedAt": now,
+                    "result": result,
+                    "error": None,
+                    "cancelRequested": False,
+                }
+                with self._lock:
+                    if key in self._interactive_jobs:
+                        raise SSBProtocolError(
+                            "The initial interactive SSB job ID is already in use."
+                        )
+                    self._retained_sessions[session_id] = retained
+                    self._device_sessions[device_key] = session_id
+                    self._interactive_jobs[key] = initial_job
+                    self._interactive_payloads[key] = (payload, descriptor)
+                return {
+                    "contractVersion": INTERACTIVE_CONTRACT_VERSION,
+                    "session": self._session_snapshot(retained),
+                    "initialResult": result,
+                }
+            except Exception:
+                if context is not None:
+                    with self._session_device_context(gpu):
+                        context.__exit__(None, None, None)
+                raise
+
+    @staticmethod
+    def _session_snapshot(retained: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "sessionID": retained["sessionID"],
+            "binding": retained["binding"],
+            "backend": retained["backend"],
+            "latestControlGeneration": retained["latestControlGeneration"],
+            "createdAt": retained["createdAt"],
+            "expiresAt": retained["expiresAt"],
+            "restartResumable": False,
+        }
+
+    def _expire_interactive_sessions(self) -> None:
+        now = self._clock()
+        with self._lock:
+            expired = [
+                session_id
+                for session_id, retained in self._retained_sessions.items()
+                if retained["expiresAt"] <= now
+            ]
+        for session_id in expired:
+            self.close_interactive_session(session_id, expired=True)
+
+    def close_interactive_session(
+        self, session_id: str, *, expired: bool = False
+    ) -> dict[str, Any]:
+        """Close one retained session after any opaque device stage finishes."""
+
+        with self._lock:
+            retained = self._retained_sessions.get(session_id)
+            if retained is None:
+                raise SSBProtocolError("No retained SSB session exists for this ID.")
+            for job in self._interactive_jobs.values():
+                if job["sessionID"] == session_id and job["state"] not in (
+                    _TERMINAL_JOB_STATES | {"cancel_requested"}
+                ):
+                    job["cancelRequested"] = True
+                    self._advance_locked(job, "cancel_requested")
+            gpu = retained["gpu"]
+        with self._device_lock(gpu):
+            with self._lock:
+                retained = self._retained_sessions.pop(session_id, None)
+                if retained is None:
+                    raise SSBProtocolError("The retained SSB session is already closed.")
+                self._device_sessions.pop((self.backend_kind, gpu), None)
+            with self._session_device_context(gpu):
+                retained["context"].__exit__(None, None, None)
+        return {
+            "contractVersion": INTERACTIVE_CONTRACT_VERSION,
+            "sessionID": session_id,
+            "state": "expired" if expired else "closed",
+            "restartResumable": False,
+        }
+
+    def close(self) -> None:
+        """Release every retained session when the service process shuts down."""
+
+        with self._lock:
+            session_ids = list(self._retained_sessions)
+        for session_id in session_ids:
+            try:
+                self.close_interactive_session(session_id)
+            except SSBProtocolError:
+                pass
+
+    def submit_interactive(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Submit one latest-wins warm reconstruction against a retained session."""
+
+        if request.get("contractVersion") != INTERACTIVE_CONTRACT_VERSION:
+            raise SSBProtocolError("Unsupported interactive SSB job contract.")
+        self._expire_interactive_sessions()
+        session_id = str(UUID(str(request["sessionID"])))
+        job_id = str(UUID(str(request["jobID"])))
+        generation = int(request["datasetGeneration"])
+        control_generation = int(request["controlGeneration"])
+        controls = self._interactive_controls(request)
+        key = (job_id, generation)
+        with self._lock:
+            retained = self._retained_sessions.get(session_id)
+            if retained is None:
+                raise SSBProtocolError("The retained SSB session is missing or expired.")
+            if request.get("sessionBindingSHA256") != retained["binding"][
+                "sessionBindingSHA256"
+            ]:
+                raise SSBProtocolError("The interactive SSB session binding changed.")
+            if request.get("sourceIdentitySHA256") != retained["binding"][
+                "sourceIdentitySHA256"
+            ] or request.get("selectionSHA256") != retained["binding"][
+                "selectionSHA256"
+            ]:
+                raise SSBProtocolError("The interactive SSB source or selection changed.")
+            if request.get("backend") != retained["backend"]:
+                raise SSBProtocolError("The interactive SSB backend or device changed.")
+            if generation != int(retained["baseRequest"]["datasetGeneration"]):
+                raise SSBProtocolError("The interactive SSB dataset generation changed.")
+            if control_generation <= retained["latestControlGeneration"]:
+                raise SSBProtocolError(
+                    "Interactive SSB controlGeneration must increase monotonically."
+                )
+            if key in self._interactive_jobs:
+                raise SSBProtocolError("The interactive SSB job ID is already in use.")
+            retained["latestControlGeneration"] = control_generation
+            retained["expiresAt"] = self._clock() + self._session_lease_seconds
+            now = self._clock()
+            job = {
+                "contractVersion": INTERACTIVE_CONTRACT_VERSION,
+                "sessionID": session_id,
+                "jobID": job_id,
+                "datasetGeneration": generation,
+                "controlGeneration": control_generation,
+                "sessionBindingSHA256": request["sessionBindingSHA256"],
+                "sourceIdentitySHA256": request["sourceIdentitySHA256"],
+                "selectionSHA256": request["selectionSHA256"],
+                "requestedBackend": request["backend"],
+                "controls": controls,
+                "sequence": 0,
+                "state": "accepted",
+                "progress": {"stage": "accepted", "determinate": False},
+                "acceptedAt": now,
+                "updatedAt": now,
+                "result": None,
+                "error": None,
+                "cancelRequested": False,
+            }
+            self._interactive_jobs[key] = job
+            snapshot = self._public_snapshot(job)
+        threading.Thread(
+            target=self._run_interactive_job,
+            args=(key, request),
+            name=f"ssb-interactive-{job_id}",
+            daemon=True,
+        ).start()
+        return snapshot
+
+    def _run_interactive_job(
+        self, key: tuple[str, int], request: dict[str, Any]
+    ) -> None:
+        session_id = str(UUID(str(request["sessionID"])))
+        try:
+            with self._lock:
+                retained = self._retained_sessions.get(session_id)
+                if retained is None:
+                    raise SSBProtocolError("The retained SSB session expired.")
+                gpu = retained["gpu"]
+            with self._device_lock(gpu):
+                with self._lock:
+                    job = self._interactive_jobs[key]
+                    retained = self._retained_sessions.get(session_id)
+                    if retained is None or job["cancelRequested"]:
+                        self._advance_locked(job, "cancelled")
+                        return
+                    if job["controlGeneration"] != retained["latestControlGeneration"]:
+                        self._advance_locked(job, "superseded")
+                        return
+                    self._advance_locked(job, "reconstructing_warm")
+                    base_request = json.loads(json.dumps(retained["baseRequest"]))
+                    session = retained["session"]
+                base_request["jobID"] = key[0]
+                outcome = self._session_outcome(
+                    session,
+                    gpu,
+                    base_request,
+                    self._interactive_jobs[key]["controls"],
+                )
+                payload_path = (
+                    f"/api/ssb/interactive/jobs/{key[0]}/phase"
+                    f"?generation={key[1]}"
+                )
+                payload, descriptor, result = self._validated_result(
+                    outcome, gpu, base_request, payload_path=payload_path
+                )
+                with self._lock:
+                    job = self._interactive_jobs[key]
+                    retained = self._retained_sessions.get(session_id)
+                    if job["cancelRequested"]:
+                        self._advance_locked(job, "cancelled")
+                    elif retained is None:
+                        self._advance_locked(job, "expired")
+                    elif job["controlGeneration"] != retained["latestControlGeneration"]:
+                        self._advance_locked(job, "superseded")
+                    else:
+                        result["interactiveSession"] = self._session_snapshot(retained)
+                        result["interactiveControls"] = job["controls"]
+                        result["controlGeneration"] = job["controlGeneration"]
+                        self._refresh_result_provenance(result)
+                        self._interactive_payloads[key] = (payload, descriptor)
+                        job["result"] = result
+                        self._advance_locked(job, "completed")
+        except Exception as exc:  # noqa: BLE001
+            with self._lock:
+                job = self._interactive_jobs[key]
+                if job["cancelRequested"]:
+                    self._advance_locked(job, "cancelled")
+                else:
+                    job["error"] = {"message": str(exc)}
+                    self._advance_locked(job, "failed")
+
+    def interactive_job_snapshot(self, job_id: str, generation: int) -> dict[str, Any]:
+        self._expire_interactive_sessions()
+        key = (str(UUID(job_id)), int(generation))
+        with self._lock:
+            job = self._interactive_jobs.get(key)
+            if job is None:
+                raise SSBProtocolError("No interactive SSB job exists for this ID.")
+            return self._public_snapshot(job)
+
+    def cancel_interactive_job(self, job_id: str, generation: int) -> dict[str, Any]:
+        key = (str(UUID(job_id)), int(generation))
+        with self._lock:
+            job = self._interactive_jobs.get(key)
+            if job is None:
+                raise SSBProtocolError("No interactive SSB job exists for this ID.")
+            if job["state"] not in _TERMINAL_JOB_STATES | {"cancel_requested"}:
+                job["cancelRequested"] = True
+                self._advance_locked(job, "cancel_requested")
+            return self._public_snapshot(job)
+
+    def interactive_payload(
+        self, job_id: str, generation: int
+    ) -> tuple[bytes, dict[str, Any]]:
+        self._expire_interactive_sessions()
+        key = (str(UUID(job_id)), int(generation))
+        with self._lock:
+            job = self._interactive_jobs.get(key)
+            stored = self._interactive_payloads.get(key)
+            if job is None:
+                raise SSBProtocolError("No interactive SSB job exists for this ID.")
+            if job["state"] == "completed" and stored is not None:
+                return stored
+            if job["state"] not in _TERMINAL_JOB_STATES:
+                raise SSBPayloadNotReady("The interactive SSB job is not complete.")
+            raise SSBPayloadUnavailable(
+                f"Interactive SSB job state {job['state']} has no phase payload."
+            )
+
+    @staticmethod
+    def _refresh_result_provenance(result: dict[str, Any]) -> None:
+        result.pop("provenanceSHA256", None)
+        result["provenanceSHA256"] = hashlib.sha256(
+            json.dumps(result, separators=(",", ":"), sort_keys=True).encode()
+        ).hexdigest()
 
     def source_identity(self, master_path: str) -> dict[str, Any]:
         master = self._resolve_master(master_path)
@@ -785,6 +1267,18 @@ class SSBProtocolService:
         self, source: Path, gpu: int | None, request: dict[str, Any]
     ) -> tuple[bytes, dict[str, Any], dict[str, Any]]:
         outcome = self._runner(source, gpu, request)
+        return self._validated_result(outcome, gpu, request)
+
+    def _validated_result(
+        self,
+        outcome: dict[str, Any],
+        gpu: int | None,
+        request: dict[str, Any],
+        *,
+        payload_path: str | None = None,
+    ) -> tuple[bytes, dict[str, Any], dict[str, Any]]:
+        """Validate one backend outcome and bind its complete result identity."""
+
         phase = _phase_bytes(outcome["phase"])
         shape = [
             int(request["scanShape"]["rows"]),
@@ -833,7 +1327,8 @@ class SSBProtocolService:
             "byteCount": len(phase),
             "sha256": phase_hash,
         }
-        payload_path = f"/api/ssb/jobs/{job_id}/phase"
+        if payload_path is None:
+            payload_path = f"/api/ssb/jobs/{job_id}/phase"
         calibration = request["calibration"]["resolution"]["calibration"]
         result = {
             "contractVersion": CONTRACT_VERSION,
@@ -994,6 +1489,76 @@ class SSBProtocolService:
         if gpu is not None:
             raise SSBProtocolError("local_mps does not accept a CUDA GPU index.")
         return None
+
+    @staticmethod
+    def _session_open_kwargs(request: dict[str, Any]) -> dict[str, Any]:
+        values = request["calibration"]["resolution"]["calibration"]["calibration"]
+        controls = SSBProtocolService._initial_controls(request)
+        return {
+            "dtype": request["precision"]["workingSourceDType"],
+            "voltage_kV": float(values["accelerationVoltageKilovolts"]["value"]),
+            "semiangle_mrad": float(
+                values["convergenceSemiangleMilliradians"]["value"]
+            ),
+            "scan_sampling_A": (
+                float(values["scanSamplingRowAngstrom"]["value"]),
+                float(values["scanSamplingColumnAngstrom"]["value"]),
+            ),
+            "scan_shape": (
+                int(request["scanShape"]["rows"]),
+                int(request["scanShape"]["columns"]),
+            ),
+            "det_sampling": _calibrated_detector_sampling_mrad(request),
+            "aberrations": {
+                name: controls[name] for name in ("C10", "C12", "phi12")
+            },
+            "rotation_angle_deg": controls["scanRotation"],
+        }
+
+    @staticmethod
+    def _cuda_device_context(gpu: int | None):
+        import cupy as cp
+
+        if gpu is None:
+            raise SSBProtocolError("remote_cuda requires an explicit GPU index.")
+        return cp.cuda.Device(gpu)
+
+    @staticmethod
+    def _open_cuda_session(
+        source: Path, gpu: int | None, request: dict[str, Any]
+    ) -> tuple[Any, Any]:
+        import cupy as cp
+
+        from quantem.gpu import SSB
+
+        if gpu is None:
+            raise SSBProtocolError("remote_cuda requires an explicit GPU index.")
+        with cp.cuda.Device(gpu):
+            context = SSB.open(
+                str(source), backend="cuda", **SSBProtocolService._session_open_kwargs(request)
+            )
+            try:
+                return context, context.__enter__()
+            except Exception:
+                context.__exit__(None, None, None)
+                raise
+
+    @staticmethod
+    def _open_mps_session(
+        source: Path, gpu: int | None, request: dict[str, Any]
+    ) -> tuple[Any, Any]:
+        from quantem.gpu import SSB
+
+        if gpu is not None:
+            raise SSBProtocolError("local_mps cannot execute on a CUDA GPU index.")
+        context = SSB.open(
+            str(source), backend="mps", **SSBProtocolService._session_open_kwargs(request)
+        )
+        try:
+            return context, context.__enter__()
+        except Exception:
+            context.__exit__(None, None, None)
+            raise
 
     @staticmethod
     def _prepare_cuda(
