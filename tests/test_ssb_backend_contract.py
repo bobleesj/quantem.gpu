@@ -60,11 +60,10 @@ def test_mps_ssb_chunked_source_never_imports_torch(monkeypatch) -> None:
     source.detector_sum = None
     source.row_prefix = False
     mps_io = importlib.import_module("quantem.gpu.io.backends.mps")
-    monkeypatch.setattr(
-        mps_io,
+    monkeypatch.setitem(
+        mps_io.__dict__,
         "MPSChunked4DSTEM",
         FakeMPSChunked4DSTEM,
-        raising=False,
     )
     imported = builtins.__import__
 
