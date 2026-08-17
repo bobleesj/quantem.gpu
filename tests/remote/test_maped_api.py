@@ -28,6 +28,7 @@ _TILTS = [
     (17.0, 0.0),
     (8.5, -14.72),
     (8.5, 14.72),
+    (25.5, 0.0),
 ]
 
 
@@ -116,6 +117,7 @@ def _run_request(
         "algorithmVersion": ALGORITHM_VERSION,
         "runID": str(uuid4()),
         "collectionIdentitySHA256": inventory["collectionIdentitySHA256"],
+        "includedDatasetIDs": [item["datasetID"] for item in tilts],
         "mode": "automaticAlignment",
         "parameters": _parameters(),
         "backend": {
@@ -345,6 +347,52 @@ def test_cache_identity_binds_nullable_ordered_calibrations(tmp_path):
         json.dumps(second_identity, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     assert first_hash != second_hash
+
+
+def test_eight_tilt_inventory_runs_only_explicit_ordered_seven_subset(tmp_path):
+    folder = _fixture_folder(tmp_path, count=8)
+    service = _service(tmp_path)
+    inventory = _inventory(service, folder)
+    assert len(inventory["tilts"]) == 8
+    assert inventory["isRunnable"] is False
+
+    request = _run_request(inventory)
+    selected = inventory["tilts"][:7]
+    request["includedDatasetIDs"] = [item["datasetID"] for item in selected]
+    request["orderedCalibrations"] = [item["calibration"] for item in selected]
+    identity = service.cache_identity(request)
+    assert identity["orderedSources"] == [item["sourceIdentity"] for item in selected]
+    assert identity["orderedTilts"] == [item["tilt"] for item in selected]
+
+    all_eight = _run_request(inventory)
+    with pytest.raises(MAPEDProtocolError, match="explicitly selected"):
+        service.cache_identity(all_eight)
+
+    duplicate = json.loads(json.dumps(request))
+    duplicate["includedDatasetIDs"][-1] = duplicate["includedDatasetIDs"][0]
+    with pytest.raises(MAPEDProtocolError, match="duplicates"):
+        service.cache_identity(duplicate)
+
+    unknown = json.loads(json.dumps(request))
+    unknown["includedDatasetIDs"][-1] = "missing-dataset"
+    with pytest.raises(MAPEDProtocolError, match="Unknown included"):
+        service.cache_identity(unknown)
+
+    reordered = json.loads(json.dumps(request))
+    reordered["includedDatasetIDs"][0:2] = reversed(
+        reordered["includedDatasetIDs"][0:2]
+    )
+    with pytest.raises(MAPEDProtocolError, match="canonical inventory order"):
+        service.cache_identity(reordered)
+
+    changed = json.loads(json.dumps(request))
+    changed["includedDatasetIDs"] = [
+        item["datasetID"] for item in inventory["tilts"][1:8]
+    ]
+    changed["orderedCalibrations"] = [
+        item["calibration"] for item in inventory["tilts"][1:8]
+    ]
+    assert service.cache_identity(changed) != identity
 
 
 def test_run_persists_alignment_and_distinguishes_cold_from_cached(tmp_path):

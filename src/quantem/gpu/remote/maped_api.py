@@ -1034,17 +1034,16 @@ class MAPEDProtocolService:
     def cache_identity(self, request: dict[str, Any]) -> dict[str, Any]:
         self._validate_contract(request)
         collection = self._collection(str(request.get("collectionIdentitySHA256", "")))
+        tilts = self._included_tilts(collection, request.get("includedDatasetIDs"))
         parameters = self._validate_parameters(request.get("parameters") or {})
         backend = request.get("backend") or {}
         self._validate_backend(backend)
         calibrations = request.get("orderedCalibrations")
-        if not isinstance(calibrations, list) or len(calibrations) != len(
-            collection["tilts"]
-        ):
+        if not isinstance(calibrations, list) or len(calibrations) != len(tilts):
             raise MAPEDProtocolError(
                 "MAPED run requires one ordered calibration envelope or null per tilt."
             )
-        for calibration, tilt in zip(calibrations, collection["tilts"], strict=True):
+        for calibration, tilt in zip(calibrations, tilts, strict=True):
             _validate_calibration_identity(
                 calibration, tilt["sourceIdentity"]["sourceIdentitySHA256"]
             )
@@ -1060,8 +1059,8 @@ class MAPEDProtocolService:
         identity = {
             "schemaVersion": CACHE_VERSION,
             "algorithmVersion": ALGORITHM_VERSION,
-            "orderedSources": [item["sourceIdentity"] for item in collection["tilts"]],
-            "orderedTilts": [item["tilt"] for item in collection["tilts"]],
+            "orderedSources": [item["sourceIdentity"] for item in tilts],
+            "orderedTilts": [item["tilt"] for item in tilts],
             "orderedCalibrations": calibrations,
             "parameters": parameters,
             "mode": "automaticAlignment",
@@ -1167,12 +1166,13 @@ class MAPEDProtocolService:
 
     def start_run(self, request: dict[str, Any]) -> dict[str, Any]:
         collection = self._collection(str(request.get("collectionIdentitySHA256", "")))
+        tilts = self._included_tilts(collection, request.get("includedDatasetIDs"))
         identity = self.cache_identity(request)
         cache_hash = _identity_hash(identity)
         request = dict(request)
         request["cacheIdentity"] = identity
         request["cacheIdentitySHA256"] = cache_hash
-        request["orderedTiltInputs"] = collection["tilts"]
+        request["orderedTiltInputs"] = tilts
         try:
             run_id = str(UUID(str(request["runID"])))
         except (KeyError, TypeError, ValueError) as exc:
@@ -1525,6 +1525,44 @@ class MAPEDProtocolService:
                 "MAPED collection identity is unknown or stale; inventory the folder again."
             )
         return collection
+
+    @staticmethod
+    def _included_tilts(
+        collection: dict[str, Any], requested: Any
+    ) -> list[dict[str, Any]]:
+        inventory = collection["tilts"]
+        if requested is None:
+            requested_ids = [item["datasetID"] for item in inventory]
+        elif isinstance(requested, list) and all(
+            isinstance(value, str) and value for value in requested
+        ):
+            requested_ids = requested
+        else:
+            raise MAPEDProtocolError(
+                "includedDatasetIDs must be a non-empty ordered string list."
+            )
+        if not requested_ids or len(requested_ids) != len(set(requested_ids)):
+            raise MAPEDProtocolError(
+                "includedDatasetIDs must be non-empty and contain no duplicates."
+            )
+        requested_set = set(requested_ids)
+        selected = [item for item in inventory if item["datasetID"] in requested_set]
+        selected_ids = [item["datasetID"] for item in selected]
+        if selected_ids != requested_ids:
+            unknown = requested_set.difference(item["datasetID"] for item in inventory)
+            if unknown:
+                raise MAPEDProtocolError(
+                    f"Unknown included MAPED datasets: {sorted(unknown)}"
+                )
+            raise MAPEDProtocolError(
+                "includedDatasetIDs must preserve canonical inventory order."
+            )
+        if len(selected) not in SUPPORTED_TILT_COUNTS:
+            raise MAPEDProtocolError(
+                "MAPED execution requires an explicitly selected 2, 3, 5, or 7 tilt subset; "
+                f"found {len(selected)}."
+            )
+        return selected
 
     def _cache_root(self, identity: dict[str, Any]) -> Path:
         parents = {
