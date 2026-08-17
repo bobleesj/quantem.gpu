@@ -485,6 +485,15 @@ def _wait_interactive(service, request):
     raise AssertionError("interactive SSB job did not finish")
 
 
+def _get_v02_interactive_phase(client, result):
+    path = result["phasePayload"]["path"]
+    generation = result["datasetGeneration"]
+    assert "?" not in path
+    assert client.get(path).status_code == 422
+    assert client.get(path, params={"generation": "wrong"}).status_code == 422
+    return client.get(path, params={"generation": generation})
+
+
 def test_request_result_and_generation_bound_payload(tmp_path):
     service, holder = _service(tmp_path)
     identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
@@ -821,7 +830,7 @@ def test_interactive_http_roundtrip_and_shutdown_close(tmp_path):
 
         def assert_phase_payload(result):
             descriptor = result["phase"]
-            payload = client.get(result["phasePayload"]["path"])
+            payload = _get_v02_interactive_phase(client, result)
             assert payload.status_code == 200
             assert payload.headers["X-Width"] == str(descriptor["shape"]["columns"])
             assert payload.headers["X-Height"] == str(descriptor["shape"]["rows"])
@@ -1154,7 +1163,7 @@ def test_local_mps_fit_http_reports_split_history_and_payload_headers(tmp_path):
         assert evidence["optimizerTrialHistoryCount"] == 200
         assert evidence["baselineHistoryCount"] == 1
         assert evidence["recordedHistoryCount"] == 201
-        payload = client.get(snapshot["result"]["phasePayload"]["path"])
+        payload = _get_v02_interactive_phase(client, snapshot["result"])
         assert payload.status_code == 200
         assert payload.headers["X-Dtype"] == "float32"
         assert int(payload.headers["X-Byte-Count"]) == len(payload.content)
