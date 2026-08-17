@@ -132,6 +132,17 @@ final class Native4DSTEMIOTests: XCTestCase {
     XCTAssertEqual(shard.datasets.map(\.id), master.datasets.map(\.id))
   }
 
+  func testMultipleInputsPreserveOrderAndDeduplicateDatasets() throws {
+    let fixture = try copiedFixture()
+    let catalog = try Native4DSTEMCatalogBuilder(cacheDirectory: fixture.cache).prepare(
+      inputs: [fixture.master, fixture.data],
+      mode: .catalogOnly
+    )
+
+    XCTAssertEqual(catalog.datasets.count, 1)
+    XCTAssertEqual(catalog.input, "\(fixture.master.path) | \(fixture.data.path)")
+  }
+
   func testDatasetIdentityIgnoresMetadataOnlyStatusChanges() throws {
     let fixture = try copiedFixture()
     let before = try nativeDatasetSignature(for: [fixture.master, fixture.data])

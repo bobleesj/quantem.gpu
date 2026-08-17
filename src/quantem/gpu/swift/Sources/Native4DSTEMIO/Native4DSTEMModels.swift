@@ -9,7 +9,7 @@ public enum Native4DSTEMCalibrationOrigin: String, Codable, Equatable, Sendable 
   case sourceMetadata = "source_metadata"
 }
 
-public struct Native4DSTEMScanCalibration: Codable, Sendable {
+public struct Native4DSTEMScanCalibration: Codable, Equatable, Sendable {
   public let rowSamplingAngstrom: Double
   public let columnSamplingAngstrom: Double
   public let origin: Native4DSTEMCalibrationOrigin
@@ -25,6 +25,13 @@ public struct Native4DSTEMScanCalibration: Codable, Sendable {
     self.columnSamplingAngstrom = columnSamplingAngstrom
     self.origin = origin
     self.evidence = evidence
+  }
+
+  public var isValid: Bool {
+    rowSamplingAngstrom.isFinite && columnSamplingAngstrom.isFinite
+      && (1.0e-4...1.0e4).contains(rowSamplingAngstrom)
+      && (1.0e-4...1.0e4).contains(columnSamplingAngstrom)
+      && origin == .sourceMetadata && !evidence.isEmpty
   }
 }
 
@@ -138,7 +145,8 @@ public enum Native4DSTEMIOError: LocalizedError, Sendable {
   public var errorDescription: String? {
     switch self {
     case .noDatasets:
-      return "No recognized datasets were found. Choose a folder containing ARINA/Samsung *_master.h5 or Velox .emd files."
+      return
+        "No recognized datasets were found. Choose a folder containing ARINA/Samsung *_master.h5 or Velox .emd files."
     case .invalidData(let message), .hdf5(let message):
       return message
     }

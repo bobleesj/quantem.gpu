@@ -8,7 +8,6 @@ struct NativeFileIdentity {
   let inode: UInt64
   let bytes: UInt64
   let modificationNanoseconds: UInt64
-  let statusChangeNanoseconds: UInt64
 }
 
 func nativeCanonicalURL(_ input: URL) -> URL {
@@ -26,15 +25,12 @@ func nativeFileIdentity(for input: URL) throws -> NativeFileIdentity {
   }
   let seconds = UInt64(status.st_mtimespec.tv_sec)
   let nanoseconds = UInt64(status.st_mtimespec.tv_nsec)
-  let changeSeconds = UInt64(status.st_ctimespec.tv_sec)
-  let changeNanoseconds = UInt64(status.st_ctimespec.tv_nsec)
   return NativeFileIdentity(
     path: url.path,
     device: UInt64(status.st_dev),
     inode: UInt64(status.st_ino),
     bytes: UInt64(status.st_size),
-    modificationNanoseconds: seconds * 1_000_000_000 + nanoseconds,
-    statusChangeNanoseconds: changeSeconds * 1_000_000_000 + changeNanoseconds
+    modificationNanoseconds: seconds * 1_000_000_000 + nanoseconds
   )
 }
 
