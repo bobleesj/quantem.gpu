@@ -18,6 +18,7 @@ import numpy as np
 CONTRACT_VERSION = "live4dstem.ssb/v0.2"
 ALGORITHM_VERSION = "quantem.gpu.SSB/v0.1"
 JOBS_CONTRACT_VERSION = "live4dstem.ssb.jobs/v0.1"
+PREPARE_CONTRACT_VERSION = "live4dstem.ssb.prepare/v0.1"
 _TERMINAL_JOB_STATES = {"completed", "cancelled", "failed", "expired"}
 
 
@@ -77,6 +78,51 @@ def count_audit_sha256(
         str(int(counts_above_working_maximum)),
     )
     return hashlib.sha256("\0".join(fields).encode()).hexdigest()
+
+
+def selection_descriptor_sha256(descriptor: dict[str, Any]) -> str:
+    """Return the canonical digest for one prepared scientific SSB selection."""
+
+    canonical = dict(descriptor)
+    canonical.pop("selectionSHA256", None)
+    payload = json.dumps(canonical, separators=(",", ":"), sort_keys=True).encode()
+    digest = hashlib.sha256()
+    digest.update(PREPARE_CONTRACT_VERSION.encode())
+    digest.update(b"\0")
+    digest.update(payload)
+    return digest.hexdigest()
+
+
+def _calibration_binding(
+    calibration: dict[str, Any], source_identity_sha256: str
+) -> dict[str, str]:
+    resolution = calibration.get("resolution") or {}
+    if resolution.get("state") != "valid":
+        raise SSBProtocolError("SSB calibration is not resolved.")
+    if calibration.get("sourceIdentitySHA256") != source_identity_sha256:
+        raise SSBProtocolError(
+            "SSB calibration belongs to a different source identity."
+        )
+    candidate = resolution.get("calibration") or {}
+    candidate_id = str(candidate.get("id", "")).strip()
+    evidence = str(candidate.get("evidenceSHA256", "")).lower()
+    try:
+        evidence_is_digest = len(evidence) == 64 and int(evidence, 16) >= 0
+    except ValueError:
+        evidence_is_digest = False
+    if not candidate_id or not evidence_is_digest or not candidate.get("calibration"):
+        raise SSBProtocolError(
+            "SSB requires a named calibration candidate with immutable evidence."
+        )
+    calibration_payload = json.dumps(
+        candidate, separators=(",", ":"), sort_keys=True
+    ).encode()
+    return {
+        "sourceIdentitySHA256": source_identity_sha256,
+        "candidateID": candidate_id,
+        "evidenceSHA256": evidence,
+        "calibrationSHA256": hashlib.sha256(calibration_payload).hexdigest(),
+    }
 
 
 def _phase_bytes(value: object) -> bytes:
@@ -228,6 +274,8 @@ class SSBProtocolService:
         device_name: Callable[[int | None], str],
         runner: Callable[[Path, int | None, dict[str, Any]], dict[str, Any]]
         | None = None,
+        preparer: Callable[[Path, int | None, dict[str, Any]], dict[str, Any]]
+        | None = None,
         source_inspector: Callable[..., Any] | None = None,
         backend_kind: str = "remote_cuda",
         implementation_revision: str = "unrecorded",
@@ -241,6 +289,9 @@ class SSBProtocolService:
         self.implementation_revision = implementation_revision.strip() or "unrecorded"
         self._runner = runner or (
             self._run_cuda if backend_kind == "remote_cuda" else self._run_mps
+        )
+        self._preparer = preparer or (
+            self._prepare_cuda if backend_kind == "remote_cuda" else self._prepare_mps
         )
         if source_inspector is None:
             from quantem.gpu.io import inspect
@@ -282,6 +333,19 @@ class SSBProtocolService:
                 "gpuIndex": gpu_index,
             },
             "resultPayload": "job_generation_endpoint",
+            "preparation": {
+                "contractVersion": PREPARE_CONTRACT_VERSION,
+                "endpoint": "/api/ssb/prepare",
+                "method": "POST",
+                "productStatus": "beta",
+                "workflow": "direct_ptychography",
+                "selectionPolicy": "full_active",
+                "detectorBin": 1,
+                "scanCropSupported": False,
+                "workingPrecision": "lossless_uint8_complete_source_audit",
+                "requiresExplicitBackend": True,
+                "implicitFallback": False,
+            },
             "precisionContract": {
                 "nativeSourceDTypes": ["uint8", "uint16", "uint32"],
                 "workingSourceDTypes": ["uint8"],
@@ -372,6 +436,9 @@ class SSBProtocolService:
                 "requestSHA256": request_sha,
                 "sourceIdentitySHA256": request["source"]["sourceIdentitySHA256"],
                 "selection": request["selection"],
+                "selectionSHA256": (request.get("preparedSelection") or {}).get(
+                    "selectionSHA256"
+                ),
                 "requestedBackend": request["backend"],
                 "sequence": 0,
                 "state": "accepted",
@@ -501,6 +568,179 @@ class SSBProtocolService:
             "sourceIdentitySHA256": _source_identity_sha256(master_hash, member_hashes),
         }
 
+    def prepare(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Prepare one source-bound SSB selection without reconstructing a phase."""
+
+        if self.implementation_revision == "unrecorded":
+            raise SSBProtocolError(
+                "The SSB service implementation revision is not recorded; restart it with an exact revision."
+            )
+        if request.get("contractVersion") != PREPARE_CONTRACT_VERSION:
+            raise SSBProtocolError("Unsupported SSB prepare contract version.")
+        gpu = self._requested_device(request)
+        master = self._resolve_master(str(request.get("masterPath", "")))
+        identity = self.source_identity(str(master))
+        expected_identity = request.get("expectedSourceIdentitySHA256")
+        if (
+            expected_identity is not None
+            and str(expected_identity).lower() != identity["sourceIdentitySHA256"]
+        ):
+            raise SSBProtocolError("SSB source identity changed before preparation.")
+
+        calibration = request.get("calibration") or {}
+        calibration_binding = _calibration_binding(
+            calibration, identity["sourceIdentitySHA256"]
+        )
+        requested_selection = request.get("selection") or {}
+        if (
+            requested_selection.get("policy") != "full_active"
+            or int(requested_selection.get("detectorBin", 0)) != 1
+            or requested_selection.get("scanCrop") is not None
+        ):
+            raise SSBProtocolError(
+                "Native SSB preparation requires full_active BF, no crop, and detector bin 1."
+            )
+
+        inspection = self._source_inspector(str(master))
+        if not inspection.ready:
+            raise SSBProtocolError(
+                f"SSB source is not ready: {inspection.reason} {inspection.action}".strip()
+            )
+        if inspection.scan_shape is None or inspection.detector_shape is None:
+            raise SSBProtocolError(
+                "SSB preparation requires inspected native scan and detector shapes."
+            )
+        scan_shape = {
+            "rows": int(inspection.scan_shape[0]),
+            "columns": int(inspection.scan_shape[1]),
+        }
+        detector_shape = {
+            "rows": int(inspection.detector_shape[0]),
+            "columns": int(inspection.detector_shape[1]),
+        }
+        execution_request = {
+            **request,
+            "source": identity,
+            "scanShape": scan_shape,
+            "detectorShape": detector_shape,
+        }
+        precision = _validated_precision(execution_request)
+        if np.dtype(inspection.dtype).name != precision["nativeSourceDType"]:
+            raise SSBProtocolError(
+                "SSB native source dtype mismatch: prepare request declares "
+                f"{precision['nativeSourceDType']}, source is {inspection.dtype}."
+            )
+        detector_sampling = _calibrated_detector_sampling_mrad(execution_request)
+
+        with self._device_lock(gpu):
+            outcome = self._preparer(master, gpu, execution_request)
+        executed_precision = outcome.get("precision")
+        if executed_precision is None:
+            executed_precision = _executed_precision(
+                execution_request,
+                working_dtype=outcome.get("workingSourceDType"),
+            )
+        if executed_precision != precision:
+            raise SSBProtocolError(
+                "SSB prepared precision or lossless count audit differs from the request."
+            )
+        executed_sampling = tuple(
+            float(value) for value in outcome["detectorSamplingMilliradians"]
+        )
+        if len(executed_sampling) != 2 or not np.allclose(
+            executed_sampling, detector_sampling, rtol=0.0, atol=1e-9
+        ):
+            raise SSBProtocolError(
+                "SSB prepared detector sampling differs from the resolved calibration."
+            )
+        logical_count = int(outcome["logicalBrightFieldCount"])
+        active_count = int(outcome["activeBrightFieldCount"])
+        if logical_count <= 0 or active_count <= 0 or active_count > logical_count:
+            raise SSBProtocolError(
+                "SSB preparation returned invalid logical or aperture-active BF counts."
+            )
+
+        descriptor = {
+            "contractVersion": PREPARE_CONTRACT_VERSION,
+            "productStatus": "beta",
+            "workflow": "direct_ptychography",
+            "algorithmVersion": ALGORITHM_VERSION,
+            "implementationRevision": self.implementation_revision,
+            "source": identity,
+            "scanShape": scan_shape,
+            "detectorShape": detector_shape,
+            "precision": precision,
+            "calibrationBinding": calibration_binding,
+            "detectorSamplingMilliradians": {
+                "row": executed_sampling[0],
+                "column": executed_sampling[1],
+            },
+            "selection": {
+                "policy": "full_active",
+                "logicalBrightFieldCount": logical_count,
+                "activeBrightFieldCount": active_count,
+                "detectorBin": 1,
+                "scanCrop": None,
+            },
+        }
+        descriptor["selectionSHA256"] = selection_descriptor_sha256(descriptor)
+        return descriptor
+
+    def _validate_prepared_selection(
+        self,
+        request: dict[str, Any],
+        identity: dict[str, Any],
+        precision: dict[str, Any],
+    ) -> None:
+        descriptor = request.get("preparedSelection")
+        if not isinstance(descriptor, dict):
+            raise SSBProtocolError(
+                "SSB reconstruction requires a server-prepared selection descriptor."
+            )
+        if descriptor.get("contractVersion") != PREPARE_CONTRACT_VERSION:
+            raise SSBProtocolError("Unsupported SSB prepared selection version.")
+        if descriptor.get("productStatus") != "beta" or descriptor.get("workflow") != (
+            "direct_ptychography"
+        ):
+            raise SSBProtocolError("SSB prepared selection workflow is unsupported.")
+        if descriptor.get("algorithmVersion") != ALGORITHM_VERSION:
+            raise SSBProtocolError("SSB prepared selection algorithm is stale.")
+        if descriptor.get("implementationRevision") != self.implementation_revision:
+            raise SSBProtocolError("SSB prepared selection implementation is stale.")
+        if descriptor.get("selectionSHA256") != selection_descriptor_sha256(descriptor):
+            raise SSBProtocolError("SSB prepared selection digest is invalid.")
+
+        descriptor_source = descriptor.get("source") or {}
+        for key in (
+            "masterPath",
+            "masterSHA256",
+            "orderedMemberSHA256",
+            "sourceIdentitySHA256",
+        ):
+            if descriptor_source.get(key) != identity[key]:
+                raise SSBProtocolError(
+                    f"SSB prepared selection is stale for source field {key}."
+                )
+        if descriptor.get("scanShape") != request.get("scanShape"):
+            raise SSBProtocolError("SSB prepared selection scan shape changed.")
+        if descriptor.get("detectorShape") != request.get("detectorShape"):
+            raise SSBProtocolError("SSB prepared selection detector shape changed.")
+        if descriptor.get("precision") != precision:
+            raise SSBProtocolError("SSB prepared selection precision changed.")
+        expected_binding = _calibration_binding(
+            request.get("calibration") or {}, identity["sourceIdentitySHA256"]
+        )
+        if descriptor.get("calibrationBinding") != expected_binding:
+            raise SSBProtocolError("SSB prepared selection calibration changed.")
+        sampling = _calibrated_detector_sampling_mrad(request)
+        if descriptor.get("detectorSamplingMilliradians") != {
+            "row": sampling[0],
+            "column": sampling[1],
+        }:
+            raise SSBProtocolError("SSB prepared detector sampling changed.")
+        if descriptor.get("selection") != request.get("selection"):
+            raise SSBProtocolError("SSB prepared scientific selection changed.")
+
     def reconstruct(self, request: dict[str, Any]) -> dict[str, Any]:
         job_id = str(UUID(str(request["jobID"])))
         generation = int(request["datasetGeneration"])
@@ -583,11 +823,14 @@ class SSBProtocolService:
         calibration = request["calibration"]["resolution"]["calibration"]
         result = {
             "contractVersion": CONTRACT_VERSION,
+            "productStatus": "beta",
+            "workflow": "direct_ptychography",
             "jobID": job_id,
             "datasetGeneration": generation,
             "source": request["source"],
             "calibration": calibration,
             "selection": request["selection"],
+            "preparedSelection": request["preparedSelection"],
             "executedDetectorSamplingMilliradians": {
                 "row": executed_sampling[0],
                 "column": executed_sampling[1],
@@ -718,6 +961,7 @@ class SSBProtocolService:
             raise SSBProtocolError(
                 "SSB detector shape does not match the inspected native source."
             )
+        self._validate_prepared_selection(request, identity, precision)
         return master, gpu
 
     def _requested_device(self, request: dict[str, Any]) -> int | None:
@@ -736,6 +980,103 @@ class SSBProtocolService:
         if gpu is not None:
             raise SSBProtocolError("local_mps does not accept a CUDA GPU index.")
         return None
+
+    @staticmethod
+    def _prepare_cuda(
+        source: Path, gpu: int | None, request: dict[str, Any]
+    ) -> dict[str, Any]:
+        import cupy as cp
+
+        from quantem.gpu import SSB
+
+        if gpu is None:
+            raise SSBProtocolError("remote_cuda requires an explicit GPU index.")
+        values = request["calibration"]["resolution"]["calibration"]["calibration"]
+        detector_sampling_mrad = _calibrated_detector_sampling_mrad(request)
+        aberrations = {
+            "C10": float(values["c10Nanometers"]["value"]),
+            "C12": float(values["c12Nanometers"]["value"]),
+            "phi12": float(values["phi12Radians"]["value"]),
+        }
+        with cp.cuda.Device(gpu):
+            session_context = SSB.open(
+                str(source),
+                backend="cuda",
+                dtype=request["precision"]["workingSourceDType"],
+                voltage_kV=float(values["accelerationVoltageKilovolts"]["value"]),
+                semiangle_mrad=float(
+                    values["convergenceSemiangleMilliradians"]["value"]
+                ),
+                scan_sampling_A=(
+                    float(values["scanSamplingRowAngstrom"]["value"]),
+                    float(values["scanSamplingColumnAngstrom"]["value"]),
+                ),
+                scan_shape=(
+                    int(request["scanShape"]["rows"]),
+                    int(request["scanShape"]["columns"]),
+                ),
+                det_sampling=detector_sampling_mrad,
+                aberrations=aberrations,
+                rotation_angle_deg=float(values["scanRotationDegrees"]["value"]),
+            )
+            with session_context as session:
+                state = session.browser_state()
+                precision = _executed_precision(
+                    request, working_dtype=session.source_dtype
+                )
+        return {
+            "logicalBrightFieldCount": state.num_bf,
+            "activeBrightFieldCount": state.active_num_bf,
+            "detectorSamplingMilliradians": tuple(
+                float(value) * 1e3 for value in state.angular_sampling_rad
+            ),
+            "precision": precision,
+        }
+
+    @staticmethod
+    def _prepare_mps(
+        source: Path, gpu: int | None, request: dict[str, Any]
+    ) -> dict[str, Any]:
+        from quantem.gpu import SSB
+
+        if gpu is not None:
+            raise SSBProtocolError("local_mps cannot execute on a CUDA GPU index.")
+        values = request["calibration"]["resolution"]["calibration"]["calibration"]
+        detector_sampling_mrad = _calibrated_detector_sampling_mrad(request)
+        aberrations = {
+            "C10": float(values["c10Nanometers"]["value"]),
+            "C12": float(values["c12Nanometers"]["value"]),
+            "phi12": float(values["phi12Radians"]["value"]),
+        }
+        session_context = SSB.open(
+            str(source),
+            backend="mps",
+            dtype=request["precision"]["workingSourceDType"],
+            voltage_kV=float(values["accelerationVoltageKilovolts"]["value"]),
+            semiangle_mrad=float(values["convergenceSemiangleMilliradians"]["value"]),
+            scan_sampling_A=(
+                float(values["scanSamplingRowAngstrom"]["value"]),
+                float(values["scanSamplingColumnAngstrom"]["value"]),
+            ),
+            scan_shape=(
+                int(request["scanShape"]["rows"]),
+                int(request["scanShape"]["columns"]),
+            ),
+            det_sampling=detector_sampling_mrad,
+            aberrations=aberrations,
+            rotation_angle_deg=float(values["scanRotationDegrees"]["value"]),
+        )
+        with session_context as session:
+            state = session.browser_state()
+            precision = _executed_precision(request, working_dtype=session.source_dtype)
+        return {
+            "logicalBrightFieldCount": state.num_bf,
+            "activeBrightFieldCount": state.active_num_bf,
+            "detectorSamplingMilliradians": tuple(
+                float(value) * 1e3 for value in state.angular_sampling_rad
+            ),
+            "precision": precision,
+        }
 
     @staticmethod
     def _run_cuda(

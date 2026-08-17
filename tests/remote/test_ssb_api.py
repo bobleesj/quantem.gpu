@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import threading
 import time
 from pathlib import Path
@@ -11,10 +12,13 @@ import numpy as np
 import pytest
 
 from quantem.gpu.remote.ssb_api import (
+    ALGORITHM_VERSION,
+    PREPARE_CONTRACT_VERSION,
     SSBPayloadUnavailable,
     SSBProtocolError,
     SSBProtocolService,
     count_audit_sha256,
+    selection_descriptor_sha256,
 )
 
 
@@ -24,6 +28,7 @@ def _inspection(*_args, **_kwargs):
         reason="",
         action="",
         dtype="uint16",
+        scan_shape=(2, 2),
         detector_shape=(2, 2),
     )
 
@@ -35,7 +40,55 @@ def _execution_evidence(request: dict) -> dict:
     }
 
 
-def _request(source: dict, *, generation: int = 7) -> dict:
+def _bind_prepared_selection(
+    request: dict, *, implementation_revision: str = "test"
+) -> dict:
+    candidate = request["calibration"]["resolution"]["calibration"]
+    source = request["source"]
+    descriptor = {
+        "contractVersion": PREPARE_CONTRACT_VERSION,
+        "productStatus": "beta",
+        "workflow": "direct_ptychography",
+        "algorithmVersion": ALGORITHM_VERSION,
+        "implementationRevision": implementation_revision,
+        "source": {
+            key: source[key]
+            for key in (
+                "masterPath",
+                "masterSHA256",
+                "orderedMemberSHA256",
+                "sourceIdentitySHA256",
+            )
+        },
+        "scanShape": request["scanShape"],
+        "detectorShape": request["detectorShape"],
+        "precision": request["precision"],
+        "calibrationBinding": {
+            "sourceIdentitySHA256": source["sourceIdentitySHA256"],
+            "candidateID": candidate["id"],
+            "evidenceSHA256": candidate["evidenceSHA256"],
+            "calibrationSHA256": hashlib.sha256(
+                json.dumps(candidate, separators=(",", ":"), sort_keys=True).encode()
+            ).hexdigest(),
+        },
+        "detectorSamplingMilliradians": {
+            "row": candidate["calibration"]["detectorSamplingRowMilliradiansPerPixel"][
+                "value"
+            ],
+            "column": candidate["calibration"][
+                "detectorSamplingColumnMilliradiansPerPixel"
+            ]["value"],
+        },
+        "selection": request["selection"],
+    }
+    descriptor["selectionSHA256"] = selection_descriptor_sha256(descriptor)
+    request["preparedSelection"] = descriptor
+    return request
+
+
+def _request(
+    source: dict, *, generation: int = 7, implementation_revision: str = "test"
+) -> dict:
     audited_element_count = 2 * 2 * 2 * 2
     audit_evidence = count_audit_sha256(
         source["sourceIdentitySHA256"],
@@ -102,7 +155,7 @@ def _request(source: dict, *, generation: int = 7) -> dict:
         "objective": "exact_full_bf_phase_variance",
         "loss": 0.044,
     }
-    return {
+    request = {
         "contractVersion": "live4dstem.ssb/v0.2",
         "algorithmVersion": "quantem.gpu.SSB/v0.1",
         "jobID": "5fce107b-c5fa-45fe-a6db-2096171049bb",
@@ -141,6 +194,27 @@ def _request(source: dict, *, generation: int = 7) -> dict:
         "computeLoss": True,
         "measureWarm": False,
     }
+    return _bind_prepared_selection(
+        request, implementation_revision=implementation_revision
+    )
+
+
+def _prepare_request(source: dict, *, backend: dict | None = None) -> dict:
+    reconstruction = _request(source)
+    return {
+        "contractVersion": PREPARE_CONTRACT_VERSION,
+        "masterPath": source["masterPath"],
+        "expectedSourceIdentitySHA256": source["sourceIdentitySHA256"],
+        "calibration": reconstruction["calibration"],
+        "selection": {
+            "policy": "full_active",
+            "detectorBin": 1,
+            "scanCrop": None,
+        },
+        "precision": reconstruction["precision"],
+        "backend": backend
+        or {"kind": "remote_cuda", "profile_id": "mjgoat", "gpu_index": 0},
+    }
 
 
 def _service(tmp_path: Path) -> tuple[SSBProtocolService, dict]:
@@ -161,11 +235,22 @@ def _service(tmp_path: Path) -> tuple[SSBProtocolService, dict]:
             "timings": {"firstReconstructSeconds": 0.1},
         }
 
+    def preparer(_source, gpu, request):
+        holder.setdefault("prepareCalls", []).append(
+            {"gpu": gpu, "backend": request["backend"]["kind"]}
+        )
+        return {
+            "logicalBrightFieldCount": 4,
+            "activeBrightFieldCount": 3,
+            **_execution_evidence(request),
+        }
+
     service = SSBProtocolService(
         tmp_path,
         available_gpus=lambda: [0],
         device_name=lambda _gpu: "Test CUDA",
         runner=runner,
+        preparer=preparer,
         source_inspector=_inspection,
         implementation_revision="test",
     )
@@ -207,6 +292,135 @@ def test_source_identity_matches_live4dstem_dataset_v0_1_digest(tmp_path):
         expected.update(value.encode())
 
     assert identity["sourceIdentitySHA256"] == expected.hexdigest()
+
+
+def test_prepare_returns_source_bound_selection_and_roundtrips(tmp_path):
+    service, holder = _service(tmp_path)
+    identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
+
+    descriptor = service.prepare(_prepare_request(identity))
+
+    assert descriptor["contractVersion"] == PREPARE_CONTRACT_VERSION
+    assert descriptor["productStatus"] == "beta"
+    assert descriptor["workflow"] == "direct_ptychography"
+    assert descriptor["source"] == identity
+    assert descriptor["scanShape"] == {"rows": 2, "columns": 2}
+    assert descriptor["detectorShape"] == {"rows": 2, "columns": 2}
+    assert descriptor["precision"]["nativeSourceDType"] == "uint16"
+    assert descriptor["precision"]["workingSourceDType"] == "uint8"
+    assert (
+        descriptor["precision"]["losslessWorkingDTypeAudit"]["auditedElementCount"]
+        == 16
+    )
+    assert descriptor["detectorSamplingMilliradians"] == {
+        "row": 1.090909,
+        "column": 1.090909,
+    }
+    assert descriptor["selection"] == {
+        "policy": "full_active",
+        "logicalBrightFieldCount": 4,
+        "activeBrightFieldCount": 3,
+        "detectorBin": 1,
+        "scanCrop": None,
+    }
+    assert descriptor["selectionSHA256"] == selection_descriptor_sha256(descriptor)
+    assert holder["prepareCalls"] == [{"gpu": 0, "backend": "remote_cuda"}]
+
+    reconstruction = _request(identity)
+    reconstruction["preparedSelection"] = descriptor
+    result = service.reconstruct(reconstruction)
+    assert result["selection"] == descriptor["selection"]
+
+
+def test_prepare_http_capability_and_unresolved_calibration_are_explicit(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from quantem.gpu.remote.server import BrowseService, create_app
+
+    service, holder = _service(tmp_path)
+    browse = BrowseService(tmp_path, initialize_cuda=False)
+    client = TestClient(create_app(tmp_path, service=browse, ssb_service=service))
+    identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
+    prepared = client.post("/api/ssb/prepare", json=_prepare_request(identity))
+    request = _prepare_request(identity)
+    request["calibration"]["resolution"] = {"state": "unresolved", "candidates": []}
+
+    response = client.post("/api/ssb/prepare", json=request)
+    capability = client.get("/api/browse/capabilities").json()["features"]["ssb"]
+
+    assert prepared.status_code == 200
+    assert prepared.json()["selection"]["activeBrightFieldCount"] == 3
+    assert response.status_code == 409
+    assert "not resolved" in response.json()["detail"]
+    assert holder["prepareCalls"] == [{"gpu": 0, "backend": "remote_cuda"}]
+    assert capability["preparation"] == {
+        "contractVersion": PREPARE_CONTRACT_VERSION,
+        "endpoint": "/api/ssb/prepare",
+        "method": "POST",
+        "productStatus": "beta",
+        "workflow": "direct_ptychography",
+        "selectionPolicy": "full_active",
+        "detectorBin": 1,
+        "scanCropSupported": False,
+        "workingPrecision": "lossless_uint8_complete_source_audit",
+        "requiresExplicitBackend": True,
+        "implicitFallback": False,
+    }
+
+
+def test_prepare_descriptor_rejects_tampering_and_stale_source_or_calibration(
+    tmp_path,
+):
+    service, _ = _service(tmp_path)
+    master = tmp_path / "BTO_18_master.h5"
+    identity = service.source_identity(str(master))
+    descriptor = service.prepare(_prepare_request(identity))
+
+    missing = _request(identity)
+    missing.pop("preparedSelection")
+    with pytest.raises(SSBProtocolError, match="requires a server-prepared"):
+        service.reconstruct(missing)
+
+    tampered = _request(identity)
+    tampered["preparedSelection"] = json.loads(json.dumps(descriptor))
+    tampered["preparedSelection"]["selection"]["activeBrightFieldCount"] = 2
+    with pytest.raises(SSBProtocolError, match="digest is invalid"):
+        service.reconstruct(tampered)
+
+    changed_calibration = _request(identity)
+    changed_calibration["preparedSelection"] = descriptor
+    changed_calibration["calibration"]["resolution"]["calibration"]["calibration"][
+        "c10Nanometers"
+    ]["value"] = 74.0
+    with pytest.raises(SSBProtocolError, match="calibration changed"):
+        service.reconstruct(changed_calibration)
+
+    (tmp_path / "BTO_18_data_000001.h5").write_bytes(b"changed shard")
+    stale_source = _request(identity)
+    stale_source["preparedSelection"] = descriptor
+    with pytest.raises(SSBProtocolError, match="source identity mismatch"):
+        service.reconstruct(stale_source)
+
+
+def test_prepare_never_falls_back_to_an_alternate_backend(tmp_path):
+    master = tmp_path / "BTO_18_master.h5"
+    master.write_bytes(b"master")
+    (tmp_path / "BTO_18_data_000001.h5").write_bytes(b"shard")
+    calls = []
+    service = SSBProtocolService(
+        tmp_path,
+        available_gpus=lambda: pytest.fail("local MPS queried CUDA devices"),
+        device_name=lambda _gpu: "Apple MPS",
+        preparer=lambda *_args: calls.append("mps"),
+        source_inspector=_inspection,
+        backend_kind="local_mps",
+        implementation_revision="test",
+    )
+    identity = service.source_identity(str(master))
+
+    with pytest.raises(SSBProtocolError, match="local_mps"):
+        service.prepare(_prepare_request(identity))
+    assert calls == []
 
 
 def test_unresolved_calibration_and_mps_selection_are_rejected(tmp_path):
@@ -322,7 +536,9 @@ def test_local_mps_async_result_payload_and_capability_are_explicit(tmp_path):
         "gpuIndex": None,
     }
 
-    request = _request(service.source_identity(str(master)))
+    request = _request(
+        service.source_identity(str(master)), implementation_revision="test-revision"
+    )
     request["backend"] = {"kind": "local_mps"}
     accepted = client.post("/api/ssb/jobs", json=request)
     completed = _wait_for_terminal(service, request["jobID"])
@@ -365,7 +581,9 @@ def test_unrecorded_or_unavailable_device_is_not_ready(tmp_path):
     assert capability["unavailableReason"] == (
         "The exact quantem.gpu implementation revision is not recorded."
     )
-    request = _request(service.source_identity(str(master)))
+    request = _request(
+        service.source_identity(str(master)), implementation_revision="test-revision"
+    )
     with pytest.raises(
         SSBProtocolError, match="implementation revision is not recorded"
     ):
@@ -427,12 +645,17 @@ def test_mps_session_closes_and_server_does_not_claim_loopback_transfer(
         backend_kind="local_mps",
         implementation_revision="test-revision",
     )
-    request = _request(service.source_identity(str(master)))
+    identity = service.source_identity(str(master))
+    prepared = service.prepare(
+        _prepare_request(identity, backend={"kind": "local_mps"})
+    )
+    request = _request(identity, implementation_revision="test-revision")
     request["backend"] = {"kind": "local_mps"}
+    request["preparedSelection"] = prepared
 
     result = service.reconstruct(request)
 
-    assert closed == [True]
+    assert closed == [True, True]
     assert opened[0]["dtype"] == "uint8"
     assert opened[0]["det_sampling"] == (1.090909, 1.090909)
     assert result["executedPrecision"] == request["precision"]
@@ -448,13 +671,13 @@ def test_mps_session_closes_and_server_does_not_claim_loopback_transfer(
         "SSB",
         SimpleNamespace(open=lambda *_args, **_kwargs: FailingSession()),
     )
-    failed_request = _request(service.source_identity(str(master)))
+    failed_request = _request(identity, implementation_revision="test-revision")
     failed_request["jobID"] = str(uuid4())
     failed_request["backend"] = {"kind": "local_mps"}
 
     with pytest.raises(RuntimeError, match="opaque MPS stage failed"):
         service.reconstruct(failed_request)
-    assert closed == [True, True]
+    assert closed == [True, True, True]
 
 
 def test_source_hash_mismatch_is_rejected_before_runner(tmp_path):
@@ -549,11 +772,13 @@ def test_logical_and_active_brightfield_counts_are_validated_separately(tmp_path
 
     wrong_logical = _request(identity)
     wrong_logical["selection"]["logicalBrightFieldCount"] = 5
+    _bind_prepared_selection(wrong_logical)
     with pytest.raises(SSBProtocolError, match="logical BF count changed"):
         service.reconstruct(wrong_logical)
 
     wrong_active = _request(identity)
     wrong_active["selection"]["activeBrightFieldCount"] = 2
+    _bind_prepared_selection(wrong_active)
     with pytest.raises(SSBProtocolError, match="active BF count changed"):
         service.reconstruct(wrong_active)
 

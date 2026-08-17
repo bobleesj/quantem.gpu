@@ -1162,6 +1162,13 @@ def create_app(
         except SSBProtocolError as exc:
             raise HTTPException(409, str(exc)) from exc
 
+    @app.post("/api/ssb/prepare")
+    async def ssb_prepare(request: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(ssb.prepare, request)
+        except (SSBProtocolError, KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+
     @app.post("/api/ssb/reconstruct")
     async def ssb_reconstruct(request: dict[str, Any]) -> dict[str, Any]:
         try:
