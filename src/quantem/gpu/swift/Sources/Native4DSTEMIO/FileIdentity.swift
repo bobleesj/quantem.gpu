@@ -47,14 +47,10 @@ func nativeDatasetSignature(for files: [URL]) throws -> String {
     var inode = identity.inode.littleEndian
     var bytes = identity.bytes.littleEndian
     var modificationNanoseconds = identity.modificationNanoseconds.littleEndian
-    var statusChangeNanoseconds = identity.statusChangeNanoseconds.littleEndian
     withUnsafeBytes(of: &device) { digest.update(bufferPointer: $0) }
     withUnsafeBytes(of: &inode) { digest.update(bufferPointer: $0) }
     withUnsafeBytes(of: &bytes) { digest.update(bufferPointer: $0) }
     withUnsafeBytes(of: &modificationNanoseconds) {
-      digest.update(bufferPointer: $0)
-    }
-    withUnsafeBytes(of: &statusChangeNanoseconds) {
       digest.update(bufferPointer: $0)
     }
   }

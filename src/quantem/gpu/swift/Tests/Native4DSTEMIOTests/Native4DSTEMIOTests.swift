@@ -132,6 +132,17 @@ final class Native4DSTEMIOTests: XCTestCase {
     XCTAssertEqual(shard.datasets.map(\.id), master.datasets.map(\.id))
   }
 
+  func testDatasetIdentityIgnoresMetadataOnlyStatusChanges() throws {
+    let fixture = try copiedFixture()
+    let before = try nativeDatasetSignature(for: [fixture.master, fixture.data])
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o600],
+      ofItemAtPath: fixture.master.path
+    )
+    let after = try nativeDatasetSignature(for: [fixture.master, fixture.data])
+    XCTAssertEqual(after, before)
+  }
+
   func testConcurrentNativeInspection() throws {
     let fixture = try copiedFixture()
     let queue = DispatchQueue(label: "native-hdf5-test", attributes: .concurrent)
