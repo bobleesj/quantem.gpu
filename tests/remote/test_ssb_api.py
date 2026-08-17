@@ -217,7 +217,11 @@ def _prepare_request(source: dict, *, backend: dict | None = None) -> dict:
     }
 
 
-def _service(tmp_path: Path) -> tuple[SSBProtocolService, dict]:
+def _service(
+    tmp_path: Path,
+    *,
+    prepared_sampling: tuple[float, float] = (1.090909, 1.090909),
+) -> tuple[SSBProtocolService, dict]:
     master = tmp_path / "BTO_18_master.h5"
     master.write_bytes(b"master")
     (tmp_path / "BTO_18_data_000001.h5").write_bytes(b"shard")
@@ -243,6 +247,7 @@ def _service(tmp_path: Path) -> tuple[SSBProtocolService, dict]:
             "logicalBrightFieldCount": 4,
             "activeBrightFieldCount": 3,
             **_execution_evidence(request),
+            "detectorSamplingMilliradians": prepared_sampling,
         }
 
     service = SSBProtocolService(
@@ -330,6 +335,39 @@ def test_prepare_returns_source_bound_selection_and_roundtrips(tmp_path):
     reconstruction["preparedSelection"] = descriptor
     result = service.reconstruct(reconstruction)
     assert result["selection"] == descriptor["selection"]
+
+
+def test_prepare_descriptor_keeps_exact_calibration_after_tolerated_backend_rounding(
+    tmp_path,
+):
+    requested = 1.090909
+    service, _ = _service(
+        tmp_path,
+        prepared_sampling=(requested + 5e-10, requested - 5e-10),
+    )
+    identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
+
+    descriptor = service.prepare(_prepare_request(identity))
+
+    assert descriptor["detectorSamplingMilliradians"] == {
+        "row": requested,
+        "column": requested,
+    }
+    reconstruction = _request(identity)
+    reconstruction["preparedSelection"] = descriptor
+    service.reconstruct(reconstruction)
+
+
+def test_prepare_rejects_detector_sampling_outside_tolerance(tmp_path):
+    requested = 1.090909
+    service, _ = _service(
+        tmp_path,
+        prepared_sampling=(requested + 2e-9, requested),
+    )
+    identity = service.source_identity(str(tmp_path / "BTO_18_master.h5"))
+
+    with pytest.raises(SSBProtocolError, match="prepared detector sampling differs"):
+        service.prepare(_prepare_request(identity))
 
 
 def test_prepare_http_capability_and_unresolved_calibration_are_explicit(tmp_path):

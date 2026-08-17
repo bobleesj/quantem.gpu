@@ -672,8 +672,8 @@ class SSBProtocolService:
             "precision": precision,
             "calibrationBinding": calibration_binding,
             "detectorSamplingMilliradians": {
-                "row": executed_sampling[0],
-                "column": executed_sampling[1],
+                "row": detector_sampling[0],
+                "column": detector_sampling[1],
             },
             "selection": {
                 "policy": "full_active",
