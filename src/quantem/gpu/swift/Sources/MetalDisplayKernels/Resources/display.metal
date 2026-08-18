@@ -125,6 +125,25 @@ kernel void metal_range_u32(
     atomic_fetch_max_explicit(&valueRange[1], value, memory_order_relaxed);
 }
 
+inline uint metal_ordered_float_bits(float value) {
+    uint bits = as_type<uint>(value);
+    return (bits & 0x80000000u) != 0u ? ~bits : bits ^ 0x80000000u;
+}
+
+kernel void metal_range_f32(
+    device const float *values [[buffer(0)]],
+    device atomic_uint *orderedRange [[buffer(1)]],
+    constant uint &count [[buffer(2)]],
+    uint index [[thread_position_in_grid]]
+) {
+    if (index >= count) return;
+    float value = values[index];
+    if (!isfinite(value)) return;
+    uint ordered = metal_ordered_float_bits(value);
+    atomic_fetch_min_explicit(&orderedRange[0], ordered, memory_order_relaxed);
+    atomic_fetch_max_explicit(&orderedRange[1], ordered, memory_order_relaxed);
+}
+
 kernel void metal_histogram_u32(
     device const uint *values [[buffer(0)]],
     device atomic_uint *bins [[buffer(1)]],

@@ -23,6 +23,22 @@
 `quantem.live` calls `quantem.gpu` for product and SSB compute instead of
 keeping second copies.
 
+Native macOS Live4DSTEM calls the Swift package products instead of a local
+Python backend:
+
+| Client need | Endpoint |
+|---|---|
+| Browser FFT of BF/ADF/custom | `MetalImageFFT.logMagnitude` |
+| Histogram / contrast window | `MetalImageRuntime` |
+| HDF5/EMD catalog | `Native4DSTEMIO` |
+| Decode / detector / CoM | `Metal4DSTEMKernels` |
+| Remote raw 4D on MJGOAT | Python `quantem.gpu` CUDA service only |
+
+Do not restore an app-local FFT, histogram, or HDF5 parser. Do not bundle
+Python in the signed Mac app. Pin Live4DSTEM to an exact `quantem.gpu`
+revision after this package is published; a local path override is only for
+integration worktrees.
+
 ## Release checks
 
 Before publishing an rc:
@@ -47,3 +63,5 @@ Before publishing an rc:
 - Do not use `quantem.cuda` as the public package name.
 - Do not treat CPU fallback speed as acceptable for GPU workflows.
 - Do not use fast-mode SSB as parity evidence.
+- Do not copy `MetalImageFFT` or `Native4DSTEMIO` source into Live4DSTEM.
+- Do not add a local Python FFT or HDF5 helper to the Mac app.

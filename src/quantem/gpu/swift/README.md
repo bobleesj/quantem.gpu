@@ -17,10 +17,23 @@ Backend names remain explicit throughout QuantEM:
   display shaders.
 - `Metal4DSTEMKernels` owns fused QH5IDX HDF5 decoding, detector products, and
   the detector-word-major kernels used during interactive detector dragging.
+- `MetalImageFFT` owns the Browser FFT endpoint
+  `MetalImageFFT.logMagnitude`. The contract is
+  `fftshift(log1p(abs(fft2(source))))` on a GPU-resident `MTLBuffer`.
+- `MetalImageRuntime` owns histogram windows, range, and display contracts.
+- `Native4DSTEMIO` owns Python-free HDF5/EMD discovery and QH5 indexing.
 - `Benchmarks` and `Tests` exercise the same package resources imported by an
   application.
 
-A native application retains platform-specific document and UI handling. These
-targets intentionally expose kernels rather than claiming to be a complete
-loader. Shared loading, cache, and command orchestration should move into a
-separate Metal runtime target before macOS and iOS applications both need it.
+A native application keeps SwiftUI, cache policy, and gestures. It must call
+these products instead of copying Metal source or launching Python. For the
+public endpoint list, 512×512 BF/ADF FFT budget, and Torch MPS comparison, see
+[Native Metal image endpoints](../../../../docs/api/metal_image.md).
+
+Typical Browser BF/ADF scans are `512×512`. Warm `logMagnitude` for that shape
+must stay inside 8.33 ms (120 Hz). Measure with:
+
+```bash
+swift run metal-image-fft-benchmark 512 512 12
+swift test --filter MetalImageFFTTests
+```

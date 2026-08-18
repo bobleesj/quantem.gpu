@@ -15,12 +15,19 @@ critical:
 and display. Widget load and compute call sites should route through
 `quantem.gpu` instead of keeping long-term duplicate GPU loaders or math.
 
-The intended dependency arrow is:
+The intended dependency arrows are:
 
 ```text
 file -> quantem.gpu (load + decompress + to_device) -> arrays
      -> quantem.gpu (BF/DF/DPC / SSB / movies) -> quantem.widget (display)
+
+file -> Native4DSTEMIO / Metal4DSTEMKernels -> resident 2D products
+     -> MetalImageFFT.logMagnitude / MetalImageRuntime -> Live4DSTEM UI
 ```
+
+Native macOS and iOS clients consume the Swift package products directly.
+They do not embed Python, NumPy, or h5py. Optional remote CUDA may use the
+Python `quantem.gpu` service on MJGOAT; that environment stays on the server.
 
 ## Current release candidate
 

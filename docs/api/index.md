@@ -16,5 +16,15 @@ Main namespaces:
 - `quantem.gpu.dpc` and `quantem.gpu.parallax` for their scientific workflows.
 - `quantem.gpu.SSB` for SSB fitting and reconstruction.
 
+Native Swift/Metal products for macOS and iOS clients:
+
+- `MetalImageFFT.logMagnitude` for Browser FFT of an already-transferred 2D
+  product. See [Native Metal image endpoints](metal_image.md).
+- `MetalImageRuntime` for histogram, range, and display contracts.
+- `Native4DSTEMIO` for Python-free HDF5/EMD discovery.
+
+Those native endpoints are the ones Live4DSTEM should call. They are not a
+local Python backend.
+
 The API is still release-candidate level. Prefer public functions documented
 here over internal backend modules.

@@ -22,6 +22,7 @@ parts:
           - file: api/images_dpc
           - file: api/ssb
           - file: api/movie
+          - file: api/metal_image
   - caption: Maintainers
     chapters:
       - file: maintainer/migration

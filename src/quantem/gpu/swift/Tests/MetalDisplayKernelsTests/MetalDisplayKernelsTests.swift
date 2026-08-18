@@ -59,6 +59,7 @@ final class MetalDisplayKernelsTests: XCTestCase {
       MetalDisplayKernels.vertexFunction,
       MetalDisplayKernels.fragmentFunction,
       MetalDisplayKernels.rangeFunction,
+      MetalDisplayKernels.floatRangeFunction,
       MetalDisplayKernels.histogramFunction,
       MetalDisplayKernels.floatFragmentFunction,
       MetalDisplayKernels.floatHistogramFunction,
