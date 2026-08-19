@@ -85,31 +85,22 @@ The rule for new heavy work is: implement the compute or IO path in
 
 ## Current measured summary
 
-These numbers are public-safe summaries. They do not include raw local paths or
-project-specific dataset names. The full-stack rows use `512x512x192x192` HDF5
-evidence. CUDA reference timing was measured on an NVIDIA RTX PRO 6000
-Blackwell GPU. WebGPU timing used real Chrome WebGPU on Apple Metal or NVIDIA
-Blackwell as listed.
+The complete table, including date, exact revision, hardware, shape/dtype,
+cache state, load/bin plan, benchmark definition, calibration, and parity, is
+the [verified benchmark results](performance/results.md). The headline rows
+below link directly to those stable evidence IDs.
 
-| Path | Backend / hardware | Shape | Median | Parity / notes |
-|---|---|---:|---:|---|
-| HDF5 load/decompress | CUDA, RTX PRO 6000 Blackwell | full `512` | `450 ms` | 946-run warm reference; resident stack `9.66 GB`. |
-| HDF5 load/decompress | CUDA, RTX PRO 6000 Blackwell | true full `1024` | `4.704 s` | Real acquisition, no bin/crop, `uint16` output, selected corrected frames bit-exact, resident stack `77.31 GB`. |
-| Stochastic HDF5 ptycho mini-batch | CUDA, RTX PRO 6000 Blackwell | 40 masters x 1000 global random positions, detector `192` | cold `8.90 s`; warm `1.0-1.6 s` | Native `uint16`, no detector bin, output `2.95 GB`; the public API uses an internal bounded single-reader preparation scheduler. |
-| BF/DF/CoM/rotation cache build | CUDA, RTX PRO 6000 Blackwell | true full `1024`, detector `192`, 12 GB cap | `12.31 s` first build; `11.76 s` streaming raw HDF5; `18 ms` rotation search | Native `uint16`, no detector bin, chunk resident under budget, cache output `16.93 MB`; BF/DF/CoM use custom CUDA kernels. This is a cache-build step, not the screen launch path. |
-| BF/DF/CoM/rotation cache build | MPS, Apple Metal | full `512`, detector `192`, 64-row chunks | `3.96 s` cache build; median chunk load `317 ms`; median chunk reduce `29 ms` | Mean DP/BF/DF bit-exact versus CUDA; CoM row/col max abs error `7.63e-6`; rotation matched. |
-| BF/DF/CoM/rotation cache hit | Any backend-facing caller | true full `1024`, detector `192` products | `6.8-8.0 ms` local cache read | Reads the small `.npz` product cache and is the path intended for sub-`0.5 s` UI launch. Cache hits do not initialize CUDA. |
-| HDF5 load/decompress | MPS, Apple Metal | true full `1024` | `4.617 s` | Real acquisition, no bin/crop, chunk-backed `uint16` output, selected corrected frames bit-exact, resident stack `77.31 GB`. |
-| Local HDF5 full-stack load | WebGPU, Chrome Apple Metal | full `512` | `772 ms` | Corrected-frame checksum parity versus CUDA. |
-| Local HDF5 full-stack load | WebGPU, Chrome NVIDIA Blackwell | true full `1024`, no crop/bin | Rejected | Attempt reached about `97.2 GB` GPU memory and failed before profile/checksum readback. This path is not signed off; product-first/crop/bin are the supported browser paths for 1024-scale evidence. |
-| Local HDF5 detector-bin load | WebGPU, Chrome NVIDIA Blackwell | full `512` and true `256` crop, `detBin=2/4/8` | full `1199/1212/1106 ms`; crop p95 `798/813/775 ms` | Corrected-frame checksum parity exact versus zero-bad-before-bin reference; crop medians `774/755/733 ms`; native non-low8 `uint16` `detBin=2` also exact at `2651 ms`. |
-| Local HDF5 scan crop | WebGPU, Chrome Apple Metal | true `256` crop | `338 ms` | Corrected-frame checksum parity versus CUDA. |
-| Product-first BF selected-block cache | WebGPU, Chrome Apple Metal | true `256`, BF radius `30` | `210 ms` | Product max/mean abs error `0` versus CUDA. |
-| Product-first BF selected-block cache | WebGPU, Chrome Apple Metal | full `512`, BF radius `30` | `378 ms` | Product max/mean abs error `0` versus CUDA. |
-| Product-first BF selected-block cache | WebGPU, Chrome NVIDIA Blackwell | true `1024`, BF radius `30` | `4.92 s` wall; `1.56 s` product stage | True real-acquisition product-first BF signoff; selected compressed payload `6.88 GB`, output `4.19 MB`, max/mean abs error `0` versus an independent Python reference. This is not full-stack no-bin browse/load signoff. |
-| Product-first BF selected-block cache | WebGPU, Chrome Apple Metal | `1024` repeat-stress, BF radius `30` | `1170 ms` | Four repeats of real `512` evidence; not true 1024 acquisition signoff. |
-| Visible Show4DSTEM interaction | WebGPU, Chrome Apple Metal | full `512` local HDF5 | full load `933 ms`; drag `0.5-0.9 ms` | GPU-resident warm BF/ADF/DPC display interactions. |
-| DPC/iDPC display | WebGPU, Chrome NVIDIA Blackwell | full `512` no-bin | DPC row/col/iDPC display medians `14.9/13.2/13.2 ms` | FFT command batching keeps iDPC in the 30 FPS budget by median; full recompute medians `13.7/19.3/22.7 ms`; corrected-frame parity passed; DPC max abs error `7.63e-6`; iDPC mean abs error `4.70e-6`, max `3.05e-5` from float32 FFT order; idle RAF `60 FPS`. Local-file timing harness runs reject URL fallback with `--require-local-profile`. |
+| Evidence ID | Path | Result | Interpretation |
+|---|---|---:|---|
+| CUDA-512-LOAD | Warm CUDA full-stack `512` load | `0.450 s` p50 | Warm source, not first encounter. |
+| M2-AIR-BIN4-E2E | Physical 8 GB M2 Air application load | `1.985-2.043 s` wall p50 | First process, full scan, explicit exact-sum detector bin 4; not true cold and not no-bin. |
+| WEBGPU-512-FULL | Prepared local-file WebGPU full-stack `512` load | `0.772 s` p50 | 946-cycle prepared-source soak; not cold. |
+| PRODUCT-CACHE-REOPEN | Saved calibration-product reopen | `6.8-8.0 ms` | Derived cache reopen; never presented as raw-source load. |
+| WEBGPU-DPC-512 | Warm GPU-resident DPC row/column/iDPC display | `14.9/13.2/13.2 ms` p50 | Display timing after load; not end-to-end source load. |
+
+The retained July diagnostics and rejected experiments remain available in the
+[optimization ledger](maintainer/backend-optimization-matrix.md), with their
+original values and status labels.
 
 ## Adding a backend kernel
 

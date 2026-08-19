@@ -5,8 +5,13 @@
   "pages": [
     {
       "path": "docs/backends.md",
-      "sha256": "a52f41641695652635bc0954516d94b58e01237a50a1aded56ae0ffa94d43a5b",
+      "sha256": "56008f2297de4037f35c4580bdf60a7474485ca1e48cf9642a39fe09f54a317d",
       "role": "Current capability and measured summary"
+    },
+    {
+      "path": "docs/performance/results.md",
+      "sha256": "5797eb9eaf9eb9b3ea98e3a5c8d68ade0bb70db5e9d4719f84ae962604a20fc0",
+      "role": "Verified benchmark provenance index"
     },
     {
       "path": "docs/maintainer/backend-optimization-matrix.md",

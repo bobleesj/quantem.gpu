@@ -35,6 +35,7 @@ def test_docs_navigation_has_world_class_top_level_sections() -> None:
         "maintainer/history/webgpu-frame-coop-u16-clip8-2026-07-25",
         "developer/writing",
         "performance/index",
+        "performance/results",
         "performance/methodology",
         "performance/parity",
         "backends",
@@ -85,6 +86,60 @@ def test_performance_landing_keeps_every_evidence_page_navigable() -> None:
     for entry in manifest["pages"]:
         name = Path(entry["path"]).name
         assert name in text or entry["role"] in text
+
+
+def test_current_benchmarks_have_complete_provenance_rows() -> None:
+    text = Path("docs/performance/results.md").read_text(encoding="utf-8")
+    benchmark_ids = (
+        "CUDA-512-LOAD",
+        "CUDA-1024-LOAD",
+        "CUDA-STOCHASTIC-IO",
+        "CUDA-CAL-BUILD",
+        "MPS-CAL-BUILD",
+        "PRODUCT-CACHE-REOPEN",
+        "MPS-1024-LOAD",
+        "M2-AIR-BIN4-E2E",
+        "WEBGPU-512-FULL",
+        "WEBGPU-1024-FULL-REJECTED",
+        "WEBGPU-DET-BIN",
+        "WEBGPU-256-CROP",
+        "WEBGPU-BF-256",
+        "WEBGPU-BF-512",
+        "WEBGPU-BF-1024",
+        "WEBGPU-BF-1024-STRESS",
+        "WEBGPU-VISIBLE-512",
+        "WEBGPU-DPC-512",
+        "CUDA-BF-512",
+        "CUDA-ADF-512",
+        "CUDA-DF-512",
+        "CUDA-COM-512",
+        "MPS-SAVE-U16-512",
+        "SSB-CUDA-512-FULL",
+        "SSB-MPS-512-R30",
+        "SSB-MPS-512-FULL",
+        "SSB-MPS-1024-SYNTH",
+    )
+
+    for benchmark_id in benchmark_ids:
+        rows = [line for line in text.splitlines() if line.startswith(f"| {benchmark_id} |")]
+        assert len(rows) == 1, benchmark_id
+        row = rows[0]
+        assert "2026-" in row
+        assert "github.com/bobleesj/quantem.gpu/commit/" in row
+        assert row.count("|") == 8
+
+    for required in (
+        "cache state and benchmark definition",
+        "scientific and calibration provenance",
+        "first process",
+        "saved-result reopen",
+        "explicit exact-sum detector bin 4",
+        "single visible run, not a median",
+        "No frozen parity value",
+    ):
+        assert required.lower() in text.lower()
+
+    assert "cold `8.90 s`" not in text
 
 
 def test_docs_build_is_hardware_independent() -> None:
