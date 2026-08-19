@@ -17,6 +17,10 @@ and final sign used by the maintained implementation. Production CUDA,
 MPS/Metal, and WebGPU kernels fuse or stream these operations for performance.
 ```
 
+## PyTorch reference: CoM
+
+### Step 1 — Define the tensor axes
+
 Start with a 4D count tensor `counts_R_q` whose axes are
 `(scan_row, scan_column, detector_row, detector_column)`, plus an optional
 detector mask `mask_q` with shape `(detector_row, detector_column)`:
@@ -24,6 +28,8 @@ detector mask `mask_q` with shape `(detector_row, detector_column)`:
 ```python
 import torch
 ```
+
+### Step 2 — Apply the detector mask
 
 $$
 S[R_r,R_c]=\sum_{q_r,q_c}M[q_r,q_c]I[R_r,R_c,q_r,q_c].
@@ -44,8 +50,10 @@ def masked_counts(
     return counts_float_R_q * mask_q.to(
         device=counts_R_q.device,
         dtype=torch.float32,
-    )
+)
 ```
+
+### Step 3 — Compute intensity and both CoM components
 
 Then
 
@@ -142,6 +150,8 @@ The CoM field is centered and rotated into a DPC field
 $\mathbf g=(g_r,g_c)$. When automatic rotation is requested, the chosen angle
 minimizes the configured curl criterion on the scan-shaped vector field.
 
+### Step 4 — Rotate the DPC vector field
+
 For one angle $\theta$, including the optional component-order test used by the
 automatic search,
 
@@ -176,6 +186,8 @@ Here `use_transpose` means testing the exchanged vector components; it does not
 transpose the scan image. The readable automatic search evaluates the same
 central-difference curl objective for both component orderings:
 
+### Step 5 — Score each candidate by curl
+
 ```python
 def curl_score(dpc_row_R: torch.Tensor, dpc_column_R: torch.Tensor) -> torch.Tensor:
     """Return the mean squared interior curl of one DPC vector field."""
@@ -190,8 +202,11 @@ def curl_score(dpc_row_R: torch.Tensor, dpc_column_R: torch.Tensor) -> torch.Ten
     )
     curl_R = row_change_of_column - column_change_of_row
     return torch.mean(curl_R * curl_R)
+```
 
+### Step 6 — Select the minimum-curl rotation
 
+```python
 def select_dpc_rotation_reference(
     com_row_R: torch.Tensor,
     com_column_R: torch.Tensor,
@@ -234,6 +249,8 @@ def select_dpc_rotation_reference(
 The production search evaluates this objective from precomputed
 curl/divergence moments instead of materializing every rotated candidate. The
 selected angle and component order remain identical to the readable reference.
+
+### Step 7 — Fourier-integrate the aligned field
 
 Integrated DPC reconstructs a scalar phase-like field in Fourier space. With
 scan frequency $\mathbf k=(k_r,k_c)$, a standard least-squares integration is
@@ -280,6 +297,8 @@ def integrate_idpc_reference(
     return -(phase_R - phase_R.mean())
 ```
 
+### Step 8 — Assemble the complete readable workflow
+
 A complete readable reference is therefore:
 
 ```python
@@ -296,6 +315,8 @@ phase_R = integrate_idpc_reference(gradient_row_R, gradient_column_R)
 
 These functions are explanatory reference code, not a promise that PyTorch is
 the optimized production path. The maintained public workflow is:
+
+### Use the maintained public API
 
 ```python
 from quantem.gpu import dpc, io
