@@ -3,6 +3,12 @@
 Center of mass converts each diffraction pattern into a detector-space vector.
 For optional detector mask $M[q_r,q_c]$, first compute
 
+```text
+4D counts → fused intensity/row-moment/column-moment reduction
+          → CoM row/column fields → center and rotation selection
+          → Fourier integration → scan-shaped iDPC phase
+```
+
 $$
 S[s_r,s_c]=\sum_{q_r,q_c}M[q_r,q_c]I[s_r,s_c,q_r,q_c].
 $$
@@ -31,6 +37,22 @@ In plain terms, `(row, column)` is `(r, c)`.
 
 This explicit naming is required at Python, Swift, CUDA, Metal, and WebGPU
 boundaries; a backend may not swap components to match launch coordinates.
+
+## Coordinate, shape, dtype, unit, and provenance contract
+
+The detector input is
+`I[scan_row, scan_column, detector_row, detector_column]`. `com_row`,
+`com_col`, their aligned components, and `phase` are float32 arrays with shape
+`(scan_row, scan_column)`. Detector coordinates are expressed in detector
+pixels unless calibrated units are explicitly provided. Zero-intensity or
+fully masked frames produce finite zero moments rather than division-by-zero
+values.
+
+Provenance records source identity and loaded geometry, detector bin/crop,
+source and moment dtypes, detector mask/checksum, detector and scan calibration,
+rotation search configuration, selected `rotation_deg`, `use_transpose`,
+backend/device, and package revision. The phase convention and FFT
+normalization are part of the result contract, not display choices.
 
 ## From CoM to DPC and iDPC
 

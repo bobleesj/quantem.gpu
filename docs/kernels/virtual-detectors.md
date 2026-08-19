@@ -3,6 +3,11 @@
 A virtual detector reduces each diffraction pattern with a detector-space mask
 $M(q_r,q_c)$:
 
+```text
+4D counts → detector geometry/mask → widened masked reduction
+          → scan-shaped BF, DF, or ADF product → provenance
+```
+
 $$
 V_M[s_r,s_c]
 =\sum_{q_r,q_c}M[q_r,q_c]I[s_r,s_c,q_r,q_c].
@@ -37,6 +42,22 @@ mean_dp = detector.mean_dp(loaded.data)
 
 Detector radii use detector-space calibration. A value in pixels must not be
 reported as mrad without calibration.
+
+## Coordinate, shape, dtype, unit, and provenance contract
+
+| Item | Contract |
+|---|---|
+| input | `I[scan_row, scan_column, detector_row, detector_column]` |
+| mask | `M[detector_row, detector_column]`, boolean or declared dimensionless weight |
+| BF/DF/ADF output | `(scan_row, scan_column)` |
+| mean diffraction output | `(detector_row, detector_column)` |
+| arithmetic | widen before integer accumulation; never wrap silently |
+| units | detector radius in px or calibrated mrad; reduced intensity in the declared count/weight convention |
+
+Provenance records source identity and loaded geometry, source/accumulation/
+output dtypes, detector bin/crop, mask geometry or checksum, calibration and
+units, backend/device, and package revision. A detector-binned source produces
+a binned-detector product and cannot be presented as native detector sampling.
 
 ## Optimization model
 

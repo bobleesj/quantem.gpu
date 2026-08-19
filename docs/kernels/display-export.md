@@ -4,6 +4,12 @@ Display kernels transform already-computed scientific arrays into ranges,
 histograms, colors, FFT views, or encoded frames. They do not redefine the
 underlying detector or reconstruction result.
 
+```text
+scientific array → finite-value/range transform → histogram or FFT view
+                 → colormap/RGBA → optional frame composition/encoding
+                 → presentation artifact plus export provenance
+```
+
 For a scalar image $A[r,c]$, display statistics operate in the same public
 order
 
@@ -32,6 +38,21 @@ movie.save_mp4(stack, "preview.mp4", fps=24, backend="auto")
 
 Stacks use `(frame, row, column) ≡ (frame, r, c)`. Multi-panel stacks add a
 leading movie/panel axis.
+
+## Coordinate, shape, dtype, unit, and provenance contract
+
+Scalar input is `A[row, column]`; a time/acquisition stack is
+`A[frame, row, column]`. Normalization produces float32 values in `[0, 1]`, the
+shared histogram has 256 uint32 count bins, and colorization produces uint8
+RGBA with shape `(row, column, 4)`. Scientific units remain attached to the
+source/result; display normalization is dimensionless and never overwrites the
+scientific array.
+
+Export provenance records the source/result identity, source shape/dtype and
+units, orientation, finite-value policy, scale, limits/percentiles, histogram
+definition, colormap/LUT checksum, selected frames, frame rate, encoder/backend,
+output checksum, and package revision. An explicit presentation rotation or
+transpose is recorded separately from scientific coordinates.
 
 ## Optimization model
 
