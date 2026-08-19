@@ -6,6 +6,9 @@ WebGPU, and an explicit CPU reference.
 
 ```{admonition} Choose how you want to enter
 :class: tip
+**Whole project:** start with the
+[Kernel and benchmark dashboard](dashboard.md).
+
 **Scientific operation:** start with [Scientific kernels](kernels/index.md).
 
 **Kernel implementation:** start with [Kernel implementations](platforms/index.md).
@@ -77,9 +80,12 @@ an implementation.
 
 ## Performance numbers are evidence
 
-The [Performance and parity](performance/index.md) section keeps current and
-historical measurements with source revision, hardware, data shape/dtype,
-cache state, load plan, memory peak, parity artifact, and benchmark definition.
+The [Kernel and benchmark dashboard](dashboard.md) is the dense one-page view
+of implementation coverage and headline measurements. The
+[Performance and parity](performance/index.md) section keeps the complete
+current and historical evidence with source revision, hardware, data
+shape/dtype, cache state, load plan, memory peak, parity artifact, and
+benchmark definition.
 
 A cached reopen is not a first source load. A cropped or binned fixture is not
 full-resolution evidence. A compile test is not a hardware benchmark. Rejected

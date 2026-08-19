@@ -3,6 +3,8 @@ root: intro
 parts:
   - caption: Start here
     chapters:
+      - file: dashboard
+        title: Kernel and benchmark dashboard
       - file: install
       - file: concepts/scientific-contract
         title: Scientific contract

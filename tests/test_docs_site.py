@@ -25,6 +25,7 @@ def test_docs_navigation_has_world_class_top_level_sections() -> None:
         assert f"caption: {caption}" in toc
 
     for page in (
+        "dashboard",
         "concepts/scientific-contract",
         "concepts/kernel-architecture",
         "kernels/index",
@@ -103,6 +104,73 @@ def test_performance_landing_keeps_every_evidence_page_navigable() -> None:
     for entry in manifest["pages"]:
         name = Path(entry["path"]).name
         assert name in text or entry["role"] in text
+
+
+def test_dashboard_is_the_dense_human_overview() -> None:
+    dashboard = Path("docs/dashboard.md").read_text(encoding="utf-8")
+    dashboard_words = " ".join(dashboard.split())
+    toc = TOC.read_text(encoding="utf-8")
+    intro = Path("docs/intro.md").read_text(encoding="utf-8")
+    readme = Path("README.md").read_text(encoding="utf-8")
+
+    assert "caption: Start here" in toc
+    assert "file: dashboard" in toc
+    assert "Kernel and benchmark dashboard" in intro
+    assert "[Kernel and benchmark dashboard](docs/dashboard.md)" in readme
+
+    for heading in (
+        "## Benchmark snapshot",
+        "## Scientific kernel and implementation matrix",
+        "## Where an implementer starts",
+        "## Dashboard maintenance rule",
+    ):
+        assert heading in dashboard
+
+    for runtime in (
+        "CUDA",
+        "Python MPS",
+        "Native Swift/Metal",
+        "WebGPU",
+        "CPU reference",
+    ):
+        assert runtime in dashboard
+
+    for operation in (
+        "Load, bitshuffle/LZ4 decode",
+        "BF/ABF/ADF/DF",
+        "CoM row/column, DPC, rotation, iDPC",
+        "SSB object, phase, loss",
+        "Display transform, histogram, colormap, and FFT",
+    ):
+        assert operation in dashboard
+
+    for evidence_id in (
+        "CUDA-512-LOAD",
+        "M2-AIR-BIN4-E2E",
+        "WEBGPU-512-FULL",
+        "WEBGPU-DPC-512",
+        "CUDA-COM-512",
+        "SSB-CUDA-512-FULL",
+        "SSB-MPS-512-FULL",
+        "PRODUCT-CACHE-REOPEN",
+    ):
+        assert evidence_id in dashboard
+
+    for provenance in (
+        "measurement date",
+        "exact source revision",
+        "physical device/runtime",
+        "source shape and dtype",
+        "cache state",
+        "crop/bin/load plan",
+        "benchmark definition",
+        "peak memory or swap",
+        "parity",
+    ):
+        assert provenance in dashboard_words
+
+    assert "I[R_r,R_c,q_r,q_c]" in dashboard
+    assert "not ranked" in dashboard
 
 
 def test_current_benchmarks_have_complete_provenance_rows() -> None:
@@ -219,6 +287,7 @@ def test_scientific_writing_convention_is_explicit() -> None:
 def test_new_public_pages_do_not_leak_private_fixture_paths() -> None:
     paths = [
         Path("docs/intro.md"),
+        Path("docs/dashboard.md"),
         Path("docs/concepts/scientific-contract.md"),
         *sorted(Path("docs/kernels").glob("*.md")),
         *sorted(Path("docs/platforms").glob("*.md")),
@@ -295,6 +364,7 @@ def test_primary_scientific_docs_use_R_q_notation() -> None:
     required_paths = [
         Path("README.md"),
         Path("docs/intro.md"),
+        Path("docs/dashboard.md"),
         Path("docs/concepts/scientific-contract.md"),
         Path("docs/kernels/data-model.md"),
         Path("docs/kernels/index.md"),
@@ -332,6 +402,7 @@ def test_primary_compute_docs_do_not_depend_on_application_frameworks() -> None:
     paths = [
         Path("README.md"),
         Path("docs/intro.md"),
+        Path("docs/dashboard.md"),
         Path("docs/install.md"),
         Path("docs/backends.md"),
         *sorted(Path("docs/concepts").glob("*.md")),
