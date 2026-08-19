@@ -6,6 +6,14 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- Add a loopback-only CUDA browse service for native applications, with exact
+  virtual-detector and selected-diffraction transport, acquisition monitoring,
+  crop/bin admission, automatic whole-dataset placement across multiple GPUs,
+  and bounded per-device resident caches. The service has no `quantem.live`
+  dependency and ships through the `[cuda,remote]` install extras. A single
+  `quantem-gpu-remote` Conda environment is provided for workstation setup,
+  and memory admission preserves native `uint32` capacity when an Arina source
+  cannot be narrowed losslessly.
 - Add drift-aware sparse ptychography batches to `quantem.gpu.io.load()`: a
   shared random position set can be paired with one dense integer or
   fractional `(row, col)` drift field per source, matching the scan grid.

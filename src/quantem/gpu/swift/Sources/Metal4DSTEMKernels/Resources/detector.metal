@@ -95,6 +95,164 @@ kernel void detector_products_u8(
     );
 }
 
+// Produce exact virtual-detector sums and center-of-mass integer moments in
+// the same scan-major pass. The 64-bit moments are safe for the complete
+// uint16 range and avoid rereading the much larger word-major resident volume.
+kernel void detector_products_u16_with_u64_moments(
+    device const ushort *data [[buffer(0)]],
+    device uint *bfMap [[buffer(1)]],
+    device uint *abfMap [[buffer(2)]],
+    device uint *dfMap [[buffer(3)]],
+    constant DetectorParams &params [[buffer(4)]],
+    device const uchar *bands [[buffer(5)]],
+    device ulong *totalMap [[buffer(6)]],
+    device ulong *rowMomentMap [[buffer(7)]],
+    device ulong *columnMomentMap [[buffer(8)]],
+    constant uint &detectorColumns [[buffer(9)]],
+    uint frame [[threadgroup_position_in_grid]],
+    uint threadIndex [[thread_index_in_threadgroup]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint threads [[threads_per_threadgroup]]
+) {
+    if (frame >= params.frameCount) return;
+    threadgroup atomic_uint bandSums[3];
+    threadgroup ulong totalScratch[256];
+    threadgroup ulong rowScratch[256];
+    threadgroup ulong columnScratch[256];
+    if (threadIndex < 3u) {
+        atomic_store_explicit(&bandSums[threadIndex], 0u, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    device const ushort *source =
+        data + ulong(frame) * ulong(params.detectorPixels);
+    uint bf = 0u;
+    uint abf = 0u;
+    uint df = 0u;
+    ulong total = 0ul;
+    ulong rowMoment = 0ul;
+    ulong columnMoment = 0ul;
+    for (uint pixel = threadIndex; pixel < params.detectorPixels; pixel += threads) {
+        uint value = uint(source[pixel]);
+        uchar band = bands[pixel];
+        if (band & 1u) bf += value;
+        if (band & 2u) abf += value;
+        if (band & 4u) df += value;
+        uint row = pixel / detectorColumns;
+        uint column = pixel - row * detectorColumns;
+        ulong wide = ulong(value);
+        total += wide;
+        rowMoment += wide * ulong(row);
+        columnMoment += wide * ulong(column);
+    }
+    bf = simd_sum(bf);
+    abf = simd_sum(abf);
+    df = simd_sum(df);
+    if (lane == 0u) {
+        atomic_fetch_add_explicit(&bandSums[0], bf, memory_order_relaxed);
+        atomic_fetch_add_explicit(&bandSums[1], abf, memory_order_relaxed);
+        atomic_fetch_add_explicit(&bandSums[2], df, memory_order_relaxed);
+    }
+    totalScratch[threadIndex] = total;
+    rowScratch[threadIndex] = rowMoment;
+    columnScratch[threadIndex] = columnMoment;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint offset = threads >> 1u; offset > 0u; offset >>= 1u) {
+        if (threadIndex < offset) {
+            totalScratch[threadIndex] += totalScratch[threadIndex + offset];
+            rowScratch[threadIndex] += rowScratch[threadIndex + offset];
+            columnScratch[threadIndex] += columnScratch[threadIndex + offset];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (threadIndex == 0u) {
+        uint destination = params.globalFrameOffset + frame;
+        bfMap[destination] = atomic_load_explicit(&bandSums[0], memory_order_relaxed);
+        abfMap[destination] = atomic_load_explicit(&bandSums[1], memory_order_relaxed);
+        dfMap[destination] = atomic_load_explicit(&bandSums[2], memory_order_relaxed);
+        totalMap[destination] = totalScratch[0];
+        rowMomentMap[destination] = rowScratch[0];
+        columnMomentMap[destination] = columnScratch[0];
+    }
+}
+
+kernel void detector_products_u8_with_u64_moments(
+    device const uchar *data [[buffer(0)]],
+    device uint *bfMap [[buffer(1)]],
+    device uint *abfMap [[buffer(2)]],
+    device uint *dfMap [[buffer(3)]],
+    constant DetectorParams &params [[buffer(4)]],
+    device const uchar *bands [[buffer(5)]],
+    device ulong *totalMap [[buffer(6)]],
+    device ulong *rowMomentMap [[buffer(7)]],
+    device ulong *columnMomentMap [[buffer(8)]],
+    constant uint &detectorColumns [[buffer(9)]],
+    uint frame [[threadgroup_position_in_grid]],
+    uint threadIndex [[thread_index_in_threadgroup]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint threads [[threads_per_threadgroup]]
+) {
+    if (frame >= params.frameCount) return;
+    threadgroup atomic_uint bandSums[3];
+    threadgroup ulong totalScratch[256];
+    threadgroup ulong rowScratch[256];
+    threadgroup ulong columnScratch[256];
+    if (threadIndex < 3u) {
+        atomic_store_explicit(&bandSums[threadIndex], 0u, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    device const uchar *source =
+        data + ulong(frame) * ulong(params.detectorPixels);
+    uint bf = 0u;
+    uint abf = 0u;
+    uint df = 0u;
+    ulong total = 0ul;
+    ulong rowMoment = 0ul;
+    ulong columnMoment = 0ul;
+    for (uint pixel = threadIndex; pixel < params.detectorPixels; pixel += threads) {
+        uint value = uint(source[pixel]);
+        uchar band = bands[pixel];
+        if (band & 1u) bf += value;
+        if (band & 2u) abf += value;
+        if (band & 4u) df += value;
+        uint row = pixel / detectorColumns;
+        uint column = pixel - row * detectorColumns;
+        ulong wide = ulong(value);
+        total += wide;
+        rowMoment += wide * ulong(row);
+        columnMoment += wide * ulong(column);
+    }
+    bf = simd_sum(bf);
+    abf = simd_sum(abf);
+    df = simd_sum(df);
+    if (lane == 0u) {
+        atomic_fetch_add_explicit(&bandSums[0], bf, memory_order_relaxed);
+        atomic_fetch_add_explicit(&bandSums[1], abf, memory_order_relaxed);
+        atomic_fetch_add_explicit(&bandSums[2], df, memory_order_relaxed);
+    }
+    totalScratch[threadIndex] = total;
+    rowScratch[threadIndex] = rowMoment;
+    columnScratch[threadIndex] = columnMoment;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint offset = threads >> 1u; offset > 0u; offset >>= 1u) {
+        if (threadIndex < offset) {
+            totalScratch[threadIndex] += totalScratch[threadIndex + offset];
+            rowScratch[threadIndex] += rowScratch[threadIndex + offset];
+            columnScratch[threadIndex] += columnScratch[threadIndex + offset];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (threadIndex == 0u) {
+        uint destination = params.globalFrameOffset + frame;
+        bfMap[destination] = atomic_load_explicit(&bandSums[0], memory_order_relaxed);
+        abfMap[destination] = atomic_load_explicit(&bandSums[1], memory_order_relaxed);
+        dfMap[destination] = atomic_load_explicit(&bandSums[2], memory_order_relaxed);
+        totalMap[destination] = totalScratch[0];
+        rowMomentMap[destination] = rowScratch[0];
+        columnMomentMap[destination] = columnScratch[0];
+    }
+}
+
 template <typename Sample>
 inline void detectorSum(
     device const Sample *data,
@@ -179,6 +337,42 @@ kernel void transpose_scan_words(
     }
 }
 
+// Canonical 32x32 tiled transpose. A 32x8 threadgroup issues full-width
+// coalesced transactions and moves four rows per thread with one barrier.
+kernel void transpose_scan_words_32x8(
+    device const uint *scanMajor [[buffer(0)]],
+    device uint *wordMajor [[buffer(1)]],
+    constant uint &sourceScanCount [[buffer(2)]],
+    constant uint &detectorWords [[buffer(3)]],
+    constant uint &destinationScanCount [[buffer(4)]],
+    constant uint &destinationScanOffset [[buffer(5)]],
+    uint2 group [[threadgroup_position_in_grid]],
+    uint2 local [[thread_position_in_threadgroup]]
+) {
+    threadgroup uint tile[32][33];
+    for (uint rowOffset = 0u; rowOffset < 32u; rowOffset += 8u) {
+        uint tileRow = local.y + rowOffset;
+        uint sourceScan = group.y * 32u + tileRow;
+        uint sourceWord = group.x * 32u + local.x;
+        if (sourceWord < detectorWords && sourceScan < sourceScanCount) {
+            tile[tileRow][local.x] =
+                scanMajor[ulong(sourceScan) * detectorWords + sourceWord];
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint wordOffset = 0u; wordOffset < 32u; wordOffset += 8u) {
+        uint tileColumn = local.y + wordOffset;
+        uint destinationScan = group.y * 32u + local.x;
+        uint destinationWord = group.x * 32u + tileColumn;
+        if (destinationWord < detectorWords && destinationScan < sourceScanCount) {
+            wordMajor[
+                ulong(destinationWord) * destinationScanCount
+                + destinationScanOffset + destinationScan
+            ] = tile[local.x][tileColumn];
+        }
+    }
+}
+
 struct ScanBinParams {
     uint sourceRows;
     uint sourceCols;
@@ -258,21 +452,12 @@ struct ScanDetectorBinParams {
 };
 
 template <typename Sample>
-inline void scanDetectorBinToU32WordMajor(
+inline uint scanDetectorBinValue(
     device const Sample *source,
-    device uint *destination,
     constant ScanDetectorBinParams &params,
-    uint2 position
+    uint outputDetectorPixel,
+    uint localOutputScan
 ) {
-    uint outputDetectorPixel = position.x;
-    uint localOutputScan = position.y;
-    uint localOutputScanRows =
-        (params.sourceRows + params.scanBin - 1u) / params.scanBin;
-    uint localOutputScanCount = localOutputScanRows * params.outputScanCols;
-    uint outputDetectorPixels = params.outputDetectorRows * params.outputDetectorCols;
-    if (outputDetectorPixel >= outputDetectorPixels ||
-        localOutputScan >= localOutputScanCount) return;
-
     uint outputScanRow = localOutputScan / params.outputScanCols;
     uint outputScanCol = localOutputScan - outputScanRow * params.outputScanCols;
     uint outputDetectorRow = outputDetectorPixel / params.outputDetectorCols;
@@ -312,10 +497,32 @@ inline void scanDetectorBinToU32WordMajor(
             }
         }
     }
+    return sum;
+}
+
+template <typename Sample>
+inline void scanDetectorBinToU32WordMajor(
+    device const Sample *source,
+    device uint *destination,
+    constant ScanDetectorBinParams &params,
+    uint2 position
+) {
+    uint outputDetectorPixel = position.x;
+    uint localOutputScan = position.y;
+    uint localOutputScanRows =
+        (params.sourceRows + params.scanBin - 1u) / params.scanBin;
+    uint localOutputScanCount = localOutputScanRows * params.outputScanCols;
+    uint outputDetectorPixels = params.outputDetectorRows * params.outputDetectorCols;
+    if (outputDetectorPixel >= outputDetectorPixels ||
+        localOutputScan >= localOutputScanCount) return;
+
+    uint outputScanRow = localOutputScan / params.outputScanCols;
+    uint outputScanCol = localOutputScan - outputScanRow * params.outputScanCols;
     uint destinationScan =
         (params.destinationScanRowOffset + outputScanRow) * params.outputScanCols
         + outputScanCol;
-    destination[ulong(outputDetectorPixel) * params.outputScanCount + destinationScan] = sum;
+    destination[ulong(outputDetectorPixel) * params.outputScanCount + destinationScan] =
+        scanDetectorBinValue(source, params, outputDetectorPixel, localOutputScan);
 }
 
 kernel void scan_detector_bin_u8_to_u32_word_major(
@@ -325,6 +532,38 @@ kernel void scan_detector_bin_u8_to_u32_word_major(
     uint2 position [[thread_position_in_grid]]
 ) {
     scanDetectorBinToU32WordMajor(source, destination, params, position);
+}
+
+// Exact compact resident path for an audited uint8 staging range.  Callers
+// must prove that the detector-bin contribution bound fits uint16 and expose
+// the actual resident dtype in provenance; otherwise they use the uint32 path.
+kernel void scan_detector_bin_u8_to_u16_word_major(
+    device const uchar *source [[buffer(0)]],
+    device uint *destination [[buffer(1)]],
+    constant ScanDetectorBinParams &params [[buffer(2)]],
+    uint2 position [[thread_position_in_grid]]
+) {
+    uint outputDetectorWord = position.x;
+    uint localOutputScan = position.y;
+    uint localOutputScanRows =
+        (params.sourceRows + params.scanBin - 1u) / params.scanBin;
+    uint localOutputScanCount = localOutputScanRows * params.outputScanCols;
+    uint outputDetectorPixels = params.outputDetectorRows * params.outputDetectorCols;
+    uint firstPixel = outputDetectorWord * 2u;
+    if (firstPixel >= outputDetectorPixels ||
+        localOutputScan >= localOutputScanCount) return;
+
+    uint low = scanDetectorBinValue(source, params, firstPixel, localOutputScan);
+    uint high = firstPixel + 1u < outputDetectorPixels
+        ? scanDetectorBinValue(source, params, firstPixel + 1u, localOutputScan)
+        : 0u;
+    uint outputScanRow = localOutputScan / params.outputScanCols;
+    uint outputScanCol = localOutputScan - outputScanRow * params.outputScanCols;
+    uint destinationScan =
+        (params.destinationScanRowOffset + outputScanRow) * params.outputScanCols
+        + outputScanCol;
+    destination[ulong(outputDetectorWord) * params.outputScanCount + destinationScan] =
+        low | (high << 16u);
 }
 
 kernel void scan_detector_bin_u16_to_u32_word_major(
@@ -535,6 +774,34 @@ DEFINE_WORD_MAJOR_COM_KERNEL(center_of_mass_u8_word_major, 8u)
 DEFINE_WORD_MAJOR_COM_KERNEL(center_of_mass_u16_word_major, 16u)
 DEFINE_WORD_MAJOR_COM_KERNEL(center_of_mass_u32_word_major, 32u)
 
+// Convert exact integer moments accumulated while decoding into the same
+// float center-of-mass representation as the standalone word-major kernels.
+kernel void center_of_mass_u32_moments(
+    device const uint *total [[buffer(0)]],
+    device const uint *rowMoment [[buffer(1)]],
+    device const uint *columnMoment [[buffer(2)]],
+    device float *rowOutput [[buffer(3)]],
+    device float *columnOutput [[buffer(4)]],
+    uint index [[thread_position_in_grid]]
+) {
+    float inverse = total[index] > 0u ? 1.0f / float(total[index]) : 0.0f;
+    rowOutput[index] = float(rowMoment[index]) * inverse;
+    columnOutput[index] = float(columnMoment[index]) * inverse;
+}
+
+kernel void center_of_mass_u64_moments(
+    device const ulong *total [[buffer(0)]],
+    device const ulong *rowMoment [[buffer(1)]],
+    device const ulong *columnMoment [[buffer(2)]],
+    device float *rowOutput [[buffer(3)]],
+    device float *columnOutput [[buffer(4)]],
+    uint index [[thread_position_in_grid]]
+) {
+    float inverse = total[index] > 0ul ? 1.0f / float(total[index]) : 0.0f;
+    rowOutput[index] = float(rowMoment[index]) * inverse;
+    columnOutput[index] = float(columnMoment[index]) * inverse;
+}
+
 
 // Produce BF/ABF/ADF from an exact uint32 scan-binned cache. One threadgroup
 // owns each output scan position, matching the native detector reduction.
@@ -561,6 +828,51 @@ kernel void detector_products_u32_word_major(
     uint df = 0;
     for (uint pixel = threadIndex; pixel < params.detectorPixels; pixel += threads) {
         uint value = data[ulong(pixel) * params.scanCount + scan];
+        uchar band = bands[pixel];
+        if (band & 1u) bf += value;
+        if (band & 2u) abf += value;
+        if (band & 4u) df += value;
+    }
+    bf = simd_sum(bf);
+    abf = simd_sum(abf);
+    df = simd_sum(df);
+    if (lane == 0) {
+        atomic_fetch_add_explicit(&sums[0], bf, memory_order_relaxed);
+        atomic_fetch_add_explicit(&sums[1], abf, memory_order_relaxed);
+        atomic_fetch_add_explicit(&sums[2], df, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (threadIndex != 0) return;
+    bfMap[scan] = atomic_load_explicit(&sums[0], memory_order_relaxed);
+    abfMap[scan] = atomic_load_explicit(&sums[1], memory_order_relaxed);
+    dfMap[scan] = atomic_load_explicit(&sums[2], memory_order_relaxed);
+}
+
+// Produce BF/ABF/ADF from two packed uint16 detector pixels per word. The
+// layout is detector-word-major: each word row spans all scan positions.
+kernel void detector_products_u16_word_major(
+    device const uint *data [[buffer(0)]],
+    device uint *bfMap [[buffer(1)]],
+    device uint *abfMap [[buffer(2)]],
+    device uint *dfMap [[buffer(3)]],
+    constant WordMajorDetectorParams &params [[buffer(4)]],
+    device const uchar *bands [[buffer(5)]],
+    uint scan [[threadgroup_position_in_grid]],
+    uint threadIndex [[thread_index_in_threadgroup]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint threads [[threads_per_threadgroup]]
+) {
+    if (scan >= params.scanCount) return;
+    threadgroup atomic_uint sums[3];
+    if (threadIndex < 3) {
+        atomic_store_explicit(&sums[threadIndex], 0u, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    uint bf = 0;
+    uint abf = 0;
+    uint df = 0;
+    for (uint pixel = threadIndex; pixel < params.detectorPixels; pixel += threads) {
+        uint value = word_major_u16_sample(data, pixel, scan, params.scanCount);
         uchar band = bands[pixel];
         if (band & 1u) bf += value;
         if (band & 2u) abf += value;

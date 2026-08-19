@@ -7,6 +7,8 @@ public enum Metal4DSTEMLoadPlanError: LocalizedError, Equatable {
   case invalidScanBin(Int)
   case invalidDetectorBin(Int)
   case invalidSourceBytesPerValue(Int)
+  case invalidStreamingDepth(Int)
+  case insufficientStreamingScratchBudget
 
   public var errorDescription: String? {
     switch self {
@@ -20,6 +22,10 @@ public enum Metal4DSTEMLoadPlanError: LocalizedError, Equatable {
       "Detector bin \(factor) is unsupported. Choose 1, 2, or 4."
     case .invalidSourceBytesPerValue(let bytes):
       "Source values must occupy 1 or 2 bytes, not \(bytes)."
+    case .invalidStreamingDepth(let depth):
+      "Streaming depth \(depth) is unsupported. Choose a positive value."
+    case .insufficientStreamingScratchBudget:
+      "The streaming scratch budget cannot hold one selected source scan row."
     }
   }
 }
@@ -68,9 +74,13 @@ public struct Metal4DSTEMScanRegion: Codable, Equatable, Hashable, Sendable {
 /// Exact storage and geometry for a native Metal 4D-STEM browse load.
 ///
 /// Cropping selects only source scan positions inside ``scanRegion``. A
-/// `scanBin` larger than one stores the exact integer sum of each neighboring
-/// scan block as `uint32`; incomplete edge bins retain every acquired source
-/// position. No detector pixels are cropped or binned by this plan.
+/// `scanBin` larger than one forms the exact integer sum of each neighboring
+/// scan block; incomplete edge bins retain every acquired source position. A
+/// `detectorBin` larger than one forms exact integer detector-pixel sums;
+/// incomplete detector edge bins retain every acquired pixel. The plan budgets
+/// conservative `uint32` storage. A loader may use a narrower exact integer
+/// representation only after proving the selected source and contribution
+/// bounds fit it, and must report that output dtype in provenance.
 public struct Metal4DSTEMLoadPlan: Equatable, Hashable, Sendable {
   public static let supportedScanBins = [1, 2, 4, 8, 16]
   public static let supportedDetectorBins = [1, 2, 4]
@@ -204,5 +214,85 @@ public struct Metal4DSTEMLoadPlan: Equatable, Hashable, Sendable {
     let rows = min(detectorBin, detectorRows - sourceRowStart)
     let columns = min(detectorBin, detectorColumns - sourceColumnStart)
     return rows * columns
+  }
+}
+
+/// Reusable streaming geometry for selected 4D-STEM loads.
+///
+/// The plan keeps total scratch allocation within `scratchBudgetBytes`, aligns
+/// non-final batches to the scan bin so exact scan sums keep stable destination
+/// offsets, and reports every derived size needed for transparent provenance.
+public struct Metal4DSTEMStreamingPlan: Equatable, Hashable, Sendable {
+  /// Balanced decode/layout overlap for Macs with ample unified memory.
+  public static let recommendedDepth = 4
+
+  /// Hardware-memory-aware decode/layout depth.
+  ///
+  /// Physical 8 GB M2 measurements favor depth 2: depth 1 loses overlap while
+  /// depths 4 and 8 increase paging and tail latency. Larger-memory Macs retain
+  /// depth 4 for greater overlap without the constrained-memory penalty.
+  public static func recommendedDepth(physicalMemoryBytes: UInt64) -> Int {
+    physicalMemoryBytes <= (UInt64(16) << 30) ? 2 : recommendedDepth
+  }
+
+  public let depth: Int
+  public let rowsPerBatch: Int
+  public let framesPerBuffer: Int
+  public let bytesPerBuffer: UInt64
+  public let totalScratchBytes: UInt64
+  public let batchCount: Int
+
+  public init(
+    loadPlan: Metal4DSTEMLoadPlan,
+    scratchBudgetBytes: UInt64,
+    preferredDepth: Int,
+    stagingBytesPerValue: Int? = nil
+  ) throws {
+    guard preferredDepth > 0 else {
+      throw Metal4DSTEMLoadPlanError.invalidStreamingDepth(preferredDepth)
+    }
+    let stagingBytes = stagingBytesPerValue ?? loadPlan.sourceBytesPerValue
+    guard stagingBytes == 1 || stagingBytes == 2 else {
+      throw Metal4DSTEMLoadPlanError.invalidSourceBytesPerValue(stagingBytes)
+    }
+    guard
+      let detectorBytes = UInt64(exactly: loadPlan.detectorPixels)?
+        .multipliedReportingOverflow(by: UInt64(stagingBytes)),
+      !detectorBytes.overflow,
+      let rowBytesProduct = UInt64(exactly: loadPlan.scanRegion.columns)?
+        .multipliedReportingOverflow(by: detectorBytes.partialValue),
+      !rowBytesProduct.overflow,
+      rowBytesProduct.partialValue > 0
+    else { throw Metal4DSTEMLoadPlanError.invalidSourceShape }
+
+    let rowBytes = rowBytesProduct.partialValue
+    let maxDepth = min(preferredDepth, loadPlan.scanRegion.rows)
+    for candidateDepth in stride(from: maxDepth, through: 1, by: -1) {
+      let rowsCapacity = Int(scratchBudgetBytes / UInt64(candidateDepth) / rowBytes)
+      guard rowsCapacity > 0 else { continue }
+
+      let rows: Int
+      if rowsCapacity >= loadPlan.scanRegion.rows {
+        rows = loadPlan.scanRegion.rows
+      } else {
+        let aligned = rowsCapacity - (rowsCapacity % max(1, loadPlan.scanBin))
+        guard aligned > 0 else { continue }
+        rows = aligned
+      }
+
+      let frames = rows * loadPlan.scanRegion.columns
+      let bufferBytes = UInt64(rows) * rowBytes
+      let batches = (loadPlan.scanRegion.rows + rows - 1) / rows
+      let activeDepth = min(candidateDepth, batches)
+      self.depth = activeDepth
+      self.rowsPerBatch = rows
+      self.framesPerBuffer = frames
+      self.bytesPerBuffer = bufferBytes
+      self.totalScratchBytes = bufferBytes * UInt64(activeDepth)
+      self.batchCount = batches
+      return
+    }
+
+    throw Metal4DSTEMLoadPlanError.insufficientStreamingScratchBudget
   }
 }

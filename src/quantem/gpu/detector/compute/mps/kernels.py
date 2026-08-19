@@ -1161,7 +1161,13 @@ class ChunkedFrames:
 
     _is_gpu_frames = True
 
-    def __init__(self, chunks: list, *, row_prefix: bool = False):
+    def __init__(
+        self,
+        chunks: list,
+        *,
+        row_prefix: bool = False,
+        torch_compat: bool = True,
+    ):
         metadata = {}
         det_bin = 1
         fast_chunks = None
@@ -1191,8 +1197,16 @@ class ChunkedFrames:
             row_prefix = bool(row_prefix or getattr(chunks[0], "_row_prefix", False))
         if not chunks:
             raise ValueError("ChunkedFrames requires at least one chunk")
-        import torch
-        self._torch = torch
+        # Detector widgets historically consume torch tensors from __getitem__,
+        # but scientific SSB preparation only uses the exact chunk-backed Metal
+        # column gather below.  Keep that path usable in the packaged local-MPS
+        # runtime, which intentionally does not bundle PyTorch.
+        if torch_compat:
+            import torch
+
+            self._torch = torch
+        else:
+            self._torch = None
         self.chunks = chunks
         self.metadata = metadata
         self.det_bin = det_bin
@@ -1204,7 +1218,11 @@ class ChunkedFrames:
         self.shape = (self._n, *self._det)
         self.ndim = 3
         self.dtype = self._np_dtype
-        self.torch_dtype = _torch_dtype(torch, self._np_dtype)
+        self.torch_dtype = (
+            _torch_dtype(self._torch, self._np_dtype)
+            if self._torch is not None
+            else None
+        )
         # Heavy compute stays in raw Metal buffers; torch is only used by the
         # base widget for small masks/traits. Keeping these helper tensors on
         # CPU avoids MPS allocator startup cost and high-watermark pressure.
@@ -1339,7 +1357,8 @@ class ChunkedFrames:
 
     def __getitem__(self, key):
         if isinstance(key, (int, np.integer)):
-            return self._torch.from_numpy(self.frame(int(key)))
+            frame = self.frame(int(key))
+            return self._torch.from_numpy(frame) if self._torch is not None else frame
         if (isinstance(key, tuple) and len(key) == 3
                 and isinstance(key[0], slice) and key[0] == slice(None)):
             r, c = int(key[1]), int(key[2])
@@ -1353,7 +1372,8 @@ class ChunkedFrames:
                 ]
             else:
                 cols = [np.asarray(ch[:, r, c]) for ch in self.chunks]
-            return self._torch.from_numpy(np.concatenate(cols))
+            values = np.concatenate(cols)
+            return self._torch.from_numpy(values) if self._torch is not None else values
         raise TypeError("ChunkedFrames: integer-frame or [:, r, c] indexing only")
 
 

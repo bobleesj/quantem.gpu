@@ -135,9 +135,11 @@ fragment float4 metal_display_fragment_f32(
     }
     uint col = min(parameters.cols - 1u, uint(input.uv.x * float(parameters.cols)));
     uint row = min(parameters.rows - 1u, uint(input.uv.y * float(parameters.rows)));
-    float normalized = metal_normalize_f32(
-        values[row * parameters.cols + col], parameters
-    );
+    float value = values[row * parameters.cols + col];
+    if (!isfinite(value)) {
+        return float4(143.0f / 255.0f, 63.0f / 255.0f, 143.0f / 255.0f, 1.0f);
+    }
+    float normalized = metal_normalize_f32(value, parameters);
     uint lutIndex = min(
         parameters.lutCount - 1u,
         uint(normalized * float(parameters.lutCount - 1u))
@@ -155,6 +157,25 @@ kernel void metal_range_u32(
     uint value = values[index];
     atomic_fetch_min_explicit(&valueRange[0], value, memory_order_relaxed);
     atomic_fetch_max_explicit(&valueRange[1], value, memory_order_relaxed);
+}
+
+inline uint metal_ordered_float_bits(float value) {
+    uint bits = as_type<uint>(value);
+    return (bits & 0x80000000u) != 0u ? ~bits : bits ^ 0x80000000u;
+}
+
+kernel void metal_range_f32(
+    device const float *values [[buffer(0)]],
+    device atomic_uint *orderedRange [[buffer(1)]],
+    constant uint &count [[buffer(2)]],
+    uint index [[thread_position_in_grid]]
+) {
+    if (index >= count) return;
+    float value = values[index];
+    if (!isfinite(value)) return;
+    uint ordered = metal_ordered_float_bits(value);
+    atomic_fetch_min_explicit(&orderedRange[0], ordered, memory_order_relaxed);
+    atomic_fetch_max_explicit(&orderedRange[1], ordered, memory_order_relaxed);
 }
 
 kernel void metal_histogram_u32(

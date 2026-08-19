@@ -143,6 +143,7 @@ public enum MetalDisplayKernels {
   public static let vertexFunction = "metal_display_vertex"
   public static let fragmentFunction = "metal_display_fragment"
   public static let rangeFunction = "metal_range_u32"
+  public static let floatRangeFunction = "metal_range_f32"
   public static let histogramFunction = "metal_histogram_u32"
   public static let floatFragmentFunction = "metal_display_fragment_f32"
   public static let floatHistogramFunction = "metal_histogram_f32"

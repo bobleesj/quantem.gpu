@@ -82,6 +82,13 @@ class DetectorSession:
             self.scan_shape
         )
 
+    def masked_sum_exact(self, mask) -> np.ndarray:
+        """Return an exact uint64 virtual-detector image for one mask."""
+
+        return _exact_to_numpy(self._backend.masked_sum_exact(mask)).reshape(
+            self.scan_shape
+        )
+
     def center_of_mass(self, mask=None) -> tuple[np.ndarray, np.ndarray]:
         """Return mean-subtracted detector CoM in ``(row, col)`` order."""
 
@@ -230,6 +237,21 @@ def _reduced_to_numpy(data) -> np.ndarray:
     return np.asarray(data, dtype=np.float32)
 
 
+def _exact_to_numpy(data) -> np.ndarray:
+    """Copy a reduced integer product to host without changing its values."""
+    if _is_cupy_array(data):
+        data = data.get()
+    elif _is_torch_tensor(data):
+        data = data.detach().cpu().numpy()
+    array = np.asarray(data)
+    if not np.issubdtype(array.dtype, np.integer):
+        raise TypeError(
+            "Exact detector sums require integer detector data; "
+            f"the backend returned {array.dtype}."
+        )
+    return array.astype(np.uint64, copy=False)
+
+
 def _flatten_scan(data):
     data = _unwrap_core_4dstem(data)
     if data.ndim == 4:
@@ -319,6 +341,41 @@ class _ArrayComputeBackend:
             .astype(np.float32)
             .reshape(self.scan_shape)
         )
+
+    def masked_sum_exact(self, det_mask):
+        mask_np = np.asarray(det_mask, dtype=bool)
+        if mask_np.shape != tuple(int(x) for x in self.flat.shape[-2:]):
+            raise ValueError(
+                f"det_mask shape {mask_np.shape} does not match detector shape "
+                f"{tuple(int(x) for x in self.flat.shape[-2:])}."
+            )
+        if _is_cupy_array(self.flat):
+            import cupy as cp
+            from quantem.gpu.detector.compute.cuda.kernels import cuda_selected_sum_uint64
+
+            indices = cp.asarray(np.flatnonzero(mask_np.reshape(-1)), dtype=cp.int32)
+            out = cuda_selected_sum_uint64(self.data, indices)
+            if out is not None:
+                return out
+            return self.flat.reshape(self.n_frames, -1)[:, indices].sum(
+                axis=1, dtype=cp.uint64
+            ).reshape(self.scan_shape)
+        if _is_torch_tensor(self.flat):
+            import torch
+
+            mask = torch.as_tensor(
+                mask_np.reshape(-1), device=self.flat.device, dtype=torch.bool
+            )
+            values = self.flat.reshape(self.n_frames, -1)[:, mask]
+            if torch.is_floating_point(values):
+                raise TypeError("Exact detector sums require integer detector data.")
+            return values.to(torch.int64).sum(dim=1).reshape(self.scan_shape)
+        flat = np.asarray(self.flat).reshape(self.n_frames, -1)
+        if not np.issubdtype(flat.dtype, np.integer):
+            raise TypeError("Exact detector sums require integer detector data.")
+        return flat[:, mask_np.reshape(-1)].sum(
+            axis=1, dtype=np.uint64
+        ).reshape(self.scan_shape)
 
     def center_of_mass(self, det_mask=None):
         mask = np.ones(self.det_shape, dtype=bool)

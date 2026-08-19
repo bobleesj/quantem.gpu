@@ -5,7 +5,7 @@ Movie helpers require the `movie` extra:
 ```bash
 python -m pip install \
   --extra-index-url https://test.pypi.org/simple/ \
-  "quantem.gpu[movie]==0.0.1rc5"
+  "quantem.gpu[movie]==0.0.1rc6"
 ```
 
 Primary imports:

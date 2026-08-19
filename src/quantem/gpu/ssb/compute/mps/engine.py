@@ -8,12 +8,12 @@ same exact reconstruction/loss core.
 """
 from __future__ import annotations
 
+import json
 import math
 import os
 import subprocess
 import threading
 import time
-import json
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import lru_cache
@@ -22,10 +22,9 @@ from pathlib import Path
 import numpy as np
 
 from quantem.gpu.detector import auto_probe, mean_dp
-from quantem.gpu.ssb.results import SSBResult
 from quantem.gpu.optics.physics import electron_wavelength_angstrom
 from quantem.gpu.ssb.bf_selector import BrightfieldDisk
-
+from quantem.gpu.ssb.results import SSBResult
 
 _EXACT_ROW_PACK_STORAGE_BF_512 = 300
 _EXACT_ROW_STORAGE_CLASSES_BF_512 = (288, 320)
@@ -629,7 +628,7 @@ def _as_chunked_frames(data):
     if isinstance(data, LoadResult):
         data = data.data
     if isinstance(data, MPSChunked4DSTEM):
-        return ChunkedFrames(data)
+        return ChunkedFrames(data, torch_compat=False)
     if isinstance(data, np.ndarray) and data.ndim in (3, 4):
         return _ArrayFrames(data)
     raise TypeError(
@@ -4096,8 +4095,7 @@ def _object_fourier_sum_dynamic(
     if threadgroup_size is None:
         threadgroup_size = _default_object_redraw_threadgroup(prepared.scan_shape)
     threadgroup_size = max(1, int(threadgroup_size))
-    sparse_storage = prepared.bf_storage_indices_np is not None
-    kernel_num_bf = prepared.num_bf if sparse_storage else int(prepared.g_qk.shape[0])
+    kernel_num_bf, sparse_storage = _object_redraw_storage_topology(prepared)
     groups = (kernel_num_bf + chunk_bf - 1) // chunk_bf
     kernel = _object_fourier_sum_dynamic_kernel(
         kernel_num_bf,
@@ -4154,6 +4152,25 @@ def _object_fourier_sum_dynamic(
     object_wave = mx.fft.ifft2(fourier_sum)
     mx.eval(object_wave)
     return object_wave
+
+
+def _object_redraw_storage_topology(
+    prepared: _PreparedMpsSSB,
+) -> tuple[int, bool]:
+    """Use compact active rows directly when preparation already packed them."""
+    stored_num_bf = int(prepared.g_qk.shape[0])
+    storage_indices = prepared.bf_storage_indices_np
+    compact_active = (
+        storage_indices is not None
+        and stored_num_bf == int(storage_indices.size)
+        and stored_num_bf < int(prepared.num_bf)
+    )
+    if compact_active:
+        return stored_num_bf, False
+    if storage_indices is not None:
+        return int(prepared.num_bf), True
+    return stored_num_bf, False
+
 
 def _prepare_selection(
     frames,
@@ -4392,6 +4409,124 @@ def _prepare_selection(
         aperture_k_1d=aperture_k_1d,
         bf_storage_indices_np=bf_storage_indices_np,
     )
+
+
+def _retarget_prepared_rotation(
+    prepared: _PreparedMpsSSB,
+    *,
+    selection: BrightfieldDisk,
+    rotation_angle_deg: float,
+) -> None:
+    """Update rotation-dependent geometry without rebuilding source FFT evidence."""
+
+    mx = prepared.mx
+    reciprocal_y = prepared.ang_y_rad / prepared.wavelength
+    reciprocal_x = prepared.ang_x_rad / prepared.wavelength
+    kx_np = (
+        selection.rows.astype(np.float32) - selection.center_row_col[0]
+    ) * reciprocal_y
+    ky_np = (
+        selection.cols.astype(np.float32) - selection.center_row_col[1]
+    ) * reciprocal_x
+    if rotation_angle_deg:
+        angle = math.radians(-float(rotation_angle_deg))
+        cos_a = math.cos(angle)
+        sin_a = math.sin(angle)
+        kx_np, ky_np = (
+            kx_np * cos_a + ky_np * sin_a,
+            -kx_np * sin_a + ky_np * cos_a,
+        )
+    kx_np = np.asarray(kx_np, dtype=np.float32)
+    ky_np = np.asarray(ky_np, dtype=np.float32)
+    if prepared.bf_storage_indices_np is not None:
+        indices = prepared.bf_storage_indices_np
+        kx_np = kx_np[indices]
+        ky_np = ky_np[indices]
+
+    kx = mx.array(kx_np, dtype=mx.float32)
+    ky = mx.array(ky_np, dtype=mx.float32)
+    alpha_k2_1d, cos2_k_1d, sin2_k_1d, aperture_k_1d = _compute_geometry(
+        mx,
+        kx,
+        ky,
+        prepared.wavelength,
+        prepared.semiangle_rad,
+        prepared.ang_y_rad,
+        prepared.ang_x_rad,
+    )
+    arrays = [kx, ky, alpha_k2_1d, cos2_k_1d, sin2_k_1d, aperture_k_1d]
+
+    alpha_k2 = cos2_k = sin2_k = aperture_k = None
+    alpha_m2 = cos2_m = sin2_m = ap_m = None
+    alpha_p2 = cos2_p = sin2_p = ap_p = None
+    if prepared.alpha_k2 is not None:
+        kx_grid = kx[:, None, None]
+        ky_grid = ky[:, None, None]
+        alpha_k2, cos2_k, sin2_k, aperture_k = _compute_geometry(
+            mx,
+            kx_grid,
+            ky_grid,
+            prepared.wavelength,
+            prepared.semiangle_rad,
+            prepared.ang_y_rad,
+            prepared.ang_x_rad,
+        )
+        alpha_m2, cos2_m, sin2_m, ap_m = _compute_geometry(
+            mx,
+            prepared.qx - kx_grid,
+            prepared.qy - ky_grid,
+            prepared.wavelength,
+            prepared.semiangle_rad,
+            prepared.ang_y_rad,
+            prepared.ang_x_rad,
+        )
+        alpha_p2, cos2_p, sin2_p, ap_p = _compute_geometry(
+            mx,
+            prepared.qx + kx_grid,
+            prepared.qy + ky_grid,
+            prepared.wavelength,
+            prepared.semiangle_rad,
+            prepared.ang_y_rad,
+            prepared.ang_x_rad,
+        )
+        arrays.extend(
+            [
+                alpha_k2,
+                cos2_k,
+                sin2_k,
+                aperture_k,
+                alpha_m2,
+                cos2_m,
+                sin2_m,
+                ap_m,
+                alpha_p2,
+                cos2_p,
+                sin2_p,
+                ap_p,
+            ]
+        )
+    mx.eval(*arrays)
+
+    prepared.kx = kx
+    prepared.ky = ky
+    prepared.kx_np = kx_np
+    prepared.ky_np = ky_np
+    prepared.alpha_k2_1d = alpha_k2_1d
+    prepared.cos2_k_1d = cos2_k_1d
+    prepared.sin2_k_1d = sin2_k_1d
+    prepared.aperture_k_1d = aperture_k_1d
+    prepared.alpha_k2 = alpha_k2
+    prepared.cos2_k = cos2_k
+    prepared.sin2_k = sin2_k
+    prepared.aperture_k = aperture_k
+    prepared.alpha_m2 = alpha_m2
+    prepared.cos2_m = cos2_m
+    prepared.sin2_m = sin2_m
+    prepared.ap_m = ap_m
+    prepared.alpha_p2 = alpha_p2
+    prepared.cos2_p = cos2_p
+    prepared.sin2_p = sin2_p
+    prepared.ap_p = ap_p
 
 
 def _reconstruct_prepared(
