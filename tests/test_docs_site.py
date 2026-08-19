@@ -126,6 +126,7 @@ def test_dashboard_is_the_dense_human_overview() -> None:
         "## Platform-first module dashboard",
         "## Speed and memory at a glance",
         "### Measured load paths",
+        "### Dtype support and peak memory",
         "### What a 4 or 6 GiB budget can hold",
         "### I/O and first usable product — `quantem.gpu.io`",
         "#### Scan-size coverage",
@@ -201,6 +202,11 @@ def test_dashboard_is_the_dense_human_overview() -> None:
     assert "Each `512x512 float32` product map is only **1 MiB**" in dashboard
     assert "ADF has an accelerated" in dashboard
     assert "no 4/6 GiB physical-device signoff yet" in dashboard
+    assert "Native `uint8`/`uint16`/`uint32` ✓" in dashboard
+    assert "Direct fused saturating output ✓" in dashboard
+    assert "persistent resident cache output is `uint16`/`uint32`" in dashboard
+    assert "allocation-transition and total-card peaks are **Pending**" in dashboard
+    assert "A calculated payload is never relabeled as a measured peak" in dashboard
 
     for scan_size in (128, 256, 512, 1024):
         assert f"`{scan_size}x{scan_size}`" in dashboard
@@ -402,6 +408,28 @@ def test_dashboard_small_gpu_numbers_match_the_screening_planner() -> None:
     assert "`memory_budget_gb=4.0`" in Path("docs/api/core.md").read_text(
         encoding="utf-8"
     )
+
+
+def test_load_dtype_docs_keep_precision_and_peak_memory_distinct() -> None:
+    dashboard = Path("docs/dashboard.md").read_text(encoding="utf-8")
+    io_api = Path("docs/api/io.md").read_text(encoding="utf-8")
+    load_kernel = Path("docs/kernels/load-decode-bin.md").read_text(encoding="utf-8")
+    methodology = Path("docs/performance/methodology.md").read_text(encoding="utf-8")
+    native_api = Path("docs/api/native_4dstem_io.md").read_text(encoding="utf-8")
+    public_load = Path("src/quantem/gpu/io/load.py").read_text(encoding="utf-8")
+
+    for text in (dashboard, io_api, load_kernel, methodology):
+        assert "source" in text.lower()
+        assert "working" in text.lower()
+        assert "accumulation" in text.lower()
+        assert "resident" in text.lower()
+        assert "peak" in text.lower()
+
+    assert '`dtype="u8"` requests saturating unsigned 8-bit browse counts' in dashboard
+    assert "values above 255" in io_api
+    assert "Do not call a payload size “peak memory.”" in methodology
+    assert "unsigned 8-bit and unsigned 16-bit detector" in native_api
+    assert '``"u8"`` requests a saturating browse output' in public_load
 
 
 def test_narrow_tables_scroll_without_compressing_provenance_columns() -> None:

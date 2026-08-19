@@ -67,6 +67,20 @@ Compressed file size is not a fit estimate. Admission includes decoded output,
 decoder scratch, reduction/layout buffers, products, allocator reserve, cache
 population, and concurrent-service baseline.
 
+Every load row separates:
+
+- source, requested, working, accumulation, and resident/output dtype;
+- resident payload bytes calculated from the recorded output shape and dtype;
+- planner-estimated peak and its included/excluded allocations;
+- measured process RSS/footprint and host peak;
+- measured accelerator allocated/reserved peak and total-device occupancy; and
+- memory pressure and swap where the platform exposes them.
+
+Do not call a payload size “peak memory.” Do not call `uint8` lossless unless a
+complete source-identity-bound audit records the corrected maximum and zero
+values above 255. A saturating `uint8` run records its saturation count and is
+labeled browse-only.
+
 On Apple unified memory, record process footprint, Metal allocated bytes,
 system pressure, and swap. On CUDA, record process allocated/reserved VRAM and
 total-card occupancy before, during, and after the run.

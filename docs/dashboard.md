@@ -35,6 +35,31 @@ the same row.
 A [saved-product reopen](performance/results.md) can take **6.8-8.0 ms**, but
 that state contains only derived products. It is never called a source load.
 
+(dtype-support-and-peak-memory)=
+### Dtype support and peak memory
+
+“Source,” “working,” “accumulation,” and “resident” dtype describe different
+stages. A `uint8` row is scientifically exact only when the source is already
+`uint8` or a complete source audit proves `maximum <= 255` and
+`pixelsAbove255 == 0`. Otherwise an explicit `dtype="u8"` load saturates values
+above 255 and is a browse representation, not raw-count evidence.
+
+| Implementation | Accelerated compressed source | Exact `uint16` path | `uint8` path | Retained or required peak-memory record |
+|---|---|---|---|---|
+| [**CUDA**](platforms/cuda.md) | `uint16` ✓; `uint32` ✓; native `uint8` — on the specialized BSLZ4 path | Native `uint16` ✓; detector sums widen when needed | Direct fused saturating output ✓; lossless only with a complete audit | Warm audited-`uint8` row retains **9.66 GB resident**; allocation-transition and total-card peaks are **Pending** |
+| [**Python MPS**](platforms/mps.md) | `uint16` ✓; `uint32` ✓; native `uint8` — on the specialized BSLZ4 path | Native `uint16` ✓; guarded `uint32` → `uint16` ✓ | Direct Metal saturating output ✓; audited low-byte working path ✓ | Planner checks output bytes against the Metal working set; measured process/Metal peak is **Pending** for the retained no-bin rows |
+| [**Native Swift/Metal**](platforms/swift-metal.md) | Native `uint8` ✓; native `uint16` ✓ | Resident `uint16` ✓; exact sums widen to `uint32` unless a bound/audit permits `uint16` | Native source and audited compact staging ✓; persistent resident cache output is `uint16`/`uint32`, not `uint8` | Physical bin-4 `uint16` output retained **1.43 GB process peak** and zero swap delta on the 8 GB M2 Air |
+| [**WebGPU**](platforms/webgpu.md) | Native `uint8`/`uint16`/`uint32` ✓ | Lossless `uint16` decode from `uint16` ✓ | Fused saturating output ✓; audited low-byte variants are separate | Audited-`uint8` row retains **9.7 GB decoded payload**; browser/device peak is **Pending** |
+| **CPU reference** | Native `uint8`/`uint16` ✓ | Reference ✓ | Explicit reference conversion ✓ | Host peak is **Pending** and is never accelerator evidence |
+
+The public Python selector is intentionally explicit:
+
+- `dtype="u16"` requests unsigned 16-bit resident counts;
+- `dtype="u8"` requests saturating unsigned 8-bit browse counts;
+- `dtype="native"` preserves the source dtype; and
+- `dtype="auto"` is an advisory convenience, not a substitute for a retained
+  complete-source value-range audit.
+
 ### What a 4 or 6 GiB budget can hold
 
 This capacity chart fixes the full scan at `512x512` and the native detector at
@@ -52,6 +77,21 @@ reserve, and other GPU users unless the row reports a measured process peak.
 Each `512x512 float32` product map is only **1 MiB**, and one `192x192`
 float32 mean diffraction pattern is **144 KiB**. The source working set—not the
 final BF/ADF/DF/DPC image—is the capacity problem.
+
+For a full scan with output detector bin $b$ and $w$ resident bytes per value,
+the payload alone is
+
+$$
+B_{\mathrm{payload}}
+=N_{R_r}N_{R_c}
+\left\lceil\frac{N_{k_r}}{b}\right\rceil
+\left\lceil\frac{N_{k_c}}{b}\right\rceil w.
+$$
+
+Peak memory is larger: the benchmark must also report live compressed bytes,
+decode and reduction scratch, staging/upload buffers, allocator reserve,
+products, concurrent GPU users, and—on unified memory—process pressure and
+swap. A calculated payload is never relabeled as a measured peak.
 
 ```{admonition} Small-GPU support today
 :class: important

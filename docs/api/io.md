@@ -71,10 +71,36 @@ batch = io.load(
 ```
 
 `scan_region` and `detector_region` are always
-`(row_start, row_stop, col_start, col_stop)`. `dtype="u8"` is appropriate only
-after the count range proves it is lossless; use `u16` when that audit is absent
-or any count exceeds 255. Reconstruction workflows should retain the raw-count
-precision they require.
+`(row_start, row_stop, col_start, col_stop)`.
+
+### Dtype selection
+
+Keep native or unsigned 16-bit counts for an exact raw-count workflow, and make
+an unsigned 8-bit browse representation explicit:
+
+```python
+exact = io.load("scan_master.h5", backend="auto", dtype="u16")
+browse = io.load("scan_master.h5", backend="auto", dtype="u8")
+```
+
+| Selector | Meaning | Scientific boundary |
+|---|---|---|
+| `dtype="native"` or `None` | Preserve the backend-native source dtype | Preferred when the source precision must remain unchanged |
+| `dtype="u16"` | Request unsigned 16-bit resident counts | Exact only while every corrected or binned value fits `uint16`; exact detector sums widen when required |
+| `dtype="u8"` | Decode directly to unsigned 8-bit and saturate values above 255 | Browse/screening representation unless a complete source audit proves zero saturation |
+| `dtype="auto"` | Use the loader's advisory compact-dtype selection | Convenience only; do not cite it as a complete-source losslessness audit |
+
+Native `uint8` input and a `uint16` input converted to `uint8` are different
+provenance. A lossless conversion requires a retained source identity, bad-pixel
+policy, maximum count, and `pixelsAbove255 == 0`. Otherwise retain the
+saturation count and label the result browse-only. Reconstruction workflows
+should retain the raw-count precision required by their objective.
+
+The resident payload is not peak memory. Record the requested, source,
+working, accumulation, and output dtypes; original/output shapes; bin/crop;
+payload bytes; predicted peak; measured process/accelerator peak; pressure or
+swap; and the resource-policy reason. See the
+{ref}`dtype and peak-memory dashboard <dtype-support-and-peak-memory>`.
 
 For stochastic loading, `random_positions=` asks QuantEM to select positions,
 while `scan_indices=` accepts positions selected by an external sampler. The
