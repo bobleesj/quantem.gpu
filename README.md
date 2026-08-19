@@ -13,6 +13,9 @@ API contracts, benchmark methodology, and cross-backend parity evidence.
 
 Choose your entry point:
 
+- [Kernel and benchmark dashboard](docs/dashboard.md): the dense one-page map
+  of scientific operations, runtime coverage, parity gates, and the latest
+  revision-pinned measurements.
 - [Scientific kernels](docs/kernels/index.md): equations, coordinates,
   optimization topology, sources, and parity gates by operation.
 - [Kernel architecture](docs/concepts/kernel-architecture.md): how the
