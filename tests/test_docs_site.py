@@ -121,14 +121,16 @@ def test_dashboard_is_the_dense_human_overview() -> None:
     assert "[Implementation overview](docs/dashboard.md)" in readme
 
     for heading in (
-        "## Module benchmark snapshot",
+        "## Platform-first module dashboard",
         "### I/O and first usable product — `quantem.gpu.io`",
+        "#### Scan-size evidence",
+        "#### Detector-bin evidence",
+        "#### Retained load timing",
         "### Screening and prepared-product caches — `quantem.gpu.screening`",
         "### Virtual images — `quantem.gpu.detector`",
         "### Detector moments and phase contrast — `quantem.gpu.dpc`",
         "### Single-sideband ptychography — `quantem.gpu.SSB`",
-        "## Scientific module and implementation matrix",
-        "### SSB square scan-size coverage",
+        "### Cross-module platform map",
         "## Where an implementer starts",
         "## Dashboard maintenance rule",
     ):
@@ -143,20 +145,21 @@ def test_dashboard_is_the_dense_human_overview() -> None:
     ):
         assert runtime in dashboard
 
-    for module in (
-        "**I/O** — load, bitshuffle/LZ4 decode",
-        "**Screening** — prepared launch products",
-        "**Virtual images** — mean diffraction and BF/ABF/ADF/DF",
-        "**Detector moments and phase contrast** — CoM row/column",
-        "**SSB** — object, phase, loss",
-        "**Display** — transform, histogram, colormap, and FFT",
+    for evidence_state in (
+        "✓ Evidence",
+        "Test only",
+        "Pending",
+        "Reference",
+        "unsupported or not a target",
     ):
-        assert module in dashboard
+        assert evidence_state in dashboard
 
     for evidence_id in (
         "CUDA-512-LOAD",
         "M2-AIR-BIN4-E2E",
         "WEBGPU-512-FULL",
+        "MPS-1024-LOAD",
+        "WEBGPU-DET-BIN",
         "CUDA-CAL-BUILD",
         "MPS-CAL-BUILD",
         "CUDA-BF-512",
@@ -187,8 +190,30 @@ def test_dashboard_is_the_dense_human_overview() -> None:
 
     for scan_size in (128, 256, 512, 1024):
         assert f"`{scan_size}x{scan_size}`" in dashboard
-    assert "scan-grid sizes, not detector dimensions" in dashboard
-    assert "native-acquisition evidence" in dashboard
+    for detector_bin in (1, 2, 4, 8):
+        assert f"Bin {detector_bin}" in dashboard
+    assert "square scan-grid sizes, not detector dimensions" in dashboard
+    assert "native acquisition retained" in dashboard
+
+    module_headings = (
+        "### I/O and first usable product — `quantem.gpu.io`",
+        "### Screening and prepared-product caches — `quantem.gpu.screening`",
+        "### Virtual images — `quantem.gpu.detector`",
+        "### Detector moments and phase contrast — `quantem.gpu.dpc`",
+        "### Single-sideband ptychography — `quantem.gpu.SSB`",
+        "### Cross-module platform map",
+    )
+    for index, heading in enumerate(module_headings[:-1]):
+        section_end = module_headings[index + 1]
+        section = dashboard.split(heading, 1)[1].split(section_end, 1)[0]
+        for runtime in (
+            "CUDA",
+            "Python MPS",
+            "Native Swift/Metal",
+            "WebGPU",
+            "CPU reference",
+        ):
+            assert f"| **{runtime}** |" in section
 
 
 def test_intro_exposes_current_benchmarks_without_erasing_provenance() -> None:
@@ -225,29 +250,28 @@ def test_intro_exposes_current_benchmarks_without_erasing_provenance() -> None:
     )
 
     for status in (
-        "**Verified**",
-        "**Implemented**",
-        "**Partial**",
+        "**✓ Evidence**",
+        "**Test only**",
+        "**Pending**",
         "**Reference**",
-        "**Not implemented**",
+        "**—**",
     ):
         assert status in intro
 
     for table_field in (
-        "Feature",
-        "Implementation",
-        "Time",
-        "Data and scientific plan",
-        "Precision and parity",
-        "Test metadata and evidence",
+        "Platform",
+        "Scan-size evidence",
+        "Detector-bin evidence",
+        "Latest retained result",
+        "Evidence or placeholder",
     ):
         assert table_field in intro
 
     for headline_time in (
-        "1.985 s p50",
-        "2.043 s p50",
+        "1.985 / 2.043 s p50",
         "0.450 s median",
         "0.772 s p50",
+        "1.199/1.212/1.106 s",
         "12.31 s",
         "3.96 s",
         "6.8 ms",
@@ -261,7 +285,7 @@ def test_intro_exposes_current_benchmarks_without_erasing_provenance() -> None:
         assert headline_time in intro
 
     assert "resident kernels are **not loading times**" in intro
-    assert "a missing isolated timing does not mean that a feature is" in intro
+    assert "No empty cell implies support" in intro
 
     for qualifier in (
         "cache state",
@@ -298,15 +322,51 @@ def test_intro_ssb_size_matrix_tracks_fixed_size_runtime_registries() -> None:
     ).read_text(encoding="utf-8")
 
     assert "scan sizes, not detector sizes" in intro
-    assert "native-acquisition evidence" in intro
+    assert "native acquisition retained" in intro
     for size in (128, 256, 512, 1024):
         assert f"`{size}x{size}`" in intro
         assert f"{size}:" in cuda
         assert f"{size}:" in mps
     assert "SUPPORTED_SSB_SIZES = [128, 256, 512, 1024]" in webgpu
 
-    assert "Frozen real CUDA-reference artifacts remain incomplete" in intro
-    assert "there is no native swift ssb kernel" in intro.lower()
+    assert "frozen real CUDA artifacts incomplete" in intro
+    assert "no native swift ssb kernel" in intro.lower()
+
+
+def test_platform_first_io_tables_expose_bins_and_missing_evidence() -> None:
+    dashboard = Path("docs/dashboard.md").read_text(encoding="utf-8")
+    swift_plan = Path(
+        "src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/"
+        "Metal4DSTEMLoadPlan.swift"
+    ).read_text(encoding="utf-8")
+
+    io_section = dashboard.split(
+        "### I/O and first usable product — `quantem.gpu.io`", 1
+    )[1].split(
+        "### Screening and prepared-product caches — `quantem.gpu.screening`", 1
+    )[0]
+
+    assert io_section.count("| Platform |") == 3
+    assert "| Platform | Bin 1 | Bin 2 | Bin 4 | Bin 8 |" in io_section
+    assert "supportedDetectorBins = [1, 2, 4]" in swift_plan
+    assert (
+        "| **Native Swift/Metal** | ✓ Evidence | Test only | ✓ Evidence | — |"
+        in io_section
+    )
+    assert (
+        "| **WebGPU** | ✓ Evidence | ✓ Evidence | ✓ Evidence | ✓ Evidence |"
+        in io_section
+    )
+    assert (
+        "| **CUDA** | ✓ Evidence | ✓ Evidence | Pending | Pending |"
+        in io_section
+    )
+    assert (
+        "| **Python MPS** | ✓ Evidence | ✓ Evidence | Pending | Pending |"
+        in io_section
+    )
+    assert "| **CPU reference** | Reference | Reference | Reference | Reference |" in io_section
+    assert "|  |" not in io_section
 
 
 def test_narrow_tables_scroll_without_compressing_provenance_columns() -> None:
