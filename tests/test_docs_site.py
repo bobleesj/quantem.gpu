@@ -121,8 +121,14 @@ def test_dashboard_is_the_dense_human_overview() -> None:
     assert "[Implementation overview](docs/dashboard.md)" in readme
 
     for heading in (
-        "## Benchmark snapshot",
-        "## Scientific kernel and implementation matrix",
+        "## Module benchmark snapshot",
+        "### I/O and first usable product — `quantem.gpu.io`",
+        "### Screening and prepared-product caches — `quantem.gpu.screening`",
+        "### Virtual images — `quantem.gpu.detector`",
+        "### Detector moments and phase contrast — `quantem.gpu.dpc`",
+        "### Single-sideband ptychography — `quantem.gpu.SSB`",
+        "## Scientific module and implementation matrix",
+        "### SSB square scan-size coverage",
         "## Where an implementer starts",
         "## Dashboard maintenance rule",
     ):
@@ -137,19 +143,24 @@ def test_dashboard_is_the_dense_human_overview() -> None:
     ):
         assert runtime in dashboard
 
-    for operation in (
-        "Load, bitshuffle/LZ4 decode",
-        "BF/ABF/ADF/DF",
-        "CoM row/column, DPC, rotation, iDPC",
-        "SSB object, phase, loss",
-        "Display transform, histogram, colormap, and FFT",
+    for module in (
+        "**I/O** — load, bitshuffle/LZ4 decode",
+        "**Screening** — prepared launch products",
+        "**Virtual images** — mean diffraction and BF/ABF/ADF/DF",
+        "**Detector moments and phase contrast** — CoM row/column",
+        "**SSB** — object, phase, loss",
+        "**Display** — transform, histogram, colormap, and FFT",
     ):
-        assert operation in dashboard
+        assert module in dashboard
 
     for evidence_id in (
         "CUDA-512-LOAD",
         "M2-AIR-BIN4-E2E",
         "WEBGPU-512-FULL",
+        "CUDA-CAL-BUILD",
+        "MPS-CAL-BUILD",
+        "CUDA-BF-512",
+        "WEBGPU-BF-512",
         "WEBGPU-DPC-512",
         "CUDA-COM-512",
         "SSB-CUDA-512-FULL",
@@ -174,30 +185,58 @@ def test_dashboard_is_the_dense_human_overview() -> None:
     assert "I[R_r,R_c,k_r,k_c]" in dashboard
     assert "not ranked" in dashboard
 
+    for scan_size in (128, 256, 512, 1024):
+        assert f"`{scan_size}x{scan_size}`" in dashboard
+    assert "scan-grid sizes, not detector dimensions" in dashboard
+    assert "native-acquisition evidence" in dashboard
+
 
 def test_intro_exposes_current_benchmarks_without_erasing_provenance() -> None:
     intro = Path("docs/intro.md").read_text(encoding="utf-8")
-    intro_prose = " ".join(intro.split())
 
     for evidence_id in (
         "M2-AIR-BIN4-E2E",
         "CUDA-512-LOAD",
+        "MPS-1024-LOAD",
         "WEBGPU-512-FULL",
+        "CUDA-CAL-BUILD",
+        "MPS-CAL-BUILD",
+        "CUDA-BF-512",
+        "WEBGPU-BF-512",
+        "CUDA-COM-512",
+        "WEBGPU-DPC-512",
+        "SSB-CUDA-512-FULL",
+        "SSB-MPS-512-FULL",
     ):
         assert evidence_id in intro
 
-    for section in (
-        "### Loading and first usable product",
-        "### Resident scientific products",
-        "### Single-sideband ptychography",
-        "### Compressed saving",
-    ):
+    module_sections = (
+        "### I/O — `quantem.gpu.io`",
+        "### Screening — `quantem.gpu.screening`",
+        "### Virtual images — `quantem.gpu.detector`",
+        "### Detector moments and phase contrast — `quantem.gpu.dpc`",
+        "### Single-sideband ptychography — `quantem.gpu.SSB`",
+        "### Other public modules",
+    )
+    for section in module_sections:
         assert section in intro
+    assert [intro.index(section) for section in module_sections] == sorted(
+        intro.index(section) for section in module_sections
+    )
+
+    for status in (
+        "**Verified**",
+        "**Implemented**",
+        "**Partial**",
+        "**Reference**",
+        "**Not implemented**",
+    ):
+        assert status in intro
 
     for table_field in (
+        "Feature",
         "Implementation",
         "Time",
-        "What was timed",
         "Data and scientific plan",
         "Precision and parity",
         "Test metadata and evidence",
@@ -209,6 +248,9 @@ def test_intro_exposes_current_benchmarks_without_erasing_provenance() -> None:
         "2.043 s p50",
         "0.450 s median",
         "0.772 s p50",
+        "12.31 s",
+        "3.96 s",
+        "6.8 ms",
         "1.35 ms",
         "12.39 ms",
         "32.2 ms p50",
@@ -219,19 +261,19 @@ def test_intro_exposes_current_benchmarks_without_erasing_provenance() -> None:
         assert headline_time in intro
 
     assert "resident kernels are **not loading times**" in intro
-    assert "CPU is the independent correctness reference" in intro
+    assert "a missing isolated timing does not mean that a feature is" in intro
 
     for qualifier in (
-        "should not be ranked",
         "cache state",
         "bin/crop plan",
         "parity artifact",
     ):
         assert qualifier in intro
 
-    assert intro.index("## Speed benchmark overview") < intro.index(
+    assert intro.index("## Module capabilities and benchmarks") < intro.index(
         "## The shared coordinate contract"
     )
+    assert "### Resident scientific products" not in intro
     assert "## How loading becomes a usable product" in intro
     assert "START WALL CLOCK" in intro
     assert "FIRST COMPLETE USABLE PRODUCT" in intro
@@ -241,6 +283,39 @@ def test_intro_exposes_current_benchmarks_without_erasing_provenance() -> None:
     assert "## Count-preserving detector binning" in load_page
     assert "exact sum of one" in load_page
     assert "materializing both a full unbinned volume" in load_page
+
+
+def test_intro_ssb_size_matrix_tracks_fixed_size_runtime_registries() -> None:
+    intro = Path("docs/intro.md").read_text(encoding="utf-8")
+    cuda = Path(
+        "src/quantem/gpu/ssb/compute/cuda/kernels/__init__.py"
+    ).read_text(encoding="utf-8")
+    mps = Path(
+        "src/quantem/gpu/ssb/compute/mps/kernels/__init__.py"
+    ).read_text(encoding="utf-8")
+    webgpu = Path(
+        "src/quantem/gpu/ssb/compute/webgpu/kernels/index.ts"
+    ).read_text(encoding="utf-8")
+
+    assert "scan sizes, not detector sizes" in intro
+    assert "native-acquisition evidence" in intro
+    for size in (128, 256, 512, 1024):
+        assert f"`{size}x{size}`" in intro
+        assert f"{size}:" in cuda
+        assert f"{size}:" in mps
+    assert "SUPPORTED_SSB_SIZES = [128, 256, 512, 1024]" in webgpu
+
+    assert "Frozen real CUDA-reference artifacts remain incomplete" in intro
+    assert "there is no native swift ssb kernel" in intro.lower()
+
+
+def test_narrow_tables_scroll_without_compressing_provenance_columns() -> None:
+    css = Path("docs/_static/custom.css").read_text(encoding="utf-8")
+
+    assert ".pst-scrollable-table-container" in css
+    assert "overflow-x: auto" in css
+    assert ".pst-scrollable-table-container > table.table" in css
+    assert "min-width: 52rem" in css
 
 
 def test_api_guide_maps_every_public_namespace() -> None:
