@@ -16,10 +16,12 @@ import logging
 import math
 import os
 import threading
+import time
 from collections import OrderedDict
-from collections.abc import Sequence
-from contextlib import asynccontextmanager, nullcontext
-from datetime import datetime, timezone
+from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager, contextmanager, nullcontext
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -48,8 +50,10 @@ PROTOCOL_NAME = "quantem-gpu-browse"
 PROTOCOL_VERSION = 1
 _SCAN_BINS = {1, 2, 4, 8, 16}
 _CUDA_CACHE_FRACTION = 0.80
+_CUDA_LOAD_HEADROOM_BYTES = 1 << 30
 _MAX_MASTER_ENTRIES = 8
 _MAX_IMAGE_ENTRIES = 64
+_MASTER_RESCAN_INTERVAL_SECONDS = 10.0
 
 logger = logging.getLogger("quantem.gpu.remote")
 
@@ -82,7 +86,12 @@ def _wire_image(array: object) -> tuple[bytes, str]:
     return wire.tobytes(), "<f4"
 
 
-def _image_response(array: object, *, cache_control: str = "max-age=300") -> Response:
+def _image_response(
+    array: object,
+    *,
+    cache_control: str = "max-age=300",
+    value_divisor: int = 1,
+) -> Response:
     image = np.asarray(array)
     payload, dtype = _wire_image(image)
     return Response(
@@ -92,6 +101,7 @@ def _image_response(array: object, *, cache_control: str = "max-age=300") -> Res
             "X-Width": str(image.shape[1]),
             "X-Height": str(image.shape[0]),
             "X-Dtype": dtype,
+            "X-Value-Divisor": str(max(1, int(value_divisor))),
             "Cache-Control": cache_control,
         },
     )
@@ -118,6 +128,48 @@ def _scan_region(
             "scan crop must be a nonempty half-open (row, column) region",
         )
     return region
+
+
+def _scan_roi_indices(
+    scan_shape: tuple[int, int],
+    *,
+    shape: str,
+    center_row: float,
+    center_column: float,
+    radius: float,
+) -> np.ndarray:
+    """Return exact flat scan indices for one circle or square ROI."""
+    if shape not in {"circle", "square"}:
+        raise HTTPException(400, "scan ROI shape must be circle or square")
+    if not math.isfinite(radius) or radius <= 0:
+        raise HTTPException(400, "scan ROI radius must be greater than zero")
+    if not math.isfinite(center_row) or not math.isfinite(center_column):
+        raise HTTPException(400, "scan ROI center must be finite")
+    row_start = max(0, math.ceil(center_row - radius))
+    row_stop = min(scan_shape[0] - 1, math.floor(center_row + radius))
+    column_start = max(0, math.ceil(center_column - radius))
+    column_stop = min(scan_shape[1] - 1, math.floor(center_column + radius))
+    if row_start > row_stop or column_start > column_stop:
+        raise HTTPException(400, "scan ROI does not include any scan positions")
+
+    rows = np.arange(row_start, row_stop + 1, dtype=np.int64)[:, None]
+    columns = np.arange(column_start, column_stop + 1, dtype=np.int64)[None, :]
+    if shape == "circle":
+        row_offset = rows - float(center_row)
+        column_offset = columns - float(center_column)
+        mask = row_offset * row_offset + column_offset * column_offset <= radius * radius
+        selected_rows, selected_columns = np.nonzero(mask)
+        indices = (
+            (selected_rows + row_start) * scan_shape[1]
+            + selected_columns
+            + column_start
+        )
+    else:
+        indices = (rows * scan_shape[1] + columns).reshape(-1)
+    indices = indices.astype(np.int32, copy=False)
+    if indices.size == 0:
+        raise HTTPException(400, "scan ROI does not include any scan positions")
+    return indices
 
 
 def _file_signature(master: Path) -> tuple[tuple[str, int, int], ...]:
@@ -210,13 +262,29 @@ class BrowseService:
         self._cache_budgets: dict[int, int] = {}
 
         self._catalog_lock = threading.Lock()
+        self._catalog_refresh_lock = threading.Lock()
+        self._catalog_generation = 0
         self._catalog: dict[str, Any] | None = None
         self._session_paths: dict[str, Path] = {}
         self._inspection_lock = threading.Lock()
         self._inspection_cache: dict[str, tuple[tuple, Any]] = {}
+        self._master_discovery_lock = threading.Lock()
+        self._master_paths_lock = threading.Lock()
+        self._known_master_paths: tuple[Path, ...] | None = None
+        self._master_scan_in_flight = False
+        self._last_master_scan_completed = 0.0
 
         self._master_lock = threading.Lock()
+        self._resident_changed = threading.Condition(self._master_lock)
         self._load_lock = threading.Lock()
+        # Numba's parallel header parser creates one native worker pool per
+        # calling thread.  Keep every serialized load on the same reusable
+        # thread so long-running HTTP services do not accumulate another pool
+        # whenever Starlette chooses a new worker.
+        self._load_executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="quantem-cuda-load",
+        )
         self._master_cache: OrderedDict[tuple, dict[str, Any]] = OrderedDict()
         self._active_master_key: tuple | None = None
         self._image_lock = threading.Lock()
@@ -315,6 +383,7 @@ class BrowseService:
                 "selected_diffraction": True,
                 "virtual_detectors": True,
                 "custom_detector": True,
+                "scan_roi_diffraction": True,
                 "acquisition_events": True,
                 "exact_integer_images": True,
                 "multi_gpu_residency": len(devices) > 1,
@@ -322,7 +391,7 @@ class BrowseService:
             },
         }
 
-    def _master_paths(self) -> list[Path]:
+    def _discover_master_paths(self) -> list[Path]:
         if not self.data_folder.is_dir():
             return []
         return sorted(
@@ -334,6 +403,45 @@ class BrowseService:
                 for part in path.relative_to(self.data_folder).parts
             )
         )
+
+    def _scan_master_paths(self) -> list[Path]:
+        with self._master_discovery_lock:
+            paths = self._discover_master_paths()
+        with self._master_paths_lock:
+            self._known_master_paths = tuple(paths)
+            self._last_master_scan_completed = time.monotonic()
+            self._master_scan_in_flight = False
+        return paths
+
+    def _finish_background_master_scan(self) -> None:
+        try:
+            self._scan_master_paths()
+        except Exception:  # pragma: no cover - protects the long-lived service
+            logger.exception("background master discovery failed")
+            with self._master_paths_lock:
+                self._last_master_scan_completed = time.monotonic()
+                self._master_scan_in_flight = False
+
+    def _watched_master_paths(self) -> list[Path]:
+        with self._master_paths_lock:
+            known = self._known_master_paths
+            should_scan = (
+                known is not None
+                and not self._master_scan_in_flight
+                and time.monotonic() - self._last_master_scan_completed
+                >= _MASTER_RESCAN_INTERVAL_SECONDS
+            )
+            if should_scan:
+                self._master_scan_in_flight = True
+        if known is None:
+            return self._scan_master_paths()
+        if should_scan:
+            threading.Thread(
+                target=self._finish_background_master_scan,
+                name="quantem-gpu-master-discovery",
+                daemon=True,
+            ).start()
+        return list(known)
 
     def _inspect(self, master: Path):
         signature = _file_signature(master)
@@ -348,6 +456,58 @@ class BrowseService:
         with self._inspection_lock:
             self._inspection_cache[key] = (signature, inspection)
         return inspection
+
+    def _watch_inspection(self, master: Path):
+        """Reuse unchanged inspections while continuing to poll active writers."""
+        key = str(master)
+        with self._inspection_lock:
+            cached = self._inspection_cache.get(key)
+        if cached is None:
+            return self._inspect(master)
+
+        signature, inspection = cached
+        if not inspection.ready:
+            source_files = (inspection.source_signature or {}).get("files", [])
+            if source_files and self._source_files_unchanged(source_files):
+                return inspection
+            return self._inspect(master)
+
+        master_signature = next(
+            (item for item in signature if item[0] == key),
+            None,
+        )
+        try:
+            stat = master.stat()
+        except OSError:
+            return self._inspect(master)
+        if master_signature is None or master_signature[1:] != (
+            int(stat.st_size),
+            int(stat.st_mtime_ns),
+        ):
+            return self._inspect(master)
+        return inspection
+
+    @staticmethod
+    def _source_files_unchanged(source_files: list[dict[str, Any]]) -> bool:
+        """Check an incomplete acquisition with metadata-only file stats."""
+        for expected in source_files:
+            path = expected.get("path")
+            if not path:
+                return False
+            try:
+                stat = Path(path).stat()
+            except OSError:
+                if expected.get("missing", False):
+                    continue
+                return False
+            if expected.get("missing", False) or expected.get("unreadable", False):
+                return False
+            if (
+                int(expected.get("size", -1)) != int(stat.st_size)
+                or int(expected.get("mtime_ns", -1)) != int(stat.st_mtime_ns)
+            ):
+                return False
+        return True
 
     def _master_size(self, master: Path) -> int:
         return sum(item[1] for item in _file_signature(master))
@@ -364,10 +524,22 @@ class BrowseService:
         return None
 
     def refresh_catalog(self) -> dict[str, Any]:
+        with self._catalog_lock:
+            requested_generation = self._catalog_generation
+        with self._catalog_refresh_lock:
+            with self._catalog_lock:
+                if (
+                    self._catalog is not None
+                    and self._catalog_generation != requested_generation
+                ):
+                    return self._catalog
+            return self._refresh_catalog()
+
+    def _refresh_catalog(self) -> dict[str, Any]:
         grouped: dict[str, tuple[str, str, list[Path]]] = {}
         session_paths: dict[str, Path] = {}
         legacy_paths: dict[str, Path | None] = {}
-        for master in self._master_paths():
+        for master in self._scan_master_paths():
             source, date = _session_identity(self.data_folder, master.parent)
             path = _session_path(self.data_folder, master.parent)
             if path not in grouped:
@@ -389,13 +561,16 @@ class BrowseService:
             files: list[dict[str, Any]] = []
             for master in sorted(masters):
                 try:
-                    inspection = self._inspect(master)
+                    inspection = self._watch_inspection(master)
                 except (OSError, KeyError, TypeError, ValueError) as exc:
                     logger.warning("could not inspect %s: %s", master, exc)
                     continue
                 scan_shape = inspection.scan_shape or (0, 0)
                 detector_shape = inspection.detector_shape or (0, 0)
-                size = self._master_size(master)
+                source_files = (inspection.source_signature or {}).get("files", [])
+                size = sum(int(item.get("size", 0)) for item in source_files)
+                if size <= 0:
+                    size = self._master_size(master)
                 metadata = inspection.metadata or {}
                 scan_sampling = self._sampling(
                     metadata,
@@ -440,6 +615,7 @@ class BrowseService:
         with self._catalog_lock:
             self._catalog = payload
             self._session_paths = session_paths
+            self._catalog_generation += 1
         return payload
 
     def sessions(self, *, refresh: bool = False) -> dict[str, Any]:
@@ -453,10 +629,9 @@ class BrowseService:
         pending: list[dict[str, Any]] = []
         ready: list[dict[str, Any]] = []
         ready_signatures: list[tuple[str, tuple]] = []
-        for master in self._master_paths():
-            signature = _file_signature(master)
+        for master in self._watched_master_paths():
             try:
-                inspection = self._inspect(master)
+                inspection = self._watch_inspection(master)
             except (OSError, KeyError, TypeError, ValueError):
                 continue
             source_files = (inspection.source_signature or {}).get("files", [])
@@ -466,22 +641,37 @@ class BrowseService:
                 for item in source_files
                 if item.get("path") != str(master) and not item.get("missing", False)
             )
-            latest_mtime = max((item[2] for item in signature), default=0)
+            latest_mtime = max(
+                (int(item.get("mtime_ns", 0)) for item in source_files),
+                default=0,
+            )
             event = {
                 "kind": "ready" if inspection.ready else "writing",
                 "path": str(master),
                 "stem": master.name.removesuffix("_master.h5"),
                 "chunks_seen": present_chunks,
                 "chunks_expected": expected_chunks,
-                "bytes_total": sum(item[1] for item in signature),
+                "bytes_total": sum(int(item.get("size", 0)) for item in source_files),
                 "ts": datetime.fromtimestamp(
                     latest_mtime / 1_000_000_000 if latest_mtime else 0,
-                    tz=timezone.utc,
+                    tz=UTC,
                 ).isoformat(),
             }
             if inspection.ready:
                 ready.append(event)
-                ready_signatures.append((str(master), signature))
+                ready_signatures.append(
+                    (
+                        str(master),
+                        tuple(
+                            (
+                                str(item.get("path", "")),
+                                int(item.get("size", 0)),
+                                int(item.get("mtime_ns", 0)),
+                            )
+                            for item in source_files
+                        ),
+                    )
+                )
             else:
                 pending.append(event)
         token = hashlib.blake2b(repr(ready_signatures).encode(), digest_size=12).hexdigest()
@@ -633,10 +823,19 @@ class BrowseService:
         except (ImportError, RuntimeError, AttributeError):
             return None
 
-    def _admission_capacity(self, gpu: int) -> dict[str, int | None]:
+    def _admission_capacity(
+        self,
+        gpu: int,
+        *,
+        preserve_active: bool = True,
+    ) -> dict[str, int | None]:
         """Return the live capacity used by both reporting and admission."""
         resident = self._resident_bytes(gpu)
-        active = self._master_cache.get(self._active_master_key)
+        active = (
+            self._master_cache.get(self._active_master_key)
+            if preserve_active
+            else None
+        )
         active_resident = (
             self._entry_bytes(active)
             if active is not None and int(active.get("gpu", self.gpu)) == gpu
@@ -711,28 +910,75 @@ class BrowseService:
         incoming_bytes: int,
         *,
         preserve: tuple | None = None,
+        required_free_bytes: int = 0,
     ) -> None:
         budget = self._budget_for(gpu)
+        projected_free = self._free_bytes(gpu) if required_free_bytes > 0 else None
         while self._master_cache and (
             self._resident_entries(gpu) >= _MAX_MASTER_ENTRIES
             or (budget > 0 and self._resident_bytes(gpu) + incoming_bytes > budget)
-        ):
-            victim = next(
-                (
-                    key
-                    for key, entry in self._master_cache.items()
-                    if key != preserve and int(entry.get("gpu", self.gpu)) == gpu
-                ),
-                None,
+            or (
+                projected_free is not None
+                and projected_free < required_free_bytes
             )
-            if victim is None:
+        ):
+            freed = self._evict_one(gpu, preserve=preserve)
+            if freed is None:
+                pinned_victim = any(
+                    key != preserve
+                    and int(entry.get("gpu", self.gpu)) == gpu
+                    and int(entry.get("resident_pins", 0)) > 0
+                    for key, entry in self._master_cache.items()
+                )
+                if pinned_victim:
+                    self._resident_changed.wait(timeout=1.0)
+                    if required_free_bytes > 0:
+                        projected_free = self._free_bytes(gpu)
+                    continue
                 break
-            self._close_entry(self._master_cache.pop(victim))
+            if projected_free is not None:
+                projected_free += freed
 
-    def _candidate_gpus(self, resident_bytes: int, peak_bytes: int) -> list[int]:
+    def _evict_one(self, gpu: int, *, preserve: tuple | None = None) -> int | None:
+        """Evict the oldest cache entry on one GPU and return its byte size."""
+        victim = next(
+            (
+                key
+                for key, entry in self._master_cache.items()
+                if key != preserve
+                and int(entry.get("gpu", self.gpu)) == gpu
+                and int(entry.get("resident_pins", 0)) == 0
+            ),
+            None,
+        )
+        if victim is None:
+            return None
+        victim_entry = self._master_cache.pop(victim)
+        freed = self._entry_bytes(victim_entry)
+        if victim == self._active_master_key:
+            self._active_master_key = None
+        self._close_entry(victim_entry)
+        return freed
+
+    @staticmethod
+    def _load_free_requirement(peak_bytes: int) -> int:
+        """Reserve small transient CUDA allocator headroom without shrinking cache."""
+        headroom = min(_CUDA_LOAD_HEADROOM_BYTES, max(0, peak_bytes // 20))
+        return peak_bytes + headroom
+
+    def _candidate_gpus(
+        self,
+        resident_bytes: int,
+        peak_bytes: int,
+        *,
+        preserve_active: bool = True,
+    ) -> list[int]:
         candidates: list[tuple[int, int, float, int]] = []
         for gpu in self._available_gpus():
-            capacity = self._admission_capacity(gpu)
+            capacity = self._admission_capacity(
+                gpu,
+                preserve_active=preserve_active,
+            )
             available_peak = capacity["available_peak_bytes"]
             available_resident = capacity["available_resident_bytes"]
             if available_peak is not None and peak_bytes > available_peak:
@@ -802,6 +1048,7 @@ class BrowseService:
         det_bin: int,
         scan_bin: int,
         scan_region: tuple[int, int, int, int] | None,
+        reserve: bool = False,
     ) -> tuple[tuple, dict[str, Any]]:
         det_bin = max(1, int(det_bin))
         scan_bin = int(scan_bin)
@@ -816,6 +1063,8 @@ class BrowseService:
             cached = self._master_cache.get(key)
             if cached is not None:
                 self._master_cache.move_to_end(key)
+                if reserve:
+                    cached["resident_pins"] = int(cached.get("resident_pins", 0)) + 1
                 return key, cached
 
         resident_bytes, peak_bytes = self._plan_bytes(path, det_bin, scan_bin, scan_region)
@@ -835,6 +1084,8 @@ class BrowseService:
                 cached = self._master_cache.get(key)
                 if cached is not None:
                     self._master_cache.move_to_end(key)
+                    if reserve:
+                        cached["resident_pins"] = int(cached.get("resident_pins", 0)) + 1
                     return key, cached
                 stale_keys = [
                     candidate
@@ -842,56 +1093,104 @@ class BrowseService:
                     if candidate[0] == str(path)
                 ]
                 for stale_key in stale_keys:
-                    self._close_entry(self._master_cache.pop(stale_key))
+                    stale = self._master_cache.get(stale_key)
+                    while stale is not None and int(stale.get("resident_pins", 0)) > 0:
+                        self._resident_changed.wait(timeout=1.0)
+                        stale = self._master_cache.get(stale_key)
+                    if stale is not None:
+                        self._master_cache.pop(stale_key)
+                        if stale_key == self._active_master_key:
+                            self._active_master_key = None
+                        self._close_entry(stale)
                 candidates = self._candidate_gpus(resident_bytes, peak_bytes)
+                preserve_key = self._active_master_key
+                if not candidates:
+                    candidates = self._candidate_gpus(
+                        resident_bytes,
+                        peak_bytes,
+                        preserve_active=False,
+                    )
+                    preserve_key = None
             if not candidates:
                 raise HTTPException(
                     413,
-                    "No configured CUDA GPU can admit the exact load while preserving "
-                    "the active dataset. Crop the scan region or increase scan/detector binning.",
+                    "No configured CUDA GPU can admit the exact load. Crop the scan "
+                    "region or increase scan/detector binning.",
                 )
             loaded: dict[str, Any] | None = None
-            last_out_of_memory: Exception | None = None
-            for gpu in candidates:
+            preservation_passes = [preserve_key]
+            if preserve_key is not None:
+                preservation_passes.append(None)
+            for preserved in preservation_passes:
                 with self._master_lock:
-                    self._evict_for(
-                        gpu,
+                    candidates = self._candidate_gpus(
                         resident_bytes,
-                        preserve=self._active_master_key,
+                        peak_bytes,
+                        preserve_active=preserved is not None,
                     )
-                self._flush_cuda_pool(gpu)
-                try:
-                    loaded = self._load_entry(path, det_bin, scan_bin, scan_region, gpu)
-                    break
-                except Exception as exc:
-                    try:
-                        import cupy as cp
+                for gpu in candidates:
+                    while True:
+                        with self._master_lock:
+                            self._evict_for(
+                                gpu,
+                                resident_bytes,
+                                preserve=preserved,
+                                required_free_bytes=self._load_free_requirement(peak_bytes),
+                            )
+                        self._flush_cuda_pool(gpu)
+                        try:
+                            loaded = self._load_executor.submit(
+                                self._load_entry,
+                                path,
+                                det_bin,
+                                scan_bin,
+                                scan_region,
+                                gpu,
+                            ).result()
+                            break
+                        except Exception as exc:
+                            try:
+                                import cupy as cp
 
-                        out_of_memory = isinstance(
-                            exc,
-                            (MemoryError, cp.cuda.memory.OutOfMemoryError),
-                        )
-                    except ImportError:
-                        out_of_memory = isinstance(exc, MemoryError)
-                    if not out_of_memory:
-                        raise
-                    last_out_of_memory = exc
-                    self._flush_cuda_pool(gpu)
+                                out_of_memory = isinstance(
+                                    exc,
+                                    (MemoryError, cp.cuda.memory.OutOfMemoryError),
+                                )
+                            except ImportError:
+                                out_of_memory = isinstance(exc, MemoryError)
+                            if not out_of_memory:
+                                raise
+                            # An exception traceback retains _load_entry locals,
+                            # including decoded and binned CUDA arrays. Drop it
+                            # before flushing the pool or the retry can never use
+                            # the memory that just failed to allocate.
+                            exc.__traceback__ = None
+                            self._flush_cuda_pool(gpu)
+                            with self._master_lock:
+                                freed = self._evict_one(gpu, preserve=preserved)
+                            if freed is None:
+                                break
+                    if loaded is not None:
+                        break
+                if loaded is not None:
+                    break
             if loaded is None:
                 raise HTTPException(
                     413,
                     "The exact load did not fit on any configured CUDA GPU. Crop the "
                     "scan region or increase scan/detector binning.",
-                ) from last_out_of_memory
+                )
             loaded["cache_key"] = key
             with self._master_lock:
                 self._evict_for(
                     int(loaded["gpu"]),
                     self._entry_bytes(loaded),
-                    preserve=self._active_master_key,
+                    preserve=preserve_key,
                 )
                 self._master_cache[key] = loaded
                 self._master_cache.move_to_end(key)
+                if reserve:
+                    loaded["resident_pins"] = int(loaded.get("resident_pins", 0)) + 1
             return key, loaded
 
     def _bf_geometry(self, entry: dict[str, Any]) -> tuple[float, float, float]:
@@ -908,6 +1207,49 @@ class BrowseService:
         with self._compute_locks_lock:
             return self._compute_locks.setdefault(key, threading.Lock())
 
+    def _release_entry(self, entry: dict[str, Any]) -> None:
+        """Release one short-lived reservation acquired by :meth:`entry`."""
+        with self._master_lock:
+            pins = int(entry.get("resident_pins", 0))
+            if pins <= 0:
+                raise RuntimeError("resident entry reservation was released twice")
+            entry["resident_pins"] = pins - 1
+            self._resident_changed.notify_all()
+
+    @contextmanager
+    def _resident_entry(self, key: tuple, expected: dict[str, Any] | None = None):
+        """Pin one resident entry while an interactive result is computed."""
+        with self._master_lock:
+            entry = self._master_cache.get(key)
+            if entry is None or (expected is not None and entry is not expected):
+                raise HTTPException(
+                    409,
+                    "The requested crop/bin is no longer resident; load a virtual "
+                    "image first.",
+                )
+            lock = self._entry_lock(key)
+            self._master_cache.move_to_end(key)
+            entry["resident_pins"] = int(entry.get("resident_pins", 0)) + 1
+        lock.acquire()
+        try:
+            if not entry:
+                raise HTTPException(
+                    409,
+                    "The requested crop/bin is no longer resident; load a virtual "
+                    "image first.",
+                )
+            yield entry
+        finally:
+            lock.release()
+            self._release_entry(entry)
+
+    def activate(self, key: tuple) -> None:
+        """Mark a still-resident plan as the active eviction preference."""
+        with self._master_lock:
+            if key in self._master_cache:
+                self._active_master_key = key
+                self._master_cache.move_to_end(key)
+
     def virtual_image(
         self,
         key: tuple,
@@ -919,43 +1261,49 @@ class BrowseService:
         center_row: float | None = None,
         center_column: float | None = None,
     ) -> np.ndarray:
-        mode = str(mode)
-        fit_row, fit_column, radius = self._bf_geometry(entry)
-        row = fit_row if center_row is None else float(center_row)
-        column = fit_column if center_column is None else float(center_column)
-        inner_pixels = max(0.0, float(inner) * radius)
-        outer_pixels = max(inner_pixels + 1.0, float(outer) * radius)
-        detector_rows, detector_columns = entry["detector_shape"]
-        rows, columns = np.ogrid[:detector_rows, :detector_columns]
-        distance_squared = (rows - row) ** 2 + (columns - column) ** 2
-        if mode == "BF":
-            mask = distance_squared <= outer_pixels**2
-        elif mode in {"ABF", "ADF", "HAADF", "DF"}:
-            mask = (distance_squared >= inner_pixels**2) & (distance_squared <= outer_pixels**2)
-        elif mode in {"CoMx", "CoMy", "CoMmag", "DPC", "iCoM"}:
-            with self._entry_lock(key):
-                with self._cuda_context(int(entry.get("gpu", self.gpu))):
-                    if entry.get("com_row") is None or entry.get("com_column") is None:
-                        com_row, com_column = entry["compute"].center_of_mass()
-                        entry["com_row"] = np.asarray(com_row, dtype=np.float32)
-                        entry["com_column"] = np.asarray(com_column, dtype=np.float32)
-            com_row = entry["com_row"].reshape(entry["scan_shape"])
-            com_column = entry["com_column"].reshape(entry["scan_shape"])
-            if mode == "CoMy":
-                return com_row
-            if mode == "CoMx":
-                return com_column
-            if mode in {"CoMmag", "DPC"}:
-                return np.hypot(com_row, com_column).astype(np.float32, copy=False)
-            from quantem.gpu import dpc
+        with self._resident_entry(key, entry) as resident:
+            mode = str(mode)
+            fit_row, fit_column, radius = self._bf_geometry(resident)
+            row = fit_row if center_row is None else float(center_row)
+            column = fit_column if center_column is None else float(center_column)
+            inner_pixels = max(0.0, float(inner) * radius)
+            outer_pixels = max(inner_pixels + 1.0, float(outer) * radius)
+            detector_rows, detector_columns = resident["detector_shape"]
+            rows, columns = np.ogrid[:detector_rows, :detector_columns]
+            distance_squared = (rows - row) ** 2 + (columns - column) ** 2
+            if mode == "BF":
+                mask = distance_squared <= outer_pixels**2
+            elif mode in {"ABF", "ADF", "HAADF", "DF"}:
+                mask = (distance_squared >= inner_pixels**2) & (
+                    distance_squared <= outer_pixels**2
+                )
+            elif mode in {"CoMx", "CoMy", "CoMmag", "DPC", "iCoM"}:
+                with self._cuda_context(int(resident.get("gpu", self.gpu))):
+                    if (
+                        resident.get("com_row") is None
+                        or resident.get("com_column") is None
+                    ):
+                        com_row, com_column = resident["compute"].center_of_mass()
+                        resident["com_row"] = np.asarray(com_row, dtype=np.float32)
+                        resident["com_column"] = np.asarray(com_column, dtype=np.float32)
+                com_row = resident["com_row"].reshape(resident["scan_shape"])
+                com_column = resident["com_column"].reshape(resident["scan_shape"])
+                if mode == "CoMy":
+                    return com_row
+                if mode == "CoMx":
+                    return com_column
+                if mode in {"CoMmag", "DPC"}:
+                    return np.hypot(com_row, com_column).astype(np.float32, copy=False)
+                from quantem.gpu import dpc
 
-            return np.asarray(dpc.integrate(com_row, com_column), dtype=np.float32)
-        else:
-            raise HTTPException(400, f"unknown virtual-image mode: {mode!r}")
-        with self._entry_lock(key):
-            with self._cuda_context(int(entry.get("gpu", self.gpu))):
-                result = entry["compute"].masked_sum_exact(np.asarray(mask, dtype=bool))
-        return np.asarray(result, dtype=np.uint64).reshape(entry["scan_shape"])
+                return np.asarray(dpc.integrate(com_row, com_column), dtype=np.float32)
+            else:
+                raise HTTPException(400, f"unknown virtual-image mode: {mode!r}")
+            with self._cuda_context(int(resident.get("gpu", self.gpu))):
+                result = resident["compute"].masked_sum_exact(
+                    np.asarray(mask, dtype=bool)
+                )
+            return np.asarray(result, dtype=np.uint64).reshape(resident["scan_shape"])
 
     def custom_detector(
         self,
@@ -966,15 +1314,71 @@ class BrowseService:
         center_column: float,
         inner_radius: float,
         outer_radius: float,
+        shape: str = "annulus",
     ) -> np.ndarray:
-        detector_rows, detector_columns = entry["detector_shape"]
-        rows, columns = np.ogrid[:detector_rows, :detector_columns]
-        distance_squared = (rows - center_row) ** 2 + (columns - center_column) ** 2
-        mask = (distance_squared >= inner_radius**2) & (distance_squared <= outer_radius**2)
-        with self._entry_lock(key):
+        with self._resident_entry(key, entry) as resident:
+            detector_rows, detector_columns = resident["detector_shape"]
+            rows, columns = np.ogrid[:detector_rows, :detector_columns]
+            if shape == "square":
+                mask = (
+                    (np.abs(rows - center_row) <= outer_radius)
+                    & (np.abs(columns - center_column) <= outer_radius)
+                )
+            else:
+                distance_squared = (rows - center_row) ** 2 + (
+                    columns - center_column
+                ) ** 2
+                mask = distance_squared <= outer_radius**2
+                if shape == "annulus":
+                    mask &= distance_squared >= inner_radius**2
+            with self._cuda_context(int(resident.get("gpu", self.gpu))):
+                result = resident["compute"].masked_sum_exact(
+                    np.asarray(mask, dtype=bool)
+                )
+            return np.asarray(result, dtype=np.uint64).reshape(resident["scan_shape"])
+
+    def scan_region_diffraction(
+        self,
+        session: str,
+        filename: str,
+        *,
+        shape: str,
+        center_row: float,
+        center_column: float,
+        radius: float,
+        reduce: str,
+        det_bin: int,
+        scan_bin: int,
+        scan_region: tuple[int, int, int, int] | None,
+        expected: dict[str, Any] | None = None,
+    ) -> tuple[np.ndarray, int]:
+        """Return the exact detector-count sum over one resident scan ROI."""
+        path = self.resolve_master(session, filename)
+        scan_region = self._normalize_scan_region(path, scan_region)
+        key = self._plan_key(path, det_bin, scan_bin, scan_region)
+        with self._resident_entry(key, expected) as entry:
+            indices = _scan_roi_indices(
+                entry["scan_shape"],
+                shape=shape,
+                center_row=center_row,
+                center_column=center_column,
+                radius=radius,
+            )
+            compute = entry["compute"]
+            reducer_name = (
+                "reduce_frames_max" if reduce == "max" else "reduce_frames_exact"
+            )
+            reducer = getattr(compute, reducer_name, None)
+            if reducer is None:
+                raise HTTPException(
+                    501, "This CUDA data type has no exact scan-ROI reducer."
+                )
             with self._cuda_context(int(entry.get("gpu", self.gpu))):
-                result = entry["compute"].masked_sum_exact(np.asarray(mask, dtype=bool))
-        return np.asarray(result, dtype=np.uint64).reshape(entry["scan_shape"])
+                result = reducer(indices)
+            return (
+                np.asarray(result, dtype=np.uint64).reshape(entry["detector_shape"]),
+                int(indices.size),
+            )
 
     def selected_diffraction(
         self,
@@ -986,23 +1390,15 @@ class BrowseService:
         det_bin: int,
         scan_bin: int,
         scan_region: tuple[int, int, int, int] | None,
+        expected: dict[str, Any] | None = None,
     ) -> np.ndarray:
         path = self.resolve_master(session, filename)
         scan_region = self._normalize_scan_region(path, scan_region)
         key = self._plan_key(path, det_bin, scan_bin, scan_region)
-        with self._master_lock:
-            entry = self._master_cache.get(key)
-            if entry is not None:
-                self._master_cache.move_to_end(key)
-        if entry is None:
-            raise HTTPException(
-                409,
-                "The requested crop/bin is not resident yet; load a virtual image first.",
-            )
-        scan_rows, scan_columns = entry["scan_shape"]
-        row = max(0, min(scan_rows - 1, int(scan_row)))
-        column = max(0, min(scan_columns - 1, int(scan_column)))
-        with self._entry_lock(key):
+        with self._resident_entry(key, expected) as entry:
+            scan_rows, scan_columns = entry["scan_shape"]
+            row = max(0, min(scan_rows - 1, int(scan_row)))
+            column = max(0, min(scan_columns - 1, int(scan_column)))
             with self._cuda_context(int(entry.get("gpu", self.gpu))):
                 frame = entry["data"][row, column]
                 if hasattr(frame, "get"):
@@ -1026,6 +1422,7 @@ class BrowseService:
                 self._image_cache.popitem(last=False)
 
     def close(self) -> None:
+        self._load_executor.shutdown(wait=True, cancel_futures=True)
         with self._master_lock:
             entries = list(self._master_cache.values())
             self._master_cache.clear()
@@ -1071,12 +1468,14 @@ def create_app(
         raise ValueError(
             "MAPED implementation revision does not match the served revision."
         )
+
     @asynccontextmanager
-    async def lifespan(_app):
+    async def lifespan(_app: FastAPI):
         try:
             yield
         finally:
             await asyncio.to_thread(ssb.close)
+            await asyncio.to_thread(browse.close)
 
     app = FastAPI(
         title="QuantEM GPU Remote Browse",
@@ -1098,6 +1497,37 @@ def create_app(
                 "stage": exc.stage,
             },
         )
+
+    def resident_result(
+        session: str,
+        filename: str,
+        *,
+        det_bin: int,
+        scan_bin: int,
+        scan_region: tuple[int, int, int, int] | None,
+        operation: Callable[[tuple, dict[str, Any]], Any],
+    ) -> tuple[tuple, Any]:
+        """Keep one exact plan resident through its requested calculation."""
+        for attempt in range(3):
+            key, entry = browse.entry(
+                session,
+                filename,
+                det_bin=det_bin,
+                scan_bin=scan_bin,
+                scan_region=scan_region,
+                reserve=True,
+            )
+            try:
+                result = operation(key, entry)
+            except HTTPException as exc:
+                if exc.status_code != 409 or attempt == 2:
+                    raise
+            else:
+                browse.activate(key)
+                return key, result
+            finally:
+                browse._release_entry(entry)
+        raise AssertionError("resident retry loop did not return or raise")
 
     @app.get("/api/browse/capabilities")
     async def capabilities() -> dict[str, Any]:
@@ -1364,18 +1794,39 @@ def create_app(
         row_stop: int | None = None,
         column_start: int | None = None,
         column_stop: int | None = None,
+        ensure_resident: bool = False,
     ) -> Response:
         region = _scan_region(row_start, row_stop, column_start, column_stop)
-        image = await asyncio.to_thread(
-            browse.selected_diffraction,
-            session,
-            file,
-            scan_row=sx,
-            scan_column=sy,
-            det_bin=max(1, det_bin),
-            scan_bin=scan_bin,
-            scan_region=region,
-        )
+        if ensure_resident:
+            _, image = await asyncio.to_thread(
+                resident_result,
+                session,
+                file,
+                det_bin=max(1, det_bin),
+                scan_bin=scan_bin,
+                scan_region=region,
+                operation=lambda _key, entry: browse.selected_diffraction(
+                    session,
+                    file,
+                    scan_row=sx,
+                    scan_column=sy,
+                    det_bin=max(1, det_bin),
+                    scan_bin=scan_bin,
+                    scan_region=region,
+                    expected=entry,
+                ),
+            )
+        else:
+            image = await asyncio.to_thread(
+                browse.selected_diffraction,
+                session,
+                file,
+                scan_row=sx,
+                scan_column=sy,
+                det_bin=max(1, det_bin),
+                scan_bin=scan_bin,
+                scan_region=region,
+            )
         return _image_response(image, cache_control="max-age=60")
 
     @app.get("/api/browse/realspace")
@@ -1413,17 +1864,11 @@ def create_app(
         cached = browse.cached_image(image_key)
         if cached is not None and not ensure_resident:
             return _image_response(cached)
-        key, entry = await asyncio.to_thread(
-            browse.entry,
-            session,
-            file,
-            det_bin=max(1, det_bin),
-            scan_bin=scan_bin,
-            scan_region=region,
-        )
-        if cached is None:
-            cached = await asyncio.to_thread(
-                browse.virtual_image,
+
+        def compute(key: tuple, entry: dict[str, Any]) -> np.ndarray:
+            if cached is not None:
+                return cached
+            return browse.virtual_image(
                 key,
                 entry,
                 mode=mode,
@@ -1432,6 +1877,17 @@ def create_app(
                 center_row=cy,
                 center_column=cx,
             )
+
+        key, cached = await asyncio.to_thread(
+            resident_result,
+            session,
+            file,
+            det_bin=max(1, det_bin),
+            scan_bin=scan_bin,
+            scan_region=region,
+            operation=compute,
+        )
+        if browse.cached_image(image_key) is None:
             browse.store_image(image_key, cached)
         browse.mark_active(key)
         return _image_response(cached)
@@ -1452,37 +1908,101 @@ def create_app(
         column_start: int | None = None,
         column_stop: int | None = None,
     ) -> Response:
-        if shape != "annulus":
-            raise HTTPException(400, "the native viewer currently requests annulus detectors")
-        if inner < 0 or outer <= inner:
-            raise HTTPException(400, "annulus radii must satisfy 0 <= inner < outer")
+        if shape not in {"circle", "square", "annulus"}:
+            raise HTTPException(400, "detector shape must be circle, square, or annulus")
+        if not all(math.isfinite(value) for value in (cx, cy, inner, outer)):
+            raise HTTPException(400, "detector center and radii must be finite")
+        if outer <= 0 or (shape == "annulus" and (inner < 0 or outer <= inner)):
+            raise HTTPException(400, "detector radii must satisfy 0 <= inner < outer")
         region = _scan_region(row_start, row_stop, column_start, column_stop)
-        key, entry = await asyncio.to_thread(
-            browse.entry,
+        key, image = await asyncio.to_thread(
+            resident_result,
             session,
             file,
             det_bin=max(1, det_bin),
             scan_bin=scan_bin,
             scan_region=region,
-        )
-        image = await asyncio.to_thread(
-            browse.custom_detector,
-            key,
-            entry,
-            center_row=cy,
-            center_column=cx,
-            inner_radius=inner,
-            outer_radius=outer,
+            operation=lambda key, entry: browse.custom_detector(
+                key,
+                entry,
+                center_row=cy,
+                center_column=cx,
+                inner_radius=inner,
+                outer_radius=outer,
+                shape=shape,
+            ),
         )
         browse.mark_active(key)
         return _image_response(image)
+
+    @app.get("/api/browse/cbed-region")
+    async def cbed_region(
+        session: str,
+        file: str,
+        shape: str = "circle",
+        cx: float = 0.0,
+        cy: float = 0.0,
+        radius: float = 1.0,
+        reduce: str = "mean",
+        det_bin: int = 1,
+        scan_bin: int = 1,
+        row_start: int | None = None,
+        row_stop: int | None = None,
+        column_start: int | None = None,
+        column_stop: int | None = None,
+        ensure_resident: bool = False,
+    ) -> Response:
+        if reduce not in {"mean", "sum", "max"}:
+            raise HTTPException(400, "scan ROI reduction must be mean, sum, or max")
+        region = _scan_region(row_start, row_stop, column_start, column_stop)
+        if ensure_resident:
+            _, (image, count) = await asyncio.to_thread(
+                resident_result,
+                session,
+                file,
+                det_bin=max(1, det_bin),
+                scan_bin=scan_bin,
+                scan_region=region,
+                operation=lambda _key, entry: browse.scan_region_diffraction(
+                    session,
+                    file,
+                    shape=shape,
+                    center_row=cy,
+                    center_column=cx,
+                    radius=radius,
+                    reduce=reduce,
+                    det_bin=max(1, det_bin),
+                    scan_bin=scan_bin,
+                    scan_region=region,
+                    expected=entry,
+                ),
+            )
+        else:
+            image, count = await asyncio.to_thread(
+                browse.scan_region_diffraction,
+                session,
+                file,
+                shape=shape,
+                center_row=cy,
+                center_column=cx,
+                radius=radius,
+                reduce=reduce,
+                det_bin=max(1, det_bin),
+                scan_bin=scan_bin,
+                scan_region=region,
+            )
+        return _image_response(
+            image,
+            cache_control="no-store",
+            value_divisor=count if reduce == "mean" else 1,
+        )
 
     return app
 
 
 __all__ = [
-    "BrowseService",
     "PROTOCOL_NAME",
     "PROTOCOL_VERSION",
+    "BrowseService",
     "create_app",
 ]

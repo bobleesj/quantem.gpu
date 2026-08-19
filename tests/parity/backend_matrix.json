@@ -1,0 +1,164 @@
+{
+  "schema_version": 1,
+  "backends": [
+    "cpu-reference",
+    "cuda",
+    "mps",
+    "swift-metal",
+    "webgpu"
+  ],
+  "contract": {
+    "coordinate_order": "row-column",
+    "real_space_crop": "explicit-only",
+    "detector_bin": "explicit-count-preserving-with-partial-edges",
+    "cpu_fallback": "explicit-reference-only",
+    "integer_outputs": "byte-exact",
+    "floating_outputs": "frozen-operation-specific-metric",
+    "required_provenance": [
+      "source_identity",
+      "source_shape",
+      "source_dtype",
+      "scan_region",
+      "detector_region",
+      "scan_bin",
+      "detector_bin",
+      "output_shape",
+      "output_dtype",
+      "backend",
+      "device",
+      "source_revision"
+    ]
+  },
+  "capabilities": [
+    {
+      "id": "io.decode-bin-provenance",
+      "parity": "Exact corrected integer values, shape, dtype, crop/bin geometry, and provenance.",
+      "coverage": {
+        "cpu-reference": {
+          "level": "reference",
+          "gates": ["tests/io/test_load.py", "tests/io/test_public_api.py"]
+        },
+        "cuda": {
+          "level": "required",
+          "gates": ["tests/test_hdf5_real_agreement.py", "tests/test_hdf5_real_parity.py"]
+        },
+        "mps": {
+          "level": "required",
+          "gates": ["tests/test_hdf5_real_agreement.py", "tests/test_hdf5_real_parity.py", "tests/io/test_mps_buffer_release.py"]
+        },
+        "swift-metal": {
+          "level": "required",
+          "gates": ["src/quantem/gpu/swift/Tests/Native4DSTEMIOTests/Native4DSTEMIOTests.swift", "src/quantem/gpu/swift/Tests/Metal4DSTEMKernelsTests/Metal4DSTEMKernelsTests.swift"]
+        },
+        "webgpu": {
+          "level": "required-hardware",
+          "gates": ["tests/test_webgpu_sources.py", "tests/test_webgpu_widget_sync.py", "docs/maintainer/backend-4dstem-load-checklist.md"]
+        }
+      }
+    },
+    {
+      "id": "detector.integer-products",
+      "parity": "Exact mean-DP integer accumulation and BF/ABF/ADF/DF sums using one mask definition.",
+      "coverage": {
+        "cpu-reference": {
+          "level": "reference",
+          "gates": ["tests/test_products_parity.py", "tests/test_integer_detector_products.py"]
+        },
+        "cuda": {
+          "level": "required",
+          "gates": ["tests/test_cuda_virtual_image.py", "tests/test_realdata_parity.py"]
+        },
+        "mps": {
+          "level": "required",
+          "gates": ["tests/test_products_parity.py", "tests/test_mps_chunk_dispatch.py"]
+        },
+        "swift-metal": {
+          "level": "required",
+          "gates": ["src/quantem/gpu/swift/Tests/Metal4DSTEMKernelsTests/Metal4DSTEMKernelsTests.swift"]
+        },
+        "webgpu": {
+          "level": "required-hardware",
+          "gates": ["tests/test_webgpu_sources.py", "docs/maintainer/backend-4dstem-load-checklist.md"]
+        }
+      }
+    },
+    {
+      "id": "dpc.com-rotation-idpc",
+      "parity": "Same row/column CoM convention, rotation, centering, FFT normalization, and frozen float metric.",
+      "coverage": {
+        "cpu-reference": {
+          "level": "reference",
+          "gates": ["tests/test_dpc_rotation_agreement.py", "tests/test_products_parity.py"]
+        },
+        "cuda": {
+          "level": "required",
+          "gates": ["tests/test_products_parity.py", "tests/test_real_product_env_match.py"]
+        },
+        "mps": {
+          "level": "required",
+          "gates": ["tests/test_products_parity.py", "tests/test_real_product_env_match.py"]
+        },
+        "swift-metal": {
+          "level": "required",
+          "gates": ["src/quantem/gpu/swift/Tests/Metal4DSTEMKernelsTests/Metal4DSTEMKernelsTests.swift"]
+        },
+        "webgpu": {
+          "level": "required-hardware",
+          "gates": ["tests/test_webgpu_sources.py", "docs/maintainer/backend-4dstem-load-checklist.md"]
+        }
+      }
+    },
+    {
+      "id": "display.transform-histogram-color-fft",
+      "parity": "Exact histogram/RGBA integer outputs and frozen float32 transform/FFT metrics.",
+      "coverage": {
+        "cpu-reference": {
+          "level": "reference",
+          "gates": ["tests/test_display_parity.py", "tests/test_display_fft_parity.py"]
+        },
+        "cuda": {
+          "level": "required",
+          "gates": ["tests/test_display_parity.py", "tests/test_display_shared_goldens.py"]
+        },
+        "mps": {
+          "level": "required",
+          "gates": ["tests/test_display_shared_goldens.py"]
+        },
+        "swift-metal": {
+          "level": "required",
+          "gates": ["src/quantem/gpu/swift/Tests/MetalDisplayKernelsTests/MetalDisplayKernelsTests.swift", "src/quantem/gpu/swift/Tests/MetalImageFFTTests/MetalImageFFTTests.swift"]
+        },
+        "webgpu": {
+          "level": "required-hardware",
+          "gates": ["tests/test_display_fft_parity.py", "tests/test_display_shared_goldens.py", "tests/test_webgpu_widget_sync.py"]
+        }
+      }
+    },
+    {
+      "id": "ssb.object-phase-loss",
+      "parity": "Same BF selection, aberrations, precision, objective, optimizer settings, and frozen phase/loss metric.",
+      "coverage": {
+        "cpu-reference": {
+          "level": "reference-fixture",
+          "gates": ["tests/fixtures/ssb_reference_512_mps.json", "tests/test_ssb_backend_contract.py"]
+        },
+        "cuda": {
+          "level": "required",
+          "gates": ["tests/test_ssb_cuda_128.py", "tests/test_ssb_mps_cuda_reference.py"]
+        },
+        "mps": {
+          "level": "required",
+          "gates": ["tests/test_ssb_mps_cuda_reference.py", "tests/test_ssb_mps_close.py"]
+        },
+        "swift-metal": {
+          "level": "not-implemented",
+          "gates": ["docs/api/ssb.md"]
+        },
+        "webgpu": {
+          "level": "partial-hardware",
+          "gates": ["tests/test_webgpu_sources.py", "tests/test_ssb_backend_contract.py", "docs/maintainer/ssb-performance.md"]
+        }
+      }
+    }
+  ]
+}

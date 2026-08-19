@@ -1,9 +1,57 @@
-.bd-main .bd-content .bd-article-container {
-  max-width: 980px;
+/* quantem.gpu pages contain wide backend matrices and numerical evidence.
+   Match quantem.widget's documentation geometry: give tables and code the
+   article width, keep navigation predictable, and avoid a duplicate right rail. */
+
+.bd-sidebar-secondary,
+.bd-toc,
+div.bd-sidebar-secondary {
+  display: none !important;
 }
 
-.bd-sidebar-secondary {
-  display: none;
+.bd-page-width,
+.bd-content,
+.bd-article-container,
+.bd-article {
+  max-width: 100% !important;
+}
+
+@media (min-width: 960px) {
+  .bd-sidebar-primary {
+    width: 16rem;
+    max-width: 16rem;
+    flex: 0 0 16rem;
+  }
+
+  .bd-sidebar-primary.pst-sidebar-hidden {
+    margin-left: -16rem;
+  }
+}
+
+table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+div.highlight pre {
+  overflow-x: auto;
+}
+
+@media (max-width: 959.98px) {
+  code.docutils.literal span.pre,
+  dt.sig span.pre {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  dt.sig {
+    white-space: normal;
+  }
+
+  table.indextable {
+    display: block;
+    overflow-x: auto;
+  }
 }
 
 code.literal {

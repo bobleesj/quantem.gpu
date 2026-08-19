@@ -69,8 +69,8 @@ for the cap-a-dummy-tensor pattern that reproduces it.
 """
 from __future__ import annotations
 
-from collections import OrderedDict
 import threading
+from collections import OrderedDict
 
 import numpy as np
 
@@ -150,7 +150,7 @@ class TorchBackend:
         elif tensor.ndim == 3:
             n, dr, dc = tensor.shape
             if scan_shape is None:
-                sr = int(round(n ** 0.5))
+                sr = round(n ** 0.5)
                 sc = n // sr
             else:
                 sr, sc = scan_shape
@@ -301,6 +301,50 @@ class TorchBackend:
             dp = frames.mean(dim=0)
         return dp.cpu().numpy()
 
+    def reduce_frames_exact(self, scan_indices: np.ndarray) -> np.ndarray:
+        """Return an exact uint64 scan-frame sum with bounded int64 scratch."""
+        torch = self.torch
+        if torch.is_floating_point(self._flat):
+            raise TypeError("Exact scan ROI sums require integer detector data.")
+        indices = np.asarray(scan_indices, dtype=np.int64).reshape(-1)
+        if indices.size == 0:
+            return np.zeros(self.det_shape, dtype=np.uint64)
+        detector_pixels = max(1, self.det_shape[0] * self.det_shape[1])
+        step = max(1, (1 << 27) // (detector_pixels * 8))
+        accumulator = torch.zeros(self.det_shape, dtype=torch.int64, device=self.device)
+        for start in range(0, indices.size, step):
+            selected = torch.as_tensor(
+                indices[start : start + step],
+                dtype=torch.int64,
+                device=self.device,
+            )
+            accumulator += self._flat.index_select(0, selected).sum(
+                dim=0,
+                dtype=torch.int64,
+            )
+        return accumulator.cpu().numpy().astype(np.uint64, copy=False)
+
+    def reduce_frames_max(self, scan_indices: np.ndarray) -> np.ndarray:
+        """Return an exact scan-frame maximum with bounded scratch."""
+        torch = self.torch
+        if torch.is_floating_point(self._flat):
+            raise TypeError("Exact scan ROI maxima require integer detector data.")
+        indices = np.asarray(scan_indices, dtype=np.int64).reshape(-1)
+        if indices.size == 0:
+            return np.zeros(self.det_shape, dtype=np.uint32)
+        detector_pixels = max(1, self.det_shape[0] * self.det_shape[1])
+        step = max(1, (1 << 27) // (detector_pixels * 8))
+        maximum = torch.zeros(self.det_shape, dtype=torch.int64, device=self.device)
+        for start in range(0, indices.size, step):
+            selected = torch.as_tensor(
+                indices[start : start + step],
+                dtype=torch.int64,
+                device=self.device,
+            )
+            chunk = self._flat.index_select(0, selected).to(torch.int64)
+            maximum = torch.maximum(maximum, chunk.max(dim=0).values)
+        return maximum.cpu().numpy().astype(np.uint32, copy=False)
+
     def center_of_mass(self, det_mask: np.ndarray | None = None):
         """Per-scan-position CoM over the (masked) detector - the DPC vector field.
 
@@ -391,7 +435,7 @@ class MetalRawBackend:
         self._cf = frames  # ChunkedFrames (or MultiChunkedFrames, duck-types the same)
         det = tuple(int(x) for x in self._cf.vi.det)
         n = int(self._cf._n)
-        sr = int(round(n ** 0.5))
+        sr = round(n ** 0.5)
         self.scan_shape = (sr, n // sr)
         self.det_shape = det
         self.n_frames = n
@@ -426,7 +470,7 @@ class MetalRawBackend:
             # Eager-cache the full-detector CoM on the bin2 sidecar so the FIRST DPC
             # click is instant (cached), the same way BF rides the prebuilt sidecar.
             self._com_cache = self.center_of_mass()
-        except Exception:
+        except Exception:  # noqa: BLE001,S110 - optional fast path falls back safely
             pass  # fall back to full-res; interaction just stays at the no-bin rate
 
     @property
@@ -662,7 +706,7 @@ class MetalRawBackend:
                     if request == self._radial_request and center == self._radial_pending:
                         self._radial_pending = None
                         return
-            except Exception as exc:  # pragma: no cover
+            except Exception as exc:  # noqa: BLE001  # pragma: no cover
                 self._radial_error = repr(exc)
             finally:
                 self._radial_building = False
@@ -745,7 +789,7 @@ class CudaKernelCompute:
             return data.reshape(-1, dr, dc), (int(sr), int(sc)), (int(dr), int(dc))
         if data.ndim == 3:
             n, dr, dc = data.shape
-            sr = int(round(int(n) ** 0.5))
+            sr = round(int(n) ** 0.5)
             scan_shape = (sr, int(n) // sr) if sr * sr == int(n) else (int(n),)
             return data.reshape(-1, dr, dc), scan_shape, (int(dr), int(dc))
         raise ValueError(f"expected 3D/4D cupy array, got {tuple(data.shape)}")
@@ -784,6 +828,7 @@ class CudaKernelCompute:
 
     def masked_sum(self, det_mask: np.ndarray) -> np.ndarray:
         import cupy as cp
+
         from quantem.gpu.detector.compute.cuda.kernels import (
             cuda_selected_sum,
             cuda_selected_sum_from_total,
@@ -819,6 +864,7 @@ class CudaKernelCompute:
     def masked_sum_exact(self, det_mask: np.ndarray) -> np.ndarray:
         """Return exact uint64 counts using the resident CUDA tensor."""
         import cupy as cp
+
         from quantem.gpu.detector.compute.cuda.kernels import cuda_selected_sum_uint64
 
         mask_np = np.asarray(det_mask, dtype=bool)
@@ -866,6 +912,41 @@ class CudaKernelCompute:
             out = frames.sum(axis=0, dtype=cp.uint64).astype(cp.float32) / int(idx.size)
         return out.reshape(self.det_shape).get()
 
+    def reduce_frames_exact(self, scan_indices: np.ndarray) -> np.ndarray:
+        """Return an exact uint64 sum without a gathered frame tensor."""
+        import cupy as cp
+
+        from quantem.gpu.detector.compute.cuda.kernels import (
+            cuda_selected_frame_sum_uint64,
+        )
+
+        indices = np.asarray(scan_indices, dtype=np.int32).reshape(-1)
+        out = cuda_selected_frame_sum_uint64(self._data, indices)
+        if out is None:
+            selected = cp.asarray(indices)
+            out = self._flat.reshape(self.n_frames, -1).take(selected, axis=0).sum(
+                axis=0,
+                dtype=cp.uint64,
+            ).reshape(self.det_shape)
+        return out.get().astype(np.uint64, copy=False)
+
+    def reduce_frames_max(self, scan_indices: np.ndarray) -> np.ndarray:
+        """Return an exact maximum without a gathered frame tensor."""
+        import cupy as cp
+
+        from quantem.gpu.detector.compute.cuda.kernels import (
+            cuda_selected_frame_max_uint32,
+        )
+
+        indices = np.asarray(scan_indices, dtype=np.int32).reshape(-1)
+        out = cuda_selected_frame_max_uint32(self._data, indices)
+        if out is None:
+            selected = cp.asarray(indices)
+            out = self._flat.reshape(self.n_frames, -1).take(selected, axis=0).max(
+                axis=0
+            ).reshape(self.det_shape)
+        return out.get().astype(np.uint32, copy=False)
+
     def center_of_mass(self, det_mask: np.ndarray | None = None):
         from quantem.gpu.detector.compute.cuda.kernels import cuda_center_of_mass
 
@@ -900,7 +981,7 @@ class CudaPackedUInt4Compute:
             self.det_shape = (shape[2], shape[3])
         elif len(shape) == 3:
             n, dr, dc = shape
-            sr = int(round(int(n) ** 0.5))
+            sr = round(int(n) ** 0.5)
             self.scan_shape = (sr, int(n) // sr) if sr * sr == int(n) else (int(n),)
             self.det_shape = (int(dr), int(dc))
         else:
@@ -921,7 +1002,9 @@ class CudaPackedUInt4Compute:
 
     def _total_counts_uint64(self):
         if self._total_cache_uint64 is None:
-            from quantem.gpu.detector.compute.cuda.kernels import cuda_sum_all_uint64_uint4
+            from quantem.gpu.detector.compute.cuda.kernels import (
+                cuda_sum_all_uint64_uint4,
+            )
 
             self._total_cache_uint64 = cuda_sum_all_uint64_uint4(self._data)
         return self._total_cache_uint64
@@ -943,6 +1026,7 @@ class CudaPackedUInt4Compute:
 
     def masked_sum(self, det_mask: np.ndarray) -> np.ndarray:
         import cupy as cp
+
         from quantem.gpu.detector.compute.cuda.kernels import (
             cuda_selected_sum_from_total_uint4,
             cuda_selected_sum_uint4,
@@ -978,6 +1062,7 @@ class CudaPackedUInt4Compute:
     def masked_sum_exact(self, det_mask: np.ndarray) -> np.ndarray:
         """Return exact uint64 counts from packed uint4 data."""
         import cupy as cp
+
         from quantem.gpu.detector.compute.cuda.kernels import cuda_selected_sum_uint4
 
         mask_np = np.asarray(det_mask, dtype=bool)
@@ -1017,6 +1102,7 @@ class CudaPackedUInt4Compute:
 
     def reduce_frames(self, scan_indices: np.ndarray, reduce: str = "mean") -> np.ndarray:
         import cupy as cp
+
         from quantem.gpu.detector.compute.cuda.kernels import cuda_frame_uint4_to_u8
 
         idx = np.asarray(scan_indices, dtype=np.int64).reshape(-1)
@@ -1037,6 +1123,30 @@ class CudaPackedUInt4Compute:
         if reduce != "sum":
             out /= int(idx.size)
         return out.reshape(self.det_shape).get()
+
+    def reduce_frames_exact(self, scan_indices: np.ndarray) -> np.ndarray:
+        """Return an exact uint64 sum directly from packed uint4 storage."""
+        from quantem.gpu.detector.compute.cuda.kernels import (
+            cuda_selected_frame_sum_uint64_uint4,
+        )
+
+        indices = np.asarray(scan_indices, dtype=np.int32).reshape(-1)
+        out = cuda_selected_frame_sum_uint64_uint4(self._data, indices)
+        if out is None:
+            raise RuntimeError("Packed uint4 CUDA scan-ROI kernel is unavailable.")
+        return out.get().astype(np.uint64, copy=False)
+
+    def reduce_frames_max(self, scan_indices: np.ndarray) -> np.ndarray:
+        """Return an exact maximum directly from packed uint4 storage."""
+        from quantem.gpu.detector.compute.cuda.kernels import (
+            cuda_selected_frame_max_uint32_uint4,
+        )
+
+        indices = np.asarray(scan_indices, dtype=np.int32).reshape(-1)
+        out = cuda_selected_frame_max_uint32_uint4(self._data, indices)
+        if out is None:
+            raise RuntimeError("Packed uint4 CUDA scan-ROI max kernel is unavailable.")
+        return out.get().astype(np.uint32, copy=False)
 
     def center_of_mass(self, det_mask: np.ndarray | None = None):
         from quantem.gpu.detector.compute.cuda.kernels import cuda_center_of_mass_uint4

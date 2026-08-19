@@ -4370,8 +4370,8 @@ single-candidate Metal kernels through two persistent worker-local MLX streams
 and synchronizes only when both losses are requested. CPU threads perform
 submission only; all reconstruction and loss arithmetic remains on MPS.
 
-No native 128x128 or 256x256 Samsung/ARINA acquisition was available on the
-measured Mac. These results are therefore kernel-microscope signoffs, not real
+No matching native 128x128 or 256x256 acquisition was available on the measured
+Mac. These results are therefore kernel-microscope signoffs, not real
 scientist-workflow claims. The prepared evidence used native complex64
 Hermitian arrays at each scan size, with the real Reference-512 automatic geometry and
 the same `8937` logical / `2464` aperture-active BF policy as the canonical 512

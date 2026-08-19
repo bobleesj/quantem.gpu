@@ -104,6 +104,8 @@ include = [
     "tests",
     "Package.swift",
     "README.md",
+    "CONTRIBUTING.md",
+    "CITATION.cff",
     "environment-remote-cuda.yml",
     "pyproject.toml",
 ]

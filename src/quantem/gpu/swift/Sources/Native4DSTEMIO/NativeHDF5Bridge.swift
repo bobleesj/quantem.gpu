@@ -21,6 +21,7 @@ struct NativeHDF5Master {
   let expectedFrames: Int?
   let scanShape: (rows: Int, columns: Int)?
   let badPixelIndices: [Int]
+  let scanPixelSizeNanometer: (row: Double, column: Double)?
   let reciprocalSampling: (row: Double, column: Double)?
   let acquisitionDate: String?
   let metadata: [String: String]
@@ -37,6 +38,32 @@ struct NativeVeloxImage {
 }
 
 enum NativeHDF5Bridge {
+  static func veloxFieldOfViewNanometer(
+    at url: URL
+  ) throws -> (row: Double, column: Double)? {
+    let image = try prepareVeloxImage(at: url, rawOutput: nil)
+    return veloxFieldOfViewNanometer(
+      jsonData: Data(image.metadataJSON.utf8)
+    )
+  }
+
+  static func veloxFieldOfViewNanometer(
+    jsonData: Data
+  ) -> (row: Double, column: Double)? {
+    guard let document = try? JSONSerialization.jsonObject(with: jsonData),
+      let root = document as? [String: Any],
+      let optics = root["Optics"] as? [String: Any],
+      let fieldOfView = optics["FullScanFieldOfView"] as? [String: Any],
+      let widthMeters = wrappedDouble(fieldOfView["x"]),
+      let heightMeters = wrappedDouble(fieldOfView["y"]),
+      widthMeters.isFinite,
+      heightMeters.isFinite,
+      widthMeters > 0,
+      heightMeters > 0
+    else { return nil }
+    return (row: heightMeters * 1e9, column: widthMeters * 1e9)
+  }
+
   static func inspectStack(at url: URL, includeChunks: Bool) throws -> NativeHDF5Stack {
     var rawStack = qh5_stack_info()
     var rawChunks: UnsafeMutablePointer<qh5_chunk_info>?
@@ -121,11 +148,16 @@ enum NativeHDF5Bridge {
       raw.has_reciprocal_sampling != 0
       ? (row: raw.reciprocal_row_mrad, column: raw.reciprocal_column_mrad)
       : nil
+    let scanPixelSizeNanometer =
+      raw.has_scan_pixel_size != 0
+      ? (row: raw.scan_pixel_row_nm, column: raw.scan_pixel_column_nm)
+      : nil
     return NativeHDF5Master(
       externalFiles: externalFiles,
       expectedFrames: expectedFrames,
       scanShape: scanShape,
       badPixelIndices: badPixelIndices,
+      scanPixelSizeNanometer: scanPixelSizeNanometer,
       reciprocalSampling: reciprocalSampling,
       acquisitionDate: raw.acquisition_date.map { String(cString: $0) },
       metadata: metadata
@@ -171,6 +203,13 @@ enum NativeHDF5Bridge {
     return UnsafeBufferPointer(start: values, count: count).compactMap {
       $0.map { String(cString: $0) }
     }
+  }
+
+  private static func wrappedDouble(_ value: Any?) -> Double? {
+    let unwrapped = (value as? [String: Any])?["value"] ?? value
+    if let number = unwrapped as? NSNumber { return number.doubleValue }
+    if let text = unwrapped as? String { return Double(text) }
+    return nil
   }
 
   private static func exactInt(_ value: UInt64, label: String) throws -> Int {

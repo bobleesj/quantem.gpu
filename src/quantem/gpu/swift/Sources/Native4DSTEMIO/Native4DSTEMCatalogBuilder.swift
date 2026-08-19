@@ -84,44 +84,39 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
     stacks.reserveCapacity(dataFiles.count)
     indexFiles.reserveCapacity(dataFiles.count)
 
-    for dataFile in dataFiles {
-      let indexFile = indexRoot.appendingPathComponent(
-        dataFile.deletingPathExtension().lastPathComponent + ".qh5idx"
+    let indexURLs = dataFiles.map {
+      indexRoot.appendingPathComponent(
+        $0.deletingPathExtension().lastPathComponent + ".qh5idx"
       )
-      let stack: NativeHDF5Stack
-      if mode == .indexed {
-        let metadata = try QH5IndexWriter.prepare(
-          source: dataFile,
-          destination: indexFile
-        )
-        stack = NativeHDF5Stack(
-          frameCount: metadata.nFrames,
-          detectorRows: metadata.detRows,
-          detectorColumns: metadata.detCols,
-          sourceBytes: metadata.srcDtype == "uint8" ? 1 : 2,
-          chunks: []
-        )
-      } else {
+    }
+    if mode == .indexed {
+      stacks = try prepareIndexedStacks(dataFiles: dataFiles, indexFiles: indexURLs)
+      indexFiles = indexURLs.map(\.path)
+    } else {
+      for (dataFile, indexFile) in zip(dataFiles, indexURLs) {
         if let metadata = try QH5IndexWriter.currentMetadata(
           source: dataFile,
           destination: indexFile
         ) {
-          stack = NativeHDF5Stack(
-            frameCount: metadata.nFrames,
-            detectorRows: metadata.detRows,
-            detectorColumns: metadata.detCols,
-            sourceBytes: metadata.srcDtype == "uint8" ? 1 : 2,
-            chunks: []
+          stacks.append(
+            NativeHDF5Stack(
+              frameCount: metadata.nFrames,
+              detectorRows: metadata.detRows,
+              detectorColumns: metadata.detCols,
+              sourceBytes: metadata.srcDtype == "uint8" ? 1 : 2,
+              chunks: []
+            )
           )
         } else {
-          stack = try NativeHDF5Bridge.inspectStack(
-            at: dataFile,
-            includeChunks: false
+          stacks.append(
+            try NativeHDF5Bridge.inspectStack(
+              at: dataFile,
+              includeChunks: false
+            )
           )
         }
+        indexFiles.append(indexFile.path)
       }
-      stacks.append(stack)
-      indexFiles.append(indexFile.path)
     }
 
     guard let first = stacks.first else { throw Native4DSTEMIOError.noDatasets }
@@ -153,6 +148,11 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
       detectorColumns: first.detectorColumns
     )
     let scanShape = try scanShape(master: master, totalFrames: totalFrames)
+    let spatialCalibration = spatialCalibration(
+      source: source,
+      master: master,
+      scanShape: scanShape
+    )
     let sourceBytes = try dataFiles.reduce(0) { total, file in
       let bytes = try nativeFileIdentity(for: file).bytes
       guard let exactBytes = Int(exactly: bytes) else {
@@ -177,11 +177,13 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
       sourceDtype: first.sourceDtype,
       sourceBytes: sourceBytes,
       badPixelIndices: master.badPixelIndices,
+      scanPixelSizeRowNanometer: spatialCalibration.sampling?.row,
+      scanPixelSizeColNanometer: spatialCalibration.sampling?.column,
       kPixelSizeRow: master.reciprocalSampling?.row,
       kPixelSizeCol: master.reciprocalSampling?.column,
       kPixelUnit: master.reciprocalSampling == nil ? nil : "mrad",
       acquisitionDate: master.acquisitionDate,
-      metadata: master.metadata,
+      metadata: master.metadata.merging(spatialCalibration.metadata) { _, new in new },
       schemaIdentity: "live4dstem.dataset/v0.1",
       sourceIdentitySHA256: hashes?.aggregate,
       masterSHA256: hashes?.master,
@@ -407,6 +409,101 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
 
   private func approximatelyEqual(_ left: Double, _ right: Double) -> Bool {
     abs(left - right) <= max(1e-15, 1e-6 * max(abs(left), abs(right)))
+  }
+
+  private func spatialCalibration(
+    source: URL,
+    master: NativeHDF5Master,
+    scanShape: (rows: Int, columns: Int)
+  ) -> (
+    sampling: (row: Double, column: Double)?,
+    metadata: [String: String]
+  ) {
+    if let sampling = master.scanPixelSizeNanometer {
+      return (sampling, ["spatial_calibration_source": "HDF5 metadata"])
+    }
+    guard let emd = unambiguousVeloxSibling(for: source),
+      let fieldOfView = try? NativeHDF5Bridge.veloxFieldOfViewNanometer(at: emd),
+      scanShape.rows > 0,
+      scanShape.columns > 0
+    else { return (nil, [:]) }
+    let row = fieldOfView.row / Double(scanShape.rows)
+    let column = fieldOfView.column / Double(scanShape.columns)
+    guard row.isFinite, column.isFinite, row > 0, column > 0 else {
+      return (nil, [:])
+    }
+    return (
+      (row: row, column: column),
+      ["spatial_calibration_source": "Velox EMD · \(emd.lastPathComponent)"]
+    )
+  }
+
+  private func unambiguousVeloxSibling(for source: URL) -> URL? {
+    let directory = source.deletingLastPathComponent()
+    guard
+      let files = try? FileManager.default.contentsOfDirectory(
+        at: directory,
+        includingPropertiesForKeys: [.isRegularFileKey],
+        options: [.skipsHiddenFiles]
+      )
+    else { return nil }
+    let emdFiles = files.filter { $0.pathExtension.lowercased() == "emd" }
+    guard !emdFiles.isEmpty else { return nil }
+    let sourceName = source.lastPathComponent
+    let stem =
+      sourceName.lowercased().hasSuffix("_master.h5")
+      ? String(sourceName.dropLast("_master.h5".count))
+      : source.deletingPathExtension().lastPathComponent
+    let exact = emdFiles.filter {
+      $0.deletingPathExtension().lastPathComponent.caseInsensitiveCompare(stem) == .orderedSame
+    }
+    if exact.count == 1 { return exact[0] }
+    let prefixed = emdFiles.filter {
+      $0.deletingPathExtension().lastPathComponent.lowercased().hasPrefix(stem.lowercased())
+    }
+    if prefixed.count == 1 { return prefixed[0] }
+    return emdFiles.count == 1 ? emdFiles[0] : nil
+  }
+
+  private func prepareIndexedStacks(
+    dataFiles: [URL],
+    indexFiles: [URL]
+  ) throws -> [NativeHDF5Stack] {
+    let workerCount = min(8, dataFiles.count)
+    let resultLock = NSLock()
+    nonisolated(unsafe) var results = [Result<NativeHDF5Stack, Error>?](
+      repeating: nil,
+      count: dataFiles.count
+    )
+
+    DispatchQueue.concurrentPerform(iterations: workerCount) { worker in
+      for index in stride(from: worker, to: dataFiles.count, by: workerCount) {
+        let result = Result {
+          let metadata = try QH5IndexWriter.prepare(
+            source: dataFiles[index],
+            destination: indexFiles[index]
+          )
+          return NativeHDF5Stack(
+            frameCount: metadata.nFrames,
+            detectorRows: metadata.detRows,
+            detectorColumns: metadata.detCols,
+            sourceBytes: metadata.srcDtype == "uint8" ? 1 : 2,
+            chunks: []
+          )
+        }
+        resultLock.lock()
+        results[index] = result
+        resultLock.unlock()
+      }
+    }
+    return try results.enumerated().map { index, result in
+      guard let result else {
+        throw Native4DSTEMIOError.invalidData(
+          "Could not prepare \(dataFiles[index].lastPathComponent)"
+        )
+      }
+      return try result.get()
+    }
   }
 
   private func masters(for input: URL) throws -> [URL] {

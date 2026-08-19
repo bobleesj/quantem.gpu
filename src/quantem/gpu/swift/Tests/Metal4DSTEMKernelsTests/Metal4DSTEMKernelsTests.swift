@@ -27,6 +27,18 @@ private struct WordMajorDetectorParameters {
   var detectorPixels: UInt32
 }
 
+private struct ScanRegionSumParameters {
+  var scanRows: UInt32
+  var scanColumns: UInt32
+  var scanCount: UInt32
+  var detectorPixels: UInt32
+  var centerRow: Float
+  var centerColumn: Float
+  var radius: Float
+  var shape: UInt32
+  var reduction: UInt32
+}
+
 private struct FFT2DParameters {
   var width: UInt32
   var height: UInt32
@@ -676,9 +688,91 @@ final class Metal4DSTEMKernelsTests: XCTestCase {
       Metal4DSTEMKernels.extractU8ToU32Function,
       Metal4DSTEMKernels.extractU16ToU32Function,
       Metal4DSTEMKernels.extractU32ToU32Function,
+      Metal4DSTEMKernels.scanRegionSumU8Function,
+      Metal4DSTEMKernels.scanRegionSumU16Function,
+      Metal4DSTEMKernels.scanRegionSumU32Function,
     ]
     for name in names {
       XCTAssertNotNil(library.makeFunction(name: name), "Missing Metal function \(name)")
+    }
+  }
+
+  func testScanRegionU16MatchesCircleSquareAndReductionReferences() throws {
+    let device = try metalDevice()
+    let queue = try XCTUnwrap(device.makeCommandQueue())
+    let library = try Metal4DSTEMKernels.makeDetectorLibrary(device: device)
+    let scanRows = 5
+    let scanColumns = 5
+    let scanCount = scanRows * scanColumns
+    let detectorPixels = 3
+    let frameMajor: [UInt16] = (0..<(scanCount * detectorPixels)).map {
+      UInt16($0 + 1)
+    }
+    var wordMajor = [UInt32](repeating: 0, count: 2 * scanCount)
+    for scan in 0..<scanCount {
+      for pixel in 0..<detectorPixels {
+        wordMajor[(pixel / 2) * scanCount + scan] |=
+          UInt32(frameMajor[scan * detectorPixels + pixel]) << UInt32((pixel % 2) * 16)
+      }
+    }
+    let source = try makeBuffer(device: device, values: wordMajor)
+    let pipeline = try device.makeComputePipelineState(
+      function: XCTUnwrap(
+        library.makeFunction(name: Metal4DSTEMKernels.scanRegionSumU16Function)
+      )
+    )
+
+    for shape in UInt32(0)...UInt32(1) {
+      for reduction in UInt32(0)...UInt32(1) {
+        let destination = try outputBuffer(device: device, count: detectorPixels)
+        var parameters = ScanRegionSumParameters(
+          scanRows: UInt32(scanRows),
+          scanColumns: UInt32(scanColumns),
+          scanCount: UInt32(scanCount),
+          detectorPixels: UInt32(detectorPixels),
+          centerRow: 2,
+          centerColumn: 2,
+          radius: 1.1,
+          shape: shape,
+          reduction: reduction
+        )
+        let command = try XCTUnwrap(queue.makeCommandBuffer())
+        let encoder = try XCTUnwrap(command.makeComputeCommandEncoder())
+        encoder.setComputePipelineState(pipeline)
+        encoder.setBuffer(source, offset: 0, index: 0)
+        encoder.setBuffer(destination, offset: 0, index: 1)
+        withUnsafeBytes(of: &parameters) {
+          encoder.setBytes($0.baseAddress!, length: $0.count, index: 2)
+        }
+        encoder.dispatchThreads(
+          MTLSize(width: detectorPixels, height: 1, depth: 1),
+          threadsPerThreadgroup: MTLSize(width: detectorPixels, height: 1, depth: 1)
+        )
+        encoder.endEncoding()
+        try complete(command)
+
+        var expected = [UInt32](repeating: 0, count: detectorPixels)
+        for row in 0..<scanRows {
+          for column in 0..<scanColumns {
+            let rowOffset = Float(row) - 2
+            let columnOffset = Float(column) - 2
+            let selected =
+              shape == 0
+              ? rowOffset * rowOffset + columnOffset * columnOffset <= 1.1 * 1.1
+              : abs(rowOffset) <= 1.1 && abs(columnOffset) <= 1.1
+            guard selected else { continue }
+            let scan = row * scanColumns + column
+            for pixel in 0..<detectorPixels {
+              let value = UInt32(frameMajor[scan * detectorPixels + pixel])
+              expected[pixel] =
+                reduction == 1
+                ? max(expected[pixel], value)
+                : expected[pixel] + value
+            }
+          }
+        }
+        XCTAssertEqual(bufferValues(destination, count: detectorPixels), expected)
+      }
     }
   }
 

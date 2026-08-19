@@ -1112,3 +1112,71 @@ kernel void extract_u32_word_major_frame_to_u32(
     if (pixel >= pixelCount) return;
     output[pixel] = data[ulong(pixel) * scanCount + scanIndex];
 }
+
+struct ScanRegionSumParams {
+    uint scanRows;
+    uint scanColumns;
+    uint scanCount;
+    uint detectorPixels;
+    float centerRow;
+    float centerColumn;
+    float radius;
+    uint shape;  // 0 = circle, 1 = square
+    uint reduction;  // 0 = sum/mean numerator, 1 = maximum
+};
+
+template <uint StorageBits>
+inline void scanRegionSumToU32(
+    device const uint *data,
+    device uint *output,
+    constant ScanRegionSumParams &params,
+    uint pixel
+) {
+    if (pixel >= params.detectorPixels) return;
+    int rowStart = max(0, int(ceil(params.centerRow - params.radius)));
+    int rowStop = min(int(params.scanRows) - 1, int(floor(params.centerRow + params.radius)));
+    int columnStart = max(0, int(ceil(params.centerColumn - params.radius)));
+    int columnStop = min(
+        int(params.scanColumns) - 1,
+        int(floor(params.centerColumn + params.radius))
+    );
+    ulong sum = 0ul;
+    float radiusSquared = params.radius * params.radius;
+    for (int row = rowStart; row <= rowStop; ++row) {
+        float rowOffset = float(row) - params.centerRow;
+        for (int column = columnStart; column <= columnStop; ++column) {
+            float columnOffset = float(column) - params.centerColumn;
+            if (params.shape == 0u &&
+                rowOffset * rowOffset + columnOffset * columnOffset > radiusSquared) {
+                continue;
+            }
+            uint scan = uint(row) * params.scanColumns + uint(column);
+            ulong value;
+            if constexpr (StorageBits == 8u) {
+                value = ulong(word_major_u8_sample(data, pixel, scan, params.scanCount));
+            } else if constexpr (StorageBits == 16u) {
+                value = ulong(word_major_u16_sample(data, pixel, scan, params.scanCount));
+            } else {
+                value = ulong(word_major_u32_sample(data, pixel, scan, params.scanCount));
+            }
+            sum = params.reduction == 1u ? max(sum, value) : sum + value;
+        }
+    }
+    output[pixel] = uint(sum);
+}
+
+#define DEFINE_SCAN_REGION_SUM_KERNEL(NAME, BITS)                                   \
+kernel void NAME(                                                                    \
+    device const uint *data [[buffer(0)]],                                           \
+    device uint *output [[buffer(1)]],                                               \
+    constant ScanRegionSumParams &params [[buffer(2)]],                              \
+    uint pixel [[thread_position_in_grid]]                                           \
+) {                                                                                  \
+    scanRegionSumToU32<BITS>(data, output, params, pixel);                           \
+}
+
+// Sum/mean or maximize one circle/square directly from detector-major
+// residency. Sum/mean accumulation remains uint64; max stays integer-exact.
+DEFINE_SCAN_REGION_SUM_KERNEL(scan_region_sum_u8_word_major_to_u32, 8u)
+DEFINE_SCAN_REGION_SUM_KERNEL(scan_region_sum_u16_word_major_to_u32, 16u)
+DEFINE_SCAN_REGION_SUM_KERNEL(scan_region_sum_u32_word_major_to_u32, 32u)

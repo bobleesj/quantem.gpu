@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "source_revision": "25355d7bd6d07ce8ee0fd0be3f0342aa7b8d1373",
+  "purpose": "Fingerprints for retained numerical evidence pages after the historical documentation archive move; measured content is preserved and moved-page links are relative to the archive location.",
+  "pages": [
+    {
+      "path": "docs/backends.md",
+      "sha256": "a52f41641695652635bc0954516d94b58e01237a50a1aded56ae0ffa94d43a5b",
+      "role": "Current capability and measured summary"
+    },
+    {
+      "path": "docs/maintainer/backend-optimization-matrix.md",
+      "sha256": "bf3e8cf941958a98084611b44577b05da636de86ec8cf379de3684eaa24e9de1",
+      "role": "Accepted and rejected optimization ledger"
+    },
+    {
+      "path": "docs/maintainer/backend-4dstem-load-checklist.md",
+      "sha256": "67534f0157f7b333d868df3c522fbd19b2c100f77719dd98d40e28ed68bb0aaf",
+      "role": "Load and product acceptance evidence"
+    },
+    {
+      "path": "docs/maintainer/ssb-performance.md",
+      "sha256": "e3dd8c1289ee2cf519d3ed7b4779fadddb843e92fe6529a02b5f67c683966c3e",
+      "role": "SSB backend performance history"
+    },
+    {
+      "path": "docs/maintainer/native-metal-hdf5-postmortem.md",
+      "sha256": "2d02fdf74f4fd7e5edbd6f3309d2290139da71aa775ea90ebacbdb589e76e731",
+      "role": "Native Metal loader postmortem"
+    },
+    {
+      "path": "docs/maintainer/history/webgpu-gqk-memory-2026-07.md",
+      "sha256": "5383b6034cf3c08e0f900060238e74befd7aa19c9839189d6d4623def4a3d512",
+      "role": "WebGPU G(q,k) memory history"
+    },
+    {
+      "path": "docs/maintainer/m2-air-lz4-match-unroll-2026-08-18.md",
+      "sha256": "fc5ce5fcc3295cec11a411161de7270f196857e927013971935f8512ee2125a1",
+      "role": "Physical M2 Air Metal load/decode evidence"
+    }
+  ]
+}

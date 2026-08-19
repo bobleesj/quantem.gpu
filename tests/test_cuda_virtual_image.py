@@ -151,6 +151,48 @@ def test_cuda_virtual_image_kernel_source_uses_warp_and_fused_dense_path() -> No
     assert "center_of_mass_selected_uint4_4f" in _CUDA_VI_CODE
     assert "frame_uint4_to_u8" in _CUDA_VI_CODE
     assert "mean_dp_uint4" in _CUDA_VI_CODE
+    assert "selected_frame_sum_u64_u16" in _CUDA_VI_CODE
+    assert "selected_frame_sum_u64_u32" in _CUDA_VI_CODE
+    assert "selected_frame_sum_u64_uint4" in _CUDA_VI_CODE
+    assert "selected_frame_max_u32_u16" in _CUDA_VI_CODE
+    assert "selected_frame_max_u32_u32" in _CUDA_VI_CODE
+    assert "selected_frame_max_u32_uint4" in _CUDA_VI_CODE
+
+
+@pytest.mark.parametrize("dtype", [np.uint8, np.uint16, np.uint32])
+def test_cuda_selected_frame_sum_matches_exact_reference(dtype) -> None:
+    cp = _cupy_with_device()
+    from quantem.gpu.detector.compute.cuda.kernels import (
+        cuda_selected_frame_sum_uint64,
+    )
+
+    rng = np.random.default_rng(47)
+    data_np = rng.integers(0, 200, size=(7, 6, 13, 11), dtype=dtype)
+    data = cp.asarray(data_np)
+    indices = np.asarray([0, 3, 8, 17, 31, 41], dtype=np.int32)
+
+    got = cuda_selected_frame_sum_uint64(data, indices)
+    expected = data.reshape(-1, 13, 11)[indices].sum(axis=0, dtype=cp.uint64)
+
+    cp.testing.assert_array_equal(got, expected)
+
+
+@pytest.mark.parametrize("dtype", [np.uint8, np.uint16, np.uint32])
+def test_cuda_selected_frame_max_matches_exact_reference(dtype) -> None:
+    cp = _cupy_with_device()
+    from quantem.gpu.detector.compute.cuda.kernels import (
+        cuda_selected_frame_max_uint32,
+    )
+
+    rng = np.random.default_rng(71)
+    data_np = rng.integers(0, 200, size=(7, 6, 13, 11), dtype=dtype)
+    data = cp.asarray(data_np)
+    indices = np.asarray([0, 3, 8, 17, 31, 41], dtype=np.int32)
+
+    got = cuda_selected_frame_max_uint32(data, indices)
+    expected = data.reshape(-1, 13, 11)[indices].max(axis=0).astype(cp.uint32)
+
+    cp.testing.assert_array_equal(got, expected)
 
 
 def test_cupy_compute_backend_dispatches_to_cuda_kernel_backend() -> None:
@@ -217,7 +259,10 @@ def test_cuda_compute_backend_caches_full_center_of_mass() -> None:
 
 def test_cuda_packed_uint4_backend_matches_unpacked_uint8_reference() -> None:
     cp = _cupy_with_device()
-    from quantem.gpu.detector.compute.backends import CudaPackedUInt4Compute, compute_backend
+    from quantem.gpu.detector.compute.backends import (
+        CudaPackedUInt4Compute,
+        compute_backend,
+    )
     from quantem.gpu.io.uint4 import pack_uint4_cupy
 
     rng = np.random.default_rng(43)
@@ -261,6 +306,16 @@ def test_cuda_packed_uint4_backend_matches_unpacked_uint8_reference() -> None:
         .sum(axis=0, dtype=cp.uint64)
         .astype(cp.float32)
         .get(),
+    )
+    np.testing.assert_array_equal(
+        backend.reduce_frames_exact(np.asarray([0, 3, 7])),
+        data.reshape(-1, 13, 11)[[0, 3, 7]]
+        .sum(axis=0, dtype=cp.uint64)
+        .get(),
+    )
+    np.testing.assert_array_equal(
+        backend.reduce_frames_max(np.asarray([0, 3, 7])),
+        data.reshape(-1, 13, 11)[[0, 3, 7]].max(axis=0).get(),
     )
 
     rows = cp.arange(13, dtype=cp.float64)[:, None]
