@@ -63,11 +63,14 @@ def select_bright_field(
     """Return the mean diffraction pattern and selected BF columns."""
     if counts_R_q.ndim != 4:
         raise ValueError("counts_R_q must have shape (R_r, R_c, q_r, q_c)")
-    if bf_mask_q.shape != counts_R_q.shape[-2:]:
+    if bf_mask_q.shape != counts_R_q.shape[2:]:
         raise ValueError("bf_mask_q must match the detector shape (q_r, q_c)")
 
+    # Average over scan row and scan column. Detector row and column remain.
     mean_q = counts_R_q.to(torch.float32).mean(dim=(0, 1))
-    selected_R_q = counts_R_q[..., bf_mask_q]  # (R_r, R_c, B)
+
+    # A two-dimensional Boolean detector mask becomes one BF-sample axis B.
+    selected_R_q = counts_R_q[:, :, bf_mask_q]  # (R_r, R_c, B)
     return mean_q, selected_R_q
 ```
 
@@ -92,10 +95,11 @@ $G_b[\mathbf k]$ layout:
 ```python
 def scan_fft(selected_R_q: Tensor) -> Tensor:
     """Transform the two scan axes and return shape (B, R_r, R_c)."""
-    return torch.fft.fft2(
-        selected_R_q.movedim(-1, 0),
-        dim=(-2, -1),
-    )
+    # Put the BF-sample axis first. The two scan axes are now last.
+    scan_images_b_R = selected_R_q.permute(2, 0, 1)
+
+    # fft2 transforms the last two axes by default: scan row and scan column.
+    return torch.fft.fft2(scan_images_b_R)
 ```
 
 Here $\mathbf k$ indexes **scan frequency**, while $b$ indexes one selected
@@ -198,8 +202,13 @@ def corrected_object(
     gamma_b_k = p_minus * p_q.conj() - p_plus.conj() * p_q
     unit_gamma = gamma_b_k / gamma_b_k.abs().clamp_min(1e-8)
     corrected_b_k = g_b_k * unit_gamma.conj()
+
+    # The overlap phase is undefined at zero scan frequency, so retain the
+    # explicitly prepared DC value instead of dividing by zero.
     corrected_b_k[:, 0, 0] = dc_value
-    return torch.fft.ifft2(corrected_b_k, dim=(-2, -1))
+
+    # ifft2 again uses the last two axes, converting (k_r, k_c) to (R_r, R_c).
+    return torch.fft.ifft2(corrected_b_k)
 ```
 
 Here `geometry.q` contains `(alpha2, azimuth, aperture)` arrays with shape

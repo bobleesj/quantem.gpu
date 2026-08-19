@@ -344,6 +344,10 @@ def test_scientific_kernel_pages_define_coordinates_math_and_optimization() -> N
     assert "\\varphi" not in ssb
     assert "\\frac{2\\pi}{\\lambda}" not in ssb
     assert "G_b[\\mathbf k]P_b" not in ssb
+    assert "dim=(-2, -1)" not in ssb
+    assert "movedim(-1, 0)" not in ssb
+    assert "selected_R_q.permute(2, 0, 1)" in ssb
+    assert "fft2 transforms the last two axes by default" in ssb
 
 
 def test_primary_scientific_docs_use_row_column_component_symbols() -> None:
