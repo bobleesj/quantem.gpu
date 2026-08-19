@@ -16,6 +16,18 @@ is scored with the same full active-bright-field phase-variance objective. The
 best candidate then seeds a local Nelder-Mead refinement. The workflow selects
 the minimum recorded loss; it does not average the 200 parameter sets.
 
+The PyTorch blocks below form one progressive reference: run them from top to
+bottom. Each equation introduces an operation, and the code immediately below
+defines that operation before a later block calls it.
+
+```python
+from typing import NamedTuple
+
+import torch
+
+Tensor = torch.Tensor
+```
+
 ## 1. Data and bright-field evidence
 
 The input convention is
@@ -39,6 +51,26 @@ The calibrated bright-field disk defines a set $\mathcal B$ of $B$ detector
 coordinates. The default uses every active coordinate in $\mathcal B$; it does
 not silently subsample this evidence for fitting.
 
+The corresponding code starts with the complete counts and an explicitly
+calibrated detector mask. It defines `selected_R_q` with shape
+`(R_r, R_c, B)`:
+
+```python
+def select_bright_field(
+    counts_R_q: Tensor,
+    bf_mask_q: Tensor,
+) -> tuple[Tensor, Tensor]:
+    """Return the mean diffraction pattern and selected BF columns."""
+    if counts_R_q.ndim != 4:
+        raise ValueError("counts_R_q must have shape (R_r, R_c, q_r, q_c)")
+    if bf_mask_q.shape != counts_R_q.shape[-2:]:
+        raise ValueError("bf_mask_q must match the detector shape (q_r, q_c)")
+
+    mean_q = counts_R_q.to(torch.float32).mean(dim=(0, 1))
+    selected_R_q = counts_R_q[..., bf_mask_q]  # (R_r, R_c, B)
+    return mean_q, selected_R_q
+```
+
 ## 2. Scan Fourier transform
 
 For each selected bright-field coordinate $\mathbf q_b$, transform over the
@@ -54,17 +86,16 @@ $$
 The prepared $G_b[\mathbf k]$ columns, bright-field indices, aperture geometry,
 and FFT plans remain resident and are reused across optimizer candidates.
 
-The same transform is direct in PyTorch. If `selected_R_q` has shape
-`(R_r, R_c, B)`, moving the bright-field axis first gives the mathematical
+Moving the already-defined bright-field axis first gives the mathematical
 $G_b[\mathbf k]$ layout:
 
 ```python
-import torch
-
-g_b_k = torch.fft.fft2(
-    selected_R_q.movedim(-1, 0),  # (B, R_r, R_c)
-    dim=(-2, -1),
-)
+def scan_fft(selected_R_q: Tensor) -> Tensor:
+    """Transform the two scan axes and return shape (B, R_r, R_c)."""
+    return torch.fft.fft2(
+        selected_R_q.movedim(-1, 0),
+        dim=(-2, -1),
+    )
 ```
 
 Here $\mathbf k$ indexes **scan frequency**, while $b$ indexes one selected
@@ -125,10 +156,24 @@ undefined phase at $|\Gamma|=0$.
 
 One candidate correction translates directly to PyTorch. The geometry arrays
 for $\mathbf q_b$, $\mathbf q_b-\mathbf k$, and
-$\mathbf q_b+\mathbf k$ are prepared once:
+$\mathbf q_b+\mathbf k$ are calibration outputs prepared once. Their type and
+shapes are defined before the correction function uses them:
 
 ```python
-def probe(alpha2, azimuth, aperture, theta, wavelength):
+class SSBGeometry(NamedTuple):
+    # Each tuple is (alpha_squared, azimuth, aperture).
+    q: tuple[Tensor, Tensor, Tensor]          # each tensor: (B,)
+    q_minus_k: tuple[Tensor, Tensor, Tensor]  # each tensor: (B, R_r, R_c)
+    q_plus_k: tuple[Tensor, Tensor, Tensor]   # each tensor: (B, R_r, R_c)
+
+
+def probe(
+    alpha2: Tensor,
+    azimuth: Tensor,
+    aperture: Tensor,
+    theta: tuple[Tensor, Tensor, Tensor],
+    wavelength: Tensor,
+) -> Tensor:
     c10, c12, phi12 = theta
     chi = (
         (torch.pi / wavelength)
@@ -138,7 +183,14 @@ def probe(alpha2, azimuth, aperture, theta, wavelength):
     return aperture * torch.exp(-1j * chi)
 
 
-def corrected_object(g_b_k, geometry, theta, wavelength, dc_value):
+def corrected_object(
+    g_b_k: Tensor,
+    geometry: SSBGeometry,
+    theta: tuple[Tensor, Tensor, Tensor],
+    wavelength: Tensor,
+    dc_value: Tensor,
+) -> Tensor:
+    """Return O_b(R; theta) with shape (B, R_r, R_c)."""
     p_q = probe(*geometry.q, theta, wavelength)[:, None, None]
     p_minus = probe(*geometry.q_minus_k, theta, wavelength)
     p_plus = probe(*geometry.q_plus_k, theta, wavelength)
@@ -182,7 +234,8 @@ $$
 The reduction axes are equally explicit in PyTorch:
 
 ```python
-def phase_variance_loss(object_b_R):
+def phase_variance_loss(object_b_R: Tensor) -> Tensor:
+    """Return the scalar phase-variance loss L(theta)."""
     phi_b_R = torch.angle(object_b_R)       # (B, R_r, R_c)
     phi_R = phi_b_R.mean(dim=0)             # mean over bright-field samples
     variance_R = (
@@ -190,6 +243,29 @@ def phase_variance_loss(object_b_R):
         - phi_R.square()
     )
     return variance_R.mean()                 # mean over scan positions
+```
+
+All quantities needed to evaluate one optimizer candidate are now defined, so
+the complete candidate function is short:
+
+```python
+def evaluate_candidate(
+    selected_R_q: Tensor,
+    geometry: SSBGeometry,
+    theta: tuple[Tensor, Tensor, Tensor],
+    wavelength: Tensor,
+    dc_value: Tensor,
+) -> tuple[Tensor, Tensor]:
+    """Return scalar loss and O_b(R; theta) for one candidate."""
+    g_b_k = scan_fft(selected_R_q)
+    object_b_R = corrected_object(
+        g_b_k,
+        geometry,
+        theta,
+        wavelength,
+        dc_value,
+    )
+    return phase_variance_loss(object_b_R), object_b_R
 ```
 
 This is the two-stage mean the implementation computes: moments across all
@@ -219,15 +295,23 @@ $$
 TPE proposes candidates sequentially, but the selection rule itself is simply:
 
 ```python
-candidate_losses = torch.tensor(losses_from_200_tpe_trials)
-best_trial_index = torch.argmin(candidate_losses).item()
-theta_tpe = theta_candidates[best_trial_index]
-
-# theta_tpe then seeds the local Nelder-Mead refinement.
+def best_tpe_candidate(
+    theta_candidates: Tensor,
+    candidate_losses: Tensor,
+) -> Tensor:
+    """Select the parameter vector with minimum loss; never average trials."""
+    if theta_candidates.shape != (200, 3):
+        raise ValueError("theta_candidates must have shape (200, 3)")
+    if candidate_losses.shape != (200,):
+        raise ValueError("candidate_losses must have shape (200,)")
+    best_trial_index = torch.argmin(candidate_losses)
+    return theta_candidates[best_trial_index]
 ```
 
-There is no mean over the 200 candidates. The mean operations are only over
-bright-field samples and scan positions inside `phase_variance_loss`.
+The returned tensor is $\boldsymbol\theta_{\mathrm{TPE}}$ and seeds the local
+Nelder-Mead refinement. There is no mean over the 200 candidates. The mean
+operations are only over bright-field samples and scan positions inside
+`phase_variance_loss`.
 
 Thus the "second step" after the 200 trials is a local refinement beginning at
 the best trial, not another average. With the final parameters, the
@@ -247,9 +331,12 @@ phase.
 The final reduction is also ordinary array code:
 
 ```python
-object_R = object_b_R.mean(dim=0)  # (R_r, R_c), complex64
-amplitude_R = torch.abs(object_R)
-phi_R = torch.angle(object_R)
+def final_object(object_b_R: Tensor) -> tuple[Tensor, Tensor, Tensor]:
+    """Return complex object, amplitude, and ordinary phase phi."""
+    object_R = object_b_R.mean(dim=0)  # (R_r, R_c), complex64
+    amplitude_R = torch.abs(object_R)
+    phi_R = torch.angle(object_R)
+    return object_R, amplitude_R, phi_R
 ```
 
 ## Why the production kernels are more elaborate

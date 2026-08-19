@@ -489,9 +489,14 @@ def test_ssb_page_explains_the_complete_default_fit() -> None:
         "not another average",
         "operatorname*{arg\\,min}",
         "torch.fft.fft2",
+        "def select_bright_field(",
+        "def scan_fft(",
+        "class SSBGeometry(",
         "return torch.fft.ifft2",
         "phi_b_R = torch.angle",
-        "candidate_losses = torch.tensor",
+        "def evaluate_candidate(",
+        "def best_tpe_candidate(",
+        "def final_object(",
         "final complex object wave",
     ):
         assert required in text
