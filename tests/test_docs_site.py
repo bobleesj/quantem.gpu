@@ -274,3 +274,17 @@ def test_primary_compute_docs_do_not_depend_on_application_frameworks() -> None:
         text = path.read_text(encoding="utf-8")
         for term in forbidden:
             assert term not in text, f"{term!r} leaked into {path}"
+
+
+def test_backend_pages_support_implementers_not_only_api_users() -> None:
+    required_sections = {
+        "cuda.md": ("## Source map", "## Execution and memory model", "## Profiling", "## Acceptance"),
+        "mps.md": ("## Source map", "## Execution and memory model", "## Profiling", "## Acceptance"),
+        "webgpu.md": ("## Source map", "## Execution and memory model", "## Profiling and acceptance"),
+        "swift-metal.md": ("## Products and sources", "## Coordinate and buffer contract", "## Build, profile, and verify"),
+    }
+
+    for name, sections in required_sections.items():
+        text = Path("docs/platforms", name).read_text(encoding="utf-8")
+        for section in sections:
+            assert section in text, f"{section!r} missing from {name}"
