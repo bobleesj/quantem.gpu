@@ -12,10 +12,10 @@ $$
 (\text{row},\text{column}) \equiv (r,c)
 $$
 
-throughout Python, Swift, Metal, CUDA, and WebGPU. Scan coordinates are
-$\mathbf s=(s_r,s_c)$, detector coordinates are
+throughout Python, Swift, Metal, CUDA, and WebGPU. Real-space probe/scan
+coordinates are $\mathbf R=(R_r,R_c)$, detector coordinates are
 $\mathbf q=(q_r,q_c)$, and logical 4D-STEM array order is
-$I[s_r,s_c,q_r,q_c]$. Scan and detector regions are half-open:
+$I[R_r,R_c,q_r,q_c]$. Scan and detector regions are half-open:
 
 ```text
 (row_start, row_stop, column_start, column_stop)

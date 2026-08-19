@@ -21,18 +21,18 @@ the minimum recorded loss; it does not average the 200 parameter sets.
 The input convention is
 
 $$
-I[s_r,s_c,q_r,q_c],
+I[R_r,R_c,q_r,q_c],
 \qquad (\text{row},\text{column})\equiv(r,c),
 $$
 
-with scan coordinate $\mathbf s=(s_r,s_c)$ and detector coordinate
-$\mathbf q=(q_r,q_c)$.
+with real-space probe/scan coordinate $\mathbf R=(R_r,R_c)$ and detector
+scattering coordinate $\mathbf q=(q_r,q_c)$.
 
 The mean diffraction pattern is
 
 $$
 \bar I[\mathbf q]
-=\frac{1}{N_s}\sum_{\mathbf s}I[\mathbf s,\mathbf q].
+=\frac{1}{N_R}\sum_{\mathbf R}I[\mathbf R,\mathbf q].
 $$
 
 The calibrated bright-field disk defines a set $\mathcal B$ of $B$ detector
@@ -46,8 +46,8 @@ two scan axes:
 
 $$
 G_b[\mathbf k]
-=\mathcal F_{\mathbf s\rightarrow\mathbf k}
-\{I[\mathbf s,\mathbf q_b]\},
+=\mathcal F_{\mathbf R\rightarrow\mathbf k}
+\{I[\mathbf R,\mathbf q_b]\},
 \qquad \mathbf k=(k_r,k_c).
 $$
 
@@ -56,10 +56,10 @@ and FFT plans remain resident and are reused across optimizer candidates.
 
 Here $\mathbf k$ indexes **scan frequency**, while $b$ indexes one selected
 bright-field detector coordinate. The inverse FFT converts each corrected
-$\mathbf k$ plane back to scan position $\mathbf s$ before the variance is
+$\mathbf k$ plane back to probe/scan position $\mathbf R$ before the variance is
 formed. The fit therefore does not search for a minimum variance "among
 $\mathbf k$"; it measures phase variance across $b$, averages that variance
-over $\mathbf s$, and minimizes the resulting scalar over candidate
+over $\mathbf R$, and minimizes the resulting scalar over candidate
 $\boldsymbol\theta$.
 
 ## 3. Candidate aberration correction
@@ -85,8 +85,8 @@ calibrated polar coordinates of bright-field sample $b$, and $A_b$ is its soft
 aperture weight. The corrected per-bright-field object contribution is
 
 $$
-O_b[\mathbf s;\boldsymbol\theta]
-=\mathcal F^{-1}_{\mathbf k\rightarrow\mathbf s}
+O_b[\mathbf R;\boldsymbol\theta]
+=\mathcal F^{-1}_{\mathbf k\rightarrow\mathbf R}
 \{G_b[\mathbf k]P_b(\boldsymbol\theta)\}.
 $$
 
@@ -95,22 +95,22 @@ $$
 Let
 
 $$
-\varphi_b[\mathbf s;\boldsymbol\theta]
-=\arg O_b[\mathbf s;\boldsymbol\theta],
+\varphi_b[\mathbf R;\boldsymbol\theta]
+=\arg O_b[\mathbf R;\boldsymbol\theta],
 \qquad
-\bar\varphi[\mathbf s;\boldsymbol\theta]
-=\frac{1}{B}\sum_{b\in\mathcal B}\varphi_b[\mathbf s;\boldsymbol\theta].
+\bar\varphi[\mathbf R;\boldsymbol\theta]
+=\frac{1}{B}\sum_{b\in\mathcal B}\varphi_b[\mathbf R;\boldsymbol\theta].
 $$
 
 The variance at one scan position and the scalar fit loss are
 
 $$
-V[\mathbf s;\boldsymbol\theta]
+V[\mathbf R;\boldsymbol\theta]
 =\frac{1}{B}\sum_{b\in\mathcal B}\varphi_b^2
 -\bar\varphi^2,
 \qquad
 L(\boldsymbol\theta)
-=\frac{1}{N_s}\sum_{\mathbf s}V[\mathbf s;\boldsymbol\theta].
+=\frac{1}{N_R}\sum_{\mathbf R}V[\mathbf R;\boldsymbol\theta].
 $$
 
 This is the two-stage mean the implementation computes: moments across all
@@ -142,9 +142,9 @@ the best trial, not another average. With the final parameters, the
 complex transmission function is
 
 $$
-O[\mathbf s]
+O[\mathbf R]
 =\frac{1}{B}\sum_{b\in\mathcal B}
-O_b[\mathbf s;\hat{\boldsymbol\theta}].
+O_b[\mathbf R;\hat{\boldsymbol\theta}].
 $$
 
 The public result stores this complex64 object wave. Its displayed phase is

@@ -30,8 +30,8 @@ print(result.metadata["full_scan_shape"])
 print(result.metadata["scan_region"])
 ```
 
-For $I[s_r,s_c,q_r,q_c]$, the selection above keeps
-$0\le s_r<32$ and $0\le s_c<48$ while preserving the requested detector
+For $I[R_r,R_c,q_r,q_c]$, the selection above keeps
+$0\le R_r<32$ and $0\le R_c<48$ while preserving the requested detector
 coverage.
 
 ## Coordinate, shape, dtype, unit, and provenance contract

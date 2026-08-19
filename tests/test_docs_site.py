@@ -249,11 +249,11 @@ def test_scientific_kernel_pages_define_coordinates_math_and_optimization() -> N
         assert "## Optimization model" in text, name
 
     data_model = Path("docs/kernels/data-model.md").read_text(encoding="utf-8")
-    for term in ("s_r", "s_c", "q_r", "q_c", "half-open", "Binning preserves counts"):
+    for term in ("R_r", "R_c", "q_r", "q_c", "half-open", "Binning preserves counts"):
         assert term in data_model
 
     detector = pages["detector"].read_text(encoding="utf-8")
-    assert "V_M[s_r,s_c]" in detector
+    assert "V_M[R_r,R_c]" in detector
     assert "Mean diffraction" in detector
 
     dpc = pages["dpc"].read_text(encoding="utf-8")
@@ -289,6 +289,29 @@ def test_primary_scientific_docs_use_row_column_component_symbols() -> None:
         text = path.read_text(encoding="utf-8")
         for term in forbidden:
             assert term not in text, f"{term!r} remains in {path}"
+
+
+def test_primary_scientific_docs_use_R_q_notation() -> None:
+    required_paths = [
+        Path("README.md"),
+        Path("docs/intro.md"),
+        Path("docs/concepts/scientific-contract.md"),
+        Path("docs/kernels/data-model.md"),
+        Path("docs/kernels/index.md"),
+        Path("docs/kernels/load-decode-bin.md"),
+        Path("docs/kernels/ssb.md"),
+    ]
+
+    for path in required_paths:
+        text = path.read_text(encoding="utf-8")
+        assert "I[R_r,R_c,q_r,q_c]" in text, path
+        assert "I[s_r,s_c,q_r,q_c]" not in text, path
+
+    data_model = Path("docs/kernels/data-model.md").read_text(encoding="utf-8")
+    ssb = Path("docs/kernels/ssb.md").read_text(encoding="utf-8")
+    assert "\\mathbf R=(R_r,R_c)" in data_model
+    assert "\\mathbf q=(q_r,q_c)" in data_model
+    assert "\\mathcal F_{\\mathbf R\\rightarrow\\mathbf k}" in ssb
 
 
 def test_remote_compute_is_a_deployment_not_a_kernel_runtime() -> None:
