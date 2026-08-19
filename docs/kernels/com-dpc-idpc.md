@@ -9,6 +9,23 @@ For optional detector mask $M[q_r,q_c]$, first compute
           → Fourier integration → scan-shaped iDPC phase
 ```
 
+## Process at a glance
+
+| Step | Input | Scientific operation | Output and purpose |
+|---:|---|---|---|
+| 1 | 4D counts $I[\mathbf R,\mathbf q]$ | Identify scan and detector row/column axes | One unambiguous coordinate contract for every runtime |
+| 2 | Counts and optional detector mask $M(\mathbf q)$ | Exclude detector pixels outside the scientifically selected region | Masked counts used consistently by intensity and both moments |
+| 3 | Masked diffraction pattern at each scan position | Sum intensity and detector row/column moments | Mean-centered CoM fields $\mu_r(\mathbf R)$ and $\mu_c(\mathbf R)$ |
+| 4 | CoM vector field | Rotate the two vector components by a candidate angle | Candidate DPC field $\mathbf g(\mathbf R)$ |
+| 5 | Candidate DPC field | Measure its interior curl | One scalar inconsistency score per candidate |
+| 6 | All angle and component-order candidates | Select the lowest-curl candidate | Aligned DPC field plus recorded angle and component order |
+| 7 | Aligned DPC row/column fields | Solve the Fourier-space least-squares integration | Zero-mean scan-shaped iDPC phase $\phi(\mathbf R)$ |
+| 8 | CoM, alignment, and phase results | Preserve shapes, calibration, mask, dtype, and revision | A reproducible `DPCResult` rather than an unlabeled image |
+
+The essential progression is therefore **detector distribution → vector field
+→ aligned gradient → integrated scalar phase**. The code below exists to make
+each transformation concrete; it is not the primary explanation.
+
 ```{admonition} Executable reference, not pseudocode
 :class: note
 The PyTorch functions below are ordinary executable reference code. They state
@@ -17,7 +34,7 @@ and final sign used by the maintained implementation. Production CUDA,
 MPS/Metal, and WebGPU kernels fuse or stream these operations for performance.
 ```
 
-## PyTorch reference: CoM
+## Process expressed in PyTorch
 
 ### Step 1 — Define the tensor axes
 
