@@ -14,7 +14,7 @@ Use the page type that matches the developer's question:
 | Reader question | Page type | Required content |
 |---|---|---|
 | What does this operation compute? | Scientific kernel | equations, coordinates, shapes/dtypes/units, optimization model, source map, parity gates |
-| How do I implement it on my device? | Backend implementation | runtime boundary, sources, memory/execution model, build, profiling, acceptance |
+| How do I implement it on my device? | Kernel implementation | runtime boundary, sources, memory/execution model, build, profiling, acceptance |
 | What may my code call and rely on? | API contract | typed inputs/outputs/errors, provenance, minimal example, ownership |
 | Is this result correct and faster? | Evidence | revision, device, source and plan, cache state, memory, statistic, parity artifact |
 

@@ -38,7 +38,8 @@ python -m pip install \
   "quantem.gpu[mps,movie]==0.0.1rc6"
 ```
 
-For Linux CUDA service development, combine the service and CUDA extras:
+For [QuantEM.GPU Remote](remote/index.md) development, combine the service and
+CUDA extras:
 
 ```bash
 python -m pip install \

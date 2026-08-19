@@ -16,7 +16,8 @@ def test_docs_navigation_has_world_class_top_level_sections() -> None:
     for caption in (
         "Start here",
         "Scientific kernels",
-        "Backend implementation",
+        "Kernel implementations",
+        "Remote compute",
         "API contracts",
         "Verification and performance",
         "Contributing",
@@ -40,7 +41,11 @@ def test_docs_navigation_has_world_class_top_level_sections() -> None:
         "platforms/swift-metal",
         "platforms/webgpu",
         "platforms/cpu-reference",
-        "platforms/remote-cuda",
+        "remote/index",
+        "remote/deployment",
+        "remote/connect",
+        "remote/protocol",
+        "remote/admission",
         "maintainer/history/index",
         "maintainer/history/webgpu-gqk-memory-2026-07",
         "maintainer/history/webgpu-frame-coop-u16-clip8-2026-07-25",
@@ -286,16 +291,18 @@ def test_primary_scientific_docs_use_row_column_component_symbols() -> None:
             assert term not in text, f"{term!r} remains in {path}"
 
 
-def test_linux_cuda_service_is_a_deployment_not_a_backend() -> None:
+def test_remote_compute_is_a_deployment_not_a_kernel_runtime() -> None:
     index = Path("docs/platforms/index.md").read_text(encoding="utf-8")
-    service = Path("docs/platforms/remote-cuda.md").read_text(encoding="utf-8")
+    toc = Path("docs/_toc.yml").read_text(encoding="utf-8")
+    service = Path("docs/remote/index.md").read_text(encoding="utf-8")
+    service_words = " ".join(service.split())
 
-    assert "[Linux CUDA service](remote-cuda.md)" in index
-    assert "Remote CUDA](remote-cuda.md)" not in index
-    assert service.startswith("# Linux CUDA service")
-    assert "not a separate backend" in service
-    assert "same host" in service
-    assert "SSH tunnel" in service
+    assert "caption: Kernel implementations" in toc
+    assert "caption: Remote compute" in toc
+    assert "[QuantEM.GPU Remote](../remote/index.md)" in index
+    assert service.startswith("# QuantEM.GPU Remote")
+    assert "not another kernel runtime" in service_words
+    assert "`quantem-gpu-remote`" in service
 
 
 def test_primary_compute_docs_do_not_depend_on_application_frameworks() -> None:
@@ -320,13 +327,59 @@ def test_primary_compute_docs_do_not_depend_on_application_frameworks() -> None:
 
 def test_backend_pages_support_implementers_not_only_api_users() -> None:
     required_sections = {
-        "cuda.md": ("## Source map", "## Execution and memory model", "## Profiling", "## Acceptance"),
-        "mps.md": ("## Source map", "## Execution and memory model", "## Profiling", "## Acceptance"),
-        "webgpu.md": ("## Source map", "## Execution and memory model", "## Profiling and acceptance"),
-        "swift-metal.md": ("## Products and sources", "## Coordinate and buffer contract", "## Build, profile, and verify"),
+        "cuda.md": (
+            "## Dispatch and implementation layers",
+            "## Execution and memory model",
+            "## Build and focused checks",
+            "## Profiling",
+            "## Acceptance",
+        ),
+        "mps.md": (
+            "## Dispatch and implementation layers",
+            "## Execution and memory model",
+            "## Build and focused checks",
+            "## Profiling",
+            "## Acceptance",
+        ),
+        "webgpu.md": (
+            "## Dispatch and implementation layers",
+            "## Execution and memory model",
+            "## Source and build checks",
+            "## Profiling and acceptance",
+        ),
+        "swift-metal.md": (
+            "## Products and sources",
+            "## Call and resource path",
+            "## Coordinate and buffer contract",
+            "## Build, profile, and verify",
+        ),
+        "cpu-reference.md": (
+            "## Dispatch and implementation layers",
+            "## Reference design",
+            "## Arithmetic and independence",
+            "## Focused checks",
+        ),
     }
 
     for name, sections in required_sections.items():
         text = Path("docs/platforms", name).read_text(encoding="utf-8")
         for section in sections:
             assert section in text, f"{section!r} missing from {name}"
+
+
+def test_ssb_page_explains_the_complete_default_fit() -> None:
+    text = Path("docs/kernels/ssb.md").read_text(encoding="utf-8")
+
+    for required in (
+        "200 TPE trials",
+        "Nelder-Mead refinement",
+        "does not average the 200 parameter sets",
+        "phase-variance objective",
+        "phase variance across $b$",
+        "not another average",
+        "operatorname*{arg\\,min}",
+        "np.angle(np.fft.ifft2",
+        "torch.angle(torch.fft.ifft2",
+        "final complex object wave",
+    ):
+        assert required in text

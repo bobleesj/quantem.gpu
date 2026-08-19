@@ -8,7 +8,7 @@ WebGPU, and an explicit CPU reference.
 :class: tip
 **Scientific operation:** start with [Scientific kernels](kernels/index.md).
 
-**Runtime implementation:** start with [Backend implementation](platforms/index.md).
+**Kernel implementation:** start with [Kernel implementations](platforms/index.md).
 
 **Correctness or speed claim:** start with
 [Verification and performance](performance/index.md).
@@ -58,6 +58,10 @@ beside the operation instead of separating it into a generic tutorial.
 
 All runtimes implement the same operation contract. They do not expose
 platform-specific scientific workflows.
+
+To run the CUDA implementation as a service, use
+[QuantEM.GPU Remote](remote/index.md). Remote access is deployment and
+communication, not another kernel runtime.
 
 ## What belongs in this package
 

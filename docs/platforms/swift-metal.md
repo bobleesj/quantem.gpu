@@ -22,6 +22,29 @@ WebGPU paths.
 | `MetalImageFFT` | FFT operations on resident 2D products | `.../MetalImageFFT` |
 | `MetalImageRuntime` | typed resident surface/statistics state | `.../MetalImageRuntime` |
 
+## Call and resource path
+
+```text
+consumer imports one SwiftPM product
+  → public Swift value types validate geometry and provenance
+  → product creates or reuses Metal pipelines and buffers
+  → bundled .metal resource writes a typed destination buffer
+  → caller receives the result without an application-framework dependency
+```
+
+`Package.swift` is the build graph. Each library target has one matching source
+directory under `src/quantem/gpu/swift/Sources`. Metal resources are copied by
+SwiftPM and resolved from their owning module bundle; clients do not compile a
+second copy.
+
+| Product | Kernel/native dependency | Tests |
+|---|---|---|
+| `Native4DSTEMIO` | `CNativeHDF5` → vendored `CHDF5.xcframework` and zlib | `Native4DSTEMIOTests` plus real-source benchmarks |
+| `Metal4DSTEMKernels` | `detector.metal`, `dpc.metal`, `qh5idx.metal` | `Metal4DSTEMKernelsTests` |
+| `MetalDisplayKernels` | `display.metal`, packaged colormaps | `MetalDisplayKernelsTests` |
+| `MetalImageFFT` | `fft.metal`, MPS/MPSGraph frameworks | `MetalImageFFTTests` |
+| `MetalImageRuntime` | `MetalDisplayKernels` | `MetalImageRuntimeTests` |
+
 The package imports no application UI framework. A client owns presentation,
 scheduling, and user-visible memory-policy choices; it must not copy or fork
 the `.metal` sources.
@@ -51,6 +74,10 @@ memory, distinguish mapped page-in from explicit copies. Acceptance includes
 Swift tests, Metal compilation, frozen CPU/CUDA cross-backend fixtures,
 rectangular row/column cases, memory-budget failures, and real-device
 cold/warm/prepared timings.
+
+Swift tests verify the package boundary; Python parity fixtures adjudicate
+cross-runtime numerical meaning. Passing only one of those layers is not a
+complete Swift/Metal signoff.
 
 Read [Native 4D-STEM IO](../api/native_4dstem_io.md) and
 [Metal image APIs](../api/metal_image.md) for public types.

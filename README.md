@@ -8,7 +8,7 @@ MPS/Metal, native Swift, WebGPU, and an explicit CPU reference.
 ## Documentation
 
 Visit the **[quantem.gpu documentation](https://bobleesj.github.io/quantem.gpu/)**
-for the scientific equations, kernel source maps, backend implementation guides,
+for the scientific equations, kernel source maps, runtime implementation guides,
 API contracts, benchmark methodology, and cross-backend parity evidence.
 
 Choose your entry point:
@@ -17,9 +17,10 @@ Choose your entry point:
   optimization topology, sources, and parity gates by operation.
 - [Kernel architecture](docs/concepts/kernel-architecture.md): how the
   domain-first source tree and cross-language contracts fit together.
-- [Backend implementation](docs/platforms/index.md): CUDA, Python MPS, native
-  Swift/Metal, WebGPU, Linux CUDA service deployment, and CPU reference
-  guidance.
+- [Kernel implementations](docs/platforms/index.md): CUDA, Python MPS, native
+  Swift/Metal, WebGPU, and CPU reference internals.
+- [QuantEM.GPU Remote](docs/remote/index.md): deploy the CUDA engine as a
+  loopback service and connect locally or through SSH.
 - [Verified performance](docs/performance/results.md): dated, revision-pinned
   measurements with hardware, data shape/dtype, cache state, and load plan.
 - [Developer guide](docs/developer/index.md): adding and reviewing kernels.
@@ -61,7 +62,7 @@ Choose only the runtime extras you need:
 |---|---|
 | `cuda` | CUDA IO, decompression, and compute |
 | `mps` | Apple Silicon Python MPS/Metal paths |
-| `remote` | loopback CUDA service used through an SSH tunnel |
+| `remote` | service dependencies for QuantEM.GPU Remote |
 | `movie` | GIF/MP4 rendering dependencies |
 | `dev` | Python tests and development tools |
 | `docs` | documentation build dependencies |
