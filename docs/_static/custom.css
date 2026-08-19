@@ -1,6 +1,6 @@
 /* quantem.gpu pages contain wide backend matrices and numerical evidence.
-   Match quantem.widget's documentation geometry: give tables and code the
-   article width, keep navigation predictable, and avoid a duplicate right rail. */
+   Give tables and code the article width, keep navigation predictable, and
+   avoid a duplicate right rail. */
 
 .bd-sidebar-secondary,
 .bd-toc,

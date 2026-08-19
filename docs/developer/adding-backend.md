@@ -45,10 +45,9 @@ memory, stage timings, and run-level results using the
 
 ## 6. Integrate consumers
 
-Test `quantem.widget`, Live4DSTEM, or `quantem.live` through a local package
-override. Publish the shared package first, then pin consumers to the exact
-verified revision. A copied kernel or consumer-side compatibility fork is not
-an integration.
+Test each supported client through a local package override. Publish the shared
+package first, then pin clients to the exact verified revision. A copied kernel
+or client-side compatibility fork is not an integration.
 
 ## 7. Migrate paths safely
 

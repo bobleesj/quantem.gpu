@@ -38,14 +38,12 @@ python -m pip install \
   "quantem.gpu[mps,movie]==0.0.1rc6"
 ```
 
-For widget display testing, install widget and allow it to resolve
-`quantem.gpu[movie]>=0.0.1rc6`:
+For remote CUDA service development, combine the service and CUDA extras:
 
 ```bash
 python -m pip install \
-  --index-url https://pypi.org/simple \
-  --extra-index-url https://test.pypi.org/simple \
-  quantem.widget
+  --extra-index-url https://test.pypi.org/simple/ \
+  "quantem.gpu[cuda,remote]==0.0.1rc6"
 ```
 
 ## Verify the install

@@ -26,8 +26,8 @@ Native Swift/Metal products for macOS and iOS clients:
   `Metal4DSTEMResidentCacheIO` for explicit native load, resource, and cache
   provenance. See [Native 4D-STEM load and cache contract](native_4dstem_io.md).
 
-Those native endpoints are the ones Live4DSTEM should call. They are not a
-local Python backend.
+Native clients call these endpoints directly. They are not a local Python
+backend.
 
 The API is still release-candidate level. Prefer public functions documented
 here over internal backend modules.

@@ -1,19 +1,23 @@
-# Choose a platform
+# Choose a runtime
 
-Choose a runtime based on where the data and application live. Do not choose a
-backend by changing scientific parameters until the workload happens to fit.
+The scientific operation determines what must be computed; the runtime page
+explains how to implement it efficiently on a particular device.
 
-| Platform | Use it when | Start here |
+| You are developing for | Start here | Build and memory model |
 |---|---|---|
-| CUDA | Data lives on an NVIDIA workstation/server or the workload needs large dedicated VRAM | [CUDA](cuda.md) |
-| Python MPS | A Python workflow runs locally on Apple Silicon | [Python MPS](mps.md) |
-| Native Swift/Metal | A macOS or iOS application needs native IO and reusable Metal kernels | [Native Swift and Metal](swift-metal.md) |
-| WebGPU | Compute runs in a browser or portable exported HTML | [WebGPU](webgpu.md) |
-| CPU reference | A small deterministic reference is needed for adjudication | [CPU reference](cpu-reference.md) |
+| NVIDIA GPU | [CUDA](cuda.md) | Python/CuPy with CUDA kernels and dedicated VRAM |
+| Apple GPU from Python | [Python MPS](mps.md) | Python adapters over MLX/PyObjC/Metal and unified memory |
+| Native Apple client/library | [Native Swift and Metal](swift-metal.md) | SwiftPM products, Metal resources, and unified memory |
+| Browser GPU | [WebGPU](webgpu.md) | TypeScript/WGSL, browser security, and explicit GPU buffers |
+| Independent adjudication | [CPU reference](cpu-reference.md) | deterministic small NumPy/reference implementations |
+| CUDA workstation service | [Remote CUDA](remote-cuda.md) | loopback protocol, SSH transport, and per-device admission |
 
-`backend="auto"` is appropriate for ordinary Python workflows. Tests,
-benchmarks, and parity reports select the backend explicitly so unsupported
-hardware fails honestly.
+Before working in a platform folder, read the corresponding page under
+[Scientific kernels](../kernels/index.md). The platform may optimize layout,
+fusion, queueing, and transfers; it must preserve the operation's
+`(row, column) ≡ (y, x)` contract and provenance.
 
-The complete implementation and evidence status is maintained in
+`backend="auto"` is suitable for ordinary Python use. Tests and benchmarks
+select a runtime explicitly so missing hardware and unsupported paths fail
+honestly. The complete implementation/evidence status is maintained in
 [Current verified results](../backends.md).

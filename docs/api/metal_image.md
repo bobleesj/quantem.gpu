@@ -4,8 +4,8 @@ These Swift package products are the reusable Apple-GPU endpoints for native
 clients. They own mathematics and GPU residency. They do not own SwiftUI,
 gestures, cache policy, or Python.
 
-Live4DSTEM, and later iOS clients, should call these APIs instead of copying
-Metal source or launching a local Python backend.
+Native clients should call these APIs instead of copying Metal source or
+launching a local Python backend.
 
 ## Products
 

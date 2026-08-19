@@ -14,22 +14,33 @@ def test_docs_navigation_has_world_class_top_level_sections() -> None:
     toc = TOC.read_text(encoding="utf-8")
 
     for caption in (
-        "Getting started",
-        "Scientific workflows",
-        "Performance & parity",
-        "Developers",
+        "Start here",
+        "Scientific kernels",
+        "Backend implementation",
+        "API contracts",
+        "Verification and performance",
+        "Contributing",
     ):
         assert f"caption: {caption}" in toc
 
     for page in (
         "concepts/scientific-contract",
+        "concepts/kernel-architecture",
+        "kernels/index",
+        "kernels/data-model",
+        "kernels/load-decode-bin",
+        "kernels/virtual-detectors",
+        "kernels/com-dpc-idpc",
+        "kernels/ssb",
+        "kernels/scan-regions",
+        "kernels/display-export",
         "platforms/index",
         "platforms/cuda",
         "platforms/mps",
         "platforms/swift-metal",
         "platforms/webgpu",
         "platforms/cpu-reference",
-        "tutorials/workflow_math",
+        "platforms/remote-cuda",
         "maintainer/history/index",
         "maintainer/history/webgpu-gqk-memory-2026-07",
         "maintainer/history/webgpu-frame-coop-u16-clip8-2026-07-25",
@@ -40,6 +51,7 @@ def test_docs_navigation_has_world_class_top_level_sections() -> None:
         "performance/parity",
         "backends",
         "developer/index",
+        "developer/kernel-lifecycle",
         "developer/adding-backend",
         "developer/testing",
         "maintainer/index",
@@ -203,7 +215,7 @@ def test_new_public_pages_do_not_leak_private_fixture_paths() -> None:
     paths = [
         Path("docs/intro.md"),
         Path("docs/concepts/scientific-contract.md"),
-        Path("docs/tutorials/workflow_math.md"),
+        *sorted(Path("docs/kernels").glob("*.md")),
         *sorted(Path("docs/platforms").glob("*.md")),
         *sorted(Path("docs/performance").glob("*.md")),
         *sorted(Path("docs/developer").glob("*.md")),
@@ -216,20 +228,49 @@ def test_new_public_pages_do_not_leak_private_fixture_paths() -> None:
             assert marker not in text, f"{marker!r} leaked in {path}"
 
 
-def test_scientific_workflow_map_covers_coordinates_and_products() -> None:
-    text = Path("docs/tutorials/workflow_math.md").read_text(encoding="utf-8")
-    normalized = " ".join(text.split())
+def test_scientific_kernel_pages_define_coordinates_math_and_optimization() -> None:
+    pages = {
+        "load": Path("docs/kernels/load-decode-bin.md"),
+        "detector": Path("docs/kernels/virtual-detectors.md"),
+        "dpc": Path("docs/kernels/com-dpc-idpc.md"),
+        "ssb": Path("docs/kernels/ssb.md"),
+        "region": Path("docs/kernels/scan-regions.md"),
+    }
 
-    for term in (
-        "I(\\mathbf r,\\mathbf q)",
-        "scan coordinate",
-        "detector coordinate",
-        "BF",
-        "DF",
-        "ADF",
-        "center of mass",
-        "iDPC",
-        "Single-sideband ptychography",
-        "no real-space crop",
-    ):
-        assert term in normalized
+    for name, path in pages.items():
+        text = path.read_text(encoding="utf-8")
+        assert "(row, column)" in text, name
+        assert "(y, x)" in text, name
+        assert "## Optimization model" in text, name
+
+    data_model = Path("docs/kernels/data-model.md").read_text(encoding="utf-8")
+    for term in ("r_y", "r_x", "q_y", "q_x", "half-open", "Binning preserves counts"):
+        assert term in data_model
+
+    detector = pages["detector"].read_text(encoding="utf-8")
+    assert "V_M[r_y,r_x]" in detector
+    assert "Mean diffraction" in detector
+
+    dpc = pages["dpc"].read_text(encoding="utf-8")
+    for term in ("com_row", "com_col", "c_y", "c_x", "iDPC"):
+        assert term in dpc
+
+
+def test_primary_compute_docs_do_not_depend_on_application_frameworks() -> None:
+    paths = [
+        Path("README.md"),
+        Path("docs/intro.md"),
+        Path("docs/install.md"),
+        Path("docs/backends.md"),
+        *sorted(Path("docs/concepts").glob("*.md")),
+        *sorted(Path("docs/kernels").glob("*.md")),
+        *sorted(Path("docs/platforms").glob("*.md")),
+        *sorted(Path("docs/api").glob("*.md")),
+        *sorted(Path("docs/developer").glob("*.md")),
+    ]
+    forbidden = ("quantem.widget", "Show4DSTEM", "Show2D", "Live4DSTEM", "quantem.live")
+
+    for path in paths:
+        text = path.read_text(encoding="utf-8")
+        for term in forbidden:
+            assert term not in text, f"{term!r} leaked into {path}"

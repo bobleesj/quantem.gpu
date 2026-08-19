@@ -2,7 +2,7 @@
 
 This section preserves migration records, backend postmortems, hardware
 evidence, architecture decisions, and kernel histories. Day-to-day users should
-start with [Scientific workflows](../tutorials/load_hdf5.md) or
+start with [Scientific kernels](../kernels/index.md) or
 [Current verified results](../backends.md).
 
 Maintainer pages are intentionally detailed. They preserve unsuccessful
