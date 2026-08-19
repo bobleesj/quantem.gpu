@@ -38,6 +38,10 @@ evidence vocabulary as the [complete module dashboard](dashboard.md):
 No empty cell implies support. Date, device, revision, scientific plan, and
 parity remain attached to every retained performance result.
 
+For the compact wall-time, scan/detector plan, peak-memory, and **4/6 GiB**
+capacity view, open
+{ref}`Speed and memory at a glance <speed-and-memory-at-a-glance>`.
+
 ### I/O — `quantem.gpu.io`
 
 The I/O module owns discovery, inspection, accelerated bitshuffle/LZ4 decode,

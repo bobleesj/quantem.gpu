@@ -16,6 +16,53 @@ number in a design or release decision.
 and code revision; this page does not replace the
 [complete benchmark provenance ledger](performance/results.md).
 
+(speed-and-memory-at-a-glance)=
+## Speed and memory at a glance
+
+The rows below are deliberately not a leaderboard. Each one keeps its cache
+state, scientific plan, device, wall-clock boundary, and memory observation in
+the same row.
+
+### Measured load paths
+
+| Implementation | Full source and output plan | Tested device and state | Wall-clock result | Memory and parity | 4/6 GiB reading |
+|---|---|---|---:|---|---|
+| [**Native Swift/Metal**](platforms/swift-metal.md) | `512x512x192x192 uint16` → full `512x512` scan, audited exact-sum detector bin 4 to `48x48 uint16`; no crop | Physical 8 GB `Mac14,2` M2 Air; first process / first observed source; seven runs per fixture | **1.985 / 2.043 s p50** to first complete product ([M2-AIR-BIN4-E2E](performance/results.md), 2026-08-18, `2c047160`/`e662d7fe`) | **1.43 GB peak process**, zero swap delta; eight products byte-identical | Observed footprint is below 4 GiB, but only the 8 GB unified-memory device is physically signed off |
+| [**CUDA**](platforms/cuda.md) | `512x512x192x192 uint16` → audited lossless `uint8`; full scan, no crop/bin | RTX PRO 6000 Blackwell; warm source; 946-run median | **0.450 s** load/decompress ([CUDA-512-LOAD](performance/results.md), 2026-07-20, `b61572e4`) | **9.66 GB decoded resident**; transition peak not retained; selected-frame checksums exact | Full residency does **not** fit 4 or 6 GiB; use a bounded stream or explicit bin |
+| [**Python MPS**](platforms/mps.md) | `1024x1024x192x192 uint16`; full scan/detector, no crop/bin, chunk-backed | Apple Metal GPU; first observed source; storage cache uncontrolled; exact Mac model missing | **4.617 s** load ([MPS-1024-LOAD](performance/results.md), 2026-07-20, `cee0ba5c`) | **77.31 GB logical decoded payload**; process peak not retained; selected frames bit-exact | Chunk backing avoids a duplicate host array, but this row is not 4/6 GiB evidence |
+| [**WebGPU**](platforms/webgpu.md) | `512x512x192x192 uint16` → audited lossless `uint8`; full scan, no crop/bin | Chrome `apple metal-3` adapter; prepared local-file source; 946 cycles | **0.772 s p50** ([WEBGPU-512-FULL](performance/results.md), 2026-07-20, `b61572e4`) | **9.7 GB decoded payload**; browser peak not retained; selected-frame checksums exact | Full residency does **not** fit 4 or 6 GiB; use product-first or explicit detector binning |
+
+A [saved-product reopen](performance/results.md) can take **6.8-8.0 ms**, but
+that state contains only derived products. It is never called a source load.
+
+### What a 4 or 6 GiB budget can hold
+
+This capacity chart fixes the full scan at `512x512` and the native detector at
+`192x192`. “Payload” excludes decoder scratch, staging buffers, allocator
+reserve, and other GPU users unless the row reports a measured process peak.
+
+| Exact plan | Resident payload or planned raw chunk | 4 GiB | 6 GiB | Product path and current evidence |
+|---|---:|---|---|---|
+| Native `uint16`, detector bin 1 | **18.00 GiB** | No | No | A full resident mean-DP/BF/ADF/DF/CoM pass needs a larger device |
+| Audited lossless `uint8`, detector bin 1 | **9.00 GiB** | No | No | Valid only after the count audit proves every retained value fits `uint8` |
+| Exact detector bin 2, general `uint32` result | **9.00 GiB** | No | No | Count-preserving, but not enough reduction for a 4/6 GiB resident stack |
+| Exact detector bin 4 | **1.125 GiB** for audited `uint16`; **2.25 GiB** for general `uint32` | Candidate; headroom required | Candidate; headroom required | The audited `uint16` path passed on the physical 8 GB M2 Air at **1.43 GB process peak**; no 4/6 GiB physical-device signoff yet |
+| Scan-row stream of native `uint16` | Planner reserves half the budget for the raw chunk | **1.97 GiB per chunk; 10 chunks** (56 rows each) | **2.99 GiB per chunk; 7 chunks** (85 rows each) | `screening.prepare` builds mean DP, BF/DF, CoM, and rotation; DPC/iDPC then use those small maps. The 4/6 GiB plans are code-verified, not physical-memory signoff |
+
+Each `512x512 float32` product map is only **1 MiB**, and one `192x192`
+float32 mean diffraction pattern is **144 KiB**. The source working set—not the
+final BF/ADF/DF/DPC image—is the capacity problem.
+
+```{admonition} Small-GPU support today
+:class: important
+The bounded CUDA/MPS screening path covers mean DP, BF, DF, CoM, rotation, and
+iDPC without cropping the scan. ADF has an accelerated CUDA/MPS/WebGPU/native
+Metal detector kernel, but it is not yet emitted by the single-pass
+`screening.prepare` cache. Physical 4 and 6 GiB product-pipeline signoff is
+therefore **Pending**, even though the budget planner and kernels exist. See the
+{ref}`screening API <screening-products>` before choosing a plan.
+```
+
 ## Platform-first module dashboard
 
 Every table keeps the scientific module as its section and puts the execution
@@ -54,19 +101,8 @@ retained. A pending cell is not permission to claim that bin as measured.
 | **CUDA** | ✓ | ✓ | Pending | Pending | Generic count-preserving source path exists; retain real bin 4/8 hardware rows |
 | **Python MPS** | ✓ | ✓ | Pending | Pending | Fused/source-backed binning exists; retain bin 4/8 physical timing and parity |
 | **Native Swift/Metal** | ✓ | Test | ✓ | — | Public load plan supports bins `1/2/4`; physical 8 GB M2 evidence is bin 4 |
-| **WebGPU** | ✓ | ✓ | ✓ | ✓ | Full `512` and true crop `256` bin 2/4/8 checksums are exact on hardware |
+| **WebGPU** | ✓ | ✓ | ✓ | ✓ | [WEBGPU-DET-BIN](performance/results.md): full `512` and true crop `256` bin 2/4/8 checksums are exact on hardware |
 | **CPU reference** | Ref | Ref | Ref | Ref | General integer-sum reference with partial-edge semantics |
-
-#### Retained load timing
-
-| Platform | Size and explicit plan | Benchmark boundary | Retained result | Details / missing comparison |
-|---|---|---|---:|---|
-| **CUDA** | `512x512x192x192`, bin 1, audited lossless-low8 output | Warm-source load/decompress median; 946 runs | **0.450 s** | [CUDA-512-LOAD](performance/results.md), 2026-07-20, `b61572e4`; not first encounter |
-| **Python MPS** | `1024x1024x192x192` native `uint16`, bin 1 | First observed source; storage cache uncontrolled | **4.617 s** | [MPS-1024-LOAD](performance/results.md), 2026-07-20, `cee0ba5c`; exact selected frames, host model missing |
-| **Native Swift/Metal** | `512x512x192x192` `uint16`, full scan, detector bin 4 | First process / first observed source to first complete product; seven isolated runs per fixture | **1.985 / 2.043 s p50** | [M2-AIR-BIN4-E2E](performance/results.md), 2026-08-18, measured `2c047160`, integrated `e662d7fe`; eight products byte-identical, `1.43 GB` peak, zero swap delta |
-| **WebGPU** | `512x512x192x192`, bin 1, audited lossless-low8 output | Prepared local-file full-stack soak; 946 cycles | **0.772 s p50** | [WEBGPU-512-FULL](performance/results.md), 2026-07-20, `b61572e4`; prepared, not cold |
-| **WebGPU** | Full `512`, explicit detector bins 2 / 4 / 8 | Prepared local-file page profiles | **1.199 / 1.212 / 1.106 s** | [WEBGPU-DET-BIN](performance/results.md), 2026-07-20, `cee0ba5c`; exact corrected-frame checksums |
-| **CPU reference** | All sizes/bins | Reference only | **Pending** | No retained comparable accelerator-style load timing |
 
 ### Screening and prepared-product caches — `quantem.gpu.screening`
 
