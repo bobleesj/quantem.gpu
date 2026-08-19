@@ -108,6 +108,6 @@ the FFT or request raw 4D data.
 
 - Local macOS/iOS Explore is Swift + Metal + native HDF5 only.
 - Do not bundle or launch Python, NumPy, or h5py in the app.
-- Remote CUDA workstations may use Python `quantem.gpu`; that stays on the server.
+- Linux CUDA hosts may use Python `quantem.gpu`; that stays on the service host.
 - The app owns cache, latest-wins scheduling, and SwiftUI. This package owns
   the buffer-to-buffer math.

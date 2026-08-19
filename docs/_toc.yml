@@ -41,7 +41,7 @@ parts:
       - file: platforms/cpu-reference
         title: CPU reference
       - file: platforms/remote-cuda
-        title: Remote CUDA service
+        title: Linux CUDA service
 
   - caption: API contracts
     chapters:
