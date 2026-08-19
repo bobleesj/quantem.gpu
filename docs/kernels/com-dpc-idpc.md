@@ -38,17 +38,9 @@ def masked_counts(
     mask_q: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Return float32 counts after applying one detector-space mask."""
-    if counts_R_q.ndim != 4:
-        raise ValueError(
-            "counts_R_q must have axes "
-            "(scan_row, scan_column, detector_row, detector_column)."
-        )
-
     counts_float_R_q = counts_R_q.to(torch.float32)
     if mask_q is None:
         return counts_float_R_q
-    if tuple(mask_q.shape) != tuple(counts_R_q.shape[2:4]):
-        raise ValueError("mask_q must match the detector row and column shape.")
     return counts_float_R_q * mask_q.to(
         device=counts_R_q.device,
         dtype=torch.float32,
@@ -261,9 +253,6 @@ def integrate_idpc_reference(
     dpc_column_R: torch.Tensor,
 ) -> torch.Tensor:
     """Fourier-integrate DPC using the maintained iDPC sign convention."""
-    if dpc_row_R.shape != dpc_column_R.shape or dpc_row_R.ndim != 2:
-        raise ValueError("DPC row and column must be matching 2D scan fields.")
-
     scan_rows, scan_columns = dpc_row_R.shape
     k_row = torch.fft.fftfreq(
         scan_rows,
