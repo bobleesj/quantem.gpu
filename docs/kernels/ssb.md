@@ -1,7 +1,24 @@
 # Single-sideband ptychography
 
-Single-sideband (SSB) ptychography uses the scan-frequency information in a
-4D-STEM acquisition to reconstruct a complex object. The input convention is
+Single-sideband (SSB) ptychography uses scan-frequency interference from a
+4D-STEM acquisition to reconstruct a complex transmission function. The full
+default fit is:
+
+```text
+4D counts → bright-field selection → scan FFT → aberration correction
+          → per-BF phase maps → phase-variance loss
+          → 200 TPE trials → Nelder-Mead refinement
+          → best aberrations → final complex object wave
+```
+
+The `200` is the default number of global Optuna TPE candidates. Each candidate
+is scored with the same full active-bright-field phase-variance objective. The
+best candidate then seeds a local Nelder-Mead refinement. The workflow selects
+the minimum recorded loss; it does not average the 200 parameter sets.
+
+## 1. Data and bright-field evidence
+
+The input convention is
 
 $$
 I[s_r,s_c,q_r,q_c],
@@ -11,12 +28,157 @@ $$
 with scan coordinate $\mathbf s=(s_r,s_c)$ and detector coordinate
 $\mathbf q=(q_r,q_c)$.
 
-After a two-dimensional FFT over scan coordinates, the data are represented
-schematically as $G(\mathbf q,\mathbf k)$, where
-$\mathbf k=(k_r,k_c)$ is scan spatial frequency. Bright-field detector
-positions whose aperture-overlap terms transfer information at $\mathbf k$
-contribute to the object estimate. The exact aperture, aberration phase,
-normalization, and loss are defined by the shared SSB contract.
+The mean diffraction pattern is
+
+$$
+\bar I[\mathbf q]
+=\frac{1}{N_s}\sum_{\mathbf s}I[\mathbf s,\mathbf q].
+$$
+
+The calibrated bright-field disk defines a set $\mathcal B$ of $B$ detector
+coordinates. The default uses every active coordinate in $\mathcal B$; it does
+not silently subsample this evidence for fitting.
+
+## 2. Scan Fourier transform
+
+For each selected bright-field coordinate $\mathbf q_b$, transform over the
+two scan axes:
+
+$$
+G_b[\mathbf k]
+=\mathcal F_{\mathbf s\rightarrow\mathbf k}
+\{I[\mathbf s,\mathbf q_b]\},
+\qquad \mathbf k=(k_r,k_c).
+$$
+
+The prepared $G_b[\mathbf k]$ columns, bright-field indices, aperture geometry,
+and FFT plans remain resident and are reused across optimizer candidates.
+
+Here $\mathbf k$ indexes **scan frequency**, while $b$ indexes one selected
+bright-field detector coordinate. The inverse FFT converts each corrected
+$\mathbf k$ plane back to scan position $\mathbf s$ before the variance is
+formed. The fit therefore does not search for a minimum variance "among
+$\mathbf k$"; it measures phase variance across $b$, averages that variance
+over $\mathbf s$, and minimizes the resulting scalar over candidate
+$\boldsymbol\theta$.
+
+## 3. Candidate aberration correction
+
+For candidate parameters
+$\boldsymbol\theta=(C_{10},C_{12},\phi_{12})$, the hot path evaluates
+
+$$
+\chi_b(\boldsymbol\theta)
+=\frac{2\pi}{\lambda}\,\alpha_b^2
+\left[C_{10}+C_{12}\cos 2(\phi_b-\phi_{12})\right],
+$$
+
+and forms the complex probe factor
+
+$$
+P_b(\boldsymbol\theta)
+=A_b\exp\!\left[-i\chi_b(\boldsymbol\theta)\right].
+$$
+
+Here $\lambda$ is the electron wavelength, $\alpha_b$ and $\phi_b$ are the
+calibrated polar coordinates of bright-field sample $b$, and $A_b$ is its soft
+aperture weight. The corrected per-bright-field object contribution is
+
+$$
+O_b[\mathbf s;\boldsymbol\theta]
+=\mathcal F^{-1}_{\mathbf k\rightarrow\mathbf s}
+\{G_b[\mathbf k]P_b(\boldsymbol\theta)\}.
+$$
+
+## 4. Exact phase-variance objective
+
+Let
+
+$$
+\varphi_b[\mathbf s;\boldsymbol\theta]
+=\arg O_b[\mathbf s;\boldsymbol\theta],
+\qquad
+\bar\varphi[\mathbf s;\boldsymbol\theta]
+=\frac{1}{B}\sum_{b\in\mathcal B}\varphi_b[\mathbf s;\boldsymbol\theta].
+$$
+
+The variance at one scan position and the scalar fit loss are
+
+$$
+V[\mathbf s;\boldsymbol\theta]
+=\frac{1}{B}\sum_{b\in\mathcal B}\varphi_b^2
+-\bar\varphi^2,
+\qquad
+L(\boldsymbol\theta)
+=\frac{1}{N_s}\sum_{\mathbf s}V[\mathbf s;\boldsymbol\theta].
+$$
+
+This is the two-stage mean the implementation computes: moments across all
+active bright-field contributions, followed by the mean spatial variance over
+the scan. These are scientific reduction axes, not averages over optimizer
+trials. The best candidate is
+
+$$
+\hat{\boldsymbol\theta}
+=\operatorname*{arg\,min}_{\boldsymbol\theta}L(\boldsymbol\theta).
+$$
+
+## 5. Default optimization and final result
+
+The default fit evaluates 200 seeded TPE candidates, chooses the lowest-loss
+candidate, and refines it with Nelder-Mead. In compact form,
+
+$$
+\left\{\boldsymbol\theta_j,L_j\right\}_{j=1}^{200}
+\xrightarrow{\operatorname*{arg\,min}_j L_j}
+\boldsymbol\theta_{\mathrm{TPE}}
+\xrightarrow{\mathrm{Nelder\text{-}Mead}
+}
+\hat{\boldsymbol\theta}.
+$$
+
+Thus the "second step" after the 200 trials is a local refinement beginning at
+the best trial, not another average. With the final parameters, the
+complex transmission function is
+
+$$
+O[\mathbf s]
+=\frac{1}{B}\sum_{b\in\mathcal B}
+O_b[\mathbf s;\hat{\boldsymbol\theta}].
+$$
+
+The public result stores this complex64 object wave. Its displayed phase is
+$\arg O$ and its amplitude is $|O|$. The optimizer's $\bar\varphi$ is part of
+the variance objective; it is not substituted for the final complex-object
+phase.
+
+## Reference array expressions
+
+These short expressions explain the shared mathematics; they are not a second
+production backend. NumPy notation is:
+
+```python
+phase_b = np.angle(np.fft.ifft2(corrected_b_k, axes=(-2, -1)))
+mean_phase = phase_b.mean(axis=0)
+variance = np.square(phase_b).mean(axis=0) - np.square(mean_phase)
+loss = variance.mean()
+object_wave = np.fft.ifft2(corrected_b_k.mean(axis=0), axes=(-2, -1))
+```
+
+The equivalent PyTorch expression is:
+
+```python
+phase_b = torch.angle(torch.fft.ifft2(corrected_b_k, dim=(-2, -1)))
+mean_phase = phase_b.mean(dim=0)
+variance = phase_b.square().mean(dim=0) - mean_phase.square()
+loss = variance.mean()
+object_wave = torch.fft.ifft2(corrected_b_k.mean(dim=0), dim=(-2, -1))
+```
+
+CUDA, MPS, and WebGPU may fuse and chunk these operations, but parity is judged
+against the same definitions and full selected bright-field evidence.
+
+## Public workflow
 
 ```python
 from quantem.gpu import SSB

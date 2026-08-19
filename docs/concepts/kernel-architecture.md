@@ -36,7 +36,7 @@ array axes, exactness rules, reusable optimization opportunities, source map,
 and parity gate.
 
 If you are implementing a **runtime**, start in
-[Backend implementation](../platforms/index.md). Each platform page explains
+[Kernel implementations](../platforms/index.md). Each platform page explains
 its memory model, source locations, build commands, profiling tools, and the
 same cross-backend acceptance boundary.
 

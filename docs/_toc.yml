@@ -28,10 +28,10 @@ parts:
       - file: kernels/display-export
         title: Display and export kernels
 
-  - caption: Backend implementation
+  - caption: Kernel implementations
     chapters:
       - file: platforms/index
-        title: Choose a runtime
+        title: Choose a kernel runtime
       - file: platforms/cuda
       - file: platforms/mps
         title: Python MPS
@@ -40,8 +40,20 @@ parts:
       - file: platforms/webgpu
       - file: platforms/cpu-reference
         title: CPU reference
-      - file: platforms/remote-cuda
-        title: Linux CUDA service
+
+  - caption: Remote compute
+    chapters:
+      - file: remote/index
+        title: QuantEM.GPU Remote
+        sections:
+          - file: remote/deployment
+            title: Deploy a Linux CUDA host
+          - file: remote/connect
+            title: Connect locally or over SSH
+          - file: remote/protocol
+            title: Protocol and integration
+          - file: remote/admission
+            title: GPU admission and residency
 
   - caption: API contracts
     chapters:
