@@ -417,6 +417,67 @@ final class MetalDisplayKernelsTests: XCTestCase {
     XCTAssertEqual(nonfinite[255], 1)
   }
 
+  func testFloatFragmentRendersNonfiniteWithExplicitInvalidColor() throws {
+    let device = try metalDevice()
+    let queue = try XCTUnwrap(device.makeCommandQueue())
+    let library = try MetalDisplayKernels.makeLibrary(device: device)
+    let descriptor = MTLRenderPipelineDescriptor()
+    descriptor.vertexFunction = try XCTUnwrap(
+      library.makeFunction(name: MetalDisplayKernels.vertexFunction)
+    )
+    descriptor.fragmentFunction = try XCTUnwrap(
+      library.makeFunction(name: MetalDisplayKernels.floatFragmentFunction)
+    )
+    descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
+    let pipeline = try device.makeRenderPipelineState(descriptor: descriptor)
+    let textureDescriptor = MTLTextureDescriptor.texture2DDescriptor(
+      pixelFormat: .bgra8Unorm,
+      width: 1,
+      height: 1,
+      mipmapped: false
+    )
+    textureDescriptor.usage = .renderTarget
+    textureDescriptor.storageMode = .shared
+    let texture = try XCTUnwrap(device.makeTexture(descriptor: textureDescriptor))
+    let values = try makeBuffer(device: device, values: [Float.nan])
+    let lut = try MetalDisplayKernels.makeLUTBuffer(device: device, colormap: .gray)
+    var parameters = MetalFloatDisplayParameters(
+      rows: 1,
+      cols: 1,
+      low: 0,
+      high: 1,
+      scale: .linear
+    )
+    let pass = MTLRenderPassDescriptor()
+    pass.colorAttachments[0].texture = texture
+    pass.colorAttachments[0].loadAction = .dontCare
+    pass.colorAttachments[0].storeAction = .store
+    let commandBuffer = try XCTUnwrap(queue.makeCommandBuffer())
+    let encoder = try XCTUnwrap(
+      commandBuffer.makeRenderCommandEncoder(descriptor: pass)
+    )
+    encoder.setRenderPipelineState(pipeline)
+    encoder.setFragmentBuffer(values, offset: 0, index: 0)
+    withUnsafeBytes(of: &parameters) { bytes in
+      encoder.setFragmentBytes(bytes.baseAddress!, length: bytes.count, index: 1)
+    }
+    encoder.setFragmentBuffer(lut, offset: 0, index: 2)
+    encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+    encoder.endEncoding()
+    commandBuffer.commit()
+    commandBuffer.waitUntilCompleted()
+    XCTAssertEqual(commandBuffer.status, .completed)
+
+    var pixels = [UInt8](repeating: 0, count: 4)
+    texture.getBytes(
+      &pixels,
+      bytesPerRow: 4,
+      from: MTLRegionMake2D(0, 0, 1, 1),
+      mipmapLevel: 0
+    )
+    XCTAssertEqual(pixels, [143, 63, 143, 255])
+  }
+
   private func metalDevice() throws -> MTLDevice {
     guard let device = MTLCreateSystemDefaultDevice() else {
       throw XCTSkip("No Metal device is available on this host.")

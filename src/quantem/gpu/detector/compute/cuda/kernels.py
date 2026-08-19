@@ -110,6 +110,42 @@ void selected_sum_u32_16f(
 }
 
 extern "C" __global__
+void selected_sum_u64_u8_16f(
+    const unsigned char* __restrict__ data,
+    const int* __restrict__ indices,
+    unsigned long long* __restrict__ out,
+    int nidx,
+    int ndet,
+    int nframes
+) {
+    selected_sum_warp32_16f_u64_impl(data, indices, out, nidx, ndet, nframes);
+}
+
+extern "C" __global__
+void selected_sum_u64_u16_16f(
+    const unsigned short* __restrict__ data,
+    const int* __restrict__ indices,
+    unsigned long long* __restrict__ out,
+    int nidx,
+    int ndet,
+    int nframes
+) {
+    selected_sum_warp32_16f_u64_impl(data, indices, out, nidx, ndet, nframes);
+}
+
+extern "C" __global__
+void selected_sum_u64_u32_16f(
+    const unsigned int* __restrict__ data,
+    const int* __restrict__ indices,
+    unsigned long long* __restrict__ out,
+    int nidx,
+    int ndet,
+    int nframes
+) {
+    selected_sum_warp32_16f_u64_impl(data, indices, out, nidx, ndet, nframes);
+}
+
+extern "C" __global__
 void selected_sum_f32_u8_16f(
     const unsigned char* __restrict__ data,
     const int* __restrict__ indices,
@@ -936,6 +972,44 @@ def cuda_selected_sum_uint32(data: Any, indices: Any) -> Any | None:
     grid = ((n_frames + block[1] - 1) // block[1], 1, 1)
     module = _cuda_vi_module()
     kernel = module.get_function(f"selected_sum_{dtype_key}_16f")
+    kernel(
+        grid,
+        block,
+        (
+            data,
+            indices,
+            out,
+            np.int32(n_idx),
+            np.int32(n_det),
+            np.int32(n_frames),
+        ),
+    )
+    return out.reshape(scan_shape)
+
+
+def cuda_selected_sum_uint64(data: Any, indices: Any) -> Any | None:
+    """Sum selected detector pixels exactly into uint64 outputs."""
+    import cupy as cp
+
+    if type(data).__module__.split(".", 1)[0] != "cupy":
+        return None
+    if not data.flags.c_contiguous:
+        return None
+    dtype_key = _supported_raw_dtype(data.dtype)
+    if dtype_key is None:
+        return None
+    flat, scan_shape, _det_shape = _flatten_scan(data)
+    n_frames = int(flat.shape[0])
+    n_det = int(flat.shape[1])
+    indices = cp.asarray(indices, dtype=cp.int32)
+    n_idx = int(indices.size)
+    if n_idx == 0:
+        return cp.zeros(scan_shape, dtype=cp.uint64)
+
+    out = cp.empty(n_frames, dtype=cp.uint64)
+    block = (32, 16, 1)
+    grid = ((n_frames + block[1] - 1) // block[1], 1, 1)
+    kernel = _cuda_vi_module().get_function(f"selected_sum_u64_{dtype_key}_16f")
     kernel(
         grid,
         block,

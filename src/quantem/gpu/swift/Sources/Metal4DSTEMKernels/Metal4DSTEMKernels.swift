@@ -21,17 +21,40 @@ public enum Metal4DSTEMKernels {
   public static let decodeU8Function =
     "h5lz4dc_unshuffle_source_u8_qh5idx"
   public static let decodeU16Function =
+    "h5lz4dc_unshuffle_u16_single_block_qh5idx"
+  public static let decodeU16TwoBlockFunction =
     "h5lz4dc_unshuffle_u16_qh5idx"
+  public static let decodeU16LosslessU8Function =
+    "h5lz4dc_unshuffle_u16_lossless_u8_qh5idx"
+  public static let decodeU16AuditedLow8Function =
+    "h5lz4dc_unshuffle_u16_audited_low8_qh5idx"
+  public static let decodeU16AuditedLow8Bin4U16WordMajorFunction =
+    "h5lz4dc_unshuffle_u16_audited_low8_bin4_u16_word_major_qh5idx"
+  public static let decodeU16AuditedLow8ScalarFunction =
+    "h5lz4dc_u16_audited_low8_scalar_qh5idx"
+  public static let binU16AuditedLow8ScalarU16WordMajorFunction =
+    "h5lz4dc_bin_u16_audited_low8_scalar_u16_word_major_qh5idx"
+  public static let binU16AuditedLow8ScalarU16WordMajorFrameOwnedFunction =
+    "h5lz4dc_bin_u16_audited_low8_scalar_u16_word_major_frame_owned_qh5idx"
+  public static let clearU16WordMajorRangeFunction =
+    "clear_u16_word_major_range_qh5idx"
 
   public static let detectorProductsU8Function = "detector_products_u8"
+  public static let detectorProductsU8MomentsFunction =
+    "detector_products_u8_with_u64_moments"
   public static let detectorProductsU16Function = "detector_products_u16"
+  public static let detectorProductsU16MomentsFunction =
+    "detector_products_u16_with_u64_moments"
   public static let detectorSumU8Function = "detector_sum_u8"
   public static let detectorSumU16Function = "detector_sum_u16"
   public static let transposeScanWordsFunction = "transpose_scan_words"
+  public static let transposeScanWords32x8Function = "transpose_scan_words_32x8"
   public static let scanBinU8Function = "scan_bin_u8_to_u32_word_major"
   public static let scanBinU16Function = "scan_bin_u16_to_u32_word_major"
   public static let scanDetectorBinU8Function =
     "scan_detector_bin_u8_to_u32_word_major"
+  public static let scanDetectorBinU8ToU16Function =
+    "scan_detector_bin_u8_to_u16_word_major"
   public static let scanDetectorBinU16Function =
     "scan_detector_bin_u16_to_u32_word_major"
   public static let residentRebinU8Function =
@@ -41,9 +64,13 @@ public enum Metal4DSTEMKernels {
   public static let residentRebinU32Function =
     "resident_rebin_u32_word_major_to_u32_word_major"
   public static let detectorProductsU32Function = "detector_products_u32_word_major"
+  public static let detectorProductsU16WordMajorFunction =
+    "detector_products_u16_word_major"
   public static let centerOfMassU8Function = "center_of_mass_u8_word_major"
   public static let centerOfMassU16Function = "center_of_mass_u16_word_major"
   public static let centerOfMassU32Function = "center_of_mass_u32_word_major"
+  public static let centerOfMassU32MomentsFunction = "center_of_mass_u32_moments"
+  public static let centerOfMassU64MomentsFunction = "center_of_mass_u64_moments"
   public static let fullSumU8Function = "full_sum_u8_word_major"
   public static let signedDeltaU8Function = "signed_delta_u8_word_major"
   public static let fullSumU16Function = "full_sum_u16_word_major"
@@ -65,6 +92,9 @@ public enum Metal4DSTEMKernels {
   public static let fftButterflyRowsFunction = "fft_butterfly_rows"
   public static let fftButterflyColumnsFunction = "fft_butterfly_columns"
   public static let fftNormalizeFunction = "fft_normalize_2d"
+  public static let bluesteinPrepareFunction = "bluestein_prepare_2d"
+  public static let complexMultiplyFunction = "complex_multiply_in_place"
+  public static let bluesteinExtractFunction = "bluestein_extract_2d"
   public static let dpcPoissonFunction = "dpc_poisson_frequency"
   public static let dpcExtractPhaseFunction = "dpc_extract_phase"
 

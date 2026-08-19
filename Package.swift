@@ -7,12 +7,43 @@ let package = Package(
   products: [
     .library(name: "MetalDisplayKernels", targets: ["MetalDisplayKernels"]),
     .library(name: "Metal4DSTEMKernels", targets: ["Metal4DSTEMKernels"]),
+    .library(name: "MetalImageFFT", targets: ["MetalImageFFT"]),
+    .library(name: "MetalImageRuntime", targets: ["MetalImageRuntime"]),
+    .library(name: "Native4DSTEMIO", targets: ["Native4DSTEMIO"]),
     .executable(
       name: "metal-display-benchmark",
       targets: ["MetalDisplayBenchmark"]
     ),
+    .executable(
+      name: "native-4dstem-io-benchmark",
+      targets: ["Native4DSTEMIOBenchmark"]
+    ),
+    .executable(
+      name: "metal-image-fft-benchmark",
+      targets: ["MetalImageFFTBenchmark"]
+    ),
+    .executable(
+      name: "metal-image-runtime-benchmark",
+      targets: ["MetalImageRuntimeBenchmark"]
+    ),
   ],
   targets: [
+    .binaryTarget(
+      name: "CHDF5",
+      path: "src/quantem/gpu/swift/Vendor/CHDF5.xcframework"
+    ),
+    .target(
+      name: "CNativeHDF5",
+      dependencies: ["CHDF5"],
+      path: "src/quantem/gpu/swift/Sources/CNativeHDF5",
+      linkerSettings: [.linkedLibrary("z")]
+    ),
+    .target(
+      name: "Native4DSTEMIO",
+      dependencies: ["CNativeHDF5"],
+      path: "src/quantem/gpu/swift/Sources/Native4DSTEMIO",
+      resources: [.copy("Resources")]
+    ),
     .target(
       name: "MetalDisplayKernels",
       path: "src/quantem/gpu/swift/Sources/MetalDisplayKernels",
@@ -23,10 +54,40 @@ let package = Package(
       path: "src/quantem/gpu/swift/Sources/Metal4DSTEMKernels",
       resources: [.copy("Resources")]
     ),
+    .target(
+      name: "MetalImageFFT",
+      path: "src/quantem/gpu/swift/Sources/MetalImageFFT",
+      resources: [.copy("Resources")],
+      linkerSettings: [
+        .linkedFramework("MetalPerformanceShaders"),
+        .linkedFramework("MetalPerformanceShadersGraph"),
+      ]
+    ),
+    .target(
+      name: "MetalImageRuntime",
+      dependencies: ["MetalDisplayKernels"],
+      path: "src/quantem/gpu/swift/Sources/MetalImageRuntime"
+    ),
     .executableTarget(
       name: "MetalDisplayBenchmark",
       dependencies: ["MetalDisplayKernels"],
       path: "src/quantem/gpu/swift/Benchmarks/MetalDisplayBenchmark"
+    ),
+    .executableTarget(
+      name: "Native4DSTEMIOBenchmark",
+      dependencies: ["Native4DSTEMIO"],
+      path: "src/quantem/gpu/swift/Benchmarks/Native4DSTEMIOBenchmark"
+    ),
+    .executableTarget(
+      name: "MetalImageFFTBenchmark",
+      dependencies: ["MetalImageFFT"],
+      path: "src/quantem/gpu/swift/Benchmarks/MetalImageFFTBenchmark",
+      exclude: ["compare_torch_fft.py"]
+    ),
+    .executableTarget(
+      name: "MetalImageRuntimeBenchmark",
+      dependencies: ["MetalImageRuntime", "MetalImageFFT"],
+      path: "src/quantem/gpu/swift/Benchmarks/MetalImageRuntimeBenchmark"
     ),
     .testTarget(
       name: "MetalDisplayKernelsTests",
@@ -37,6 +98,22 @@ let package = Package(
       name: "Metal4DSTEMKernelsTests",
       dependencies: ["Metal4DSTEMKernels"],
       path: "src/quantem/gpu/swift/Tests/Metal4DSTEMKernelsTests"
+    ),
+    .testTarget(
+      name: "MetalImageFFTTests",
+      dependencies: ["MetalImageFFT"],
+      path: "src/quantem/gpu/swift/Tests/MetalImageFFTTests"
+    ),
+    .testTarget(
+      name: "MetalImageRuntimeTests",
+      dependencies: ["MetalImageRuntime"],
+      path: "src/quantem/gpu/swift/Tests/MetalImageRuntimeTests"
+    ),
+    .testTarget(
+      name: "Native4DSTEMIOTests",
+      dependencies: ["Native4DSTEMIO"],
+      path: "src/quantem/gpu/swift/Tests/Native4DSTEMIOTests",
+      resources: [.copy("Fixtures")]
     ),
   ]
 )

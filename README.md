@@ -11,7 +11,7 @@ Install the current release candidate from TestPyPI:
 ```bash
 python -m pip install \
   --extra-index-url https://test.pypi.org/simple/ \
-  "quantem.gpu==0.0.1rc5"
+  "quantem.gpu==0.0.1rc6"
 ```
 
 For CUDA machines, install the CUDA extra in an environment with a matching
@@ -20,7 +20,7 @@ CUDA runtime:
 ```bash
 python -m pip install \
   --extra-index-url https://test.pypi.org/simple/ \
-  "quantem.gpu[cuda]==0.0.1rc5"
+  "quantem.gpu[cuda]==0.0.1rc6"
 ```
 
 For Apple Silicon MPS testing:
@@ -28,8 +28,50 @@ For Apple Silicon MPS testing:
 ```bash
 python -m pip install \
   --extra-index-url https://test.pypi.org/simple/ \
-  "quantem.gpu[mps]==0.0.1rc5"
+  "quantem.gpu[mps]==0.0.1rc6"
 ```
+
+For native applications that browse data on a remote CUDA workstation, the GPU
+computer needs only the CUDA driver and this compute package. It does not need
+Live4DSTEM, `quantem.live`, `quantem.widget`, or a web frontend. The recommended
+setup is one self-contained Conda environment:
+
+```bash
+conda env create -f environment-remote-cuda.yml
+```
+
+The environment is named `quantem-gpu-remote`. Live4DSTEM finds its
+`quantem-gpu` executable in standard Miniforge, Miniconda, and Anaconda
+locations even when a non-interactive SSH session has not activated Conda.
+The equivalent manual installation is:
+
+```bash
+python -m pip install -e ".[cuda,remote]"
+```
+
+In Live4DSTEM, a regular user then selects an existing SSH alias and the remote
+data folder and clicks **Connect**. The Mac app starts the service and creates
+the authenticated SSH tunnel; no server command or GPU index is required. By
+default, datasets remain whole and are distributed across all available CUDA
+GPUs for resident caching. A single GPU can still be selected for a shared
+workstation.
+
+The remote viewer reserves up to 80% of each CUDA GPU for exact resident
+4D-STEM data. The remaining 20% is left for CUDA contexts, decode scratch,
+display products, and other allocations. A single dataset remains on one GPU;
+the aggregate capacity of several GPUs is used to cache different datasets,
+not to split one volume. Live free VRAM is checked again before every load, so
+the service will choose another configured GPU or reject the plan rather than
+overcommit a busy device.
+
+For diagnostics, the equivalent manual command is
+`quantem-gpu serve /data/4dstem --gpus auto --port 8780`. The service listens
+only on `127.0.0.1`. It serves catalog metadata, acquisition readiness, exact
+virtual-detector images, and selected diffraction patterns. It has no web
+frontend or reconstruction scheduler; raw 4D detector data stays on the CUDA
+host. Catalog discovery is recursive: every session carries its complete path
+relative to the selected data root, so identically named folders in different
+projects remain distinct.
 
 For GIF/MP4 movie rendering, include the `movie` extra. Combine extras when
 you also need a device-specific backend:
@@ -37,11 +79,11 @@ you also need a device-specific backend:
 ```bash
 python -m pip install \
   --extra-index-url https://test.pypi.org/simple/ \
-  "quantem.gpu[movie]==0.0.1rc5"
+  "quantem.gpu[movie]==0.0.1rc6"
 
 python -m pip install \
   --extra-index-url https://test.pypi.org/simple/ \
-  "quantem.gpu[mps,movie]==0.0.1rc5"
+  "quantem.gpu[mps,movie]==0.0.1rc6"
 ```
 
 Check which backend will be used:
@@ -283,7 +325,7 @@ Install the matching GPU release candidate before testing widget integration:
 ```bash
 python -m pip install \
   --extra-index-url https://test.pypi.org/simple/ \
-  "quantem.gpu[movie]>=0.0.1rc5"
+  "quantem.gpu[movie]>=0.0.1rc6"
 ```
 
 Then existing widget calls continue to work while the heavy load and compute

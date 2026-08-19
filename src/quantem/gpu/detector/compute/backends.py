@@ -248,6 +248,28 @@ class TorchBackend:
             out[i:i + step] = torch.tensordot(chunk, mask, dims=([2, 3], [0, 1]))
         return out.cpu().numpy()
 
+    def masked_sum_exact(self, det_mask: np.ndarray) -> np.ndarray:
+        """Virtual image with integer counts preserved through host transfer."""
+        torch = self.torch
+        if torch.is_floating_point(self._flat):
+            raise TypeError("Exact detector sums require integer detector data.")
+        mask = torch.as_tensor(
+            np.ascontiguousarray(det_mask), device=self.device, dtype=torch.bool
+        ).reshape(-1)
+        selected = torch.nonzero(mask, as_tuple=False).reshape(-1)
+        if selected.numel() == 0:
+            return np.zeros(self.scan_shape, dtype=np.uint64)
+        flat = self._flat.reshape(self.n_frames, -1)
+        out = torch.empty(self.n_frames, dtype=torch.int64, device=self.device)
+        step = max(
+            1,
+            _SPARSE_MASK_CHUNK_BYTE_BUDGET // max(1, selected.numel() * 8),
+        )
+        for i in range(0, self.n_frames, step):
+            j = min(self.n_frames, i + step)
+            out[i:j] = flat[i:j].index_select(1, selected).to(torch.int64).sum(dim=1)
+        return out.reshape(self.scan_shape).cpu().numpy().astype(np.uint64, copy=False)
+
     def mean_dp(self) -> np.ndarray:
         """Mean DP over all scan positions - int64 accumulate, float only at output.
 
@@ -469,6 +491,18 @@ class MetalRawBackend:
                 cache_attr="_total_cache",
             )
         return vi.reshape(self.scan_shape).astype(np.float32, copy=False)
+
+    def masked_sum_exact(self, det_mask: np.ndarray) -> np.ndarray:
+        """Exact full-resolution integer reduction, bypassing display sidecars."""
+        values = self._masked_sum_with_total_cache(
+            self._cf.vi,
+            np.ascontiguousarray(det_mask),
+            cache_attr="_total_cache",
+        )
+        array = np.asarray(values)
+        if not np.issubdtype(array.dtype, np.integer):
+            raise TypeError("Exact detector sums require integer detector data.")
+        return array.reshape(self.scan_shape).astype(np.uint64, copy=False)
 
     def mean_dp(self) -> np.ndarray:
         detector_sum = getattr(self._cf, "detector_sum", None)
@@ -782,6 +816,37 @@ class CudaKernelCompute:
             return self._fallback_backend().masked_sum(mask_np)
         return out.get().astype(np.float32, copy=False)
 
+    def masked_sum_exact(self, det_mask: np.ndarray) -> np.ndarray:
+        """Return exact uint64 counts using the resident CUDA tensor."""
+        import cupy as cp
+        from quantem.gpu.detector.compute.cuda.kernels import cuda_selected_sum_uint64
+
+        mask_np = np.asarray(det_mask, dtype=bool)
+        if mask_np.shape != self.det_shape:
+            raise ValueError(
+                f"det_mask shape {mask_np.shape} does not match detector shape "
+                f"{self.det_shape}."
+            )
+        selected = int(mask_np.sum())
+        if selected == 0:
+            return np.zeros(self.scan_shape, dtype=np.uint64)
+        if selected == mask_np.size:
+            out = self._total_counts_uint64()
+        elif selected > int(mask_np.size * 0.5):
+            complement = self._device_indices_for(~mask_np)
+            complement_sum = cuda_selected_sum_uint64(self._data, complement)
+            total = self._total_counts_uint64()
+            out = None if total is None or complement_sum is None else total - complement_sum
+        else:
+            out = cuda_selected_sum_uint64(
+                self._data, self._device_indices_for(mask_np)
+            )
+        if out is None:
+            flat = self._data.reshape(self.n_frames, -1)
+            indices = self._device_indices_for(mask_np)
+            out = flat[:, indices].sum(axis=1, dtype=cp.uint64).reshape(self.scan_shape)
+        return out.get().astype(np.uint64, copy=False)
+
     def mean_dp(self) -> np.ndarray:
         import cupy as cp
 
@@ -909,6 +974,38 @@ class CudaPackedUInt4Compute:
         if out is None:
             raise RuntimeError("Packed uint4 CUDA masked-sum kernel is unavailable.")
         return out.get().astype(np.float32, copy=False)
+
+    def masked_sum_exact(self, det_mask: np.ndarray) -> np.ndarray:
+        """Return exact uint64 counts from packed uint4 data."""
+        import cupy as cp
+        from quantem.gpu.detector.compute.cuda.kernels import cuda_selected_sum_uint4
+
+        mask_np = np.asarray(det_mask, dtype=bool)
+        if mask_np.shape != self.det_shape:
+            raise ValueError(
+                f"det_mask shape {mask_np.shape} does not match detector shape "
+                f"{self.det_shape}."
+            )
+        selected = int(mask_np.sum())
+        if selected == 0:
+            return np.zeros(self.scan_shape, dtype=np.uint64)
+        if selected == mask_np.size:
+            out = self._total_counts_uint64()
+        elif selected > int(mask_np.size * 0.5):
+            complement = cuda_selected_sum_uint4(
+                self._data, self._device_indices_for(~mask_np)
+            )
+            total = self._total_counts_uint64()
+            out = None if total is None or complement is None else total - complement.astype(cp.uint64)
+        else:
+            out = cuda_selected_sum_uint4(
+                self._data, self._device_indices_for(mask_np)
+            )
+            if out is not None:
+                out = out.astype(cp.uint64)
+        if out is None:
+            raise RuntimeError("Packed uint4 CUDA exact masked-sum kernel is unavailable.")
+        return out.get().astype(np.uint64, copy=False)
 
     def mean_dp(self) -> np.ndarray:
         from quantem.gpu.detector.compute.cuda.kernels import cuda_mean_dp_uint4

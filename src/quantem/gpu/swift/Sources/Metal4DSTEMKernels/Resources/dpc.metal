@@ -18,6 +18,17 @@ struct DPCPackParameters {
     float4 rotation;
 };
 
+struct Bluestein2DParameters {
+    uint sourceWidth;
+    uint sourceHeight;
+    uint paddedWidth;
+    uint paddedHeight;
+    float direction;
+    float scale;
+    uint _padding0;
+    uint _padding1;
+};
+
 inline float2 complexMultiply(float2 a, float2 b) {
     return float2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x);
 }
@@ -154,6 +165,85 @@ kernel void fft_normalize_2d(
     if (position.x >= parameters.width || position.y >= parameters.height) return;
     uint index = position.y * parameters.width + position.x;
     data[index] /= float(parameters.width * parameters.height);
+}
+
+kernel void bluestein_prepare_2d(
+    device const float2 *source [[buffer(0)]],
+    device float2 *signal [[buffer(1)]],
+    device float2 *chirp [[buffer(2)]],
+    constant Bluestein2DParameters &parameters [[buffer(3)]],
+    uint2 position [[thread_position_in_grid]]
+) {
+    uint column = position.x;
+    uint row = position.y;
+    if (column >= parameters.paddedWidth || row >= parameters.paddedHeight) return;
+    uint index = row * parameters.paddedWidth + column;
+
+    signal[index] = float2(0.0f);
+    if (row < parameters.sourceHeight && column < parameters.sourceWidth) {
+        float angle = parameters.direction * M_PI_F * (
+            float(row * row) / float(parameters.sourceHeight)
+            + float(column * column) / float(parameters.sourceWidth)
+        );
+        float2 factor = float2(cos(angle), sin(angle));
+        signal[index] = complexMultiply(
+            source[row * parameters.sourceWidth + column], factor
+        );
+    }
+
+    int signedRow = int(row);
+    bool validRow = row < parameters.sourceHeight;
+    uint negativeRowStart = parameters.paddedHeight - parameters.sourceHeight + 1u;
+    if (!validRow && row >= negativeRowStart) {
+        signedRow -= int(parameters.paddedHeight);
+        validRow = true;
+    }
+    int signedColumn = int(column);
+    bool validColumn = column < parameters.sourceWidth;
+    uint negativeColumnStart = parameters.paddedWidth - parameters.sourceWidth + 1u;
+    if (!validColumn && column >= negativeColumnStart) {
+        signedColumn -= int(parameters.paddedWidth);
+        validColumn = true;
+    }
+    if (validRow && validColumn) {
+        float angle = -parameters.direction * M_PI_F * (
+            float(signedRow * signedRow) / float(parameters.sourceHeight)
+            + float(signedColumn * signedColumn) / float(parameters.sourceWidth)
+        );
+        chirp[index] = float2(cos(angle), sin(angle));
+    } else {
+        chirp[index] = float2(0.0f);
+    }
+}
+
+kernel void complex_multiply_in_place(
+    device float2 *left [[buffer(0)]],
+    device const float2 *right [[buffer(1)]],
+    constant uint &count [[buffer(2)]],
+    uint index [[thread_position_in_grid]]
+) {
+    if (index >= count) return;
+    left[index] = complexMultiply(left[index], right[index]);
+}
+
+kernel void bluestein_extract_2d(
+    device const float2 *convolved [[buffer(0)]],
+    device float2 *destination [[buffer(1)]],
+    constant Bluestein2DParameters &parameters [[buffer(2)]],
+    uint2 position [[thread_position_in_grid]]
+) {
+    uint column = position.x;
+    uint row = position.y;
+    if (column >= parameters.sourceWidth || row >= parameters.sourceHeight) return;
+    float angle = parameters.direction * M_PI_F * (
+        float(row * row) / float(parameters.sourceHeight)
+        + float(column * column) / float(parameters.sourceWidth)
+    );
+    float2 factor = float2(cos(angle), sin(angle));
+    uint sourceIndex = row * parameters.paddedWidth + column;
+    uint destinationIndex = row * parameters.sourceWidth + column;
+    destination[destinationIndex] =
+        parameters.scale * complexMultiply(convolved[sourceIndex], factor);
 }
 
 inline float frequency(uint index, uint size) {

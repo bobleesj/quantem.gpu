@@ -9,22 +9,24 @@ import numpy as np
 
 from quantem.gpu.detector import mean_dp
 from quantem.gpu.optics.physics import electron_wavelength_angstrom
+from quantem.gpu.ssb.results import SSBResult
 
 from ..protocol import SSBExportState, SSBPrecision
 from .engine import (
     MpsBfColumnFrames,
-    _PreparedMpsSSB,
     _as_chunked_frames,
     _as_sampling,
     _default_object_redraw_chunk_bf,
     _default_object_setup_chunk_bf,
+    _effective_phase_loss_chunk_bf,
     _object_fourier_sum_dynamic,
     _prepare_selection,
-    _require_mlx,
+    _PreparedMpsSSB,
     _reconstruct_prepared,
+    _require_mlx,
     _resolve_bf_selection,
+    _retarget_prepared_rotation,
     _scan_shape,
-    reconstruct as reconstruct_mps,
 )
 from .optimizer import optimize as optimize_mps
 
@@ -129,6 +131,9 @@ class MpsSSBBackend:
             if redraw_chunk_bf is not None
             else max(requested_chunk_bf, int(_default_object_redraw_chunk_bf()))
         )
+        self._phase_chunk_bf = _effective_phase_loss_chunk_bf(
+            requested_chunk_bf, self._scan_shape
+        )
         stored_dc = (
             self._frames.dc_value
             if isinstance(self._frames, MpsBfColumnFrames)
@@ -212,6 +217,10 @@ class MpsSSBBackend:
             verbose=verbose,
             _on_complete=self._retain_fit_state,
         )
+        # Fit leaves large candidate-batch temporaries in MLX's allocator
+        # cache. The retained prepared FFT remains active; release only unused
+        # cache before subsequent slider reconstructions.
+        _require_mlx().clear_cache()
         self._aberrations = dict(result.aberrations)
         return result
 
@@ -235,24 +244,46 @@ class MpsSSBBackend:
         *,
         compute_loss: bool = True,
     ):
-        """Reconstruct the MPS complex object at fixed aberrations."""
+        """Reconstruct from the retained source FFT and geometry."""
 
-        result = reconstruct_mps(
-            self._source_data,
-            voltage_kV=self._voltage_kV,
-            semiangle_mrad=self._semiangle_mrad,
-            scan_sampling_A=self._scan_sampling,
-            det_sampling=self._det_sampling,
+        started = time.perf_counter()
+        if self._prepared is None:
+            self.cache_rotation(math.radians(self._rotation_angle_deg))
+        object_wave = _object_fourier_sum_dynamic(
+            self._prepared,
             C10=float(aberrations["C10"]),
             C12=float(aberrations["C12"]),
             phi12=float(aberrations["phi12"]),
-            rotation_angle_deg=self._rotation_angle_deg,
-            bf_intensity_threshold=self._bf_intensity_threshold,
-            bf_center=self._bf_center,
-            bf_radius=self._bf_radius,
-            compute_loss=compute_loss,
+            chunk_bf=self._chunk_bf,
         )
+        loss = None
+        if compute_loss:
+            _unused_object, loss, _unused_phase = _reconstruct_prepared(
+                self._prepared,
+                C10=float(aberrations["C10"]),
+                C12=float(aberrations["C12"]),
+                phi12=float(aberrations["phi12"]),
+                chunk_bf=self._phase_chunk_bf,
+                compute_loss=True,
+                compute_object=False,
+            )
         self._aberrations = dict(aberrations)
+        result = SSBResult(
+            object_wave=np.asarray(object_wave).astype(np.complex64, copy=False),
+            backend="mps",
+            aberrations=dict(aberrations),
+            rotation_angle_deg=self._rotation_angle_deg,
+            loss=None if loss is None else float(loss),
+            elapsed=time.perf_counter() - started,
+            num_bf=self._selection.size,
+            voltage_kV=self._voltage_kV,
+            semiangle_mrad=self._semiangle_mrad,
+            scan_sampling_A=self._scan_sampling,
+            bf_center=self._selection.center_row_col,
+            bf_radius=self._selection.radius_px,
+            detected_bf_radius=self._selection.detected_radius_px,
+        )
+        _require_mlx().clear_cache()
         return result
 
     def preview(
@@ -345,19 +376,27 @@ class MpsSSBBackend:
         self._fit_preview_phase = None
         self._fit_preview_loss = None
         self._fit_preview_aberrations = None
-        self._prepared = _prepare_selection(
-            self._frames,
-            scan_shape=self._scan_shape,
-            selection=self._selection,
-            voltage_kV=self._voltage_kV,
-            semiangle_mrad=self._semiangle_mrad,
-            scan_sampling=self._scan_sampling,
-            det_sampling=self._det_sampling,
-            rotation_angle_deg=self._rotation_angle_deg,
-            chunk_bf=self._setup_chunk_bf,
-            compact_inactive=True,
-            dc_value_override=self._dc_value_override,
-        )
+        if self._prepared is None:
+            self._prepared = _prepare_selection(
+                self._frames,
+                scan_shape=self._scan_shape,
+                selection=self._selection,
+                voltage_kV=self._voltage_kV,
+                semiangle_mrad=self._semiangle_mrad,
+                scan_sampling=self._scan_sampling,
+                det_sampling=self._det_sampling,
+                rotation_angle_deg=self._rotation_angle_deg,
+                chunk_bf=self._setup_chunk_bf,
+                compact_inactive=True,
+                dc_value_override=self._dc_value_override,
+            )
+        else:
+            _retarget_prepared_rotation(
+                self._prepared,
+                selection=self._selection,
+                rotation_angle_deg=self._rotation_angle_deg,
+            )
+            _require_mlx().clear_cache()
 
     def reconstruct_with_loss(
         self,

@@ -2517,6 +2517,28 @@ def _prepare_master_frames(
     }
 
 
+def _default_decoded_output_dtype(
+    source_dtype: type | np.dtype,
+    *,
+    auto_narrow: bool,
+    detector_bin: int,
+) -> tuple[np.dtype, bool]:
+    """Return the lossless default dtype for one decoded detector frame."""
+    if int(detector_bin) > 1:
+        # A detector output pixel sums detector_bin**2 source values. Keeping
+        # the source uint16 dtype can wrap even though every individual count
+        # is valid, so exact binned loads widen before the first write.
+        return np.dtype(np.uint32), False
+    narrow_mode = bool(
+        auto_narrow
+        and np.dtype(source_dtype) == np.dtype(np.uint32)
+    )
+    return (
+        np.dtype(np.uint16) if narrow_mode else np.dtype(source_dtype),
+        narrow_mode,
+    )
+
+
 def _decompress_prepared(
     prepared: dict,
     verbose: bool = False,
@@ -2611,11 +2633,11 @@ def _decompress_prepared(
             final_dtype = np.dtype(output_dtype)
         narrow_mode = False
     else:
-        narrow_mode = bool(
-            auto_narrow
-            and np.dtype(source_dtype) == np.dtype(np.uint32)
+        final_dtype, narrow_mode = _default_decoded_output_dtype(
+            source_dtype,
+            auto_narrow=auto_narrow,
+            detector_bin=det_bin if streaming_bin else 1,
         )
-        final_dtype = np.uint16 if narrow_mode else source_dtype
 
     # --- Pick batch size ----------------------------------------------------
     # Cap at max_batch=10000 to match the kernel's old launch characteristics
@@ -6756,6 +6778,7 @@ def bin(
     axes: str = "detector",
     dtype=None,
     reduction: str = "sum",
+    edge: str = "crop",
 ):
     """Apply spatial binning on GPU: CuPy or Torch (same type out).
 
@@ -6788,6 +6811,11 @@ def bin(
         sum uses uint32 (CuPy) or int64 (Torch); otherwise float32.
     reduction : str
         ``"sum"`` (default) or ``"mean"``.
+    edge : str
+        ``"crop"`` (default) drops incomplete trailing bins for compatibility.
+        ``"partial"`` keeps them by zero-padding before an exact sum. Partial
+        mean bins are intentionally unsupported because zero padding changes
+        their denominator.
 
     Returns
     -------
@@ -6800,12 +6828,19 @@ def bin(
     >>> stack = bin(stack, factor=4, axes="detector", reduction="sum")  # (N,H,W)
     >>> binned = bin(cupy_4d, factor=2, axes="detector")
     """
-    import torch
+    try:
+        import torch
+    except ImportError:
+        torch = None
 
     if reduction not in ("sum", "mean"):
         raise ValueError(f"reduction must be 'sum' or 'mean', got {reduction!r}")
+    if edge not in ("crop", "partial"):
+        raise ValueError(f"edge must be 'crop' or 'partial', got {edge!r}")
+    if edge == "partial" and reduction == "mean":
+        raise ValueError("edge='partial' supports exact sum reduction only")
 
-    is_torch = isinstance(data, torch.Tensor)
+    is_torch = torch is not None and isinstance(data, torch.Tensor)
     is_cupy = cp is not None and isinstance(data, cp.ndarray)
     if not is_torch and not is_cupy:
         kind = type(data).__name__
@@ -6902,8 +6937,21 @@ def bin(
     if data.ndim == 4:
         sr, sc, kr, kc = data.shape
 
+        def _padded(shape):
+            if is_torch:
+                out = torch.zeros(shape, dtype=data.dtype, device=data.device)
+            else:
+                out = cp.zeros(shape, dtype=data.dtype)
+            out[:sr, :sc, :kr, :kc] = data
+            return out
+
         if axes == "detector":
-            kr2, kc2 = _fit(kr), _fit(kc)
+            if edge == "partial":
+                kr2 = ((kr + factor - 1) // factor) * factor
+                kc2 = ((kc + factor - 1) // factor) * factor
+                data = _padded((sr, sc, kr2, kc2))
+            else:
+                kr2, kc2 = _fit(kr), _fit(kc)
             if kr2 == 0 or kc2 == 0:
                 raise ValueError(
                     f"Detector dims ({kr}, {kc}) too small for factor {factor}"
@@ -6915,7 +6963,12 @@ def bin(
             return _reduce(reshaped, (3, 5))
 
         if axes == "scan":
-            sr2, sc2 = _fit(sr), _fit(sc)
+            if edge == "partial":
+                sr2 = ((sr + factor - 1) // factor) * factor
+                sc2 = ((sc + factor - 1) // factor) * factor
+                data = _padded((sr2, sc2, kr, kc))
+            else:
+                sr2, sc2 = _fit(sr), _fit(sc)
             if sr2 == 0 or sc2 == 0:
                 raise ValueError(
                     f"Scan dims ({sr}, {sc}) too small for factor {factor}"
@@ -6926,7 +6979,14 @@ def bin(
             )
             return _reduce(reshaped, (1, 3))
 
-        sr2, sc2, kr2, kc2 = _fit(sr), _fit(sc), _fit(kr), _fit(kc)
+        if edge == "partial":
+            sr2 = ((sr + factor - 1) // factor) * factor
+            sc2 = ((sc + factor - 1) // factor) * factor
+            kr2 = ((kr + factor - 1) // factor) * factor
+            kc2 = ((kc + factor - 1) // factor) * factor
+            data = _padded((sr2, sc2, kr2, kc2))
+        else:
+            sr2, sc2, kr2, kc2 = _fit(sr), _fit(sc), _fit(kr), _fit(kc)
         if min(sr2, sc2, kr2, kc2) == 0:
             raise ValueError(
                 f"Shape {(sr, sc, kr, kc)} too small for factor {factor}"

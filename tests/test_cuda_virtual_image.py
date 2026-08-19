@@ -134,6 +134,8 @@ def test_cuda_virtual_image_kernel_source_uses_warp_and_fused_dense_path() -> No
     assert "__shfl_down_sync" in _CUDA_VI_CODE
     assert "selected_sum_f32_u16_16f" in _CUDA_VI_CODE
     assert "selected_sum_f32_u32_16f" in _CUDA_VI_CODE
+    assert "selected_sum_u64_u16_16f" in _CUDA_VI_CODE
+    assert "selected_sum_u64_u32_16f" in _CUDA_VI_CODE
     assert "selected_sum_from_total_f32_u16_16f" in _CUDA_VI_CODE
     assert "selected_sum_from_total_f32_u32_16f" in _CUDA_VI_CODE
     assert "selected_sum_f32_uint4_16f" in _CUDA_VI_CODE
@@ -171,6 +173,19 @@ def test_cupy_compute_backend_dispatches_to_cuda_kernel_backend() -> None:
     np.testing.assert_array_equal(dense, np.full((4, 4), dense_mask.sum(), np.float32))
     assert backend._total_cache_uint64 is not None
     assert len(backend._mask_index_cache) == 1
+
+
+def test_cuda_exact_masked_sum_preserves_counts_above_float32_limit() -> None:
+    cp = _cupy_with_device()
+    from quantem.gpu import detector
+
+    data = cp.full((2, 3, 20, 20), 100_000, dtype=cp.uint32)
+    mask = np.ones((20, 20), dtype=bool)
+
+    result = detector.prepare(data).masked_sum_exact(mask)
+
+    assert result.dtype == np.uint64
+    np.testing.assert_array_equal(result, np.full((2, 3), 40_000_000, np.uint64))
 
 
 def test_cuda_compute_backend_caches_full_center_of_mass() -> None:

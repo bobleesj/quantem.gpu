@@ -22,12 +22,15 @@ parts:
           - file: api/images_dpc
           - file: api/ssb
           - file: api/movie
+          - file: api/metal_image
+          - file: api/native_4dstem_io
   - caption: Maintainers
     chapters:
       - file: maintainer/migration
       - file: maintainer/backend-optimization-matrix
       - file: maintainer/backend-4dstem-load-checklist
       - file: maintainer/native-metal-hdf5-postmortem
+      - file: maintainer/remote-cuda-real-data-2026-08-15
       - file: maintainer/ssb-architecture
       - file: maintainer/ssb-performance
       - file: maintainer/webgpu-gqk-memory-history
