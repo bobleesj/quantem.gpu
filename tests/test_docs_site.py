@@ -395,6 +395,9 @@ def test_scientific_kernel_pages_define_coordinates_math_and_optimization() -> N
     assert ":-" not in dpc
     assert "from __future__ import annotations" not in dpc
     assert "ValueError" not in dpc
+    assert "## Process at a glance" in dpc
+    assert "Input | Scientific operation | Output and purpose" in dpc
+    assert "detector distribution → vector field" in dpc
     for step in range(1, 9):
         assert f"### Step {step}" in dpc
 
