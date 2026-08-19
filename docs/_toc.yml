@@ -39,6 +39,7 @@ parts:
       - file: performance/index
         title: Evidence overview
         sections:
+          - file: performance/results
           - file: backends
             title: Current verified results
           - file: performance/methodology

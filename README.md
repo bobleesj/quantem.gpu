@@ -211,6 +211,7 @@ kernel, or evidence file. Documentation starts at [docs/intro.md](docs/intro.md)
 
 - [installation](docs/install.md)
 - [backend capability and evidence](docs/backends.md)
+- [verified benchmark results and provenance](docs/performance/results.md)
 - [Python API](docs/api/index.md)
 - [tutorials](docs/tutorials/load_hdf5.md)
 - [native Swift/Metal APIs](docs/api/native_4dstem_io.md)
