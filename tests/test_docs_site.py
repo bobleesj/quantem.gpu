@@ -177,6 +177,7 @@ def test_dashboard_is_the_dense_human_overview() -> None:
 
 def test_intro_exposes_current_benchmarks_without_erasing_provenance() -> None:
     intro = Path("docs/intro.md").read_text(encoding="utf-8")
+    intro_prose = " ".join(intro.split())
 
     for evidence_id in (
         "M2-AIR-BIN4-E2E",
@@ -184,6 +185,33 @@ def test_intro_exposes_current_benchmarks_without_erasing_provenance() -> None:
         "WEBGPU-512-FULL",
     ):
         assert evidence_id in intro
+
+    for stack in (
+        "Native Swift/Metal",
+        "CUDA — full-source load",
+        "Python MPS/Metal — product-cache build",
+        "WebGPU — full-stack local-file load",
+        "CUDA — resident BF/ADF/DF/CoM kernels",
+        "WebGPU — resident DPC/iDPC",
+        "CUDA — SSB phase + loss",
+        "Python MPS — SSB phase + loss",
+        "Python MPS/Metal — compressed save",
+        "CPU — independent reference",
+    ):
+        assert stack in intro
+
+    for provenance_field in (
+        "Tested date and measured revision",
+        "Physical device",
+        "Data, precision, and load plan",
+        "State and timing boundary",
+        "Latest retained speed",
+        "Correctness and evidence status",
+    ):
+        assert provenance_field in intro
+
+    assert "millisecond resident-kernel timings are not load times" in intro_prose
+    assert "No performance signoff" in intro
 
     for qualifier in (
         "not a platform ranking",
