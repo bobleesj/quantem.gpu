@@ -383,3 +383,47 @@ def test_ssb_page_explains_the_complete_default_fit() -> None:
         "final complex object wave",
     ):
         assert required in text
+
+
+def test_public_api_pages_are_contracts_not_consumer_ui_guides() -> None:
+    required_sections = {
+        "images_dpc.md": (
+            "## Inputs and outputs",
+            "## Shapes, coordinates, dtypes, and units",
+            "## Errors and unsupported requests",
+            "## Provenance",
+            "## Minimal example",
+            "## Integration boundary",
+        ),
+        "ssb.md": (
+            "## Inputs and outputs",
+            "## Shapes, coordinates, dtypes, and units",
+            "## Errors and unsupported requests",
+            "## Provenance and exact reuse",
+            "## Minimal fit",
+            "## Integration boundary",
+        ),
+        "movie.md": (
+            "## Inputs and outputs",
+            "## Shapes, coordinates, dtypes, and units",
+            "## Errors and unsupported requests",
+            "## Provenance",
+            "## Integration boundary",
+        ),
+    }
+
+    for name, sections in required_sections.items():
+        text = Path("docs/api", name).read_text(encoding="utf-8")
+        for section in sections:
+            assert section in text, f"{section!r} missing from {name}"
+        assert "quantem.widget" not in text
+        assert "Show3D" not in text
+
+
+def test_ssb_api_keeps_benchmark_numbers_out_of_the_contract() -> None:
+    text = Path("docs/api/ssb.md").read_text(encoding="utf-8")
+    prose = " ".join(text.split())
+
+    assert "23.058 s" not in text
+    assert "24.528 s" not in text
+    assert "Performance numbers do not live in this API contract" in prose
