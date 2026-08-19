@@ -20,6 +20,15 @@ The PyTorch blocks below form one progressive reference: run them from top to
 bottom. Each equation introduces an operation, and the code immediately below
 defines that operation before a later block calls it.
 
+```{admonition} Executable reference, not copied production kernels
+:class: note
+These are real PyTorch function definitions, not pseudocode. They execute when
+given the tensors and calibrated geometry defined on this page, and they express
+the same equations and reduction axes used for parity. They are not the source
+of the optimized CUDA, MPS/Metal, or WebGPU runtimes; those implementations may
+fuse or stream the same work and are listed in **Source map and gates** below.
+```
+
 ```python
 from typing import NamedTuple
 

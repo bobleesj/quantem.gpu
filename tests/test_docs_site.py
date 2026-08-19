@@ -483,6 +483,7 @@ def test_backend_pages_support_implementers_not_only_api_users() -> None:
 
 def test_ssb_page_explains_the_complete_default_fit() -> None:
     text = Path("docs/kernels/ssb.md").read_text(encoding="utf-8")
+    text_words = " ".join(text.split())
 
     for required in (
         "200 TPE trials",
@@ -501,9 +502,11 @@ def test_ssb_page_explains_the_complete_default_fit() -> None:
         "def evaluate_candidate(",
         "def best_tpe_candidate(",
         "def final_object(",
+        "real PyTorch function definitions, not pseudocode",
+        "not the source of the optimized CUDA, MPS/Metal, or WebGPU runtimes",
         "final complex object wave",
     ):
-        assert required in text
+        assert required in text_words
 
 
 def test_public_api_pages_are_contracts_not_consumer_ui_guides() -> None:
