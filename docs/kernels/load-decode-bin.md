@@ -60,6 +60,37 @@ Profile these stages separately where the storage/runtime makes that possible:
 On unified memory, storage page-in, decode, and device access may overlap. Do
 not invent a separate “upload” number when bytes are mapped without a copy.
 
+## Count-preserving detector binning
+
+For detector bin factor $b$, each output detector pixel is the exact sum of one
+$b\times b$ source block:
+
+$$
+I_b[R_r,R_c,k'_r,k'_c]
+=\sum_{i=0}^{b-1}\sum_{j=0}^{b-1}
+I[R_r,R_c,bk'_r+i,bk'_c+j].
+$$
+
+This preserves the complete scan grid and total detector counts. It does not
+crop real space, interpolate detector values, average counts, or label the
+result as native detector resolution. Incomplete detector-edge blocks are
+summed over the source pixels that exist, using the same rule on every backend.
+
+The efficient path performs this sum while decoded chunks are already on the
+accelerator. It writes the final resident dtype/layout directly instead of
+materializing both a full unbinned volume and a second binned copy. Correctness
+still requires widened accumulation, explicit overflow behavior, bad-pixel
+ordering, original/output detector shapes, selected bin, and the resource-policy
+reason in provenance.
+
+```text
+compressed chunk
+      ↓ GPU decode
+decoded source counts ──► bad-pixel policy ──► exact b×b sum
+                                                   ↓
+                                  final resident binned counts
+```
+
 ## Optimization model
 
 The reusable fast path should:
