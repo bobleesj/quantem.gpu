@@ -18,7 +18,8 @@ Choose your entry point:
 - [Kernel architecture](docs/concepts/kernel-architecture.md): how the
   domain-first source tree and cross-language contracts fit together.
 - [Backend implementation](docs/platforms/index.md): CUDA, Python MPS, native
-  Swift/Metal, WebGPU, remote CUDA, and CPU reference guidance.
+  Swift/Metal, WebGPU, Linux CUDA service deployment, and CPU reference
+  guidance.
 - [Verified performance](docs/performance/results.md): dated, revision-pinned
   measurements with hardware, data shape/dtype, cache state, and load plan.
 - [Developer guide](docs/developer/index.md): adding and reviewing kernels.

@@ -1,12 +1,20 @@
-# Remote CUDA service
+# Linux CUDA service
 
-Remote CUDA keeps raw 4D-STEM data, decoding, and detector products on the GPU
-workstation. A client receives exact scientific arrays and metadata over an
-authenticated SSH tunnel. The service has no presentation dependency.
+The Linux CUDA service keeps raw 4D-STEM data, decoding, and detector products
+on a CUDA host. A client may run on that same host through loopback or on
+another machine through an authenticated SSH tunnel. In both cases, the
+service exposes the same CUDA scientific backend and has no presentation
+dependency.
+
+“Remote” describes where a client happens to run; it is not a separate backend
+or numerical implementation. Use [CUDA](cuda.md) for in-process kernel and
+memory details, and this page for service deployment, transport, admission,
+and resident dataset lifecycle.
 
 ## Install the service environment
 
-The recommended setup is the repository's self-contained Conda environment:
+The recommended Linux service setup is the repository's self-contained Conda
+environment. The existing filename retains `remote-cuda` for compatibility:
 
 ```bash
 conda env create -f environment-remote-cuda.yml
@@ -19,7 +27,7 @@ developer installation is:
 python -m pip install -e ".[cuda,remote]"
 ```
 
-The CUDA runtime must match the workstation driver. Verify the environment
+The CUDA runtime must match the host driver. Verify the environment
 before connecting a client:
 
 ```bash
@@ -30,15 +38,17 @@ conda run -n quantem-gpu-remote python -c \
 
 ## Start and connect
 
-Run the service on the CUDA host:
+Run the service on the Linux CUDA host:
 
 ```bash
 quantem-gpu serve /data/4dstem --gpus auto --port 8780
 ```
 
-The service binds to `127.0.0.1`; SSH owns authentication and encryption. Do
-not expose this HTTP service directly on a public interface. A client connects
-through a local SSH port forward and uses the versioned scientific protocol.
+The service binds to `127.0.0.1`. A client on the same host connects directly
+through loopback. A client on another machine connects through a local SSH port
+forward, with SSH providing authentication and encryption. Do not expose this
+HTTP service directly on a public interface. Both access modes use the same
+versioned scientific protocol.
 
 ## GPU placement and memory
 
@@ -58,7 +68,7 @@ projects remain distinct.
 
 ## Scientific and transport boundary
 
-The remote service owns source discovery, readiness, exact resident caching,
+The Linux CUDA service owns source discovery, readiness, exact resident caching,
 virtual-detector products, and selected diffraction arrays. The native client
 owns presentation and interaction. Raw detector data stays on the CUDA host
 unless the requested API explicitly returns it.

@@ -286,6 +286,18 @@ def test_primary_scientific_docs_use_row_column_component_symbols() -> None:
             assert term not in text, f"{term!r} remains in {path}"
 
 
+def test_linux_cuda_service_is_a_deployment_not_a_backend() -> None:
+    index = Path("docs/platforms/index.md").read_text(encoding="utf-8")
+    service = Path("docs/platforms/remote-cuda.md").read_text(encoding="utf-8")
+
+    assert "[Linux CUDA service](remote-cuda.md)" in index
+    assert "Remote CUDA](remote-cuda.md)" not in index
+    assert service.startswith("# Linux CUDA service")
+    assert "not a separate backend" in service
+    assert "same host" in service
+    assert "SSH tunnel" in service
+
+
 def test_primary_compute_docs_do_not_depend_on_application_frameworks() -> None:
     paths = [
         Path("README.md"),
