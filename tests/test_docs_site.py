@@ -171,7 +171,7 @@ def test_dashboard_is_the_dense_human_overview() -> None:
     ):
         assert provenance in dashboard_words
 
-    assert "I[R_r,R_c,q_r,q_c]" in dashboard
+    assert "I[R_r,R_c,k_r,k_c]" in dashboard
     assert "not ranked" in dashboard
 
 
@@ -370,7 +370,7 @@ def test_scientific_kernel_pages_define_coordinates_math_and_optimization() -> N
         assert "## Optimization model" in text, name
 
     data_model = Path("docs/kernels/data-model.md").read_text(encoding="utf-8")
-    for term in ("R_r", "R_c", "q_r", "q_c", "half-open", "Binning preserves counts"):
+    for term in ("R_r", "R_c", "k_r", "k_c", "half-open", "Binning preserves counts"):
         assert term in data_model
 
     detector = pages["detector"].read_text(encoding="utf-8")
@@ -404,10 +404,10 @@ def test_scientific_kernel_pages_define_coordinates_math_and_optimization() -> N
     ssb = pages["ssb"].read_text(encoding="utf-8")
     for term in (
         "\\phi_b[\\mathbf R;\\boldsymbol\\theta]",
-        "\\Gamma_b(\\mathbf k;\\boldsymbol\\theta)",
+        "\\Gamma_b(\\boldsymbol{\\nu};\\boldsymbol\\theta)",
         "torch.fft.fft2",
         "def probe(",
-        "gamma_b_k =",
+            "gamma_b_nu =",
         "def phase_variance_loss(",
         "torch.argmin",
         "phi_R = torch.angle(object_R)",
@@ -415,10 +415,10 @@ def test_scientific_kernel_pages_define_coordinates_math_and_optimization() -> N
         assert term in ssb
     assert "\\varphi" not in ssb
     assert "\\frac{2\\pi}{\\lambda}" not in ssb
-    assert "G_b[\\mathbf k]P_b" not in ssb
+    assert "G_b[\\boldsymbol{\\nu}]P_b" not in ssb
     assert "dim=(-2, -1)" not in ssb
     assert "movedim(-1, 0)" not in ssb
-    assert "selected_R_q.permute(2, 0, 1)" in ssb
+    assert "selected_R_k.permute(2, 0, 1)" in ssb
     assert "fft2 transforms the last two axes by default" in ssb
 
 
@@ -466,14 +466,38 @@ def test_primary_scientific_docs_use_R_q_notation() -> None:
 
     for path in required_paths:
         text = path.read_text(encoding="utf-8")
-        assert "I[R_r,R_c,q_r,q_c]" in text, path
-        assert "I[s_r,s_c,q_r,q_c]" not in text, path
+        assert "I[R_r,R_c,k_r,k_c]" in text, path
+        assert "I[s_r,s_c,k_r,k_c]" not in text, path
 
     data_model = Path("docs/kernels/data-model.md").read_text(encoding="utf-8")
     ssb = Path("docs/kernels/ssb.md").read_text(encoding="utf-8")
     assert "\\mathbf R=(R_r,R_c)" in data_model
-    assert "\\mathbf q=(q_r,q_c)" in data_model
-    assert "\\mathcal F_{\\mathbf R\\rightarrow\\mathbf k}" in ssb
+    assert "\\mathbf k=(k_r,k_c)" in data_model
+    assert "\\mathcal F_{\\mathbf R\\rightarrow\\boldsymbol{\\nu}}" in ssb
+
+
+def test_public_scientific_notation_uses_k_for_detector_and_nu_for_scan_frequency() -> None:
+    public_pages = [
+        Path("README.md"),
+        Path("docs/intro.md"),
+        Path("docs/dashboard.md"),
+        *sorted(Path("docs/concepts").glob("*.md")),
+        *sorted(Path("docs/kernels").glob("*.md")),
+        *sorted(Path("docs/api").glob("*.md")),
+        *sorted(Path("docs/platforms").glob("*.md")),
+        Path("docs/developer/writing.md"),
+    ]
+
+    for path in public_pages:
+        text = path.read_text(encoding="utf-8")
+        assert "q_r" not in text, path
+        assert "q_c" not in text, path
+        assert "\\mathbf q" not in text, path
+
+    ssb = Path("docs/kernels/ssb.md").read_text(encoding="utf-8")
+    dpc = Path("docs/kernels/com-dpc-idpc.md").read_text(encoding="utf-8")
+    assert "\\boldsymbol{\\nu}" in ssb
+    assert "\\boldsymbol{\\nu}" in dpc
 
 
 def test_remote_compute_is_a_deployment_not_a_kernel_runtime() -> None:

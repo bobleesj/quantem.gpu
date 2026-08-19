@@ -55,7 +55,7 @@ same order:
 
 Use `row` and `col` in public names, metadata, and error messages. In equations,
 use $\mathbf R=(R_r,R_c)$ for real-space probe/scan coordinates and
-$\mathbf q=(q_r,q_c)$ for detector scattering coordinates.
+$\mathbf k=(k_r,k_c)$ for detector scattering coordinates.
 Some plotting libraries request the horizontal coordinate before the vertical
 coordinate. Document that adapter boundary without changing the scientific
 row/column array order.
@@ -91,11 +91,18 @@ unit, normalization, coordinate order, and calibration source.
 Use consistent roles:
 
 - italic lowercase letters for scalars;
-- bold uppercase $\mathbf R$ for real-space probe position and bold lowercase
-  $\mathbf q$ or $\mathbf k$ for reciprocal/frequency coordinates;
+- bold uppercase $\mathbf R$ for real-space probe position, bold lowercase
+  $\mathbf k$ for detector reciprocal coordinates, and
+  $\boldsymbol{\nu}$ for scan spatial-frequency coordinates;
 - uppercase letters for arrays, transforms, or operators when appropriate;
 - roman text for named operators, such as $\operatorname{argmin}$; and
-- semantic subscripts, such as $q_{\min}$, instead of unexplained indices.
+- semantic subscripts, such as $k_{\min}$, instead of unexplained indices.
+
+Current explanatory prose and equations use $\mathbf k$ for detector
+coordinates and $\boldsymbol{\nu}$ for scan frequency. Historical evidence may
+retain literal implementation identifiers such as `G_qk` when renaming them
+would falsify a benchmark artifact, source symbol, or archived command. Label
+those as legacy identifiers rather than treating them as current notation.
 
 In MyST Markdown, write inline math as `$k = 2\pi/\lambda$` and display math in
 `$$` blocks. In Python docstrings, use reStructuredText ``:math:`` for inline

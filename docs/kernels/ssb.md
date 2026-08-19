@@ -42,18 +42,18 @@ Tensor = torch.Tensor
 The input convention is
 
 $$
-I[R_r,R_c,q_r,q_c],
+I[R_r,R_c,k_r,k_c],
 \qquad (\text{row},\text{column})\equiv(r,c),
 $$
 
 with real-space probe/scan coordinate $\mathbf R=(R_r,R_c)$ and detector
-scattering coordinate $\mathbf q=(q_r,q_c)$.
+scattering coordinate $\mathbf k=(k_r,k_c)$.
 
 The mean diffraction pattern is
 
 $$
-\bar I[\mathbf q]
-=\frac{1}{N_R}\sum_{\mathbf R}I[\mathbf R,\mathbf q].
+\bar I[\mathbf k]
+=\frac{1}{N_R}\sum_{\mathbf R}I[\mathbf R,\mathbf k].
 $$
 
 The calibrated bright-field disk defines a set $\mathcal B$ of $B$ detector
@@ -61,61 +61,61 @@ coordinates. The default uses every active coordinate in $\mathcal B$; it does
 not silently subsample this evidence for fitting.
 
 The corresponding code starts with the complete counts and an explicitly
-calibrated detector mask. It defines `selected_R_q` with shape
+calibrated detector mask. It defines `selected_R_k` with shape
 `(R_r, R_c, B)`:
 
 ```python
 def select_bright_field(
-    counts_R_q: Tensor,
-    bf_mask_q: Tensor,
+    counts_R_k: Tensor,
+    bf_mask_k: Tensor,
 ) -> tuple[Tensor, Tensor]:
     """Return the mean diffraction pattern and selected BF columns."""
-    if counts_R_q.ndim != 4:
-        raise ValueError("counts_R_q must have shape (R_r, R_c, q_r, q_c)")
-    if bf_mask_q.shape != counts_R_q.shape[2:]:
-        raise ValueError("bf_mask_q must match the detector shape (q_r, q_c)")
+    if counts_R_k.ndim != 4:
+        raise ValueError("counts_R_k must have shape (R_r, R_c, k_r, k_c)")
+    if bf_mask_k.shape != counts_R_k.shape[2:]:
+        raise ValueError("bf_mask_k must match the detector shape (k_r, k_c)")
 
     # Average over scan row and scan column. Detector row and column remain.
-    mean_q = counts_R_q.to(torch.float32).mean(dim=(0, 1))
+    mean_k = counts_R_k.to(torch.float32).mean(dim=(0, 1))
 
     # A two-dimensional Boolean detector mask becomes one BF-sample axis B.
-    selected_R_q = counts_R_q[:, :, bf_mask_q]  # (R_r, R_c, B)
-    return mean_q, selected_R_q
+    selected_R_k = counts_R_k[:, :, bf_mask_k]  # (R_r, R_c, B)
+    return mean_k, selected_R_k
 ```
 
 ## 2. Scan Fourier transform
 
-For each selected bright-field coordinate $\mathbf q_b$, transform over the
+For each selected bright-field coordinate $\mathbf k_b$, transform over the
 two scan axes:
 
 $$
-G_b[\mathbf k]
-=\mathcal F_{\mathbf R\rightarrow\mathbf k}
-\{I[\mathbf R,\mathbf q_b]\},
-\qquad \mathbf k=(k_r,k_c).
+G_b[\boldsymbol{\nu}]
+=\mathcal F_{\mathbf R\rightarrow\boldsymbol{\nu}}
+\{I[\mathbf R,\mathbf k_b]\},
+\qquad \boldsymbol{\nu}=(\nu_r,\nu_c).
 $$
 
-The prepared $G_b[\mathbf k]$ columns, bright-field indices, aperture geometry,
+The prepared $G_b[\boldsymbol{\nu}]$ columns, bright-field indices, aperture geometry,
 and FFT plans remain resident and are reused across optimizer candidates.
 
 Moving the already-defined bright-field axis first gives the mathematical
-$G_b[\mathbf k]$ layout:
+$G_b[\boldsymbol{\nu}]$ layout:
 
 ```python
-def scan_fft(selected_R_q: Tensor) -> Tensor:
+def scan_fft(selected_R_k: Tensor) -> Tensor:
     """Transform the two scan axes and return shape (B, R_r, R_c)."""
     # Put the BF-sample axis first. The two scan axes are now last.
-    scan_images_b_R = selected_R_q.permute(2, 0, 1)
+    scan_images_b_R = selected_R_k.permute(2, 0, 1)
 
     # fft2 transforms the last two axes by default: scan row and scan column.
     return torch.fft.fft2(scan_images_b_R)
 ```
 
-Here $\mathbf k$ indexes **scan frequency**, while $b$ indexes one selected
+Here $\boldsymbol{\nu}$ indexes **scan frequency**, while $b$ indexes one selected
 bright-field detector coordinate. The inverse FFT converts each corrected
-$\mathbf k$ plane back to probe/scan position $\mathbf R$ before the variance is
+$\boldsymbol{\nu}$ plane back to probe/scan position $\mathbf R$ before the variance is
 formed. The fit therefore does not search for a minimum variance "among
-$\mathbf k$"; it measures phase variance across $b$, averages that variance
+$\boldsymbol{\nu}$"; it measures phase variance across $b$, averages that variance
 over $\mathbf R$, and minimizes the resulting scalar over candidate
 $\boldsymbol\theta$.
 
@@ -140,44 +140,44 @@ $$
 
 Here $\lambda$ is the electron wavelength, $\alpha(\mathbf u)$ and
 $\phi(\mathbf u)$ are calibrated polar coordinates, and $A(\mathbf u)$ is the
-soft aperture weight. For bright-field coordinate $\mathbf q_b$, the SSB
+soft aperture weight. For bright-field coordinate $\mathbf k_b$, the SSB
 overlap is
 
 $$
-\Gamma_b(\mathbf k;\boldsymbol\theta)
-=P_{\boldsymbol\theta}(\mathbf q_b-\mathbf k)
- P_{\boldsymbol\theta}^{*}(\mathbf q_b)
--P_{\boldsymbol\theta}^{*}(\mathbf q_b+\mathbf k)
- P_{\boldsymbol\theta}(\mathbf q_b).
+\Gamma_b(\boldsymbol{\nu};\boldsymbol\theta)
+=P_{\boldsymbol\theta}(\mathbf k_b-\boldsymbol{\nu})
+ P_{\boldsymbol\theta}^{*}(\mathbf k_b)
+-P_{\boldsymbol\theta}^{*}(\mathbf k_b+\boldsymbol{\nu})
+ P_{\boldsymbol\theta}(\mathbf k_b).
 $$
 
 The phase-only correction and its real-space contribution are
 
 $$
-C_b(\mathbf k;\boldsymbol\theta)
-=G_b(\mathbf k)
-\frac{\Gamma_b^{*}(\mathbf k;\boldsymbol\theta)}
-{\max\left(|\Gamma_b(\mathbf k;\boldsymbol\theta)|,\epsilon\right)},
+C_b(\boldsymbol{\nu};\boldsymbol\theta)
+=G_b(\boldsymbol{\nu})
+\frac{\Gamma_b^{*}(\boldsymbol{\nu};\boldsymbol\theta)}
+{\max\left(|\Gamma_b(\boldsymbol{\nu};\boldsymbol\theta)|,\epsilon\right)},
 \qquad
 O_b(\mathbf R;\boldsymbol\theta)
-=\mathcal F^{-1}_{\mathbf k\rightarrow\mathbf R}
-\left\{C_b(\mathbf k;\boldsymbol\theta)\right\}.
+=\mathcal F^{-1}_{\boldsymbol{\nu}\rightarrow\mathbf R}
+\left\{C_b(\boldsymbol{\nu};\boldsymbol\theta)\right\}.
 $$
 
 The implementation treats the DC term explicitly rather than allowing an
 undefined phase at $|\Gamma|=0$.
 
 One candidate correction translates directly to PyTorch. The geometry arrays
-for $\mathbf q_b$, $\mathbf q_b-\mathbf k$, and
-$\mathbf q_b+\mathbf k$ are calibration outputs prepared once. Their type and
+for $\mathbf k_b$, $\mathbf k_b-\boldsymbol{\nu}$, and
+$\mathbf k_b+\boldsymbol{\nu}$ are calibration outputs prepared once. Their type and
 shapes are defined before the correction function uses them:
 
 ```python
 class SSBGeometry(NamedTuple):
     # Each tuple is (alpha_squared, azimuth, aperture).
-    q: tuple[Tensor, Tensor, Tensor]          # each tensor: (B,)
-    q_minus_k: tuple[Tensor, Tensor, Tensor]  # each tensor: (B, R_r, R_c)
-    q_plus_k: tuple[Tensor, Tensor, Tensor]   # each tensor: (B, R_r, R_c)
+    k: tuple[Tensor, Tensor, Tensor]             # each tensor: (B,)
+    k_minus_nu: tuple[Tensor, Tensor, Tensor]    # each tensor: (B, R_r, R_c)
+    k_plus_nu: tuple[Tensor, Tensor, Tensor]     # each tensor: (B, R_r, R_c)
 
 
 def probe(
@@ -197,32 +197,32 @@ def probe(
 
 
 def corrected_object(
-    g_b_k: Tensor,
+    g_b_nu: Tensor,
     geometry: SSBGeometry,
     theta: tuple[Tensor, Tensor, Tensor],
     wavelength: Tensor,
     dc_value: Tensor,
 ) -> Tensor:
     """Return O_b(R; theta) with shape (B, R_r, R_c)."""
-    p_q = probe(*geometry.q, theta, wavelength)[:, None, None]
-    p_minus = probe(*geometry.q_minus_k, theta, wavelength)
-    p_plus = probe(*geometry.q_plus_k, theta, wavelength)
+    p_k = probe(*geometry.k, theta, wavelength)[:, None, None]
+    p_minus = probe(*geometry.k_minus_nu, theta, wavelength)
+    p_plus = probe(*geometry.k_plus_nu, theta, wavelength)
 
-    gamma_b_k = p_minus * p_q.conj() - p_plus.conj() * p_q
-    unit_gamma = gamma_b_k / gamma_b_k.abs().clamp_min(1e-8)
-    corrected_b_k = g_b_k * unit_gamma.conj()
+    gamma_b_nu = p_minus * p_k.conj() - p_plus.conj() * p_k
+    unit_gamma = gamma_b_nu / gamma_b_nu.abs().clamp_min(1e-8)
+    corrected_b_nu = g_b_nu * unit_gamma.conj()
 
     # The overlap phase is undefined at zero scan frequency, so retain the
     # explicitly prepared DC value instead of dividing by zero.
-    corrected_b_k[:, 0, 0] = dc_value
+    corrected_b_nu[:, 0, 0] = dc_value
 
-    # ifft2 again uses the last two axes, converting (k_r, k_c) to (R_r, R_c).
-    return torch.fft.ifft2(corrected_b_k)
+    # ifft2 again uses the last two axes, converting (\nu_r, \nu_c) to (R_r, R_c).
+    return torch.fft.ifft2(corrected_b_nu)
 ```
 
-Here `geometry.q` contains `(alpha2, azimuth, aperture)` arrays with shape
-`(B,)`; `q_minus_k` and `q_plus_k` contain the broadcast geometry with shape
-`(B, R_r, R_c)`. The prepared `g_b_k` and geometry stay resident. A candidate
+Here `geometry.k` contains `(alpha2, azimuth, aperture)` arrays with shape
+`(B,)`; `k_minus_nu` and `k_plus_nu` contain the broadcast geometry with shape
+`(B, R_r, R_c)`. The prepared `g_b_nu` and geometry stay resident. A candidate
 changes only `theta`, probe phases, the normalized overlap, and the inverse
 transform.
 
@@ -268,16 +268,16 @@ the complete candidate function is short:
 
 ```python
 def evaluate_candidate(
-    selected_R_q: Tensor,
+    selected_R_k: Tensor,
     geometry: SSBGeometry,
     theta: tuple[Tensor, Tensor, Tensor],
     wavelength: Tensor,
     dc_value: Tensor,
 ) -> tuple[Tensor, Tensor]:
     """Return scalar loss and O_b(R; theta) for one candidate."""
-    g_b_k = scan_fft(selected_R_q)
+    g_b_nu = scan_fft(selected_R_k)
     object_b_R = corrected_object(
-        g_b_k,
+        g_b_nu,
         geometry,
         theta,
         wavelength,
@@ -396,7 +396,7 @@ SSB performance is governed by data preparation, FFT layout, active
 bright-field count, phase evaluation, and optimizer trial scheduling. Reusable
 optimizations include:
 
-- keeping prepared bright-field columns and $G(\mathbf q,\mathbf k)$ on device;
+- keeping prepared bright-field columns and $G(\mathbf k,\boldsymbol{\nu})$ on device;
 - using backend-qualified FFT layouts without changing normalization;
 - fusing phase/object/loss work when the same intermediates are consumed;
 - batching aberration trials without duplicating the prepared source;
@@ -411,7 +411,7 @@ parameters, precision, and optimizer settings match.
 ## Coordinate and unit checks
 
 - scan sampling is ordered `(row, column) ≡ (r, c)` and carries length units;
-- detector angles are ordered $(q_r,q_c)$ and carry calibrated angle or
+- detector angles are ordered $(k_r,k_c)$ and carry calibrated angle or
   reciprocal-length units;
 - aberration coefficients and angles use the documented public units; and
 - any transpose or Hermitian storage is private and reversed before producing

@@ -27,7 +27,7 @@ automatic resource policy.
 The logical output is
 
 $$
-I[R_r,R_c,q_r,q_c],
+I[R_r,R_c,k_r,k_c],
 \qquad (\text{row},\text{column})\equiv(r,c).
 $$
 

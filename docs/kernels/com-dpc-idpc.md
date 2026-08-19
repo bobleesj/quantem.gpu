@@ -1,7 +1,7 @@
 # CoM, DPC, and iDPC
 
 Center of mass converts each diffraction pattern into a detector-space vector.
-For optional detector mask $M[q_r,q_c]$, first compute
+For optional detector mask $M[k_r,k_c]$, first compute
 
 ```text
 4D counts → fused intensity/row-moment/column-moment reduction
@@ -13,8 +13,8 @@ For optional detector mask $M[q_r,q_c]$, first compute
 
 | Step | Input | Scientific operation | Output and purpose |
 |---:|---|---|---|
-| 1 | 4D counts $I[\mathbf R,\mathbf q]$ | Identify scan and detector row/column axes | One unambiguous coordinate contract for every runtime |
-| 2 | Counts and optional detector mask $M(\mathbf q)$ | Exclude detector pixels outside the scientifically selected region | Masked counts used consistently by intensity and both moments |
+| 1 | 4D counts $I[\mathbf R,\mathbf k]$ | Identify scan and detector row/column axes | One unambiguous coordinate contract for every runtime |
+| 2 | Counts and optional detector mask $M(\mathbf k)$ | Exclude detector pixels outside the scientifically selected region | Masked counts used consistently by intensity and both moments |
 | 3 | Masked diffraction pattern at each scan position | Sum intensity and detector row/column moments | Mean-centered CoM fields $\mu_r(\mathbf R)$ and $\mu_c(\mathbf R)$ |
 | 4 | CoM vector field | Rotate the two vector components by a candidate angle | Candidate DPC field $\mathbf g(\mathbf R)$ |
 | 5 | Candidate DPC field | Measure its interior curl | One scalar inconsistency score per candidate |
@@ -38,9 +38,9 @@ MPS/Metal, and WebGPU kernels fuse or stream these operations for performance.
 
 ### Step 1 — Define the tensor axes
 
-Start with a 4D count tensor `counts_R_q` whose axes are
+Start with a 4D count tensor `counts_R_k` whose axes are
 `(scan_row, scan_column, detector_row, detector_column)`, plus an optional
-detector mask `mask_q` with shape `(detector_row, detector_column)`:
+detector mask `mask_k` with shape `(detector_row, detector_column)`:
 
 ```python
 import torch
@@ -49,7 +49,7 @@ import torch
 ### Step 2 — Apply the detector mask
 
 $$
-S[R_r,R_c]=\sum_{q_r,q_c}M[q_r,q_c]I[R_r,R_c,q_r,q_c].
+S[R_r,R_c]=\sum_{k_r,k_c}M[k_r,k_c]I[R_r,R_c,k_r,k_c].
 $$
 
 The detector axes are explicitly dimensions 2 and 3. The mask is applied
@@ -57,15 +57,15 @@ before all three reductions:
 
 ```python
 def masked_counts(
-    counts_R_q: torch.Tensor,
-    mask_q: torch.Tensor | None = None,
+    counts_R_k: torch.Tensor,
+    mask_k: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Return float32 counts after applying one detector-space mask."""
-    counts_float_R_q = counts_R_q.to(torch.float32)
-    if mask_q is None:
-        return counts_float_R_q
-    return counts_float_R_q * mask_q.to(
-        device=counts_R_q.device,
+    counts_float_R_k = counts_R_k.to(torch.float32)
+    if mask_k is None:
+        return counts_float_R_k
+    return counts_float_R_k * mask_k.to(
+        device=counts_R_k.device,
         dtype=torch.float32,
 )
 ```
@@ -76,13 +76,13 @@ Then
 
 $$
 \mu_r[R_r,R_c]
-=\frac{\sum_{q_r,q_c}q_rM[q_r,q_c]I[R_r,R_c,q_r,q_c]}
+=\frac{\sum_{k_r,k_c}k_rM[k_r,k_c]I[R_r,R_c,k_r,k_c]}
 {S[R_r,R_c]},
 $$
 
 $$
 \mu_c[R_r,R_c]
-=\frac{\sum_{q_r,q_c}q_cM[q_r,q_c]I[R_r,R_c,q_r,q_c]}
+=\frac{\sum_{k_r,k_c}k_cM[k_r,k_c]I[R_r,R_c,k_r,k_c]}
 {S[R_r,R_c]}.
 $$
 
@@ -92,35 +92,35 @@ public CoM workflow does:
 
 ```python
 def center_of_mass_reference(
-    counts_R_q: torch.Tensor,
-    mask_q: torch.Tensor | None = None,
+    counts_R_k: torch.Tensor,
+    mask_k: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Compute mean-centered CoM in public detector (row, column) order."""
-    weighted_R_q = masked_counts(counts_R_q, mask_q)
+    weighted_R_k = masked_counts(counts_R_k, mask_k)
     detector_dimensions = (2, 3)
-    intensity_R = weighted_R_q.sum(dim=detector_dimensions)
+    intensity_R = weighted_R_k.sum(dim=detector_dimensions)
     safe_intensity_R = torch.where(
         intensity_R > 0,
         intensity_R,
         torch.ones_like(intensity_R),
     )
 
-    detector_rows, detector_columns = counts_R_q.shape[2:4]
-    q_row = torch.arange(
+    detector_rows, detector_columns = counts_R_k.shape[2:4]
+    k_row = torch.arange(
         detector_rows,
-        device=counts_R_q.device,
+        device=counts_R_k.device,
         dtype=torch.float32,
     ).reshape(1, 1, detector_rows, 1)
-    q_column = torch.arange(
+    k_column = torch.arange(
         detector_columns,
-        device=counts_R_q.device,
+        device=counts_R_k.device,
         dtype=torch.float32,
     ).reshape(1, 1, 1, detector_columns)
 
-    com_row_R = (weighted_R_q * q_row).sum(
+    com_row_R = (weighted_R_k * k_row).sum(
         dim=detector_dimensions
     ) / safe_intensity_R
-    com_column_R = (weighted_R_q * q_column).sum(
+    com_column_R = (weighted_R_k * k_column).sum(
         dim=detector_dimensions
     ) / safe_intensity_R
 
@@ -270,12 +270,12 @@ selected angle and component order remain identical to the readable reference.
 ### Step 7 — Fourier-integrate the aligned field
 
 Integrated DPC reconstructs a scalar phase-like field in Fourier space. With
-scan frequency $\mathbf k=(k_r,k_c)$, a standard least-squares integration is
+scan frequency $\boldsymbol{\nu}=(\nu_r,\nu_c)$, a standard least-squares integration is
 
 $$
-\hat\phi(\mathbf k)
- =\frac{-0.25i\,[k_r\hat g_r(\mathbf k)+k_c\hat g_c(\mathbf k)]}
-{k_r^2+k_c^2+\epsilon},
+\hat\phi(\boldsymbol{\nu})
+ =\frac{-0.25i\,[\nu_r\hat g_r(\boldsymbol{\nu})+\nu_c\hat g_c(\boldsymbol{\nu})]}
+{\nu_r^2+\nu_c^2+\epsilon},
 $$
 
 with the zero-frequency value and normalization fixed by the shared contract.
@@ -288,29 +288,29 @@ def integrate_idpc_reference(
 ) -> torch.Tensor:
     """Fourier-integrate DPC using the maintained iDPC sign convention."""
     scan_rows, scan_columns = dpc_row_R.shape
-    k_row = torch.fft.fftfreq(
+    nu_row = torch.fft.fftfreq(
         scan_rows,
         device=dpc_row_R.device,
         dtype=torch.float32,
     )
-    k_column = torch.fft.fftfreq(
+    nu_column = torch.fft.fftfreq(
         scan_columns,
         device=dpc_row_R.device,
         dtype=torch.float32,
     )
-    k_row_R, k_column_R = torch.meshgrid(k_row, k_column, indexing="ij")
+    nu_row_R, nu_column_R = torch.meshgrid(nu_row, nu_column, indexing="ij")
 
-    dpc_row_k = torch.fft.fft2(dpc_row_R.to(torch.float32))
-    dpc_column_k = torch.fft.fft2(dpc_column_R.to(torch.float32))
-    frequency_squared_R = k_row_R * k_row_R + k_column_R * k_column_R
+    dpc_row_nu = torch.fft.fft2(dpc_row_R.to(torch.float32))
+    dpc_column_nu = torch.fft.fft2(dpc_column_R.to(torch.float32))
+    frequency_squared_R = nu_row_R * nu_row_R + nu_column_R * nu_column_R
     safe_frequency_squared_R = frequency_squared_R.clone()
     safe_frequency_squared_R[0, 0] = 1.0
 
-    phase_k = (-0.25j) * (
-        k_row_R * dpc_row_k + k_column_R * dpc_column_k
+    phase_nu = (-0.25j) * (
+        nu_row_R * dpc_row_nu + nu_column_R * dpc_column_nu
     ) / safe_frequency_squared_R
-    phase_k[0, 0] = 0.0
-    phase_R = torch.fft.ifft2(phase_k).real.to(torch.float32)
+    phase_nu[0, 0] = 0.0
+    phase_R = torch.fft.ifft2(phase_nu).real.to(torch.float32)
     return -(phase_R - phase_R.mean())
 ```
 
@@ -319,7 +319,7 @@ def integrate_idpc_reference(
 A complete readable reference is therefore:
 
 ```python
-com_row_R, com_column_R = center_of_mass_reference(counts_R_q, mask_q)
+com_row_R, com_column_R = center_of_mass_reference(counts_R_k, mask_k)
 aligned_row_R, aligned_column_R, angle_deg, use_transpose = (
     select_dpc_rotation_reference(com_row_R, com_column_R)
 )
@@ -348,7 +348,7 @@ print(result.rotation_deg, result.use_transpose)
 ## Optimization model
 
 CoM should not require three full detector-volume traversals. A fused moment
-kernel accumulates $S$, $\sum q_rI$, and $\sum q_cI$ in one pass, with masks
+kernel accumulates $S$, $\sum k_rI$, and $\sum k_cI$ in one pass, with masks
 and bad-pixel treatment applied in the same order as the reference. The large
 source remains accelerator-resident; only the small scan-shaped moment fields
 continue to rotation and FFT integration.
