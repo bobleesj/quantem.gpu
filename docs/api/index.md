@@ -1,7 +1,8 @@
 # API guide
 
-This is a practical API guide for the migrated compute package. It focuses on
-the public functions scientists and downstream packages should call first.
+This guide maps public scientific contracts to their stable entry points. Use
+it when integrating QuantEM.GPU; use the scientific-kernel and runtime sections
+when implementing or optimizing those contracts.
 
 ```python
 import quantem.gpu as qgpu
@@ -9,12 +10,15 @@ import quantem.gpu as qgpu
 qgpu.device.detect()
 ```
 
-Main namespaces:
-
-- `quantem.gpu.io` for HDF5 discovery, inspection, loading, and saving.
-- `quantem.gpu.detector` for BF, DF, ADF, and virtual-detector images.
-- `quantem.gpu.dpc` and `quantem.gpu.parallax` for their scientific workflows.
-- `quantem.gpu.SSB` for SSB fitting and reconstruction.
+| Domain | Stable entry point | Primary result |
+|---|---|---|
+| device selection | `quantem.gpu.device` | explicit backend/device description |
+| discovery, load, and save | `quantem.gpu.io` | typed data plus provenance metadata |
+| BF, DF, ADF, mean diffraction | `quantem.gpu.detector` | scan- or detector-shaped product |
+| CoM, DPC, and iDPC | `quantem.gpu.dpc` | `DPCResult` |
+| parallax reconstruction | `quantem.gpu.parallax` | domain reconstruction result |
+| SSB fitting/reconstruction | `quantem.gpu.SSB` | `SSBResult` or `SSBSeriesResult` |
+| display/export math | `quantem.gpu.display`, `quantem.gpu.movie` | display buffer or encoded artifact |
 
 Native Swift/Metal products for macOS and iOS clients:
 
