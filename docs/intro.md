@@ -17,6 +17,64 @@ WebGPU, and an explicit CPU reference.
 [Benchmarks and parity](performance/index.md).
 ```
 
+## Speed benchmark overview
+
+These are the current headline measurements. They are intentionally labeled by
+load state and scientific plan because a prepared reopen, a warm source, and a
+first-process application load answer different performance questions.
+
+| Runtime and device | Measured boundary and scientific plan | Speed | Evidence |
+|---|---|---:|---|
+| Native Swift/Metal; physical 8 GB M2 MacBook Air | First-process action → first complete product; full `512x512` scan, `192x192` `uint16` detector, no crop, explicit exact-sum detector bin 4 | **1.985-2.043 s wall p50** across two fixtures | [M2-AIR-BIN4-E2E](performance/results.md) |
+| CUDA; NVIDIA RTX PRO 6000 Blackwell | Warm-source load/decompress; full `512x512x192x192`, no crop/bin | **0.450 s median** | [CUDA-512-LOAD](performance/results.md) |
+| WebGPU; Apple Metal adapter | Prepared local-file full-stack load; full `512x512x192x192`, no crop/bin | **0.772 s p50** | [WEBGPU-512-FULL](performance/results.md) |
+
+These rows are not a platform ranking. Click an evidence ID for its date,
+measured revision, physical device, source shape/dtype, cache state, load plan,
+bin/crop plan, timing boundary, memory, and parity artifact. See the
+[complete benchmark dashboard](dashboard.md),
+[methodology](performance/methodology.md), and
+[revision ledger](performance/changes.md).
+
+## How loading becomes a usable product
+
+```text
+START WALL CLOCK
+      │
+      ▼
+HDF5 master + compressed shards
+      │  open, metadata, source identity, prepared index lookup/build
+      ▼
+Verified source geometry: scan shape, detector shape, dtype, calibration
+      │  estimate resident + scratch + product memory
+      ▼
+Explicit load plan: full scan; no automatic real-space crop;
+                    detector bin; source/accumulation/output dtype; reason
+      │  plan source-aligned chunks and reusable buffers
+      ▼
+Storage read ──overlap──► GPU bitshuffle/LZ4 decode
+                              │  bad-pixel policy + dtype conversion
+                              │  + exact detector sum/bin when selected
+                              ▼
+Resident I[R_r,R_c,k_r,k_c] + complete provenance
+      │  fused/reused GPU reductions
+      ▼
+Mean diffraction, BF/ADF/DF, CoM, DPC, iDPC
+      │
+      ▼
+FIRST COMPLETE USABLE PRODUCT  ← STOP WALL CLOCK
+      │
+      └── optional cache/finalization, reported separately
+```
+
+Detector binning is exact block summation, not interpolation or cropping. It
+may run while chunks are decoded so the unbinned 4D volume is never
+materialized unnecessarily. The metadata still reports the original detector
+shape, selected bin, output shape, accumulation/output dtype, memory estimate,
+and policy reason. See [Load, decode, and bin](kernels/load-decode-bin.md) for
+the mathematical contract and [Benchmark methodology](performance/methodology.md)
+for every timed stage.
+
 ## The shared coordinate contract
 
 Every backend interprets 4D-STEM data as
@@ -78,7 +136,7 @@ Read [Kernel architecture](concepts/kernel-architecture.md) for the source tree
 and [Kernel development lifecycle](developer/kernel-lifecycle.md) before adding
 an implementation.
 
-## Performance numbers are evidence
+## How to interpret performance evidence
 
 The [implementation overview](dashboard.md) is the dense one-page view
 of implementation coverage and headline measurements. The
@@ -86,19 +144,6 @@ of implementation coverage and headline measurements. The
 current and historical evidence with source revision, hardware, data
 shape/dtype, cache state, load plan, memory peak, parity artifact, and
 benchmark definition.
-
-| Current headline | What was measured | Result | Full provenance |
-|---|---|---:|---|
-| Native Swift/Metal on a physical 8 GB M2 MacBook Air | First-process application load to first complete product; full `512x512` scan, `192x192` `uint16` detector, no crop, explicit exact-sum detector bin 4 | **1.985-2.043 s wall p50** across two fixtures | [M2-AIR-BIN4-E2E](performance/results.md) |
-| CUDA on NVIDIA RTX PRO 6000 Blackwell | Warm-source load/decompress; full `512x512x192x192`, no crop/bin | **0.450 s median** | [CUDA-512-LOAD](performance/results.md) |
-| WebGPU on an Apple Metal adapter | Prepared local-file full-stack load; full `512x512x192x192`, no crop/bin | **0.772 s p50** | [WEBGPU-512-FULL](performance/results.md) |
-
-These are different benchmark states and are not a platform ranking. For every
-number, open the linked row to inspect the measurement date, exact code
-revision, physical device, source shape/dtype, cache state, bin/crop plan,
-timing boundary, memory evidence, and parity artifact. See the
-[revision and change ledger](performance/changes.md) for what changed in the
-latest documentation and which implementation revision each claim measures.
 
 A cached reopen is not a first source load. A cropped or binned fixture is not
 full-resolution evidence. A compile test is not a hardware benchmark. Rejected

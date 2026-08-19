@@ -193,6 +193,19 @@ def test_intro_exposes_current_benchmarks_without_erasing_provenance() -> None:
     ):
         assert qualifier in intro
 
+    assert intro.index("## Speed benchmark overview") < intro.index(
+        "## The shared coordinate contract"
+    )
+    assert "## How loading becomes a usable product" in intro
+    assert "START WALL CLOCK" in intro
+    assert "FIRST COMPLETE USABLE PRODUCT" in intro
+    assert "no automatic real-space crop" in intro
+
+    load_page = Path("docs/kernels/load-decode-bin.md").read_text(encoding="utf-8")
+    assert "## Count-preserving detector binning" in load_page
+    assert "exact sum of one" in load_page
+    assert "materializing both a full unbinned volume" in load_page
+
 
 def test_api_guide_maps_every_public_namespace() -> None:
     api = Path("docs/api/index.md").read_text(encoding="utf-8")
