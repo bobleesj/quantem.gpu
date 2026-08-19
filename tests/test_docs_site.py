@@ -393,6 +393,7 @@ def test_scientific_kernel_pages_define_coordinates_math_and_optimization() -> N
     assert "dim=(-2, -1)" not in dpc
     assert "movedim(-1" not in dpc
     assert ":-" not in dpc
+    assert "from __future__ import annotations" not in dpc
 
     ssb = pages["ssb"].read_text(encoding="utf-8")
     for term in (
