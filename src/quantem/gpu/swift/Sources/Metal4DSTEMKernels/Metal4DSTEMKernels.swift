@@ -86,6 +86,12 @@ public enum Metal4DSTEMKernels {
     "extract_u16_word_major_frame_to_u32"
   public static let extractU32ToU32Function =
     "extract_u32_word_major_frame_to_u32"
+  public static let scanRegionSumU8Function =
+    "scan_region_sum_u8_word_major_to_u32"
+  public static let scanRegionSumU16Function =
+    "scan_region_sum_u16_word_major_to_u32"
+  public static let scanRegionSumU32Function =
+    "scan_region_sum_u32_word_major_to_u32"
   public static let dpcPackFunction = "dpc_pack_complex"
   public static let fftBitReverseRowsFunction = "fft_bit_reverse_rows"
   public static let fftBitReverseColumnsFunction = "fft_bit_reverse_columns"

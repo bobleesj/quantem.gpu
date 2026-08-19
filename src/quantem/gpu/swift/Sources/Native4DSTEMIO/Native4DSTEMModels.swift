@@ -74,6 +74,8 @@ public struct Native4DSTEMDataset: Codable, Identifiable, Sendable {
   public let sourceDtype: String
   public let sourceBytes: Int
   public let badPixelIndices: [Int]
+  public let scanPixelSizeRowNanometer: Double?
+  public let scanPixelSizeColNanometer: Double?
   public let kPixelSizeRow: Double?
   public let kPixelSizeCol: Double?
   public let kPixelUnit: String?
@@ -99,6 +101,8 @@ public struct Native4DSTEMDataset: Codable, Identifiable, Sendable {
     sourceDtype: String,
     sourceBytes: Int,
     badPixelIndices: [Int],
+    scanPixelSizeRowNanometer: Double? = nil,
+    scanPixelSizeColNanometer: Double? = nil,
     kPixelSizeRow: Double?,
     kPixelSizeCol: Double?,
     kPixelUnit: String?,
@@ -123,6 +127,8 @@ public struct Native4DSTEMDataset: Codable, Identifiable, Sendable {
     self.sourceDtype = sourceDtype
     self.sourceBytes = sourceBytes
     self.badPixelIndices = badPixelIndices
+    self.scanPixelSizeRowNanometer = scanPixelSizeRowNanometer
+    self.scanPixelSizeColNanometer = scanPixelSizeColNanometer
     self.kPixelSizeRow = kPixelSizeRow
     self.kPixelSizeCol = kPixelSizeCol
     self.kPixelUnit = kPixelUnit

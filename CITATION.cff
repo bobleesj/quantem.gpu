@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+message: >-
+  If quantem.gpu contributed to your research, cite this software. The README
+  provides the related framework article and DOI.
+title: quantem.gpu
+type: software
+authors:
+  - family-names: Lee
+    given-names: Sangjoon
+version: 0.0.1rc6
+license: MIT
+repository-code: https://github.com/bobleesj/quantem.gpu

@@ -12,11 +12,12 @@ Examples
 
 from __future__ import annotations
 
-import os
-import re
 import hashlib
+import os
 import pickle
+import re
 import tempfile
+import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,8 +39,9 @@ import hdf5plugin  # noqa: F401 - registers bitshuffle filter
 import numpy as np
 from numba import njit, prange
 
-from .constants import BLOCK_SIZE
 from quantem.gpu.io.uint4 import is_packed_uint4, pack_uint4_cupy
+
+from .constants import BLOCK_SIZE
 
 ScanOrder = Literal["row-major", "serpentine"]
 _MASTER_FRAME_SOURCE_CACHE: dict[tuple[str, tuple[str, ...], bool], tuple[list[dict[str, Any]], Any]] = {}
@@ -318,11 +320,11 @@ def _convert_load_output(result, output: str):
 
 
 def _apply_scan_shape(
-    data: "cp.ndarray",
+    data: cp.ndarray,
     explicit: tuple[int, int] | None,
     meta: dict,
     scan_order: str = "row-major",
-) -> "cp.ndarray":
+) -> cp.ndarray:
     """Reshape 3D ``(N, det_r, det_c)`` → 4D ``(scan_r, scan_c, det_r, det_c)``.
 
     Uses ``explicit`` when the caller passed ``scan_shape=``, else
@@ -369,7 +371,7 @@ def _normalize_scan_order(scan_order: str | None) -> ScanOrder:
     return aliases[key]
 
 
-def _apply_scan_order(data: "cp.ndarray", scan_order: ScanOrder) -> "cp.ndarray":
+def _apply_scan_order(data: cp.ndarray, scan_order: ScanOrder) -> cp.ndarray:
     """Apply scan-order correction in-place on an already 4D scan array."""
     if scan_order == "row-major" or data.ndim != 4:
         return data
@@ -652,13 +654,13 @@ def _resample_scan_crop_kernel(dtype: np.dtype):
 
 
 def _resample_scan_crop_cuda(
-    data: "cp.ndarray",
+    data: cp.ndarray,
     *,
     source_scan_region: tuple[int, int, int, int],
     target_scan_region: tuple[int, int, int, int],
     scan_shift_row_col,
     scan_resample_dtype: type | np.dtype = np.float32,
-) -> "cp.ndarray":
+) -> cp.ndarray:
     """Resample a decoded scan crop into one target specimen-coordinate crop."""
     if cp is None:  # pragma: no cover - CUDA-only helper
         raise RuntimeError("scan-crop resampling requires CuPy/CUDA")
@@ -727,13 +729,13 @@ def _resample_scan_crop_cuda(
 
 
 def resample_scan_crop(
-    data: "cp.ndarray",
+    data: cp.ndarray,
     *,
     source_scan_region: tuple[int, int, int, int],
     target_scan_region: tuple[int, int, int, int],
     scan_shift_row_col,
     output_dtype: type | np.dtype = np.float32,
-) -> "cp.ndarray":
+) -> cp.ndarray:
     """Resample a decoded CUDA scan crop into specimen coordinates.
 
     Parameters
@@ -1288,8 +1290,8 @@ def read_emd_metadata(emd_path) -> dict:
     format version varies across microscope builds, so missing-field
     handling is the common path, not the edge case.
     """
-    from pathlib import Path as _Path
     import json as _json
+    from pathlib import Path as _Path
     path = _Path(emd_path)
     if not path.is_file():
         return {}
@@ -1350,7 +1352,7 @@ def read_emd_metadata(emd_path) -> dict:
     return out
 
 
-def find_emd_sibling(master_path) -> "Path | None":
+def find_emd_sibling(master_path) -> Path | None:
     """Locate a Velox EMD next to an Arina master file.
 
     Arina writes ``<stem>_master.h5`` alongside data chunk files; when
@@ -1367,8 +1369,7 @@ def find_emd_sibling(master_path) -> "Path | None":
     master = _Path(master_path)
     folder = master.parent
     stem = master.stem
-    if stem.endswith("_master"):
-        stem = stem[:-7]
+    stem = stem.removesuffix("_master")
     candidates = list(folder.glob(f"{stem}.emd")) + list(folder.glob(f"{stem}*.emd"))
     if candidates:
         return candidates[0]
@@ -1701,9 +1702,7 @@ def _get_libc():
             except OSError:
                 _LIBC = False
             else:
-                try:
-                    libc.posix_fadvise
-                except AttributeError:
+                if not hasattr(libc, "posix_fadvise"):
                     _LIBC = False
                 else:
                     _LIBC = libc
@@ -1732,16 +1731,10 @@ else:
 # kernel so threading the register does not help. Registered buffers are kept
 # for the process and reused from a free list, so a session loading same-size
 # masters pays the lock once and later masters reuse the page-lock for free.
+# Redundant nearby sizes are unregistered on release so ascending file sizes do
+# not leave one multi-gigabyte mapping behind for every master.
 _PINNED_BUFS: list[dict] = []
-_PINNED_BUFS_LOCK = None
-
-
-def _pinned_lock():
-    global _PINNED_BUFS_LOCK
-    if _PINNED_BUFS_LOCK is None:
-        import threading
-        _PINNED_BUFS_LOCK = threading.Lock()
-    return _PINNED_BUFS_LOCK
+_PINNED_BUFS_LOCK = threading.Lock()
 
 
 def _alloc_pinned_fast(nbytes: int) -> np.ndarray:
@@ -1755,7 +1748,7 @@ def _alloc_pinned_fast(nbytes: int) -> np.ndarray:
     process eats ~2 s in cudaHostAlloc; this trims that to ~1.2 s and to ~0 on
     every subsequent same-size master.
     """
-    with _pinned_lock():
+    with _PINNED_BUFS_LOCK:
         for entry in _PINNED_BUFS:
             if entry["free"] and nbytes <= entry["size"] <= int(nbytes * 1.5):
                 entry["free"] = False
@@ -1772,27 +1765,81 @@ def _alloc_pinned_fast(nbytes: int) -> np.ndarray:
     if int(err[0]) != 0:
         raise RuntimeError(f"cudaHostRegister failed: {int(err[0])}")
     arr = np.frombuffer(region, dtype=np.uint8)
-    with _pinned_lock():
+    with _PINNED_BUFS_LOCK:
         _PINNED_BUFS.append(
             {"region": region, "addr": addr, "arr": arr, "size": nbytes, "free": False}
         )
     return arr[:nbytes]
 
 
-def _release_pinned(view: np.ndarray) -> None:
+def _release_pinned(view: np.ndarray, *, prune: bool = True) -> None:
     """Mark a buffer from :func:`_alloc_pinned_fast` reusable.
 
-    Keeps it registered (re-registering costs the lock again); the free list is
-    bounded by the in-flight master count (~2-3 in the pipeline) so locked host
-    RSS stays small. ``view`` is the sliced array; its ``.base`` is the full
-    registered array we cached.
+    Keeps one reusable buffer per non-overlapping size class. A larger free
+    buffer supersedes a smaller one when it is no more than 1.5x larger, which
+    is the same fit rule used by :func:`_alloc_pinned_fast`. ``view`` is the
+    sliced array; its ``.base`` is the full registered array we cached.
+
+    Group-pipelined loads pass ``prune=False`` while disk preparation and GPU
+    decode overlap. They prune once after the pipeline drains, so the next
+    group can reuse every in-flight staging slot instead of repeatedly
+    unregistering and registering a nearby-sized buffer.
     """
     base = view.base if view.base is not None else view
-    with _pinned_lock():
+    with _PINNED_BUFS_LOCK:
+        released = None
         for entry in _PINNED_BUFS:
             if entry["arr"] is base:
                 entry["free"] = True
-                return
+                released = entry
+                break
+        if released is None:
+            return
+
+        if not prune:
+            return
+
+        _prune_pinned_free_locked()
+
+
+def _prune_pinned_free(*, retain_per_size_class: int = 1) -> None:
+    """Discard redundant idle staging buffers after a pipeline drains."""
+    with _PINNED_BUFS_LOCK:
+        _prune_pinned_free_locked(retain_per_size_class=retain_per_size_class)
+
+
+def _prune_pinned_free_locked(*, retain_per_size_class: int = 1) -> None:
+    """Prune redundant free buffers while ``_PINNED_BUFS_LOCK`` is held."""
+    retain_per_size_class = max(1, int(retain_per_size_class))
+    retained: list[dict] = []
+    redundant: list[dict] = []
+    for entry in sorted(
+        (item for item in _PINNED_BUFS if item["free"]),
+        key=lambda item: item["size"],
+        reverse=True,
+    ):
+        covering = sum(
+            keeper["size"] <= int(entry["size"] * 1.5)
+            for keeper in retained
+        )
+        if covering >= retain_per_size_class:
+            redundant.append(entry)
+        else:
+            retained.append(entry)
+    for entry in redundant:
+        if _unregister_pinned_entry(entry):
+            _PINNED_BUFS.remove(entry)
+            entry.clear()
+
+
+def _unregister_pinned_entry(entry: dict) -> bool:
+    """Unregister one idle mmap-backed staging buffer."""
+    try:
+        from cuda.bindings import runtime as cudart
+    except ModuleNotFoundError:
+        return False
+    error = cudart.cudaHostUnregister(entry["addr"])
+    return int(error[0]) == 0
 
 
 def _prepare_master(
@@ -1851,99 +1898,124 @@ def _prepare_master(
     # collapsed to 10 s) and in the per-master pipeline it did not reach the
     # concurrency that made it fast in a synthetic all-files bench; net loss.
     read_buffer = _alloc_pinned_fast(total_compressed_est)
-    file_offsets = np.cumsum([0] + file_sizes[:-1]).tolist()
+    try:
+        file_offsets = np.cumsum([0] + file_sizes[:-1]).tolist()
 
-    libc = _get_libc()
+        libc = _get_libc()
 
-    def read_and_index(args):
-        data_path, buf_offset, file_size = args
-        fd = os.open(data_path, os.O_RDONLY)
-        try:
-            if libc is not None:
-                # SEQUENTIAL doubles the kernel readahead window;
-                # WILLNEED kicks off immediate prefetch.
-                libc.posix_fadvise(fd, ctypes.c_long(0), ctypes.c_long(0), _POSIX_FADV_SEQUENTIAL)
-                libc.posix_fadvise(fd, ctypes.c_long(0), ctypes.c_long(0), _POSIX_FADV_WILLNEED)
-            mv = memoryview(read_buffer)[buf_offset:buf_offset + file_size]
-            remaining = file_size
-            view_off = 0
-            while remaining > 0:
-                got = os.readv(fd, [mv[view_off:view_off + remaining]])
-                if got == 0:
-                    break
-                view_off += got
-                remaining -= got
-        finally:
-            os.close(fd)
-        with h5py.File(data_path, "r") as df:
-            ds = df["entry/data/data"]
-            n_frames = ds.shape[0]
-            frame_shape = ds.shape[1:]
-            dtype = ds.dtype
-            chunk_infos = []
-            ds.id.chunk_iter(lambda info: chunk_infos.append(
-                (info.byte_offset, info.size)
-            ))
+        def read_and_index(args):
+            data_path, buf_offset, file_size = args
+            fd = os.open(data_path, os.O_RDONLY)
+            try:
+                if libc is not None:
+                    # SEQUENTIAL doubles the kernel readahead window;
+                    # WILLNEED kicks off immediate prefetch.
+                    libc.posix_fadvise(
+                        fd,
+                        ctypes.c_long(0),
+                        ctypes.c_long(0),
+                        _POSIX_FADV_SEQUENTIAL,
+                    )
+                    libc.posix_fadvise(
+                        fd,
+                        ctypes.c_long(0),
+                        ctypes.c_long(0),
+                        _POSIX_FADV_WILLNEED,
+                    )
+                mv = memoryview(read_buffer)[buf_offset : buf_offset + file_size]
+                remaining = file_size
+                view_off = 0
+                while remaining > 0:
+                    got = os.readv(fd, [mv[view_off : view_off + remaining]])
+                    if got == 0:
+                        break
+                    view_off += got
+                    remaining -= got
+            finally:
+                os.close(fd)
+            with h5py.File(data_path, "r") as df:
+                ds = df["entry/data/data"]
+                n_frames = ds.shape[0]
+                frame_shape = ds.shape[1:]
+                dtype = ds.dtype
+                chunk_infos = []
+                ds.id.chunk_iter(
+                    lambda info: chunk_infos.append((info.byte_offset, info.size))
+                )
+            return {
+                "n_frames": n_frames,
+                "frame_shape": frame_shape,
+                "dtype": dtype,
+                "chunk_infos": chunk_infos,
+            }
+
+        # 12 threads saturates the NVMe random-file bandwidth on Arina-style
+        # masters; past 16 hurts on host queue depth, 8 underfeeds it.
+        with ThreadPoolExecutor(max_workers=12) as pool:
+            file_infos = list(
+                pool.map(
+                    read_and_index,
+                    zip(data_paths, file_offsets, file_sizes),
+                )
+            )
+
+        total_frames = sum(fi["n_frames"] for fi in file_infos)
+        frame_shape = file_infos[0]["frame_shape"]
+        dtype = file_infos[0]["dtype"]
+        frame_bytes = int(np.prod(frame_shape) * np.dtype(dtype).itemsize)
+        n_blocks_per_frame = (frame_bytes + BLOCK_SIZE - 1) // BLOCK_SIZE
+
+        # uint64 chunk_offsets: the absolute byte offset of each frame's
+        # compressed chunk inside `read_buffer` can exceed 4 GB on dense
+        # multi-file scans, so uint32 silently wraps and the GPU kernel
+        # reads garbage. (chunk_sizes stays uint32 - per-frame compressed
+        # payload is only ~23 KB.)
+        chunk_offsets_arr = np.empty(total_frames, dtype=np.uint64)
+        chunk_sizes_arr = np.empty(total_frames, dtype=np.uint32)
+        frame_idx = 0
+        for fi, buf_offset in zip(file_infos, file_offsets):
+            for byte_offset, size in fi["chunk_infos"]:
+                chunk_offsets_arr[frame_idx] = buf_offset + byte_offset
+                chunk_sizes_arr[frame_idx] = size
+                frame_idx += 1
+
+        block_starts_flat = np.zeros(
+            total_frames * n_blocks_per_frame,
+            dtype=np.uint32,
+        )
+        block_counts = np.zeros(total_frames, dtype=np.uint32)
+        block_offsets_arr = np.zeros(total_frames + 1, dtype=np.uint32)
+        _parse_headers_bulk(
+            read_buffer,
+            chunk_sizes_arr,
+            chunk_offsets_arr,
+            block_starts_flat,
+            block_counts,
+            total_frames,
+            n_blocks_per_frame,
+        )
+        block_offsets_arr[1 : total_frames + 1] = np.cumsum(
+            block_counts[:total_frames]
+        )
+        total_blocks = int(block_offsets_arr[total_frames])
+        total_used = int(max(chunk_offsets_arr + chunk_sizes_arr))
+
         return {
-            "n_frames": n_frames,
+            "read_buffer": read_buffer[:total_used],
+            "chunk_offsets": chunk_offsets_arr,
+            "block_starts": block_starts_flat[:total_blocks],
+            "block_counts": block_counts,
+            "block_offsets": block_offsets_arr,
+            "total_frames": total_frames,
             "frame_shape": frame_shape,
+            "frame_bytes": frame_bytes,
             "dtype": dtype,
-            "chunk_infos": chunk_infos,
+            "pixel_mask": pixel_mask,
+            "n_chunk_files": len(chunk_names),
         }
-
-    # 12 threads saturates the NVMe random-file bandwidth on Arina-style
-    # masters; past 16 hurts on host queue depth, 8 underfeeds it.
-    with ThreadPoolExecutor(max_workers=12) as pool:
-        file_infos = list(pool.map(
-            read_and_index,
-            zip(data_paths, file_offsets, file_sizes),
-        ))
-
-    total_frames = sum(fi["n_frames"] for fi in file_infos)
-    frame_shape = file_infos[0]["frame_shape"]
-    dtype = file_infos[0]["dtype"]
-    frame_bytes = int(np.prod(frame_shape) * np.dtype(dtype).itemsize)
-    n_blocks_per_frame = (frame_bytes + BLOCK_SIZE - 1) // BLOCK_SIZE
-
-    # uint64 chunk_offsets: the absolute byte offset of each frame's
-    # compressed chunk inside `read_buffer` can exceed 4 GB on dense
-    # multi-file scans, so uint32 silently wraps and the GPU kernel
-    # reads garbage. (chunk_sizes stays uint32 - per-frame compressed
-    # payload is only ~23 KB.)
-    chunk_offsets_arr = np.empty(total_frames, dtype=np.uint64)
-    chunk_sizes_arr = np.empty(total_frames, dtype=np.uint32)
-    frame_idx = 0
-    for fi, buf_offset in zip(file_infos, file_offsets):
-        for byte_offset, size in fi["chunk_infos"]:
-            chunk_offsets_arr[frame_idx] = buf_offset + byte_offset
-            chunk_sizes_arr[frame_idx] = size
-            frame_idx += 1
-
-    block_starts_flat = np.zeros(total_frames * n_blocks_per_frame, dtype=np.uint32)
-    block_counts = np.zeros(total_frames, dtype=np.uint32)
-    block_offsets_arr = np.zeros(total_frames + 1, dtype=np.uint32)
-    _parse_headers_bulk(
-        read_buffer, chunk_sizes_arr, chunk_offsets_arr,
-        block_starts_flat, block_counts,
-        total_frames, n_blocks_per_frame,
-    )
-    block_offsets_arr[1:total_frames + 1] = np.cumsum(block_counts[:total_frames])
-    total_blocks = int(block_offsets_arr[total_frames])
-    total_used = int(max(chunk_offsets_arr + chunk_sizes_arr))
-
-    return {
-        "read_buffer": read_buffer[:total_used],
-        "chunk_offsets": chunk_offsets_arr,
-        "block_starts": block_starts_flat[:total_blocks],
-        "block_counts": block_counts,
-        "block_offsets": block_offsets_arr,
-        "total_frames": total_frames,
-        "frame_shape": frame_shape,
-        "frame_bytes": frame_bytes,
-        "dtype": dtype,
-        "pixel_mask": pixel_mask,
-        "n_chunk_files": len(chunk_names),
-    }
+    except BaseException:
+        _release_pinned(read_buffer)
+        raise
 
 
 def _file_stat_signature(path: str) -> dict[str, Any]:
@@ -2030,7 +2102,7 @@ def _load_frame_source_disk_cache(
             cached = pickle.load(handle)
     except FileNotFoundError:
         return None
-    except Exception:
+    except Exception:  # noqa: BLE001 - a corrupt optional cache must not block loading
         return None
     if signature is not None and cached.get("signature") != signature:
         return None
@@ -2076,7 +2148,7 @@ def _write_frame_source_disk_cache(
         with os.fdopen(fd, "wb") as handle:
             pickle.dump(payload, handle, protocol=pickle.HIGHEST_PROTOCOL)
         os.replace(tmp_path, cache_path)
-    except Exception:
+    except Exception:  # noqa: BLE001 - cache persistence is an optional optimization
         try:
             os.unlink(tmp_path)
         except OSError:
@@ -2141,7 +2213,7 @@ def _load_prepared_scan_crop_disk_cache(
             cached = pickle.load(handle)
     except FileNotFoundError:
         return None
-    except Exception:
+    except Exception:  # noqa: BLE001 - a corrupt optional cache must not block loading
         return None
     if cached.get("version") != _PREPARED_SCAN_CROP_CACHE_VERSION:
         return None
@@ -2225,7 +2297,7 @@ def _write_prepared_scan_crop_disk_cache(
             pickle.dump(payload, handle, protocol=pickle.HIGHEST_PROTOCOL)
         os.replace(tmp_read_path, read_path)
         os.replace(tmp_meta_path, meta_path)
-    except Exception:
+    except Exception:  # noqa: BLE001 - cache persistence is an optional optimization
         for path in (tmp_read_path, tmp_meta_path):
             try:
                 os.unlink(path)
@@ -2293,9 +2365,11 @@ def _get_master_frame_sources(
                     f"HDF5 chunk; got chunks={ds.chunks} in {data_path}"
                 )
             chunk_infos = []
-            ds.id.chunk_iter(
-                lambda info: chunk_infos.append((info.byte_offset, info.size))
-            )
+
+            def collect_chunk(info, output=chunk_infos):
+                output.append((info.byte_offset, info.size))
+
+            ds.id.chunk_iter(collect_chunk)
             source_infos.append(
                 {
                     "path": data_path,
@@ -2387,23 +2461,28 @@ def _prepare_master_frames(
     max_gap_bytes = _scan_crop_max_gap_bytes()
     read_plan_by_source: dict[int, list[tuple[int, int, int]]] = {}
     cursor = 0
+
+    def append_span(
+        source_index: int,
+        start: int,
+        stop: int,
+        span: list[tuple[int, int, int]],
+        destination: int,
+    ) -> int:
+        span_nbytes = int(stop - start)
+        read_plan_by_source.setdefault(source_index, []).append(
+            (int(start), int(destination), span_nbytes)
+        )
+        for order_pos, byte_offset, chunk_size in span:
+            chunk_offsets_arr[order_pos] = destination + int(byte_offset - start)
+            chunk_sizes_arr[order_pos] = int(chunk_size)
+        return destination + span_nbytes
+
     for source_idx, entries in entries_by_source.items():
         entries = sorted(entries, key=lambda item: item[1])
         span_start = entries[0][1]
         span_end = entries[0][1] + entries[0][2]
         span_entries = [entries[0]]
-
-        def flush_span() -> None:
-            nonlocal cursor, span_start, span_end, span_entries
-            dst_start = cursor
-            span_nbytes = int(span_end - span_start)
-            read_plan_by_source.setdefault(source_idx, []).append(
-                (int(span_start), int(dst_start), span_nbytes)
-            )
-            for order_pos, byte_offset, chunk_size in span_entries:
-                chunk_offsets_arr[order_pos] = dst_start + int(byte_offset - span_start)
-                chunk_sizes_arr[order_pos] = int(chunk_size)
-            cursor += span_nbytes
 
         for entry in entries[1:]:
             _, byte_offset, chunk_size = entry
@@ -2412,11 +2491,13 @@ def _prepare_master_frames(
                 span_end = max(span_end, next_end)
                 span_entries.append(entry)
             else:
-                flush_span()
+                cursor = append_span(
+                    source_idx, span_start, span_end, span_entries, cursor
+                )
                 span_start = int(byte_offset)
                 span_end = next_end
                 span_entries = [entry]
-        flush_span()
+        cursor = append_span(source_idx, span_start, span_end, span_entries, cursor)
     plan_seconds = time.perf_counter() - t_plan
 
     total_compressed = int(cursor)
@@ -2539,7 +2620,7 @@ def _default_decoded_output_dtype(
     )
 
 
-def _decompress_prepared(
+def _decompress_prepared_impl(
     prepared: dict,
     verbose: bool = False,
     auto_narrow: bool = True,
@@ -2625,9 +2706,7 @@ def _decompress_prepared(
         # (the screening dtype the public load(dtype="u8") advertises). numpy's
         # np.dtype("u8") is uint64 (8 BYTES) — passing the browse token straight
         # to np.dtype would silently 8× the output and OOM. Map it explicitly.
-        if uint4_mode:
-            final_dtype = np.dtype(np.uint8)
-        elif isinstance(output_dtype, str) and output_dtype in ("u8", "uint8"):
+        if uint4_mode or isinstance(output_dtype, str) and output_dtype in ("u8", "uint8"):
             final_dtype = np.dtype(np.uint8)
         else:
             final_dtype = np.dtype(output_dtype)
@@ -2959,10 +3038,6 @@ def _decompress_prepared(
     del compressed_gpu, chunk_offsets_gpu, block_starts_gpu
     del block_counts_gpu, block_offsets_gpu
     cp.get_default_memory_pool().free_all_blocks()
-    # Host read_buffer is fully uploaded; return it to the pinned free list so
-    # the next master reuses the page-lock instead of paying it again.
-    _release_pinned(read_buffer)
-
     # pixel_mask already applied per-batch above; no final touch needed.
 
     t_total = time.perf_counter() - t0
@@ -2983,6 +3058,46 @@ def _decompress_prepared(
     return result
 
 
+def _decompress_prepared(
+    prepared: dict,
+    verbose: bool = False,
+    auto_narrow: bool = True,
+    batch_bytes_target: int = 1 << 28,
+    det_bin: int = 1,
+    streaming_bin: bool = False,
+    output_dtype: type | np.dtype | None = None,
+    streaming_upload: bool | None = None,
+    prune_pinned: bool = True,
+) -> cp.ndarray:
+    """Consume one prepared master and always release its host staging buffer."""
+    read_buffer = prepared["read_buffer"]
+    try:
+        return _decompress_prepared_impl(
+            prepared,
+            verbose=verbose,
+            auto_narrow=auto_narrow,
+            batch_bytes_target=batch_bytes_target,
+            det_bin=det_bin,
+            streaming_bin=streaming_bin,
+            output_dtype=output_dtype,
+            streaming_upload=streaming_upload,
+        )
+    except BaseException:
+        # A failed kernel or allocation may follow an asynchronous H2D from the
+        # page-locked buffer. Finish any queued access before making it reusable.
+        if cp is not None:
+            try:
+                cp.cuda.Device().synchronize()
+            except Exception:  # noqa: BLE001, S110 - preserve the original failure
+                pass
+        raise
+    finally:
+        if prune_pinned:
+            _release_pinned(read_buffer)
+        else:
+            _release_pinned(read_buffer, prune=False)
+
+
 def _discover_chunk_names(filepath: str) -> list[str]:
     """Get chunk dataset names (data_000001, etc.) from a master file."""
     with h5py.File(filepath, "r") as f:
@@ -2990,7 +3105,7 @@ def _discover_chunk_names(filepath: str) -> list[str]:
         if data_group is None:
             return []
         return sorted([
-            name for name in data_group.keys()
+            name for name in data_group
             if re.match(r"data_\d{6}", name)
         ])
 
@@ -3072,7 +3187,7 @@ def _normalise_readiness_scan_shape(
     normalized: list[int] = []
     for value in values:
         if isinstance(value, (bool, np.bool_)):
-            raise ValueError(
+            raise ValueError(  # noqa: TRY004 - preserve the public validation contract
                 "scan_shape values must be positive integers, not booleans; "
                 f"got {scan_shape!r}."
             )
@@ -3228,7 +3343,7 @@ def inspect_master_readiness(
 
             chunk_names = sorted(
                 name
-                for name in data_group.keys()
+                for name in data_group
                 if re.fullmatch(r"data_\d{6}", name)
             )
             source_names = chunk_names or (["data"] if "data" in data_group else [])
@@ -3585,7 +3700,7 @@ def _load_master_pipelined(
     groups = [chunk_names[bounds[i]:bounds[i + 1]] for i in range(n_groups)
               if bounds[i + 1] > bounds[i]]
 
-    q: "queue.Queue" = queue.Queue(maxsize=1)  # 1 in-flight group while GPU works
+    q: queue.Queue = queue.Queue(maxsize=1)  # 1 in-flight group while GPU works
     _SENT = object()
 
     def producer():
@@ -3602,31 +3717,42 @@ def _load_master_pipelined(
     out = None
     pixel_mask = None
     cursor = 0
-    while True:
-        item = q.get()
-        if item is _SENT:
-            break
-        prepared, err = item
-        if err is not None:
-            raise err
-        d = _decompress_prepared(
-            prepared, verbose=False, auto_narrow=auto_narrow,
-            det_bin=det_bin, streaming_bin=streaming_bin,
-            output_dtype=output_dtype)
-        g_frames = d.shape[0]
-        if out is None:
-            # First group reveals the post-bin detector shape; total frames
-            # comes from the master's ntrigger (one header read, not 105 chunk
-            # opens). Preallocate the full flat output once, then write each
-            # group into its frame slice (no concat).
-            det_shape = d.shape[1:]
-            total = _master_total_frames(filepath, chunk_names)
-            out = cp.empty((total, *det_shape), dtype=d.dtype)
-            pixel_mask = prepared.get("pixel_mask")
-        out[cursor:cursor + g_frames] = d
-        cursor += g_frames
-        del d
-        cp.get_default_memory_pool().free_all_blocks()
+    try:
+        while True:
+            item = q.get()
+            if item is _SENT:
+                break
+            prepared, err = item
+            if err is not None:
+                raise err
+            d = _decompress_prepared(
+                prepared,
+                verbose=False,
+                auto_narrow=auto_narrow,
+                det_bin=det_bin,
+                streaming_bin=streaming_bin,
+                output_dtype=output_dtype,
+                prune_pinned=False,
+            )
+            g_frames = d.shape[0]
+            if out is None:
+                # First group reveals the post-bin detector shape; total frames
+                # comes from the master's ntrigger (one header read, not 105 chunk
+                # opens). Preallocate the full flat output once, then write each
+                # group into its frame slice (no concat).
+                det_shape = d.shape[1:]
+                total = _master_total_frames(filepath, chunk_names)
+                out = cp.empty((total, *det_shape), dtype=d.dtype)
+                pixel_mask = prepared.get("pixel_mask")
+            out[cursor:cursor + g_frames] = d
+            cursor += g_frames
+            del d
+            cp.get_default_memory_pool().free_all_blocks()
+    finally:
+        # The nine-group loader reaches four overlapping host/GPU staging
+        # slots. Retain those slots across repeated loads; collapsing to one
+        # makes every reopen page-register roughly three 360 MB buffers again.
+        _prune_pinned_free(retain_per_size_class=4)
     if out is None:
         raise FileNotFoundError(f"{filepath}: no data decompressed")
     if cursor < out.shape[0]:
@@ -4023,10 +4149,8 @@ def _browse_dtype_advise_and_cast(data, dtype, verbose):
             return data
         want_u8 = sel in ("u8", "uint8") or (sel == "auto" and mx <= 255)
         if want_u8 and data.dtype.itemsize > 1:
-            xp = type(data).__module__.split(".")[0]
-            clip = data  # clip at 255 keeps it linear; only the >255 tail is lost
-            data = (data if mx <= 255 else
-                    (clip.clip(0, 255) if xp != "cupy" else clip.clip(0, 255))).astype(np.uint8)
+            # Clipping at 255 keeps the browse view linear; only the >255 tail is lost.
+            data = (data if mx <= 255 else data.clip(0, 255)).astype(np.uint8)
             if verbose:
                 if pct255 == 0.0:
                     print(f"  Loaded this in uint8 to save you memory - your brightest pixel is "
@@ -5121,7 +5245,7 @@ def load_scan_indices(
         "file_names": [os.path.basename(os.fspath(p)) for p in paths],
         "n_frames": int(sum(len(x) for x in frame_lists)),
         "prep_workers": int(worker_count),
-        "positions_per_file": [int(len(x)) for x in frame_lists],
+        "positions_per_file": [len(x) for x in frame_lists],
         "unique_frame_count_per_file": [
             int(m["unique_frame_count"]) for m in per_file_meta
         ],
@@ -5861,9 +5985,8 @@ def _load_many_parallel(masters, *, gpus=None, max_concurrent=None, verbose=Fals
     """
     import queue
     import threading
-    from contextlib import nullcontext
     from concurrent.futures import ThreadPoolExecutor
-    import cupy as cp
+    from contextlib import nullcontext
 
     masters = list(masters)
     n = len(masters)
@@ -5873,7 +5996,11 @@ def _load_many_parallel(masters, *, gpus=None, max_concurrent=None, verbose=Fals
         dev = [int(gpus)] * n
     else:
         gl = [int(g) for g in gpus]
+        if not gl:
+            raise ValueError("gpus must contain at least one CUDA device")
         dev = [gl[i % len(gl)] for i in range(n)]
+
+    import cupy as cp
 
     disks = [disk_of(m) for m in masters]
     n_disks = len({d for d in disks if d != "?"})
@@ -5886,19 +6013,50 @@ def _load_many_parallel(masters, *, gpus=None, max_concurrent=None, verbose=Fals
     # Producer: concurrent read+prepare (host) into a bounded queue. The pinned-
     # buffer pool is lock-guarded, so concurrent reads are thread-safe; the queue
     # bound caps in-flight host buffers.
-    q: "queue.Queue" = queue.Queue(maxsize=n_read + 1)
+    q: queue.Queue = queue.Queue(maxsize=n_read + 1)
     _SENT = object()
+    cancelled = threading.Event()
+
+    def _put(item) -> bool:
+        while not cancelled.is_set():
+            try:
+                q.put(item, timeout=0.1)
+                return True
+            except queue.Full:
+                pass
+        return False
+
+    def _release_queued(item) -> None:
+        if item is _SENT:
+            return
+        kind, _index, payload = item
+        if kind == "prepared":
+            _release_pinned(payload["read_buffer"])
 
     def _producer():
         def _prep(i):
-            q.put((i, _prepare_master(masters[i], _discover_chunk_names(masters[i]), True)))
+            try:
+                prepared = _prepare_master(
+                    masters[i],
+                    _discover_chunk_names(masters[i]),
+                    True,
+                )
+            except Exception as exc:  # noqa: BLE001 - transport worker failures
+                if _put(("error", i, exc)):
+                    cancelled.set()
+                return
+            if not _put(("prepared", i, prepared)):
+                _release_pinned(prepared["read_buffer"])
+
         try:
             with ThreadPoolExecutor(max_workers=n_read) as pool:
                 list(pool.map(_prep, order))
         finally:
-            q.put(_SENT)
+            if not cancelled.is_set():
+                _put(_SENT)
 
-    threading.Thread(target=_producer, daemon=True).start()
+    producer_thread = threading.Thread(target=_producer, daemon=True)
+    producer_thread.start()
 
     # Consumer: serial decode, each master onto its assigned GPU.
     decode_kw = {k: load_kwargs[k] for k in ("output_dtype", "det_bin", "auto_narrow")
@@ -5907,22 +6065,42 @@ def _load_many_parallel(masters, *, gpus=None, max_concurrent=None, verbose=Fals
     if decode_kw.get("det_bin", 1) > 1:
         decode_kw["streaming_bin"] = True
     results: list = [None] * n
-    while True:
-        item = q.get()
-        if item is _SENT:
-            break
-        i, prepared = item
-        d = dev[i]
-        with (cp.cuda.Device(d) if d is not None else nullcontext()):
-            data = _decompress_prepared(prepared, **decode_kw)
-            meta = get_metadata(masters[i])
-            nf = int(data.shape[0])
-            side = int(nf ** 0.5)
-            if data.ndim == 3 and side * side == nf:
-                meta.setdefault("scan_shape", (side, side))
-            data = _apply_scan_shape(data, load_kwargs.get("scan_shape"), meta, scan_order)
-            meta["scan_order"] = _normalize_scan_order(scan_order)
-        results[i] = LoadResult(data, meta)
+    try:
+        while True:
+            item = q.get()
+            if item is _SENT:
+                break
+            kind, i, payload = item
+            if kind == "error":
+                raise payload
+            prepared = payload
+            d = dev[i]
+            with (cp.cuda.Device(d) if d is not None else nullcontext()):
+                data = _decompress_prepared(prepared, **decode_kw)
+                meta = get_metadata(masters[i])
+                nf = int(data.shape[0])
+                side = int(nf ** 0.5)
+                if data.ndim == 3 and side * side == nf:
+                    meta.setdefault("scan_shape", (side, side))
+                data = _apply_scan_shape(
+                    data,
+                    load_kwargs.get("scan_shape"),
+                    meta,
+                    scan_order,
+                )
+                meta["scan_order"] = _normalize_scan_order(scan_order)
+            results[i] = LoadResult(data, meta)
+    except BaseException:
+        cancelled.set()
+        while producer_thread.is_alive() or not q.empty():
+            try:
+                pending = q.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            _release_queued(pending)
+        producer_thread.join()
+        raise
+    producer_thread.join()
     return results
 
 
@@ -5942,7 +6120,7 @@ def _load_impl(
     row_prefix: bool = False,
     precompute_detector_sum: bool = False,
     skip_mps_memory_check: bool | None = None,
-) -> "LoadResult":
+) -> LoadResult:
     """Load bitshuffle+LZ4 compressed HDF5 data directly to GPU.
 
     Automatically detects file format:
@@ -6249,7 +6427,7 @@ def _load_impl(
         # queue (2 slots) caps host memory to ~2 files' compressed bytes.
         # Files that aren't resolvable chunked masters fall back to a full
         # serial load() in the consumer.
-        prep_q: "queue.Queue" = queue.Queue(maxsize=2)
+        prep_q: queue.Queue = queue.Queue(maxsize=2)
         _SENTINEL = object()
 
         def producer():
@@ -6357,7 +6535,7 @@ def _load_impl(
         if data_group is not None:
             # Check for Dectris-style chunked data (data_000001, etc.)
             chunk_names = sorted([
-                name for name in data_group.keys()
+                name for name in data_group
                 if re.match(r"data_\d{6}", name)
             ])
             # Two layouts ride the chunk-name prefix:

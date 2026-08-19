@@ -7,7 +7,6 @@ from typing import Any
 
 import numpy as np
 
-
 _CUDA_VI_CODE = r'''
 __device__ __forceinline__
 unsigned int uint4_at(const unsigned char* __restrict__ data, unsigned long long logical_idx) {
@@ -845,6 +844,128 @@ void center_of_mass_selected_u32_4f(
         data, indices, out_row, out_col, nidx, ndet, det_cols, nframes
     );
 }
+
+template <typename T>
+__device__ __forceinline__
+void selected_frame_sum_u64_impl(
+    const T* __restrict__ data,
+    const int* __restrict__ indices,
+    unsigned long long* __restrict__ out,
+    int nidx,
+    int ndet
+) {
+    int detector = blockIdx.x * blockDim.x + threadIdx.x;
+    if (detector >= ndet) {
+        return;
+    }
+    unsigned long long sum = 0;
+    for (int index = 0; index < nidx; ++index) {
+        unsigned long long offset =
+            (unsigned long long)indices[index] * (unsigned int)ndet
+            + (unsigned int)detector;
+        sum += (unsigned long long)data[offset];
+    }
+    out[detector] = sum;
+}
+
+#define DEFINE_SELECTED_FRAME_SUM(NAME, TYPE)                                       \
+extern "C" __global__                                                               \
+void NAME(                                                                           \
+    const TYPE* __restrict__ data,                                                    \
+    const int* __restrict__ indices,                                                  \
+    unsigned long long* __restrict__ out,                                             \
+    int nidx,                                                                         \
+    int ndet                                                                          \
+) {                                                                                  \
+    selected_frame_sum_u64_impl(data, indices, out, nidx, ndet);                     \
+}
+
+DEFINE_SELECTED_FRAME_SUM(selected_frame_sum_u64_u8, unsigned char)
+DEFINE_SELECTED_FRAME_SUM(selected_frame_sum_u64_u16, unsigned short)
+DEFINE_SELECTED_FRAME_SUM(selected_frame_sum_u64_u32, unsigned int)
+
+template <typename T>
+__device__ __forceinline__
+void selected_frame_max_u32_impl(
+    const T* __restrict__ data,
+    const int* __restrict__ indices,
+    unsigned int* __restrict__ out,
+    int nidx,
+    int ndet
+) {
+    int detector = blockIdx.x * blockDim.x + threadIdx.x;
+    if (detector >= ndet) {
+        return;
+    }
+    unsigned int maximum = 0;
+    for (int index = 0; index < nidx; ++index) {
+        unsigned long long offset =
+            (unsigned long long)indices[index] * (unsigned int)ndet
+            + (unsigned int)detector;
+        maximum = max(maximum, (unsigned int)data[offset]);
+    }
+    out[detector] = maximum;
+}
+
+#define DEFINE_SELECTED_FRAME_MAX(NAME, TYPE)                                       \
+extern "C" __global__                                                               \
+void NAME(                                                                           \
+    const TYPE* __restrict__ data,                                                    \
+    const int* __restrict__ indices,                                                  \
+    unsigned int* __restrict__ out,                                                   \
+    int nidx,                                                                         \
+    int ndet                                                                          \
+) {                                                                                  \
+    selected_frame_max_u32_impl(data, indices, out, nidx, ndet);                     \
+}
+
+DEFINE_SELECTED_FRAME_MAX(selected_frame_max_u32_u8, unsigned char)
+DEFINE_SELECTED_FRAME_MAX(selected_frame_max_u32_u16, unsigned short)
+DEFINE_SELECTED_FRAME_MAX(selected_frame_max_u32_u32, unsigned int)
+
+extern "C" __global__
+void selected_frame_sum_u64_uint4(
+    const unsigned char* __restrict__ data,
+    const int* __restrict__ indices,
+    unsigned long long* __restrict__ out,
+    int nidx,
+    int ndet
+) {
+    int detector = blockIdx.x * blockDim.x + threadIdx.x;
+    if (detector >= ndet) {
+        return;
+    }
+    unsigned long long sum = 0;
+    for (int index = 0; index < nidx; ++index) {
+        unsigned long long logical =
+            (unsigned long long)indices[index] * (unsigned int)ndet
+            + (unsigned int)detector;
+        sum += (unsigned long long)uint4_at(data, logical);
+    }
+    out[detector] = sum;
+}
+
+extern "C" __global__
+void selected_frame_max_u32_uint4(
+    const unsigned char* __restrict__ data,
+    const int* __restrict__ indices,
+    unsigned int* __restrict__ out,
+    int nidx,
+    int ndet
+) {
+    int detector = blockIdx.x * blockDim.x + threadIdx.x;
+    if (detector >= ndet) {
+        return;
+    }
+    unsigned int maximum = 0;
+    for (int index = 0; index < nidx; ++index) {
+        unsigned long long logical =
+            (unsigned long long)indices[index] * (unsigned int)ndet
+            + (unsigned int)detector;
+        maximum = max(maximum, (unsigned int)uint4_at(data, logical));
+    }
+    out[detector] = maximum;
+}
 '''
 
 
@@ -856,7 +977,7 @@ def _cuda_vi_module():
 
 
 def _scan_shape_from_flat(n_frames: int) -> tuple[int, ...]:
-    side = int(math.isqrt(n_frames))
+    side = math.isqrt(n_frames)
     if side * side == n_frames:
         return side, side
     return (n_frames,)
@@ -1023,6 +1144,148 @@ def cuda_selected_sum_uint64(data: Any, indices: Any) -> Any | None:
         ),
     )
     return out.reshape(scan_shape)
+
+
+def cuda_selected_frame_sum_uint64(data: Any, indices: Any) -> Any | None:
+    """Sum selected scan frames exactly into one uint64 diffraction pattern.
+
+    The kernel writes one detector pixel per CUDA thread and walks only the
+    selected scan indices. Adjacent threads therefore read adjacent detector
+    values, keeping the hot reduction coalesced without allocating a gathered
+    ``selected_frames × detector_pixels`` tensor.
+    """
+    import cupy as cp
+
+    if type(data).__module__.split(".", 1)[0] != "cupy":
+        return None
+    if not data.flags.c_contiguous:
+        return None
+    dtype_key = _supported_raw_dtype(data.dtype)
+    if dtype_key is None:
+        return None
+    flat, _scan_shape, det_shape = _flatten_scan(data)
+    scan_indices = cp.asarray(indices, dtype=cp.int32).reshape(-1)
+    n_idx = int(scan_indices.size)
+    n_det = int(flat.shape[1])
+    if n_idx == 0:
+        return cp.zeros(det_shape, dtype=cp.uint64)
+    out = cp.empty(n_det, dtype=cp.uint64)
+    threads = 256
+    kernel = _cuda_vi_module().get_function(
+        f"selected_frame_sum_u64_{dtype_key}"
+    )
+    kernel(
+        ((n_det + threads - 1) // threads, 1, 1),
+        (threads, 1, 1),
+        (
+            data,
+            scan_indices,
+            out,
+            np.int32(n_idx),
+            np.int32(n_det),
+        ),
+    )
+    return out.reshape(det_shape)
+
+
+def cuda_selected_frame_sum_uint64_uint4(data: Any, indices: Any) -> Any | None:
+    """Sum selected packed-uint4 scan frames exactly without unpacking."""
+    import cupy as cp
+
+    flattened = _flatten_uint4(data)
+    if flattened is None:
+        return None
+    buffer, _scan_shape, det_shape, _n_frames, n_det = flattened
+    if type(buffer).__module__.split(".", 1)[0] != "cupy":
+        return None
+    if not buffer.flags.c_contiguous:
+        return None
+    scan_indices = cp.asarray(indices, dtype=cp.int32).reshape(-1)
+    n_idx = int(scan_indices.size)
+    if n_idx == 0:
+        return cp.zeros(det_shape, dtype=cp.uint64)
+    out = cp.empty(n_det, dtype=cp.uint64)
+    threads = 256
+    kernel = _cuda_vi_module().get_function("selected_frame_sum_u64_uint4")
+    kernel(
+        ((n_det + threads - 1) // threads, 1, 1),
+        (threads, 1, 1),
+        (
+            buffer,
+            scan_indices,
+            out,
+            np.int32(n_idx),
+            np.int32(n_det),
+        ),
+    )
+    return out.reshape(det_shape)
+
+
+def cuda_selected_frame_max_uint32(data: Any, indices: Any) -> Any | None:
+    """Take an exact per-detector maximum without a gathered frame tensor."""
+    import cupy as cp
+
+    if type(data).__module__.split(".", 1)[0] != "cupy":
+        return None
+    if not data.flags.c_contiguous:
+        return None
+    dtype_key = _supported_raw_dtype(data.dtype)
+    if dtype_key is None:
+        return None
+    flat, _scan_shape, det_shape = _flatten_scan(data)
+    scan_indices = cp.asarray(indices, dtype=cp.int32).reshape(-1)
+    n_idx = int(scan_indices.size)
+    n_det = int(flat.shape[1])
+    if n_idx == 0:
+        return cp.zeros(det_shape, dtype=cp.uint32)
+    out = cp.empty(n_det, dtype=cp.uint32)
+    threads = 256
+    kernel = _cuda_vi_module().get_function(f"selected_frame_max_u32_{dtype_key}")
+    kernel(
+        ((n_det + threads - 1) // threads, 1, 1),
+        (threads, 1, 1),
+        (
+            data,
+            scan_indices,
+            out,
+            np.int32(n_idx),
+            np.int32(n_det),
+        ),
+    )
+    return out.reshape(det_shape)
+
+
+def cuda_selected_frame_max_uint32_uint4(data: Any, indices: Any) -> Any | None:
+    """Take an exact maximum directly from packed uint4 storage."""
+    import cupy as cp
+
+    flattened = _flatten_uint4(data)
+    if flattened is None:
+        return None
+    buffer, _scan_shape, det_shape, _n_frames, n_det = flattened
+    if type(buffer).__module__.split(".", 1)[0] != "cupy":
+        return None
+    if not buffer.flags.c_contiguous:
+        return None
+    scan_indices = cp.asarray(indices, dtype=cp.int32).reshape(-1)
+    n_idx = int(scan_indices.size)
+    if n_idx == 0:
+        return cp.zeros(det_shape, dtype=cp.uint32)
+    out = cp.empty(n_det, dtype=cp.uint32)
+    threads = 256
+    kernel = _cuda_vi_module().get_function("selected_frame_max_u32_uint4")
+    kernel(
+        ((n_det + threads - 1) // threads, 1, 1),
+        (threads, 1, 1),
+        (
+            buffer,
+            scan_indices,
+            out,
+            np.int32(n_idx),
+            np.int32(n_det),
+        ),
+    )
+    return out.reshape(det_shape)
 
 
 def cuda_selected_sum(data: Any, indices: Any) -> Any | None:

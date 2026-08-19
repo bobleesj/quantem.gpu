@@ -1,5 +1,11 @@
 # Backends
 
+The canonical source-tree and cross-language test organization is documented
+in [Backend layout and parity contract](maintainer/backend-layout-and-parity.md).
+Backend implementations remain private behind one domain-level scientific API;
+folder moves require the machine-readable parity gates in
+`tests/parity/backend_matrix.json`.
+
 `quantem.gpu` supports three backend names:
 
 | Backend | Purpose | Notes |

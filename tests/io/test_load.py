@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import sys
+import threading
 import types
-from types import SimpleNamespace
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -206,7 +207,6 @@ def test_get_libc_returns_none_when_posix_fadvise_is_unavailable(monkeypatch) ->
     """macOS libc exists but does not expose Linux posix_fadvise."""
     import ctypes
     import ctypes.util
-
     from importlib import import_module
     load_module = import_module("quantem.gpu.io.load")
 
@@ -1113,7 +1113,7 @@ def test_random_scan_indices_are_reproducible_and_per_file() -> None:
     assert positions.shape == (4, 2)
     assert np.all(one >= 0)
     assert np.all(one < 16)
-    assert len(set(int(v) for v in one)) == 4
+    assert len({int(v) for v in one}) == 4
     assert not np.array_equal(per_file[0], per_file[1])
     np.testing.assert_array_equal(positions[:, 0] * 4 + positions[:, 1], one)
 
@@ -1454,7 +1454,7 @@ def test_mps_multi_dataset_loader_is_owned_by_quantem_gpu(monkeypatch) -> None:
 
     class FakeOwner:
         data = multi
-        names = ["a", "b"]
+        names = ("a", "b")
 
         def start(self):
             calls["started"] = True
@@ -1492,7 +1492,7 @@ def test_load_with_scan_region_rejects_slice_and_range_forms() -> None:
     load_module = import_module("quantem.gpu.io.load")
 
     with pytest.raises(TypeError, match="scan_region must be"):
-        load_module._normalize_scan_region((slice(0, 1), range(0, 1)), (5, 6))
+        load_module._normalize_scan_region((slice(0, 1), range(1)), (5, 6))
 
 
 def test_load_with_detector_region_rejects_invalid_bounds() -> None:
@@ -1641,3 +1641,281 @@ def test_torch_scan_bin_partial_keeps_incomplete_edges_exactly() -> None:
         axis=(1, 3), dtype=np.uint64
     )
     np.testing.assert_array_equal(out.numpy(), expected.astype(np.int64))
+
+
+def test_pinned_buffer_release_prunes_redundant_smaller_size(monkeypatch) -> None:
+    from importlib import import_module
+
+    load_module = import_module("quantem.gpu.io.load")
+    small_array = np.zeros(80, dtype=np.uint8)
+    large_array = np.zeros(100, dtype=np.uint8)
+    small = {"arr": small_array, "size": 80, "free": True, "addr": 1}
+    large = {"arr": large_array, "size": 100, "free": False, "addr": 2}
+    released = []
+    monkeypatch.setattr(load_module, "_PINNED_BUFS", [small, large])
+
+    def unregister(entry) -> bool:
+        released.append(entry["size"])
+        return True
+
+    monkeypatch.setattr(load_module, "_unregister_pinned_entry", unregister)
+
+    load_module._release_pinned(large_array[:90])
+
+    assert load_module._PINNED_BUFS == [large]
+    assert large["free"] is True
+    assert released == [80]
+    assert small == {}
+
+
+def test_pinned_buffer_release_keeps_distinct_size_classes(monkeypatch) -> None:
+    from importlib import import_module
+
+    load_module = import_module("quantem.gpu.io.load")
+    small_array = np.zeros(40, dtype=np.uint8)
+    large_array = np.zeros(100, dtype=np.uint8)
+    small = {"arr": small_array, "size": 40, "free": True, "addr": 1}
+    large = {"arr": large_array, "size": 100, "free": False, "addr": 2}
+    monkeypatch.setattr(load_module, "_PINNED_BUFS", [small, large])
+    monkeypatch.setattr(load_module, "_unregister_pinned_entry", lambda _entry: True)
+
+    load_module._release_pinned(large_array[:90])
+
+    assert load_module._PINNED_BUFS == [small, large]
+    assert all(entry["free"] for entry in load_module._PINNED_BUFS)
+
+
+def test_pinned_buffer_release_prunes_newly_released_smaller_buffer(
+    monkeypatch,
+) -> None:
+    from importlib import import_module
+
+    load_module = import_module("quantem.gpu.io.load")
+    small_array = np.zeros(80, dtype=np.uint8)
+    large_array = np.zeros(100, dtype=np.uint8)
+    small = {"arr": small_array, "size": 80, "free": False, "addr": 1}
+    large = {"arr": large_array, "size": 100, "free": True, "addr": 2}
+    released = []
+    monkeypatch.setattr(load_module, "_PINNED_BUFS", [small, large])
+
+    def unregister(entry) -> bool:
+        released.append(entry["size"])
+        return True
+
+    monkeypatch.setattr(load_module, "_unregister_pinned_entry", unregister)
+
+    load_module._release_pinned(small_array)
+
+    assert load_module._PINNED_BUFS == [large]
+    assert released == [80]
+    assert small == {}
+
+
+def test_pinned_buffer_release_defers_pruning_until_pipeline_drains(
+    monkeypatch,
+) -> None:
+    from importlib import import_module
+
+    load_module = import_module("quantem.gpu.io.load")
+    small_array = np.zeros(80, dtype=np.uint8)
+    large_array = np.zeros(100, dtype=np.uint8)
+    small = {"arr": small_array, "size": 80, "free": False, "addr": 1}
+    large = {"arr": large_array, "size": 100, "free": True, "addr": 2}
+    released = []
+    monkeypatch.setattr(load_module, "_PINNED_BUFS", [small, large])
+
+    def unregister(entry) -> bool:
+        released.append(entry["size"])
+        return True
+
+    monkeypatch.setattr(load_module, "_unregister_pinned_entry", unregister)
+
+    load_module._release_pinned(small_array, prune=False)
+
+    assert load_module._PINNED_BUFS == [small, large]
+    assert all(entry["free"] for entry in load_module._PINNED_BUFS)
+    assert released == []
+
+    load_module._prune_pinned_free()
+
+    assert load_module._PINNED_BUFS == [large]
+    assert released == [80]
+    assert small == {}
+
+
+def test_pinned_buffer_pipeline_prune_retains_requested_reuse_slots(
+    monkeypatch,
+) -> None:
+    from importlib import import_module
+
+    load_module = import_module("quantem.gpu.io.load")
+    arrays = [np.zeros(size, dtype=np.uint8) for size in (80, 90, 95, 100, 105)]
+    entries = [
+        {"arr": array, "size": int(array.size), "free": True, "addr": index}
+        for index, array in enumerate(arrays, start=1)
+    ]
+    released = []
+    monkeypatch.setattr(load_module, "_PINNED_BUFS", entries.copy())
+
+    def unregister(entry) -> bool:
+        released.append(entry["size"])
+        return True
+
+    monkeypatch.setattr(load_module, "_unregister_pinned_entry", unregister)
+
+    load_module._prune_pinned_free(retain_per_size_class=4)
+
+    assert [entry["size"] for entry in load_module._PINNED_BUFS] == [90, 95, 100, 105]
+    assert released == [80]
+
+
+def test_prepare_master_releases_pinned_buffer_after_preparation_error(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    h5py = pytest.importorskip("h5py")
+    from importlib import import_module
+
+    load_module = import_module("quantem.gpu.io.load")
+    master = tmp_path / "scan_master.h5"
+    with h5py.File(master, "w") as handle:
+        handle.create_dataset(
+            "entry/data/data",
+            data=np.zeros((1, 2, 2), dtype=np.uint16),
+        )
+
+    allocated = np.zeros(master.stat().st_size, dtype=np.uint8)
+    released = []
+    monkeypatch.setattr(load_module, "_alloc_pinned_fast", lambda _size: allocated)
+    monkeypatch.setattr(load_module, "_release_pinned", released.append)
+    monkeypatch.setattr(
+        load_module.np,
+        "cumsum",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("index failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="index failed"):
+        load_module._prepare_master(str(master), ["data"])
+
+    assert len(released) == 1
+    assert released[0] is allocated
+
+
+def test_decompress_prepared_releases_staging_buffer_on_success(monkeypatch) -> None:
+    from importlib import import_module
+
+    load_module = import_module("quantem.gpu.io.load")
+    read_buffer = np.zeros(4, dtype=np.uint8)
+    result = object()
+    released = []
+    monkeypatch.setattr(
+        load_module,
+        "_decompress_prepared_impl",
+        lambda *_args, **_kwargs: result,
+    )
+    monkeypatch.setattr(load_module, "_release_pinned", released.append)
+
+    assert load_module._decompress_prepared({"read_buffer": read_buffer}) is result
+    assert len(released) == 1
+    assert released[0] is read_buffer
+
+
+def test_decompress_prepared_synchronizes_before_failure_release(monkeypatch) -> None:
+    from importlib import import_module
+
+    load_module = import_module("quantem.gpu.io.load")
+    read_buffer = np.zeros(4, dtype=np.uint8)
+    events = []
+
+    def fail_decode(*_args, **_kwargs):
+        events.append("decode")
+        raise RuntimeError("decode failed")
+
+    class FakeDevice:
+        def synchronize(self) -> None:
+            events.append("synchronize")
+
+    fake_cupy = SimpleNamespace(cuda=SimpleNamespace(Device=lambda: FakeDevice()))
+    monkeypatch.setattr(load_module, "cp", fake_cupy)
+    monkeypatch.setattr(load_module, "_decompress_prepared_impl", fail_decode)
+    monkeypatch.setattr(
+        load_module,
+        "_release_pinned",
+        lambda buffer: events.append(("release", buffer)),
+    )
+
+    with pytest.raises(RuntimeError, match="decode failed"):
+        load_module._decompress_prepared({"read_buffer": read_buffer})
+
+    assert events[:2] == ["decode", "synchronize"]
+    assert events[2][0] == "release"
+    assert events[2][1] is read_buffer
+
+
+def test_load_many_parallel_propagates_reader_failure(monkeypatch) -> None:
+    from importlib import import_module
+
+    load_module = import_module("quantem.gpu.io.load")
+    monkeypatch.setitem(sys.modules, "cupy", SimpleNamespace())
+    monkeypatch.setattr(load_module, "disk_of", lambda _path: "nvme0")
+    monkeypatch.setattr(load_module, "_discover_chunk_names", lambda _path: ["data"])
+    monkeypatch.setattr(
+        load_module,
+        "_prepare_master",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("read failed")),
+    )
+
+    with pytest.raises(OSError, match="read failed"):
+        load_module._load_many_parallel(["broken_master.h5"])
+
+
+def test_load_many_parallel_releases_queued_buffers_after_decode_failure(
+    monkeypatch,
+) -> None:
+    from importlib import import_module
+
+    load_module = import_module("quantem.gpu.io.load")
+    monkeypatch.setitem(sys.modules, "cupy", SimpleNamespace())
+    monkeypatch.setattr(load_module, "disk_of", lambda _path: "nvme0")
+    monkeypatch.setattr(load_module, "_discover_chunk_names", lambda _path: ["data"])
+
+    buffers = {
+        "a_master.h5": np.zeros(1, dtype=np.uint8),
+        "b_master.h5": np.zeros(2, dtype=np.uint8),
+    }
+    both_prepared = threading.Event()
+    prepared_count = 0
+    prepared_lock = threading.Lock()
+    released = []
+
+    def prepare(path, *_args, **_kwargs):
+        nonlocal prepared_count
+        with prepared_lock:
+            prepared_count += 1
+            if prepared_count == 2:
+                both_prepared.set()
+        return {"read_buffer": buffers[path]}
+
+    def fail_decode(prepared, **_kwargs):
+        assert both_prepared.wait(timeout=1.0)
+        load_module._release_pinned(prepared["read_buffer"])
+        raise RuntimeError("decode failed")
+
+    monkeypatch.setattr(load_module, "_prepare_master", prepare)
+    monkeypatch.setattr(load_module, "_decompress_prepared", fail_decode)
+    monkeypatch.setattr(load_module, "_release_pinned", released.append)
+
+    with pytest.raises(RuntimeError, match="decode failed"):
+        load_module._load_many_parallel(list(buffers))
+
+    assert {id(buffer) for buffer in released} == {
+        id(buffer) for buffer in buffers.values()
+    }
+
+
+def test_load_many_parallel_rejects_empty_gpu_list() -> None:
+    from importlib import import_module
+
+    load_module = import_module("quantem.gpu.io.load")
+    with pytest.raises(ValueError, match="at least one CUDA device"):
+        load_module._load_many_parallel(["scan_master.h5"], gpus=[])

@@ -36,6 +36,9 @@ typedef struct {
   int has_scan_shape;
   uint64_t *bad_pixel_indices;
   size_t bad_pixel_count;
+  double scan_pixel_row_nm;
+  double scan_pixel_column_nm;
+  int has_scan_pixel_size;
   double reciprocal_row_mrad;
   double reciprocal_column_mrad;
   int has_reciprocal_sampling;

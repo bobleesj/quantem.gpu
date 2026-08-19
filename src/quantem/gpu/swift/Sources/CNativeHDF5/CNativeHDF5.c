@@ -126,7 +126,7 @@ static int qh5_read_stack_geometry(
   if (type_class != H5T_INTEGER || sign != H5T_SGN_NONE || (source_bytes != 1 && source_bytes != 2)) {
     return qh5_fail(
       error_message,
-      "Live4DSTEM supports uint8/uint16 detector counts; this stack uses an unsupported dtype"
+      "QuantEM.GPU native HDF5 supports uint8/uint16 detector counts; this stack uses an unsupported dtype"
     );
   }
 
@@ -472,7 +472,11 @@ static char *qh5_read_dataset_string(hid_t file, const char *path) {
   return value;
 }
 
-static int qh5_read_length_meters(hid_t file, const char *path, double *value_meters) {
+static int qh5_read_length_meters_with_policy(
+    hid_t file,
+    const char *path,
+    double *value_meters,
+    int require_explicit_units) {
   hid_t dataset = H5Dopen2(file, path, H5P_DEFAULT);
   if (dataset < 0) return 0;
   hid_t space = H5Dget_space(dataset);
@@ -488,6 +492,10 @@ static int qh5_read_length_meters(hid_t file, const char *path, double *value_me
     free(units);
     return 0;
   }
+  if (require_explicit_units && (units == NULL || units[0] == '\0')) {
+    free(units);
+    return 0;
+  }
   double factor = 0;
   const char *unit = units == NULL || units[0] == '\0' ? "m" : units;
   if (strcasecmp(unit, "m") == 0) factor = 1;
@@ -500,6 +508,10 @@ static int qh5_read_length_meters(hid_t file, const char *path, double *value_me
   return 1;
 }
 
+static int qh5_read_length_meters(hid_t file, const char *path, double *value_meters) {
+  return qh5_read_length_meters_with_policy(file, path, value_meters, 0);
+}
+
 static void qh5_read_reciprocal_sampling(hid_t file, qh5_master_info *info) {
   double distance = 0;
   double row_pitch = 0;
@@ -510,6 +522,42 @@ static void qh5_read_reciprocal_sampling(hid_t file, qh5_master_info *info) {
     info->reciprocal_row_mrad = atan(row_pitch / distance) * 1000;
     info->reciprocal_column_mrad = atan(column_pitch / distance) * 1000;
     info->has_reciprocal_sampling = 1;
+  }
+}
+
+static void qh5_read_scan_pixel_size(hid_t file, qh5_master_info *info) {
+  const char *row_paths[] = {
+    "/entry/instrument/scan/y_pixel_size",
+    "/entry/instrument/scan/step_y",
+    "/entry/measurement/scan_step_y",
+    "/entry/scan/y_pixel_size",
+  };
+  const char *column_paths[] = {
+    "/entry/instrument/scan/x_pixel_size",
+    "/entry/instrument/scan/step_x",
+    "/entry/measurement/scan_step_x",
+    "/entry/scan/x_pixel_size",
+  };
+  double row_meters = 0;
+  double column_meters = 0;
+  int found_row = 0;
+  int found_column = 0;
+  for (size_t index = 0; index < sizeof(row_paths) / sizeof(row_paths[0]); index++) {
+    if (qh5_read_length_meters_with_policy(file, row_paths[index], &row_meters, 1)) {
+      found_row = 1;
+      break;
+    }
+  }
+  for (size_t index = 0; index < sizeof(column_paths) / sizeof(column_paths[0]); index++) {
+    if (qh5_read_length_meters_with_policy(file, column_paths[index], &column_meters, 1)) {
+      found_column = 1;
+      break;
+    }
+  }
+  if (found_row && found_column) {
+    info->scan_pixel_row_nm = row_meters * 1e9;
+    info->scan_pixel_column_nm = column_meters * 1e9;
+    info->has_scan_pixel_size = 1;
   }
 }
 
@@ -754,6 +802,7 @@ static int qh5_inspect_master_unlocked(
     if (mask < 0) status = qh5_fail(error_message, "The HDF5 pixel mask does not match the detector shape");
   }
   if (status == 0) qh5_read_reciprocal_sampling(file, info);
+  if (status == 0) qh5_read_scan_pixel_size(file, info);
   const char *date_paths[] = {
     "/entry/instrument/detector/detectorSpecific/data_collection_date",
     "/entry/start_time",
@@ -895,7 +944,7 @@ static int qh5_prepare_velox_image_unlocked(
           || (source_bytes != 1 && source_bytes != 2))) {
     status = qh5_fail(
       error_message,
-      "Live4DSTEM supports uint8/uint16 Velox scalar images; this image uses an unsupported dtype"
+      "QuantEM.GPU native EMD supports uint8/uint16 scalar images; this image uses an unsupported dtype"
     );
   }
   if (data_type >= 0) H5Tclose(data_type);

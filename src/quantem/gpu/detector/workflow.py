@@ -70,6 +70,26 @@ class DetectorSession:
 
         return np.asarray(self._backend.reduce_frames(indices, reduce=mode))
 
+    def reduce_frames_exact(self, indices) -> np.ndarray:
+        """Return the exact uint64 sum of selected scan frames."""
+
+        reducer = getattr(self._backend, "reduce_frames_exact", None)
+        if reducer is None:
+            raise NotImplementedError(
+                "This compute backend has no exact selected-frame reducer."
+            )
+        return _exact_to_numpy(reducer(indices)).reshape(self.detector_shape)
+
+    def reduce_frames_max(self, indices) -> np.ndarray:
+        """Return the exact integer maximum of selected scan frames."""
+
+        reducer = getattr(self._backend, "reduce_frames_max", None)
+        if reducer is None:
+            raise NotImplementedError(
+                "This compute backend has no exact selected-frame maximum."
+            )
+        return _exact_to_numpy(reducer(indices)).reshape(self.detector_shape)
+
     def mean_dp(self) -> np.ndarray:
         """Return the float32 mean diffraction pattern."""
 
@@ -258,7 +278,7 @@ def _flatten_scan(data):
         return data.reshape(-1, *data.shape[-2:]), (int(data.shape[0]), int(data.shape[1]))
     if data.ndim == 3:
         n = int(data.shape[0])
-        side = int(round(n ** 0.5))
+        side = round(n ** 0.5)
         scan_shape = (side, n // side) if side * side == n else (n,)
         return data, scan_shape
     raise ValueError(
@@ -305,6 +325,60 @@ class _ArrayComputeBackend:
             return _reduced_to_numpy(selected.max(axis=0))
         raise ValueError(f"Unknown frame reduction {reduce!r}; use mean, sum, or max.")
 
+    def reduce_frames_exact(self, scan_indices) -> np.ndarray:
+        indices = np.asarray(scan_indices, dtype=np.intp).reshape(-1)
+        if _is_cupy_array(self.flat):
+            from quantem.gpu.detector.compute.cuda.kernels import (
+                cuda_selected_frame_sum_uint64,
+            )
+
+            out = cuda_selected_frame_sum_uint64(self.data, indices)
+            if out is not None:
+                return out
+        selected = self.flat[indices]
+        if _is_torch_tensor(selected):
+            import torch
+
+            if torch.is_floating_point(selected):
+                raise TypeError("Exact scan ROI sums require integer detector data.")
+            return selected.to(torch.int64).sum(dim=0)
+        if _is_cupy_array(selected):
+            import cupy as cp
+
+            if selected.dtype.kind not in "ui":
+                raise TypeError("Exact scan ROI sums require integer detector data.")
+            return selected.sum(axis=0, dtype=cp.uint64)
+        selected = np.asarray(selected)
+        if not np.issubdtype(selected.dtype, np.integer):
+            raise TypeError("Exact scan ROI sums require integer detector data.")
+        return selected.sum(axis=0, dtype=np.uint64)
+
+    def reduce_frames_max(self, scan_indices) -> np.ndarray:
+        indices = np.asarray(scan_indices, dtype=np.intp).reshape(-1)
+        if _is_cupy_array(self.flat):
+            from quantem.gpu.detector.compute.cuda.kernels import (
+                cuda_selected_frame_max_uint32,
+            )
+
+            out = cuda_selected_frame_max_uint32(self.data, indices)
+            if out is not None:
+                return out
+        selected = self.flat[indices]
+        if _is_torch_tensor(selected):
+            import torch
+
+            if torch.is_floating_point(selected):
+                raise TypeError("Exact scan ROI maxima require integer detector data.")
+            return selected.to(torch.int64).max(dim=0).values
+        if _is_cupy_array(selected):
+            if selected.dtype.kind not in "ui":
+                raise TypeError("Exact scan ROI maxima require integer detector data.")
+            return selected.max(axis=0)
+        selected = np.asarray(selected)
+        if not np.issubdtype(selected.dtype, np.integer):
+            raise TypeError("Exact scan ROI maxima require integer detector data.")
+        return selected.max(axis=0).astype(np.uint32, copy=False)
+
     def masked_sum(self, det_mask):
         mask_np = np.asarray(det_mask, dtype=bool)
         if mask_np.shape != tuple(int(x) for x in self.flat.shape[-2:]):
@@ -314,6 +388,7 @@ class _ArrayComputeBackend:
             )
         if _is_cupy_array(self.flat):
             import cupy as cp
+
             from quantem.gpu.detector.compute.cuda.kernels import cuda_masked_sum
 
             out = cuda_masked_sum(self.data, mask_np)
@@ -351,7 +426,10 @@ class _ArrayComputeBackend:
             )
         if _is_cupy_array(self.flat):
             import cupy as cp
-            from quantem.gpu.detector.compute.cuda.kernels import cuda_selected_sum_uint64
+
+            from quantem.gpu.detector.compute.cuda.kernels import (
+                cuda_selected_sum_uint64,
+            )
 
             indices = cp.asarray(np.flatnonzero(mask_np.reshape(-1)), dtype=cp.int32)
             out = cuda_selected_sum_uint64(self.data, indices)

@@ -6,8 +6,8 @@
 > `quantem.widget` so the compute repository retains the experimental setup,
 > formulas, measurements, rejected ideas, and debugging lessons. It is not a
 > claim that every flag, source path, transport, or timing below still matches
-> the current runtime. Use [SSB performance](ssb-performance.md) for the newer
-> backend matrix and [SSB architecture](ssb-architecture.md) for current
+> the current runtime. Use [SSB performance](../ssb-performance.md) for the newer
+> backend matrix and [SSB architecture](../ssb-architecture.md) for current
 > ownership and API contracts.
 
 ## What must be reverified
@@ -18,7 +18,7 @@
 | `herm16` compact-preview error and memory numbers | Historical WebGPU experiment | Confirm the mode still exists, then repeat phase/error sweeps at 128, 256, 512, and 1024 |
 | July 2026 WebGPU timings and FPS | Hardware-, browser-, BF-policy-, and implementation-specific | Repeat on a named real adapter; report selected and aperture-active BF counts plus mean/p50/p95 |
 | URL flags, debug globals, serving scripts, and companion files | Several were explicitly removed or superseded later in this record | Check current TypeScript/WGSL source and current export documentation; do not copy commands blindly |
-| CUDA/MPS/WebGPU TODO matrix | Superseded by later backend work | Use the current matrix in [SSB performance](ssb-performance.md) and verify against tests/source |
+| CUDA/MPS/WebGPU TODO matrix | Superseded by later backend work | Use the current matrix in [SSB performance](../ssb-performance.md) and verify against tests/source |
 | Object-redraw identity and estimator distinction | Scientifically important, but timings are historical | Hold BF subset and aberrations fixed; distinguish `angle(mean(object))` from `mean(angle(object))` |
 
 The original experiment began on 2026-07-16 and gained follow-ups on

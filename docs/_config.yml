@@ -1,7 +1,6 @@
-# Jupyter Book config for the quantem.gpu documentation site.
-# The first docs pass is intentionally Markdown-only: examples use small code
-# snippets and real-data commands, but the build does not require private HDF5
-# masters, CUDA, or Apple Metal hardware.
+# Jupyter Book config for the quantem.gpu documentation site. Builds are
+# intentionally hardware-independent: qualified CUDA, Metal/MPS, and WebGPU
+# runs publish retained evidence rather than rerunning private data on Pages CI.
 title: quantem.gpu
 author: Sangjoon Bob Lee, et al
 logo: ""
@@ -13,21 +12,36 @@ execute:
   execute_notebooks: "off"
 
 sphinx:
-  extra_extensions:
-    - sphinx.ext.autodoc
-    - sphinx.ext.napoleon
   config:
+    # This site is static and does not expose an in-page notebook kernel.
+    # Listing the extensions explicitly omits sphinx-thebe and avoids loading
+    # its runtime on every page while retaining MyST/MathJax rendering.
+    extensions:
+      - sphinx_togglebutton
+      - sphinx_copybutton
+      - myst_nb
+      - jupyter_book
+      - sphinx_comments
+      - sphinx_external_toc
+      - sphinx.ext.intersphinx
+      - sphinx_design
+      - sphinx_book_theme
+      - sphinx.ext.autodoc
+      - sphinx.ext.napoleon
     napoleon_numpy_docstring: true
     napoleon_google_docstring: false
     napoleon_use_param: true
     napoleon_use_rtype: true
     autodoc_member_order: "bysource"
+    autoclass_content: "both"
     html_theme_options:
       secondary_sidebar_items: []
     html_static_path:
       - "_static"
     html_css_files:
       - custom.css
+    html_js_files:
+      - nav-toggle-fix.js
     suppress_warnings:
       - "etoc.toctree"
     copyright: "2026, ophusgroup"

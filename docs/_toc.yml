@@ -1,22 +1,59 @@
+# quantem.gpu documentation follows the same audience-first hierarchy as
+# quantem.widget: practical workflows first, exhaustive API and evidence later.
 format: jb-book
 root: intro
 parts:
   - caption: Getting started
     chapters:
       - file: install
-      - file: backends
-  - caption: Tutorials
+      - file: concepts/scientific-contract
+        title: Scientific contract
+      - file: platforms/index
+        title: Choose a platform
+        sections:
+          - file: platforms/cuda
+          - file: platforms/mps
+            title: Python MPS
+          - file: platforms/swift-metal
+            title: Native Swift and Metal
+          - file: platforms/webgpu
+          - file: platforms/cpu-reference
+            title: CPU reference
+
+  - caption: Scientific workflows
     chapters:
+      - file: tutorials/workflow_math
+        title: What do the products measure?
       - file: tutorials/load_hdf5
-      - file: tutorials/scan_region
       - file: tutorials/bf_df_adf
       - file: tutorials/dpc
       - file: tutorials/ssb
-      - file: tutorials/movie_rendering
       - file: tutorials/display_widget
-  - caption: API guide
+      - file: tutorials/movie_rendering
+      - file: tutorials/remote_cuda
+      - file: tutorials/scan_region
+        title: Explicit scan regions
+
+  - caption: Performance & parity
+    chapters:
+      - file: performance/index
+        title: Evidence overview
+        sections:
+          - file: backends
+            title: Current verified results
+          - file: performance/methodology
+          - file: performance/parity
+          - file: maintainer/backend-optimization-matrix
+            title: Optimization ledger
+          - file: maintainer/backend-4dstem-load-checklist
+            title: Load acceptance evidence
+          - file: maintainer/ssb-performance
+            title: SSB performance evidence
+
+  - caption: Developers
     chapters:
       - file: api/index
+        title: API reference
         sections:
           - file: api/io
           - file: api/images_dpc
@@ -24,14 +61,32 @@ parts:
           - file: api/movie
           - file: api/metal_image
           - file: api/native_4dstem_io
-  - caption: Maintainers
-    chapters:
-      - file: maintainer/migration
-      - file: maintainer/backend-optimization-matrix
-      - file: maintainer/backend-4dstem-load-checklist
-      - file: maintainer/native-metal-hdf5-postmortem
-      - file: maintainer/remote-cuda-real-data-2026-08-15
-      - file: maintainer/ssb-architecture
-      - file: maintainer/ssb-performance
-      - file: maintainer/webgpu-gqk-memory-history
-      - file: maintainer/virtual-image-kernel-checklist
+      - file: developer/index
+        title: Developer guide
+        sections:
+          - file: maintainer/backend-layout-and-parity
+            title: Repository architecture
+          - file: developer/adding-backend
+          - file: developer/writing
+            title: Writing, notation, and units
+          - file: developer/testing
+
+  - chapters:
+      - file: maintainer/index
+        title: Maintainer guide
+        sections:
+          - file: maintainer/migration
+          - file: maintainer/native-metal-hdf5-postmortem
+          - file: maintainer/m2-air-lz4-match-unroll-2026-08-18
+            title: M2 Air Metal evidence
+          - file: maintainer/remote-cuda-real-data-2026-08-15
+            title: Remote CUDA evidence
+          - file: maintainer/ssb-architecture
+          - file: maintainer/virtual-image-kernel-checklist
+          - file: maintainer/history/index
+            title: Historical experiments
+            sections:
+              - file: maintainer/history/webgpu-gqk-memory-2026-07
+                title: WebGPU G(q,k) memory history
+              - file: maintainer/history/webgpu-frame-coop-u16-clip8-2026-07-25
+                title: WebGPU frame-cooperative decode
