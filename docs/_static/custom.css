@@ -33,11 +33,23 @@ table {
   overflow-x: auto;
 }
 
+.pst-scrollable-table-container {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
 div.highlight pre {
   overflow-x: auto;
 }
 
 @media (max-width: 959.98px) {
+  .pst-scrollable-table-container > table.table {
+    display: table;
+    min-width: 52rem;
+    max-width: none;
+    overflow: visible;
+  }
+
   code.docutils.literal span.pre,
   dt.sig span.pre {
     white-space: normal;
