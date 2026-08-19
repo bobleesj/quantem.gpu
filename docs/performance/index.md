@@ -1,4 +1,4 @@
-# Performance and parity evidence
+# Benchmarks and parity
 
 This section is the numerical record for `quantem.gpu`. It keeps current
 results easy to find while preserving the detailed history needed to understand
@@ -9,6 +9,7 @@ which optimizations were accepted, rejected, or remain provisional.
 | Evidence | Use it for |
 |---|---|
 | [Verified benchmark results](results.md) | Metrics with date, revision, device, shape/dtype, cache state, load plan, benchmark definition, calibration, and parity provenance |
+| [Revision and change ledger](changes.md) | Latest documentation changes, implementation baselines, and why a retained number changed or remained historical |
 | [Current verified results](../backends.md) | Capability status and the public-safe timing/parity summary across CUDA, MPS/Metal, Swift, and WebGPU |
 | [Benchmark methodology](methodology.md) | Required timing stages, cold/warm definitions, memory reporting, and acceptance rules |
 | [Cross-backend parity](parity.md) | Exact integer contracts, floating metrics, fixtures, and hardware gates |

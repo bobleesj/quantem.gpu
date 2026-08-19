@@ -19,7 +19,7 @@ def test_docs_navigation_has_world_class_top_level_sections() -> None:
         "Kernel implementations",
         "Remote compute",
         "API contracts",
-        "Verification and performance",
+        "Benchmarks and parity",
         "Contributing",
     ):
         assert f"caption: {caption}" in toc
@@ -53,6 +53,7 @@ def test_docs_navigation_has_world_class_top_level_sections() -> None:
         "developer/writing",
         "performance/index",
         "performance/results",
+        "performance/changes",
         "performance/methodology",
         "performance/parity",
         "backends",
@@ -61,6 +62,7 @@ def test_docs_navigation_has_world_class_top_level_sections() -> None:
         "developer/adding-backend",
         "developer/testing",
         "maintainer/index",
+        "api/core",
     ):
         assert f"file: {page}" in toc
 
@@ -115,8 +117,8 @@ def test_dashboard_is_the_dense_human_overview() -> None:
 
     assert "caption: Start here" in toc
     assert "file: dashboard" in toc
-    assert "Kernel and benchmark dashboard" in intro
-    assert "[Kernel and benchmark dashboard](docs/dashboard.md)" in readme
+    assert "implementation overview" in intro
+    assert "[Implementation overview](docs/dashboard.md)" in readme
 
     for heading in (
         "## Benchmark snapshot",
@@ -171,6 +173,56 @@ def test_dashboard_is_the_dense_human_overview() -> None:
 
     assert "I[R_r,R_c,q_r,q_c]" in dashboard
     assert "not ranked" in dashboard
+
+
+def test_intro_exposes_current_benchmarks_without_erasing_provenance() -> None:
+    intro = Path("docs/intro.md").read_text(encoding="utf-8")
+
+    for evidence_id in (
+        "M2-AIR-BIN4-E2E",
+        "CUDA-512-LOAD",
+        "WEBGPU-512-FULL",
+    ):
+        assert evidence_id in intro
+
+    for qualifier in (
+        "not a platform ranking",
+        "cache state",
+        "bin/crop plan",
+        "parity artifact",
+    ):
+        assert qualifier in intro
+
+
+def test_api_guide_maps_every_public_namespace() -> None:
+    api = Path("docs/api/index.md").read_text(encoding="utf-8")
+    root = Path("src/quantem/gpu/__init__.py").read_text(encoding="utf-8")
+
+    for namespace in (
+        "detector",
+        "device",
+        "dpc",
+        "io",
+        "movie",
+        "optics",
+        "parallax",
+        "screening",
+    ):
+        assert f'"{namespace}"' in root
+        assert f"`{namespace}`" in api
+
+    core = Path("docs/api/core.md").read_text(encoding="utf-8")
+    for entry_point in (
+        "device.detect",
+        "device.profile",
+        "device.resolve",
+        "screening.prepare",
+        "parallax.run",
+        "wavelength_A_from_kV",
+        "chi_polar",
+        "fit_aberrations",
+    ):
+        assert entry_point in core
 
 
 def test_current_benchmarks_have_complete_provenance_rows() -> None:

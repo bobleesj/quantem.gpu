@@ -19,6 +19,10 @@ qgpu.device.detect()
 | parallax reconstruction | `quantem.gpu.parallax` | domain reconstruction result |
 | SSB fitting/reconstruction | `quantem.gpu.SSB` | `SSBResult` or `SSBSeriesResult` |
 | display/export math | `quantem.gpu.display`, `quantem.gpu.movie` | display buffer or encoded artifact |
+| device selection | `quantem.gpu.device.detect`, `profile`, `resolve` | explicit backend/device description |
+| electron optics | `quantem.gpu.optics` | wavelength, reciprocal cutoff, aberration phase, and fit results |
+| cached screening | `quantem.gpu.screening.prepare` | `ScreeningResult` with derived launch products and provenance |
+| parallax | `quantem.gpu.parallax.run` | `ParallaxResult` |
 
 Native Swift/Metal products for macOS and iOS clients:
 
@@ -35,3 +39,21 @@ backend.
 
 The API is still release-candidate level. Prefer public functions documented
 here over internal backend modules.
+
+## Complete public namespace map
+
+| Namespace/product | Stable public surface | Contract page |
+|---|---|---|
+| `device` | `detect`, `profile`, `resolve` | [Device selection and supporting APIs](core.md) |
+| `io` | `discover`, `inspect`, `load`, `save` | [I/O API](io.md) |
+| `detector`, `dpc` | detector reductions, `DPCResult` | [Detector and DPC API](images_dpc.md) |
+| `optics` | wavelength/convergence conversions, aberration phase and fitting | [Device selection and supporting APIs](core.md) |
+| `screening` | `prepare`, `ScreeningResult` | [Device selection and supporting APIs](core.md) |
+| `parallax` | `run`, `ParallaxResult` | [Device selection and supporting APIs](core.md) |
+| `SSB` | `SSB`, `SSBResult`, series results | [SSB API](ssb.md) |
+| `display`, `movie` | display transforms and encoded artifacts | [Movie API](movie.md) and [display kernels](../kernels/display-export.md) |
+| SwiftPM products | `MetalImageFFT`, `MetalImageRuntime`, `Native4DSTEMIO`, `Metal4DSTEMKernels` | [Native Metal image](metal_image.md) and [native load/cache](native_4dstem_io.md) |
+| Remote services | browse, MAPED, and SSB protocol services | [QuantEM.GPU Remote](../remote/index.md) |
+
+Backend modules, private helpers, launch geometry, cache scheduling, and UI
+state are deliberately not public API.
