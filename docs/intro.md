@@ -4,6 +4,19 @@ One scientific GPU contract for electron microscopy—from compressed detector
 data to exact products—across NVIDIA CUDA, Apple MPS/Metal, native Swift,
 WebGPU, and an explicit CPU reference.
 
+```{admonition} Living pre-release draft
+:class: important
+This site documents an evolving `0.0.1` release-candidate series. Public APIs,
+runtime coverage, and recommendations may change between candidates. Python
+examples currently pin the exact TestPyPI candidate
+`quantem.gpu==0.0.1rc6`; Swift consumers pin an exact verified Git revision.
+
+The documentation is a draft, but retained performance and parity rows are not
+draft estimates: each is a frozen historical measurement tied to its stated
+date, source revision, device, data plan, cache state, and acceptance rule. A
+newer candidate replaces the documented pin only after those gates are rerun.
+```
+
 ```{admonition} Choose how you want to enter
 :class: tip
 **Whole project:** start with the

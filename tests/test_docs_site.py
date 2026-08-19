@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import re
+import tomllib
 
 import pytest
 
@@ -567,6 +569,27 @@ def test_public_repository_files_are_linked_from_readme() -> None:
     assert "https://doi.org/10.1093/mam/ozag053.941" in readme
     assert '"CONTRIBUTING.md"' in package
     assert '"CITATION.cff"' in package
+
+
+def test_prerelease_docs_pin_the_exact_declared_candidate() -> None:
+    readme = Path("README.md").read_text(encoding="utf-8")
+    intro = Path("docs/intro.md").read_text(encoding="utf-8")
+    install = Path("docs/install.md").read_text(encoding="utf-8")
+    package = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    version = package["project"]["version"]
+    exact_pin = f"quantem.gpu=={version}"
+
+    assert version == "0.0.1rc6"
+    assert exact_pin in readme
+    assert exact_pin in intro
+    assert exact_pin in install
+    assert "evolving pre-release draft" in install
+    assert "candidates are not assumed to be" in install
+    assert "unpinned `--pre` install" in install
+
+    requirements = re.findall(r'"(quantem\.gpu(?:\[[^]]+\])?==[^"]+)"', install)
+    assert requirements
+    assert all(requirement.endswith(f"=={version}") for requirement in requirements)
 
 
 def test_scientific_writing_convention_is_explicit() -> None:

@@ -11,6 +11,14 @@ Visit the **[quantem.gpu documentation](https://bobleesj.github.io/quantem.gpu/)
 for the scientific equations, kernel source maps, runtime implementation guides,
 API contracts, benchmark methodology, and cross-backend parity evidence.
 
+> [!IMPORTANT]
+> **Pre-release documentation:** `quantem.gpu` and this site are an evolving
+> draft during the `0.0.1` release-candidate series. APIs and support guidance
+> may change between candidates. For reproducible Python testing, pin the exact
+> TestPyPI candidate shown here (`quantem.gpu==0.0.1rc6`); native Swift clients
+> should pin an exact verified Git revision. A newer candidate is adopted only
+> after its compatibility, parity, and performance gates are repeated.
+
 Choose your entry point:
 
 - [Implementation overview](docs/dashboard.md): the dense one-page map
@@ -51,7 +59,7 @@ binned result is never represented as native resolution.
 
 ## Install
 
-Install the current release candidate from TestPyPI:
+Install the documentation's exact release-candidate pin from TestPyPI:
 
 ```bash
 python -m pip install \
