@@ -1,6 +1,16 @@
 # Install
 
-Install the release candidate from TestPyPI:
+```{admonition} Pin the documented candidate
+:class: important
+QuantEM.GPU and this documentation are an evolving pre-release draft. As of
+2026-08-19, the Python examples target the exact TestPyPI candidate
+`quantem.gpu==0.0.1rc6`, which matches the version declared by this source
+tree. TestPyPI may list a newer candidate; candidates are not assumed to be
+interchangeable. Keep the equality pin, and advance it only after installation,
+compatibility, scientific parity, and performance checks are repeated.
+```
+
+Install that exact release candidate from TestPyPI:
 
 ```bash
 python -m pip install \
@@ -59,3 +69,9 @@ print(qgpu.device.detect())
 ```
 
 The distribution version and `qgpu.__version__` should match.
+
+For a reproducible test report, record both printed versions, the Python
+executable, platform/device, and the exact command above. Do not describe an
+unpinned `--pre` install as equivalent to the documented candidate. Benchmark
+rows can name other exact Git revisions because they are frozen historical
+evidence rather than statements about the current package pin.
