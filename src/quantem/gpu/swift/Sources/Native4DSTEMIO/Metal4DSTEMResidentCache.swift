@@ -354,19 +354,25 @@ public enum Metal4DSTEMResidentCacheIO {
     guard metadata.outputDtype == "uint16" || metadata.outputDtype == "uint32" else {
       try invalid("output dtype \(metadata.outputDtype) is not supported")
     }
-    guard let sourceDetectorPixels = checkedProduct(
-      UInt64(metadata.sourceDetectorRows), UInt64(metadata.sourceDetectorColumns)
-    ) else { try invalid("source detector shape overflows UInt64") }
+    guard
+      let sourceDetectorPixels = checkedProduct(
+        UInt64(metadata.sourceDetectorRows), UInt64(metadata.sourceDetectorColumns)
+      )
+    else { try invalid("source detector shape overflows UInt64") }
     let badPixels = Set(metadata.badPixelIndices)
     guard badPixels.count == metadata.badPixelIndices.count,
       badPixels.allSatisfy({ $0 >= 0 && UInt64($0) < sourceDetectorPixels })
     else { try invalid("badPixelIndices contains duplicates or out-of-range values") }
-    guard let outputScanPositions = checkedProduct(
-      UInt64(metadata.outputScanRows), UInt64(metadata.outputScanColumns)
-    ), let outputDetectorPixels = checkedProduct(
-      UInt64(metadata.outputDetectorRows), UInt64(metadata.outputDetectorColumns)
-    ) else { try invalid("output shape overflows UInt64") }
-    let wordsPerFrame = metadata.outputDtype == "uint16"
+    guard
+      let outputScanPositions = checkedProduct(
+        UInt64(metadata.outputScanRows), UInt64(metadata.outputScanColumns)
+      ),
+      let outputDetectorPixels = checkedProduct(
+        UInt64(metadata.outputDetectorRows), UInt64(metadata.outputDetectorColumns)
+      )
+    else { try invalid("output shape overflows UInt64") }
+    let wordsPerFrame =
+      metadata.outputDtype == "uint16"
       ? (outputDetectorPixels + 1) / 2
       : outputDetectorPixels
     guard let payloadWords = checkedProduct(outputScanPositions, wordsPerFrame),
@@ -385,9 +391,10 @@ public enum Metal4DSTEMResidentCacheIO {
     {
       try invalid("sourceIdentitySHA256 is not a lowercase SHA-256 digest")
     }
-    guard !requireSealedPayload
-      || (metadata.payloadIdentity?.byteCount == metadata.payloadBytes
-        && isSHA256(metadata.payloadSHA256))
+    guard
+      !requireSealedPayload
+        || (metadata.payloadIdentity?.byteCount == metadata.payloadBytes
+          && isSHA256(metadata.payloadSHA256))
     else { try invalid("payload identity or SHA-256 seal is missing") }
   }
 
@@ -397,8 +404,9 @@ public enum Metal4DSTEMResidentCacheIO {
   }
 
   private static func isSHA256(_ value: String) -> Bool {
-    value.utf8.count == 64 && value.utf8.allSatisfy {
-      (48...57).contains($0) || (97...102).contains($0)
-    }
+    value.utf8.count == 64
+      && value.utf8.allSatisfy {
+        (48...57).contains($0) || (97...102).contains($0)
+      }
   }
 }

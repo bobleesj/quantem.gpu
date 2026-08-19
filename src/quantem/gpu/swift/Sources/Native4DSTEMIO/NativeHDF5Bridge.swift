@@ -57,11 +57,12 @@ enum NativeHDF5Bridge {
       qh5_free_error(errorMessage)
     }
     guard status == 0 else { throw hdf5Error(errorMessage) }
-    let chunks = rawChunks.map {
-      Array(UnsafeBufferPointer(start: $0, count: rawChunkCount)).map {
-        NativeHDF5Chunk(offset: $0.offset, size: $0.size)
-      }
-    } ?? []
+    let chunks =
+      rawChunks.map {
+        Array(UnsafeBufferPointer(start: $0, count: rawChunkCount)).map {
+          NativeHDF5Chunk(offset: $0.offset, size: $0.size)
+        }
+      } ?? []
     return NativeHDF5Stack(
       frameCount: try exactInt(rawStack.frame_count, label: "frame count"),
       detectorRows: try exactInt(rawStack.detector_rows, label: "detector rows"),
@@ -94,9 +95,10 @@ enum NativeHDF5Bridge {
     guard status == 0 else { throw hdf5Error(errorMessage) }
 
     let externalFiles = strings(raw.external_files, count: raw.external_file_count)
-    let badPixelIndices = raw.bad_pixel_indices.map {
-      UnsafeBufferPointer(start: $0, count: raw.bad_pixel_count).map(Int.init)
-    } ?? []
+    let badPixelIndices =
+      raw.bad_pixel_indices.map {
+        UnsafeBufferPointer(start: $0, count: raw.bad_pixel_count).map(Int.init)
+      } ?? []
     var metadata: [String: String] = [:]
     if let items = raw.metadata {
       for item in UnsafeBufferPointer(start: items, count: raw.metadata_count) {
@@ -104,16 +106,19 @@ enum NativeHDF5Bridge {
         metadata[String(cString: key)] = String(cString: value)
       }
     }
-    let expectedFrames = raw.has_expected_frames != 0
+    let expectedFrames =
+      raw.has_expected_frames != 0
       ? try exactInt(raw.expected_frames, label: "expected frame count")
       : nil
-    let scanShape = raw.has_scan_shape != 0
+    let scanShape =
+      raw.has_scan_shape != 0
       ? (
         rows: try exactInt(raw.scan_rows, label: "scan rows"),
         columns: try exactInt(raw.scan_columns, label: "scan columns")
       )
       : nil
-    let reciprocalSampling = raw.has_reciprocal_sampling != 0
+    let reciprocalSampling =
+      raw.has_reciprocal_sampling != 0
       ? (row: raw.reciprocal_row_mrad, column: raw.reciprocal_column_mrad)
       : nil
     return NativeHDF5Master(

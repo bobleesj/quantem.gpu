@@ -43,7 +43,8 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
         "Missing HDF5 shard(s): \(missing.map(\.path).joined(separator: ", "))"
       )
     }
-    let signatureFiles = (FileManager.default.fileExists(atPath: source.path) ? [source] : [])
+    let signatureFiles =
+      (FileManager.default.fileExists(atPath: source.path) ? [source] : [])
       + dataFiles
     let signature = try nativeDatasetSignature(for: signatureFiles)
     let indexRoot = cacheDirectory.appendingPathComponent(signature, isDirectory: true)
@@ -70,7 +71,8 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
         return cached
       }
     }
-    let hashes = mode == .indexed
+    let hashes =
+      mode == .indexed
       ? try nativeSourceHashes(
         master: isMaster(source) ? source : nil,
         dataFiles: dataFiles,
@@ -123,11 +125,13 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
     }
 
     guard let first = stacks.first else { throw Native4DSTEMIOError.noDatasets }
-    guard stacks.dropFirst().allSatisfy({
-      $0.detectorRows == first.detectorRows
-        && $0.detectorColumns == first.detectorColumns
-        && $0.sourceBytes == first.sourceBytes
-    }) else {
+    guard
+      stacks.dropFirst().allSatisfy({
+        $0.detectorRows == first.detectorRows
+          && $0.detectorColumns == first.detectorColumns
+          && $0.sourceBytes == first.sourceBytes
+      })
+    else {
       throw Native4DSTEMIOError.invalidData(
         "\(source.lastPathComponent) has inconsistent detector shards"
       )
@@ -139,7 +143,8 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
       }
       return sum
     }
-    let metadataSource = FileManager.default.fileExists(atPath: source.path)
+    let metadataSource =
+      FileManager.default.fileExists(atPath: source.path)
       ? source
       : dataFiles[0]
     let master = try NativeHDF5Bridge.inspectMaster(
@@ -245,7 +250,8 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
       columns: image.columns,
       evidencePath: image.metadataPath
     )
-    let hashes = mode == .indexed
+    let hashes =
+      mode == .indexed
       ? try nativeSourceHashes(master: nil, dataFiles: [source]) : nil
     let after = try nativeFileIdentity(for: source)
     guard before.device == after.device,
@@ -449,10 +455,10 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
         .filter { !$0.hasPrefix(".") }
         .map { directory.appendingPathComponent($0) }
         .filter {
-        let name = $0.lastPathComponent.lowercased()
-        return name.hasPrefix((stem + "_data_").lowercased()) && name.hasSuffix(".h5")
-          && shardStem($0.lastPathComponent) == stem
-      }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+          let name = $0.lastPathComponent.lowercased()
+          return name.hasPrefix((stem + "_data_").lowercased()) && name.hasSuffix(".h5")
+            && shardStem($0.lastPathComponent) == stem
+        }.sorted { $0.lastPathComponent < $1.lastPathComponent }
       if !globbed.isEmpty {
         return globbed.map(nativeCanonicalURL)
       }
@@ -569,7 +575,8 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
 
   private func label(for source: URL) -> String {
     let suffixLength = isMaster(source) ? "_master.h5".count : 0
-    let stem = suffixLength == 0
+    let stem =
+      suffixLength == 0
       ? source.deletingPathExtension().lastPathComponent
       : String(source.lastPathComponent.dropLast(suffixLength))
     let expression = try! NSRegularExpression(
@@ -582,6 +589,7 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
       let row = Double(stem[rowRange]),
       let column = Double(stem[columnRange])
     else { return stem }
-    return "\(row.formatted(.number.precision(.fractionLength(0...8))))°, \(column.formatted(.number.precision(.fractionLength(0...8))))°"
+    return
+      "\(row.formatted(.number.precision(.fractionLength(0...8))))°, \(column.formatted(.number.precision(.fractionLength(0...8))))°"
   }
 }
