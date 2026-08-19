@@ -123,8 +123,8 @@ def test_dashboard_is_the_dense_human_overview() -> None:
     for heading in (
         "## Platform-first module dashboard",
         "### I/O and first usable product — `quantem.gpu.io`",
-        "#### Scan-size evidence",
-        "#### Detector-bin evidence",
+        "#### Scan-size coverage",
+        "#### Detector-bin coverage",
         "#### Retained load timing",
         "### Screening and prepared-product caches — `quantem.gpu.screening`",
         "### Virtual images — `quantem.gpu.detector`",
@@ -146,10 +146,10 @@ def test_dashboard_is_the_dense_human_overview() -> None:
         assert runtime in dashboard
 
     for evidence_state in (
-        "✓ Evidence",
-        "Test only",
+        "✓",
+        "Test",
         "Pending",
-        "Reference",
+        "Ref",
         "unsupported or not a target",
     ):
         assert evidence_state in dashboard
@@ -193,7 +193,7 @@ def test_dashboard_is_the_dense_human_overview() -> None:
     for detector_bin in (1, 2, 4, 8):
         assert f"Bin {detector_bin}" in dashboard
     assert "square scan-grid sizes, not detector dimensions" in dashboard
-    assert "native acquisition retained" in dashboard
+    assert "`512` is native full-BF" in dashboard
 
     module_headings = (
         "### I/O and first usable product — `quantem.gpu.io`",
@@ -250,20 +250,20 @@ def test_intro_exposes_current_benchmarks_without_erasing_provenance() -> None:
     )
 
     for status in (
-        "**✓ Evidence**",
-        "**Test only**",
+        "**✓**",
+        "**Test**",
         "**Pending**",
-        "**Reference**",
+        "**Ref**",
         "**—**",
     ):
         assert status in intro
 
     for table_field in (
         "Platform",
-        "Scan-size evidence",
-        "Detector-bin evidence",
+        "Scan sizes",
+        "Detector bins",
         "Latest retained result",
-        "Evidence or placeholder",
+        "Details",
     ):
         assert table_field in intro
 
@@ -322,14 +322,14 @@ def test_intro_ssb_size_matrix_tracks_fixed_size_runtime_registries() -> None:
     ).read_text(encoding="utf-8")
 
     assert "scan sizes, not detector sizes" in intro
-    assert "native acquisition retained" in intro
+    assert "`512` is native full-BF" in intro
     for size in (128, 256, 512, 1024):
         assert f"`{size}x{size}`" in intro
         assert f"{size}:" in cuda
         assert f"{size}:" in mps
     assert "SUPPORTED_SSB_SIZES = [128, 256, 512, 1024]" in webgpu
 
-    assert "frozen real CUDA artifacts incomplete" in intro
+    assert "incomplete frozen CUDA artifacts" in intro
     assert "no native swift ssb kernel" in intro.lower()
 
 
@@ -350,22 +350,22 @@ def test_platform_first_io_tables_expose_bins_and_missing_evidence() -> None:
     assert "| Platform | Bin 1 | Bin 2 | Bin 4 | Bin 8 |" in io_section
     assert "supportedDetectorBins = [1, 2, 4]" in swift_plan
     assert (
-        "| **Native Swift/Metal** | ✓ Evidence | Test only | ✓ Evidence | — |"
+        "| **Native Swift/Metal** | ✓ | Test | ✓ | — |"
         in io_section
     )
     assert (
-        "| **WebGPU** | ✓ Evidence | ✓ Evidence | ✓ Evidence | ✓ Evidence |"
+        "| **WebGPU** | ✓ | ✓ | ✓ | ✓ |"
         in io_section
     )
     assert (
-        "| **CUDA** | ✓ Evidence | ✓ Evidence | Pending | Pending |"
+        "| **CUDA** | ✓ | ✓ | Pending | Pending |"
         in io_section
     )
     assert (
-        "| **Python MPS** | ✓ Evidence | ✓ Evidence | Pending | Pending |"
+        "| **Python MPS** | ✓ | ✓ | Pending | Pending |"
         in io_section
     )
-    assert "| **CPU reference** | Reference | Reference | Reference | Reference |" in io_section
+    assert "| **CPU reference** | Ref | Ref | Ref | Ref |" in io_section
     assert "|  |" not in io_section
 
 

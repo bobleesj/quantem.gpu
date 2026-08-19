@@ -27,13 +27,12 @@ missing.
 Every module table starts with the implementation platform. Cells use the same
 evidence vocabulary as the [complete module dashboard](dashboard.md):
 
-- **✓ Evidence** — retained real-data or physical-device parity evidence for
-  that exact cell.
-- **Test only** — deterministic tests exist, but equivalent physical evidence
+- **✓** — verified with retained real-data or physical-device parity evidence.
+- **Test** — deterministic tests exist, but equivalent physical evidence
   is not retained.
 - **Pending** — the source path exists, but the exact size, bin, or timing row
   still needs evidence.
-- **Reference** — independent CPU correctness adjudication, never fallback.
+- **Ref** — independent CPU correctness adjudication, never fallback.
 - **—** — unsupported or not a target.
 
 No empty cell implies support. Date, device, revision, scientific plan, and
@@ -45,26 +44,26 @@ The I/O module owns discovery, inspection, accelerated bitshuffle/LZ4 decode,
 explicit crop/bin geometry, dtype conversion, provenance, and compressed HDF5
 saving.
 
-| Platform | Load/decode/provenance | Scan-size evidence | Detector-bin evidence | Compressed save | Latest retained result and exact plan |
+| Platform | Load/decode/provenance | Scan sizes | Detector bins | Compressed save | Latest retained result and exact plan |
 |---|---|---|---|---|---|
-| **CUDA** | ✓ Evidence | `128/256/512/1024` ✓ | bin 1/2 ✓; bin 4/8 **Pending** | ✓ Evidence | **0.450 s median**, warm `512x512x192x192`, bin 1, audited low8; [CUDA-512-LOAD](performance/results.md), 2026-07-20, `b61572e4` |
-| **Python MPS** | ✓ Evidence | `128/256/512/1024` ✓ | bin 1/2 ✓; bin 4/8 **Pending** | ✓ Evidence | load **4.617 s**, first-observed native `1024`, bin 1; save **1.69 s** sweep / **1.91 s** public default for warm `512` `uint16`; [MPS-1024-LOAD](performance/results.md), [MPS-SAVE-U16-512](performance/results.md) |
-| **Native Swift/Metal** | ✓ Evidence | `512` ✓; `128/256/1024` **Pending** | bin 1 ✓; bin 2 **Test only**; bin 4 ✓; bin 8 — | Resident cache only; HDF5 save — | **1.985 / 2.043 s p50**, first process/observed `512`, full scan, detector bin 4; physical 8 GB M2 Air; [M2-AIR-BIN4-E2E](performance/results.md), 2026-08-18, `2c047160`/`e662d7fe` |
-| **WebGPU** | ✓ Evidence | `128/256/512` ✓; `1024` partial product-first | bin 1/2/4/8 ✓ | — | no-bin **0.772 s p50** prepared full `512`; bin 2/4/8 **1.199/1.212/1.106 s**; [WEBGPU-512-FULL](performance/results.md), [WEBGPU-DET-BIN](performance/results.md) |
-| **CPU reference** | Reference | All sizes Reference | bin 1/2/4/8 Reference | Reference writer | **Pending** — no comparable accelerator-style timing |
+| **CUDA** | ✓ | `128/256/512/1024` ✓ | bin 1/2 ✓; bin 4/8 **Pending** | ✓ | **0.450 s median**, warm `512x512x192x192`, bin 1, audited low8; [CUDA-512-LOAD](performance/results.md), 2026-07-20, `b61572e4` |
+| **Python MPS** | ✓ | `128/256/512/1024` ✓ | bin 1/2 ✓; bin 4/8 **Pending** | ✓ | load **4.617 s**, first-observed native `1024`, bin 1; save **1.69 s** sweep / **1.91 s** public default for warm `512` `uint16`; [MPS-1024-LOAD](performance/results.md), [MPS-SAVE-U16-512](performance/results.md) |
+| **Native Swift/Metal** | ✓ | `512` ✓; `128/256/1024` **Pending** | bin 1 ✓; bin 2 **Test**; bin 4 ✓; bin 8 — | Resident cache only; HDF5 save — | **1.985 / 2.043 s p50**, first process/observed `512`, full scan, detector bin 4; physical 8 GB M2 Air; [M2-AIR-BIN4-E2E](performance/results.md), 2026-08-18, `2c047160`/`e662d7fe` |
+| **WebGPU** | ✓ | `128/256/512` ✓; `1024` partial product-first | bin 1/2/4/8 ✓ | — | no-bin **0.772 s p50** prepared full `512`; bin 2/4/8 **1.199/1.212/1.106 s**; [WEBGPU-512-FULL](performance/results.md), [WEBGPU-DET-BIN](performance/results.md) |
+| **CPU reference** | Ref | All sizes Ref | bin 1/2/4/8 Ref | Reference writer | **Pending** — no comparable accelerator-style timing |
 
 ### Screening — `quantem.gpu.screening`
 
 `screening.prepare` builds and reopens the small mean-diffraction, BF, DF, CoM,
 rotation, and iDPC launch products. It is a separate module from raw I/O.
 
-| Platform | Module support | Size and explicit plan | Latest retained result | Evidence or placeholder |
+| Platform | Module support | Size and explicit plan | Latest retained result | Details |
 |---|---|---|---:|---|
-| **CUDA** | ✓ Evidence | `1024x1024x192x192` native `uint16`, bin 1, 12 GB cap | **12.31 s** build | [CUDA-CAL-BUILD](performance/results.md), 2026-07-28, `1c5dd03b` |
-| **Python MPS** | ✓ Evidence | `512x512x192x192` native `uint16`, bin 1, 64-row chunks | **3.96 s** build | [MPS-CAL-BUILD](performance/results.md), 2026-07-21, `6c8ca5d0`; integer products exact, CoM max error `7.63e-6` |
+| **CUDA** | ✓ | `1024x1024x192x192` native `uint16`, bin 1, 12 GB cap | **12.31 s** build | [CUDA-CAL-BUILD](performance/results.md), 2026-07-28, `1c5dd03b` |
+| **Python MPS** | ✓ | `512x512x192x192` native `uint16`, bin 1, 64-row chunks | **3.96 s** build | [MPS-CAL-BUILD](performance/results.md), 2026-07-21, `6c8ca5d0`; integer products exact, CoM max error `7.63e-6` |
 | **Native Swift/Metal** | — | — | **Pending** | Public `quantem.gpu.screening` module not implemented natively |
 | **WebGPU** | — | — | **Pending** | Public `quantem.gpu.screening` module not implemented for WebGPU |
-| **CPU reference** | Reference products | Reference fixtures | **Pending** | Correctness adjudication only |
+| **CPU reference** | Ref | Reference fixtures | **Pending** | Correctness adjudication only |
 
 Backend-neutral [PRODUCT-CACHE-REOPEN](performance/results.md) is a separate
 saved-result state: **6.8 ms** fastest retained repeat for full-`1024` derived
@@ -75,26 +74,26 @@ products, never source load or cache construction.
 This module owns mean diffraction and exact masked sums for BF, ABF, ADF, DF,
 and arbitrary detector masks.
 
-| Platform | Mean DP and BF/ABF/ADF/DF | Measured size/bin plan | Latest retained result | Evidence or placeholder |
+| Platform | Mean DP and BF/ABF/ADF/DF | Measured size/bin plan | Latest retained result | Details |
 |---|---|---|---:|---|
-| **CUDA** | ✓ Evidence | Resident full `512x512x192x192`, bin 1 | BF **1.35 ms**; ADF **3.86 ms**; DF **1.84 ms** | [CUDA-BF-512](performance/results.md), [CUDA-ADF-512](performance/results.md), [CUDA-DF-512](performance/results.md); integer max error `0` |
-| **Python MPS** | ✓ Evidence | Full `512`, bin 1 through screening parity | **Pending** | No isolated timing with complete public device provenance |
-| **Native Swift/Metal** | ✓ Evidence | Full `512`, detector bin 4 in physical application parity | **Pending** | Products are byte-identical; isolated kernel timing not retained |
-| **WebGPU** | ✓ Evidence | Full `512`, bin 1, fixed 30 px BF radius | BF page total **0.378 s p50** | [WEBGPU-BF-512](performance/results.md), prepared selected-block boundary, exact to CUDA |
-| **CPU reference** | Reference | Reference fixtures | **Pending** | Correctness adjudication only |
+| **CUDA** | ✓ | Resident full `512x512x192x192`, bin 1 | BF **1.35 ms**; ADF **3.86 ms**; DF **1.84 ms** | [CUDA-BF-512](performance/results.md), [CUDA-ADF-512](performance/results.md), [CUDA-DF-512](performance/results.md); integer max error `0` |
+| **Python MPS** | ✓ | Full `512`, bin 1 through screening parity | **Pending** | No isolated timing with complete public device provenance |
+| **Native Swift/Metal** | ✓ | Full `512`, detector bin 4 in physical application parity | **Pending** | Products are byte-identical; isolated kernel timing not retained |
+| **WebGPU** | ✓ | Full `512`, bin 1, fixed 30 px BF radius | BF page total **0.378 s p50** | [WEBGPU-BF-512](performance/results.md), prepared selected-block boundary, exact to CUDA |
+| **CPU reference** | Ref | Reference fixtures | **Pending** | Correctness adjudication only |
 
 ### Detector moments and phase contrast — `quantem.gpu.dpc`
 
 This module owns CoM row/column, centering, rotation, DPC, and iDPC. All runtime
 boundaries preserve `(row, column)` component order.
 
-| Platform | CoM row/column, DPC, rotation, iDPC | Measured size/bin plan | Latest retained result | Evidence or placeholder |
+| Platform | CoM row/column, DPC, rotation, iDPC | Measured size/bin plan | Latest retained result | Details |
 |---|---|---|---:|---|
-| **CUDA** | ✓ Evidence | Resident full `512x512x192x192`, bin 1 | CoM **12.39 ms** | [CUDA-COM-512](performance/results.md), 2026-07-19, `0456e15e`; max error `0` |
-| **Python MPS** | ✓ Evidence | Full `512`, bin 1 through screening parity | **Pending** | No isolated full-module timing with complete public device provenance |
-| **Native Swift/Metal** | ✓ Evidence | Full `512`, detector bin 4 in physical application parity | **Pending** | CoM/DPC/iDPC exports byte-identical; isolated timing not retained |
-| **WebGPU** | ✓ Evidence | Resident full `512x512x192x192`, bin 1 | DPC row/column/iDPC **14.9/13.2/13.2 ms p50** | [WEBGPU-DPC-512](performance/results.md), 2026-07-20, `cee0ba5c`; frozen float32 errors retained |
-| **CPU reference** | Reference | Reference fixtures | **Pending** | Correctness adjudication only |
+| **CUDA** | ✓ | Resident full `512x512x192x192`, bin 1 | CoM **12.39 ms** | [CUDA-COM-512](performance/results.md), 2026-07-19, `0456e15e`; max error `0` |
+| **Python MPS** | ✓ | Full `512`, bin 1 through screening parity | **Pending** | No isolated full-module timing with complete public device provenance |
+| **Native Swift/Metal** | ✓ | Full `512`, detector bin 4 in physical application parity | **Pending** | CoM/DPC/iDPC exports byte-identical; isolated timing not retained |
+| **WebGPU** | ✓ | Resident full `512x512x192x192`, bin 1 | DPC row/column/iDPC **14.9/13.2/13.2 ms p50** | [WEBGPU-DPC-512](performance/results.md), 2026-07-20, `cee0ba5c`; frozen float32 errors retained |
+| **CPU reference** | Ref | Reference fixtures | **Pending** | Correctness adjudication only |
 
 ### Single-sideband ptychography — `quantem.gpu.SSB`
 
@@ -102,13 +101,13 @@ SSB uses specialized kernels for **square scan grids**. The numbers below are
 scan sizes, not detector sizes. “Native” means a retained acquisition at that
 scan size; resized or synthetic evidence is labeled explicitly.
 
-| Platform | `128x128` | `256x256` | `512x512` | `1024x1024` | Latest retained full-policy result | Evidence boundary or placeholder |
+| Platform | `128x128` | `256x256` | `512x512` | `1024x1024` | Latest retained full-policy result | Details / next gap |
 |---|---|---|---|---|---:|---|
-| **CUDA** | ✓ Evidence | ✓ Evidence | ✓ Real full-BF | ✓ Evidence | **32.2 ms p50** at `512` | [SSB-CUDA-512-FULL](performance/results.md); fixed-size kernels/reference checks at all sizes |
-| **Python MPS** | ✓ Resized/synthetic | ✓ Resized/synthetic | ✓ Native full-BF | ✓ Resized/synthetic | **537.58 ms p50** at `512` | [SSB-MPS-512-FULL](performance/results.md); physical runs at all sizes, native acquisition retained at `512` |
+| **CUDA** | ✓ | ✓ | ✓ | ✓ | **32.2 ms p50** at `512` | [SSB-CUDA-512-FULL](performance/results.md); `512` is real full-BF, with fixed-size kernel/reference checks at all sizes |
+| **Python MPS** | ✓ | ✓ | ✓ | ✓ | **537.58 ms p50** at `512` | [SSB-MPS-512-FULL](performance/results.md); `512` is native full-BF, other sizes resized/synthetic |
 | **Native Swift/Metal** | — | — | — | — | **Pending** | No native Swift SSB kernel |
-| **WebGPU** | ✓ Real BF30 vs CUDA | Test only | Partial: real interaction | Partial: real load/interaction | **Pending** | Source supports all sizes; frozen real CUDA artifacts incomplete at `256/512/1024` |
-| **CPU reference** | — | — | Reference fixture | — | **Pending** | Independent `512` adjudication only |
+| **WebGPU** | ✓ | Test | Partial | Partial | **Pending** | `128` is real BF30 vs CUDA; `256` is test-only; `512/1024` have real interaction but incomplete frozen CUDA artifacts |
+| **CPU reference** | — | — | Ref | — | **Pending** | Independent `512` adjudication only |
 
 The [SSB performance record](maintainer/ssb-performance.md) contains the full
 `128/256/512/1024` timing matrix, native-versus-resized provenance, memory, and
@@ -116,13 +115,13 @@ rejected experiments.
 
 ### Other public modules
 
-| Platform | `display` | `movie` | `parallax` | Evidence or placeholder |
+| Platform | `display` | `movie` | `parallax` | Details |
 |---|---|---|---|---|
-| **CUDA** | ✓ Evidence | NVENC ✓ | CUDA-only implementation | Operation-specific gates; no single comparable cross-module headline |
-| **Python MPS** | ✓ Evidence | VideoToolbox ✓ | — | Operation-specific gates; no single comparable cross-module headline |
+| **CUDA** | ✓ | NVENC ✓ | CUDA-only implementation | Operation-specific gates; no single comparable cross-module headline |
+| **Python MPS** | ✓ | VideoToolbox ✓ | — | Operation-specific gates; no single comparable cross-module headline |
 | **Native Swift/Metal** | `MetalDisplayKernels`/`MetalImageFFT` ✓ | Native package products | — | Display/FFT parity retained; standalone movie headline **Pending** |
-| **WebGPU** | ✓ Evidence | — | — | Real-adapter display evidence retained |
-| **CPU reference** | Reference | Explicit fallback | — | Correctness adjudication only |
+| **WebGPU** | ✓ | — | — | Real-adapter display evidence retained |
+| **CPU reference** | Ref | Explicit fallback | — | Correctness adjudication only |
 
 ```{admonition} How to read these numbers
 :class: important
