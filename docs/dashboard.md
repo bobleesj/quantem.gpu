@@ -16,91 +16,123 @@ number in a design or release decision.
 and code revision; this page does not replace the
 [complete benchmark provenance ledger](performance/results.md).
 
-## Module benchmark snapshot
+## Platform-first module dashboard
 
-The tables are organized by the public module that owns the work. Each row is
-one measurement, not a claim about the speed of the entire runtime.
+Every table keeps the scientific module as its section and puts the execution
+platform in the first column. Empty cells are forbidden:
+
+- **✓ Evidence** — retained real-data or physical-device parity evidence for
+  that exact cell.
+- **Test only** — deterministic source/test coverage without an equivalent
+  retained physical or native-data run.
+- **Pending** — implementation exists, but that exact size, bin, or timing
+  evidence has not been retained yet.
+- **Reference** — CPU correctness adjudication, never a production fallback.
+- **—** — unsupported or not a target.
 
 ### I/O and first usable product — `quantem.gpu.io`
 
-| Evidence | Runtime and physical device | Scientific source and plan | State and benchmark boundary | Retained result | Parity and interpretation |
-|---|---|---|---|---:|---|
-| [M2-AIR-BIN4-E2E](performance/results.md) | Native Swift/Metal; physical 8 GB M2 MacBook Air | `512x512x192x192` `uint16`; full scan, no crop, scan bin 1, explicit exact-sum detector bin 4 to `48x48` | First process / first observed source; seven alternating process-isolated application loads per fixture; OS cache not forcibly evicted | Fixture A **1.985 s** wall p50; Fixture B **2.043 s** wall p50; Metal **1.615-1.618 s** p50; peak process **1.43 GB**, zero swap delta | Eight BF/ABF/ADF/CoM/DPC/iDPC exports byte-identical across frozen/candidate/frozen. Not no-bin or true-cold evidence. 2026-08-18, measured `2c047160`, published integration `e662d7fe`. |
-| [CUDA-512-LOAD](performance/results.md) | CUDA; NVIDIA RTX PRO 6000 Blackwell | `512x512x192x192`, source `uint16`, full scan, no crop/bin, audited `uint8` browse output | Warm source; 946-run load/decompress median | **0.450 s** | Selected-frame integer checksums corrected and exact. Not a first encounter. 2026-07-20, `b61572e4`. |
-| [WEBGPU-512-FULL](performance/results.md) | WebGPU; Chrome on Apple Metal adapter | `512x512x192x192`, source `uint16`, audited lossless-low8 `uint8` browse output, no crop/bin | Prepared local-file indexes/sidecars; 946-cycle full-stack soak | **0.772 s** p50, `0.726-0.879 s` range | First/middle/last corrected-frame checksums exact to CUDA. Prepared, not cold. 2026-07-20, `b61572e4`. |
+#### Scan-size evidence
+
+Scan sizes describe the real-space grid; the retained detector is `192x192`
+unless a row says otherwise.
+
+| Platform | `128x128` | `256x256` | `512x512` | `1024x1024` | Evidence boundary |
+|---|---|---|---|---|---|
+| **CUDA** | ✓ Evidence | ✓ Evidence | ✓ Evidence | ✓ Evidence | Real HDF5 crop/full-load parity, including true `1024` no-bin load |
+| **Python MPS** | ✓ Evidence | ✓ Evidence | ✓ Evidence | ✓ Evidence | Real crop/full-load parity and chunk-backed true `1024` load |
+| **Native Swift/Metal** | Pending | Pending | ✓ Evidence | Pending | Physical `512` full-scan load retained; other size-specific physical runs are not |
+| **WebGPU** | ✓ Evidence | ✓ Evidence | ✓ Evidence | Partial: product-first only | True `1024` full-stack no-bin browse remains unsigned off |
+| **CPU reference** | Reference | Reference | Reference | Reference | Shape-independent adjudication path; not an accelerator measurement |
+
+#### Detector-bin evidence
+
+Detector binning is exact integer block summation with incomplete edge bins
+retained. A pending cell is not permission to claim that bin as measured.
+
+| Platform | Bin 1 | Bin 2 | Bin 4 | Bin 8 | Implementation and next evidence |
+|---|---|---|---|---|---|
+| **CUDA** | ✓ Evidence | ✓ Evidence | Pending | Pending | Generic count-preserving source path exists; retain real bin 4/8 hardware rows |
+| **Python MPS** | ✓ Evidence | ✓ Evidence | Pending | Pending | Fused/source-backed binning exists; retain bin 4/8 physical timing and parity |
+| **Native Swift/Metal** | ✓ Evidence | Test only | ✓ Evidence | — | Public load plan supports bins `1/2/4`; physical 8 GB M2 evidence is bin 4 |
+| **WebGPU** | ✓ Evidence | ✓ Evidence | ✓ Evidence | ✓ Evidence | Full `512` and true crop `256` bin 2/4/8 checksums are exact on hardware |
+| **CPU reference** | Reference | Reference | Reference | Reference | General integer-sum reference with partial-edge semantics |
+
+#### Retained load timing
+
+| Platform | Size and explicit plan | Benchmark boundary | Retained result | Evidence and missing comparison |
+|---|---|---|---:|---|
+| **CUDA** | `512x512x192x192`, bin 1, audited lossless-low8 output | Warm-source load/decompress median; 946 runs | **0.450 s** | [CUDA-512-LOAD](performance/results.md), 2026-07-20, `b61572e4`; not first encounter |
+| **Python MPS** | `1024x1024x192x192` native `uint16`, bin 1 | First observed source; storage cache uncontrolled | **4.617 s** | [MPS-1024-LOAD](performance/results.md), 2026-07-20, `cee0ba5c`; exact selected frames, host model missing |
+| **Native Swift/Metal** | `512x512x192x192` `uint16`, full scan, detector bin 4 | First process / first observed source to first complete product; seven isolated runs per fixture | **1.985 / 2.043 s p50** | [M2-AIR-BIN4-E2E](performance/results.md), 2026-08-18, measured `2c047160`, integrated `e662d7fe`; eight products byte-identical, `1.43 GB` peak, zero swap delta |
+| **WebGPU** | `512x512x192x192`, bin 1, audited lossless-low8 output | Prepared local-file full-stack soak; 946 cycles | **0.772 s p50** | [WEBGPU-512-FULL](performance/results.md), 2026-07-20, `b61572e4`; prepared, not cold |
+| **WebGPU** | Full `512`, explicit detector bins 2 / 4 / 8 | Prepared local-file page profiles | **1.199 / 1.212 / 1.106 s** | [WEBGPU-DET-BIN](performance/results.md), 2026-07-20, `cee0ba5c`; exact corrected-frame checksums |
+| **CPU reference** | All sizes/bins | Reference only | **Pending** | No retained comparable accelerator-style load timing |
 
 ### Screening and prepared-product caches — `quantem.gpu.screening`
 
-| Evidence | Runtime and physical device | Scientific source and plan | State and benchmark boundary | Retained result | Parity and interpretation |
-|---|---|---|---|---:|---|
-| [CUDA-CAL-BUILD](performance/results.md) | CUDA; NVIDIA RTX PRO 6000 Blackwell | `1024x1024x192x192` native `uint16`; full scan/detector, no crop/bin; 12 GB allocator cap | Chunked first product-cache construction | **12.31 s** | Full product build under the stated memory policy. 2026-07-28, `1c5dd03b`. |
-| [MPS-CAL-BUILD](performance/results.md) | Python MPS; Apple Metal GPU, exact Mac model not retained | `512x512x192x192` native `uint16`; full scan/detector, no crop/bin; 64-row chunks | First product-cache build; source-cache state not retained | **3.96 s** | Mean DP/BF/DF bit-exact; CoM max error `7.63e-6`. Historical diagnostic. 2026-07-21, `6c8ca5d0`. |
-| [PRODUCT-CACHE-REOPEN](performance/results.md) | Backend-neutral local filesystem; host not retained | Persisted BF/DF/CoM/rotation products for a full `1024` scan; raw detector volume not reopened | Saved-result reopen; five repeats | **6.8-8.0 ms** | Derived products only. Never represented as HDF5 source load or cache construction. 2026-07-20, `628214a8`. |
+| Platform | Module support | Measured size and plan | Build timing | Evidence or explicit gap |
+|---|---|---|---:|---|
+| **CUDA** | ✓ Evidence | `1024x1024x192x192`, native `uint16`, bin 1, 12 GB allocator cap | **12.31 s** | [CUDA-CAL-BUILD](performance/results.md), 2026-07-28, `1c5dd03b`; full product build |
+| **Python MPS** | ✓ Evidence | `512x512x192x192`, native `uint16`, bin 1, 64-row chunks | **3.96 s** | [MPS-CAL-BUILD](performance/results.md), 2026-07-21, `6c8ca5d0`; integer products exact, CoM max error `7.63e-6` |
+| **Native Swift/Metal** | — | — | **Pending** | `quantem.gpu.screening` is not implemented as a native Swift public module |
+| **WebGPU** | — | — | **Pending** | `quantem.gpu.screening` is not implemented as a WebGPU public module |
+| **CPU reference** | Reference products | Reference fixtures | **Pending** | Correctness adjudication only; no retained build benchmark |
+
+Backend-neutral saved-product reopen is a separate state:
+[PRODUCT-CACHE-REOPEN](performance/results.md) retained **6.8-8.0 ms** for five
+repeats of full-`1024` BF/DF/CoM/rotation products. It is never represented as
+source load or cache construction.
 
 ### Virtual images — `quantem.gpu.detector`
 
-| Evidence | Runtime and physical device | Scientific source and plan | State and benchmark boundary | Retained result | Parity and interpretation |
-|---|---|---|---|---:|---|
-| [CUDA-BF-512](performance/results.md) | CUDA GPU; exact model not retained | GPU-resident full `512x512x192x192`; no crop/bin | Warm resident BF reduction; source load excluded | **1.35 ms** | Integer maximum error `0`. Historical diagnostic because device and mask details are incomplete. 2026-07-19, `0456e15e`. |
-| [WEBGPU-BF-512](performance/results.md) | WebGPU; Chrome on Apple Metal adapter | Full `512x512x192x192`; fixed 30 px BF radius | Prepared selected-block page total; not an isolated kernel time | **0.378 s** p50 | Exact to CUDA across 946 cycles. Prepared, not cold. 2026-07-20, `b61572e4`. |
+| Platform | Mean DP and BF/ABF/ADF/DF | Measured size/bin plan | Latest retained timing | Evidence or placeholder |
+|---|---|---|---:|---|
+| **CUDA** | ✓ Evidence | Resident `512x512x192x192`, bin 1 | BF **1.35 ms**; ADF **3.86 ms**; DF **1.84 ms** | [CUDA-BF-512](performance/results.md), [CUDA-ADF-512](performance/results.md), and [CUDA-DF-512](performance/results.md), 2026-07-19, `0456e15e`; integer max error `0` |
+| **Python MPS** | ✓ Evidence | Full `512` bin-1 products through retained screening parity | **Pending** | No isolated MPS virtual-image timing with complete public device provenance |
+| **Native Swift/Metal** | ✓ Evidence | Full `512`, detector bin 4 in physical application parity | **Pending** | Products are byte-identical in the M2 Air gate; isolated kernel timing is not retained |
+| **WebGPU** | ✓ Evidence | Full `512`, bin 1, fixed 30 px BF radius | BF page total **0.378 s p50** | [WEBGPU-BF-512](performance/results.md), 2026-07-20, `b61572e4`; prepared selected-block boundary, not isolated kernel time |
+| **CPU reference** | Reference | Reference fixtures | **Pending** | Correctness adjudication only |
 
 ### Detector moments and phase contrast — `quantem.gpu.dpc`
 
-| Evidence | Runtime and physical device | Scientific source and plan | State and benchmark boundary | Retained result | Parity and interpretation |
-|---|---|---|---|---:|---|
-| [CUDA-COM-512](performance/results.md) | CUDA GPU; exact model not retained | GPU-resident full `512x512x192x192`, no crop/bin | Warm resident-kernel microbenchmark; source load excluded | **200.42 -> 12.39 ms** | CoM row/column max error `0`. Historical diagnostic because the device identity is incomplete. 2026-07-19, `0456e15e`. |
-| [WEBGPU-DPC-512](performance/results.md) | WebGPU; headed Chrome on NVIDIA RTX PRO 6000 Blackwell | GPU-resident full `512x512x192x192`, no crop/bin | Warm resident display; source load excluded | DPC row/column/iDPC **14.9/13.2/13.2 ms** p50 | DPC max error `7.63e-6`; iDPC mean/max error `4.70e-6/3.05e-5`. 2026-07-20, `cee0ba5c`. |
+| Platform | CoM row/column, DPC, rotation, iDPC | Measured size/bin plan | Latest retained timing | Evidence or placeholder |
+|---|---|---|---:|---|
+| **CUDA** | ✓ Evidence | Resident full `512x512x192x192`, bin 1 | CoM row + column **12.39 ms** | [CUDA-COM-512](performance/results.md), 2026-07-19, `0456e15e`; max error `0` |
+| **Python MPS** | ✓ Evidence | Full `512`, bin 1 through retained screening parity | **Pending** | No isolated full-module MPS timing with complete public device provenance |
+| **Native Swift/Metal** | ✓ Evidence | Full `512`, detector bin 4 in physical application parity | **Pending** | CoM/DPC/iDPC exports are byte-identical; isolated kernel timing is not retained |
+| **WebGPU** | ✓ Evidence | Resident full `512x512x192x192`, bin 1 | DPC row/column/iDPC **14.9 / 13.2 / 13.2 ms p50** | [WEBGPU-DPC-512](performance/results.md), 2026-07-20, `cee0ba5c`; frozen float32 errors retained |
+| **CPU reference** | Reference | Reference fixtures | **Pending** | Correctness adjudication only |
 
 ### Single-sideband ptychography — `quantem.gpu.SSB`
 
-| Evidence | Runtime and physical device | Scientific source and plan | State and benchmark boundary | Retained result | Parity and interpretation |
-|---|---|---|---|---:|---|
-| [SSB-CUDA-512-FULL](performance/results.md) | CUDA GPU; exact model not retained | Prepared real `512x512` SSB field, full-BF policy, `float32`/`complex64` | Warm phase+loss kernel; source preparation excluded | **32.2 ms** p50, `33.3 ms` p95 | Same BF disk, aberrations, objective, and loss reference. Historical diagnostic. 2026-07-19, `0456e15e`. |
-| [SSB-MPS-512-FULL](performance/results.md) | Python MPS; Apple Silicon GPU, exact model not retained | Prepared real `512x512` Hermitian $G(\mathbf k,\boldsymbol{\nu})$, full active BF, `float32`/`complex64` | Warm phase+loss kernel; source preparation excluded | **537.58 ms** p50, `557.51 ms` p95 | Same full-active BF policy, aberrations, precision, objective, and frozen loss. Historical diagnostic. 2026-07-28, `e8d49866`. |
+These are square scan-grid sizes, not detector dimensions.
 
-These rows are intentionally not ranked. They answer different questions.
-See [Benchmark methodology](performance/methodology.md) for the required timing
-and memory boundaries, and [Verified benchmark results](performance/results.md)
-for every retained measurement, including rejected and historical evidence.
-
-## Scientific module and implementation matrix
-
-Status meanings:
-
-- **Verified** — implemented with the required parity gate and retained
-  hardware evidence.
-- **Partial** — implementation exists, but its full hardware or parity matrix
-  is incomplete.
-- **Reference** — independent adjudication path, not a production fallback.
-- **Not implemented** — intentionally exposed as a gap rather than silently
-  falling back.
-
-| Scientific module | Public contract and principal source | CUDA | Python MPS | Native Swift/Metal | WebGPU | CPU reference | Required parity gate |
-|---|---|---|---|---|---|---|---|
-| **I/O** — load, bitshuffle/LZ4 decode, dtype, crop/bin provenance | [`io.load`](api/io.md); `io/backends/*` | Verified | Verified | Verified: `Native4DSTEMIO`, `Metal4DSTEMKernels` | Verified on hardware | Reference | Exact corrected counts, source/output shape and dtype, half-open regions, bin geometry, bad pixels, and provenance |
-| **Screening** — prepared launch products and cache reopen | [`screening`](api/core.md); `screening/*` | Verified | Verified | Not implemented as this public module | Not implemented | Reference products | Exact mean DP/BF/DF integers, frozen CoM error, cache identity, and explicit build-versus-reopen state |
-| **Virtual images** — mean diffraction and BF/ABF/ADF/DF | [`detector`](kernels/virtual-detectors.md); `detector/compute/*` | Verified | Verified | Verified: `Metal4DSTEMKernels` | Verified on hardware | Reference | Exact integer accumulation and masks; bad-pixel order fixed |
-| **Detector moments and phase contrast** — CoM row/column, DPC, rotation, iDPC | [`dpc`](kernels/com-dpc-idpc.md); `dpc/compute/*` | Verified | Verified | Verified: `Metal4DSTEMKernels` | Verified on hardware | Reference | Same $(k_r,k_c)$ moments, centering, rotation, FFT normalization, and frozen float metric |
-| **SSB** — object, phase, loss, aberration fit | [`SSB`](kernels/ssb.md); `ssb/compute/*` | Verified | Verified | Not implemented | Partial | Reference fixture | Same complete BF disk, aberrations, precision, objective, optimizer settings, and frozen phase/loss metric |
-| **Display** — transform, histogram, colormap, and FFT | [`display`](kernels/display-export.md); `display/*` | Verified | Verified | Verified: `MetalDisplayKernels`, `MetalImageFFT` | Verified on hardware | Reference | Exact histogram/RGBA integers and frozen `float32` transform/FFT metrics |
-| **Movie** — GIF/MP4 frame rendering | [`movie`](api/movie.md); `movie/*` | Verified: NVENC | Verified: VideoToolbox | Native product consumed through package API | Not a target | Explicit fallback | Frame parity and encoded-movie smoke tests |
-
-### SSB square scan-size coverage
-
-These are scan-grid sizes, not detector dimensions. “Verified” means the
-stated runtime and evidence class passed; it does not make resized or synthetic
-input equivalent to a native acquisition.
-
-| Runtime | `128x128` | `256x256` | `512x512` | `1024x1024` | Evidence qualification |
-|---|---|---|---|---|---|
-| **CUDA** | Verified | Verified | Verified, real full-BF | Verified | Production fixed-size kernels and reference checks at all four sizes |
-| **Python MPS** | Verified, resized/synthetic | Verified, resized/synthetic | Verified, native full-BF | Verified, resized/synthetic | Physical Apple GPU runs at every size; native-acquisition evidence is retained at `512x512` |
-| **WebGPU** | Verified, real BF30 vs CUDA | Implemented, synthetic browser reference | Partial, real interaction | Partial, real load/interaction | Source supports all four sizes; frozen real CUDA artifacts remain incomplete at `256/512/1024` |
-| **Native Swift/Metal** | Not implemented | Not implemented | Not implemented | Not implemented | No native Swift SSB kernel |
-| **CPU reference** | — | — | Reference fixture | — | Independent adjudication only |
+| Platform | `128x128` | `256x256` | `512x512` | `1024x1024` | Latest retained full-policy result | Evidence or next gap |
+|---|---|---|---|---|---:|---|
+| **CUDA** | ✓ Evidence | ✓ Evidence | ✓ Real full-BF | ✓ Evidence | **32.2 ms p50** at `512` | [SSB-CUDA-512-FULL](performance/results.md), 2026-07-19, `0456e15e`; production fixed-size kernels and reference checks at all sizes |
+| **Python MPS** | ✓ Resized/synthetic | ✓ Resized/synthetic | ✓ Native full-BF | ✓ Resized/synthetic | **537.58 ms p50** at `512` | [SSB-MPS-512-FULL](performance/results.md), 2026-07-28, `e8d49866`; physical runs at all sizes, native acquisition retained at `512` |
+| **Native Swift/Metal** | — | — | — | — | **Pending** | No native Swift SSB kernel |
+| **WebGPU** | ✓ Real BF30 vs CUDA | Test only | Partial: real interaction | Partial: real load/interaction | **Pending** | Source supports all sizes; comparable frozen real CUDA artifacts remain incomplete at `256/512/1024` |
+| **CPU reference** | — | — | Reference fixture | — | **Pending** | Independent `512` adjudication only |
 
 See the [full SSB performance record](maintainer/ssb-performance.md) for the
-12-cell redraw matrix, timings, memory, and rejected experiments.
+12-cell redraw matrix, size-specific timings, memory, and rejected experiments.
+
+### Cross-module platform map
+
+| Platform | I/O | Screening | Virtual images | CoM/DPC/iDPC | SSB | Display/movie and other boundaries |
+|---|---|---|---|---|---|---|
+| **CUDA** | ✓ Evidence | ✓ Evidence | ✓ Evidence | ✓ Evidence | ✓ Evidence | Display ✓; movie via NVENC; parallax CUDA-only |
+| **Python MPS** | ✓ Evidence | ✓ Evidence | ✓ Evidence | ✓ Evidence | ✓ Evidence | Display ✓; movie via VideoToolbox; parallax — |
+| **Native Swift/Metal** | ✓ Evidence | — | ✓ Evidence | ✓ Evidence | — | `MetalDisplayKernels`/`MetalImageFFT` ✓; native package products |
+| **WebGPU** | ✓ Evidence | — | ✓ Evidence | ✓ Evidence | Partial | Display ✓; movie and parallax are not targets |
+| **CPU reference** | Reference | Reference products | Reference | Reference | Reference fixture | Explicit adjudication/fallback paths only |
+
+The rows above are intentionally not ranked. A warm resident kernel, prepared
+source, first-process application load, and saved-result reopen answer different
+questions. See [Benchmark methodology](performance/methodology.md) and
+[Verified benchmark results](performance/results.md) before comparing them.
 
 The public scientific array is always
 
