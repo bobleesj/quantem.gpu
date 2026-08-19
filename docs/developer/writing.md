@@ -2,8 +2,27 @@
 
 QuantEM.GPU follows the coding and documentation conventions in
 [`ophusgroup/dev` Appendix D](https://github.com/ophusgroup/dev#appendix-d-coding-standards).
-Write for the scientist calling the API: state the scientific problem first,
-then explain the design needed to interpret the result.
+Write for scientific API authors, kernel/runtime implementers, and application
+integrators as well as scientists calling the API. State the scientific
+operation first, define its stable contract, map it to real source paths, and
+explain how to verify an implementation.
+
+## Audiences and page types
+
+Use the page type that matches the developer's question:
+
+| Reader question | Page type | Required content |
+|---|---|---|
+| What does this operation compute? | Scientific kernel | equations, coordinates, shapes/dtypes/units, optimization model, source map, parity gates |
+| How do I implement it on my device? | Backend implementation | runtime boundary, sources, memory/execution model, build, profiling, acceptance |
+| What may my code call and rely on? | API contract | typed inputs/outputs/errors, provenance, minimal example, ownership |
+| Is this result correct and faster? | Evidence | revision, device, source and plan, cache state, memory, statistic, parity artifact |
+
+Primary documentation must not depend on a consumer UI framework. Application
+developers need integration ownership—what this package computes and what the
+client schedules or presents—not instructions for a particular screen or
+viewer. Product-specific details belong in that product's documentation unless
+they are necessary historical provenance.
 
 ## Docstrings
 
@@ -25,17 +44,19 @@ implementation details.
 
 ## Coordinates and shapes
 
-All public image and scan coordinates use `(row, col)` order. Row is the slow,
-vertical axis and column is the fast, horizontal axis. Write shapes in the same
-order:
+All public image and scan coordinates use `(row, col)` order with the explicit
+mathematical equivalence `(row, column) ≡ (y, x)`. Row/$y$ is the slow,
+vertical axis and column/$x$ is the fast, horizontal axis. Write shapes in the
+same order:
 
 ```text
 (scan_rows, scan_cols, detector_rows, detector_cols)
 ```
 
-Use `row` and `col` in public names, metadata, readouts, and error messages.
-Use `x` and `y` only for screen or plotting coordinates, where plotting a
-scientific point requires `(x, y) = (col, row)`.
+Use `row` and `col` in public names, metadata, and error messages. In equations,
+use $r_y,r_x$ for scan coordinates and $q_y,q_x$ for detector coordinates.
+Plotting libraries may request `(x, y) = (column, row)`; document that adapter
+boundary without changing the scientific array order.
 
 ## Quantities and units
 
@@ -82,6 +103,11 @@ Equations preserve the repository's scientific contract: they state any crop,
 bin, mask, dtype conversion, approximation, normalization, or calibration that
 changes the result. Code identifiers may follow an equation, but they do not
 replace the mathematical definition.
+
+Every scientific-kernel page also includes an **Optimization model** section.
+Describe reusable dataflow choices—residency, fusion, traversal count, buffer
+reuse, queue overlap, synchronization, and readback—without making an
+unmeasured speed claim or hard-coding one backend topology into the science.
 
 ## Scientific prose and evidence
 
