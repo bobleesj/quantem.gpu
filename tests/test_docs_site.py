@@ -329,6 +329,22 @@ def test_scientific_kernel_pages_define_coordinates_math_and_optimization() -> N
     for term in ("com_row", "com_col", "mu_r", "mu_c", "iDPC"):
         assert term in dpc
 
+    ssb = pages["ssb"].read_text(encoding="utf-8")
+    for term in (
+        "\\phi_b[\\mathbf R;\\boldsymbol\\theta]",
+        "\\Gamma_b(\\mathbf k;\\boldsymbol\\theta)",
+        "torch.fft.fft2",
+        "def probe(",
+        "gamma_b_k =",
+        "def phase_variance_loss(",
+        "torch.argmin",
+        "phi_R = torch.angle(object_R)",
+    ):
+        assert term in ssb
+    assert "\\varphi" not in ssb
+    assert "\\frac{2\\pi}{\\lambda}" not in ssb
+    assert "G_b[\\mathbf k]P_b" not in ssb
+
 
 def test_primary_scientific_docs_use_row_column_component_symbols() -> None:
     paths = [
@@ -472,8 +488,10 @@ def test_ssb_page_explains_the_complete_default_fit() -> None:
         "phase variance across $b$",
         "not another average",
         "operatorname*{arg\\,min}",
-        "np.angle(np.fft.ifft2",
-        "torch.angle(torch.fft.ifft2",
+        "torch.fft.fft2",
+        "return torch.fft.ifft2",
+        "phi_b_R = torch.angle",
+        "candidate_losses = torch.tensor",
         "final complex object wave",
     ):
         assert required in text
