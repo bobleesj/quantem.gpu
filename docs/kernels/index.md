@@ -25,11 +25,11 @@ $$
 For 4D-STEM data,
 
 $$
-I[R_r,R_c,q_r,q_c],
+I[R_r,R_c,k_r,k_c],
 $$
 
 where $\mathbf R=(R_r,R_c)$ is the real-space probe/scan coordinate and
-$\mathbf q=(q_r,q_c)$ is the detector coordinate. A backend-specific launch
+$\mathbf k=(k_r,k_c)$ is the detector coordinate. A backend-specific launch
 order may differ internally, but its public inputs, outputs, masks, metadata,
 and parity artifacts must preserve this order.
 

@@ -26,7 +26,7 @@ and code revision; this page does not replace the
 | [WEBGPU-DPC-512](performance/results.md) | WebGPU; headed Chrome on NVIDIA RTX PRO 6000 Blackwell | GPU-resident full `512x512x192x192`, no crop/bin | Warm resident display; source load excluded | DPC row/column/iDPC **14.9/13.2/13.2 ms** p50 | DPC max error `7.63e-6`; iDPC mean/max error `4.70e-6/3.05e-5`. 2026-07-20, `cee0ba5c`. |
 | [CUDA-COM-512](performance/results.md) | CUDA GPU; exact model not retained | GPU-resident full `512x512x192x192`, no crop/bin | Warm resident-kernel microbenchmark; source load excluded | **200.42 -> 12.39 ms** | CoM row/column max error `0`. Historical diagnostic because the device identity is incomplete. 2026-07-19, `0456e15e`. |
 | [SSB-CUDA-512-FULL](performance/results.md) | CUDA GPU; exact model not retained | Prepared real `512x512` SSB field, full-BF policy, `float32`/`complex64` | Warm phase+loss kernel; source preparation excluded | **32.2 ms** p50, `33.3 ms` p95 | Same BF disk, aberrations, objective, and loss reference. Historical diagnostic. 2026-07-19, `0456e15e`. |
-| [SSB-MPS-512-FULL](performance/results.md) | Python MPS; Apple Silicon GPU, exact model not retained | Prepared real `512x512` Hermitian $G(\mathbf q,\mathbf k)$, full active BF, `float32`/`complex64` | Warm phase+loss kernel; source preparation excluded | **537.58 ms** p50, `557.51 ms` p95 | Same full-active BF policy, aberrations, precision, objective, and frozen loss. Historical diagnostic. 2026-07-28, `e8d49866`. |
+| [SSB-MPS-512-FULL](performance/results.md) | Python MPS; Apple Silicon GPU, exact model not retained | Prepared real `512x512` Hermitian $G(\mathbf k,\boldsymbol{\nu})$, full active BF, `float32`/`complex64` | Warm phase+loss kernel; source preparation excluded | **537.58 ms** p50, `557.51 ms` p95 | Same full-active BF policy, aberrations, precision, objective, and frozen loss. Historical diagnostic. 2026-07-28, `e8d49866`. |
 | [PRODUCT-CACHE-REOPEN](performance/results.md) | Backend-neutral local filesystem; host not retained | Persisted BF/DF/CoM/rotation products for a full `1024` scan; raw detector volume not reopened | Saved-result reopen; five repeats | **6.8-8.0 ms** | Derived products only. Never represented as HDF5 source load or cache construction. 2026-07-20, `628214a8`. |
 
 These rows are intentionally not ranked. They answer different questions.
@@ -50,7 +50,7 @@ Status meanings:
 |---|---|---|---|---|---|---|---|
 | Load, bitshuffle/LZ4 decode, dtype, crop/bin provenance | [`io.load`](api/io.md); `io/backends/*` | Verified | Verified | Verified: `Native4DSTEMIO`, `Metal4DSTEMKernels` | Verified on hardware | Reference | Exact corrected counts, source/output shape and dtype, half-open regions, bin geometry, bad pixels, and provenance |
 | Mean diffraction and BF/ABF/ADF/DF | [`detector`](kernels/virtual-detectors.md); `detector/compute/*` | Verified | Verified | Verified: `Metal4DSTEMKernels` | Verified on hardware | Reference | Exact integer accumulation and masks; bad-pixel order fixed |
-| CoM row/column, DPC, rotation, iDPC | [`dpc`](kernels/com-dpc-idpc.md); `dpc/compute/*` | Verified | Verified | Verified: `Metal4DSTEMKernels` | Verified on hardware | Reference | Same $(q_r,q_c)$ moments, centering, rotation, FFT normalization, and frozen float metric |
+| CoM row/column, DPC, rotation, iDPC | [`dpc`](kernels/com-dpc-idpc.md); `dpc/compute/*` | Verified | Verified | Verified: `Metal4DSTEMKernels` | Verified on hardware | Reference | Same $(k_r,k_c)$ moments, centering, rotation, FFT normalization, and frozen float metric |
 | SSB object, phase, loss, aberration fit | [`SSB`](kernels/ssb.md); `ssb/compute/*` | Verified | Verified | Not implemented | Partial | Reference fixture | Same complete BF disk, aberrations, precision, objective, optimizer settings, and frozen phase/loss metric |
 | Display transform, histogram, colormap, and FFT | [`display`](kernels/display-export.md); `display/*` | Verified | Verified | Verified: `MetalDisplayKernels`, `MetalImageFFT` | Verified on hardware | Reference | Exact histogram/RGBA integers and frozen `float32` transform/FFT metrics |
 | GIF/MP4 frame rendering | [`movie`](api/movie.md); `movie/*` | Verified: NVENC | Verified: VideoToolbox | Native product consumed through package API | Not a target | Explicit fallback | Frame parity and encoded-movie smoke tests |
@@ -58,11 +58,11 @@ Status meanings:
 The public scientific array is always
 
 $$
-I[R_r,R_c,q_r,q_c],
+I[R_r,R_c,k_r,k_c],
 $$
 
 where $\mathbf R=(R_r,R_c)$ is the probe/scan coordinate and
-$\mathbf q=(q_r,q_c)$ is the detector coordinate. Runtime-specific layout,
+$\mathbf k=(k_r,k_c)$ is the detector coordinate. Runtime-specific layout,
 tiling, fusion, and dispatch are private optimizations; shape, sampling,
 precision, calibration, and provenance are shared contracts.
 

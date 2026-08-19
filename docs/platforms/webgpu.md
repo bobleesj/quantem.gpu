@@ -43,7 +43,7 @@ alignment, adapter limits, and temporary staging buffers.
 
 Local-file security may require worker or file-handle paths unavailable to a
 normal network request. Those acquisition details must not change
-$I[R_r,R_c,q_r,q_c]$ or `(row, column) ≡ (r, c)`.
+$I[R_r,R_c,k_r,k_c]$ or `(row, column) ≡ (r, c)`.
 
 ## Source and build checks
 

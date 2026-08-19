@@ -1,7 +1,7 @@
 # BF, DF, and ADF reductions
 
 A virtual detector reduces each diffraction pattern with a detector-space mask
-$M(q_r,q_c)$:
+$M(k_r,k_c)$:
 
 ```text
 4D counts → detector geometry/mask → widened masked reduction
@@ -10,7 +10,7 @@ $M(q_r,q_c)$:
 
 $$
 V_M[R_r,R_c]
-=\sum_{q_r,q_c}M[q_r,q_c]I[R_r,R_c,q_r,q_c].
+=\sum_{k_r,k_c}M[k_r,k_c]I[R_r,R_c,k_r,k_c].
 $$
 
 The result keeps the full scan shape. Array order remains
@@ -25,8 +25,8 @@ The result keeps the full scan shape. Array order remains
 - **Mean diffraction** reduces scan coordinates instead:
 
   $$
-  \bar I[q_r,q_c]
-  =\frac{1}{N_R}\sum_{R_r,R_c}I[R_r,R_c,q_r,q_c].
+  \bar I[k_r,k_c]
+  =\frac{1}{N_R}\sum_{R_r,R_c}I[R_r,R_c,k_r,k_c].
   $$
 
 ```python

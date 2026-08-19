@@ -33,7 +33,7 @@ io.load(..., backend="cpu")
 
 Reference code favors directness and independent arithmetic over sharing an
 accelerator optimization. It preserves
-$I[R_r,R_c,q_r,q_c]$ and `(row, column) ≡ (r, c)`, uses widened accumulators,
+$I[R_r,R_c,k_r,k_c]$ and `(row, column) ≡ (r, c)`, uses widened accumulators,
 retains incomplete edge bins, and records the same provenance.
 
 A reference fixture is small, deterministic, versioned, and generated through

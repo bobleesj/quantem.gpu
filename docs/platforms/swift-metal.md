@@ -53,7 +53,7 @@ the `.metal` sources.
 
 Public geometry uses `(row, column) ≡ (r, c)`. Swift properties such as scan
 rows/columns and detector rows/columns preserve
-$I[R_r,R_c,q_r,q_c]`, even when a Metal buffer uses a private flattened or
+$I[R_r,R_c,k_r,k_c]`, even when a Metal buffer uses a private flattened or
 detector-major stride.
 
 Load plans record source/output shapes, half-open regions, scan/detector bins,
