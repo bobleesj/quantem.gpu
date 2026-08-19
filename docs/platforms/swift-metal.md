@@ -28,9 +28,9 @@ the `.metal` sources.
 
 ## Coordinate and buffer contract
 
-Public geometry uses `(row, column) ≡ (y, x)`. Swift properties such as scan
+Public geometry uses `(row, column) ≡ (r, c)`. Swift properties such as scan
 rows/columns and detector rows/columns preserve
-$I[r_y,r_x,q_y,q_x]`, even when a Metal buffer uses a private flattened or
+$I[s_r,s_c,q_r,q_c]`, even when a Metal buffer uses a private flattened or
 detector-major stride.
 
 Load plans record source/output shapes, half-open regions, scan/detector bins,

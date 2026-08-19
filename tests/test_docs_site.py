@@ -240,20 +240,50 @@ def test_scientific_kernel_pages_define_coordinates_math_and_optimization() -> N
     for name, path in pages.items():
         text = path.read_text(encoding="utf-8")
         assert "(row, column)" in text, name
-        assert "(y, x)" in text, name
+        assert "(r, c)" in text, name
         assert "## Optimization model" in text, name
 
     data_model = Path("docs/kernels/data-model.md").read_text(encoding="utf-8")
-    for term in ("r_y", "r_x", "q_y", "q_x", "half-open", "Binning preserves counts"):
+    for term in ("s_r", "s_c", "q_r", "q_c", "half-open", "Binning preserves counts"):
         assert term in data_model
 
     detector = pages["detector"].read_text(encoding="utf-8")
-    assert "V_M[r_y,r_x]" in detector
+    assert "V_M[s_r,s_c]" in detector
     assert "Mean diffraction" in detector
 
     dpc = pages["dpc"].read_text(encoding="utf-8")
-    for term in ("com_row", "com_col", "c_y", "c_x", "iDPC"):
+    for term in ("com_row", "com_col", "mu_r", "mu_c", "iDPC"):
         assert term in dpc
+
+
+def test_primary_scientific_docs_use_row_column_component_symbols() -> None:
+    paths = [
+        Path("README.md"),
+        Path("docs/intro.md"),
+        *sorted(Path("docs/concepts").glob("*.md")),
+        *sorted(Path("docs/kernels").glob("*.md")),
+        *sorted(Path("docs/platforms").glob("*.md")),
+        *sorted(Path("docs/developer").glob("*.md")),
+    ]
+    forbidden = (
+        "r_y",
+        "r_x",
+        "q_y",
+        "q_x",
+        "c_y",
+        "c_x",
+        "g_y",
+        "g_x",
+        "k_y",
+        "k_x",
+        "(y, x)",
+        "[y,x]",
+    )
+
+    for path in paths:
+        text = path.read_text(encoding="utf-8")
+        for term in forbidden:
+            assert term not in text, f"{term!r} remains in {path}"
 
 
 def test_primary_compute_docs_do_not_depend_on_application_frameworks() -> None:

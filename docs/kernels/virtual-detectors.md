@@ -1,15 +1,15 @@
 # BF, DF, and ADF reductions
 
 A virtual detector reduces each diffraction pattern with a detector-space mask
-$M(q_y,q_x)$:
+$M(q_r,q_c)$:
 
 $$
-V_M[r_y,r_x]
-=\sum_{q_y,q_x}M[q_y,q_x]I[r_y,r_x,q_y,q_x].
+V_M[s_r,s_c]
+=\sum_{q_r,q_c}M[q_r,q_c]I[s_r,s_c,q_r,q_c].
 $$
 
 The result keeps the full scan shape. Array order remains
-`(row, column) ≡ (y, x)` in both scan and detector space.
+`(row, column) ≡ (r, c)` in both scan and detector space.
 
 ## Products
 
@@ -20,8 +20,8 @@ The result keeps the full scan shape. Array order remains
 - **Mean diffraction** reduces scan coordinates instead:
 
   $$
-  \bar I[q_y,q_x]
-  =\frac{1}{N_r}\sum_{r_y,r_x}I[r_y,r_x,q_y,q_x].
+  \bar I[q_r,q_c]
+  =\frac{1}{N_s}\sum_{s_r,s_c}I[s_r,s_c,q_r,q_c].
   $$
 
 ```python

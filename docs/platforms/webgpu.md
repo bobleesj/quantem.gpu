@@ -27,7 +27,7 @@ alignment, adapter limits, and temporary staging buffers.
 
 Local-file security may require worker or file-handle paths unavailable to a
 normal network request. Those acquisition details must not change
-$I[r_y,r_x,q_y,q_x]$ or `(row, column) ≡ (y, x)`.
+$I[s_r,s_c,q_r,q_c]$ or `(row, column) ≡ (r, c)`.
 
 ## Profiling and acceptance
 

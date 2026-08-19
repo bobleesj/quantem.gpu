@@ -43,8 +43,8 @@ and call the result wall time.
 
 ## Acceptance
 
-CUDA results preserve `I[r_y,r_x,q_y,q_x]` and
-`(row, column) ≡ (y, x)`. Integer decode/reduction paths are byte-exact against
+CUDA results preserve `I[s_r,s_c,q_r,q_c]` and
+`(row, column) ≡ (r, c)`. Integer decode/reduction paths are byte-exact against
 the frozen reference. Floating products use the operation-specific parity
 metric. Record GPU model, driver/runtime, source shape/dtype, crop/bin plan,
 memory, cache state, and exact source/kernel revisions.

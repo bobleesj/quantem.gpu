@@ -1,33 +1,33 @@
 # CoM, DPC, and iDPC
 
 Center of mass converts each diffraction pattern into a detector-space vector.
-For optional detector mask $M[q_y,q_x]$, first compute
+For optional detector mask $M[q_r,q_c]$, first compute
 
 $$
-S[r_y,r_x]=\sum_{q_y,q_x}M[q_y,q_x]I[r_y,r_x,q_y,q_x].
+S[s_r,s_c]=\sum_{q_r,q_c}M[q_r,q_c]I[s_r,s_c,q_r,q_c].
 $$
 
 Then
 
 $$
-c_y[r_y,r_x]
-=\frac{\sum_{q_y,q_x}q_yM[q_y,q_x]I[r_y,r_x,q_y,q_x]}
-{S[r_y,r_x]},
+\mu_r[s_r,s_c]
+=\frac{\sum_{q_r,q_c}q_rM[q_r,q_c]I[s_r,s_c,q_r,q_c]}
+{S[s_r,s_c]},
 $$
 
 $$
-c_x[r_y,r_x]
-=\frac{\sum_{q_y,q_x}q_xM[q_y,q_x]I[r_y,r_x,q_y,q_x]}
-{S[r_y,r_x]}.
+\mu_c[s_r,s_c]
+=\frac{\sum_{q_r,q_c}q_cM[q_r,q_c]I[s_r,s_c,q_r,q_c]}
+{S[s_r,s_c]}.
 $$
 
-`com_row` is $c_y$ and `com_col` is $c_x$:
+`com_row` is $\mu_r$ and `com_col` is $\mu_c$:
 
 $$
-(\text{row},\text{column})\equiv(y,x).
+(\text{row},\text{column})\equiv(r,c).
 $$
 
-In plain terms, `(row, column)` is `(y, x)`.
+In plain terms, `(row, column)` is `(r, c)`.
 
 This explicit naming is required at Python, Swift, CUDA, Metal, and WebGPU
 boundaries; a backend may not swap components to match launch coordinates.
@@ -35,20 +35,20 @@ boundaries; a backend may not swap components to match launch coordinates.
 ## From CoM to DPC and iDPC
 
 The CoM field is centered and rotated into a DPC field
-$\mathbf g=(g_y,g_x)$. When automatic rotation is requested, the chosen angle
+$\mathbf g=(g_r,g_c)$. When automatic rotation is requested, the chosen angle
 minimizes the configured curl criterion on the scan-shaped vector field.
 
 Integrated DPC reconstructs a scalar phase-like field in Fourier space. With
-scan frequency $\mathbf k=(k_y,k_x)$, a standard least-squares integration is
+scan frequency $\mathbf k=(k_r,k_c)$, a standard least-squares integration is
 
 $$
 \hat\phi(\mathbf k)
-=\frac{-i\,[k_y\hat g_y(\mathbf k)+k_x\hat g_x(\mathbf k)]}
-{k_y^2+k_x^2+\epsilon},
+=\frac{-i\,[k_r\hat g_r(\mathbf k)+k_c\hat g_c(\mathbf k)]}
+{k_r^2+k_c^2+\epsilon},
 $$
 
 with the zero-frequency value and normalization fixed by the shared contract.
-The inverse two-dimensional FFT returns $\phi[r_y,r_x]$.
+The inverse two-dimensional FFT returns $\phi[s_r,s_c]$.
 
 ```python
 from quantem.gpu import dpc, io
@@ -63,7 +63,7 @@ print(result.rotation_deg, result.use_transpose)
 ## Optimization model
 
 CoM should not require three full detector-volume traversals. A fused moment
-kernel accumulates $S$, $\sum q_yI$, and $\sum q_xI$ in one pass, with masks
+kernel accumulates $S$, $\sum q_rI$, and $\sum q_cI$ in one pass, with masks
 and bad-pixel treatment applied in the same order as the reference. The large
 source remains accelerator-resident; only the small scan-shaped moment fields
 continue to rotation and FFT integration.

@@ -46,7 +46,7 @@ Backends may change memory layout, tiling, thread topology, chunk size, queue
 depth, buffer reuse, fusion, and caching of prepared state. Backends may not
 silently change:
 
-- `(row, column) ≡ (y, x)` axis meaning;
+- `(row, column) ≡ (r, c)` axis meaning;
 - scan or detector coverage;
 - detector or scan binning;
 - masks, bad-pixel treatment, or calibration;

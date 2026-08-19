@@ -19,7 +19,7 @@ reference = io.load("small_master.h5", backend="cpu", dtype="u16")
 
 Reference code favors directness and independent arithmetic over sharing an
 accelerator optimization. It preserves
-$I[r_y,r_x,q_y,q_x]$ and `(row, column) ≡ (y, x)`, uses widened accumulators,
+$I[s_r,s_c,q_r,q_c]$ and `(row, column) ≡ (r, c)`, uses widened accumulators,
 retains incomplete edge bins, and records the same provenance.
 
 A reference fixture is small, deterministic, versioned, and generated through

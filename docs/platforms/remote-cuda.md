@@ -68,6 +68,6 @@ and output dtype, scan and detector regions, scan and detector bins, backend,
 and device. Detector binning is explicit and count-preserving. A binned result
 must never be presented as native resolution.
 
-Scan and detector coordinates follow `(row, column) ≡ (y, x)`. Admission
+Scan and detector coordinates follow `(row, column) ≡ (r, c)`. Admission
 telemetry is an estimate that includes resident and peak capacity; the server's
 final load response remains authoritative when concurrent occupancy changes.

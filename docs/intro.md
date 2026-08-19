@@ -19,12 +19,12 @@ WebGPU, and an explicit CPU reference.
 Every backend interprets 4D-STEM data as
 
 $$
-I[r_y,r_x,q_y,q_x],
-\qquad (\text{row},\text{column})\equiv(y,x),
+I[s_r,s_c,q_r,q_c],
+\qquad (\text{row},\text{column})\equiv(r,c),
 $$
 
-where $\mathbf r=(r_y,r_x)$ is the scan coordinate and
-$\mathbf q=(q_y,q_x)$ is the detector coordinate. A private device layout may
+where $\mathbf s=(s_r,s_c)$ is the scan coordinate and
+$\mathbf q=(q_r,q_c)$ is the detector coordinate. A private device layout may
 be flattened, transposed, tiled, packed, or detector-major, but the public
 shape, masks, metadata, and results preserve this meaning.
 
@@ -37,7 +37,7 @@ new kernel.
 |---|---|---|
 | Load/decode/bin | compressed source to typed resident counts | [Load, decode, and bin](kernels/load-decode-bin.md) |
 | Virtual detector | BF/DF/ADF and mean-diffraction reductions | [BF, DF, and ADF](kernels/virtual-detectors.md) |
-| Detector moments | CoM row/y, CoM column/x, DPC, and iDPC | [CoM, DPC, and iDPC](kernels/com-dpc-idpc.md) |
+| Detector moments | CoM row, CoM column, DPC, and iDPC | [CoM, DPC, and iDPC](kernels/com-dpc-idpc.md) |
 | Ptychography | SSB object, phase, loss, and aberrations | [Single-sideband ptychography](kernels/ssb.md) |
 | Scan selection | explicit half-open real-space subsets | [Explicit scan regions](kernels/scan-regions.md) |
 | Presentation math | ranges, histograms, colormaps, FFT views, movies | [Display and export kernels](kernels/display-export.md) |
