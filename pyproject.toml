@@ -62,6 +62,7 @@ mps = [
 ]
 dev = [
     "fastapi>=0.115",
+    "httpx2",
     "pytest>=8",
     "torch",
     "uvicorn>=0.30",

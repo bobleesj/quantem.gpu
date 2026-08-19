@@ -208,6 +208,10 @@ final class MetalImageFFTTests: XCTestCase {
   }
 
   func testWarm2048StaysAheadOfTypicalTorchMPSDisplayFFT() throws {
+    try XCTSkipUnless(
+      ProcessInfo.processInfo.environment["QUANTEM_GPU_ENFORCE_METAL_BENCHMARKS"] == "1",
+      "Set QUANTEM_GPU_ENFORCE_METAL_BENCHMARKS=1 for device-qualified performance gates"
+    )
     let device = try metalDevice()
     let fft = try MetalImageFFT(device: device)
     let rows = 2048
