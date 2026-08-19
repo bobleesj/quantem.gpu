@@ -4,6 +4,8 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
 
 TOC = Path("docs/_toc.yml")
 CONFIG = Path("docs/_config.yml")
@@ -122,10 +124,12 @@ def test_dashboard_is_the_dense_human_overview() -> None:
 
     for heading in (
         "## Platform-first module dashboard",
+        "## Speed and memory at a glance",
+        "### Measured load paths",
+        "### What a 4 or 6 GiB budget can hold",
         "### I/O and first usable product — `quantem.gpu.io`",
         "#### Scan-size coverage",
         "#### Detector-bin coverage",
-        "#### Retained load timing",
         "### Screening and prepared-product caches — `quantem.gpu.screening`",
         "### Virtual images — `quantem.gpu.detector`",
         "### Detector moments and phase contrast — `quantem.gpu.dpc`",
@@ -187,6 +191,16 @@ def test_dashboard_is_the_dense_human_overview() -> None:
 
     assert "I[R_r,R_c,k_r,k_c]" in dashboard
     assert "not ranked" in dashboard
+    assert "1.43 GB peak process" in dashboard
+    assert "18.00 GiB" in dashboard
+    assert "9.00 GiB" in dashboard
+    assert "1.125 GiB" in dashboard
+    assert "2.25 GiB" in dashboard
+    assert "1.97 GiB per chunk; 10 chunks" in dashboard
+    assert "2.99 GiB per chunk; 7 chunks" in dashboard
+    assert "Each `512x512 float32` product map is only **1 MiB**" in dashboard
+    assert "ADF has an accelerated" in dashboard
+    assert "no 4/6 GiB physical-device signoff yet" in dashboard
 
     for scan_size in (128, 256, 512, 1024):
         assert f"`{scan_size}x{scan_size}`" in dashboard
@@ -346,7 +360,7 @@ def test_platform_first_io_tables_expose_bins_and_missing_evidence() -> None:
         "### Screening and prepared-product caches — `quantem.gpu.screening`", 1
     )[0]
 
-    assert io_section.count("| Platform |") == 3
+    assert io_section.count("| Platform |") == 2
     assert "| Platform | Bin 1 | Bin 2 | Bin 4 | Bin 8 |" in io_section
     assert "supportedDetectorBins = [1, 2, 4]" in swift_plan
     assert (
@@ -367,6 +381,27 @@ def test_platform_first_io_tables_expose_bins_and_missing_evidence() -> None:
     )
     assert "| **CPU reference** | Ref | Ref | Ref | Ref |" in io_section
     assert "|  |" not in io_section
+
+
+def test_dashboard_small_gpu_numbers_match_the_screening_planner() -> None:
+    from quantem.gpu.screening.workflow import _memory_plan_for_shapes
+
+    dashboard = Path("docs/dashboard.md").read_text(encoding="utf-8")
+    four_gib = _memory_plan_for_shapes((512, 512), (192, 192), 2, 4.0)
+    six_gib = _memory_plan_for_shapes((512, 512), (192, 192), 2, 6.0)
+
+    assert four_gib.chunk_rows == 56
+    assert four_gib.chunk_count == 10
+    assert four_gib.chunk_resident_gb / (1 << 30) * 1e9 == pytest.approx(1.96875)
+    assert six_gib.chunk_rows == 85
+    assert six_gib.chunk_count == 7
+    assert six_gib.chunk_resident_gb / (1 << 30) * 1e9 == pytest.approx(2.98828125)
+
+    assert "**1.97 GiB per chunk; 10 chunks** (56 rows each)" in dashboard
+    assert "**2.99 GiB per chunk; 7 chunks** (85 rows each)" in dashboard
+    assert "`memory_budget_gb=4.0`" in Path("docs/api/core.md").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_narrow_tables_scroll_without_compressing_provenance_columns() -> None:

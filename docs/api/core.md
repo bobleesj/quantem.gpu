@@ -32,6 +32,7 @@ cutoff is in Å⁻¹. Aberration coefficient ordering is defined by
 `ABERRATION_INDICES`; applications must persist that ordering and the beam
 energy with fitted values.
 
+(screening-products)=
 ## Screening products
 
 ```python
@@ -41,8 +42,10 @@ products = screening.prepare(
     "scan_master.h5",
     backend="auto",
     scan_shape=(512, 512),
-    memory_budget_gb=6.0,
+    memory_budget_gb=4.0,
 )
+
+print(products.metadata["memory"])
 ```
 
 `screening.prepare` builds or reopens derived BF/DF/CoM/rotation products and
@@ -51,6 +54,19 @@ rotation, cache/refresh policy, explicit memory budget, chunk rows, sampling
 seed/count, rotation search steps, and dtype. A cache reopen is not a raw HDF5
 load. The raw source remains the scientific evidence source, and metadata must
 retain the source fingerprint, parameters, timing, and memory plan.
+
+`memory_budget_gb=4.0` requests a bounded streaming working set; it does not
+promise that a complete unbinned 4D stack will fit in 4 GiB. For a native
+`512x512x192x192 uint16` source, the current planner selects 56 scan rows per
+chunk: **1.97 GiB** of raw counts across 10 sequential chunks. A 6.0 budget
+selects 85 rows: **2.99 GiB** across 7 chunks. Decoder scratch, allocator
+reserve, other processes, and the final measured peak remain separate gates.
+The historical API name says `gb`, while the planner uses binary GiB bytes.
+
+This public cache currently produces mean DP, BF, DF, CoM, rotation, and iDPC.
+ADF has accelerated detector kernels, but is not yet part of this one-pass
+screening result. No automatic scan crop is allowed, and a client-selected
+detector bin must remain explicit in provenance.
 
 ## Parallax reconstruction
 
