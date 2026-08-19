@@ -7,14 +7,14 @@ WebGPU, and an explicit CPU reference.
 ```{admonition} Choose how you want to enter
 :class: tip
 **Whole project:** start with the
-[Kernel and benchmark dashboard](dashboard.md).
+[implementation overview](dashboard.md).
 
 **Scientific operation:** start with [Scientific kernels](kernels/index.md).
 
 **Kernel implementation:** start with [Kernel implementations](platforms/index.md).
 
 **Correctness or speed claim:** start with
-[Verification and performance](performance/index.md).
+[Benchmarks and parity](performance/index.md).
 ```
 
 ## The shared coordinate contract
@@ -80,12 +80,25 @@ an implementation.
 
 ## Performance numbers are evidence
 
-The [Kernel and benchmark dashboard](dashboard.md) is the dense one-page view
+The [implementation overview](dashboard.md) is the dense one-page view
 of implementation coverage and headline measurements. The
-[Performance and parity](performance/index.md) section keeps the complete
+[Benchmarks and parity](performance/index.md) section keeps the complete
 current and historical evidence with source revision, hardware, data
 shape/dtype, cache state, load plan, memory peak, parity artifact, and
 benchmark definition.
+
+| Current headline | What was measured | Result | Full provenance |
+|---|---|---:|---|
+| Native Swift/Metal on a physical 8 GB M2 MacBook Air | First-process application load to first complete product; full `512x512` scan, `192x192` `uint16` detector, no crop, explicit exact-sum detector bin 4 | **1.985-2.043 s wall p50** across two fixtures | [M2-AIR-BIN4-E2E](performance/results.md) |
+| CUDA on NVIDIA RTX PRO 6000 Blackwell | Warm-source load/decompress; full `512x512x192x192`, no crop/bin | **0.450 s median** | [CUDA-512-LOAD](performance/results.md) |
+| WebGPU on an Apple Metal adapter | Prepared local-file full-stack load; full `512x512x192x192`, no crop/bin | **0.772 s p50** | [WEBGPU-512-FULL](performance/results.md) |
+
+These are different benchmark states and are not a platform ranking. For every
+number, open the linked row to inspect the measurement date, exact code
+revision, physical device, source shape/dtype, cache state, bin/crop plan,
+timing boundary, memory evidence, and parity artifact. See the
+[revision and change ledger](performance/changes.md) for what changed in the
+latest documentation and which implementation revision each claim measures.
 
 A cached reopen is not a first source load. A cropped or binned fixture is not
 full-resolution evidence. A compile test is not a hardware benchmark. Rejected

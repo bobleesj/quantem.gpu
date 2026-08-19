@@ -4,7 +4,7 @@ parts:
   - caption: Start here
     chapters:
       - file: dashboard
-        title: Kernel and benchmark dashboard
+        title: Implementation overview
       - file: install
       - file: concepts/scientific-contract
         title: Scientific contract
@@ -68,13 +68,18 @@ parts:
           - file: api/movie
           - file: api/metal_image
           - file: api/native_4dstem_io
+          - file: api/core
+            title: Device, optics, screening, and parallax
 
-  - caption: Verification and performance
+  - caption: Benchmarks and parity
     chapters:
       - file: performance/index
-        title: Evidence overview
+        title: Benchmark overview
         sections:
           - file: performance/results
+            title: Verified benchmark results
+          - file: performance/changes
+            title: Revision and change ledger
           - file: backends
             title: Current verified results
           - file: performance/methodology
