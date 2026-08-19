@@ -19,27 +19,67 @@ WebGPU, and an explicit CPU reference.
 
 ## Speed benchmark overview
 
-**Overview reviewed:** 2026-08-19. This table records the latest retained
-measurement for each major runtime/workload represented in the evidence ledger.
-“Latest retained” does not mean “measured on the current source tree”: the date
-and measured revision identify exactly what ran.
+**Overview reviewed:** 2026-08-19. Choose the table that matches the work being
+timed. Loading, a resident scientific kernel, SSB reconstruction, and saving
+have different boundaries and should not be ranked as though they were the same
+operation. Each row contains one headline measurement; its test metadata is in
+the rightmost column.
 
-| Stack and workload | Tested date and measured revision | Physical device | Data, precision, and load plan | State and timing boundary | Latest retained speed | Correctness and evidence status |
-|---|---|---|---|---|---:|---|
-| **Native Swift/Metal — application load + products** | 2026-08-18; candidate `2c047160`, integration [`e662d7fe`](https://github.com/bobleesj/quantem.gpu/commit/e662d7feebf78e7c1513276651d0be55a555cb40) | Physical 8 GB `Mac14,2` M2 MacBook Air | `512x512x192x192` source `uint16`; full scan; no crop; scan bin 1; exact detector sum bin 4 → `48x48`; resident `uint16` | First process, OS cache not forcibly evicted; action → first complete product; seven alternating isolated runs per fixture | Fixture A/B wall **1.985/2.043 s p50**; Metal **1.615-1.618 s p50**; peak process `1.43 GB`, zero swap delta | Eight BF/ABF/ADF/CoM/DPC/iDPC exports byte-identical; diffraction hashes retained. [M2-AIR-BIN4-E2E](performance/results.md) |
-| **CUDA — full-source load** | 2026-07-20; [`b61572e4`](https://github.com/bobleesj/quantem.gpu/commit/b61572e47058e4b3fa48835541f667d46b762cf0) | NVIDIA RTX PRO 6000 Blackwell | `512x512x192x192` source `uint16`; full scan; no crop/bin; audited lossless-low8 `uint8` browse output | Warm source; 946-run load/decompress median | **0.450 s**; decoded resident `9.66 GB` | Selected corrected-frame integer checksums exact. Not first-encounter evidence. [CUDA-512-LOAD](performance/results.md) |
-| **Python MPS/Metal — product-cache build** | 2026-07-21; [`6c8ca5d0`](https://github.com/bobleesj/quantem.gpu/commit/6c8ca5d0a66bf78d88d6310fba5a1b9a2ea50326) | Apple Metal GPU; exact Mac model not retained | `512x512x192x192` native `uint16`; no crop/bin; 64-row chunks | First product-cache build; source-cache state not retained; raw HDF5 stream + Metal reductions | **3.96 s** build; `3.95 s` stream; `29.3 ms/chunk` reduction p50 | Mean DP/BF/DF bit-exact to CUDA; CoM max error `7.63e-6`. **Historical diagnostic:** incomplete hardware provenance. [MPS-CAL-BUILD](performance/results.md) |
-| **WebGPU — full-stack local-file load** | 2026-07-20; [`b61572e4`](https://github.com/bobleesj/quantem.gpu/commit/b61572e47058e4b3fa48835541f667d46b762cf0) | Chrome, Apple `metal-3` adapter; exact Mac model not retained | `512x512x192x192` source `uint16`; full scan; no crop/bin; audited lossless-low8 `uint8` output | Prepared indexes/sidecars; 946-cycle full-stack soak | **0.772 s p50**, `0.726-0.879 s` range | First/middle/last corrected-frame checksums exact to CUDA. Prepared, not cold. [WEBGPU-512-FULL](performance/results.md) |
-| **CUDA — resident BF/ADF/DF/CoM kernels** | 2026-07-19; [`0456e15e`](https://github.com/bobleesj/quantem.gpu/commit/0456e15ebfecd3627794118a930295e55a5a709b) | CUDA GPU; exact model not retained | GPU-resident full `512x512x192x192`; no crop/bin; integer sums and float32 CoM | Warm resident-kernel before → after microbenchmarks; source load excluded | BF `4.96→1.35 ms`; ADF `16.16→3.86 ms`; DF `62.64→1.84 ms`; CoM `200.42→12.39 ms` | Integer product max error `0`; CoM max error `0`. **Historical diagnostic:** device/mask provenance incomplete. [CUDA-BF/ADF/DF/COM-512](performance/results.md) |
-| **WebGPU — resident DPC/iDPC** | 2026-07-20; [`cee0ba5c`](https://github.com/bobleesj/quantem.gpu/commit/cee0ba5ca3725b03054ecf5e6a14e304bb93d4ed) | Headed Chrome, NVIDIA RTX PRO 6000 Blackwell | GPU-resident full `512x512x192x192`; no crop/bin; float32 DPC/iDPC | Warm resident display p50; source load excluded | row/column/iDPC **14.9/13.2/13.2 ms p50** | DPC max error `7.63e-6`; iDPC mean/max `4.70e-6/3.05e-5`. [WEBGPU-DPC-512](performance/results.md) |
-| **CUDA — SSB phase + loss** | 2026-07-19; [`0456e15e`](https://github.com/bobleesj/quantem.gpu/commit/0456e15ebfecd3627794118a930295e55a5a709b) | CUDA GPU; exact model not retained | Prepared real `512x512` field; full-BF policy; `float32`/`complex64` | Warm prepared phase+loss kernel; source preparation excluded | **32.2 ms p50**, `33.3 ms p95` | Same BF disk, aberrations, objective, and loss reference. **Historical diagnostic:** device/BF-count provenance incomplete. [SSB-CUDA-512-FULL](performance/results.md) |
-| **Python MPS — SSB phase + loss** | 2026-07-28; [`e8d49866`](https://github.com/bobleesj/quantem.gpu/commit/e8d49866ea16cc57c0073d734c448cbbf601a5a5) | Apple Silicon GPU; exact Mac model not retained | Prepared real `512x512` Hermitian legacy `G_qk`; full active BF; `float32`/`complex64` | Warm prepared phase+loss kernel; source preparation excluded | **537.58 ms p50**, `557.51 ms p95`; loss `0.0885396` | Same full-active BF policy, aberrations, precision, objective, and frozen loss. **Historical diagnostic:** host/BF-count provenance incomplete. [SSB-MPS-512-FULL](performance/results.md) |
-| **Python MPS/Metal — compressed save** | 2026-07-25; [`3061501`](https://github.com/bobleesj/quantem.gpu/commit/30615019cfe293ae9759006ae89c0e378b7065fd), API [`83bb608`](https://github.com/bobleesj/quantem.gpu/commit/83bb6089e11604b5828e6f94a70d49e487e75929) | Apple Metal GPU; exact Mac/storage model not retained | Chunk-backed `512x512x192x192` `uint16`; no crop/bin; batch 2048; bitshuffle/LZ4 HDF5 | Warm resident source; compression + HDF5 write; source load excluded | sweep **1.69-1.80 s**; public default `1.91 s`; output `1.205 GB` | Decoded samples exact, mismatches `0`. **Historical diagnostic:** host/storage provenance incomplete. [MPS-SAVE-U16-512](performance/results.md) |
-| **CPU — independent reference** | No performance signoff | CPU reference, intentionally hardware-independent | Exact scientific fixtures and widened/reference arithmetic | Correctness adjudication only; never a silent production fallback | **Not benchmarked as an accelerator** | Defines exact integers and frozen floating metrics used to accept CUDA, MPS/Metal, Swift/Metal, and WebGPU. [Parity contract](performance/parity.md) |
+### Loading and first usable product
 
-These rows are not a platform ranking, and millisecond resident-kernel timings
-are not load times. Click the evidence link for the complete command and
-artifact record, including cache state, bin/crop plan, and parity artifact. See the
+These measurements include storage or prepared-source work. Only the
+Swift/Metal rows are application wall time through the first complete product.
+
+| Implementation | Time | What was timed | Data and scientific plan | Test metadata and evidence |
+|---|---:|---|---|---|
+| **Swift/Metal**, fixture A | **1.985 s p50** | First-process action → first complete product | `512x512x192x192` `uint16`; full scan; no crop; scan bin 1; exact detector sum bin 4 → `48x48`; resident `uint16` | 2026-08-18 · physical 8 GB M2 MacBook Air (`Mac14,2`) · candidate `2c047160` · seven isolated runs · peak process `1.43 GB` · zero swap delta · eight product exports byte-identical · [M2-AIR-BIN4-E2E](performance/results.md) |
+| **Swift/Metal**, fixture B | **2.043 s p50** | First-process action → first complete product | Same full-scan plan as fixture A | 2026-08-18 · physical 8 GB M2 MacBook Air (`Mac14,2`) · integration [`e662d7fe`](https://github.com/bobleesj/quantem.gpu/commit/e662d7feebf78e7c1513276651d0be55a555cb40) · seven isolated runs · diffraction hash retained · [M2-AIR-BIN4-E2E](performance/results.md) |
+| **CUDA** | **0.450 s median** | Warm-source load and decompression; first product excluded | `512x512x192x192` `uint16`; full scan; no crop/bin; audited lossless-low8 `uint8` output | 2026-07-20 · NVIDIA RTX PRO 6000 Blackwell · [`b61572e4`](https://github.com/bobleesj/quantem.gpu/commit/b61572e47058e4b3fa48835541f667d46b762cf0) · 946 runs · selected integer checksums exact · [CUDA-512-LOAD](performance/results.md) |
+| **Python MPS** | **3.96 s** | First product-cache build; source-cache state not retained | `512x512x192x192` native `uint16`; no crop/bin; 64-row chunks | 2026-07-21 · Apple Metal GPU, exact Mac model not retained · [`6c8ca5d0`](https://github.com/bobleesj/quantem.gpu/commit/6c8ca5d0a66bf78d88d6310fba5a1b9a2ea50326) · mean DP/BF/DF bit-exact; CoM max error `7.63e-6` · **historical diagnostic** · [MPS-CAL-BUILD](performance/results.md) |
+| **WebGPU** | **0.772 s p50** | Prepared local-file full-stack load; not cold | `512x512x192x192` `uint16`; full scan; no crop/bin; audited lossless-low8 `uint8` output | 2026-07-20 · Chrome on Apple `metal-3`, exact Mac model not retained · [`b61572e4`](https://github.com/bobleesj/quantem.gpu/commit/b61572e47058e4b3fa48835541f667d46b762cf0) · 946 cycles · corrected-frame checksums exact to CUDA · [WEBGPU-512-FULL](performance/results.md) |
+
+### Resident scientific products
+
+Source loading is excluded here. Every row is one warm, GPU-resident product
+measurement on the full `512x512x192x192` data volume with no crop or binning.
+
+| Implementation | Product | Time | Precision and parity | Test metadata and evidence |
+|---|---|---:|---|---|
+| **CUDA** | BF | **1.35 ms** | Integer sum; max error `0` | 2026-07-19 · CUDA GPU, exact model not retained · [`0456e15e`](https://github.com/bobleesj/quantem.gpu/commit/0456e15ebfecd3627794118a930295e55a5a709b) · **historical diagnostic** · [CUDA-BF-512](performance/results.md) |
+| **CUDA** | ADF | **3.86 ms** | Integer sum; max error `0` | 2026-07-19 · same device/revision · **historical diagnostic** · [CUDA-ADF-512](performance/results.md) |
+| **CUDA** | DF | **1.84 ms** | Integer sum; max error `0` | 2026-07-19 · same device/revision · **historical diagnostic** · [CUDA-DF-512](performance/results.md) |
+| **CUDA** | CoM row + column | **12.39 ms** | `float32`; max error `0` | 2026-07-19 · same device/revision · **historical diagnostic** · [CUDA-COM-512](performance/results.md) |
+| **WebGPU** | DPC row | **14.9 ms p50** | `float32`; max error `7.63e-6` | 2026-07-20 · headed Chrome · NVIDIA RTX PRO 6000 Blackwell · [`cee0ba5c`](https://github.com/bobleesj/quantem.gpu/commit/cee0ba5ca3725b03054ecf5e6a14e304bb93d4ed) · [WEBGPU-DPC-512](performance/results.md) |
+| **WebGPU** | DPC column | **13.2 ms p50** | `float32`; max error `7.63e-6` | 2026-07-20 · same device/revision · [WEBGPU-DPC-512](performance/results.md) |
+| **WebGPU** | iDPC | **13.2 ms p50** | `float32`; mean/max error `4.70e-6/3.05e-5` | 2026-07-20 · same device/revision · [WEBGPU-DPC-512](performance/results.md) |
+
+### Single-sideband ptychography
+
+These are warm, prepared phase-and-loss kernel measurements. Loading and source
+preparation are excluded.
+
+| Implementation | Time | Data and precision | Test metadata and evidence |
+|---|---:|---|---|
+| **CUDA** | **32.2 ms p50** | Real `512x512` field; full-BF policy; `float32`/`complex64` | 2026-07-19 · CUDA GPU, exact model not retained · [`0456e15e`](https://github.com/bobleesj/quantem.gpu/commit/0456e15ebfecd3627794118a930295e55a5a709b) · same BF disk, aberrations, objective, and loss reference · **historical diagnostic** · [SSB-CUDA-512-FULL](performance/results.md) |
+| **Python MPS** | **537.58 ms p50** | Real `512x512` Hermitian legacy `G_qk`; full active BF; `float32`/`complex64` | 2026-07-28 · Apple Silicon GPU, exact Mac model not retained · [`e8d49866`](https://github.com/bobleesj/quantem.gpu/commit/e8d49866ea16cc57c0073d734c448cbbf601a5a5) · same BF policy, aberrations, precision, objective, and frozen loss · **historical diagnostic** · [SSB-MPS-512-FULL](performance/results.md) |
+
+### Compressed saving
+
+| Implementation | Time | What was timed | Data and precision | Test metadata and evidence |
+|---|---:|---|---|---|
+| **Python MPS/Metal** | **1.69 s** | Best retained compression/HDF5-write sweep; source load excluded | Warm resident `512x512x192x192` `uint16`; no crop/bin; batch 2048; Bitshuffle/LZ4; output `1.205 GB` | 2026-07-25 · Apple Metal GPU, exact Mac/storage model not retained · [`3061501`](https://github.com/bobleesj/quantem.gpu/commit/30615019cfe293ae9759006ae89c0e378b7065fd) · decoded samples exact · **historical diagnostic** · [MPS-SAVE-U16-512](performance/results.md) |
+| **Python MPS/Metal** | **1.91 s** | Public-default confirmation; source load excluded | Same source, precision, and compression plan | 2026-07-25 · public API [`83bb608`](https://github.com/bobleesj/quantem.gpu/commit/83bb6089e11604b5828e6f94a70d49e487e75929) · decoded samples exact · **historical diagnostic** · [MPS-SAVE-U16-512](performance/results.md) |
+
+```{admonition} How to read these numbers
+:class: important
+Milliseconds for resident kernels are **not loading times**. A warm source, a
+prepared index, an application first product, and a saved-result reopen are also
+different states. CPU is the independent correctness reference—not a benchmarked
+accelerator and never a silent fallback.
+```
+
+For the complete command, cache state, bin/crop plan, memory record, and parity
+artifact behind each row, follow its evidence ID. See the
 [complete benchmark dashboard](dashboard.md),
 [methodology](performance/methodology.md), and
 [revision ledger](performance/changes.md).
