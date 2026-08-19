@@ -427,3 +427,37 @@ def test_ssb_api_keeps_benchmark_numbers_out_of_the_contract() -> None:
     assert "23.058 s" not in text
     assert "24.528 s" not in text
     assert "Performance numbers do not live in this API contract" in prose
+
+
+def test_scientific_kernel_pages_define_pipeline_and_data_contract() -> None:
+    expectations = {
+        "virtual-detectors.md": (
+            "4D counts → detector geometry/mask",
+            "## Coordinate, shape, dtype, unit, and provenance contract",
+            "## Optimization model",
+            "## Source map and gates",
+        ),
+        "com-dpc-idpc.md": (
+            "4D counts → fused intensity/row-moment/column-moment reduction",
+            "## Coordinate, shape, dtype, unit, and provenance contract",
+            "## Optimization model",
+            "## Source map and gates",
+        ),
+        "scan-regions.md": (
+            "full source geometry → explicit half-open scan region",
+            "## Coordinate, shape, dtype, unit, and provenance contract",
+            "## Optimization model",
+            "## Source map and gates",
+        ),
+        "display-export.md": (
+            "scientific array → finite-value/range transform",
+            "## Coordinate, shape, dtype, unit, and provenance contract",
+            "## Optimization model",
+            "## Source map and gates",
+        ),
+    }
+
+    for name, required_fragments in expectations.items():
+        text = Path("docs/kernels", name).read_text(encoding="utf-8")
+        for fragment in required_fragments:
+            assert fragment in text, f"{fragment!r} missing from {name}"
