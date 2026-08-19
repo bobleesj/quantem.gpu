@@ -61,8 +61,10 @@ mps = [
     "pyobjc-framework-Metal; platform_system == 'Darwin'",
 ]
 dev = [
+    "fastapi>=0.115",
     "pytest>=8",
     "torch",
+    "uvicorn>=0.30",
 ]
 docs = [
     "jupyter-book>=1.0",
