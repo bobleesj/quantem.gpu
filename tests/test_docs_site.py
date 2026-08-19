@@ -144,12 +144,15 @@ def test_current_benchmarks_have_complete_provenance_rows() -> None:
 
 def test_docs_build_is_hardware_independent() -> None:
     config = CONFIG.read_text(encoding="utf-8")
+    requirements = Path("docs/requirements.txt").read_text(encoding="utf-8")
     workflow = Path(".github/workflows/gpu-docs.yml").read_text(encoding="utf-8")
     pull_request_workflow = Path(".github/workflows/test.yml").read_text(
         encoding="utf-8"
     )
 
     assert 'execute_notebooks: "off"' in config
+    assert "jupyter-book>=1.0,<2" in requirements
+    assert "sphinx>=7,<8" in requirements
     assert "sphinx_thebe" not in config
     assert "jupyter-book build docs" in workflow
     assert "check_docs_links.py" in workflow
