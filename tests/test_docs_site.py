@@ -380,6 +380,19 @@ def test_scientific_kernel_pages_define_coordinates_math_and_optimization() -> N
     dpc = pages["dpc"].read_text(encoding="utf-8")
     for term in ("com_row", "com_col", "mu_r", "mu_c", "iDPC"):
         assert term in dpc
+    for reference_function in (
+        "masked_counts",
+        "center_of_mass_reference",
+        "rotate_dpc_reference",
+        "curl_score",
+        "select_dpc_rotation_reference",
+        "integrate_idpc_reference",
+    ):
+        assert f"def {reference_function}" in dpc
+    assert "-0.25j" in dpc
+    assert "dim=(-2, -1)" not in dpc
+    assert "movedim(-1" not in dpc
+    assert ":-" not in dpc
 
     ssb = pages["ssb"].read_text(encoding="utf-8")
     for term in (
