@@ -186,35 +186,43 @@ def test_intro_exposes_current_benchmarks_without_erasing_provenance() -> None:
     ):
         assert evidence_id in intro
 
-    for stack in (
-        "Native Swift/Metal",
-        "CUDA — full-source load",
-        "Python MPS/Metal — product-cache build",
-        "WebGPU — full-stack local-file load",
-        "CUDA — resident BF/ADF/DF/CoM kernels",
-        "WebGPU — resident DPC/iDPC",
-        "CUDA — SSB phase + loss",
-        "Python MPS — SSB phase + loss",
-        "Python MPS/Metal — compressed save",
-        "CPU — independent reference",
+    for section in (
+        "### Loading and first usable product",
+        "### Resident scientific products",
+        "### Single-sideband ptychography",
+        "### Compressed saving",
     ):
-        assert stack in intro
+        assert section in intro
 
-    for provenance_field in (
-        "Tested date and measured revision",
-        "Physical device",
-        "Data, precision, and load plan",
-        "State and timing boundary",
-        "Latest retained speed",
-        "Correctness and evidence status",
+    for table_field in (
+        "Implementation",
+        "Time",
+        "What was timed",
+        "Data and scientific plan",
+        "Precision and parity",
+        "Test metadata and evidence",
     ):
-        assert provenance_field in intro
+        assert table_field in intro
 
-    assert "millisecond resident-kernel timings are not load times" in intro_prose
-    assert "No performance signoff" in intro
+    for headline_time in (
+        "1.985 s p50",
+        "2.043 s p50",
+        "0.450 s median",
+        "0.772 s p50",
+        "1.35 ms",
+        "12.39 ms",
+        "32.2 ms p50",
+        "537.58 ms p50",
+        "1.69 s",
+        "1.91 s",
+    ):
+        assert headline_time in intro
+
+    assert "resident kernels are **not loading times**" in intro
+    assert "CPU is the independent correctness reference" in intro
 
     for qualifier in (
-        "not a platform ranking",
+        "should not be ranked",
         "cache state",
         "bin/crop plan",
         "parity artifact",
