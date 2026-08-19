@@ -16,6 +16,12 @@ Native clients import two products for local 4D-STEM loading:
 
 Neither product imports SwiftUI, AppKit, UIKit, or Python.
 
+The native HDF5 bridge accepts unsigned 8-bit and unsigned 16-bit detector
+sources. `Metal4DSTEMLoadPlan.sourceBytesPerValue` is therefore exactly 1 or 2.
+The persistent resident cache currently stores `uint16` or `uint32`; audited
+`uint8` is a compact decode/staging representation, not a silently relabeled
+`uint8` resident cache.
+
 ## Catalog and load geometry
 
 Prepare a Python-free catalog and construct an explicit load plan:

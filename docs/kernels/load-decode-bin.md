@@ -38,6 +38,40 @@ may be detector-major or packed. `LoadResult` metadata must still report the
 logical scan and detector shapes, source/output dtype, crop/bin plan, and
 source identity.
 
+## Dtype and memory contract
+
+The load path keeps four precision decisions separate:
+
+1. **source dtype** — the detector counts stored in HDF5, commonly `uint16`;
+2. **working dtype** — compact decode/staging precision, such as an audited
+   lossless `uint8` low-byte path;
+3. **accumulation dtype** — widened integer precision used for detector or scan
+   sums; and
+4. **resident dtype** — the array representation delivered to downstream
+   kernels and recorded in provenance.
+
+`uint16` is exact for native `uint16` counts only while every correction and
+sum fits 0 through 65,535. Detector binning therefore widens accumulation and,
+when needed, the resident result to `uint32`. `uint8` is exact only for a native
+`uint8` source or after a complete identity-bound range audit proves every
+corrected count is at most 255. An explicit `dtype="u8"` without that proof is
+a saturating browse transform and must retain its saturation count.
+
+For output detector bin $b$ and $w$ resident bytes per value,
+
+$$
+B_{\mathrm{payload}}
+=N_{R_r}N_{R_c}
+\left\lceil\frac{N_{k_r}}{b}\right\rceil
+\left\lceil\frac{N_{k_c}}{b}\right\rceil w.
+$$
+
+This is only the resident payload. Peak memory also includes live compressed
+bytes, decode/reduction scratch, staging or upload buffers, allocator reserve,
+products, and other active GPU users. Report predicted payload and measured
+peak separately; on Apple unified memory also report process footprint,
+pressure, and swap.
+
 ## Pipeline stages
 
 ```text
@@ -119,7 +153,7 @@ presents:
 - source and output detector shapes;
 - scan region and scan bin;
 - source, accumulation, and resident dtypes;
-- predicted and measured memory; and
+- resident payload, predicted peak, measured peak, and the measurement source;
 - the reason the plan changed.
 
 The resulting array is binned evidence, not native-resolution evidence.
