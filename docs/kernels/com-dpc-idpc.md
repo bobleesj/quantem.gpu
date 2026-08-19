@@ -22,8 +22,6 @@ Start with a 4D count tensor `counts_R_q` whose axes are
 detector mask `mask_q` with shape `(detector_row, detector_column)`:
 
 ```python
-from __future__ import annotations
-
 import torch
 ```
 
