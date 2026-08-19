@@ -476,8 +476,9 @@ public struct MetalUInt32SurfaceState: @unchecked Sendable {
   ) -> Bool {
     let low = min(0.99, max(0, contrastLow))
     let high = min(1, max(low + 0.01, contrastHigh))
-    guard self.scale != scale || self.colormap != colormap
-      || self.contrastLow != low || self.contrastHigh != high
+    guard
+      self.scale != scale || self.colormap != colormap
+        || self.contrastLow != low || self.contrastHigh != high
     else { return false }
     self.scale = scale
     self.colormap = colormap
@@ -547,8 +548,9 @@ public struct MetalFloat32SurfaceState: @unchecked Sendable {
   ) -> Bool {
     let low = min(0.99, max(0, contrastLow))
     let high = min(1, max(low + 0.01, contrastHigh))
-    guard self.scale != scale || self.colormap != colormap
-      || self.contrastLow != low || self.contrastHigh != high
+    guard
+      self.scale != scale || self.colormap != colormap
+        || self.contrastLow != low || self.contrastHigh != high
     else { return false }
     self.scale = scale
     self.colormap = colormap

@@ -10,7 +10,8 @@ guard arguments.count >= 3 else {
 do {
   let input = URL(fileURLWithPath: arguments[1])
   let cache = URL(fileURLWithPath: arguments[2], isDirectory: true)
-  let mode: Native4DSTEMCatalogMode = arguments.contains("--catalog-only")
+  let mode: Native4DSTEMCatalogMode =
+    arguments.contains("--catalog-only")
     ? .catalogOnly
     : .indexed
   let started = ContinuousClock.now
@@ -19,7 +20,8 @@ do {
     mode: mode
   )
   let duration = ContinuousClock.now - started
-  let seconds = Double(duration.components.seconds)
+  let seconds =
+    Double(duration.components.seconds)
     + Double(duration.components.attoseconds) / 1e18
   let encoder = JSONEncoder()
   encoder.outputFormatting = [.sortedKeys]
@@ -27,7 +29,9 @@ do {
   FileHandle.standardOutput.write(output)
   FileHandle.standardOutput.write(Data("\n".utf8))
   fputs(
-    String(format: "NATIVE_HDF5 mode=%@ datasets=%d wall=%.6f\n", mode == .catalogOnly ? "catalog" : "indexed", catalog.datasets.count, seconds),
+    String(
+      format: "NATIVE_HDF5 mode=%@ datasets=%d wall=%.6f\n",
+      mode == .catalogOnly ? "catalog" : "indexed", catalog.datasets.count, seconds),
     stderr
   )
 } catch {

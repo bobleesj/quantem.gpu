@@ -208,9 +208,11 @@ private struct QH5DirectDetectorBinParameters {
 
 final class Metal4DSTEMKernelsTests: XCTestCase {
   func testRealQH5PrefixStopsAtExactLowPlaneBoundary() throws {
-    guard let indexDirectory = ProcessInfo.processInfo.environment[
-      "QUANTEM_GPU_QH5_REAL_INDEX_DIR"
-    ] else {
+    guard
+      let indexDirectory = ProcessInfo.processInfo.environment[
+        "QUANTEM_GPU_QH5_REAL_INDEX_DIR"
+      ]
+    else {
       throw XCTSkip("Set QUANTEM_GPU_QH5_REAL_INDEX_DIR to run real QH5 decode parity")
     }
     let records = try realQH5Blocks(
@@ -230,9 +232,11 @@ final class Metal4DSTEMKernelsTests: XCTestCase {
   }
 
   func testRealQH5ScalarLowPlaneDecodeMatchesCPUReference() throws {
-    guard let indexDirectory = ProcessInfo.processInfo.environment[
-      "QUANTEM_GPU_QH5_REAL_INDEX_DIR"
-    ] else {
+    guard
+      let indexDirectory = ProcessInfo.processInfo.environment[
+        "QUANTEM_GPU_QH5_REAL_INDEX_DIR"
+      ]
+    else {
       throw XCTSkip("Set QUANTEM_GPU_QH5_REAL_INDEX_DIR to run real QH5 decode parity")
     }
     let device = try metalDevice()
@@ -297,9 +301,11 @@ final class Metal4DSTEMKernelsTests: XCTestCase {
   }
 
   func testRealQH5ScalarDetectorBin4MatchesCPUReference() throws {
-    guard let indexDirectory = ProcessInfo.processInfo.environment[
-      "QUANTEM_GPU_QH5_REAL_INDEX_DIR"
-    ] else {
+    guard
+      let indexDirectory = ProcessInfo.processInfo.environment[
+        "QUANTEM_GPU_QH5_REAL_INDEX_DIR"
+      ]
+    else {
       throw XCTSkip("Set QUANTEM_GPU_QH5_REAL_INDEX_DIR to run real QH5 decode parity")
     }
     let device = try metalDevice()
@@ -420,7 +426,8 @@ final class Metal4DSTEMKernelsTests: XCTestCase {
         for bit in 0..<8 {
           let wordOffset = bit * 512 + group * 4
           let bytes = decodedBlocks[block]
-          let word = UInt32(bytes[wordOffset])
+          let word =
+            UInt32(bytes[wordOffset])
             | UInt32(bytes[wordOffset + 1]) << 8
             | UInt32(bytes[wordOffset + 2]) << 16
             | UInt32(bytes[wordOffset + 3]) << 24
@@ -515,9 +522,11 @@ final class Metal4DSTEMKernelsTests: XCTestCase {
   }
 
   func testRealQH5ParallelFullBlockDecodeMatchesCPUReference() throws {
-    guard let indexDirectory = ProcessInfo.processInfo.environment[
-      "QUANTEM_GPU_QH5_REAL_INDEX_DIR"
-    ] else {
+    guard
+      let indexDirectory = ProcessInfo.processInfo.environment[
+        "QUANTEM_GPU_QH5_REAL_INDEX_DIR"
+      ]
+    else {
       throw XCTSkip("Set QUANTEM_GPU_QH5_REAL_INDEX_DIR to run real QH5 decode parity")
     }
     let device = try metalDevice()
@@ -593,7 +602,8 @@ final class Metal4DSTEMKernelsTests: XCTestCase {
         for bit in 0..<8 {
           let wordOffset = bit * 512 + group * 4
           let bytes = decodedBlocks[block]
-          let word = UInt32(bytes[wordOffset])
+          let word =
+            UInt32(bytes[wordOffset])
             | UInt32(bytes[wordOffset + 1]) << 8
             | UInt32(bytes[wordOffset + 2]) << 16
             | UInt32(bytes[wordOffset + 3]) << 24
