@@ -1,40 +1,61 @@
-# quantem.gpu documentation follows the same audience-first hierarchy as
-# quantem.widget: practical workflows first, exhaustive API and evidence later.
 format: jb-book
 root: intro
 parts:
-  - caption: Getting started
+  - caption: Start here
     chapters:
       - file: install
       - file: concepts/scientific-contract
         title: Scientific contract
-      - file: platforms/index
-        title: Choose a platform
-        sections:
-          - file: platforms/cuda
-          - file: platforms/mps
-            title: Python MPS
-          - file: platforms/swift-metal
-            title: Native Swift and Metal
-          - file: platforms/webgpu
-          - file: platforms/cpu-reference
-            title: CPU reference
+      - file: concepts/kernel-architecture
+        title: Kernel architecture
+      - file: kernels/index
+        title: Choose a scientific operation
 
-  - caption: Scientific workflows
+  - caption: Scientific kernels
     chapters:
-      - file: tutorials/workflow_math
-        title: What do the products measure?
-      - file: tutorials/load_hdf5
-      - file: tutorials/bf_df_adf
-      - file: tutorials/dpc
-      - file: tutorials/ssb
-      - file: tutorials/display_widget
-      - file: tutorials/movie_rendering
-      - file: tutorials/remote_cuda
-      - file: tutorials/scan_region
+      - file: kernels/data-model
+        title: Data model and coordinates
+      - file: kernels/load-decode-bin
+        title: Load, decode, and bin
+      - file: kernels/virtual-detectors
+        title: BF, DF, and ADF reductions
+      - file: kernels/com-dpc-idpc
+        title: CoM, DPC, and iDPC
+      - file: kernels/ssb
+        title: Single-sideband ptychography
+      - file: kernels/scan-regions
         title: Explicit scan regions
+      - file: kernels/display-export
+        title: Display and export kernels
 
-  - caption: Performance & parity
+  - caption: Backend implementation
+    chapters:
+      - file: platforms/index
+        title: Choose a runtime
+      - file: platforms/cuda
+      - file: platforms/mps
+        title: Python MPS
+      - file: platforms/swift-metal
+        title: Native Swift and Metal
+      - file: platforms/webgpu
+      - file: platforms/cpu-reference
+        title: CPU reference
+      - file: platforms/remote-cuda
+        title: Remote CUDA service
+
+  - caption: API contracts
+    chapters:
+      - file: api/index
+        title: API reference
+        sections:
+          - file: api/io
+          - file: api/images_dpc
+          - file: api/ssb
+          - file: api/movie
+          - file: api/metal_image
+          - file: api/native_4dstem_io
+
+  - caption: Verification and performance
     chapters:
       - file: performance/index
         title: Evidence overview
@@ -51,30 +72,21 @@ parts:
           - file: maintainer/ssb-performance
             title: SSB performance evidence
 
-  - caption: Developers
+  - caption: Contributing
     chapters:
-      - file: api/index
-        title: API reference
-        sections:
-          - file: api/io
-          - file: api/images_dpc
-          - file: api/ssb
-          - file: api/movie
-          - file: api/metal_image
-          - file: api/native_4dstem_io
       - file: developer/index
         title: Developer guide
         sections:
+          - file: developer/kernel-lifecycle
+            title: Kernel development lifecycle
           - file: maintainer/backend-layout-and-parity
             title: Repository architecture
           - file: developer/adding-backend
           - file: developer/writing
             title: Writing, notation, and units
           - file: developer/testing
-
-  - chapters:
       - file: maintainer/index
-        title: Maintainer guide
+        title: Maintainer archive
         sections:
           - file: maintainer/migration
           - file: maintainer/native-metal-hdf5-postmortem

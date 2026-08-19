@@ -97,7 +97,7 @@ let isLossless = audit.provesLosslessUInt8(
 The audit records the exact source identity, dtype, bad-pixel set, maximum, and
 number of values above 255. A filename or shape match is insufficient. New
 files use schema `quantem.gpu.value-range-audit/v1`; the reader accepts the
-earlier Live4DSTEM schema only so existing audited fixtures remain usable.
+earlier client-specific schema only so existing audited fixtures remain usable.
 
 The accepted Air fast path uses
 `decodeU16AuditedLow8ScalarFunction` followed by
@@ -148,7 +148,7 @@ must never change scan coverage, binning, dtype, or metadata silently.
 
 ## Client ownership
 
-Live4DSTEM owns:
+The consuming application owns:
 
 - folder selection, latest-request-wins scheduling, cancellation, and UI;
 - memory budget and reserve selection;

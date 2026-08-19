@@ -1,8 +1,7 @@
 # CPU reference
 
-CPU is an explicit reference and portability path for small tests. It provides
-an independent implementation for adjudicating accelerator outputs and file
-round trips.
+The CPU path is an explicit independent reference for small deterministic
+fixtures and portable IO checks. It is not a silent production fallback.
 
 ```python
 from quantem.gpu import io
@@ -10,10 +9,20 @@ from quantem.gpu import io
 reference = io.load("small_master.h5", backend="cpu", dtype="u16")
 ```
 
-Production accelerated APIs never silently fall back to CPU. A missing CUDA,
-MPS, native Metal, or WebGPU capability must fail honestly rather than produce
-a slower result that is later reported as GPU evidence.
+## Source map
 
-Reference fixtures should be small, deterministic, and generated independently
-of the backend under test. Frozen outputs include source hashes, parameters,
-shape/dtype, and the metric used for comparison.
+- IO reference: `src/quantem/gpu/io/backends/cpu`
+- backend-neutral detector/DPC reference: the public domain implementations
+- frozen fixtures and comparisons: `tests/parity` and focused test modules
+
+## Reference design
+
+Reference code favors directness and independent arithmetic over sharing an
+accelerator optimization. It preserves
+$I[r_y,r_x,q_y,q_x]$ and `(row, column) ≡ (y, x)`, uses widened accumulators,
+retains incomplete edge bins, and records the same provenance.
+
+A reference fixture is small, deterministic, versioned, and generated through
+an explicit recapture command. The backend being adjudicated never creates its
+own golden. Missing accelerated capability fails honestly rather than running
+the reference and later being reported as GPU evidence.

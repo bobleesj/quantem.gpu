@@ -18,10 +18,10 @@ annular_dark_field = detector.adf(
 dpc_result = dpc.run(data)
 ```
 
-For a screen page or exported viewer that needs BF, DF, CoM, and DPC products
-at launch, use `screening.prepare()` and reuse its small cache rather than
-reducing the full HDF5 volume on every open.
+For a client that needs BF, DF, CoM, and DPC products at launch, use
+`screening.prepare()` and reuse its small derived cache rather than reducing
+the full HDF5 volume on every open.
 
 Native-detector agreement and scientific-count claims should start from
-`det_bin=1` and a count-preserving dtype. Display reduced products with
-`quantem.widget.Show2D`.
+`det_bin=1` and a count-preserving dtype. Presentation remains outside this
+compute API.

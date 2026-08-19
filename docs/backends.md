@@ -34,24 +34,15 @@ Use `backend="auto"` for normal scripts and `backend="cuda"` or
 `backend="mps"` in parity/performance tests.
 
 WebGPU is a browser runtime, not a Python device backend. Reusable browser
-compute sources live beside their scientific domains and are bundled by
-`quantem.widget` for anywidget and exported-HTML use. SSB-specific WebGPU
-implementation files live under `quantem.gpu.ssb.compute.webgpu`. Browser performance claims must log a real
+compute sources live beside their scientific domains and are packaged for
+browser clients. SSB-specific WebGPU implementation files live under
+`quantem.gpu.ssb.compute.webgpu`. Browser performance claims must log a real
 adapter; SwiftShader or another software adapter is only a smoke test.
 
-The Show4DSTEM command-line entry points live in `quantem.widget`, while
-`quantem.gpu` owns the reusable load/decode/reduction kernels:
-
-```bash
-quantem show4dstem /data/session --backend mps --count 7 --bin 1 --dtype u8
-quantem show4dstem /data/session --backend cuda --count 7 --devices 0,1 --bin 1 --dtype u8
-quantem show4dstem /data/session --backend webgpu --html --count 7 --bin 1 --dtype u8
-```
-
-CUDA can use explicit `--devices 0,1` placement through the widget CLI. WebGPU
-does not expose CUDA-style multi-GPU placement; the browser chooses one hardware
-adapter for the page and the widget must not pretend a browser page is using two
-CUDA GPUs.
+CUDA service placement can select several devices for independent resident
+datasets. Their VRAM is not combined to make one dataset fit. WebGPU does not
+expose CUDA-style multi-GPU placement; the browser selects one adapter for a
+page.
 
 ## Backend coverage
 
@@ -65,7 +56,7 @@ complete; `Gap` means the backend does not implement that capability yet.
 | Capability | CUDA | MPS | WebGPU | CPU | Notes |
 |---|---|---|---|---|---|
 | Device report and explicit selection | Done | Done | NA | Done | WebGPU adapter selection is browser-side. |
-| HDF5 metadata, readiness, discovery | Done | Done | Done | Done | Keep one shared API for widget/live callers. |
+| HDF5 metadata, readiness, discovery | Done | Done | Done | Done | Keep one shared API for all clients. |
 | Full HDF5 bitshuffle/LZ4 load/decompress | Done | Done | Done | Reference | CUDA kernels, Metal chunk-backed loaders, and WebGPU WGSL decode are implemented for `uint8`/`uint16`/`uint32` detector sources. `load(..., dtype='uint32')` or `dtype='u32'` requests native four-byte unsigned output. `load(..., dtype='u4')` means true packed 4-bit counts (`0..15`), not NumPy `<u4`; CUDA returns a packed two-counts-per-byte array after an exact range audit. MPS/WebGPU HDF5 packed `u4` output is a named gap and raises honestly. WebGPU strict full-stack no-bin `1024x1024x192x192` browse is rejected as a memory-policy path; use product-first, crop, or explicit bin. |
 | `load(..., scan_region=...)` crop-first IO | Done | Done | Done | Reference | WebGPU uses frame-window slicing before upload/decode. |
 | Detector bin during load, min-memory | Done | Done | Done | Reference | WebGPU has explicit count-preserving `detBin` source support; full `512x512x192x192` `detBin=2/4/8` headed parity is exact on a real NVIDIA WebGPU adapter, including native non-low8 `uint16` `detBin=2`. |
@@ -74,14 +65,14 @@ complete; `Gap` means the backend does not implement that capability yet.
 | CoM/DPC resident kernels | Done | Done | Done | Reference | WebGPU row/col DPC has full no-bin headed signoff on real hardware. |
 | Cached BF/DF/CoM/rotation products | Done | Done | Product-first Done / cache-read Done | Cache-read Done | CUDA and MPS build the raw-HDF5 product cache; WebGPU owns browser selected-block product caches and can read prepared cache products. |
 | iDPC | Done | Done | Done | Reference | WebGPU fixed-rotation iDPC is implemented with paired DPC buffers and a dual-real FFT; parity is float32 FFT tolerance, not bit-exact. |
-| Ptychographic SSB preview | Done | Done | Partial | Reference | WebGPU SSB source lives under `quantem.gpu.ssb.compute.webgpu` and is bundled by the widget; the full browser matrix is not complete. |
+| Ptychographic SSB preview | Done | Done | Partial | Reference | WebGPU SSB source lives under `quantem.gpu.ssb.compute.webgpu`; the full browser matrix is not complete. |
 | Ptychographic SSB fit/reconstruction | Done | Done | Partial | Not target | MPS supports current parity shapes; large exact phase/loss is still slower than CUDA. |
 | Native Browser FFT (`MetalImageFFT.logMagnitude`) | NA | Done | NA | Reference | Native Swift/Metal product for already-transferred 2D BF/ADF/custom images. 512×512 must stay inside 120 Hz when warm. Not a Python MPS path. |
-| GIF/MP4 movie rendering | Done | Done | NA | Fallback | CUDA/NVENC and Metal/VideoToolbox paths live here; widget owns UI buttons. |
+| GIF/MP4 movie rendering | Done | Done | NA | Fallback | CUDA/NVENC and Metal/VideoToolbox paths live here; presentation controls remain client-owned. |
 | Browser source ownership | Done | Done | Done | NA | Reusable TypeScript/WGSL source lives beside each scientific domain. |
 
 The rule for new heavy work is: implement the compute or IO path in
-`quantem.gpu`, then let widget/live call it.
+`quantem.gpu`, then let clients call the shared contract.
 
 ## Current measured summary
 
