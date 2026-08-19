@@ -27,13 +27,13 @@ automatic resource policy.
 The logical output is
 
 $$
-I[r_y,r_x,q_y,q_x],
-\qquad (\text{row},\text{column})\equiv(y,x).
+I[s_r,s_c,q_r,q_c],
+\qquad (\text{row},\text{column})\equiv(r,c).
 $$
 
-In plain terms, `(row, column)` is `(y, x)` for both scan and detector axes.
+In plain terms, `(row, column)` is `(r, c)` for both scan and detector axes.
 
-Storage shards may flatten $(r_y,r_x)$ into a frame index, and a device layout
+Storage shards may flatten $(s_r,s_c)$ into a frame index, and a device layout
 may be detector-major or packed. `LoadResult` metadata must still report the
 logical scan and detector shapes, source/output dtype, crop/bin plan, and
 source identity.

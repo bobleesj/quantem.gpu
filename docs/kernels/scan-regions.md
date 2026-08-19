@@ -5,11 +5,10 @@ shortcut. Its public order is
 
 ```text
 (row_start, row_stop, column_start, column_stop)
-== (y_start, y_stop, x_start, x_stop)
 ```
 
 and each interval is half-open. The coordinate convention is
-`(row, column) ≡ (y, x)`.
+`(row, column) ≡ (r, c)`.
 
 ```python
 from quantem.gpu import io
@@ -25,8 +24,8 @@ print(result.metadata["full_scan_shape"])
 print(result.metadata["scan_region"])
 ```
 
-For $I[r_y,r_x,q_y,q_x]$, the selection above keeps
-$0\le r_y<32$ and $0\le r_x<48$ while preserving the requested detector
+For $I[s_r,s_c,q_r,q_c]$, the selection above keeps
+$0\le s_r<32$ and $0\le s_c<48$ while preserving the requested detector
 coverage.
 
 ## Optimization model

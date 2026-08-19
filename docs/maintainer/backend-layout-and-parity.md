@@ -97,7 +97,7 @@ Every backend result bundle must record:
 - half-open scan and detector regions;
 - scan bin, detector bin, output shape, output dtype, and accumulation dtype;
 - bad-pixel policy and detector-mask definition;
-- `(row, column) ≡ (y, x)` coordinate convention;
+- `(row, column) ≡ (r, c)` coordinate convention;
 - backend, device, source revision, and kernel revision;
 - whether the result is native resolution, explicitly binned, or explicitly
   cropped; and

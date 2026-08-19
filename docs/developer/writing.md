@@ -45,8 +45,8 @@ implementation details.
 ## Coordinates and shapes
 
 All public image and scan coordinates use `(row, col)` order with the explicit
-mathematical equivalence `(row, column) ≡ (y, x)`. Row/$y$ is the slow,
-vertical axis and column/$x$ is the fast, horizontal axis. Write shapes in the
+mathematical equivalence `(row, column) ≡ (r, c)`. Row/$r$ is the slow,
+vertical axis and column/$c$ is the fast, horizontal axis. Write shapes in the
 same order:
 
 ```text
@@ -54,9 +54,10 @@ same order:
 ```
 
 Use `row` and `col` in public names, metadata, and error messages. In equations,
-use $r_y,r_x$ for scan coordinates and $q_y,q_x$ for detector coordinates.
-Plotting libraries may request `(x, y) = (column, row)`; document that adapter
-boundary without changing the scientific array order.
+use $s_r,s_c$ for scan coordinates and $q_r,q_c$ for detector coordinates.
+Some plotting libraries request the horizontal coordinate before the vertical
+coordinate. Document that adapter boundary without changing the scientific
+row/column array order.
 
 ## Quantities and units
 
@@ -89,7 +90,7 @@ unit, normalization, coordinate order, and calibration source.
 Use consistent roles:
 
 - italic lowercase letters for scalars;
-- bold lowercase letters for vectors, such as $\mathbf r$ and $\mathbf q$;
+- bold lowercase letters for vectors, such as $\mathbf s$ and $\mathbf q$;
 - uppercase letters for arrays, transforms, or operators when appropriate;
 - roman text for named operators, such as $\operatorname{argmin}$; and
 - semantic subscripts, such as $q_{\min}$, instead of unexplained indices.

@@ -4,11 +4,11 @@ Display kernels transform already-computed scientific arrays into ranges,
 histograms, colors, FFT views, or encoded frames. They do not redefine the
 underlying detector or reconstruction result.
 
-For a scalar image $A[y,x]$, display statistics operate in the same public
+For a scalar image $A[r,c]$, display statistics operate in the same public
 order
 
 $$
-(\text{row},\text{column})\equiv(y,x).
+(\text{row},\text{column})\equiv(r,c).
 $$
 
 Colormap and movie output preserve that orientation unless an explicit
@@ -30,7 +30,7 @@ movie.save_gif(stack, "preview.gif", fps=8)
 movie.save_mp4(stack, "preview.mp4", fps=24, backend="auto")
 ```
 
-Stacks use `(frame, row, column) ≡ (frame, y, x)`. Multi-panel stacks add a
+Stacks use `(frame, row, column) ≡ (frame, r, c)`. Multi-panel stacks add a
 leading movie/panel axis.
 
 ## Optimization model

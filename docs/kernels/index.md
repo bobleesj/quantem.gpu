@@ -19,17 +19,17 @@ WebGPU, and the CPU reference.
 Array order is always
 
 $$
-(\text{row},\text{column}) \equiv (y,x).
+(\text{row},\text{column}) \equiv (r,c).
 $$
 
 For 4D-STEM data,
 
 $$
-I[r_y,r_x,q_y,q_x],
+I[s_r,s_c,q_r,q_c],
 $$
 
-where $\mathbf r=(r_y,r_x)$ is the scan coordinate and
-$\mathbf q=(q_y,q_x)$ is the detector coordinate. A backend-specific launch
+where $\mathbf s=(s_r,s_c)$ is the scan coordinate and
+$\mathbf q=(q_r,q_c)$ is the detector coordinate. A backend-specific launch
 order may differ internally, but its public inputs, outputs, masks, metadata,
 and parity artifacts must preserve this order.
 

@@ -7,7 +7,7 @@ backend-specific product.
 ## 1. Start from the operation
 
 Read the matching page under [Scientific kernels](../kernels/index.md). Freeze
-its input shape/dtype, `(row, column) ≡ (y, x)` convention, parameters,
+its input shape/dtype, `(row, column) ≡ (r, c)` convention, parameters,
 provenance, outputs, and accepted metric before changing code.
 
 ## 2. Locate every implementation

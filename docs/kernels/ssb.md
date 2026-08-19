@@ -4,16 +4,16 @@ Single-sideband (SSB) ptychography uses the scan-frequency information in a
 4D-STEM acquisition to reconstruct a complex object. The input convention is
 
 $$
-I[r_y,r_x,q_y,q_x],
-\qquad (\text{row},\text{column})\equiv(y,x),
+I[s_r,s_c,q_r,q_c],
+\qquad (\text{row},\text{column})\equiv(r,c),
 $$
 
-with scan coordinate $\mathbf r=(r_y,r_x)$ and detector coordinate
-$\mathbf q=(q_y,q_x)$.
+with scan coordinate $\mathbf s=(s_r,s_c)$ and detector coordinate
+$\mathbf q=(q_r,q_c)$.
 
 After a two-dimensional FFT over scan coordinates, the data are represented
 schematically as $G(\mathbf q,\mathbf k)$, where
-$\mathbf k=(k_y,k_x)$ is scan spatial frequency. Bright-field detector
+$\mathbf k=(k_r,k_c)$ is scan spatial frequency. Bright-field detector
 positions whose aperture-overlap terms transfer information at $\mathbf k$
 contribute to the object estimate. The exact aperture, aberration phase,
 normalization, and loss are defined by the shared SSB contract.
@@ -60,8 +60,8 @@ parameters, precision, and optimizer settings match.
 
 ## Coordinate and unit checks
 
-- scan sampling is ordered `(row, column) ≡ (y, x)` and carries length units;
-- detector angles are ordered $(q_y,q_x)$ and carry calibrated angle or
+- scan sampling is ordered `(row, column) ≡ (r, c)` and carries length units;
+- detector angles are ordered $(q_r,q_c)$ and carry calibrated angle or
   reciprocal-length units;
 - aberration coefficients and angles use the documented public units; and
 - any transpose or Hermitian storage is private and reversed before producing

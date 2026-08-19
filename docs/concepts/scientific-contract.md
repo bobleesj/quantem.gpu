@@ -9,13 +9,13 @@ before its performance can be compared.
 Spatial coordinates use
 
 $$
-(\text{row},\text{column}) \equiv (y,x)
+(\text{row},\text{column}) \equiv (r,c)
 $$
 
 throughout Python, Swift, Metal, CUDA, and WebGPU. Scan coordinates are
-$\mathbf r=(r_y,r_x)$, detector coordinates are
-$\mathbf q=(q_y,q_x)$, and logical 4D-STEM array order is
-$I[r_y,r_x,q_y,q_x]$. Scan and detector regions are half-open:
+$\mathbf s=(s_r,s_c)$, detector coordinates are
+$\mathbf q=(q_r,q_c)$, and logical 4D-STEM array order is
+$I[s_r,s_c,q_r,q_c]$. Scan and detector regions are half-open:
 
 ```text
 (row_start, row_stop, column_start, column_stop)

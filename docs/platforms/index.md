@@ -15,7 +15,7 @@ explains how to implement it efficiently on a particular device.
 Before working in a platform folder, read the corresponding page under
 [Scientific kernels](../kernels/index.md). The platform may optimize layout,
 fusion, queueing, and transfers; it must preserve the operation's
-`(row, column) ≡ (y, x)` contract and provenance.
+`(row, column) ≡ (r, c)` contract and provenance.
 
 `backend="auto"` is suitable for ordinary Python use. Tests and benchmarks
 select a runtime explicitly so missing hardware and unsupported paths fail

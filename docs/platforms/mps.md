@@ -40,8 +40,8 @@ timestamps and wall-to-first-product remain required.
 
 ## Acceptance
 
-The backend preserves `I[r_y,r_x,q_y,q_x]` and
-`(row, column) ≡ (y, x)`. Unsafe plans fail before allocation or return a
+The backend preserves `I[s_r,s_c,q_r,q_c]` and
+`(row, column) ≡ (r, c)`. Unsafe plans fail before allocation or return a
 typed cost estimate to the caller; they never crop the scan. Automatic detector
 binning is a visible client policy and records original/output detector shapes,
 dtypes, factor, memory estimate, and reason.
