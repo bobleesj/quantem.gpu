@@ -9,8 +9,8 @@ $M(q_r,q_c)$:
 ```
 
 $$
-V_M[s_r,s_c]
-=\sum_{q_r,q_c}M[q_r,q_c]I[s_r,s_c,q_r,q_c].
+V_M[R_r,R_c]
+=\sum_{q_r,q_c}M[q_r,q_c]I[R_r,R_c,q_r,q_c].
 $$
 
 The result keeps the full scan shape. Array order remains
@@ -26,7 +26,7 @@ The result keeps the full scan shape. Array order remains
 
   $$
   \bar I[q_r,q_c]
-  =\frac{1}{N_s}\sum_{s_r,s_c}I[s_r,s_c,q_r,q_c].
+  =\frac{1}{N_R}\sum_{R_r,R_c}I[R_r,R_c,q_r,q_c].
   $$
 
 ```python

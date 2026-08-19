@@ -34,11 +34,11 @@ their provenance without obscuring the public entry points.
 All runtimes use
 
 $$
-I[s_r,s_c,q_r,q_c],
+I[R_r,R_c,q_r,q_c],
 \qquad (\mathrm{row},\mathrm{column})\equiv(r,c),
 $$
 
-where $\mathbf s=(s_r,s_c)$ is the scan coordinate and
+where $\mathbf R=(R_r,R_c)$ is the real-space probe/scan coordinate and
 $\mathbf q=(q_r,q_c)$ is the detector coordinate.
 
 Backends may change layout, tiling, fusion, queueing, buffer reuse, and kernel

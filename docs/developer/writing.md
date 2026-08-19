@@ -54,7 +54,8 @@ same order:
 ```
 
 Use `row` and `col` in public names, metadata, and error messages. In equations,
-use $s_r,s_c$ for scan coordinates and $q_r,q_c$ for detector coordinates.
+use $\mathbf R=(R_r,R_c)$ for real-space probe/scan coordinates and
+$\mathbf q=(q_r,q_c)$ for detector scattering coordinates.
 Some plotting libraries request the horizontal coordinate before the vertical
 coordinate. Document that adapter boundary without changing the scientific
 row/column array order.
@@ -90,7 +91,8 @@ unit, normalization, coordinate order, and calibration source.
 Use consistent roles:
 
 - italic lowercase letters for scalars;
-- bold lowercase letters for vectors, such as $\mathbf s$ and $\mathbf q$;
+- bold uppercase $\mathbf R$ for real-space probe position and bold lowercase
+  $\mathbf q$ or $\mathbf k$ for reciprocal/frequency coordinates;
 - uppercase letters for arrays, transforms, or operators when appropriate;
 - roman text for named operators, such as $\operatorname{argmin}$; and
 - semantic subscripts, such as $q_{\min}$, instead of unexplained indices.

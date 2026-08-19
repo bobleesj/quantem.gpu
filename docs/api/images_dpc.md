@@ -1,7 +1,7 @@
 # Detector and DPC API
 
 The detector and DPC namespaces own reusable reductions from
-$I[s_r,s_c,q_r,q_c]$ to detector-shaped or scan-shaped scientific products.
+$I[R_r,R_c,q_r,q_c]$ to detector-shaped or scan-shaped scientific products.
 They do not own presentation, cache policy, or automatic resource choices.
 
 ## Inputs and outputs

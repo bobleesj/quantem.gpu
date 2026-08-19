@@ -10,21 +10,21 @@ For optional detector mask $M[q_r,q_c]$, first compute
 ```
 
 $$
-S[s_r,s_c]=\sum_{q_r,q_c}M[q_r,q_c]I[s_r,s_c,q_r,q_c].
+S[R_r,R_c]=\sum_{q_r,q_c}M[q_r,q_c]I[R_r,R_c,q_r,q_c].
 $$
 
 Then
 
 $$
-\mu_r[s_r,s_c]
-=\frac{\sum_{q_r,q_c}q_rM[q_r,q_c]I[s_r,s_c,q_r,q_c]}
-{S[s_r,s_c]},
+\mu_r[R_r,R_c]
+=\frac{\sum_{q_r,q_c}q_rM[q_r,q_c]I[R_r,R_c,q_r,q_c]}
+{S[R_r,R_c]},
 $$
 
 $$
-\mu_c[s_r,s_c]
-=\frac{\sum_{q_r,q_c}q_cM[q_r,q_c]I[s_r,s_c,q_r,q_c]}
-{S[s_r,s_c]}.
+\mu_c[R_r,R_c]
+=\frac{\sum_{q_r,q_c}q_cM[q_r,q_c]I[R_r,R_c,q_r,q_c]}
+{S[R_r,R_c]}.
 $$
 
 `com_row` is $\mu_r$ and `com_col` is $\mu_c$:
@@ -70,7 +70,7 @@ $$
 $$
 
 with the zero-frequency value and normalization fixed by the shared contract.
-The inverse two-dimensional FFT returns $\phi[s_r,s_c]$.
+The inverse two-dimensional FFT returns $\phi[R_r,R_c]$.
 
 ```python
 from quantem.gpu import dpc, io
