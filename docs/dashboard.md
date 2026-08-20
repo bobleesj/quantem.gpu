@@ -467,7 +467,7 @@ precision, calibration, and provenance are shared contracts.
 | Build a native Apple client/library | [Native Swift and Metal](platforms/swift-metal.md) | `Package.swift` and `src/quantem/gpu/swift/{Sources,Tests}` | `swift test`, physical Metal timing, and cross-language fixtures |
 | Optimize a browser client | [WebGPU](platforms/webgpu.md) | Domain WebGPU TypeScript/WGSL resources | Real adapter, headed browser gate, and matching scientific output |
 | Deploy CUDA behind a process boundary | [QuantEM.GPU Remote](remote/index.md) | Deployment, protocol, and admission pages | Same array/provenance contract plus transport and capacity checks |
-| Add or review a benchmark | [Benchmark methodology](performance/methodology.md) | [Parity](performance/parity.md) and the [optimization ledger](maintainer/backend-optimization-matrix.md) | Date, revision, device, source plan, cache state, memory, wall boundary, and parity artifact |
+| Add or review a benchmark | [Benchmark methodology](performance/methodology.md) | [Continuous profiling](performance/continuous-profiling.md), [parity](performance/parity.md), and the [optimization ledger](maintainer/backend-optimization-matrix.md) | Date, revision, device, source plan, cache state, memory, wall boundary, and parity artifact |
 
 ## Dashboard maintenance rule
 
@@ -485,3 +485,6 @@ Accepted and rejected experiments remain in the
 [optimization ledger](maintainer/backend-optimization-matrix.md), and the
 machine-readable evidence fingerprints are in
 [`performance/evidence_manifest.json`](performance/evidence_manifest.json).
+The platform/module cadence, runner ownership, and known harness gaps are
+machine-checked from `benchmarks/profile_matrix.json`; see
+[Continuous profiling](performance/continuous-profiling.md).

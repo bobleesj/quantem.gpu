@@ -1,0 +1,25 @@
+# Profiling run registry
+
+This is the human index for cross-platform QuantEM.GPU profiling. Each row
+points to a machine-readable manifest. Failed, refuted, superseded, and partial
+runs remain visible; the dashboard promotes only parity-qualified results with
+complete provenance.
+
+| id | hypothesis | setup | status | result | artifact |
+|---|---|---|---|---|---|
+| 20260819-platform-profile-cpu-reference | Can the current CPU path independently adjudicate every accelerated load/bin and product result without becoming a silent fallback? | Phil CPU; full `512x512x192x192` `uint16`; detector bins 1/2/4/8; full scan; no crop | ok | Exact adjudication completed; one-load reference was 34.37-54.22 s depending on detector bin | [manifest](20260819-platform-profile-cpu-reference/manifest.json); `local-evidence://platform-profile-20260819/webgpu-cpu/cpu-reference` |
+| 20260819-platform-profile-cuda | Do current CUDA load, product, SSB reconstruction, and 200-trial calibration paths pass frozen parity and repeatability while retaining subsecond warm loading? | MJGOAT physical CUDA GPU 1; full `512x512x192x192` `uint16`; detector bins 1/2/4/8; native-detector SSB | ok | Warm load p50 0.381-0.396 s; deterministic 200-trial TPE plus Nelder-Mead p50 11.168 s; earlier faster atomic fit was refuted; 6 GiB screening signoff remains pending | [manifest](20260819-platform-profile-cuda/manifest.json); `local-evidence://platform-profile-20260819/cuda` |
+| 20260819-platform-profile-mps | Do current Python MPS load, products, exact screening, and raw-source SSB agree with independent references on Apple hardware? | Phil physical MPS; full `512x512x192x192` `uint16`; detector bins 1/2/4/8; explicit detector-bin-2 SSB | ok | Warm load p50 0.586-2.273 s; exact screening build 6.711 s and reopen p50 20.803 ms; SSB phase max error `1.2815e-6` rad | [manifest](20260819-platform-profile-mps/manifest.json); `local-evidence://platform-profile-20260819/apple` |
+| 20260819-platform-profile-swift-metal | Which native Swift/Metal package operations have current physical parity and independent timing evidence? | Phil native Swift/Metal release build; real QH5 frame checks; synchronized command buffers | ok | 66 tests passed with one opt-in skip; index reopen p50 5.339 ms; full-scan product timing, numerical DPC/iDPC, and native SSB remain explicit gaps | [manifest](20260819-platform-profile-swift-metal/manifest.json); `local-evidence://platform-profile-20260819/apple/phil-swift` |
+| 20260819-platform-profile-webgpu | Do current hardware-WebGPU load, detector/DPC, and SSB reconstruction paths pass the retained compute contracts in a real browser? | Phil Chrome hardware adapter; full `512x512x192x192` `uint16`; detector bins 1/2/4/8; native-detector SSB companion | ok | Warm loader p50 0.824-1.281 s; SSB readback wall p50 32.5-189.4 ms; physical 8 GB gate, per-pixel DPC errors, and calibration remain explicit gaps | [manifest](20260819-platform-profile-webgpu/manifest.json); `local-evidence://platform-profile-20260819/webgpu-cpu/webgpu` |
+
+## New run rule
+
+Before launching a new profile, add its row with status `running` and create
+`experiments/<id>/manifest.json`. On completion, change the row to `ok`,
+`failed`, `refuted`, or `superseded`, retain the run-level artifact hashes, and
+run:
+
+```bash
+python scripts/check_profile_registry.py
+```

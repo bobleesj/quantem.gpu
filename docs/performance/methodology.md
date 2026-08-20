@@ -4,6 +4,11 @@ Performance is reported only after scientific parity. A faster result that
 changes source coverage, detector sampling, precision, mask, objective, or
 output meaning is a different experiment.
 
+The [continuous profiling plan](continuous-profiling.md) defines which checks
+belong on every pull request, which require named physical hardware, and how a
+qualified measurement is promoted to the dashboard. Its machine-readable
+platform/module schedule is `benchmarks/profile_matrix.json`.
+
 ## Required labels
 
 Every benchmark records:
@@ -60,6 +65,12 @@ records so initialization outliers and cache effects remain visible.
 
 Kernel microbenchmarks are useful for diagnosis but are not user-facing load
 time. End-to-end application evidence remains required.
+
+Timing regressions are evaluated only within an exact comparison key: protocol,
+module/platform cell, source identity and plan, cache state, timing boundary,
+device/runtime, precision, and source revision. A new key begins in report-only
+mode. Do not introduce a blocking percentage threshold until at least five
+accepted sessions establish the variance of that exact configuration.
 
 ## Memory
 
@@ -136,3 +147,7 @@ A faster sidecar, prepared index, saved result, cropped scan, or detector-binned
 representation never inherits the acceptance state of the native source plan.
 
 Rejected experiments stay in the [optimization ledger](../maintainer/backend-optimization-matrix.md).
+Every scheduled or diagnostic run also keeps a machine-readable manifest and a
+terminal row in the
+[`experiments/RUNS.md`](https://github.com/bobleesj/quantem.gpu/blob/main/experiments/RUNS.md)
+registry.

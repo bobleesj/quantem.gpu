@@ -13,6 +13,18 @@ Portable CI proves imports, public contracts, CPU references, source packaging,
 and tests that do not require a physical accelerator. Backend skips are
 reported; they are not parity evidence.
 
+Validate the profiling schedule and retained run registry in the same portable
+environment:
+
+```bash
+python scripts/check_profile_registry.py
+```
+
+This checks that every parity capability has exactly one cell for CPU reference,
+CUDA, Python MPS, native Swift/Metal, and WebGPU; unsupported cells stay
+fail-closed; and terminal experiment manifests retain full revisions, input and
+output hashes, timestamps, and a human registry row.
+
 ## Native Swift and Metal
 
 ```bash
@@ -45,3 +57,7 @@ it is deterministic drift or nondeterminism.
 
 Never edit a frozen golden, expected hash, reference value, or tolerance merely
 to make a new implementation pass.
+
+Hardware timing cadence and promotion rules are defined in
+[Continuous profiling](../performance/continuous-profiling.md). A PR smoke test
+never becomes a physical-device performance claim.
