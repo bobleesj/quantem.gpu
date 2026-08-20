@@ -534,14 +534,15 @@ kernel void scan_detector_bin_u8_to_u32_word_major(
     scanDetectorBinToU32WordMajor(source, destination, params, position);
 }
 
-// Exact compact resident path for an audited uint8 staging range.  Callers
-// must prove that the detector-bin contribution bound fits uint16 and expose
-// the actual resident dtype in provenance; otherwise they use the uint32 path.
-kernel void scan_detector_bin_u8_to_u16_word_major(
-    device const uchar *source [[buffer(0)]],
-    device uint *destination [[buffer(1)]],
-    constant ScanDetectorBinParams &params [[buffer(2)]],
-    uint2 position [[thread_position_in_grid]]
+// Exact compact resident path. Callers must prove that the scan-and-detector
+// contribution bound fits uint16 and expose source, staging, and output dtypes
+// in provenance; otherwise they use the uint32 path.
+template <typename Sample>
+inline void scanDetectorBinToU16WordMajor(
+    device const Sample *source,
+    device uint *destination,
+    constant ScanDetectorBinParams &params,
+    uint2 position
 ) {
     uint outputDetectorWord = position.x;
     uint localOutputScan = position.y;
@@ -564,6 +565,24 @@ kernel void scan_detector_bin_u8_to_u16_word_major(
         + outputScanCol;
     destination[ulong(outputDetectorWord) * params.outputScanCount + destinationScan] =
         low | (high << 16u);
+}
+
+kernel void scan_detector_bin_u8_to_u16_word_major(
+    device const uchar *source [[buffer(0)]],
+    device uint *destination [[buffer(1)]],
+    constant ScanDetectorBinParams &params [[buffer(2)]],
+    uint2 position [[thread_position_in_grid]]
+) {
+    scanDetectorBinToU16WordMajor(source, destination, params, position);
+}
+
+kernel void scan_detector_bin_u16_to_u16_word_major(
+    device const ushort *source [[buffer(0)]],
+    device uint *destination [[buffer(1)]],
+    constant ScanDetectorBinParams &params [[buffer(2)]],
+    uint2 position [[thread_position_in_grid]]
+) {
+    scanDetectorBinToU16WordMajor(source, destination, params, position);
 }
 
 kernel void scan_detector_bin_u16_to_u32_word_major(

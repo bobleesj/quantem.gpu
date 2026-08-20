@@ -12,7 +12,7 @@ Native clients import two products for local 4D-STEM loading:
 | Product | Owns | Dependencies |
 |---|---|---|
 | `Native4DSTEMIO` | HDF5 and EMD catalog discovery, QH5 indexing, source identity, value audits, resident-cache and exact-summary IO | `CNativeHDF5`, vendored `CHDF5.xcframework`, zlib, Foundation, CryptoKit |
-| `Metal4DSTEMKernels` | Exact load geometry, streaming geometry, QH5 decode, detector binning, BF/ABF/ADF, CoM, DPC/iDPC primitives | Metal, Foundation |
+| `Metal4DSTEMKernels` | Exact load geometry, streaming geometry, typed exact binning, QH5 decode, BF/ABF/ADF, CoM, and DPC/iDPC primitives | Metal, Foundation, CryptoKit |
 
 Neither product imports SwiftUI, AppKit, UIKit, or Python.
 
@@ -49,20 +49,78 @@ let plan = try Metal4DSTEMLoadPlan(
 )
 ```
 
-The client must record all of these fields in provenance:
+The client must preserve all of these package-provided fields in provenance:
 
 - source and output scan rows and columns;
 - source and output detector rows and columns;
-- source and resident dtype;
+- source, staging, and output dtype;
 - half-open scan region `[rowStart, rowStop) × [columnStart, columnStop)`;
 - scan and detector bin factors;
-- whether detector sums use a narrower exact integer representation;
-- the memory budget, chosen plan, and reason for any automatic reduction.
+- exact reduction semantics, source-audit identity, staging and output layout,
+  maximum output count, and payload bytes.
+
+The client additionally records its memory budget, chosen plan, and reason for
+any automatic reduction. Those are application-policy fields, not defaults
+selected by QuantEM.GPU.
 
 Do not infer a crop or silently call detector-binned data native resolution.
-The M2 Air policy validated for the retained BTO fixtures uses the full 512 by
-512 scan, scan bin 1, and explicit exact detector sum bin 4 from 192 by 192 to
-48 by 48.
+QuantEM.GPU does not choose detector bin 1, 2, or 4 from a device name. For the
+specific full-scan 512 by 512, detector 192 by 192 case, exact detector bin 2
+produces a 512 by 512 by 96 by 96 packed-uint16 payload of 4,831,838,208 bytes
+(4.5 GiB) when an identity-bound audit proves every four-pixel sum fits
+`uint16`. That byte calculation is not a physical-device admission decision.
+
+## Typed exact binning
+
+Construct and validate the scientific contract before allocating a resident
+payload or encoding a command:
+
+```swift
+let sourceAudit = try Metal4DSTEMExactSourceAudit(
+  sourceIdentitySHA256: sourceIdentity,
+  sourceDtype: .uint16,
+  badPixelIndices: badPixels,
+  maximumSourceCount: maximum,
+  pixelsAbove255: pixelsAbove255
+)
+let exact = try Metal4DSTEMExactBinner.provenance(
+  plan: plan,
+  sourceAudit: sourceAudit,
+  stagingDtype: .uint16,
+  outputDtype: .uint16
+)
+```
+
+The audit digest binds source identity, source dtype, sorted bad-pixel indices,
+maximum source count, and the above-255 count. Detector bin 2 accepts a
+`uint16` maximum of 16,383 and rejects 16,384 because four equal source counts
+would sum to 65,536. Use `uint32` output when the proven bound does not fit
+`uint16`; do not clip or downcast.
+
+`Metal4DSTEMExactBinner.encodeBatch(...)` accepts a frame-major
+`stagedSource`. It must contain only the selected scan columns, and the audited
+bad pixels must already be zeroed in every frame. The method validates batch
+coverage, offsets, buffer lengths, Metal's 32-bit geometry parameters, dtypes,
+and output bounds before creating a command encoder. It writes either
+detector-word-major `uint32` values or packed `uint16` low/high lanes, including
+a zero high lane for an odd final detector pixel. It does not allocate buffers,
+commit, synchronize, choose a memory budget, or select a bin factor.
+
+Sampling propagation is deliberately narrower than a full calibration
+transform:
+
+```swift
+let sampling = try exact.propagatingSampling(
+  sourceScan: sourceScanSampling,
+  sourceDetector: sourceDetectorSampling
+)
+```
+
+Uniform complete bins scale row and column sampling by the corresponding bin
+factor and report the first working-bin center in source-pixel coordinates.
+Incomplete edge bins return no single uniform working sampling. Detector
+center, affine calibration, masks, and radii require their own typed coordinate
+transform and are not silently rewritten by this API.
 
 ## Streaming geometry
 
@@ -118,11 +176,12 @@ dispatched and is not part of this contract.
 
 ## Resident cache
 
-`Metal4DSTEMResidentCacheMetadata` records scientific meaning as well as file
-integrity:
+`Metal4DSTEMResidentCacheMetadata` format 2 records scientific meaning as well
+as file integrity:
 
 - dataset and ordered source identities;
-- source identity SHA-256;
+- source identity SHA-256 and, whenever narrowing requires it, the complete
+  sealed value-range audit plus its canonical SHA-256;
 - source and output shapes and dtypes;
 - half-open scan region, scan bin, and detector bin;
 - bad-pixel indices, maximum count, and values above 255;
@@ -140,10 +199,11 @@ let complete = try Metal4DSTEMResidentCacheIO.write(
 )
 ```
 
-`write` validates shape, dtype, bin, crop, payload size, and bad-pixel
-provenance before publishing the payload. It writes a temporary payload,
-renames it, seals the metadata with SHA-256, and removes the payload if metadata
-publication fails.
+`write` validates shape, dtype, exact output bound, bin, crop, payload size,
+bad-pixel provenance, and the sealed audit before publishing the payload. It
+writes a temporary payload, renames it, seals the metadata with SHA-256, and
+removes the payload if metadata publication fails. Format 1 metadata is
+invalidated rather than interpreted under the stronger format 2 contract.
 
 On reopen, call `readMetadata(from:)` and then
 `validatePayload(at:metadata:verifySHA256:)`. The default SHA-256 verification
@@ -194,6 +254,16 @@ returns a partly trusted product set.
 This is a prepared-product cache. Reading it does not open, read, or decompress
 the original HDF5 source and must not be reported as a source-load benchmark.
 The application owns the decision to create, retain, evict, or present it.
+
+## Package benchmark boundary
+
+`metal-4dstem-binning-benchmark` measures only the synchronized exact-binning
+kernel after a deterministic source buffer is already staged in unified
+memory. Its JSON reports source and working shapes, all three dtypes, bin
+factors, staged and output bytes, device limits, p50/p95/max wall and GPU time,
+and output SHA-256. It explicitly excludes HDF5 discovery, storage reads,
+decompression, cache creation or reopen, scientific products, and UI. Never
+publish its kernel time as a first-load or application wall time.
 
 ## Client ownership
 

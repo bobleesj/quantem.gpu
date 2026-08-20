@@ -13,6 +13,10 @@ final class Native4DSTEMIOTests: XCTestCase {
       pixelsAbove255: 0
     )
     XCTAssertEqual(audit.schema, Native4DSTEMValueRangeAudit.currentSchema)
+    XCTAssertEqual(
+      try audit.sha256(),
+      "feea583af9482886a18e26dfd0b398c842057a17092e77e712feddce2280147c"
+    )
     XCTAssertTrue(
       audit.provesLosslessUInt8(
         sourceIdentitySHA256: String(repeating: "a", count: 64),
@@ -48,6 +52,166 @@ final class Native4DSTEMIOTests: XCTestCase {
         sourceIdentitySHA256: String(repeating: "a", count: 64),
         sourceDtype: "uint16",
         badPixelIndices: [2, 9]
+      )
+    )
+
+    var invalidObject = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: JSONEncoder().encode(audit)) as? [String: Any]
+    )
+    invalidObject["maximum"] = 300
+    let invalid = try JSONDecoder().decode(
+      Native4DSTEMValueRangeAudit.self,
+      from: JSONSerialization.data(withJSONObject: invalidObject)
+    )
+    XCTAssertThrowsError(try invalid.validate())
+    XCTAssertFalse(
+      invalid.provesLosslessUInt8(
+        sourceIdentitySHA256: String(repeating: "a", count: 64),
+        sourceDtype: "uint16",
+        badPixelIndices: [2, 9]
+      )
+    )
+  }
+
+  func testResidentCacheRequiresMatchingSealedAuditForExactUInt16Bin2() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(
+        "Metal4DSTEMResidentCacheAuditTests-\(UUID().uuidString)",
+        isDirectory: true
+      )
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+    let sourceURL = root.appendingPathComponent("source.h5")
+    try Data([1, 2, 3, 4]).write(to: sourceURL)
+    let sourceIdentity = String(repeating: "a", count: 64)
+    let audit = Native4DSTEMValueRangeAudit(
+      sourceIdentitySHA256: sourceIdentity,
+      sourceDtype: "uint16",
+      badPixelIndices: [2, 9],
+      maximum: 53,
+      pixelsAbove255: 0
+    )
+    let digest = try audit.sha256()
+    let metadata = Metal4DSTEMResidentCacheMetadata(
+      datasetID: "exact-bin2-fixture",
+      sourceIdentitySHA256: sourceIdentity,
+      valueRangeAuditSHA256: digest,
+      valueRangeAudit: audit,
+      sources: [try Metal4DSTEMSourceIdentity(url: sourceURL)],
+      sourceScanRows: 2,
+      sourceScanColumns: 2,
+      sourceDetectorRows: 4,
+      sourceDetectorColumns: 4,
+      sourceDtype: "uint16",
+      outputScanRows: 2,
+      outputScanColumns: 2,
+      outputDetectorRows: 2,
+      outputDetectorColumns: 2,
+      outputDtype: "uint16",
+      scanRowStart: 0,
+      scanRowStop: 2,
+      scanColumnStart: 0,
+      scanColumnStop: 2,
+      scanBin: 1,
+      detectorBin: 2,
+      badPixelIndices: [2, 9],
+      maxCount: 53,
+      pixelsAbove255: 0,
+      payloadBytes: 32
+    )
+    XCTAssertNoThrow(
+      try Metal4DSTEMResidentCacheIO.validateMetadata(
+        metadata,
+        requireSealedPayload: false
+      )
+    )
+    var versionOneObject = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: JSONEncoder().encode(metadata))
+        as? [String: Any]
+    )
+    versionOneObject["formatVersion"] = 1
+    let versionOne = try JSONDecoder().decode(
+      Metal4DSTEMResidentCacheMetadata.self,
+      from: JSONSerialization.data(withJSONObject: versionOneObject)
+    )
+    XCTAssertThrowsError(
+      try Metal4DSTEMResidentCacheIO.validateMetadata(
+        versionOne,
+        requireSealedPayload: false
+      )
+    )
+
+    let missingAudit = Metal4DSTEMResidentCacheMetadata(
+      datasetID: "exact-bin2-fixture",
+      sourceIdentitySHA256: sourceIdentity,
+      valueRangeAuditSHA256: digest,
+      sources: metadata.sources,
+      sourceScanRows: 2,
+      sourceScanColumns: 2,
+      sourceDetectorRows: 4,
+      sourceDetectorColumns: 4,
+      sourceDtype: "uint16",
+      outputScanRows: 2,
+      outputScanColumns: 2,
+      outputDetectorRows: 2,
+      outputDetectorColumns: 2,
+      outputDtype: "uint16",
+      scanRowStart: 0,
+      scanRowStop: 2,
+      scanColumnStart: 0,
+      scanColumnStop: 2,
+      scanBin: 1,
+      detectorBin: 2,
+      badPixelIndices: [2, 9],
+      maxCount: 53,
+      pixelsAbove255: 0,
+      payloadBytes: 32
+    )
+    XCTAssertThrowsError(
+      try Metal4DSTEMResidentCacheIO.validateMetadata(
+        missingAudit,
+        requireSealedPayload: false
+      )
+    )
+
+    let overflowAudit = Native4DSTEMValueRangeAudit(
+      sourceIdentitySHA256: sourceIdentity,
+      sourceDtype: "uint16",
+      badPixelIndices: [],
+      maximum: 16_384,
+      pixelsAbove255: 1
+    )
+    let overflow = Metal4DSTEMResidentCacheMetadata(
+      datasetID: "overflow-bin2-fixture",
+      sourceIdentitySHA256: sourceIdentity,
+      valueRangeAuditSHA256: try overflowAudit.sha256(),
+      valueRangeAudit: overflowAudit,
+      sources: metadata.sources,
+      sourceScanRows: 1,
+      sourceScanColumns: 1,
+      sourceDetectorRows: 2,
+      sourceDetectorColumns: 2,
+      sourceDtype: "uint16",
+      outputScanRows: 1,
+      outputScanColumns: 1,
+      outputDetectorRows: 1,
+      outputDetectorColumns: 1,
+      outputDtype: "uint16",
+      scanRowStart: 0,
+      scanRowStop: 1,
+      scanColumnStart: 0,
+      scanColumnStop: 1,
+      scanBin: 1,
+      detectorBin: 2,
+      badPixelIndices: [],
+      maxCount: 16_384,
+      pixelsAbove255: 1,
+      payloadBytes: 4
+    )
+    XCTAssertThrowsError(
+      try Metal4DSTEMResidentCacheIO.validateMetadata(
+        overflow,
+        requireSealedPayload: false
       )
     )
   }

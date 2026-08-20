@@ -66,6 +66,27 @@ public struct Metal4DSTEMExactAccumulatorBounds: Equatable, Hashable, Sendable {
   }
 }
 
+/// Conservative exact bound for one working 4D-STEM detector value.
+///
+/// The contribution count includes both scan-space and detector-space exact
+/// summation. Consumers may store the working volume as `uint16` only when
+/// ``fitsUInt16`` is true, or as `uint32` only when ``fitsUInt32`` is true.
+public struct Metal4DSTEMExactOutputSampleBounds: Equatable, Hashable, Sendable {
+  public let maxSourceCount: UInt32
+  public let maximumScanContributions: Int
+  public let maximumDetectorContributions: Int
+  public let maximumTotalContributions: Int
+  public let maximumOutputCount: UInt64
+
+  public var fitsUInt16: Bool {
+    maximumOutputCount <= UInt64(UInt16.max)
+  }
+
+  public var fitsUInt32: Bool {
+    maximumOutputCount <= UInt64(UInt32.max)
+  }
+}
+
 /// A half-open real-space scan selection using `(row, column)` coordinates.
 public struct Metal4DSTEMScanRegion: Codable, Equatable, Hashable, Sendable {
   public let rowStart: Int
@@ -301,6 +322,42 @@ public struct Metal4DSTEMLoadPlan: Equatable, Hashable, Sendable {
       maximumDetectorColumnMoment: try momentBound(
         coordinateMaximum: outputDetectorColumns - 1
       )
+    )
+  }
+
+  /// Prove a conservative bound for every exact working detector value.
+  ///
+  /// - Parameter maxSourceCount: Maximum value of one source detector pixel,
+  ///   established by an exact source audit.
+  /// - Returns: The largest possible scan-and-detector sum for this plan.
+  /// - Throws: ``Metal4DSTEMExactAccumulatorBoundsError/arithmeticOverflow``
+  ///   when the contribution count or bound cannot be represented exactly.
+  public func exactOutputSampleBounds(
+    maxSourceCount: UInt32
+  ) throws -> Metal4DSTEMExactOutputSampleBounds {
+    let maximumScanContributions =
+      min(scanBin, scanRegion.rows) * min(scanBin, scanRegion.columns)
+    let maximumDetectorContributions =
+      min(detectorBin, detectorRows) * min(detectorBin, detectorColumns)
+    let contributionProduct = maximumScanContributions.multipliedReportingOverflow(
+      by: maximumDetectorContributions
+    )
+    guard !contributionProduct.overflow else {
+      throw Metal4DSTEMExactAccumulatorBoundsError.arithmeticOverflow
+    }
+    let totalContributions = contributionProduct.partialValue
+    let bound = UInt64(maxSourceCount).multipliedReportingOverflow(
+      by: UInt64(totalContributions)
+    )
+    guard !bound.overflow else {
+      throw Metal4DSTEMExactAccumulatorBoundsError.arithmeticOverflow
+    }
+    return Metal4DSTEMExactOutputSampleBounds(
+      maxSourceCount: maxSourceCount,
+      maximumScanContributions: maximumScanContributions,
+      maximumDetectorContributions: maximumDetectorContributions,
+      maximumTotalContributions: totalContributions,
+      maximumOutputCount: bound.partialValue
     )
   }
 }
