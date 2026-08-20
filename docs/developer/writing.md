@@ -129,3 +129,23 @@ claim includes the reference, metric, tolerance, and result.
 
 Use [benchmark methodology](../performance/methodology.md) and
 [cross-backend parity](../performance/parity.md) for the required evidence.
+
+## Tables: one cell, one value
+
+Use long-form tables for capabilities and benchmarks. One row represents one
+exact configuration or one exact measurement; one cell contains one field.
+Repeat the row when the platform, scan size, detector size, bin, dtype, cache
+state, fixture, statistic, or timing boundary changes.
+
+For example, detector bins 2, 4, and 8 at `512x512` are three rows, not
+`2/4/8` in one cell with `1.199/1.212/1.106 s` in another. Split source,
+decode/working, accumulation, and resident dtype into separate columns. Split
+the timing statistic from the numerical time, and the memory kind from the
+memory value.
+
+Do not infer a Cartesian product from independent tests. Evidence that a
+runtime supports a `512x512` scan and separate evidence that it implements bin
+8 do not prove the joint `512x512`, bin-8 configuration. Add that exact row as
+**Pending** until its joint parity and physical timing are retained. This
+long-form form is deliberately repetitive: it is sortable, machine-checkable,
+and safe to extend without rewriting table structure.
