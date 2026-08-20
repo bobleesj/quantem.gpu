@@ -1687,3 +1687,206 @@ kernel void h5lz4dc_bin_u16_audited_low8_scalar_u16_frame_major_row8_qh5idx(
         );
     }
 }
+
+// Word-major companion for native consumers. One thread owns the two adjacent
+// detector-bin-4 pixels packed into each destination word. When both pixels
+// occupy one detector row, their eight source columns share each bit-plane
+// load. The guarded scalar fallback preserves exact behavior for incomplete or
+// unaligned detector geometry.
+kernel void h5lz4dc_bin_u16_audited_low8_scalar_u16_word_major_frame_owned_row8_qh5idx(
+    const device uchar *lowPlaneScratch [[buffer(0)]],
+    device uint *output [[buffer(1)]],
+    const device uchar *badPixelMask [[buffer(2)]],
+    device atomic_uint *countAudit [[buffer(3)]],
+    constant uint &globalFrameOffset [[buffer(4)]],
+    constant uint &blocksPerFrame [[buffer(5)]],
+    constant uint &frameElements [[buffer(6)]],
+    constant QH5DirectDetectorBinParams &params [[buffer(7)]],
+    const device uchar *detectorBands [[buffer(8)]],
+    device atomic_uint *bfMap [[buffer(9)]],
+    device atomic_uint *abfMap [[buffer(10)]],
+    device atomic_uint *dfMap [[buffer(11)]],
+    device atomic_uint *comTotal [[buffer(12)]],
+    device atomic_uint *comRowMoment [[buffer(13)]],
+    device atomic_uint *comColumnMoment [[buffer(14)]],
+    uint linearGroup [[threadgroup_position_in_grid]],
+    uint threadIndex [[thread_index_in_threadgroup]],
+    uint lane [[thread_index_in_simdgroup]]
+) {
+    (void)blocksPerFrame;
+    uint outputRows = (params.sourceDetectorRows + 3u) / 4u;
+    uint outputPixels = outputRows * params.outputDetectorColumns;
+    uint outputWords = (outputPixels + 1u) / 2u;
+    uint groupsPerFrame = (outputWords + 127u) / 128u;
+    uint frame = linearGroup / groupsPerFrame;
+    uint groupInFrame = linearGroup - frame * groupsPerFrame;
+    uint outputWord = groupInFrame * 128u + threadIndex;
+
+    threadgroup atomic_uint groupMax;
+    threadgroup atomic_uint groupBF;
+    threadgroup atomic_uint groupABF;
+    threadgroup atomic_uint groupDF;
+    threadgroup atomic_uint groupTotal;
+    threadgroup atomic_uint groupRowMoment;
+    threadgroup atomic_uint groupColumnMoment;
+    if (threadIndex == 0u) {
+        atomic_store_explicit(&groupMax, 0u, memory_order_relaxed);
+        atomic_store_explicit(&groupBF, 0u, memory_order_relaxed);
+        atomic_store_explicit(&groupABF, 0u, memory_order_relaxed);
+        atomic_store_explicit(&groupDF, 0u, memory_order_relaxed);
+        atomic_store_explicit(&groupTotal, 0u, memory_order_relaxed);
+        atomic_store_explicit(&groupRowMoment, 0u, memory_order_relaxed);
+        atomic_store_explicit(&groupColumnMoment, 0u, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    uint localMax = 0u;
+    uint localBF = 0u;
+    uint localABF = 0u;
+    uint localDF = 0u;
+    uint localTotal = 0u;
+    uint localRowMoment = 0u;
+    uint localColumnMoment = 0u;
+    if (outputWord < outputWords) {
+        uint firstOutputPixel = outputWord * 2u;
+        uint firstOutputRow = firstOutputPixel / params.outputDetectorColumns;
+        uint firstOutputColumn = firstOutputPixel
+            - firstOutputRow * params.outputDetectorColumns;
+        uint2 sums = uint2(0u);
+        bool completePair = firstOutputPixel + 1u < outputPixels
+            && firstOutputColumn + 1u < params.outputDetectorColumns
+            && firstOutputRow * 4u + 3u < params.sourceDetectorRows
+            && firstOutputColumn * 4u + 7u < params.sourceDetectorColumns;
+        if (completePair) {
+            bool aligned = true;
+            for (uint rowOffset = 0u; rowOffset < 4u; ++rowOffset) {
+                uint sourceRow = firstOutputRow * 4u + rowOffset;
+                uint sourcePixel = sourceRow * params.sourceDetectorColumns
+                    + firstOutputColumn * 4u;
+                uint localPixel = sourcePixel & 4095u;
+                aligned = aligned
+                    && (sourcePixel & 31u) <= 24u
+                    && localPixel <= 4088u;
+            }
+            if (aligned) {
+                for (uint rowOffset = 0u; rowOffset < 4u; ++rowOffset) {
+                    uint sourceRow = firstOutputRow * 4u + rowOffset;
+                    uint sourcePixel = sourceRow * params.sourceDetectorColumns
+                        + firstOutputColumn * 4u;
+                    sums += bslz4Low8AlignedRow8(
+                        lowPlaneScratch,
+                        badPixelMask,
+                        frame,
+                        frameElements,
+                        sourcePixel,
+                        localMax
+                    );
+                }
+            } else {
+                completePair = false;
+            }
+        }
+        if (!completePair) {
+            sums = uint2(0u);
+            for (uint pair = 0u; pair < 2u; ++pair) {
+                uint outputPixel = firstOutputPixel + pair;
+                if (outputPixel >= outputPixels) continue;
+                uint outputRow = outputPixel / params.outputDetectorColumns;
+                uint outputColumn = outputPixel
+                    - outputRow * params.outputDetectorColumns;
+                uint sum = 0u;
+                for (uint rowOffset = 0u; rowOffset < 4u; ++rowOffset) {
+                    uint sourceRow = outputRow * 4u + rowOffset;
+                    if (sourceRow >= params.sourceDetectorRows) continue;
+                    uint sourcePixel = sourceRow * params.sourceDetectorColumns
+                        + outputColumn * 4u;
+                    sum += bslz4Low8AlignedRow4(
+                        lowPlaneScratch,
+                        badPixelMask,
+                        frame,
+                        frameElements,
+                        sourcePixel,
+                        localMax
+                    );
+                }
+                sums[pair] = sum;
+            }
+        }
+        output[ulong(outputWord) * params.outputScanCount
+            + globalFrameOffset + frame] = sums.x | (sums.y << 16u);
+
+        for (uint pair = 0u; pair < 2u; ++pair) {
+            uint outputPixel = firstOutputPixel + pair;
+            if (outputPixel >= outputPixels) continue;
+            uint outputRow = outputPixel / params.outputDetectorColumns;
+            uint outputColumn = outputPixel - outputRow * params.outputDetectorColumns;
+            uint sum = sums[pair];
+            uchar bands = detectorBands[outputPixel];
+            localBF += (bands & 1u) == 0u ? 0u : sum;
+            localABF += (bands & 2u) == 0u ? 0u : sum;
+            localDF += (bands & 4u) == 0u ? 0u : sum;
+            localTotal += sum;
+            localRowMoment += sum * outputRow;
+            localColumnMoment += sum * outputColumn;
+        }
+    }
+
+    localMax = simd_max(localMax);
+    localBF = simd_sum(localBF);
+    localABF = simd_sum(localABF);
+    localDF = simd_sum(localDF);
+    localTotal = simd_sum(localTotal);
+    localRowMoment = simd_sum(localRowMoment);
+    localColumnMoment = simd_sum(localColumnMoment);
+    if (lane == 0u) {
+        atomic_fetch_max_explicit(&groupMax, localMax, memory_order_relaxed);
+        atomic_fetch_add_explicit(&groupBF, localBF, memory_order_relaxed);
+        atomic_fetch_add_explicit(&groupABF, localABF, memory_order_relaxed);
+        atomic_fetch_add_explicit(&groupDF, localDF, memory_order_relaxed);
+        atomic_fetch_add_explicit(&groupTotal, localTotal, memory_order_relaxed);
+        atomic_fetch_add_explicit(&groupRowMoment, localRowMoment, memory_order_relaxed);
+        atomic_fetch_add_explicit(
+            &groupColumnMoment, localColumnMoment, memory_order_relaxed
+        );
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (threadIndex == 0u) {
+        uint outputFrame = globalFrameOffset + frame;
+        uint frameAudit = 2u * outputFrame;
+        atomic_fetch_max_explicit(
+            &countAudit[frameAudit],
+            atomic_load_explicit(&groupMax, memory_order_relaxed),
+            memory_order_relaxed
+        );
+        atomic_fetch_add_explicit(
+            &bfMap[outputFrame],
+            atomic_load_explicit(&groupBF, memory_order_relaxed),
+            memory_order_relaxed
+        );
+        atomic_fetch_add_explicit(
+            &abfMap[outputFrame],
+            atomic_load_explicit(&groupABF, memory_order_relaxed),
+            memory_order_relaxed
+        );
+        atomic_fetch_add_explicit(
+            &dfMap[outputFrame],
+            atomic_load_explicit(&groupDF, memory_order_relaxed),
+            memory_order_relaxed
+        );
+        atomic_fetch_add_explicit(
+            &comTotal[outputFrame],
+            atomic_load_explicit(&groupTotal, memory_order_relaxed),
+            memory_order_relaxed
+        );
+        atomic_fetch_add_explicit(
+            &comRowMoment[outputFrame],
+            atomic_load_explicit(&groupRowMoment, memory_order_relaxed),
+            memory_order_relaxed
+        );
+        atomic_fetch_add_explicit(
+            &comColumnMoment[outputFrame],
+            atomic_load_explicit(&groupColumnMoment, memory_order_relaxed),
+            memory_order_relaxed
+        );
+    }
+}
