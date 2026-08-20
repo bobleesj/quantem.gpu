@@ -68,3 +68,18 @@ intervals, output checksum, and load plan.
 Integer corrected-frame, bin, mask, histogram, and RGBA outputs are byte-exact
 where formats match. Large-source capability requires a physical browser run;
 TypeScript compilation alone is not signoff.
+
+### 8 GB laptop release floor
+
+The minimum WebGPU device class is a physical laptop with **8 GB of total
+system RAM**. This is a whole-machine limit shared by the operating system,
+browser, JavaScript heap, staging buffers, GPU buffers, and presentation—not an
+8 GB WebGPU allocation budget.
+
+For the full `512x512` scan and `192x192` source detector, the current bin-1
+`uint8` representation and bin-2 exact-sum `float32` representation each need
+9.00 GiB of resident payload, so both are **No** before browser overhead. Bins 4
+and 8 require 2.25 GiB and 0.5625 GiB and are candidates, but remain **Pending**
+until a headed run on a physical 8 GB laptop retains browser/system peak,
+memory pressure, swap, adapter limits, first usable product, and scientific
+parity. A real-adapter run on a higher-memory machine cannot receive this ✓.

@@ -10,6 +10,7 @@ which optimizations were accepted, rejected, or remain provisional.
 |---|---|
 | [Documentation landing overview](../intro.md) | Friendly module-first entry point with current representative devices and timings |
 | [Implementation dashboard](../dashboard.md) | Dense atomic matrix of platform, bin, dtype, cache state, memory, parity, device, and test date |
+| {ref}`Minimum-device gates <minimum-device-memory-gates>` | CUDA 6 GiB VRAM and WebGPU 8 GB laptop acceptance status; runtime details on [CUDA](../platforms/cuda.md) and [WebGPU](../platforms/webgpu.md) |
 | [Verified benchmark results](results.md) | Metrics with date, revision, device, shape/dtype, cache state, load plan, benchmark definition, calibration, and parity provenance |
 | [Revision and change ledger](changes.md) | Latest documentation changes, implementation baselines, and why a retained number changed or remained historical |
 | [Current verified results](../backends.md) | Capability status and the public-safe timing/parity summary across CUDA, MPS/Metal, Swift, and WebGPU |

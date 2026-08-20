@@ -129,6 +129,7 @@ def test_dashboard_is_the_dense_human_overview() -> None:
         "## Speed and memory at a glance",
         "### Measured load configurations",
         "### Dtype support and peak memory",
+        "### Minimum-device memory gates",
         "### What a 4 or 6 GiB budget can hold",
         "### I/O and first usable product — `quantem.gpu.io`",
         "#### Exact configuration gaps",
@@ -199,6 +200,9 @@ def test_dashboard_is_the_dense_human_overview() -> None:
     assert "| `uint16` | `uint16` | `uint32` | General exact detector sum | ✓ |" in dashboard
     assert "| `uint16` | `uint8` | `float32` | Exact detector sum | ✓ |" in dashboard
     assert "A calculated payload is never relabeled as a measured peak" in dashboard
+    assert "6 GiB of dedicated VRAM for CUDA" in dashboard_words
+    assert "8 GB of total laptop RAM for WebGPU" in dashboard_words
+    assert "| 8 GB ✓ at detector bin 4 |" in dashboard
 
     for scan_size in (128, 256, 512, 1024):
         assert f"`{scan_size}x{scan_size}`" in dashboard
@@ -470,6 +474,64 @@ def test_dashboard_small_gpu_numbers_match_the_screening_planner() -> None:
     assert "`memory_budget_gb=4.0`" in Path("docs/api/core.md").read_text(
         encoding="utf-8"
     )
+
+
+def test_minimum_device_memory_gates_are_atomic_and_fail_closed() -> None:
+    dashboard = Path("docs/dashboard.md").read_text(encoding="utf-8")
+    intro = Path("docs/intro.md").read_text(encoding="utf-8")
+    methodology = Path("docs/performance/methodology.md").read_text(encoding="utf-8")
+    cuda = Path("docs/platforms/cuda.md").read_text(encoding="utf-8")
+    webgpu = Path("docs/platforms/webgpu.md").read_text(encoding="utf-8")
+
+    assert "### Minimum-device memory gates" in dashboard
+    assert "### Minimum-memory release gates" in intro
+    assert "## Minimum-device memory gates" in methodology
+    assert "### 6 GiB VRAM release floor" in cuda
+    assert "### 8 GB laptop release floor" in webgpu
+
+    for detector_bin, payload, gate in (
+        (1, "18.00 GiB", "No"),
+        (2, "9.00 GiB", "No"),
+        (4, "2.25 GiB", "Pending"),
+        (8, "0.5625 GiB", "Pending"),
+    ):
+        row = (
+            f"| [**CUDA**](platforms/cuda.md) | 6 GiB VRAM | `512x512` | "
+            f"Full | `192x192` | {detector_bin} |"
+        )
+        assert row in dashboard
+        matching = next(line for line in dashboard.splitlines() if line.startswith(row))
+        assert f"**{payload}**" in matching
+        assert f"**{gate}**" in matching
+
+    for detector_bin, payload, gate in (
+        (1, "9.00 GiB", "No"),
+        (2, "9.00 GiB", "No"),
+        (4, "2.25 GiB", "Pending"),
+        (8, "0.5625 GiB", "Pending"),
+    ):
+        row = (
+            f"| [**WebGPU**](platforms/webgpu.md) | 8 GB total RAM | `512x512` "
+            f"| Full | `192x192` | {detector_bin} |"
+        )
+        assert row in dashboard
+        matching = next(line for line in dashboard.splitlines() if line.startswith(row))
+        assert f"**{payload}**" in matching
+        assert f"**{gate}**" in matching
+
+    native_row = (
+        "| [**Native Swift/Metal**](platforms/swift-metal.md) | 8 GB unified "
+        "RAM | `512x512` | Full | `192x192` | 4 |"
+    )
+    matching = next(line for line in dashboard.splitlines() if line.startswith(native_row))
+    assert "**1.125 GiB**" in matching
+    assert "**✓**" in matching
+    assert "Apple M2 MacBook Air (`Mac14,2`, 8 GB)" in matching
+
+    assert "A calculated payload can prove **No**" in " ".join(dashboard.split())
+    assert "Do not convert **Pending** or **Test** to ✓" in methodology
+    assert "Measurements on a larger Blackwell GPU do not by themselves prove" in cuda
+    assert "A real-adapter run on a higher-memory machine cannot receive this ✓" in webgpu
 
 
 def test_load_dtype_docs_keep_precision_and_peak_memory_distinct() -> None:

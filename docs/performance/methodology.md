@@ -85,6 +85,30 @@ On Apple unified memory, record process footprint, Metal allocated bytes,
 system pressure, and swap. On CUDA, record process allocated/reserved VRAM and
 total-card occupancy before, during, and after the run.
 
+## Minimum-device memory gates
+
+Minimum-device support is a complete-pipeline claim, not a payload comparison:
+
+- **CUDA floor:** 6 GiB of dedicated VRAM. Count process allocation and reserve,
+  decoder/reduction scratch, products, staging, and other card occupants.
+- **WebGPU floor:** 8 GB of total physical laptop RAM. Count the operating
+  system, browser, JavaScript heap, staging, GPU buffers, presentation, memory
+  pressure, and swap.
+- **Apple native/MPS floor:** 8 GB of unified RAM when that row is claimed.
+  Record the same whole-process and system-pressure signals as WebGPU.
+
+Gate vocabulary is fail-closed:
+
+| Status | Meaning |
+|---|---|
+| **✓** | Complete headed or native physical-device run at or below the floor, with parity and peak-memory evidence |
+| **Pending** | Payload is a plausible candidate, but complete physical peak or parity evidence is missing |
+| **No** | Payload alone exceeds the floor, or the complete run exceeds it |
+| **Test** | A capped larger device or software adapter passed as a pre-check; physical floor signoff is still missing |
+
+Do not convert **Pending** or **Test** to ✓ from a larger device, a calculated
+payload, a kernel-only microbenchmark, or a prepared-source reopen.
+
 ## Interaction sidecars and scientific resolution
 
 A detector-binned interaction sidecar is a distinct scientific sampling plan,

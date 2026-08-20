@@ -5,13 +5,23 @@
   "pages": [
     {
       "path": "docs/intro.md",
-      "sha256": "9ed1bb06da6e536b47c2713c0651ef51e2fba9f9888bd2ca18db06a7b7dc7600",
+      "sha256": "2c5128afe27e34e08d2144d572def97a9479cf38382a5ddd7a2ded0c8376058f",
       "role": "Current developer landing page and benchmark overview"
     },
     {
       "path": "docs/dashboard.md",
-      "sha256": "9c412840b3342a9927f2a799d32c3c06a80981c77b94888f0419071874a3a683",
+      "sha256": "7881bca7b807200ff59b2d7c530830f80440e7f17eccaec062b1188b3b84939e",
       "role": "Atomic capability, speed, memory, and parity dashboard"
+    },
+    {
+      "path": "docs/platforms/cuda.md",
+      "sha256": "a748b94c3fdb9328dca9a1787ba3b0c70e84b49abf7d898da5e131e9b2841de1",
+      "role": "CUDA 6 GiB minimum-device acceptance contract"
+    },
+    {
+      "path": "docs/platforms/webgpu.md",
+      "sha256": "c3431cff9e67d6a9f05e1e7053a48d253330c47ff979211e87d6ac9409f79fca",
+      "role": "WebGPU 8 GB laptop acceptance contract"
     },
     {
       "path": "docs/backends.md",
@@ -30,7 +40,7 @@
     },
     {
       "path": "docs/performance/methodology.md",
-      "sha256": "d92932354a91b8f7e9a8c22daa755f6b4a31cb6a9faa74838b23ae01d35ad705",
+      "sha256": "686fae4d7a2c6e6f1ad4d7781b3b78b609a8a5e3e0a3670c0fd7f0bb7caa5564",
       "role": "Benchmark state, provenance, and scientific-resolution contract"
     },
     {
