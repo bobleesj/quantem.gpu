@@ -262,7 +262,8 @@ is likewise never presented as source load.
 | **Python MPS** | BF exact sum | `512x512` | `48x48` | 4 | Warm resident | p50 | **2.502 ms** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
 | **Python MPS** | ADF exact sum | `512x512` | `48x48` | 4 | Warm resident | p50 | **4.404 ms** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
 | **Python MPS** | DF exact sum | `512x512` | `48x48` | 4 | Warm resident | p50 | **2.642 ms** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
-| **Native Swift/Metal** | BF, ABF, ADF, total, and row/column moments | `512x512` | `48x48` | 4 | One resident-cache traversal | Single run | **103.0 ms** | Apple M2 MacBook Air (`Mac14,2`, 8 GB) | 2026-08-19 |
+| **Native Swift/Metal** | BF, ABF, ADF, total, and row/column moments | `512x512` | `48x48` | 4 | Prepared resident-cache fallback | Single run | **103.0 ms** | Apple M2 MacBook Air (`Mac14,2`, 8 GB) | 2026-08-19 |
+| **Native Swift/Metal** | Exact moment widening for resident summary | `512x512` | `48x48` | 4 | Same validated fused source pass; no resident traversal | Single run | **0.569 ms** | Apple M2 MacBook Air (`Mac14,2`, 8 GB) | 2026-08-20 |
 | **WebGPU** | Mean diffraction | `512x512` | `192x192` | 1 | Warm resident | p50 | **50.9 ms** | Chrome 151, Apple M5 Max Metal-3 | 2026-08-19 |
 | **WebGPU** | BF exact sum | `512x512` | `192x192` | 1 | Warm resident | p50 | **5.5 ms** | Chrome 151, Apple M5 Max Metal-3 | 2026-08-19 |
 | **WebGPU** | ADF exact sum | `512x512` | `192x192` | 1 | Warm resident | p50 | **15.0 ms** | Chrome 151, Apple M5 Max Metal-3 | 2026-08-19 |
@@ -272,9 +273,12 @@ is likewise never presented as source load.
 The current integer and mean-DP rows pass their independent CPU reference. CUDA
 uses native detector resolution on fixture D; MPS uses explicit detector bin 4
 on fixture C. WebGPU uses native detector resolution on D. The native fused pass
-produces three virtual images plus overflow-safe `uint64` total and detector
-moments in one traversal; its row is the complete pass, not a separately timed
-value for each output. These are resident kernels and are not source-load times.
+produces three virtual images and exact `uint32` total and detector moments.
+Revision `70bc366` proves when those accumulators fit, then widens the three
+moment maps to `uint64` in one small dispatch. The 0.569 ms row is only that
+incremental widening; it is not the full source pass. The cache-only fallback
+row remains because it has a different input state.
+Neither row is a compressed-source load time.
 
 ### Detector moments and phase contrast — `quantem.gpu.dpc`
 
