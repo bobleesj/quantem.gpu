@@ -299,7 +299,7 @@ public enum Metal4DSTEMResidentCacheIO {
     return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
   }
 
-  private static func validateMetadata(
+  static func validateMetadata(
     _ metadata: Metal4DSTEMResidentCacheMetadata,
     requireSealedPayload: Bool
   ) throws {

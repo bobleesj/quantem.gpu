@@ -893,6 +893,84 @@ kernel void detector_products_u16_word_major(
     dfMap[scan] = atomic_load_explicit(&sums[2], memory_order_relaxed);
 }
 
+// Produce exact virtual-detector sums and 64-bit center-of-mass moments while
+// traversing a packed uint16 resident cache once. This is the reusable summary
+// path for fast, provenance-bound cache reopen.
+kernel void detector_products_u16_word_major_with_u64_moments(
+    device const uint *data [[buffer(0)]],
+    device uint *bfMap [[buffer(1)]],
+    device uint *abfMap [[buffer(2)]],
+    device uint *dfMap [[buffer(3)]],
+    constant WordMajorDetectorParams &params [[buffer(4)]],
+    device const uchar *bands [[buffer(5)]],
+    device ulong *totalMap [[buffer(6)]],
+    device ulong *rowMomentMap [[buffer(7)]],
+    device ulong *columnMomentMap [[buffer(8)]],
+    constant uint &detectorColumns [[buffer(9)]],
+    uint scan [[threadgroup_position_in_grid]],
+    uint threadIndex [[thread_index_in_threadgroup]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint threads [[threads_per_threadgroup]]
+) {
+    if (scan >= params.scanCount) return;
+    threadgroup atomic_uint bandSums[3];
+    threadgroup ulong totalScratch[256];
+    threadgroup ulong rowScratch[256];
+    threadgroup ulong columnScratch[256];
+    if (threadIndex < 3u) {
+        atomic_store_explicit(&bandSums[threadIndex], 0u, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    uint bf = 0u;
+    uint abf = 0u;
+    uint df = 0u;
+    ulong total = 0ul;
+    ulong rowMoment = 0ul;
+    ulong columnMoment = 0ul;
+    for (uint pixel = threadIndex; pixel < params.detectorPixels; pixel += threads) {
+        uint value = word_major_u16_sample(data, pixel, scan, params.scanCount);
+        uchar band = bands[pixel];
+        if (band & 1u) bf += value;
+        if (band & 2u) abf += value;
+        if (band & 4u) df += value;
+        uint row = pixel / detectorColumns;
+        uint column = pixel - row * detectorColumns;
+        ulong wide = ulong(value);
+        total += wide;
+        rowMoment += wide * ulong(row);
+        columnMoment += wide * ulong(column);
+    }
+    bf = simd_sum(bf);
+    abf = simd_sum(abf);
+    df = simd_sum(df);
+    if (lane == 0u) {
+        atomic_fetch_add_explicit(&bandSums[0], bf, memory_order_relaxed);
+        atomic_fetch_add_explicit(&bandSums[1], abf, memory_order_relaxed);
+        atomic_fetch_add_explicit(&bandSums[2], df, memory_order_relaxed);
+    }
+    totalScratch[threadIndex] = total;
+    rowScratch[threadIndex] = rowMoment;
+    columnScratch[threadIndex] = columnMoment;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint offset = threads >> 1u; offset > 0u; offset >>= 1u) {
+        if (threadIndex < offset) {
+            totalScratch[threadIndex] += totalScratch[threadIndex + offset];
+            rowScratch[threadIndex] += rowScratch[threadIndex + offset];
+            columnScratch[threadIndex] += columnScratch[threadIndex + offset];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (threadIndex == 0u) {
+        bfMap[scan] = atomic_load_explicit(&bandSums[0], memory_order_relaxed);
+        abfMap[scan] = atomic_load_explicit(&bandSums[1], memory_order_relaxed);
+        dfMap[scan] = atomic_load_explicit(&bandSums[2], memory_order_relaxed);
+        totalMap[scan] = totalScratch[0];
+        rowMomentMap[scan] = rowScratch[0];
+        columnMomentMap[scan] = columnScratch[0];
+    }
+}
+
 // Each entry is (detector uint32 word, 2-bit coefficients for its four uint8
 // lanes). Coeff 1 includes a lane; coeff 2 subtracts it. Consecutive SIMD lanes
 // process consecutive scan positions while reading one detector-major word,

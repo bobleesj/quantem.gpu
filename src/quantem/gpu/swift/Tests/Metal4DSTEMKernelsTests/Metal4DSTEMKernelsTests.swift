@@ -916,6 +916,7 @@ final class Metal4DSTEMKernelsTests: XCTestCase {
       Metal4DSTEMKernels.residentRebinU32Function,
       Metal4DSTEMKernels.detectorProductsU32Function,
       Metal4DSTEMKernels.detectorProductsU16WordMajorFunction,
+      Metal4DSTEMKernels.detectorProductsU16WordMajorMomentsFunction,
       Metal4DSTEMKernels.centerOfMassU8Function,
       Metal4DSTEMKernels.centerOfMassU16Function,
       Metal4DSTEMKernels.centerOfMassU32Function,
@@ -2070,6 +2071,171 @@ final class Metal4DSTEMKernelsTests: XCTestCase {
     XCTAssertEqual(bufferValues(df, count: scanCount), reference(4))
   }
 
+  func testWordMajorPackedU16SummaryMomentsMatchReference() throws {
+    let device = try metalDevice()
+    let queue = try XCTUnwrap(device.makeCommandQueue())
+    let library = try Metal4DSTEMKernels.makeDetectorLibrary(device: device)
+    let scanCount = 5
+    let detectorRows = 2
+    let detectorColumns = 4
+    let detectorPixels = detectorRows * detectorColumns
+    let values: [UInt16] = (0..<detectorPixels).flatMap { pixel in
+      (0..<scanCount).map { scan in UInt16(100 * pixel + scan + 1) }
+    }
+    var packed = [UInt32](repeating: 0, count: (detectorPixels / 2) * scanCount)
+    for pixel in 0..<detectorPixels {
+      for scan in 0..<scanCount {
+        packed[(pixel / 2) * scanCount + scan] |=
+          UInt32(values[pixel * scanCount + scan]) << UInt32((pixel % 2) * 16)
+      }
+    }
+    let bands: [UInt8] = (0..<detectorPixels).map { pixel in
+      (pixel % 2 == 0 ? 1 : 0) | (pixel % 3 == 0 ? 2 : 0) | (pixel >= 4 ? 4 : 0)
+    }
+    let source = try makeBuffer(device: device, values: packed)
+    let bandBuffer = try makeBuffer(device: device, values: bands)
+    let bf = try outputBuffer(device: device, count: scanCount)
+    let abf = try outputBuffer(device: device, count: scanCount)
+    let df = try outputBuffer(device: device, count: scanCount)
+    let total = try outputBuffer64(device: device, count: scanCount)
+    let rowMoment = try outputBuffer64(device: device, count: scanCount)
+    let columnMoment = try outputBuffer64(device: device, count: scanCount)
+    var parameters = WordMajorDetectorParameters(
+      scanCount: UInt32(scanCount),
+      detectorPixels: UInt32(detectorPixels)
+    )
+    var detectorColumnCount = UInt32(detectorColumns)
+    let pipeline = try device.makeComputePipelineState(
+      function: XCTUnwrap(
+        library.makeFunction(
+          name: Metal4DSTEMKernels.detectorProductsU16WordMajorMomentsFunction
+        )
+      )
+    )
+    let command = try XCTUnwrap(queue.makeCommandBuffer())
+    let encoder = try XCTUnwrap(command.makeComputeCommandEncoder())
+    encoder.setComputePipelineState(pipeline)
+    encoder.setBuffer(source, offset: 0, index: 0)
+    encoder.setBuffer(bf, offset: 0, index: 1)
+    encoder.setBuffer(abf, offset: 0, index: 2)
+    encoder.setBuffer(df, offset: 0, index: 3)
+    withUnsafeBytes(of: &parameters) {
+      encoder.setBytes($0.baseAddress!, length: $0.count, index: 4)
+    }
+    encoder.setBuffer(bandBuffer, offset: 0, index: 5)
+    encoder.setBuffer(total, offset: 0, index: 6)
+    encoder.setBuffer(rowMoment, offset: 0, index: 7)
+    encoder.setBuffer(columnMoment, offset: 0, index: 8)
+    encoder.setBytes(&detectorColumnCount, length: 4, index: 9)
+    encoder.dispatchThreadgroups(
+      MTLSize(width: scanCount, height: 1, depth: 1),
+      threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
+    )
+    encoder.endEncoding()
+    try complete(command)
+
+    func bandReference(_ band: UInt8) -> [UInt32] {
+      (0..<scanCount).map { scan in
+        (0..<detectorPixels).reduce(UInt32(0)) { sum, pixel in
+          sum
+            + (bands[pixel] & band == 0
+              ? 0 : UInt32(values[pixel * scanCount + scan]))
+        }
+      }
+    }
+    let totalReference: [UInt64] = (0..<scanCount).map { scan in
+      (0..<detectorPixels).reduce(UInt64(0)) { sum, pixel in
+        sum + UInt64(values[pixel * scanCount + scan])
+      }
+    }
+    let rowReference: [UInt64] = (0..<scanCount).map { scan in
+      (0..<detectorPixels).reduce(UInt64(0)) { sum, pixel in
+        sum + UInt64(values[pixel * scanCount + scan]) * UInt64(pixel / detectorColumns)
+      }
+    }
+    let columnReference: [UInt64] = (0..<scanCount).map { scan in
+      (0..<detectorPixels).reduce(UInt64(0)) { sum, pixel in
+        sum + UInt64(values[pixel * scanCount + scan]) * UInt64(pixel % detectorColumns)
+      }
+    }
+    XCTAssertEqual(bufferValues(bf, count: scanCount), bandReference(1))
+    XCTAssertEqual(bufferValues(abf, count: scanCount), bandReference(2))
+    XCTAssertEqual(bufferValues(df, count: scanCount), bandReference(4))
+    XCTAssertEqual(bufferValues64(total, count: scanCount), totalReference)
+    XCTAssertEqual(bufferValues64(rowMoment, count: scanCount), rowReference)
+    XCTAssertEqual(bufferValues64(columnMoment, count: scanCount), columnReference)
+  }
+
+  func testWordMajorSummaryMomentsPreserveFullUInt16DynamicRange() throws {
+    let device = try metalDevice()
+    let queue = try XCTUnwrap(device.makeCommandQueue())
+    let library = try Metal4DSTEMKernels.makeDetectorLibrary(device: device)
+    let detectorRows = 256
+    let detectorColumns = 256
+    let detectorPixels = detectorRows * detectorColumns
+    let packed = [UInt32](
+      repeating: UInt32(UInt16.max) | UInt32(UInt16.max) << 16,
+      count: detectorPixels / 2
+    )
+    let source = try makeBuffer(device: device, values: packed)
+    let bands = try makeBuffer(
+      device: device,
+      values: [UInt8](repeating: 0, count: detectorPixels)
+    )
+    let bf = try outputBuffer(device: device, count: 1)
+    let abf = try outputBuffer(device: device, count: 1)
+    let df = try outputBuffer(device: device, count: 1)
+    let total = try outputBuffer64(device: device, count: 1)
+    let rowMoment = try outputBuffer64(device: device, count: 1)
+    let columnMoment = try outputBuffer64(device: device, count: 1)
+    var parameters = WordMajorDetectorParameters(
+      scanCount: 1,
+      detectorPixels: UInt32(detectorPixels)
+    )
+    var detectorColumnCount = UInt32(detectorColumns)
+    let pipeline = try device.makeComputePipelineState(
+      function: XCTUnwrap(
+        library.makeFunction(
+          name: Metal4DSTEMKernels.detectorProductsU16WordMajorMomentsFunction
+        )
+      )
+    )
+    let command = try XCTUnwrap(queue.makeCommandBuffer())
+    let encoder = try XCTUnwrap(command.makeComputeCommandEncoder())
+    encoder.setComputePipelineState(pipeline)
+    encoder.setBuffer(source, offset: 0, index: 0)
+    encoder.setBuffer(bf, offset: 0, index: 1)
+    encoder.setBuffer(abf, offset: 0, index: 2)
+    encoder.setBuffer(df, offset: 0, index: 3)
+    withUnsafeBytes(of: &parameters) {
+      encoder.setBytes($0.baseAddress!, length: $0.count, index: 4)
+    }
+    encoder.setBuffer(bands, offset: 0, index: 5)
+    encoder.setBuffer(total, offset: 0, index: 6)
+    encoder.setBuffer(rowMoment, offset: 0, index: 7)
+    encoder.setBuffer(columnMoment, offset: 0, index: 8)
+    encoder.setBytes(&detectorColumnCount, length: 4, index: 9)
+    encoder.dispatchThreadgroups(
+      MTLSize(width: 1, height: 1, depth: 1),
+      threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
+    )
+    encoder.endEncoding()
+    try complete(command)
+
+    let value = UInt64(UInt16.max)
+    let expectedTotal = value * UInt64(detectorPixels)
+    let coordinateSum = UInt64(detectorRows * (detectorRows - 1) / 2)
+    let expectedRowMoment = value * UInt64(detectorColumns) * coordinateSum
+    let expectedColumnMoment = value * UInt64(detectorRows) * coordinateSum
+    XCTAssertGreaterThan(expectedRowMoment, UInt64(UInt32.max))
+    XCTAssertEqual(bufferValues64(total, count: 1), [expectedTotal])
+    XCTAssertEqual(bufferValues64(rowMoment, count: 1), [expectedRowMoment])
+    XCTAssertEqual(bufferValues64(columnMoment, count: 1), [expectedColumnMoment])
+    XCTAssertEqual(bufferValues(bf, count: 1), [0])
+    XCTAssertEqual(bufferValues(abf, count: 1), [0])
+    XCTAssertEqual(bufferValues(df, count: 1), [0])
+  }
+
   func testWordMajorU32DetectorProductsAndInteractiveUpdatesMatchReference() throws {
     let device = try metalDevice()
     let queue = try XCTUnwrap(device.makeCommandQueue())
@@ -2240,8 +2406,24 @@ final class Metal4DSTEMKernelsTests: XCTestCase {
     return buffer
   }
 
+  private func outputBuffer64(device: MTLDevice, count: Int) throws -> MTLBuffer {
+    let buffer = try XCTUnwrap(
+      device.makeBuffer(
+        length: count * MemoryLayout<UInt64>.stride,
+        options: .storageModeShared
+      )
+    )
+    memset(buffer.contents(), 0, buffer.length)
+    return buffer
+  }
+
   private func bufferValues(_ buffer: MTLBuffer, count: Int) -> [UInt32] {
     let pointer = buffer.contents().bindMemory(to: UInt32.self, capacity: count)
+    return Array(UnsafeBufferPointer(start: pointer, count: count))
+  }
+
+  private func bufferValues64(_ buffer: MTLBuffer, count: Int) -> [UInt64] {
+    let pointer = buffer.contents().bindMemory(to: UInt64.self, capacity: count)
     return Array(UnsafeBufferPointer(start: pointer, count: count))
   }
 
