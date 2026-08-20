@@ -144,6 +144,40 @@ The public Python selector is intentionally explicit:
 - `dtype="auto"` is an advisory convenience, not a substitute for a retained
   complete-source value-range audit.
 
+(minimum-device-memory-gates)=
+### Minimum-device memory gates
+
+The public release floors are **6 GiB of dedicated VRAM for CUDA** and **8 GB
+of total laptop RAM for WebGPU**. The WebGPU number is the entire machine
+budget shared by the operating system, browser, JavaScript heap, staging
+buffers, and GPU—not memory available exclusively to one `GPUBuffer`.
+
+**✓** is awarded only after the complete load-and-product pipeline runs on a
+physical device at or below the stated floor with retained peak memory,
+pressure/swap, output parity, and responsiveness evidence. A calculated
+payload can prove **No**, but it can only establish a **Pending** candidate.
+An allocator cap on a larger GPU is a useful pre-check, not physical-device
+signoff.
+
+| Platform | Minimum device | Selected scan | Scan plan | Source detector | Detector bin | Output detector | Resident dtype | Resident payload | Gate | Reason | Device tested | Date tested |
+|---|---|---:|---|---:|---:|---:|---|---:|---|---|---|---|
+| [**CUDA**](platforms/cuda.md) | 6 GiB VRAM | `512x512` | Full | `192x192` | 1 | `192x192` | `uint16` | **18.00 GiB** | **No** | Payload exceeds device floor | — | — |
+| [**CUDA**](platforms/cuda.md) | 6 GiB VRAM | `512x512` | Full | `192x192` | 2 | `96x96` | `uint32` | **9.00 GiB** | **No** | Payload exceeds device floor | — | — |
+| [**CUDA**](platforms/cuda.md) | 6 GiB VRAM | `512x512` | Full | `192x192` | 4 | `48x48` | `uint32` | **2.25 GiB** | **Pending** | Complete 6 GiB peak not retained | — | — |
+| [**CUDA**](platforms/cuda.md) | 6 GiB VRAM | `512x512` | Full | `192x192` | 8 | `24x24` | `uint32` | **0.5625 GiB** | **Pending** | Complete 6 GiB peak not retained | — | — |
+| [**Python MPS**](platforms/mps.md) | 8 GB unified RAM | `512x512` | Full | `192x192` | 4 | `48x48` | `uint16` | **1.125 GiB** | **Pending** | Physical 8 GB MPS run not retained | — | — |
+| [**Native Swift/Metal**](platforms/swift-metal.md) | 8 GB unified RAM | `512x512` | Full | `192x192` | 4 | `48x48` | `uint16` | **1.125 GiB** | **✓** | Complete physical-device run | Apple M2 MacBook Air (`Mac14,2`, 8 GB) | 2026-08-18 |
+| [**WebGPU**](platforms/webgpu.md) | 8 GB total RAM | `512x512` | Full | `192x192` | 1 | `192x192` | `uint8` | **9.00 GiB** | **No** | Payload exceeds total machine RAM | — | — |
+| [**WebGPU**](platforms/webgpu.md) | 8 GB total RAM | `512x512` | Full | `192x192` | 2 | `96x96` | `float32` | **9.00 GiB** | **No** | Payload exceeds total machine RAM | — | — |
+| [**WebGPU**](platforms/webgpu.md) | 8 GB total RAM | `512x512` | Full | `192x192` | 4 | `48x48` | `float32` | **2.25 GiB** | **Pending** | Browser and system peak not retained | — | — |
+| [**WebGPU**](platforms/webgpu.md) | 8 GB total RAM | `512x512` | Full | `192x192` | 8 | `24x24` | `float32` | **0.5625 GiB** | **Pending** | Browser and system peak not retained | — | — |
+
+The current full-native WebGPU bin-1 and exact-sum bin-2 representations cannot
+meet the 8 GB laptop floor because the resident payload alone is 9.00 GiB.
+Bins 4 and 8 are viable plans, but they do not receive ✓ until a headed browser
+run on a physical 8 GB laptop records the complete peak and scientific outputs.
+Likewise, the current Blackwell timings do not prove a 6 GiB CUDA floor.
+
 ### What a 4 or 6 GiB budget can hold
 
 This capacity chart fixes the full scan at `512x512` and the native detector at
@@ -341,13 +375,13 @@ See the [full SSB performance record](maintainer/ssb-performance.md) for the
 
 ### Cross-module platform map
 
-| Platform | I/O | Screening | Virtual images | CoM/DPC/iDPC | SSB | Display/movie and other boundaries |
-|---|---|---|---|---|---|---|
-| **CUDA** | ✓ | ✓ | ✓ | CoM ✓; cross-backend iDPC Block | ✓ | Display ✓; movie via NVENC; parallax CUDA-only |
-| **Python MPS** | ✓ | ✓ | ✓ | Bin-4 CoM ✓; native sidecar Block | ✓ | Display ✓; movie via VideoToolbox; parallax — |
-| **Native Swift/Metal** | ✓ | — | ✓ | ✓ | — | `MetalDisplayKernels`/`MetalImageFFT` ✓; native package products |
-| **WebGPU** | ✓ | — | ✓ | ✓ | Partial | Display ✓; movie and parallax are not targets |
-| **CPU reference** | Ref | Ref | Ref | Ref | Ref | Explicit adjudication/fallback paths only |
+| Platform | I/O | Screening | Virtual images | CoM/DPC/iDPC | SSB | Minimum-memory gate | Display/movie and other boundaries |
+|---|---|---|---|---|---|---|---|
+| **CUDA** | ✓ | ✓ | ✓ | CoM ✓; cross-backend iDPC Block | ✓ | 6 GiB Pending | Display ✓; movie via NVENC; parallax CUDA-only |
+| **Python MPS** | ✓ | ✓ | ✓ | Bin-4 CoM ✓; native sidecar Block | ✓ | 8 GB Pending | Display ✓; movie via VideoToolbox; parallax — |
+| **Native Swift/Metal** | ✓ | — | ✓ | ✓ | — | 8 GB ✓ at detector bin 4 | `MetalDisplayKernels`/`MetalImageFFT` ✓; native package products |
+| **WebGPU** | ✓ | — | ✓ | ✓ | Partial | 8 GB Pending | Display ✓; movie and parallax are not targets |
+| **CPU reference** | Ref | Ref | Ref | Ref | Ref | — | Explicit adjudication/fallback paths only |
 
 The rows above are intentionally not ranked. A warm resident kernel, prepared
 source, first-process application load, and saved-result reopen answer different

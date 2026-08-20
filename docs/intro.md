@@ -52,9 +52,28 @@ No empty cell implies support. Overview timing rows show the device and test
 date. Exact revision, scientific plan, and parity remain in the
 [verified benchmark results](performance/results.md).
 
-For the compact wall-time, scan/detector plan, peak-memory, and **4/6 GiB**
-capacity view, open
+For the compact wall-time, scan/detector plan, peak-memory, **6 GiB CUDA**, and
+**8 GB laptop** capacity view, open
 {ref}`Speed and memory at a glance <speed-and-memory-at-a-glance>`.
+
+### Minimum-memory release gates
+
+The minimum CUDA target is 6 GiB of dedicated VRAM. The minimum WebGPU target
+is a physical laptop with 8 GB of total system RAM, including the browser and
+operating system. ✓ means the complete physical-device pipeline is retained;
+a small calculated payload alone remains **Pending**.
+
+| Platform | Minimum device | Selected scan | Detector bin | Output detector | Resident dtype | Resident payload | Gate | Device tested | Date tested |
+|---|---|---:|---:|---:|---|---:|---|---|---|
+| **CUDA** | 6 GiB VRAM | `512x512` | 4 | `48x48` | `uint32` | **2.25 GiB** | **Pending** | — | — |
+| **Python MPS** | 8 GB unified RAM | `512x512` | 4 | `48x48` | `uint16` | **1.125 GiB** | **Pending** | — | — |
+| **Native Swift/Metal** | 8 GB unified RAM | `512x512` | 4 | `48x48` | `uint16` | **1.125 GiB** | **✓** | Apple M2 MacBook Air (`Mac14,2`, 8 GB) | 2026-08-18 |
+| **WebGPU** | 8 GB total RAM | `512x512` | 4 | `48x48` | `float32` | **2.25 GiB** | **Pending** | — | — |
+
+The detailed {ref}`minimum-device table <minimum-device-memory-gates>` also
+shows the configurations that are already **No**: full-scan WebGPU bins 1 and 2
+exceed the entire 8 GB floor from resident payload alone, while bins 4 and 8
+remain physical-test candidates.
 
 ### I/O — `quantem.gpu.io`
 

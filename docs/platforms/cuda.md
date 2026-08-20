@@ -88,3 +88,19 @@ memory, cache state, and exact source/kernel revisions.
 The minimum review bundle contains a CPU-reference comparison, rectangular
 row/column case, dtype/overflow case, full requested crop/bin plan, synchronized
 wall and device timings, process and total-card memory, and the exact command.
+
+### 6 GiB VRAM release floor
+
+The minimum CUDA device class is **6 GiB of dedicated VRAM**. A configuration
+receives ✓ only when the complete load, decode, reduction, and first-product
+pipeline fits inside that physical limit, including destination arrays,
+decoder and reduction scratch, CuPy allocation reserve, products, and the
+concurrent process baseline.
+
+For the full `512x512` scan and `192x192` source detector, native detector bin 1
+requires an 18.00 GiB `uint16` resident payload and exact detector bin 2 requires
+a 9.00 GiB `uint32` payload, so both are **No** for this floor. Detector bins 4
+and 8 have 2.25 GiB and 0.5625 GiB resident payloads and are candidates, but
+remain **Pending** until a physical 6 GiB run—or a clearly labeled capped
+pre-check followed by physical signoff—retains total-card peak and parity.
+Measurements on a larger Blackwell GPU do not by themselves prove this gate.
