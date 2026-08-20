@@ -90,6 +90,12 @@ calibrated BF positions, and calibration SHA-256
 `8815ddd710f33973ac11d504cd679f16d9f5d6bf3043d0480e682ecc0a053941`.
 WebGPU uses a separately frozen native-detector exact `uint8` companion, 3,418
 active aperture positions, and compute-matched revision `5cd285250911974c738e9c911bd00a170873bf45`.
+Native Swift/Metal uses a separate frozen 512×512 exact-`uint8` full-BF
+fixture at `e1da9bc86a0c1ae6edc60e1205a9966e6826f315`: 9,074 logical BF
+planes, 2,459 executed aperture planes, no scan crop or bin, detector bin 1,
+and float32/complex64 compute. Its source SHA-256 is
+`6046f7855b6925aafc86a52cc9ef06156ebf617d63b25c5a2a10fd94762ae3ae`.
+The operating-system page cache was warm.
 
 | Platform | Operation | Statistic | Time | Numerical state | Device tested |
 |---|---|---|---:|---|---|
@@ -98,13 +104,18 @@ active aperture positions, and compute-matched revision `5cd285250911974c738e9c9
 | **CUDA** | Exact phase and loss | p50 of 7 | **32.335 ms** | Deterministic | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 |
 | **CUDA** | 200-trial TPE plus Nelder–Mead | p50/p95/max of 3 | **11.168/11.235/11.242 s** | Byte-identical fitted parameters, phase, object, and loss | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 |
 | **Python MPS** | Exact phase and loss | One synchronized run | **497.187 ms** | CUDA phase max `1.2815e-6` rad; loss error `7.45e-9` | Apple M5 Max, 40-core GPU |
+| **Native Swift/Metal** | Complex object, complete Hermitian cache | p50 of 7 | **8.911 ms** | CUDA phase relative L2 `5.8695e-5`; maximum `5.6288e-6` rad | Apple M5 Max, 40-core GPU |
+| **Native Swift/Metal** | Exact phase-variance loss, complete Hermitian cache | p50 of 7 | **25.120 ms** | Cached-versus-streamed loss relative error below `5e-5` | Apple M5 Max, 40-core GPU |
+| **Native Swift/Metal** | 200-trial TPE plus Nelder–Mead | p50 of 3 | **6.061 s** | Identical fitted parameters and loss, seed 42 | Apple M5 Max, 40-core GPU |
 | **WebGPU** | Complex object | Readback wall p50 of 5 | **32.5 ms** | Deterministic hash 5/5 | Chrome 151, Apple M5 Max Metal-3 |
 | **WebGPU** | Exact phase | Readback wall p50 of 5 | **102.1 ms** | Deterministic hash; one retained scheduling outlier | Chrome 151, Apple M5 Max Metal-3 |
 | **WebGPU** | Exact phase and loss | Readback wall p50 of 5 | **189.4 ms** | Phase byte-identical to no-loss 5/5 | Chrome 151, Apple M5 Max Metal-3 |
 
 The first CUDA 200-trial baseline was faster (`8.096 s` p50) but split into two
 fitted minima under the same seed, so it failed the frozen repeatability gate.
-The deterministic follow-up is the accepted number. The prepared MPS companion
+The deterministic follow-up is the accepted number. Native Swift calibration
+also repeats deterministically but uses a different real fixture and optimizer
+implementation, so its timing is not a direct CUDA ranking. The prepared MPS companion
 candidate is rejected because its stored columns do not match its declared
 detector-bin coordinate grid. WebGPU implements reconstruction but not TPE or
 Nelder–Mead calibration. Levenberg–Marquardt is not implemented in any current
@@ -116,9 +127,18 @@ At `334b7b5`, the release suite passed 66 tests with one opt-in performance skip
 and no failures. Four real QH5 frames matched the Swift CPU reference exactly
 for decode, detector bin 4, BF/ABF/DF/total, and row/column moments. Prepared
 index reopen was **5.339/5.760/5.842 ms** p50/p95/max; 512×512 FFT was
-**15.622 ms** first and **0.291/0.584 ms** warm p50/p95. The package has no
-full-scan decode/product benchmark executable, numerical DPC/iDPC test, or
-native SSB implementation; application timings are not substituted.
+**15.622 ms** first and **0.291/0.584 ms** warm p50/p95. The package still has
+no full-scan decode/product benchmark executable or numerical DPC/iDPC test;
+application timings are not substituted.
+
+The later native SSB follow-up `e1da9bc` adds `MetalSSBKernels` and a standalone
+release benchmark. The full-cache real-reference run prepared 2.589 GB of
+Hermitian data in **365.238 ms**, reconstructed at **8.911/9.416/9.416 ms**
+p50/p95/max, and peaked at **2.922 GB** process footprint. Its zero-cache exact
+path reconstructed at **145.178/147.070/147.070 ms** and peaked at **310.5 MB**.
+Both are warm-source library measurements, not application wall time or an
+8 GB physical-device signoff. See the
+[native Metal SSB migration record](../maintainer/native-metal-ssb-migration.md).
 
 ### Current evidence fingerprints
 

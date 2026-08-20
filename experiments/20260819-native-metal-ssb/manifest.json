@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260819-native-metal-ssb",
+  "status": "completed",
+  "question": "Can the extracted native Swift/Metal SSB engine reproduce an independent 512x512 phase reference, run a deterministic 200-trial TPE plus Nelder-Mead fit, and preserve the exact objective under complete-cache and bounded-memory policies?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260819-native-metal-ssb/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "e1da9bc86a0c1ae6edc60e1205a9966e6826f315",
+    "entrypoint": "swift run -c release metal-ssb-benchmark",
+    "dirty": false,
+    "diff_sha256": null,
+    "snapshot_path": "local-snapshot://quantem-gpu-native-metal-ssb/source"
+  },
+  "inputs": [
+    {
+      "dataset_id": "native-ssb-fullbf-512-u8-v2",
+      "path": "private-fixture://native-ssb-fullbf-512-u8-v2/full-bf-columns",
+      "sha256": "6046f7855b6925aafc86a52cc9ef06156ebf617d63b25c5a2a10fd94762ae3ae"
+    },
+    {
+      "dataset_id": "native-ssb-fullbf-512-phase-reference-v2",
+      "path": "private-fixture://native-ssb-fullbf-512-u8-v2/independent-phase-reference",
+      "sha256": "7def3b8ae2b781e3f0189ecfb5adbe9442942d8caf8d2e73e8fa672f78f1fa4a"
+    }
+  ],
+  "parameters": {
+    "source_shape": [9074, 512, 512],
+    "source_layout": ["brightfield", "scan_row", "scan_column"],
+    "source_dtype": "uint8",
+    "source_bytes": 2378694656,
+    "scan_shape": [512, 512],
+    "scan_crop": null,
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "precision": "float32 and complex64",
+    "logical_brightfield_count": 9074,
+    "executed_brightfield_count": 2459,
+    "proven_zero_brightfield_count": 6615,
+    "cache_policies_bytes": [2588520448, 0],
+    "cache_state": "operating-system page cache warm; not cold-source evidence",
+    "timing_boundary": "library source mapping, engine initialization, preparation, synchronized reconstruction, exact phase-variance loss, and complete deterministic fit measured separately",
+    "warm_repetitions": 7,
+    "fit_trials": 200,
+    "fit_repetitions": 3,
+    "fit_seed": 42,
+    "refinement": "Nelder-Mead",
+    "levenberg_marquardt": "not implemented",
+    "physical_8gb_followup": "required separately; the bounded-memory path is not a physical 8 GB signoff"
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": ["Apple M5 Max integrated GPU"],
+    "gpu_model": "Apple M5 Max, 40-core GPU, 128 GB unified memory",
+    "operating_system": "macOS 26.4"
+  },
+  "outputs": [
+    {
+      "artifact": "local-evidence://native-metal-ssb-20260819/full-cache-release.log",
+      "sha256": "9fb88f7cf2a9a429edca7e6e97fcb75210840c3a80a79323df4addace731723a",
+      "result": "complete cache: warm object p50 8.911 ms, exact loss p50 25.120 ms, deterministic 200-trial TPE plus Nelder-Mead fit p50 6.061212 s, 2.922 GB peak process footprint, no swaps"
+    },
+    {
+      "artifact": "local-evidence://native-metal-ssb-20260819/zero-cache-release.log",
+      "sha256": "b7ea9a4653799e3db00eee13190ae9fdcf1f87bc3e012d58030d52f6c7e67ece",
+      "result": "zero cache: warm object p50 145.178 ms, exact loss p50 263.005 ms, 310.5 MB peak process footprint, no swaps"
+    }
+  ],
+  "parity": {
+    "independent_phase_reference": "CUDA-formula float32 phase",
+    "complete_cache_phase_relative_l2": 0.0000586952296,
+    "complete_cache_phase_maximum_wrapped_radians": 0.00000562884106,
+    "zero_cache_phase_relative_l2": 0.0000230151898,
+    "zero_cache_phase_maximum_wrapped_radians": 0.00000248712759,
+    "cached_streamed_loss_relative_tolerance": 0.00005,
+    "fit_repeatability": "identical fitted parameters and loss in 3 of 3 fits"
+  },
+  "timestamps": {
+    "created": "2026-08-19T20:40:00-07:00",
+    "started": "2026-08-19T20:40:00-07:00",
+    "finished": "2026-08-19T20:46:34-07:00"
+  }
+}

@@ -225,6 +225,8 @@ Current `512x512` compute, excluding source preparation and UI paint:
 | **CUDA** | Complex object | Native `192x192` | Warm resident GPU | p50 | **13.883 ms** | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 | 2026-08-19 |
 | **CUDA** | Exact phase and loss | Native `192x192` | Warm resident GPU | p50 | **32.335 ms** | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 | 2026-08-19 |
 | **Python MPS** | Exact phase and loss | Explicit detector bin 2 | Single synchronized reconstruction | Single run | **497.187 ms** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
+| **Native Swift/Metal** | Complex object | Native-detector exact BF columns | Warm complete Hermitian cache | p50 | **8.911 ms** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
+| **Native Swift/Metal** | Exact phase-variance loss | Native-detector exact BF columns | Warm complete Hermitian cache | p50 | **25.120 ms** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
 | **WebGPU** | Complex object | Native `192x192` companion | Readback-complete compute wall | p50 | **32.5 ms** | Chrome 151, Apple M5 Max Metal-3 | 2026-08-19 |
 | **WebGPU** | Exact phase | Native `192x192` companion | Readback-complete compute wall | p50 | **102.1 ms** | Chrome 151, Apple M5 Max Metal-3 | 2026-08-19 |
 | **WebGPU** | Exact phase and loss | Native `192x192` companion | Readback-complete compute wall | p50 | **189.4 ms** | Chrome 151, Apple M5 Max Metal-3 | 2026-08-19 |
@@ -238,7 +240,7 @@ declared detector-bin coordinate grid.
 |---|---|---|---|---:|---|---|---|
 | **CUDA** | Seeded Optuna TPE, 200 trials | Nelder–Mead | p50 of 3 | **11.168 s** | Byte-deterministic | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 | 2026-08-19 |
 | **Python MPS** | 200-trial TPE | Nelder–Mead | — | **Pending** | Compatible current source not profiled | — | — |
-| **Native Swift/Metal** | — | — | — | — | Unsupported | — | — |
+| **Native Swift/Metal** | Seeded TPE, 200 trials | Nelder–Mead | p50 of 3 | **6.061 s** | Deterministic | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
 | **WebGPU** | — | — | — | — | Unsupported | — | — |
 | **CPU reference** | — | — | — | — | Reference only | — | — |
 
@@ -258,7 +260,7 @@ seed, so it remains rejected rather than replacing the deterministic result.
 | **Python MPS** | `1024x1024` | Synthetic | 8,809 BF | ✓ | p50 | **669.1 ms** | Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU) | 2026-07-28 |
 | **Native Swift/Metal** | `128x128` | — | — | — | — | — | — | — |
 | **Native Swift/Metal** | `256x256` | — | — | — | — | — | — | — |
-| **Native Swift/Metal** | `512x512` | — | — | — | — | — | — | — |
+| **Native Swift/Metal** | `512x512` | Native real acquisition | 9,074 logical / 2,459 executed BF | ✓ | p50 | **8.911 ms** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
 | **Native Swift/Metal** | `1024x1024` | — | — | — | — | — | — | — |
 | **WebGPU** | `128x128` | Real BF30 parity | Radius 30 px | ✓ | — | **Pending** | — | — |
 | **WebGPU** | `256x256` | Deterministic test | Test fixture | Test | — | **Pending** | — | — |
@@ -269,9 +271,10 @@ seed, so it remains rejected rather than replacing the deterministic result.
 | **CPU reference** | `512x512` | Independent adjudication | Frozen fixture | Ref | — | **Pending** | — | — |
 | **CPU reference** | `1024x1024` | — | — | — | — | — | — | — |
 
-Native Swift/Metal has no native SSB kernel. Untimed CUDA and MPS sizes retain
-fixed-size parity coverage; WebGPU rows still need the physical timing or
-reference gate represented by **Pending**.
+Native Swift/Metal now has a package-owned exact 512×512 implementation. Other
+native Swift scan sizes remain unsupported rather than inferred from CUDA/MPS.
+Untimed CUDA and MPS sizes retain fixed-size parity coverage; WebGPU rows still
+need the physical timing or reference gate represented by **Pending**.
 
 The [SSB performance record](maintainer/ssb-performance.md) contains the full
 `128/256/512/1024` timing matrix, native-versus-resized provenance, memory, and

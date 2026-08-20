@@ -25,8 +25,9 @@ defines that operation before a later block calls it.
 These are real PyTorch function definitions, not pseudocode. They execute when
 given the tensors and calibrated geometry defined on this page, and they express
 the same equations and reduction axes used for parity. They are not the source
-of the optimized CUDA, MPS/Metal, or WebGPU runtimes; those implementations may
-fuse or stream the same work and are listed in **Source map and gates** below.
+of the optimized CUDA, Python MPS, native Swift/Metal, or WebGPU runtimes; those
+implementations may fuse or stream the same work and are listed in **Source map
+and gates** below.
 ```
 
 ```python
@@ -424,9 +425,15 @@ parameters, precision, and optimizer settings match.
 | Public workflow/results | `src/quantem/gpu/ssb` |
 | CUDA engine and optimizer | `src/quantem/gpu/ssb/compute/cuda` |
 | Python MPS engine and optimizer | `src/quantem/gpu/ssb/compute/mps` |
+| Native Swift/Metal engine and optimizer | `src/quantem/gpu/swift/Sources/MetalSSBKernels` |
 | WebGPU kernels | `src/quantem/gpu/ssb/compute/webgpu` |
 
 Parity uses the same source, bright-field selection, physical calibration,
 aberrations, precision, and objective. Reports include complex-object or phase
 error maps, full-BF loss, fitted parameters, preparation/evaluation/fit times,
 active BF count, memory peak, and device/kernel revision.
+
+The native Swift/Metal implementation currently supports a 512×512 scan and
+plane-major lossless `uint8` BF columns. Its complete-cache and bounded-memory
+streaming modes retain the same logical BF normalization; other native scan
+sizes remain explicit gaps.

@@ -33,6 +33,9 @@ Native Swift/Metal products for macOS and iOS clients:
 - `Metal4DSTEMLoadPlan`, `Metal4DSTEMStreamingPlan`, and
   `Metal4DSTEMResidentCacheIO` for explicit native load, resource, and cache
   provenance. See [Native 4D-STEM load and cache contract](native_4dstem_io.md).
+- `MetalSSBEngine` for exact native 512×512 SSB reconstruction,
+  phase-variance evaluation, and deterministic 200-trial TPE plus Nelder–Mead
+  fitting. See [SSB API](ssb.md).
 
 Native clients call these endpoints directly. They are not a local Python
 backend.
@@ -52,7 +55,7 @@ here over internal backend modules.
 | `parallax` | `run`, `ParallaxResult` | [Device selection and supporting APIs](core.md) |
 | `SSB` | `SSB`, `SSBResult`, series results | [SSB API](ssb.md) |
 | `display`, `movie` | display transforms and encoded artifacts | [Movie API](movie.md) and [display kernels](../kernels/display-export.md) |
-| SwiftPM products | `MetalImageFFT`, `MetalImageRuntime`, `Native4DSTEMIO`, `Metal4DSTEMKernels` | [Native Metal image](metal_image.md) and [native load/cache](native_4dstem_io.md) |
+| SwiftPM products | `MetalImageFFT`, `MetalImageRuntime`, `Native4DSTEMIO`, `Metal4DSTEMKernels`, `MetalSSBKernels` | [Native Metal image](metal_image.md), [native load/cache](native_4dstem_io.md), and [SSB](ssb.md) |
 | Remote services | browse, MAPED, and SSB protocol services | [QuantEM.GPU Remote](../remote/index.md) |
 
 Backend modules, private helpers, launch geometry, cache scheduling, and UI

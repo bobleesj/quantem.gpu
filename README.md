@@ -140,10 +140,12 @@ The repository-root Swift package exposes reusable, UI-independent products:
 - `MetalDisplayKernels`
 - `MetalImageFFT`
 - `MetalImageRuntime`
+- `MetalSSBKernels`
 
 ```bash
 swift test
 swift run -c release metal-display-benchmark 512
+swift test -c release --filter MetalSSBKernelsTests
 ```
 
 See [Native Swift and Metal](docs/platforms/swift-metal.md) for the source map,

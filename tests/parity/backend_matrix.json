@@ -177,8 +177,8 @@
           "gates": ["tests/test_ssb_mps_cuda_reference.py", "tests/test_ssb_mps_close.py"]
         },
         "swift-metal": {
-          "level": "not-implemented",
-          "gates": ["docs/api/ssb.md"]
+          "level": "required",
+          "gates": ["src/quantem/gpu/swift/Tests/MetalSSBKernelsTests/MetalSSBKernelsTests.swift", "docs/maintainer/native-metal-ssb-migration.md"]
         },
         "webgpu": {
           "level": "partial-hardware",
@@ -203,8 +203,8 @@
           "gates": ["tests/test_ssb_mps_cuda_reference.py", "tests/test_ssb_structure.py"]
         },
         "swift-metal": {
-          "level": "not-implemented",
-          "gates": ["docs/api/ssb.md", "docs/platforms/swift-metal.md"]
+          "level": "required",
+          "gates": ["src/quantem/gpu/swift/Tests/MetalSSBKernelsTests/MetalSSBKernelsTests.swift", "src/quantem/gpu/swift/Benchmarks/MetalSSBBenchmark/main.swift", "docs/maintainer/native-metal-ssb-migration.md"]
         },
         "webgpu": {
           "level": "not-implemented",

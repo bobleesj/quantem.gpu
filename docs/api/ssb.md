@@ -1,12 +1,11 @@
 # SSB API
 
-`quantem.gpu.SSB` is the public single-sideband ptychography contract for CUDA,
-MPS, and WebGPU workflows. Python `SSB.open()` executes CUDA or MPS; the browser
-WebGPU runtime mirrors the reconstruction, phase, and exact-loss contract
-asynchronously. WebGPU does not currently implement aberration fitting, and
-Native Swift/Metal does not currently implement SSB. Backend engines, kernel
-launch geometry, FFT layouts, and optimizer batching remain implementation
-details.
+`quantem.gpu.SSB` is the public Python single-sideband ptychography contract for
+CUDA and MPS. The browser WebGPU runtime mirrors reconstruction, phase, and the
+exact-loss contract asynchronously. Native clients use the separate SwiftPM
+product `MetalSSBKernels`. WebGPU does not currently implement aberration
+fitting. Backend launch geometry, FFT layouts, and optimizer batching remain
+implementation details.
 
 ## Inputs and outputs
 
@@ -48,6 +47,9 @@ or MPS. The browser never substitutes fewer trials or a reduced objective.
 - `trials` must be non-negative and `refinement` is `"nelder-mead"` or `None`.
 - When an in-memory array uses saved-result reuse, provide `source_path` so a
   different same-shaped array cannot match the original source accidentally.
+- Native Swift requires a complete, finite `MetalSSBGeometry`, a 512×512 scan,
+  and a sufficiently large plane-major `uint8` Metal buffer. It raises rather
+  than cropping, binning, changing precision, or falling back to CPU.
 
 ## Provenance and exact reuse
 
@@ -85,6 +87,48 @@ result = workflow.reconstruct(
 `preview()` accepts the same complete aberration mapping and returns a
 transient phase array plus an optional exact loss. It does not create a second
 public result type.
+
+## Native Swift and Metal
+
+`MetalSSBEngine` consumes exact plane-major BF columns with layout
+`[logical_brightfield, scan_row, scan_column]`, source dtype `uint8`, and fixed
+scan shape 512×512. The engine computes in float32/complex64. It retains every
+logical BF term in normalization and skips only the proven-zero aperture union.
+
+```swift
+import Metal
+import MetalSSBKernels
+
+let device = MTLCreateSystemDefaultDevice()!
+let engine = try MetalSSBEngine(
+  device: device,
+  geometry: calibratedGeometry,
+  cacheBudgetBytes: availableSSBCacheBytes
+)
+
+try engine.prepare(brightfield: planeMajorUInt8Buffer)
+let result = try engine.reconstruct(
+  aberrations: MetalSSBAberrations(
+    c10Nanometers: 72.98,
+    c12Nanometers: 14.4,
+    phi12Radians: 0.4686
+  )
+)
+```
+
+`result.object` and `result.fourierSum` are row-major 512×512 complex64 Metal
+buffers. `result.provenance` records scan shape, source/compute dtype, scan bin
+1, no scan crop, logical/executed/zero-aperture BF counts, cached/streamed BF
+counts, and cache bytes. `phaseVariance(...)` evaluates the same complete
+objective. `optimize(...)` defaults to 200 seeded TPE trials followed by
+Nelder–Mead and returns the full trial record.
+
+`cacheBudgetBytes: nil` requests a complete Hermitian `G(k)` cache. A finite
+budget caches whole 32-BF batches and streams the remaining terms exactly.
+Cache policy is an application decision: the application must choose and show
+the memory policy, while QuantEM.GPU owns the estimator inputs, exact kernels,
+and provenance. The Swift package does not own windows, controls, sessions, or
+plots.
 
 ## Series reconstruction
 

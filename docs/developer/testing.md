@@ -34,10 +34,23 @@ xcrun swift-format lint --strict --recursive \
   src/quantem/gpu/swift/Tests \
   src/quantem/gpu/swift/Benchmarks
 swift test
+swift test -c release --filter MetalSSBKernelsTests
 ```
 
 Opt-in real-source tests retain their fixture hashes and environment variables.
 A simulator or compile-only result does not replace physical Metal execution.
+The package-owned SSB benchmark accepts an exact metadata file, plane-major BF
+source, independent phase reference, repetition count, cache policy, fit-trial
+count, and fit-repetition count:
+
+```bash
+swift run -c release metal-ssb-benchmark \
+  METADATA_JSON FULL_BF_U8 REFERENCE_PHASE_F32 7 full 200 3
+```
+
+Record preparation separately from warm reconstruction, exact loss, and the
+complete fit. A finite cache budget is a different resource-policy row, not a
+replacement for the complete-cache timing.
 
 ## Documentation
 

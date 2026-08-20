@@ -54,6 +54,7 @@ def test_docs_navigation_has_world_class_top_level_sections() -> None:
         "maintainer/history/index",
         "maintainer/history/webgpu-gqk-memory-2026-07",
         "maintainer/history/webgpu-frame-coop-u16-clip8-2026-07-25",
+        "maintainer/native-metal-ssb-migration",
         "developer/writing",
         "performance/index",
         "performance/results",
@@ -201,7 +202,7 @@ def test_dashboard_is_the_dense_human_overview() -> None:
     assert "A calculated payload is never relabeled as a measured peak" in dashboard
     assert "6 GiB of dedicated VRAM for CUDA" in dashboard_words
     assert "8 GB of total laptop RAM for WebGPU" in dashboard_words
-    assert "| 8 GB ✓ at detector bin 4 |" in dashboard
+    assert "| 8 GB ✓ at detector bin 4; SSB physical 8 GB Pending |" in dashboard
 
     for scan_size in (128, 256, 512, 1024):
         assert f"`{scan_size}x{scan_size}`" in dashboard
@@ -373,7 +374,7 @@ def test_intro_ssb_size_matrix_tracks_fixed_size_runtime_registries() -> None:
     assert "Native real acquisition | Full active BF" in ssb_section
     assert "NVIDIA RTX PRO 6000 Blackwell | 2026-07-19" in ssb_section
     assert "Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU) | 2026-07-28" in ssb_section
-    assert "native swift/metal has no native ssb kernel" in ssb_section.lower()
+    assert "native swift/metal now has a package-owned exact 512×512 implementation" in ssb_section.lower()
 
 
 def test_platform_first_io_tables_expose_bins_devices_and_dates() -> None:
@@ -1039,7 +1040,7 @@ def test_ssb_page_explains_the_complete_default_fit() -> None:
         "def best_tpe_candidate(",
         "def final_object(",
         "real PyTorch function definitions, not pseudocode",
-        "not the source of the optimized CUDA, MPS/Metal, or WebGPU runtimes",
+        "not the source of the optimized CUDA, Python MPS, native Swift/Metal, or WebGPU runtimes",
         "final complex object wave",
     ):
         assert required in text_words

@@ -22,7 +22,7 @@ different definitions of the science.
 | BF/DF/ADF and mean diffraction | `src/quantem/gpu/detector` | `detector/compute/{cuda,mps,webgpu}` | `Metal4DSTEMKernels` |
 | CoM, DPC, and iDPC | `src/quantem/gpu/dpc` | `dpc/compute/{cuda,mps,webgpu}` | `Metal4DSTEMKernels`, `MetalImageFFT` |
 | Display statistics and transforms | `src/quantem/gpu/display` | `display/webgpu` and backend modules | `MetalDisplayKernels`, `MetalImageRuntime` |
-| Single-sideband ptychography | `src/quantem/gpu/ssb` | `ssb/compute/{cuda,mps,webgpu}` | backend-specific compute library |
+| Single-sideband ptychography | `src/quantem/gpu/ssb` | `ssb/compute/{cuda,mps,webgpu}` | `MetalSSBKernels` |
 
 The current `compute` folder name is an internal compatibility boundary. New
 public APIs belong to the scientific domain; consumers must not import a

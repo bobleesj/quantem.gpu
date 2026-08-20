@@ -1,16 +1,16 @@
 {
   "schema_version": 1,
-  "source_revision": "8c47a466d573f74e425faff611939a17fa6efbf2",
+  "source_revision": "e1da9bc86a0c1ae6edc60e1205a9966e6826f315",
   "purpose": "Fingerprints for the current cross-platform benchmark overview, its parity and methodology contract, and retained historical evidence pages. Every current measurement records its tested baseline or follow-up revision, cache state, data plan, device, date, and acceptance boundary.",
   "pages": [
     {
       "path": "docs/intro.md",
-      "sha256": "cabbd1c62364c6ecd8c8b14d06b2c57ac31640e7e86f6daabb4d93ec8ae35cc8",
+      "sha256": "0d79965ca1c53ac1b2881d73235bbde01560a9a819750af8d2e8fb2e159ac3c1",
       "role": "Current developer landing page and benchmark overview"
     },
     {
       "path": "docs/dashboard.md",
-      "sha256": "f79570b7a7b5ce01f6f9a1ea7e3e1cff613575e27efb5fe0d9986aa771cd53be",
+      "sha256": "cbb19785602dd457cdfe5593e9b6663f4d00d27d5eddcc7fef444df2be733bb5",
       "role": "Atomic capability, speed, memory, and parity dashboard"
     },
     {
@@ -25,17 +25,17 @@
     },
     {
       "path": "docs/backends.md",
-      "sha256": "afb1a38a04c5eab0aabcc2b4b72d6eda199e2c2056cd423ef147cc2bafecfa2a",
+      "sha256": "9e1f6a04e1529061a1bed8bd385e5ca9ce7c60dddddba05b127ad8889df9f72a",
       "role": "Current capability and measured summary"
     },
     {
       "path": "docs/performance/results.md",
-      "sha256": "61d013547a10edbb14130899694bfdea7698fc75a0b0856b8468b8b918f179f1",
+      "sha256": "409440c4e5e0110e0a826cf48fc39e0dff04e5547bd743dbd7d773679f71f1b1",
       "role": "Verified benchmark provenance index"
     },
     {
       "path": "docs/performance/changes.md",
-      "sha256": "4673ee198dbda9ca9d68fcafd5d8c0c61af16e5fdcd098f7989ccb7f1c9a20d2",
+      "sha256": "35a1f8ebde7fc43962373f3f272bb55d9e126cef760b3f2a76766a5c0963e071",
       "role": "Measurement replacement and historical-change ledger"
     },
     {
@@ -45,12 +45,12 @@
     },
     {
       "path": "docs/performance/continuous-profiling.md",
-      "sha256": "2075493dc1d57ba2b5ed35545d1e0d06a757e6294ebc5218e79a53f60d54e8e7",
+      "sha256": "f38ba526825b9e437ffee0028153b68a071b9789a3e22deeec2241c92ce29122",
       "role": "Cross-platform cadence, comparison-key, run-registry, and promotion contract"
     },
     {
       "path": "docs/performance/parity.md",
-      "sha256": "490039ef80415314c796ea77ed3d8612e9d6fed601f13c59722d50a6953a4792",
+      "sha256": "ab3efdd27866605bacff0561ed5c178a78a426196976299745f744a3c0bc1498",
       "role": "Current cross-platform numerical acceptance gates"
     },
     {
@@ -65,8 +65,13 @@
     },
     {
       "path": "docs/maintainer/ssb-performance.md",
-      "sha256": "e3dd8c1289ee2cf519d3ed7b4779fadddb843e92fe6529a02b5f67c683966c3e",
+      "sha256": "299ad54a239438adaf99ca8371b528964cbbb22b0576e2faaa5857d428e1a4e3",
       "role": "SSB backend performance history"
+    },
+    {
+      "path": "docs/maintainer/native-metal-ssb-migration.md",
+      "sha256": "04fa4856a67f87088c68c41a88601e383203ea4a3c079c69d5418b6d67461a9c",
+      "role": "Native Swift Metal SSB lineage, parity, and benchmark record"
     },
     {
       "path": "docs/maintainer/native-metal-hdf5-postmortem.md",
