@@ -21,7 +21,7 @@ def test_profile_registry_validator_accepts_retained_evidence() -> None:
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "35 platform/module cells" in result.stdout
-    assert "5 retained experiments" in result.stdout
+    assert "6 retained experiments" in result.stdout
 
 
 def test_profile_matrix_has_one_atomic_cell_per_backend_capability() -> None:
@@ -42,6 +42,8 @@ def test_profile_matrix_keeps_current_gaps_and_unsupported_paths_explicit() -> N
     assert cells["dpc.com-rotation-idpc::swift-metal"]["state"] == "evidence-gap"
     assert cells["dpc.com-rotation-idpc::webgpu"]["state"] == "evidence-gap"
     assert cells["ssb.calibration-200-nelder-mead::mps"]["state"] == "evidence-gap"
+    assert cells["ssb.object-phase-loss::swift-metal"]["state"] == "ready"
+    assert cells["ssb.calibration-200-nelder-mead::swift-metal"]["state"] == "ready"
 
     for cell in cells.values():
         if cell["support_level"] == "not-implemented":

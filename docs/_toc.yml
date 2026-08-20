@@ -116,6 +116,8 @@ parts:
           - file: maintainer/remote-cuda-real-data-2026-08-15
             title: Remote CUDA evidence
           - file: maintainer/ssb-architecture
+          - file: maintainer/native-metal-ssb-migration
+            title: Native Metal SSB migration
           - file: maintainer/virtual-image-kernel-checklist
           - file: maintainer/history/index
             title: Historical experiments

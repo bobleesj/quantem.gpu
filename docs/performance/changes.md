@@ -6,18 +6,19 @@ measurement of the current code.
 
 - **Ledger reviewed:** 2026-08-19
 - **Integration base:** `334b7b5`
-- **Current combined local stack before this follow-up:** `e052dfb`
+- **Current combined local stack before this follow-up:** `e1da9bc`
 - **Current measured checkout:** `8c47a466` (source tree `c3094dcf`)
-- **Documentation branch:** `platform-parity-profile-integration`
+- **Documentation branch:** `native-metal-ssb`
 
-The current profiling-registry follow-up changes documentation, machine-readable
-run policy, and CI validation. It does not change production Python, CUDA,
-Metal, Swift, or WebGPU kernels or relabel an older measurement.
+The current follow-up adds the native Swift/Metal SSB product at `e1da9bc` and
+records its separately qualified evidence. It does not relabel an older CUDA,
+Python MPS, WebGPU, IO, or application measurement.
 
 ## Latest documentation changes
 
 | Commit | Change | Performance-number effect |
 |---|---|---|
+| `e1da9bc` | Added `MetalSSBKernels`, exact 512×512 reconstruction/loss, deterministic 200-trial TPE plus Nelder–Mead fitting, focused tests, and a standalone benchmark | adds separate native Swift/Metal SSB rows; does not replace differently configured CUDA, Python MPS, or WebGPU rows |
 | Current profiling-registry follow-up | Added the 35-cell platform/module schedule, human run index, manifest validator, CI gate, and continuous-profiling guide | none; the existing timings and scientific acceptance states are unchanged |
 | `e052dfb` | Combined current platform profiling evidence with the three parity-qualified scientific fixes | existing measured baselines remain tied to their recorded revisions |
 | `146238a` | Clarified that the SSB PyTorch functions are executable teaching references, not production kernels | none |
@@ -39,6 +40,7 @@ unpublished revision.
 
 | Evidence | Latest retained interpretation | Why it changed or remained separate |
 |---|---|---|
+| `20260819-native-metal-ssb` | Complete-cache object p50 `8.911 ms`, exact-loss p50 `25.120 ms`, deterministic 200-trial fit p50 `6.061 s`; zero-cache object p50 `145.178 ms` | new native Swift/Metal 512 evidence on a separate full-BF fixture; warm prepared compute is not raw-source load, application wall time, or physical 8 GB signoff |
 | `PLATFORM-PROFILE-2026-08-19` | Added current CUDA, Python MPS, native Swift/Metal, WebGPU, and CPU-reference rows with atomic p50/p95/max, memory, dtype/bin, and parity fields | replaces older overview values only when the operation, cache boundary, source shape/dtype, and load plan are equivalent; fixtures C and D remain explicitly separate |
 | Exact streamed screening follow-up | MPS full-scan mean DP and CoM are byte-exact; BF/DF are value-exact across public `float32` and reference `uint64`; build `6.711 s`, validated warm reopen `20.803 ms` | replaces the faster `3.451 s` first-chunk-mask candidate because that candidate failed full-scan parity |
 | Deterministic CUDA SSB calibration follow-up | 200 seeded TPE trials plus Nelder–Mead are byte-deterministic across three full fits; p50 `11.168 s` | replaces the `8.096 s` atomic-objective headline because identical seeds produced two fitted minima; the slower deterministic result is the accepted claim |

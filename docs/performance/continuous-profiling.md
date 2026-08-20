@@ -52,7 +52,7 @@ accepted sessions establish a stable same-key device baseline.
 | CPU reference | Phil portable CPU | Independent exact adjudication; never a silent fallback | Not applicable |
 | CUDA | MJGOAT physical CUDA | Load/decode, resident products, screening, SSB reconstruction, and deterministic calibration | Physical or equivalently constrained 6 GiB dedicated-VRAM run, including other card occupants |
 | Python MPS | Phil physical MPS | Load/decode, products, screening, SSB, process footprint, pressure, and swap | Physical 8 GB unified-memory run |
-| Native Swift/Metal | Phil physical native toolchain | Swift tests, Metal compilation, QH5/native IO, FFT/display, and package-owned numerical kernels | Physical 8 GB unified-memory run plus application signoff where the claim is wall-to-wall |
+| Native Swift/Metal | Phil physical native toolchain | Swift tests, Metal compilation, QH5/native IO, FFT/display, SSB reconstruction/loss/calibration, and package-owned numerical kernels | Physical 8 GB unified-memory run plus application signoff where the claim is wall-to-wall |
 | WebGPU | Phil hardware browser | Browser load/decode, products, DPC/iDPC, SSB reconstruction, adapter limits, browser-tree memory, and device loss | Physical 8 GB laptop run; software/fallback adapters never qualify |
 
 The physical 8 GB Apple gate is coordinated: only one memory/GPU campaign may
