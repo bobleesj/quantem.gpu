@@ -30,9 +30,10 @@ Native Swift/Metal products for macOS and iOS clients:
   product. See [Native Metal image endpoints](metal_image.md).
 - `MetalImageRuntime` for histogram, range, and display contracts.
 - `Native4DSTEMIO` for Python-free HDF5/EMD discovery.
-- `Metal4DSTEMLoadPlan`, `Metal4DSTEMStreamingPlan`, and
-  `Metal4DSTEMResidentCacheIO` for explicit native load, resource, and cache
-  provenance. See [Native 4D-STEM load and cache contract](native_4dstem_io.md).
+- `Metal4DSTEMLoadPlan`, `Metal4DSTEMStreamingPlan`,
+  `Metal4DSTEMResidentCacheIO`, and `Metal4DSTEMResidentSummaryIO` for explicit
+  native load, resource, resident-cache, and exact prepared-product provenance.
+  See [Native 4D-STEM load and cache contract](native_4dstem_io.md).
 - `MetalSSBEngine` for exact native 512×512 SSB reconstruction,
   phase-variance evaluation, and deterministic 200-trial TPE plus Nelder–Mead
   fitting. See [SSB API](ssb.md).

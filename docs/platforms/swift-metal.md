@@ -68,6 +68,34 @@ source/accumulation/output dtypes, bad-pixel policy, and expected bytes. An
 automatic detector-bin choice belongs to client policy and must remain visible
 in provenance.
 
+## Exact resident summaries
+
+`Native4DSTEMIO` can persist compact, exact products and sufficient statistics
+beside a sealed resident cache. This is a prepared-product boundary: it is not a
+compressed-source load, and a client must label it accordingly.
+
+| Public type | Contract |
+|---|---|
+| `Metal4DSTEMResidentSummaryRole` | Names BF, ABF, ADF, total intensity, detector row/column moments, and selected diffraction artifacts |
+| `Metal4DSTEMResidentSummaryMetadata` | Schema, source/resident identity, output shape/dtype, scan region/bin, detector bin, count audit, detector bands, selected scan coordinate, and artifact descriptors |
+| `Metal4DSTEMResidentSummary` | Validated metadata plus exact artifact bytes |
+| `Metal4DSTEMResidentSummaryIO.write(...)` | Atomically creates a new `quantem.gpu.resident-summary/v1` directory; never overwrites an existing summary |
+| `Metal4DSTEMResidentSummaryIO.read(...)` | Fails closed on identity, geometry, dtype, bin, audit, size, or SHA-256 mismatch |
+
+The fused
+`detector_products_u16_word_major_with_u64_moments` Metal kernel traverses an
+exact detector-bin-4 `uint16` resident volume once. It writes BF/ABF/ADF as
+`uint32` and total, detector-row, and detector-column moments as `uint64`; the
+wider moment dtype prevents overflow before CoM, DPC, or iDPC derivation.
+
+`quantem.gpu` owns the reusable integer artifacts, the reduction kernel, and
+strict provenance validation. A native client owns discovery, admission,
+scheduling, eviction, memory-pressure response, and the user-visible reason for
+any detector bin or prepared reopen. The client must not describe a summary
+reopen as a first source encounter or a binned detector as native resolution.
+See [Verified benchmark results](../performance/results.md) for the physical
+Phil and 8 GB M2 Air measurements; this platform page does not duplicate them.
+
 `MetalSSBEngine` is intentionally narrower than the Python source loader. It
 accepts plane-major lossless `uint8` bright-field columns with shape
 `[logical_brightfield, scan_row, scan_column]` for a 512×512 scan. It never

@@ -11,7 +11,7 @@ Native clients import two products for local 4D-STEM loading:
 
 | Product | Owns | Dependencies |
 |---|---|---|
-| `Native4DSTEMIO` | HDF5 and EMD catalog discovery, QH5 indexing, source identity, value audits, resident-cache IO | `CNativeHDF5`, vendored `CHDF5.xcframework`, zlib, Foundation, CryptoKit |
+| `Native4DSTEMIO` | HDF5 and EMD catalog discovery, QH5 indexing, source identity, value audits, resident-cache and exact-summary IO | `CNativeHDF5`, vendored `CHDF5.xcframework`, zlib, Foundation, CryptoKit |
 | `Metal4DSTEMKernels` | Exact load geometry, streaming geometry, QH5 decode, detector binning, BF/ABF/ADF, CoM, DPC/iDPC primitives | Metal, Foundation |
 
 Neither product imports SwiftUI, AppKit, UIKit, or Python.
@@ -151,6 +151,49 @@ is the scientific integrity path. Passing `verifySHA256: false` verifies only
 the sealed file identity and size and must be labeled as such by the client.
 An incomplete or rejected cache falls back to the original indexed source; it
 must never change scan coverage, binning, dtype, or metadata silently.
+
+## Exact resident summary
+
+After a resident payload has been sealed, a client may persist exact compact
+products and sufficient statistics with
+`Metal4DSTEMResidentSummaryIO.write(...)`:
+
+```swift
+let summaryMetadata = try Metal4DSTEMResidentSummaryIO.write(
+  to: summaryDirectory,
+  residentMetadata: residentMetadata,
+  detectorBands: detectorBands,
+  selectedScanRow: selectedRow,
+  selectedScanColumn: selectedColumn,
+  artifacts: exactArtifacts
+)
+```
+
+`exactArtifacts` must contain every `Metal4DSTEMResidentSummaryRole`: BF, ABF,
+ADF, total intensity, detector-row moment, detector-column moment, and selected
+diffraction. Virtual images and selected diffraction are little-endian
+`uint32`; total and coordinate moments are little-endian `uint64` so CoM
+derivation cannot overflow at the retained full-scan scale.
+
+Reopen against the same sealed resident metadata and detector-band definition:
+
+```swift
+let summary = try Metal4DSTEMResidentSummaryIO.read(
+  from: summaryDirectory,
+  residentMetadata: residentMetadata,
+  detectorBands: detectorBands
+)
+```
+
+The reader validates the `quantem.gpu.resident-summary/v1` schema, source and
+resident identities, output shape/dtype, half-open scan region, scan and
+detector bins, count audit, detector bands, selected scan coordinate, artifact
+shape/dtype/size, and every artifact SHA-256. A mismatch fails closed; it never
+returns a partly trusted product set.
+
+This is a prepared-product cache. Reading it does not open, read, or decompress
+the original HDF5 source and must not be reported as a source-load benchmark.
+The application owns the decision to create, retain, evict, or present it.
 
 ## Client ownership
 

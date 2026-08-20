@@ -12,7 +12,7 @@ never presented as native resolution. Check the complete provenance ledger
 before using a number in a design or release decision.
 ```
 
-**Dashboard review:** 2026-08-19. Every measured timing below shows the device
+**Dashboard review:** 2026-08-20. Every measured timing below shows the device
 and test date. The overview deliberately omits evidence IDs and source revisions;
 it does not replace the
 [complete benchmark provenance ledger](performance/results.md).
@@ -45,6 +45,7 @@ the timing, memory, parity, device, and date columns are to the right.
 | [**Python MPS**](platforms/mps.md) | `512x512` | Full | `192x192` | 2 | `96x96` | `uint16` | `uint16` | `uint16` | Warm source | First usable resident | C | p50 | **0.707 s** | Process RSS | **0.73 GB** | Pass | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-19 |
 | [**Python MPS**](platforms/mps.md) | `512x512` | Full | `192x192` | 4 | `48x48` | `uint16` | `uint16` | `uint16` | Warm source | First usable resident | C | p50 | **0.605 s** | Process RSS | **0.73 GB** | Pass | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-19 |
 | [**Python MPS**](platforms/mps.md) | `512x512` | Full | `192x192` | 8 | `24x24` | `uint16` | `uint16` | `uint16` | Warm source | First usable resident | C | p50 | **0.586 s** | Process RSS | **0.74 GB** | Pass | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-19 |
+| [**Native Swift/Metal**](platforms/swift-metal.md) | `512x512` | Full | `192x192` | 4 | `48x48` | `uint16` | — | `uint16` | Prepared exact summary | First complete product | C | p50 | **0.029 s** | Process RSS max | **92.0 MB** | Pass | Apple M2 MacBook Air (`Mac14,2`, 8 GB) | 2026-08-19 |
 | [**WebGPU**](platforms/webgpu.md) | `512x512` | Full | `192x192` | 1 | `192x192` | `uint16` | `uint8` | `uint8` | Warm OS cache | First usable resident | D | p50 | **0.824 s** | Chrome-tree RSS max | **5.39 GB** | Pass | Chrome 151, Apple M5 Max Metal-3 | 2026-08-19 |
 | [**WebGPU**](platforms/webgpu.md) | `512x512` | Full | `192x192` | 2 | `96x96` | `uint16` | `uint16` | `float32` | Warm OS cache | First usable resident | D | p50 | **1.281 s** | Chrome-tree RSS max | **5.76 GB** | Pass | Chrome 151, Apple M5 Max Metal-3 | 2026-08-19 |
 | [**WebGPU**](platforms/webgpu.md) | `512x512` | Full | `192x192` | 4 | `48x48` | `uint16` | `uint16` | `float32` | Warm OS cache | First usable resident | D | p50 | **1.044 s** | Chrome-tree RSS max | **5.57 GB** | Pass | Chrome 151, Apple M5 Max Metal-3 | 2026-08-19 |
@@ -57,14 +58,17 @@ the timing, memory, parity, device, and date columns are to the right.
 Fixtures C and D are independent real `512x512x192x192`, native-`uint16`,
 27-shard compressed-HDF5 sources. Every row selects the complete scan, uses no
 scan crop, keeps scan bin 1, and records the detector bin explicitly. CUDA and
-WebGPU use D; Python MPS uses C; CPU is an independent reference, never a
-silent fallback. Different fixtures and boundaries are not ranked.
+WebGPU use D; Python MPS and Native Swift/Metal use C; CPU is an independent
+reference, never a silent fallback. Different fixtures and boundaries are not
+ranked.
 
-The source cache was not forcibly evicted, so accelerator rows are labeled
-warm rather than cold. The results ledger owns p95/max, exact revisions, fixture
-hashes, logical payloads, and parity artifacts. Historical cropped, prepared,
-first-campaign, and application-level rows were removed from this current table
-and remain in the maintainer records linked from
+The source cache was not forcibly evicted, so source rows are labeled warm
+rather than cold. The Native Swift/Metal row is explicitly a prepared exact
+summary: it validates compact products and sufficient statistics and does not
+decode or traverse the resident 4D volume. The results ledger owns p95/max,
+exact revisions, fixture hashes, logical payloads, and parity artifacts.
+Historical cropped, superseded prepared, first-campaign, and application-level
+rows remain in the maintainer records linked from
 [Verified benchmark results](performance/results.md).
 
 (dtype-support-and-peak-memory)=
@@ -258,7 +262,7 @@ is likewise never presented as source load.
 | **Python MPS** | BF exact sum | `512x512` | `48x48` | 4 | Warm resident | p50 | **2.502 ms** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
 | **Python MPS** | ADF exact sum | `512x512` | `48x48` | 4 | Warm resident | p50 | **4.404 ms** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
 | **Python MPS** | DF exact sum | `512x512` | `48x48` | 4 | Warm resident | p50 | **2.642 ms** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
-| **Native Swift/Metal** | Virtual-image module | `512x512` | `48x48` | 4 | Physical application parity | — | **Pending** | Apple M2 MacBook Air (`Mac14,2`, 8 GB) | 2026-08-18 |
+| **Native Swift/Metal** | BF, ABF, ADF, total, and row/column moments | `512x512` | `48x48` | 4 | One resident-cache traversal | Single run | **103.0 ms** | Apple M2 MacBook Air (`Mac14,2`, 8 GB) | 2026-08-19 |
 | **WebGPU** | Mean diffraction | `512x512` | `192x192` | 1 | Warm resident | p50 | **50.9 ms** | Chrome 151, Apple M5 Max Metal-3 | 2026-08-19 |
 | **WebGPU** | BF exact sum | `512x512` | `192x192` | 1 | Warm resident | p50 | **5.5 ms** | Chrome 151, Apple M5 Max Metal-3 | 2026-08-19 |
 | **WebGPU** | ADF exact sum | `512x512` | `192x192` | 1 | Warm resident | p50 | **15.0 ms** | Chrome 151, Apple M5 Max Metal-3 | 2026-08-19 |
@@ -267,8 +271,10 @@ is likewise never presented as source load.
 
 The current integer and mean-DP rows pass their independent CPU reference. CUDA
 uses native detector resolution on fixture D; MPS uses explicit detector bin 4
-on fixture C. WebGPU uses native detector resolution on D. These are warm
-resident kernels and are not source-load times.
+on fixture C. WebGPU uses native detector resolution on D. The native fused pass
+produces three virtual images plus overflow-safe `uint64` total and detector
+moments in one traversal; its row is the complete pass, not a separately timed
+value for each output. These are resident kernels and are not source-load times.
 
 ### Detector moments and phase contrast — `quantem.gpu.dpc`
 
@@ -278,13 +284,16 @@ resident kernels and are not source-load times.
 | **CUDA** | Fixed-orientation iDPC | `512x512` | `192x192` | 1 | CPU small-field integration | p50 | **21.272 ms** | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 | 2026-08-19 |
 | **Python MPS** | CoM row and column | `512x512` | `48x48` | 4 | Warm resident | p50 | **4.637 ms** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
 | **Python MPS** | Fixed-orientation iDPC | `512x512` | `48x48` | 4 | CPU small-field integration | p50 | **12.678 ms** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
-| **Native Swift/Metal** | Phase-contrast module | `512x512` | `48x48` | 4 | Physical application parity | — | **Pending** | Apple M2 MacBook Air (`Mac14,2`, 8 GB) | 2026-08-18 |
+| **Native Swift/Metal** | CoM, DPC, iDPC, and display statistics | `512x512` | `48x48` | 4 | Prepared exact `uint64` moments | Single run | **11.389 ms** | Apple M2 MacBook Air (`Mac14,2`, 8 GB) | 2026-08-19 |
 | **WebGPU** | DPC row | `512x512` | `192x192` | 1 | Warm cached CoM | p50 | **0.9 ms** | Chrome 151, Apple M5 Max Metal-3 | 2026-08-19 |
 | **WebGPU** | DPC column | `512x512` | `192x192` | 1 | Warm cached CoM | p50 | **0.7 ms** | Chrome 151, Apple M5 Max Metal-3 | 2026-08-19 |
 | **WebGPU** | iDPC | `512x512` | `192x192` | 1 | Explicit 0-degree rotation | p50 | **1.4 ms** | Chrome 151, Apple M5 Max Metal-3 | 2026-08-19 |
 | **CPU reference** | Rotation and iDPC adjudication | `512x512` | `192x192` | 1 | CPU reference | Single run | **177.6 ms** | Apple M5 Max CPU | 2026-08-19 |
 
 The current CUDA and MPS CoM rows pass their respective independent references.
+The native row is the complete derived-product stage after exact moments exist;
+it includes center/mean, alignment, Metal iDPC, and float-surface construction.
+It does not include resident-cache traversal or source loading.
 The CUDA/MPS cross-fixture timing rows are not compared numerically. The prior
 same-fixture detector-bin-4 comparison remains a historical block for iDPC at
 `2.84e-5` maximum error. Current WebGPU CoM/DPC/iDPC summaries are deterministic,
@@ -371,7 +380,7 @@ dashboard and the verified-results ledger.
 |---|---|---|---|---|---|---|---|
 | **CUDA** | ✓ | ✓ | ✓ | CoM ✓; historical cross-backend iDPC Block | ✓; deterministic 200-trial fit ✓ | 6 GiB Pending | Display ✓; movie via NVENC; parallax CUDA-only |
 | **Python MPS** | ✓ | ✓ | ✓ | Bin-4 CoM ✓; native sidecar Block | Raw detector-bin-2 parity ✓; current fit Pending | 8 GB Pending | Display ✓; movie via VideoToolbox; parallax — |
-| **Native Swift/Metal** | ✓ | — | ✓ | Compile/test coverage; numerical package parity Pending | 512×512 exact ✓ | 8 GB ✓ at detector bin 4; SSB physical 8 GB Pending | `MetalDisplayKernels`/`MetalImageFFT`/`MetalSSBKernels` ✓ |
+| **Native Swift/Metal** | ✓ | — | ✓ | Physical bin-4 products exact; package-level DPC parity Pending | 512×512 exact ✓ | 8 GB ✓ at detector bin 4; SSB physical 8 GB Pending | `MetalDisplayKernels`/`MetalImageFFT`/`MetalSSBKernels` ✓ |
 | **WebGPU** | ✓ | — | ✓ | Timing ✓; per-pixel float parity Pending | Reconstruction ✓; calibration — | 8 GB Pending | Display ✓; movie and parallax are not targets |
 | **CPU reference** | Ref | Ref | Ref | Ref | Ref | — | Explicit adjudication/fallback paths only |
 
