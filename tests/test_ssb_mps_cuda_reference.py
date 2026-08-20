@@ -167,6 +167,177 @@ def test_load_bf_columns_mps_keeps_exact_sparse_detector_source(tmp_path) -> Non
     assert frames.nbytes == columns.nbytes
 
 
+def test_load_bf_columns_mps_resolves_linked_manifest_schema(tmp_path) -> None:
+    """Current exports keep BF storage metadata in the linked root manifest."""
+    from quantem.gpu.ssb.compute.mps.engine import load_bf_columns_mps
+
+    source = tmp_path / "source"
+    source.mkdir()
+    rows = [0, 1, 1]
+    cols = [1, 1, 2]
+    columns = np.arange(3 * 16, dtype=np.uint8).reshape(3, 16)
+    (source / "bf_columns.u8").write_bytes(columns.tobytes())
+    (tmp_path / "cal.json").write_text(json.dumps({
+        "scan_region": {"shape": [4, 4]},
+        "detector_shape": [2, 3],
+        "bf_rows": rows,
+        "bf_cols": cols,
+        "bf_center": [1.0, 1.5],
+        "bf_radius_px": 1.25,
+        "bf_column_companion": True,
+        "source_transport": "bf_columns",
+        "dc_value": [1.0, 0.0],
+    }))
+    (tmp_path / "manifest.json").write_text(json.dumps({
+        "calibration": "cal.json",
+        "source": {
+            "bf_columns": {
+                "kind": "bf_columns",
+                "path": "source/bf_columns.u8",
+                "encoding": "uint8",
+                "dtype": "uint8",
+                "order": "bf,scan",
+                "shape": [3, 16],
+                "scan_shape": [4, 4],
+                "detector_shape": [2, 3],
+                "source_detector_shape": [4, 6],
+                "detector_bin": 2,
+                "bits_per_value": 8,
+                "bytes_per_bf": 16,
+                "max_value": int(columns.max()),
+                "bytes": int(columns.nbytes),
+            }
+        },
+    }))
+
+    frames = load_bf_columns_mps(tmp_path)
+
+    assert frames.source_path == (source / "bf_columns.u8").resolve()
+    assert frames.det_bin == 2
+    assert frames.source_provenance["declaration"] == "manifest"
+    assert frames.source_provenance["detector_bin"] == 2
+    assert frames.source_provenance["detector_bin_source"] == "declared"
+    np.testing.assert_array_equal(frames.columns(rows, cols), columns)
+
+
+def test_load_bf_columns_mps_rejects_detector_coordinate_mismatch(tmp_path) -> None:
+    """Native-grid columns cannot masquerade as detector-binned coordinates."""
+    from quantem.gpu.ssb.compute.mps.engine import load_bf_columns_mps
+
+    source = tmp_path / "source"
+    source.mkdir()
+    columns = np.arange(3 * 16, dtype=np.uint8).reshape(3, 16)
+    (source / "bf_columns.u8").write_bytes(columns.tobytes())
+    (tmp_path / "cal.json").write_text(json.dumps({
+        "scan_region": {"shape": [4, 4]},
+        "detector_shape": [2, 3],
+        "bf_rows": [0, 1, 1],
+        "bf_cols": [1, 1, 2],
+        "bf_center": [1.0, 1.5],
+        "bf_column_companion": True,
+        "source_transport": "bf_columns",
+    }))
+    (tmp_path / "manifest.json").write_text(json.dumps({
+        "calibration": "cal.json",
+        "source": {
+            "bf_columns": {
+                "kind": "bf_columns",
+                "path": "source/bf_columns.u8",
+                "encoding": "uint8",
+                "dtype": "uint8",
+                "order": "bf,scan",
+                "shape": [3, 16],
+                "scan_shape": [4, 4],
+                "detector_shape": [4, 6],
+                "bits_per_value": 8,
+                "bytes_per_bf": 16,
+                "max_value": int(columns.max()),
+                "bytes": int(columns.nbytes),
+            }
+        },
+    }))
+
+    with pytest.raises(ValueError, match="cannot infer detector binning"):
+        load_bf_columns_mps(tmp_path)
+
+
+def test_load_bf_columns_mps_rejects_malformed_declared_manifest(tmp_path) -> None:
+    """A declared companion must fail closed instead of loading full detector data."""
+    from quantem.gpu.ssb.compute.mps.engine import load_bf_columns_mps
+
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "bf_columns.u8").write_bytes(bytes(16))
+    (tmp_path / "cal.json").write_text(json.dumps({
+        "scan_region": {"shape": [4, 4]},
+        "detector_shape": [2, 2],
+        "bf_rows": [0],
+        "bf_cols": [0],
+        "bf_center": [0.0, 0.0],
+        "bf_column_companion": True,
+        "source_transport": "bf_columns",
+    }))
+    (tmp_path / "manifest.json").write_text(json.dumps({
+        "calibration": "cal.json",
+        "source": {
+            "bf_columns": {
+                "kind": "bf_columns",
+                "path": "source/bf_columns.u8",
+                "encoding": "uint8",
+                "dtype": "uint8",
+                "order": "scan,bf",
+                "shape": [1, 16],
+                "scan_shape": [4, 4],
+                "detector_shape": [4, 4],
+                "bytes": 16,
+            }
+        },
+    }))
+
+    with pytest.raises(ValueError, match="order must be 'bf,scan'"):
+        load_bf_columns_mps(tmp_path)
+
+
+def test_ssb_open_does_not_swallow_declared_companion_error(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """Invalid declared exact data cannot silently become a full-stack load."""
+    from quantem.gpu import io
+    from quantem.gpu.ssb import workflow
+    from quantem.gpu.ssb.compute.mps import engine
+
+    monkeypatch.setattr(workflow, "_resolve_backend", lambda _backend: "mps")
+    monkeypatch.setattr(
+        workflow,
+        "_mps_brightfield_sources",
+        lambda _source, _calibration: (tmp_path,),
+    )
+    monkeypatch.setattr(
+        engine,
+        "load_bf_columns_mps",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ValueError("declared companion is invalid")
+        ),
+    )
+    monkeypatch.setattr(
+        io,
+        "load",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("full detector fallback must not run")
+        ),
+    )
+
+    with pytest.raises(ValueError, match="declared companion is invalid"):
+        workflow.SSB.open(
+            str(tmp_path / "source_master.h5"),
+            backend="mps",
+            voltage_kV=300.0,
+            semiangle_mrad=30.0,
+            scan_sampling_A=0.25,
+        )
+
+
 @pytest.mark.parametrize(
     ("offset", "expected_dtype", "expected_suffix"),
     [
