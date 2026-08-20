@@ -25,8 +25,8 @@
     },
     {
       "path": "docs/platforms/swift-metal.md",
-      "sha256": "eae6095f25c0c2a876cdf141d447e876d77a04a8dbcde0215528b43d4719562a",
-      "role": "Native Swift Metal exact resident-summary and ownership contract"
+      "sha256": "151e561812ff108d52f7b8e88a4c89c63a253d56120a597b1fee8303ff418f8e",
+      "role": "Native Swift Metal exact resident-summary, bounded indexed-streaming, and ownership contract"
     },
     {
       "path": "docs/backends.md",

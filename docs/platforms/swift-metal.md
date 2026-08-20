@@ -18,6 +18,7 @@ WebGPU paths.
 |---|---|---|
 | `Native4DSTEMIO` | discovery, QH5 indexing, HDF5 access, identities, caches, audits | `src/quantem/gpu/swift/Sources/Native4DSTEMIO` |
 | `Metal4DSTEMKernels` | load plans, decode, binning, BF/DF/ADF, CoM, DPC, iDPC primitives | `.../Metal4DSTEMKernels` |
+| `Metal4DSTEMStreamingIO` | bounded QH5 decode, exact `uint64` products, source audit, on-demand native frames | `.../Metal4DSTEMStreamingIO` |
 | `MetalDisplayKernels` | range, histogram, transfer function, colormap | `.../MetalDisplayKernels` |
 | `MetalImageFFT` | FFT operations on resident 2D products | `.../MetalImageFFT` |
 | `MetalImageRuntime` | typed resident surface/statistics state | `.../MetalImageRuntime` |
@@ -47,6 +48,7 @@ second copy.
 |---|---|---|
 | `Native4DSTEMIO` | `CNativeHDF5` → vendored `CHDF5.xcframework` and zlib | `Native4DSTEMIOTests` plus real-source benchmarks |
 | `Metal4DSTEMKernels` | `detector.metal`, `dpc.metal`, `qh5idx.metal` | `Metal4DSTEMKernelsTests` |
+| `Metal4DSTEMStreamingIO` | `Native4DSTEMIO` plus `Metal4DSTEMKernels` | synthetic compressed-fixture parity, overflow, cancellation, and opt-in real-source gates |
 | `MetalDisplayKernels` | `display.metal`, packaged colormaps | `MetalDisplayKernelsTests` |
 | `MetalImageFFT` | `fft.metal`, MPS/MPSGraph frameworks | `MetalImageFFTTests` |
 | `MetalImageRuntime` | `MetalDisplayKernels` | `MetalImageRuntimeTests` |
@@ -109,6 +111,7 @@ remaining BF terms without changing the objective or normalization.
 ```bash
 swift test
 swift run -c release native-4dstem-io-benchmark --help
+swift run -c release metal-4dstem-indexed-load-benchmark --help
 swift run -c release metal-display-benchmark 512
 swift run -c release metal-ssb-benchmark \
   METADATA_JSON FULL_BF_U8 REFERENCE_PHASE_F32 7 full 200 3

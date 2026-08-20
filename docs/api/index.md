@@ -31,6 +31,8 @@ Native Swift/Metal products for macOS and iOS clients:
 - `MetalImageRuntime` for histogram, range, and display contracts.
 - `Native4DSTEMIO` for Python-free HDF5/EMD discovery, prepared QH5 indexes,
   and bounded native frame windows.
+- `Metal4DSTEMStreamingIO` for bounded native QH5 decode, exact `uint64`
+  products, source audits, and on-demand full-resolution diffraction frames.
 - `Metal4DSTEMLoadPlan`, `Metal4DSTEMStreamingPlan`,
   `Metal4DSTEMResidentCacheIO`, and `Metal4DSTEMResidentSummaryIO` for explicit
   native load, resource, resident-cache, and exact prepared-product provenance.
@@ -57,7 +59,7 @@ here over internal backend modules.
 | `parallax` | `run`, `ParallaxResult` | [Device selection and supporting APIs](core.md) |
 | `SSB` | `SSB`, `SSBResult`, series results | [SSB API](ssb.md) |
 | `display`, `movie` | display transforms and encoded artifacts | [Movie API](movie.md) and [display kernels](../kernels/display-export.md) |
-| SwiftPM products | `MetalImageFFT`, `MetalImageRuntime`, `Native4DSTEMIO`, `Metal4DSTEMKernels`, `MetalSSBKernels` | [Native Metal image](metal_image.md), [native load/cache](native_4dstem_io.md), and [SSB](ssb.md) |
+| SwiftPM products | `MetalImageFFT`, `MetalImageRuntime`, `Native4DSTEMIO`, `Metal4DSTEMKernels`, `Metal4DSTEMStreamingIO`, `MetalSSBKernels` | [Native Metal image](metal_image.md), [native load/cache](native_4dstem_io.md), and [SSB](ssb.md) |
 | Remote services | browse, MAPED, and SSB protocol services | [QuantEM.GPU Remote](../remote/index.md) |
 
 Backend modules, private helpers, launch geometry, cache scheduling, and UI
