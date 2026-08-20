@@ -127,12 +127,11 @@ def test_dashboard_is_the_dense_human_overview() -> None:
     for heading in (
         "## Platform-first module dashboard",
         "## Speed and memory at a glance",
-        "### Measured load paths",
+        "### Measured load configurations",
         "### Dtype support and peak memory",
         "### What a 4 or 6 GiB budget can hold",
         "### I/O and first usable product — `quantem.gpu.io`",
-        "#### Scan-size coverage",
-        "#### Detector-bin coverage",
+        "#### Exact configuration gaps",
         "### Screening and prepared-product caches — `quantem.gpu.screening`",
         "### Virtual images — `quantem.gpu.detector`",
         "### Detector moments and phase contrast — `quantem.gpu.dpc`",
@@ -194,28 +193,27 @@ def test_dashboard_is_the_dense_human_overview() -> None:
 
     assert "I[R_r,R_c,k_r,k_c]" in dashboard
     assert "not ranked" in dashboard
-    assert "1.43 GB peak process" in dashboard
+    assert "| Process peak | **1.43 GB** |" in dashboard
     assert "18.00 GiB" in dashboard
     assert "9.00 GiB" in dashboard
     assert "1.125 GiB" in dashboard
     assert "2.25 GiB" in dashboard
-    assert "1.97 GiB per chunk; 10 chunks" in dashboard
-    assert "2.99 GiB per chunk; 7 chunks" in dashboard
+    assert "| 4 GiB | `uint16` | 56 | **1.97 GiB** | 10 | Pending |" in dashboard
+    assert "| 6 GiB | `uint16` | 85 | **2.99 GiB** | 7 | Pending |" in dashboard
     assert "Each `512x512 float32` product map is only **1 MiB**" in dashboard
     assert "ADF has an accelerated" in dashboard
-    assert "no 4/6 GiB physical-device signoff yet" in dashboard
-    assert "Native `uint8`/`uint16`/`uint32` ✓" in dashboard
-    assert "Direct fused saturating output ✓" in dashboard
-    assert "persistent resident cache output is `uint16`/`uint32`" in dashboard
-    assert "allocation-transition and total-card peaks are **Pending**" in dashboard
+    assert "physical 4/6 GiB signoff Pending" in dashboard
+    assert "| `uint8` | `uint8` | `uint8` | Exact native counts | ✓ |" in dashboard
+    assert "| `uint16` | `uint16` | `uint32` | General exact detector sum | ✓ |" in dashboard
+    assert "| `uint16` | `uint8` | `float32` | Exact detector sum | ✓ |" in dashboard
     assert "A calculated payload is never relabeled as a measured peak" in dashboard
 
     for scan_size in (128, 256, 512, 1024):
         assert f"`{scan_size}x{scan_size}`" in dashboard
     for detector_bin in (1, 2, 4, 8):
-        assert f"Bin {detector_bin}" in dashboard
+        assert f"| {detector_bin} |" in dashboard
     assert "square scan-grid sizes, not detector dimensions" in dashboard
-    assert "`512` is native full-BF" in dashboard
+    assert "| **Python MPS** | `512x512` | Native real acquisition | Full active BF | ✓ | p50 | **537.58 ms** |" in dashboard
 
     module_headings = (
         "### I/O and first usable product — `quantem.gpu.io`",
@@ -235,7 +233,7 @@ def test_dashboard_is_the_dense_human_overview() -> None:
             "WebGPU",
             "CPU reference",
         ):
-            assert f"| **{runtime}** |" in section
+            assert runtime in section
 
 
 def test_intro_exposes_current_benchmarks_without_erasing_provenance() -> None:
@@ -282,25 +280,35 @@ def test_intro_exposes_current_benchmarks_without_erasing_provenance() -> None:
 
     for table_field in (
         "Platform",
-        "Scan sizes",
-        "Detector bins",
-        "Latest retained result",
-        "Details",
+        "Selected scan",
+        "Detector bin",
+        "Cache state",
+        "Fixture",
+        "Statistic",
+        "Time",
+        "Date",
+        "Revision",
+        "Device",
+        "Evidence",
     ):
         assert table_field in intro
 
     for headline_time in (
-        "1.985 / 2.043 s p50",
-        "0.450 s median",
-        "0.772 s p50",
-        "1.199/1.212/1.106 s",
+        "1.985 s",
+        "2.043 s",
+        "0.450 s",
+        "0.772 s",
+        "1.199 s",
+        "1.212 s",
+        "1.106 s",
         "12.31 s",
         "3.96 s",
         "6.8 ms",
         "1.35 ms",
         "12.39 ms",
-        "32.2 ms p50",
-        "537.58 ms p50",
+        "32.2 ms",
+        "537.58 ms",
+        "669.1 ms",
         "1.69 s",
         "1.91 s",
     ):
@@ -333,6 +341,9 @@ def test_intro_exposes_current_benchmarks_without_erasing_provenance() -> None:
 
 def test_intro_ssb_size_matrix_tracks_fixed_size_runtime_registries() -> None:
     intro = Path("docs/intro.md").read_text(encoding="utf-8")
+    ssb_section = intro.split(
+        "### Single-sideband ptychography — `quantem.gpu.SSB`", 1
+    )[1].split("### Other public modules", 1)[0]
     cuda = Path(
         "src/quantem/gpu/ssb/compute/cuda/kernels/__init__.py"
     ).read_text(encoding="utf-8")
@@ -343,16 +354,26 @@ def test_intro_ssb_size_matrix_tracks_fixed_size_runtime_registries() -> None:
         "src/quantem/gpu/ssb/compute/webgpu/kernels/index.ts"
     ).read_text(encoding="utf-8")
 
-    assert "scan sizes, not detector sizes" in intro
-    assert "`512` is native full-BF" in intro
+    assert "scan sizes, not detector sizes" in ssb_section
+    assert "| Platform | Scan grid | Evidence type | BF policy | State | Statistic | Time |" in ssb_section
+    assert "| Platform | `128x128` | `256x256` |" not in ssb_section
     for size in (128, 256, 512, 1024):
-        assert f"`{size}x{size}`" in intro
+        assert f"`{size}x{size}`" in ssb_section
         assert f"{size}:" in cuda
         assert f"{size}:" in mps
+        for platform in (
+            "CUDA",
+            "Python MPS",
+            "Native Swift/Metal",
+            "WebGPU",
+            "CPU reference",
+        ):
+            assert ssb_section.count(f"| **{platform}** | `{size}x{size}` |") == 1
     assert "SUPPORTED_SSB_SIZES = [128, 256, 512, 1024]" in webgpu
 
-    assert "incomplete frozen CUDA artifacts" in intro
-    assert "no native swift ssb kernel" in intro.lower()
+    assert "Incomplete frozen reference" in ssb_section
+    assert "Native real acquisition | Full active BF" in ssb_section
+    assert "no native swift ssb kernel" in ssb_section.lower()
 
 
 def test_platform_first_io_tables_expose_bins_and_missing_evidence() -> None:
@@ -362,33 +383,93 @@ def test_platform_first_io_tables_expose_bins_and_missing_evidence() -> None:
         "Metal4DSTEMLoadPlan.swift"
     ).read_text(encoding="utf-8")
 
-    io_section = dashboard.split(
+    load_section = dashboard.split(
+        "### Measured load configurations", 1
+    )[1].split(
+        "(dtype-support-and-peak-memory)=", 1
+    )[0]
+    gap_section = dashboard.split(
         "### I/O and first usable product — `quantem.gpu.io`", 1
     )[1].split(
         "### Screening and prepared-product caches — `quantem.gpu.screening`", 1
     )[0]
 
-    assert io_section.count("| Platform |") == 2
-    assert "| Platform | Bin 1 | Bin 2 | Bin 4 | Bin 8 |" in io_section
+    assert "| Platform | Selected scan | Scan plan |" in load_section
+    assert "| Platform | Selected scan | Scan plan |" in gap_section
     assert "supportedDetectorBins = [1, 2, 4]" in swift_plan
-    assert (
-        "| **Native Swift/Metal** | ✓ | Test | ✓ | — |"
-        in io_section
+
+    rows = [
+        [cell.strip() for cell in line.strip("|").split("|")]
+        for line in load_section.splitlines()
+        if line.startswith("| [**")
+    ]
+    webgpu_rows = [row for row in rows if "WebGPU" in row[0]]
+    observed = {
+        (row[1], int(row[4]), row[5], row[7], row[8], row[13])
+        for row in webgpu_rows
+    }
+    assert {
+        ("`256x256`", 1, "`192x192`", "`uint8`", "`uint8`", "**0.338 s**"),
+        ("`256x256`", 2, "`96x96`", "`uint8`", "`float32`", "**0.774 s**"),
+        ("`256x256`", 4, "`48x48`", "`uint8`", "`float32`", "**0.755 s**"),
+        ("`256x256`", 8, "`24x24`", "`uint8`", "`float32`", "**0.733 s**"),
+        ("`512x512`", 1, "`192x192`", "`uint8`", "`uint8`", "**0.772 s**"),
+        ("`512x512`", 2, "`96x96`", "`uint8`", "`float32`", "**1.199 s**"),
+        ("`512x512`", 4, "`48x48`", "`uint8`", "`float32`", "**1.212 s**"),
+        ("`512x512`", 8, "`24x24`", "`uint8`", "`float32`", "**1.106 s**"),
+        ("`512x512`", 2, "`96x96`", "`uint16`", "`float32`", "**2.651 s**"),
+    } <= observed
+
+    assert "1.199/1.212/1.106" not in load_section
+    assert "0.774/0.755/0.733" not in load_section
+    assert "1.985 / 2.043" not in load_section
+    assert "Joint crop-plus-bin parity and hardware timing" in gap_section
+    assert "| **Native Swift/Metal** | `512x512` | Full | `192x192` | 8 | `24x24` | — | — |" in gap_section
+    assert "|  |" not in load_section
+    assert "|  |" not in gap_section
+
+    intro = Path("docs/intro.md").read_text(encoding="utf-8")
+    intro_io = intro.split("### I/O — `quantem.gpu.io`", 1)[1].split(
+        "### Screening — `quantem.gpu.screening`", 1
+    )[0]
+    intro_rows = [
+        [cell.strip() for cell in line.strip("|").split("|")]
+        for line in intro_io.splitlines()
+        if line.startswith("| **")
+    ]
+    platforms = ("CUDA", "Python MPS", "Native Swift/Metal", "WebGPU")
+    evidence_ids = (
+        "CUDA-512-LOAD",
+        "MPS-1024-LOAD",
+        "M2-AIR-BIN4-E2E",
+        "WEBGPU-256-CROP",
+        "WEBGPU-512-FULL",
+        "WEBGPU-DET-BIN",
     )
-    assert (
-        "| **WebGPU** | ✓ | ✓ | ✓ | ✓ |"
-        in io_section
-    )
-    assert (
-        "| **CUDA** | ✓ | ✓ | Pending | Pending |"
-        in io_section
-    )
-    assert (
-        "| **Python MPS** | ✓ | ✓ | Pending | Pending |"
-        in io_section
-    )
-    assert "| **CPU reference** | Ref | Ref | Ref | Ref |" in io_section
-    assert "|  |" not in io_section
+
+    def platform(cell: str) -> str:
+        return next(name for name in platforms if name in cell)
+
+    def evidence_id(cell: str) -> str:
+        return next(name for name in evidence_ids if name in cell)
+
+    dashboard_keys = {
+        (
+            platform(row[0]), row[1], row[2], row[4], row[5], row[6], row[7],
+            row[8], row[9], row[11], row[12], row[13], row[17], row[18],
+            row[19], evidence_id(row[20]),
+        )
+        for row in rows
+    }
+    intro_keys = {
+        (
+            platform(row[0]), row[1], row[2], row[3], row[4], row[5], row[6],
+            row[7], row[8], row[9], row[10], row[11], row[12], row[13],
+            row[14], evidence_id(row[15]),
+        )
+        for row in intro_rows
+    }
+    assert intro_keys == dashboard_keys
 
 
 def test_dashboard_small_gpu_numbers_match_the_screening_planner() -> None:
@@ -405,8 +486,8 @@ def test_dashboard_small_gpu_numbers_match_the_screening_planner() -> None:
     assert six_gib.chunk_count == 7
     assert six_gib.chunk_resident_gb / (1 << 30) * 1e9 == pytest.approx(2.98828125)
 
-    assert "**1.97 GiB per chunk; 10 chunks** (56 rows each)" in dashboard
-    assert "**2.99 GiB per chunk; 7 chunks** (85 rows each)" in dashboard
+    assert "| 4 GiB | `uint16` | 56 | **1.97 GiB** | 10 | Pending |" in dashboard
+    assert "| 6 GiB | `uint16` | 85 | **2.99 GiB** | 7 | Pending |" in dashboard
     assert "`memory_budget_gb=4.0`" in Path("docs/api/core.md").read_text(
         encoding="utf-8"
     )
@@ -604,6 +685,10 @@ def test_scientific_writing_convention_is_explicit() -> None:
     assert "6 GiB" in writing
     assert "``:math:``" in writing
     assert "``.. math::``" in writing
+    assert "## Tables: one cell, one value" in writing
+    assert "exact configuration or one exact measurement" in writing
+    assert "Do not infer a Cartesian product" in writing
+    assert "1.199/1.212/1.106 s" in writing
 
 
 def test_new_public_pages_do_not_leak_private_fixture_paths() -> None:
