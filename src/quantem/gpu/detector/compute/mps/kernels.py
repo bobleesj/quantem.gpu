@@ -1564,8 +1564,10 @@ class MultiChunkedFrames(ChunkedFrames):
         d0 = self.datasets[0]
         self._det = d0._det
         self._frame_elems = d0._frame_elems
-        self.det_bin = d0.det_bin
+        self._np_dtype = np.dtype(d0._np_dtype)
+        self.det_bin = int(d0.det_bin)
         self._torch = d0._torch
+        self.torch_dtype = d0.torch_dtype
         stored_scan = d0.metadata.get("scan_shape")
         if stored_scan is None:
             scan = int(round(d0._n ** 0.5))
@@ -1582,7 +1584,7 @@ class MultiChunkedFrames(ChunkedFrames):
             )
         self.shape = (n_total, *self._scan, *self._det)
         self.ndim = 5
-        self.dtype = d0.dtype
+        self.dtype = self._np_dtype
         self.device = d0.device
 
     @property
@@ -1595,6 +1597,17 @@ class MultiChunkedFrames(ChunkedFrames):
         if det != tuple(self._det):
             raise ValueError(
                 f"Dataset detector shape {det} does not match existing {tuple(self._det)}"
+            )
+        dtype = np.dtype(getattr(frames, "_np_dtype", frames.dtype))
+        if dtype != self._np_dtype:
+            raise ValueError(
+                f"Dataset dtype {dtype} does not match existing {self._np_dtype}"
+            )
+        detector_bin = int(getattr(frames, "det_bin", 1))
+        if detector_bin != self.det_bin:
+            raise ValueError(
+                f"Dataset detector bin {detector_bin} does not match existing "
+                f"{self.det_bin}"
             )
         stored_scan = frames.metadata.get("scan_shape")
         if stored_scan is None:

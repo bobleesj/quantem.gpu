@@ -417,10 +417,15 @@ class SSB:
         self.bf_radius = bf_radius
         self.source_path = source_path
         self.calibration_path: str | None = None
+        self.source_manifest_path: str | None = None
         self.source_storage_path = source_path
         self.source_kind: Literal["array", "detector", "bf_columns"] = "array"
         self.source_dtype = str(data.dtype)
         self.source_bytes = int(data.nbytes)
+        self.source_detector_bin = int(getattr(data, "det_bin", 1) or 1)
+        self.source_provenance = json_value(
+            getattr(data, "source_provenance", None)
+        )
         self.source_load_seconds: float | None = None
         self._cuda_session = None
         self._mps_backend = None
@@ -746,12 +751,15 @@ class SSB:
         source_load_seconds: float
         source_storage_path: str
         if selected == "mps":
-            from .compute.mps.engine import load_bf_columns_mps
+            from .compute.mps.engine import (
+                _BfColumnCompanionNotDeclared,
+                load_bf_columns_mps,
+            )
 
             for candidate in _mps_brightfield_sources(source, calibration):
                 try:
                     frames = load_bf_columns_mps(candidate, verbose=verbose)
-                except (FileNotFoundError, ValueError):
+                except _BfColumnCompanionNotDeclared:
                     continue
                 data = frames
                 source_kind = "bf_columns"
@@ -798,10 +806,25 @@ class SSB:
             source_path=str(source),
         )
         session.source_kind = source_kind
-        session.calibration_path = calibration
+        auto_calibration = (
+            session.source_provenance.get("calibration_path")
+            if isinstance(session.source_provenance, dict)
+            else None
+        )
+        auto_manifest = (
+            session.source_provenance.get("manifest_path")
+            if isinstance(session.source_provenance, dict)
+            else None
+        )
+        session.calibration_path = calibration or auto_calibration
+        session.source_manifest_path = auto_manifest
         session.source_storage_path = source_storage_path
         session.source_dtype = source_dtype
         session.source_bytes = source_bytes
+        session.source_detector_bin = int(getattr(data, "det_bin", 1) or 1)
+        session.source_provenance = json_value(
+            getattr(data, "source_provenance", None)
+        )
         session.source_load_seconds = source_load_seconds
         return session
 
@@ -895,10 +918,16 @@ class SSB:
             if self.calibration_path is None
             else path_signature(self.calibration_path)
         )
+        manifest = (
+            None
+            if self.source_manifest_path is None
+            else path_signature(self.source_manifest_path)
+        )
         return {
             "detector": signature,
             "storage": storage,
             "calibration": calibration,
+            "manifest": manifest,
         }
 
     def _result_signature(
@@ -920,6 +949,8 @@ class SSB:
                     "bytes": self.source_bytes,
                     "shape": tuple(int(value) for value in self._data.shape),
                     "scan_shape": self._scan_shape,
+                    "detector_bin": self.source_detector_bin,
+                    "source_provenance": self.source_provenance,
                 },
                 "instrument": {
                     "voltage_kV": self.voltage_kV,
@@ -956,8 +987,11 @@ class SSB:
                 "source_kind": self.source_kind,
                 "source_dtype": self.source_dtype,
                 "source_bytes": self.source_bytes,
+                "source_detector_bin": self.source_detector_bin,
+                "source_provenance": self.source_provenance,
                 "source_load_seconds": self.source_load_seconds,
                 "calibration_path": self.calibration_path,
+                "source_manifest_path": self.source_manifest_path,
             },
         )
 
