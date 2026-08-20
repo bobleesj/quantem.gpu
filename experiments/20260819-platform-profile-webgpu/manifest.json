@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260819-platform-profile-webgpu",
+  "status": "completed",
+  "question": "What are the parity-qualified WebGPU load, detector, DPC/iDPC, and SSB redraw timings on current compute sources and real Apple WebGPU hardware?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260819-platform-profile-webgpu/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "334b7b5135fe29787540370a00f280fa138430a2",
+    "entrypoint": "scripts/benchmark_webgpu_h5_browser.py, scripts/benchmark_webgpu_h5_product_browser.py, and the retained compute-matched ShowPtycho bundle",
+    "dirty": false,
+    "diff_sha256": null,
+    "snapshot_path": "local-snapshot://quantem-gpu-platform-profile-webgpu/source"
+  },
+  "inputs": [
+    {
+      "dataset_id": "real-512x512x192x192-u16-bslz4-27shard",
+      "path": "private-fixture://full-512-u16-bslz4-27shard/collection",
+      "sha256": "1be810b96fdff8e384ad4cb6ebd49adff9b4ab0a6503cd5fed9106e09f5aa286"
+    },
+    {
+      "dataset_id": "webgpu-ssb-512-exact-bf-companion-v1",
+      "path": "private-fixture://webgpu-ssb-512/manifest",
+      "sha256": "13eef0036fc1744b6956fc6c6353e7e9301d2ec3590f4a3946458041cbe6415e"
+    },
+    {
+      "dataset_id": "webgpu-ssb-512-exact-bf-columns-v1",
+      "path": "private-fixture://webgpu-ssb-512/bf_columns.u8",
+      "sha256": "ce1870e8eb125b6b7674faa73f6f40e190432c8bb01cf9d67fd189606e8868be"
+    }
+  ],
+  "parameters": {
+    "source_shape": [512, 512, 192, 192],
+    "source_dtype": "uint16",
+    "scan_crop": null,
+    "detector_crop": null,
+    "scan_bin": 1,
+    "detector_bins": [1, 2, 4, 8],
+    "ssb_bf_count": 13137,
+    "ssb_active_bf_count": 3418,
+    "ssb_companion_dtype": "uint8 exact raw counts",
+    "ssb_sizes": [128, 256, 512, 1024],
+    "ssb_quantities": ["object", "phase", "phase-plus-loss"],
+    "ssb_optimization": "not implemented; current source throws instead of substituting a reduced objective",
+    "optimizer_trials": 200,
+    "refinement": "Nelder-Mead not implemented in WebGPU",
+    "levenberg_marquardt": "not implemented",
+    "timing_repetitions": 5,
+    "cache_states": ["first-process-not-cold", "warm-source", "prepared", "resident-interaction"],
+    "adapter_requirement": "hardware adapter; software and fallback adapters are rejected for timing claims",
+    "presentation_revision_boundary": "retained bundle matches current compute sources but not all display sources; regenerate before a current presentation-wall claim",
+    "retained_consumer_revisions": {
+      "quantem_gpu": "5cd285250911974c738e9c911bd00a170873bf45",
+      "quantem_widget": "a872a9702304579fdded9162f908facfe2fea27b"
+    },
+    "parity": {
+      "integer_products": "byte-exact",
+      "floating_outputs": "existing frozen operation-specific gates"
+    },
+    "run_root": "local-evidence://platform-profile-20260819/webgpu-cpu/webgpu"
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "webgpu",
+    "gpu_ids": ["apple:metal-3"],
+    "gpu_model": "Apple M5 Max, 40-core GPU, 128 GB unified memory"
+  },
+  "outputs": [
+    {
+      "artifact": "RESULTS.md",
+      "sha256": "a2f75c7a595d5fc457b5c32afd0ea8aac5dd20f5db30c496b386e30acedce7d1",
+      "result": "current load bins 1/2/4/8, exact integer products, deterministic compute-matched SSB; float per-pixel and UI-paint gaps explicit"
+    },
+    {
+      "artifact": "sha256sums.txt",
+      "sha256": "4a2230c4eff8b3b6a65fbae56faa86cd2bf5c0babd3798d4836732ff36efdc01",
+      "result": "integrity manifest for 96 non-fixture artifacts"
+    }
+  ],
+  "timestamps": {
+    "created": "2026-08-19T18:45:00-07:00",
+    "started": "2026-08-19T18:45:00-07:00",
+    "finished": "2026-08-19T19:33:54-07:00"
+  }
+}

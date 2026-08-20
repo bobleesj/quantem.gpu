@@ -68,6 +68,12 @@ ADF has accelerated detector kernels, but is not yet part of this one-pass
 screening result. No automatic scan crop is allowed, and a client-selected
 detector bin must remain explicit in provenance.
 
+`screening.prepare` is currently a Python CUDA/MPS API. Native Swift/Metal and
+WebGPU expose reusable detector and DPC operations, but they do not implement
+this prepared-product cache contract. Applications must not label an
+independently assembled native or browser product set as a
+`ScreeningResult`.
+
 ## Parallax reconstruction
 
 ```python

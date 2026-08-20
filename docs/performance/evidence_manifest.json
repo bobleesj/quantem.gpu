@@ -1,16 +1,16 @@
 {
   "schema_version": 1,
   "source_revision": "8c47a466d573f74e425faff611939a17fa6efbf2",
-  "purpose": "Fingerprints for the current three-host benchmark overview, its parity and methodology contract, and retained historical evidence pages. Current measurements use one tested source revision and keep cache state, data plan, device, date, and acceptance boundaries explicit.",
+  "purpose": "Fingerprints for the current cross-platform benchmark overview, its parity and methodology contract, and retained historical evidence pages. Every current measurement records its tested baseline or follow-up revision, cache state, data plan, device, date, and acceptance boundary.",
   "pages": [
     {
       "path": "docs/intro.md",
-      "sha256": "2c5128afe27e34e08d2144d572def97a9479cf38382a5ddd7a2ded0c8376058f",
+      "sha256": "cabbd1c62364c6ecd8c8b14d06b2c57ac31640e7e86f6daabb4d93ec8ae35cc8",
       "role": "Current developer landing page and benchmark overview"
     },
     {
       "path": "docs/dashboard.md",
-      "sha256": "7881bca7b807200ff59b2d7c530830f80440e7f17eccaec062b1188b3b84939e",
+      "sha256": "fa455d49a3536de866336e440b0e37f8c92fdae188cdb79e9c73fc29c4be5579",
       "role": "Atomic capability, speed, memory, and parity dashboard"
     },
     {
@@ -20,22 +20,22 @@
     },
     {
       "path": "docs/platforms/webgpu.md",
-      "sha256": "c3431cff9e67d6a9f05e1e7053a48d253330c47ff979211e87d6ac9409f79fca",
+      "sha256": "9e52111495a3a885967b058ae63029a67ce282ad3922644201214c6eccac5054",
       "role": "WebGPU 8 GB laptop acceptance contract"
     },
     {
       "path": "docs/backends.md",
-      "sha256": "17c6db28c07f57a5c8a6c9a9b2df2423a098490a43042feae29bae474bc3f7d2",
+      "sha256": "afb1a38a04c5eab0aabcc2b4b72d6eda199e2c2056cd423ef147cc2bafecfa2a",
       "role": "Current capability and measured summary"
     },
     {
       "path": "docs/performance/results.md",
-      "sha256": "41ca834bce6225582d04bad9a49f26cb54b2af8458bf850e02424d2232611f39",
+      "sha256": "61d013547a10edbb14130899694bfdea7698fc75a0b0856b8468b8b918f179f1",
       "role": "Verified benchmark provenance index"
     },
     {
       "path": "docs/performance/changes.md",
-      "sha256": "7a372b392b967dc8b269c7cc7d3cc20ffa540ce25dd1fe7b68cc4dbf08629e81",
+      "sha256": "01dc43c0c5417a570e1b452d3060010fc398f1e5f0a6fde006da8a8c426209e0",
       "role": "Measurement replacement and historical-change ledger"
     },
     {

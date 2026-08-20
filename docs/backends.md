@@ -83,20 +83,20 @@ one timing per row and ends with the physical device and date.
 
 | Platform | Operation | State | Time | Device tested | Date tested |
 |---|---|---|---:|---|---|
-| **CUDA** | Full `512x512`, detector bin 4 load | Warm source p50 | **0.553 s** | NVIDIA RTX PRO 6000 Blackwell, GPU 0 | 2026-08-19 |
-| **Python MPS** | Full `512x512`, detector bin 4 load | Warm source p50 | **0.586 s** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
+| **CUDA** | Full `512x512`, detector bin 4 load | Warm source p50 | **0.390 s** | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 | 2026-08-19 |
+| **Python MPS** | Full `512x512`, detector bin 4 load | Warm source p50 | **0.605 s** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
 | **Python MPS** | Full `512x512`, detector bin 4 load | Warm source p50 | **1.695 s** | Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU) | 2026-08-19 |
 | **Native Swift/Metal** | Full `512x512`, detector bin 4 first product, fixture A | First process p50 | **1.985 s** | Apple M2 MacBook Air (`Mac14,2`, 8 GB) | 2026-08-18 |
 | **Native Swift/Metal** | Full `512x512`, detector bin 4 first product, fixture B | First process p50 | **2.043 s** | Apple M2 MacBook Air (`Mac14,2`, 8 GB) | 2026-08-18 |
-| **Native Swift/Metal** | Prepared native HDF5 index reopen | Warm prepared p50 | **3.669 ms** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
+| **Native Swift/Metal** | Prepared native HDF5 index reopen | Warm prepared p50 | **5.339 ms** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
 | **Native Swift/Metal** | Prepared native HDF5 index reopen | Warm prepared p50 | **2.375 ms** | Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU) | 2026-08-19 |
-| **WebGPU** | Full `512x512` prepared local-file load | Prepared source p50 | **0.772 s** | Apple Metal-3 adapter (Mac model not retained) | 2026-07-20 |
+| **WebGPU** | Full `512x512`, detector bin 1 load | Warm OS cache, first-usable-resident p50 | **0.824 s** | Chrome 151, Apple M5 Max Metal-3 | 2026-08-19 |
 
-The current `512x512x192x192` CUDA/MPS source matrix uses the identical
-3,169,920,193-byte `uint16` compressed fixture, full scan, no crop, scan bin 1,
-and explicit detector bins. The measured source revision is `8c47a466`.
-Detector-bin-4 integer products are byte-exact and CoM passes; iDPC remains
-blocked at the frozen `1e-5` cross-backend gate. Prepared index reopen and warm
+The current rows use full `512x512x192x192` native-`uint16` sources, no crop,
+scan bin 1, and explicit detector bins. CUDA/WebGPU and MPS/Swift use two
+independent real fixtures, so the timings are not a fixture-controlled backend
+ranking. Integer products pass their independent references; current WebGPU
+per-pixel CoM/DPC/iDPC parity remains unproven. Prepared index reopen and warm
 resident kernels are never represented as source-load time.
 
 The retained July diagnostics and rejected experiments remain available in the

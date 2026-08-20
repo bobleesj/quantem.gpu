@@ -2,9 +2,11 @@
 
 `quantem.gpu.SSB` is the public single-sideband ptychography contract for CUDA,
 MPS, and WebGPU workflows. Python `SSB.open()` executes CUDA or MPS; the browser
-WebGPU runtime mirrors the same result and precision contract asynchronously.
-Backend engines, kernel launch geometry, FFT layouts, and optimizer batching
-remain implementation details.
+WebGPU runtime mirrors the reconstruction, phase, and exact-loss contract
+asynchronously. WebGPU does not currently implement aberration fitting, and
+Native Swift/Metal does not currently implement SSB. Backend engines, kernel
+launch geometry, FFT layouts, and optimizer batching remain implementation
+details.
 
 ## Inputs and outputs
 
@@ -31,6 +33,11 @@ bright-field geometry, timings, reuse state, and provenance metadata.
 The default fit evaluates 200 seeded TPE candidates with the exact full active
 bright-field phase-variance objective, chooses the minimum loss, and performs
 Nelder–Mead refinement. It does not average optimizer candidates.
+
+This is the implemented calibration workflow; Levenberg–Marquardt is not an
+available refinement mode. In WebGPU, requesting `fit()` fails explicitly and
+directs the caller to run the exact 200-trial plus Nelder–Mead workflow on CUDA
+or MPS. The browser never substitutes fewer trials or a reduced objective.
 
 ## Errors and unsupported requests
 

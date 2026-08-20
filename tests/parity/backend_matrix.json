@@ -83,6 +83,32 @@
       }
     },
     {
+      "id": "screening.prepared-products",
+      "parity": "Same source identity, load plan, mean DP, BF/DF, CoM row/column, rotation, iDPC, cache signature, and provenance; ADF is not yet part of ScreeningResult.",
+      "coverage": {
+        "cpu-reference": {
+          "level": "reference",
+          "gates": ["tests/test_screening.py", "docs/api/core.md"]
+        },
+        "cuda": {
+          "level": "required",
+          "gates": ["tests/test_screening.py", "docs/maintainer/backend-4dstem-load-checklist.md"]
+        },
+        "mps": {
+          "level": "required",
+          "gates": ["tests/test_screening.py", "docs/maintainer/backend-4dstem-load-checklist.md"]
+        },
+        "swift-metal": {
+          "level": "not-implemented",
+          "gates": ["docs/api/core.md", "docs/platforms/swift-metal.md"]
+        },
+        "webgpu": {
+          "level": "not-implemented",
+          "gates": ["docs/api/core.md", "docs/platforms/webgpu.md"]
+        }
+      }
+    },
+    {
       "id": "dpc.com-rotation-idpc",
       "parity": "Same row/column CoM convention, rotation, centering, FFT normalization, and frozen float metric.",
       "coverage": {
@@ -157,6 +183,32 @@
         "webgpu": {
           "level": "partial-hardware",
           "gates": ["tests/test_webgpu_sources.py", "tests/test_ssb_backend_contract.py", "docs/maintainer/ssb-performance.md"]
+        }
+      }
+    },
+    {
+      "id": "ssb.calibration-200-nelder-mead",
+      "parity": "Same full active BF selection, seed, 200 exact TPE candidates, candidate history, Nelder-Mead refinement, fitted aberrations, loss, precision, and final independent reconstruction.",
+      "coverage": {
+        "cpu-reference": {
+          "level": "reference-fixture",
+          "gates": ["tests/fixtures/ssb_reference_512_mps.json", "tests/test_ssb_structure.py"]
+        },
+        "cuda": {
+          "level": "required",
+          "gates": ["tests/test_ssb_batch_optuna.py", "tests/test_ssb_cuda_128.py", "tests/test_ssb_structure.py"]
+        },
+        "mps": {
+          "level": "required",
+          "gates": ["tests/test_ssb_mps_cuda_reference.py", "tests/test_ssb_structure.py"]
+        },
+        "swift-metal": {
+          "level": "not-implemented",
+          "gates": ["docs/api/ssb.md", "docs/platforms/swift-metal.md"]
+        },
+        "webgpu": {
+          "level": "not-implemented",
+          "gates": ["tests/test_webgpu_sources.py", "docs/api/ssb.md"]
         }
       }
     }

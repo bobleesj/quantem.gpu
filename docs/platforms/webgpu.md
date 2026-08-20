@@ -33,6 +33,14 @@ than in a browser UI.
 These files are package resources. A browser client bundles the canonical
 sources rather than maintaining a second scientific implementation.
 
+WebGPU implements local-file load/decode, detector products, CoM/DPC/iDPC,
+SSB reconstruction, phase, loss, and display operations. It does not currently
+implement the Python `screening.prepare` cache or SSB aberration fitting. The
+optimizer entry point fails explicitly and directs exact calibration to the
+200-trial TPE plus Nelder–Mead CUDA/MPS workflow; it never substitutes a
+smaller browser objective. Levenberg–Marquardt is not an implemented refinement
+mode in any current backend.
+
 ## Execution and memory model
 
 Browser file access, worker parsing, queue writes, GPU decode, reductions,
