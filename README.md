@@ -168,14 +168,14 @@ performance evidence. Cold source load, warm source load, resident interaction,
 and saved-result reopen are different benchmark states and are reported
 separately.
 
-## Current evidence boundary
+## Evidence boundary
 
-The true real-acquisition `1024×1024×192×192` product-first BF has
-max/mean abs error `0` against its frozen reference.
-This is not full-stack no-bin browse/load signoff. The complete source shape,
-dtype, selected payload, cache
-state, hardware, revision, and timing remain in
-[Verified performance](docs/performance/results.md), not in this landing page.
+The README does not copy benchmark results. Current overview values belong in
+the [implementation dashboard](docs/dashboard.md); exact revisions, fixtures,
+cache states, load plans, timing distributions, memory observations, and
+parity gates belong in [Verified performance](docs/performance/results.md).
+Historical and rejected experiments remain in the maintainer ledgers and are
+never promoted as current results.
 
 ## Citing quantem.gpu
 

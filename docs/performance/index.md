@@ -8,12 +8,12 @@ which optimizations were accepted, rejected, or remain provisional.
 
 | Evidence | Use it for |
 |---|---|
-| [Documentation landing overview](../intro.md) | Friendly module-first entry point with current representative devices and timings |
-| [Implementation dashboard](../dashboard.md) | Dense atomic matrix of platform, bin, dtype, cache state, memory, parity, device, and test date |
+| [Documentation landing page](../intro.md) | Package contract and routes for API, kernel, and application developers; intentionally contains no benchmark tables |
+| [Implementation dashboard](../dashboard.md) | The single friendly current overview of platform, bin, dtype, cache state, memory, parity, device, and test date |
 | {ref}`Minimum-device gates <minimum-device-memory-gates>` | CUDA 6 GiB VRAM and WebGPU 8 GB laptop acceptance status; runtime details on [CUDA](../platforms/cuda.md) and [WebGPU](../platforms/webgpu.md) |
 | [Verified benchmark results](results.md) | Metrics with date, revision, device, shape/dtype, cache state, load plan, benchmark definition, calibration, and parity provenance |
 | [Revision and change ledger](changes.md) | Latest documentation changes, implementation baselines, and why a retained number changed or remained historical |
-| [Current verified results](../backends.md) | Capability status and the public-safe timing/parity summary across CUDA, MPS/Metal, Swift, and WebGPU |
+| [Backend coverage](../backends.md) | Capability and implementation-source status without duplicated timing tables |
 | [Benchmark methodology](methodology.md) | Required timing stages, cold/warm definitions, memory reporting, and acceptance rules |
 | [Continuous profiling](continuous-profiling.md) | PR smoke, weekly physical profiles, manual signoff, comparison keys, run registry, and regression decisions |
 | [Cross-backend parity](parity.md) | Exact integer contracts, floating metrics, fixtures, and hardware gates |
@@ -54,13 +54,16 @@ but is not a release or migration signoff.
 
 ## Current versus historical evidence
 
-The summary page contains the current retained result. Maintainer ledgers keep
-chronological experiments—including regressions—so future work does not repeat
-failed kernel layouts or confuse an older record with the production path.
+The dashboard summarizes the current retained result; the results page owns its
+complete provenance. Maintainer ledgers keep chronological experiments—including
+regressions—so future work does not repeat failed kernel layouts or confuse an
+older record with the production path.
 
 Dated pages with headings such as “Question,” “TODO,” or “Next” are collected
 under [Historical experiments](../maintainer/history/index.md). Their wording is
 preserved as experiment provenance and does not define current commitments.
 
-Numbers are never deleted merely because a faster result appears. They are
-superseded with exact revision and protocol context.
+Valid older numbers are not copied through current overview pages. They remain
+once in the owning historical ledger with exact revision and protocol context.
+Measurements that failed parity or repeatability remain named as rejected
+experiments, never as current timing rows.

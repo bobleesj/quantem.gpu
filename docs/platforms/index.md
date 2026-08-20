@@ -53,8 +53,9 @@ fusion, queueing, and transfers; it must preserve the operation's
 
 `backend="auto"` is suitable for ordinary Python use. Tests and benchmarks
 select a runtime explicitly so missing hardware and unsupported paths fail
-honestly. The complete implementation/evidence status is maintained in
-[Current verified results](../backends.md).
+honestly. Capability status is maintained in [Backend coverage](../backends.md);
+current measurements live in
+[Verified benchmark results](../performance/results.md).
 
 Serving CUDA to another process is not a kernel implementation. See
 [QuantEM.GPU Remote](../remote/index.md) for local loopback and SSH-tunneled

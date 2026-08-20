@@ -55,20 +55,12 @@ GPU-reduced log-magnitude peak.
 Call `prewarm(rows:columns:)` once after the scan shape is known, during load,
 so the first visible FFT is not an MPSGraph compile hitch.
 
-## 512×512 performance contract
+## 512×512 performance gate
 
-Browser BF/ADF images are commonly `512×512`. That FFT must stay inside a
-120 Hz frame after the graph is warm.
-
-Measured on Apple M5 Max, in-place `logMagnitude`, same display contract as
-PyTorch `fftshift(log1p(abs(fft2(x))))`:
-
-| Shape | Dtype | Metal p50 | Metal FPS | Torch MPS p50 | Torch MPS FPS |
-|---|---|---:|---:|---:|---:|
-| 256×256 | float32 | 0.35 ms | 2850 | 0.44 ms | 2252 |
-| **512×512** | **uint32 BF** | **≤ 8.33 ms required** | **≥ 120** | 0.58 ms | 1712 |
-| 512×512 | float32 | 0.31 ms | 3236 | 0.58 ms | 1712 |
-| 2048×2048 | float32 | 0.90 ms | 1111 | 2.29 ms | 437 |
+Browser BF/ADF images are commonly `512×512`. After prewarming, the FFT gate is
+completion within **8.33 ms** for a 120 Hz frame. This is an acceptance budget,
+not a copied benchmark result. Current measurements, device identity, revision,
+distribution, and parity live in [Verified benchmark results](../performance/results.md).
 
 Release checks:
 
@@ -79,8 +71,8 @@ python src/quantem/gpu/swift/Benchmarks/MetalImageFFTBenchmark/compare_torch_fft
 ```
 
 `testWarm512UInt32BrightFieldFFTStaysInside120Hz` is the BF/ADF gate. Do not
-treat CPU `fft2`, software adapters, or a first-compile hitch as 120 Hz
-evidence.
+treat CPU `fft2`, software adapters, a first-compile hitch, or a historical
+table copied into an API contract as 120 Hz evidence.
 
 ## Histogram and contrast
 

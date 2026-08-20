@@ -7,7 +7,7 @@ public contract.
 
 Open questions and TODO tables inside an archived page describe the state at
 that page's recorded source revision. Before resuming one, check the current
-[verified results](../../backends.md),
+[verified results](../../performance/results.md),
 [optimization ledger](../backend-optimization-matrix.md), source, and tests.
 
 Historical numbers remain labeled with their original backend, source state,
