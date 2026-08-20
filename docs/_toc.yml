@@ -81,7 +81,7 @@ parts:
           - file: performance/changes
             title: Revision and change ledger
           - file: backends
-            title: Current verified results
+            title: Backend coverage
           - file: performance/methodology
           - file: performance/continuous-profiling
             title: Continuous profiling

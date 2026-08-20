@@ -38,6 +38,16 @@ table {
   overflow-x: auto;
 }
 
+/* Atomic benchmark tables deliberately keep one fact per column. Give tables
+   with at least fifteen columns enough intrinsic width to preserve readable
+   shapes, dtypes, timings, and device names; the container owns scrolling. */
+.pst-scrollable-table-container > table.table:has(th:nth-child(15)) {
+  display: table;
+  min-width: 112rem;
+  max-width: none;
+  overflow: visible;
+}
+
 div.highlight pre {
   overflow-x: auto;
 }

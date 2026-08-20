@@ -1,17 +1,17 @@
 {
   "schema_version": 1,
   "source_revision": "e1da9bc86a0c1ae6edc60e1205a9966e6826f315",
-  "purpose": "Fingerprints for the current cross-platform benchmark overview, its parity and methodology contract, and retained historical evidence pages. Every current measurement records its tested baseline or follow-up revision, cache state, data plan, device, date, and acceptance boundary.",
+  "purpose": "Fingerprints for the current benchmark dashboard, authoritative provenance ledger, parity and methodology contracts, and canonical historical evidence. Landing, API, and backend capability pages intentionally do not duplicate measurements.",
   "pages": [
     {
       "path": "docs/intro.md",
-      "sha256": "0d79965ca1c53ac1b2881d73235bbde01560a9a819750af8d2e8fb2e159ac3c1",
-      "role": "Current developer landing page and benchmark overview"
+      "sha256": "c5cd24f84aa6f28feffc19d0a9a181cee919f7ac01fe2df0f831c819ec5045b5",
+      "role": "Developer landing page and benchmark routing without copied measurements"
     },
     {
       "path": "docs/dashboard.md",
-      "sha256": "cbb19785602dd457cdfe5593e9b6663f4d00d27d5eddcc7fef444df2be733bb5",
-      "role": "Atomic capability, speed, memory, and parity dashboard"
+      "sha256": "626916198be96f21c11784ed3e4eb57de62d2b7d537dffb1d6a5602904c5ae20",
+      "role": "Single human-facing current capability, speed, memory, and parity overview"
     },
     {
       "path": "docs/platforms/cuda.md",
@@ -25,18 +25,18 @@
     },
     {
       "path": "docs/backends.md",
-      "sha256": "9e1f6a04e1529061a1bed8bd385e5ca9ce7c60dddddba05b127ad8889df9f72a",
-      "role": "Current capability and measured summary"
+      "sha256": "79f4df705f465f90217e6f2b01a14f4fec01f043422d37facad4f8c8866f0aa0",
+      "role": "Capability and implementation-source map without copied timings"
     },
     {
       "path": "docs/performance/results.md",
-      "sha256": "409440c4e5e0110e0a826cf48fc39e0dff04e5547bd743dbd7d773679f71f1b1",
-      "role": "Verified benchmark provenance index"
+      "sha256": "db5abd5a229e61793caa953fe158446b02741889da478f2ae6f66f395a236fa8",
+      "role": "Authoritative current benchmark provenance ledger"
     },
     {
       "path": "docs/performance/changes.md",
-      "sha256": "35a1f8ebde7fc43962373f3f272bb55d9e126cef760b3f2a76766a5c0963e071",
-      "role": "Measurement replacement and historical-change ledger"
+      "sha256": "770baf8a574b5fedc4ba7671310546a17d20e5f53fe20e166ededbdc63b2a951",
+      "role": "Benchmark promotion, rejection, and supersession decisions without copied values"
     },
     {
       "path": "docs/performance/methodology.md",
@@ -65,8 +65,8 @@
     },
     {
       "path": "docs/maintainer/ssb-performance.md",
-      "sha256": "299ad54a239438adaf99ca8371b528964cbbb22b0576e2faaa5857d428e1a4e3",
-      "role": "SSB backend performance history"
+      "sha256": "4af2955dbe5b53e241eec605d0ac944fa3c5313219e7526da06fb5176157aea3",
+      "role": "Chronological SSB optimization and rejected-experiment history"
     },
     {
       "path": "docs/maintainer/native-metal-ssb-migration.md",

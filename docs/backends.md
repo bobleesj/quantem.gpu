@@ -74,34 +74,21 @@ complete; `Gap` means the backend does not implement that capability yet.
 The rule for new heavy work is: implement the compute or IO path in
 `quantem.gpu`, then let clients call the shared contract.
 
-## Current measured summary
+## Benchmark ownership
 
-The complete table, including exact revision, shape/dtype, crop/bin plan,
-benchmark boundary, memory, calibration, and parity, is in the
-[verified benchmark results](performance/results.md). This concise view keeps
-one timing per row and ends with the physical device and date.
+This page owns capability and source-boundary status only. Numerical results are
+not copied here:
 
-| Platform | Operation | State | Time | Device tested | Date tested |
-|---|---|---|---:|---|---|
-| **CUDA** | Full `512x512`, detector bin 4 load | Warm source p50 | **0.390 s** | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 | 2026-08-19 |
-| **Python MPS** | Full `512x512`, detector bin 4 load | Warm source p50 | **0.605 s** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
-| **Python MPS** | Full `512x512`, detector bin 4 load | Warm source p50 | **1.695 s** | Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU) | 2026-08-19 |
-| **Native Swift/Metal** | Full `512x512`, detector bin 4 first product, fixture A | First process p50 | **1.985 s** | Apple M2 MacBook Air (`Mac14,2`, 8 GB) | 2026-08-18 |
-| **Native Swift/Metal** | Full `512x512`, detector bin 4 first product, fixture B | First process p50 | **2.043 s** | Apple M2 MacBook Air (`Mac14,2`, 8 GB) | 2026-08-18 |
-| **Native Swift/Metal** | Prepared native HDF5 index reopen | Warm prepared p50 | **5.339 ms** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
-| **Native Swift/Metal** | Prepared native HDF5 index reopen | Warm prepared p50 | **2.375 ms** | Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU) | 2026-08-19 |
-| **WebGPU** | Full `512x512`, detector bin 1 load | Warm OS cache, first-usable-resident p50 | **0.824 s** | Chrome 151, Apple M5 Max Metal-3 | 2026-08-19 |
+- [Implementation overview](dashboard.md) is the current human-facing speed,
+  memory, feature, and parity dashboard.
+- [Verified benchmark results](performance/results.md) is the authoritative
+  provenance ledger.
+- [Optimization ledger](maintainer/backend-optimization-matrix.md) preserves
+  accepted and rejected experiments.
 
-The current rows use full `512x512x192x192` native-`uint16` sources, no crop,
-scan bin 1, and explicit detector bins. CUDA/WebGPU and MPS/Swift use two
-independent real fixtures, so the timings are not a fixture-controlled backend
-ranking. Integer products pass their independent references; current WebGPU
-per-pixel CoM/DPC/iDPC parity remains unproven. Prepared index reopen and warm
-resident kernels are never represented as source-load time.
-
-The retained July diagnostics and rejected experiments remain available in the
-[optimization ledger](maintainer/backend-optimization-matrix.md), with their
-original values and status labels.
+Keeping the backend map timing-free prevents a prepared-index reopen, resident
+kernel, historical campaign, or application first product from drifting into a
+misleading source-load comparison.
 
 ## Adding a backend kernel
 

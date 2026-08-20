@@ -116,8 +116,9 @@ def test_performance_landing_keeps_every_evidence_page_navigable() -> None:
 def test_dashboard_is_the_dense_human_overview() -> None:
     dashboard = Path("docs/dashboard.md").read_text(encoding="utf-8")
     dashboard_words = " ".join(dashboard.split())
-    toc = TOC.read_text(encoding="utf-8")
+    results = Path("docs/performance/results.md").read_text(encoding="utf-8")
     intro = Path("docs/intro.md").read_text(encoding="utf-8")
+    toc = TOC.read_text(encoding="utf-8")
     readme = Path("README.md").read_text(encoding="utf-8")
 
     assert "caption: Start here" in toc
@@ -133,7 +134,6 @@ def test_dashboard_is_the_dense_human_overview() -> None:
         "### Minimum-device memory gates",
         "### What a 4 or 6 GiB budget can hold",
         "### I/O and first usable product — `quantem.gpu.io`",
-        "#### Exact configuration gaps",
         "### Screening and prepared-product caches — `quantem.gpu.screening`",
         "### Virtual images — `quantem.gpu.detector`",
         "### Detector moments and phase contrast — `quantem.gpu.dpc`",
@@ -153,20 +153,12 @@ def test_dashboard_is_the_dense_human_overview() -> None:
     ):
         assert runtime in dashboard
 
-    for evidence_state in (
-        "✓",
-        "Test",
-        "Pending",
-        "Ref",
-        "unsupported or not a target",
-    ):
+    for evidence_state in ("✓", "Test", "Pending", "Ref", "unsupported or not a target"):
         assert evidence_state in dashboard
 
-    assert "| Evidence |" not in dashboard
-    assert "Evidence / next gap" not in dashboard
     for device in (
         "NVIDIA RTX PRO 6000 Blackwell",
-        "Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU)",
+        "Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB)",
         "Apple M2 MacBook Air (`Mac14,2`, 8 GB)",
     ):
         assert device in dashboard
@@ -186,7 +178,6 @@ def test_dashboard_is_the_dense_human_overview() -> None:
 
     assert "I[R_r,R_c,k_r,k_c]" in dashboard
     assert "not ranked" in dashboard
-    assert "| Process peak | **1.43 GB** |" in dashboard
     assert "18.00 GiB" in dashboard
     assert "9.00 GiB" in dashboard
     assert "1.125 GiB" in dashboard
@@ -194,11 +185,6 @@ def test_dashboard_is_the_dense_human_overview() -> None:
     assert "| 4 GiB | `uint16` | 56 | **1.97 GiB** | 10 | Pending |" in dashboard
     assert "| 6 GiB | `uint16` | 85 | **2.99 GiB** | 7 | Pending |" in dashboard
     assert "Each `512x512 float32` product map is only **1 MiB**" in dashboard
-    assert "ADF has an accelerated" in dashboard
-    assert "physical 4/6 GiB signoff Pending" in dashboard
-    assert "| `uint8` | `uint8` | `uint8` | Exact native counts | ✓ |" in dashboard
-    assert "| `uint16` | `uint16` | `uint32` | General exact detector sum | ✓ |" in dashboard
-    assert "| `uint16` | `uint8` | `float32` | Exact detector sum | ✓ |" in dashboard
     assert "A calculated payload is never relabeled as a measured peak" in dashboard
     assert "6 GiB of dedicated VRAM for CUDA" in dashboard_words
     assert "8 GB of total laptop RAM for WebGPU" in dashboard_words
@@ -209,7 +195,30 @@ def test_dashboard_is_the_dense_human_overview() -> None:
     for detector_bin in (1, 2, 4, 8):
         assert f"| {detector_bin} |" in dashboard
     assert "square scan-grid sizes, not detector dimensions" in dashboard
-    assert "| **Python MPS** | `512x512` | Native real acquisition | Full active BF | ✓ | p50 | **537.58 ms** | Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU) | 2026-07-28 |" in dashboard
+
+    for dashboard_value, results_value in (
+        ("0.386 s", "0.386 s"),
+        ("0.605 s", "0.605 s"),
+        ("0.824 s", "0.824 s"),
+        ("6.711 s", "6.711 s"),
+        ("20.803 ms", "20.803 ms"),
+        ("11.168 s", "11.168/11.235/11.242 s"),
+    ):
+        assert dashboard.count(dashboard_value) == 1
+        assert results.count(results_value) == 1
+
+    for removed_value in (
+        "0.338 s",
+        "1.695 s",
+        "2.027 s",
+        "3.451 s",
+        "8.096 s",
+        "537.58 ms",
+        "669.1 ms",
+    ):
+        assert removed_value not in dashboard
+        assert removed_value not in intro
+        assert removed_value not in results
 
     module_headings = (
         "### I/O and first usable product — `quantem.gpu.io`",
@@ -220,244 +229,109 @@ def test_dashboard_is_the_dense_human_overview() -> None:
         "### Cross-module platform map",
     )
     for index, heading in enumerate(module_headings[:-1]):
-        section_end = module_headings[index + 1]
-        section = dashboard.split(heading, 1)[1].split(section_end, 1)[0]
-        for runtime in (
-            "CUDA",
-            "Python MPS",
-            "Native Swift/Metal",
-            "WebGPU",
-            "CPU reference",
-        ):
+        section = dashboard.split(heading, 1)[1].split(module_headings[index + 1], 1)[0]
+        for runtime in ("CUDA", "Python MPS", "Native Swift/Metal", "WebGPU", "CPU reference"):
             assert runtime in section
 
-
-def test_intro_exposes_current_benchmarks_without_erasing_provenance() -> None:
+def test_intro_routes_to_benchmarks_without_copying_them() -> None:
     intro = Path("docs/intro.md").read_text(encoding="utf-8")
 
-    assert "| Evidence |" not in intro
-    assert "Evidence / next gap" not in intro
-    assert "NVIDIA RTX PRO 6000 Blackwell" in intro
-    assert "Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU)" in intro
-    assert "Apple M2 MacBook Air (`Mac14,2`, 8 GB)" in intro
+    assert "## Implementation and benchmark overview" in intro
+    assert "[implementation dashboard](dashboard.md)" in intro
+    assert "[verified benchmark results](performance/results.md)" in intro
+    assert "[Benchmark methodology](performance/methodology.md)" in intro
+    assert "[Optimization ledger](maintainer/backend-optimization-matrix.md)" in intro
+    assert "One claim, one owner" in intro
 
-    module_sections = (
-        "### I/O — `quantem.gpu.io`",
-        "### Screening — `quantem.gpu.screening`",
-        "### Virtual images — `quantem.gpu.detector`",
-        "### Detector moments and phase contrast — `quantem.gpu.dpc`",
-        "### Single-sideband ptychography — `quantem.gpu.SSB`",
-        "### Other public modules",
-    )
-    for section in module_sections:
-        assert section in intro
-    assert [intro.index(section) for section in module_sections] == sorted(
-        intro.index(section) for section in module_sections
-    )
-
-    for status in (
-        "**✓**",
-        "**Test**",
-        "**Pending**",
-        "**Ref**",
-        "**—**",
-    ):
-        assert status in intro
-
-    for table_field in (
-        "Platform",
-        "Selected scan",
-        "Detector bin",
-        "Cache state",
-        "Fixture",
-        "Statistic",
-        "Time",
+    for copied_field in (
         "Device tested",
         "Date tested",
+        "Measured load configurations",
+        "Current resident products",
+        "Current SSB reconstruction",
     ):
-        assert table_field in intro
+        assert copied_field not in intro
+    for copied_time in ("0.386 s", "0.605 s", "0.824 s", "11.168 s", "8.911 ms"):
+        assert copied_time not in intro
 
-    for headline_time in (
-        "0.386 s",
-        "0.390 s",
-        "0.586 s",
-        "1.695 s",
-        "2.273 s",
-        "0.605 s",
-        "2.027 s",
-        "1.982 s",
-        "2.775 s",
-        "1.985 s",
-        "2.043 s",
-        "0.824 s",
-        "1.281 s",
-        "1.044 s",
-        "0.979 s",
-        "12.31 s",
-        "6.711 s",
-        "20.803 ms",
-        "6.8 ms",
-        "13.448 ms",
-        "5.339 ms",
-        "15.622 ms",
-        "0.291 ms",
-        "0.353 ms",
-        "32.2 ms",
-        "32.335 ms",
-        "497.187 ms",
-        "11.168 s",
-        "537.58 ms",
-        "669.1 ms",
-        "1.69 s",
-        "1.91 s",
-    ):
-        assert headline_time in intro
-
-    assert "resident kernels are **not loading times**" in intro
-    assert "No empty cell implies support" in intro
-
-    for qualifier in (
-        "cache state",
-        "bin/crop plan",
-        "parity artifact",
-    ):
-        assert qualifier in intro
-
-    assert intro.index("## Module capabilities and benchmarks") < intro.index(
-        "## The shared coordinate contract"
-    )
-    assert "### Resident scientific products" not in intro
     assert "## How loading becomes a usable product" in intro
     assert "START WALL CLOCK" in intro
     assert "FIRST COMPLETE USABLE PRODUCT" in intro
     assert "no automatic real-space crop" in intro
+    assert "## The shared coordinate contract" in intro
 
     load_page = Path("docs/kernels/load-decode-bin.md").read_text(encoding="utf-8")
     assert "## Count-preserving detector binning" in load_page
     assert "exact sum of one" in load_page
     assert "materializing both a full unbinned volume" in load_page
 
-
-def test_intro_ssb_size_matrix_tracks_fixed_size_runtime_registries() -> None:
-    intro = Path("docs/intro.md").read_text(encoding="utf-8")
-    ssb_section = intro.split(
+def test_dashboard_ssb_size_matrix_tracks_fixed_size_runtime_registries() -> None:
+    dashboard = Path("docs/dashboard.md").read_text(encoding="utf-8")
+    ssb_section = dashboard.split(
         "### Single-sideband ptychography — `quantem.gpu.SSB`", 1
-    )[1].split("### Other public modules", 1)[0]
-    cuda = Path(
-        "src/quantem/gpu/ssb/compute/cuda/kernels/__init__.py"
-    ).read_text(encoding="utf-8")
-    mps = Path(
-        "src/quantem/gpu/ssb/compute/mps/kernels/__init__.py"
-    ).read_text(encoding="utf-8")
+    )[1].split("### Cross-module platform map", 1)[0]
+    cuda = Path("src/quantem/gpu/ssb/compute/cuda/kernels/__init__.py").read_text(
+        encoding="utf-8"
+    )
+    mps = Path("src/quantem/gpu/ssb/compute/mps/kernels/__init__.py").read_text(
+        encoding="utf-8"
+    )
     webgpu = Path(
         "src/quantem/gpu/ssb/compute/webgpu/kernels/index.ts"
     ).read_text(encoding="utf-8")
 
-    assert "scan sizes, not detector sizes" in ssb_section
-    assert "| Platform | Scan grid | Source kind | BF policy | State | Statistic | Time | Device tested | Date tested |" in ssb_section
-    assert "| Platform | `128x128` | `256x256` |" not in ssb_section
+    assert "square scan-grid sizes, not detector dimensions" in ssb_section
+    assert "| Platform | Scan grid | Source kind | BF policy | State |" in ssb_section
+    assert "| Statistic | Time | Device tested | Date tested |" not in ssb_section.split(
+        "| Platform | Scan grid | Source kind | BF policy | State |", 1
+    )[1]
     for size in (128, 256, 512, 1024):
-        assert f"`{size}x{size}`" in ssb_section
         assert f"{size}:" in cuda
         assert f"{size}:" in mps
-        for platform in (
-            "CUDA",
-            "Python MPS",
-            "Native Swift/Metal",
-            "WebGPU",
-            "CPU reference",
-        ):
+        for platform in ("CUDA", "Python MPS", "Native Swift/Metal", "WebGPU", "CPU reference"):
             assert ssb_section.count(f"| **{platform}** | `{size}x{size}` |") == 1
     assert "SUPPORTED_SSB_SIZES = [128, 256, 512, 1024]" in webgpu
-
     assert "Incomplete frozen reference" in ssb_section
     assert "Native real acquisition | Full active BF" in ssb_section
-    assert "NVIDIA RTX PRO 6000 Blackwell | 2026-07-19" in ssb_section
-    assert "Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU) | 2026-07-28" in ssb_section
-    assert "native swift/metal now has a package-owned exact 512×512 implementation" in ssb_section.lower()
+    assert "537.58 ms" not in ssb_section
+    assert "669.1 ms" not in ssb_section
 
-
-def test_platform_first_io_tables_expose_bins_devices_and_dates() -> None:
+def test_platform_first_io_tables_expose_current_bins_devices_and_dates() -> None:
     dashboard = Path("docs/dashboard.md").read_text(encoding="utf-8")
+    intro = Path("docs/intro.md").read_text(encoding="utf-8")
     swift_plan = Path(
-        "src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/"
-        "Metal4DSTEMLoadPlan.swift"
+        "src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Metal4DSTEMLoadPlan.swift"
     ).read_text(encoding="utf-8")
 
-    load_section = dashboard.split(
-        "### Measured load configurations", 1
-    )[1].split(
+    load_section = dashboard.split("### Measured load configurations", 1)[1].split(
         "(dtype-support-and-peak-memory)=", 1
     )[0]
-    gap_section = dashboard.split(
-        "### I/O and first usable product — `quantem.gpu.io`", 1
-    )[1].split(
-        "### Screening and prepared-product caches — `quantem.gpu.screening`", 1
-    )[0]
-
     assert "| Platform | Selected scan | Scan plan |" in load_section
-    assert "| Platform | Selected scan | Scan plan |" in gap_section
     assert "supportedDetectorBins = [1, 2, 4]" in swift_plan
 
     rows = [
         [cell.strip() for cell in line.strip("|").split("|")]
         for line in load_section.splitlines()
-        if line.startswith("| [**")
+        if line.startswith("| [**") or line.startswith("| **CPU reference**")
     ]
+    assert len(rows) == 16
+
     webgpu_rows = [row for row in rows if "WebGPU" in row[0]]
     observed = {
         (row[1], int(row[4]), row[5], row[7], row[8], row[13])
         for row in webgpu_rows
     }
-    assert {
-        ("`256x256`", 1, "`192x192`", "`uint8`", "`uint8`", "**0.338 s**"),
-        ("`256x256`", 2, "`96x96`", "`uint8`", "`float32`", "**0.774 s**"),
-        ("`256x256`", 4, "`48x48`", "`uint8`", "`float32`", "**0.755 s**"),
-        ("`256x256`", 8, "`24x24`", "`uint8`", "`float32`", "**0.733 s**"),
+    assert observed == {
         ("`512x512`", 1, "`192x192`", "`uint8`", "`uint8`", "**0.824 s**"),
         ("`512x512`", 2, "`96x96`", "`uint16`", "`float32`", "**1.281 s**"),
         ("`512x512`", 4, "`48x48`", "`uint16`", "`float32`", "**1.044 s**"),
         ("`512x512`", 8, "`24x24`", "`uint16`", "`float32`", "**0.979 s**"),
-        ("`512x512`", 2, "`96x96`", "`uint16`", "`float32`", "**2.651 s**"),
-    } <= observed
-
-    assert "1.199/1.212/1.106" not in load_section
-    assert "0.774/0.755/0.733" not in load_section
-    assert "1.985 / 2.043" not in load_section
-    assert "Joint crop-plus-bin parity and hardware timing" in gap_section
-    assert "| **Native Swift/Metal** | `512x512` | Full | `192x192` | 8 | `24x24` | — | — |" in gap_section
-    assert "|  |" not in load_section
-    assert "|  |" not in gap_section
-
-    intro = Path("docs/intro.md").read_text(encoding="utf-8")
-    intro_io = intro.split("### I/O — `quantem.gpu.io`", 1)[1].split(
-        "### Screening — `quantem.gpu.screening`", 1
-    )[0]
-    intro_rows = [
-        [cell.strip() for cell in line.strip("|").split("|")]
-        for line in intro_io.splitlines()
-        if line.startswith("| **")
-    ]
-    platforms = ("CUDA", "Python MPS", "Native Swift/Metal", "WebGPU")
-    def platform(cell: str) -> str:
-        return next(name for name in platforms if name in cell)
-
-    dashboard_keys = {
-        (
-            platform(row[0]), row[1], row[2], row[4], row[5], row[6], row[7],
-            row[8], row[9], row[11], row[12], row[13], row[17], row[18],
-        )
-        for row in rows
     }
-    intro_keys = {
-        (
-            platform(row[0]), row[1], row[2], row[3], row[4], row[5], row[6],
-            row[7], row[8], row[9], row[10], row[11], row[12], row[13],
-        )
-        for row in intro_rows
-    }
-    assert intro_keys == dashboard_keys
 
+    for historical in ("`256x256` | Explicit crop", "2.651 s", "1.985 s", "2.043 s"):
+        assert historical not in load_section
+    assert "Measured load configurations" not in intro
+    assert "Device tested" not in intro
 
 def test_dashboard_small_gpu_numbers_match_the_screening_planner() -> None:
     from quantem.gpu.screening.workflow import _memory_plan_for_shapes
@@ -488,7 +362,8 @@ def test_minimum_device_memory_gates_are_atomic_and_fail_closed() -> None:
     webgpu = Path("docs/platforms/webgpu.md").read_text(encoding="utf-8")
 
     assert "### Minimum-device memory gates" in dashboard
-    assert "### Minimum-memory release gates" in intro
+    assert "[implementation dashboard](dashboard.md)" in intro
+    assert "### Minimum-device memory gates" not in intro
     assert "## Minimum-device memory gates" in methodology
     assert "### 6 GiB VRAM release floor" in cuda
     assert "### 8 GB laptop release floor" in webgpu
@@ -503,7 +378,6 @@ def test_minimum_device_memory_gates_are_atomic_and_fail_closed() -> None:
             f"| [**CUDA**](platforms/cuda.md) | 6 GiB VRAM | `512x512` | "
             f"Full | `192x192` | {detector_bin} |"
         )
-        assert row in dashboard
         matching = next(line for line in dashboard.splitlines() if line.startswith(row))
         assert f"**{payload}**" in matching
         assert f"**{gate}**" in matching
@@ -518,7 +392,6 @@ def test_minimum_device_memory_gates_are_atomic_and_fail_closed() -> None:
             f"| [**WebGPU**](platforms/webgpu.md) | 8 GB total RAM | `512x512` "
             f"| Full | `192x192` | {detector_bin} |"
         )
-        assert row in dashboard
         matching = next(line for line in dashboard.splitlines() if line.startswith(row))
         assert f"**{payload}**" in matching
         assert f"**{gate}**" in matching
@@ -536,7 +409,6 @@ def test_minimum_device_memory_gates_are_atomic_and_fail_closed() -> None:
     assert "Do not convert **Pending** or **Test** to ✓" in methodology
     assert "Measurements on a larger Blackwell GPU do not by themselves prove" in cuda
     assert "A real-adapter run on a higher-memory machine cannot receive this ✓" in webgpu
-
 
 def test_load_dtype_docs_keep_precision_and_peak_memory_distinct() -> None:
     dashboard = Path("docs/dashboard.md").read_text(encoding="utf-8")
@@ -567,40 +439,42 @@ def test_narrow_tables_scroll_without_compressing_provenance_columns() -> None:
     assert "overflow-x: auto" in css
     assert ".pst-scrollable-table-container > table.table" in css
     assert "min-width: 52rem" in css
+    assert "table.table:has(th:nth-child(15))" in css
+    assert "min-width: 112rem" in css
 
 
-def test_overview_tables_use_device_and_date_not_evidence_columns() -> None:
+def test_dashboard_tables_use_device_and_date_while_landing_stays_timing_free() -> None:
     dashboard = Path("docs/dashboard.md").read_text(encoding="utf-8")
     intro = Path("docs/intro.md").read_text(encoding="utf-8")
     writing = Path("docs/developer/writing.md").read_text(encoding="utf-8")
 
-    for overview in (dashboard, intro):
-        assert "Device tested" in overview
-        assert "Date tested" in overview
-        assert "| Evidence |" not in overview
-        assert "Evidence / next gap" not in overview
+    assert "Device tested" in dashboard
+    assert "Date tested" in dashboard
+    assert "| Evidence |" not in dashboard
+    assert "Evidence / next gap" not in dashboard
+    assert "Device tested" not in intro
+    assert "Date tested" not in intro
 
-        for block in overview.split("\n\n"):
-            lines = [line for line in block.splitlines() if line.startswith("|")]
-            if len(lines) < 3:
+    for block in dashboard.split("\n\n"):
+        lines = [line for line in block.splitlines() if line.startswith("|")]
+        if len(lines) < 3:
+            continue
+        headers = [cell.strip() for cell in lines[0].strip("|").split("|")]
+        if not {"Time", "Device tested", "Date tested"} <= set(headers):
+            continue
+        time_index = headers.index("Time")
+        device_index = headers.index("Device tested")
+        date_index = headers.index("Date tested")
+        for line in lines[2:]:
+            cells = [cell.strip() for cell in line.strip("|").split("|")]
+            assert len(cells) == len(headers)
+            if cells[time_index] in {"—", "**Pending**"}:
                 continue
-            headers = [cell.strip() for cell in lines[0].strip("|").split("|")]
-            if not {"Time", "Device tested", "Date tested"} <= set(headers):
-                continue
-            time_index = headers.index("Time")
-            device_index = headers.index("Device tested")
-            date_index = headers.index("Date tested")
-            for line in lines[2:]:
-                cells = [cell.strip() for cell in line.strip("|").split("|")]
-                assert len(cells) == len(headers)
-                if cells[time_index] in {"—", "**Pending**"}:
-                    continue
-                assert cells[device_index] != "—"
-                assert re.fullmatch(r"20\d{2}-\d{2}-\d{2}", cells[date_index])
+            assert cells[device_index] != "—"
+            assert re.fullmatch(r"20\d{2}-\d{2}-\d{2}", cells[date_index])
 
     assert "human-facing overview table ends with **Device" in writing
     assert "Do not add evidence-ID or source-revision columns" in writing
-
 
 def test_api_guide_maps_every_public_namespace() -> None:
     api = Path("docs/api/index.md").read_text(encoding="utf-8")
@@ -635,65 +509,57 @@ def test_api_guide_maps_every_public_namespace() -> None:
 
 def test_current_benchmarks_have_complete_provenance_rows() -> None:
     text = Path("docs/performance/results.md").read_text(encoding="utf-8")
-    benchmark_ids = (
-        "CUDA-512-LOAD",
-        "CUDA-1024-LOAD",
-        "CUDA-STOCHASTIC-IO",
-        "CUDA-CAL-BUILD",
-        "MPS-CAL-BUILD",
-        "PRODUCT-CACHE-REOPEN",
-        "MPS-1024-LOAD",
-        "M2-AIR-BIN4-E2E",
-        "WEBGPU-512-FULL",
-        "WEBGPU-1024-FULL-REJECTED",
-        "WEBGPU-DET-BIN",
-        "WEBGPU-256-CROP",
-        "WEBGPU-BF-256",
-        "WEBGPU-BF-512",
-        "WEBGPU-BF-1024",
-        "WEBGPU-BF-1024-STRESS",
-        "WEBGPU-VISIBLE-512",
-        "WEBGPU-DPC-512",
-        "CUDA-BF-512",
-        "CUDA-ADF-512",
-        "CUDA-DF-512",
-        "CUDA-COM-512",
-        "MPS-SAVE-U16-512",
-        "SSB-CUDA-512-FULL",
-        "SSB-MPS-512-R30",
-        "SSB-MPS-512-FULL",
-        "SSB-MPS-1024-SYNTH",
-    )
 
-    for benchmark_id in benchmark_ids:
-        rows = [line for line in text.splitlines() if line.startswith(f"| {benchmark_id} |")]
-        assert len(rows) == 1, benchmark_id
-        row = rows[0]
-        assert "2026-" in row
-        assert "github.com/bobleesj/quantem.gpu/commit/" in row
-        assert row.count("|") == 8
+    for heading in (
+        "### Current warm load/decode/bin",
+        "### Current streamed screening",
+        "### Current resident products",
+        "### Current SSB reconstruction and calibration",
+        "### Current native Swift/Metal boundary",
+        "### Current evidence fingerprints",
+        "## Historical and rejected results",
+    ):
+        assert heading in text
+
+    load = text.split("### Current warm load/decode/bin", 1)[1].split(
+        "### Current streamed screening", 1
+    )[0]
+    rows = [
+        line
+        for line in load.splitlines()
+        if line.startswith("| **CUDA**")
+        or line.startswith("| **Python MPS**")
+        or line.startswith("| **WebGPU**")
+        or line.startswith("| **CPU reference**")
+    ]
+    assert len(rows) == 16
+    for row in rows:
+        assert row.count("|") == 13
+        assert "2026" not in row  # date is profile-level and not duplicated per row
+        assert "| Pass |" in row or "Exact" in row or "adjudicator" in row
 
     for required in (
-        "cache state and benchmark definition",
-        "scientific and calibration provenance",
-        "first process",
-        "saved-result reopen",
-        "explicit exact-sum detector bin 4",
-        "single visible run, not a median",
-        "No frozen parity value",
+        "Date tested:",
+        "Baseline revisions:",
+        "Fixture C:",
+        "Fixture D:",
+        "not called cold",
+        "complete `512x512` scan",
+        "no scan or detector crop",
+        "Current evidence fingerprints",
+        "failed scientific gates",
     ):
         assert required.lower() in text.lower()
 
-    assert "cold `8.90 s`" not in text
-    assert (
-        "| SSB-CUDA-512-FULL | 2026-07-19,"
-        in text
-    )
-    assert "NVIDIA RTX PRO 6000 Blackwell | Prepared real `512x512` SSB" in text
-    assert text.count(
-        "Apple M5 MacBook Pro (`Mac17,2`), 10-core GPU, 24 GB unified memory"
-    ) == 3
-
+    for removed in (
+        "## Earlier three-host full-scan campaign",
+        "## Historical native CUDA and MPS IO",
+        "CUDA-512-LOAD",
+        "PRODUCT-CACHE-REOPEN",
+        "8.096 s",
+        "3.451 s",
+    ):
+        assert removed not in text
 
 def test_docs_build_is_hardware_independent() -> None:
     config = CONFIG.read_text(encoding="utf-8")

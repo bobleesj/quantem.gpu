@@ -2,8 +2,8 @@
 
 This section preserves migration records, backend postmortems, hardware
 evidence, architecture decisions, and kernel histories. Day-to-day users should
-start with [Scientific kernels](../kernels/index.md) or
-[Current verified results](../backends.md).
+start with [Scientific kernels](../kernels/index.md) or the
+[implementation dashboard](../dashboard.md).
 
 Maintainer pages are intentionally detailed. They preserve unsuccessful
 experiments and exact historical numbers so future work does not repeat a
