@@ -85,6 +85,19 @@ On Apple unified memory, record process footprint, Metal allocated bytes,
 system pressure, and swap. On CUDA, record process allocated/reserved VRAM and
 total-card occupancy before, during, and after the run.
 
+## Interaction sidecars and scientific resolution
+
+A detector-binned interaction sidecar is a distinct scientific sampling plan,
+even when it is built automatically after a native-detector load. Its speed may
+be reported only with the sidecar detector bin and output meaning. It cannot be
+used as parity evidence for native-detector CoM, DPC, iDPC, a diffraction
+pattern, or another resolution-sensitive product.
+
+If the public API promises native resolution, parity must exercise the
+full-resolution reducer. If a client chooses the interaction sidecar, metadata
+and UI provenance must identify its detector bin; the application must not
+present the result as native resolution.
+
 ## Acceptance
 
 An optimization is retained only when:
@@ -94,5 +107,8 @@ An optimization is retained only when:
 - tails and responsiveness do not regress;
 - provenance remains complete; and
 - the implementation does not create a backend-specific public API.
+
+A faster sidecar, prepared index, saved result, cropped scan, or detector-binned
+representation never inherits the acceptance state of the native source plan.
 
 Rejected experiments stay in the [optimization ledger](../maintainer/backend-optimization-matrix.md).

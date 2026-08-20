@@ -34,6 +34,26 @@ CoM, DPC/iDPC, FFT, and SSB use frozen operation-specific metrics. Reports
 include maximum and high-percentile error where meaningful. Tolerances are not
 widened to make a new backend pass.
 
+## Current real-data gate
+
+The 2026-08-19 full-scan campaign used revision `8c47a466` and one
+byte-identical `512x512x192x192` `uint16` compressed-HDF5 fixture on CUDA GPU 0,
+Apple M5 Max, and Apple M5. No scan crop was used and detector bin was explicit.
+
+At detector bin 4, mean diffraction and exact total/BF/DF are byte-identical
+across the three machines. Apple-to-Apple CoM/iDPC is also byte-identical; CUDA
+CoM differs by at most `1.91e-6` and passes the frozen `1e-5` gate. CUDA-versus-
+MPS iDPC differs by `2.84e-5` and is blocked at the frozen `rtol=1e-5`,
+`atol=1e-5` gate.
+
+At detector bin 1, integer products are byte-identical, but the public MPS
+interaction sidecar uses detector bin 2 and therefore changes native-detector
+CoM/iDPC. A direct full-resolution Metal diagnostic passes CoM with `7.63e-6`
+maximum error, while iDPC remains blocked at `7.58e-5`. Detector-bin-2 and
+detector-bin-8 timings have no equivalent retained real-data product bundle and
+remain timing-only. See [Verified benchmark results](results.md) for the full
+matrix and device/runtime details.
+
 ## Result bundle
 
 A cross-backend result bundle contains:

@@ -9,7 +9,146 @@ state, load plan, benchmark definition, and scientific agreement gate.
 operating-system storage cache was not forcibly evicted. It is not called cold.
 “Prepared” means an index, sidecar, or derived product cache already existed.
 
-## Native CUDA and MPS IO
+## Current three-host full-scan campaign
+
+- **Date tested:** 2026-08-19
+- **Measured revision:** `8c47a466d573f74e425faff611939a17fa6efbf2`
+- **Source tree:** `c3094dcfeb7adc2e8268031678202fcb8517a2a0`
+- **Fixture:** `real-512x512x192x192-u16-bslz4-27shard`, 28 HDF5 files,
+  3,169,920,193 compressed bytes, aggregate file-manifest SHA-256
+  `741e7bcf13ffd77bcacfeeabc0b7edb7b427448273ceba2a166426b8f73f509a`.
+All 28 hashes match on Phil, Rodman, and MJGOAT.
+
+Every row below uses the complete `512x512` scan, no scan crop, scan bin 1,
+native `uint16` source counts, and the explicit detector bin shown. No
+operating-system cache purge or reboot was performed, so no result is labeled
+cold. MJGOAT ran with `CUDA_VISIBLE_DEVICES=0`; GPU 0 initially had only the
+Sunshine process using 952 MiB and reported 1% utilization.
+
+### Warm raw-source load
+
+Wall time is the public `quantem.gpu.io.load` call through synchronized backend
+completion. Detector-bin-1 uses seven sustained repetitions; the other rows
+use five or seven as shown. Resident payload is not peak process memory.
+
+| Platform | Detector bin | Output detector | Resident dtype | Repetitions | p50 | p95 | Maximum | Resident payload | State | Device tested | Date tested |
+|---|---:|---:|---|---:|---:|---:|---:|---:|---|---|---|
+| **CUDA** | 1 | `192x192` | `uint16` | 7 | **0.588 s** | **0.674 s** | **0.695 s** | **18.00 GiB** | Warm source | NVIDIA RTX PRO 6000 Blackwell, GPU 0 | 2026-08-19 |
+| **CUDA** | 2 | `96x96` | `uint32` | 5 | **0.626 s** | **0.682 s** | **0.693 s** | **9.00 GiB** | Warm source | NVIDIA RTX PRO 6000 Blackwell, GPU 0 | 2026-08-19 |
+| **CUDA** | 4 | `48x48` | `uint32` | 7 | **0.553 s** | **0.660 s** | **0.688 s** | **2.25 GiB** | Warm source | NVIDIA RTX PRO 6000 Blackwell, GPU 0 | 2026-08-19 |
+| **CUDA** | 8 | `24x24` | `uint32` | 5 | **0.599 s** | **0.607 s** | **0.607 s** | **0.5625 GiB** | Warm source | NVIDIA RTX PRO 6000 Blackwell, GPU 0 | 2026-08-19 |
+| **Python MPS** | 1 | `192x192` | `uint16` | 7 | **2.164 s** | **2.214 s** | **2.218 s** | **18.00 GiB** | Warm source | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-19 |
+| **Python MPS** | 2 | `96x96` | `uint16` | 5 | **0.691 s** | **0.713 s** | **0.719 s** | **4.50 GiB** | Warm source | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-19 |
+| **Python MPS** | 4 | `48x48` | `uint16` | 7 | **0.586 s** | **0.589 s** | **0.590 s** | **1.125 GiB** | Warm source | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-19 |
+| **Python MPS** | 8 | `24x24` | `uint16` | 5 | **0.575 s** | **0.576 s** | **0.576 s** | **0.28125 GiB** | Warm source | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-19 |
+| **Python MPS** | 1 | `192x192` | `uint16` | — | — | — | — | **18.00 GiB** | Blocked before decode | Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU, 24 GB) | 2026-08-19 |
+| **Python MPS** | 2 | `96x96` | `uint16` | 5 | **2.224 s** | **2.382 s** | **2.386 s** | **4.50 GiB** | Warm source | Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU, 24 GB) | 2026-08-19 |
+| **Python MPS** | 4 | `48x48` | `uint16` | 7 | **1.695 s** | **1.834 s** | **1.838 s** | **1.125 GiB** | Warm source | Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU, 24 GB) | 2026-08-19 |
+| **Python MPS** | 8 | `24x24` | `uint16` | 5 | **1.580 s** | **1.586 s** | **1.588 s** | **0.28125 GiB** | Warm source | Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU, 24 GB) | 2026-08-19 |
+
+The 24 GB M5 memory guard is a successful policy result, not a failed load. A
+native-detector allocation would materialize 18.00 GiB against a conservative
+12.4 GiB limit derived from the 17.8 GiB recommended Metal working set. The
+loader stopped before allocation and recommended detector bin 2; it did not
+silently change the requested plan.
+
+For CUDA, the CuPy pool used/reserved after the seven-repetition native row was
+18.00/36.00 GiB. Detector-bin-2, detector-bin-4, and detector-bin-8 used/reserved
+9.00/18.00 GiB, 2.25/4.50 GiB, and 0.5625/1.129 GiB respectively. These are
+post-run allocator observations, not total-card peak samples. Apple rows retain
+logical Metal payload plus process logs; process RSS alone does not include the
+whole unified-memory payload and is not promoted as peak memory.
+
+### First campaign encounter plus scientific products
+
+These are single first campaign encounters, not medians and not cold. The wall
+boundary is synchronized public load plus mean diffraction, exact
+total/BF/DF, CoM row/column, and fixed-orientation iDPC. Evidence-NPZ
+serialization is excluded from the retained total.
+
+| Platform | Detector bin | Load | Products | Load + products | Memory observation | Scientific state | Device tested | Date tested |
+|---|---:|---:|---:|---:|---|---|---|---|
+| **CUDA** | 4 | **1.991 s** | **36.435 ms** | **2.027 s** | Process RSS max **3.42 GiB**; CuPy used/reserved **2.25/2.26 GiB** | Integer/CoM pass; iDPC block | NVIDIA RTX PRO 6000 Blackwell, GPU 0 | 2026-08-19 |
+| **Python MPS** | 4 | **1.881 s** | **101.286 ms** | **1.982 s** | Peak memory footprint **2.93 GiB** | Phil/Rodman exact; CUDA iDPC block | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-19 |
+| **Python MPS** | 4 | **2.662 s** | **112.817 ms** | **2.775 s** | Peak memory footprint **2.93 GiB** | Phil/Rodman exact; CUDA iDPC block | Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU, 24 GB) | 2026-08-19 |
+
+The measured product-stage decomposition is:
+
+| Platform | Mean diffraction | Mask fit | Total exact | BF exact | DF exact | CoM | iDPC | Device tested | Date tested |
+|---|---:|---:|---:|---:|---:|---:|---:|---|---|
+| **CUDA** | **6.102 ms** | **0.155 ms** | **8.706 ms** | **1.637 ms** | **1.452 ms** | **2.531 ms** | **15.852 ms** | NVIDIA RTX PRO 6000 Blackwell, GPU 0 | 2026-08-19 |
+| **Python MPS** | **76.788 ms** | **0.235 ms** | **4.021 ms** | **2.245 ms** | **2.310 ms** | **5.258 ms** | **10.429 ms** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
+| **Python MPS** | **59.063 ms** | **0.399 ms** | **14.459 ms** | **6.757 ms** | **7.131 ms** | **14.681 ms** | **10.327 ms** | Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU) | 2026-08-19 |
+
+### Native Swift/Metal release diagnostics
+
+The same source revision was rebuilt in release mode. Catalog/index timings are
+metadata preparation, not detector decode; prepared index reopen is not a
+source load.
+
+| Operation | Statistic | Apple M5 Max | Apple M5 | Shape/state | Date tested |
+|---|---|---:|---:|---|---|
+| Native HDF5 catalog only | Single run | **12.397 ms** | **20.198 ms** | Same 28-file fixture | 2026-08-19 |
+| Native HDF5 first index build | Single run | **1.370 s** | **1.239 s** | New cache directory | 2026-08-19 |
+| Native HDF5 prepared index reopen | p50 | **3.669 ms** | **2.375 ms** | Seven process-isolated reopens | 2026-08-19 |
+| Native HDF5 prepared index reopen | p95 | **3.865 ms** | **2.651 ms** | Seven process-isolated reopens | 2026-08-19 |
+| Float32 FFT | First execution | **7.566 ms** | **7.001 ms** | `512x512` | 2026-08-19 |
+| Float32 FFT | Warm p50 | **0.213 ms** | **0.551 ms** | 20 warm transforms | 2026-08-19 |
+| Float32 FFT | Warm p95 | **0.391 ms** | **0.865 ms** | 20 warm transforms | 2026-08-19 |
+| UInt32 statistics | First execution | **3.679 ms** | **2.141 ms** | `512x512` | 2026-08-19 |
+| UInt32 statistics | Warm p50 | **0.296 ms** | **0.727 ms** | 20 warm analyses | 2026-08-19 |
+| UInt32 statistics | Warm p95 | **0.408 ms** | **0.975 ms** | 20 warm analyses | 2026-08-19 |
+
+The display benchmark retained exact range `0:4095` and histogram sum
+`262144`. Its linear-render GPU median was `0.0143 ms` on the M5 Max and
+`0.0471 ms` on the M5. These resident 2D timings are not wall-to-wall 4D-STEM
+load times.
+
+### Numerical adjudication
+
+The frozen gates are byte equality for integer products, `rtol=0`,
+`atol=1e-5` for CoM, and `rtol=1e-5`, `atol=1e-5` for iDPC.
+
+| Plan | Product | Comparison | Maximum absolute error | Gate |
+|---|---|---|---:|---|
+| Detector bin 4 | Mean diffraction, total, BF, DF | Phil vs Rodman vs CUDA | **0** | **Pass** |
+| Detector bin 4 | CoM row/column | Phil vs Rodman | **0** | **Pass** |
+| Detector bin 4 | CoM row/column | Phil vs CUDA | **1.91e-6** | **Pass** |
+| Detector bin 4 | iDPC | Phil vs Rodman | **0** | **Pass** |
+| Detector bin 4 | iDPC | Phil vs CUDA | **2.84e-5** | **Block** |
+| Detector bin 1 | Mean diffraction, total, BF, DF | Public MPS vs CUDA | **0** | **Pass** |
+| Detector bin 1 | CoM row/column | Public MPS bin-2 sidecar vs CUDA | **0.508 px** | **Block** |
+| Detector bin 1 | iDPC | Public MPS bin-2 sidecar vs CUDA | **1.16e-2** | **Block** |
+| Detector bin 1 | CoM row/column | Direct full-resolution Metal diagnostic vs CUDA | **7.63e-6** | **Pass** |
+| Detector bin 1 | iDPC | Direct full-resolution Metal diagnostic vs CUDA | **7.58e-5** | **Block** |
+
+The native-detector public MPS session can automatically reuse a detector-bin-2
+interaction sidecar. That is suitable for responsive interaction only when its
+changed detector sampling is explicit; it is not full-resolution parity. A
+diagnostic bypass showed that the existing full-resolution Metal CoM kernel
+takes `83.3 ms` on the M5 Max and passes the CoM gate. This private diagnostic
+does not itself change the public contract, and the iDPC gate remains blocked.
+
+Detector-bin-2 and detector-bin-8 rows are timing evidence only because this
+campaign did not retain equivalent real-data product arrays for those plans.
+No result inherits detector-bin-4 parity.
+
+### Focused checks and environment gaps
+
+- Phil Python: **132 passed, 10 skipped** in 2.73 s.
+- Rodman Python: **132 passed, 10 skipped** in 5.24 s.
+- MJGOAT GPU 0 Python/CUDA: **148 passed, 2 skipped** in 8.98 s.
+- Phil Swift/Metal: **66 tests, 5 skipped, 0 failures**.
+- Rodman release and debug production products: **build pass**.
+- Rodman Swift tests: **blocked before execution** because the installed
+  CommandLineTools toolchain has no XCTest module; this is an environment gap,
+  not a passing test row.
+
+All benchmark commands placed the isolated exact source first. This matters on
+Phil because its default Python environment otherwise resolves a stale editable
+checkout from a mounted path.
+
+## Historical native CUDA and MPS IO
 
 | ID | Date and exact revision | Hardware | Source and load plan | Cache state and benchmark definition | Result | Scientific and calibration provenance |
 |---|---|---|---|---|---|---|
@@ -62,6 +201,19 @@ diagnostics even when numerical parity is strong.
 
 ## What changed in this audit
 
+- A single exact revision and byte-identical real fixture now cover current
+  full-scan CUDA GPU 0 and Python MPS load timings at detector bins 1/2/4/8 on
+  two Apple devices. This replaces the stale representative CUDA/MPS numbers
+  in the overview where the configuration is comparable; the older rows remain
+  below as historical, differently configured evidence.
+- Current product timing is separated from parity. Detector-bin-4 integer
+  products and CoM pass, but cross-backend iDPC fails its frozen `1e-5` gate.
+  Native-detector public MPS CoM/iDPC also fails because the interaction
+  sidecar uses detector bin 2; those fast results are not presented as native
+  resolution.
+- Release-mode Native Swift/Metal catalog, first-index, prepared-index,
+  display, statistics, and FFT diagnostics now identify both Apple devices.
+  Prepared index reopen remains explicitly distinct from raw-source load.
 - The stochastic IO `8.90 s` result is now “first process” rather than “cold”
   because the storage-cache eviction procedure was not retained.
 - The visible WebGPU `0.933 s` result is now explicitly a single headed run,

@@ -1,17 +1,42 @@
 {
   "schema_version": 1,
-  "source_revision": "25355d7bd6d07ce8ee0fd0be3f0342aa7b8d1373",
-  "purpose": "Fingerprints for retained numerical evidence pages after the historical documentation archive move; measured content is preserved and moved-page links are relative to the archive location.",
+  "source_revision": "8c47a466d573f74e425faff611939a17fa6efbf2",
+  "purpose": "Fingerprints for the current three-host benchmark overview, its parity and methodology contract, and retained historical evidence pages. Current measurements use one tested source revision and keep cache state, data plan, device, date, and acceptance boundaries explicit.",
   "pages": [
     {
+      "path": "docs/intro.md",
+      "sha256": "9ed1bb06da6e536b47c2713c0651ef51e2fba9f9888bd2ca18db06a7b7dc7600",
+      "role": "Current developer landing page and benchmark overview"
+    },
+    {
+      "path": "docs/dashboard.md",
+      "sha256": "9c412840b3342a9927f2a799d32c3c06a80981c77b94888f0419071874a3a683",
+      "role": "Atomic capability, speed, memory, and parity dashboard"
+    },
+    {
       "path": "docs/backends.md",
-      "sha256": "6a02803777a0080db0c561102a8c17665f07edd941dd3f0eeb4a34823caa9e82",
+      "sha256": "17c6db28c07f57a5c8a6c9a9b2df2423a098490a43042feae29bae474bc3f7d2",
       "role": "Current capability and measured summary"
     },
     {
       "path": "docs/performance/results.md",
-      "sha256": "2ec4903e766b9085a84d8b9f8e83d41f65b862a6a843fef6ed44b53550c00220",
+      "sha256": "41ca834bce6225582d04bad9a49f26cb54b2af8458bf850e02424d2232611f39",
       "role": "Verified benchmark provenance index"
+    },
+    {
+      "path": "docs/performance/changes.md",
+      "sha256": "7a372b392b967dc8b269c7cc7d3cc20ffa540ce25dd1fe7b68cc4dbf08629e81",
+      "role": "Measurement replacement and historical-change ledger"
+    },
+    {
+      "path": "docs/performance/methodology.md",
+      "sha256": "d92932354a91b8f7e9a8c22daa755f6b4a31cb6a9faa74838b23ae01d35ad705",
+      "role": "Benchmark state, provenance, and scientific-resolution contract"
+    },
+    {
+      "path": "docs/performance/parity.md",
+      "sha256": "490039ef80415314c796ea77ed3d8612e9d6fed601f13c59722d50a6953a4792",
+      "role": "Current cross-platform numerical acceptance gates"
     },
     {
       "path": "docs/maintainer/backend-optimization-matrix.md",
