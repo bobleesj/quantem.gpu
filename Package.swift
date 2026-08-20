@@ -9,6 +9,7 @@ let package = Package(
     .library(name: "Metal4DSTEMKernels", targets: ["Metal4DSTEMKernels"]),
     .library(name: "MetalImageFFT", targets: ["MetalImageFFT"]),
     .library(name: "MetalImageRuntime", targets: ["MetalImageRuntime"]),
+    .library(name: "MetalSSBKernels", targets: ["MetalSSBKernels"]),
     .library(name: "Native4DSTEMIO", targets: ["Native4DSTEMIO"]),
     .executable(
       name: "metal-display-benchmark",
@@ -25,6 +26,10 @@ let package = Package(
     .executable(
       name: "metal-image-runtime-benchmark",
       targets: ["MetalImageRuntimeBenchmark"]
+    ),
+    .executable(
+      name: "metal-ssb-benchmark",
+      targets: ["MetalSSBBenchmark"]
     ),
   ],
   targets: [
@@ -68,6 +73,11 @@ let package = Package(
       dependencies: ["MetalDisplayKernels"],
       path: "src/quantem/gpu/swift/Sources/MetalImageRuntime"
     ),
+    .target(
+      name: "MetalSSBKernels",
+      path: "src/quantem/gpu/swift/Sources/MetalSSBKernels",
+      resources: [.copy("Resources")]
+    ),
     .executableTarget(
       name: "MetalDisplayBenchmark",
       dependencies: ["MetalDisplayKernels"],
@@ -89,6 +99,11 @@ let package = Package(
       dependencies: ["MetalImageRuntime", "MetalImageFFT"],
       path: "src/quantem/gpu/swift/Benchmarks/MetalImageRuntimeBenchmark"
     ),
+    .executableTarget(
+      name: "MetalSSBBenchmark",
+      dependencies: ["MetalSSBKernels"],
+      path: "src/quantem/gpu/swift/Benchmarks/MetalSSBBenchmark"
+    ),
     .testTarget(
       name: "MetalDisplayKernelsTests",
       dependencies: ["MetalDisplayKernels"],
@@ -108,6 +123,11 @@ let package = Package(
       name: "MetalImageRuntimeTests",
       dependencies: ["MetalImageRuntime"],
       path: "src/quantem/gpu/swift/Tests/MetalImageRuntimeTests"
+    ),
+    .testTarget(
+      name: "MetalSSBKernelsTests",
+      dependencies: ["MetalSSBKernels"],
+      path: "src/quantem/gpu/swift/Tests/MetalSSBKernelsTests"
     ),
     .testTarget(
       name: "Native4DSTEMIOTests",
