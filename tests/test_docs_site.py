@@ -160,23 +160,15 @@ def test_dashboard_is_the_dense_human_overview() -> None:
     ):
         assert evidence_state in dashboard
 
-    for evidence_id in (
-        "CUDA-512-LOAD",
-        "M2-AIR-BIN4-E2E",
-        "WEBGPU-512-FULL",
-        "MPS-1024-LOAD",
-        "WEBGPU-DET-BIN",
-        "CUDA-CAL-BUILD",
-        "MPS-CAL-BUILD",
-        "CUDA-BF-512",
-        "WEBGPU-BF-512",
-        "WEBGPU-DPC-512",
-        "CUDA-COM-512",
-        "SSB-CUDA-512-FULL",
-        "SSB-MPS-512-FULL",
-        "PRODUCT-CACHE-REOPEN",
+    assert "| Evidence |" not in dashboard
+    assert "Evidence / next gap" not in dashboard
+    for device in (
+        "NVIDIA RTX PRO 6000 Blackwell",
+        "Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU)",
+        "Apple M2 MacBook Air (`Mac14,2`, 8 GB)",
+        "Apple Metal GPU (model not retained)",
     ):
-        assert evidence_id in dashboard
+        assert device in dashboard
 
     for provenance in (
         "measurement date",
@@ -213,7 +205,7 @@ def test_dashboard_is_the_dense_human_overview() -> None:
     for detector_bin in (1, 2, 4, 8):
         assert f"| {detector_bin} |" in dashboard
     assert "square scan-grid sizes, not detector dimensions" in dashboard
-    assert "| **Python MPS** | `512x512` | Native real acquisition | Full active BF | ✓ | p50 | **537.58 ms** |" in dashboard
+    assert "| **Python MPS** | `512x512` | Native real acquisition | Full active BF | ✓ | p50 | **537.58 ms** | Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU) | 2026-07-28 |" in dashboard
 
     module_headings = (
         "### I/O and first usable product — `quantem.gpu.io`",
@@ -239,21 +231,11 @@ def test_dashboard_is_the_dense_human_overview() -> None:
 def test_intro_exposes_current_benchmarks_without_erasing_provenance() -> None:
     intro = Path("docs/intro.md").read_text(encoding="utf-8")
 
-    for evidence_id in (
-        "M2-AIR-BIN4-E2E",
-        "CUDA-512-LOAD",
-        "MPS-1024-LOAD",
-        "WEBGPU-512-FULL",
-        "CUDA-CAL-BUILD",
-        "MPS-CAL-BUILD",
-        "CUDA-BF-512",
-        "WEBGPU-BF-512",
-        "CUDA-COM-512",
-        "WEBGPU-DPC-512",
-        "SSB-CUDA-512-FULL",
-        "SSB-MPS-512-FULL",
-    ):
-        assert evidence_id in intro
+    assert "| Evidence |" not in intro
+    assert "Evidence / next gap" not in intro
+    assert "NVIDIA RTX PRO 6000 Blackwell" in intro
+    assert "Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU)" in intro
+    assert "Apple M2 MacBook Air (`Mac14,2`, 8 GB)" in intro
 
     module_sections = (
         "### I/O — `quantem.gpu.io`",
@@ -286,10 +268,8 @@ def test_intro_exposes_current_benchmarks_without_erasing_provenance() -> None:
         "Fixture",
         "Statistic",
         "Time",
-        "Date",
-        "Revision",
-        "Device",
-        "Evidence",
+        "Device tested",
+        "Date tested",
     ):
         assert table_field in intro
 
@@ -355,7 +335,7 @@ def test_intro_ssb_size_matrix_tracks_fixed_size_runtime_registries() -> None:
     ).read_text(encoding="utf-8")
 
     assert "scan sizes, not detector sizes" in ssb_section
-    assert "| Platform | Scan grid | Evidence type | BF policy | State | Statistic | Time |" in ssb_section
+    assert "| Platform | Scan grid | Source kind | BF policy | State | Statistic | Time | Device tested | Date tested |" in ssb_section
     assert "| Platform | `128x128` | `256x256` |" not in ssb_section
     for size in (128, 256, 512, 1024):
         assert f"`{size}x{size}`" in ssb_section
@@ -373,10 +353,12 @@ def test_intro_ssb_size_matrix_tracks_fixed_size_runtime_registries() -> None:
 
     assert "Incomplete frozen reference" in ssb_section
     assert "Native real acquisition | Full active BF" in ssb_section
-    assert "no native swift ssb kernel" in ssb_section.lower()
+    assert "NVIDIA RTX PRO 6000 Blackwell | 2026-07-19" in ssb_section
+    assert "Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU) | 2026-07-28" in ssb_section
+    assert "native swift/metal has no native ssb kernel" in ssb_section.lower()
 
 
-def test_platform_first_io_tables_expose_bins_and_missing_evidence() -> None:
+def test_platform_first_io_tables_expose_bins_devices_and_dates() -> None:
     dashboard = Path("docs/dashboard.md").read_text(encoding="utf-8")
     swift_plan = Path(
         "src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/"
@@ -438,26 +420,13 @@ def test_platform_first_io_tables_expose_bins_and_missing_evidence() -> None:
         if line.startswith("| **")
     ]
     platforms = ("CUDA", "Python MPS", "Native Swift/Metal", "WebGPU")
-    evidence_ids = (
-        "CUDA-512-LOAD",
-        "MPS-1024-LOAD",
-        "M2-AIR-BIN4-E2E",
-        "WEBGPU-256-CROP",
-        "WEBGPU-512-FULL",
-        "WEBGPU-DET-BIN",
-    )
-
     def platform(cell: str) -> str:
         return next(name for name in platforms if name in cell)
-
-    def evidence_id(cell: str) -> str:
-        return next(name for name in evidence_ids if name in cell)
 
     dashboard_keys = {
         (
             platform(row[0]), row[1], row[2], row[4], row[5], row[6], row[7],
             row[8], row[9], row[11], row[12], row[13], row[17], row[18],
-            row[19], evidence_id(row[20]),
         )
         for row in rows
     }
@@ -465,7 +434,6 @@ def test_platform_first_io_tables_expose_bins_and_missing_evidence() -> None:
         (
             platform(row[0]), row[1], row[2], row[3], row[4], row[5], row[6],
             row[7], row[8], row[9], row[10], row[11], row[12], row[13],
-            row[14], evidence_id(row[15]),
         )
         for row in intro_rows
     }
@@ -522,6 +490,39 @@ def test_narrow_tables_scroll_without_compressing_provenance_columns() -> None:
     assert "overflow-x: auto" in css
     assert ".pst-scrollable-table-container > table.table" in css
     assert "min-width: 52rem" in css
+
+
+def test_overview_tables_use_device_and_date_not_evidence_columns() -> None:
+    dashboard = Path("docs/dashboard.md").read_text(encoding="utf-8")
+    intro = Path("docs/intro.md").read_text(encoding="utf-8")
+    writing = Path("docs/developer/writing.md").read_text(encoding="utf-8")
+
+    for overview in (dashboard, intro):
+        assert "Device tested" in overview
+        assert "Date tested" in overview
+        assert "| Evidence |" not in overview
+        assert "Evidence / next gap" not in overview
+
+        for block in overview.split("\n\n"):
+            lines = [line for line in block.splitlines() if line.startswith("|")]
+            if len(lines) < 3:
+                continue
+            headers = [cell.strip() for cell in lines[0].strip("|").split("|")]
+            if not {"Time", "Device tested", "Date tested"} <= set(headers):
+                continue
+            time_index = headers.index("Time")
+            device_index = headers.index("Device tested")
+            date_index = headers.index("Date tested")
+            for line in lines[2:]:
+                cells = [cell.strip() for cell in line.strip("|").split("|")]
+                assert len(cells) == len(headers)
+                if cells[time_index] in {"—", "**Pending**"}:
+                    continue
+                assert cells[device_index] != "—"
+                assert re.fullmatch(r"20\d{2}-\d{2}-\d{2}", cells[date_index])
+
+    assert "human-facing overview table ends with **Device" in writing
+    assert "Do not add evidence-ID or source-revision columns" in writing
 
 
 def test_api_guide_maps_every_public_namespace() -> None:
@@ -607,6 +608,14 @@ def test_current_benchmarks_have_complete_provenance_rows() -> None:
         assert required.lower() in text.lower()
 
     assert "cold `8.90 s`" not in text
+    assert (
+        "| SSB-CUDA-512-FULL | 2026-07-19,"
+        in text
+    )
+    assert "NVIDIA RTX PRO 6000 Blackwell | Prepared real `512x512` SSB" in text
+    assert text.count(
+        "Apple M5 MacBook Pro (`Mac17,2`), 10-core GPU, 24 GB unified memory"
+    ) == 3
 
 
 def test_docs_build_is_hardware_independent() -> None:
