@@ -39,7 +39,8 @@ unpublished revision.
 | `M2-AIR-BIN4-E2E` | Added as physical 8 GB M2 Air first-process application evidence at measured revision `2c047160`; integration revision `e662d7fe` | newer Apple application evidence, but detector bin 4 makes it incomparable with no-bin library rows |
 | `CUDA-STOCHASTIC-IO` | labeled first-process, not cold | the storage-cache eviction procedure was not retained |
 | `WEBGPU-VISIBLE-512` | labeled a single visible run | no distribution was recorded, so it is not a median |
-| July MPS/CUDA/SSB rows with missing host identity | retained as historical diagnostics | numerical evidence remains useful, but incomplete hardware provenance prevents release signoff |
+| July SSB CUDA and MPS rows | timing unchanged; device restored as RTX PRO 6000 Blackwell and Apple M5 `Mac17,2` respectively | the same-revision SSB performance record and frozen MPS fixture retain the hardware identity |
+| Other July MPS/CUDA rows with missing host identity | retained as historical diagnostics | numerical evidence remains useful, but incomplete hardware provenance prevents release signoff |
 
 The authoritative row-level values remain in
 [Verified benchmark results](results.md). Accepted and rejected performance

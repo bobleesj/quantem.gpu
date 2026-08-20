@@ -48,8 +48,9 @@ evidence vocabulary as the [complete module dashboard](dashboard.md):
 - **Ref** — independent CPU correctness adjudication, never fallback.
 - **—** — unsupported or not a target.
 
-No empty cell implies support. Date, device, revision, scientific plan, and
-parity remain attached to every retained performance result.
+No empty cell implies support. Overview timing rows show the device and test
+date. Exact revision, scientific plan, and parity remain in the
+[verified benchmark results](performance/results.md).
 
 For the compact wall-time, scan/detector plan, peak-memory, and **4/6 GiB**
 capacity view, open
@@ -66,73 +67,75 @@ One row below is one exact configuration and one headline statistic. The full
 memory kind, parity, and unmeasured combinations in separate fields.
 Scroll horizontally on narrow screens rather than combining fields.
 
-| Platform | Selected scan | Scan plan | Detector bin | Output detector | Source dtype | Decode dtype | Resident dtype | Cache state | Fixture | Statistic | Time | Date | Revision | Device | Evidence |
-|---|---:|---|---:|---:|---|---|---|---|---|---|---:|---|---|---|---|
-| **CUDA** | `512x512` | Full | 1 | `192x192` | `uint16` | `uint8` | `uint8` | Warm source | — | Median | **0.450 s** | 2026-07-20 | `b61572e4` | RTX PRO 6000 | [CUDA-512-LOAD](performance/results.md) |
-| **Python MPS** | `1024x1024` | Full | 1 | `192x192` | `uint16` | `uint16` | `uint16` | First observed source | — | Single run | **4.617 s** | 2026-07-20 | `cee0ba5c` | Apple GPU; model missing | [MPS-1024-LOAD](performance/results.md) |
-| **Native Swift/Metal** | `512x512` | Full | 4 | `48x48` | `uint16` | `uint16` | `uint16` | First process | A | p50 | **1.985 s** | 2026-08-18 | `2c047160` | 8 GB `Mac14,2` M2 Air | [M2-AIR-BIN4-E2E](performance/results.md) |
-| **Native Swift/Metal** | `512x512` | Full | 4 | `48x48` | `uint16` | `uint16` | `uint16` | First process | B | p50 | **2.043 s** | 2026-08-18 | `2c047160` | 8 GB `Mac14,2` M2 Air | [M2-AIR-BIN4-E2E](performance/results.md) |
-| **WebGPU** | `256x256` | Explicit crop | 1 | `192x192` | `uint16` | `uint8` | `uint8` | Prepared source | — | p50 | **0.338 s** | 2026-07-20 | `b61572e4` | Apple Metal-3 | [WEBGPU-256-CROP](performance/results.md) |
-| **WebGPU** | `256x256` | Explicit crop | 2 | `96x96` | `uint16` | `uint8` | `float32` | Prepared source | — | p50 | **0.774 s** | 2026-07-20 | `cee0ba5c` | RTX PRO 6000 | [WEBGPU-DET-BIN](performance/results.md) |
-| **WebGPU** | `256x256` | Explicit crop | 4 | `48x48` | `uint16` | `uint8` | `float32` | Prepared source | — | p50 | **0.755 s** | 2026-07-20 | `cee0ba5c` | RTX PRO 6000 | [WEBGPU-DET-BIN](performance/results.md) |
-| **WebGPU** | `256x256` | Explicit crop | 8 | `24x24` | `uint16` | `uint8` | `float32` | Prepared source | — | p50 | **0.733 s** | 2026-07-20 | `cee0ba5c` | RTX PRO 6000 | [WEBGPU-DET-BIN](performance/results.md) |
-| **WebGPU** | `512x512` | Full | 1 | `192x192` | `uint16` | `uint8` | `uint8` | Prepared source | — | p50 | **0.772 s** | 2026-07-20 | `b61572e4` | Apple Metal-3 | [WEBGPU-512-FULL](performance/results.md) |
-| **WebGPU** | `512x512` | Full | 2 | `96x96` | `uint16` | `uint8` | `float32` | Prepared source | — | Single profile | **1.199 s** | 2026-07-20 | `cee0ba5c` | RTX PRO 6000 | [WEBGPU-DET-BIN](performance/results.md) |
-| **WebGPU** | `512x512` | Full | 4 | `48x48` | `uint16` | `uint8` | `float32` | Prepared source | — | Single profile | **1.212 s** | 2026-07-20 | `cee0ba5c` | RTX PRO 6000 | [WEBGPU-DET-BIN](performance/results.md) |
-| **WebGPU** | `512x512` | Full | 8 | `24x24` | `uint16` | `uint8` | `float32` | Prepared source | — | Single profile | **1.106 s** | 2026-07-20 | `cee0ba5c` | RTX PRO 6000 | [WEBGPU-DET-BIN](performance/results.md) |
-| **WebGPU** | `512x512` | Full | 2 | `96x96` | `uint16` | `uint16` | `float32` | Prepared source | — | Single profile | **2.651 s** | 2026-07-20 | `cee0ba5c` | RTX PRO 6000 | [WEBGPU-DET-BIN](performance/results.md) |
+| Platform | Selected scan | Scan plan | Detector bin | Output detector | Source dtype | Decode dtype | Resident dtype | Cache state | Fixture | Statistic | Time | Device tested | Date tested |
+|---|---:|---|---:|---:|---|---|---|---|---|---|---:|---|---|
+| **CUDA** | `512x512` | Full | 1 | `192x192` | `uint16` | `uint8` | `uint8` | Warm source | — | Median | **0.450 s** | NVIDIA RTX PRO 6000 Blackwell | 2026-07-20 |
+| **Python MPS** | `1024x1024` | Full | 1 | `192x192` | `uint16` | `uint16` | `uint16` | First observed source | — | Single run | **4.617 s** | Apple Metal GPU (model not retained) | 2026-07-20 |
+| **Native Swift/Metal** | `512x512` | Full | 4 | `48x48` | `uint16` | `uint16` | `uint16` | First process | A | p50 | **1.985 s** | Apple M2 MacBook Air (`Mac14,2`, 8 GB) | 2026-08-18 |
+| **Native Swift/Metal** | `512x512` | Full | 4 | `48x48` | `uint16` | `uint16` | `uint16` | First process | B | p50 | **2.043 s** | Apple M2 MacBook Air (`Mac14,2`, 8 GB) | 2026-08-18 |
+| **WebGPU** | `256x256` | Explicit crop | 1 | `192x192` | `uint16` | `uint8` | `uint8` | Prepared source | — | p50 | **0.338 s** | Apple Metal-3 adapter (Mac model not retained) | 2026-07-20 |
+| **WebGPU** | `256x256` | Explicit crop | 2 | `96x96` | `uint16` | `uint8` | `float32` | Prepared source | — | p50 | **0.774 s** | NVIDIA RTX PRO 6000 Blackwell | 2026-07-20 |
+| **WebGPU** | `256x256` | Explicit crop | 4 | `48x48` | `uint16` | `uint8` | `float32` | Prepared source | — | p50 | **0.755 s** | NVIDIA RTX PRO 6000 Blackwell | 2026-07-20 |
+| **WebGPU** | `256x256` | Explicit crop | 8 | `24x24` | `uint16` | `uint8` | `float32` | Prepared source | — | p50 | **0.733 s** | NVIDIA RTX PRO 6000 Blackwell | 2026-07-20 |
+| **WebGPU** | `512x512` | Full | 1 | `192x192` | `uint16` | `uint8` | `uint8` | Prepared source | — | p50 | **0.772 s** | Apple Metal-3 adapter (Mac model not retained) | 2026-07-20 |
+| **WebGPU** | `512x512` | Full | 2 | `96x96` | `uint16` | `uint8` | `float32` | Prepared source | — | Single profile | **1.199 s** | NVIDIA RTX PRO 6000 Blackwell | 2026-07-20 |
+| **WebGPU** | `512x512` | Full | 4 | `48x48` | `uint16` | `uint8` | `float32` | Prepared source | — | Single profile | **1.212 s** | NVIDIA RTX PRO 6000 Blackwell | 2026-07-20 |
+| **WebGPU** | `512x512` | Full | 8 | `24x24` | `uint16` | `uint8` | `float32` | Prepared source | — | Single profile | **1.106 s** | NVIDIA RTX PRO 6000 Blackwell | 2026-07-20 |
+| **WebGPU** | `512x512` | Full | 2 | `96x96` | `uint16` | `uint16` | `float32` | Prepared source | — | Single profile | **2.651 s** | NVIDIA RTX PRO 6000 Blackwell | 2026-07-20 |
 
 The `256x256` rows are explicit crop experiments, never automatic real-space
 cropping or substitutes for full-scan evidence. Compressed save is a separate
 operation: [MPS-SAVE-U16-512](performance/results.md) retains **1.69 s** for the
-sweep winner and **1.91 s** for the public default confirmation.
+sweep winner and **1.91 s** for the public default confirmation, tested
+2026-07-25 on an Apple Metal GPU whose exact Mac model was not retained.
 
 ### Screening — `quantem.gpu.screening`
 
 `screening.prepare` builds and reopens the small mean-diffraction, BF, DF, CoM,
 rotation, and iDPC launch products. It is a separate module from raw I/O.
 
-| Platform | Module support | Size and explicit plan | Latest retained result | Details |
-|---|---|---|---:|---|
-| **CUDA** | ✓ | `1024x1024x192x192` native `uint16`, bin 1, 12 GB cap | **12.31 s** build | [CUDA-CAL-BUILD](performance/results.md), 2026-07-28, `1c5dd03b` |
-| **Python MPS** | ✓ | `512x512x192x192` native `uint16`, bin 1, 64-row chunks | **3.96 s** build | [MPS-CAL-BUILD](performance/results.md), 2026-07-21, `6c8ca5d0`; integer products exact, CoM max error `7.63e-6` |
-| **Native Swift/Metal** | — | — | **Pending** | Public `quantem.gpu.screening` module not implemented natively |
-| **WebGPU** | — | — | **Pending** | Public `quantem.gpu.screening` module not implemented for WebGPU |
-| **CPU reference** | Ref | Reference fixtures | **Pending** | Correctness adjudication only |
+| Platform | Support | Scan grid | Detector | Source dtype | Detector bin | Chunk plan | Statistic | Time | Device tested | Date tested |
+|---|---|---:|---:|---|---:|---|---|---:|---|---|
+| **CUDA** | ✓ | `1024x1024` | `192x192` | `uint16` | 1 | 12 GB allocator cap | Single build | **12.31 s** | NVIDIA RTX PRO 6000 Blackwell | 2026-07-28 |
+| **Python MPS** | ✓ | `512x512` | `192x192` | `uint16` | 1 | 64 scan rows | Single build | **3.96 s** | Apple Metal GPU (model not retained) | 2026-07-21 |
+| **Native Swift/Metal** | — | — | — | — | — | — | — | — | — | — |
+| **WebGPU** | — | — | — | — | — | — | — | — | — | — |
+| **CPU reference** | Ref | — | — | — | — | Reference fixtures | — | **Pending** | — | — |
 
 Backend-neutral [PRODUCT-CACHE-REOPEN](performance/results.md) is a separate
 saved-result state: **6.8 ms** fastest retained repeat for full-`1024` derived
-products, never source load or cache construction.
+products on 2026-07-20. The host model was not retained. This is never source
+load or cache construction.
 
 ### Virtual images — `quantem.gpu.detector`
 
 This module owns mean diffraction and exact masked sums for BF, ABF, ADF, DF,
 and arbitrary detector masks.
 
-| Platform | Operation | Measured size/bin plan | Latest retained result | Details |
-|---|---|---|---:|---|
-| **CUDA** | BF | Resident full `512x512x192x192`, bin 1 | **1.35 ms** | [CUDA-BF-512](performance/results.md); integer max error `0` |
-| **CUDA** | ADF | Resident full `512x512x192x192`, bin 1 | **3.86 ms** | [CUDA-ADF-512](performance/results.md); integer max error `0` |
-| **CUDA** | DF | Resident full `512x512x192x192`, bin 1 | **1.84 ms** | [CUDA-DF-512](performance/results.md); integer max error `0` |
-| **Python MPS** | Virtual-image module | Full `512`, bin 1 through screening parity | **Pending** | No isolated timing with complete public device provenance |
-| **Native Swift/Metal** | Virtual-image module | Full `512`, detector bin 4 in physical application parity | **Pending** | Products are byte-identical; isolated kernel timing not retained |
-| **WebGPU** | BF | Full `512`, bin 1, fixed 30 px BF radius | **0.378 s p50** | [WEBGPU-BF-512](performance/results.md), prepared selected-block boundary, exact to CUDA |
-| **CPU reference** | Virtual-image module | Reference fixtures | **Pending** | Correctness adjudication only |
+| Platform | Operation | Scan grid | Detector | Detector bin | Input state | Statistic | Time | Device tested | Date tested |
+|---|---|---:|---:|---:|---|---|---:|---|---|
+| **CUDA** | BF | `512x512` | `192x192` | 1 | Warm resident | Single optimized | **1.35 ms** | CUDA GPU (model not retained) | 2026-07-19 |
+| **CUDA** | ADF | `512x512` | `192x192` | 1 | Warm resident | Single optimized | **3.86 ms** | CUDA GPU (model not retained) | 2026-07-19 |
+| **CUDA** | DF | `512x512` | `192x192` | 1 | Warm resident | Single optimized | **1.84 ms** | CUDA GPU (model not retained) | 2026-07-19 |
+| **Python MPS** | Virtual-image module | `512x512` | `192x192` | 1 | Screening parity | — | **Pending** | — | — |
+| **Native Swift/Metal** | Virtual-image module | `512x512` | `48x48` | 4 | Physical application parity | — | **Pending** | Apple M2 MacBook Air (`Mac14,2`, 8 GB) | 2026-08-18 |
+| **WebGPU** | BF | `512x512` | `192x192` | 1 | Prepared selected blocks | p50 | **0.378 s** | Apple Metal-3 adapter (Mac model not retained) | 2026-07-20 |
+| **CPU reference** | Virtual-image module | — | — | — | Reference fixtures | — | **Pending** | — | — |
 
 ### Detector moments and phase contrast — `quantem.gpu.dpc`
 
 This module owns CoM row/column, centering, rotation, DPC, and iDPC. All runtime
 boundaries preserve `(row, column)` component order.
 
-| Platform | Operation | Measured size/bin plan | Latest retained result | Details |
-|---|---|---|---:|---|
-| **CUDA** | CoM row/column | Resident full `512x512x192x192`, bin 1 | **12.39 ms** | [CUDA-COM-512](performance/results.md), 2026-07-19, `0456e15e`; max error `0` |
-| **Python MPS** | Phase-contrast module | Full `512`, bin 1 through screening parity | **Pending** | No isolated full-module timing with complete public device provenance |
-| **Native Swift/Metal** | Phase-contrast module | Full `512`, detector bin 4 in physical application parity | **Pending** | CoM/DPC/iDPC exports byte-identical; isolated timing not retained |
-| **WebGPU** | DPC row | Resident full `512x512x192x192`, bin 1 | **14.9 ms p50** | [WEBGPU-DPC-512](performance/results.md), 2026-07-20, `cee0ba5c`; frozen float32 errors retained |
-| **WebGPU** | DPC column | Resident full `512x512x192x192`, bin 1 | **13.2 ms p50** | [WEBGPU-DPC-512](performance/results.md), 2026-07-20, `cee0ba5c`; frozen float32 errors retained |
-| **WebGPU** | iDPC | Resident full `512x512x192x192`, bin 1 | **13.2 ms p50** | [WEBGPU-DPC-512](performance/results.md), 2026-07-20, `cee0ba5c`; frozen float32 errors retained |
-| **CPU reference** | Phase-contrast module | Reference fixtures | **Pending** | Correctness adjudication only |
+| Platform | Operation | Scan grid | Detector | Detector bin | Input state | Statistic | Time | Device tested | Date tested |
+|---|---|---:|---:|---:|---|---|---:|---|---|
+| **CUDA** | CoM row and column | `512x512` | `192x192` | 1 | Warm resident | Single optimized | **12.39 ms** | CUDA GPU (model not retained) | 2026-07-19 |
+| **Python MPS** | Phase-contrast module | `512x512` | `192x192` | 1 | Screening parity | — | **Pending** | — | — |
+| **Native Swift/Metal** | Phase-contrast module | `512x512` | `48x48` | 4 | Physical application parity | — | **Pending** | Apple M2 MacBook Air (`Mac14,2`, 8 GB) | 2026-08-18 |
+| **WebGPU** | DPC row | `512x512` | `192x192` | 1 | Warm resident | p50 | **14.9 ms** | NVIDIA RTX PRO 6000 Blackwell | 2026-07-20 |
+| **WebGPU** | DPC column | `512x512` | `192x192` | 1 | Warm resident | p50 | **13.2 ms** | NVIDIA RTX PRO 6000 Blackwell | 2026-07-20 |
+| **WebGPU** | iDPC | `512x512` | `192x192` | 1 | Warm resident | p50 | **13.2 ms** | NVIDIA RTX PRO 6000 Blackwell | 2026-07-20 |
+| **CPU reference** | Phase-contrast module | — | — | — | Reference fixtures | — | **Pending** | — | — |
 
 ### Single-sideband ptychography — `quantem.gpu.SSB`
 
@@ -140,28 +143,32 @@ SSB uses specialized kernels for **square scan grids**. The numbers below are
 scan sizes, not detector sizes. “Native” means a retained acquisition at that
 scan size; resized or synthetic evidence is labeled explicitly.
 
-| Platform | Scan grid | Evidence type | BF policy | State | Statistic | Time | Evidence / next gap |
-|---|---:|---|---|---|---|---:|---|
-| **CUDA** | `128x128` | Fixed-size parity | Frozen fixture | ✓ | — | **Pending** | Retain a dated device timing |
-| **CUDA** | `256x256` | Fixed-size parity | Frozen fixture | ✓ | — | **Pending** | Retain a dated device timing |
-| **CUDA** | `512x512` | Native real acquisition | Full active BF | ✓ | p50 | **32.2 ms** | [SSB-CUDA-512-FULL](performance/results.md) |
-| **CUDA** | `1024x1024` | Fixed-size parity | Frozen fixture | ✓ | — | **Pending** | Retain a dated device timing |
-| **Python MPS** | `128x128` | Resized/synthetic | Fixed-size fixture | ✓ | — | **Pending** | Retain a comparable policy timing |
-| **Python MPS** | `256x256` | Resized/synthetic | Fixed-size fixture | ✓ | — | **Pending** | Retain a comparable policy timing |
-| **Python MPS** | `512x512` | Native real acquisition | Full active BF | ✓ | p50 | **537.58 ms** | [SSB-MPS-512-FULL](performance/results.md) |
-| **Python MPS** | `1024x1024` | Synthetic | 8,809 BF | ✓ | p50 | **669.1 ms** | [SSB-MPS-1024-SYNTH](performance/results.md) |
-| **Native Swift/Metal** | `128x128` | — | — | — | — | — | No native Swift SSB kernel |
-| **Native Swift/Metal** | `256x256` | — | — | — | — | — | No native Swift SSB kernel |
-| **Native Swift/Metal** | `512x512` | — | — | — | — | — | No native Swift SSB kernel |
-| **Native Swift/Metal** | `1024x1024` | — | — | — | — | — | No native Swift SSB kernel |
-| **WebGPU** | `128x128` | Real BF30 parity | Radius 30 px | ✓ | — | **Pending** | Retain a dated isolated timing |
-| **WebGPU** | `256x256` | Deterministic test | Test fixture | Test | — | **Pending** | Retain physical real-data parity and timing |
-| **WebGPU** | `512x512` | Real interaction | Incomplete frozen reference | Partial | — | **Pending** | Complete the CUDA artifact gate |
-| **WebGPU** | `1024x1024` | Real interaction | Incomplete frozen reference | Partial | — | **Pending** | Complete the CUDA artifact gate |
-| **CPU reference** | `128x128` | — | — | — | — | — | Not a retained adjudication size |
-| **CPU reference** | `256x256` | — | — | — | — | — | Not a retained adjudication size |
-| **CPU reference** | `512x512` | Independent adjudication | Frozen fixture | Ref | — | **Pending** | Correctness reference only |
-| **CPU reference** | `1024x1024` | — | — | — | — | — | Not a retained adjudication size |
+| Platform | Scan grid | Source kind | BF policy | State | Statistic | Time | Device tested | Date tested |
+|---|---:|---|---|---|---|---:|---|---|
+| **CUDA** | `128x128` | Fixed-size parity | Frozen fixture | ✓ | — | **Pending** | — | — |
+| **CUDA** | `256x256` | Fixed-size parity | Frozen fixture | ✓ | — | **Pending** | — | — |
+| **CUDA** | `512x512` | Native real acquisition | Full active BF | ✓ | p50 | **32.2 ms** | NVIDIA RTX PRO 6000 Blackwell | 2026-07-19 |
+| **CUDA** | `1024x1024` | Fixed-size parity | Frozen fixture | ✓ | — | **Pending** | — | — |
+| **Python MPS** | `128x128` | Resized/synthetic | Fixed-size fixture | ✓ | — | **Pending** | — | — |
+| **Python MPS** | `256x256` | Resized/synthetic | Fixed-size fixture | ✓ | — | **Pending** | — | — |
+| **Python MPS** | `512x512` | Native real acquisition | Full active BF | ✓ | p50 | **537.58 ms** | Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU) | 2026-07-28 |
+| **Python MPS** | `1024x1024` | Synthetic | 8,809 BF | ✓ | p50 | **669.1 ms** | Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU) | 2026-07-28 |
+| **Native Swift/Metal** | `128x128` | — | — | — | — | — | — | — |
+| **Native Swift/Metal** | `256x256` | — | — | — | — | — | — | — |
+| **Native Swift/Metal** | `512x512` | — | — | — | — | — | — | — |
+| **Native Swift/Metal** | `1024x1024` | — | — | — | — | — | — | — |
+| **WebGPU** | `128x128` | Real BF30 parity | Radius 30 px | ✓ | — | **Pending** | — | — |
+| **WebGPU** | `256x256` | Deterministic test | Test fixture | Test | — | **Pending** | — | — |
+| **WebGPU** | `512x512` | Real interaction | Incomplete frozen reference | Partial | — | **Pending** | — | — |
+| **WebGPU** | `1024x1024` | Real interaction | Incomplete frozen reference | Partial | — | **Pending** | — | — |
+| **CPU reference** | `128x128` | — | — | — | — | — | — | — |
+| **CPU reference** | `256x256` | — | — | — | — | — | — | — |
+| **CPU reference** | `512x512` | Independent adjudication | Frozen fixture | Ref | — | **Pending** | — | — |
+| **CPU reference** | `1024x1024` | — | — | — | — | — | — | — |
+
+Native Swift/Metal has no native SSB kernel. Untimed CUDA and MPS sizes retain
+fixed-size parity coverage; WebGPU rows still need the physical timing or
+reference gate represented by **Pending**.
 
 The [SSB performance record](maintainer/ssb-performance.md) contains the full
 `128/256/512/1024` timing matrix, native-versus-resized provenance, memory, and
@@ -185,11 +192,11 @@ different states. A feature marked supported without an isolated time is still
 covered by its parity gate.
 ```
 
-For the complete command, cache state, bin/crop plan, memory record, and parity
-artifact behind each row, follow its evidence ID. See the
+For the complete command, source revision, cache state, bin/crop plan, memory
+record, and parity artifact behind each row, see the
 [complete module dashboard](dashboard.md),
 [methodology](performance/methodology.md), and
-[revision ledger](performance/changes.md).
+[verified benchmark results](performance/results.md).
 
 ## How loading becomes a usable product
 
