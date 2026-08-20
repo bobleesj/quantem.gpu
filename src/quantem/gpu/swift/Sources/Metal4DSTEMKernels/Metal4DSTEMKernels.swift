@@ -51,8 +51,12 @@ public enum Metal4DSTEMKernels {
   public static let detectorProductsU16Function = "detector_products_u16"
   public static let detectorProductsU16MomentsFunction =
     "detector_products_u16_with_u64_moments"
+  public static let detectorProductsU16ExactU64Function =
+    "detector_products_u16_exact_u64"
   public static let detectorSumU8Function = "detector_sum_u8"
   public static let detectorSumU16Function = "detector_sum_u16"
+  public static let detectorAccumulateU16U64Function =
+    "detector_accumulate_u16_u64"
   public static let transposeScanWordsFunction = "transpose_scan_words"
   public static let transposeScanWords32x8Function = "transpose_scan_words_32x8"
   public static let scanBinU8Function = "scan_bin_u8_to_u32_word_major"

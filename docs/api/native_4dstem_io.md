@@ -7,14 +7,15 @@ admission or eviction, or application state.
 
 ## Products and dependencies
 
-Native clients import two products for local 4D-STEM loading:
+Native clients compose three products for local 4D-STEM loading:
 
 | Product | Owns | Dependencies |
 |---|---|---|
 | `Native4DSTEMIO` | HDF5 and EMD catalog discovery, QH5 indexing, validated bounded source windows, source identity, value audits, resident-cache and exact-summary IO | `CNativeHDF5`, vendored `CHDF5.xcframework`, zlib, Foundation, CryptoKit |
 | `Metal4DSTEMKernels` | Exact load geometry, streaming geometry, typed exact binning, QH5 decode, BF/ABF/ADF, CoM, and DPC/iDPC primitives | Metal, Foundation, CryptoKit |
+| `Metal4DSTEMStreamingIO` | Bounded native QH5 mapping and decode, overflow-safe exact products, source audit, and on-demand native diffraction frames | `Native4DSTEMIO`, `Metal4DSTEMKernels` |
 
-Neither product imports SwiftUI, AppKit, UIKit, or Python.
+None of these products imports SwiftUI, AppKit, UIKit, or Python.
 
 The native HDF5 bridge accepts unsigned 8-bit and unsigned 16-bit detector
 sources. `Metal4DSTEMLoadPlan.sourceBytesPerValue` is therefore exactly 1 or 2.
@@ -101,8 +102,10 @@ let windows = try indexedSource.windows(
 Each `Native4DSTEMIndexedWindow` reports one half-open global frame range, its
 decoded byte count, and the exact shard/chunk/index-word slices required to
 decode it. For a `512 × 512 × 192 × 192 uint16` source, four-row windows are
-288 MiB each, 128 windows cover all 262,144 scan positions, and
-`logicalDecodedBytes` remains 19,327,352,832 bytes (18 GiB).
+150,994,944 bytes (144 MiB) each, 128 windows cover all 262,144 scan positions,
+and `logicalDecodedBytes` remains 19,327,352,832 bytes (18 GiB). An explicit
+eight-row ceiling is 301,989,888 bytes (288 MiB) and produces 64 windows; these
+are different plans and must not share a memory claim.
 
 Opening and partitioning read only prepared index sidecars. They do not open or
 map compressed HDF5 shards, decode frames, allocate a resident volume, execute
@@ -110,6 +113,79 @@ Metal, compute products, or choose a device budget. Consequently, index-open
 latency is not a first-load or first-product benchmark. The consuming layer
 supplies the transient byte ceiling and owns scheduling, cancellation, memory
 admission, and cache lifecycle.
+
+## Bounded native exact products
+
+`Metal4DSTEMStreamingIO` composes the validated index and reusable kernels
+without allocating the logical 18 GiB tensor. The caller supplies every
+detector-band membership byte and an explicit transient ceiling:
+
+```swift
+import Metal4DSTEMStreamingIO
+
+let bands = try Metal4DSTEMDetectorBands(
+  detectorRows: dataset.detectorRows,
+  detectorColumns: dataset.detectorCols,
+  membership: detectorBandBytes
+)
+let streamPlan = try Metal4DSTEMIndexedLoadPlan(
+  source: indexedSource,
+  maximumDecodedWindowBytes: decodedWindowBudget,
+  detectorBands: bands
+)
+
+// The application decides whether this exact plan is admissible.
+let loader = try Metal4DSTEMIndexedLoader(device: selectedDevice)
+let result = try loader.loadExactProducts(
+  source: indexedSource,
+  plan: streamPlan,
+  shouldCancel: cancellationCheck
+)
+```
+
+For native counts \(I[\mathbf R,\mathbf k]\), one pass returns exact `uint64`
+sufficient statistics:
+
+\[
+D[\mathbf k] = \sum_{\mathbf R} I[\mathbf R,\mathbf k], \qquad
+T[\mathbf R] = \sum_{\mathbf k} I[\mathbf R,\mathbf k],
+\]
+
+\[
+M_r[\mathbf R] = \sum_{k_r,k_c} k_r I[\mathbf R,k_r,k_c], \qquad
+M_c[\mathbf R] = \sum_{k_r,k_c} k_c I[\mathbf R,k_r,k_c].
+\]
+
+The three independent band sums use membership bits 1, 2, and 4. A consumer
+may name those masks BF, ABF, and DF only after supplying and retaining the
+corresponding scientific geometry. CoM is derived without another volume pass
+as `(row, column) = (M_r / T, M_c / T)` where `T > 0`. The mean diffraction
+pattern is `D / logicalFrameCount`; `D` itself is never silently normalized.
+
+The plan exposes allocated bytes excluding the current no-copy compressed-file
+mapping, compressed shard bytes, page-rounded mapped-buffer bytes, maximum
+individual Metal buffer bytes, window and slice counts, source and working
+geometry, all dtypes, detector-band SHA-256, bad pixels, and unchanged
+calibration fields. These are resource facts, not an admission decision. The
+result provenance fixes scan bin 1, detector bin 1, crop none, native `uint16`
+staging, exact-integer reduction, row-major public coordinates, and the
+identity-bound value audit.
+
+Decode one full-resolution detector frame without materializing the volume:
+
+```swift
+let diffraction = try loader.diffractionPattern(
+  source: indexedSource,
+  scanRow: selectedRow,
+  scanColumn: selectedColumn
+)
+```
+
+Cancellation is checked between exact slices. The consuming application owns
+latest-request-wins behavior, cache lifecycle, memory pressure, and UI. Package
+tests prove compressed-fixture parity and 64-bit overflow behavior. A physical
+full-source timing remains pending until the execution process exposes Metal;
+index coverage or a synthetic kernel run is not substituted for that gate.
 
 ## Typed exact binning
 
@@ -305,6 +381,16 @@ factors, staged and output bytes, device limits, p50/p95/max wall and GPU time,
 and output SHA-256. It explicitly excludes HDF5 discovery, storage reads,
 decompression, cache creation or reopen, scientific products, and UI. Never
 publish its kernel time as a first-load or application wall time.
+
+`metal-4dstem-indexed-load-benchmark` measures the bounded source path and
+requires an exact revision, immutable output directory, explicit detector-band
+file or `--all-bands`, decoded scan-row ceiling, and iteration count. Its JSON
+separates catalog/index preparation, pipeline compilation, plan construction,
+source mapping, synchronized GPU work, and package wall time. It labels source
+page state as unspecified rather than calling an unpurged run cold, writes
+little-endian `uint64` artifacts, and rejects changing hashes or provenance
+between repetitions. Application first-usable-product and headed wall time
+remain separate acceptance boundaries.
 
 ## Client ownership
 

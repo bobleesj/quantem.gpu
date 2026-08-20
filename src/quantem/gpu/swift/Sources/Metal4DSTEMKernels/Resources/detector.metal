@@ -176,6 +176,82 @@ kernel void detector_products_u16_with_u64_moments(
     }
 }
 
+// Produce exact, overflow-safe screening sufficient statistics from one
+// frame-major uint16 decode window. One threadgroup owns each frame. Every
+// partial sum uses ulong and the fixed tree reduction is deterministic; no
+// dataset-specific count ceiling or unordered atomic sum is assumed.
+kernel void detector_products_u16_exact_u64(
+    device const ushort *data [[buffer(0)]],
+    device ulong *band1Map [[buffer(1)]],
+    device ulong *band2Map [[buffer(2)]],
+    device ulong *band4Map [[buffer(3)]],
+    constant DetectorParams &params [[buffer(4)]],
+    device const uchar *bands [[buffer(5)]],
+    device ulong *totalMap [[buffer(6)]],
+    device ulong *rowMomentMap [[buffer(7)]],
+    device ulong *columnMomentMap [[buffer(8)]],
+    constant uint &detectorColumns [[buffer(9)]],
+    uint frame [[threadgroup_position_in_grid]],
+    uint threadIndex [[thread_index_in_threadgroup]],
+    uint threads [[threads_per_threadgroup]]
+) {
+    if (frame >= params.frameCount) return;
+    threadgroup ulong band1Scratch[256];
+    threadgroup ulong band2Scratch[256];
+    threadgroup ulong band4Scratch[256];
+    threadgroup ulong totalScratch[256];
+    threadgroup ulong rowScratch[256];
+    threadgroup ulong columnScratch[256];
+
+    device const ushort *source =
+        data + ulong(frame) * ulong(params.detectorPixels);
+    ulong band1 = 0ul;
+    ulong band2 = 0ul;
+    ulong band4 = 0ul;
+    ulong total = 0ul;
+    ulong rowMoment = 0ul;
+    ulong columnMoment = 0ul;
+    for (uint pixel = threadIndex; pixel < params.detectorPixels; pixel += threads) {
+        ulong value = ulong(source[pixel]);
+        uchar membership = bands[pixel];
+        if (membership & 1u) band1 += value;
+        if (membership & 2u) band2 += value;
+        if (membership & 4u) band4 += value;
+        uint row = pixel / detectorColumns;
+        uint column = pixel - row * detectorColumns;
+        total += value;
+        rowMoment += value * ulong(row);
+        columnMoment += value * ulong(column);
+    }
+    band1Scratch[threadIndex] = band1;
+    band2Scratch[threadIndex] = band2;
+    band4Scratch[threadIndex] = band4;
+    totalScratch[threadIndex] = total;
+    rowScratch[threadIndex] = rowMoment;
+    columnScratch[threadIndex] = columnMoment;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint offset = threads >> 1u; offset > 0u; offset >>= 1u) {
+        if (threadIndex < offset) {
+            band1Scratch[threadIndex] += band1Scratch[threadIndex + offset];
+            band2Scratch[threadIndex] += band2Scratch[threadIndex + offset];
+            band4Scratch[threadIndex] += band4Scratch[threadIndex + offset];
+            totalScratch[threadIndex] += totalScratch[threadIndex + offset];
+            rowScratch[threadIndex] += rowScratch[threadIndex + offset];
+            columnScratch[threadIndex] += columnScratch[threadIndex + offset];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (threadIndex == 0u) {
+        uint destination = params.globalFrameOffset + frame;
+        band1Map[destination] = band1Scratch[0];
+        band2Map[destination] = band2Scratch[0];
+        band4Map[destination] = band4Scratch[0];
+        totalMap[destination] = totalScratch[0];
+        rowMomentMap[destination] = rowScratch[0];
+        columnMomentMap[destination] = columnScratch[0];
+    }
+}
+
 kernel void detector_products_u8_with_u64_moments(
     device const uchar *data [[buffer(0)]],
     device uint *bfMap [[buffer(1)]],
@@ -290,6 +366,24 @@ kernel void detector_sum_u8(
     uint pixel [[thread_position_in_grid]]
 ) {
     detectorSum(data, output, detectorPixels, frameCount, pixel);
+}
+
+// Accumulate one decoded uint16 window into an exact detector-space sum. Each
+// detector pixel has one unique writer, so command-queue order makes repeated
+// windows deterministic without atomics.
+kernel void detector_accumulate_u16_u64(
+    device const ushort *data [[buffer(0)]],
+    device ulong *output [[buffer(1)]],
+    constant uint &detectorPixels [[buffer(2)]],
+    constant uint &frameCount [[buffer(3)]],
+    uint pixel [[thread_position_in_grid]]
+) {
+    if (pixel >= detectorPixels) return;
+    ulong sum = 0ul;
+    for (uint frame = 0u; frame < frameCount; ++frame) {
+        sum += ulong(data[ulong(frame) * ulong(detectorPixels) + pixel]);
+    }
+    output[pixel] += sum;
 }
 
 // Convert scan-major packed words to detector-word-major storage once after

@@ -137,6 +137,7 @@ The repository-root Swift package exposes reusable, UI-independent products:
 
 - `Native4DSTEMIO`
 - `Metal4DSTEMKernels`
+- `Metal4DSTEMStreamingIO`
 - `MetalDisplayKernels`
 - `MetalImageFFT`
 - `MetalImageRuntime`

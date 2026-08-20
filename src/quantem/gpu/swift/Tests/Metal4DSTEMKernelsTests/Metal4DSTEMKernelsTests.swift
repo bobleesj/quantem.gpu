@@ -2235,6 +2235,109 @@ final class Metal4DSTEMKernelsTests: XCTestCase {
     XCTAssertEqual(bufferValues(df, count: scanCount), reference(4))
   }
 
+  func testExactU64WindowProductsAndDetectorAccumulationDoNotOverflowUInt32() throws {
+    let device = try metalDevice()
+    let queue = try XCTUnwrap(device.makeCommandQueue())
+    let library = try Metal4DSTEMKernels.makeDetectorLibrary(device: device)
+    let productsPipeline = try device.makeComputePipelineState(
+      function: XCTUnwrap(
+        library.makeFunction(
+          name: Metal4DSTEMKernels.detectorProductsU16ExactU64Function
+        )
+      )
+    )
+    let detectorSumPipeline = try device.makeComputePipelineState(
+      function: XCTUnwrap(
+        library.makeFunction(
+          name: Metal4DSTEMKernels.detectorAccumulateU16U64Function
+        )
+      )
+    )
+    let detectorRows = 257
+    let detectorColumns = 256
+    let detectorPixels = detectorRows * detectorColumns
+    let sourceValues = [UInt16](repeating: .max, count: detectorPixels)
+    let bands = [UInt8](repeating: 7, count: detectorPixels)
+    let source = try makeBuffer(device: device, values: sourceValues)
+    let bandBuffer = try makeBuffer(device: device, values: bands)
+    let band1 = try outputBuffer64(device: device, count: 2)
+    let band2 = try outputBuffer64(device: device, count: 2)
+    let band4 = try outputBuffer64(device: device, count: 2)
+    let total = try outputBuffer64(device: device, count: 2)
+    let rowMoment = try outputBuffer64(device: device, count: 2)
+    let columnMoment = try outputBuffer64(device: device, count: 2)
+    let detectorSum = try outputBuffer64(device: device, count: detectorPixels)
+
+    for globalFrame in 0..<2 {
+      var parameters = DetectorParameters(
+        frameCount: 1,
+        detectorPixels: UInt32(detectorPixels),
+        globalFrameOffset: UInt32(globalFrame)
+      )
+      var detectorColumnCount = UInt32(detectorColumns)
+      var detectorPixelCount = UInt32(detectorPixels)
+      var frameCount: UInt32 = 1
+      let command = try XCTUnwrap(queue.makeCommandBuffer())
+      let encoder = try XCTUnwrap(command.makeComputeCommandEncoder())
+      encoder.setComputePipelineState(productsPipeline)
+      encoder.setBuffer(source, offset: 0, index: 0)
+      encoder.setBuffer(band1, offset: 0, index: 1)
+      encoder.setBuffer(band2, offset: 0, index: 2)
+      encoder.setBuffer(band4, offset: 0, index: 3)
+      withUnsafeBytes(of: &parameters) {
+        encoder.setBytes($0.baseAddress!, length: $0.count, index: 4)
+      }
+      encoder.setBuffer(bandBuffer, offset: 0, index: 5)
+      encoder.setBuffer(total, offset: 0, index: 6)
+      encoder.setBuffer(rowMoment, offset: 0, index: 7)
+      encoder.setBuffer(columnMoment, offset: 0, index: 8)
+      encoder.setBytes(&detectorColumnCount, length: 4, index: 9)
+      encoder.dispatchThreadgroups(
+        MTLSize(width: 1, height: 1, depth: 1),
+        threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
+      )
+      encoder.memoryBarrier(scope: .buffers)
+      encoder.setComputePipelineState(detectorSumPipeline)
+      encoder.setBuffer(source, offset: 0, index: 0)
+      encoder.setBuffer(detectorSum, offset: 0, index: 1)
+      encoder.setBytes(&detectorPixelCount, length: 4, index: 2)
+      encoder.setBytes(&frameCount, length: 4, index: 3)
+      encoder.dispatchThreads(
+        MTLSize(width: detectorPixels, height: 1, depth: 1),
+        threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
+      )
+      encoder.endEncoding()
+      try complete(command)
+    }
+
+    let expectedBand = UInt64(UInt16.max) * UInt64(detectorPixels)
+    XCTAssertGreaterThan(expectedBand, UInt64(UInt32.max))
+    let rowCoordinateSum = UInt64((detectorRows - 1) * detectorRows / 2)
+    let columnCoordinateSum = UInt64(
+      (detectorColumns - 1) * detectorColumns / 2
+    )
+    let expectedRowMoment =
+      UInt64(UInt16.max) * UInt64(detectorColumns) * rowCoordinateSum
+    let expectedColumnMoment =
+      UInt64(UInt16.max) * UInt64(detectorRows) * columnCoordinateSum
+    XCTAssertEqual(bufferValues64(band1, count: 2), [expectedBand, expectedBand])
+    XCTAssertEqual(bufferValues64(band2, count: 2), [expectedBand, expectedBand])
+    XCTAssertEqual(bufferValues64(band4, count: 2), [expectedBand, expectedBand])
+    XCTAssertEqual(bufferValues64(total, count: 2), [expectedBand, expectedBand])
+    XCTAssertEqual(
+      bufferValues64(rowMoment, count: 2),
+      [expectedRowMoment, expectedRowMoment]
+    )
+    XCTAssertEqual(
+      bufferValues64(columnMoment, count: 2),
+      [expectedColumnMoment, expectedColumnMoment]
+    )
+    XCTAssertEqual(
+      bufferValues64(detectorSum, count: detectorPixels),
+      [UInt64](repeating: UInt64(UInt16.max) * 2, count: detectorPixels)
+    )
+  }
+
   func testWordMajorPackedU16SummaryMomentsMatchReference() throws {
     let device = try metalDevice()
     let queue = try XCTUnwrap(device.makeCommandQueue())

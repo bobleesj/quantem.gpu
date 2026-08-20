@@ -11,6 +11,10 @@ let package = Package(
     .library(name: "MetalImageRuntime", targets: ["MetalImageRuntime"]),
     .library(name: "MetalSSBKernels", targets: ["MetalSSBKernels"]),
     .library(name: "Native4DSTEMIO", targets: ["Native4DSTEMIO"]),
+    .library(
+      name: "Metal4DSTEMStreamingIO",
+      targets: ["Metal4DSTEMStreamingIO"]
+    ),
     .executable(
       name: "metal-display-benchmark",
       targets: ["MetalDisplayBenchmark"]
@@ -34,6 +38,10 @@ let package = Package(
     .executable(
       name: "metal-4dstem-binning-benchmark",
       targets: ["Metal4DSTEMBinningBenchmark"]
+    ),
+    .executable(
+      name: "metal-4dstem-indexed-load-benchmark",
+      targets: ["Metal4DSTEMStreamingIOBenchmark"]
     ),
   ],
   targets: [
@@ -62,6 +70,11 @@ let package = Package(
       name: "Metal4DSTEMKernels",
       path: "src/quantem/gpu/swift/Sources/Metal4DSTEMKernels",
       resources: [.copy("Resources")]
+    ),
+    .target(
+      name: "Metal4DSTEMStreamingIO",
+      dependencies: ["Metal4DSTEMKernels", "Native4DSTEMIO"],
+      path: "src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO"
     ),
     .target(
       name: "MetalImageFFT",
@@ -113,6 +126,11 @@ let package = Package(
       dependencies: ["Metal4DSTEMKernels"],
       path: "src/quantem/gpu/swift/Benchmarks/Metal4DSTEMBinningBenchmark"
     ),
+    .executableTarget(
+      name: "Metal4DSTEMStreamingIOBenchmark",
+      dependencies: ["Metal4DSTEMStreamingIO", "Native4DSTEMIO"],
+      path: "src/quantem/gpu/swift/Benchmarks/Metal4DSTEMStreamingIOBenchmark"
+    ),
     .testTarget(
       name: "MetalDisplayKernelsTests",
       dependencies: ["MetalDisplayKernels"],
@@ -140,7 +158,7 @@ let package = Package(
     ),
     .testTarget(
       name: "Native4DSTEMIOTests",
-      dependencies: ["Native4DSTEMIO"],
+      dependencies: ["Metal4DSTEMStreamingIO", "Native4DSTEMIO"],
       path: "src/quantem/gpu/swift/Tests/Native4DSTEMIOTests",
       resources: [.copy("Fixtures")]
     ),

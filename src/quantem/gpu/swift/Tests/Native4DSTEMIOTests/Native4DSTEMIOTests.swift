@@ -1,6 +1,8 @@
 import Foundation
+import Metal
 import XCTest
 
+@testable import Metal4DSTEMStreamingIO
 @testable import Native4DSTEMIO
 
 final class Native4DSTEMIOTests: XCTestCase {
@@ -896,6 +898,264 @@ final class Native4DSTEMIOTests: XCTestCase {
 
     XCTAssertThrowsError(try Native4DSTEMIndexedSource.open(dataset: repeated)) { error in
       XCTAssertTrue(error.localizedDescription.contains("repeats a source"))
+    }
+  }
+
+  func testIndexedStreamingPlanReportsOnlyBoundedExactStorage() throws {
+    let fixture = try copiedFixture()
+    let dataset = try XCTUnwrap(
+      Native4DSTEMCatalogBuilder(cacheDirectory: fixture.cache)
+        .prepare(input: fixture.master).datasets.first
+    )
+    let source = try Native4DSTEMIndexedSource.open(dataset: dataset)
+    let detectorPixels = dataset.detectorRows * dataset.detectorCols
+    let bands = try Metal4DSTEMDetectorBands(
+      detectorRows: dataset.detectorRows,
+      detectorColumns: dataset.detectorCols,
+      membership: [UInt8](repeating: 7, count: detectorPixels)
+    )
+    let plan = try Metal4DSTEMIndexedLoadPlan(
+      source: source,
+      maximumDecodedWindowBytes: source.decodedBytesPerFrame,
+      detectorBands: bands
+    )
+
+    XCTAssertEqual(plan.sourceDtype, .uint16)
+    XCTAssertEqual(plan.stagingDtype, .uint16)
+    XCTAssertEqual(plan.scanBin, 1)
+    XCTAssertEqual(plan.detectorBin, 1)
+    XCTAssertEqual(plan.logicalFrameCount, 1)
+    XCTAssertEqual(plan.logicalDecodedBytes, UInt64(detectorPixels * 2))
+    XCTAssertEqual(plan.maximumActualWindowBytes, UInt64(detectorPixels * 2))
+    XCTAssertEqual(plan.windows.map(\.globalFrameRange), [0..<1])
+    XCTAssertEqual(plan.persistentOutputBytes, UInt64(6 * 8 + detectorPixels * 8))
+    XCTAssertLessThan(plan.estimatedAllocatedMetalBytesExcludingMappedSource, 100_000)
+    XCTAssertEqual(plan.sourceScanRows, plan.windows[0].globalFrameRange.count)
+    XCTAssertEqual(plan.sourceDetectorRows, 64)
+    XCTAssertEqual(plan.sourceDetectorColumns, 64)
+    XCTAssertEqual(plan.detectorBandsSHA256.count, 64)
+    XCTAssertGreaterThanOrEqual(
+      plan.maximumMappedSourceBufferBytes,
+      plan.maximumMappedCompressedBytes
+    )
+
+    XCTAssertNoThrow(
+      try Metal4DSTEMIndexedLoadPlan.validateExactProductBounds(
+        detectorRows: 192,
+        detectorColumns: 192,
+        logicalFrameCount: 512 * 512
+      )
+    )
+    XCTAssertThrowsError(
+      try Metal4DSTEMIndexedLoadPlan.validateExactProductBounds(
+        detectorRows: Int(UInt32.max),
+        detectorColumns: 1,
+        logicalFrameCount: 1
+      )
+    ) { error in
+      XCTAssertTrue(error.localizedDescription.contains("detector-row moment"))
+    }
+    XCTAssertThrowsError(
+      try Metal4DSTEMIndexedLoadPlan.validateExactProductBounds(
+        detectorRows: 1,
+        detectorColumns: Int(UInt32.max),
+        logicalFrameCount: 1
+      )
+    ) { error in
+      XCTAssertTrue(error.localizedDescription.contains("detector-column moment"))
+    }
+
+    XCTAssertThrowsError(
+      try Metal4DSTEMDetectorBands(
+        detectorRows: 64,
+        detectorColumns: 64,
+        membership: [UInt8](repeating: 8, count: detectorPixels)
+      )
+    )
+    XCTAssertThrowsError(
+      try Metal4DSTEMIndexedLoadPlan(
+        source: source,
+        maximumDecodedWindowBytes: source.decodedBytesPerFrame - 1,
+        detectorBands: bands
+      )
+    )
+  }
+
+  func testIndexedStreamingRequiresSourceIdentityAndExactNativeShape() throws {
+    let fixture = try copiedFixture()
+    let prepared = try XCTUnwrap(
+      Native4DSTEMCatalogBuilder(cacheDirectory: fixture.cache)
+        .prepare(input: fixture.master).datasets.first
+    )
+    let unbound = Native4DSTEMDataset(
+      id: prepared.id,
+      label: prepared.label,
+      masterPath: prepared.masterPath,
+      dataFiles: prepared.dataFiles,
+      indexFiles: prepared.indexFiles,
+      scanRows: prepared.scanRows,
+      scanCols: prepared.scanCols,
+      detectorRows: prepared.detectorRows,
+      detectorCols: prepared.detectorCols,
+      sourceDtype: prepared.sourceDtype,
+      sourceBytes: prepared.sourceBytes,
+      badPixelIndices: prepared.badPixelIndices,
+      scanPixelSizeRowNanometer: prepared.scanPixelSizeRowNanometer,
+      scanPixelSizeColNanometer: prepared.scanPixelSizeColNanometer,
+      kPixelSizeRow: prepared.kPixelSizeRow,
+      kPixelSizeCol: prepared.kPixelSizeCol,
+      kPixelUnit: prepared.kPixelUnit,
+      acquisitionDate: prepared.acquisitionDate,
+      metadata: prepared.metadata,
+      schemaIdentity: prepared.schemaIdentity,
+      sourceIdentitySHA256: nil,
+      masterSHA256: prepared.masterSHA256,
+      orderedMemberSHA256: prepared.orderedMemberSHA256,
+      sourceScanCalibration: prepared.sourceScanCalibration,
+      scalarImageRawPath: prepared.scalarImageRawPath
+    )
+    let source = try Native4DSTEMIndexedSource.open(dataset: unbound)
+    let bands = try Metal4DSTEMDetectorBands(
+      detectorRows: prepared.detectorRows,
+      detectorColumns: prepared.detectorCols,
+      membership: [UInt8](
+        repeating: 0,
+        count: prepared.detectorRows * prepared.detectorCols
+      )
+    )
+    XCTAssertThrowsError(
+      try Metal4DSTEMIndexedLoadPlan(
+        source: source,
+        maximumDecodedWindowBytes: source.decodedBytesPerFrame,
+        detectorBands: bands
+      )
+    ) { error in
+      XCTAssertTrue(error.localizedDescription.contains("source identity"))
+    }
+  }
+
+  func testIndexedStreamingMetalMatchesExactFixtureReference() throws {
+    guard let device = MTLCreateSystemDefaultDevice() else {
+      throw XCTSkip("No Metal device is available for indexed streaming parity.")
+    }
+    let fixture = try copiedFixture()
+    let dataset = try XCTUnwrap(
+      Native4DSTEMCatalogBuilder(cacheDirectory: fixture.cache)
+        .prepare(input: fixture.master).datasets.first
+    )
+    let source = try Native4DSTEMIndexedSource.open(dataset: dataset)
+    let detectorPixels = dataset.detectorRows * dataset.detectorCols
+    let membership = (0..<detectorPixels).map { pixel -> UInt8 in
+      let row = pixel / dataset.detectorCols
+      let column = pixel % dataset.detectorCols
+      return (row < 32 ? 1 : 0)
+        | (column < 32 ? 2 : 0)
+        | (row >= 32 && column >= 32 ? 4 : 0)
+    }
+    let bands = try Metal4DSTEMDetectorBands(
+      detectorRows: dataset.detectorRows,
+      detectorColumns: dataset.detectorCols,
+      membership: membership
+    )
+    let plan = try Metal4DSTEMIndexedLoadPlan(
+      source: source,
+      maximumDecodedWindowBytes: source.decodedBytesPerFrame,
+      detectorBands: bands
+    )
+    let loader = try Metal4DSTEMIndexedLoader(device: device)
+    let result = try loader.loadExactProducts(source: source, plan: plan)
+    let badPixels = Set(dataset.badPixelIndices)
+    let expected: [UInt16] = (0..<detectorPixels).map {
+      badPixels.contains($0) ? 0 : UInt16($0 % 257)
+    }
+    func sum(where includes: (Int) -> Bool) -> UInt64 {
+      expected.indices.reduce(UInt64(0)) {
+        $0 + (includes($1) ? UInt64(expected[$1]) : 0)
+      }
+    }
+    let total = expected.reduce(UInt64(0)) { $0 + UInt64($1) }
+    let rowMoment = expected.indices.reduce(UInt64(0)) {
+      $0 + UInt64(expected[$1]) * UInt64($1 / dataset.detectorCols)
+    }
+    let columnMoment = expected.indices.reduce(UInt64(0)) {
+      $0 + UInt64(expected[$1]) * UInt64($1 % dataset.detectorCols)
+    }
+
+    XCTAssertEqual(result.products.detectorSum, expected.map(UInt64.init))
+    XCTAssertEqual(result.products.band1, [sum { membership[$0] & 1 != 0 }])
+    XCTAssertEqual(result.products.band2, [sum { membership[$0] & 2 != 0 }])
+    XCTAssertEqual(result.products.band4, [sum { membership[$0] & 4 != 0 }])
+    XCTAssertEqual(result.products.total, [total])
+    XCTAssertEqual(result.products.detectorRowMoment, [rowMoment])
+    XCTAssertEqual(result.products.detectorColumnMoment, [columnMoment])
+    XCTAssertEqual(result.sourceAudit.maximumSourceCount, UInt32(expected.max() ?? 0))
+    XCTAssertEqual(
+      result.sourceAudit.pixelsAbove255,
+      UInt64(expected.filter { $0 > 255 }.count)
+    )
+    XCTAssertEqual(result.provenance.sourceDetectorRows, 64)
+    XCTAssertEqual(result.provenance.workingDetectorRows, 64)
+    XCTAssertEqual(result.provenance.scanBin, 1)
+    XCTAssertEqual(result.provenance.detectorBin, 1)
+    XCTAssertEqual(result.provenance.productDtype, "uint64")
+    XCTAssertEqual(result.provenance.sourceState, "prepared_qh5_index")
+    XCTAssertEqual(result.provenance.detectorBandsSHA256, plan.detectorBandsSHA256)
+    XCTAssertEqual(result.provenance.scanCalibration, plan.scanCalibration)
+    XCTAssertEqual(
+      result.provenance.scanSamplingRowNanometer,
+      plan.scanSamplingRowNanometer
+    )
+    XCTAssertEqual(
+      result.provenance.scanSamplingColumnNanometer,
+      plan.scanSamplingColumnNanometer
+    )
+    XCTAssertEqual(result.provenance.detectorSamplingRow, plan.detectorSamplingRow)
+    XCTAssertEqual(
+      result.provenance.detectorSamplingColumn,
+      plan.detectorSamplingColumn
+    )
+    XCTAssertEqual(result.provenance.detectorSamplingUnit, plan.detectorSamplingUnit)
+
+    let frame = try loader.diffractionPattern(
+      source: source,
+      scanRow: 0,
+      scanColumn: 0
+    )
+    XCTAssertEqual(frame.values, expected)
+    XCTAssertEqual(frame.dtype, .uint16)
+    XCTAssertEqual(frame.detectorRows, 64)
+    XCTAssertEqual(frame.detectorColumns, 64)
+  }
+
+  func testIndexedStreamingCancellationFailsBeforeSourceDecode() throws {
+    guard let device = MTLCreateSystemDefaultDevice() else {
+      throw XCTSkip("No Metal device is available for indexed streaming cancellation.")
+    }
+    let fixture = try copiedFixture()
+    let dataset = try XCTUnwrap(
+      Native4DSTEMCatalogBuilder(cacheDirectory: fixture.cache)
+        .prepare(input: fixture.master).datasets.first
+    )
+    let source = try Native4DSTEMIndexedSource.open(dataset: dataset)
+    let bands = try Metal4DSTEMDetectorBands(
+      detectorRows: dataset.detectorRows,
+      detectorColumns: dataset.detectorCols,
+      membership: [UInt8](repeating: 0, count: dataset.detectorRows * dataset.detectorCols)
+    )
+    let plan = try Metal4DSTEMIndexedLoadPlan(
+      source: source,
+      maximumDecodedWindowBytes: source.decodedBytesPerFrame,
+      detectorBands: bands
+    )
+    let loader = try Metal4DSTEMIndexedLoader(device: device)
+    XCTAssertThrowsError(
+      try loader.loadExactProducts(
+        source: source,
+        plan: plan,
+        shouldCancel: { true }
+      )
+    ) { error in
+      XCTAssertEqual(error as? Metal4DSTEMStreamingIOError, .cancelled)
     }
   }
 
