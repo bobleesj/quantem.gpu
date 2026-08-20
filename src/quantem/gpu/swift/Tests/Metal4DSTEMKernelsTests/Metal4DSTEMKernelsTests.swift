@@ -922,6 +922,7 @@ final class Metal4DSTEMKernelsTests: XCTestCase {
       Metal4DSTEMKernels.centerOfMassU32Function,
       Metal4DSTEMKernels.centerOfMassU32MomentsFunction,
       Metal4DSTEMKernels.centerOfMassU64MomentsFunction,
+      Metal4DSTEMKernels.widenU32AccumulatorTripletToU64Function,
       Metal4DSTEMKernels.fullSumU8Function,
       Metal4DSTEMKernels.signedDeltaU8Function,
       Metal4DSTEMKernels.fullSumU16Function,
@@ -1466,6 +1467,97 @@ final class Metal4DSTEMKernelsTests: XCTestCase {
     XCTAssertEqual(plan.detectorContributionCount(outputRow: 0, outputColumn: 0), 4)
     XCTAssertEqual(plan.detectorContributionCount(outputRow: 2, outputColumn: 3), 1)
     XCTAssertTrue(plan.provenanceLabel.contains("detector-sum bin 2×2"))
+  }
+
+  func testExactAccumulatorBoundsAdmitAuditedLow8DetectorBin4Load() throws {
+    let region = try Metal4DSTEMScanRegion.full(sourceRows: 512, sourceColumns: 512)
+    let plan = try Metal4DSTEMLoadPlan(
+      sourceScanRows: 512,
+      sourceScanColumns: 512,
+      detectorRows: 192,
+      detectorColumns: 192,
+      sourceBytesPerValue: 2,
+      scanRegion: region,
+      detectorBin: 4
+    )
+
+    let bounds = try plan.exactAccumulatorBounds(maxSourceCount: 255)
+
+    XCTAssertEqual(bounds.maximumScanContributions, 1)
+    XCTAssertEqual(bounds.maximumDetectorSum, 9_400_320)
+    XCTAssertEqual(bounds.maximumDetectorRowMoment, 441_815_040)
+    XCTAssertEqual(bounds.maximumDetectorColumnMoment, 441_815_040)
+    XCTAssertTrue(bounds.fitsUInt32Accumulators)
+  }
+
+  func testExactAccumulatorBoundsIncludeScanBinAndIncompleteDetectorEdges() throws {
+    let region = try Metal4DSTEMScanRegion(
+      rowStart: 1,
+      rowStop: 4,
+      columnStart: 2,
+      columnStop: 7,
+      sourceRows: 6,
+      sourceColumns: 8
+    )
+    let plan = try Metal4DSTEMLoadPlan(
+      sourceScanRows: 6,
+      sourceScanColumns: 8,
+      detectorRows: 5,
+      detectorColumns: 7,
+      sourceBytesPerValue: 2,
+      scanRegion: region,
+      scanBin: 4,
+      detectorBin: 2
+    )
+
+    let bounds = try plan.exactAccumulatorBounds(maxSourceCount: 10)
+
+    XCTAssertEqual(bounds.maximumScanContributions, 12)
+    XCTAssertEqual(bounds.maximumDetectorSum, 4_200)
+    XCTAssertEqual(bounds.maximumDetectorRowMoment, 8_400)
+    XCTAssertEqual(bounds.maximumDetectorColumnMoment, 12_600)
+    XCTAssertTrue(bounds.fitsUInt32Accumulators)
+  }
+
+  func testExactAccumulatorBoundsRejectHighDynamicRangeU32Moments() throws {
+    let region = try Metal4DSTEMScanRegion.full(sourceRows: 2, sourceColumns: 2)
+    let plan = try Metal4DSTEMLoadPlan(
+      sourceScanRows: 2,
+      sourceScanColumns: 2,
+      detectorRows: 256,
+      detectorColumns: 256,
+      sourceBytesPerValue: 2,
+      scanRegion: region
+    )
+
+    let bounds = try plan.exactAccumulatorBounds(maxSourceCount: UInt32(UInt16.max))
+
+    XCTAssertEqual(bounds.maximumDetectorSum, 4_294_901_760)
+    XCTAssertGreaterThan(bounds.maximumDetectorRowMoment, UInt64(UInt32.max))
+    XCTAssertGreaterThan(bounds.maximumDetectorColumnMoment, UInt64(UInt32.max))
+    XCTAssertFalse(bounds.fitsUInt32Accumulators)
+  }
+
+  func testExactAccumulatorBoundsFailClosedOnUInt64Overflow() throws {
+    let region = try Metal4DSTEMScanRegion.full(sourceRows: 16, sourceColumns: 16)
+    let plan = try Metal4DSTEMLoadPlan(
+      sourceScanRows: 16,
+      sourceScanColumns: 16,
+      detectorRows: Int.max / 2,
+      detectorColumns: 2,
+      sourceBytesPerValue: 2,
+      scanRegion: region,
+      scanBin: 16
+    )
+
+    XCTAssertThrowsError(
+      try plan.exactAccumulatorBounds(maxSourceCount: UInt32.max)
+    ) { error in
+      XCTAssertEqual(
+        error as? Metal4DSTEMExactAccumulatorBoundsError,
+        .arithmeticOverflow
+      )
+    }
   }
 
   func testRecommendedStreamingPlanSplitsSelectedLoadWithinScratchBudget() throws {
@@ -2234,6 +2326,58 @@ final class Metal4DSTEMKernelsTests: XCTestCase {
     XCTAssertEqual(bufferValues(bf, count: 1), [0])
     XCTAssertEqual(bufferValues(abf, count: 1), [0])
     XCTAssertEqual(bufferValues(df, count: 1), [0])
+  }
+
+  func testWidenU32AccumulatorTripletToU64IsExact() throws {
+    let device = try metalDevice()
+    let queue = try XCTUnwrap(device.makeCommandQueue())
+    let library = try Metal4DSTEMKernels.makeDetectorLibrary(device: device)
+    let firstValues: [UInt32] = [0, 1, UInt32.max, 19]
+    let secondValues: [UInt32] = [7, UInt32.max, 2, 0]
+    let thirdValues: [UInt32] = [UInt32.max - 1, 9, 0, UInt32.max]
+    let firstInput = try makeBuffer(device: device, values: firstValues)
+    let secondInput = try makeBuffer(device: device, values: secondValues)
+    let thirdInput = try makeBuffer(device: device, values: thirdValues)
+    let firstOutput = try outputBuffer64(device: device, count: firstValues.count)
+    let secondOutput = try outputBuffer64(device: device, count: firstValues.count)
+    let thirdOutput = try outputBuffer64(device: device, count: firstValues.count)
+    var count = UInt32(firstValues.count)
+    let pipeline = try device.makeComputePipelineState(
+      function: XCTUnwrap(
+        library.makeFunction(
+          name: Metal4DSTEMKernels.widenU32AccumulatorTripletToU64Function
+        )
+      )
+    )
+    let command = try XCTUnwrap(queue.makeCommandBuffer())
+    let encoder = try XCTUnwrap(command.makeComputeCommandEncoder())
+    encoder.setComputePipelineState(pipeline)
+    encoder.setBuffer(firstInput, offset: 0, index: 0)
+    encoder.setBuffer(secondInput, offset: 0, index: 1)
+    encoder.setBuffer(thirdInput, offset: 0, index: 2)
+    encoder.setBuffer(firstOutput, offset: 0, index: 3)
+    encoder.setBuffer(secondOutput, offset: 0, index: 4)
+    encoder.setBuffer(thirdOutput, offset: 0, index: 5)
+    encoder.setBytes(&count, length: 4, index: 6)
+    encoder.dispatchThreads(
+      MTLSize(width: firstValues.count + 4, height: 1, depth: 1),
+      threadsPerThreadgroup: MTLSize(width: 4, height: 1, depth: 1)
+    )
+    encoder.endEncoding()
+    try complete(command)
+
+    XCTAssertEqual(
+      bufferValues64(firstOutput, count: firstValues.count),
+      firstValues.map(UInt64.init)
+    )
+    XCTAssertEqual(
+      bufferValues64(secondOutput, count: secondValues.count),
+      secondValues.map(UInt64.init)
+    )
+    XCTAssertEqual(
+      bufferValues64(thirdOutput, count: thirdValues.count),
+      thirdValues.map(UInt64.init)
+    )
   }
 
   func testWordMajorU32DetectorProductsAndInteractiveUpdatesMatchReference() throws {

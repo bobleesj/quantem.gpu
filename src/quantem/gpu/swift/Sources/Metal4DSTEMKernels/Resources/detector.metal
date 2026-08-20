@@ -802,6 +802,26 @@ kernel void center_of_mass_u64_moments(
     columnOutput[index] = float(columnMoment[index]) * inverse;
 }
 
+// Preserve exact fused-load accumulators in the uint64 summary schema without
+// traversing the resident 4D volume a second time. The caller must first prove
+// that the fused uint32 accumulation is safe for the selected source and load
+// geometry.
+kernel void widen_u32_accumulator_triplet_to_u64(
+    device const uint *firstInput [[buffer(0)]],
+    device const uint *secondInput [[buffer(1)]],
+    device const uint *thirdInput [[buffer(2)]],
+    device ulong *firstOutput [[buffer(3)]],
+    device ulong *secondOutput [[buffer(4)]],
+    device ulong *thirdOutput [[buffer(5)]],
+    constant uint &count [[buffer(6)]],
+    uint index [[thread_position_in_grid]]
+) {
+    if (index >= count) return;
+    firstOutput[index] = ulong(firstInput[index]);
+    secondOutput[index] = ulong(secondInput[index]);
+    thirdOutput[index] = ulong(thirdInput[index]);
+}
+
 
 // Produce BF/ABF/ADF from an exact uint32 scan-binned cache. One threadgroup
 // owns each output scan position, matching the native detector reduction.

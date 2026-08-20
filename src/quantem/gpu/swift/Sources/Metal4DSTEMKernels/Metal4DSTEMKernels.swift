@@ -79,6 +79,8 @@ public enum Metal4DSTEMKernels {
   public static let centerOfMassU32Function = "center_of_mass_u32_word_major"
   public static let centerOfMassU32MomentsFunction = "center_of_mass_u32_moments"
   public static let centerOfMassU64MomentsFunction = "center_of_mass_u64_moments"
+  public static let widenU32AccumulatorTripletToU64Function =
+    "widen_u32_accumulator_triplet_to_u64"
   public static let fullSumU8Function = "full_sum_u8_word_major"
   public static let signedDeltaU8Function = "signed_delta_u8_word_major"
   public static let fullSumU16Function = "full_sum_u16_word_major"
