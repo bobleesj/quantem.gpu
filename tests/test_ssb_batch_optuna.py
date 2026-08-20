@@ -34,3 +34,29 @@ def test_eval_single_exact_fallback_calls_scalar_loss_once() -> None:
     assert loss == 4.0
     assert accel.scalar_calls == 1
     assert accel.batch_calls == 0
+
+
+def test_nelder_mead_keeps_first_vertex_for_tied_losses() -> None:
+    """Stable tie ordering keeps a flat seeded fit at its input point."""
+    cp = pytest.importorskip("cupy")
+    from quantem.gpu.ssb.compute.cuda.optimizer import batch_nelder_mead
+
+    class FlatAccel:
+        uses_optimizer_reconstruct_fallback = False
+
+        def variance_loss_batch(
+            self,
+            c10: np.ndarray,
+            c12: np.ndarray,
+            phi12: np.ndarray,
+        ):
+            assert len(c10) == len(c12) == len(phi12)
+            return cp.ones(len(c10), dtype=cp.float32)
+
+    x0 = np.asarray([-20.0, 22.0, 0.46], dtype=np.float64)
+    first = batch_nelder_mead(FlatAccel(), x0, max_iter=4)
+    second = batch_nelder_mead(FlatAccel(), x0, max_iter=4)
+
+    np.testing.assert_array_equal(first[0], x0)
+    np.testing.assert_array_equal(second[0], first[0])
+    assert first[1:] == second[1:]

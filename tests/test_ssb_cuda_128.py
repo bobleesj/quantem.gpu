@@ -424,6 +424,45 @@ def test_cuda_512_optimizer_uses_exact_phase_loss_objective() -> None:
     assert engine.uses_optimizer_reconstruct_fallback
 
 
+def test_cuda_optimizer_chunk_reduction_is_repeatable() -> None:
+    """Fixed-order optimizer feedback returns identical loss bits."""
+    cp = _cupy()
+    engine = _make_engine(size=128, num_bf=17)
+    engine._preferred_chunk_bf = 5
+    args = (-120.0, 55.0, math.radians(17.0))
+
+    phases = []
+    losses = []
+    for _ in range(4):
+        phase, loss = engine._fused_chunked_core(
+            *args,
+            compute_loss=True,
+            deterministic_reduction=True,
+        )
+        phases.append(cp.asnumpy(phase))
+        losses.append(loss)
+
+    for phase in phases[1:]:
+        np.testing.assert_array_equal(phase, phases[0])
+    assert all(loss == losses[0] for loss in losses[1:])
+
+    fast_phase, fast_loss = engine._fused_chunked_core(
+        *args,
+        compute_loss=True,
+    )
+    cp.testing.assert_allclose(
+        fast_phase,
+        cp.asarray(phases[0]),
+        rtol=PHASE_RTOL,
+        atol=PHASE_ATOL,
+    )
+    assert fast_loss == pytest.approx(
+        losses[0],
+        rel=LOSS_RTOL,
+        abs=LOSS_ATOL,
+    )
+
+
 @pytest.mark.parametrize("size,num_bf", [(128, 7), (256, 5), (512, 5), (1024, 3)])
 def test_cuda_fourier_sum_object_matches_chunked_ifft(size: int, num_bf: int) -> None:
     cp = _cupy()

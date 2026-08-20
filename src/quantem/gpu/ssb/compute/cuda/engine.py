@@ -1519,10 +1519,37 @@ class SSBEngine:
         """Chunked version of reconstruct_with_loss for large scans."""
         return self._fused_chunked_core(C10, C12, phi12, compute_loss=True)
 
+    def _optimizer_reconstruct_with_loss(
+        self,
+        C10: float,
+        C12: float,
+        phi12: float,
+    ) -> tuple["cp.ndarray", float]:
+        """Return exact full-IFFT loss with deterministic chunk reduction.
+
+        Interactive redraw retains the faster direct atomic accumulation. Exact
+        optimizer feedback instead writes one partial plane per reduction group
+        and merges those planes in a fixed order so seeded fits receive the same
+        loss bits on repeated evaluations.
+        """
+        c = self._cache
+        full_bytes = int(c["num_bf"]) * int(c["ny"]) * int(c["nx"]) * 8
+        if full_bytes <= 6 * 1024**3:
+            return self.reconstruct_with_loss(C10, C12, phi12)
+        return self._fused_chunked_core(
+            C10,
+            C12,
+            phi12,
+            compute_loss=True,
+            deterministic_reduction=True,
+        )
+
     def _fused_chunked_core(
         self,
         C10: float, C12: float, phi12: float,
-        *, compute_loss: bool = False,
+        *,
+        compute_loss: bool = False,
+        deterministic_reduction: bool = False,
     ):
         """Shared chunked core using fused col-FFT + phase accumulate.
 
@@ -1592,8 +1619,12 @@ class SSBEngine:
         ):
             self._partial_sumsq = cp.empty(partial_shape, dtype=cp.float32)
 
-        use_direct_accumulate = hasattr(
-            self._custom_fft, "ifft2_fused_pk_col_accumulate_direct"
+        use_direct_accumulate = (
+            not deterministic_reduction
+            and hasattr(
+                self._custom_fft,
+                "ifft2_fused_pk_col_accumulate_direct",
+            )
         )
         use_paired_direct = (
             use_direct_accumulate
@@ -1796,7 +1827,7 @@ class SSBEngine:
         batch = int(c10_vals.size)
         losses = out if out is not None else cp.empty(batch, dtype=cp.float32)
         for i in range(batch):
-            _, loss = self.reconstruct_with_loss(
+            _, loss = self._optimizer_reconstruct_with_loss(
                 float(c10_vals[i]),
                 float(c12_vals[i]),
                 float(phi_vals[i]),
@@ -2075,7 +2106,7 @@ class SSBEngine:
         c12_arr = np.full(4, C12, dtype=np.float32)
         phi_arr = np.full(4, phi12, dtype=np.float32)
         if self.uses_optimizer_reconstruct_fallback:
-            _, loss = self.reconstruct_with_loss(C10, C12, phi12)
+            _, loss = self._optimizer_reconstruct_with_loss(C10, C12, phi12)
             if out is None:
                 return loss
             out[()] = np.float32(loss)
