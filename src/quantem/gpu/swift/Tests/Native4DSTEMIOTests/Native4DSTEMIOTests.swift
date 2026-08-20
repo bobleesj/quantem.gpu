@@ -417,7 +417,7 @@ final class Native4DSTEMIOTests: XCTestCase {
     let jsonLength = Int(readLE32(index, at: 8))
     let wordCount = Int(readLE32(index, at: 12))
     let metadata = try JSONDecoder().decode(
-      QH5IndexMetadata.self,
+      NativeQH5IndexMetadata.self,
       from: index.subdata(in: 16..<(16 + jsonLength))
     )
     XCTAssertEqual(metadata.nFrames, 1)
@@ -495,7 +495,7 @@ final class Native4DSTEMIOTests: XCTestCase {
     let index = try Data(contentsOf: indexURL)
     let jsonLength = Int(readLE32(index, at: 8))
     let metadata = try JSONDecoder().decode(
-      QH5IndexMetadata.self,
+      NativeQH5IndexMetadata.self,
       from: index.subdata(in: 16..<(16 + jsonLength))
     )
     XCTAssertEqual(metadata.blockElems, 8192)
@@ -692,6 +692,210 @@ final class Native4DSTEMIOTests: XCTestCase {
         String(decoding: try Data(contentsOf: path).prefix(8), as: UTF8.self),
         "QH5IDX01"
       )
+    }
+  }
+
+  func testIndexedFrameWindowPlanBoundsNative18GiBWithoutChangingCoverage() throws {
+    let decodedRowBytes = UInt64(512 * 192 * 192 * 2)
+    let maximumWindowBytes = decodedRowBytes * 7
+    let plan = try Native4DSTEMFrameWindowPlan(
+      scanRows: 512,
+      scanColumns: 512,
+      detectorRows: 192,
+      detectorColumns: 192,
+      sourceBytesPerValue: 2,
+      maximumDecodedBytes: maximumWindowBytes
+    )
+
+    XCTAssertEqual(plan.decodedBytesPerFrame, 192 * 192 * 2)
+    XCTAssertEqual(plan.logicalDecodedBytes, 19_327_352_832)
+    XCTAssertEqual(plan.frameRanges.first, 0..<(7 * 512))
+    XCTAssertEqual(plan.frameRanges.last?.upperBound, 512 * 512)
+    XCTAssertEqual(plan.frameRanges.reduce(0) { $0 + $1.count }, 512 * 512)
+    XCTAssertTrue(
+      plan.frameRanges.allSatisfy {
+        UInt64($0.count) * plan.decodedBytesPerFrame <= maximumWindowBytes
+      }
+    )
+    XCTAssertTrue(
+      plan.frameRanges.dropLast().allSatisfy {
+        $0.lowerBound.isMultiple(of: 512) && $0.upperBound.isMultiple(of: 512)
+      }
+    )
+    for (previous, next) in zip(plan.frameRanges, plan.frameRanges.dropFirst()) {
+      XCTAssertEqual(previous.upperBound, next.lowerBound)
+    }
+    XCTAssertThrowsError(
+      try Native4DSTEMFrameWindowPlan(
+        scanRows: 512,
+        scanColumns: 512,
+        detectorRows: 192,
+        detectorColumns: 192,
+        sourceBytesPerValue: 2,
+        maximumDecodedBytes: decodedRowBytes - 1
+      )
+    )
+  }
+
+  func testIndexedSourceOpensPreparedFixtureAndResolvesRowColumnFrame() throws {
+    let fixture = try copiedFixture()
+    let dataset = try XCTUnwrap(
+      Native4DSTEMCatalogBuilder(cacheDirectory: fixture.cache)
+        .prepare(input: fixture.master).datasets.first
+    )
+
+    let source = try Native4DSTEMIndexedSource.open(dataset: dataset)
+    XCTAssertEqual(source.logicalFrameCount, 1)
+    XCTAssertEqual(source.decodedBytesPerFrame, 64 * 64 * 2)
+    XCTAssertEqual(source.logicalDecodedBytes, 64 * 64 * 2)
+    XCTAssertEqual(source.shards.count, 1)
+    XCTAssertEqual(source.shards[0].index.metadataWords.count, 2)
+
+    let windows = try source.windows(
+      maximumDecodedBytes: source.decodedBytesPerFrame,
+      alignToScanRows: true
+    )
+    XCTAssertEqual(windows.count, 1)
+    XCTAssertEqual(windows[0].globalFrameRange, 0..<1)
+    XCTAssertEqual(windows[0].decodedBytes, 64 * 64 * 2)
+    XCTAssertEqual(windows[0].slices.count, 1)
+    XCTAssertEqual(windows[0].slices[0].globalFrameRange, 0..<1)
+    XCTAssertEqual(windows[0].slices[0].shardFrameRange, 0..<1)
+    XCTAssertEqual(windows[0].slices[0].metadataWordRange, 0..<2)
+    XCTAssertEqual(try source.frameWindow(scanRow: 0, scanColumn: 0), windows[0])
+    XCTAssertThrowsError(try source.frameWindow(scanRow: 0, scanColumn: 1))
+  }
+
+  func testIndexedSourceRejectsStaleIndexAndIncompleteLogicalCoverage() throws {
+    do {
+      let fixture = try copiedFixture()
+      let dataset = try XCTUnwrap(
+        Native4DSTEMCatalogBuilder(cacheDirectory: fixture.cache)
+          .prepare(input: fixture.master).datasets.first
+      )
+      try FileManager.default.setAttributes(
+        [.modificationDate: Date(timeIntervalSince1970: 2_000_000_000)],
+        ofItemAtPath: fixture.data.path
+      )
+      XCTAssertThrowsError(try Native4DSTEMIndexedSource.open(dataset: dataset)) { error in
+        XCTAssertTrue(error.localizedDescription.contains("is stale"))
+      }
+    }
+
+    do {
+      let fixture = try copiedFixture()
+      let dataset = try XCTUnwrap(
+        Native4DSTEMCatalogBuilder(cacheDirectory: fixture.cache)
+          .prepare(input: fixture.master).datasets.first
+      )
+      let incomplete = Native4DSTEMDataset(
+        id: dataset.id,
+        label: dataset.label,
+        masterPath: dataset.masterPath,
+        dataFiles: dataset.dataFiles,
+        indexFiles: dataset.indexFiles,
+        scanRows: 1,
+        scanCols: 2,
+        detectorRows: dataset.detectorRows,
+        detectorCols: dataset.detectorCols,
+        sourceDtype: dataset.sourceDtype,
+        sourceBytes: dataset.sourceBytes,
+        badPixelIndices: dataset.badPixelIndices,
+        scanPixelSizeRowNanometer: dataset.scanPixelSizeRowNanometer,
+        scanPixelSizeColNanometer: dataset.scanPixelSizeColNanometer,
+        kPixelSizeRow: dataset.kPixelSizeRow,
+        kPixelSizeCol: dataset.kPixelSizeCol,
+        kPixelUnit: dataset.kPixelUnit,
+        acquisitionDate: dataset.acquisitionDate,
+        metadata: dataset.metadata,
+        schemaIdentity: dataset.schemaIdentity,
+        sourceIdentitySHA256: dataset.sourceIdentitySHA256,
+        masterSHA256: dataset.masterSHA256,
+        orderedMemberSHA256: dataset.orderedMemberSHA256,
+        sourceScanCalibration: dataset.sourceScanCalibration,
+        scalarImageRawPath: dataset.scalarImageRawPath
+      )
+      XCTAssertThrowsError(try Native4DSTEMIndexedSource.open(dataset: incomplete)) { error in
+        XCTAssertTrue(error.localizedDescription.contains("indexes cover 1 frames; expected 2"))
+      }
+    }
+  }
+
+  func testNativeQH5IndexRejectsTrailingBytes() throws {
+    let fixture = try copiedFixture()
+    let dataset = try XCTUnwrap(
+      Native4DSTEMCatalogBuilder(cacheDirectory: fixture.cache)
+        .prepare(input: fixture.master).datasets.first
+    )
+    let indexURL = URL(fileURLWithPath: try XCTUnwrap(dataset.indexFiles.first))
+    var index = try Data(contentsOf: indexURL)
+    index.append(0)
+    try index.write(to: indexURL, options: .atomic)
+
+    XCTAssertThrowsError(
+      try NativeQH5Index.open(sourceURL: fixture.data, indexURL: indexURL)
+    ) { error in
+      XCTAssertTrue(error.localizedDescription.contains("Truncated or trailing"))
+    }
+  }
+
+  func testNativeQH5IndexRejectsIncompatibleBlockGeometry() throws {
+    let fixture = try copiedFixture()
+    let dataset = try XCTUnwrap(
+      Native4DSTEMCatalogBuilder(cacheDirectory: fixture.cache)
+        .prepare(input: fixture.master).datasets.first
+    )
+    let indexURL = URL(fileURLWithPath: try XCTUnwrap(dataset.indexFiles.first))
+    var index = try Data(contentsOf: indexURL)
+    let valid = Data("\"nBlocksPerFrame\":1".utf8)
+    let invalid = Data("\"nBlocksPerFrame\":2".utf8)
+    let range = try XCTUnwrap(index.range(of: valid))
+    index.replaceSubrange(range, with: invalid)
+    try index.write(to: indexURL, options: .atomic)
+
+    XCTAssertThrowsError(
+      try NativeQH5Index.open(sourceURL: fixture.data, indexURL: indexURL)
+    ) { error in
+      XCTAssertTrue(error.localizedDescription.contains("block geometry"))
+    }
+  }
+
+  func testIndexedSourceRejectsRepeatedSourceOrIndexPaths() throws {
+    let fixture = try copiedFixture()
+    let dataset = try XCTUnwrap(
+      Native4DSTEMCatalogBuilder(cacheDirectory: fixture.cache)
+        .prepare(input: fixture.master).datasets.first
+    )
+    let repeated = Native4DSTEMDataset(
+      id: dataset.id,
+      label: dataset.label,
+      masterPath: dataset.masterPath,
+      dataFiles: dataset.dataFiles + dataset.dataFiles,
+      indexFiles: dataset.indexFiles + dataset.indexFiles,
+      scanRows: 1,
+      scanCols: 2,
+      detectorRows: dataset.detectorRows,
+      detectorCols: dataset.detectorCols,
+      sourceDtype: dataset.sourceDtype,
+      sourceBytes: dataset.sourceBytes * 2,
+      badPixelIndices: dataset.badPixelIndices,
+      scanPixelSizeRowNanometer: dataset.scanPixelSizeRowNanometer,
+      scanPixelSizeColNanometer: dataset.scanPixelSizeColNanometer,
+      kPixelSizeRow: dataset.kPixelSizeRow,
+      kPixelSizeCol: dataset.kPixelSizeCol,
+      kPixelUnit: dataset.kPixelUnit,
+      acquisitionDate: dataset.acquisitionDate,
+      metadata: dataset.metadata,
+      schemaIdentity: dataset.schemaIdentity,
+      sourceIdentitySHA256: dataset.sourceIdentitySHA256,
+      masterSHA256: dataset.masterSHA256,
+      orderedMemberSHA256: dataset.orderedMemberSHA256,
+      sourceScanCalibration: dataset.sourceScanCalibration,
+      scalarImageRawPath: dataset.scalarImageRawPath
+    )
+
+    XCTAssertThrowsError(try Native4DSTEMIndexedSource.open(dataset: repeated)) { error in
+      XCTAssertTrue(error.localizedDescription.contains("repeats a source"))
     }
   }
 

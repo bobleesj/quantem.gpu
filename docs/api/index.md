@@ -29,7 +29,8 @@ Native Swift/Metal products for macOS and iOS clients:
 - `MetalImageFFT.logMagnitude` for Browser FFT of an already-transferred 2D
   product. See [Native Metal image endpoints](metal_image.md).
 - `MetalImageRuntime` for histogram, range, and display contracts.
-- `Native4DSTEMIO` for Python-free HDF5/EMD discovery.
+- `Native4DSTEMIO` for Python-free HDF5/EMD discovery, prepared QH5 indexes,
+  and bounded native frame windows.
 - `Metal4DSTEMLoadPlan`, `Metal4DSTEMStreamingPlan`,
   `Metal4DSTEMResidentCacheIO`, and `Metal4DSTEMResidentSummaryIO` for explicit
   native load, resource, resident-cache, and exact prepared-product provenance.

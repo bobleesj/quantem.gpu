@@ -11,7 +11,7 @@ Native clients import two products for local 4D-STEM loading:
 
 | Product | Owns | Dependencies |
 |---|---|---|
-| `Native4DSTEMIO` | HDF5 and EMD catalog discovery, QH5 indexing, source identity, value audits, resident-cache and exact-summary IO | `CNativeHDF5`, vendored `CHDF5.xcframework`, zlib, Foundation, CryptoKit |
+| `Native4DSTEMIO` | HDF5 and EMD catalog discovery, QH5 indexing, validated bounded source windows, source identity, value audits, resident-cache and exact-summary IO | `CNativeHDF5`, vendored `CHDF5.xcframework`, zlib, Foundation, CryptoKit |
 | `Metal4DSTEMKernels` | Exact load geometry, streaming geometry, typed exact binning, QH5 decode, BF/ABF/ADF, CoM, and DPC/iDPC primitives | Metal, Foundation, CryptoKit |
 
 Neither product imports SwiftUI, AppKit, UIKit, or Python.
@@ -33,6 +33,7 @@ import Native4DSTEMIO
 let catalog = try Native4DSTEMCatalogBuilder(cacheDirectory: indexDirectory)
   .prepare(input: selectedFolder, mode: .indexed)
 let dataset = catalog.datasets[0]
+let indexedSource = try Native4DSTEMIndexedSource.open(dataset: dataset)
 let region = try Metal4DSTEMScanRegion.full(
   sourceRows: dataset.scanRows,
   sourceColumns: dataset.scanCols
@@ -42,7 +43,7 @@ let plan = try Metal4DSTEMLoadPlan(
   sourceScanColumns: dataset.scanCols,
   detectorRows: dataset.detectorRows,
   detectorColumns: dataset.detectorCols,
-  sourceBytesPerValue: dataset.sourceBytes,
+  sourceBytesPerValue: indexedSource.sourceBytesPerValue,
   scanRegion: region,
   scanBin: 1,
   detectorBin: 4
@@ -69,6 +70,46 @@ specific full-scan 512 by 512, detector 192 by 192 case, exact detector bin 2
 produces a 512 by 512 by 96 by 96 packed-uint16 payload of 4,831,838,208 bytes
 (4.5 GiB) when an identity-bound audit proves every four-pixel sum fits
 `uint16`. That byte calculation is not a physical-device admission decision.
+
+## Bounded native indexed windows
+
+`Native4DSTEMIndexedSource` opens the prepared QH5 sidecars, validates them
+against their exact canonical source paths, sizes, modification times, detector
+geometry, dtype, block geometry, compressed ranges, and complete frame
+coverage. It rejects stale, trailing, repeated, incomplete, or incompatible
+indexes. Moving a source file makes its old path-bound index stale; regenerate
+the index instead of weakening this check.
+
+The public frame order is row-major:
+
+\[
+n = R_r N_{R_c} + R_c,
+\]
+
+where \((R_r, R_c)\) is `(scanRow, scanColumn)`. A caller can partition the
+logical source without changing its scientific shape, dtype, binning, or crop:
+
+```swift
+let decodedBytesForFourScanRows =
+  UInt64(4 * dataset.scanCols) * indexedSource.decodedBytesPerFrame
+let windows = try indexedSource.windows(
+  maximumDecodedBytes: decodedBytesForFourScanRows,
+  alignToScanRows: true
+)
+```
+
+Each `Native4DSTEMIndexedWindow` reports one half-open global frame range, its
+decoded byte count, and the exact shard/chunk/index-word slices required to
+decode it. For a `512 × 512 × 192 × 192 uint16` source, four-row windows are
+288 MiB each, 128 windows cover all 262,144 scan positions, and
+`logicalDecodedBytes` remains 19,327,352,832 bytes (18 GiB).
+
+Opening and partitioning read only prepared index sidecars. They do not open or
+map compressed HDF5 shards, decode frames, allocate a resident volume, execute
+Metal, compute products, or choose a device budget. Consequently, index-open
+latency is not a first-load or first-product benchmark. The consuming layer
+supplies the transient byte ceiling and owns scheduling, cancellation, memory
+admission, and cache lifecycle.
 
 ## Typed exact binning
 

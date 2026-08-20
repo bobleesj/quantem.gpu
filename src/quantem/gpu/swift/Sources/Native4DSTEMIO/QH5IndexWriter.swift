@@ -1,35 +1,37 @@
 import Darwin
 import Foundation
 
-private let qh5IndexMagic = Data("QH5IDX01".utf8)
+let qh5IndexMagic = Data("QH5IDX01".utf8)
 
-struct QH5IndexChunk: Codable, Equatable {
-  let startFrame: Int
-  let nFrames: Int
-  let rangeStart: UInt64
-  let rangeEnd: UInt64
-  let metaOffsetWords: Int
-  let metaWords: Int
+/// One contiguous compressed-source range in a prepared QH5 index.
+public struct NativeQH5IndexChunk: Codable, Equatable, Sendable {
+  public let startFrame: Int
+  public let nFrames: Int
+  public let rangeStart: UInt64
+  public let rangeEnd: UInt64
+  public let metaOffsetWords: Int
+  public let metaWords: Int
 }
 
-struct QH5IndexMetadata: Codable, Equatable {
-  let sourcePath: String
-  let sourceBytes: UInt64
-  let sourceMtimeNs: UInt64
-  let detRows: Int
-  let detCols: Int
-  let nFrames: Int
-  let srcDtype: String
-  let blockElems: Int
-  let nBlocksPerFrame: Int
-  let chunks: [QH5IndexChunk]
+/// Stable metadata stored in a `QH5IDX01` sidecar.
+public struct NativeQH5IndexMetadata: Codable, Equatable, Sendable {
+  public let sourcePath: String
+  public let sourceBytes: UInt64
+  public let sourceMtimeNs: UInt64
+  public let detRows: Int
+  public let detCols: Int
+  public let nFrames: Int
+  public let srcDtype: String
+  public let blockElems: Int
+  public let nBlocksPerFrame: Int
+  public let chunks: [NativeQH5IndexChunk]
 }
 
 enum QH5IndexWriter {
   static func prepare(
     source: URL,
     destination: URL
-  ) throws -> QH5IndexMetadata {
+  ) throws -> NativeQH5IndexMetadata {
     let identity = try nativeFileIdentity(for: source)
     if let cached = try currentMetadata(
       sourceIdentity: identity,
@@ -52,7 +54,8 @@ enum QH5IndexWriter {
       stack.detectorColumns,
       label: "detector size"
     )
-    let result = try withMappedFile(source) { rawBytes -> (QH5IndexMetadata, [UInt32]) in
+    let result = try withMappedFile(source) {
+      rawBytes -> (NativeQH5IndexMetadata, [UInt32]) in
       guard let base = rawBytes.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
         throw Native4DSTEMIOError.invalidData("\(source.lastPathComponent) is empty")
       }
@@ -118,7 +121,7 @@ enum QH5IndexWriter {
         label: "index word count"
       )
       var words = [UInt32](repeating: 0, count: metadataWords)
-      var outputChunks: [QH5IndexChunk] = []
+      var outputChunks: [NativeQH5IndexChunk] = []
       outputChunks.reserveCapacity((stack.frameCount + framesPerChunk - 1) / framesPerChunk)
       var metadataOffset = 0
 
@@ -166,7 +169,7 @@ enum QH5IndexWriter {
           rangeEnd = max(rangeEnd, UInt64(position))
         }
         outputChunks.append(
-          QH5IndexChunk(
+          NativeQH5IndexChunk(
             startFrame: start,
             nFrames: stop - start,
             rangeStart: rangeStart,
@@ -176,7 +179,7 @@ enum QH5IndexWriter {
           )
         )
       }
-      let metadata = QH5IndexMetadata(
+      let metadata = NativeQH5IndexMetadata(
         sourcePath: identity.path,
         sourceBytes: identity.bytes,
         sourceMtimeNs: identity.modificationNanoseconds,
@@ -197,7 +200,7 @@ enum QH5IndexWriter {
   static func currentMetadata(
     source: URL,
     destination: URL
-  ) throws -> QH5IndexMetadata? {
+  ) throws -> NativeQH5IndexMetadata? {
     try currentMetadata(
       sourceIdentity: nativeFileIdentity(for: source),
       destination: destination
@@ -207,7 +210,7 @@ enum QH5IndexWriter {
   private static func currentMetadata(
     sourceIdentity: NativeFileIdentity,
     destination: URL
-  ) throws -> QH5IndexMetadata? {
+  ) throws -> NativeQH5IndexMetadata? {
     guard let cached = try cachedMetadata(at: destination),
       cached.sourcePath == sourceIdentity.path,
       cached.sourceBytes == sourceIdentity.bytes,
@@ -216,20 +219,22 @@ enum QH5IndexWriter {
     return cached
   }
 
-  private static func cachedMetadata(at destination: URL) throws -> QH5IndexMetadata? {
+  private static func cachedMetadata(
+    at destination: URL
+  ) throws -> NativeQH5IndexMetadata? {
     guard FileManager.default.fileExists(atPath: destination.path) else { return nil }
     let data = try Data(contentsOf: destination, options: .mappedIfSafe)
     guard data.count >= 16, data.prefix(8) == qh5IndexMagic else { return nil }
     let jsonLength = Int(readLE32(data, at: 8))
     guard jsonLength >= 0, jsonLength <= data.count - 16 else { return nil }
     return try? JSONDecoder().decode(
-      QH5IndexMetadata.self,
+      NativeQH5IndexMetadata.self,
       from: data.subdata(in: 16..<(16 + jsonLength))
     )
   }
 
   private static func write(
-    metadata: QH5IndexMetadata,
+    metadata: NativeQH5IndexMetadata,
     words: [UInt32],
     to destination: URL
   ) throws {
