@@ -10,7 +10,7 @@
     },
     {
       "path": "docs/dashboard.md",
-      "sha256": "fa455d49a3536de866336e440b0e37f8c92fdae188cdb79e9c73fc29c4be5579",
+      "sha256": "f79570b7a7b5ce01f6f9a1ea7e3e1cff613575e27efb5fe0d9986aa771cd53be",
       "role": "Atomic capability, speed, memory, and parity dashboard"
     },
     {
@@ -35,13 +35,18 @@
     },
     {
       "path": "docs/performance/changes.md",
-      "sha256": "01dc43c0c5417a570e1b452d3060010fc398f1e5f0a6fde006da8a8c426209e0",
+      "sha256": "4673ee198dbda9ca9d68fcafd5d8c0c61af16e5fdcd098f7989ccb7f1c9a20d2",
       "role": "Measurement replacement and historical-change ledger"
     },
     {
       "path": "docs/performance/methodology.md",
-      "sha256": "686fae4d7a2c6e6f1ad4d7781b3b78b609a8a5e3e0a3670c0fd7f0bb7caa5564",
+      "sha256": "2754af708ec854eecedec7a56aafbdb53400fb3d1716dadb930b2f29bfebb51a",
       "role": "Benchmark state, provenance, and scientific-resolution contract"
+    },
+    {
+      "path": "docs/performance/continuous-profiling.md",
+      "sha256": "2075493dc1d57ba2b5ed35545d1e0d06a757e6294ebc5218e79a53f60d54e8e7",
+      "role": "Cross-platform cadence, comparison-key, run-registry, and promotion contract"
     },
     {
       "path": "docs/performance/parity.md",

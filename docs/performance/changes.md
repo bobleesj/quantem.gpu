@@ -5,19 +5,21 @@ that produced a benchmark. A documentation edit never makes an older timing a
 measurement of the current code.
 
 - **Ledger reviewed:** 2026-08-19
-- **Implementation baseline for this documentation branch:** `origin/main` at
-  `4f89e08`
+- **Integration base:** `334b7b5`
+- **Current combined local stack before this follow-up:** `e052dfb`
 - **Current measured checkout:** `8c47a466` (source tree `c3094dcf`)
-- **Documentation branch:** `developer-centered-documentation`
+- **Documentation branch:** `platform-parity-profile-integration`
 
-The documentation commits after `4f89e08` change navigation, API explanation,
-notation, equations, and evidence presentation. They do not change production
-Python, CUDA, Metal, Swift, or WebGPU kernels.
+The current profiling-registry follow-up changes documentation, machine-readable
+run policy, and CI validation. It does not change production Python, CUDA,
+Metal, Swift, or WebGPU kernels or relabel an older measurement.
 
 ## Latest documentation changes
 
 | Commit | Change | Performance-number effect |
 |---|---|---|
+| Current profiling-registry follow-up | Added the 35-cell platform/module schedule, human run index, manifest validator, CI gate, and continuous-profiling guide | none; the existing timings and scientific acceptance states are unchanged |
+| `e052dfb` | Combined current platform profiling evidence with the three parity-qualified scientific fixes | existing measured baselines remain tied to their recorded revisions |
 | `146238a` | Clarified that the SSB PyTorch functions are executable teaching references, not production kernels | none |
 | `d83c8a1` | Rewrote SSB examples with explicit named layouts and ordinary PyTorch FFT calls | none |
 | `7182ce4` | Made the SSB reference progressive and executable from top to bottom | none |

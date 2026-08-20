@@ -15,6 +15,7 @@ which optimizations were accepted, rejected, or remain provisional.
 | [Revision and change ledger](changes.md) | Latest documentation changes, implementation baselines, and why a retained number changed or remained historical |
 | [Current verified results](../backends.md) | Capability status and the public-safe timing/parity summary across CUDA, MPS/Metal, Swift, and WebGPU |
 | [Benchmark methodology](methodology.md) | Required timing stages, cold/warm definitions, memory reporting, and acceptance rules |
+| [Continuous profiling](continuous-profiling.md) | PR smoke, weekly physical profiles, manual signoff, comparison keys, run registry, and regression decisions |
 | [Cross-backend parity](parity.md) | Exact integer contracts, floating metrics, fixtures, and hardware gates |
 | [Optimization ledger](../maintainer/backend-optimization-matrix.md) | Accepted and rejected IO, kernel, display, and browser experiments |
 | [Load acceptance evidence](../maintainer/backend-4dstem-load-checklist.md) | Real-data load/decode/product gates and backend signoff |
@@ -27,6 +28,11 @@ The machine-readable fingerprints for retained numerical pages are available as
 {download}`evidence_manifest.json <evidence_manifest.json>`. The manifest makes
 an evidence edit explicit: changing a number requires updating its fingerprint
 and rerunning the documentation guard.
+
+The machine-readable execution schedule lives in
+[`benchmarks/profile_matrix.json`](https://github.com/bobleesj/quantem.gpu/blob/main/benchmarks/profile_matrix.json),
+and completed, failed, refuted, or superseded runs remain indexed in
+[`experiments/RUNS.md`](https://github.com/bobleesj/quantem.gpu/blob/main/experiments/RUNS.md).
 
 ## Reading a result
 
