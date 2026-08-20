@@ -69,8 +69,21 @@ Scroll horizontally on narrow screens rather than combining fields.
 
 | Platform | Selected scan | Scan plan | Detector bin | Output detector | Source dtype | Decode dtype | Resident dtype | Cache state | Fixture | Statistic | Time | Device tested | Date tested |
 |---|---:|---|---:|---:|---|---|---|---|---|---|---:|---|---|
-| **CUDA** | `512x512` | Full | 1 | `192x192` | `uint16` | `uint8` | `uint8` | Warm source | — | Median | **0.450 s** | NVIDIA RTX PRO 6000 Blackwell | 2026-07-20 |
-| **Python MPS** | `1024x1024` | Full | 1 | `192x192` | `uint16` | `uint16` | `uint16` | First observed source | — | Single run | **4.617 s** | Apple Metal GPU (model not retained) | 2026-07-20 |
+| **CUDA** | `512x512` | Full | 1 | `192x192` | `uint16` | `uint16` | `uint16` | Warm source | C | p50 | **0.588 s** | NVIDIA RTX PRO 6000 Blackwell, GPU 0 | 2026-08-19 |
+| **CUDA** | `512x512` | Full | 2 | `96x96` | `uint16` | `uint16` | `uint32` | Warm source | C | p50 | **0.626 s** | NVIDIA RTX PRO 6000 Blackwell, GPU 0 | 2026-08-19 |
+| **CUDA** | `512x512` | Full | 4 | `48x48` | `uint16` | `uint16` | `uint32` | Warm source | C | p50 | **0.553 s** | NVIDIA RTX PRO 6000 Blackwell, GPU 0 | 2026-08-19 |
+| **CUDA** | `512x512` | Full | 8 | `24x24` | `uint16` | `uint16` | `uint32` | Warm source | C | p50 | **0.599 s** | NVIDIA RTX PRO 6000 Blackwell, GPU 0 | 2026-08-19 |
+| **Python MPS** | `512x512` | Full | 1 | `192x192` | `uint16` | `uint16` | `uint16` | Warm source | C | p50 | **2.164 s** | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-19 |
+| **Python MPS** | `512x512` | Full | 2 | `96x96` | `uint16` | `uint16` | `uint16` | Warm source | C | p50 | **0.691 s** | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-19 |
+| **Python MPS** | `512x512` | Full | 4 | `48x48` | `uint16` | `uint16` | `uint16` | Warm source | C | p50 | **0.586 s** | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-19 |
+| **Python MPS** | `512x512` | Full | 8 | `24x24` | `uint16` | `uint16` | `uint16` | Warm source | C | p50 | **0.575 s** | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-19 |
+| **Python MPS** | `512x512` | Full | 1 | `192x192` | `uint16` | `uint16` | `uint16` | Admission check | C | Guard result | — | Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU, 24 GB) | 2026-08-19 |
+| **Python MPS** | `512x512` | Full | 2 | `96x96` | `uint16` | `uint16` | `uint16` | Warm source | C | p50 | **2.224 s** | Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU, 24 GB) | 2026-08-19 |
+| **Python MPS** | `512x512` | Full | 4 | `48x48` | `uint16` | `uint16` | `uint16` | Warm source | C | p50 | **1.695 s** | Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU, 24 GB) | 2026-08-19 |
+| **Python MPS** | `512x512` | Full | 8 | `24x24` | `uint16` | `uint16` | `uint16` | Warm source | C | p50 | **1.580 s** | Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU, 24 GB) | 2026-08-19 |
+| **CUDA** | `512x512` | Full | 4 | `48x48` | `uint16` | `uint16` | `uint32` | First campaign encounter | C | Single run | **2.027 s** | NVIDIA RTX PRO 6000 Blackwell, GPU 0 | 2026-08-19 |
+| **Python MPS** | `512x512` | Full | 4 | `48x48` | `uint16` | `uint16` | `uint16` | First campaign encounter | C | Single run | **1.982 s** | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-19 |
+| **Python MPS** | `512x512` | Full | 4 | `48x48` | `uint16` | `uint16` | `uint16` | First campaign encounter | C | Single run | **2.775 s** | Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU, 24 GB) | 2026-08-19 |
 | **Native Swift/Metal** | `512x512` | Full | 4 | `48x48` | `uint16` | `uint16` | `uint16` | First process | A | p50 | **1.985 s** | Apple M2 MacBook Air (`Mac14,2`, 8 GB) | 2026-08-18 |
 | **Native Swift/Metal** | `512x512` | Full | 4 | `48x48` | `uint16` | `uint16` | `uint16` | First process | B | p50 | **2.043 s** | Apple M2 MacBook Air (`Mac14,2`, 8 GB) | 2026-08-18 |
 | **WebGPU** | `256x256` | Explicit crop | 1 | `192x192` | `uint16` | `uint8` | `uint8` | Prepared source | — | p50 | **0.338 s** | Apple Metal-3 adapter (Mac model not retained) | 2026-07-20 |
@@ -82,6 +95,23 @@ Scroll horizontally on narrow screens rather than combining fields.
 | **WebGPU** | `512x512` | Full | 4 | `48x48` | `uint16` | `uint8` | `float32` | Prepared source | — | Single profile | **1.212 s** | NVIDIA RTX PRO 6000 Blackwell | 2026-07-20 |
 | **WebGPU** | `512x512` | Full | 8 | `24x24` | `uint16` | `uint8` | `float32` | Prepared source | — | Single profile | **1.106 s** | NVIDIA RTX PRO 6000 Blackwell | 2026-07-20 |
 | **WebGPU** | `512x512` | Full | 2 | `96x96` | `uint16` | `uint16` | `float32` | Prepared source | — | Single profile | **2.651 s** | NVIDIA RTX PRO 6000 Blackwell | 2026-07-20 |
+
+Fixture C is the current full-scan, native-`uint16`, 27-shard real fixture. The
+three machines have identical hashes for the master and every shard. No C row
+uses a real-space crop; scan bin is 1 and detector bin is explicit. “First
+campaign encounter” is not cold because the operating-system storage cache was
+not reset. The complete p50/p95/max, memory, revision, and parity record is in
+the [implementation overview](dashboard.md) and
+[verified results](performance/results.md).
+
+Native Swift/Metal release executables were also rebuilt from `8c47a466` and
+run against the identical fixture. Catalog and index work is metadata
+preparation, not detector decode:
+
+| Device tested | Catalog only | First index build | Prepared index p50 | Prepared index p95 | Date tested |
+|---|---:|---:|---:|---:|---|
+| Apple M5 Max (`Mac17,6`, 40-core GPU) | **12.397 ms** | **1.370 s** | **3.669 ms** | **3.865 ms** | 2026-08-19 |
+| Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU) | **20.198 ms** | **1.239 s** | **2.375 ms** | **2.651 ms** | 2026-08-19 |
 
 The `256x256` rows are explicit crop experiments, never automatic real-space
 cropping or substitutes for full-scan evidence. Compressed save is a separate
@@ -114,13 +144,22 @@ and arbitrary detector masks.
 
 | Platform | Operation | Scan grid | Detector | Detector bin | Input state | Statistic | Time | Device tested | Date tested |
 |---|---|---:|---:|---:|---|---|---:|---|---|
-| **CUDA** | BF | `512x512` | `192x192` | 1 | Warm resident | Single optimized | **1.35 ms** | CUDA GPU (model not retained) | 2026-07-19 |
-| **CUDA** | ADF | `512x512` | `192x192` | 1 | Warm resident | Single optimized | **3.86 ms** | CUDA GPU (model not retained) | 2026-07-19 |
-| **CUDA** | DF | `512x512` | `192x192` | 1 | Warm resident | Single optimized | **1.84 ms** | CUDA GPU (model not retained) | 2026-07-19 |
-| **Python MPS** | Virtual-image module | `512x512` | `192x192` | 1 | Screening parity | — | **Pending** | — | — |
+| **CUDA** | Mean diffraction | `512x512` | `48x48` | 4 | First resident pass | Single run | **6.102 ms** | NVIDIA RTX PRO 6000 Blackwell, GPU 0 | 2026-08-19 |
+| **CUDA** | BF exact sum | `512x512` | `48x48` | 4 | First resident pass | Single run | **1.637 ms** | NVIDIA RTX PRO 6000 Blackwell, GPU 0 | 2026-08-19 |
+| **CUDA** | DF exact sum | `512x512` | `48x48` | 4 | First resident pass | Single run | **1.452 ms** | NVIDIA RTX PRO 6000 Blackwell, GPU 0 | 2026-08-19 |
+| **Python MPS** | Mean diffraction | `512x512` | `48x48` | 4 | First resident pass | Single run | **76.788 ms** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
+| **Python MPS** | BF exact sum | `512x512` | `48x48` | 4 | First resident pass | Single run | **2.245 ms** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
+| **Python MPS** | DF exact sum | `512x512` | `48x48` | 4 | First resident pass | Single run | **2.310 ms** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
+| **Python MPS** | Mean diffraction | `512x512` | `48x48` | 4 | First resident pass | Single run | **59.063 ms** | Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU) | 2026-08-19 |
+| **Python MPS** | BF exact sum | `512x512` | `48x48` | 4 | First resident pass | Single run | **6.757 ms** | Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU) | 2026-08-19 |
+| **Python MPS** | DF exact sum | `512x512` | `48x48` | 4 | First resident pass | Single run | **7.131 ms** | Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU) | 2026-08-19 |
 | **Native Swift/Metal** | Virtual-image module | `512x512` | `48x48` | 4 | Physical application parity | — | **Pending** | Apple M2 MacBook Air (`Mac14,2`, 8 GB) | 2026-08-18 |
 | **WebGPU** | BF | `512x512` | `192x192` | 1 | Prepared selected blocks | p50 | **0.378 s** | Apple Metal-3 adapter (Mac model not retained) | 2026-07-20 |
 | **CPU reference** | Virtual-image module | — | — | — | Reference fixtures | — | **Pending** | — | — |
+
+The current detector-bin-4 mean diffraction and exact total/BF/DF products are
+byte-identical on both Apple devices and MJGOAT GPU 0. The numbers above are
+single first-resident passes, not source-load medians.
 
 ### Detector moments and phase contrast — `quantem.gpu.dpc`
 
@@ -129,13 +168,22 @@ boundaries preserve `(row, column)` component order.
 
 | Platform | Operation | Scan grid | Detector | Detector bin | Input state | Statistic | Time | Device tested | Date tested |
 |---|---|---:|---:|---:|---|---|---:|---|---|
-| **CUDA** | CoM row and column | `512x512` | `192x192` | 1 | Warm resident | Single optimized | **12.39 ms** | CUDA GPU (model not retained) | 2026-07-19 |
-| **Python MPS** | Phase-contrast module | `512x512` | `192x192` | 1 | Screening parity | — | **Pending** | — | — |
+| **CUDA** | CoM row and column | `512x512` | `48x48` | 4 | First resident pass | Single run | **2.531 ms** | NVIDIA RTX PRO 6000 Blackwell, GPU 0 | 2026-08-19 |
+| **CUDA** | Fixed-orientation iDPC | `512x512` | `48x48` | 4 | First resident pass | Single run | **15.852 ms** | NVIDIA RTX PRO 6000 Blackwell, GPU 0 | 2026-08-19 |
+| **Python MPS** | CoM row and column | `512x512` | `48x48` | 4 | First resident pass | Single run | **5.258 ms** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
+| **Python MPS** | Fixed-orientation iDPC | `512x512` | `48x48` | 4 | First resident pass | Single run | **10.429 ms** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
+| **Python MPS** | CoM row and column | `512x512` | `48x48` | 4 | First resident pass | Single run | **14.681 ms** | Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU) | 2026-08-19 |
+| **Python MPS** | Fixed-orientation iDPC | `512x512` | `48x48` | 4 | First resident pass | Single run | **10.327 ms** | Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU) | 2026-08-19 |
 | **Native Swift/Metal** | Phase-contrast module | `512x512` | `48x48` | 4 | Physical application parity | — | **Pending** | Apple M2 MacBook Air (`Mac14,2`, 8 GB) | 2026-08-18 |
 | **WebGPU** | DPC row | `512x512` | `192x192` | 1 | Warm resident | p50 | **14.9 ms** | NVIDIA RTX PRO 6000 Blackwell | 2026-07-20 |
 | **WebGPU** | DPC column | `512x512` | `192x192` | 1 | Warm resident | p50 | **13.2 ms** | NVIDIA RTX PRO 6000 Blackwell | 2026-07-20 |
 | **WebGPU** | iDPC | `512x512` | `192x192` | 1 | Warm resident | p50 | **13.2 ms** | NVIDIA RTX PRO 6000 Blackwell | 2026-07-20 |
 | **CPU reference** | Phase-contrast module | — | — | — | Reference fixtures | — | **Pending** | — | — |
+
+Detector-bin-4 CoM passes the frozen cross-backend `1e-5` gate, but iDPC does
+not: its maximum CUDA-versus-MPS error is `2.84e-5`. Native-detector MPS also
+has an approximate automatic interaction sidecar. Those paths remain blocked
+in the detailed parity ledger instead of receiving a check mark here.
 
 ### Single-sideband ptychography — `quantem.gpu.SSB`
 
@@ -183,6 +231,21 @@ rejected experiments.
 | **Native Swift/Metal** | `MetalDisplayKernels`/`MetalImageFFT` ✓ | Native package products | — | Display/FFT parity retained; standalone movie headline **Pending** |
 | **WebGPU** | ✓ | — | — | Real-adapter display evidence retained |
 | **CPU reference** | Ref | Explicit fallback | — | Correctness adjudication only |
+
+Current release-mode native display and FFT diagnostics are kept separate from
+load time:
+
+| Platform | Operation | Shape | First execution | Warm p50 | Warm p95 | Device tested | Date tested |
+|---|---|---:|---:|---:|---:|---|---|
+| **Native Swift/Metal** | Float32 FFT | `512x512` | **7.566 ms** | **0.213 ms** | **0.391 ms** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
+| **Native Swift/Metal** | Float32 FFT | `512x512` | **7.001 ms** | **0.551 ms** | **0.865 ms** | Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU) | 2026-08-19 |
+| **Native Swift/Metal** | UInt32 statistics | `512x512` | **3.679 ms** | **0.296 ms** | **0.408 ms** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
+| **Native Swift/Metal** | UInt32 statistics | `512x512` | **2.141 ms** | **0.727 ms** | **0.975 ms** | Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU) | 2026-08-19 |
+
+The display benchmark also retained exact range `0:4095` and histogram sum
+`262144`; linear-render GPU medians were `0.0143 ms` on the M5 Max and
+`0.0471 ms` on the M5. These are resident 2D kernels, not wall-to-wall 4D-STEM
+loading.
 
 ```{admonition} How to read these numbers
 :class: important

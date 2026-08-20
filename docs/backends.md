@@ -62,9 +62,9 @@ complete; `Gap` means the backend does not implement that capability yet.
 | Detector bin during load, min-memory | Done | Done | Done | Reference | WebGPU has explicit count-preserving `detBin` source support; full `512x512x192x192` `detBin=2/4/8` headed parity is exact on a real NVIDIA WebGPU adapter, including native non-low8 `uint16` `detBin=2`. |
 | BF/DF/ADF resident kernels | Done | Done | Done | Reference | CUDA RawKernel, MPS Metal, and WebGPU WGSL selected reducers are implemented for `uint8`/`uint16`/`uint32` resident data; CUDA also has packed `uint4` selected/dense reducers and CoM kernels. |
 | Dense DF/ADF strategy | Done | Done | Done | Reference | Dense masks use cached `total - complement` where cheaper. |
-| CoM/DPC resident kernels | Done | Done | Done | Reference | WebGPU row/col DPC has full no-bin headed signoff on real hardware. |
+| CoM/DPC resident kernels | Done | Partial | Done | Reference | Detector-bin-4 CUDA/MPS CoM passes the frozen gate. The public MPS native-detector interaction sidecar is detector-bin-2 and is not full-resolution parity. WebGPU row/col DPC has full no-bin headed signoff on real hardware. |
 | Cached BF/DF/CoM/rotation products | Done | Done | Product-first Done / cache-read Done | Cache-read Done | CUDA and MPS build the raw-HDF5 product cache; WebGPU owns browser selected-block product caches and can read prepared cache products. |
-| iDPC | Done | Done | Done | Reference | WebGPU fixed-rotation iDPC is implemented with paired DPC buffers and a dual-real FFT; parity is float32 FFT tolerance, not bit-exact. |
+| iDPC | Done | Partial | Done | Reference | Current CUDA/MPS detector-bin-4 iDPC exceeds the frozen `1e-5` cross-backend gate; native-detector MPS sidecar iDPC is also blocked. WebGPU fixed-rotation iDPC uses paired DPC buffers and a dual-real FFT with an explicit float32 tolerance. |
 | Ptychographic SSB preview | Done | Done | Partial | Reference | WebGPU SSB source lives under `quantem.gpu.ssb.compute.webgpu`; the full browser matrix is not complete. |
 | Ptychographic SSB fit/reconstruction | Done | Done | Partial | Not target | MPS supports current parity shapes; large exact phase/loss is still slower than CUDA. |
 | Native Browser FFT (`MetalImageFFT.logMagnitude`) | NA | Done | NA | Reference | Native Swift/Metal product for already-transferred 2D BF/ADF/custom images. 512×512 must stay inside 120 Hz when warm. Not a Python MPS path. |
@@ -76,18 +76,28 @@ The rule for new heavy work is: implement the compute or IO path in
 
 ## Current measured summary
 
-The complete table, including date, exact revision, hardware, shape/dtype,
-cache state, load/bin plan, benchmark definition, calibration, and parity, is
-the [verified benchmark results](performance/results.md). The headline rows
-below link directly to those stable evidence IDs.
+The complete table, including exact revision, shape/dtype, crop/bin plan,
+benchmark boundary, memory, calibration, and parity, is in the
+[verified benchmark results](performance/results.md). This concise view keeps
+one timing per row and ends with the physical device and date.
 
-| Evidence ID | Path | Result | Interpretation |
-|---|---|---:|---|
-| CUDA-512-LOAD | Warm CUDA full-stack `512` load | `0.450 s` p50 | Warm source, not first encounter. |
-| M2-AIR-BIN4-E2E | Physical 8 GB M2 Air application load | `1.985-2.043 s` wall p50 | First process, full scan, explicit exact-sum detector bin 4; not true cold and not no-bin. |
-| WEBGPU-512-FULL | Prepared local-file WebGPU full-stack `512` load | `0.772 s` p50 | 946-cycle prepared-source soak; not cold. |
-| PRODUCT-CACHE-REOPEN | Saved calibration-product reopen | `6.8-8.0 ms` | Derived cache reopen; never presented as raw-source load. |
-| WEBGPU-DPC-512 | Warm GPU-resident DPC row/column/iDPC display | `14.9/13.2/13.2 ms` p50 | Display timing after load; not end-to-end source load. |
+| Platform | Operation | State | Time | Device tested | Date tested |
+|---|---|---|---:|---|---|
+| **CUDA** | Full `512x512`, detector bin 4 load | Warm source p50 | **0.553 s** | NVIDIA RTX PRO 6000 Blackwell, GPU 0 | 2026-08-19 |
+| **Python MPS** | Full `512x512`, detector bin 4 load | Warm source p50 | **0.586 s** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
+| **Python MPS** | Full `512x512`, detector bin 4 load | Warm source p50 | **1.695 s** | Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU) | 2026-08-19 |
+| **Native Swift/Metal** | Full `512x512`, detector bin 4 first product, fixture A | First process p50 | **1.985 s** | Apple M2 MacBook Air (`Mac14,2`, 8 GB) | 2026-08-18 |
+| **Native Swift/Metal** | Full `512x512`, detector bin 4 first product, fixture B | First process p50 | **2.043 s** | Apple M2 MacBook Air (`Mac14,2`, 8 GB) | 2026-08-18 |
+| **Native Swift/Metal** | Prepared native HDF5 index reopen | Warm prepared p50 | **3.669 ms** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
+| **Native Swift/Metal** | Prepared native HDF5 index reopen | Warm prepared p50 | **2.375 ms** | Apple M5 MacBook Pro (`Mac17,2`, 10-core GPU) | 2026-08-19 |
+| **WebGPU** | Full `512x512` prepared local-file load | Prepared source p50 | **0.772 s** | Apple Metal-3 adapter (Mac model not retained) | 2026-07-20 |
+
+The current `512x512x192x192` CUDA/MPS source matrix uses the identical
+3,169,920,193-byte `uint16` compressed fixture, full scan, no crop, scan bin 1,
+and explicit detector bins. The measured source revision is `8c47a466`.
+Detector-bin-4 integer products are byte-exact and CoM passes; iDPC remains
+blocked at the frozen `1e-5` cross-backend gate. Prepared index reopen and warm
+resident kernels are never represented as source-load time.
 
 The retained July diagnostics and rejected experiments remain available in the
 [optimization ledger](maintainer/backend-optimization-matrix.md), with their

@@ -4,10 +4,11 @@ This ledger separates documentation revisions from the implementation revision
 that produced a benchmark. A documentation edit never makes an older timing a
 measurement of the current code.
 
-**Ledger reviewed:** 2026-08-19  
-**Implementation baseline for this documentation branch:** `origin/main` at
-`4f89e08`  
-**Documentation branch:** `developer-centered-documentation`
+- **Ledger reviewed:** 2026-08-19
+- **Implementation baseline for this documentation branch:** `origin/main` at
+  `4f89e08`
+- **Current measured checkout:** `8c47a466` (source tree `c3094dcf`)
+- **Documentation branch:** `developer-centered-documentation`
 
 The documentation commits after `4f89e08` change navigation, API explanation,
 notation, equations, and evidence presentation. They do not change production
@@ -36,6 +37,9 @@ unpublished revision.
 
 | Evidence | Latest retained interpretation | Why it changed or remained separate |
 |---|---|---|
+| `THREE-HOST-512-U16-2026-08-19` | Added one exact-revision, byte-identical-fixture matrix for CUDA GPU 0 and Python MPS detector bins 1/2/4/8, plus release Native Swift/Metal diagnostics | replaces stale representative overview rows only where the full-scan source/dtype/bin/cache boundary is comparable; differently configured July and physical M2 Air rows remain historical or separate |
+| Current detector-bin-4 products | Integer mean/total/BF/DF and Apple-to-Apple CoM/iDPC are byte-exact; CUDA CoM passes `1e-5`; CUDA-versus-MPS iDPC is blocked at `2.84e-5` maximum error | performance is no longer allowed to inherit a check mark from integer parity when the phase product fails |
+| Native-detector MPS CoM/iDPC | public automatic detector-bin-2 interaction sidecar is blocked as native-resolution evidence; direct full-resolution Metal CoM passes in `83.3 ms`, while iDPC remains blocked | the newer exact diagnostic distinguishes the full-resolution kernel from the faster changed-sampling sidecar |
 | `M2-AIR-BIN4-E2E` | Added as physical 8 GB M2 Air first-process application evidence at measured revision `2c047160`; integration revision `e662d7fe` | newer Apple application evidence, but detector bin 4 makes it incomparable with no-bin library rows |
 | `CUDA-STOCHASTIC-IO` | labeled first-process, not cold | the storage-cache eviction procedure was not retained |
 | `WEBGPU-VISIBLE-512` | labeled a single visible run | no distribution was recorded, so it is not a median |
