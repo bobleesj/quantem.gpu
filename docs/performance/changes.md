@@ -4,20 +4,23 @@ This ledger separates documentation revisions from the implementation revision
 that produced a benchmark. A documentation edit never makes an older timing a
 measurement of the current code.
 
-- **Ledger reviewed:** 2026-08-19
+- **Ledger reviewed:** 2026-08-20
 - **Integration base:** `334b7b5`
-- **Current combined local stack before this follow-up:** `e1da9bc`
+- **Current clean local stack:** `d65911a`
 - **Current measured checkout:** `8c47a466` (source tree `c3094dcf`)
-- **Documentation branch:** `native-metal-ssb`
+- **Documentation branch:** `mps-subsecond-pipeline`
 
-The current follow-up adds the native Swift/Metal SSB product at `e1da9bc` and
-records its separately qualified evidence. It does not relabel an older CUDA,
-Python MPS, WebGPU, IO, or application measurement.
+The current follow-up adds exact prepared QH5 binning (`e0e92b4`), optimized
+word-major detector binning (`ff3c7fd`), and exact resident summaries
+(`d65911a`) after the native Swift/Metal SSB product (`e1da9bc`). It does not
+relabel an older CUDA, Python MPS, WebGPU, source-load, or application
+measurement.
 
 ## Latest documentation changes
 
 | Commit | Change | Performance-number effect |
 |---|---|---|
+| `d65911a` | Added provenance-bound exact resident summaries and overflow-safe `uint64` detector moments | adds separate one-time summary-build and prepared-reopen rows; does not replace first compressed-source load or resident-compute rows |
 | `e1da9bc` | Added `MetalSSBKernels`, exact 512×512 reconstruction/loss, deterministic 200-trial TPE plus Nelder–Mead fitting, focused tests, and a standalone benchmark | adds separate native Swift/Metal SSB rows; does not replace differently configured CUDA, Python MPS, or WebGPU rows |
 | Current profiling-registry follow-up | Added the 35-cell platform/module schedule, human run index, manifest validator, CI gate, and continuous-profiling guide | none; the existing timings and scientific acceptance states are unchanged |
 | `e052dfb` | Combined current platform profiling evidence with the three parity-qualified scientific fixes | existing measured baselines remain tied to their recorded revisions |
@@ -44,6 +47,7 @@ The current values and distributions live only in
 
 | Evidence change | Current disposition | Why |
 |---|---|---|
+| `20260819-air-exact-resident-summary` | Promoted as separate native Swift/Metal prepared-product evidence | Seven fresh-process reopens reproduce nine same-device products byte-for-byte on Phil and the physical 8 GB M2 Air. Summary creation, prepared reopen, resident load, compressed-source load, and GUI paint remain distinct boundaries. |
 | `20260819-native-metal-ssb` | Promoted as a separate native Swift/Metal SSB row | It uses its own full-BF fixture and optimizer implementation; warm prepared compute is not raw-source load, application wall time, or physical 8 GB signoff. |
 | `PLATFORM-PROFILE-2026-08-19` | Current cross-platform profile | It supplies atomic timing, memory, dtype/bin, device, date, and parity fields; fixtures C and D remain explicitly separate. |
 | Exact streamed screening follow-up | Promoted | It derives masks from the complete detector sum and transparently reruns BF/DF when the provisional mask differs. The first-chunk-mask candidate failed full-scan parity and remains rejected. |

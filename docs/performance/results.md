@@ -16,11 +16,13 @@ operating-system storage cache was not forcibly evicted. It is not called cold.
 - **Baseline revisions:** Phil `334b7b5135fe29787540370a00f280fa138430a2`;
   CUDA execution mirror `8c47a466d573f74e425faff611939a17fa6efbf2`.
   Their production compute trees are byte-equivalent for the profiled paths.
-- **Clean follow-up stack:** local branch `platform-parity-profile-integration`
-  at `fa9ab6f`, containing exact streamed screening (`5d56535`), strict MPS
-  source validation (`1d2e3c9`), and deterministic CUDA SSB fitting
-  (`fa9ab6f`). These unpublished commits do not retroactively change baseline
-  timings.
+- **Clean follow-up stack:** local branch `mps-subsecond-pipeline` at
+  `d65911aaa9e043c545e1414b415548ced1900962`. It contains exact streamed
+  screening (`5d56535`), strict MPS source validation (`1d2e3c9`),
+  deterministic CUDA SSB fitting (`fa9ab6f`), native Metal SSB (`e1da9bc`),
+  exact prepared QH5 binning (`e0e92b4`), optimized word-major binning
+  (`ff3c7fd`), and provenance-bound resident summaries (`d65911a`). These
+  unpublished commits do not retroactively change baseline timings.
 - **Fixture C:** independent real `512x512x192x192` native-`uint16` source,
   27 compressed shards, 3,169,920,193 bytes, 28-file manifest SHA-256
   `741e7bcf13ffd77bcacfeeabc0b7edb7b427448273ceba2a166426b8f73f509a`.
@@ -65,6 +67,52 @@ Fixture D bin 1 is value-audited lossless `uint8`; bins 2/4/8 are exact detector
 sums stored as `float32`. WebGPU's Chrome RSS is not a complete device-memory
 measurement and does not prove the physical 8 GB laptop gate. CPU timings are
 diagnostic adjudication only, never a silent production fallback.
+
+### Current native exact resident summary
+
+Revision `d65911a` adds a package-owned exact summary beside a validated native
+resident cache. The measured plan is the complete `512x512` scan from fixture C,
+no scan or detector crop, scan bin 1, exact detector sum bin 4 from `192x192` to
+`48x48`, native `uint16` source, and `uint16` resident output. The source
+identity is
+`9f0ddb932c631b63cb573c38d747fa41941ee585c5389d33bdafb4add962b768`;
+the resident payload SHA-256 is
+`2a876d00ca1512955006a40433341b26aee766dec077ddced8368011f4ec52b3`.
+
+The summary stores exact BF, ABF, and ADF `uint32` maps; total, detector-row,
+and detector-column `uint64` moments; and one selected `uint32` diffraction
+pattern. Read validates source identity, resident payload, geometry, dtype,
+scan region/bin, detector bin, count audit, detector-band definition, selected
+scan coordinate, artifact sizes, and every artifact SHA-256 before returning a
+product. It never represents a prepared summary as source loading.
+
+| Device | Revision | Repetitions | Cache state | First complete product p50 | p95 | Maximum | Process wall p50 | p95 | Maximum | Maximum RSS | Parity |
+|---|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---|
+| Apple M5 Max, 40-core GPU, 128 GB | `d65911a` | 7 fresh processes | Prepared exact summary | **0.026 s** | **0.027 s** | **0.027 s** | **0.120 s** | **0.144 s** | **0.150 s** | **97.4 MB** | Nine same-device products byte exact |
+| Apple M2 MacBook Air (`Mac14,2`, 8 GB) | `d65911a` | 7 fresh processes | Prepared exact summary | **0.029 s** | **0.030 s** | **0.030 s** | **0.110 s** | **0.124 s** | **0.130 s** | **92.0 MB** | Nine same-device products byte exact |
+
+Creating that summary is a different one-time operation: it traverses the
+validated 1.208 GB resident cache, but it does not open or decompress the
+3.17 GB compressed-HDF5 source.
+
+| Device | Revision | Repetitions | Cache state | Resident load wall | Metal product/moment kernel | Summary write | Process wall | Process swaps |
+|---|---|---:|---|---:|---:|---:|---:|---:|
+| Apple M5 Max, 40-core GPU, 128 GB | `d65911a` | 1 | Prepared resident cache, summary absent | **0.369 s** | **8.0 ms** | **8.0 ms** | **0.86 s** | **0** |
+| Apple M2 MacBook Air (`Mac14,2`, 8 GB) | `d65911a` | 1 | Prepared resident cache, summary absent | **1.397 s** | **103.0 ms** | **18.0 ms** | **2.61 s** | **0** |
+
+On the Air, the resident-cache pass took 1.313 s while the fused exact Metal
+product/moment kernel took 103 ms. Mapped-page population, not reduction, is
+therefore the dominant creation cost. Once exact moments exist, one
+instrumented derived-product stage took **11.389 ms**: 0.565 ms center/mean on
+CPU, 1.107 ms rotation/alignment on CPU, 2.095 ms Metal iDPC, and 7.622 ms
+float-surface statistics. The legacy `gpu=0.000` aggregate excludes those small
+command buffers and is rejected as GPU telemetry for this path.
+
+All seven summary artifact hashes match across Phil and the Air. Every reopen
+also reproduced same-device BF, ABF, ADF, CoM row/column, DPC row/column, iDPC,
+and selected diffraction byte-for-byte against the full resident calculation.
+This is prepared-product evidence, not the original compressed-source first
+encounter and not a headed application-paint measurement.
 
 ### Current streamed screening
 
@@ -139,13 +187,20 @@ Levenberg–Marquardt is not implemented in any current SSB backend.
 
 ### Current native Swift/Metal boundary
 
-At `334b7b5`, the release suite passed 66 tests with one opt-in performance skip
-and no failures. Four real QH5 frames matched the Swift CPU reference exactly
-for decode, detector bin 4, BF/ABF/DF/total, and row/column moments. Prepared
-index reopen was **5.339/5.760/5.842 ms** p50/p95/max; 512×512 FFT was
-**15.622 ms** first and **0.291/0.584 ms** warm p50/p95. The package still has
-no full-scan decode/product benchmark executable or numerical DPC/iDPC test;
-application timings are not substituted.
+At `d65911a`, the release suite executed 76 tests, skipped five opt-in
+real-QH5/performance cases, and had no failures. A separate real-QH5 run
+executed 71 tests with one performance skip and no failures. Four real QH5
+frames matched the Swift CPU reference exactly for decode, detector bin 4,
+BF/ABF/DF/total, and row/column moments. The physical full-scan summary evidence
+above adds exact BF/ABF/ADF and overflow-safe total/row/column moments plus
+same-device derived-product parity. Package-level numerical DPC/iDPC unit tests
+remain pending; the derived-product timing came from an isolated headless
+consumer harness, not a GUI or application-paint boundary.
+
+The earlier `334b7b5` profile remains the owner of prepared-index reopen
+**5.339/5.760/5.842 ms** p50/p95/max and 512×512 FFT **15.622 ms** first,
+**0.291/0.584 ms** warm p50/p95. Those measurements were not rerun or silently
+reassigned to `d65911a`.
 
 The later native SSB follow-up `e1da9bc` adds `MetalSSBKernels`, complete-cache
 and bounded-memory exact policies, and a standalone release benchmark. Its
@@ -165,6 +220,7 @@ device signoff.
 | Exact MPS screening adjudication | `1094cc68e2bf9952916fb12ac6489119a4f4ee4be2ece7f8b1c1a4f1ed411fa3` |
 | Raw MPS/CUDA SSB parity | `17a7ef5750444377c7d16c18bfadef39607ea3d684c91dad93681ca887d7154e` |
 | Deterministic CUDA full fit | `d262c1ed8fa55728811735bc974ef4fcc413e60aff83dfcd7396b4ad681f4527` |
+| Exact Air resident summary | `4f8f366553cf8ae13b5b732a24a070f6cc404127ef6e421599d00b5c27a3688c` |
 
 ## Historical and rejected results
 

@@ -14,6 +14,7 @@ which optimizations were accepted, rejected, or remain provisional.
 | [Verified benchmark results](results.md) | Metrics with date, revision, device, shape/dtype, cache state, load plan, benchmark definition, calibration, and parity provenance |
 | [Revision and change ledger](changes.md) | Latest documentation changes, implementation baselines, and why a retained number changed or remained historical |
 | [Backend coverage](../backends.md) | Capability and implementation-source status without duplicated timing tables |
+| [Native Swift and Metal](../platforms/swift-metal.md) | SwiftPM product structure, exact resident-summary contract, ownership boundary, and links to retained timing |
 | [Benchmark methodology](methodology.md) | Required timing stages, cold/warm definitions, memory reporting, and acceptance rules |
 | [Continuous profiling](continuous-profiling.md) | PR smoke, weekly physical profiles, manual signoff, comparison keys, run registry, and regression decisions |
 | [Cross-backend parity](parity.md) | Exact integer contracts, floating metrics, fixtures, and hardware gates |

@@ -203,6 +203,9 @@ def test_dashboard_is_the_dense_human_overview() -> None:
         ("6.711 s", "6.711 s"),
         ("20.803 ms", "20.803 ms"),
         ("11.168 s", "11.168/11.235/11.242 s"),
+        ("0.029 s", "0.029 s"),
+        ("103.0 ms", "103.0 ms"),
+        ("11.389 ms", "11.389 ms"),
     ):
         assert dashboard.count(dashboard_value) == 1
         assert results.count(results_value) == 1
@@ -251,7 +254,16 @@ def test_intro_routes_to_benchmarks_without_copying_them() -> None:
         "Current SSB reconstruction",
     ):
         assert copied_field not in intro
-    for copied_time in ("0.386 s", "0.605 s", "0.824 s", "11.168 s", "8.911 ms"):
+    for copied_time in (
+        "0.029 s",
+        "0.386 s",
+        "0.605 s",
+        "0.824 s",
+        "11.168 s",
+        "11.389 ms",
+        "103.0 ms",
+        "8.911 ms",
+    ):
         assert copied_time not in intro
 
     assert "## How loading becomes a usable product" in intro
@@ -314,7 +326,7 @@ def test_platform_first_io_tables_expose_current_bins_devices_and_dates() -> Non
         for line in load_section.splitlines()
         if line.startswith("| [**") or line.startswith("| **CPU reference**")
     ]
-    assert len(rows) == 16
+    assert len(rows) == 17
 
     webgpu_rows = [row for row in rows if "WebGPU" in row[0]]
     observed = {
@@ -512,6 +524,7 @@ def test_current_benchmarks_have_complete_provenance_rows() -> None:
 
     for heading in (
         "### Current warm load/decode/bin",
+        "### Current native exact resident summary",
         "### Current streamed screening",
         "### Current resident products",
         "### Current SSB reconstruction and calibration",
@@ -522,7 +535,7 @@ def test_current_benchmarks_have_complete_provenance_rows() -> None:
         assert heading in text
 
     load = text.split("### Current warm load/decode/bin", 1)[1].split(
-        "### Current streamed screening", 1
+        "### Current native exact resident summary", 1
     )[0]
     rows = [
         line

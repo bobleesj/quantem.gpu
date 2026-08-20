@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "source_revision": "e1da9bc86a0c1ae6edc60e1205a9966e6826f315",
+  "source_revision": "d65911aaa9e043c545e1414b415548ced1900962",
   "purpose": "Fingerprints for the current benchmark dashboard, authoritative provenance ledger, parity and methodology contracts, and canonical historical evidence. Landing, API, and backend capability pages intentionally do not duplicate measurements.",
   "pages": [
     {
@@ -10,7 +10,7 @@
     },
     {
       "path": "docs/dashboard.md",
-      "sha256": "626916198be96f21c11784ed3e4eb57de62d2b7d537dffb1d6a5602904c5ae20",
+      "sha256": "39c10950f98fe86c87fd8cafc2708fb75eaf5ee65dbd7d6492c069829c0de95f",
       "role": "Single human-facing current capability, speed, memory, and parity overview"
     },
     {
@@ -24,18 +24,23 @@
       "role": "WebGPU 8 GB laptop acceptance contract"
     },
     {
+      "path": "docs/platforms/swift-metal.md",
+      "sha256": "eae6095f25c0c2a876cdf141d447e876d77a04a8dbcde0215528b43d4719562a",
+      "role": "Native Swift Metal exact resident-summary and ownership contract"
+    },
+    {
       "path": "docs/backends.md",
       "sha256": "79f4df705f465f90217e6f2b01a14f4fec01f043422d37facad4f8c8866f0aa0",
       "role": "Capability and implementation-source map without copied timings"
     },
     {
       "path": "docs/performance/results.md",
-      "sha256": "db5abd5a229e61793caa953fe158446b02741889da478f2ae6f66f395a236fa8",
+      "sha256": "1f7e3e7f10dd308fd76bc9c4cd6adb92e9398701ed5a40ef98332916e0126675",
       "role": "Authoritative current benchmark provenance ledger"
     },
     {
       "path": "docs/performance/changes.md",
-      "sha256": "770baf8a574b5fedc4ba7671310546a17d20e5f53fe20e166ededbdc63b2a951",
+      "sha256": "b57c3b18abd7fec1f766384bd0ccc45396c71d08d80cb85115e534ccc172fb1a",
       "role": "Benchmark promotion, rejection, and supersession decisions without copied values"
     },
     {

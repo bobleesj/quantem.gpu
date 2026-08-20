@@ -177,6 +177,13 @@ parity gates belong in [Verified performance](docs/performance/results.md).
 Historical and rejected experiments remain in the maintainer ledgers and are
 never promoted as current results.
 
+One retained WebGPU acceptance case covers product-first BF on a
+true real-acquisition `1024x1024x192x192` source with max/mean abs error `0`
+against its independent reference.
+This is not full-stack no-bin browse/load signoff; that separate gate remains
+pending in the
+[load acceptance record](docs/maintainer/backend-4dstem-load-checklist.md).
+
 ## Citing quantem.gpu
 
 If `quantem.gpu` accelerated IO, detector or DPC analysis, display math, SSB
