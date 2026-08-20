@@ -1492,3 +1492,198 @@ kernel void h5lz4dc_bin_u16_audited_low8_scalar_u16_word_major_frame_owned_qh5id
         );
     }
 }
+
+// Frame-major companion for Python MPS consumers. Each thread owns one packed
+// pair of detector-bin-4 pixels and writes it exactly once. The source audit
+// proves that the uint16 source has no populated high byte after masking and
+// that each exact 4x4 sum fits in uint16. This keeps the public Python load
+// layout (frame, detector row, detector column) without a 1.2 GB transpose.
+kernel void h5lz4dc_bin_u16_audited_low8_scalar_u16_frame_major_qh5idx(
+    const device uchar *lowPlaneScratch [[buffer(0)]],
+    device uint *output [[buffer(1)]],
+    const device uchar *badPixelMask [[buffer(2)]],
+    device atomic_uint *countAudit [[buffer(3)]],
+    constant uint &globalFrameOffset [[buffer(4)]],
+    constant uint &frameElements [[buffer(5)]],
+    constant QH5DirectDetectorBinParams &params [[buffer(6)]],
+    uint linearGroup [[threadgroup_position_in_grid]],
+    uint threadIndex [[thread_index_in_threadgroup]],
+    uint lane [[thread_index_in_simdgroup]]
+) {
+    uint outputRows = params.sourceDetectorRows / 4u;
+    uint outputPixels = outputRows * params.outputDetectorColumns;
+    uint outputWords = outputPixels / 2u;
+    uint groupsPerFrame = (outputWords + 127u) / 128u;
+    uint frame = linearGroup / groupsPerFrame;
+    uint groupInFrame = linearGroup - frame * groupsPerFrame;
+    uint outputWord = groupInFrame * 128u + threadIndex;
+
+    threadgroup atomic_uint groupMax;
+    if (threadIndex == 0u) {
+        atomic_store_explicit(&groupMax, 0u, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    uint localMax = 0u;
+    if (outputWord < outputWords) {
+        uint packedOutput = 0u;
+        for (uint pair = 0u; pair < 2u; ++pair) {
+            uint outputPixel = outputWord * 2u + pair;
+            uint outputRow = outputPixel / params.outputDetectorColumns;
+            uint outputColumn = outputPixel - outputRow * params.outputDetectorColumns;
+            uint sum = 0u;
+            for (uint rowOffset = 0u; rowOffset < 4u; ++rowOffset) {
+                uint sourceRow = outputRow * 4u + rowOffset;
+                uint sourcePixel = sourceRow * params.sourceDetectorColumns
+                    + outputColumn * 4u;
+                sum += bslz4Low8AlignedRow4(
+                    lowPlaneScratch,
+                    badPixelMask,
+                    frame,
+                    frameElements,
+                    sourcePixel,
+                    localMax
+                );
+            }
+            packedOutput |= pair == 0u ? sum : (sum << 16u);
+        }
+        ulong outputFrame = ulong(globalFrameOffset + frame);
+        output[outputFrame * outputWords + outputWord] = packedOutput;
+    }
+
+    localMax = simd_max(localMax);
+    if (lane == 0u) {
+        atomic_fetch_max_explicit(&groupMax, localMax, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (threadIndex == 0u) {
+        atomic_fetch_max_explicit(
+            &countAudit[globalFrameOffset + frame],
+            atomic_load_explicit(&groupMax, memory_order_relaxed),
+            memory_order_relaxed
+        );
+    }
+}
+
+inline uint2 bslz4Low8AlignedRow8(
+    const device uchar *lowPlaneScratch,
+    const device uchar *badPixelMask,
+    uint frame,
+    uint frameElements,
+    uint sourcePixel,
+    thread uint &localMax
+) {
+    uint block = sourcePixel >> 12u;
+    uint localPixel = sourcePixel & 4095u;
+    uint group = localPixel >> 5u;
+    uint shift = localPixel & 31u;
+    const device uint *planes = (const device uint *)(
+        lowPlaneScratch + ulong(frame) * frameElements + block * 4096u
+    );
+    uint validMask = 0u;
+    for (uint offset = 0u; offset < 8u; ++offset) {
+        if (!badPixelMask[sourcePixel + offset]) {
+            validMask |= 1u << offset;
+        }
+    }
+    ulong bitMatrix = 0ul;
+    for (uint bit = 0u; bit < 8u; ++bit) {
+        uint byteValues = (planes[bit * 128u + group] >> shift) & validMask;
+        bitMatrix |= ulong(byteValues) << (bit * 8u);
+    }
+    ulong swap = (bitMatrix ^ (bitMatrix >> 7u)) & 0x00AA00AA00AA00AAul;
+    bitMatrix ^= swap ^ (swap << 7u);
+    swap = (bitMatrix ^ (bitMatrix >> 14u)) & 0x0000CCCC0000CCCCul;
+    bitMatrix ^= swap ^ (swap << 14u);
+    swap = (bitMatrix ^ (bitMatrix >> 28u)) & 0x00000000F0F0F0F0ul;
+    bitMatrix ^= swap ^ (swap << 28u);
+    uint packedLow = uint(bitMatrix);
+    uint packedHigh = uint(bitMatrix >> 32u);
+    uint value0 = packedLow & 0xffu;
+    uint value1 = (packedLow >> 8u) & 0xffu;
+    uint value2 = (packedLow >> 16u) & 0xffu;
+    uint value3 = packedLow >> 24u;
+    uint value4 = packedHigh & 0xffu;
+    uint value5 = (packedHigh >> 8u) & 0xffu;
+    uint value6 = (packedHigh >> 16u) & 0xffu;
+    uint value7 = packedHigh >> 24u;
+    localMax = max(
+        localMax,
+        max(
+            max(max(value0, value1), max(value2, value3)),
+            max(max(value4, value5), max(value6, value7))
+        )
+    );
+    return uint2(
+        value0 + value1 + value2 + value3,
+        value4 + value5 + value6 + value7
+    );
+}
+
+// Two adjacent detector-bin-4 pixels share each source-row bit-plane load.
+// The caller selects this kernel only when detector rows begin on 32-pixel
+// bit-plane groups and the output detector width is even, so every row-8 read
+// stays within one block word. Masking and runtime count auditing remain exact.
+kernel void h5lz4dc_bin_u16_audited_low8_scalar_u16_frame_major_row8_qh5idx(
+    const device uchar *lowPlaneScratch [[buffer(0)]],
+    device uint *output [[buffer(1)]],
+    const device uchar *badPixelMask [[buffer(2)]],
+    device atomic_uint *countAudit [[buffer(3)]],
+    constant uint &globalFrameOffset [[buffer(4)]],
+    constant uint &frameElements [[buffer(5)]],
+    constant QH5DirectDetectorBinParams &params [[buffer(6)]],
+    uint linearGroup [[threadgroup_position_in_grid]],
+    uint threadIndex [[thread_index_in_threadgroup]],
+    uint lane [[thread_index_in_simdgroup]]
+) {
+    uint outputRows = params.sourceDetectorRows / 4u;
+    uint outputPixels = outputRows * params.outputDetectorColumns;
+    uint outputWords = outputPixels / 2u;
+    uint groupsPerFrame = (outputWords + 127u) / 128u;
+    uint frame = linearGroup / groupsPerFrame;
+    uint groupInFrame = linearGroup - frame * groupsPerFrame;
+    uint outputWord = groupInFrame * 128u + threadIndex;
+
+    threadgroup atomic_uint groupMax;
+    if (threadIndex == 0u) {
+        atomic_store_explicit(&groupMax, 0u, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    uint localMax = 0u;
+    if (outputWord < outputWords) {
+        uint firstOutputPixel = outputWord * 2u;
+        uint outputRow = firstOutputPixel / params.outputDetectorColumns;
+        uint outputColumn = firstOutputPixel
+            - outputRow * params.outputDetectorColumns;
+        uint2 sums = uint2(0u);
+        for (uint rowOffset = 0u; rowOffset < 4u; ++rowOffset) {
+            uint sourceRow = outputRow * 4u + rowOffset;
+            uint sourcePixel = sourceRow * params.sourceDetectorColumns
+                + outputColumn * 4u;
+            sums += bslz4Low8AlignedRow8(
+                lowPlaneScratch,
+                badPixelMask,
+                frame,
+                frameElements,
+                sourcePixel,
+                localMax
+            );
+        }
+        ulong outputFrame = ulong(globalFrameOffset + frame);
+        output[outputFrame * outputWords + outputWord] = sums.x | (sums.y << 16u);
+    }
+
+    localMax = simd_max(localMax);
+    if (lane == 0u) {
+        atomic_fetch_max_explicit(&groupMax, localMax, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (threadIndex == 0u) {
+        atomic_fetch_max_explicit(
+            &countAudit[globalFrameOffset + frame],
+            atomic_load_explicit(&groupMax, memory_order_relaxed),
+            memory_order_relaxed
+        );
+    }
+}

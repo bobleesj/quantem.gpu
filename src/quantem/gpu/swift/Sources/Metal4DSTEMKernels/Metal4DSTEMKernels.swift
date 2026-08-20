@@ -36,6 +36,10 @@ public enum Metal4DSTEMKernels {
     "h5lz4dc_bin_u16_audited_low8_scalar_u16_word_major_qh5idx"
   public static let binU16AuditedLow8ScalarU16WordMajorFrameOwnedFunction =
     "h5lz4dc_bin_u16_audited_low8_scalar_u16_word_major_frame_owned_qh5idx"
+  public static let binU16AuditedLow8ScalarU16FrameMajorFunction =
+    "h5lz4dc_bin_u16_audited_low8_scalar_u16_frame_major_qh5idx"
+  public static let binU16AuditedLow8ScalarU16FrameMajorRow8Function =
+    "h5lz4dc_bin_u16_audited_low8_scalar_u16_frame_major_row8_qh5idx"
   public static let clearU16WordMajorRangeFunction =
     "clear_u16_word_major_range_qh5idx"
 
