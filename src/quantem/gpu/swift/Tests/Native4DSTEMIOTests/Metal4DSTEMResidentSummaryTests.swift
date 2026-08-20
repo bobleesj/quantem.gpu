@@ -136,12 +136,12 @@ final class Metal4DSTEMResidentSummaryTests: XCTestCase {
       sourceScanRows: 1,
       sourceScanColumns: 1,
       sourceDetectorRows: 1,
-      sourceDetectorColumns: 2,
+      sourceDetectorColumns: 65_538,
       sourceDtype: "uint16",
       outputScanRows: 1,
       outputScanColumns: 1,
       outputDetectorRows: 1,
-      outputDetectorColumns: 2,
+      outputDetectorColumns: 65_538,
       outputDtype: "uint16",
       scanRowStart: 0,
       scanRowStop: 1,
@@ -150,12 +150,12 @@ final class Metal4DSTEMResidentSummaryTests: XCTestCase {
       scanBin: 1,
       detectorBin: 1,
       badPixelIndices: [],
-      maxCount: UInt32.max,
+      maxCount: UInt32(UInt16.max),
       pixelsAbove255: 1,
-      payloadBytes: 4
+      payloadBytes: 131_076
     )
     let payloadURL = root.appendingPathComponent("resident.bin")
-    let sealed = try [UInt32(0)].withUnsafeBytes { bytes in
+    let sealed = try [UInt32](repeating: 0, count: 32_769).withUnsafeBytes { bytes in
       try Metal4DSTEMResidentCacheIO.write(
         pointer: try XCTUnwrap(bytes.baseAddress),
         length: bytes.count,
@@ -169,10 +169,10 @@ final class Metal4DSTEMResidentSummaryTests: XCTestCase {
       try Metal4DSTEMResidentSummaryIO.write(
         to: root.appendingPathComponent("summary"),
         residentMetadata: sealed,
-        detectorBands: Data([1, 4]),
+        detectorBands: Data(repeating: 1, count: 65_538),
         selectedScanRow: 0,
         selectedScanColumn: 0,
-        artifacts: exactArtifacts(scanCount: 1, detectorPixels: 2)
+        artifacts: exactArtifacts(scanCount: 1, detectorPixels: 65_538)
       )
     ) { error in
       guard case Metal4DSTEMResidentSummaryError.invalidMetadata(let reason) = error else {

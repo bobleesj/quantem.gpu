@@ -31,6 +31,10 @@ let package = Package(
       name: "metal-ssb-benchmark",
       targets: ["MetalSSBBenchmark"]
     ),
+    .executable(
+      name: "metal-4dstem-binning-benchmark",
+      targets: ["Metal4DSTEMBinningBenchmark"]
+    ),
   ],
   targets: [
     .binaryTarget(
@@ -103,6 +107,11 @@ let package = Package(
       name: "MetalSSBBenchmark",
       dependencies: ["MetalSSBKernels"],
       path: "src/quantem/gpu/swift/Benchmarks/MetalSSBBenchmark"
+    ),
+    .executableTarget(
+      name: "Metal4DSTEMBinningBenchmark",
+      dependencies: ["Metal4DSTEMKernels"],
+      path: "src/quantem/gpu/swift/Benchmarks/Metal4DSTEMBinningBenchmark"
     ),
     .testTarget(
       name: "MetalDisplayKernelsTests",

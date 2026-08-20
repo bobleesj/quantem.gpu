@@ -1447,26 +1447,98 @@ final class Metal4DSTEMKernelsTests: XCTestCase {
     XCTAssertFalse(plan.isFullNative)
   }
 
-  func testLoadPlanAccountsForExactDetectorSumBinning() throws {
-    let region = try Metal4DSTEMScanRegion.full(sourceRows: 8, sourceColumns: 8)
+  func testExactBinnerU16ToPackedU16MatchesReferenceAndRejectsExtraRows() throws {
+    let device = try metalDevice()
+    let queue = try XCTUnwrap(device.makeCommandQueue())
     let plan = try Metal4DSTEMLoadPlan(
-      sourceScanRows: 8,
-      sourceScanColumns: 8,
-      detectorRows: 5,
-      detectorColumns: 7,
+      sourceScanRows: 3,
+      sourceScanColumns: 2,
+      detectorRows: 3,
+      detectorColumns: 5,
       sourceBytesPerValue: 2,
-      scanRegion: region,
+      scanRegion: Metal4DSTEMScanRegion.full(sourceRows: 3, sourceColumns: 2),
       detectorBin: 2
     )
+    let frameCount = plan.scanRegion.scanPositions
+    let values = (0..<(frameCount * plan.detectorPixels)).map {
+      UInt16(($0 % 97) + 1)
+    }
+    let audit = try Metal4DSTEMExactSourceAudit(
+      sourceIdentitySHA256: String(repeating: "e", count: 64),
+      sourceDtype: .uint16,
+      badPixelIndices: [],
+      maximumSourceCount: UInt32(values.max()!),
+      pixelsAbove255: 0
+    )
+    let source = try makeBuffer(device: device, values: values)
+    let outputWordsPerScan = (plan.outputDetectorPixels + 1) / 2
+    let destination = try outputBuffer(
+      device: device,
+      count: outputWordsPerScan * plan.outputScanPositions
+    )
+    let binner = try Metal4DSTEMExactBinner(device: device)
+    let command = try XCTUnwrap(queue.makeCommandBuffer())
+    _ = try binner.encodeBatch(
+      commandBuffer: command,
+      stagedSource: source,
+      destination: destination,
+      plan: plan,
+      sourceBatchRows: 3,
+      destinationScanRowOffset: 0,
+      sourceAudit: audit,
+      stagingDtype: .uint16,
+      outputDtype: .uint16
+    )
+    try complete(command)
 
-    XCTAssertEqual(plan.outputDetectorRows, 3)
-    XCTAssertEqual(plan.outputDetectorColumns, 4)
-    XCTAssertEqual(plan.outputDetectorPixels, 12)
-    XCTAssertEqual(plan.residentBytesPerValue, MemoryLayout<UInt32>.stride)
-    XCTAssertEqual(plan.residentVolumeBytes, 64 * 12 * 4)
-    XCTAssertEqual(plan.detectorContributionCount(outputRow: 0, outputColumn: 0), 4)
-    XCTAssertEqual(plan.detectorContributionCount(outputRow: 2, outputColumn: 3), 1)
-    XCTAssertTrue(plan.provenanceLabel.contains("detector-sum bin 2×2"))
+    var expected = [UInt32](
+      repeating: 0,
+      count: outputWordsPerScan * plan.outputScanPositions
+    )
+    for scan in 0..<plan.outputScanPositions {
+      var detectorSums = [UInt32](repeating: 0, count: plan.outputDetectorPixels)
+      for outputRow in 0..<plan.outputDetectorRows {
+        for outputColumn in 0..<plan.outputDetectorColumns {
+          let outputPixel = outputRow * plan.outputDetectorColumns + outputColumn
+          for row in (outputRow * 2)..<min((outputRow + 1) * 2, plan.detectorRows) {
+            for column in (outputColumn * 2)..<min((outputColumn + 1) * 2, plan.detectorColumns) {
+              let sourcePixel = row * plan.detectorColumns + column
+              detectorSums[outputPixel] += UInt32(
+                values[scan * plan.detectorPixels + sourcePixel]
+              )
+            }
+          }
+        }
+      }
+      for word in 0..<outputWordsPerScan {
+        let low = detectorSums[word * 2]
+        let high =
+          word * 2 + 1 < detectorSums.count
+          ? detectorSums[word * 2 + 1] : 0
+        expected[word * plan.outputScanPositions + scan] = low | (high << 16)
+      }
+    }
+    XCTAssertEqual(bufferValues(destination, count: expected.count), expected)
+
+    let invalidCommand = try XCTUnwrap(queue.makeCommandBuffer())
+    XCTAssertThrowsError(
+      try binner.encodeBatch(
+        commandBuffer: invalidCommand,
+        stagedSource: source,
+        destination: destination,
+        plan: plan,
+        sourceBatchRows: 2,
+        destinationScanRowOffset: 2,
+        sourceAudit: audit,
+        stagingDtype: .uint16,
+        outputDtype: .uint16
+      )
+    ) { error in
+      XCTAssertEqual(
+        error as? Metal4DSTEMExactBinnerError,
+        .invalidBatchCoverage(rows: 2, remaining: 1)
+      )
+    }
   }
 
   func testExactAccumulatorBoundsAdmitAuditedLow8DetectorBin4Load() throws {

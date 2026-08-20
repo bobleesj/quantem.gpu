@@ -31,11 +31,13 @@ public struct Metal4DSTEMSourceIdentity: Codable, Equatable, Sendable {
 
 /// Scientific and storage provenance for an exact detector-word-major cache.
 public struct Metal4DSTEMResidentCacheMetadata: Codable, Equatable, Sendable {
-  public static let currentFormatVersion = 1
+  public static let currentFormatVersion = 2
 
   public let formatVersion: Int
   public let datasetID: String
   public let sourceIdentitySHA256: String?
+  public let valueRangeAuditSHA256: String?
+  public let valueRangeAudit: Native4DSTEMValueRangeAudit?
   public let sources: [Metal4DSTEMSourceIdentity]
   public let payloadIdentity: Metal4DSTEMSourceIdentity?
   public let sourceScanRows: Int
@@ -63,6 +65,8 @@ public struct Metal4DSTEMResidentCacheMetadata: Codable, Equatable, Sendable {
   public init(
     datasetID: String,
     sourceIdentitySHA256: String? = nil,
+    valueRangeAuditSHA256: String? = nil,
+    valueRangeAudit: Native4DSTEMValueRangeAudit? = nil,
     sources: [Metal4DSTEMSourceIdentity],
     payloadIdentity: Metal4DSTEMSourceIdentity? = nil,
     sourceScanRows: Int,
@@ -90,6 +94,8 @@ public struct Metal4DSTEMResidentCacheMetadata: Codable, Equatable, Sendable {
     formatVersion = Self.currentFormatVersion
     self.datasetID = datasetID
     self.sourceIdentitySHA256 = sourceIdentitySHA256
+    self.valueRangeAuditSHA256 = valueRangeAuditSHA256
+    self.valueRangeAudit = valueRangeAudit
     self.sources = sources
     self.payloadIdentity = payloadIdentity
     self.sourceScanRows = sourceScanRows
@@ -122,6 +128,8 @@ public struct Metal4DSTEMResidentCacheMetadata: Codable, Equatable, Sendable {
     Self(
       datasetID: datasetID,
       sourceIdentitySHA256: sourceIdentitySHA256,
+      valueRangeAuditSHA256: valueRangeAuditSHA256,
+      valueRangeAudit: valueRangeAudit,
       sources: sources,
       payloadIdentity: identity,
       sourceScanRows: sourceScanRows,
@@ -351,18 +359,21 @@ public enum Metal4DSTEMResidentCacheIO {
           + "with the recorded scan region and bin factors"
       )
     }
-    guard metadata.outputDtype == "uint16" || metadata.outputDtype == "uint32" else {
-      try invalid("output dtype \(metadata.outputDtype) is not supported")
-    }
     guard
       let sourceDetectorPixels = checkedProduct(
         UInt64(metadata.sourceDetectorRows), UInt64(metadata.sourceDetectorColumns)
       )
     else { try invalid("source detector shape overflows UInt64") }
     let badPixels = Set(metadata.badPixelIndices)
-    guard badPixels.count == metadata.badPixelIndices.count,
+    guard metadata.badPixelIndices == metadata.badPixelIndices.sorted(),
+      badPixels.count == metadata.badPixelIndices.count,
       badPixels.allSatisfy({ $0 >= 0 && UInt64($0) < sourceDetectorPixels })
     else { try invalid("badPixelIndices contains duplicates or out-of-range values") }
+    try validateValueRangeContract(
+      metadata,
+      selectedRows: selectedRows,
+      selectedColumns: selectedColumns
+    )
     guard
       let outputScanPositions = checkedProduct(
         UInt64(metadata.outputScanRows), UInt64(metadata.outputScanColumns)
@@ -396,6 +407,100 @@ public enum Metal4DSTEMResidentCacheIO {
         || (metadata.payloadIdentity?.byteCount == metadata.payloadBytes
           && isSHA256(metadata.payloadSHA256))
     else { try invalid("payload identity or SHA-256 seal is missing") }
+  }
+
+  private static func validateValueRangeContract(
+    _ metadata: Metal4DSTEMResidentCacheMetadata,
+    selectedRows: Int,
+    selectedColumns: Int
+  ) throws {
+    func invalid(_ reason: String) throws -> Never {
+      throw Metal4DSTEMResidentCacheError.invalidMetadata(reason)
+    }
+    guard metadata.sourceDtype == "uint8" || metadata.sourceDtype == "uint16" else {
+      try invalid("source dtype \(metadata.sourceDtype) is not supported")
+    }
+    guard metadata.maxCount <= UInt32(UInt16.max),
+      (metadata.maxCount > UInt32(UInt8.max)) == (metadata.pixelsAbove255 > 0),
+      metadata.sourceDtype != "uint8"
+        || (metadata.maxCount <= UInt32(UInt8.max) && metadata.pixelsAbove255 == 0)
+    else {
+      try invalid(
+        "maxCount and pixelsAbove255 cannot describe \(metadata.sourceDtype) source values"
+      )
+    }
+    guard metadata.outputDtype == "uint16" || metadata.outputDtype == "uint32" else {
+      try invalid("output dtype \(metadata.outputDtype) is not supported")
+    }
+    guard
+      let maximumScanContributions = checkedProduct(
+        UInt64(min(metadata.scanBin, selectedRows)),
+        UInt64(min(metadata.scanBin, selectedColumns))
+      ),
+      let maximumDetectorContributions = checkedProduct(
+        UInt64(min(metadata.detectorBin, metadata.sourceDetectorRows)),
+        UInt64(min(metadata.detectorBin, metadata.sourceDetectorColumns))
+      ),
+      let maximumContributions = checkedProduct(
+        maximumScanContributions, maximumDetectorContributions
+      ),
+      let maximumOutputCount = checkedProduct(
+        UInt64(metadata.maxCount), maximumContributions
+      )
+    else { try invalid("exact output count bound overflows UInt64") }
+    let outputMaximum =
+      metadata.outputDtype == "uint16"
+      ? UInt64(UInt16.max) : UInt64(UInt32.max)
+    guard maximumOutputCount <= outputMaximum else {
+      try invalid(
+        "exact output bound \(maximumOutputCount) does not fit \(metadata.outputDtype)"
+      )
+    }
+    let sourceTypeMaximum =
+      metadata.sourceDtype == "uint8" ? UInt64(UInt8.max) : UInt64(UInt16.max)
+    guard
+      let typeMaximumOutputCount = checkedProduct(
+        sourceTypeMaximum, maximumContributions
+      )
+    else { try invalid("source dtype output bound overflows UInt64") }
+    let requiresAudit = typeMaximumOutputCount > outputMaximum
+
+    if let audit = metadata.valueRangeAudit {
+      do {
+        try audit.validate()
+        let digest = try audit.sha256()
+        guard let sourceDigest = metadata.sourceIdentitySHA256,
+          audit.sourceIdentitySHA256 == sourceDigest,
+          audit.sourceDtype == metadata.sourceDtype,
+          audit.badPixelIndices == metadata.badPixelIndices,
+          audit.maximum == metadata.maxCount,
+          audit.pixelsAbove255 == metadata.pixelsAbove255,
+          digest == metadata.valueRangeAuditSHA256
+        else {
+          try invalid(
+            "value-range audit does not match source identity, dtype, bad pixels, or counts"
+          )
+        }
+      } catch let error as Metal4DSTEMResidentCacheError {
+        throw error
+      } catch {
+        try invalid("value-range audit is invalid: \(error.localizedDescription)")
+      }
+    } else if metadata.valueRangeAuditSHA256 != nil {
+      try invalid("valueRangeAuditSHA256 is present without its sealed audit fields")
+    }
+    if requiresAudit {
+      guard let sourceDigest = metadata.sourceIdentitySHA256,
+        isSHA256(sourceDigest),
+        let auditDigest = metadata.valueRangeAuditSHA256,
+        isSHA256(auditDigest),
+        metadata.valueRangeAudit != nil
+      else {
+        try invalid(
+          "narrow exact integer sums require source identity and a sealed value-range audit"
+        )
+      }
+    }
   }
 
   private static func checkedProduct(_ lhs: UInt64, _ rhs: UInt64) -> UInt64? {

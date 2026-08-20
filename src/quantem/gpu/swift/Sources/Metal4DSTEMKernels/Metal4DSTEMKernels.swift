@@ -61,6 +61,8 @@ public enum Metal4DSTEMKernels {
     "scan_detector_bin_u8_to_u32_word_major"
   public static let scanDetectorBinU8ToU16Function =
     "scan_detector_bin_u8_to_u16_word_major"
+  public static let scanDetectorBinU16ToU16Function =
+    "scan_detector_bin_u16_to_u16_word_major"
   public static let scanDetectorBinU16Function =
     "scan_detector_bin_u16_to_u32_word_major"
   public static let residentRebinU8Function =
