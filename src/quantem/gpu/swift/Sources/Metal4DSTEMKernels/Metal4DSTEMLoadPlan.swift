@@ -30,6 +30,42 @@ public enum Metal4DSTEMLoadPlanError: LocalizedError, Equatable {
   }
 }
 
+/// Validation failures while proving exact integer accumulator widths.
+public enum Metal4DSTEMExactAccumulatorBoundsError: LocalizedError, Equatable {
+  case arithmeticOverflow
+
+  public var errorDescription: String? {
+    switch self {
+    case .arithmeticOverflow:
+      "The exact detector accumulator bound exceeds UInt64. Use the general 64-bit "
+        + "reduction path for this load plan."
+    }
+  }
+}
+
+/// Conservative exact bounds for fused detector sums and moments.
+///
+/// The bounds cover every source detector count accumulated into one output
+/// scan position, including scan summation and incomplete detector edge bins.
+/// Detector row and column moments use the output detector coordinates after
+/// detector binning. Consumers may use 32-bit fused accumulators only when
+/// ``fitsUInt32Accumulators`` is true; otherwise they must use the general
+/// 64-bit reduction path.
+public struct Metal4DSTEMExactAccumulatorBounds: Equatable, Hashable, Sendable {
+  public let maxSourceCount: UInt32
+  public let maximumScanContributions: Int
+  public let maximumDetectorSum: UInt64
+  public let maximumDetectorRowMoment: UInt64
+  public let maximumDetectorColumnMoment: UInt64
+
+  public var fitsUInt32Accumulators: Bool {
+    let limit = UInt64(UInt32.max)
+    return maximumDetectorSum <= limit
+      && maximumDetectorRowMoment <= limit
+      && maximumDetectorColumnMoment <= limit
+  }
+}
+
 /// A half-open real-space scan selection using `(row, column)` coordinates.
 public struct Metal4DSTEMScanRegion: Codable, Equatable, Hashable, Sendable {
   public let rowStart: Int
@@ -214,6 +250,58 @@ public struct Metal4DSTEMLoadPlan: Equatable, Hashable, Sendable {
     let rows = min(detectorBin, detectorRows - sourceRowStart)
     let columns = min(detectorBin, detectorColumns - sourceColumnStart)
     return rows * columns
+  }
+
+  /// Prove conservative integer bounds for fused detector accumulators.
+  ///
+  /// - Parameter maxSourceCount: Maximum value of one source detector pixel,
+  ///   established by an exact source audit.
+  /// - Returns: Bounds for the detector sum and output-coordinate moments.
+  /// - Throws: ``Metal4DSTEMExactAccumulatorBoundsError/arithmeticOverflow``
+  ///   when the bound cannot be represented by `UInt64`.
+  public func exactAccumulatorBounds(
+    maxSourceCount: UInt32
+  ) throws -> Metal4DSTEMExactAccumulatorBounds {
+    let scanRows = min(scanBin, scanRegion.rows)
+    let scanColumns = min(scanBin, scanRegion.columns)
+    let maximumScanContributions = scanRows * scanColumns
+
+    let factors = [
+      UInt64(maxSourceCount),
+      UInt64(maximumScanContributions),
+      UInt64(detectorRows),
+      UInt64(detectorColumns),
+    ]
+    var maximumDetectorSum = UInt64(1)
+    for factor in factors {
+      let product = maximumDetectorSum.multipliedReportingOverflow(by: factor)
+      guard !product.overflow else {
+        throw Metal4DSTEMExactAccumulatorBoundsError.arithmeticOverflow
+      }
+      maximumDetectorSum = product.partialValue
+    }
+
+    func momentBound(coordinateMaximum: Int) throws -> UInt64 {
+      let product = maximumDetectorSum.multipliedReportingOverflow(
+        by: UInt64(coordinateMaximum)
+      )
+      guard !product.overflow else {
+        throw Metal4DSTEMExactAccumulatorBoundsError.arithmeticOverflow
+      }
+      return product.partialValue
+    }
+
+    return Metal4DSTEMExactAccumulatorBounds(
+      maxSourceCount: maxSourceCount,
+      maximumScanContributions: maximumScanContributions,
+      maximumDetectorSum: maximumDetectorSum,
+      maximumDetectorRowMoment: try momentBound(
+        coordinateMaximum: outputDetectorRows - 1
+      ),
+      maximumDetectorColumnMoment: try momentBound(
+        coordinateMaximum: outputDetectorColumns - 1
+      )
+    )
   }
 }
 
