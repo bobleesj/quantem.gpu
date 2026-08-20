@@ -72,6 +72,8 @@ public enum Metal4DSTEMKernels {
   public static let detectorProductsU32Function = "detector_products_u32_word_major"
   public static let detectorProductsU16WordMajorFunction =
     "detector_products_u16_word_major"
+  public static let detectorProductsU16WordMajorMomentsFunction =
+    "detector_products_u16_word_major_with_u64_moments"
   public static let centerOfMassU8Function = "center_of_mass_u8_word_major"
   public static let centerOfMassU16Function = "center_of_mass_u16_word_major"
   public static let centerOfMassU32Function = "center_of_mass_u32_word_major"
