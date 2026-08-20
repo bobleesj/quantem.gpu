@@ -17,12 +17,13 @@ operating-system storage cache was not forcibly evicted. It is not called cold.
   CUDA execution mirror `8c47a466d573f74e425faff611939a17fa6efbf2`.
   Their production compute trees are byte-equivalent for the profiled paths.
 - **Clean follow-up stack:** local branch `mps-subsecond-pipeline` at
-  `d65911aaa9e043c545e1414b415548ced1900962`. It contains exact streamed
+  `70bc3663c1c7cc495e77348c9fe7594545c66fa8`. It contains exact streamed
   screening (`5d56535`), strict MPS source validation (`1d2e3c9`),
   deterministic CUDA SSB fitting (`fa9ab6f`), native Metal SSB (`e1da9bc`),
   exact prepared QH5 binning (`e0e92b4`), optimized word-major binning
-  (`ff3c7fd`), and provenance-bound resident summaries (`d65911a`). These
-  unpublished commits do not retroactively change baseline timings.
+  (`ff3c7fd`), provenance-bound resident summaries (`d65911a`), and exact
+  fused-accumulator widening (`70bc366`). These unpublished commits do not
+  retroactively change baseline timings.
 - **Fixture C:** independent real `512x512x192x192` native-`uint16` source,
   27 compressed shards, 3,169,920,193 bytes, 28-file manifest SHA-256
   `741e7bcf13ffd77bcacfeeabc0b7edb7b427448273ceba2a166426b8f73f509a`.
@@ -71,7 +72,10 @@ diagnostic adjudication only, never a silent production fallback.
 ### Current native exact resident summary
 
 Revision `d65911a` adds a package-owned exact summary beside a validated native
-resident cache. The measured plan is the complete `512x512` scan from fixture C,
+resident cache. Revision `70bc366` adds an overflow-checked path that widens
+the exact `uint32` accumulators already produced by a fused source pass, so an
+integrator need not reread the resident detector volume. The measured plan is
+the complete `512x512` scan from fixture C,
 no scan or detector crop, scan bin 1, exact detector sum bin 4 from `192x192` to
 `48x48`, native `uint16` source, and `uint16` resident output. The source
 identity is
@@ -91,9 +95,11 @@ product. It never represents a prepared summary as source loading.
 | Apple M5 Max, 40-core GPU, 128 GB | `d65911a` | 7 fresh processes | Prepared exact summary | **0.026 s** | **0.027 s** | **0.027 s** | **0.120 s** | **0.144 s** | **0.150 s** | **97.4 MB** | Nine same-device products byte exact |
 | Apple M2 MacBook Air (`Mac14,2`, 8 GB) | `d65911a` | 7 fresh processes | Prepared exact summary | **0.029 s** | **0.030 s** | **0.030 s** | **0.110 s** | **0.124 s** | **0.130 s** | **92.0 MB** | Nine same-device products byte exact |
 
-Creating that summary is a different one-time operation: it traverses the
-validated 1.208 GB resident cache, but it does not open or decompress the
-3.17 GB compressed-HDF5 source.
+The original `d65911a` creation path remains a valid fallback when only a
+prepared resident cache exists. It traverses the validated 1.208 GB resident
+cache, but it does not open or decompress the 3.17 GB compressed-HDF5 source.
+These historical fallback measurements remain here because their input state
+differs from source-fused creation.
 
 | Device | Revision | Repetitions | Cache state | Resident load wall | Metal product/moment kernel | Summary write | Process wall | Process swaps |
 |---|---|---:|---|---:|---:|---:|---:|---:|
@@ -107,6 +113,25 @@ instrumented derived-product stage took **11.389 ms**: 0.565 ms center/mean on
 CPU, 1.107 ms rotation/alignment on CPU, 2.095 ms Metal iDPC, and 7.622 ms
 float-surface statistics. The legacy `gpu=0.000` aggregate excludes those small
 command buffers and is rejected as GPU telemetry for this path.
+
+Revision `70bc366` removes that additional resident traversal when the same
+process has just completed the validated fused source pass. The consumer
+rechecks a conservative accumulator bound, widens the three exact moment maps
+in one small Metal dispatch, and writes the unchanged
+`quantem.gpu.resident-summary/v1` schema. The table reports only the incremental
+summary work; it is not a compressed-source load time.
+
+| Device | QuantEM.GPU revision | Consumer overlay | Repetitions | Input state | Additional resident traversal | Widen wall | Widen GPU | Summary write | Process swaps | Parity | Date tested |
+|---|---|---|---:|---|---|---:|---:|---:|---:|---|---|
+| Apple M5 Max, 40-core GPU, 128 GB | `70bc366` | `105942d3` tracked-diff SHA-256 | 1 | Same validated fused source pass | None | **0.703 ms** | **0.328 ms** | **11 ms** | **0** | Seven summary artifacts byte exact; nine products same-device byte exact | 2026-08-20 |
+| Apple M2 MacBook Air (`Mac14,2`, 8 GB) | `70bc366` | `105942d3` tracked-diff SHA-256 | 1 | Same validated fused source pass; low page residency and pre-existing swap | None | **0.569 ms** | **0.104 ms** | **18 ms** | **0** | Seven cross-device integer artifacts byte exact; all floating products below `1e-5` | 2026-08-20 |
+
+The Air's surrounding source encounter took 6.444 s in a low-residency state;
+three sequential rechecks improved from 5.534 s to 2.723 s to 2.101 s while
+Metal stayed between 1.450 s and 1.542 s. Those values are a cache-state
+sequence, not independent repetitions, so none is promoted into the current
+warm-load table. The follow-up changed only post-pass summary materialization;
+it did not make the compressed source sub-second.
 
 All seven summary artifact hashes match across Phil and the Air. Every reopen
 also reproduced same-device BF, ABF, ADF, CoM row/column, DPC row/column, iDPC,
@@ -197,6 +222,12 @@ same-device derived-product parity. Package-level numerical DPC/iDPC unit tests
 remain pending; the derived-product timing came from an isolated headless
 consumer harness, not a GUI or application-paint boundary.
 
+At `70bc366`, the expanded release suite executed 81 tests, skipped five
+opt-in/data cases, and had no failures. Its new focused checks cover the
+audited low-count plan, scan-bin and incomplete-edge contribution bounds,
+high-dynamic-range rejection, arithmetic overflow, and exact Metal widening.
+The real-QH5 gate again passed four of four checks.
+
 The earlier `334b7b5` profile remains the owner of prepared-index reopen
 **5.339/5.760/5.842 ms** p50/p95/max and 512×512 FFT **15.622 ms** first,
 **0.291/0.584 ms** warm p50/p95. Those measurements were not rerun or silently
@@ -221,6 +252,7 @@ device signoff.
 | Raw MPS/CUDA SSB parity | `17a7ef5750444377c7d16c18bfadef39607ea3d684c91dad93681ca887d7154e` |
 | Deterministic CUDA full fit | `d262c1ed8fa55728811735bc974ef4fcc413e60aff83dfcd7396b4ad681f4527` |
 | Exact Air resident summary | `4f8f366553cf8ae13b5b732a24a070f6cc404127ef6e421599d00b5c27a3688c` |
+| Source-fused Air summary follow-up | `123b77e3424994980379a942da21dfbdf0d0921b2de0a862652831c4bfe814a9` |
 
 ## Historical and rejected results
 
