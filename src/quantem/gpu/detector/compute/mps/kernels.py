@@ -200,6 +200,18 @@ class MetalVirtualImage:
         self._pipe, _ = dev.newComputePipelineStateWithFunction_error_(
             lib.newFunctionWithName_(f"masked_sum_{suffix}"), None)
         self._detsum_pipe = None
+        self._detsum_exact_pipe, _ = (
+            dev.newComputePipelineStateWithFunction_error_(
+                lib.newFunctionWithName_(f"detector_sum_exact_{suffix}"),
+                None,
+            )
+        )
+        self._detsum_exact_prefix_pipe, _ = (
+            dev.newComputePipelineStateWithFunction_error_(
+                lib.newFunctionWithName_("detector_sum_exact_prefix_u16"),
+                None,
+            )
+        )
         self._detsum_u8_partial_pipe = None
         self._detsum_u8_merge_pipe = None
         if self._dtype != np.dtype(np.uint32):
@@ -293,6 +305,16 @@ class MetalVirtualImage:
             max_blocks = (max(int(c.shape[0]) for c in chunks) + 1023) // 1024
             self._detsum_u8_partial_mtl = _mps._metal_buffer_alloc(
                 max_blocks * self.ndet * np.dtype(np.int32).itemsize
+            )
+        self._detsum_exact_mtls = []
+        self._detsum_exact_nps = []
+        for _ in chunks:
+            exact_mtl = _mps._metal_buffer_alloc(
+                self.ndet * np.dtype(np.uint64).itemsize
+            )
+            self._detsum_exact_mtls.append(exact_mtl)
+            self._detsum_exact_nps.append(
+                _mps._numpy_view(exact_mtl, np.uint64, self.ndet)
             )
         # mask buffer (one detector frame, written per recompute)
         self._mask_mtl = _mps._metal_buffer_alloc(self.ndet)
@@ -1018,6 +1040,65 @@ class MetalVirtualImage:
             cmd.commit()
             cmd.waitUntilCompleted()
         return ds_np.reshape(self.det).astype(np.float32)
+
+    def detector_sum_exact(self) -> np.ndarray:
+        """Return the exact uint64 detector sum over all resident chunks.
+
+        Each Metal dispatch writes a private uint64 detector plane for one
+        chunk. The small planes are merged in a fixed host order, avoiding the
+        overflow and nondeterministic ordering of the interactive int32 atomic
+        reducer used by :meth:`detector_sum`.
+        """
+        Metal = self._Metal
+        mps = self._mps
+        pipe = (
+            self._detsum_exact_prefix_pipe
+            if self._row_prefix
+            else self._detsum_exact_pipe
+        )
+        commands = []
+        for group in _chunk_groups(self.chunks):
+            command = mps._queue.commandBuffer()
+            encoder = command.computeCommandEncoder()
+            encoder.setComputePipelineState_(pipe)
+            for chunk_index in group:
+                encoder.setBuffer_offset_atIndex_(
+                    self.chunks[chunk_index]._mtl,
+                    0,
+                    0,
+                )
+                encoder.setBuffer_offset_atIndex_(
+                    self._detsum_exact_mtls[chunk_index],
+                    0,
+                    1,
+                )
+                encoder.setBuffer_offset_atIndex_(self._ndet_mtl, 0, 2)
+                if self._row_prefix:
+                    encoder.setBuffer_offset_atIndex_(self._detcols_mtl, 0, 3)
+                    encoder.setBuffer_offset_atIndex_(
+                        self._nf_mtls[chunk_index],
+                        0,
+                        4,
+                    )
+                else:
+                    encoder.setBuffer_offset_atIndex_(
+                        self._nf_mtls[chunk_index],
+                        0,
+                        3,
+                    )
+                encoder.dispatchThreadgroups_threadsPerThreadgroup_(
+                    Metal.MTLSizeMake((self.ndet + 255) // 256, 1, 1),
+                    Metal.MTLSizeMake(256, 1, 1),
+                )
+            encoder.endEncoding()
+            command.commit()
+            commands.append(command)
+        commands[-1].waitUntilCompleted()
+
+        total = np.zeros(self.ndet, dtype=np.uint64)
+        for chunk_sum in self._detsum_exact_nps:
+            np.add(total, chunk_sum, out=total)
+        return total.reshape(self.det)
 
     def gather_columns_float32(
         self,

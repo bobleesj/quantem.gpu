@@ -3,6 +3,96 @@ from __future__ import annotations
 import numpy as np
 
 
+def _run_fake_mps_screening(monkeypatch, tmp_path, chunks):
+    from types import SimpleNamespace
+
+    from quantem.gpu import detector, io
+    from quantem.gpu.dpc import workflow as dpc_workflow
+    from quantem.gpu.screening import workflow
+
+    class FakeFrames:
+        def __init__(self, values):
+            self.values = np.asarray(values, dtype=np.uint16)
+            self.vi = self
+            self.n = int(self.values.shape[0])
+            self.nbytes = int(self.values.nbytes)
+
+        def detector_sum_exact(self):
+            return self.values.sum(axis=0, dtype=np.uint64)
+
+        def detector_sum(self):
+            return self.detector_sum_exact().astype(np.float32)
+
+        def masked_sum(self, mask):
+            return self.values[:, np.asarray(mask, dtype=bool)].sum(
+                axis=1,
+                dtype=np.uint64,
+            )
+
+        def center_of_mass(self, _mask):
+            zeros = np.zeros(self.n, dtype=np.float32)
+            return zeros.copy(), zeros.copy()
+
+    loads = []
+
+    def fake_load(_source, *, scan_region=None, **_kwargs):
+        row = 0 if scan_region is None else int(scan_region[0])
+        loads.append(row)
+        return SimpleNamespace(data=FakeFrames(chunks[row]))
+
+    def fake_auto_probe(mean_dp):
+        center = np.unravel_index(int(np.argmax(mean_dp)), mean_dp.shape)
+        return tuple(float(value) for value in center), 0.25
+
+    def fake_detector_mask(center, inner, _outer, shape):
+        mask = np.zeros(shape, dtype=bool)
+        mask[int(round(center[0])), int(round(center[1]))] = True
+        return ~mask if inner > 0 else mask
+
+    monkeypatch.setattr(io, "inspect", lambda _path: SimpleNamespace(
+        metadata={"detector_shape": (2, 2), "dtype": "uint16"},
+    ))
+    monkeypatch.setattr(io, "load", fake_load)
+    monkeypatch.setattr(detector, "auto_probe", fake_auto_probe)
+    monkeypatch.setattr(detector, "detector_mask", fake_detector_mask)
+    monkeypatch.setattr(
+        dpc_workflow,
+        "find_optimal_rotation",
+        lambda *_args, **_kwargs: (None, None, 0.0, False),
+    )
+    monkeypatch.setattr(workflow, "_mps_chunked_frames_for", lambda data: data)
+    monkeypatch.setattr(workflow, "_clear_mps_transients", lambda: None)
+    monkeypatch.setattr(
+        workflow,
+        "_source_fingerprint",
+        lambda _master: {"fixture": "stable"},
+    )
+
+    master = tmp_path / "scan_master.h5"
+    master.write_bytes(b"placeholder")
+    plan = workflow._memory_plan_with_chunk_rows(
+        workflow._memory_plan_for_shapes(
+            (2, 1),
+            (2, 2),
+            np.dtype(np.uint16).itemsize,
+            1.0,
+        ),
+        1,
+    )
+    result = workflow._build_mps_products(
+        master,
+        scan_shape=(2, 1),
+        chunk_rows=1,
+        sample_positions=0,
+        seed=0,
+        rotation_steps=1,
+        memory_plan=plan,
+        verbose=False,
+        skip_mps_memory_check=True,
+    )
+    return result, loads
+
+
 def _result(master, workflow):
     metadata = {
         "version": workflow._CACHE_VERSION,
@@ -52,6 +142,31 @@ def test_screening_cache_roundtrip(tmp_path) -> None:
     assert actual.dpc_phase.dtype == np.float32
 
 
+def test_screening_cache_path_tracks_exact_cache_version(tmp_path) -> None:
+    from quantem.gpu.screening import workflow
+
+    master = tmp_path / "scan_master.h5"
+    master.write_bytes(b"placeholder")
+
+    path = workflow._cache_path(master, tmp_path / "cache")
+
+    assert workflow._CACHE_VERSION == 3
+    assert path.name == "scan_master.screening-v3.npz"
+
+
+def test_screening_cache_rejects_legacy_first_chunk_version(tmp_path) -> None:
+    from quantem.gpu.screening import workflow
+
+    master = tmp_path / "scan_master.h5"
+    master.write_bytes(b"placeholder")
+    cache_path = workflow._cache_path(master, tmp_path / "cache")
+    result = _result(master, workflow)
+    result.metadata["version"] = 2
+    workflow._save_cache(result, cache_path)
+
+    assert workflow._prepare_cache(cache_path, master) is None
+
+
 def test_screening_cache_rejects_changed_source(tmp_path) -> None:
     from quantem.gpu.screening import workflow
 
@@ -61,6 +176,33 @@ def test_screening_cache_rejects_changed_source(tmp_path) -> None:
     workflow._save_cache(_result(master, workflow), cache_path)
 
     master.write_bytes(b"changed")
+
+    assert workflow._prepare_cache(cache_path, master) is None
+
+
+def test_screening_cache_rejects_changed_external_shard(tmp_path) -> None:
+    import h5py
+
+    from quantem.gpu.screening import workflow
+
+    shard = tmp_path / "scan_data_000001.h5"
+    with h5py.File(shard, "w") as handle:
+        handle.create_dataset(
+            "entry/data/data",
+            data=np.zeros((4, 2, 3), dtype=np.uint16),
+        )
+    master = tmp_path / "scan_master.h5"
+    with h5py.File(master, "w") as handle:
+        group = handle.require_group("entry/data")
+        group["data_000001"] = h5py.ExternalLink(
+            shard.name,
+            "/entry/data/data",
+        )
+    cache_path = workflow._cache_path(master, tmp_path / "cache")
+    workflow._save_cache(_result(master, workflow), cache_path)
+
+    with h5py.File(shard, "a") as handle:
+        handle.attrs["changed"] = True
 
     assert workflow._prepare_cache(cache_path, master) is None
 
@@ -121,3 +263,54 @@ def test_screening_load_calls_use_public_api() -> None:
 
     assert calls
     assert not unexpected, f"unsupported public io.load keywords: {sorted(unexpected)}"
+
+
+def test_mps_screening_reuses_primary_pass_when_full_scan_mask_matches(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    chunks = [
+        np.asarray([[[9, 0], [0, 0]]], dtype=np.uint16),
+        np.asarray([[[7, 0], [0, 0]]], dtype=np.uint16),
+    ]
+
+    result, loads = _run_fake_mps_screening(monkeypatch, tmp_path, chunks)
+
+    assert loads == [0, 1]
+    assert result.metadata["parameters"]["probe_source"] == "full_scan_exact"
+    assert result.metadata["parameters"]["bootstrap_source"] == "first_chunk"
+    assert result.metadata["parameters"]["masks_identical"] is True
+    assert result.metadata["parameters"]["pass_count"] == 1
+    np.testing.assert_array_equal(
+        result.mean_dp,
+        np.asarray([[8, 0], [0, 0]], dtype=np.float32),
+    )
+    np.testing.assert_array_equal(
+        result.bright_field,
+        np.asarray([[9], [7]], dtype=np.float32),
+    )
+
+
+def test_mps_screening_restreams_bf_df_when_full_scan_mask_changes(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    chunks = [
+        np.asarray([[[9, 0], [0, 0]]], dtype=np.uint16),
+        np.asarray([[[0, 0], [0, 30]]], dtype=np.uint16),
+    ]
+
+    result, loads = _run_fake_mps_screening(monkeypatch, tmp_path, chunks)
+
+    assert loads == [0, 1, 0, 1]
+    assert result.metadata["parameters"]["probe_source"] == "full_scan_exact"
+    assert result.metadata["parameters"]["masks_identical"] is False
+    assert result.metadata["parameters"]["pass_count"] == 2
+    np.testing.assert_array_equal(
+        result.mean_dp,
+        np.asarray([[4.5, 0], [0, 15]], dtype=np.float32),
+    )
+    np.testing.assert_array_equal(
+        result.bright_field,
+        np.asarray([[0], [30]], dtype=np.float32),
+    )
