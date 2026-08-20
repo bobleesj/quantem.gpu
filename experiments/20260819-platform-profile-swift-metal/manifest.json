@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260819-platform-profile-swift-metal",
+  "status": "completed",
+  "question": "What are the parity-qualified native Swift/Metal I/O, detector, DPC/iDPC, FFT, display, and image-runtime timings on the current Swift package?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260819-platform-profile-swift-metal/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "334b7b5135fe29787540370a00f280fa138430a2",
+    "entrypoint": "SwiftPM release benchmarks for Native4DSTEMIO, Metal4DSTEMKernels, MetalImageFFT, MetalImageRuntime, and MetalDisplayKernels",
+    "dirty": false,
+    "diff_sha256": null,
+    "snapshot_path": "local-snapshot://quantem-gpu-platform-profile-swift-metal/source"
+  },
+  "inputs": [
+    {
+      "dataset_id": "real-512x512x192x192-u16-bslz4-27shard",
+      "path": "private-fixture://full-512-u16-bslz4-27shard/collection",
+      "sha256": "741e7bcf13ffd77bcacfeeabc0b7edb7b427448273ceba2a166426b8f73f509a"
+    }
+  ],
+  "parameters": {
+    "source_shape": [512, 512, 192, 192],
+    "source_dtype": "uint16",
+    "scan_crop": null,
+    "detector_crop": null,
+    "scan_bin": 1,
+    "detector_bins": [1, 2, 4],
+    "timing_repetitions": 7,
+    "timing_warmups": 2,
+    "synchronization": "waitUntilCompleted for every timed command buffer",
+    "ssb": "not implemented in the native Swift package",
+    "levenberg_marquardt": "not implemented",
+    "parity": {
+      "integer_products": "byte-exact",
+      "floating_gate": 1e-5
+    },
+    "physical_8gb_followup": "separate coordinated fail-closed run; not authorized by this manifest",
+    "run_root": "local-evidence://platform-profile-20260819/apple/phil-swift"
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": ["Apple M5 Max integrated GPU"],
+    "gpu_model": "Apple M5 Max, 40-core GPU, 128 GB unified memory"
+  },
+  "outputs": [
+    {
+      "artifact": "swift-test.log",
+      "sha256": "90eabb105ea04b476abbf401fe28664e46cc7b6fbcf748906363a3ba2c434694",
+      "result": "66 tests, 1 opt-in performance skip, 0 failures; four real QH5 frames exact"
+    },
+    {
+      "artifact": "benchmarks/",
+      "sha256_manifest": "336907a4fa0633c010308cfc5178635594dfad9d1709f8990dec646428c19e24",
+      "result": "catalog/index/display/FFT/runtime timings; full-scan decode/products, numerical DPC/iDPC, and SSB remain unsupported or unmeasured"
+    }
+  ],
+  "timestamps": {
+    "created": "2026-08-19T18:42:00-07:00",
+    "started": "2026-08-19T18:42:00-07:00",
+    "finished": "2026-08-19T18:56:49-07:00"
+  }
+}

@@ -109,6 +109,14 @@ def test_webgpu_backend_source_tracks_ssb_engine() -> None:
     assert source.count(".createComputePipelineAsync(") >= 14
 
 
+def test_webgpu_ssb_calibration_fails_explicitly() -> None:
+    optimizer = source_text("ssb/compute/webgpu/optimizer.ts")
+
+    assert "aberration optimization is not implemented" in optimizer
+    assert "exact 200-trial plus Nelder-Mead workflow on CUDA or MPS" in optimizer
+    assert "never substitutes a reduced objective" in optimizer
+
+
 def test_webgpu_h5reader_keeps_single_pass_block_metadata_parse() -> None:
     source = source_text("io/backends/webgpu/h5reader.ts")
 

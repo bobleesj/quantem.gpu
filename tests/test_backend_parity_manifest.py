@@ -15,9 +15,11 @@ EXPECTED_BACKENDS = {
 EXPECTED_CAPABILITIES = {
     "io.decode-bin-provenance",
     "detector.integer-products",
+    "screening.prepared-products",
     "dpc.com-rotation-idpc",
     "display.transform-histogram-color-fft",
     "ssb.object-phase-loss",
+    "ssb.calibration-200-nelder-mead",
 }
 ALLOWED_LEVELS = {
     "reference",

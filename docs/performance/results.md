@@ -9,7 +9,133 @@ state, load plan, benchmark definition, and scientific agreement gate.
 operating-system storage cache was not forcibly evicted. It is not called cold.
 “Prepared” means an index, sidecar, or derived product cache already existed.
 
-## Current three-host full-scan campaign
+## Current platform profile
+
+- **Date tested:** 2026-08-19 local time; retained UTC artifacts extend into
+  2026-08-20.
+- **Baseline revisions:** Phil `334b7b5135fe29787540370a00f280fa138430a2`;
+  CUDA execution mirror `8c47a466d573f74e425faff611939a17fa6efbf2`.
+  Their production compute trees are byte-equivalent for the profiled paths.
+- **Clean follow-up stack:** local branch `platform-parity-profile-integration`
+  at `fa9ab6f`, containing exact streamed screening (`5d56535`), strict MPS
+  source validation (`1d2e3c9`), and deterministic CUDA SSB fitting
+  (`fa9ab6f`). These unpublished commits do not retroactively change baseline
+  timings.
+- **Fixture C:** independent real `512x512x192x192` native-`uint16` source,
+  27 compressed shards, 3,169,920,193 bytes, 28-file manifest SHA-256
+  `741e7bcf13ffd77bcacfeeabc0b7edb7b427448273ceba2a166426b8f73f509a`.
+- **Fixture D:** independent real `512x512x192x192` native-`uint16` source,
+  27 compressed shards, 3,165,551,746 bytes, master SHA-256
+  `4802ec16ba241fef439e9dcb1c28e94f9cf9d95f773df9c5c8c3b5f7ed8192c4`;
+  dataset/v0.1 identity
+  `1be810b96fdff8e384ad4cb6ebd49adff9b4ab0a6503cd5fed9106e09f5aa286`.
+
+Every current load uses the complete `512x512` scan, no scan or detector crop,
+scan bin 1, and the explicit detector bin shown. The operating-system storage
+cache was not forcibly evicted, so the source measurements are **warm**, not
+cold. CUDA and WebGPU use D; MPS/Swift use C. They are not a fixture-controlled
+backend ranking.
+
+### Current warm load/decode/bin
+
+The boundary is synchronized first-usable resident output from the public
+loader. WebGPU uses the loader's internal library boundary rather than the
+outer browser harness. Resident payload and process/card peaks remain distinct.
+
+| Platform | Revision | Detector bin | Output detector | Resident dtype | Repetitions | p50 | p95 | Maximum | Memory observation | Parity | Device tested |
+|---|---|---:|---:|---|---:|---:|---:|---:|---|---|---|
+| **CUDA** | `8c47a466` | 1 | `192x192` | `uint16` | 7 | **0.386 s** | **0.396 s** | **0.397 s** | 18.00 GiB payload; 22.78 GB total-card peak | Pass | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 |
+| **CUDA** | `8c47a466` | 2 | `96x96` | `uint32` | 7 | **0.396 s** | **0.401 s** | **0.402 s** | 9.00 GiB payload; 12.41 GB total-card peak | Pass | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 |
+| **CUDA** | `8c47a466` | 4 | `48x48` | `uint32` | 7 | **0.390 s** | **0.413 s** | **0.419 s** | 2.25 GiB payload; 4.03 GB total-card peak | Pass | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 |
+| **CUDA** | `8c47a466` | 8 | `24x24` | `uint32` | 7 | **0.381 s** | **0.401 s** | **0.402 s** | 0.5625 GiB payload; 1.94 GB total-card peak | Pass | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 |
+| **Python MPS** | `334b7b5` | 1 | `192x192` | `uint16` | 7 | **2.273 s** | **2.445 s** | **2.449 s** | 19.327 GB logical payload; process RSS 0.93 GB | Pass | Apple M5 Max, 40-core GPU, 128 GB |
+| **Python MPS** | `334b7b5` | 2 | `96x96` | `uint16` | 7 | **0.707 s** | **0.720 s** | **0.723 s** | 4.832 GB logical payload; process RSS 0.73 GB | Pass | Apple M5 Max, 40-core GPU, 128 GB |
+| **Python MPS** | `334b7b5` | 4 | `48x48` | `uint16` | 7 | **0.605 s** | **0.613 s** | **0.615 s** | 1.208 GB logical payload; process RSS 0.73 GB | Pass | Apple M5 Max, 40-core GPU, 128 GB |
+| **Python MPS** | `334b7b5` | 8 | `24x24` | `uint16` | 7 | **0.586 s** | **0.592 s** | **0.594 s** | 0.302 GB logical payload; process RSS 0.74 GB | Pass | Apple M5 Max, 40-core GPU, 128 GB |
+| **WebGPU** | `334b7b5` | 1 | `192x192` | `uint8` | 5 | **0.824 s** | **0.892 s** | **0.892 s** | Chrome-tree RSS max 5.39 GB | Exact tested frames and products | Chrome 151, Apple M5 Max Metal-3 |
+| **WebGPU** | `334b7b5` | 2 | `96x96` | `float32` sums | 5 | **1.281 s** | **1.300 s** | **1.300 s** | Chrome-tree RSS max 5.76 GB | Exact sampled count sums | Chrome 151, Apple M5 Max Metal-3 |
+| **WebGPU** | `334b7b5` | 4 | `48x48` | `float32` sums | 5 | **1.044 s** | **1.050 s** | **1.050 s** | Chrome-tree RSS max 5.57 GB | Exact sampled count sums | Chrome 151, Apple M5 Max Metal-3 |
+| **WebGPU** | `334b7b5` | 8 | `24x24` | `float32` sums | 5 | **0.979 s** | **0.986 s** | **0.986 s** | Chrome-tree RSS max 5.57 GB | Exact sampled count sums | Chrome 151, Apple M5 Max Metal-3 |
+| **CPU reference** | `334b7b5` | 1 | `192x192` | `uint16` | 1 | **34.37 s** | — | — | Peak RSS 39.14 GB | Independent exact adjudicator | Apple M5 Max CPU |
+| **CPU reference** | `334b7b5` | 2 | `96x96` | `uint16` | 1 | **54.22 s** | — | — | Peak RSS 10.34 GB | Independent exact adjudicator | Apple M5 Max CPU |
+| **CPU reference** | `334b7b5` | 4 | `48x48` | `uint16` | 1 | **43.04 s** | — | — | Peak RSS 3.20 GB | Independent exact adjudicator | Apple M5 Max CPU |
+| **CPU reference** | `334b7b5` | 8 | `24x24` | `uint16` | 1 | **38.13 s** | — | — | Peak RSS 2.18 GB | Independent exact adjudicator | Apple M5 Max CPU |
+
+Fixture D bin 1 is value-audited lossless `uint8`; bins 2/4/8 are exact detector
+sums stored as `float32`. WebGPU's Chrome RSS is not a complete device-memory
+measurement and does not prove the physical 8 GB laptop gate. CPU timings are
+diagnostic adjudication only, never a silent production fallback.
+
+### Current resident products
+
+All rows exclude source loading. CUDA uses D at detector bin 1; MPS uses C at
+detector bin 4; WebGPU uses D at detector bin 1. CUDA and MPS rotation/iDPC are
+small-field CPU operations after GPU CoM, not GPU-kernel claims.
+
+| Platform | Mean DP | BF | ADF | DF | CoM row/column | DPC row/column | iDPC | State and parity |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| **CUDA** | **18.392 ms** | **3.768 ms** | **5.586 ms** | **3.747 ms** | **13.002 ms** | — | **21.272 ms** | p50 of 7; integer/mean exact; CoM and iDPC pass current CPU gates |
+| **Python MPS** | **74.805 ms** | **2.502 ms** | **4.404 ms** | **2.642 ms** | **4.637 ms** | — | **12.678 ms** | p50 of 21; integer/mean/CoM exact; same-runtime iDPC exact |
+| **WebGPU** | **50.9 ms** | **5.5 ms** | **15.0 ms** | **43.4 ms** | **82.9 ms** | **0.9/0.7 ms** | **1.4 ms** | p50 of 5; integer/mean exact; per-pixel float errors not retained |
+| **CPU reference** | — | — | — | — | — | — | **177.6 ms** | Independent product traversal was 31.08 s; reference only |
+
+### Current SSB reconstruction and calibration
+
+CUDA calibration uses calibration SHA-256
+`4a2d9cc36943973dbe0f1d5e40858160f0a6393cd56d9f54e073a358b3eff8e8`,
+200 kV, 21.4 mrad semiangle, 0.49492961 Å scan sampling, full automatically
+detected BF disk, float32/complex64, seeded Optuna TPE 200 trials, and
+Nelder–Mead refinement. The MPS row uses C, explicit detector bin 2, 2,275
+calibrated BF positions, and calibration SHA-256
+`8815ddd710f33973ac11d504cd679f16d9f5d6bf3043d0480e682ecc0a053941`.
+WebGPU uses a separately frozen native-detector exact `uint8` companion, 3,418
+active aperture positions, and compute-matched revision `5cd285250911974c738e9c911bd00a170873bf45`.
+
+| Platform | Operation | Statistic | Time | Numerical state | Device tested |
+|---|---|---|---:|---|---|
+| **CUDA** | Complex object | p50 of 7 | **13.883 ms** | Deterministic | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 |
+| **CUDA** | Exact phase | p50 of 7 | **32.035 ms** | Deterministic | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 |
+| **CUDA** | Exact phase and loss | p50 of 7 | **32.335 ms** | Deterministic | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 |
+| **CUDA** | 200-trial TPE plus Nelder–Mead | p50/p95/max of 3 | **11.168/11.235/11.242 s** | Byte-identical fitted parameters, phase, object, and loss | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 |
+| **Python MPS** | Exact phase and loss | One synchronized run | **497.187 ms** | CUDA phase max `1.2815e-6` rad; loss error `7.45e-9` | Apple M5 Max, 40-core GPU |
+| **WebGPU** | Complex object | Readback wall p50 of 5 | **32.5 ms** | Deterministic hash 5/5 | Chrome 151, Apple M5 Max Metal-3 |
+| **WebGPU** | Exact phase | Readback wall p50 of 5 | **102.1 ms** | Deterministic hash; one retained scheduling outlier | Chrome 151, Apple M5 Max Metal-3 |
+| **WebGPU** | Exact phase and loss | Readback wall p50 of 5 | **189.4 ms** | Phase byte-identical to no-loss 5/5 | Chrome 151, Apple M5 Max Metal-3 |
+
+The first CUDA 200-trial baseline was faster (`8.096 s` p50) but split into two
+fitted minima under the same seed, so it failed the frozen repeatability gate.
+The deterministic follow-up is the accepted number. The prepared MPS companion
+candidate is rejected because its stored columns do not match its declared
+detector-bin coordinate grid. WebGPU implements reconstruction but not TPE or
+Nelder–Mead calibration. Levenberg–Marquardt is not implemented in any current
+SSB backend.
+
+### Current native Swift/Metal boundary
+
+At `334b7b5`, the release suite passed 66 tests with one opt-in performance skip
+and no failures. Four real QH5 frames matched the Swift CPU reference exactly
+for decode, detector bin 4, BF/ABF/DF/total, and row/column moments. Prepared
+index reopen was **5.339/5.760/5.842 ms** p50/p95/max; 512×512 FFT was
+**15.622 ms** first and **0.291/0.584 ms** warm p50/p95. The package has no
+full-scan decode/product benchmark executable, numerical DPC/iDPC test, or
+native SSB implementation; application timings are not substituted.
+
+### Current evidence fingerprints
+
+| Evidence bundle | SHA-256 |
+|---|---|
+| Apple atomic matrix | `358da791e27433a7f2cd5bab3e7880d1907a8f07976bd9fa529882685de0c84e` |
+| CUDA atomic rows | `e68c6b56a95b6844a9eb354b1c68ca68e2f2f815395dc74ee6b4a3e6f7945272` |
+| WebGPU/CPU report | `a2f75c7a595d5fc457b5c32afd0ea8aac5dd20f5db30c496b386e30acedce7d1` |
+| Exact MPS screening adjudication | `1094cc68e2bf9952916fb12ac6489119a4f4ee4be2ece7f8b1c1a4f1ed411fa3` |
+| Raw MPS/CUDA SSB parity | `17a7ef5750444377c7d16c18bfadef39607ea3d684c91dad93681ca887d7154e` |
+| Deterministic CUDA full fit | `d262c1ed8fa55728811735bc974ef4fcc413e60aff83dfcd7396b4ad681f4527` |
+
+## Earlier three-host full-scan campaign
+
+This retained campaign used fixture C on three machines. Its rows remain valid
+historical same-fixture comparisons, but the current platform profile above
+replaces headline values where a newer equivalent measurement exists.
 
 - **Date tested:** 2026-08-19
 - **Measured revision:** `8c47a466d573f74e425faff611939a17fa6efbf2`

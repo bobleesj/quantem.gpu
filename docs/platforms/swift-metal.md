@@ -22,6 +22,11 @@ WebGPU paths.
 | `MetalImageFFT` | FFT operations on resident 2D products | `.../MetalImageFFT` |
 | `MetalImageRuntime` | typed resident surface/statistics state | `.../MetalImageRuntime` |
 
+The native package does not currently provide the Python
+`screening.prepare` cache contract or an SSB implementation. It does provide
+the detector, CoM, DPC/iDPC, display, FFT, load, and provenance primitives that
+a native client can compose without changing their scientific meaning.
+
 ## Call and resource path
 
 ```text
