@@ -343,6 +343,14 @@ final class Metal4DSTEMKernelsTests: XCTestCase {
         )
       )
     )
+    let frameMajorRow8BinPipeline = try device.makeComputePipelineState(
+      function: XCTUnwrap(
+        library.makeFunction(
+          name: Metal4DSTEMKernels
+            .binU16AuditedLow8ScalarU16FrameMajorRow8Function
+        )
+      )
+    )
     let records = try realQH5Blocks(
       indexDirectory: URL(fileURLWithPath: indexDirectory),
       globalFrames: [117_229, 152_528, 155_484, 217_787]
@@ -474,6 +482,42 @@ final class Metal4DSTEMKernelsTests: XCTestCase {
       XCTAssertEqual(bufferValues(total, count: 1), [expectedTotal])
       XCTAssertEqual(bufferValues(rowMoment, count: 1), [expectedRowMoment])
       XCTAssertEqual(bufferValues(columnMoment, count: 1), [expectedColumnMoment])
+
+      let frameMajorRow8Output = try outputBuffer(
+        device: device,
+        count: 48 * 48 / 2
+      )
+      let frameMajorRow8Audit = try outputBuffer(device: device, count: 1)
+      let frameMajorRow8Command = try XCTUnwrap(queue.makeCommandBuffer())
+      let frameMajorRow8Encoder = try XCTUnwrap(
+        frameMajorRow8Command.makeComputeCommandEncoder()
+      )
+      frameMajorRow8Encoder.setComputePipelineState(frameMajorRow8BinPipeline)
+      frameMajorRow8Encoder.setBuffer(scratch, offset: 0, index: 0)
+      frameMajorRow8Encoder.setBuffer(frameMajorRow8Output, offset: 0, index: 1)
+      frameMajorRow8Encoder.setBuffer(badMask, offset: 0, index: 2)
+      frameMajorRow8Encoder.setBuffer(frameMajorRow8Audit, offset: 0, index: 3)
+      frameMajorRow8Encoder.setBytes(&globalFrameOffset, length: 4, index: 4)
+      frameMajorRow8Encoder.setBytes(&frameElements, length: 4, index: 5)
+      withUnsafeBytes(of: &parameters) {
+        frameMajorRow8Encoder.setBytes($0.baseAddress!, length: $0.count, index: 6)
+      }
+      frameMajorRow8Encoder.dispatchThreadgroups(
+        MTLSize(width: 9, height: 1, depth: 1),
+        threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1)
+      )
+      frameMajorRow8Encoder.endEncoding()
+      try complete(frameMajorRow8Command)
+
+      XCTAssertEqual(
+        bufferValues(frameMajorRow8Output, count: 48 * 48 / 2),
+        actualWords,
+        "frame-major row8 detector-bin mismatch at scan frame \(frame)"
+      )
+      XCTAssertEqual(
+        bufferValues(frameMajorRow8Audit, count: 1),
+        [bufferValues(countAudit, count: 2)[0]]
+      )
 
       let frameOwnedOutput = try outputBuffer(device: device, count: 48 * 48 / 2)
       let frameOwnedAudit = try outputBuffer(device: device, count: 2)
