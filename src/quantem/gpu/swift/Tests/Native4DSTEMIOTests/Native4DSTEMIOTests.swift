@@ -938,6 +938,11 @@ final class Native4DSTEMIOTests: XCTestCase {
       plan.maximumMappedSourceBufferBytes,
       plan.maximumMappedCompressedBytes
     )
+    XCTAssertEqual(plan.maximumInFlightCommandBuffers, 4)
+    XCTAssertEqual(
+      plan.maximumInFlightMappedSourceBytes,
+      plan.maximumMappedSourceBufferBytes
+    )
 
     XCTAssertNoThrow(
       try Metal4DSTEMIndexedLoadPlan.validateExactProductBounds(
@@ -1115,6 +1120,12 @@ final class Native4DSTEMIOTests: XCTestCase {
       plan.detectorSamplingColumn
     )
     XCTAssertEqual(result.provenance.detectorSamplingUnit, plan.detectorSamplingUnit)
+    XCTAssertEqual(result.metrics.commandBufferCount, 1)
+    XCTAssertEqual(result.metrics.peakInFlightCommandBuffers, 1)
+    XCTAssertEqual(
+      result.metrics.peakInFlightMappedSourceBytes,
+      result.metrics.maximumMappedSourceBufferBytes
+    )
 
     let frame = try loader.diffractionPattern(
       source: source,
@@ -1157,6 +1168,43 @@ final class Native4DSTEMIOTests: XCTestCase {
     ) { error in
       XCTAssertEqual(error as? Metal4DSTEMStreamingIOError, .cancelled)
     }
+  }
+
+  func testIndexedStreamingCancellationDrainsSubmittedCommand() throws {
+    guard let device = MTLCreateSystemDefaultDevice() else {
+      throw XCTSkip("No Metal device is available for indexed streaming cancellation.")
+    }
+    let fixture = try copiedFixture()
+    let dataset = try XCTUnwrap(
+      Native4DSTEMCatalogBuilder(cacheDirectory: fixture.cache)
+        .prepare(input: fixture.master).datasets.first
+    )
+    let source = try Native4DSTEMIndexedSource.open(dataset: dataset)
+    let bands = try Metal4DSTEMDetectorBands(
+      detectorRows: dataset.detectorRows,
+      detectorColumns: dataset.detectorCols,
+      membership: [UInt8](repeating: 0, count: dataset.detectorRows * dataset.detectorCols)
+    )
+    let plan = try Metal4DSTEMIndexedLoadPlan(
+      source: source,
+      maximumDecodedWindowBytes: source.decodedBytesPerFrame,
+      detectorBands: bands
+    )
+    let loader = try Metal4DSTEMIndexedLoader(device: device)
+    var cancellationChecks = 0
+    XCTAssertThrowsError(
+      try loader.loadExactProducts(
+        source: source,
+        plan: plan,
+        shouldCancel: {
+          cancellationChecks += 1
+          return cancellationChecks >= 3
+        }
+      )
+    ) { error in
+      XCTAssertEqual(error as? Metal4DSTEMStreamingIOError, .cancelled)
+    }
+    XCTAssertEqual(cancellationChecks, 3)
   }
 
   private func copiedFixture() throws -> (
