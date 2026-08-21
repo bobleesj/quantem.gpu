@@ -688,6 +688,78 @@ kernel void scan_detector_bin_u16_to_u32_word_major(
     scanDetectorBinToU32WordMajor(source, destination, params, position);
 }
 
+// A prepared QH5 slice is a contiguous frame interval, but chunk/shard
+// boundaries need not align to complete scan rows. This exact path therefore
+// maps one decoded frame directly to one working scan position while retaining
+// detector-word-major packed uint16 storage. Scan binning and crop are excluded
+// by the typed Swift contract.
+struct ContiguousDetectorBinParams {
+    uint frameCount;
+    uint sourceDetectorRows;
+    uint sourceDetectorCols;
+    uint detectorBin;
+    uint destinationScanCount;
+    uint destinationScanOffset;
+    uint outputDetectorRows;
+    uint outputDetectorCols;
+};
+
+inline uint contiguousDetectorBinU16Value(
+    device const ushort *source,
+    constant ContiguousDetectorBinParams &params,
+    uint outputDetectorPixel,
+    uint localFrame
+) {
+    uint outputDetectorRow = outputDetectorPixel / params.outputDetectorCols;
+    uint outputDetectorCol =
+        outputDetectorPixel - outputDetectorRow * params.outputDetectorCols;
+    uint sourceDetectorRowStart = outputDetectorRow * params.detectorBin;
+    uint sourceDetectorColStart = outputDetectorCol * params.detectorBin;
+    uint sourceDetectorRowStop = min(
+        params.sourceDetectorRows,
+        sourceDetectorRowStart + params.detectorBin
+    );
+    uint sourceDetectorColStop = min(
+        params.sourceDetectorCols,
+        sourceDetectorColStart + params.detectorBin
+    );
+    uint sourceDetectorPixels = params.sourceDetectorRows * params.sourceDetectorCols;
+    ulong frameBase = ulong(localFrame) * sourceDetectorPixels;
+    uint sum = 0u;
+    for (uint row = sourceDetectorRowStart; row < sourceDetectorRowStop; ++row) {
+        ulong rowBase = frameBase + ulong(row) * params.sourceDetectorCols;
+        for (uint col = sourceDetectorColStart; col < sourceDetectorColStop; ++col) {
+            sum += source[rowBase + col];
+        }
+    }
+    return sum;
+}
+
+kernel void contiguous_detector_bin_u16_to_u16_word_major(
+    device const ushort *source [[buffer(0)]],
+    device uint *destination [[buffer(1)]],
+    constant ContiguousDetectorBinParams &params [[buffer(2)]],
+    uint2 position [[thread_position_in_grid]]
+) {
+    uint outputDetectorWord = position.x;
+    uint localFrame = position.y;
+    uint outputDetectorPixels = params.outputDetectorRows * params.outputDetectorCols;
+    uint firstPixel = outputDetectorWord * 2u;
+    if (firstPixel >= outputDetectorPixels || localFrame >= params.frameCount) return;
+
+    uint low = contiguousDetectorBinU16Value(
+        source, params, firstPixel, localFrame
+    );
+    uint high = firstPixel + 1u < outputDetectorPixels
+        ? contiguousDetectorBinU16Value(
+            source, params, firstPixel + 1u, localFrame
+        )
+        : 0u;
+    uint destinationScan = params.destinationScanOffset + localFrame;
+    destination[ulong(outputDetectorWord) * params.destinationScanCount + destinationScan] =
+        low | (high << 16u);
+}
+
 struct WordMajorDetectorParams {
     uint scanCount;
     uint detectorPixels;

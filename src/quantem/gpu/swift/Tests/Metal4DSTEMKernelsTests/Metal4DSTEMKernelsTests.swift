@@ -1668,6 +1668,169 @@ final class Metal4DSTEMKernelsTests: XCTestCase {
     }
   }
 
+  func testExactBinnerContiguousFrameSlicesMatchReferenceAcrossRowShards() throws {
+    let device = try metalDevice()
+    let queue = try XCTUnwrap(device.makeCommandQueue())
+    let plan = try Metal4DSTEMLoadPlan(
+      sourceScanRows: 2,
+      sourceScanColumns: 3,
+      detectorRows: 3,
+      detectorColumns: 5,
+      sourceBytesPerValue: 2,
+      scanRegion: Metal4DSTEMScanRegion.full(sourceRows: 2, sourceColumns: 3),
+      detectorBin: 2
+    )
+    let frameCount = plan.outputScanPositions
+    let values = (0..<(frameCount * plan.detectorPixels)).map {
+      UInt16(($0 * 7 + 3) % 113)
+    }
+    let audit = try Metal4DSTEMExactSourceAudit(
+      sourceIdentitySHA256: String(repeating: "c", count: 64),
+      sourceDtype: .uint16,
+      badPixelIndices: [],
+      maximumSourceCount: UInt32(values.max()!),
+      pixelsAbove255: 0
+    )
+    let provenance = try Metal4DSTEMExactBinner.provenance(
+      plan: plan,
+      sourceAudit: audit,
+      stagingDtype: .uint16,
+      outputDtype: .uint16
+    )
+    let wordsPerScan = (plan.outputDetectorPixels + 1) / 2
+    let shardPlan = try Metal4DSTEMExactBinningShardPlan(
+      provenance: provenance,
+      maximumShardBytes: UInt64(
+        wordsPerScan * plan.outputScanColumns * MemoryLayout<UInt32>.stride
+      )
+    )
+    XCTAssertEqual(shardPlan.shards.map(\.outputScanPositionCount), [3, 3])
+
+    let source = try makeBuffer(device: device, values: values)
+    let destinations = try shardPlan.shards.map {
+      try outputBuffer(
+        device: device,
+        count: wordsPerScan * $0.outputScanPositionCount
+      )
+    }
+    let command = try XCTUnwrap(queue.makeCommandBuffer())
+    let binner = try Metal4DSTEMExactBinner(device: device)
+    for range in [0..<2, 2..<3, 3..<5, 5..<6] {
+      let shardIndex = range.lowerBound / plan.outputScanColumns
+      _ = try binner.encodeContiguousUInt16Frames(
+        commandBuffer: command,
+        stagedSource: source,
+        stagedSourceOffset:
+          range.lowerBound * plan.detectorPixels * MemoryLayout<UInt16>.stride,
+        destination: destinations[shardIndex],
+        destinationView: .scanRowShard(plan: shardPlan, index: shardIndex),
+        plan: plan,
+        sourceFrameCount: range.count,
+        globalScanPositionOffset: range.lowerBound,
+        sourceAudit: audit
+      )
+    }
+    try complete(command)
+
+    var expected = [UInt32](
+      repeating: 0,
+      count: wordsPerScan * plan.outputScanPositions
+    )
+    for scan in 0..<plan.outputScanPositions {
+      var detectorSums = [UInt32](repeating: 0, count: plan.outputDetectorPixels)
+      for outputRow in 0..<plan.outputDetectorRows {
+        for outputColumn in 0..<plan.outputDetectorColumns {
+          let outputPixel = outputRow * plan.outputDetectorColumns + outputColumn
+          for row in (outputRow * 2)..<min((outputRow + 1) * 2, plan.detectorRows) {
+            for column in (outputColumn * 2)..<min((outputColumn + 1) * 2, plan.detectorColumns) {
+              let sourcePixel = row * plan.detectorColumns + column
+              detectorSums[outputPixel] += UInt32(
+                values[scan * plan.detectorPixels + sourcePixel]
+              )
+            }
+          }
+        }
+      }
+      for word in 0..<wordsPerScan {
+        let low = detectorSums[word * 2]
+        let high =
+          word * 2 + 1 < detectorSums.count
+          ? detectorSums[word * 2 + 1] : 0
+        expected[word * plan.outputScanPositions + scan] = low | (high << 16)
+      }
+    }
+    for shard in shardPlan.shards {
+      var expectedShard: [UInt32] = []
+      for word in 0..<wordsPerScan {
+        let start = word * plan.outputScanPositions + shard.outputScanPositionStart
+        expectedShard.append(
+          contentsOf: expected[start..<(start + shard.outputScanPositionCount)]
+        )
+      }
+      XCTAssertEqual(
+        bufferValues(destinations[shard.index], count: expectedShard.count),
+        expectedShard
+      )
+    }
+
+    let crossing = try XCTUnwrap(queue.makeCommandBuffer())
+    XCTAssertThrowsError(
+      try binner.encodeContiguousUInt16Frames(
+        commandBuffer: crossing,
+        stagedSource: source,
+        stagedSourceOffset: 2 * plan.detectorPixels * MemoryLayout<UInt16>.stride,
+        destination: destinations[0],
+        destinationView: .scanRowShard(plan: shardPlan, index: 0),
+        plan: plan,
+        sourceFrameCount: 2,
+        globalScanPositionOffset: 2,
+        sourceAudit: audit
+      )
+    ) { error in
+      XCTAssertEqual(
+        error as? Metal4DSTEMExactBinnerError,
+        .frameRangeCrossesDestinationShard(
+          frameStart: 2, frameStop: 4, shardStart: 0, shardStop: 3
+        )
+      )
+    }
+
+    let croppedRegion = try Metal4DSTEMScanRegion(
+      rowStart: 0,
+      rowStop: 2,
+      columnStart: 1,
+      columnStop: 3,
+      sourceRows: 2,
+      sourceColumns: 3
+    )
+    let croppedPlan = try Metal4DSTEMLoadPlan(
+      sourceScanRows: 2,
+      sourceScanColumns: 3,
+      detectorRows: 3,
+      detectorColumns: 5,
+      sourceBytesPerValue: 2,
+      scanRegion: croppedRegion,
+      detectorBin: 2
+    )
+    let cropped = try XCTUnwrap(queue.makeCommandBuffer())
+    XCTAssertThrowsError(
+      try binner.encodeContiguousUInt16Frames(
+        commandBuffer: cropped,
+        stagedSource: source,
+        destination: destinations[0],
+        plan: croppedPlan,
+        sourceFrameCount: 1,
+        globalScanPositionOffset: 0,
+        sourceAudit: audit
+      )
+    ) { error in
+      XCTAssertEqual(
+        error as? Metal4DSTEMExactBinnerError,
+        .contiguousFramesRequireFullScanBinOne
+      )
+    }
+  }
+
   func testExactAccumulatorBoundsAdmitAuditedLow8DetectorBin4Load() throws {
     let region = try Metal4DSTEMScanRegion.full(sourceRows: 512, sourceColumns: 512)
     let plan = try Metal4DSTEMLoadPlan(
