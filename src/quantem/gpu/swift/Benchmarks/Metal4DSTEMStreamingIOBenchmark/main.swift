@@ -2,6 +2,7 @@ import CryptoKit
 import Darwin
 import Foundation
 import Metal
+import Metal4DSTEMKernels
 import Metal4DSTEMStreamingIO
 import Native4DSTEMIO
 
@@ -14,11 +15,14 @@ private struct Options {
       --revision 40_CHARACTER_COMMIT_SHA \\
       (--bands-file PATH | --all-bands) \\
       [--window-scan-rows N] \\
-      [--iterations N]
+      [--iterations N] \\
+      [--exact-working-audit PATH --detector-bin N --maximum-shard-bytes N]
 
     Source-page state is not purged or inferred. The first trial is labeled as
     a first process encounter with prepared indexes and unspecified source pages;
-    later trials are same-process repeats. Application UI time is not measured.
+    later trials are same-process repeats. Supplying all three exact-working
+    options retains the complete full-scan working volume as bounded packed
+    uint16 shards. Application UI and cache-write time are not measured.
     """
 
   let input: URL
@@ -29,6 +33,9 @@ private struct Options {
   let iterations: Int
   let bandsFile: URL?
   let allBands: Bool
+  let exactWorkingAudit: URL?
+  let detectorBin: Int?
+  let maximumShardBytes: UInt64?
 
   static func parse(_ arguments: [String]) throws -> Self {
     var values: [String: String] = [:]
@@ -72,6 +79,26 @@ private struct Options {
         "--window-scan-rows and --iterations must be positive integers."
       )
     }
+    let audit = values["--exact-working-audit"].map {
+      URL(fileURLWithPath: $0)
+    }
+    let detectorBin = values["--detector-bin"].flatMap(Int.init)
+    let maximumShardBytes = values["--maximum-shard-bytes"].flatMap(UInt64.init)
+    let exactOptions = [audit != nil, detectorBin != nil, maximumShardBytes != nil]
+    guard exactOptions.allSatisfy({ $0 }) || exactOptions.allSatisfy({ !$0 }) else {
+      throw BenchmarkError.usage(
+        "Provide --exact-working-audit, --detector-bin, and --maximum-shard-bytes together."
+      )
+    }
+    if let detectorBin {
+      guard Metal4DSTEMLoadPlan.supportedDetectorBins.contains(detectorBin),
+        let maximumShardBytes, maximumShardBytes > 0
+      else {
+        throw BenchmarkError.usage(
+          "Exact working-volume detector bin must be 1, 2, or 4 and shard bytes must be positive."
+        )
+      }
+    }
     return Self(
       input: URL(fileURLWithPath: input),
       cacheDirectory: URL(fileURLWithPath: cache, isDirectory: true),
@@ -80,7 +107,10 @@ private struct Options {
       windowScanRows: windowRows,
       iterations: iterations,
       bandsFile: bandsFile,
-      allBands: allBands
+      allBands: allBands,
+      exactWorkingAudit: audit,
+      detectorBin: detectorBin,
+      maximumShardBytes: maximumShardBytes
     )
   }
 }
@@ -100,6 +130,8 @@ private struct RunRecord: Codable {
   let trial: Int
   let state: String
   let wallSeconds: Double
+  let destinationAllocationSeconds: Double?
+  let workingVolumeHashSeconds: Double?
   let gpuSeconds: Double
   let sourceMappingSeconds: Double
   let commandBufferCount: Int
@@ -111,6 +143,8 @@ private struct RunRecord: Codable {
   let maximumDecodedSliceBytes: UInt64
   let maximumSourceCount: UInt32
   let pixelsAbove255: UInt64
+  let binningDispatchCount: Int?
+  let workingVolumeSHA256: String?
   let hashes: [String: String]
 }
 
@@ -149,6 +183,11 @@ private struct BenchmarkSummary: Codable {
   let maximumInFlightMappedSourceBytes: UInt64
   let maximumInFlightCommandBuffers: Int
   let maximumIndividualMetalBufferBytes: UInt64
+  let workingPayloadBytes: UInt64?
+  let shardCount: Int?
+  let maximumActualShardBytes: UInt64?
+  let valueRangeAuditSHA256: String?
+  let workingVolumeSHA256: String?
   let processPeakResidentBytes: UInt64?
   let catalogSeconds: Double
   let pipelineCompilationSeconds: Double
@@ -157,6 +196,9 @@ private struct BenchmarkSummary: Codable {
   let repeatedLoadWall: Distribution
   let runs: [RunRecord]
   let provenance: Metal4DSTEMIndexedLoadProvenance
+  let binningProvenance: Metal4DSTEMExactBinningProvenance?
+  let samplingPropagation: Metal4DSTEMSamplingPropagation?
+  let shardPlan: Metal4DSTEMExactBinningShardPlan?
 }
 
 private func checkedProduct(_ values: [UInt64], label: String) throws -> UInt64 {
@@ -185,6 +227,24 @@ private func sha256(_ data: Data) -> String {
   SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
 }
 
+private func sha256(_ buffers: [MTLBuffer]) throws -> String {
+  var hasher = SHA256()
+  for buffer in buffers {
+    guard buffer.storageMode == .shared else {
+      throw BenchmarkError.invalid(
+        "Working-volume hashing requires shared Metal shards."
+      )
+    }
+    hasher.update(
+      bufferPointer: UnsafeRawBufferPointer(
+        start: buffer.contents(),
+        count: buffer.length
+      )
+    )
+  }
+  return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+}
+
 private func productData(_ products: Metal4DSTEMExactProducts) -> [String: Data] {
   [
     "detector_sum.u64": littleEndianData(products.detectorSum),
@@ -195,6 +255,18 @@ private func productData(_ products: Metal4DSTEMExactProducts) -> [String: Data]
     "detector_row_moment.u64": littleEndianData(products.detectorRowMoment),
     "detector_column_moment.u64": littleEndianData(products.detectorColumnMoment),
   ]
+}
+
+private struct LoadedTrial {
+  let products: Metal4DSTEMExactProducts
+  let sourceAudit: Metal4DSTEMExactSourceAudit
+  let provenance: Metal4DSTEMIndexedLoadProvenance
+  let metrics: Metal4DSTEMIndexedLoadMetrics
+  let wallSeconds: Double
+  let destinationAllocationSeconds: Double?
+  let binningDispatchCount: Int?
+  let workingVolumeSHA256: String?
+  let workingVolumeHashSeconds: Double?
 }
 
 private func run() throws {
@@ -269,11 +341,31 @@ private func run() throws {
     label: "decoded window"
   )
   let planStarted = CFAbsoluteTimeGetCurrent()
-  let plan = try Metal4DSTEMIndexedLoadPlan(
+  let productPlan = try Metal4DSTEMIndexedLoadPlan(
     source: source,
     maximumDecodedWindowBytes: windowBytes,
     detectorBands: bands
   )
+  let binnedPlan: Metal4DSTEMIndexedBinnedLoadPlan?
+  if let auditURL = options.exactWorkingAudit,
+    let detectorBin = options.detectorBin,
+    let maximumShardBytes = options.maximumShardBytes
+  {
+    let audit = try JSONDecoder().decode(
+      Metal4DSTEMExactSourceAudit.self,
+      from: Data(contentsOf: auditURL)
+    )
+    binnedPlan = try Metal4DSTEMIndexedBinnedLoadPlan(
+      source: source,
+      maximumDecodedWindowBytes: windowBytes,
+      detectorBands: bands,
+      detectorBin: detectorBin,
+      sourceAudit: audit,
+      maximumShardBytes: maximumShardBytes
+    )
+  } else {
+    binnedPlan = nil
+  }
   let planSeconds = CFAbsoluteTimeGetCurrent() - planStarted
   guard let device = MTLCreateSystemDefaultDevice() else {
     throw BenchmarkError.invalid("No Metal device is visible to this benchmark process.")
@@ -285,10 +377,44 @@ private func run() throws {
   var records: [RunRecord] = []
   var acceptedHashes: [String: String]?
   var acceptedProvenance: Metal4DSTEMIndexedLoadProvenance?
+  var acceptedWorkingVolumeSHA256: String?
   var acceptedData: [String: Data] = [:]
   for trial in 1...options.iterations {
-    let result = try loader.loadExactProducts(source: source, plan: plan)
-    let data = productData(result.products)
+    let loaded: LoadedTrial
+    if let binnedPlan {
+      let result = try loader.loadExactBinnedShards(
+        source: source,
+        plan: binnedPlan
+      )
+      let hashStarted = CFAbsoluteTimeGetCurrent()
+      let workingVolumeSHA256 = try sha256(result.workingVolumeShards)
+      let hashSeconds = CFAbsoluteTimeGetCurrent() - hashStarted
+      loaded = LoadedTrial(
+        products: result.products,
+        sourceAudit: result.sourceAudit,
+        provenance: result.nativeProductProvenance,
+        metrics: result.metrics.indexedLoad,
+        wallSeconds: result.metrics.totalWallSeconds,
+        destinationAllocationSeconds: result.metrics.destinationAllocationSeconds,
+        binningDispatchCount: result.metrics.binningDispatchCount,
+        workingVolumeSHA256: workingVolumeSHA256,
+        workingVolumeHashSeconds: hashSeconds
+      )
+    } else {
+      let result = try loader.loadExactProducts(source: source, plan: productPlan)
+      loaded = LoadedTrial(
+        products: result.products,
+        sourceAudit: result.sourceAudit,
+        provenance: result.provenance,
+        metrics: result.metrics,
+        wallSeconds: result.metrics.wallSeconds,
+        destinationAllocationSeconds: nil,
+        binningDispatchCount: nil,
+        workingVolumeSHA256: nil,
+        workingVolumeHashSeconds: nil
+      )
+    }
+    let data = productData(loaded.products)
     let hashes = data.mapValues(sha256)
     if let acceptedHashes, hashes != acceptedHashes {
       throw BenchmarkError.invalid(
@@ -296,14 +422,24 @@ private func run() throws {
       )
     }
     if let acceptedProvenance {
-      guard acceptedProvenance == result.provenance else {
+      guard acceptedProvenance == loaded.provenance else {
         throw BenchmarkError.invalid(
           "Exact product provenance changed between repeated load trials."
         )
       }
     }
+    if let workingVolumeSHA256 = loaded.workingVolumeSHA256 {
+      if let acceptedWorkingVolumeSHA256,
+        acceptedWorkingVolumeSHA256 != workingVolumeSHA256
+      {
+        throw BenchmarkError.invalid(
+          "Exact working-volume SHA-256 changed between repeated load trials."
+        )
+      }
+      acceptedWorkingVolumeSHA256 = workingVolumeSHA256
+    }
     acceptedHashes = hashes
-    acceptedProvenance = result.provenance
+    acceptedProvenance = loaded.provenance
     acceptedData = data
     records.append(
       RunRecord(
@@ -311,20 +447,24 @@ private func run() throws {
         state: trial == 1
           ? "first_process_prepared_index_source_pages_unspecified"
           : "same_process_repeat_source_pages_unspecified",
-        wallSeconds: result.metrics.wallSeconds,
-        gpuSeconds: result.metrics.gpuSeconds,
-        sourceMappingSeconds: result.metrics.sourceMappingSeconds,
-        commandBufferCount: result.metrics.commandBufferCount,
-        peakInFlightCommandBuffers: result.metrics.peakInFlightCommandBuffers,
-        peakInFlightMappedSourceBytes: result.metrics.peakInFlightMappedSourceBytes,
-        mappedCompressedSourceBytes: result.metrics.mappedCompressedSourceBytes,
+        wallSeconds: loaded.wallSeconds,
+        destinationAllocationSeconds: loaded.destinationAllocationSeconds,
+        workingVolumeHashSeconds: loaded.workingVolumeHashSeconds,
+        gpuSeconds: loaded.metrics.gpuSeconds,
+        sourceMappingSeconds: loaded.metrics.sourceMappingSeconds,
+        commandBufferCount: loaded.metrics.commandBufferCount,
+        peakInFlightCommandBuffers: loaded.metrics.peakInFlightCommandBuffers,
+        peakInFlightMappedSourceBytes: loaded.metrics.peakInFlightMappedSourceBytes,
+        mappedCompressedSourceBytes: loaded.metrics.mappedCompressedSourceBytes,
         maximumMappedCompressedSourceBytes:
-          result.metrics.maximumMappedCompressedSourceBytes,
+          loaded.metrics.maximumMappedCompressedSourceBytes,
         maximumMappedSourceBufferBytes:
-          result.metrics.maximumMappedSourceBufferBytes,
-        maximumDecodedSliceBytes: result.metrics.maximumDecodedSliceBytes,
-        maximumSourceCount: result.sourceAudit.maximumSourceCount,
-        pixelsAbove255: result.sourceAudit.pixelsAbove255,
+          loaded.metrics.maximumMappedSourceBufferBytes,
+        maximumDecodedSliceBytes: loaded.metrics.maximumDecodedSliceBytes,
+        maximumSourceCount: loaded.sourceAudit.maximumSourceCount,
+        pixelsAbove255: loaded.sourceAudit.pixelsAbove255,
+        binningDispatchCount: loaded.binningDispatchCount,
+        workingVolumeSHA256: loaded.workingVolumeSHA256,
         hashes: hashes
       )
     )
@@ -339,45 +479,64 @@ private func run() throws {
     p95: percentile(wall, fraction: 0.95),
     maximum: wall.max() ?? .nan
   )
+  let workingShape =
+    binnedPlan.map {
+      [
+        $0.binningProvenance.outputScanRows,
+        $0.binningProvenance.outputScanColumns,
+        $0.binningProvenance.outputDetectorRows,
+        $0.binningProvenance.outputDetectorColumns,
+      ]
+    } ?? [
+      productPlan.sourceScanRows,
+      productPlan.sourceScanColumns,
+      productPlan.sourceDetectorRows,
+      productPlan.sourceDetectorColumns,
+    ]
   let summary = BenchmarkSummary(
-    schema: "quantem.gpu.metal-4dstem-indexed-load-benchmark/v1",
+    schema: "quantem.gpu.metal-4dstem-indexed-load-benchmark/v2",
     revision: options.revision,
     timestamp: ISO8601DateFormatter().string(from: Date()),
     host: ProcessInfo.processInfo.hostName,
     os: ProcessInfo.processInfo.operatingSystemVersionString,
     device: device.name,
     input: options.input.path,
-    sourceIdentitySHA256: plan.sourceIdentitySHA256,
+    sourceIdentitySHA256: productPlan.sourceIdentitySHA256,
     sourceShape: [
-      plan.sourceScanRows,
-      plan.sourceScanColumns,
-      plan.sourceDetectorRows,
-      plan.sourceDetectorColumns,
+      productPlan.sourceScanRows,
+      productPlan.sourceScanColumns,
+      productPlan.sourceDetectorRows,
+      productPlan.sourceDetectorColumns,
     ],
-    workingShape: [
-      plan.sourceScanRows,
-      plan.sourceScanColumns,
-      plan.sourceDetectorRows,
-      plan.sourceDetectorColumns,
-    ],
-    sourceDtype: plan.sourceDtype.rawValue,
-    workingDtype: plan.stagingDtype.rawValue,
-    scanBin: plan.scanBin,
-    detectorBin: plan.detectorBin,
+    workingShape: workingShape,
+    sourceDtype: productPlan.sourceDtype.rawValue,
+    workingDtype: binnedPlan?.binningProvenance.outputDtype.rawValue
+      ?? productPlan.stagingDtype.rawValue,
+    scanBin: binnedPlan?.binningProvenance.scanBin ?? productPlan.scanBin,
+    detectorBin: binnedPlan?.binningProvenance.detectorBin
+      ?? productPlan.detectorBin,
     crop: "none",
     bandSource: bandSource,
-    compressedSourceBytes: plan.compressedSourceBytes,
-    logicalDecodedBytes: plan.logicalDecodedBytes,
-    maximumDecodedWindowBytes: plan.maximumDecodedWindowBytes,
+    compressedSourceBytes: productPlan.compressedSourceBytes,
+    logicalDecodedBytes: productPlan.logicalDecodedBytes,
+    maximumDecodedWindowBytes: productPlan.maximumDecodedWindowBytes,
     requestedWindowScanRows: options.windowScanRows,
-    maximumActualWindowBytes: plan.maximumActualWindowBytes,
+    maximumActualWindowBytes: productPlan.maximumActualWindowBytes,
     estimatedAllocatedMetalBytesExcludingMappedSource:
-      plan.estimatedAllocatedMetalBytesExcludingMappedSource,
-    maximumMappedCompressedBytes: plan.maximumMappedCompressedBytes,
-    maximumMappedSourceBufferBytes: plan.maximumMappedSourceBufferBytes,
-    maximumInFlightMappedSourceBytes: plan.maximumInFlightMappedSourceBytes,
-    maximumInFlightCommandBuffers: plan.maximumInFlightCommandBuffers,
-    maximumIndividualMetalBufferBytes: plan.maximumIndividualMetalBufferBytes,
+      binnedPlan?.estimatedAllocatedMetalBytesExcludingMappedSource
+      ?? productPlan.estimatedAllocatedMetalBytesExcludingMappedSource,
+    maximumMappedCompressedBytes: productPlan.maximumMappedCompressedBytes,
+    maximumMappedSourceBufferBytes: productPlan.maximumMappedSourceBufferBytes,
+    maximumInFlightMappedSourceBytes: productPlan.maximumInFlightMappedSourceBytes,
+    maximumInFlightCommandBuffers: productPlan.maximumInFlightCommandBuffers,
+    maximumIndividualMetalBufferBytes:
+      binnedPlan?.maximumIndividualMetalBufferBytes
+      ?? productPlan.maximumIndividualMetalBufferBytes,
+    workingPayloadBytes: binnedPlan?.workingPayloadBytes,
+    shardCount: binnedPlan?.shardPlan.shards.count,
+    maximumActualShardBytes: binnedPlan?.shardPlan.maximumActualShardBytes,
+    valueRangeAuditSHA256: binnedPlan?.sourceAudit.auditSHA256,
+    workingVolumeSHA256: acceptedWorkingVolumeSHA256,
     processPeakResidentBytes: processPeakResidentBytes(),
     catalogSeconds: catalogSeconds,
     pipelineCompilationSeconds: compileSeconds,
@@ -386,7 +545,10 @@ private func run() throws {
       catalogSeconds + compileSeconds + planSeconds + first.wallSeconds,
     repeatedLoadWall: distribution,
     runs: records,
-    provenance: provenance
+    provenance: provenance,
+    binningProvenance: binnedPlan?.binningProvenance,
+    samplingPropagation: binnedPlan?.samplingPropagation,
+    shardPlan: binnedPlan?.shardPlan
   )
   try FileManager.default.createDirectory(
     at: options.outputDirectory,

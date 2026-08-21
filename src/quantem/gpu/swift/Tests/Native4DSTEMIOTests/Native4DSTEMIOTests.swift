@@ -2,6 +2,7 @@ import Foundation
 import Metal
 import XCTest
 
+@testable import Metal4DSTEMKernels
 @testable import Metal4DSTEMStreamingIO
 @testable import Native4DSTEMIO
 
@@ -1136,6 +1137,113 @@ final class Native4DSTEMIOTests: XCTestCase {
     XCTAssertEqual(frame.dtype, .uint16)
     XCTAssertEqual(frame.detectorRows, 64)
     XCTAssertEqual(frame.detectorColumns, 64)
+  }
+
+  func testIndexedStreamingExactBinnedShardsMatchFixtureAndAuditFailsClosed() throws {
+    guard let device = MTLCreateSystemDefaultDevice() else {
+      throw XCTSkip("No Metal device is available for indexed binning parity.")
+    }
+    let fixture = try copiedFixture()
+    let dataset = try XCTUnwrap(
+      Native4DSTEMCatalogBuilder(cacheDirectory: fixture.cache)
+        .prepare(input: fixture.master).datasets.first
+    )
+    let source = try Native4DSTEMIndexedSource.open(dataset: dataset)
+    let detectorPixels = dataset.detectorRows * dataset.detectorCols
+    let badPixels = Set(dataset.badPixelIndices)
+    let expectedNative: [UInt16] = (0..<detectorPixels).map {
+      badPixels.contains($0) ? 0 : UInt16($0 % 257)
+    }
+    let audit = try Metal4DSTEMExactSourceAudit(
+      sourceIdentitySHA256: try XCTUnwrap(dataset.sourceIdentitySHA256),
+      sourceDtype: .uint16,
+      badPixelIndices: dataset.badPixelIndices,
+      maximumSourceCount: UInt32(expectedNative.max() ?? 0),
+      pixelsAbove255: UInt64(expectedNative.filter { $0 > 255 }.count)
+    )
+    let bands = try Metal4DSTEMDetectorBands(
+      detectorRows: dataset.detectorRows,
+      detectorColumns: dataset.detectorCols,
+      membership: [UInt8](repeating: 7, count: detectorPixels)
+    )
+    let plan = try Metal4DSTEMIndexedBinnedLoadPlan(
+      source: source,
+      maximumDecodedWindowBytes: source.decodedBytesPerFrame,
+      detectorBands: bands,
+      detectorBin: 2,
+      sourceAudit: audit,
+      maximumShardBytes: 1 << 20
+    )
+    let loader = try Metal4DSTEMIndexedLoader(device: device)
+    let result = try loader.loadExactBinnedShards(source: source, plan: plan)
+
+    var expectedWorking: [UInt16] = []
+    for outputRow in 0..<plan.binningProvenance.outputDetectorRows {
+      for outputColumn in 0..<plan.binningProvenance.outputDetectorColumns {
+        var sum: UInt32 = 0
+        for row in (outputRow * 2)..<min((outputRow + 1) * 2, dataset.detectorRows) {
+          for column in (outputColumn * 2)..<min((outputColumn + 1) * 2, dataset.detectorCols) {
+            sum += UInt32(expectedNative[row * dataset.detectorCols + column])
+          }
+        }
+        expectedWorking.append(UInt16(sum))
+      }
+    }
+    XCTAssertEqual(result.workingVolumeShards.count, 1)
+    let packedWordCount = (expectedWorking.count + 1) / 2
+    let words: [UInt32] = Array(
+      UnsafeBufferPointer(
+        start: result.workingVolumeShards[0].contents().bindMemory(
+          to: UInt32.self,
+          capacity: packedWordCount
+        ),
+        count: packedWordCount
+      )
+    )
+    var actualWorking: [UInt16] = []
+    for (index, word) in words.enumerated() {
+      actualWorking.append(UInt16(word & 0xffff))
+      if index * 2 + 1 < expectedWorking.count {
+        actualWorking.append(UInt16((word >> 16) & 0xffff))
+      }
+    }
+    XCTAssertEqual(actualWorking, expectedWorking)
+    XCTAssertEqual(result.products.detectorSum, expectedNative.map(UInt64.init))
+    XCTAssertEqual(
+      result.products.total,
+      [expectedNative.reduce(UInt64(0)) { $0 + UInt64($1) }]
+    )
+    XCTAssertEqual(result.sourceAudit, audit)
+    XCTAssertEqual(result.binningProvenance.sourceDetectorRows, 64)
+    XCTAssertEqual(result.binningProvenance.outputDetectorRows, 32)
+    XCTAssertEqual(result.binningProvenance.detectorBin, 2)
+    XCTAssertEqual(result.binningProvenance.sourceDtype, .uint16)
+    XCTAssertEqual(result.binningProvenance.stagingDtype, .uint16)
+    XCTAssertEqual(result.binningProvenance.outputDtype, .uint16)
+    XCTAssertEqual(result.metrics.binningDispatchCount, 1)
+    XCTAssertEqual(result.metrics.workingPayloadBytes, UInt64(packedWordCount * 4))
+    XCTAssertEqual(result.metrics.destinationStorageMode, "shared")
+
+    let wrongAudit = try Metal4DSTEMExactSourceAudit(
+      sourceIdentitySHA256: try XCTUnwrap(dataset.sourceIdentitySHA256),
+      sourceDtype: .uint16,
+      badPixelIndices: dataset.badPixelIndices,
+      maximumSourceCount: 0,
+      pixelsAbove255: 0
+    )
+    let wrongPlan = try Metal4DSTEMIndexedBinnedLoadPlan(
+      source: source,
+      maximumDecodedWindowBytes: source.decodedBytesPerFrame,
+      detectorBands: bands,
+      detectorBin: 2,
+      sourceAudit: wrongAudit,
+      maximumShardBytes: 1 << 20
+    )
+    XCTAssertThrowsError(
+      try loader.loadExactBinnedShards(source: source, plan: wrongPlan)
+    ) { error in
+      XCTAssertTrue(error.localizedDescription.contains("decoded value-range audit"))
+    }
   }
 
   func testIndexedStreamingCancellationFailsBeforeSourceDecode() throws {
