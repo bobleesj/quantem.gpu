@@ -102,6 +102,9 @@ private struct RunRecord: Codable {
   let wallSeconds: Double
   let gpuSeconds: Double
   let sourceMappingSeconds: Double
+  let commandBufferCount: Int
+  let peakInFlightCommandBuffers: Int
+  let peakInFlightMappedSourceBytes: UInt64
   let mappedCompressedSourceBytes: UInt64
   let maximumMappedCompressedSourceBytes: UInt64
   let maximumMappedSourceBufferBytes: UInt64
@@ -143,6 +146,8 @@ private struct BenchmarkSummary: Codable {
   let estimatedAllocatedMetalBytesExcludingMappedSource: UInt64
   let maximumMappedCompressedBytes: UInt64
   let maximumMappedSourceBufferBytes: UInt64
+  let maximumInFlightMappedSourceBytes: UInt64
+  let maximumInFlightCommandBuffers: Int
   let maximumIndividualMetalBufferBytes: UInt64
   let processPeakResidentBytes: UInt64?
   let catalogSeconds: Double
@@ -309,6 +314,9 @@ private func run() throws {
         wallSeconds: result.metrics.wallSeconds,
         gpuSeconds: result.metrics.gpuSeconds,
         sourceMappingSeconds: result.metrics.sourceMappingSeconds,
+        commandBufferCount: result.metrics.commandBufferCount,
+        peakInFlightCommandBuffers: result.metrics.peakInFlightCommandBuffers,
+        peakInFlightMappedSourceBytes: result.metrics.peakInFlightMappedSourceBytes,
         mappedCompressedSourceBytes: result.metrics.mappedCompressedSourceBytes,
         maximumMappedCompressedSourceBytes:
           result.metrics.maximumMappedCompressedSourceBytes,
@@ -367,6 +375,8 @@ private func run() throws {
       plan.estimatedAllocatedMetalBytesExcludingMappedSource,
     maximumMappedCompressedBytes: plan.maximumMappedCompressedBytes,
     maximumMappedSourceBufferBytes: plan.maximumMappedSourceBufferBytes,
+    maximumInFlightMappedSourceBytes: plan.maximumInFlightMappedSourceBytes,
+    maximumInFlightCommandBuffers: plan.maximumInFlightCommandBuffers,
     maximumIndividualMetalBufferBytes: plan.maximumIndividualMetalBufferBytes,
     processPeakResidentBytes: processPeakResidentBytes(),
     catalogSeconds: catalogSeconds,
