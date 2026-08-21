@@ -101,7 +101,14 @@ inline void bslz4CopyRepeatDeviceToThreadgroup(
     uint threadIndex
 ) {
     uint repeatMask = distance - 1u;
-    if (distance != 0u && (distance & repeatMask) == 0u) {
+    if (distance == 2u) {
+        // A 32-lane stride preserves lane parity, so every write by this lane
+        // uses the same one of the two stable history bytes. Load it once.
+        uchar repeated = source[threadIndex & 1u];
+        for (uint index = threadIndex; index < length; index += kLZ4Threads) {
+            destination[index] = repeated;
+        }
+    } else if (distance != 0u && (distance & repeatMask) == 0u) {
         for (uint index = threadIndex; index < length; index += kLZ4Threads) {
             destination[index] = source[index & repeatMask];
         }
@@ -134,7 +141,14 @@ inline void bslz4CopyRepeatThreadgroupToThreadgroup(
     // byte-addressed: packed threadgroup stores were not reliably aligned on
     // all Apple GPU generations and corrupted rare legal LZ4 repeats.
     uint repeatMask = distance - 1u;
-    if (distance != 0u && (distance & repeatMask) == 0u) {
+    if (distance == 2u) {
+        // A 32-lane stride preserves lane parity, so every write by this lane
+        // uses the same one of the two stable history bytes. Load it once.
+        uchar repeated = source[threadIndex & 1u];
+        for (uint index = threadIndex; index < length; index += kLZ4Threads) {
+            destination[index] = repeated;
+        }
+    } else if (distance != 0u && (distance & repeatMask) == 0u) {
         for (uint index = threadIndex; index < length; index += kLZ4Threads) {
             destination[index] = source[index & repeatMask];
         }
