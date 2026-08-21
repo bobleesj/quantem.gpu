@@ -93,6 +93,18 @@ inline void bslz4CopyDeviceToThreadgroup(
     }
 }
 
+inline void bslz4CopyRepeatDeviceToThreadgroup(
+    threadgroup uchar *destination,
+    const device uchar *source,
+    uint distance,
+    uint length,
+    uint threadIndex
+) {
+    for (uint index = threadIndex; index < length; index += kLZ4Threads) {
+        destination[index] = source[index % distance];
+    }
+}
+
 inline void bslz4CopyThreadgroupToThreadgroup(
     threadgroup uchar *destination,
     threadgroup const uchar *source,
@@ -212,6 +224,74 @@ inline void bslz4DecompressStreamToThreadgroup(
                     decompressed + outputIndex,
                     inputCache + literalStart + literalCount - matchOffset
                         - uint(bufferOffset),
+                    matchOffset,
+                    matchLength,
+                    threadIndex
+                );
+                bslz4Barrier();
+            } else {
+                bslz4Barrier();
+                bslz4CopyOverlapThreadgroupToThreadgroup(
+                    decompressed + outputIndex,
+                    decompressed + outputIndex - matchOffset,
+                    matchOffset,
+                    matchLength,
+                    threadIndex
+                );
+            }
+            outputIndex += matchLength;
+        }
+    }
+    bslz4Barrier();
+}
+
+// Full-precision direct-input variant. It preserves every byte of the complete
+// LZ4 stream while removing the 256-byte compressed-input cache and its refill
+// barriers. Matches that point into the immediately preceding literal run read
+// the same compressed bytes directly; all other matches retain the exact
+// dependency-safe threadgroup history copy.
+inline void bslz4DecompressStreamDirectToThreadgroup(
+    threadgroup uchar *decompressed,
+    const device uchar *compressed,
+    uint compressedLength,
+    uint threadIndex
+) {
+    uint outputIndex = 0;
+    uint inputIndex = 0;
+    while (inputIndex < compressedLength) {
+        BSLZ4Token token = bslz4DecodeToken(compressed[inputIndex++]);
+        uint literalCount = token.literals;
+        if (token.literals == 15) {
+            uchar next = 0xff;
+            while (next == 0xff) {
+                next = compressed[inputIndex++];
+                literalCount += next;
+            }
+        }
+        uint literalStart = inputIndex;
+        bslz4CopyDeviceToThreadgroup(
+            decompressed + outputIndex,
+            compressed + inputIndex,
+            literalCount,
+            threadIndex
+        );
+        inputIndex += literalCount;
+        outputIndex += literalCount;
+        if (inputIndex < compressedLength) {
+            ushort matchOffset = bslz4ReadWordDevice(compressed + inputIndex);
+            inputIndex += 2;
+            uint matchLength = 4 + token.matches;
+            if (token.matches == 15) {
+                uchar next = 0xff;
+                while (next == 0xff) {
+                    next = compressed[inputIndex++];
+                    matchLength += next;
+                }
+            }
+            if (matchOffset <= literalCount) {
+                bslz4CopyRepeatDeviceToThreadgroup(
+                    decompressed + outputIndex,
+                    compressed + literalStart + literalCount - matchOffset,
                     matchOffset,
                     matchLength,
                     threadIndex
@@ -558,7 +638,7 @@ kernel void h5lz4dc_unshuffle_u16_qh5idx(
 // One compressed bitshuffle block per 128-thread threadgroup. The two-block
 // kernel above uses fewer threadgroups, but its 16.5 KiB threadgroup-memory
 // footprint limits concurrent groups on smaller Apple GPUs. This topology uses
-// about 8.5 KiB and therefore exposes more independent LZ4 streams while
+// 8 KiB and therefore exposes more independent LZ4 streams while
 // preserving the identical uint16 output and exact count audit.
 kernel void h5lz4dc_unshuffle_u16_single_block_qh5idx(
     const device uchar *h5File [[buffer(0)]],
@@ -577,7 +657,6 @@ kernel void h5lz4dc_unshuffle_u16_single_block_qh5idx(
 ) {
     uint frame = threadgroupPosition.x;
     uint block = threadgroupPosition.z;
-    threadgroup uchar inputCache[kInputBufferBytes];
     threadgroup uchar shuffledBlock[kBslz4BlockBytes];
     threadgroup atomic_uint blockMax;
     threadgroup atomic_uint blockAbove255;
@@ -589,8 +668,7 @@ kernel void h5lz4dc_unshuffle_u16_single_block_qh5idx(
         uint2 metadata = blockMetadata[
             ulong(metadataFrameOffset + frame) * blocksPerFrame + block
         ];
-        bslz4DecompressStreamToThreadgroup(
-            inputCache,
+        bslz4DecompressStreamDirectToThreadgroup(
             shuffledBlock,
             h5File + rangeStart + ulong(metadata.x),
             metadata.y,
