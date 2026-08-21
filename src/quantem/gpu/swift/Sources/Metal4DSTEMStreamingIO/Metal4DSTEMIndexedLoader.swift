@@ -596,7 +596,10 @@ public final class Metal4DSTEMIndexedLoader {
       )
     }
     let allocationSeconds = CFAbsoluteTimeGetCurrent() - allocationStarted
-    let context = BinnedOutputContext(plan: plan, destinations: destinations)
+    let context = BinnedOutputContext(
+      resident: plan,
+      destinations: destinations
+    )
     let loaded = try loadExactProductsInternal(
       source: source,
       plan: plan.productPlan,
@@ -620,6 +623,96 @@ public final class Metal4DSTEMIndexedLoader {
         shardCount: plan.shardPlan.shards.count,
         maximumShardBytes: plan.shardPlan.maximumActualShardBytes,
         destinationStorageMode: plan.destinationStorageMode
+      )
+    )
+  }
+
+  /// Decode once and transactionally write an exact file-backed working volume.
+  ///
+  /// Only one output shard is allocated in Metal at a time. Each shard is
+  /// complete before it is appended to a unique temporary payload and released.
+  /// The metadata publication marker remains absent until the recomputed source
+  /// audit, exact products, full byte coverage, fsync, and SHA-256 seal all
+  /// succeed. The caller owns device admission and cache lifecycle.
+  public func loadExactBinnedCache(
+    source: Native4DSTEMIndexedSource,
+    plan: Metal4DSTEMIndexedBinnedLoadPlan,
+    payloadURL: URL,
+    metadataURL: URL,
+    shouldCancel: () -> Bool = { false }
+  ) throws -> Metal4DSTEMIndexedBinnedCacheResult {
+    let totalStarted = CFAbsoluteTimeGetCurrent()
+    let expectedPlan = try Metal4DSTEMIndexedBinnedLoadPlan(
+      source: source,
+      maximumDecodedWindowBytes: plan.productPlan.maximumDecodedWindowBytes,
+      detectorBands: plan.productPlan.detectorBands,
+      detectorBin: plan.binningProvenance.detectorBin,
+      sourceAudit: plan.sourceAudit,
+      maximumShardBytes: plan.shardPlan.maximumShardBytes
+    )
+    guard expectedPlan == plan else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "The exact binned cache plan does not match its indexed source, audit, "
+          + "detector bands, or shard geometry."
+      )
+    }
+    guard plan.maximumIndividualMetalBufferBytes <= UInt64(device.maxBufferLength) else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "The largest exact binned-cache buffer requires "
+          + "\(plan.maximumIndividualMetalBufferBytes) bytes, exceeding this Metal "
+          + "device's maximum single-buffer length of \(device.maxBufferLength) bytes."
+      )
+    }
+    try BinnedOutputContext.validateStreamable(plan)
+    let unsealedMetadata = try residentCacheMetadata(source: source, plan: plan)
+    let writer = try Metal4DSTEMResidentCacheStreamWriter(
+      payloadURL: payloadURL,
+      metadataURL: metadataURL,
+      metadata: unsealedMetadata
+    )
+    defer { writer.cancel() }
+    let context = BinnedOutputContext(
+      streaming: plan,
+      consume: { _, buffer in
+        try writer.append(pointer: buffer.contents(), length: buffer.length)
+      }
+    )
+    let loaded = try loadExactProductsInternal(
+      source: source,
+      plan: plan.productPlan,
+      binned: context,
+      shouldCancel: shouldCancel
+    )
+    guard context.completedShardCount == plan.shardPlan.shards.count else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "The exact cache build completed \(context.completedShardCount) output "
+          + "shards; expected \(plan.shardPlan.shards.count)."
+      )
+    }
+    let finalizeStarted = CFAbsoluteTimeGetCurrent()
+    let completeMetadata = try writer.finish()
+    let finalizeSeconds = CFAbsoluteTimeGetCurrent() - finalizeStarted
+    return Metal4DSTEMIndexedBinnedCacheResult(
+      payloadURL: payloadURL,
+      metadataURL: metadataURL,
+      metadata: completeMetadata,
+      products: loaded.result.products,
+      sourceAudit: loaded.result.sourceAudit,
+      nativeProductProvenance: loaded.result.provenance,
+      binningProvenance: plan.binningProvenance,
+      samplingPropagation: plan.samplingPropagation,
+      metrics: Metal4DSTEMIndexedBinnedCacheMetrics(
+        indexedLoad: loaded.result.metrics,
+        destinationAllocationSeconds: context.destinationAllocationSeconds,
+        payloadWriteSeconds: context.payloadWriteSeconds,
+        payloadFinalizeSeconds: finalizeSeconds,
+        totalWallSeconds: CFAbsoluteTimeGetCurrent() - totalStarted,
+        binningDispatchCount: loaded.binningDispatchCount,
+        workingPayloadBytes: plan.workingPayloadBytes,
+        shardCount: context.completedShardCount,
+        maximumShardBytes: plan.shardPlan.maximumActualShardBytes,
+        peakWorkingMetalBytes: context.peakWorkingMetalBytes,
+        destinationStorage: "transactional_file_backed_exact_payload"
       )
     )
   }
@@ -711,6 +804,25 @@ public final class Metal4DSTEMIndexedLoader {
       if shouldCancel() {
         gpuSeconds += try drainAll(&pendingCommands)
         throw Metal4DSTEMStreamingIOError.cancelled
+      }
+      if let binned,
+        try binned.requiresDestinationTransition(for: window.globalFrameRange)
+      {
+        // A streamed output shard cannot be written or released until every
+        // command that targets it has completed. Resident output buffers are
+        // all retained and therefore never take this transition path.
+        gpuSeconds += try drainAll(&pendingCommands)
+        try binned.finishActiveDestination()
+        try binned.prepareDestination(
+          for: window.globalFrameRange,
+          makeBuffer: { shard in
+            try self.makeBuffer(
+              bytes: shard.payloadBytes,
+              options: .storageModeShared,
+              label: "transactional exact working-volume shard \(shard.index)"
+            )
+          }
+        )
       }
       for slice in window.slices {
         if shouldCancel() {
@@ -805,6 +917,7 @@ public final class Metal4DSTEMIndexedLoader {
       }
     }
     gpuSeconds += try drainAll(&pendingCommands)
+    try binned?.finishActiveDestination()
     activeSource = nil
 
     let auditValues = values(from: countAudit, count: frameCount * 2, as: UInt32.self)
@@ -905,9 +1018,8 @@ public final class Metal4DSTEMIndexedLoader {
       maximumMappedCompressedSourceBytes: maximumMappedCompressedSourceBytes,
       maximumMappedSourceBufferBytes: maximumMappedSourceBufferBytes,
       maximumDecodedSliceBytes: maximumDecodedSliceBytes,
-      cacheState: binned == nil
-        ? "prepared_qh5_index_source_pages_unspecified"
-        : "prepared_qh5_index_exact_binned_resident_source_pages_unspecified"
+      cacheState: binned?.cacheState
+        ?? "prepared_qh5_index_source_pages_unspecified"
     )
     return (
       result: Metal4DSTEMIndexedLoadResult(
@@ -1190,7 +1302,7 @@ public final class Metal4DSTEMIndexedLoader {
         commandBuffer: commandBuffer,
         stagedSource: scratch,
         stagedSourceOffset: sourceOffset.partialValue,
-        destination: context.destinations[shard.index],
+        destination: try context.destination(for: shard.index),
         destinationView: .scanRowShard(
           plan: plan.shardPlan,
           index: shard.index
@@ -1386,6 +1498,114 @@ public final class Metal4DSTEMIndexedLoader {
       )
     )
   }
+
+  private func residentCacheMetadata(
+    source: Native4DSTEMIndexedSource,
+    plan: Metal4DSTEMIndexedBinnedLoadPlan
+  ) throws -> Metal4DSTEMResidentCacheMetadata {
+    let sourceAudit = plan.sourceAudit
+    try sourceAudit.validate()
+    let audit = Native4DSTEMValueRangeAudit(
+      sourceIdentitySHA256: sourceAudit.sourceIdentitySHA256,
+      sourceDtype: sourceAudit.sourceDtype.rawValue,
+      badPixelIndices: sourceAudit.badPixelIndices,
+      maximum: sourceAudit.maximumSourceCount,
+      pixelsAbove255: sourceAudit.pixelsAbove255
+    )
+    guard try audit.sha256() == sourceAudit.auditSHA256 else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "The exact source audit digest does not match its canonical cache metadata."
+      )
+    }
+    let provenance = plan.binningProvenance
+    var sourceURLs =
+      source.dataset.masterPath.map {
+        [URL(fileURLWithPath: $0)]
+      } ?? []
+    sourceURLs.append(contentsOf: source.shards.map(\.sourceURL))
+    var seenSourcePaths = Set<String>()
+    let sourceIdentities: [Metal4DSTEMSourceIdentity] = try sourceURLs.compactMap {
+      url in
+      let path = url.standardizedFileURL.path
+      guard seenSourcePaths.insert(path).inserted else { return nil }
+      return try Metal4DSTEMSourceIdentity(url: url)
+    }
+    return Metal4DSTEMResidentCacheMetadata(
+      datasetID: plan.productPlan.datasetID,
+      sourceIdentitySHA256: sourceAudit.sourceIdentitySHA256,
+      valueRangeAuditSHA256: sourceAudit.auditSHA256,
+      valueRangeAudit: audit,
+      sources: sourceIdentities,
+      sourceScanRows: provenance.sourceScanRows,
+      sourceScanColumns: provenance.sourceScanColumns,
+      sourceDetectorRows: provenance.sourceDetectorRows,
+      sourceDetectorColumns: provenance.sourceDetectorColumns,
+      sourceDtype: provenance.sourceDtype.rawValue,
+      outputScanRows: provenance.outputScanRows,
+      outputScanColumns: provenance.outputScanColumns,
+      outputDetectorRows: provenance.outputDetectorRows,
+      outputDetectorColumns: provenance.outputDetectorColumns,
+      outputDtype: provenance.outputDtype.rawValue,
+      scanRowStart: provenance.scanRegion.rowStart,
+      scanRowStop: provenance.scanRegion.rowStop,
+      scanColumnStart: provenance.scanRegion.columnStart,
+      scanColumnStop: provenance.scanRegion.columnStop,
+      scanBin: provenance.scanBin,
+      detectorBin: provenance.detectorBin,
+      badPixelIndices: provenance.badPixelIndices,
+      maxCount: provenance.maximumSourceCount,
+      pixelsAbove255: provenance.pixelsAbove255,
+      samplingPropagation: residentSamplingPropagation(plan.samplingPropagation),
+      payloadBytes: provenance.outputPayloadBytes
+    )
+  }
+
+  private func residentSamplingPropagation(
+    _ value: Metal4DSTEMSamplingPropagation
+  ) -> Metal4DSTEMResidentSamplingPropagation {
+    func axis(
+      _ value: Metal4DSTEMAxisSampling?
+    ) -> Metal4DSTEMResidentAxisSampling? {
+      value.map {
+        Metal4DSTEMResidentAxisSampling(
+          row: $0.row,
+          column: $0.column,
+          unit: $0.unit,
+          provenance: $0.provenance,
+          evidence: $0.evidence
+        )
+      }
+    }
+    func state(
+      _ value: Metal4DSTEMSamplingPropagationState
+    ) -> Metal4DSTEMResidentSamplingState {
+      switch value {
+      case .unavailable: .unavailable
+      case .unchanged: .unchanged
+      case .uniformlyScaled: .uniformlyScaled
+      case .nonuniformEdgeBins: .nonuniformEdgeBins
+      }
+    }
+    return Metal4DSTEMResidentSamplingPropagation(
+      sourceScan: axis(value.sourceScan),
+      workingScan: axis(value.workingScan),
+      sourceDetector: axis(value.sourceDetector),
+      workingDetector: axis(value.workingDetector),
+      scanState: state(value.scanState),
+      detectorState: state(value.detectorState),
+      scanRegionRowStartInSourcePixels: value.scanRegionRowStartInSourcePixels,
+      scanRegionColumnStartInSourcePixels:
+        value.scanRegionColumnStartInSourcePixels,
+      firstWorkingScanCenterRowInSourcePixels:
+        value.firstWorkingScanCenterRowInSourcePixels,
+      firstWorkingScanCenterColumnInSourcePixels:
+        value.firstWorkingScanCenterColumnInSourcePixels,
+      firstWorkingDetectorCenterRowInSourcePixels:
+        value.firstWorkingDetectorCenterRowInSourcePixels,
+      firstWorkingDetectorCenterColumnInSourcePixels:
+        value.firstWorkingDetectorCenterColumnInSourcePixels
+    )
+  }
 }
 
 private struct DetectorParameters {
@@ -1403,9 +1623,146 @@ private struct PendingIndexedCommand {
   let binningDispatchCount: Int
 }
 
-private struct BinnedOutputContext {
+private final class BinnedOutputContext {
+  private enum Storage {
+    case resident([MTLBuffer])
+    case streaming((Metal4DSTEMExactBinningShard, MTLBuffer) throws -> Void)
+  }
+
   let plan: Metal4DSTEMIndexedBinnedLoadPlan
-  let destinations: [MTLBuffer]
+  let cacheState: String
+  private let storage: Storage
+  private var activeShardIndex: Int?
+  private var activeDestination: MTLBuffer?
+  private(set) var destinationAllocationSeconds = 0.0
+  private(set) var payloadWriteSeconds = 0.0
+  private(set) var completedShardCount = 0
+  private(set) var peakWorkingMetalBytes: UInt64 = 0
+
+  init(
+    resident plan: Metal4DSTEMIndexedBinnedLoadPlan,
+    destinations: [MTLBuffer]
+  ) {
+    self.plan = plan
+    storage = .resident(destinations)
+    cacheState =
+      "prepared_qh5_index_exact_binned_resident_source_pages_unspecified"
+    peakWorkingMetalBytes = destinations.reduce(0) { total, buffer in
+      total + UInt64(buffer.length)
+    }
+  }
+
+  init(
+    streaming plan: Metal4DSTEMIndexedBinnedLoadPlan,
+    consume: @escaping (Metal4DSTEMExactBinningShard, MTLBuffer) throws -> Void
+  ) {
+    self.plan = plan
+    storage = .streaming(consume)
+    cacheState =
+      "prepared_qh5_index_exact_binned_transactional_file_source_pages_unspecified"
+  }
+
+  func requiresDestinationTransition(for range: Range<Int>) throws -> Bool {
+    switch storage {
+    case .resident:
+      return false
+    case .streaming:
+      return try shard(containing: range).index != activeShardIndex
+    }
+  }
+
+  func prepareDestination(
+    for range: Range<Int>,
+    makeBuffer: (Metal4DSTEMExactBinningShard) throws -> MTLBuffer
+  ) throws {
+    guard case .streaming = storage else { return }
+    let shard = try shard(containing: range)
+    guard activeShardIndex == nil, activeDestination == nil else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "The previous exact output shard must complete before allocating the next shard."
+      )
+    }
+    guard shard.index == completedShardCount else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "Exact output shards must be streamed once in canonical scan-row order; "
+          + "expected shard \(completedShardCount), received \(shard.index)."
+      )
+    }
+    let started = CFAbsoluteTimeGetCurrent()
+    let destination = try makeBuffer(shard)
+    destinationAllocationSeconds += CFAbsoluteTimeGetCurrent() - started
+    guard UInt64(destination.length) == shard.payloadBytes else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "Exact output shard \(shard.index) allocated \(destination.length) bytes; "
+          + "expected \(shard.payloadBytes)."
+      )
+    }
+    activeShardIndex = shard.index
+    activeDestination = destination
+    peakWorkingMetalBytes = max(peakWorkingMetalBytes, UInt64(destination.length))
+  }
+
+  func destination(for shardIndex: Int) throws -> MTLBuffer {
+    switch storage {
+    case .resident(let destinations):
+      guard destinations.indices.contains(shardIndex) else {
+        throw Metal4DSTEMStreamingIOError.invalidRequest(
+          "Exact destination shard index \(shardIndex) is outside the resident plan."
+        )
+      }
+      return destinations[shardIndex]
+    case .streaming:
+      guard activeShardIndex == shardIndex, let activeDestination else {
+        throw Metal4DSTEMStreamingIOError.invalidRequest(
+          "Exact output shard \(shardIndex) was not prepared before encoding."
+        )
+      }
+      return activeDestination
+    }
+  }
+
+  func finishActiveDestination() throws {
+    guard case .streaming(let consume) = storage,
+      let activeShardIndex,
+      let activeDestination
+    else { return }
+    let shard = plan.shardPlan.shards[activeShardIndex]
+    let started = CFAbsoluteTimeGetCurrent()
+    try consume(shard, activeDestination)
+    payloadWriteSeconds += CFAbsoluteTimeGetCurrent() - started
+    completedShardCount += 1
+    self.activeShardIndex = nil
+    self.activeDestination = nil
+  }
+
+  private func shard(
+    containing range: Range<Int>
+  ) throws -> Metal4DSTEMExactBinningShard {
+    guard !range.isEmpty,
+      let shard = plan.shardPlan.shards.first(where: { candidate in
+        let stop =
+          candidate.outputScanPositionStart
+          + candidate.outputScanPositionCount
+        return range.lowerBound >= candidate.outputScanPositionStart
+          && range.upperBound <= stop
+      })
+    else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "Each decoded window must fit completely within one exact output shard. "
+          + "Align the private output-shard size to the decoded-window geometry."
+      )
+    }
+    return shard
+  }
+
+  static func validateStreamable(
+    _ plan: Metal4DSTEMIndexedBinnedLoadPlan
+  ) throws {
+    let context = BinnedOutputContext(streaming: plan) { _, _ in }
+    for window in plan.productPlan.windows {
+      _ = try context.shard(containing: window.globalFrameRange)
+    }
+  }
 }
 
 private final class MappedMetalSource {

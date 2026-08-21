@@ -195,3 +195,37 @@ public struct Metal4DSTEMIndexedBinnedLoadResult {
   public let samplingPropagation: Metal4DSTEMSamplingPropagation
   public let metrics: Metal4DSTEMIndexedBinnedLoadMetrics
 }
+
+/// Metrics for one transactional exact-binned cache build.
+public struct Metal4DSTEMIndexedBinnedCacheMetrics: Codable, Equatable, Sendable {
+  public let indexedLoad: Metal4DSTEMIndexedLoadMetrics
+  public let destinationAllocationSeconds: Double
+  public let payloadWriteSeconds: Double
+  public let payloadFinalizeSeconds: Double
+  public let totalWallSeconds: Double
+  public let binningDispatchCount: Int
+  public let workingPayloadBytes: UInt64
+  public let shardCount: Int
+  public let maximumShardBytes: UInt64
+  public let peakWorkingMetalBytes: UInt64
+  public let destinationStorage: String
+}
+
+/// Exact products and a sealed file-backed logical working volume.
+///
+/// The cache payload follows `metadata`'s detector-word-major packed-uint16
+/// contract. The caller chooses the destination and owns admission, naming,
+/// eviction, and lifecycle. QuantEM.GPU writes only a unique temporary payload
+/// until source audit, coverage, byte count, storage synchronization, and
+/// SHA-256 sealing all succeed.
+public struct Metal4DSTEMIndexedBinnedCacheResult {
+  public let payloadURL: URL
+  public let metadataURL: URL
+  public let metadata: Metal4DSTEMResidentCacheMetadata
+  public let products: Metal4DSTEMExactProducts
+  public let sourceAudit: Metal4DSTEMExactSourceAudit
+  public let nativeProductProvenance: Metal4DSTEMIndexedLoadProvenance
+  public let binningProvenance: Metal4DSTEMExactBinningProvenance
+  public let samplingPropagation: Metal4DSTEMSamplingPropagation
+  public let metrics: Metal4DSTEMIndexedBinnedCacheMetrics
+}
