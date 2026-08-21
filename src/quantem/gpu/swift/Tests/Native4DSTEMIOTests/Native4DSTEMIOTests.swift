@@ -338,6 +338,100 @@ final class Native4DSTEMIOTests: XCTestCase {
     }
   }
 
+  func testResidentCacheStreamWriterPublishesOnlyCompletePayload() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(
+        "Metal4DSTEMResidentCacheStreamTests-\(UUID().uuidString)",
+        isDirectory: true
+      )
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+
+    let sourceURL = root.appendingPathComponent("source.h5")
+    try Data([1, 2, 3, 4]).write(to: sourceURL)
+    let payloadURL = root.appendingPathComponent("resident.bin")
+    let metadataURL = root.appendingPathComponent("resident.json")
+    let words: [UInt16] = [1, 2, 4, 5, 3, 0, 6, 0]
+    let metadata = Metal4DSTEMResidentCacheMetadata(
+      datasetID: "stream-fixture",
+      sourceIdentitySHA256: String(repeating: "a", count: 64),
+      sources: [try Metal4DSTEMSourceIdentity(url: sourceURL)],
+      sourceScanRows: 2,
+      sourceScanColumns: 1,
+      sourceDetectorRows: 1,
+      sourceDetectorColumns: 3,
+      sourceDtype: "uint16",
+      outputScanRows: 2,
+      outputScanColumns: 1,
+      outputDetectorRows: 1,
+      outputDetectorColumns: 3,
+      outputDtype: "uint16",
+      scanRowStart: 0,
+      scanRowStop: 2,
+      scanColumnStart: 0,
+      scanColumnStop: 1,
+      scanBin: 1,
+      detectorBin: 1,
+      badPixelIndices: [],
+      maxCount: 6,
+      pixelsAbove255: 0,
+      payloadBytes: UInt64(words.count * MemoryLayout<UInt16>.stride)
+    )
+    let writer = try Metal4DSTEMResidentCacheStreamWriter(
+      payloadURL: payloadURL,
+      metadataURL: metadataURL,
+      metadata: metadata
+    )
+    try words.withUnsafeBytes { bytes in
+      let base = try XCTUnwrap(bytes.baseAddress)
+      try writer.append(pointer: base, length: bytes.count / 2)
+      XCTAssertFalse(FileManager.default.fileExists(atPath: payloadURL.path))
+      XCTAssertFalse(FileManager.default.fileExists(atPath: metadataURL.path))
+      try writer.append(
+        pointer: base.advanced(by: bytes.count / 2),
+        length: bytes.count / 2
+      )
+    }
+    let complete = try writer.finish()
+    try Metal4DSTEMResidentCacheIO.validatePayload(
+      at: payloadURL,
+      metadata: complete
+    )
+    XCTAssertEqual(try Data(contentsOf: payloadURL), words.withUnsafeBytes { Data($0) })
+    XCTAssertEqual(try Metal4DSTEMResidentCacheIO.readMetadata(from: metadataURL), complete)
+    XCTAssertThrowsError(
+      try Metal4DSTEMResidentCacheStreamWriter(
+        payloadURL: payloadURL,
+        metadataURL: metadataURL,
+        metadata: metadata
+      )
+    )
+
+    let incompletePayload = root.appendingPathComponent("incomplete.bin")
+    let incompleteMetadata = root.appendingPathComponent("incomplete.json")
+    let incomplete = try Metal4DSTEMResidentCacheStreamWriter(
+      payloadURL: incompletePayload,
+      metadataURL: incompleteMetadata,
+      metadata: metadata
+    )
+    try words.withUnsafeBytes { bytes in
+      try incomplete.append(
+        pointer: try XCTUnwrap(bytes.baseAddress),
+        length: bytes.count / 2
+      )
+    }
+    XCTAssertThrowsError(try incomplete.finish())
+    incomplete.cancel()
+    XCTAssertFalse(FileManager.default.fileExists(atPath: incompletePayload.path))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: incompleteMetadata.path))
+    XCTAssertEqual(
+      try FileManager.default.contentsOfDirectory(atPath: root.path).filter {
+        $0.hasSuffix(".tmp")
+      },
+      []
+    )
+  }
+
   func testResidentCacheRejectsShapeOrBinMetadataThatChangesScientificMeaning() throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(
@@ -1244,6 +1338,186 @@ final class Native4DSTEMIOTests: XCTestCase {
     ) { error in
       XCTAssertTrue(error.localizedDescription.contains("decoded value-range audit"))
     }
+  }
+
+  func testIndexedStreamingExactBinnedCacheIsTransactionalAndExact() throws {
+    guard let device = MTLCreateSystemDefaultDevice() else {
+      throw XCTSkip("No Metal device is available for indexed cache parity.")
+    }
+    let fixture = try copiedFixture()
+    let dataset = try XCTUnwrap(
+      Native4DSTEMCatalogBuilder(cacheDirectory: fixture.cache)
+        .prepare(input: fixture.master).datasets.first
+    )
+    let source = try Native4DSTEMIndexedSource.open(dataset: dataset)
+    let detectorPixels = dataset.detectorRows * dataset.detectorCols
+    let badPixels = Set(dataset.badPixelIndices)
+    let expectedNative: [UInt16] = (0..<detectorPixels).map {
+      badPixels.contains($0) ? 0 : UInt16($0 % 257)
+    }
+    let audit = try Metal4DSTEMExactSourceAudit(
+      sourceIdentitySHA256: try XCTUnwrap(dataset.sourceIdentitySHA256),
+      sourceDtype: .uint16,
+      badPixelIndices: dataset.badPixelIndices,
+      maximumSourceCount: UInt32(expectedNative.max() ?? 0),
+      pixelsAbove255: UInt64(expectedNative.filter { $0 > 255 }.count)
+    )
+    let bands = try Metal4DSTEMDetectorBands(
+      detectorRows: dataset.detectorRows,
+      detectorColumns: dataset.detectorCols,
+      membership: [UInt8](repeating: 7, count: detectorPixels)
+    )
+    let plan = try Metal4DSTEMIndexedBinnedLoadPlan(
+      source: source,
+      maximumDecodedWindowBytes: source.decodedBytesPerFrame,
+      detectorBands: bands,
+      detectorBin: 2,
+      sourceAudit: audit,
+      maximumShardBytes: 1 << 20
+    )
+    let payload = fixture.root.appendingPathComponent("working-bin2.qgpu")
+    let metadata = fixture.root.appendingPathComponent("working-bin2.json")
+    let loader = try Metal4DSTEMIndexedLoader(device: device)
+    let result = try loader.loadExactBinnedCache(
+      source: source,
+      plan: plan,
+      payloadURL: payload,
+      metadataURL: metadata
+    )
+
+    var expectedWorking: [UInt16] = []
+    for outputRow in 0..<plan.binningProvenance.outputDetectorRows {
+      for outputColumn in 0..<plan.binningProvenance.outputDetectorColumns {
+        var sum: UInt32 = 0
+        for row in (outputRow * 2)..<min((outputRow + 1) * 2, dataset.detectorRows) {
+          for column in (outputColumn * 2)..<min((outputColumn + 1) * 2, dataset.detectorCols) {
+            sum += UInt32(expectedNative[row * dataset.detectorCols + column])
+          }
+        }
+        expectedWorking.append(UInt16(sum))
+      }
+    }
+    let completeMetadata = try Metal4DSTEMResidentCacheIO.readMetadata(from: metadata)
+    try Metal4DSTEMResidentCacheIO.validatePayload(
+      at: payload,
+      metadata: completeMetadata
+    )
+    let payloadData = try Data(contentsOf: payload)
+    let actualWorking: [UInt16] = payloadData.withUnsafeBytes { bytes in
+      let wordCount = payloadData.count / MemoryLayout<UInt32>.stride
+      var values: [UInt16] = []
+      values.reserveCapacity(expectedWorking.count)
+      for wordIndex in 0..<wordCount {
+        let word = bytes.loadUnaligned(
+          fromByteOffset: wordIndex * MemoryLayout<UInt32>.stride,
+          as: UInt32.self
+        ).littleEndian
+        values.append(UInt16(word & 0xffff))
+        if values.count < expectedWorking.count {
+          values.append(UInt16((word >> 16) & 0xffff))
+        }
+      }
+      return values
+    }
+    XCTAssertEqual(actualWorking, expectedWorking)
+    XCTAssertEqual(result.metadata, completeMetadata)
+    XCTAssertEqual(result.sourceAudit, audit)
+    XCTAssertEqual(result.products.detectorSum, expectedNative.map(UInt64.init))
+    XCTAssertEqual(completeMetadata.sourceScanRows, dataset.scanRows)
+    XCTAssertEqual(completeMetadata.outputScanRows, dataset.scanRows)
+    XCTAssertEqual(completeMetadata.sourceDetectorRows, 64)
+    XCTAssertEqual(completeMetadata.outputDetectorRows, 32)
+    XCTAssertEqual(completeMetadata.sourceDtype, "uint16")
+    XCTAssertEqual(completeMetadata.outputDtype, "uint16")
+    XCTAssertEqual(completeMetadata.scanBin, 1)
+    XCTAssertEqual(completeMetadata.detectorBin, 2)
+    XCTAssertEqual(completeMetadata.valueRangeAuditSHA256, audit.auditSHA256)
+    XCTAssertEqual(completeMetadata.payloadBytes, UInt64(payloadData.count))
+    XCTAssertEqual(
+      Set(completeMetadata.sources.map(\.fileName)),
+      Set([fixture.master.lastPathComponent, fixture.data.lastPathComponent])
+    )
+    let cachedSampling = try XCTUnwrap(completeMetadata.samplingPropagation)
+    XCTAssertEqual(
+      cachedSampling.scanState.rawValue,
+      result.samplingPropagation.scanState.rawValue
+    )
+    XCTAssertEqual(
+      cachedSampling.detectorState.rawValue,
+      result.samplingPropagation.detectorState.rawValue
+    )
+    XCTAssertEqual(
+      cachedSampling.workingScan?.row,
+      result.samplingPropagation.workingScan?.row
+    )
+    XCTAssertEqual(
+      cachedSampling.workingDetector?.column,
+      result.samplingPropagation.workingDetector?.column
+    )
+    XCTAssertEqual(
+      cachedSampling.firstWorkingDetectorCenterRowInSourcePixels,
+      result.samplingPropagation.firstWorkingDetectorCenterRowInSourcePixels
+    )
+    XCTAssertEqual(result.metrics.shardCount, 1)
+    XCTAssertEqual(result.metrics.peakWorkingMetalBytes, completeMetadata.payloadBytes)
+    XCTAssertEqual(
+      result.metrics.destinationStorage,
+      "transactional_file_backed_exact_payload"
+    )
+    XCTAssertEqual(
+      result.metrics.indexedLoad.cacheState,
+      "prepared_qh5_index_exact_binned_transactional_file_source_pages_unspecified"
+    )
+
+    let wrongAudit = try Metal4DSTEMExactSourceAudit(
+      sourceIdentitySHA256: try XCTUnwrap(dataset.sourceIdentitySHA256),
+      sourceDtype: .uint16,
+      badPixelIndices: dataset.badPixelIndices,
+      maximumSourceCount: 0,
+      pixelsAbove255: 0
+    )
+    let wrongPlan = try Metal4DSTEMIndexedBinnedLoadPlan(
+      source: source,
+      maximumDecodedWindowBytes: source.decodedBytesPerFrame,
+      detectorBands: bands,
+      detectorBin: 2,
+      sourceAudit: wrongAudit,
+      maximumShardBytes: 1 << 20
+    )
+    let wrongPayload = fixture.root.appendingPathComponent("wrong.qgpu")
+    let wrongMetadata = fixture.root.appendingPathComponent("wrong.json")
+    XCTAssertThrowsError(
+      try loader.loadExactBinnedCache(
+        source: source,
+        plan: wrongPlan,
+        payloadURL: wrongPayload,
+        metadataURL: wrongMetadata
+      )
+    ) { error in
+      XCTAssertTrue(error.localizedDescription.contains("decoded value-range audit"))
+    }
+    XCTAssertFalse(FileManager.default.fileExists(atPath: wrongPayload.path))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: wrongMetadata.path))
+
+    let cancelledPayload = fixture.root.appendingPathComponent("cancelled.qgpu")
+    let cancelledMetadata = fixture.root.appendingPathComponent("cancelled.json")
+    XCTAssertThrowsError(
+      try loader.loadExactBinnedCache(
+        source: source,
+        plan: plan,
+        payloadURL: cancelledPayload,
+        metadataURL: cancelledMetadata,
+        shouldCancel: { true }
+      )
+    ) { error in
+      XCTAssertEqual(error as? Metal4DSTEMStreamingIOError, .cancelled)
+    }
+    XCTAssertFalse(FileManager.default.fileExists(atPath: cancelledPayload.path))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: cancelledMetadata.path))
+    let remainingFiles = try FileManager.default.contentsOfDirectory(
+      atPath: fixture.root.path
+    )
+    XCTAssertFalse(remainingFiles.contains { $0.hasSuffix(".tmp") })
   }
 
   func testIndexedStreamingCancellationFailsBeforeSourceDecode() throws {

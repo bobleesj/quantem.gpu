@@ -16,13 +16,19 @@ private struct Options {
       (--bands-file PATH | --all-bands) \\
       [--window-scan-rows N] \\
       [--iterations N] \\
-      [--exact-working-audit PATH --detector-bin N --maximum-shard-bytes N]
+      [--exact-working-audit PATH --detector-bin N --maximum-shard-bytes N] \\
+      [--exact-working-cache-payload PATH \\
+       --exact-working-cache-metadata PATH \\
+       --cache-reopen-iterations N]
 
     Source-page state is not purged or inferred. The first trial is labeled as
     a first process encounter with prepared indexes and unspecified source pages;
     later trials are same-process repeats. Supplying all three exact-working
     options retains the complete full-scan working volume as bounded packed
-    uint16 shards. Application UI and cache-write time are not measured.
+    uint16 shards. Supplying both cache paths instead writes those same exact
+    shards transactionally with only one output shard resident at a time;
+    cache mode requires --iterations 1 and records separately labeled reopen
+    validation. Application UI and product presentation are not measured.
     """
 
   let input: URL
@@ -36,6 +42,9 @@ private struct Options {
   let exactWorkingAudit: URL?
   let detectorBin: Int?
   let maximumShardBytes: UInt64?
+  let exactWorkingCachePayload: URL?
+  let exactWorkingCacheMetadata: URL?
+  let cacheReopenIterations: Int
 
   static func parse(_ arguments: [String]) throws -> Self {
     var values: [String: String] = [:]
@@ -99,6 +108,36 @@ private struct Options {
         )
       }
     }
+    let cachePayload = values["--exact-working-cache-payload"].map {
+      URL(fileURLWithPath: $0)
+    }
+    let cacheMetadata = values["--exact-working-cache-metadata"].map {
+      URL(fileURLWithPath: $0)
+    }
+    guard (cachePayload != nil) == (cacheMetadata != nil) else {
+      throw BenchmarkError.usage(
+        "Provide --exact-working-cache-payload and "
+          + "--exact-working-cache-metadata together."
+      )
+    }
+    let cacheReopenIterations =
+      Int(values["--cache-reopen-iterations"] ?? (cachePayload == nil ? "0" : "7"))
+      ?? -1
+    guard cacheReopenIterations >= 0 else {
+      throw BenchmarkError.usage("--cache-reopen-iterations must be nonnegative.")
+    }
+    if cachePayload != nil {
+      guard audit != nil, iterations == 1, cacheReopenIterations > 0 else {
+        throw BenchmarkError.usage(
+          "Exact cache mode requires exact-working options, --iterations 1, "
+            + "and at least one cache-reopen iteration."
+        )
+      }
+    } else if values["--cache-reopen-iterations"] != nil {
+      throw BenchmarkError.usage(
+        "--cache-reopen-iterations is valid only with exact cache paths."
+      )
+    }
     return Self(
       input: URL(fileURLWithPath: input),
       cacheDirectory: URL(fileURLWithPath: cache, isDirectory: true),
@@ -110,7 +149,10 @@ private struct Options {
       allBands: allBands,
       exactWorkingAudit: audit,
       detectorBin: detectorBin,
-      maximumShardBytes: maximumShardBytes
+      maximumShardBytes: maximumShardBytes,
+      exactWorkingCachePayload: cachePayload,
+      exactWorkingCacheMetadata: cacheMetadata,
+      cacheReopenIterations: cacheReopenIterations
     )
   }
 }
@@ -132,6 +174,10 @@ private struct RunRecord: Codable {
   let wallSeconds: Double
   let destinationAllocationSeconds: Double?
   let workingVolumeHashSeconds: Double?
+  let payloadWriteSeconds: Double?
+  let payloadFinalizeSeconds: Double?
+  let peakWorkingMetalBytes: UInt64?
+  let destinationStorage: String?
   let gpuSeconds: Double
   let sourceMappingSeconds: Double
   let commandBufferCount: Int
@@ -149,6 +195,16 @@ private struct RunRecord: Codable {
   let metalAllocatedBytesAfterLoad: UInt64
   let metalAllocatedBytesAfterRelease: UInt64
   let hashes: [String: String]
+}
+
+private struct CacheReopenRecord: Codable {
+  let trial: Int
+  let state: String
+  let wallSeconds: Double
+  let metadataReadSeconds: Double
+  let identityValidationSeconds: Double
+  let payloadBytes: UInt64
+  let payloadSHA256: String
 }
 
 private struct Distribution: Codable {
@@ -191,6 +247,11 @@ private struct BenchmarkSummary: Codable {
   let maximumActualShardBytes: UInt64?
   let valueRangeAuditSHA256: String?
   let workingVolumeSHA256: String?
+  let destinationStorage: String?
+  let cachePayload: String?
+  let cacheMetadata: String?
+  let cacheReopenValidation: Distribution?
+  let cacheReopenRuns: [CacheReopenRecord]
   let processPeakResidentBytes: UInt64?
   let catalogSeconds: Double
   let pipelineCompilationSeconds: Double
@@ -267,6 +328,10 @@ private struct LoadedTrial {
   let metrics: Metal4DSTEMIndexedLoadMetrics
   let wallSeconds: Double
   let destinationAllocationSeconds: Double?
+  let payloadWriteSeconds: Double?
+  let payloadFinalizeSeconds: Double?
+  let peakWorkingMetalBytes: UInt64?
+  let destinationStorage: String?
   let binningDispatchCount: Int?
   let workingVolumeSHA256: String?
   let workingVolumeHashSeconds: Double?
@@ -387,6 +452,33 @@ private func run() throws {
     let metalAllocatedBytesBeforeLoad = UInt64(device.currentAllocatedSize)
     let loaded: LoadedTrial = try autoreleasepool {
       if let binnedPlan {
+        if let payloadURL = options.exactWorkingCachePayload,
+          let metadataURL = options.exactWorkingCacheMetadata
+        {
+          let result = try loader.loadExactBinnedCache(
+            source: source,
+            plan: binnedPlan,
+            payloadURL: payloadURL,
+            metadataURL: metadataURL
+          )
+          return LoadedTrial(
+            products: result.products,
+            sourceAudit: result.sourceAudit,
+            provenance: result.nativeProductProvenance,
+            metrics: result.metrics.indexedLoad,
+            wallSeconds: result.metrics.totalWallSeconds,
+            destinationAllocationSeconds:
+              result.metrics.destinationAllocationSeconds,
+            payloadWriteSeconds: result.metrics.payloadWriteSeconds,
+            payloadFinalizeSeconds: result.metrics.payloadFinalizeSeconds,
+            peakWorkingMetalBytes: result.metrics.peakWorkingMetalBytes,
+            destinationStorage: result.metrics.destinationStorage,
+            binningDispatchCount: result.metrics.binningDispatchCount,
+            workingVolumeSHA256: result.metadata.payloadSHA256,
+            workingVolumeHashSeconds: nil,
+            metalAllocatedBytesAfterLoad: UInt64(device.currentAllocatedSize)
+          )
+        }
         let result = try loader.loadExactBinnedShards(
           source: source,
           plan: binnedPlan
@@ -401,6 +493,10 @@ private func run() throws {
           metrics: result.metrics.indexedLoad,
           wallSeconds: result.metrics.totalWallSeconds,
           destinationAllocationSeconds: result.metrics.destinationAllocationSeconds,
+          payloadWriteSeconds: nil,
+          payloadFinalizeSeconds: nil,
+          peakWorkingMetalBytes: result.metrics.workingPayloadBytes,
+          destinationStorage: result.metrics.destinationStorageMode,
           binningDispatchCount: result.metrics.binningDispatchCount,
           workingVolumeSHA256: workingVolumeSHA256,
           workingVolumeHashSeconds: hashSeconds,
@@ -415,6 +511,10 @@ private func run() throws {
         metrics: result.metrics,
         wallSeconds: result.metrics.wallSeconds,
         destinationAllocationSeconds: nil,
+        payloadWriteSeconds: nil,
+        payloadFinalizeSeconds: nil,
+        peakWorkingMetalBytes: nil,
+        destinationStorage: nil,
         binningDispatchCount: nil,
         workingVolumeSHA256: nil,
         workingVolumeHashSeconds: nil,
@@ -453,11 +553,15 @@ private func run() throws {
       RunRecord(
         trial: trial,
         state: trial == 1
-          ? "first_process_prepared_index_source_pages_unspecified"
-          : "same_process_repeat_source_pages_unspecified",
+          ? "first_process_\(loaded.metrics.cacheState)"
+          : "same_process_repeat_\(loaded.metrics.cacheState)",
         wallSeconds: loaded.wallSeconds,
         destinationAllocationSeconds: loaded.destinationAllocationSeconds,
         workingVolumeHashSeconds: loaded.workingVolumeHashSeconds,
+        payloadWriteSeconds: loaded.payloadWriteSeconds,
+        payloadFinalizeSeconds: loaded.payloadFinalizeSeconds,
+        peakWorkingMetalBytes: loaded.peakWorkingMetalBytes,
+        destinationStorage: loaded.destinationStorage,
         gpuSeconds: loaded.metrics.gpuSeconds,
         sourceMappingSeconds: loaded.metrics.sourceMappingSeconds,
         commandBufferCount: loaded.metrics.commandBufferCount,
@@ -480,6 +584,41 @@ private func run() throws {
       )
     )
   }
+  var cacheReopenRuns: [CacheReopenRecord] = []
+  if let payloadURL = options.exactWorkingCachePayload,
+    let metadataURL = options.exactWorkingCacheMetadata
+  {
+    for trial in 1...options.cacheReopenIterations {
+      let started = CFAbsoluteTimeGetCurrent()
+      let metadataStarted = CFAbsoluteTimeGetCurrent()
+      let metadata = try Metal4DSTEMResidentCacheIO.readMetadata(from: metadataURL)
+      let metadataSeconds = CFAbsoluteTimeGetCurrent() - metadataStarted
+      let validationStarted = CFAbsoluteTimeGetCurrent()
+      try Metal4DSTEMResidentCacheIO.validatePayload(
+        at: payloadURL,
+        metadata: metadata,
+        verifySHA256: false
+      )
+      let validationSeconds = CFAbsoluteTimeGetCurrent() - validationStarted
+      guard metadata.payloadSHA256 == acceptedWorkingVolumeSHA256 else {
+        throw BenchmarkError.invalid(
+          "Prepared-cache reopen changed the exact working-volume SHA-256."
+        )
+      }
+      cacheReopenRuns.append(
+        CacheReopenRecord(
+          trial: trial,
+          state:
+            "prepared_cache_metadata_and_identity_reopen_no_payload_hash_or_product_presentation",
+          wallSeconds: CFAbsoluteTimeGetCurrent() - started,
+          metadataReadSeconds: metadataSeconds,
+          identityValidationSeconds: validationSeconds,
+          payloadBytes: metadata.payloadBytes,
+          payloadSHA256: metadata.payloadSHA256
+        )
+      )
+    }
+  }
   guard let provenance = acceptedProvenance, let first = records.first else {
     throw BenchmarkError.invalid("The benchmark produced no accepted load trial.")
   }
@@ -490,6 +629,15 @@ private func run() throws {
     p95: percentile(wall, fraction: 0.95),
     maximum: wall.max() ?? .nan
   )
+  let cacheReopenDistribution: Distribution? =
+    cacheReopenRuns.isEmpty
+    ? nil
+    : Distribution(
+      samples: cacheReopenRuns.count,
+      p50: percentile(cacheReopenRuns.map(\.wallSeconds), fraction: 0.50),
+      p95: percentile(cacheReopenRuns.map(\.wallSeconds), fraction: 0.95),
+      maximum: cacheReopenRuns.map(\.wallSeconds).max() ?? .nan
+    )
   let workingShape =
     binnedPlan.map {
       [
@@ -504,8 +652,23 @@ private func run() throws {
       productPlan.sourceDetectorRows,
       productPlan.sourceDetectorColumns,
     ]
+  let estimatedAllocatedMetalBytes: UInt64
+  if options.exactWorkingCachePayload != nil, let binnedPlan {
+    let sum = productPlan.estimatedAllocatedMetalBytesExcludingMappedSource
+      .addingReportingOverflow(binnedPlan.shardPlan.maximumActualShardBytes)
+    guard !sum.overflow else {
+      throw BenchmarkError.invalid(
+        "Bounded cache-build Metal allocation estimate overflows UInt64."
+      )
+    }
+    estimatedAllocatedMetalBytes = sum.partialValue
+  } else {
+    estimatedAllocatedMetalBytes =
+      binnedPlan?.estimatedAllocatedMetalBytesExcludingMappedSource
+      ?? productPlan.estimatedAllocatedMetalBytesExcludingMappedSource
+  }
   let summary = BenchmarkSummary(
-    schema: "quantem.gpu.metal-4dstem-indexed-load-benchmark/v2",
+    schema: "quantem.gpu.metal-4dstem-indexed-load-benchmark/v3",
     revision: options.revision,
     timestamp: ISO8601DateFormatter().string(from: Date()),
     host: ProcessInfo.processInfo.hostName,
@@ -534,8 +697,7 @@ private func run() throws {
     requestedWindowScanRows: options.windowScanRows,
     maximumActualWindowBytes: productPlan.maximumActualWindowBytes,
     estimatedAllocatedMetalBytesExcludingMappedSource:
-      binnedPlan?.estimatedAllocatedMetalBytesExcludingMappedSource
-      ?? productPlan.estimatedAllocatedMetalBytesExcludingMappedSource,
+      estimatedAllocatedMetalBytes,
     maximumMappedCompressedBytes: productPlan.maximumMappedCompressedBytes,
     maximumMappedSourceBufferBytes: productPlan.maximumMappedSourceBufferBytes,
     maximumInFlightMappedSourceBytes: productPlan.maximumInFlightMappedSourceBytes,
@@ -548,6 +710,11 @@ private func run() throws {
     maximumActualShardBytes: binnedPlan?.shardPlan.maximumActualShardBytes,
     valueRangeAuditSHA256: binnedPlan?.sourceAudit.auditSHA256,
     workingVolumeSHA256: acceptedWorkingVolumeSHA256,
+    destinationStorage: first.destinationStorage,
+    cachePayload: options.exactWorkingCachePayload?.path,
+    cacheMetadata: options.exactWorkingCacheMetadata?.path,
+    cacheReopenValidation: cacheReopenDistribution,
+    cacheReopenRuns: cacheReopenRuns,
     processPeakResidentBytes: processPeakResidentBytes(),
     catalogSeconds: catalogSeconds,
     pipelineCompilationSeconds: compileSeconds,

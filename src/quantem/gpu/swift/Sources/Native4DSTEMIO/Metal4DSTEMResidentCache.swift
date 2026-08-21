@@ -29,6 +29,88 @@ public struct Metal4DSTEMSourceIdentity: Codable, Equatable, Sendable {
   }
 }
 
+/// Row/column sampling stored with an exact resident-cache payload.
+public struct Metal4DSTEMResidentAxisSampling: Codable, Equatable, Sendable {
+  public let row: Double
+  public let column: Double
+  public let unit: String
+  public let provenance: String
+  public let evidence: String
+
+  public init(
+    row: Double,
+    column: Double,
+    unit: String,
+    provenance: String,
+    evidence: String
+  ) {
+    self.row = row
+    self.column = column
+    self.unit = unit
+    self.provenance = provenance
+    self.evidence = evidence
+  }
+}
+
+/// Sampling state stored independently of Metal or application policy.
+public enum Metal4DSTEMResidentSamplingState: String, Codable, Equatable, Sendable {
+  case unavailable
+  case unchanged
+  case uniformlyScaled = "uniformly_scaled"
+  case nonuniformEdgeBins = "nonuniform_edge_bins"
+}
+
+/// Source-to-working sampling provenance for one exact cached selection.
+///
+/// This contract intentionally covers row/column sampling and bin centroids,
+/// not detector centers, affine transforms, masks, or radii.
+public struct Metal4DSTEMResidentSamplingPropagation: Codable, Equatable, Sendable {
+  public let sourceScan: Metal4DSTEMResidentAxisSampling?
+  public let workingScan: Metal4DSTEMResidentAxisSampling?
+  public let sourceDetector: Metal4DSTEMResidentAxisSampling?
+  public let workingDetector: Metal4DSTEMResidentAxisSampling?
+  public let scanState: Metal4DSTEMResidentSamplingState
+  public let detectorState: Metal4DSTEMResidentSamplingState
+  public let scanRegionRowStartInSourcePixels: Int
+  public let scanRegionColumnStartInSourcePixels: Int
+  public let firstWorkingScanCenterRowInSourcePixels: Double
+  public let firstWorkingScanCenterColumnInSourcePixels: Double
+  public let firstWorkingDetectorCenterRowInSourcePixels: Double
+  public let firstWorkingDetectorCenterColumnInSourcePixels: Double
+
+  public init(
+    sourceScan: Metal4DSTEMResidentAxisSampling?,
+    workingScan: Metal4DSTEMResidentAxisSampling?,
+    sourceDetector: Metal4DSTEMResidentAxisSampling?,
+    workingDetector: Metal4DSTEMResidentAxisSampling?,
+    scanState: Metal4DSTEMResidentSamplingState,
+    detectorState: Metal4DSTEMResidentSamplingState,
+    scanRegionRowStartInSourcePixels: Int,
+    scanRegionColumnStartInSourcePixels: Int,
+    firstWorkingScanCenterRowInSourcePixels: Double,
+    firstWorkingScanCenterColumnInSourcePixels: Double,
+    firstWorkingDetectorCenterRowInSourcePixels: Double,
+    firstWorkingDetectorCenterColumnInSourcePixels: Double
+  ) {
+    self.sourceScan = sourceScan
+    self.workingScan = workingScan
+    self.sourceDetector = sourceDetector
+    self.workingDetector = workingDetector
+    self.scanState = scanState
+    self.detectorState = detectorState
+    self.scanRegionRowStartInSourcePixels = scanRegionRowStartInSourcePixels
+    self.scanRegionColumnStartInSourcePixels = scanRegionColumnStartInSourcePixels
+    self.firstWorkingScanCenterRowInSourcePixels =
+      firstWorkingScanCenterRowInSourcePixels
+    self.firstWorkingScanCenterColumnInSourcePixels =
+      firstWorkingScanCenterColumnInSourcePixels
+    self.firstWorkingDetectorCenterRowInSourcePixels =
+      firstWorkingDetectorCenterRowInSourcePixels
+    self.firstWorkingDetectorCenterColumnInSourcePixels =
+      firstWorkingDetectorCenterColumnInSourcePixels
+  }
+}
+
 /// Scientific and storage provenance for an exact detector-word-major cache.
 public struct Metal4DSTEMResidentCacheMetadata: Codable, Equatable, Sendable {
   public static let currentFormatVersion = 2
@@ -59,6 +141,7 @@ public struct Metal4DSTEMResidentCacheMetadata: Codable, Equatable, Sendable {
   public let badPixelIndices: [Int]
   public let maxCount: UInt32
   public let pixelsAbove255: UInt64
+  public let samplingPropagation: Metal4DSTEMResidentSamplingPropagation?
   public let payloadBytes: UInt64
   public let payloadSHA256: String
 
@@ -88,6 +171,7 @@ public struct Metal4DSTEMResidentCacheMetadata: Codable, Equatable, Sendable {
     badPixelIndices: [Int],
     maxCount: UInt32,
     pixelsAbove255: UInt64,
+    samplingPropagation: Metal4DSTEMResidentSamplingPropagation? = nil,
     payloadBytes: UInt64,
     payloadSHA256: String = ""
   ) {
@@ -117,6 +201,7 @@ public struct Metal4DSTEMResidentCacheMetadata: Codable, Equatable, Sendable {
     self.badPixelIndices = badPixelIndices
     self.maxCount = maxCount
     self.pixelsAbove255 = pixelsAbove255
+    self.samplingPropagation = samplingPropagation
     self.payloadBytes = payloadBytes
     self.payloadSHA256 = payloadSHA256
   }
@@ -151,6 +236,7 @@ public struct Metal4DSTEMResidentCacheMetadata: Codable, Equatable, Sendable {
       badPixelIndices: badPixelIndices,
       maxCount: maxCount,
       pixelsAbove255: pixelsAbove255,
+      samplingPropagation: samplingPropagation,
       payloadBytes: payloadBytes,
       payloadSHA256: digest
     )
@@ -186,50 +272,113 @@ public enum Metal4DSTEMResidentCacheError: LocalizedError {
   }
 }
 
-/// Read and write exact resident-cache payloads without materializing a copy.
-public enum Metal4DSTEMResidentCacheIO {
-  public static func write(
-    pointer: UnsafeRawPointer,
-    length: Int,
+/// Transactional writer for an exact resident-cache payload.
+///
+/// Callers append nonoverlapping payload regions in canonical byte order. The
+/// metadata publication marker remains absent until every declared byte has
+/// been written, synchronized to storage, hashed, and sealed. If a write fails
+/// or the writer is abandoned, its unique temporary payload is removed. Cache
+/// admission, naming, eviction, and lifecycle remain caller policy.
+public final class Metal4DSTEMResidentCacheStreamWriter {
+  private let payloadURL: URL
+  private let metadataURL: URL
+  private let temporaryPayloadURL: URL
+  private let metadata: Metal4DSTEMResidentCacheMetadata
+  private var descriptor: Int32
+  private var hasher = SHA256()
+  private var writtenBytes: UInt64 = 0
+  private var didFinish = false
+
+  public init(
     payloadURL: URL,
     metadataURL: URL,
     metadata: Metal4DSTEMResidentCacheMetadata
-  ) throws -> Metal4DSTEMResidentCacheMetadata {
+  ) throws {
     guard !FileManager.default.fileExists(atPath: payloadURL.path),
       !FileManager.default.fileExists(atPath: metadataURL.path)
     else {
       throw Metal4DSTEMResidentCacheError.destinationExists(payloadURL.path)
     }
-    try validateMetadata(metadata, requireSealedPayload: false)
-    guard length >= 0, metadata.payloadBytes == UInt64(length) else {
-      throw Metal4DSTEMResidentCacheError.invalidMetadata(
-        "payloadBytes \(metadata.payloadBytes) does not match buffer length \(length)"
-      )
-    }
-
-    let temporaryPayload = payloadURL.deletingLastPathComponent().appendingPathComponent(
+    try Metal4DSTEMResidentCacheIO.validateMetadata(
+      metadata,
+      requireSealedPayload: false
+    )
+    let temporary = payloadURL.deletingLastPathComponent().appendingPathComponent(
       ".\(payloadURL.lastPathComponent).\(UUID().uuidString).tmp"
     )
-    var descriptor = open(
-      temporaryPayload.path,
+    let descriptor = open(
+      temporary.path,
       O_WRONLY | O_CREAT | O_EXCL,
       S_IRUSR | S_IWUSR
     )
     guard descriptor >= 0 else {
       throw Metal4DSTEMResidentCacheError.cannotCreatePayload(payloadURL.path)
     }
-    defer {
-      if descriptor >= 0 { close(descriptor) }
-      try? FileManager.default.removeItem(at: temporaryPayload)
+    self.payloadURL = payloadURL
+    self.metadataURL = metadataURL
+    temporaryPayloadURL = temporary
+    self.metadata = metadata
+    self.descriptor = descriptor
+  }
+
+  deinit {
+    cancel()
+  }
+
+  /// Append one exact canonical payload region without materializing a copy.
+  public func append(pointer: UnsafeRawPointer, length: Int) throws {
+    guard !didFinish, descriptor >= 0, length > 0 else {
+      throw Metal4DSTEMResidentCacheError.cannotWritePayload(payloadURL.path)
     }
-    var offset = 0
-    while offset < length {
-      let count = min(16 * 1024 * 1024, length - offset)
-      let written = Darwin.write(descriptor, pointer.advanced(by: offset), count)
-      guard written > 0 else {
-        throw Metal4DSTEMResidentCacheError.cannotWritePayload(payloadURL.path)
+    guard let length64 = UInt64(exactly: length) else {
+      throw Metal4DSTEMResidentCacheError.cannotWritePayload(payloadURL.path)
+    }
+    let newTotal = writtenBytes.addingReportingOverflow(length64)
+    guard !newTotal.overflow, newTotal.partialValue <= metadata.payloadBytes else {
+      throw Metal4DSTEMResidentCacheError.payloadSizeMismatch(
+        expected: metadata.payloadBytes,
+        actual: newTotal.partialValue
+      )
+    }
+    var chunkStart = 0
+    while chunkStart < length {
+      let chunkLength = min(16 * 1024 * 1024, length - chunkStart)
+      var chunkWritten = 0
+      while chunkWritten < chunkLength {
+        let written = Darwin.write(
+          descriptor,
+          pointer.advanced(by: chunkStart + chunkWritten),
+          chunkLength - chunkWritten
+        )
+        if written < 0, errno == EINTR { continue }
+        guard written > 0 else {
+          throw Metal4DSTEMResidentCacheError.cannotWritePayload(payloadURL.path)
+        }
+        chunkWritten += written
       }
-      offset += written
+      let bytes = Data(
+        bytesNoCopy: UnsafeMutableRawPointer(
+          mutating: pointer.advanced(by: chunkStart)
+        ),
+        count: chunkLength,
+        deallocator: .none
+      )
+      hasher.update(data: bytes)
+      chunkStart += chunkLength
+    }
+    writtenBytes = newTotal.partialValue
+  }
+
+  /// Publish the complete payload and its sealed metadata atomically by file.
+  public func finish() throws -> Metal4DSTEMResidentCacheMetadata {
+    guard !didFinish, descriptor >= 0 else {
+      throw Metal4DSTEMResidentCacheError.cannotWritePayload(payloadURL.path)
+    }
+    guard writtenBytes == metadata.payloadBytes else {
+      throw Metal4DSTEMResidentCacheError.payloadSizeMismatch(
+        expected: metadata.payloadBytes,
+        actual: writtenBytes
+      )
     }
     guard fsync(descriptor) == 0 else {
       throw Metal4DSTEMResidentCacheError.cannotWritePayload(payloadURL.path)
@@ -239,20 +388,75 @@ public enum Metal4DSTEMResidentCacheIO {
       throw Metal4DSTEMResidentCacheError.cannotWritePayload(payloadURL.path)
     }
     descriptor = -1
-    try FileManager.default.moveItem(at: temporaryPayload, to: payloadURL)
+    let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    var movedPayload = false
     do {
-      let digest = sha256(pointer: pointer, length: length)
+      try FileManager.default.moveItem(at: temporaryPayloadURL, to: payloadURL)
+      movedPayload = true
       let identity = try Metal4DSTEMSourceIdentity(url: payloadURL)
       let complete = metadata.withPayloadSHA256(digest, identity: identity)
-      try validateMetadata(complete, requireSealedPayload: true)
+      try Metal4DSTEMResidentCacheIO.validateMetadata(
+        complete,
+        requireSealedPayload: true
+      )
       let encoder = JSONEncoder()
       encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-      try encoder.encode(complete).write(to: metadataURL, options: .atomic)
+      let temporaryMetadataURL = metadataURL.deletingLastPathComponent()
+        .appendingPathComponent(
+          ".\(metadataURL.lastPathComponent).\(UUID().uuidString).tmp"
+        )
+      defer { try? FileManager.default.removeItem(at: temporaryMetadataURL) }
+      try encoder.encode(complete).write(
+        to: temporaryMetadataURL,
+        options: .atomic
+      )
+      try FileManager.default.moveItem(
+        at: temporaryMetadataURL,
+        to: metadataURL
+      )
+      didFinish = true
       return complete
     } catch {
-      try? FileManager.default.removeItem(at: payloadURL)
+      if movedPayload {
+        try? FileManager.default.removeItem(at: payloadURL)
+      }
       throw error
     }
+  }
+
+  /// Discard an incomplete transaction. Published files are never removed.
+  public func cancel() {
+    guard !didFinish else { return }
+    if descriptor >= 0 {
+      close(descriptor)
+      descriptor = -1
+    }
+    try? FileManager.default.removeItem(at: temporaryPayloadURL)
+  }
+}
+
+/// Read and write exact resident-cache payloads without materializing a copy.
+public enum Metal4DSTEMResidentCacheIO {
+  public static func write(
+    pointer: UnsafeRawPointer,
+    length: Int,
+    payloadURL: URL,
+    metadataURL: URL,
+    metadata: Metal4DSTEMResidentCacheMetadata
+  ) throws -> Metal4DSTEMResidentCacheMetadata {
+    guard length >= 0, metadata.payloadBytes == UInt64(length) else {
+      throw Metal4DSTEMResidentCacheError.invalidMetadata(
+        "payloadBytes \(metadata.payloadBytes) does not match buffer length \(length)"
+      )
+    }
+    let writer = try Metal4DSTEMResidentCacheStreamWriter(
+      payloadURL: payloadURL,
+      metadataURL: metadataURL,
+      metadata: metadata
+    )
+    defer { writer.cancel() }
+    try writer.append(pointer: pointer, length: length)
+    return try writer.finish()
   }
 
   public static func readMetadata(from url: URL) throws -> Metal4DSTEMResidentCacheMetadata {
@@ -296,15 +500,6 @@ public enum Metal4DSTEMResidentCacheIO {
         actual: actual
       )
     }
-  }
-
-  private static func sha256(pointer: UnsafeRawPointer, length: Int) -> String {
-    let data = Data(
-      bytesNoCopy: UnsafeMutableRawPointer(mutating: pointer),
-      count: length,
-      deallocator: .none
-    )
-    return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
   }
 
   static func validateMetadata(
@@ -370,6 +565,11 @@ public enum Metal4DSTEMResidentCacheIO {
       badPixels.allSatisfy({ $0 >= 0 && UInt64($0) < sourceDetectorPixels })
     else { try invalid("badPixelIndices contains duplicates or out-of-range values") }
     try validateValueRangeContract(
+      metadata,
+      selectedRows: selectedRows,
+      selectedColumns: selectedColumns
+    )
+    try validateSamplingPropagation(
       metadata,
       selectedRows: selectedRows,
       selectedColumns: selectedColumns
@@ -500,6 +700,93 @@ public enum Metal4DSTEMResidentCacheIO {
           "narrow exact integer sums require source identity and a sealed value-range audit"
         )
       }
+    }
+  }
+
+  private static func validateSamplingPropagation(
+    _ metadata: Metal4DSTEMResidentCacheMetadata,
+    selectedRows: Int,
+    selectedColumns: Int
+  ) throws {
+    guard let sampling = metadata.samplingPropagation else { return }
+    func invalid(_ reason: String) throws -> Never {
+      throw Metal4DSTEMResidentCacheError.invalidMetadata(reason)
+    }
+    func valid(_ axis: Metal4DSTEMResidentAxisSampling) -> Bool {
+      axis.row.isFinite && axis.row > 0
+        && axis.column.isFinite && axis.column > 0
+        && !axis.unit.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        && !axis.provenance.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        && !axis.evidence.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+    func validateAxis(
+      source: Metal4DSTEMResidentAxisSampling?,
+      working: Metal4DSTEMResidentAxisSampling?,
+      state: Metal4DSTEMResidentSamplingState,
+      bin: Int,
+      label: String
+    ) throws {
+      guard source.map(valid) ?? true, working.map(valid) ?? true else {
+        try invalid("\(label) sampling contains a nonpositive or incomplete axis")
+      }
+      switch state {
+      case .unavailable:
+        guard source == nil, working == nil else {
+          try invalid("unavailable \(label) sampling must not contain axis values")
+        }
+      case .unchanged:
+        guard bin == 1, let source, source == working else {
+          try invalid("unchanged \(label) sampling must match source values at bin 1")
+        }
+      case .uniformlyScaled:
+        guard bin > 1, let source, let working,
+          working.row == source.row * Double(bin),
+          working.column == source.column * Double(bin),
+          working.unit == source.unit,
+          working.provenance == source.provenance,
+          working.evidence == source.evidence
+        else {
+          try invalid("uniform \(label) sampling does not match bin \(bin)")
+        }
+      case .nonuniformEdgeBins:
+        guard source != nil, working == nil else {
+          try invalid("nonuniform-edge \(label) sampling must retain only source values")
+        }
+      }
+    }
+    try validateAxis(
+      source: sampling.sourceScan,
+      working: sampling.workingScan,
+      state: sampling.scanState,
+      bin: metadata.scanBin,
+      label: "scan"
+    )
+    try validateAxis(
+      source: sampling.sourceDetector,
+      working: sampling.workingDetector,
+      state: sampling.detectorState,
+      bin: metadata.detectorBin,
+      label: "detector"
+    )
+    let expectedScanRowCenter =
+      Double(metadata.scanRowStart)
+      + Double(min(metadata.scanBin, selectedRows) - 1) / 2
+    let expectedScanColumnCenter =
+      Double(metadata.scanColumnStart)
+      + Double(min(metadata.scanBin, selectedColumns) - 1) / 2
+    let expectedDetectorRowCenter =
+      Double(min(metadata.detectorBin, metadata.sourceDetectorRows) - 1) / 2
+    let expectedDetectorColumnCenter =
+      Double(min(metadata.detectorBin, metadata.sourceDetectorColumns) - 1) / 2
+    guard sampling.scanRegionRowStartInSourcePixels == metadata.scanRowStart,
+      sampling.scanRegionColumnStartInSourcePixels == metadata.scanColumnStart,
+      sampling.firstWorkingScanCenterRowInSourcePixels == expectedScanRowCenter,
+      sampling.firstWorkingScanCenterColumnInSourcePixels == expectedScanColumnCenter,
+      sampling.firstWorkingDetectorCenterRowInSourcePixels == expectedDetectorRowCenter,
+      sampling.firstWorkingDetectorCenterColumnInSourcePixels
+        == expectedDetectorColumnCenter
+    else {
+      try invalid("sampling origins or first-bin centroids disagree with geometry")
     }
   }
 
