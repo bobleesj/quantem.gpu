@@ -629,8 +629,9 @@ public final class Metal4DSTEMIndexedLoader {
 
   /// Decode once and transactionally write an exact file-backed working volume.
   ///
-  /// Only one output shard is allocated in Metal at a time. Each shard is
-  /// complete before it is appended to a unique temporary payload and released.
+  /// Only one output-shard buffer is allocated in Metal. Each shard is complete
+  /// before it is appended to a unique temporary payload and the same bounded
+  /// buffer is reused for the next shard.
   /// The metadata publication marker remains absent until the recomputed source
   /// audit, exact products, full byte coverage, fsync, and SHA-256 seal all
   /// succeed. The caller owns device admission and cache lifecycle.
