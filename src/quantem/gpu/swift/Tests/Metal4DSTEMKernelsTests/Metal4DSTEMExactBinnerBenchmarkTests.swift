@@ -64,6 +64,10 @@ final class Metal4DSTEMExactBinnerBenchmarkTests: XCTestCase {
       stagingDtype: .uint16,
       outputDtype: .uint16
     )
+    let fullShardPlan = try Metal4DSTEMExactBinningShardPlan(
+      provenance: fullProvenance,
+      maximumShardBytes: 603_979_776
+    )
     let sourceValueCount = try checkedProduct([
       batchRows, scanColumns, plan.detectorPixels,
     ])
@@ -140,6 +144,15 @@ final class Metal4DSTEMExactBinnerBenchmarkTests: XCTestCase {
       "staged_source_bytes": sourceBytes,
       "batch_output_bytes": provenance.outputPayloadBytes,
       "full_512_output_bytes": fullProvenance.outputPayloadBytes,
+      "full_512_shard_count": fullShardPlan.shards.count,
+      "full_512_bytes_per_scan_row": fullShardPlan.bytesPerOutputScanRow,
+      "full_512_maximum_shard_bytes": fullShardPlan.maximumShardBytes,
+      "full_512_maximum_actual_shard_bytes": fullShardPlan.maximumActualShardBytes,
+      "full_512_shard_scan_rows": fullShardPlan.shards.map {
+        $0.outputScanRowStop - $0.outputScanRowStart
+      },
+      "full_512_fits_single_metal_buffer":
+        fullProvenance.outputPayloadBytes <= UInt64(device.maxBufferLength),
       "max_buffer_length": device.maxBufferLength,
       "recommended_max_working_set_size": device.recommendedMaxWorkingSetSize,
       "warmups": warmups,

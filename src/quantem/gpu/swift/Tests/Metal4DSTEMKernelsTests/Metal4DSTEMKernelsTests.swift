@@ -1520,6 +1520,133 @@ final class Metal4DSTEMKernelsTests: XCTestCase {
     }
     XCTAssertEqual(bufferValues(destination, count: expected.count), expected)
 
+    let provenance = try Metal4DSTEMExactBinner.provenance(
+      plan: plan,
+      sourceAudit: audit,
+      stagingDtype: .uint16,
+      outputDtype: .uint16
+    )
+    let bytesPerOutputScanRow =
+      outputWordsPerScan * plan.outputScanColumns
+      * MemoryLayout<UInt32>.stride
+    let shardPlan = try Metal4DSTEMExactBinningShardPlan(
+      provenance: provenance,
+      maximumShardBytes: UInt64(bytesPerOutputScanRow)
+    )
+    XCTAssertEqual(shardPlan.shards.count, plan.outputScanRows)
+    let sourceValuesPerScanRow = plan.scanRegion.columns * plan.detectorPixels
+    for shard in shardPlan.shards {
+      let shardDestination = try outputBuffer(
+        device: device,
+        count: outputWordsPerScan * shard.outputScanPositionCount
+      )
+      let shardCommand = try XCTUnwrap(queue.makeCommandBuffer())
+      _ = try binner.encodeBatch(
+        commandBuffer: shardCommand,
+        stagedSource: source,
+        stagedSourceOffset:
+          shard.outputScanRowStart * sourceValuesPerScanRow
+          * MemoryLayout<UInt16>.stride,
+        destination: shardDestination,
+        destinationView: .scanRowShard(plan: shardPlan, index: shard.index),
+        plan: plan,
+        sourceBatchRows: shard.outputScanRowStop - shard.outputScanRowStart,
+        destinationScanRowOffset: shard.outputScanRowStart,
+        sourceAudit: audit,
+        stagingDtype: .uint16,
+        outputDtype: .uint16
+      )
+      try complete(shardCommand)
+
+      var expectedShard: [UInt32] = []
+      for word in 0..<outputWordsPerScan {
+        let fullWordStart =
+          word * plan.outputScanPositions
+          + shard.outputScanPositionStart
+        let fullWordStop = fullWordStart + shard.outputScanPositionCount
+        expectedShard.append(contentsOf: expected[fullWordStart..<fullWordStop])
+      }
+      XCTAssertEqual(
+        bufferValues(shardDestination, count: expectedShard.count),
+        expectedShard
+      )
+    }
+
+    let crossingCommand = try XCTUnwrap(queue.makeCommandBuffer())
+    XCTAssertThrowsError(
+      try binner.encodeBatch(
+        commandBuffer: crossingCommand,
+        stagedSource: source,
+        destination: destination,
+        destinationView: .scanRowShard(plan: shardPlan, index: 0),
+        plan: plan,
+        sourceBatchRows: 2,
+        destinationScanRowOffset: 0,
+        sourceAudit: audit,
+        stagingDtype: .uint16,
+        outputDtype: .uint16
+      )
+    ) { error in
+      XCTAssertEqual(
+        error as? Metal4DSTEMExactBinnerError,
+        .batchCrossesDestinationShard(
+          batchStart: 0, batchStop: 2, shardStart: 0, shardStop: 1
+        )
+      )
+    }
+
+    let invalidShardCommand = try XCTUnwrap(queue.makeCommandBuffer())
+    XCTAssertThrowsError(
+      try binner.encodeBatch(
+        commandBuffer: invalidShardCommand,
+        stagedSource: source,
+        destination: destination,
+        destinationView: .scanRowShard(
+          plan: shardPlan,
+          index: shardPlan.shards.count
+        ),
+        plan: plan,
+        sourceBatchRows: 1,
+        destinationScanRowOffset: 0,
+        sourceAudit: audit,
+        stagingDtype: .uint16,
+        outputDtype: .uint16
+      )
+    ) { error in
+      XCTAssertEqual(
+        error as? Metal4DSTEMExactBinnerError,
+        .invalidDestinationShard(shardPlan.shards.count)
+      )
+    }
+
+    let undersizedShardDestination = try outputBuffer(
+      device: device,
+      count: outputWordsPerScan * plan.outputScanColumns - 1
+    )
+    let undersizedShardCommand = try XCTUnwrap(queue.makeCommandBuffer())
+    XCTAssertThrowsError(
+      try binner.encodeBatch(
+        commandBuffer: undersizedShardCommand,
+        stagedSource: source,
+        destination: undersizedShardDestination,
+        destinationView: .scanRowShard(plan: shardPlan, index: 0),
+        plan: plan,
+        sourceBatchRows: 1,
+        destinationScanRowOffset: 0,
+        sourceAudit: audit,
+        stagingDtype: .uint16,
+        outputDtype: .uint16
+      )
+    ) { error in
+      XCTAssertEqual(
+        error as? Metal4DSTEMExactBinnerError,
+        .destinationBufferTooSmall(
+          expected: UInt64(bytesPerOutputScanRow),
+          actual: UInt64(bytesPerOutputScanRow - MemoryLayout<UInt32>.stride)
+        )
+      )
+    }
+
     let invalidCommand = try XCTUnwrap(queue.makeCommandBuffer())
     XCTAssertThrowsError(
       try binner.encodeBatch(

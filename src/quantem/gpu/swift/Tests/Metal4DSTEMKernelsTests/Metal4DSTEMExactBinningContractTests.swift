@@ -71,6 +71,33 @@ final class Metal4DSTEMExactBinningContractTests: XCTestCase {
     XCTAssertEqual(provenance.maximumOutputCount, 212)
     XCTAssertEqual(provenance.outputPayloadBytes, 4_831_838_208)
 
+    let shardPlan = try Metal4DSTEMExactBinningShardPlan(
+      provenance: provenance,
+      maximumShardBytes: 603_979_776
+    )
+    XCTAssertEqual(shardPlan.bytesPerOutputScanRow, 9_437_184)
+    XCTAssertEqual(shardPlan.shards.count, 8)
+    XCTAssertEqual(shardPlan.totalPayloadBytes, 4_831_838_208)
+    XCTAssertEqual(shardPlan.maximumActualShardBytes, 603_979_776)
+    for (index, shard) in shardPlan.shards.enumerated() {
+      XCTAssertEqual(shard.index, index)
+      XCTAssertEqual(shard.outputScanRowStart, index * 64)
+      XCTAssertEqual(shard.outputScanRowStop, (index + 1) * 64)
+      XCTAssertEqual(shard.outputScanPositionStart, index * 64 * 512)
+      XCTAssertEqual(shard.outputScanPositionCount, 64 * 512)
+      XCTAssertEqual(shard.payloadBytes, 603_979_776)
+      XCTAssertEqual(shard.outputLayout, .detectorWordMajorPackedUInt16)
+    }
+    try shardPlan.validate(provenance: provenance)
+    try shardPlan.validate(sourceAudit: audit)
+    XCTAssertEqual(
+      try JSONDecoder().decode(
+        Metal4DSTEMExactBinningShardPlan.self,
+        from: JSONEncoder().encode(shardPlan)
+      ),
+      shardPlan
+    )
+
     let sampling = try provenance.propagatingSampling(
       sourceScan: Metal4DSTEMAxisSampling(
         row: 0.08,
@@ -115,6 +142,69 @@ final class Metal4DSTEMExactBinningContractTests: XCTestCase {
     )
     XCTAssertThrowsError(try tampered.validate(sourceAudit: audit)) { error in
       XCTAssertEqual(error as? Metal4DSTEMExactBinnerError, .invalidProvenance)
+    }
+  }
+
+  func testExactBinningShardPlanFailsClosed() throws {
+    let plan = try Metal4DSTEMLoadPlan(
+      sourceScanRows: 4,
+      sourceScanColumns: 3,
+      detectorRows: 3,
+      detectorColumns: 5,
+      sourceBytesPerValue: 2,
+      scanRegion: Metal4DSTEMScanRegion.full(sourceRows: 4, sourceColumns: 3),
+      detectorBin: 2
+    )
+    let audit = try Metal4DSTEMExactSourceAudit(
+      sourceIdentitySHA256: String(repeating: "7", count: 64),
+      sourceDtype: .uint16,
+      badPixelIndices: [],
+      maximumSourceCount: 11,
+      pixelsAbove255: 0
+    )
+    let provenance = try Metal4DSTEMExactBinner.provenance(
+      plan: plan,
+      sourceAudit: audit,
+      stagingDtype: .uint16,
+      outputDtype: .uint16
+    )
+    XCTAssertEqual(provenance.outputPayloadBytes, 144)
+    XCTAssertThrowsError(
+      try Metal4DSTEMExactBinningShardPlan(
+        provenance: provenance,
+        maximumShardBytes: 35
+      )
+    ) { error in
+      XCTAssertEqual(
+        error as? Metal4DSTEMExactBinnerError,
+        .maximumShardBytesTooSmall(required: 36, actual: 35)
+      )
+    }
+
+    let shardPlan = try Metal4DSTEMExactBinningShardPlan(
+      provenance: provenance,
+      maximumShardBytes: 72
+    )
+    XCTAssertEqual(shardPlan.shards.map(\.outputScanRowStart), [0, 2])
+    XCTAssertEqual(shardPlan.shards.map(\.outputScanRowStop), [2, 4])
+
+    let differentAudit = try Metal4DSTEMExactSourceAudit(
+      sourceIdentitySHA256: String(repeating: "8", count: 64),
+      sourceDtype: .uint16,
+      badPixelIndices: [],
+      maximumSourceCount: 11,
+      pixelsAbove255: 0
+    )
+    let differentProvenance = try Metal4DSTEMExactBinner.provenance(
+      plan: plan,
+      sourceAudit: differentAudit,
+      stagingDtype: .uint16,
+      outputDtype: .uint16
+    )
+    XCTAssertThrowsError(
+      try shardPlan.validate(provenance: differentProvenance)
+    ) { error in
+      XCTAssertEqual(error as? Metal4DSTEMExactBinnerError, .invalidShardPlan)
     }
   }
 

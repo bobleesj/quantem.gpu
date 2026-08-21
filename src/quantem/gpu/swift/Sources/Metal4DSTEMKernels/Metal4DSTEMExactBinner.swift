@@ -361,6 +361,181 @@ public struct Metal4DSTEMExactBinningProvenance: Codable, Equatable, Sendable {
   }
 }
 
+/// One scan-row-contiguous shard of an exact word-major working volume.
+///
+/// Each shard retains every detector pixel and every selected scan column for
+/// its half-open output scan-row interval. Detector words remain the major
+/// dimension inside the shard; `outputScanPositionCount` is their local stride.
+public struct Metal4DSTEMExactBinningShard: Codable, Equatable, Sendable {
+  public let index: Int
+  public let outputScanRowStart: Int
+  public let outputScanRowStop: Int
+  public let outputScanPositionStart: Int
+  public let outputScanPositionCount: Int
+  public let payloadBytes: UInt64
+  public let outputLayout: Metal4DSTEMOutputLayout
+}
+
+/// Deterministic bounded-buffer storage for one exact logical working volume.
+///
+/// Sharding changes only physical storage. The source/working geometry, dtype,
+/// exact-sum semantics, calibration propagation, and complete scan coverage are
+/// inherited unchanged from `provenance`.
+public struct Metal4DSTEMExactBinningShardPlan: Codable, Equatable, Sendable {
+  public static let currentSchema = "quantem.gpu.metal-4dstem-exact-binning-shards/v1"
+
+  public let schema: String
+  public let provenance: Metal4DSTEMExactBinningProvenance
+  public let maximumShardBytes: UInt64
+  public let bytesPerOutputScanRow: UInt64
+  public let shards: [Metal4DSTEMExactBinningShard]
+  public let totalPayloadBytes: UInt64
+  public let maximumActualShardBytes: UInt64
+
+  public init(
+    provenance: Metal4DSTEMExactBinningProvenance,
+    maximumShardBytes: UInt64
+  ) throws {
+    guard provenance.schema == Metal4DSTEMExactBinningProvenance.currentSchema,
+      provenance.outputScanRows > 0,
+      provenance.outputScanColumns > 0,
+      provenance.outputDetectorRows > 0,
+      provenance.outputDetectorColumns > 0
+    else { throw Metal4DSTEMExactBinnerError.invalidShardPlan }
+
+    guard
+      let detectorPixels = Self.checkedProduct(
+        UInt64(provenance.outputDetectorRows),
+        UInt64(provenance.outputDetectorColumns)
+      )
+    else { throw Metal4DSTEMExactBinnerError.arithmeticOverflow }
+    let wordsPerScan =
+      provenance.outputDtype == .uint16
+      ? (detectorPixels + 1) / 2
+      : detectorPixels
+    let expectedLayout: Metal4DSTEMOutputLayout =
+      provenance.outputDtype == .uint16
+      ? .detectorWordMajorPackedUInt16 : .detectorWordMajorUInt32
+    guard provenance.outputDtype == .uint16 || provenance.outputDtype == .uint32,
+      provenance.outputLayout == expectedLayout,
+      let wordsPerRow = Self.checkedProduct(
+        wordsPerScan, UInt64(provenance.outputScanColumns)
+      ),
+      let rowBytes = Self.checkedProduct(
+        wordsPerRow, UInt64(MemoryLayout<UInt32>.stride)
+      ),
+      let expectedTotal = Self.checkedProduct(
+        rowBytes, UInt64(provenance.outputScanRows)
+      ),
+      expectedTotal == provenance.outputPayloadBytes
+    else { throw Metal4DSTEMExactBinnerError.invalidShardPlan }
+    guard maximumShardBytes >= rowBytes else {
+      throw Metal4DSTEMExactBinnerError.maximumShardBytesTooSmall(
+        required: rowBytes, actual: maximumShardBytes
+      )
+    }
+
+    let rowsPerShard = Int(
+      min(
+        UInt64(provenance.outputScanRows),
+        maximumShardBytes / rowBytes
+      )
+    )
+    guard rowsPerShard > 0 else {
+      throw Metal4DSTEMExactBinnerError.maximumShardBytesTooSmall(
+        required: rowBytes, actual: maximumShardBytes
+      )
+    }
+    var generated: [Metal4DSTEMExactBinningShard] = []
+    var rowStart = 0
+    var total: UInt64 = 0
+    var largest: UInt64 = 0
+    while rowStart < provenance.outputScanRows {
+      let rowCount = min(
+        provenance.outputScanRows - rowStart,
+        rowsPerShard
+      )
+      let rowStopResult = rowStart.addingReportingOverflow(rowCount)
+      guard !rowStopResult.overflow else {
+        throw Metal4DSTEMExactBinnerError.arithmeticOverflow
+      }
+      let rowStop = rowStopResult.partialValue
+      let positionStartResult = rowStart.multipliedReportingOverflow(
+        by: provenance.outputScanColumns
+      )
+      let positionCountResult = rowCount.multipliedReportingOverflow(
+        by: provenance.outputScanColumns
+      )
+      guard !positionStartResult.overflow, !positionCountResult.overflow,
+        let payload = Self.checkedProduct(UInt64(rowCount), rowBytes),
+        payload <= maximumShardBytes
+      else { throw Metal4DSTEMExactBinnerError.arithmeticOverflow }
+      let nextTotal = total.addingReportingOverflow(payload)
+      guard !nextTotal.overflow else {
+        throw Metal4DSTEMExactBinnerError.arithmeticOverflow
+      }
+      generated.append(
+        Metal4DSTEMExactBinningShard(
+          index: generated.count,
+          outputScanRowStart: rowStart,
+          outputScanRowStop: rowStop,
+          outputScanPositionStart: positionStartResult.partialValue,
+          outputScanPositionCount: positionCountResult.partialValue,
+          payloadBytes: payload,
+          outputLayout: provenance.outputLayout
+        )
+      )
+      total = nextTotal.partialValue
+      largest = max(largest, payload)
+      rowStart = rowStop
+    }
+    guard !generated.isEmpty, total == provenance.outputPayloadBytes else {
+      throw Metal4DSTEMExactBinnerError.invalidShardPlan
+    }
+
+    schema = Self.currentSchema
+    self.provenance = provenance
+    self.maximumShardBytes = maximumShardBytes
+    bytesPerOutputScanRow = rowBytes
+    shards = generated
+    totalPayloadBytes = total
+    maximumActualShardBytes = largest
+  }
+
+  /// Rebuild and compare a decoded plan before allocating or encoding shards.
+  public func validate(
+    provenance expectedProvenance: Metal4DSTEMExactBinningProvenance
+  ) throws {
+    let expected = try Self(
+      provenance: expectedProvenance,
+      maximumShardBytes: maximumShardBytes
+    )
+    guard self == expected else {
+      throw Metal4DSTEMExactBinnerError.invalidShardPlan
+    }
+  }
+
+  /// Revalidate both provenance and physical sharding against a source audit.
+  public func validate(sourceAudit: Metal4DSTEMExactSourceAudit) throws {
+    try provenance.validate(sourceAudit: sourceAudit)
+    try validate(provenance: provenance)
+  }
+
+  private static func checkedProduct(_ lhs: UInt64, _ rhs: UInt64) -> UInt64? {
+    let result = lhs.multipliedReportingOverflow(by: rhs)
+    return result.overflow ? nil : result.partialValue
+  }
+}
+
+/// The physical destination selected for one exact binning dispatch.
+public enum Metal4DSTEMExactBinningDestination: Equatable, Sendable {
+  /// One complete detector-word-major destination.
+  case complete
+
+  /// One validated scan-row shard of the complete logical destination.
+  case scanRowShard(plan: Metal4DSTEMExactBinningShardPlan, index: Int)
+}
+
 /// Validation failures for exact Metal load/bin encoding.
 public enum Metal4DSTEMExactBinnerError: LocalizedError, Equatable {
   case invalidCalibration
@@ -377,6 +552,12 @@ public enum Metal4DSTEMExactBinnerError: LocalizedError, Equatable {
   case invalidBatchCoverage(rows: Int, remaining: Int)
   case misalignedNonfinalBatch(rows: Int, scanBin: Int)
   case invalidDestinationScanRowOffset(Int)
+  case maximumShardBytesTooSmall(required: UInt64, actual: UInt64)
+  case invalidShardPlan
+  case invalidDestinationShard(Int)
+  case batchCrossesDestinationShard(
+    batchStart: Int, batchStop: Int, shardStart: Int, shardStop: Int
+  )
   case invalidSourceOffset(Int)
   case arithmeticOverflow
   case sourceBufferTooSmall(expected: UInt64, actual: UInt64)
@@ -421,6 +602,21 @@ public enum Metal4DSTEMExactBinnerError: LocalizedError, Equatable {
       "A nonfinal batch with \(rows) scan rows is not aligned to scan bin \(scanBin)."
     case .invalidDestinationScanRowOffset(let offset):
       "Destination scan-row offset \(offset) is outside the working scan."
+    case .maximumShardBytesTooSmall(let required, let actual):
+      "An exact output scan row requires \(required) bytes, but the shard limit "
+        + "is \(actual). Increase the physical shard limit without changing the "
+        + "scientific load plan."
+    case .invalidShardPlan:
+      "The exact output shard plan does not match its complete provenance or "
+        + "deterministic scan-row partition. Rebuild it from validated provenance."
+    case .invalidDestinationShard(let index):
+      "Exact output shard index \(index) is outside the declared shard plan."
+    case .batchCrossesDestinationShard(
+      let batchStart, let batchStop, let shardStart, let shardStop
+    ):
+      "Exact output rows [\(batchStart), \(batchStop)) cross the selected shard "
+        + "rows [\(shardStart), \(shardStop)). Split the source batch at the "
+        + "declared shard boundary."
     case .invalidSourceOffset(let offset):
       "Source byte offset \(offset) is negative or misaligned for the staging dtype."
     case .arithmeticOverflow:
@@ -571,7 +767,7 @@ public final class Metal4DSTEMExactBinner {
     )
   }
 
-  /// Encode one aligned batch into the plan's complete word-major destination.
+  /// Encode one aligned batch into a complete or scan-row-sharded destination.
   ///
   /// `stagedSource` is frame-major over the selected scan columns. Values at
   /// `sourceAudit.badPixelIndices` must already be zero in every staged frame;
@@ -584,6 +780,7 @@ public final class Metal4DSTEMExactBinner {
     stagedSource: MTLBuffer,
     stagedSourceOffset: Int = 0,
     destination: MTLBuffer,
+    destinationView: Metal4DSTEMExactBinningDestination = .complete,
     plan: Metal4DSTEMLoadPlan,
     sourceBatchRows: Int,
     destinationScanRowOffset: Int,
@@ -659,9 +856,38 @@ public final class Metal4DSTEMExactBinner {
         expected: requiredSourceBytes, actual: UInt64(stagedSource.length)
       )
     }
-    guard provenance.outputPayloadBytes <= UInt64(destination.length) else {
+    let destinationScanCount: Int
+    let localDestinationScanRowOffset: Int
+    let requiredDestinationBytes: UInt64
+    switch destinationView {
+    case .complete:
+      destinationScanCount = plan.outputScanPositions
+      localDestinationScanRowOffset = destinationScanRowOffset
+      requiredDestinationBytes = provenance.outputPayloadBytes
+    case .scanRowShard(let shardPlan, let index):
+      try shardPlan.validate(provenance: provenance)
+      guard shardPlan.shards.indices.contains(index) else {
+        throw Metal4DSTEMExactBinnerError.invalidDestinationShard(index)
+      }
+      let shard = shardPlan.shards[index]
+      guard destinationScanRowOffset >= shard.outputScanRowStart,
+        destinationStop.partialValue <= shard.outputScanRowStop
+      else {
+        throw Metal4DSTEMExactBinnerError.batchCrossesDestinationShard(
+          batchStart: destinationScanRowOffset,
+          batchStop: destinationStop.partialValue,
+          shardStart: shard.outputScanRowStart,
+          shardStop: shard.outputScanRowStop
+        )
+      }
+      destinationScanCount = shard.outputScanPositionCount
+      localDestinationScanRowOffset =
+        destinationScanRowOffset - shard.outputScanRowStart
+      requiredDestinationBytes = shard.payloadBytes
+    }
+    guard requiredDestinationBytes <= UInt64(destination.length) else {
       throw Metal4DSTEMExactBinnerError.destinationBufferTooSmall(
-        expected: provenance.outputPayloadBytes, actual: UInt64(destination.length)
+        expected: requiredDestinationBytes, actual: UInt64(destination.length)
       )
     }
     guard let parameterSourceRows = UInt32(exactly: sourceBatchRows),
@@ -670,17 +896,19 @@ public final class Metal4DSTEMExactBinner {
       let parameterDetectorColumns = UInt32(exactly: plan.detectorColumns),
       let parameterScanBin = UInt32(exactly: plan.scanBin),
       let parameterDetectorBin = UInt32(exactly: plan.detectorBin),
-      let parameterOutputScanCount = UInt32(exactly: plan.outputScanPositions),
+      let parameterOutputScanCount = UInt32(exactly: destinationScanCount),
       let parameterOutputScanColumns = UInt32(exactly: plan.outputScanColumns),
       let parameterOutputDetectorRows = UInt32(exactly: plan.outputDetectorRows),
       let parameterOutputDetectorColumns = UInt32(exactly: plan.outputDetectorColumns),
-      let parameterDestinationRowOffset = UInt32(exactly: destinationScanRowOffset)
+      let parameterDestinationRowOffset = UInt32(
+        exactly: localDestinationScanRowOffset
+      )
     else { throw Metal4DSTEMExactBinnerError.arithmeticOverflow }
     guard Self.fitsMetalUIntProduct(sourceBatchRows, plan.scanRegion.columns),
       Self.fitsMetalUIntProduct(plan.detectorRows, plan.detectorColumns),
       Self.fitsMetalUIntProduct(localOutputRows, plan.outputScanColumns),
       Self.fitsMetalUIntProduct(plan.outputDetectorRows, plan.outputDetectorColumns),
-      UInt64(plan.outputScanPositions) <= UInt64(UInt32.max)
+      UInt64(destinationScanCount) <= UInt64(UInt32.max)
     else { throw Metal4DSTEMExactBinnerError.arithmeticOverflow }
     var parameters = Metal4DSTEMScanDetectorBinParameters(
       sourceRows: parameterSourceRows,

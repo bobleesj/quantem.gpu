@@ -10,6 +10,7 @@ private struct Configuration {
   var detectorRows = 192
   var detectorColumns = 192
   var detectorBin = 2
+  var maximumShardBytes = 603_979_776
   var warmups = 3
   var iterations = 15
 
@@ -26,6 +27,7 @@ private struct Configuration {
       case "--detector-rows": detectorRows = value
       case "--detector-columns": detectorColumns = value
       case "--detector-bin": detectorBin = value
+      case "--maximum-shard-bytes": maximumShardBytes = value
       case "--warmups": warmups = value
       case "--iterations": iterations = value
       default:
@@ -103,6 +105,13 @@ private struct Report: Codable {
   let stagedSourceBytes: UInt64
   let batchOutputBytes: UInt64
   let full512OutputBytes: UInt64
+  let full512BytesPerScanRow: UInt64
+  let full512ShardCount: Int
+  let full512ShardScanRows: [Int]
+  let full512MaximumShardBytes: UInt64
+  let full512MaximumActualShardBytes: UInt64
+  let full512FitsSingleMetalBuffer: Bool
+  let full512AllShardsFitDevice: Bool
   let warmups: Int
   let iterations: Int
   let wall: TimingSummary
@@ -275,6 +284,10 @@ private func run() throws {
     stagingDtype: .uint16,
     outputDtype: .uint16
   )
+  let fullShardPlan = try Metal4DSTEMExactBinningShardPlan(
+    provenance: fullProvenance,
+    maximumShardBytes: UInt64(configuration.maximumShardBytes)
+  )
   let sourceValueCount = try checkedProduct([
     configuration.batchRows,
     configuration.scanColumns,
@@ -370,6 +383,17 @@ private func run() throws {
     stagedSourceBytes: UInt64(sourceBytes),
     batchOutputBytes: batchProvenance.outputPayloadBytes,
     full512OutputBytes: fullProvenance.outputPayloadBytes,
+    full512BytesPerScanRow: fullShardPlan.bytesPerOutputScanRow,
+    full512ShardCount: fullShardPlan.shards.count,
+    full512ShardScanRows: fullShardPlan.shards.map {
+      $0.outputScanRowStop - $0.outputScanRowStart
+    },
+    full512MaximumShardBytes: fullShardPlan.maximumShardBytes,
+    full512MaximumActualShardBytes: fullShardPlan.maximumActualShardBytes,
+    full512FitsSingleMetalBuffer:
+      fullProvenance.outputPayloadBytes <= UInt64(device.maxBufferLength),
+    full512AllShardsFitDevice:
+      fullShardPlan.maximumActualShardBytes <= UInt64(device.maxBufferLength),
     warmups: configuration.warmups,
     iterations: configuration.iterations,
     wall: wall,
