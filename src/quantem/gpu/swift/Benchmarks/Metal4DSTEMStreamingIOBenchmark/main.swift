@@ -145,6 +145,9 @@ private struct RunRecord: Codable {
   let pixelsAbove255: UInt64
   let binningDispatchCount: Int?
   let workingVolumeSHA256: String?
+  let metalAllocatedBytesBeforeLoad: UInt64
+  let metalAllocatedBytesAfterLoad: UInt64
+  let metalAllocatedBytesAfterRelease: UInt64
   let hashes: [String: String]
 }
 
@@ -267,6 +270,7 @@ private struct LoadedTrial {
   let binningDispatchCount: Int?
   let workingVolumeSHA256: String?
   let workingVolumeHashSeconds: Double?
+  let metalAllocatedBytesAfterLoad: UInt64
 }
 
 private func run() throws {
@@ -380,29 +384,31 @@ private func run() throws {
   var acceptedWorkingVolumeSHA256: String?
   var acceptedData: [String: Data] = [:]
   for trial in 1...options.iterations {
-    let loaded: LoadedTrial
-    if let binnedPlan {
-      let result = try loader.loadExactBinnedShards(
-        source: source,
-        plan: binnedPlan
-      )
-      let hashStarted = CFAbsoluteTimeGetCurrent()
-      let workingVolumeSHA256 = try sha256(result.workingVolumeShards)
-      let hashSeconds = CFAbsoluteTimeGetCurrent() - hashStarted
-      loaded = LoadedTrial(
-        products: result.products,
-        sourceAudit: result.sourceAudit,
-        provenance: result.nativeProductProvenance,
-        metrics: result.metrics.indexedLoad,
-        wallSeconds: result.metrics.totalWallSeconds,
-        destinationAllocationSeconds: result.metrics.destinationAllocationSeconds,
-        binningDispatchCount: result.metrics.binningDispatchCount,
-        workingVolumeSHA256: workingVolumeSHA256,
-        workingVolumeHashSeconds: hashSeconds
-      )
-    } else {
+    let metalAllocatedBytesBeforeLoad = UInt64(device.currentAllocatedSize)
+    let loaded: LoadedTrial = try autoreleasepool {
+      if let binnedPlan {
+        let result = try loader.loadExactBinnedShards(
+          source: source,
+          plan: binnedPlan
+        )
+        let hashStarted = CFAbsoluteTimeGetCurrent()
+        let workingVolumeSHA256 = try sha256(result.workingVolumeShards)
+        let hashSeconds = CFAbsoluteTimeGetCurrent() - hashStarted
+        return LoadedTrial(
+          products: result.products,
+          sourceAudit: result.sourceAudit,
+          provenance: result.nativeProductProvenance,
+          metrics: result.metrics.indexedLoad,
+          wallSeconds: result.metrics.totalWallSeconds,
+          destinationAllocationSeconds: result.metrics.destinationAllocationSeconds,
+          binningDispatchCount: result.metrics.binningDispatchCount,
+          workingVolumeSHA256: workingVolumeSHA256,
+          workingVolumeHashSeconds: hashSeconds,
+          metalAllocatedBytesAfterLoad: UInt64(device.currentAllocatedSize)
+        )
+      }
       let result = try loader.loadExactProducts(source: source, plan: productPlan)
-      loaded = LoadedTrial(
+      return LoadedTrial(
         products: result.products,
         sourceAudit: result.sourceAudit,
         provenance: result.provenance,
@@ -411,9 +417,11 @@ private func run() throws {
         destinationAllocationSeconds: nil,
         binningDispatchCount: nil,
         workingVolumeSHA256: nil,
-        workingVolumeHashSeconds: nil
+        workingVolumeHashSeconds: nil,
+        metalAllocatedBytesAfterLoad: UInt64(device.currentAllocatedSize)
       )
     }
+    let metalAllocatedBytesAfterRelease = UInt64(device.currentAllocatedSize)
     let data = productData(loaded.products)
     let hashes = data.mapValues(sha256)
     if let acceptedHashes, hashes != acceptedHashes {
@@ -465,6 +473,9 @@ private func run() throws {
         pixelsAbove255: loaded.sourceAudit.pixelsAbove255,
         binningDispatchCount: loaded.binningDispatchCount,
         workingVolumeSHA256: loaded.workingVolumeSHA256,
+        metalAllocatedBytesBeforeLoad: metalAllocatedBytesBeforeLoad,
+        metalAllocatedBytesAfterLoad: loaded.metalAllocatedBytesAfterLoad,
+        metalAllocatedBytesAfterRelease: metalAllocatedBytesAfterRelease,
         hashes: hashes
       )
     )
