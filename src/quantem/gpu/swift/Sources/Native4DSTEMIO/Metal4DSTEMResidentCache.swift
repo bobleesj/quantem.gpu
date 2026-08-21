@@ -356,14 +356,16 @@ public final class Metal4DSTEMResidentCacheStreamWriter {
         }
         chunkWritten += written
       }
-      let bytes = Data(
-        bytesNoCopy: UnsafeMutableRawPointer(
-          mutating: pointer.advanced(by: chunkStart)
-        ),
-        count: chunkLength,
-        deallocator: .none
-      )
-      hasher.update(data: bytes)
+      autoreleasepool {
+        let bytes = Data(
+          bytesNoCopy: UnsafeMutableRawPointer(
+            mutating: pointer.advanced(by: chunkStart)
+          ),
+          count: chunkLength,
+          deallocator: .none
+        )
+        hasher.update(data: bytes)
+      }
       chunkStart += chunkLength
     }
     writtenBytes = newTotal.partialValue

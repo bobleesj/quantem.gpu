@@ -843,11 +843,13 @@ public final class Metal4DSTEMIndexedLoader {
               "Prepared QH5 index changed after the indexed source was opened. Reopen the source."
             )
           }
-          activeSource = try MappedMetalSource(
-            url: shard.sourceURL,
-            expectedBytes: shard.index.metadata.sourceBytes,
-            device: device
-          )
+          activeSource = try autoreleasepool {
+            try MappedMetalSource(
+              url: shard.sourceURL,
+              expectedBytes: shard.index.metadata.sourceBytes,
+              device: device
+            )
+          }
           activeShardIndex = slice.shardIndex
           mapSeconds += CFAbsoluteTimeGetCurrent() - mapStarted
           if mappedShards.insert(slice.shardIndex).inserted {
@@ -879,23 +881,25 @@ public final class Metal4DSTEMIndexedLoader {
           UInt64(slice.globalFrameRange.count)
           * source.decodedBytesPerFrame
         maximumDecodedSliceBytes = max(maximumDecodedSliceBytes, decodedSliceBytes)
-        let pending = try enqueue(
-          source: source,
-          slice: slice,
-          mapped: mapped,
-          scratch: scratch,
-          badPixelMask: badPixelMask,
-          detectorBands: detectorBands,
-          countAudit: countAudit,
-          band1: band1,
-          band2: band2,
-          band4: band4,
-          total: total,
-          rowMoment: rowMoment,
-          columnMoment: columnMoment,
-          detectorSum: detectorSum,
-          binned: binned
-        )
+        let pending = try autoreleasepool {
+          try enqueue(
+            source: source,
+            slice: slice,
+            mapped: mapped,
+            scratch: scratch,
+            badPixelMask: badPixelMask,
+            detectorBands: detectorBands,
+            countAudit: countAudit,
+            band1: band1,
+            band2: band2,
+            band4: band4,
+            total: total,
+            rowMoment: rowMoment,
+            columnMoment: columnMoment,
+            detectorSum: detectorSum,
+            binned: binned
+          )
+        }
         binningDispatchCount += pending.binningDispatchCount
         pendingCommands.append(pending)
         peakInFlightCommandBuffers = max(
@@ -1689,7 +1693,9 @@ private final class BinnedOutputContext {
       )
     }
     let started = CFAbsoluteTimeGetCurrent()
-    let destination = try makeBuffer(shard)
+    let destination = try autoreleasepool {
+      try makeBuffer(shard)
+    }
     destinationAllocationSeconds += CFAbsoluteTimeGetCurrent() - started
     guard UInt64(destination.length) == shard.payloadBytes else {
       throw Metal4DSTEMStreamingIOError.invalidRequest(
