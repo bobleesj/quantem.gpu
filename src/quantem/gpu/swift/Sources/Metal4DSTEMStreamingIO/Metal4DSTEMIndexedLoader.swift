@@ -1732,13 +1732,20 @@ private final class BinnedOutputContext {
       let activeShardIndex,
       let activeDestination
     else { return }
+    defer {
+      // The streamed shard has no remaining GPU consumer after `consume`
+      // returns. Explicitly discard its Metal backing so Objective-C resource
+      // lifetime extension cannot retain every completed shard until the
+      // surrounding autorelease pool drains.
+      _ = activeDestination.setPurgeableState(.empty)
+      self.activeShardIndex = nil
+      self.activeDestination = nil
+    }
     let shard = plan.shardPlan.shards[activeShardIndex]
     let started = CFAbsoluteTimeGetCurrent()
     try consume(shard, activeDestination)
     payloadWriteSeconds += CFAbsoluteTimeGetCurrent() - started
     completedShardCount += 1
-    self.activeShardIndex = nil
-    self.activeDestination = nil
   }
 
   private func shard(
