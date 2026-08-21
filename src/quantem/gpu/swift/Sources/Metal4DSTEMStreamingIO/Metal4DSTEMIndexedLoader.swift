@@ -673,8 +673,13 @@ public final class Metal4DSTEMIndexedLoader {
     defer { writer.cancel() }
     let context = BinnedOutputContext(
       streaming: plan,
-      consume: { _, buffer in
-        try writer.append(pointer: buffer.contents(), length: buffer.length)
+      consume: { shard, buffer in
+        guard let payloadLength = Int(exactly: shard.payloadBytes) else {
+          throw Metal4DSTEMStreamingIOError.invalidRequest(
+            "Exact output-shard byte count does not fit this process."
+          )
+        }
+        try writer.append(pointer: buffer.contents(), length: payloadLength)
       }
     )
     let loaded = try loadExactProductsInternal(
@@ -817,9 +822,9 @@ public final class Metal4DSTEMIndexedLoader {
           for: window.globalFrameRange,
           makeBuffer: { shard in
             try self.makeBuffer(
-              bytes: shard.payloadBytes,
+              bytes: binned.plan.shardPlan.maximumActualShardBytes,
               options: .storageModeShared,
-              label: "transactional exact working-volume shard \(shard.index)"
+              label: "reusable transactional exact working-volume shard \(shard.index)"
             )
           }
         )
@@ -1637,7 +1642,7 @@ private final class BinnedOutputContext {
   let cacheState: String
   private let storage: Storage
   private var activeShardIndex: Int?
-  private var activeDestination: MTLBuffer?
+  private var streamingDestination: MTLBuffer?
   private(set) var destinationAllocationSeconds = 0.0
   private(set) var payloadWriteSeconds = 0.0
   private(set) var completedShardCount = 0
@@ -1681,9 +1686,9 @@ private final class BinnedOutputContext {
   ) throws {
     guard case .streaming = storage else { return }
     let shard = try shard(containing: range)
-    guard activeShardIndex == nil, activeDestination == nil else {
+    guard activeShardIndex == nil else {
       throw Metal4DSTEMStreamingIOError.invalidRequest(
-        "The previous exact output shard must complete before allocating the next shard."
+        "The previous exact output shard must complete before reusing its Metal buffer."
       )
     }
     guard shard.index == completedShardCount else {
@@ -1692,19 +1697,24 @@ private final class BinnedOutputContext {
           + "expected shard \(completedShardCount), received \(shard.index)."
       )
     }
-    let started = CFAbsoluteTimeGetCurrent()
-    let destination = try autoreleasepool {
-      try makeBuffer(shard)
+    let destination: MTLBuffer
+    if let reusable = streamingDestination {
+      destination = reusable
+    } else {
+      let started = CFAbsoluteTimeGetCurrent()
+      destination = try autoreleasepool {
+        try makeBuffer(shard)
+      }
+      destinationAllocationSeconds += CFAbsoluteTimeGetCurrent() - started
+      streamingDestination = destination
     }
-    destinationAllocationSeconds += CFAbsoluteTimeGetCurrent() - started
-    guard UInt64(destination.length) == shard.payloadBytes else {
+    guard UInt64(destination.length) >= shard.payloadBytes else {
       throw Metal4DSTEMStreamingIOError.invalidRequest(
         "Exact output shard \(shard.index) allocated \(destination.length) bytes; "
-          + "expected \(shard.payloadBytes)."
+          + "at least \(shard.payloadBytes) are required."
       )
     }
     activeShardIndex = shard.index
-    activeDestination = destination
     peakWorkingMetalBytes = max(peakWorkingMetalBytes, UInt64(destination.length))
   }
 
@@ -1718,32 +1728,26 @@ private final class BinnedOutputContext {
       }
       return destinations[shardIndex]
     case .streaming:
-      guard activeShardIndex == shardIndex, let activeDestination else {
+      guard activeShardIndex == shardIndex, let streamingDestination else {
         throw Metal4DSTEMStreamingIOError.invalidRequest(
           "Exact output shard \(shardIndex) was not prepared before encoding."
         )
       }
-      return activeDestination
+      return streamingDestination
     }
   }
 
   func finishActiveDestination() throws {
     guard case .streaming(let consume) = storage,
       let activeShardIndex,
-      let activeDestination
+      let streamingDestination
     else { return }
     defer {
-      // The streamed shard has no remaining GPU consumer after `consume`
-      // returns. Explicitly discard its Metal backing so Objective-C resource
-      // lifetime extension cannot retain every completed shard until the
-      // surrounding autorelease pool drains.
-      _ = activeDestination.setPurgeableState(.empty)
       self.activeShardIndex = nil
-      self.activeDestination = nil
     }
     let shard = plan.shardPlan.shards[activeShardIndex]
     let started = CFAbsoluteTimeGetCurrent()
-    try consume(shard, activeDestination)
+    try consume(shard, streamingDestination)
     payloadWriteSeconds += CFAbsoluteTimeGetCurrent() - started
     completedShardCount += 1
   }
