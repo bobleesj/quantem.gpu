@@ -100,8 +100,15 @@ inline void bslz4CopyRepeatDeviceToThreadgroup(
     uint length,
     uint threadIndex
 ) {
-    for (uint index = threadIndex; index < length; index += kLZ4Threads) {
-        destination[index] = source[index % distance];
+    uint repeatMask = distance - 1u;
+    if (distance != 0u && (distance & repeatMask) == 0u) {
+        for (uint index = threadIndex; index < length; index += kLZ4Threads) {
+            destination[index] = source[index & repeatMask];
+        }
+    } else {
+        for (uint index = threadIndex; index < length; index += kLZ4Threads) {
+            destination[index] = source[index % distance];
+        }
     }
 }
 
@@ -126,8 +133,15 @@ inline void bslz4CopyRepeatThreadgroupToThreadgroup(
     // Every lane reads only the already-produced history window. Keep this
     // byte-addressed: packed threadgroup stores were not reliably aligned on
     // all Apple GPU generations and corrupted rare legal LZ4 repeats.
-    for (uint index = threadIndex; index < length; index += kLZ4Threads) {
-        destination[index] = source[index % distance];
+    uint repeatMask = distance - 1u;
+    if (distance != 0u && (distance & repeatMask) == 0u) {
+        for (uint index = threadIndex; index < length; index += kLZ4Threads) {
+            destination[index] = source[index & repeatMask];
+        }
+    } else {
+        for (uint index = threadIndex; index < length; index += kLZ4Threads) {
+            destination[index] = source[index % distance];
+        }
     }
 }
 
