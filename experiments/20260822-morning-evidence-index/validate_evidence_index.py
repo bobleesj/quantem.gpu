@@ -204,6 +204,30 @@ def verify_measurement(
         assert measurement["first_usable_p50_seconds"] == measurement[
             "exact_complete_p50_seconds"
         ]
+    if measurement["functional_area"] == "selective-loading":
+        assert measurement["platform"] == "webgpu"
+        selected_rows = (
+            measurement["selected_scan_row_stop"]
+            - measurement["selected_scan_row_start"]
+        )
+        selected_columns = (
+            measurement["selected_scan_column_stop"]
+            - measurement["selected_scan_column_start"]
+        )
+        assert 0 < selected_rows <= measurement["source_scan_rows"]
+        assert 0 < selected_columns <= measurement["source_scan_columns"]
+        expected_bytes = (
+            selected_rows
+            * selected_columns
+            * measurement["working_detector_rows"]
+            * measurement["working_detector_columns"]
+            * 2
+        )
+        assert measurement["logical_resident_bytes"] == expected_bytes
+        assert 0 < measurement["source_shards_read"] < measurement["source_shards_total"]
+        assert measurement["source_storage_bytes_read"] > 0
+        assert measurement["accelerator_peak_bytes"] is None
+        assert measurement["browser_tree_peak_rss_bytes"] > 0
     if measurement["functional_area"] == "screening-cache-reopen":
         assert measurement["working_dtype"] == "not-applicable-cached-results"
         assert measurement["cache_bytes"] == measurement["comparison_baseline_cache_bytes"]

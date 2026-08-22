@@ -29,12 +29,14 @@ operating-system storage cache was not forcibly evicted. It is not called cold.
   exact private Metal residency, controlled macOS source-page measurement, and
   state-consistent benchmark provenance. It does not relabel the 2026-08-19
   cross-platform rows.
-- **Current Python MPS exact-load stack:** clean local branch
-  `mps-load-sub500ms` at
-  `f0f39c9158e4d8a2bd73c427cda91c25e3eddfc2`. It adds scratch-free exact
-  `uint16` decode, fused exact detector-sum kernels for bins 2/4/8, lazy LZ4
-  scratch, and source-shard-aligned pipelining. Revision `be035c4` remains the
-  lifecycle-correct pre-optimization reference.
+- **Current Python MPS lifecycle evidence:** clean local evidence revision
+  `3fbd87a53acc1f4ab165b841175681b166bcb629` records accepted historical
+  performance for source `b7f8ef3ff2a2d8458944e1e55a3296a39c854357`.
+  It extends explicit caller-owned resident-destination recycling to detector
+  bins 2/4/8. Consumer-safe exception cleanup is separately sealed at source
+  `3c4d903ea62e5e7b19c760efde908c75544b5eba` and evidence
+  `08e50c5baab0ad3ff492a48ff1ff4b723a9da876`; its single smoke does not
+  replace the historical timing distributions.
 - **Fixture C:** independent real `512x512x192x192` native-`uint16` source,
   27 compressed shards plus one master file, 3,169,920,193 total bytes and
   3,169,489,846 indexed compressed bytes, 28-file manifest SHA-256
@@ -64,10 +66,6 @@ outer browser harness. Resident payload and process/card peaks remain distinct.
 | **CUDA** | `8c47a466` | 2 | `96x96` | `uint32` | 7 | **0.396 s** | **0.401 s** | **0.402 s** | **9.00 GiB** | **11.561 GiB** | Pending | Total-card occupancy | Pass | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 |
 | **CUDA** | `8c47a466` | 4 | `48x48` | `uint32` | 7 | **0.390 s** | **0.413 s** | **0.419 s** | **2.25 GiB** | **3.756 GiB** | Pending | Total-card occupancy | Pass | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 |
 | **CUDA** | `8c47a466` | 8 | `24x24` | `uint32` | 7 | **0.381 s** | **0.401 s** | **0.402 s** | **0.5625 GiB** | **1.805 GiB** | Pending | Total-card occupancy | Pass | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 |
-| **Python MPS** | `f0f39c9` | 1 | `192x192` | `uint16` | 6 | **0.523 s** | **0.541 s** | **0.545 s** | **18.00 GiB** | **18.442 GiB** | **0.689 GiB** | Sampled Metal driver | Pass | Apple M5 Max, 40-core GPU, 128 GB |
-| **Python MPS** | `f0f39c9` | 2 | `96x96` | `uint16` | 6 | **0.498 s** | **0.515 s** | **0.517 s** | **4.50 GiB** | **5.688 GiB** | **0.573 GiB** | Sampled Metal driver | Pass | Apple M5 Max, 40-core GPU, 128 GB |
-| **Python MPS** | `f0f39c9` | 4 | `48x48` | `uint16` | 6 | **0.421 s** | **0.423 s** | **0.423 s** | **1.125 GiB** | **2.313 GiB** | **0.572 GiB** | Sampled Metal driver | Pass | Apple M5 Max, 40-core GPU, 128 GB |
-| **Python MPS** | `f0f39c9` | 8 | `24x24` | `uint16` | 6 | **0.417 s** | **0.422 s** | **0.423 s** | **0.28125 GiB** | **1.470 GiB** | **0.574 GiB** | Sampled Metal driver | Pass | Apple M5 Max, 40-core GPU, 128 GB |
 | **WebGPU** | `334b7b5` | 1 | `192x192` | `uint8` | 5 | **0.824 s** | **0.892 s** | **0.892 s** | **9.00 GiB** | Pending | **5.020 GiB** | Device allocation incomplete; Chrome-tree RSS retained | Exact tested frames and products | Chrome 151, Apple M5 Max Metal-3 |
 | **WebGPU** | `334b7b5` | 2 | `96x96` | `float32` sums | 5 | **1.281 s** | **1.300 s** | **1.300 s** | **9.00 GiB** | Pending | **5.363 GiB** | Device allocation incomplete; Chrome-tree RSS retained | Exact sampled count sums | Chrome 151, Apple M5 Max Metal-3 |
 | **WebGPU** | `334b7b5` | 4 | `48x48` | `float32` sums | 5 | **1.044 s** | **1.050 s** | **1.050 s** | **2.25 GiB** | Pending | **5.188 GiB** | Device allocation incomplete; Chrome-tree RSS retained | Exact sampled count sums | Chrome 151, Apple M5 Max Metal-3 |
@@ -82,7 +80,69 @@ sums stored as `float32`. WebGPU's Chrome RSS is not a complete device-memory
 measurement and does not prove the physical 8 GB laptop gate. CPU timings are
 diagnostic adjudication only, never a silent production fallback.
 
-### Current exact Python MPS load
+### Current prepared WebGPU shard-selective rectangles
+
+Evidence revision `54303cb88aab76c29ff884261b5973c8795c2495` measures the
+existing rectangle contract on physical Apple Metal WebGPU. The retained
+frame-span manifest permits whole nonintersecting shards to be omitted; selected
+row windows alone are decoded and uploaded. Reads inside each intersecting
+shard remain whole-file reads, so these rows are not intra-shard byte-range I/O.
+
+| Selected scan | Rectangle `(row_start,row_stop,column_start,column_stop)` | Shards read | Storage bytes read | Samples | Loader p50 | Loader p95 | Loader maximum | Logical resident | Browser-tree RSS peak | Observed swap delta |
+|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `64x64` | `(0,64,0,64)` | 4 of 27 | 488,224,242 B | 5 | **0.147 s** | **0.1544 s** | **0.156 s** | 301,989,888 B | 1,724,317,696 B | 0 B |
+| `256x256` | `(128,384,128,384)` | 14 of 27 | 1,705,556,941 B | 5 | **0.381 s** | **0.3924 s** | **0.394 s** | 4,831,838,208 B | 3,002,875,904 B | 0 B |
+| `384x384` | `(64,448,64,448)` | 20 of 27 | 2,432,636,897 B | 5 | **0.574 s** | **0.582 s** | **0.584 s** | 10,871,635,968 B | 3,896,934,400 B | 0 B |
+
+All 15 physical runs passed independent CPU `uint16` checksum probes at the
+first, middle, and last retained raw frames, as well as output shape, dtype,
+row-major order, and selection metadata. Full-tensor readback parity was not
+performed. Every row uses the native `192x192 uint16`
+detector, scan bin 1, detector bin 1, no detector crop, prepared block indexes,
+and a prepared frame-span manifest. Operating-system source-page state was
+uncontrolled/unspecified and no eviction was performed.
+Frame-manifest preparation/injection, the checksum harness, products, and
+application E2E are excluded from loader wall time.
+
+Without the frame-span manifest, the `64x64` negative control read all 27 shards
+and 3.17 GB; that path is explicitly non-selective. Arbitrary ordered/duplicate
+positions and intra-shard range reads remain unsupported or unqualified.
+This WebGPU fixture view records source identity `1be810b9...`; fixture C is
+`c9c0d968...`, while the CUDA master record is `4802ec16...`. The rows are not
+a cross-lane fixture-controlled comparison.
+
+### Current exact Python MPS resident lifecycle
+
+All rows below use fixture C, full `512x512` scan coverage, native
+`192x192 uint16` detector data, scan bin 1, no crop, and exact `uint16` output.
+The source-page state is warm or uncontrolled after one same-lifecycle warmup.
+The timer spans the exact package load into a caller-selected resident
+destination. Recycle is explicit caller behavior, not automatic cache policy.
+
+| Detector bin | Output detector | Destination arm | Repetitions | p50 | p95 | Maximum | Logical resident | Metal peak | RSS statistic | Process RSS | Swap delta |
+|---:|---:|---|---:|---:|---:|---:|---:|---:|---|---:|---:|
+| 1 | `192x192` | fresh | 8 | **0.425533 s** | **0.436353 s** | **0.437419 s** | **19,327,352,832 B** | **19,801,456,640 B** | p50 | **737,763,328 B** | **0 B** |
+| 1 | `192x192` | recycled | 8 | **0.259189 s** | **0.263118 s** | **0.263375 s** | **19,327,352,832 B** | **19,801,456,640 B** | p50 | **738,426,880 B** | **0 B** |
+| 2 | `96x96` | fresh | 8 | **0.462541 s** | **0.479014 s** | **0.483058 s** | **4,831,838,208 B** | **6,107,774,976 B** | p50 | **613,564,416 B** | **0 B** |
+| 2 | `96x96` | recycled | 8 | **0.359606 s** | **0.361384 s** | **0.361995 s** | **4,831,838,208 B** | **6,107,774,976 B** | p50 | **612,622,336 B** | **0 B** |
+| 4 | `48x48` | fresh | 8 | **0.384264 s** | **0.385355 s** | **0.385638 s** | **1,207,959,552 B** | **2,483,896,320 B** | p50 | **613,212,160 B** | **0 B** |
+| 4 | `48x48` | recycled | 8 | **0.352990 s** | **0.355048 s** | **0.355062 s** | **1,207,959,552 B** | **2,483,896,320 B** | p50 | **613,728,256 B** | **0 B** |
+| 8 | `24x24` | earlier accepted fresh-process specialization | 6 | **0.356969 s** | **0.359302 s** | **0.359820 s** | **301,989,888 B** | **1,577,926,656 B** | peak | **613,924,864 B** | Pending |
+
+Each timed bin-2/bin-4 ABBA load matched six selected frame hashes. Separate
+one-load smokes matched the complete output SHA-256, total, maximum, shape, and
+dtype; complete-volume hashing was deliberately outside the timed boundary.
+The new detector-bin-8 lifecycle trial was scientifically exact but drifted
+chronologically under ScreenSharingAgent and WindowServer activity, so its
+timing is inconclusive and the earlier `0.356969 s` accepted row remains.
+
+The timing rows remain bound to `b7f8ef3f/3fbd87a5`. The later
+`3c4d903e/08e50c5b` follow-up passed injected failure cleanup, prior-output
+ownership, full detector-bin-2 parity, and a non-regression smoke, closing the
+consumer-safety blocker without creating a new speed distribution. None of
+these rows is cold HDF5 or application E2E.
+
+### Historical Python MPS topology comparison
 
 Revision `f0f39c9` measures fixture C through the public `quantem.gpu.io.load`
 boundary after the final MPS command buffer completes. The exact full-detector
@@ -162,6 +222,25 @@ Revision `be035c4` remains the lifecycle-correct historical reference: its warm
 process p50 values were 0.903/0.907/0.764/0.751 seconds for bins 1/2/4/8. The
 older 2.273-second bin-1 result is retained only as pressure evidence because
 that harness did not free direct Metal outputs between repetitions.
+
+### Current CUDA exact screening
+
+Source `023a6c497b106b216c87205d3fbec63377d77177` and sealed evidence
+`5bcc89ebdb77663ea8c035a255a218079ee1ab31` compare a baseline with two
+bounded rounded pinned-host registration slots. The full
+`512x512x192x192 uint16` source is streamed at scan bin 1, detector bin 1, and
+no crop. Source pages were warm or unspecified and the result cache was empty;
+this is neither cold HDF5 nor prepared-result reopen.
+
+| Arm | Samples | Package p50 | Package p95 | Package maximum | Pinned registration p50 | Host RSS p50 | GPU allocated peak | GPU reserved peak | Total-card peak | Swap delta |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Baseline | 6 | **1.356516 s** | **1.642386 s** | **1.730328 s** | **0.274093 s** | **2,287,351,808 B** | **2,238,152,192 B** | **5,050,266,112 B** | **6,532,890,624 B** | **0 B** |
+| Reused pinned slots | 6 | **1.204713 s** | **1.325760 s** | **1.329731 s** | **0.184592 s** | **2,102,042,624 B** | **2,238,152,192 B** | **5,050,266,112 B** | **6,532,890,624 B** | **0 B** |
+
+All six public screening arrays were byte exact in every trial. First usable is
+exact complete; no preview is counted. GPU allocated and reserved bytes are
+process metrics, while total-card peak includes the coexisting service
+baseline and must not be interpreted as process residency.
 
 ### Current controlled native exact resident load
 
@@ -419,7 +498,11 @@ device signoff.
 | Raw MPS/CUDA SSB parity | `17a7ef5750444377c7d16c18bfadef39607ea3d684c91dad93681ca887d7154e` |
 | Current MPS fresh-process load/memory audit | `a332552a98d8bc718b30f083a6e4afd4c6e7d56f10cbb1e09639cfab0042bc0d` |
 | Current MPS warm-process explicit-release audit | `07affa9decf0a8c99ac10b32db961c2c2681f5baf5f91a151ea121d93811bb50` |
+| MPS bin-2/bin-4 resident-lifecycle timing manifest | `e2b57949709c2bf70d0b987b3ca9a83950c8d80d92eaef1cfce850ab010cc7f9` |
+| MPS binned exception-cleanup manifest | `4cac5fa7f9cdb647f7e943e46bff27e6244459702b35680d2dde39ba0027a4ac` |
 | Current MPS exact sparse detector-bin/product parity | `96a986274dd2ba2b8f175d5003eabffc3c52e94d069f1c4e899d669e710832be` |
+| CUDA pinned-slot screening manifest | `2103a425526ebd2caf15d053867a6d8526481f9e833e19047bcaaf0e49c304de` |
+| WebGPU prepared shard-selective rectangle manifest | `98e1b24a4f80885213477aaaccc02cc60770284b3287a27cac6b66977ae26b59` |
 | Deterministic CUDA full fit | `d262c1ed8fa55728811735bc974ef4fcc413e60aff83dfcd7396b4ad681f4527` |
 | Exact Air resident summary | `4f8f366553cf8ae13b5b732a24a070f6cc404127ef6e421599d00b5c27a3688c` |
 | Source-fused Air summary follow-up | `123b77e3424994980379a942da21dfbdf0d0921b2de0a862652831c4bfe814a9` |
@@ -435,6 +518,7 @@ domain-specific maintainer records instead of being copied into this page.
 | Earlier three-host full-scan campaign | Superseded for current headline timing; still useful same-fixture history | [Load acceptance evidence](../maintainer/backend-4dstem-load-checklist.md) |
 | July native CUDA/MPS IO and compressed-save work | Historical diagnostic; some host/storage fields were not retained | [Optimization ledger](../maintainer/backend-optimization-matrix.md) |
 | WebGPU local-file, selected-block, and display campaigns | Historical implementation evidence, not current full-stack or physical-8-GB signoff | [Optimization ledger](../maintainer/backend-optimization-matrix.md) and [WebGPU history](../maintainer/history/index.md) |
+| WebGPU full-native batch-2 load candidate | Refuted for performance: exact output but prepared-index/source-pages-unspecified p50/p95/max `1.128484/1.140200/1.141501 s` missed the strict subsecond gate and did not replace the accepted `1.080860 s` single observation | Sealed evidence `75eec9cccd5c1a9814068a83a23e67253227a363` |
 | SSB size sweeps and rejected kernel layouts | Historical or rejected unless promoted into the current table above | [SSB performance history](../maintainer/ssb-performance.md) |
 | Physical M2 Air application loading | Separate application-level evidence; never substituted for a library benchmark | [M2 Air Metal evidence](../maintainer/m2-air-lz4-match-unroll-2026-08-18.md) |
 | Rejected first-chunk screening and nondeterministic CUDA calibration | Failed scientific gates; retained to prevent repetition, never shown as current speed | [Revision and change ledger](changes.md) and [optimization ledger](../maintainer/backend-optimization-matrix.md) |

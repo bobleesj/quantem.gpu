@@ -1,26 +1,26 @@
 {
   "schema": "quantem.gpu.morning-evidence-validation/v1",
-  "validated_at": "2026-08-22T08:42:38-07:00",
+  "validated_at": "2026-08-22T09:42:16-07:00",
   "runtime_or_hardware_execution": false,
   "coordinator_base": "23d25619cfe22d5e89761fda2d2796a7c82ba090",
-  "artifact_count": 22,
-  "accepted_artifact_count": 16,
-  "refuted_artifact_count": 4,
+  "artifact_count": 27,
+  "accepted_artifact_count": 20,
+  "refuted_artifact_count": 5,
   "pending_artifact_count": 2,
-  "accepted_atomic_measurement_count": 19,
+  "accepted_atomic_measurement_count": 28,
   "refuted_diagnostic_count": 1,
-  "pending_observation_count": 1,
+  "pending_observation_count": 2,
   "source_placeholder_count": 0,
   "unresolved_metric_cell_count": 14,
   "unique_source_worktree_states": {
-    "clean": 18,
+    "clean": 22,
     "dirty": 2,
-    "not_applicable": 2
+    "not_applicable": 3
   },
   "checks": [
     {
       "command": "python experiments/20260822-morning-evidence-index/validate_evidence_index.py",
-      "result": "passed; 22 artifact hashes, immutable Git-object evidence, revisions, observed source states, 19 atomic measurement contracts, zero source placeholders, and fixture bindings verified"
+      "result": "passed; 27 artifact hashes, immutable Git-object evidence, revisions, observed source states, 28 atomic measurement contracts, zero source placeholders, and fixture bindings verified"
     },
     {
       "command": "python scripts/check_profile_registry.py",
@@ -45,6 +45,10 @@
     {
       "command": "ruff check experiments/20260822-morning-evidence-index/validate_evidence_index.py",
       "result": "passed"
+    },
+    {
+      "command": "jupyter-book build docs",
+      "result": "passed; 59 source files"
     }
   ],
   "policy_assertions": [
@@ -54,11 +58,17 @@
     "the rejected packed-uint16 WebGPU timing is not promoted",
     "the accepted paired-u32 WebGPU full-native lineage is not used to relabel the rejected packed-uint16 lineage",
     "the refuted WebGPU SSB timing is diagnostic and not promoted",
-    "the accepted MPS bin-1 recycled-destination timing remains labeled as an explicit resident lifecycle rather than cold load",
+    "the accepted MPS bin-1, bin-2, and bin-4 recycled-destination timings remain labeled as explicit resident lifecycles rather than cold loads",
+    "timed MPS bin-2 and bin-4 ABBA trials claim six selected frame hashes only; complete-volume parity remains a separate smoke",
+    "MPS binned lifecycle timings remain bound to b7f8ef3/3fbd87a while 3c4d903/08e50c5 independently closes the consumer failure-cleanup gate",
+    "WebGPU selective timings are prepared whole-shard rectangle evidence and are not labeled intra-shard byte-range or arbitrary-position support",
+    "the exact WebGPU batch-2 full-native candidate remains refuted for performance and does not replace the accepted single observation",
+    "the CUDA pinned-slot screening result remains warm/source-pages-unspecified and is not labeled cold or cache reopen",
     "the refuted a23ae3b CUDA cross-alias shortcut contributes no accepted metric",
     "the accepted 8258ac2 CUDA cache manifest and ledger are verified from immutable Git objects rather than the advancing source worktree",
     "the provisional CUDA compact-index package distribution is not an accepted measurement",
     "the Rodman full-native single sample is not labeled p50 or p95",
-    "no private fixture filesystem path is present in the index or report"
+    "no private fixture filesystem path is present in the index or report",
+    "documentation is reconciled locally without publication, release, or consumer cutover"
   ]
 }

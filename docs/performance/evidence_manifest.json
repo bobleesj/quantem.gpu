@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
-  "source_revision": "f0f39c9158e4d8a2bd73c427cda91c25e3eddfc2",
+  "source_revision": "23d25619cfe22d5e89761fda2d2796a7c82ba090",
+  "source_revision_scope": "Clean coordinator documentation baseline; later isolated source and evidence revisions are cited per retained measurement rather than implied by this field.",
   "purpose": "Fingerprints for the current benchmark dashboard, authoritative provenance ledger, parity and methodology contracts, and canonical historical evidence. Landing, API, and backend capability pages intentionally do not duplicate measurements.",
   "pages": [
     {
@@ -10,7 +11,7 @@
     },
     {
       "path": "docs/dashboard.md",
-      "sha256": "14cf9af3720e56d0932367a784ccb6ea61bbce9176fdb3a7bfa46af6e62bf021",
+      "sha256": "9b38c1eb5f7756ece1d353e086b2266d18da270add2810e9e5c8a0dbbc98570a",
       "role": "Single human-facing current capability, speed, memory, and parity overview"
     },
     {
@@ -40,7 +41,7 @@
     },
     {
       "path": "docs/performance/results.md",
-      "sha256": "445b6bd767ff6d1e8c6557ee365eb6d784c94f2f8b65c179576778bc2b835ac9",
+      "sha256": "600d0087124662c4077716bc533224501b1dcfb784a5c754ccbb9536c6b3f8d8",
       "role": "Authoritative current benchmark provenance ledger"
     },
     {

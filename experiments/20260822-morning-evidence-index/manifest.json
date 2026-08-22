@@ -11,10 +11,17 @@
   "code": {
     "repository": "https://github.com/bobleesj/quantem.gpu",
     "revision": "23d25619cfe22d5e89761fda2d2796a7c82ba090",
+    "revision_scope": "clean scientific-source snapshot used for read-only reconciliation",
     "entrypoint": "source-only artifact and lineage validation",
     "dirty": false,
     "diff_sha256": null,
     "snapshot_path": "local-snapshot://quantem-gpu-morning-evidence-index-20260822/source"
+  },
+  "reconciliation_worktree": {
+    "branch": "morning-evidence-index-20260822",
+    "base_revision": "70f5f04399f45c0308b80f85bf926994936be7dd",
+    "state_during_generation": "dirty with nine intended tracked documentation, evidence-index, validator, and test files; no untracked files",
+    "sealed_revision": "the Git commit containing this manifest"
   },
   "inputs": [
     {
@@ -27,6 +34,7 @@
     "runtime_or_hardware_execution": false,
     "copy_source_artifacts": false,
     "promote_documentation": false,
+    "reconcile_local_documentation": true,
     "allowed_dispositions": ["accepted", "refuted", "pending"],
     "required_fields": [
       "artifact path and SHA-256",
@@ -51,47 +59,48 @@
       "kind": "machine-readable evidence index",
       "artifact": "evidence-index.json",
       "path": "experiments/20260822-morning-evidence-index/evidence-index.json",
-      "sha256": "7e2049ff0ef32093a067c5bdbc320d446371c454551fc3a077e4ecd063d86d25",
-      "result": "22 referenced artifacts: 16 accepted, 4 refuted, and 2 pending; 19 accepted atomic measurements; one refuted diagnostic; zero source placeholders; 14 unresolved cells"
+      "sha256": "67922d42a0527bc71a40df0b742d906df497a9d878e9c1211b09719bb4e39bfe",
+      "result": "27 referenced artifacts: 20 accepted, 5 refuted, and 2 pending; 28 accepted atomic measurements; one refuted diagnostic; zero source placeholders; 14 unresolved cells"
     },
     {
       "kind": "human morning-report draft",
       "artifact": "MORNING-REPORT-DRAFT.md",
       "path": "experiments/20260822-morning-evidence-index/MORNING-REPORT-DRAFT.md",
-      "sha256": "c4c404e6af24faa09e85f95b6b9e78e0ef2aefd1bafe1ceda4abf072bf2a7c8f",
+      "sha256": "0799b040c1da4e569b67a1c5ebe61b993d0ec672693becab5a0451f46f4a1094",
       "result": "accepted, refuted, and pending claims remain separated by platform, computer, cache state, timing boundary, and memory definition"
     },
     {
       "kind": "source-only validator",
       "artifact": "validate_evidence_index.py",
       "path": "experiments/20260822-morning-evidence-index/validate_evidence_index.py",
-      "sha256": "8912e30d3cae7ef81f32a62759770e1f4d4b76f3cd8fb47a16a1e18e1b1ba920",
+      "sha256": "b4c4b0de2b2de4461b4cbc738f076ca51963baa1df9d93f84e194041b3eaf9c0",
       "result": "all referenced hashes, immutable Git objects, revisions, worktree states, fixture bindings, source placeholders, and atomic metric contracts passed"
     },
     {
       "kind": "validation record",
       "artifact": "validation.json",
       "path": "experiments/20260822-morning-evidence-index/validation.json",
-      "sha256": "54371c869adb8b5157a8803273cd3b87b4f88ebb295503b0cf36215de306648e",
-      "result": "profile registry, 36 registry/documentation tests, documentation source links, JSON syntax, Ruff, and diff hygiene passed"
+      "sha256": "c0fad09527af6584bf403dfdb57e7259811e3c4ebc11e9de5a6989eb5eb4d20d",
+      "result": "evidence index, profile registry, 36 registry/documentation tests, documentation source links and build, JSON syntax, Ruff, and diff hygiene passed"
     }
   ],
   "results": {
     "decision": "mixed",
-    "accepted_artifacts": 16,
-    "refuted_artifacts": 4,
+    "accepted_artifacts": 20,
+    "refuted_artifacts": 5,
     "pending_artifacts": 2,
-    "accepted_atomic_measurements": 19,
+    "accepted_atomic_measurements": 28,
     "refuted_diagnostics": 1,
-    "pending_observations": 1,
+    "pending_observations": 2,
     "source_placeholders": 0,
     "unresolved_metric_cells": 14,
     "consumer_handoff": false,
-    "documentation_promoted": false
+    "documentation_promoted": false,
+    "local_documentation_reconciled": true
   },
   "timestamps": {
     "created": "2026-08-22T07:00:05-07:00",
     "started": "2026-08-22T07:00:05-07:00",
-    "finished": "2026-08-22T08:42:38-07:00"
+    "finished": "2026-08-22T09:42:16-07:00"
   }
 }
