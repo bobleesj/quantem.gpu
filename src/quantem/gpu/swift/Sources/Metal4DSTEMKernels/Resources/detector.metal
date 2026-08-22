@@ -1506,6 +1506,147 @@ kernel void contiguous_detector_bin2_u8_products_detector_partials_tiled32x8(
     }
 }
 
+// Exact detector-bin4 specialization for native detector-192 data. Four
+// source rows are folded into each output row while the same source bytes also
+// produce exact products and bounded 32-frame detector-sum partials. The
+// detector tile is reused one source row at a time to stay within Apple GPU
+// threadgroup-memory limits.
+kernel void contiguous_detector_bin4_u8_products_detector_partials_tiled32x8(
+    device const uchar *source [[buffer(0)]],
+    device uint *destination [[buffer(1)]],
+    constant ContiguousBin2ProductsParams &params [[buffer(2)]],
+    device const uchar *bands [[buffer(3)]],
+    device uint *band1Map [[buffer(4)]],
+    device uint *band2Map [[buffer(5)]],
+    device uint *band4Map [[buffer(6)]],
+    device uint *totalMap [[buffer(7)]],
+    device uint *rowMomentMap [[buffer(8)]],
+    device uint *columnMomentMap [[buffer(9)]],
+    device ushort *detectorPartials [[buffer(10)]],
+    uint2 group [[threadgroup_position_in_grid]],
+    uint2 local [[thread_position_in_threadgroup]],
+    uint lane [[thread_index_in_simdgroup]]
+) {
+    threadgroup uint tile[32][33];
+    threadgroup uint detectorTile[8][8][33];
+    uint frameBase = group.x * 32u;
+    uint sourceDetectorPixels =
+        params.sourceDetectorRows * params.sourceDetectorCols;
+    uint outputDetectorPixels =
+        params.outputDetectorRows * params.outputDetectorCols;
+    uint outputDetectorWords = (outputDetectorPixels + 1u) / 2u;
+    ExactProductU32 products[4];
+    for (uint slot = 0u; slot < 4u; ++slot) {
+        products[slot] = ExactProductU32{0u, 0u, 0u, 0u, 0u, 0u};
+    }
+
+    for (uint wordBase = 0u; wordBase < outputDetectorWords; wordBase += 32u) {
+        uint lowSums[4] = {0u, 0u, 0u, 0u};
+        uint highSums[4] = {0u, 0u, 0u, 0u};
+        uint outputWord = wordBase + local.x;
+        uint firstOutputPixel = outputWord * 2u;
+        uint outputRow = firstOutputPixel / params.outputDetectorCols;
+        uint outputColumn =
+            firstOutputPixel - outputRow * params.outputDetectorCols;
+        uint sourceRow = outputRow * 4u;
+        uint sourceColumn = outputColumn * 4u;
+
+        for (uint sourceRowDelta = 0u; sourceRowDelta < 4u; ++sourceRowDelta) {
+            uint detectorPartial[8] = {0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
+            for (uint frameSlot = 0u; frameSlot < 4u; ++frameSlot) {
+                uint localFrame = frameBase + local.y + frameSlot * 8u;
+                if (localFrame < params.frameCount && outputWord < outputDetectorWords) {
+                    uint row = sourceRow + sourceRowDelta;
+                    ulong sourceOffset =
+                        ulong(localFrame) * ulong(sourceDetectorPixels)
+                        + ulong(row * params.sourceDetectorCols + sourceColumn);
+                    ulong packedRow =
+                        *((device const ulong *)(source + sourceOffset));
+                    for (uint valueIndex = 0u; valueIndex < 8u; ++valueIndex) {
+                        uint value = uint(
+                            (packedRow >> (valueIndex * 8u)) & ulong(0xffu)
+                        );
+                        uint column = sourceColumn + valueIndex;
+                        uint pixel = row * params.sourceDetectorCols + column;
+                        detectorPartial[valueIndex] += value;
+                        if (valueIndex < 4u) {
+                            lowSums[frameSlot] += value;
+                        } else {
+                            highSums[frameSlot] += value;
+                        }
+                        uchar membership = bands[pixel];
+                        if (membership & 1u) products[frameSlot].band1 += value;
+                        if (membership & 2u) products[frameSlot].band2 += value;
+                        if (membership & 4u) products[frameSlot].band4 += value;
+                        products[frameSlot].total += value;
+                        products[frameSlot].rowMoment += value * row;
+                        products[frameSlot].columnMoment += value * column;
+                    }
+                }
+            }
+
+            for (uint valueIndex = 0u; valueIndex < 8u; ++valueIndex) {
+                detectorTile[valueIndex][local.y][local.x] =
+                    detectorPartial[valueIndex];
+            }
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+            if (local.y == 0u && outputWord < outputDetectorWords) {
+                uint row = sourceRow + sourceRowDelta;
+                for (uint valueIndex = 0u; valueIndex < 8u; ++valueIndex) {
+                    uint partial = 0u;
+                    for (uint frameLane = 0u; frameLane < 8u; ++frameLane) {
+                        partial += detectorTile[valueIndex][frameLane][local.x];
+                    }
+                    uint pixel =
+                        row * params.sourceDetectorCols + sourceColumn + valueIndex;
+                    detectorPartials[
+                        ulong(group.x) * sourceDetectorPixels + pixel
+                    ] = ushort(partial);
+                }
+            }
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+        }
+
+        for (uint frameSlot = 0u; frameSlot < 4u; ++frameSlot) {
+            tile[local.y + frameSlot * 8u][local.x] =
+                lowSums[frameSlot] | (highSums[frameSlot] << 16u);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        uint localFrame = frameBase + local.x;
+        for (uint wordSlot = 0u; wordSlot < 4u; ++wordSlot) {
+            uint transposedWord = wordBase + local.y + wordSlot * 8u;
+            if (localFrame < params.frameCount
+                && transposedWord < outputDetectorWords) {
+                uint destinationScan = params.destinationScanOffset + localFrame;
+                destination[
+                    ulong(transposedWord) * params.destinationScanCount
+                    + destinationScan
+                ] = tile[local.x][local.y + wordSlot * 8u];
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+
+    for (uint frameSlot = 0u; frameSlot < 4u; ++frameSlot) {
+        uint localFrame = frameBase + local.y + frameSlot * 8u;
+        uint band1 = simd_sum(products[frameSlot].band1);
+        uint band2 = simd_sum(products[frameSlot].band2);
+        uint band4 = simd_sum(products[frameSlot].band4);
+        uint total = simd_sum(products[frameSlot].total);
+        uint rowMoment = simd_sum(products[frameSlot].rowMoment);
+        uint columnMoment = simd_sum(products[frameSlot].columnMoment);
+        if (lane == 0u && localFrame < params.frameCount) {
+            uint outputFrame = params.globalFrameOffset + localFrame;
+            band1Map[outputFrame] = band1;
+            band2Map[outputFrame] = band2;
+            band4Map[outputFrame] = band4;
+            totalMap[outputFrame] = total;
+            rowMomentMap[outputFrame] = rowMoment;
+            columnMomentMap[outputFrame] = columnMoment;
+        }
+    }
+}
+
 kernel void detector_accumulate_u16_partials_u64(
     device const ushort *partials [[buffer(0)]],
     device ulong *output [[buffer(1)]],

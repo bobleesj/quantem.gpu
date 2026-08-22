@@ -89,6 +89,8 @@ public enum Metal4DSTEMKernels {
     "contiguous_detector_bin2_u8_to_u16_word_major_tiled32"
   public static let contiguousDetectorBin2U8ProductsDetectorPartialsTiled32x8Function =
     "contiguous_detector_bin2_u8_products_detector_partials_tiled32x8"
+  public static let contiguousDetectorBin4U8ProductsDetectorPartialsTiled32x8Function =
+    "contiguous_detector_bin4_u8_products_detector_partials_tiled32x8"
   public static let contiguousDetectorBin1U8ProductsDetectorPartialsTiled32x8Function =
     "contiguous_detector_bin1_u8_products_detector_partials_tiled32x8"
   public static let detectorAccumulateU16PartialsU64Function =

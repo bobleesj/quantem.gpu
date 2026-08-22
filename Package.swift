@@ -43,6 +43,10 @@ let package = Package(
       name: "metal-4dstem-indexed-load-benchmark",
       targets: ["Metal4DSTEMStreamingIOBenchmark"]
     ),
+    .executable(
+      name: "metal-4dstem-dpc-benchmark",
+      targets: ["Metal4DSTEMDPCBenchmark"]
+    ),
   ],
   targets: [
     .binaryTarget(
@@ -130,6 +134,11 @@ let package = Package(
       name: "Metal4DSTEMStreamingIOBenchmark",
       dependencies: ["Metal4DSTEMStreamingIO", "Native4DSTEMIO"],
       path: "src/quantem/gpu/swift/Benchmarks/Metal4DSTEMStreamingIOBenchmark"
+    ),
+    .executableTarget(
+      name: "Metal4DSTEMDPCBenchmark",
+      dependencies: ["Metal4DSTEMKernels"],
+      path: "src/quantem/gpu/swift/Benchmarks/Metal4DSTEMDPCBenchmark"
     ),
     .testTarget(
       name: "MetalDisplayKernelsTests",
