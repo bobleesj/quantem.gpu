@@ -171,7 +171,7 @@ public struct Metal4DSTEMIndexedBinnedLoadPlan: Equatable, Sendable {
       }.max() ?? 0
     let detectorPartialScratchBytes: UInt64
     if stagingDtype == .uint8,
-      detectorBin == 1 || detectorBin == 2,
+      detectorBin == 1 || detectorBin == 2 || detectorBin == 4,
       productPlan.sourceDetectorRows == 192,
       productPlan.sourceDetectorColumns == 192
     {
