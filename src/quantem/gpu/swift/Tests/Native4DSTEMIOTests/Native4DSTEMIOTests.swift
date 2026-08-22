@@ -1652,6 +1652,55 @@ final class Native4DSTEMIOTests: XCTestCase {
       "prepared_qh5_index_exact_binned_transactional_file_source_pages_unspecified"
     )
 
+    let privatePlan = try Metal4DSTEMIndexedBinnedLoadPlan(
+      source: source,
+      maximumDecodedWindowBytes: source.decodedBytesPerFrame,
+      detectorBands: bands,
+      detectorBin: 2,
+      sourceAudit: audit,
+      maximumShardBytes: 1 << 20,
+      residentStorage: .privateGPU
+    )
+    let privatePayload = fixture.root.appendingPathComponent("working-bin2-private-plan.qgpu")
+    let privateMetadata = fixture.root.appendingPathComponent("working-bin2-private-plan.json")
+    let privateResult = try loader.loadExactBinnedCache(
+      source: source,
+      plan: privatePlan,
+      payloadURL: privatePayload,
+      metadataURL: privateMetadata
+    )
+    XCTAssertEqual(privateResult.products, result.products)
+    XCTAssertEqual(privateResult.binningProvenance, result.binningProvenance)
+    XCTAssertEqual(try Data(contentsOf: privatePayload), payloadData)
+    let privateCompleteMetadata = try Metal4DSTEMResidentCacheIO.readMetadata(
+      from: privateMetadata
+    )
+    XCTAssertEqual(
+      privateCompleteMetadata.sourceIdentitySHA256,
+      completeMetadata.sourceIdentitySHA256
+    )
+    XCTAssertEqual(privateCompleteMetadata.valueRangeAudit, completeMetadata.valueRangeAudit)
+    XCTAssertEqual(privateCompleteMetadata.sources, completeMetadata.sources)
+    XCTAssertEqual(privateCompleteMetadata.sourceScanRows, completeMetadata.sourceScanRows)
+    XCTAssertEqual(
+      privateCompleteMetadata.sourceDetectorRows,
+      completeMetadata.sourceDetectorRows
+    )
+    XCTAssertEqual(privateCompleteMetadata.outputScanRows, completeMetadata.outputScanRows)
+    XCTAssertEqual(
+      privateCompleteMetadata.outputDetectorRows,
+      completeMetadata.outputDetectorRows
+    )
+    XCTAssertEqual(privateCompleteMetadata.outputDtype, completeMetadata.outputDtype)
+    XCTAssertEqual(privateCompleteMetadata.scanBin, completeMetadata.scanBin)
+    XCTAssertEqual(privateCompleteMetadata.detectorBin, completeMetadata.detectorBin)
+    XCTAssertEqual(
+      privateCompleteMetadata.samplingPropagation,
+      completeMetadata.samplingPropagation
+    )
+    XCTAssertEqual(privateCompleteMetadata.payloadBytes, completeMetadata.payloadBytes)
+    XCTAssertEqual(privateCompleteMetadata.payloadSHA256, completeMetadata.payloadSHA256)
+
     let wrongAudit = try Metal4DSTEMExactSourceAudit(
       sourceIdentitySHA256: try XCTUnwrap(dataset.sourceIdentitySHA256),
       sourceDtype: .uint16,
