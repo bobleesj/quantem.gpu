@@ -191,9 +191,10 @@ pending in the
 
 ## Citing quantem.gpu
 
-If `quantem.gpu` accelerated IO, detector or DPC analysis, display math, SSB
-reconstruction, or CUDA/MPS/Metal/WebGPU workflows contributed to your
-research, please consider citing:
+If the quantEM interactive framework, including `quantem.gpu` accelerated IO,
+detector or DPC analysis, display math, SSB reconstruction, or
+CUDA/MPS/Metal/WebGPU workflows, contributed to your research, please consider
+citing:
 
 > Sangjoon Lee et al., “Interactive Framework for Real-Time 4DSTEM Analysis
 > and Reconstruction,” *Microscopy and Microanalysis* 32 (Supplement 1),
@@ -201,14 +202,10 @@ research, please consider citing:
 
 Machine-readable citation metadata is provided in [CITATION.cff](CITATION.cff).
 
-## Package boundaries
+## Package boundary
 
-- `quantem.gpu` owns reusable accelerated IO, math, kernels, result contracts,
-  and backend/resource estimation.
-- `quantem.widget` owns browser UI, interaction, export, and display
-  orchestration while bundling canonical WebGPU sources from this package.
-- Live4DSTEM and `quantem.live` own application UI, acquisition lifecycle,
-  cache policy, and reconstruction orchestration while consuming exact
-  `quantem.gpu` revisions.
+`quantem.gpu` owns reusable accelerated IO, math, kernels, result contracts,
+and backend/resource estimation. Consuming applications own presentation,
+interaction, acquisition lifecycle, cache policy, and orchestration.
 
 The package is distributed under the [MIT License](LICENSE).
