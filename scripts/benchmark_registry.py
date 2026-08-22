@@ -891,6 +891,15 @@ def _find_gate(registry: dict[str, Any], gate_id: str) -> dict[str, Any]:
     raise SystemExit(f"Unknown benchmark gate: {gate_id}")
 
 
+def _command_values(gate: dict[str, Any]) -> _SafeFormat:
+    """Return gate fields plus lifecycle values required by command templates."""
+
+    values = _SafeFormat(gate)
+    cache_state = str(gate.get("cache_state") or "").lower()
+    values["warmup_count"] = 0 if cache_state.startswith("cold ") else 1
+    return values
+
+
 def _filters_match(item: dict[str, Any], args: argparse.Namespace) -> bool:
     for argument, field in (
         (args.state, "state"),
@@ -976,7 +985,7 @@ def main() -> int:
     if args.action == "command":
         gate = _find_gate(registry, args.gate_id)
         runbook = registry["runbooks"][gate["runbook"]]
-        values = _SafeFormat(gate)
+        values = _command_values(gate)
         print(f"Gate: {gate['id']}")
         print(f"State: {STATE_LABELS[gate['state']]}")
         print(f"Runbook: {gate['runbook']} -- {runbook['title']}")
