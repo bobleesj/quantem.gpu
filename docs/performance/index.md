@@ -43,7 +43,8 @@ A complete row answers all of these questions:
 1. Which exact source and source revision ran?
 2. What were the scan/detector shape, dtype, crop, bin, mask, and precision?
 3. Which backend, device, driver/runtime, and kernel revision ran?
-4. Was storage cold, page-cache warm, process warm, or a saved-result reopen?
+4. Was storage cold, controlled uncached-source-page, page-cache warm, process
+   warm, or a saved-result reopen, and which audits/indexes already existed?
 5. What did file open, read, decode, reduction, upload, synchronization, first
    usable product, and total wall time cost?
 6. What were peak process memory, accelerator allocation/reserve, total-device

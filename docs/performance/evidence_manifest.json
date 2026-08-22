@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "source_revision": "70bc3663c1c7cc495e77348c9fe7594545c66fa8",
+  "source_revision": "c0ea44465e6346a8436a0b74f491a04af0b5dc32",
   "purpose": "Fingerprints for the current benchmark dashboard, authoritative provenance ledger, parity and methodology contracts, and canonical historical evidence. Landing, API, and backend capability pages intentionally do not duplicate measurements.",
   "pages": [
     {
@@ -10,7 +10,7 @@
     },
     {
       "path": "docs/dashboard.md",
-      "sha256": "27b2f9ff287e97e22591ea285c8c7d47e40ae63b19f827591f6aa3d77903d964",
+      "sha256": "b2c35c4e683bbcc14f1f5be55b6d42d050cbbba1e53de3ad1c821d6e12dea5d7",
       "role": "Single human-facing current capability, speed, memory, and parity overview"
     },
     {
@@ -25,7 +25,7 @@
     },
     {
       "path": "docs/platforms/swift-metal.md",
-      "sha256": "151e561812ff108d52f7b8e88a4c89c63a253d56120a597b1fee8303ff418f8e",
+      "sha256": "a0637601ab619d94a8a051480ec2420b48bdef8b89d69b6947994d594b416e50",
       "role": "Native Swift Metal exact resident-summary, bounded indexed-streaming, and ownership contract"
     },
     {
@@ -35,17 +35,17 @@
     },
     {
       "path": "docs/performance/results.md",
-      "sha256": "f2027942218f33b1a533c4e23a912e45d80ff4c42cbad42abeb0e0b1d745507c",
+      "sha256": "352d0afc03f7f6a26d0dae1690fb69cf2f537b98cacac0e378ebf39277c660a4",
       "role": "Authoritative current benchmark provenance ledger"
     },
     {
       "path": "docs/performance/changes.md",
-      "sha256": "b57c3b18abd7fec1f766384bd0ccc45396c71d08d80cb85115e534ccc172fb1a",
+      "sha256": "7b324a2dbcee11da2ea9e2526222febad34a997b0b808e4b13b8e7bdc5a8a6a3",
       "role": "Benchmark promotion, rejection, and supersession decisions without copied values"
     },
     {
       "path": "docs/performance/methodology.md",
-      "sha256": "2754af708ec854eecedec7a56aafbdb53400fb3d1716dadb930b2f29bfebb51a",
+      "sha256": "cda5715350374eed14613997bfe2de6566c0d34665e38c50856c4808a1f02b8c",
       "role": "Benchmark state, provenance, and scientific-resolution contract"
     },
     {

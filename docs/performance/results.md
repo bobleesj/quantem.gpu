@@ -11,8 +11,8 @@ operating-system storage cache was not forcibly evicted. It is not called cold.
 
 ## Current platform profile
 
-- **Date tested:** 2026-08-19 local time; retained UTC artifacts extend into
-  2026-08-20.
+- **Date tested:** the cross-platform profile was measured 2026-08-19 local
+  time; retained follow-up artifacts extend through 2026-08-22.
 - **Baseline revisions:** Phil `334b7b5135fe29787540370a00f280fa138430a2`;
   CUDA execution mirror `8c47a466d573f74e425faff611939a17fa6efbf2`.
   Their production compute trees are byte-equivalent for the profiled paths.
@@ -24,8 +24,14 @@ operating-system storage cache was not forcibly evicted. It is not called cold.
   (`ff3c7fd`), provenance-bound resident summaries (`d65911a`), and exact
   fused-accumulator widening (`70bc366`). These unpublished commits do not
   retroactively change baseline timings.
+- **Current native load stack:** clean local branch `metal-cold-300ms` at
+  `c0ea44465e6346a8436a0b74f491a04af0b5dc32`. It adds bounded indexed loading,
+  exact private Metal residency, controlled macOS source-page measurement, and
+  state-consistent benchmark provenance. It does not relabel the 2026-08-19
+  cross-platform rows.
 - **Fixture C:** independent real `512x512x192x192` native-`uint16` source,
-  27 compressed shards, 3,169,920,193 bytes, 28-file manifest SHA-256
+  27 compressed shards plus one master file, 3,169,920,193 total bytes and
+  3,169,489,846 indexed compressed bytes, 28-file manifest SHA-256
   `741e7bcf13ffd77bcacfeeabc0b7edb7b427448273ceba2a166426b8f73f509a`.
 - **Fixture D:** independent real `512x512x192x192` native-`uint16` source,
   27 compressed shards, 3,165,551,746 bytes, master SHA-256
@@ -34,10 +40,11 @@ operating-system storage cache was not forcibly evicted. It is not called cold.
   `1be810b96fdff8e384ad4cb6ebd49adff9b4ab0a6503cd5fed9106e09f5aa286`.
 
 Every current load uses the complete `512x512` scan, no scan or detector crop,
-scan bin 1, and the explicit detector bin shown. The operating-system storage
-cache was not forcibly evicted, so the source measurements are **warm**, not
-cold. CUDA and WebGPU use D; MPS/Swift use C. They are not a fixture-controlled
-backend ranking.
+scan bin 1, and the explicit detector bin shown. The 2026-08-19 source profile
+did not forcibly evict the operating-system storage cache and is therefore
+**warm**, not cold. The separate 2026-08-22 native load controls source-page
+reuse explicitly and is documented in its own section. CUDA and WebGPU use D;
+MPS/Swift use C. They are not a fixture-controlled backend ranking.
 
 ### Current warm load/decode/bin
 
@@ -68,6 +75,70 @@ Fixture D bin 1 is value-audited lossless `uint8`; bins 2/4/8 are exact detector
 sums stored as `float32`. WebGPU's Chrome RSS is not a complete device-memory
 measurement and does not prove the physical 8 GB laptop gate. CPU timings are
 diagnostic adjudication only, never a silent production fallback.
+
+### Current controlled native exact resident load
+
+Revision `c0ea444` measures fixture C with a fresh process, a new empty QH5
+index root, a fresh private Metal destination, and macOS `F_NOCACHE` on the
+exact source hash plus every indexed source descriptor. The immutable source
+already has a complete identity-bound value-range audit. The state is therefore
+**controlled uncached source pages for an audited source**—not an audit-free
+arbitrary-source cold encounter, not a warm reopen, and not application end to
+end.
+
+The fixture master SHA-256 is
+`c9c0d968fae70b8911ae925d676b90007886970fa99fe296a47cfe07844bbfe9`;
+the ordered source identity is
+`9f0ddb932c631b63cb573c38d747fa41941ee585c5389d33bdafb4add962b768`.
+The retained audit digest is
+`2107fefc8bff91e5907e76cc84f53270c547479a626a6ea1271a9e8f317c3d41`:
+maximum source count 53, zero pixels above 255, and bad-pixel indices 5,319,
+15,050, 21,710, and 29,965. The three-band membership digest is
+`669882a145976986ebe08795e39198742a5c40a9302e410a12c8d576c94954e4`.
+The device ran macOS 26.4 (25E246) with Metal 4.
+
+The exact plan is the full `512x512x192x192 uint16` volume, scan bin 1,
+detector bin 1, crop none, audit-bound lossless `uint8` staging, `uint16`
+resident output, and a private Metal allocation. The timed package boundary
+ends only after the complete 18 GiB resident volume, exact BF/ABF/ADF, detector
+sum, total, detector-row moment, detector-column moment, and provenance are
+available. A complete resident-volume SHA-256 is computed afterward and is not
+included in package wall.
+
+| Device | Revision | Repetitions | Source/index state | Boundary | p50 | p95 | Maximum | Maximum process RSS | Metal allocated after load | Parity | Date tested |
+|---|---|---:|---|---|---:|---:|---:|---:|---:|---|---|
+| Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | `c0ea444` | 7 fresh processes | Controlled `F_NOCACHE`; new QH5 index root; existing sealed audit | Exact complete private resident plus products | **0.577793 s** | **0.900979 s** | **0.900979 s** | **938.52 MB** | **19.94 GB** | 7/7 exact volume and product hashes | 2026-08-22 |
+
+The first 0.900979-second storage outlier is retained. Stage intervals explain
+the package wall but are not all additive: source reads overlap Metal decode,
+reduction, and transfer.
+
+| Stage | p50 | p95 | Maximum | Boundary |
+|---|---:|---:|---:|---|
+| Catalog, source identity, and new index | **0.208247 s** | **0.229903 s** | **0.229903 s** | Package wall component before exact load |
+| Exact indexed load | **0.365434 s** | **0.682858 s** | **0.682858 s** | Synchronized complete resident and products |
+| Compressed source reads | **0.521686 s** | **0.751283 s** | **0.751283 s** | Accumulated overlapping read intervals |
+| Metal active | **0.276298 s** | **0.286221 s** | **0.286221 s** | Synchronized command-buffer intervals |
+| Decode and value audit | **0.152240 s** | **0.157220 s** | **0.157220 s** | GPU stage within Metal active time |
+| Exact products and detector-bin stage | **0.119040 s** | **0.127788 s** | **0.127788 s** | GPU stage; detector bin 1 preserves native sampling |
+| Complete resident-volume SHA-256 | **6.576119 s** | **6.636689 s** | **6.636689 s** | Post-boundary parity check; excluded from package wall |
+
+The logical resident payload is 19,327,352,832 bytes (18 GiB). The loader
+estimated 19,663,855,616 allocated Metal bytes excluding mapped source and
+20,519,411,712 bytes including source transfer; the observed post-load Metal
+allocation was 19,940,737,024 bytes. Peak retained source-buffer bytes were
+610,828,288; maximum process RSS was 938,524,672 bytes; Metal allocation fell
+to 720,896 bytes after release. On unified memory, RSS is not a substitute for
+Metal allocation.
+
+The working-volume SHA-256 was
+`1b555fb64b2c54d4f58b750c381d69ed5fe5452361d39cd65e36cf4d5d7358e5`.
+All seven exact product hashes repeated in every trial. Package-wall p50 is
+0.577793 seconds, so the 0.3-second target was not met. The previous schema-v7
+measurement is preserved but superseded for durable reporting because its raw
+state said source pages were unspecified while the command had applied
+`F_NOCACHE`; the v8 run fixes that label without changing IO or scientific
+arithmetic.
 
 ### Current native exact resident summary
 
@@ -228,6 +299,15 @@ audited low-count plan, scan-bin and incomplete-edge contribution bounds,
 high-dynamic-range rejection, arithmetic overflow, and exact Metal widening.
 The real-QH5 gate again passed four of four checks.
 
+At `c0ea444`, the release suite executed 111 tests, skipped eight explicit
+opt-in real-data/performance cases, and had no failures. Strict recursive Swift
+formatting and the release indexed-load benchmark build also passed. The added
+tests prove that controlled source-page reporting cannot be enabled through the
+private environment variable alone, that default and controlled small-fixture
+paths are byte-identical, and that a private-resident plan can create and reopen
+the same exact transactional cache. This remains package evidence, not a native
+application-paint or physical 8 GB/24 GB admission gate.
+
 The earlier `334b7b5` profile remains the owner of prepared-index reopen
 **5.339/5.760/5.842 ms** p50/p95/max and 512×512 FFT **15.622 ms** first,
 **0.291/0.584 ms** warm p50/p95. Those measurements were not rerun or silently
@@ -253,6 +333,7 @@ device signoff.
 | Deterministic CUDA full fit | `d262c1ed8fa55728811735bc974ef4fcc413e60aff83dfcd7396b4ad681f4527` |
 | Exact Air resident summary | `4f8f366553cf8ae13b5b732a24a070f6cc404127ef6e421599d00b5c27a3688c` |
 | Source-fused Air summary follow-up | `123b77e3424994980379a942da21dfbdf0d0921b2de0a862652831c4bfe814a9` |
+| Controlled full-native exact resident load, schema v8 | `2480cfd2ea78f24637cc542edceb1c4f39f7e4ba324d15969acdc3115a9dfcee` |
 
 ## Historical and rejected results
 

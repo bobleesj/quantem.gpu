@@ -226,7 +226,7 @@ class CudaParallaxBackend:
         list[BFImage]
             BF images at each k-space position.
         """
-        bf_stack, positions, center_idx = self._extract_at_positions(self._xy_inds)
+        bf_stack, positions, _ = self._extract_at_positions(self._xy_inds)
         self._bf_stack = bf_stack
         self._bf_images = self._make_bf_list(bf_stack, positions)
         return self._bf_images
@@ -634,7 +634,7 @@ class CudaParallaxBackend:
         import matplotlib.pyplot as plt
         from matplotlib.patches import Circle
 
-        fig, ax = plt.subplots(figsize=(8, 8))
+        _, ax = plt.subplots(figsize=(8, 8))
         # Show mean diffraction pattern
         dp = cp.asnumpy(self.data.mean(axis=0))
         ax.imshow(dp, cmap='gray', origin='lower')
@@ -660,7 +660,7 @@ class CudaParallaxBackend:
         """Plot shift vectors as quiver plot."""
         import matplotlib.pyplot as plt
 
-        fig, ax = plt.subplots(figsize=(10, 10))
+        _, ax = plt.subplots(figsize=(10, 10))
         # Extract positions and shifts
         center_row, center_col = self.center
         kx_rel = []
@@ -699,7 +699,7 @@ class CudaParallaxBackend:
         """Plot the reconstructed image."""
         import matplotlib.pyplot as plt
 
-        fig, ax = plt.subplots(figsize=(10, 10))
+        _, ax = plt.subplots(figsize=(10, 10))
         img_np = cp.asnumpy(image)
         ax.imshow(img_np, cmap='gray', origin='lower')
         ax.set_title('Parallax Reconstruction')

@@ -28,12 +28,19 @@ Report these separately:
 | Label | Meaning |
 |---|---|
 | Cold source | First encounter after a documented storage-cache reset or reboot; process and kernel caches are also identified |
+| Controlled uncached source pages | A platform-specific page-reuse control such as macOS `F_NOCACHE` is applied to every declared source descriptor; source audit, index, process, and destination state are still reported separately |
 | Warm source | Raw source reopened with operating-system page cache or storage cache available |
 | Warm process | Same process and reusable allocations/kernel compilation retained |
 | Saved-result reopen | A derived cache or persisted resident payload is opened; not a raw-source load |
 
 If true cache eviction was not controlled, use `first process` or `first
 observed source` rather than `cold`.
+
+Controlled source-page IO is not automatically arbitrary-source cold. For
+example, a run may use `F_NOCACHE` on an immutable source while reusing a sealed
+value-range audit, or it may build a new QH5 index while the source itself is
+already qualified. Name each retained state instead of compressing them into
+one “cold” label.
 
 ## End-to-end stages
 

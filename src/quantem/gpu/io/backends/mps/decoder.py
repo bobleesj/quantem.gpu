@@ -1603,8 +1603,9 @@ class MPSDecompressor:
         if verbose:
             iterable = tqdm(iterable, desc="mps", leave=False)
         for ci in iterable:
-            comp_np, co_np, bs_np, bc_np, bo_np, csizes, comp_mtl, co_mtl, \
-                bs_mtl, bc_mtl, bo_mtl = bufs[ci % 2]
+            _, _, _, bc_np, _, _, comp_mtl, co_mtl, bs_mtl, bc_mtl, bo_mtl = (
+                bufs[ci % 2]
+            )
             nf = chunk_n_frames[ci]
             read_next_done = False
             for s in range(0, nf, gpu_batch):

@@ -217,7 +217,7 @@ def join_object_waves(
 
     t0 = time.perf_counter()
     stack = _as_object_wave_stack(object_waves)
-    n_time, n_row, n_col = (int(x) for x in stack.shape)
+    n_time = int(stack.shape[0])
     shifts_cp = _normalize_shifts(shifts, n_time)
     weights_cp = _normalize_weights(weights, n_time)
     aligned = _align_object_wave_stack(stack, shifts_cp, phase_reference)

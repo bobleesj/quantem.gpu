@@ -530,10 +530,10 @@ def _run_one(
         state = None
         while time.perf_counter() - wall0 < args.timeout_s:
             state = target.eval(
-                f"""(() => ({{
+                """(() => ({
                   loadprof: globalThis.__loadprof || null,
                   hasChecksums: Boolean(globalThis.__sh4d && globalThis.__sh4d.rawChecksums)
-                }}))()"""
+                }))()"""
             )
             profile = (state or {}).get("loadprof")
             local_ok = bool(profile) and (

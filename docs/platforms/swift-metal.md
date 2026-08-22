@@ -117,6 +117,14 @@ swift run -c release metal-ssb-benchmark \
   METADATA_JSON FULL_BF_U8 REFERENCE_PHASE_F32 7 full 200 3
 ```
 
+The indexed-load benchmark has an explicit `--uncached-source-reads` diagnostic
+mode. On macOS it applies `F_NOCACHE` to source hashing and each indexed source
+descriptor and records that control in the emitted raw state. The private
+environment seam cannot enable controlled reporting unless the public flag is
+also present. This is benchmark instrumentation, not a package load-policy
+default and not a claim that source audit, index, or application caches are
+absent.
+
 Profile physical-device wall time and Metal command intervals. For unified
 memory, distinguish mapped page-in from explicit copies. Acceptance includes
 Swift tests, Metal compilation, frozen CPU/CUDA cross-backend fixtures,

@@ -4,22 +4,26 @@ This ledger separates documentation revisions from the implementation revision
 that produced a benchmark. A documentation edit never makes an older timing a
 measurement of the current code.
 
-- **Ledger reviewed:** 2026-08-20
+- **Ledger reviewed:** 2026-08-22
 - **Integration base:** `334b7b5`
-- **Current clean local stack:** `d65911a`
-- **Current measured checkout:** `8c47a466` (source tree `c3094dcf`)
-- **Documentation branch:** `mps-subsecond-pipeline`
+- **Current clean local stack:** `c0ea444`
+- **Current measured checkouts:** cross-platform `8c47a466` (source tree
+  `c3094dcf`); native controlled-source `c0ea444`
+- **Documentation branch:** `metal-cold-300ms`
 
-The current follow-up adds exact prepared QH5 binning (`e0e92b4`), optimized
+The native stack extends exact prepared QH5 binning (`e0e92b4`), optimized
 word-major detector binning (`ff3c7fd`), and exact resident summaries
-(`d65911a`) after the native Swift/Metal SSB product (`e1da9bc`). It does not
-relabel an older CUDA, Python MPS, WebGPU, source-load, or application
-measurement.
+(`d65911a`) with bounded streaming, private residency, and controlled macOS
+source-page measurement through `c0ea444`. It does not relabel an older CUDA,
+Python MPS, WebGPU, source-load, or application measurement.
 
 ## Latest documentation changes
 
 | Commit | Change | Performance-number effect |
 |---|---|---|
+| `c0ea444` | Aligned the raw benchmark state with explicit macOS `F_NOCACHE` control and sealed seven replacement runs | promotes a controlled uncached-source-page full-native package row; its distribution replaces schema v7 only because the older raw state was contradictory, not because the IO path changed |
+| `00ba8bd` | Reused the immutable source identity while preserving controlled source reads | kept the same exact source/load boundary; the later `c0ea444` run owns durable timing because its state label is internally consistent |
+| `3bb3845` | Added exact full-native detector-bin-1 loading into private Metal residency | established the 18 GiB exact resident path; later controlled-source runs own the current distribution |
 | `d65911a` | Added provenance-bound exact resident summaries and overflow-safe `uint64` detector moments | adds separate one-time summary-build and prepared-reopen rows; does not replace first compressed-source load or resident-compute rows |
 | `e1da9bc` | Added `MetalSSBKernels`, exact 512×512 reconstruction/loss, deterministic 200-trial TPE plus Nelder–Mead fitting, focused tests, and a standalone benchmark | adds separate native Swift/Metal SSB rows; does not replace differently configured CUDA, Python MPS, or WebGPU rows |
 | Current profiling-registry follow-up | Added the 35-cell platform/module schedule, human run index, manifest validator, CI gate, and continuous-profiling guide | none; the existing timings and scientific acceptance states are unchanged |
@@ -47,6 +51,8 @@ The current values and distributions live only in
 
 | Evidence change | Current disposition | Why |
 |---|---|---|
+| `0822-97-fnocache-provenance-v8` | Promoted as controlled native package evidence | Seven fresh processes use a new index root, fresh private destination, and explicit `F_NOCACHE` source descriptors; volume and product hashes are exact. It is an audited-source package boundary, not arbitrary-source cold or application E2E, and the detailed result remains above the requested target. |
+| `0821-96-bin1-controlled-cold` schema v7 | Superseded, preserved | Its command applied `F_NOCACHE` but the raw state token said source pages were unspecified. The timing and raw trials remain retained; schema v8 replaces it only for state-consistent reporting. |
 | `20260819-air-exact-resident-summary` | Promoted as separate native Swift/Metal prepared-product evidence | Seven fresh-process reopens reproduce nine same-device products byte-for-byte on Phil and the physical 8 GB M2 Air. Summary creation, prepared reopen, resident load, compressed-source load, and GUI paint remain distinct boundaries. |
 | `20260819-native-metal-ssb` | Promoted as a separate native Swift/Metal SSB row | It uses its own full-BF fixture and optimizer implementation; warm prepared compute is not raw-source load, application wall time, or physical 8 GB signoff. |
 | `PLATFORM-PROFILE-2026-08-19` | Current cross-platform profile | It supplies atomic timing, memory, dtype/bin, device, date, and parity fields; fixtures C and D remain explicitly separate. |
