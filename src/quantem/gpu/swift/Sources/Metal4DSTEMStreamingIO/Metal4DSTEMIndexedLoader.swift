@@ -71,6 +71,39 @@ public struct Metal4DSTEMDetectorBands: Codable, Equatable, Sendable {
   }
 }
 
+/// How prepared compressed source shards reach Metal-visible memory.
+///
+/// The caller selects this execution resource contract; QuantEM.GPU does not
+/// infer device admission policy. Memory mapping minimizes explicitly allocated
+/// staging. Buffered read-ahead uses bounded shared Metal buffers so storage
+/// reads can overlap exact decode, reduction, and detector binning.
+public enum Metal4DSTEMIndexedSourceTransfer: Codable, Equatable, Sendable {
+  /// Map each source shard and retain mappings only while Metal consumes them.
+  case memoryMapped
+
+  /// Read source shards into shared Metal buffers ahead of consumption.
+  ///
+  /// A value of one is double buffering: one shard is consumed while the next
+  /// is read. Larger values require more explicitly allocated source staging.
+  case bufferedReadAhead(prefetchShardCount: Int)
+
+  public var prefetchShardCount: Int {
+    switch self {
+    case .memoryMapped: 0
+    case .bufferedReadAhead(let count): count
+    }
+  }
+
+  fileprivate func validate() throws {
+    if case .bufferedReadAhead(let count) = self, count <= 0 {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "Buffered source read-ahead requires a positive prefetch-shard count. "
+          + "Use memoryMapped when no buffered read-ahead is requested."
+      )
+    }
+  }
+}
+
 /// A caller-inspectable, policy-free memory plan for exact indexed loading.
 ///
 /// The plan bounds transient decoded storage and reports all package-owned
@@ -102,7 +135,12 @@ public struct Metal4DSTEMIndexedLoadPlan: Equatable, Sendable {
   public let maximumMappedCompressedBytes: UInt64
   public let maximumMappedSourceBufferBytes: UInt64
   public let maximumInFlightMappedSourceBytes: UInt64
+  /// Conservative bound for all source buffers retained by this transfer mode.
+  public let maximumRetainedSourceBufferBytes: UInt64
+  /// Package Metal allocations plus buffered source transfer, when requested.
+  public let estimatedAllocatedMetalBytesIncludingSourceTransfer: UInt64
   public let maximumInFlightCommandBuffers: Int
+  public let sourceTransfer: Metal4DSTEMIndexedSourceTransfer
   public let windows: [Native4DSTEMIndexedWindow]
   public let detectorBands: Metal4DSTEMDetectorBands
   public let detectorBandsSHA256: String
@@ -117,8 +155,10 @@ public struct Metal4DSTEMIndexedLoadPlan: Equatable, Sendable {
   public init(
     source: Native4DSTEMIndexedSource,
     maximumDecodedWindowBytes: UInt64,
-    detectorBands: Metal4DSTEMDetectorBands
+    detectorBands: Metal4DSTEMDetectorBands,
+    sourceTransfer: Metal4DSTEMIndexedSourceTransfer = .memoryMapped
   ) throws {
+    try sourceTransfer.validate()
     let dataset = source.dataset
     guard dataset.sourceDtype == Metal4DSTEMIntegerDType.uint16.rawValue,
       source.sourceBytesPerValue == Metal4DSTEMIntegerDType.uint16.bytesPerValue
@@ -261,6 +301,24 @@ public struct Metal4DSTEMIndexedLoadPlan: Equatable, Sendable {
       Array(mappedSourceBytes.sorted(by: >).prefix(maximumInFlightCommandBuffers)),
       label: "in-flight mapped source buffers"
     )
+    switch sourceTransfer {
+    case .memoryMapped:
+      maximumRetainedSourceBufferBytes = maximumInFlightMappedSourceBytes
+      estimatedAllocatedMetalBytesIncludingSourceTransfer = working
+    case .bufferedReadAhead(let prefetchShardCount):
+      let retainedCount = min(
+        source.shards.count,
+        maximumInFlightCommandBuffers + 1 + prefetchShardCount
+      )
+      maximumRetainedSourceBufferBytes = try Self.sum(
+        Array(mappedSourceBytes.sorted(by: >).prefix(retainedCount)),
+        label: "retained buffered source staging"
+      )
+      estimatedAllocatedMetalBytesIncludingSourceTransfer = try Self.sum(
+        [working, maximumRetainedSourceBufferBytes],
+        label: "package Metal storage including source transfer"
+      )
+    }
     maximumIndividualMetalBufferBytes =
       [
         actualWindowBytes,
@@ -283,6 +341,7 @@ public struct Metal4DSTEMIndexedLoadPlan: Equatable, Sendable {
     detectorSamplingRow = dataset.kPixelSizeRow
     detectorSamplingColumn = dataset.kPixelSizeCol
     detectorSamplingUnit = dataset.kPixelUnit
+    self.sourceTransfer = sourceTransfer
   }
 
   fileprivate static func isSHA256(_ value: String) -> Bool {
@@ -339,7 +398,7 @@ public struct Metal4DSTEMIndexedLoadPlan: Equatable, Sendable {
     )
   }
 
-  private static func mappedBufferBytes(_ sourceBytes: UInt64) throws -> UInt64 {
+  fileprivate static func mappedBufferBytes(_ sourceBytes: UInt64) throws -> UInt64 {
     let pageBytes = UInt64(getpagesize())
     guard sourceBytes > 0, pageBytes > 0 else {
       throw Metal4DSTEMStreamingIOError.invalidRequest(
@@ -454,17 +513,34 @@ public struct Metal4DSTEMIndexedLoadProvenance: Codable, Equatable, Sendable {
 public struct Metal4DSTEMIndexedLoadMetrics: Codable, Equatable, Sendable {
   public let wallSeconds: Double
   public let sourceMappingSeconds: Double
+  public let sourceOpenAndStatSeconds: Double
+  public let sourceMmapSeconds: Double
+  public let sourceReadSeconds: Double
+  public let sourceMetalBufferSeconds: Double
+  public let sourceTransfer: Metal4DSTEMIndexedSourceTransfer
   public let gpuSeconds: Double
   public let windowCount: Int
   public let sliceCount: Int
   public let commandBufferCount: Int
   public let peakInFlightCommandBuffers: Int
   public let peakInFlightMappedSourceBytes: UInt64
+  /// Peak source-buffer bytes retained by commands, active work, and read-ahead.
+  public let peakRetainedSourceBufferBytes: UInt64
   public let mappedCompressedSourceBytes: UInt64
   public let maximumMappedCompressedSourceBytes: UInt64
   public let maximumMappedSourceBufferBytes: UInt64
   public let maximumDecodedSliceBytes: UInt64
   public let cacheState: String
+  public let synchronizedStageSeconds: Metal4DSTEMIndexedStageSeconds?
+}
+
+/// Opt-in synchronized Metal stage attribution for package benchmarks.
+public struct Metal4DSTEMIndexedStageSeconds: Codable, Equatable, Sendable {
+  public let decodeAndAudit: Double
+  public let exactScanProductsAndDetectorBinning: Double
+  public let exactDetectorSum: Double
+  public let commandQueueRemainder: Double
+  public let commandBuffers: Int
 }
 
 public struct Metal4DSTEMIndexedLoadResult: Equatable, Sendable {
@@ -501,9 +577,24 @@ public final class Metal4DSTEMIndexedLoader {
   private let device: MTLDevice
   private let queue: MTLCommandQueue
   private let decodePipeline: MTLComputePipelineState
+  private let auditedLow8DecodePipeline: MTLComputePipelineState
+  private let auditedLow8Octet192DecodePipeline: MTLComputePipelineState
   private let productPipeline: MTLComputePipelineState
+  private let auditedLow8ProductPipeline: MTLComputePipelineState
+  private let auditedLow8SIMDProductPipeline: MTLComputePipelineState
+  private let auditedLow8Detector192SIMDProductPipeline: MTLComputePipelineState
   private let detectorSumPipeline: MTLComputePipelineState
+  private let auditedLow8TiledDetectorSumPipeline: MTLComputePipelineState
+  private let fusedTiledLow8Bin2ProductsDetectorPartialsPipeline: MTLComputePipelineState
+  private let detectorAccumulateU16PartialsPipeline: MTLComputePipelineState
   private let exactBinner: Metal4DSTEMExactBinner
+  private let stageProfiler: IndexedStageProfiler?
+  private var profiledPreviousGPUEndTime: CFTimeInterval?
+  private var profiledGPUIdleSeconds = 0.0
+  private var profiledCommandCreationSeconds = 0.0
+  private var profiledEncodingSeconds = 0.0
+  private var profiledCommitSeconds = 0.0
+  private var profiledWaitSeconds = 0.0
 
   public init(device: MTLDevice) throws {
     guard let queue = device.makeCommandQueue() else {
@@ -515,11 +606,37 @@ public final class Metal4DSTEMIndexedLoader {
       let hdf5 = try Metal4DSTEMKernels.makeHDF5Library(device: device)
       let detector = try Metal4DSTEMKernels.makeDetectorLibrary(device: device)
       guard let decode = hdf5.makeFunction(name: Metal4DSTEMKernels.decodeU16Function),
+        let auditedLow8Decode = hdf5.makeFunction(
+          name: Metal4DSTEMKernels.decodeU16AuditedLow8DirectFunction
+        ),
+        let auditedLow8Octet192Decode = hdf5.makeFunction(
+          name: Metal4DSTEMKernels.decodeU16AuditedLow8DirectOctet192Function
+        ),
         let products = detector.makeFunction(
           name: Metal4DSTEMKernels.detectorProductsU16ExactU64Function
         ),
+        let auditedLow8Products = detector.makeFunction(
+          name: Metal4DSTEMKernels.detectorProductsU8ExactU64Function
+        ),
+        let auditedLow8SIMDProducts = detector.makeFunction(
+          name: Metal4DSTEMKernels.detectorProductsU8ExactU32SIMDToU64Function
+        ),
+        let auditedLow8Detector192SIMDProducts = detector.makeFunction(
+          name: Metal4DSTEMKernels
+            .detectorProductsU8Detector192ExactU32SIMDToU64Function
+        ),
         let detectorSum = detector.makeFunction(
           name: Metal4DSTEMKernels.detectorAccumulateU16U64Function
+        ),
+        let auditedLow8TiledDetectorSum = detector.makeFunction(
+          name: Metal4DSTEMKernels.detectorAccumulateU8U64FrameTiledFunction
+        ),
+        let fusedTiledLow8Bin2ProductsDetectorPartials = detector.makeFunction(
+          name: Metal4DSTEMKernels
+            .contiguousDetectorBin2U8ProductsDetectorPartialsTiled32x8Function
+        ),
+        let detectorAccumulateU16Partials = detector.makeFunction(
+          name: Metal4DSTEMKernels.detectorAccumulateU16PartialsU64Function
         )
       else {
         throw Metal4DSTEMStreamingIOError.metalUnavailable(
@@ -527,12 +644,39 @@ public final class Metal4DSTEMIndexedLoader {
         )
       }
       decodePipeline = try device.makeComputePipelineState(function: decode)
+      auditedLow8DecodePipeline = try device.makeComputePipelineState(
+        function: auditedLow8Decode
+      )
+      auditedLow8Octet192DecodePipeline = try device.makeComputePipelineState(
+        function: auditedLow8Octet192Decode
+      )
       productPipeline = try device.makeComputePipelineState(function: products)
+      auditedLow8ProductPipeline = try device.makeComputePipelineState(
+        function: auditedLow8Products
+      )
+      auditedLow8SIMDProductPipeline = try device.makeComputePipelineState(
+        function: auditedLow8SIMDProducts
+      )
+      auditedLow8Detector192SIMDProductPipeline = try device.makeComputePipelineState(
+        function: auditedLow8Detector192SIMDProducts
+      )
       detectorSumPipeline = try device.makeComputePipelineState(function: detectorSum)
+      auditedLow8TiledDetectorSumPipeline = try device.makeComputePipelineState(
+        function: auditedLow8TiledDetectorSum
+      )
+      fusedTiledLow8Bin2ProductsDetectorPartialsPipeline =
+        try device
+        .makeComputePipelineState(
+          function: fusedTiledLow8Bin2ProductsDetectorPartials
+        )
+      detectorAccumulateU16PartialsPipeline = try device.makeComputePipelineState(
+        function: detectorAccumulateU16Partials
+      )
       exactBinner = try Metal4DSTEMExactBinner(
         device: device,
         detectorLibrary: detector
       )
+      stageProfiler = try IndexedStageProfiler.makeIfRequested(device: device)
     } catch let error as Metal4DSTEMStreamingIOError {
       throw error
     } catch {
@@ -566,27 +710,7 @@ public final class Metal4DSTEMIndexedLoader {
     shouldCancel: () -> Bool = { false }
   ) throws -> Metal4DSTEMIndexedBinnedLoadResult {
     let totalStarted = CFAbsoluteTimeGetCurrent()
-    let expectedPlan = try Metal4DSTEMIndexedBinnedLoadPlan(
-      source: source,
-      maximumDecodedWindowBytes: plan.productPlan.maximumDecodedWindowBytes,
-      detectorBands: plan.productPlan.detectorBands,
-      detectorBin: plan.binningProvenance.detectorBin,
-      sourceAudit: plan.sourceAudit,
-      maximumShardBytes: plan.shardPlan.maximumShardBytes
-    )
-    guard expectedPlan == plan else {
-      throw Metal4DSTEMStreamingIOError.invalidRequest(
-        "The exact binned load plan does not match its indexed source, audit, "
-          + "detector bands, or shard geometry."
-      )
-    }
-    guard plan.maximumIndividualMetalBufferBytes <= UInt64(device.maxBufferLength) else {
-      throw Metal4DSTEMStreamingIOError.invalidRequest(
-        "The largest exact binned-load buffer requires "
-          + "\(plan.maximumIndividualMetalBufferBytes) bytes, exceeding this Metal "
-          + "device's maximum single-buffer length of \(device.maxBufferLength) bytes."
-      )
-    }
+    try validateBinnedLoadPlan(source: source, plan: plan)
     let allocationStarted = CFAbsoluteTimeGetCurrent()
     let destinations = try plan.shardPlan.shards.map { shard in
       try makeBuffer(
@@ -596,6 +720,54 @@ public final class Metal4DSTEMIndexedLoader {
       )
     }
     let allocationSeconds = CFAbsoluteTimeGetCurrent() - allocationStarted
+    return try loadExactBinnedShards(
+      source: source,
+      plan: plan,
+      destinations: destinations,
+      destinationAllocationSeconds: allocationSeconds,
+      totalStarted: totalStarted,
+      shouldCancel: shouldCancel
+    )
+  }
+
+  /// Decode once and fill exact caller-owned resident shards.
+  ///
+  /// This overload separates reusable allocation and device-admission policy
+  /// from exact loading. `destinationShards` must contain one distinct shared
+  /// buffer for every shard in `plan`, in canonical shard order, with each
+  /// buffer's length exactly equal to its planned payload. On success every
+  /// payload byte has been overwritten with the exact result. If loading throws,
+  /// destination contents are unspecified and must not be published.
+  ///
+  /// The caller owns buffer allocation, reuse, synchronization outside this
+  /// synchronous call, retention, eviction, and device-memory admission.
+  public func loadExactBinnedShards(
+    source: Native4DSTEMIndexedSource,
+    plan: Metal4DSTEMIndexedBinnedLoadPlan,
+    destinationShards: [MTLBuffer],
+    shouldCancel: () -> Bool = { false }
+  ) throws -> Metal4DSTEMIndexedBinnedLoadResult {
+    let totalStarted = CFAbsoluteTimeGetCurrent()
+    try validateBinnedLoadPlan(source: source, plan: plan)
+    try validateResidentDestinations(destinationShards, plan: plan)
+    return try loadExactBinnedShards(
+      source: source,
+      plan: plan,
+      destinations: destinationShards,
+      destinationAllocationSeconds: 0,
+      totalStarted: totalStarted,
+      shouldCancel: shouldCancel
+    )
+  }
+
+  private func loadExactBinnedShards(
+    source: Native4DSTEMIndexedSource,
+    plan: Metal4DSTEMIndexedBinnedLoadPlan,
+    destinations: [MTLBuffer],
+    destinationAllocationSeconds: Double,
+    totalStarted: CFAbsoluteTime,
+    shouldCancel: () -> Bool
+  ) throws -> Metal4DSTEMIndexedBinnedLoadResult {
     let context = BinnedOutputContext(
       resident: plan,
       destinations: destinations
@@ -616,7 +788,7 @@ public final class Metal4DSTEMIndexedLoader {
       samplingPropagation: plan.samplingPropagation,
       metrics: Metal4DSTEMIndexedBinnedLoadMetrics(
         indexedLoad: loaded.result.metrics,
-        destinationAllocationSeconds: allocationSeconds,
+        destinationAllocationSeconds: destinationAllocationSeconds,
         totalWallSeconds: CFAbsoluteTimeGetCurrent() - totalStarted,
         binningDispatchCount: loaded.binningDispatchCount,
         workingPayloadBytes: plan.workingPayloadBytes,
@@ -625,6 +797,71 @@ public final class Metal4DSTEMIndexedLoader {
         destinationStorageMode: plan.destinationStorageMode
       )
     )
+  }
+
+  private func validateBinnedLoadPlan(
+    source: Native4DSTEMIndexedSource,
+    plan: Metal4DSTEMIndexedBinnedLoadPlan
+  ) throws {
+    let expectedPlan = try Metal4DSTEMIndexedBinnedLoadPlan(
+      source: source,
+      maximumDecodedWindowBytes: plan.productPlan.maximumDecodedWindowBytes,
+      detectorBands: plan.productPlan.detectorBands,
+      detectorBin: plan.binningProvenance.detectorBin,
+      sourceAudit: plan.sourceAudit,
+      maximumShardBytes: plan.shardPlan.maximumShardBytes,
+      sourceTransfer: plan.productPlan.sourceTransfer
+    )
+    guard expectedPlan == plan else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "The exact binned load plan does not match its indexed source, audit, "
+          + "detector bands, or shard geometry."
+      )
+    }
+    guard plan.maximumIndividualMetalBufferBytes <= UInt64(device.maxBufferLength) else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "The largest exact binned-load buffer requires "
+          + "\(plan.maximumIndividualMetalBufferBytes) bytes, exceeding this Metal "
+          + "device's maximum single-buffer length of \(device.maxBufferLength) bytes."
+      )
+    }
+  }
+
+  private func validateResidentDestinations(
+    _ destinations: [MTLBuffer],
+    plan: Metal4DSTEMIndexedBinnedLoadPlan
+  ) throws {
+    guard destinations.count == plan.shardPlan.shards.count else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "Exact resident loading requires \(plan.shardPlan.shards.count) destination "
+          + "shards in canonical order; received \(destinations.count)."
+      )
+    }
+    guard Set(destinations.map(ObjectIdentifier.init)).count == destinations.count else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "Exact resident destination shards must be distinct buffers; aliases are invalid."
+      )
+    }
+    for (shard, destination) in zip(plan.shardPlan.shards, destinations) {
+      guard destination.device.registryID == device.registryID else {
+        throw Metal4DSTEMStreamingIOError.invalidRequest(
+          "Exact resident destination shard \(shard.index) belongs to a different "
+            + "Metal device. Allocate every shard on the loader's device."
+        )
+      }
+      guard destination.storageMode == .shared else {
+        throw Metal4DSTEMStreamingIOError.invalidRequest(
+          "Exact resident destination shard \(shard.index) must use shared Metal "
+            + "storage; received \(destination.storageMode.rawValue)."
+        )
+      }
+      guard UInt64(destination.length) == shard.payloadBytes else {
+        throw Metal4DSTEMStreamingIOError.invalidRequest(
+          "Exact resident destination shard \(shard.index) requires exactly "
+            + "\(shard.payloadBytes) bytes; received \(destination.length)."
+        )
+      }
+    }
   }
 
   /// Decode once and transactionally write an exact file-backed working volume.
@@ -649,7 +886,8 @@ public final class Metal4DSTEMIndexedLoader {
       detectorBands: plan.productPlan.detectorBands,
       detectorBin: plan.binningProvenance.detectorBin,
       sourceAudit: plan.sourceAudit,
-      maximumShardBytes: plan.shardPlan.maximumShardBytes
+      maximumShardBytes: plan.shardPlan.maximumShardBytes,
+      sourceTransfer: plan.productPlan.sourceTransfer
     )
     guard expectedPlan == plan else {
       throw Metal4DSTEMStreamingIOError.invalidRequest(
@@ -735,7 +973,8 @@ public final class Metal4DSTEMIndexedLoader {
     let expectedPlan = try Metal4DSTEMIndexedLoadPlan(
       source: source,
       maximumDecodedWindowBytes: plan.maximumDecodedWindowBytes,
-      detectorBands: plan.detectorBands
+      detectorBands: plan.detectorBands,
+      sourceTransfer: plan.sourceTransfer
     )
     guard expectedPlan == plan else {
       throw Metal4DSTEMStreamingIOError.invalidRequest(
@@ -743,10 +982,35 @@ public final class Metal4DSTEMIndexedLoader {
       )
     }
     try validateDevice(plan: plan)
+    stageProfiler?.reset()
+    profiledPreviousGPUEndTime = nil
+    profiledGPUIdleSeconds = 0
+    profiledCommandCreationSeconds = 0
+    profiledEncodingSeconds = 0
+    profiledCommitSeconds = 0
+    profiledWaitSeconds = 0
+    let stagingDtype = binned?.plan.binningProvenance.stagingDtype ?? .uint16
+    if stagingDtype == .uint8 {
+      guard let binned, binned.plan.sourceAudit.provesLosslessUInt8Staging else {
+        throw Metal4DSTEMStreamingIOError.invalidRequest(
+          "Compact indexed staging requires an identity-bound lossless uint8 audit."
+        )
+      }
+    }
+    let usesFusedTiledLow8Bin2Products = try supportsFusedAuditedLow8Bin2(
+      plan: plan,
+      binned: binned,
+      stagingDtype: stagingDtype
+    )
     let started = CFAbsoluteTimeGetCurrent()
     let frameCount = plan.logicalFrameCount
     let detectorPixels = plan.sourceDetectorRows * plan.sourceDetectorColumns
-    let mapBytes = try byteCount(count: frameCount, stride: 8, label: "one scan map")
+    let mapBytes = try byteCount(
+      count: frameCount,
+      stride:
+        usesFusedTiledLow8Bin2Products ? 4 : 8,
+      label: "one scan-map accumulator"
+    )
     let detectorBytes = try byteCount(
       count: detectorPixels,
       stride: 8,
@@ -757,11 +1021,52 @@ public final class Metal4DSTEMIndexedLoader {
       stride: MemoryLayout<UInt32>.stride,
       label: "count audit"
     )
+    let maximumNativeSliceBytes = try plan.windows.flatMap(\.slices).reduce(UInt64(0)) {
+      maximum, slice in
+      let sliceBytes = UInt64(slice.globalFrameRange.count)
+        .multipliedReportingOverflow(by: source.decodedBytesPerFrame)
+      guard !sliceBytes.overflow else {
+        throw Metal4DSTEMStreamingIOError.invalidRequest(
+          "One indexed decoded slice exceeds the reusable loader's UInt64 range."
+        )
+      }
+      return max(maximum, sliceBytes.partialValue)
+    }
+    guard maximumNativeSliceBytes > 0,
+      maximumNativeSliceBytes.isMultiple(
+        of: UInt64(plan.stagingDtype.bytesPerValue)
+      )
+    else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "The indexed source has no valid decoded slice storage."
+      )
+    }
+    let scratchBytes =
+      maximumNativeSliceBytes
+      / UInt64(plan.stagingDtype.bytesPerValue)
+      * UInt64(stagingDtype.bytesPerValue)
     let scratch = try makeBuffer(
-      bytes: plan.maximumActualWindowBytes,
+      bytes: scratchBytes,
       options: .storageModePrivate,
-      label: "decoded native window"
+      label: "decoded exact staging window"
     )
+    let detectorPartialScratch: MTLBuffer?
+    if usesFusedTiledLow8Bin2Products {
+      guard let binned,
+        binned.plan.maximumDetectorPartialScratchBytes > 0
+      else {
+        throw Metal4DSTEMStreamingIOError.invalidRequest(
+          "The exact detector-partial path is missing its planned scratch bound."
+        )
+      }
+      detectorPartialScratch = try makeBuffer(
+        bytes: binned.plan.maximumDetectorPartialScratchBytes,
+        options: .storageModePrivate,
+        label: "exact detector partials"
+      )
+    } else {
+      detectorPartialScratch = nil
+    }
     let band1 = try makeBuffer(bytes: UInt64(mapBytes), label: "band-1 map")
     let band2 = try makeBuffer(bytes: UInt64(mapBytes), label: "band-2 map")
     let band4 = try makeBuffer(bytes: UInt64(mapBytes), label: "band-4 map")
@@ -790,10 +1095,15 @@ public final class Metal4DSTEMIndexedLoader {
     ] {
       memset(buffer.contents(), 0, buffer.length)
     }
+    let setupFinished = CFAbsoluteTimeGetCurrent()
 
     var activeShardIndex: Int?
     var activeSource: MappedMetalSource?
     var mapSeconds = 0.0
+    var sourceOpenAndStatSeconds = 0.0
+    var sourceMmapSeconds = 0.0
+    var sourceReadSeconds = 0.0
+    var sourceMetalBufferSeconds = 0.0
     var gpuSeconds = 0.0
     var sliceCount = 0
     var binningDispatchCount = 0
@@ -803,9 +1113,69 @@ public final class Metal4DSTEMIndexedLoader {
     var maximumMappedSourceBufferBytes: UInt64 = 0
     var maximumDecodedSliceBytes: UInt64 = 0
     var pendingCommands: [PendingIndexedCommand] = []
+    var commandBufferCount = 0
     var peakInFlightCommandBuffers = 0
     var peakInFlightMappedSourceBytes: UInt64 = 0
+    var peakRetainedSourceBufferBytes: UInt64 = 0
+    let bufferedPrefetchDepth = plan.sourceTransfer.prefetchShardCount
+    var bufferedSourceFutures: [Int: BufferedMetalSourceFuture] = [:]
 
+    func retainedSourceBufferBytes() throws -> UInt64 {
+      var seen = Set<ObjectIdentifier>()
+      var bytes: UInt64 = 0
+      func add(_ value: UInt64) throws {
+        let updated = bytes.addingReportingOverflow(value)
+        guard !updated.overflow else {
+          throw Metal4DSTEMStreamingIOError.invalidRequest(
+            "Retained source-buffer byte accounting overflows UInt64."
+          )
+        }
+        bytes = updated.partialValue
+      }
+      for pending in pendingCommands {
+        for mapped in pending.mappedSources
+        where seen.insert(ObjectIdentifier(mapped)).inserted {
+          try add(UInt64(mapped.buffer.length))
+        }
+      }
+      if let activeSource,
+        seen.insert(ObjectIdentifier(activeSource)).inserted
+      {
+        try add(UInt64(activeSource.buffer.length))
+      }
+      for future in bufferedSourceFutures.values {
+        try add(future.expectedBufferBytes)
+      }
+      return bytes
+    }
+
+    func recordRetainedSourceBufferPeak() throws {
+      peakRetainedSourceBufferBytes = max(
+        peakRetainedSourceBufferBytes,
+        try retainedSourceBufferBytes()
+      )
+    }
+
+    func scheduleBufferedSource(_ shardIndex: Int) throws {
+      guard bufferedPrefetchDepth > 0,
+        source.shards.indices.contains(shardIndex),
+        bufferedSourceFutures[shardIndex] == nil
+      else { return }
+      let shard = source.shards[shardIndex]
+      bufferedSourceFutures[shardIndex] = try BufferedMetalSourceFuture(
+        url: shard.sourceURL,
+        expectedBytes: shard.index.metadata.sourceBytes,
+        expectedModificationNanoseconds: shard.index.metadata.sourceMtimeNs,
+        device: device
+      )
+      try recordRetainedSourceBufferPeak()
+    }
+
+    let streamStarted = CFAbsoluteTimeGetCurrent()
+    let maximumPendingCommandCount = Self.maximumInFlightCommandBuffers
+    for shardIndex in 0..<min(bufferedPrefetchDepth, source.shards.count) {
+      try scheduleBufferedSource(shardIndex)
+    }
     for window in plan.windows {
       if shouldCancel() {
         gpuSeconds += try drainAll(&pendingCommands)
@@ -837,46 +1207,82 @@ public final class Metal4DSTEMIndexedLoader {
         }
         let shard = source.shards[slice.shardIndex]
         if activeShardIndex != slice.shardIndex {
-          let mapStarted = CFAbsoluteTimeGetCurrent()
-          let currentIndex = try NativeQH5Index.open(
-            sourceURL: shard.sourceURL,
-            indexURL: shard.indexURL
-          )
-          guard currentIndex.metadata == shard.index.metadata,
-            currentIndex.metadataWords == shard.index.metadataWords
-          else {
-            throw Metal4DSTEMStreamingIOError.invalidRequest(
-              "Prepared QH5 index changed after the indexed source was opened. Reopen the source."
-            )
-          }
-          activeSource = try autoreleasepool {
-            try MappedMetalSource(
-              url: shard.sourceURL,
-              expectedBytes: shard.index.metadata.sourceBytes,
-              device: device
-            )
-          }
-          activeShardIndex = slice.shardIndex
-          mapSeconds += CFAbsoluteTimeGetCurrent() - mapStarted
-          if mappedShards.insert(slice.shardIndex).inserted {
-            let total = mappedCompressedSourceBytes.addingReportingOverflow(
-              shard.index.metadata.sourceBytes
-            )
-            guard !total.overflow else {
+          if bufferedPrefetchDepth > 0 {
+            try scheduleBufferedSource(slice.shardIndex)
+            try scheduleBufferedSource(slice.shardIndex + bufferedPrefetchDepth)
+            guard
+              let future = bufferedSourceFutures.removeValue(
+                forKey: slice.shardIndex
+              )
+            else {
               throw Metal4DSTEMStreamingIOError.invalidRequest(
-                "Mapped compressed-source byte accounting overflows UInt64."
+                "The bounded source prefetch lost shard \(slice.shardIndex)."
               )
             }
-            mappedCompressedSourceBytes = total.partialValue
+            let mapStarted = CFAbsoluteTimeGetCurrent()
+            activeSource = try future.value()
+            activeShardIndex = slice.shardIndex
+            mapSeconds += CFAbsoluteTimeGetCurrent() - mapStarted
+            sourceOpenAndStatSeconds += activeSource?.openAndStatSeconds ?? 0
+            sourceMmapSeconds += activeSource?.mmapSeconds ?? 0
+            sourceReadSeconds += activeSource?.readSeconds ?? 0
+            sourceMetalBufferSeconds += activeSource?.metalBufferSeconds ?? 0
+            if mappedShards.insert(slice.shardIndex).inserted {
+              let total = mappedCompressedSourceBytes.addingReportingOverflow(
+                shard.index.metadata.sourceBytes
+              )
+              guard !total.overflow else {
+                throw Metal4DSTEMStreamingIOError.invalidRequest(
+                  "Mapped compressed-source byte accounting overflows UInt64."
+                )
+              }
+              mappedCompressedSourceBytes = total.partialValue
+            }
+            maximumMappedCompressedSourceBytes = max(
+              maximumMappedCompressedSourceBytes,
+              shard.index.metadata.sourceBytes
+            )
+            maximumMappedSourceBufferBytes = max(
+              maximumMappedSourceBufferBytes,
+              UInt64(activeSource?.buffer.length ?? 0)
+            )
+            try recordRetainedSourceBufferPeak()
+          } else {
+            let mapStarted = CFAbsoluteTimeGetCurrent()
+            activeSource = try autoreleasepool {
+              try MappedMetalSource(
+                url: shard.sourceURL,
+                expectedBytes: shard.index.metadata.sourceBytes,
+                expectedModificationNanoseconds: shard.index.metadata.sourceMtimeNs,
+                device: device
+              )
+            }
+            activeShardIndex = slice.shardIndex
+            mapSeconds += CFAbsoluteTimeGetCurrent() - mapStarted
+            sourceOpenAndStatSeconds += activeSource?.openAndStatSeconds ?? 0
+            sourceMmapSeconds += activeSource?.mmapSeconds ?? 0
+            sourceReadSeconds += activeSource?.readSeconds ?? 0
+            sourceMetalBufferSeconds += activeSource?.metalBufferSeconds ?? 0
+            if mappedShards.insert(slice.shardIndex).inserted {
+              let total = mappedCompressedSourceBytes.addingReportingOverflow(
+                shard.index.metadata.sourceBytes
+              )
+              guard !total.overflow else {
+                throw Metal4DSTEMStreamingIOError.invalidRequest(
+                  "Mapped compressed-source byte accounting overflows UInt64."
+                )
+              }
+              mappedCompressedSourceBytes = total.partialValue
+            }
+            maximumMappedCompressedSourceBytes = max(
+              maximumMappedCompressedSourceBytes,
+              shard.index.metadata.sourceBytes
+            )
+            maximumMappedSourceBufferBytes = max(
+              maximumMappedSourceBufferBytes,
+              UInt64(activeSource?.buffer.length ?? 0)
+            )
           }
-          maximumMappedCompressedSourceBytes = max(
-            maximumMappedCompressedSourceBytes,
-            shard.index.metadata.sourceBytes
-          )
-          maximumMappedSourceBufferBytes = max(
-            maximumMappedSourceBufferBytes,
-            UInt64(activeSource?.buffer.length ?? 0)
-          )
         }
         guard let mapped = activeSource else {
           throw Metal4DSTEMStreamingIOError.metalUnavailable(
@@ -887,8 +1293,18 @@ public final class Metal4DSTEMIndexedLoader {
           UInt64(slice.globalFrameRange.count)
           * source.decodedBytesPerFrame
         maximumDecodedSliceBytes = max(maximumDecodedSliceBytes, decodedSliceBytes)
-        let pending = try autoreleasepool {
-          try enqueue(
+        let commandStarted = CFAbsoluteTimeGetCurrent()
+        guard let command = makeStreamingCommandBuffer() else {
+          throw Metal4DSTEMStreamingIOError.metalUnavailable(
+            "the device could not start an indexed decode command"
+          )
+        }
+        profiledCommandCreationSeconds +=
+          CFAbsoluteTimeGetCurrent() - commandStarted
+        let counterSamples = try stageProfiler?.makeSampleBuffer()
+        let encodingStarted = CFAbsoluteTimeGetCurrent()
+        let encoded = try autoreleasepool {
+          try encodeSlice(
             source: source,
             slice: slice,
             mapped: mapped,
@@ -903,11 +1319,29 @@ public final class Metal4DSTEMIndexedLoader {
             rowMoment: rowMoment,
             columnMoment: columnMoment,
             detectorSum: detectorSum,
-            binned: binned
+            detectorPartialScratch: detectorPartialScratch,
+            stagingDtype: stagingDtype,
+            usesFusedTiledLow8Bin2Products: usesFusedTiledLow8Bin2Products,
+            binned: binned,
+            command: command,
+            counterSamples: counterSamples
           )
         }
-        binningDispatchCount += pending.binningDispatchCount
-        pendingCommands.append(pending)
+        profiledEncodingSeconds += CFAbsoluteTimeGetCurrent() - encodingStarted
+        let commitStarted = CFAbsoluteTimeGetCurrent()
+        command.commit()
+        profiledCommitSeconds += CFAbsoluteTimeGetCurrent() - commitStarted
+        commandBufferCount += 1
+        binningDispatchCount += encoded.binningDispatchCount
+        pendingCommands.append(
+          PendingIndexedCommand(
+            command: command,
+            mappedSources: [mapped],
+            metadataBuffers: [encoded.metadata],
+            counterSamples: counterSamples,
+            binningDispatchCount: encoded.binningDispatchCount
+          )
+        )
         peakInFlightCommandBuffers = max(
           peakInFlightCommandBuffers,
           pendingCommands.count
@@ -916,7 +1350,8 @@ public final class Metal4DSTEMIndexedLoader {
           peakInFlightMappedSourceBytes,
           try inFlightMappedSourceBytes(pendingCommands)
         )
-        if pendingCommands.count >= Self.maximumInFlightCommandBuffers {
+        try recordRetainedSourceBufferPeak()
+        if pendingCommands.count >= maximumPendingCommandCount {
           gpuSeconds += try drainOldestOrFinishAll(&pendingCommands)
         }
         if shouldCancel() {
@@ -929,13 +1364,26 @@ public final class Metal4DSTEMIndexedLoader {
     gpuSeconds += try drainAll(&pendingCommands)
     try binned?.finishActiveDestination()
     activeSource = nil
+    let streamFinished = CFAbsoluteTimeGetCurrent()
+    guard peakRetainedSourceBufferBytes <= plan.maximumRetainedSourceBufferBytes else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "Indexed source transfer retained \(peakRetainedSourceBufferBytes) bytes, "
+          + "exceeding its planned bound of "
+          + "\(plan.maximumRetainedSourceBufferBytes) bytes."
+      )
+    }
 
-    let auditValues = values(from: countAudit, count: frameCount * 2, as: UInt32.self)
+    let sourceAudit: Metal4DSTEMExactSourceAudit
+    let auditValues = values(
+      from: countAudit, count: frameCount * 2, as: UInt32.self
+    )
     var maximum: UInt32 = 0
     var above255: UInt64 = 0
     for frame in 0..<frameCount {
       maximum = max(maximum, auditValues[2 * frame])
-      let sum = above255.addingReportingOverflow(UInt64(auditValues[2 * frame + 1]))
+      let sum = above255.addingReportingOverflow(
+        UInt64(auditValues[2 * frame + 1])
+      )
       guard !sum.overflow else {
         throw Metal4DSTEMStreamingIOError.invalidRequest(
           "The decoded above-255 audit overflows UInt64."
@@ -943,7 +1391,7 @@ public final class Metal4DSTEMIndexedLoader {
       }
       above255 = sum.partialValue
     }
-    let sourceAudit = try Metal4DSTEMExactSourceAudit(
+    sourceAudit = try Metal4DSTEMExactSourceAudit(
       sourceIdentitySHA256: plan.sourceIdentitySHA256,
       sourceDtype: .uint16,
       badPixelIndices: plan.badPixelIndices,
@@ -957,17 +1405,23 @@ public final class Metal4DSTEMIndexedLoader {
           + "working storage. Discard the shards and rebuild the audit."
       )
     }
+    let auditFinished = CFAbsoluteTimeGetCurrent()
+    func exactMapValues(from buffer: MTLBuffer) -> [UInt64] {
+      if usesFusedTiledLow8Bin2Products {
+        return values(from: buffer, count: frameCount, as: UInt32.self).map(UInt64.init)
+      }
+      return values(from: buffer, count: frameCount, as: UInt64.self)
+    }
     let products = Metal4DSTEMExactProducts(
       detectorSum: values(from: detectorSum, count: detectorPixels, as: UInt64.self),
-      band1: values(from: band1, count: frameCount, as: UInt64.self),
-      band2: values(from: band2, count: frameCount, as: UInt64.self),
-      band4: values(from: band4, count: frameCount, as: UInt64.self),
-      total: values(from: total, count: frameCount, as: UInt64.self),
-      detectorRowMoment: values(from: rowMoment, count: frameCount, as: UInt64.self),
-      detectorColumnMoment: values(
-        from: columnMoment, count: frameCount, as: UInt64.self
-      )
+      band1: exactMapValues(from: band1),
+      band2: exactMapValues(from: band2),
+      band4: exactMapValues(from: band4),
+      total: exactMapValues(from: total),
+      detectorRowMoment: exactMapValues(from: rowMoment),
+      detectorColumnMoment: exactMapValues(from: columnMoment)
     )
+    let productsFinished = CFAbsoluteTimeGetCurrent()
     let provenance = Metal4DSTEMIndexedLoadProvenance(
       schema: Metal4DSTEMIndexedLoadProvenance.currentSchema,
       datasetID: plan.datasetID,
@@ -982,7 +1436,7 @@ public final class Metal4DSTEMIndexedLoader {
       workingDetectorRows: plan.sourceDetectorRows,
       workingDetectorColumns: plan.sourceDetectorColumns,
       sourceDtype: .uint16,
-      stagingDtype: .uint16,
+      stagingDtype: stagingDtype,
       workingDtype: .uint16,
       productDtype: "uint64",
       scanBin: 1,
@@ -993,8 +1447,8 @@ public final class Metal4DSTEMIndexedLoader {
       scanColumnStop: plan.sourceScanColumns,
       reduction: .exactIntegerSum,
       badPixelIndices: plan.badPixelIndices,
-      maximumSourceCount: maximum,
-      pixelsAbove255: above255,
+      maximumSourceCount: sourceAudit.maximumSourceCount,
+      pixelsAbove255: sourceAudit.pixelsAbove255,
       logicalDecodedBytes: plan.logicalDecodedBytes,
       maximumDecodedWindowBytes: plan.maximumDecodedWindowBytes,
       maximumActualWindowBytes: plan.maximumActualWindowBytes,
@@ -1015,21 +1469,53 @@ public final class Metal4DSTEMIndexedLoader {
       detectorSamplingColumn: plan.detectorSamplingColumn,
       detectorSamplingUnit: plan.detectorSamplingUnit
     )
+    let resultFinished = CFAbsoluteTimeGetCurrent()
+    if ProcessInfo.processInfo.environment["QUANTEM_GPU_METAL_HOST_PROFILE"] == "1" {
+      let hostProfile = String(
+        format:
+          "QGPU_HOST setup=%.9f stream=%.9f gpu_active=%.9f gpu_idle=%.9f map=%.9f open_stat=%.9f mmap=%.9f pread=%.9f metal_buffer=%.9f command_create=%.9f encode=%.9f commit=%.9f wait=%.9f audit=%.9f products=%.9f provenance=%.9f total=%.9f\n",
+        setupFinished - started,
+        streamFinished - streamStarted,
+        gpuSeconds,
+        profiledGPUIdleSeconds,
+        mapSeconds,
+        sourceOpenAndStatSeconds,
+        sourceMmapSeconds,
+        sourceReadSeconds,
+        sourceMetalBufferSeconds,
+        profiledCommandCreationSeconds,
+        profiledEncodingSeconds,
+        profiledCommitSeconds,
+        profiledWaitSeconds,
+        auditFinished - streamFinished,
+        productsFinished - auditFinished,
+        resultFinished - productsFinished,
+        resultFinished - started
+      )
+      FileHandle.standardError.write(Data(hostProfile.utf8))
+    }
     let metrics = Metal4DSTEMIndexedLoadMetrics(
-      wallSeconds: CFAbsoluteTimeGetCurrent() - started,
+      wallSeconds: resultFinished - started,
       sourceMappingSeconds: mapSeconds,
+      sourceOpenAndStatSeconds: sourceOpenAndStatSeconds,
+      sourceMmapSeconds: sourceMmapSeconds,
+      sourceReadSeconds: sourceReadSeconds,
+      sourceMetalBufferSeconds: sourceMetalBufferSeconds,
+      sourceTransfer: plan.sourceTransfer,
       gpuSeconds: gpuSeconds,
       windowCount: plan.windows.count,
       sliceCount: sliceCount,
-      commandBufferCount: sliceCount,
+      commandBufferCount: commandBufferCount,
       peakInFlightCommandBuffers: peakInFlightCommandBuffers,
       peakInFlightMappedSourceBytes: peakInFlightMappedSourceBytes,
+      peakRetainedSourceBufferBytes: peakRetainedSourceBufferBytes,
       mappedCompressedSourceBytes: mappedCompressedSourceBytes,
       maximumMappedCompressedSourceBytes: maximumMappedCompressedSourceBytes,
       maximumMappedSourceBufferBytes: maximumMappedSourceBufferBytes,
       maximumDecodedSliceBytes: maximumDecodedSliceBytes,
       cacheState: binned?.cacheState
-        ?? "prepared_qh5_index_source_pages_unspecified"
+        ?? "prepared_qh5_index_source_pages_unspecified",
+      synchronizedStageSeconds: stageProfiler?.snapshot()
     )
     return (
       result: Metal4DSTEMIndexedLoadResult(
@@ -1063,17 +1549,6 @@ public final class Metal4DSTEMIndexedLoader {
       )
     }
     let shard = source.shards[slice.shardIndex]
-    let currentIndex = try NativeQH5Index.open(
-      sourceURL: shard.sourceURL,
-      indexURL: shard.indexURL
-    )
-    guard currentIndex.metadata == shard.index.metadata,
-      currentIndex.metadataWords == shard.index.metadataWords
-    else {
-      throw Metal4DSTEMStreamingIOError.invalidRequest(
-        "Prepared QH5 index changed after the indexed source was opened. Reopen the source."
-      )
-    }
     let detectorPixels = source.dataset.detectorRows * source.dataset.detectorCols
     let output = try makeBuffer(
       bytes: source.decodedBytesPerFrame,
@@ -1092,6 +1567,7 @@ public final class Metal4DSTEMIndexedLoader {
     let mapped = try MappedMetalSource(
       url: shard.sourceURL,
       expectedBytes: shard.index.metadata.sourceBytes,
+      expectedModificationNanoseconds: shard.index.metadata.sourceMtimeNs,
       device: device
     )
     let metadata = try metadataBuffer(source: source, slice: slice)
@@ -1143,7 +1619,70 @@ public final class Metal4DSTEMIndexedLoader {
     )
   }
 
-  private func enqueue(
+  private func supportsFusedAuditedLow8Bin2(
+    plan: Metal4DSTEMIndexedLoadPlan,
+    binned: BinnedOutputContext?,
+    stagingDtype: Metal4DSTEMIntegerDType
+  ) throws -> Bool {
+    guard stagingDtype == .uint8, let binned,
+      binned.plan.binningProvenance.detectorBin == 2,
+      binned.plan.binningProvenance.outputDtype == .uint16,
+      binned.plan.sourceAudit.provesLosslessUInt8Staging,
+      plan.sourceDetectorRows == 192,
+      plan.sourceDetectorColumns == 192,
+      binned.plan.binningProvenance.outputDetectorRows == 96,
+      binned.plan.binningProvenance.outputDetectorColumns == 96,
+      binned.plan.maximumDetectorPartialScratchBytes > 0
+    else { return false }
+
+    let fullRegion = try Metal4DSTEMScanRegion.full(
+      sourceRows: plan.sourceScanRows,
+      sourceColumns: plan.sourceScanColumns
+    )
+    let nativeProductPlan = try Metal4DSTEMLoadPlan(
+      sourceScanRows: plan.sourceScanRows,
+      sourceScanColumns: plan.sourceScanColumns,
+      detectorRows: plan.sourceDetectorRows,
+      detectorColumns: plan.sourceDetectorColumns,
+      sourceBytesPerValue: plan.sourceDtype.bytesPerValue,
+      scanRegion: fullRegion,
+      scanBin: 1,
+      detectorBin: 1
+    )
+    let bounds = try nativeProductPlan.exactAccumulatorBounds(
+      maxSourceCount: binned.plan.sourceAudit.maximumSourceCount
+    )
+    let detectorSumBound = UInt64(binned.plan.sourceAudit.maximumSourceCount)
+      .multipliedReportingOverflow(by: UInt64(plan.logicalFrameCount))
+    guard bounds.fitsUInt32Accumulators,
+      !detectorSumBound.overflow,
+      detectorSumBound.partialValue <= UInt64(UInt32.max),
+      Self.exactDetectorPartialFitsUInt16(
+        maximumSourceCount: binned.plan.sourceAudit.maximumSourceCount
+      )
+    else { return false }
+
+    for window in plan.windows {
+      for slice in window.slices {
+        let fitsOneShard = binned.plan.shardPlan.shards.contains { shard in
+          let stop = shard.outputScanPositionStart + shard.outputScanPositionCount
+          return slice.globalFrameRange.lowerBound >= shard.outputScanPositionStart
+            && slice.globalFrameRange.upperBound <= stop
+        }
+        if !fitsOneShard { return false }
+      }
+    }
+    return true
+  }
+
+  static func exactDetectorPartialFitsUInt16(
+    maximumSourceCount: UInt32
+  ) -> Bool {
+    let bound = UInt64(maximumSourceCount).multipliedReportingOverflow(by: 32)
+    return !bound.overflow && bound.partialValue <= UInt64(UInt16.max)
+  }
+
+  private func encodeSlice(
     source: Native4DSTEMIndexedSource,
     slice: Native4DSTEMIndexedSlice,
     mapped: MappedMetalSource,
@@ -1158,8 +1697,13 @@ public final class Metal4DSTEMIndexedLoader {
     rowMoment: MTLBuffer,
     columnMoment: MTLBuffer,
     detectorSum: MTLBuffer,
-    binned: BinnedOutputContext?
-  ) throws -> PendingIndexedCommand {
+    detectorPartialScratch: MTLBuffer?,
+    stagingDtype: Metal4DSTEMIntegerDType,
+    usesFusedTiledLow8Bin2Products: Bool,
+    binned: BinnedOutputContext?,
+    command: MTLCommandBuffer,
+    counterSamples: MTLCounterSampleBuffer?
+  ) throws -> (metadata: MTLBuffer, binningDispatchCount: Int) {
     let shard = source.shards[slice.shardIndex]
     let frameCount = try exactUInt32(slice.globalFrameRange.count, label: "slice frames")
     let detectorPixels = source.dataset.detectorRows * source.dataset.detectorCols
@@ -1184,14 +1728,45 @@ public final class Metal4DSTEMIndexedLoader {
       detectorPixels: detectorPixelCount,
       globalFrameOffset: globalFrameOffset
     )
-    guard let command = queue.makeCommandBuffer(),
-      let encoder = command.makeComputeCommandEncoder()
+    guard
+      var encoder = try stageProfiler?.makeComputeEncoder(
+        commandBuffer: command,
+        sampleBuffer: counterSamples,
+        stageIndex: 0
+      ) ?? command.makeComputeCommandEncoder()
     else {
       throw Metal4DSTEMStreamingIOError.metalUnavailable(
-        "the device could not start an indexed decode command"
+        "the device could not start an indexed decode encoder"
       )
     }
-    encoder.setComputePipelineState(decodePipeline)
+    let selectedDetectorSumPipeline =
+      stagingDtype == .uint8
+      ? auditedLow8TiledDetectorSumPipeline : detectorSumPipeline
+    let binningDispatchCount: Int
+    let selectedDecodePipeline =
+      stagingDtype == .uint8
+      ? (detectorPixels == 192 * 192
+        && source.dataset.detectorRows == 192
+        && source.dataset.detectorCols == 192
+        ? auditedLow8Octet192DecodePipeline : auditedLow8DecodePipeline)
+      : decodePipeline
+    let usesDetector192OctetDecode =
+      stagingDtype == .uint8
+      && detectorPixels == 192 * 192
+      && source.dataset.detectorRows == 192
+      && source.dataset.detectorCols == 192
+    let usesDetector192ProductPipeline =
+      stagingDtype == .uint8
+      && exactLow8ProductsFitUInt32(source: source)
+      && detectorPixels == 192 * 192
+      && source.dataset.detectorRows == 192
+      && source.dataset.detectorCols == 192
+    let selectedProductPipeline =
+      stagingDtype == .uint8 && exactLow8ProductsFitUInt32(source: source)
+      ? (usesDetector192ProductPipeline
+        ? auditedLow8Detector192SIMDProductPipeline : auditedLow8SIMDProductPipeline)
+      : (stagingDtype == .uint8 ? auditedLow8ProductPipeline : productPipeline)
+    encoder.setComputePipelineState(selectedDecodePipeline)
     encoder.setBuffer(mapped.buffer, offset: 0, index: 0)
     encoder.setBuffer(metadata, offset: 0, index: 1)
     encoder.setBytes(&rangeStart, length: 8, index: 2)
@@ -1208,65 +1783,228 @@ public final class Metal4DSTEMIndexedLoader {
         height: 1,
         depth: Int(blocksPerFrame)
       ),
-      threadsPerThreadgroup: MTLSize(width: 32, height: 4, depth: 1)
+      threadsPerThreadgroup: usesDetector192OctetDecode
+        ? MTLSize(width: 32, height: 1, depth: 1)
+        : MTLSize(width: 32, height: 4, depth: 1)
     )
-    encoder.memoryBarrier(scope: .buffers)
+    encoder = try nextProfiledEncoder(
+      current: encoder,
+      commandBuffer: command,
+      sampleBuffer: counterSamples,
+      stageIndex: 1
+    )
 
-    encoder.setComputePipelineState(productPipeline)
-    encoder.setBuffer(scratch, offset: 0, index: 0)
-    encoder.setBuffer(band1, offset: 0, index: 1)
-    encoder.setBuffer(band2, offset: 0, index: 2)
-    encoder.setBuffer(band4, offset: 0, index: 3)
-    withUnsafeBytes(of: &parameters) {
-      encoder.setBytes($0.baseAddress!, length: $0.count, index: 4)
-    }
-    encoder.setBuffer(detectorBands, offset: 0, index: 5)
-    encoder.setBuffer(total, offset: 0, index: 6)
-    encoder.setBuffer(rowMoment, offset: 0, index: 7)
-    encoder.setBuffer(columnMoment, offset: 0, index: 8)
-    encoder.setBytes(&detectorColumns, length: 4, index: 9)
-    encoder.dispatchThreadgroups(
-      MTLSize(width: Int(frameCount), height: 1, depth: 1),
-      threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
-    )
-    encoder.memoryBarrier(scope: .buffers)
-
-    encoder.setComputePipelineState(detectorSumPipeline)
-    encoder.setBuffer(scratch, offset: 0, index: 0)
-    encoder.setBuffer(detectorSum, offset: 0, index: 1)
-    encoder.setBytes(&detectorPixelCount, length: 4, index: 2)
-    var mutableFrameCount = frameCount
-    encoder.setBytes(&mutableFrameCount, length: 4, index: 3)
-    let threads = min(256, detectorSumPipeline.maxTotalThreadsPerThreadgroup)
-    encoder.dispatchThreads(
-      MTLSize(width: detectorPixels, height: 1, depth: 1),
-      threadsPerThreadgroup: MTLSize(width: threads, height: 1, depth: 1)
-    )
-    encoder.endEncoding()
-    let binningDispatchCount =
-      try binned.map {
-        try encodeBinnedSlice(
-          context: $0,
-          slice: slice,
-          scratch: scratch,
-          commandBuffer: command
+    if usesFusedTiledLow8Bin2Products {
+      guard let binned,
+        let outputShard = binned.plan.shardPlan.shards.first(where: { candidate in
+          let stop =
+            candidate.outputScanPositionStart
+            + candidate.outputScanPositionCount
+          return slice.globalFrameRange.lowerBound
+            >= candidate.outputScanPositionStart
+            && slice.globalFrameRange.upperBound <= stop
+        }),
+        let sourceDetectorRows = UInt32(exactly: source.dataset.detectorRows),
+        let destinationScanCount = UInt32(
+          exactly: outputShard.outputScanPositionCount
+        ),
+        let destinationScanOffset = UInt32(
+          exactly:
+            slice.globalFrameRange.lowerBound
+            - outputShard.outputScanPositionStart
+        ),
+        let outputDetectorRows = UInt32(
+          exactly: binned.plan.binningProvenance.outputDetectorRows
+        ),
+        let outputDetectorColumns = UInt32(
+          exactly: binned.plan.binningProvenance.outputDetectorColumns
         )
-      } ?? 0
-    command.commit()
-    return PendingIndexedCommand(
-      command: command,
-      mappedSource: mapped,
-      metadata: metadata,
-      binningDispatchCount: binningDispatchCount
+      else {
+        throw Metal4DSTEMStreamingIOError.invalidRequest(
+          "The tiled fused exact bin2 slice does not fit one validated destination shard."
+        )
+      }
+      let destination = try binned.destination(for: outputShard.index)
+      var fusedParameters = ContiguousBin2ProductsParameters(
+        frameCount: frameCount,
+        sourceDetectorRows: sourceDetectorRows,
+        sourceDetectorColumns: detectorColumns,
+        destinationScanCount: destinationScanCount,
+        destinationScanOffset: destinationScanOffset,
+        globalFrameOffset: globalFrameOffset,
+        outputDetectorRows: outputDetectorRows,
+        outputDetectorColumns: outputDetectorColumns
+      )
+      encoder.setComputePipelineState(
+        fusedTiledLow8Bin2ProductsDetectorPartialsPipeline
+      )
+      encoder.setBuffer(scratch, offset: 0, index: 0)
+      encoder.setBuffer(destination, offset: 0, index: 1)
+      withUnsafeBytes(of: &fusedParameters) {
+        encoder.setBytes($0.baseAddress!, length: $0.count, index: 2)
+      }
+      encoder.setBuffer(detectorBands, offset: 0, index: 3)
+      encoder.setBuffer(band1, offset: 0, index: 4)
+      encoder.setBuffer(band2, offset: 0, index: 5)
+      encoder.setBuffer(band4, offset: 0, index: 6)
+      encoder.setBuffer(total, offset: 0, index: 7)
+      encoder.setBuffer(rowMoment, offset: 0, index: 8)
+      encoder.setBuffer(columnMoment, offset: 0, index: 9)
+      guard let detectorPartialScratch else {
+        throw Metal4DSTEMStreamingIOError.invalidRequest(
+          "The fused exact detector-partial path requires bounded scratch storage."
+        )
+      }
+      encoder.setBuffer(detectorPartialScratch, offset: 0, index: 10)
+      encoder.dispatchThreadgroups(
+        MTLSize(width: (Int(frameCount) + 31) / 32, height: 1, depth: 1),
+        threadsPerThreadgroup: MTLSize(width: 32, height: 8, depth: 1)
+      )
+      binningDispatchCount = 1
+    } else {
+      encoder.setComputePipelineState(selectedProductPipeline)
+      encoder.setBuffer(scratch, offset: 0, index: 0)
+      encoder.setBuffer(band1, offset: 0, index: 1)
+      encoder.setBuffer(band2, offset: 0, index: 2)
+      encoder.setBuffer(band4, offset: 0, index: 3)
+      withUnsafeBytes(of: &parameters) {
+        encoder.setBytes($0.baseAddress!, length: $0.count, index: 4)
+      }
+      encoder.setBuffer(detectorBands, offset: 0, index: 5)
+      encoder.setBuffer(total, offset: 0, index: 6)
+      encoder.setBuffer(rowMoment, offset: 0, index: 7)
+      encoder.setBuffer(columnMoment, offset: 0, index: 8)
+      encoder.setBytes(&detectorColumns, length: 4, index: 9)
+      encoder.dispatchThreadgroups(
+        MTLSize(width: Int(frameCount), height: 1, depth: 1),
+        threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
+      )
+      binningDispatchCount = 0
+    }
+    encoder = try nextProfiledEncoder(
+      current: encoder,
+      commandBuffer: command,
+      sampleBuffer: counterSamples,
+      stageIndex: 2
     )
+
+    var mutableFrameCount = frameCount
+    if usesFusedTiledLow8Bin2Products {
+      guard let detectorPartialScratch else {
+        throw Metal4DSTEMStreamingIOError.invalidRequest(
+          "The fused exact detector-partial reduction lost its scratch storage."
+        )
+      }
+      var partialCount = (frameCount + 31) / 32
+      encoder.setComputePipelineState(detectorAccumulateU16PartialsPipeline)
+      encoder.setBuffer(detectorPartialScratch, offset: 0, index: 0)
+      encoder.setBuffer(detectorSum, offset: 0, index: 1)
+      encoder.setBytes(&detectorPixelCount, length: 4, index: 2)
+      encoder.setBytes(&partialCount, length: 4, index: 3)
+      encoder.dispatchThreads(
+        MTLSize(width: detectorPixels, height: 1, depth: 1),
+        threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
+      )
+    } else if stagingDtype == .uint8 {
+      encoder.setComputePipelineState(selectedDetectorSumPipeline)
+      encoder.setBuffer(scratch, offset: 0, index: 0)
+      encoder.setBuffer(detectorSum, offset: 0, index: 1)
+      encoder.setBytes(&detectorPixelCount, length: 4, index: 2)
+      encoder.setBytes(&mutableFrameCount, length: 4, index: 3)
+      encoder.dispatchThreadgroups(
+        MTLSize(width: (detectorPixels + 31) / 32, height: 1, depth: 1),
+        threadsPerThreadgroup: MTLSize(
+          width: 32,
+          height: 8,
+          depth: 1
+        )
+      )
+    } else {
+      encoder.setComputePipelineState(selectedDetectorSumPipeline)
+      encoder.setBuffer(scratch, offset: 0, index: 0)
+      encoder.setBuffer(detectorSum, offset: 0, index: 1)
+      encoder.setBytes(&detectorPixelCount, length: 4, index: 2)
+      encoder.setBytes(&mutableFrameCount, length: 4, index: 3)
+      let threads = min(
+        256, selectedDetectorSumPipeline.maxTotalThreadsPerThreadgroup
+      )
+      encoder.dispatchThreads(
+        MTLSize(width: detectorPixels, height: 1, depth: 1),
+        threadsPerThreadgroup: MTLSize(width: threads, height: 1, depth: 1)
+      )
+    }
+    encoder.endEncoding()
+    let totalBinningDispatchCount: Int
+    if usesFusedTiledLow8Bin2Products {
+      totalBinningDispatchCount = binningDispatchCount
+    } else {
+      totalBinningDispatchCount =
+        try binned.map {
+          try encodeBinnedSlice(
+            context: $0,
+            slice: slice,
+            scratch: scratch,
+            stagingDtype: stagingDtype,
+            commandBuffer: command
+          )
+        } ?? 0
+    }
+    return (metadata, totalBinningDispatchCount)
+  }
+
+  private func exactLow8ProductsFitUInt32(
+    source: Native4DSTEMIndexedSource
+  ) -> Bool {
+    guard let rows = UInt64(exactly: source.dataset.detectorRows),
+      let columns = UInt64(exactly: source.dataset.detectorCols),
+      rows > 0,
+      columns > 0
+    else { return false }
+
+    func multiply(_ factors: [UInt64]) -> UInt64? {
+      var value: UInt64 = 1
+      for factor in factors {
+        let next = value.multipliedReportingOverflow(by: factor)
+        guard !next.overflow else { return nil }
+        value = next.partialValue
+      }
+      return value
+    }
+
+    func triangular(_ count: UInt64) -> UInt64? {
+      var first = count
+      var second = count - 1
+      if first.isMultiple(of: 2) {
+        first /= 2
+      } else {
+        second /= 2
+      }
+      return multiply([first, second])
+    }
+
+    guard let rowIndices = triangular(rows),
+      let columnIndices = triangular(columns),
+      let total = multiply([rows, columns, UInt64(UInt8.max)]),
+      let rowMoment = multiply([rowIndices, columns, UInt64(UInt8.max)]),
+      let columnMoment = multiply([columnIndices, rows, UInt64(UInt8.max)])
+    else { return false }
+    let maximum = max(total, rowMoment, columnMoment)
+    return maximum <= UInt64(UInt32.max)
   }
 
   private func encodeBinnedSlice(
     context: BinnedOutputContext,
     slice: Native4DSTEMIndexedSlice,
     scratch: MTLBuffer,
-    commandBuffer: MTLCommandBuffer
+    stagingDtype: Metal4DSTEMIntegerDType,
+    commandBuffer: MTLCommandBuffer? = nil,
+    encoder: MTLComputeCommandEncoder? = nil
   ) throws -> Int {
+    guard (commandBuffer == nil) != (encoder == nil) else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "Exact binning requires exactly one command buffer or existing encoder."
+      )
+    }
     let plan = context.plan
     let sourceFrameElements = plan.productPlan.sourceDetectorRows
       .multipliedReportingOverflow(by: plan.productPlan.sourceDetectorColumns)
@@ -1276,7 +2014,7 @@ public final class Metal4DSTEMIndexedLoader {
       )
     }
     let sourceFrameBytes = sourceFrameElements.partialValue
-      .multipliedReportingOverflow(by: MemoryLayout<UInt16>.stride)
+      .multipliedReportingOverflow(by: stagingDtype.bytesPerValue)
     guard !sourceFrameBytes.overflow else {
       throw Metal4DSTEMStreamingIOError.invalidRequest(
         "One indexed source-frame byte count overflows Int."
@@ -1308,20 +2046,64 @@ public final class Metal4DSTEMIndexedLoader {
           "Indexed binning source offset overflows Int."
         )
       }
-      _ = try exactBinner.encodeContiguousUInt16Frames(
-        commandBuffer: commandBuffer,
-        stagedSource: scratch,
-        stagedSourceOffset: sourceOffset.partialValue,
-        destination: try context.destination(for: shard.index),
-        destinationView: .scanRowShard(
-          plan: plan.shardPlan,
-          index: shard.index
-        ),
-        plan: binningPlan,
-        sourceFrameCount: globalStop - globalStart,
-        globalScanPositionOffset: globalStart,
-        sourceAudit: plan.sourceAudit
+      let destination = try context.destination(for: shard.index)
+      let destinationView = Metal4DSTEMExactBinningDestination.scanRowShard(
+        plan: plan.shardPlan,
+        index: shard.index
       )
+      if stagingDtype == .uint8 {
+        if let encoder {
+          _ = try exactBinner.encodeContiguousAuditedUInt8Frames(
+            encoder: encoder,
+            stagedSource: scratch,
+            stagedSourceOffset: sourceOffset.partialValue,
+            destination: destination,
+            destinationView: destinationView,
+            plan: binningPlan,
+            sourceFrameCount: globalStop - globalStart,
+            globalScanPositionOffset: globalStart,
+            sourceAudit: plan.sourceAudit
+          )
+        } else if let commandBuffer {
+          _ = try exactBinner.encodeContiguousAuditedUInt8Frames(
+            commandBuffer: commandBuffer,
+            stagedSource: scratch,
+            stagedSourceOffset: sourceOffset.partialValue,
+            destination: destination,
+            destinationView: destinationView,
+            plan: binningPlan,
+            sourceFrameCount: globalStop - globalStart,
+            globalScanPositionOffset: globalStart,
+            sourceAudit: plan.sourceAudit
+          )
+        }
+      } else {
+        if let encoder {
+          _ = try exactBinner.encodeContiguousUInt16Frames(
+            encoder: encoder,
+            stagedSource: scratch,
+            stagedSourceOffset: sourceOffset.partialValue,
+            destination: destination,
+            destinationView: destinationView,
+            plan: binningPlan,
+            sourceFrameCount: globalStop - globalStart,
+            globalScanPositionOffset: globalStart,
+            sourceAudit: plan.sourceAudit
+          )
+        } else if let commandBuffer {
+          _ = try exactBinner.encodeContiguousUInt16Frames(
+            commandBuffer: commandBuffer,
+            stagedSource: scratch,
+            stagedSourceOffset: sourceOffset.partialValue,
+            destination: destination,
+            destinationView: destinationView,
+            plan: binningPlan,
+            sourceFrameCount: globalStop - globalStart,
+            globalScanPositionOffset: globalStart,
+            sourceAudit: plan.sourceAudit
+          )
+        }
+      }
       dispatchCount += 1
       globalStart = globalStop
     }
@@ -1333,8 +2115,43 @@ public final class Metal4DSTEMIndexedLoader {
   ) throws -> Double {
     guard !pendingCommands.isEmpty else { return 0 }
     let pending = pendingCommands.removeFirst()
+    let waitStarted = CFAbsoluteTimeGetCurrent()
     try wait(pending.command)
-    return max(0, pending.command.gpuEndTime - pending.command.gpuStartTime)
+    profiledWaitSeconds += CFAbsoluteTimeGetCurrent() - waitStarted
+    let gpuSeconds = max(
+      0, pending.command.gpuEndTime - pending.command.gpuStartTime
+    )
+    if ProcessInfo.processInfo.environment["QUANTEM_GPU_METAL_HOST_PROFILE"] == "1" {
+      if let previousEnd = profiledPreviousGPUEndTime {
+        profiledGPUIdleSeconds += max(
+          0, pending.command.gpuStartTime - previousEnd
+        )
+      }
+      profiledPreviousGPUEndTime = pending.command.gpuEndTime
+    }
+    try stageProfiler?.record(
+      sampleBuffer: pending.counterSamples,
+      commandGPUSeconds: gpuSeconds
+    )
+    return gpuSeconds
+  }
+
+  private func nextProfiledEncoder(
+    current: MTLComputeCommandEncoder,
+    commandBuffer: MTLCommandBuffer,
+    sampleBuffer: MTLCounterSampleBuffer?,
+    stageIndex: Int
+  ) throws -> MTLComputeCommandEncoder {
+    guard let stageProfiler, let sampleBuffer else {
+      current.memoryBarrier(scope: .buffers)
+      return current
+    }
+    current.endEncoding()
+    return try stageProfiler.makeComputeEncoder(
+      commandBuffer: commandBuffer,
+      sampleBuffer: sampleBuffer,
+      stageIndex: stageIndex
+    )
   }
 
   private func drainAll(
@@ -1372,16 +2189,18 @@ public final class Metal4DSTEMIndexedLoader {
     var seen = Set<ObjectIdentifier>()
     var bytes: UInt64 = 0
     for pending in pendingCommands {
-      guard seen.insert(ObjectIdentifier(pending.mappedSource)).inserted else {
-        continue
+      for mappedSource in pending.mappedSources {
+        guard seen.insert(ObjectIdentifier(mappedSource)).inserted else {
+          continue
+        }
+        let updated = bytes.addingReportingOverflow(UInt64(mappedSource.buffer.length))
+        guard !updated.overflow else {
+          throw Metal4DSTEMStreamingIOError.invalidRequest(
+            "In-flight mapped-source byte accounting overflows UInt64."
+          )
+        }
+        bytes = updated.partialValue
       }
-      let updated = bytes.addingReportingOverflow(UInt64(pending.mappedSource.buffer.length))
-      guard !updated.overflow else {
-        throw Metal4DSTEMStreamingIOError.invalidRequest(
-          "In-flight mapped-source byte accounting overflows UInt64."
-        )
-      }
-      bytes = updated.partialValue
     }
     return bytes
   }
@@ -1421,6 +2240,14 @@ public final class Metal4DSTEMIndexedLoader {
       values[index] = 1
     }
     return try makeBuffer(values: values, label: label)
+  }
+
+  /// Create a command whose resources are retained by this loader's pending
+  /// submission record instead of duplicated inside every Metal command.
+  private func makeStreamingCommandBuffer() -> MTLCommandBuffer? {
+    let descriptor = MTLCommandBufferDescriptor()
+    descriptor.retainedReferences = false
+    return queue.makeCommandBuffer(descriptor: descriptor)
   }
 
   private func makeBuffer<T>(values: [T], label: String) throws -> MTLBuffer {
@@ -1625,12 +2452,150 @@ private struct DetectorParameters {
   var padding: UInt32 = 0
 }
 
+private struct ContiguousBin2ProductsParameters {
+  var frameCount: UInt32
+  var sourceDetectorRows: UInt32
+  var sourceDetectorColumns: UInt32
+  var destinationScanCount: UInt32
+  var destinationScanOffset: UInt32
+  var globalFrameOffset: UInt32
+  var outputDetectorRows: UInt32
+  var outputDetectorColumns: UInt32
+}
+
 /// Strong resource retention for one asynchronously submitted source slice.
 private struct PendingIndexedCommand {
   let command: MTLCommandBuffer
-  let mappedSource: MappedMetalSource
-  let metadata: MTLBuffer
+  let mappedSources: [MappedMetalSource]
+  let metadataBuffers: [MTLBuffer]
+  let counterSamples: MTLCounterSampleBuffer?
   let binningDispatchCount: Int
+}
+
+private final class IndexedStageProfiler {
+  private let device: MTLDevice
+  private let timestampCounterSet: MTLCounterSet
+  private var decodeAndAudit = 0.0
+  private var exactScanProductsAndDetectorBinning = 0.0
+  private var exactDetectorSum = 0.0
+  private var commandQueueRemainder = 0.0
+  private var commandBuffers = 0
+
+  private init(device: MTLDevice, timestampCounterSet: MTLCounterSet) {
+    self.device = device
+    self.timestampCounterSet = timestampCounterSet
+  }
+
+  static func makeIfRequested(device: MTLDevice) throws -> IndexedStageProfiler? {
+    guard
+      ProcessInfo.processInfo.environment["QUANTEM_GPU_METAL_STAGE_PROFILE"] == "1"
+    else { return nil }
+    guard device.supportsCounterSampling(.atStageBoundary) else {
+      throw Metal4DSTEMStreamingIOError.metalUnavailable(
+        "the selected device does not expose Metal stage-boundary counters"
+      )
+    }
+    guard let counterSet = device.counterSets?.first(where: { $0.name == "timestamp" })
+    else {
+      throw Metal4DSTEMStreamingIOError.metalUnavailable(
+        "the selected device does not expose Metal timestamp counters"
+      )
+    }
+    return IndexedStageProfiler(device: device, timestampCounterSet: counterSet)
+  }
+
+  func reset() {
+    decodeAndAudit = 0
+    exactScanProductsAndDetectorBinning = 0
+    exactDetectorSum = 0
+    commandQueueRemainder = 0
+    commandBuffers = 0
+  }
+
+  func makeSampleBuffer() throws -> MTLCounterSampleBuffer {
+    let descriptor = MTLCounterSampleBufferDescriptor()
+    descriptor.counterSet = timestampCounterSet
+    descriptor.storageMode = .shared
+    descriptor.sampleCount = 6
+    return try device.makeCounterSampleBuffer(descriptor: descriptor)
+  }
+
+  func makeComputeEncoder(
+    commandBuffer: MTLCommandBuffer,
+    sampleBuffer: MTLCounterSampleBuffer?,
+    stageIndex: Int
+  ) throws -> MTLComputeCommandEncoder {
+    guard let sampleBuffer else {
+      guard let encoder = commandBuffer.makeComputeCommandEncoder() else {
+        throw Metal4DSTEMStreamingIOError.metalUnavailable(
+          "the device could not create a compute encoder"
+        )
+      }
+      return encoder
+    }
+    let descriptor = MTLComputePassDescriptor()
+    guard let attachment = descriptor.sampleBufferAttachments[0] else {
+      throw Metal4DSTEMStreamingIOError.metalUnavailable(
+        "the device could not create a counter attachment"
+      )
+    }
+    attachment.sampleBuffer = sampleBuffer
+    attachment.startOfEncoderSampleIndex = stageIndex * 2
+    attachment.endOfEncoderSampleIndex = stageIndex * 2 + 1
+    guard
+      let encoder = commandBuffer.makeComputeCommandEncoder(
+        descriptor: descriptor
+      )
+    else {
+      throw Metal4DSTEMStreamingIOError.metalUnavailable(
+        "the device could not create a profiled compute encoder"
+      )
+    }
+    return encoder
+  }
+
+  func record(
+    sampleBuffer: MTLCounterSampleBuffer?,
+    commandGPUSeconds: Double
+  ) throws {
+    guard let sampleBuffer,
+      let data = try sampleBuffer.resolveCounterRange(0..<6)
+    else { return }
+    let timestamps = data.withUnsafeBytes {
+      Array($0.bindMemory(to: MTLCounterResultTimestamp.self)).map(\.timestamp)
+    }
+    guard timestamps.count == 6,
+      timestamps[1] >= timestamps[0],
+      timestamps[3] >= timestamps[2],
+      timestamps[5] >= timestamps[4]
+    else {
+      throw Metal4DSTEMStreamingIOError.commandFailed(
+        "Metal returned invalid synchronized stage timestamps."
+      )
+    }
+    let secondsPerNanosecond = 1.0e-9
+    let decode = Double(timestamps[1] - timestamps[0]) * secondsPerNanosecond
+    let products = Double(timestamps[3] - timestamps[2]) * secondsPerNanosecond
+    let detectorSum = Double(timestamps[5] - timestamps[4]) * secondsPerNanosecond
+    decodeAndAudit += decode
+    exactScanProductsAndDetectorBinning += products
+    exactDetectorSum += detectorSum
+    commandQueueRemainder += max(
+      0, commandGPUSeconds - decode - products - detectorSum
+    )
+    commandBuffers += 1
+  }
+
+  func snapshot() -> Metal4DSTEMIndexedStageSeconds {
+    Metal4DSTEMIndexedStageSeconds(
+      decodeAndAudit: decodeAndAudit,
+      exactScanProductsAndDetectorBinning:
+        exactScanProductsAndDetectorBinning,
+      exactDetectorSum: exactDetectorSum,
+      commandQueueRemainder: commandQueueRemainder,
+      commandBuffers: commandBuffers
+    )
+  }
 }
 
 private final class BinnedOutputContext {
@@ -1648,6 +2613,11 @@ private final class BinnedOutputContext {
   private(set) var payloadWriteSeconds = 0.0
   private(set) var completedShardCount = 0
   private(set) var peakWorkingMetalBytes: UInt64 = 0
+
+  var retainsAllDestinations: Bool {
+    if case .resident = storage { return true }
+    return false
+  }
 
   init(
     resident plan: Metal4DSTEMIndexedBinnedLoadPlan,
@@ -1783,14 +2753,67 @@ private final class BinnedOutputContext {
   }
 }
 
-private final class MappedMetalSource {
-  let buffer: MTLBuffer
+private final class BufferedMetalSourceFuture: @unchecked Sendable {
+  private let group = DispatchGroup()
+  private let lock = NSLock()
+  private var result: Result<MappedMetalSource, Error>?
+  let expectedBufferBytes: UInt64
 
   init(
     url: URL,
     expectedBytes: UInt64,
+    expectedModificationNanoseconds: UInt64,
     device: MTLDevice
   ) throws {
+    expectedBufferBytes = try Metal4DSTEMIndexedLoadPlan.mappedBufferBytes(
+      expectedBytes
+    )
+    group.enter()
+    DispatchQueue.global(qos: .userInitiated).async { [self] in
+      let completed = Result {
+        try MappedMetalSource(
+          url: url,
+          expectedBytes: expectedBytes,
+          expectedModificationNanoseconds: expectedModificationNanoseconds,
+          device: device,
+          bufferedRead: true
+        )
+      }
+      lock.lock()
+      result = completed
+      lock.unlock()
+      group.leave()
+    }
+  }
+
+  func value() throws -> MappedMetalSource {
+    group.wait()
+    lock.lock()
+    defer { lock.unlock() }
+    guard let result else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "The bounded source prefetch completed without a result."
+      )
+    }
+    return try result.get()
+  }
+}
+
+private final class MappedMetalSource {
+  let buffer: MTLBuffer
+  let openAndStatSeconds: Double
+  let mmapSeconds: Double
+  let readSeconds: Double
+  let metalBufferSeconds: Double
+
+  init(
+    url: URL,
+    expectedBytes: UInt64,
+    expectedModificationNanoseconds: UInt64,
+    device: MTLDevice,
+    bufferedRead: Bool = false
+  ) throws {
+    let openAndStatStarted = CFAbsoluteTimeGetCurrent()
     let descriptor = open(url.path, O_RDONLY)
     guard descriptor >= 0 else {
       throw Metal4DSTEMStreamingIOError.invalidRequest(
@@ -1798,15 +2821,29 @@ private final class MappedMetalSource {
       )
     }
     var status = stat()
-    guard fstat(descriptor, &status) == 0,
+    let statResult = fstat(descriptor, &status)
+    let seconds = UInt64(exactly: status.st_mtimespec.tv_sec)
+    let nanoseconds = UInt64(exactly: status.st_mtimespec.tv_nsec)
+    let modification = seconds?.multipliedReportingOverflow(by: 1_000_000_000)
+    let modificationNanoseconds = modification?.partialValue.addingReportingOverflow(
+      nanoseconds ?? 0
+    )
+    guard statResult == 0,
       let fileBytes = UInt64(exactly: status.st_size),
       fileBytes == expectedBytes,
+      let nanoseconds,
+      nanoseconds < 1_000_000_000,
+      let modification,
+      !modification.overflow,
+      let modificationNanoseconds,
+      !modificationNanoseconds.overflow,
+      modificationNanoseconds.partialValue == expectedModificationNanoseconds,
       let fileLength = Int(exactly: fileBytes),
       fileLength > 0
     else {
       close(descriptor)
       throw Metal4DSTEMStreamingIOError.invalidRequest(
-        "Indexed source \(url.lastPathComponent) changed size after validation."
+        "Indexed source \(url.lastPathComponent) changed size or modification time after validation."
       )
     }
     let pageBytes = Int(getpagesize())
@@ -1825,6 +2862,49 @@ private final class MappedMetalSource {
           + "single-buffer limit; prepare smaller source shards."
       )
     }
+    let openAndStatFinished = CFAbsoluteTimeGetCurrent()
+    if bufferedRead {
+      let metalBufferStarted = CFAbsoluteTimeGetCurrent()
+      guard
+        let buffer = device.makeBuffer(
+          length: mappedBytes,
+          options: .storageModeShared
+        )
+      else {
+        close(descriptor)
+        throw Metal4DSTEMStreamingIOError.allocationFailed(
+          label: "buffered source \(url.lastPathComponent)",
+          bytes: UInt64(mappedBytes)
+        )
+      }
+      let allocationSeconds = CFAbsoluteTimeGetCurrent() - metalBufferStarted
+      let readStarted = CFAbsoluteTimeGetCurrent()
+      var offset = 0
+      while offset < fileLength {
+        let count = pread(
+          descriptor,
+          buffer.contents().advanced(by: offset),
+          fileLength - offset,
+          off_t(offset)
+        )
+        if count < 0 && errno == EINTR { continue }
+        guard count > 0 else {
+          close(descriptor)
+          throw Metal4DSTEMStreamingIOError.invalidRequest(
+            "Could not read indexed source \(url.lastPathComponent) into bounded Metal staging."
+          )
+        }
+        offset += count
+      }
+      close(descriptor)
+      self.buffer = buffer
+      openAndStatSeconds = openAndStatFinished - openAndStatStarted
+      mmapSeconds = 0
+      readSeconds = CFAbsoluteTimeGetCurrent() - readStarted
+      metalBufferSeconds = allocationSeconds
+      return
+    }
+    let mmapStarted = CFAbsoluteTimeGetCurrent()
     let pointer = mmap(
       nil,
       mappedBytes,
@@ -1839,6 +2919,8 @@ private final class MappedMetalSource {
         "Could not memory-map indexed source \(url.lastPathComponent)."
       )
     }
+    let mmapFinished = CFAbsoluteTimeGetCurrent()
+    let metalBufferStarted = CFAbsoluteTimeGetCurrent()
     guard
       let buffer = device.makeBuffer(
         bytesNoCopy: pointer,
@@ -1854,5 +2936,9 @@ private final class MappedMetalSource {
       )
     }
     self.buffer = buffer
+    openAndStatSeconds = openAndStatFinished - openAndStatStarted
+    mmapSeconds = mmapFinished - mmapStarted
+    readSeconds = 0
+    metalBufferSeconds = CFAbsoluteTimeGetCurrent() - metalBufferStarted
   }
 }

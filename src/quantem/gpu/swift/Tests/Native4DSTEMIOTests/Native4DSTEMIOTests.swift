@@ -1318,6 +1318,63 @@ final class Native4DSTEMIOTests: XCTestCase {
     XCTAssertEqual(result.metrics.workingPayloadBytes, UInt64(packedWordCount * 4))
     XCTAssertEqual(result.metrics.destinationStorageMode, "shared")
 
+    let bufferedPlan = try Metal4DSTEMIndexedBinnedLoadPlan(
+      source: source,
+      maximumDecodedWindowBytes: source.decodedBytesPerFrame,
+      detectorBands: bands,
+      detectorBin: 2,
+      sourceAudit: audit,
+      maximumShardBytes: 1 << 20,
+      sourceTransfer: .bufferedReadAhead(prefetchShardCount: 1)
+    )
+    let buffered = try loader.loadExactBinnedShards(
+      source: source,
+      plan: bufferedPlan
+    )
+    XCTAssertEqual(buffered.products, result.products)
+    XCTAssertEqual(buffered.sourceAudit, result.sourceAudit)
+    XCTAssertEqual(buffered.binningProvenance, result.binningProvenance)
+    XCTAssertEqual(buffered.workingVolumeShards.count, result.workingVolumeShards.count)
+    for (mappedShard, bufferedShard) in zip(
+      result.workingVolumeShards,
+      buffered.workingVolumeShards
+    ) {
+      XCTAssertEqual(mappedShard.length, bufferedShard.length)
+      XCTAssertEqual(
+        memcmp(mappedShard.contents(), bufferedShard.contents(), mappedShard.length),
+        0
+      )
+    }
+    XCTAssertEqual(
+      buffered.metrics.indexedLoad.sourceTransfer,
+      .bufferedReadAhead(prefetchShardCount: 1)
+    )
+    XCTAssertGreaterThan(
+      buffered.metrics.indexedLoad.peakRetainedSourceBufferBytes,
+      0
+    )
+    XCTAssertLessThanOrEqual(
+      buffered.metrics.indexedLoad.peakRetainedSourceBufferBytes,
+      bufferedPlan.maximumRetainedSourceBufferBytes
+    )
+    XCTAssertGreaterThan(
+      bufferedPlan.estimatedAllocatedMetalBytesIncludingSourceTransfer,
+      bufferedPlan.estimatedAllocatedMetalBytesExcludingMappedSource
+    )
+    XCTAssertThrowsError(
+      try Metal4DSTEMIndexedBinnedLoadPlan(
+        source: source,
+        maximumDecodedWindowBytes: source.decodedBytesPerFrame,
+        detectorBands: bands,
+        detectorBin: 2,
+        sourceAudit: audit,
+        maximumShardBytes: 1 << 20,
+        sourceTransfer: .bufferedReadAhead(prefetchShardCount: 0)
+      )
+    ) { error in
+      XCTAssertTrue(error.localizedDescription.contains("positive prefetch-shard"))
+    }
+
     let wrongAudit = try Metal4DSTEMExactSourceAudit(
       sourceIdentitySHA256: try XCTUnwrap(dataset.sourceIdentitySHA256),
       sourceDtype: .uint16,
@@ -1338,6 +1395,42 @@ final class Native4DSTEMIOTests: XCTestCase {
     ) { error in
       XCTAssertTrue(error.localizedDescription.contains("decoded value-range audit"))
     }
+  }
+
+  func testExactDetectorPartialScratchAndUInt16BoundsFailClosed() throws {
+    XCTAssertEqual(
+      try Metal4DSTEMIndexedBinnedLoadPlan.exactDetectorPartialScratchBytes(
+        maximumSliceFrames: 10_000,
+        detectorRows: 192,
+        detectorColumns: 192
+      ),
+      23_076_864
+    )
+    XCTAssertEqual(
+      try Metal4DSTEMIndexedBinnedLoadPlan.exactDetectorPartialScratchBytes(
+        maximumSliceFrames: 0,
+        detectorRows: 192,
+        detectorColumns: 192
+      ),
+      0
+    )
+    XCTAssertThrowsError(
+      try Metal4DSTEMIndexedBinnedLoadPlan.exactDetectorPartialScratchBytes(
+        maximumSliceFrames: UInt64.max,
+        detectorRows: 192,
+        detectorColumns: 192
+      )
+    )
+    XCTAssertTrue(
+      Metal4DSTEMIndexedLoader.exactDetectorPartialFitsUInt16(
+        maximumSourceCount: 2_047
+      )
+    )
+    XCTAssertFalse(
+      Metal4DSTEMIndexedLoader.exactDetectorPartialFitsUInt16(
+        maximumSourceCount: 2_048
+      )
+    )
   }
 
   func testIndexedStreamingExactBinnedCacheIsTransactionalAndExact() throws {

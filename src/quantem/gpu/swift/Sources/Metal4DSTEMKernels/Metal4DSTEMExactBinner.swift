@@ -659,6 +659,9 @@ public final class Metal4DSTEMExactBinner {
   let u16ToU16: MTLComputePipelineState
   let u8ToU32: MTLComputePipelineState
   let u16ToU32: MTLComputePipelineState
+  let contiguousU8ToU16: MTLComputePipelineState
+  let contiguousBin1U8ToU16Tiled32: MTLComputePipelineState
+  let contiguousBin2U8ToU16Tiled32: MTLComputePipelineState
   let contiguousU16ToU16: MTLComputePipelineState
 
   public convenience init(device: MTLDevice) throws {
@@ -687,6 +690,18 @@ public final class Metal4DSTEMExactBinner {
     u16ToU32 = try Self.pipeline(
       device: device, library: library,
       name: Metal4DSTEMKernels.scanDetectorBinU16Function
+    )
+    contiguousU8ToU16 = try Self.pipeline(
+      device: device, library: library,
+      name: Metal4DSTEMKernels.contiguousDetectorBinU8ToU16Function
+    )
+    contiguousBin1U8ToU16Tiled32 = try Self.pipeline(
+      device: device, library: library,
+      name: Metal4DSTEMKernels.contiguousDetectorBin1U8ToU16Tiled32Function
+    )
+    contiguousBin2U8ToU16Tiled32 = try Self.pipeline(
+      device: device, library: library,
+      name: Metal4DSTEMKernels.contiguousDetectorBin2U8ToU16Tiled32Function
     )
     contiguousU16ToU16 = try Self.pipeline(
       device: device, library: library,

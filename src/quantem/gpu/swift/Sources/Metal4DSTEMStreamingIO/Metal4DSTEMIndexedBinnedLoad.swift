@@ -16,7 +16,11 @@ public struct Metal4DSTEMIndexedBinnedLoadPlan: Equatable, Sendable {
   public let samplingPropagation: Metal4DSTEMSamplingPropagation
   public let workingPayloadBytes: UInt64
   public let packagePersistentOutputBytes: UInt64
+  /// Maximum private scratch used by the exact fused detector-sum reduction.
+  public let maximumDetectorPartialScratchBytes: UInt64
   public let estimatedAllocatedMetalBytesExcludingMappedSource: UInt64
+  public let maximumRetainedSourceBufferBytes: UInt64
+  public let estimatedAllocatedMetalBytesIncludingSourceTransfer: UInt64
   public let maximumIndividualMetalBufferBytes: UInt64
   public let destinationStorageMode: String
 
@@ -41,13 +45,15 @@ public struct Metal4DSTEMIndexedBinnedLoadPlan: Equatable, Sendable {
     detectorBands: Metal4DSTEMDetectorBands,
     detectorBin: Int,
     sourceAudit: Metal4DSTEMExactSourceAudit,
-    maximumShardBytes: UInt64
+    maximumShardBytes: UInt64,
+    sourceTransfer: Metal4DSTEMIndexedSourceTransfer = .memoryMapped
   ) throws {
     try sourceAudit.validate()
     let productPlan = try Metal4DSTEMIndexedLoadPlan(
       source: source,
       maximumDecodedWindowBytes: maximumDecodedWindowBytes,
-      detectorBands: detectorBands
+      detectorBands: detectorBands,
+      sourceTransfer: sourceTransfer
     )
     guard sourceAudit.sourceIdentitySHA256 == productPlan.sourceIdentitySHA256,
       sourceAudit.sourceDtype == .uint16,
@@ -72,10 +78,12 @@ public struct Metal4DSTEMIndexedBinnedLoadPlan: Equatable, Sendable {
       scanBin: 1,
       detectorBin: detectorBin
     )
+    let stagingDtype: Metal4DSTEMIntegerDType =
+      sourceAudit.provesLosslessUInt8Staging ? .uint8 : .uint16
     let provenance = try Metal4DSTEMExactBinner.provenance(
       plan: binningPlan,
       sourceAudit: sourceAudit,
-      stagingDtype: .uint16,
+      stagingDtype: stagingDtype,
       outputDtype: .uint16
     )
     let shards = try Metal4DSTEMExactBinningShardPlan(
@@ -107,9 +115,47 @@ public struct Metal4DSTEMIndexedBinnedLoadPlan: Equatable, Sendable {
       shards.totalPayloadBytes,
       label: "persistent exact outputs"
     )
+    guard
+      productPlan.estimatedAllocatedMetalBytesExcludingMappedSource
+        >= productPlan.maximumActualWindowBytes
+    else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "The indexed product plan reports inconsistent transient storage."
+      )
+    }
+    let stagingWindowBytes =
+      productPlan.maximumActualWindowBytes
+      / UInt64(productPlan.stagingDtype.bytesPerValue)
+      * UInt64(stagingDtype.bytesPerValue)
+    let productStorageWithSelectedStaging =
+      productPlan.estimatedAllocatedMetalBytesExcludingMappedSource
+      - productPlan.maximumActualWindowBytes
+      + stagingWindowBytes
+    let maximumSliceFrames =
+      productPlan.windows.flatMap(\.slices).map {
+        UInt64($0.globalFrameRange.count)
+      }.max() ?? 0
+    let detectorPartialScratchBytes: UInt64
+    if stagingDtype == .uint8,
+      detectorBin == 2,
+      productPlan.sourceDetectorRows == 192,
+      productPlan.sourceDetectorColumns == 192
+    {
+      detectorPartialScratchBytes = try Self.exactDetectorPartialScratchBytes(
+        maximumSliceFrames: maximumSliceFrames,
+        detectorRows: UInt64(productPlan.sourceDetectorRows),
+        detectorColumns: UInt64(productPlan.sourceDetectorColumns)
+      )
+    } else {
+      detectorPartialScratchBytes = 0
+    }
     let allocated = try Self.sum(
-      productPlan.estimatedAllocatedMetalBytesExcludingMappedSource,
-      shards.totalPayloadBytes,
+      try Self.sum(
+        productStorageWithSelectedStaging,
+        shards.totalPayloadBytes,
+        label: "package Metal allocation"
+      ),
+      detectorPartialScratchBytes,
       label: "package Metal allocation"
     )
 
@@ -120,10 +166,23 @@ public struct Metal4DSTEMIndexedBinnedLoadPlan: Equatable, Sendable {
     samplingPropagation = propagation
     workingPayloadBytes = shards.totalPayloadBytes
     packagePersistentOutputBytes = persistent
+    maximumDetectorPartialScratchBytes = detectorPartialScratchBytes
     estimatedAllocatedMetalBytesExcludingMappedSource = allocated
+    maximumRetainedSourceBufferBytes = productPlan.maximumRetainedSourceBufferBytes
+    switch sourceTransfer {
+    case .memoryMapped:
+      estimatedAllocatedMetalBytesIncludingSourceTransfer = allocated
+    case .bufferedReadAhead:
+      estimatedAllocatedMetalBytesIncludingSourceTransfer = try Self.sum(
+        allocated,
+        productPlan.maximumRetainedSourceBufferBytes,
+        label: "package Metal allocation including source transfer"
+      )
+    }
     maximumIndividualMetalBufferBytes = max(
       productPlan.maximumIndividualMetalBufferBytes,
-      shards.maximumActualShardBytes
+      shards.maximumActualShardBytes,
+      detectorPartialScratchBytes
     )
     destinationStorageMode = "shared"
   }
@@ -164,6 +223,46 @@ public struct Metal4DSTEMIndexedBinnedLoadPlan: Equatable, Sendable {
       )
     }
     return result.partialValue
+  }
+
+  private static func product(
+    _ lhs: UInt64,
+    _ rhs: UInt64,
+    label: String
+  ) throws -> UInt64 {
+    let result = lhs.multipliedReportingOverflow(by: rhs)
+    guard !result.overflow else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "Indexed \(label) overflows UInt64."
+      )
+    }
+    return result.partialValue
+  }
+
+  static func exactDetectorPartialScratchBytes(
+    maximumSliceFrames: UInt64,
+    detectorRows: UInt64,
+    detectorColumns: UInt64
+  ) throws -> UInt64 {
+    guard maximumSliceFrames > 0, detectorRows > 0, detectorColumns > 0 else {
+      return 0
+    }
+    let groupNumerator = maximumSliceFrames.addingReportingOverflow(31)
+    guard !groupNumerator.overflow else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "Indexed detector partial group count overflows UInt64."
+      )
+    }
+    let groups = groupNumerator.partialValue / 32
+    return try product(
+      try product(
+        try product(groups, detectorRows, label: "detector partial rows"),
+        detectorColumns,
+        label: "detector partial elements"
+      ),
+      UInt64(MemoryLayout<UInt16>.stride),
+      label: "detector partial scratch"
+    )
   }
 }
 
