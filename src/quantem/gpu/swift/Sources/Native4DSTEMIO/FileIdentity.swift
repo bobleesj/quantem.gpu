@@ -88,6 +88,33 @@ private func nativeSHA256(of url: URL) throws -> String {
   return digest.finalize().map { String(format: "%02x", $0) }.joined()
 }
 
+private func nativeSHA256(of files: [URL]) throws -> [String] {
+  guard !files.isEmpty else { return [] }
+  let workerCount = min(8, files.count)
+  let resultLock = NSLock()
+  nonisolated(unsafe) var results = [Result<String, Error>?](
+    repeating: nil,
+    count: files.count
+  )
+
+  DispatchQueue.concurrentPerform(iterations: workerCount) { worker in
+    for index in stride(from: worker, to: files.count, by: workerCount) {
+      let result = Result { try nativeSHA256(of: files[index]) }
+      resultLock.lock()
+      results[index] = result
+      resultLock.unlock()
+    }
+  }
+  return try results.enumerated().map { index, result in
+    guard let result else {
+      throw Native4DSTEMIOError.invalidData(
+        "Could not verify the exact identity of \(files[index].path)"
+      )
+    }
+    return try result.get()
+  }
+}
+
 private struct NativeSourceHashCache: Codable {
   let schema: String
   let snapshots: [NativeContentSnapshot]
@@ -124,7 +151,7 @@ func nativeSourceHashes(
       aggregate: cached.aggregateHash
     )
   }
-  let hashes = try files.map(nativeSHA256)
+  let hashes = try nativeSHA256(of: files)
   guard before == (try files.map(nativeContentSnapshot)) else {
     throw Native4DSTEMIOError.invalidData(
       "A source file changed while its exact identity was being verified; retry"

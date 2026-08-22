@@ -71,26 +71,26 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
         return cached
       }
     }
-    let hashes =
-      mode == .indexed
-      ? try nativeSourceHashes(
-        master: isMaster(source) ? source : nil,
-        dataFiles: dataFiles,
-        cacheFile: indexRoot.appendingPathComponent("source-hashes.json")
-      )
-      : nil
-    var indexFiles: [String] = []
-    var stacks: [NativeHDF5Stack] = []
-    stacks.reserveCapacity(dataFiles.count)
-    indexFiles.reserveCapacity(dataFiles.count)
-
     let indexURLs = dataFiles.map {
       indexRoot.appendingPathComponent(
         $0.deletingPathExtension().lastPathComponent + ".qh5idx"
       )
     }
+    var hashes: NativeSourceHashes?
+    var indexFiles: [String] = []
+    var stacks: [NativeHDF5Stack] = []
+    stacks.reserveCapacity(dataFiles.count)
+    indexFiles.reserveCapacity(dataFiles.count)
+
     if mode == .indexed {
-      stacks = try prepareIndexedStacks(dataFiles: dataFiles, indexFiles: indexURLs)
+      let evidence = try prepareIndexedEvidence(
+        master: isMaster(source) ? source : nil,
+        dataFiles: dataFiles,
+        indexRoot: indexRoot,
+        indexFiles: indexURLs
+      )
+      hashes = evidence.hashes
+      stacks = evidence.stacks
       indexFiles = indexURLs.map(\.path)
     } else {
       for (dataFile, indexFile) in zip(dataFiles, indexURLs) {
@@ -504,6 +504,45 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
       }
       return try result.get()
     }
+  }
+
+  private func prepareIndexedEvidence(
+    master: URL?,
+    dataFiles: [URL],
+    indexRoot: URL,
+    indexFiles: [URL]
+  ) throws -> (hashes: NativeSourceHashes, stacks: [NativeHDF5Stack]) {
+    let resultLock = NSLock()
+    nonisolated(unsafe) var hashResult: Result<NativeSourceHashes, Error>?
+    nonisolated(unsafe) var stackResult: Result<[NativeHDF5Stack], Error>?
+
+    DispatchQueue.concurrentPerform(iterations: 2) { task in
+      if task == 0 {
+        let result = Result {
+          try nativeSourceHashes(
+            master: master,
+            dataFiles: dataFiles,
+            cacheFile: indexRoot.appendingPathComponent("source-hashes.json")
+          )
+        }
+        resultLock.lock()
+        hashResult = result
+        resultLock.unlock()
+      } else {
+        let result = Result {
+          try prepareIndexedStacks(dataFiles: dataFiles, indexFiles: indexFiles)
+        }
+        resultLock.lock()
+        stackResult = result
+        resultLock.unlock()
+      }
+    }
+    guard let hashResult, let stackResult else {
+      throw Native4DSTEMIOError.invalidData(
+        "Could not prepare the exact source identity and QH5 indexes"
+      )
+    }
+    return (try hashResult.get(), try stackResult.get())
   }
 
   private func masters(for input: URL) throws -> [URL] {
