@@ -10,7 +10,6 @@ on:
       - "docs/**"
       - "README.md"
       - "CONTRIBUTING.md"
-      - "CITATION.cff"
       - "scripts/check_docs_links.py"
       - "scripts/check_docs_nav_toggle.py"
       - "tests/test_docs_site.py"

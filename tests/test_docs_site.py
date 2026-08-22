@@ -169,20 +169,19 @@ def test_docs_build_is_hardware_independent() -> None:
         assert forbidden not in workflow
 
 
-def test_public_repository_files_are_linked_from_readme() -> None:
+def test_public_repository_links_and_citation_copy() -> None:
     readme = Path("README.md").read_text(encoding="utf-8")
-    citation = Path("CITATION.cff").read_text(encoding="utf-8")
     package = Path("pyproject.toml").read_text(encoding="utf-8")
 
     assert "https://bobleesj.github.io/quantem.gpu/" in readme
     assert "[Contributing](CONTRIBUTING.md)" in readme
-    assert "[CITATION.cff](CITATION.cff)" in readme
     assert Path("CONTRIBUTING.md").is_file()
-    assert Path("CITATION.cff").is_file()
-    assert "cff-version: 1.2.0" in citation
+    assert "## Citing quantem.gpu" in readme
+    assert "the quantEM interactive framework" in readme
     assert "https://doi.org/10.1093/mam/ozag053.941" in readme
     assert '"CONTRIBUTING.md"' in package
-    assert '"CITATION.cff"' in package
+    assert not Path("CITATION.cff").exists()
+    assert "CITATION.cff" not in package
 
 
 def test_scientific_writing_convention_is_explicit() -> None:
