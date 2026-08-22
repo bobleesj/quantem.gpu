@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "source_revision": "be035c41dcfb9176f541843caf959eee66ae9c2e",
+  "source_revision": "f0f39c9158e4d8a2bd73c427cda91c25e3eddfc2",
   "purpose": "Fingerprints for the current benchmark dashboard, authoritative provenance ledger, parity and methodology contracts, and canonical historical evidence. Landing, API, and backend capability pages intentionally do not duplicate measurements.",
   "pages": [
     {
@@ -10,7 +10,7 @@
     },
     {
       "path": "docs/dashboard.md",
-      "sha256": "de45cbe7bcebafbac21bb7b93ec827490803c5afad340696e3bc5859f887907f",
+      "sha256": "14cf9af3720e56d0932367a784ccb6ea61bbce9176fdb3a7bfa46af6e62bf021",
       "role": "Single human-facing current capability, speed, memory, and parity overview"
     },
     {
@@ -20,7 +20,7 @@
     },
     {
       "path": "docs/platforms/mps.md",
-      "sha256": "529562b892e41d141ac0f2bd9ef9157b3e221823a3c55c5e1b85fe1ad81d14a1",
+      "sha256": "f316442494f039c362f0b0200e6fd5cfa535fd68e0ae047d0fb5eea2bcea5d97",
       "role": "Python MPS direct-Metal lifetime and resident-versus-peak memory contract"
     },
     {
@@ -40,12 +40,12 @@
     },
     {
       "path": "docs/performance/results.md",
-      "sha256": "ef4e292e546d485a120b75d07d3f6c211b2299ae224e52459212df0a4f536a18",
+      "sha256": "445b6bd767ff6d1e8c6557ee365eb6d784c94f2f8b65c179576778bc2b835ac9",
       "role": "Authoritative current benchmark provenance ledger"
     },
     {
       "path": "docs/performance/changes.md",
-      "sha256": "4b68ba5206b57f28053c680e483787c30b4e9d609aeb387ce6a20d1600c393ee",
+      "sha256": "89f12698aed26e75bd7f8bcd31fbdb2e5826497d7b61cfef2239399860f212f2",
       "role": "Benchmark promotion, rejection, and supersession decisions without copied values"
     },
     {
@@ -65,7 +65,7 @@
     },
     {
       "path": "docs/maintainer/backend-optimization-matrix.md",
-      "sha256": "bf3e8cf941958a98084611b44577b05da636de86ec8cf379de3684eaa24e9de1",
+      "sha256": "0a94d9be34317d21cc74ff41dda545ce48adad6e325296945b97cabaff01b01d",
       "role": "Accepted and rejected optimization ledger"
     },
     {

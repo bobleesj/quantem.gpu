@@ -79,6 +79,28 @@ and optimizer state, not the full acquisition.
 
 ## Current Measured Checkpoints
 
+### MPS exact load sprint, 2026-08-22
+
+The accepted path keeps the complete `512x512` scan, native `uint16` counts,
+scan bin 1, no crop, and explicit detector bins 1/2/4/8. All output bytes match
+the pre-optimization path. Source pages were warm and uncontrolled; these are
+library load measurements on Phil, not cold storage or Live4DSTEM E2E.
+
+| Hypothesis | Measured result | Decision |
+|---|---|---|
+| Decode full `uint16` without an unnecessary full-volume scratch buffer and pipeline three compressed inputs. | Bin1 ABBA p50 improved from 0.689 to 0.523 s; sampled Metal-driver peak fell to 18.442 GiB for an 18.00 GiB logical resident. | Promote. |
+| Fuse bit-unshuffle and exact detector summation for bins 2/4/8, with a specialized bin-2 kernel. | Candidate p50 reached 0.498/0.421/0.417 s for bins 2/4/8; full-output hashes are byte exact. | Promote. |
+| Allocate LZ4 scratch only for chunks that need it. | Reduced persistent decoder allocation without changing output; retained as part of the accepted topology. | Promote. |
+| Use 64 threads for the full exact decoder. | Neutral to slower than 128 threads in the retained ABBA trial. | Reject as default; retain artifact. |
+| Use 256 threads for the full exact decoder. | Neutral to slower than 128 threads in the retained ABBA trial. | Reject as default; retain artifact. |
+| Increase whole-output grouping beyond the accepted source-shard-aligned plan. | A 3 GiB grouping regressed; 0.75 and 1.0 GiB were only marginal alternatives. | Keep the 1.5 GiB compact-output default and the 1 GiB unusual-shard safety bound. |
+| Retune LZ4 threadgroup height to 12 or 16. | No accepted end-to-end win over the retained layout. | Reject as default; retain artifacts. |
+
+One instrumented bin1 run measured 0.622 s wall, 0.211 s cumulative source
+reads, 0.390 s GPU interval union, and 0.093 s of gaps inside the GPU span.
+Source reads and GPU work overlap and must not be summed. The strict 0.5-second
+four-bin goal is met for bins 2/4/8; bin1 remains 23 ms above it by p50.
+
 ### MPS compressed-save sprint, 2026-07-26
 
 Target workflow: full no-bin `512x512x192x192` MAPED output on Apple Silicon,

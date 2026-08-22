@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
 import re
 import tomllib
+from pathlib import Path
 
 import pytest
-
 
 TOC = Path("docs/_toc.yml")
 CONFIG = Path("docs/_config.yml")
@@ -198,7 +197,7 @@ def test_dashboard_is_the_dense_human_overview() -> None:
 
     for dashboard_value, results_value in (
         ("0.386 s", "0.386 s"),
-        ("0.903 s", "0.902767 s"),
+        ("0.523 s", "0.522754 s"),
         ("0.824 s", "0.824 s"),
         ("6.711 s", "6.711 s"),
         ("20.803 ms", "20.803 ms"),
@@ -335,23 +334,24 @@ def test_platform_first_io_tables_expose_current_bins_devices_and_dates() -> Non
     rows = [
         [cell.strip() for cell in line.strip("|").split("|")]
         for line in load_section.splitlines()
-        if line.startswith("| [**") or line.startswith("| **CPU reference**")
+        if line.startswith(("| [**", "| **CPU reference**"))
     ]
     assert len(rows) == 21
 
     mps_rows = [row for row in rows if "Python MPS" in row[0]]
     assert len(mps_rows) == 8
     assert {
-        (int(row[4]), row[9], row[13], row[14], row[16]) for row in mps_rows
+        (int(row[4]), row[9], row[13], row[14], row[16], row[17])
+        for row in mps_rows
     } == {
-        (1, "Fresh process; warm source pages", "**1.163 s**", "**18.00 GiB**", "**19.815 GiB**"),
-        (2, "Fresh process; warm source pages", "**1.320 s**", "**4.50 GiB**", "**5.933 GiB**"),
-        (4, "Fresh process; warm source pages", "**1.220 s**", "**1.125 GiB**", "**2.558 GiB**"),
-        (8, "Fresh process; warm source pages", "**1.229 s**", "**0.28125 GiB**", "**1.714 GiB**"),
-        (1, "Warm process/source; output freed", "**0.903 s**", "**18.00 GiB**", "**19.815 GiB**"),
-        (2, "Warm process/source; output freed", "**0.907 s**", "**4.50 GiB**", "**5.933 GiB**"),
-        (4, "Warm process/source; output freed", "**0.764 s**", "**1.125 GiB**", "**2.558 GiB**"),
-        (8, "Warm process/source; output freed", "**0.751 s**", "**0.28125 GiB**", "**1.714 GiB**"),
+        (1, "Independent process; warm source pages", "**0.649 s**", "**18.00 GiB**", "**18.442 GiB**", "**0.687 GiB**"),
+        (2, "Independent process; warm source pages", "**0.700 s**", "**4.50 GiB**", "**5.688 GiB**", "**0.574 GiB**"),
+        (4, "Independent process; warm source pages", "**0.643 s**", "**1.125 GiB**", "**2.313 GiB**", "**0.572 GiB**"),
+        (8, "Independent process; warm source pages", "**0.632 s**", "**0.28125 GiB**", "**1.470 GiB**", "**0.572 GiB**"),
+        (1, "Warm process/source; output freed", "**0.523 s**", "**18.00 GiB**", "**18.442 GiB**", "**0.689 GiB**"),
+        (2, "Warm process/source; output freed", "**0.498 s**", "**4.50 GiB**", "**5.688 GiB**", "**0.573 GiB**"),
+        (4, "Warm process/source; output freed", "**0.421 s**", "**1.125 GiB**", "**2.313 GiB**", "**0.572 GiB**"),
+        (8, "Warm process/source; output freed", "**0.417 s**", "**0.28125 GiB**", "**1.470 GiB**", "**0.574 GiB**"),
     }
 
     webgpu_rows = [row for row in rows if "WebGPU" in row[0]]
@@ -379,45 +379,47 @@ def test_load_memory_rows_separate_payload_from_measured_peak() -> None:
     )[0]
     lines = [line for line in load_section.splitlines() if line.startswith("|")]
     headers = [cell.strip() for cell in lines[0].strip("|").split("|")]
-    assert "Resident payload" in headers
-    assert "Peak boundary" in headers
-    assert "Measured peak" in headers
+    assert "Logical resident" in headers
+    assert "Device/driver boundary" in headers
+    assert "Device/driver peak" in headers
+    assert "Process/tree RSS" in headers
 
     rows = [
         [cell.strip() for cell in line.strip("|").split("|")]
         for line in lines[2:]
-        if line.startswith("| [**") or line.startswith("| **CPU reference**")
+        if line.startswith(("| [**", "| **CPU reference**"))
     ]
-    payload_index = headers.index("Resident payload")
-    boundary_index = headers.index("Peak boundary")
-    peak_index = headers.index("Measured peak")
+    payload_index = headers.index("Logical resident")
+    boundary_index = headers.index("Device/driver boundary")
+    peak_index = headers.index("Device/driver peak")
+    rss_index = headers.index("Process/tree RSS")
     bin_index = headers.index("Detector bin")
     state_index = headers.index("Cache/process state")
 
     expected = {
         "CUDA": {
-            1: ("**18.00 GiB**", "**21.215 GiB**"),
-            2: ("**9.00 GiB**", "**11.561 GiB**"),
-            4: ("**2.25 GiB**", "**3.756 GiB**"),
-            8: ("**0.5625 GiB**", "**1.805 GiB**"),
+            1: ("**18.00 GiB**", "**21.215 GiB**", "Pending"),
+            2: ("**9.00 GiB**", "**11.561 GiB**", "Pending"),
+            4: ("**2.25 GiB**", "**3.756 GiB**", "Pending"),
+            8: ("**0.5625 GiB**", "**1.805 GiB**", "Pending"),
         },
         "Python MPS": {
-            1: ("**18.00 GiB**", "**19.815 GiB**"),
-            2: ("**4.50 GiB**", "**5.933 GiB**"),
-            4: ("**1.125 GiB**", "**2.558 GiB**"),
-            8: ("**0.28125 GiB**", "**1.714 GiB**"),
+            1: ("**18.00 GiB**", "**18.442 GiB**"),
+            2: ("**4.50 GiB**", "**5.688 GiB**"),
+            4: ("**1.125 GiB**", "**2.313 GiB**"),
+            8: ("**0.28125 GiB**", "**1.470 GiB**"),
         },
         "WebGPU": {
-            1: ("**9.00 GiB**", "**5.020 GiB**"),
-            2: ("**9.00 GiB**", "**5.363 GiB**"),
-            4: ("**2.25 GiB**", "**5.188 GiB**"),
-            8: ("**0.5625 GiB**", "**5.184 GiB**"),
+            1: ("**9.00 GiB**", "Pending", "**5.020 GiB**"),
+            2: ("**9.00 GiB**", "Pending", "**5.363 GiB**"),
+            4: ("**2.25 GiB**", "Pending", "**5.188 GiB**"),
+            8: ("**0.5625 GiB**", "Pending", "**5.184 GiB**"),
         },
         "CPU reference": {
-            1: ("**18.00 GiB**", "**36.450 GiB**"),
-            2: ("**4.50 GiB**", "**9.634 GiB**"),
-            4: ("**1.125 GiB**", "**2.978 GiB**"),
-            8: ("**0.28125 GiB**", "**2.034 GiB**"),
+            1: ("**18.00 GiB**", "—", "**36.450 GiB**"),
+            2: ("**4.50 GiB**", "—", "**9.634 GiB**"),
+            4: ("**1.125 GiB**", "—", "**2.978 GiB**"),
+            8: ("**0.28125 GiB**", "—", "**2.034 GiB**"),
         },
     }
     for row in rows:
@@ -425,14 +427,21 @@ def test_load_memory_rows_separate_payload_from_measured_peak() -> None:
             continue
         platform = next(name for name in expected if name in row[0])
         detector_bin = int(row[bin_index])
-        assert (row[payload_index], row[peak_index]) == expected[platform][detector_bin]
+        if platform == "Python MPS":
+            assert (row[payload_index], row[peak_index]) == expected[platform][detector_bin]
+            assert row[rss_index].endswith("GiB**")
+        else:
+            assert (row[payload_index], row[peak_index], row[rss_index]) == expected[
+                platform
+            ][detector_bin]
         if platform == "Python MPS":
             assert row[boundary_index] == "Sampled Metal driver"
-            assert "output freed" in row[state_index] or "Fresh process" in row[state_index]
+            assert "output freed" in row[state_index] or "Independent process" in row[state_index]
 
     native = next(row for row in rows if "Native Swift/Metal" in row[0])
     assert native[payload_index] == "**18.00 GiB**"
     assert native[peak_index] == "**>=18.571 GiB**"
+    assert native[rss_index] == "**0.874 GiB**"
     assert "sampled peak pending" in native[boundary_index]
 
 def test_dashboard_small_gpu_numbers_match_the_screening_planner() -> None:
@@ -529,9 +538,9 @@ def test_load_dtype_docs_keep_precision_and_peak_memory_distinct() -> None:
         assert "peak" in text.lower()
 
     assert '`dtype="u8"` requests saturating unsigned 8-bit browse counts' in dashboard
-    assert "| Resident payload | Peak boundary | Measured peak |" in dashboard
+    assert "| Logical resident | Device/driver boundary | Device/driver peak | Process/tree RSS |" in dashboard
     assert "19,327,352,832 bytes" in dashboard
-    assert "19.815 GiB" in dashboard
+    assert "18.442 GiB" in dashboard
     assert "Process RSS does not include every direct Metal" in dashboard
     assert "maximum-count audit of 53" in dashboard
     assert "8x8 exact" in dashboard
@@ -643,7 +652,7 @@ def test_current_benchmarks_have_complete_provenance_rows() -> None:
 
     for heading in (
         "### Current warm load/decode/bin",
-        "### Current Python MPS lifecycle and memory audit",
+        "### Current exact Python MPS load",
         "### Current controlled native exact resident load",
         "### Current native exact resident summary",
         "### Current streamed screening",
@@ -661,14 +670,18 @@ def test_current_benchmarks_have_complete_provenance_rows() -> None:
     rows = [
         line
         for line in load.splitlines()
-        if line.startswith("| **CUDA**")
-        or line.startswith("| **Python MPS**")
-        or line.startswith("| **WebGPU**")
-        or line.startswith("| **CPU reference**")
+        if line.startswith(
+            (
+                "| **CUDA**",
+                "| **Python MPS**",
+                "| **WebGPU**",
+                "| **CPU reference**",
+            )
+        )
     ]
     assert len(rows) == 16
     for row in rows:
-        assert row.count("|") == 15
+        assert row.count("|") == 16
         assert "2026" not in row  # date is profile-level and not duplicated per row
         assert "| Pass |" in row or "Exact" in row or "adjudicator" in row
 

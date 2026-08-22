@@ -1,0 +1,129 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260822-mps-load-sub500ms",
+  "status": "completed",
+  "question": "Can the public Python MPS full-scan loader reach a p50 at or below 0.5 seconds for detector bins 1, 2, 4, and 8 by removing allocation, synchronization, decode, binning, or source-read overhead without changing scientific evidence or memory reporting?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260822-mps-load-sub500ms/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "f0f39c9158e4d8a2bd73c427cda91c25e3eddfc2",
+    "entrypoint": "quantem.gpu.io.load with backend=mps",
+    "dirty": false,
+    "diff_sha256": null,
+    "snapshot_path": "local-snapshot://quantem-gpu-mps-load-sub500ms/source"
+  },
+  "inputs": [
+    {
+      "dataset_id": "real-512x512x192x192-u16-bslz4-27shard-master-fixture-c",
+      "path": "private-fixture://full-512-u16-bslz4-27shard/master-c",
+      "sha256": "c9c0d968fae70b8911ae925d676b90007886970fa99fe296a47cfe07844bbfe9"
+    }
+  ],
+  "parameters": {
+    "source_identity_sha256": "9f0ddb932c631b63cb573c38d747fa41941ee585c5389d33bdafb4add962b768",
+    "source_shape": [512, 512, 192, 192],
+    "source_dtype": "uint16",
+    "audited_maximum_source_count": 53,
+    "selected_scan": [512, 512],
+    "scan_bin": 1,
+    "detector_bins": [1, 2, 4, 8],
+    "detector_crop": null,
+    "scan_crop": null,
+    "output_dtype": "uint16",
+    "timing_target_p50_seconds": 0.5,
+    "baseline_process_policy": "one excluded warm-up followed by repeated public loads in one process with explicit MPSChunked4DSTEM.free after every output",
+    "baseline_source_page_state": "warm operating-system source pages; uncontrolled",
+    "timing_boundary": "public io.load return after final MPS command-buffer completion",
+    "memory_contract": [
+      "logical resident payload",
+      "sampled Metal-driver peak",
+      "Metal-driver allocation after output release",
+      "process peak RSS",
+      "whole-system pressure and swap"
+    ],
+    "run_root": "local-evidence://mps-load-sub500ms-20260822"
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "mps",
+    "gpu_ids": ["Apple M5 Max integrated GPU"],
+    "gpu_model": "Apple M5 Max, 40-core GPU, 128 GB unified memory"
+  },
+  "outputs": [
+    {
+      "kind": "warm-process ABBA bin-1 evidence",
+      "artifact": "abba-bin1-fused-full-depth3-lazy-r12.json",
+      "path": "local-evidence://mps-load-sub500ms-20260822/abba-bin1-fused-full-depth3-lazy-r12.json",
+      "sha256": "0731c34b4c7ce1959141abb8641976e55ba46768290a9b9871250c9cb7af102a",
+      "result": "six retained candidate loads: p50 0.522754 s, p95 0.540934 s, maximum 0.544737 s; exact full native detector; 18 GiB logical resident; 18.441544 GiB sampled Metal-driver peak"
+    },
+    {
+      "kind": "warm-process ABBA bin-2 evidence",
+      "artifact": "abba-bin2-fused-special-lazy-r12.json",
+      "path": "local-evidence://mps-load-sub500ms-20260822/abba-bin2-fused-special-lazy-r12.json",
+      "sha256": "9f29c4790e51bacf99299a98f74ad34e6bf93b48416568e0d1f00be8ff76a916",
+      "result": "six retained candidate loads: p50 0.498435 s, p95 0.514828 s, maximum 0.517209 s; exact detector sum; 4.5 GiB logical resident; 5.688309 GiB sampled Metal-driver peak"
+    },
+    {
+      "kind": "warm-process ABBA bin-4 evidence",
+      "artifact": "abba-bin4-fused-lazy-r12.json",
+      "path": "local-evidence://mps-load-sub500ms-20260822/abba-bin4-fused-lazy-r12.json",
+      "sha256": "7f76b5c795452d5caaf04c59dbb0008f1ffc6eb22de1e1a0be5468eeb35b087a",
+      "result": "six retained candidate loads: p50 0.421396 s, p95 0.423067 s, maximum 0.423377 s; exact detector sum; 1.125 GiB logical resident; 2.313309 GiB sampled Metal-driver peak"
+    },
+    {
+      "kind": "warm-process ABBA bin-8 evidence",
+      "artifact": "abba-bin8-fused-lazy-r12.json",
+      "path": "local-evidence://mps-load-sub500ms-20260822/abba-bin8-fused-lazy-r12.json",
+      "sha256": "d13f0414238387cc105daa9ddc432b95bb9d7bc417cda102486283834606dd62",
+      "result": "six retained candidate loads: p50 0.416601 s, p95 0.422252 s, maximum 0.423076 s; exact detector sum; 0.28125 GiB logical resident; 1.469559 GiB sampled Metal-driver peak"
+    },
+    {
+      "kind": "independent-process first-public-load evidence",
+      "artifact": "fresh-process-final-r28.json",
+      "path": "local-evidence://mps-load-sub500ms-20260822/fresh-process-final-r28.json",
+      "sha256": "640313f559145126b40e6f6d9467206a666775b0c99ea3d9aff9a33663a149d0",
+      "result": "seven independent-process loads per bin after imports and package Metal-library initialization; source pages warm and uncontrolled; p50 0.648989/0.700366/0.642743/0.632086 s for bins 1/2/4/8"
+    },
+    {
+      "kind": "full-output exact parity",
+      "artifact": "full-output-parity-bins1-2-4-8.json",
+      "path": "local-evidence://mps-load-sub500ms-20260822/full-output-parity-bins1-2-4-8.json",
+      "sha256": "fc61130c120c1713614235f5c2b1eb8ea05b84ada4f78c8f300110ae4eed3d0a",
+      "result": "every output byte, shape, dtype, total, maximum, logical resident size, and selected metadata field match the pre-optimization exact path for bins 1/2/4/8"
+    },
+    {
+      "kind": "bin-1 stage timeline",
+      "artifact": "stage-bin1-fused-full-depth3-timeline.json",
+      "path": "local-evidence://mps-load-sub500ms-20260822/stage-bin1-fused-full-depth3-timeline.json",
+      "sha256": "e285f610def7a175555da316557a4b10c3cb58462dd87f8c73e8230c5c295bed",
+      "result": "one instrumented warm-source run: 0.621986 s wall, 0.210796 s cumulative source reads, 0.389971 s GPU union, and 0.092500 s gaps within the GPU span; overlapping intervals are not additive"
+    }
+  ],
+  "results": {
+    "warm_process_abba_candidate": {
+      "1": {"p50_seconds": 0.522754, "p95_seconds": 0.540934, "maximum_seconds": 0.544737, "resident_bytes": 19327352832, "metal_driver_peak_bytes": 19801456640, "metal_driver_after_release_bytes": 474103808, "process_rss_maximum_bytes": 739966976},
+      "2": {"p50_seconds": 0.498435, "p95_seconds": 0.514828, "maximum_seconds": 0.517209, "resident_bytes": 4831838208, "metal_driver_peak_bytes": 6107774976, "metal_driver_after_release_bytes": 1275936768, "process_rss_maximum_bytes": 614793216},
+      "4": {"p50_seconds": 0.421396, "p95_seconds": 0.423067, "maximum_seconds": 0.423377, "resident_bytes": 1207959552, "metal_driver_peak_bytes": 2483896320, "metal_driver_after_release_bytes": 1275936768, "process_rss_maximum_bytes": 614023168},
+      "8": {"p50_seconds": 0.416601, "p95_seconds": 0.422252, "maximum_seconds": 0.423076, "resident_bytes": 301989888, "metal_driver_peak_bytes": 1577926656, "metal_driver_after_release_bytes": 1275936768, "process_rss_maximum_bytes": 616169472}
+    },
+    "independent_process_first_public_load": {
+      "1": {"p50_seconds": 0.648989, "p95_seconds": 0.662009, "maximum_seconds": 0.663333, "resident_bytes": 19327352832, "metal_driver_peak_bytes": 19801456640, "process_rss_maximum_bytes": 737902592},
+      "2": {"p50_seconds": 0.700366, "p95_seconds": 0.752164, "maximum_seconds": 0.768494, "resident_bytes": 4831838208, "metal_driver_peak_bytes": 6107774976, "process_rss_maximum_bytes": 616235008},
+      "4": {"p50_seconds": 0.642743, "p95_seconds": 0.654920, "maximum_seconds": 0.654962, "resident_bytes": 1207959552, "metal_driver_peak_bytes": 2483896320, "process_rss_maximum_bytes": 614170624},
+      "8": {"p50_seconds": 0.632086, "p95_seconds": 0.633783, "maximum_seconds": 0.634237, "resident_bytes": 301989888, "metal_driver_peak_bytes": 1577926656, "process_rss_maximum_bytes": 614137856}
+    },
+    "target_assessment": "The approximate 0.5-second warm-process goal is met for all four bins; strict p50 <=0.5 seconds is met for bins 2/4/8, while full native bin1 remains 0.022754 seconds above the strict threshold.",
+    "parity": "full-output byte exact for bins 1/2/4/8, with unchanged uint16 counts, full scan coverage, no crop, scan bin 1, explicit detector bin, shape, dtype, totals, maxima, and selected metadata",
+    "system_note": "Phil remained on AC with no reported thermal or memory-pressure throttling; pre-existing desktop and virtualization load was retained rather than terminated. Whole-system swap was already nonzero and was not sampled as a per-trial delta by the final ABBA harness."
+  },
+  "timestamps": {
+    "created": "2026-08-22T01:24:14-07:00",
+    "started": "2026-08-22T01:24:14-07:00",
+    "finished": "2026-08-22T09:19:38Z"
+  }
+}

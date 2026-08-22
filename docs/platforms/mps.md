@@ -10,7 +10,7 @@ MLX/PyObjC/Metal and chunk-backed unified-memory representations.
 | Device selection | `src/quantem/gpu/device/backend.py` | require macOS Metal/PyObjC or an available Torch MPS device |
 | IO orchestration | `src/quantem/gpu/io/load.py` | source planning, metadata, policy-free crop/bin/dtype contract |
 | MPS decode adapter | `src/quantem/gpu/io/backends/mps/decoder.py` | map compressed chunks and submit Metal decode work |
-| Decode shader | `src/quantem/gpu/io/backends/mps/kernels/bslz4.msl` | bitshuffle/LZ4 reconstruction and typed output |
+| Decode shader | `src/quantem/gpu/io/backends/mps/kernels/bslz4.msl` | bitshuffle/LZ4 reconstruction, scratch-free exact `uint16` output, and fused exact detector sums |
 | Chunk series | `src/quantem/gpu/io/backends/mps/series.py` | preserve source lifetime without full duplication |
 | Detector adapter | `src/quantem/gpu/detector/compute/mps/kernels.py` | chunk-backed frame and reduction interface |
 | Detector shader | `src/quantem/gpu/detector/compute/mps/metal/reductions.msl` | exact sums and detector moments |
@@ -52,6 +52,12 @@ consume those chunks without materializing a second full host array. Resource
 plans include mapped source, decoded destination, scratch slots, reduction/FFT
 buffers, process reserve, memory pressure, and swap—not compressed file size.
 
+The current exact loader uses source-shard-aligned batches, a three-deep
+compressed-input pipeline for full `uint16`, fused bit-unshuffle plus detector
+sum for bins 2/4/8, and lazy LZ4 scratch. The bin-2 path has a specialized
+kernel. These are private implementation choices; callers keep the same public
+load verb and explicit scientific plan.
+
 Optimize queue overlap, reusable `MTLBuffer` storage, prepared pipelines, and
 fused decode/conversion/bin/reduction while preserving exact counts. A unified
 memory mapping is not an H2D copy, so profiling should report page-in and GPU
@@ -66,11 +72,18 @@ per repetition and measures memory pressure rather than steady-state loader
 speed.
 
 For the full `512x512x192x192 uint16` plan, the resident payload is exactly
-19,327,352,832 bytes (18.00 GiB). On the 2026-08-22 Phil audit, the sampled
-Metal-driver high-water mark was 21,276,016,640 bytes (19.814835 GiB), while
-maximum process RSS was only 734,314,496 bytes. The smaller RSS is not the GPU
-memory footprint: direct Metal allocations are outside the complete scope of
-that process counter.
+19,327,352,832 bytes (18.00 GiB). On the current 2026-08-22 Phil run, the
+sampled Metal-driver high-water mark was 19,801,456,640 bytes (18.441544 GiB),
+while maximum process RSS was 739,966,976 bytes (0.689148 GiB). The smaller RSS
+is not the GPU memory footprint: direct Metal allocations are outside the
+complete scope of that process counter.
+
+At revision `f0f39c9`, persistent-process p50 for the exact full-scan source is
+0.523/0.498/0.421/0.417 seconds for detector bins 1/2/4/8. The corresponding
+independent-process first-public-load p50 is 0.649/0.700/0.643/0.632 seconds.
+Both protocols used warm, uncontrolled source pages, so neither is a cold-load
+claim. Full-output parity against the pre-optimization path is byte exact for
+all four bins.
 
 The retained binned timings use an identity-bound source audit whose maximum
 count is 53. That proves bin2, bin4, and bin8 exact sums fit `uint16` for this

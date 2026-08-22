@@ -29,10 +29,12 @@ operating-system storage cache was not forcibly evicted. It is not called cold.
   exact private Metal residency, controlled macOS source-page measurement, and
   state-consistent benchmark provenance. It does not relabel the 2026-08-19
   cross-platform rows.
-- **Current Python MPS memory audit:** revision
-  `be035c41dcfb9176f541843caf959eee66ae9c2e` on the same branch. It changes no
-  loader science; it replaces the pressure-contaminated MPS headline with
-  lifecycle-correct measurements that explicitly free each direct Metal output.
+- **Current Python MPS exact-load stack:** clean local branch
+  `mps-load-sub500ms` at
+  `f0f39c9158e4d8a2bd73c427cda91c25e3eddfc2`. It adds scratch-free exact
+  `uint16` decode, fused exact detector-sum kernels for bins 2/4/8, lazy LZ4
+  scratch, and source-shard-aligned pipelining. Revision `be035c4` remains the
+  lifecycle-correct pre-optimization reference.
 - **Fixture C:** independent real `512x512x192x192` native-`uint16` source,
   27 compressed shards plus one master file, 3,169,920,193 total bytes and
   3,169,489,846 indexed compressed bytes, 28-file manifest SHA-256
@@ -56,78 +58,110 @@ The boundary is synchronized first-usable resident output from the public
 loader. WebGPU uses the loader's internal library boundary rather than the
 outer browser harness. Resident payload and process/card peaks remain distinct.
 
-| Platform | Revision | Detector bin | Output detector | Resident dtype | Repetitions | p50 | p95 | Maximum | Resident payload | Measured peak | Peak boundary | Parity | Device tested |
-|---|---|---:|---:|---|---:|---:|---:|---:|---:|---:|---|---|---|
-| **CUDA** | `8c47a466` | 1 | `192x192` | `uint16` | 7 | **0.386 s** | **0.396 s** | **0.397 s** | **18.00 GiB** | **21.215 GiB** | Total-card occupancy | Pass | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 |
-| **CUDA** | `8c47a466` | 2 | `96x96` | `uint32` | 7 | **0.396 s** | **0.401 s** | **0.402 s** | **9.00 GiB** | **11.561 GiB** | Total-card occupancy | Pass | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 |
-| **CUDA** | `8c47a466` | 4 | `48x48` | `uint32` | 7 | **0.390 s** | **0.413 s** | **0.419 s** | **2.25 GiB** | **3.756 GiB** | Total-card occupancy | Pass | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 |
-| **CUDA** | `8c47a466` | 8 | `24x24` | `uint32` | 7 | **0.381 s** | **0.401 s** | **0.402 s** | **0.5625 GiB** | **1.805 GiB** | Total-card occupancy | Pass | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 |
-| **Python MPS** | `be035c4` | 1 | `192x192` | `uint16` | 7 | **0.903 s** | **0.989 s** | **1.005 s** | **18.00 GiB** | **19.815 GiB** | Sampled Metal driver | Pass | Apple M5 Max, 40-core GPU, 128 GB |
-| **Python MPS** | `be035c4` | 2 | `96x96` | `uint16` | 7 | **0.907 s** | **0.919 s** | **0.921 s** | **4.50 GiB** | **5.933 GiB** | Sampled Metal driver | Pass | Apple M5 Max, 40-core GPU, 128 GB |
-| **Python MPS** | `be035c4` | 4 | `48x48` | `uint16` | 7 | **0.764 s** | **0.796 s** | **0.802 s** | **1.125 GiB** | **2.558 GiB** | Sampled Metal driver | Pass | Apple M5 Max, 40-core GPU, 128 GB |
-| **Python MPS** | `be035c4` | 8 | `24x24` | `uint16` | 7 | **0.751 s** | **0.818 s** | **0.823 s** | **0.28125 GiB** | **1.714 GiB** | Sampled Metal driver | Pass | Apple M5 Max, 40-core GPU, 128 GB |
-| **WebGPU** | `334b7b5` | 1 | `192x192` | `uint8` | 5 | **0.824 s** | **0.892 s** | **0.892 s** | **9.00 GiB** | **5.020 GiB** | Chrome-tree RSS; device peak incomplete | Exact tested frames and products | Chrome 151, Apple M5 Max Metal-3 |
-| **WebGPU** | `334b7b5` | 2 | `96x96` | `float32` sums | 5 | **1.281 s** | **1.300 s** | **1.300 s** | **9.00 GiB** | **5.363 GiB** | Chrome-tree RSS; device peak incomplete | Exact sampled count sums | Chrome 151, Apple M5 Max Metal-3 |
-| **WebGPU** | `334b7b5` | 4 | `48x48` | `float32` sums | 5 | **1.044 s** | **1.050 s** | **1.050 s** | **2.25 GiB** | **5.188 GiB** | Chrome-tree RSS; device peak incomplete | Exact sampled count sums | Chrome 151, Apple M5 Max Metal-3 |
-| **WebGPU** | `334b7b5` | 8 | `24x24` | `float32` sums | 5 | **0.979 s** | **0.986 s** | **0.986 s** | **0.5625 GiB** | **5.184 GiB** | Chrome-tree RSS; device peak incomplete | Exact sampled count sums | Chrome 151, Apple M5 Max Metal-3 |
-| **CPU reference** | `334b7b5` | 1 | `192x192` | `uint16` | 1 | **34.37 s** | — | — | **18.00 GiB** | **36.450 GiB** | Process RSS | Independent exact adjudicator | Apple M5 Max CPU |
-| **CPU reference** | `334b7b5` | 2 | `96x96` | `uint16` | 1 | **54.22 s** | — | — | **4.50 GiB** | **9.634 GiB** | Process RSS | Independent exact adjudicator | Apple M5 Max CPU |
-| **CPU reference** | `334b7b5` | 4 | `48x48` | `uint16` | 1 | **43.04 s** | — | — | **1.125 GiB** | **2.978 GiB** | Process RSS | Independent exact adjudicator | Apple M5 Max CPU |
-| **CPU reference** | `334b7b5` | 8 | `24x24` | `uint16` | 1 | **38.13 s** | — | — | **0.28125 GiB** | **2.034 GiB** | Process RSS | Independent exact adjudicator | Apple M5 Max CPU |
+| Platform | Revision | Detector bin | Output detector | Resident dtype | Repetitions | p50 | p95 | Maximum | Logical resident | Device/driver peak | Process/tree RSS | Peak boundary | Parity | Device tested |
+|---|---|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---|---|---|
+| **CUDA** | `8c47a466` | 1 | `192x192` | `uint16` | 7 | **0.386 s** | **0.396 s** | **0.397 s** | **18.00 GiB** | **21.215 GiB** | Pending | Total-card occupancy | Pass | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 |
+| **CUDA** | `8c47a466` | 2 | `96x96` | `uint32` | 7 | **0.396 s** | **0.401 s** | **0.402 s** | **9.00 GiB** | **11.561 GiB** | Pending | Total-card occupancy | Pass | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 |
+| **CUDA** | `8c47a466` | 4 | `48x48` | `uint32` | 7 | **0.390 s** | **0.413 s** | **0.419 s** | **2.25 GiB** | **3.756 GiB** | Pending | Total-card occupancy | Pass | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 |
+| **CUDA** | `8c47a466` | 8 | `24x24` | `uint32` | 7 | **0.381 s** | **0.401 s** | **0.402 s** | **0.5625 GiB** | **1.805 GiB** | Pending | Total-card occupancy | Pass | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 |
+| **Python MPS** | `f0f39c9` | 1 | `192x192` | `uint16` | 6 | **0.523 s** | **0.541 s** | **0.545 s** | **18.00 GiB** | **18.442 GiB** | **0.689 GiB** | Sampled Metal driver | Pass | Apple M5 Max, 40-core GPU, 128 GB |
+| **Python MPS** | `f0f39c9` | 2 | `96x96` | `uint16` | 6 | **0.498 s** | **0.515 s** | **0.517 s** | **4.50 GiB** | **5.688 GiB** | **0.573 GiB** | Sampled Metal driver | Pass | Apple M5 Max, 40-core GPU, 128 GB |
+| **Python MPS** | `f0f39c9` | 4 | `48x48` | `uint16` | 6 | **0.421 s** | **0.423 s** | **0.423 s** | **1.125 GiB** | **2.313 GiB** | **0.572 GiB** | Sampled Metal driver | Pass | Apple M5 Max, 40-core GPU, 128 GB |
+| **Python MPS** | `f0f39c9` | 8 | `24x24` | `uint16` | 6 | **0.417 s** | **0.422 s** | **0.423 s** | **0.28125 GiB** | **1.470 GiB** | **0.574 GiB** | Sampled Metal driver | Pass | Apple M5 Max, 40-core GPU, 128 GB |
+| **WebGPU** | `334b7b5` | 1 | `192x192` | `uint8` | 5 | **0.824 s** | **0.892 s** | **0.892 s** | **9.00 GiB** | Pending | **5.020 GiB** | Device allocation incomplete; Chrome-tree RSS retained | Exact tested frames and products | Chrome 151, Apple M5 Max Metal-3 |
+| **WebGPU** | `334b7b5` | 2 | `96x96` | `float32` sums | 5 | **1.281 s** | **1.300 s** | **1.300 s** | **9.00 GiB** | Pending | **5.363 GiB** | Device allocation incomplete; Chrome-tree RSS retained | Exact sampled count sums | Chrome 151, Apple M5 Max Metal-3 |
+| **WebGPU** | `334b7b5` | 4 | `48x48` | `float32` sums | 5 | **1.044 s** | **1.050 s** | **1.050 s** | **2.25 GiB** | Pending | **5.188 GiB** | Device allocation incomplete; Chrome-tree RSS retained | Exact sampled count sums | Chrome 151, Apple M5 Max Metal-3 |
+| **WebGPU** | `334b7b5` | 8 | `24x24` | `float32` sums | 5 | **0.979 s** | **0.986 s** | **0.986 s** | **0.5625 GiB** | Pending | **5.184 GiB** | Device allocation incomplete; Chrome-tree RSS retained | Exact sampled count sums | Chrome 151, Apple M5 Max Metal-3 |
+| **CPU reference** | `334b7b5` | 1 | `192x192` | `uint16` | 1 | **34.37 s** | — | — | **18.00 GiB** | — | **36.450 GiB** | Host allocation not separated | Independent exact adjudicator | Apple M5 Max CPU |
+| **CPU reference** | `334b7b5` | 2 | `96x96` | `uint16` | 1 | **54.22 s** | — | — | **4.50 GiB** | — | **9.634 GiB** | Host allocation not separated | Independent exact adjudicator | Apple M5 Max CPU |
+| **CPU reference** | `334b7b5` | 4 | `48x48` | `uint16` | 1 | **43.04 s** | — | — | **1.125 GiB** | — | **2.978 GiB** | Host allocation not separated | Independent exact adjudicator | Apple M5 Max CPU |
+| **CPU reference** | `334b7b5` | 8 | `24x24` | `uint16` | 1 | **38.13 s** | — | — | **0.28125 GiB** | — | **2.034 GiB** | Host allocation not separated | Independent exact adjudicator | Apple M5 Max CPU |
 
 Fixture D bin 1 is value-audited lossless `uint8`; bins 2/4/8 are exact detector
 sums stored as `float32`. WebGPU's Chrome RSS is not a complete device-memory
 measurement and does not prove the physical 8 GB laptop gate. CPU timings are
 diagnostic adjudication only, never a silent production fallback.
 
-### Current Python MPS lifecycle and memory audit
+### Current exact Python MPS load
 
-Revision `be035c4` measures fixture C with two deliberately separate process
-states. “Fresh process” launches one Python process for each timed load. “Warm
-process” performs one excluded warm-up and then seven timed loads in one process,
-calling `MPSChunked4DSTEM.free()` after every output while retaining the decoder
-and compiled pipeline. Both protocols used warm, uncontrolled operating-system
-source pages; neither is cold-storage evidence.
+Revision `f0f39c9` measures fixture C through the public `quantem.gpu.io.load`
+boundary after the final MPS command buffer completes. The exact full-detector
+path decodes without a full-volume scratch buffer and pipelines three compressed
+inputs. The detector-bin paths fuse bit-unshuffle and exact integer sum for bins
+2/4/8; bin 2 has a specialized kernel. LZ4 scratch is allocated only when a
+chunk actually needs it. Source-shard-sized batches preserve the 10,000-frame
+storage layout, with a 1 GiB safety bound for unusually large shards.
 
-| Process state | Detector bin | Repetitions | p50 | p95 | Maximum | Resident payload | Metal-driver peak | Driver allocation after output release | Process RSS maximum | Swap delta |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| Fresh process | 1 | 7 | **1.162922 s** | **1.232134 s** | **1.239148 s** | **18.00 GiB** | **19.814835 GiB** | Process exited | **0.688431 GiB** | **0 bytes** |
-| Fresh process | 2 | 7 | **1.320150 s** | **1.437594 s** | **1.452454 s** | **4.50 GiB** | **5.932907 GiB** | Process exited | **0.583893 GiB** | **0 bytes** |
-| Fresh process | 4 | 7 | **1.220299 s** | **1.276742 s** | **1.293782 s** | **1.125 GiB** | **2.557907 GiB** | Process exited | **0.576675 GiB** | **0 bytes** |
-| Fresh process | 8 | 7 | **1.228915 s** | **1.456881 s** | **1.457247 s** | **0.28125 GiB** | **1.714157 GiB** | Process exited | **0.578186 GiB** | **0 bytes** |
-| Warm process; explicit output release | 1 | 7 | **0.902767 s** | **0.988826 s** | **1.005018 s** | **18.00 GiB** | **19.814835 GiB** | **1.814835 GiB** | **0.683884 GiB** | **0 bytes** |
-| Warm process; explicit output release | 2 | 7 | **0.907045 s** | **0.919356 s** | **0.920723 s** | **4.50 GiB** | **5.932907 GiB** | **1.432907 GiB** | **0.571259 GiB** | **0 bytes** |
-| Warm process; explicit output release | 4 | 7 | **0.763949 s** | **0.796346 s** | **0.801575 s** | **1.125 GiB** | **2.557907 GiB** | **1.432907 GiB** | **0.571823 GiB** | **0 bytes** |
-| Warm process; explicit output release | 8 | 7 | **0.750592 s** | **0.818166 s** | **0.823454 s** | **0.28125 GiB** | **1.714157 GiB** | **1.432907 GiB** | **0.567871 GiB** | **0 bytes** |
+The comparable ABBA experiment ran one excluded warm-up and six retained loads
+for each candidate in one persistent process. Every output was explicitly freed
+after sampling. Source pages were warm and uncontrolled. “Before” is the
+non-fused topology under the same revision, process, source-page state, and
+lifecycle; “after” enables the accepted exact fused topology. This is a causal
+kernel/pipeline comparison, not a cold-source benchmark.
+
+| Detector bin | Before p50 | After p50 | After p95 | After maximum | p50 reduction | Logical resident | Metal-driver peak | Driver after release | Process RSS maximum |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | **0.689148 s** | **0.522754 s** | **0.540934 s** | **0.544737 s** | **24.1%** | **18.00 GiB** | **18.441544 GiB** | **0.441544 GiB** | **0.689148 GiB** |
+| 2 | **0.573434 s** | **0.498435 s** | **0.514828 s** | **0.517209 s** | **13.1%** | **4.50 GiB** | **5.688309 GiB** | **1.188309 GiB** | **0.572571 GiB** |
+| 4 | **0.461250 s** | **0.421396 s** | **0.423067 s** | **0.423377 s** | **8.6%** | **1.125 GiB** | **2.313309 GiB** | **1.188309 GiB** | **0.571854 GiB** |
+| 8 | **0.441671 s** | **0.416601 s** | **0.422252 s** | **0.423076 s** | **5.7%** | **0.28125 GiB** | **1.469559 GiB** | **1.188309 GiB** | **0.573853 GiB** |
+
+Bins 2/4/8 meet the strict p50 at or below 0.5 seconds. Full native bin 1 is
+approximately 0.5 seconds but remains 22.754 ms above the strict threshold. The
+system had no reported thermal or memory-pressure throttling, but unrelated
+desktop and virtualization work remained active. Whole-system swap was already
+nonzero and the final ABBA harness did not measure a per-trial swap delta, so no
+zero-swap claim is attached to this table.
+
+A second protocol launched seven independent Python processes per bin. Imports
+and package Metal-library initialization completed before the timer, then the
+first public load was measured. Source pages were again warm and uncontrolled.
+It measures per-process decoder and pipeline setup, not cold storage and not
+application launch.
+
+| Detector bin | Repetitions | p50 | p95 | Maximum | Logical resident | Metal-driver peak | Process RSS maximum |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 7 | **0.648989 s** | **0.662009 s** | **0.663333 s** | **18.00 GiB** | **18.441544 GiB** | **0.687225 GiB** |
+| 2 | 7 | **0.700366 s** | **0.752164 s** | **0.768494 s** | **4.50 GiB** | **5.688309 GiB** | **0.573914 GiB** |
+| 4 | 7 | **0.642743 s** | **0.654920 s** | **0.654962 s** | **1.125 GiB** | **2.313309 GiB** | **0.571991 GiB** |
+| 8 | 7 | **0.632086 s** | **0.633783 s** | **0.634237 s** | **0.28125 GiB** | **1.469559 GiB** | **0.571960 GiB** |
 
 The full native detector payload is exactly 19,327,352,832 bytes: **18.00
-GiB**, not 0.93 GB and not 156 GB. Direct buffers are allocated through
-Metal/PyObjC, so `torch.mps.current_allocated_memory()` remains zero and process
-RSS alone is incomplete. `torch.mps.driver_allocated_memory()` is the retained
-high-water signal for these loads. The 1.814835 GiB or 1.432907 GiB remaining
-after output release is reusable decoder/runtime allocation, not resident 4D
-data.
+GiB**, not process RSS and not total device pressure. Direct buffers are
+allocated through Metal/PyObjC, so process RSS alone is incomplete. The sampled
+Metal-driver peak is the retained device-allocation high-water signal. The
+allocation remaining after output release is reusable decoder/runtime state,
+not resident 4D data.
 
-The binned output dtype is also identity-bound evidence, not a generic
-assumption. Fixture C's retained complete value-range audit records a maximum
-source count of 53. The worst possible exact sums are therefore 212 at bin2,
-848 at bin4, and 3,392 at bin8, all within `uint16`. An unaudited `uint16`
-source must use a provably sufficient wider result dtype or fail closed.
+Fixture C's retained complete value-range audit records a maximum source count
+of 53. The worst possible exact sums are therefore 212 at bin2, 848 at bin4,
+and 3,392 at bin8, all within `uint16`. An unaudited `uint16` source must use a
+provably sufficient wider result dtype or fail closed.
 
-The superseded 2026-08-19 harness called `clear_mps_cache()` but never freed the
-direct Metal output. Its bin-1 repetitions accumulated successive 18 GiB
-allocations, system free memory fell from 86% to 41%, and the reported p50 rose
-to 2.273 seconds. That value remains historical pressure evidence; it is not a
-current loader headline and is not interpreted as a kernel regression.
+Full-output parity hashed every result byte for bins 1/2/4/8 and compared shape,
+dtype, total, maximum, logical resident bytes, and selected provenance against
+the pre-optimization path. Every comparison is exact. The parity artifact
+SHA-256 is
+`fc61130c120c1713614235f5c2b1eb8ea05b84ada4f78c8f300110ae4eed3d0a`.
+The independent-process artifact SHA-256 is
+`640313f559145126b40e6f6d9467206a666775b0c99ea3d9aff9a33663a149d0`.
+The ABBA artifact SHA-256 values for bins 1/2/4/8 are
+`0731c34b4c7ce1959141abb8641976e55ba46768290a9b9871250c9cb7af102a`,
+`9f29c4790e51bacf99299a98f74ad34e6bf93b48416568e0d1f00be8ff76a916`,
+`7f76b5c795452d5caaf04c59dbb0008f1ffc6eb22de1e1a0be5468eeb35b087a`,
+and `d13f0414238387cc105daa9ddc432b95bb9d7bc417cda102486283834606dd62`.
 
-The fresh-process artifact SHA-256 is
-`a332552a98d8bc718b30f083a6e4afd4c6e7d56f10cbb1e09639cfab0042bc0d`;
-the warm-process artifact SHA-256 is
-`07affa9decf0a8c99ac10b32db961c2c2681f5baf5f91a151ea121d93811bb50`.
-An independent 512-position parity run passed exact detector-bin 2/4/8 sums and
-exact bin-4 total/BF/ADF/DF products with maximum absolute error zero; artifact
-SHA-256
-`96a986274dd2ba2b8f175d5003eabffc3c52e94d069f1c4e899d669e710832be`.
+One instrumented bin-1 run measured 0.621986 seconds wall, 0.210796 seconds of
+cumulative source reads, 0.389971 seconds in the GPU interval union, and 0.092500
+seconds of gaps inside the GPU span. Reads and GPU work overlap, so these
+intervals must not be added. The remaining work is GPU scheduling and read
+jitter, not a scientifically removable detector traversal. Artifact SHA-256:
+`e285f610def7a175555da316557a4b10c3cb58462dd87f8c73e8230c5c295bed`.
+
+Revision `be035c4` remains the lifecycle-correct historical reference: its warm
+process p50 values were 0.903/0.907/0.764/0.751 seconds for bins 1/2/4/8. The
+older 2.273-second bin-1 result is retained only as pressure evidence because
+that harness did not free direct Metal outputs between repetitions.
 
 ### Current controlled native exact resident load
 
