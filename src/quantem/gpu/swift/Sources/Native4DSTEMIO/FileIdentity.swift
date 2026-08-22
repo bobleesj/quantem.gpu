@@ -81,6 +81,15 @@ private func nativeContentSnapshot(for url: URL) throws -> NativeContentSnapshot
 private func nativeSHA256(of url: URL) throws -> String {
   let handle = try FileHandle(forReadingFrom: url)
   defer { try? handle.close() }
+  if ProcessInfo.processInfo.environment[
+    "QUANTEM_GPU_BENCHMARK_UNCACHED_SOURCE_READS"
+  ] == "1" {
+    guard Darwin.fcntl(handle.fileDescriptor, F_NOCACHE, 1) == 0 else {
+      throw Native4DSTEMIOError.invalidData(
+        "Could not enable uncached benchmark reads for \(url.path)"
+      )
+    }
+  }
   var digest = SHA256()
   while let data = try handle.read(upToCount: 8 * 1024 * 1024), !data.isEmpty {
     digest.update(data: data)
