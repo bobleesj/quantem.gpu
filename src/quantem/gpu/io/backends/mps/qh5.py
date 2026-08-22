@@ -28,7 +28,7 @@ _AUDIT_SCHEMAS = {
 }
 _SOURCE_HASH_SCHEMA = "quantem.gpu.source-hashes/v1"
 _SHA256_HEX_LENGTH = 64
-_pipeline_cache: tuple[Any, Any, Any, Any] | None = None
+_pipeline_cache: tuple[Any, Any, Any, Any, Any] | None = None
 
 
 class QH5PreparedSourceError(ValueError):
@@ -442,11 +442,16 @@ class _SequentialReadAhead:
         self.thread.join(timeout=0.1)
 
 
-def _pipelines(device: Any) -> tuple[Any, Any, Any]:
+def _pipelines(device: Any) -> tuple[Any, Any, Any, Any]:
     global _pipeline_cache
     device_key = int(device.__c_void_p__().value)
     if _pipeline_cache is not None and _pipeline_cache[0] == device_key:
-        return _pipeline_cache[1], _pipeline_cache[2], _pipeline_cache[3]
+        return (
+            _pipeline_cache[1],
+            _pipeline_cache[2],
+            _pipeline_cache[3],
+            _pipeline_cache[4],
+        )
     import Metal
 
     source = (
@@ -464,6 +469,9 @@ def _pipelines(device: Any) -> tuple[Any, Any, Any]:
     detector_bin_row8 = library.newFunctionWithName_(
         "h5lz4dc_bin_u16_audited_low8_scalar_u16_frame_major_row8_qh5idx"
     )
+    packed_full_precision = library.newFunctionWithName_(
+        "h5lz4dc_unshuffle_u16_single_block_packed_h5"
+    )
     decode_pipeline, decode_error = device.newComputePipelineStateWithFunction_error_(
         decode, None
     )
@@ -472,6 +480,9 @@ def _pipelines(device: Any) -> tuple[Any, Any, Any]:
     )
     bin_row8_pipeline, bin_row8_error = (
         device.newComputePipelineStateWithFunction_error_(detector_bin_row8, None)
+    )
+    packed_pipeline, packed_error = (
+        device.newComputePipelineStateWithFunction_error_(packed_full_precision, None)
     )
     if decode_pipeline is None or decode_error:
         raise RuntimeError(f"Metal QH5 decode pipeline error: {decode_error}")
@@ -483,13 +494,23 @@ def _pipelines(device: Any) -> tuple[Any, Any, Any]:
         raise RuntimeError(
             f"Metal QH5 row-8 detector-bin pipeline error: {bin_row8_error}"
         )
+    if packed_pipeline is None or packed_error:
+        raise RuntimeError(
+            f"Metal packed-HDF5 uint16 pipeline error: {packed_error}"
+        )
     _pipeline_cache = (
         device_key,
         decode_pipeline,
         bin_row4_pipeline,
         bin_row8_pipeline,
+        packed_pipeline,
     )
-    return decode_pipeline, bin_row4_pipeline, bin_row8_pipeline
+    return decode_pipeline, bin_row4_pipeline, bin_row8_pipeline, packed_pipeline
+
+
+def _packed_u16_pipeline(device: Any) -> Any:
+    """Return the shared full-precision packed-HDF5 Metal pipeline."""
+    return _pipelines(device)[3]
 
 
 def _can_use_row8_bin(detector_shape: tuple[int, int]) -> bool:
@@ -536,7 +557,7 @@ def load_audited_bin4(
         raise ValueError("batch_scan_rows must be at least 1")
     scalar_threads = max(32, min(1024, int(scalar_threads) // 32 * 32))
     device = decoder._device
-    decode_pipeline, bin_row4_pipeline, bin_row8_pipeline = _pipelines(device)
+    decode_pipeline, bin_row4_pipeline, bin_row8_pipeline, _ = _pipelines(device)
     use_row8_bin = _can_use_row8_bin(prepared.detector_shape)
     bin_pipeline = bin_row8_pipeline if use_row8_bin else bin_row4_pipeline
     pipeline_ready = time.perf_counter()

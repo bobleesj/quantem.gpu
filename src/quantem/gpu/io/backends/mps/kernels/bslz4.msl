@@ -371,6 +371,196 @@ kernel void shuf_8192_16_to_u8_masked_batched(
         = mask[detector_index] ? uchar(0) : uchar(min(result, ushort(255)));
 }
 
+// Fused generic uint16 bit-unshuffle + exact detector sum-bin. A 256-thread
+// group reconstructs one 8x16 output tile from bit-plane words into a bounded
+// threadgroup tile, then sums each explicit BxB detector region. This removes
+// the full-resolution global-memory write/read between unshuffle and binning.
+// The caller uses this path only for B in {2,4,8}, detector widths divisible by
+// 32, and complete 8192-byte bitshuffle blocks; other layouts retain the
+// established two-kernel path.
+kernel void shuf_bin_sum_8192_16_batched(
+    const device uint*  in             [[buffer(0)]],
+    device ushort*      out            [[buffer(1)]],
+    const device uchar* mask           [[buffer(2)]],
+    constant uint&      in_rows        [[buffer(3)]],
+    constant uint&      in_cols        [[buffer(4)]],
+    constant uint&      frame_u16s     [[buffer(5)]],
+    constant uint&      out_rows       [[buffer(6)]],
+    constant uint&      out_cols       [[buffer(7)]],
+    constant uint&      bin_factor     [[buffer(8)]],
+    uint3 group_position               [[threadgroup_position_in_grid]],
+    uint thread_index                  [[thread_index_in_threadgroup]],
+    uint lane                          [[thread_index_in_simdgroup]],
+    uint simdgroup_index               [[simdgroup_index_in_threadgroup]]
+) {
+    constexpr uint output_tile_rows = 8u;
+    constexpr uint output_tile_cols = 16u;
+    constexpr uint simdgroups_per_threadgroup = 8u;
+    constexpr uint groups_per_block = 128u;
+
+    uint frame = group_position.x;
+    uint input_tile_rows = output_tile_rows * bin_factor;
+    uint input_tile_cols = output_tile_cols * bin_factor;
+    uint input_origin_row = group_position.y * input_tile_rows;
+    uint input_origin_col = group_position.z * input_tile_cols;
+    uint row_word_groups = input_tile_cols / 32u;
+    uint tile_word_groups = input_tile_rows * row_word_groups;
+
+    // Maximum is bin8: (8*8) x (16*8) = 8192 uint16 values (16 KiB).
+    threadgroup ushort tile[64u * 128u];
+    threadgroup uint planes[simdgroups_per_threadgroup][16u];
+
+    for (
+        uint tile_group = simdgroup_index;
+        tile_group < tile_word_groups;
+        tile_group += simdgroups_per_threadgroup
+    ) {
+        uint local_row = tile_group / row_word_groups;
+        uint local_word_group = tile_group - local_row * row_word_groups;
+        uint source_row = input_origin_row + local_row;
+        uint source_col = input_origin_col + local_word_group * 32u;
+        bool valid_group = source_row < in_rows && source_col < in_cols;
+
+        if (lane < 16u) {
+            uint plane_word = 0u;
+            if (valid_group) {
+                uint source_pixel = source_row * in_cols + source_col;
+                uint block = source_pixel >> 12u;
+                uint group_in_block = (source_pixel & 4095u) >> 5u;
+                const device uint* block_in = in
+                    + ulong(frame) * ulong(frame_u16s / 2u)
+                    + block * 2048u;
+                plane_word = block_in[lane * groups_per_block + group_in_block];
+            }
+            planes[simdgroup_index][lane] = plane_word;
+        }
+        simdgroup_barrier(mem_flags::mem_threadgroup);
+
+        ushort value = 0u;
+        for (uint bit = 0u; bit < 16u; ++bit) {
+            if (planes[simdgroup_index][bit] & (1u << lane)) {
+                value |= ushort(1u << bit);
+            }
+        }
+        uint detector_col = source_col + lane;
+        bool valid_pixel = valid_group && detector_col < in_cols;
+        uint detector_pixel = source_row * in_cols + detector_col;
+        if (!valid_pixel || mask[detector_pixel] != 0u) {
+            value = 0u;
+        }
+        tile[local_row * input_tile_cols + local_word_group * 32u + lane] = value;
+        simdgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    if (thread_index >= output_tile_rows * output_tile_cols) return;
+    uint local_output_row = thread_index / output_tile_cols;
+    uint local_output_col = thread_index - local_output_row * output_tile_cols;
+    uint output_row = group_position.y * output_tile_rows + local_output_row;
+    uint output_col = group_position.z * output_tile_cols + local_output_col;
+    if (output_row >= out_rows || output_col >= out_cols) return;
+
+    uint sum = 0u;
+    uint tile_row = local_output_row * bin_factor;
+    uint tile_col = local_output_col * bin_factor;
+    for (uint row_offset = 0u; row_offset < bin_factor; ++row_offset) {
+        for (uint col_offset = 0u; col_offset < bin_factor; ++col_offset) {
+            sum += uint(
+                tile[(tile_row + row_offset) * input_tile_cols
+                     + tile_col + col_offset]
+            );
+        }
+    }
+    uint output_frame_elements = out_rows * out_cols;
+    out[ulong(frame) * ulong(output_frame_elements) + output_row * out_cols
+        + output_col] = ushort(min(sum, 65535u));
+}
+
+// Bin-2 specialization of the fused kernel above. Its 1 KiB input tile keeps
+// substantially more threadgroups resident than the generic bin-8-sized tile,
+// and the fixed four-value sum is fully unrolled by the Metal compiler.
+kernel void shuf_bin2_sum_8192_16_batched(
+    const device uint*  in             [[buffer(0)]],
+    device ushort*      out            [[buffer(1)]],
+    const device uchar* mask           [[buffer(2)]],
+    constant uint&      in_rows        [[buffer(3)]],
+    constant uint&      in_cols        [[buffer(4)]],
+    constant uint&      frame_u16s     [[buffer(5)]],
+    constant uint&      out_rows       [[buffer(6)]],
+    constant uint&      out_cols       [[buffer(7)]],
+    constant uint&      bin_factor     [[buffer(8)]],
+    uint3 group_position               [[threadgroup_position_in_grid]],
+    uint thread_index                  [[thread_index_in_threadgroup]],
+    uint lane                          [[thread_index_in_simdgroup]],
+    uint simdgroup_index               [[simdgroup_index_in_threadgroup]]
+) {
+    (void)bin_factor;
+    constexpr uint input_tile_rows = 16u;
+    constexpr uint input_tile_cols = 32u;
+    constexpr uint groups_per_block = 128u;
+    constexpr uint simdgroups_per_threadgroup = 8u;
+    uint frame = group_position.x;
+    uint input_origin_row = group_position.y * input_tile_rows;
+    uint input_origin_col = group_position.z * input_tile_cols;
+    threadgroup ushort tile[input_tile_rows * input_tile_cols];
+    threadgroup uint planes[simdgroups_per_threadgroup][16u];
+
+    for (
+        uint local_row = simdgroup_index;
+        local_row < input_tile_rows;
+        local_row += simdgroups_per_threadgroup
+    ) {
+        uint source_row = input_origin_row + local_row;
+        bool valid_group = source_row < in_rows && input_origin_col < in_cols;
+        if (lane < 16u) {
+            uint plane_word = 0u;
+            if (valid_group) {
+                uint source_pixel = source_row * in_cols + input_origin_col;
+                uint block = source_pixel >> 12u;
+                uint group_in_block = (source_pixel & 4095u) >> 5u;
+                const device uint* block_in = in
+                    + ulong(frame) * ulong(frame_u16s / 2u)
+                    + block * 2048u;
+                plane_word = block_in[lane * groups_per_block + group_in_block];
+            }
+            planes[simdgroup_index][lane] = plane_word;
+        }
+        simdgroup_barrier(mem_flags::mem_threadgroup);
+
+        ushort value = 0u;
+        for (uint bit = 0u; bit < 16u; ++bit) {
+            if (planes[simdgroup_index][bit] & (1u << lane)) {
+                value |= ushort(1u << bit);
+            }
+        }
+        uint detector_col = input_origin_col + lane;
+        bool valid_pixel = valid_group && detector_col < in_cols;
+        uint detector_pixel = source_row * in_cols + detector_col;
+        if (!valid_pixel || mask[detector_pixel] != 0u) {
+            value = 0u;
+        }
+        tile[local_row * input_tile_cols + lane] = value;
+        simdgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    if (thread_index >= 128u) return;
+    uint local_output_row = thread_index / 16u;
+    uint local_output_col = thread_index - local_output_row * 16u;
+    uint output_row = group_position.y * 8u + local_output_row;
+    uint output_col = group_position.z * 16u + local_output_col;
+    if (output_row >= out_rows || output_col >= out_cols) return;
+    uint tile_row = local_output_row * 2u;
+    uint tile_col = local_output_col * 2u;
+    uint first_row = tile_row * input_tile_cols + tile_col;
+    uint second_row = first_row + input_tile_cols;
+    uint sum = uint(tile[first_row]) + uint(tile[first_row + 1u])
+        + uint(tile[second_row]) + uint(tile[second_row + 1u]);
+    uint output_frame_elements = out_rows * out_cols;
+    out[ulong(frame) * ulong(output_frame_elements) + output_row * out_cols
+        + output_col] = ushort(min(sum, 65535u));
+}
+
 // Optional decode-side detector sum. Each source chunk gets an independent
 // output plane, so concurrently executing decode command buffers never race.
 kernel void detector_sum_u8_decode_partial(
