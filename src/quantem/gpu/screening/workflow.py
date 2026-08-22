@@ -130,6 +130,7 @@ def _save_cache(products: ScreeningResult, path: Path) -> None:
         mean_dp=np.asarray(products.mean_dp, dtype=np.float32),
         bright_field=np.asarray(products.bright_field, dtype=np.float32),
         dark_field=np.asarray(products.dark_field, dtype=np.float32),
+        dpc_phase=np.asarray(products.dpc_phase, dtype=np.float32),
         com_row=np.asarray(products.com_row, dtype=np.float32),
         com_col=np.asarray(products.com_col, dtype=np.float32),
     )
@@ -144,18 +145,25 @@ def _prepare_cache(path: Path, master: Path) -> ScreeningResult | None:
         if not _cache_matches(metadata, master):
             return None
         params = metadata.get("parameters", {})
+        com_row = np.asarray(data["com_row"], dtype=np.float32)
+        com_col = np.asarray(data["com_col"], dtype=np.float32)
+        dpc_phase = (
+            np.asarray(data["dpc_phase"], dtype=np.float32)
+            if "dpc_phase" in data.files
+            else _dpc_phase(
+                com_row,
+                com_col,
+                float(params["rotation_deg"]),
+                bool(params["transposed"]),
+            )
+        )
         products = ScreeningResult(
             mean_dp=np.asarray(data["mean_dp"], dtype=np.float32),
             bright_field=np.asarray(data["bright_field"], dtype=np.float32),
             dark_field=np.asarray(data["dark_field"], dtype=np.float32),
-            dpc_phase=_dpc_phase(
-                np.asarray(data["com_row"], dtype=np.float32),
-                np.asarray(data["com_col"], dtype=np.float32),
-                float(params["rotation_deg"]),
-                bool(params["transposed"]),
-            ),
-            com_row=np.asarray(data["com_row"], dtype=np.float32),
-            com_col=np.asarray(data["com_col"], dtype=np.float32),
+            dpc_phase=dpc_phase,
+            com_row=com_row,
+            com_col=com_col,
             probe_center=tuple(float(v) for v in params["center"]),
             probe_radius=float(params["radius_px"]),
             rotation_deg=float(params["rotation_deg"]),
