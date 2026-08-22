@@ -23,6 +23,7 @@ from _benchmark_support import (
     _host_info,
     _memory_snapshot,
     _nearest_rank_summary,
+    _release_array,
     _stable_json_sha256,
     _sync_backend,
 )
@@ -232,6 +233,7 @@ def main() -> None:
 
     for _ in range(args.warmup):
         result, _ = _run_once(args, selector)
+        _release_array(result.data)
         del result
         _clear_backend(args.backend)
 
@@ -239,13 +241,15 @@ def main() -> None:
     for trial in range(1, args.reps + 1):
         result, record = _run_once(args, selector)
         record["trial"] = trial
-        records.append(record)
+        record["release_method"] = _release_array(result.data)
         del result
         _clear_backend(args.backend)
+        record["memory_after_release"] = _memory_snapshot(args.backend)
+        records.append(record)
 
     hashes = [record["output_sha256"] for record in records]
     report = {
-        "schema": "quantem-gpu-selective-load-benchmark/v1",
+        "schema": "quantem-gpu-selective-load-benchmark/v2",
         "benchmark_definition": {
             "cache_state": args.cache_state,
             "timing_boundary": "public load return after synchronized exact selected resident output",
