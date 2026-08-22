@@ -27,6 +27,17 @@ private struct WordMajorDetectorParameters {
   var detectorPixels: UInt32
 }
 
+private struct ContiguousProductsParameters {
+  var frameCount: UInt32
+  var sourceDetectorRows: UInt32
+  var sourceDetectorColumns: UInt32
+  var destinationScanCount: UInt32
+  var destinationScanOffset: UInt32
+  var globalFrameOffset: UInt32
+  var outputDetectorRows: UInt32
+  var outputDetectorColumns: UInt32
+}
+
 private struct ScanRegionSumParameters {
   var scanRows: UInt32
   var scanColumns: UInt32
@@ -2314,6 +2325,148 @@ final class Metal4DSTEMKernelsTests: XCTestCase {
       }
     }
     XCTAssertEqual(bufferValues(destination, count: expected.count), expected)
+  }
+
+  func testFusedDetectorBin4ProductsAndPartialsMatchIntegerReference() throws {
+    let device = try metalDevice()
+    let queue = try XCTUnwrap(device.makeCommandQueue())
+    let library = try Metal4DSTEMKernels.makeDetectorLibrary(device: device)
+    let pipeline = try device.makeComputePipelineState(
+      function: XCTUnwrap(
+        library.makeFunction(
+          name: Metal4DSTEMKernels
+            .contiguousDetectorBin4U8ProductsDetectorPartialsTiled32x8Function
+        )
+      )
+    )
+    let frameCount = 9
+    let detectorRows = 192
+    let detectorColumns = 192
+    let detectorPixels = detectorRows * detectorColumns
+    let outputDetectorRows = detectorRows / 4
+    let outputDetectorColumns = detectorColumns / 4
+    let outputDetectorPixels = outputDetectorRows * outputDetectorColumns
+    let outputDetectorWords = outputDetectorPixels / 2
+    let sourceValues: [UInt8] = (0..<(frameCount * detectorPixels)).map {
+      UInt8(($0 * 17 + $0 / detectorPixels * 11 + 3) % 54)
+    }
+    let membership: [UInt8] = (0..<detectorPixels).map { pixel in
+      let row = pixel / detectorColumns
+      let column = pixel % detectorColumns
+      return (row < 96 ? 1 : 0)
+        | (48 <= column && column < 144 ? 2 : 0)
+        | (row >= 96 ? 4 : 0)
+    }
+    let source = try makeBuffer(device: device, values: sourceValues)
+    let bands = try makeBuffer(device: device, values: membership)
+    let destination = try outputBuffer(
+      device: device,
+      count: outputDetectorWords * frameCount
+    )
+    let band1 = try outputBuffer(device: device, count: frameCount)
+    let band2 = try outputBuffer(device: device, count: frameCount)
+    let band4 = try outputBuffer(device: device, count: frameCount)
+    let total = try outputBuffer(device: device, count: frameCount)
+    let rowMoment = try outputBuffer(device: device, count: frameCount)
+    let columnMoment = try outputBuffer(device: device, count: frameCount)
+    let detectorPartials = try XCTUnwrap(
+      device.makeBuffer(
+        length: detectorPixels * MemoryLayout<UInt16>.stride,
+        options: .storageModeShared
+      )
+    )
+    memset(detectorPartials.contents(), 0, detectorPartials.length)
+    var parameters = ContiguousProductsParameters(
+      frameCount: UInt32(frameCount),
+      sourceDetectorRows: UInt32(detectorRows),
+      sourceDetectorColumns: UInt32(detectorColumns),
+      destinationScanCount: UInt32(frameCount),
+      destinationScanOffset: 0,
+      globalFrameOffset: 0,
+      outputDetectorRows: UInt32(outputDetectorRows),
+      outputDetectorColumns: UInt32(outputDetectorColumns)
+    )
+    let command = try XCTUnwrap(queue.makeCommandBuffer())
+    let encoder = try XCTUnwrap(command.makeComputeCommandEncoder())
+    encoder.setComputePipelineState(pipeline)
+    encoder.setBuffer(source, offset: 0, index: 0)
+    encoder.setBuffer(destination, offset: 0, index: 1)
+    withUnsafeBytes(of: &parameters) {
+      encoder.setBytes($0.baseAddress!, length: $0.count, index: 2)
+    }
+    encoder.setBuffer(bands, offset: 0, index: 3)
+    encoder.setBuffer(band1, offset: 0, index: 4)
+    encoder.setBuffer(band2, offset: 0, index: 5)
+    encoder.setBuffer(band4, offset: 0, index: 6)
+    encoder.setBuffer(total, offset: 0, index: 7)
+    encoder.setBuffer(rowMoment, offset: 0, index: 8)
+    encoder.setBuffer(columnMoment, offset: 0, index: 9)
+    encoder.setBuffer(detectorPartials, offset: 0, index: 10)
+    encoder.dispatchThreadgroups(
+      MTLSize(width: 1, height: 1, depth: 1),
+      threadsPerThreadgroup: MTLSize(width: 32, height: 8, depth: 1)
+    )
+    encoder.endEncoding()
+    try complete(command)
+
+    var expectedDestination = [UInt32](
+      repeating: 0,
+      count: outputDetectorWords * frameCount
+    )
+    var expectedBand1 = [UInt32](repeating: 0, count: frameCount)
+    var expectedBand2 = [UInt32](repeating: 0, count: frameCount)
+    var expectedBand4 = [UInt32](repeating: 0, count: frameCount)
+    var expectedTotal = [UInt32](repeating: 0, count: frameCount)
+    var expectedRowMoment = [UInt32](repeating: 0, count: frameCount)
+    var expectedColumnMoment = [UInt32](repeating: 0, count: frameCount)
+    var expectedDetectorPartials = [UInt16](repeating: 0, count: detectorPixels)
+    for frame in 0..<frameCount {
+      for pixel in 0..<detectorPixels {
+        let value = UInt32(sourceValues[frame * detectorPixels + pixel])
+        let row = pixel / detectorColumns
+        let column = pixel % detectorColumns
+        if membership[pixel] & 1 != 0 { expectedBand1[frame] += value }
+        if membership[pixel] & 2 != 0 { expectedBand2[frame] += value }
+        if membership[pixel] & 4 != 0 { expectedBand4[frame] += value }
+        expectedTotal[frame] += value
+        expectedRowMoment[frame] += value * UInt32(row)
+        expectedColumnMoment[frame] += value * UInt32(column)
+        expectedDetectorPartials[pixel] += UInt16(value)
+      }
+      for outputPixel in 0..<outputDetectorPixels {
+        let outputRow = outputPixel / outputDetectorColumns
+        let outputColumn = outputPixel % outputDetectorColumns
+        var sum: UInt32 = 0
+        for row in (outputRow * 4)..<(outputRow * 4 + 4) {
+          for column in (outputColumn * 4)..<(outputColumn * 4 + 4) {
+            sum += UInt32(
+              sourceValues[frame * detectorPixels + row * detectorColumns + column]
+            )
+          }
+        }
+        expectedDestination[(outputPixel / 2) * frameCount + frame] |=
+          sum << UInt32((outputPixel % 2) * 16)
+      }
+    }
+    let partialPointer = detectorPartials.contents().bindMemory(
+      to: UInt16.self,
+      capacity: detectorPixels
+    )
+    let actualDetectorPartials = Array(
+      UnsafeBufferPointer(start: partialPointer, count: detectorPixels)
+    )
+
+    XCTAssertEqual(
+      bufferValues(destination, count: expectedDestination.count),
+      expectedDestination
+    )
+    XCTAssertEqual(bufferValues(band1, count: frameCount), expectedBand1)
+    XCTAssertEqual(bufferValues(band2, count: frameCount), expectedBand2)
+    XCTAssertEqual(bufferValues(band4, count: frameCount), expectedBand4)
+    XCTAssertEqual(bufferValues(total, count: frameCount), expectedTotal)
+    XCTAssertEqual(bufferValues(rowMoment, count: frameCount), expectedRowMoment)
+    XCTAssertEqual(bufferValues(columnMoment, count: frameCount), expectedColumnMoment)
+    XCTAssertEqual(actualDetectorPartials, expectedDetectorPartials)
   }
 
   func testResidentRebinU16MatchesCroppedIntegerReferenceIncludingEdges() throws {

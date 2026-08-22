@@ -589,6 +589,7 @@ public final class Metal4DSTEMIndexedLoader {
   private let auditedLow8TiledDetectorSumPipeline: MTLComputePipelineState
   private let fusedTiledLow8Bin1ProductsDetectorPartialsPipeline: MTLComputePipelineState
   private let fusedTiledLow8Bin2ProductsDetectorPartialsPipeline: MTLComputePipelineState
+  private let fusedTiledLow8Bin4ProductsDetectorPartialsPipeline: MTLComputePipelineState
   private let detectorAccumulateU16PartialsPipeline: MTLComputePipelineState
   private let privateResidentPagePreparationPipeline: MTLComputePipelineState
   private let exactBinner: Metal4DSTEMExactBinner
@@ -643,6 +644,10 @@ public final class Metal4DSTEMIndexedLoader {
           name: Metal4DSTEMKernels
             .contiguousDetectorBin2U8ProductsDetectorPartialsTiled32x8Function
         ),
+        let fusedTiledLow8Bin4ProductsDetectorPartials = detector.makeFunction(
+          name: Metal4DSTEMKernels
+            .contiguousDetectorBin4U8ProductsDetectorPartialsTiled32x8Function
+        ),
         let detectorAccumulateU16Partials = detector.makeFunction(
           name: Metal4DSTEMKernels.detectorAccumulateU16PartialsU64Function
         ),
@@ -683,6 +688,11 @@ public final class Metal4DSTEMIndexedLoader {
         try device
         .makeComputePipelineState(
           function: fusedTiledLow8Bin2ProductsDetectorPartials
+        )
+      fusedTiledLow8Bin4ProductsDetectorPartialsPipeline =
+        try device
+        .makeComputePipelineState(
+          function: fusedTiledLow8Bin4ProductsDetectorPartials
         )
       detectorAccumulateU16PartialsPipeline = try device.makeComputePipelineState(
         function: detectorAccumulateU16Partials
@@ -1031,8 +1041,15 @@ public final class Metal4DSTEMIndexedLoader {
       stagingDtype: stagingDtype,
       detectorBin: 2
     )
+    let usesFusedTiledLow8Bin4Products = try supportsFusedAuditedLow8(
+      plan: plan,
+      binned: binned,
+      stagingDtype: stagingDtype,
+      detectorBin: 4
+    )
     let usesFusedTiledLow8Products =
       usesFusedTiledLow8Bin1Products || usesFusedTiledLow8Bin2Products
+      || usesFusedTiledLow8Bin4Products
     let started = CFAbsoluteTimeGetCurrent()
     let frameCount = plan.logicalFrameCount
     let detectorPixels = plan.sourceDetectorRows * plan.sourceDetectorColumns
@@ -1354,6 +1371,7 @@ public final class Metal4DSTEMIndexedLoader {
             stagingDtype: stagingDtype,
             usesFusedTiledLow8Bin1Products: usesFusedTiledLow8Bin1Products,
             usesFusedTiledLow8Bin2Products: usesFusedTiledLow8Bin2Products,
+            usesFusedTiledLow8Bin4Products: usesFusedTiledLow8Bin4Products,
             binned: binned,
             command: command,
             counterSamples: counterSamples
@@ -1659,7 +1677,7 @@ public final class Metal4DSTEMIndexedLoader {
     detectorBin: Int
   ) throws -> Bool {
     guard stagingDtype == .uint8, let binned,
-      detectorBin == 1 || detectorBin == 2,
+      detectorBin == 1 || detectorBin == 2 || detectorBin == 4,
       binned.plan.binningProvenance.detectorBin == detectorBin,
       binned.plan.binningProvenance.outputDtype == .uint16,
       binned.plan.sourceAudit.provesLosslessUInt8Staging,
@@ -1736,6 +1754,7 @@ public final class Metal4DSTEMIndexedLoader {
     stagingDtype: Metal4DSTEMIntegerDType,
     usesFusedTiledLow8Bin1Products: Bool,
     usesFusedTiledLow8Bin2Products: Bool,
+    usesFusedTiledLow8Bin4Products: Bool,
     binned: BinnedOutputContext?,
     command: MTLCommandBuffer,
     counterSamples: MTLCounterSampleBuffer?
@@ -1832,6 +1851,7 @@ public final class Metal4DSTEMIndexedLoader {
 
     let usesFusedTiledLow8Products =
       usesFusedTiledLow8Bin1Products || usesFusedTiledLow8Bin2Products
+      || usesFusedTiledLow8Bin4Products
     if usesFusedTiledLow8Products {
       guard let binned,
         let outputShard = binned.plan.shardPlan.shards.first(where: { candidate in
@@ -1873,11 +1893,15 @@ public final class Metal4DSTEMIndexedLoader {
         outputDetectorRows: outputDetectorRows,
         outputDetectorColumns: outputDetectorColumns
       )
-      encoder.setComputePipelineState(
-        usesFusedTiledLow8Bin1Products
-          ? fusedTiledLow8Bin1ProductsDetectorPartialsPipeline
-          : fusedTiledLow8Bin2ProductsDetectorPartialsPipeline
-      )
+      let fusedPipeline: MTLComputePipelineState
+      if usesFusedTiledLow8Bin1Products {
+        fusedPipeline = fusedTiledLow8Bin1ProductsDetectorPartialsPipeline
+      } else if usesFusedTiledLow8Bin2Products {
+        fusedPipeline = fusedTiledLow8Bin2ProductsDetectorPartialsPipeline
+      } else {
+        fusedPipeline = fusedTiledLow8Bin4ProductsDetectorPartialsPipeline
+      }
+      encoder.setComputePipelineState(fusedPipeline)
       encoder.setBuffer(scratch, offset: 0, index: 0)
       encoder.setBuffer(destination, offset: 0, index: 1)
       withUnsafeBytes(of: &fusedParameters) {
