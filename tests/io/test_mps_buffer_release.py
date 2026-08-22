@@ -326,6 +326,238 @@ def _release_test_arrays(be, *groups) -> None:
                 be._release_metal_buffer(buffer)
 
 
+def test_compact_native_output_recycle_preserves_exact_bytes_and_buffers(tmp_path):
+    """Explicit recycle reuses one exact destination generation, never aliases it."""
+    from quantem.gpu.io.backends.mps import decoder as be
+
+    values = (np.arange(6 * 64 * 64, dtype=np.uint16) % 997).reshape(6, 64, 64)
+    master = _write_bslz4_sharded_master(tmp_path, "recycle", values, split=3)
+    be.clear_mps_cache()
+    first = be.load_mps_4dstem(
+        str(master),
+        scan_shape=(2, 3),
+        compact=True,
+        compact_target_gb=0.00003,
+        verbose=False,
+    )
+    first_buffers = [be._buffer_key(chunk._mtl) for chunk in first.chunks]
+    np.testing.assert_array_equal(np.concatenate(first.chunks), values)
+
+    first.recycle()
+    assert first.chunks == []
+    second = be.load_mps_4dstem(
+        str(master),
+        scan_shape=(2, 3),
+        compact=True,
+        compact_target_gb=0.00003,
+        verbose=False,
+    )
+    try:
+        second_buffers = [be._buffer_key(chunk._mtl) for chunk in second.chunks]
+        assert second_buffers == first_buffers
+        np.testing.assert_array_equal(np.concatenate(second.chunks), values)
+    finally:
+        second.free()
+        be.clear_mps_cache()
+
+
+@pytest.mark.parametrize("bin_factor", [2, 4, 8])
+def test_binned_native_output_recycle_preserves_exact_sums_and_buffer(
+    tmp_path,
+    bin_factor,
+):
+    """Explicit recycle reuses one exact compatible binned destination."""
+    from quantem.gpu.io.backends.mps import decoder as be
+
+    values = (np.arange(6 * 64 * 64, dtype=np.uint16) % 100).reshape(6, 64, 64)
+    master = _write_bslz4_sharded_master(tmp_path, "binned-recycle", values, split=3)
+    expected = values.reshape(
+        6,
+        64 // bin_factor,
+        bin_factor,
+        64 // bin_factor,
+        bin_factor,
+    ).sum(axis=(2, 4), dtype=np.uint64).astype(np.uint16)
+
+    be.clear_mps_cache()
+    first = be.load_mps_4dstem(
+        str(master),
+        scan_shape=(2, 3),
+        det_bin=bin_factor,
+        verbose=False,
+    )
+    first_buffer = be._buffer_key(first.chunks[0]._mtl)
+    np.testing.assert_array_equal(first.chunks[0], expected)
+
+    first.recycle()
+    assert first.chunks == []
+    second = be.load_mps_4dstem(
+        str(master),
+        scan_shape=(2, 3),
+        det_bin=bin_factor,
+        verbose=False,
+    )
+    try:
+        assert be._buffer_key(second.chunks[0]._mtl) == first_buffer
+        np.testing.assert_array_equal(second.chunks[0], expected)
+    finally:
+        second.free()
+        be.clear_mps_cache()
+
+
+def test_binned_native_output_recycle_rejects_incompatible_size(tmp_path):
+    """A cross-bin load releases, rather than aliases, a recycled destination."""
+    from quantem.gpu.io.backends.mps import decoder as be
+
+    values = (np.arange(6 * 64 * 64, dtype=np.uint16) % 100).reshape(6, 64, 64)
+    master = _write_bslz4_sharded_master(tmp_path, "recycle-size", values, split=3)
+    expected_bin4 = values.reshape(6, 16, 4, 16, 4).sum(
+        axis=(2, 4),
+        dtype=np.uint64,
+    ).astype(np.uint16)
+
+    be.clear_mps_cache()
+    first = be.load_mps_4dstem(
+        str(master),
+        scan_shape=(2, 3),
+        det_bin=2,
+        verbose=False,
+    )
+    decoder = first.chunks[0]._recycle_decoder
+    first.recycle()
+    assert len(decoder._resident_output_recycle_pool) == 1
+
+    second = be.load_mps_4dstem(
+        str(master),
+        scan_shape=(2, 3),
+        det_bin=4,
+        verbose=False,
+    )
+    try:
+        assert decoder._resident_output_recycle_pool == []
+        assert second.chunks[0].nbytes == expected_bin4.nbytes
+        np.testing.assert_array_equal(second.chunks[0], expected_bin4)
+    finally:
+        second.free()
+        be.clear_mps_cache()
+
+
+def test_binned_recycled_output_is_released_after_source_failure(
+    tmp_path,
+    monkeypatch,
+):
+    """A failed reload frees its retired destination before the next load."""
+    from quantem.gpu.io.backends.mps import decoder as be
+
+    values = (np.arange(6 * 64 * 64, dtype=np.uint16) % 100).reshape(6, 64, 64)
+    master = _write_bslz4_sharded_master(tmp_path, "recycle-failure", values, split=3)
+    expected = values.reshape(6, 32, 2, 32, 2).sum(
+        axis=(2, 4),
+        dtype=np.uint64,
+    ).astype(np.uint16)
+
+    be.clear_mps_cache()
+    first = be.load_mps_4dstem(
+        str(master),
+        scan_shape=(2, 3),
+        det_bin=2,
+        verbose=False,
+    )
+    decoder = first.chunks[0]._recycle_decoder
+    retired_buffer_key = be._buffer_key(first.chunks[0]._mtl)
+    first.recycle()
+
+    released_buffer_keys = []
+    release_metal_buffer = be._release_metal_buffer
+
+    def record_release(buffer) -> None:
+        if buffer is not None:
+            released_buffer_keys.append(be._buffer_key(buffer))
+        release_metal_buffer(buffer)
+
+    monkeypatch.setattr(be, "_release_metal_buffer", record_release)
+    read_chunk = decoder._read_chunk
+    read_count = 0
+
+    def fail_second_source_read(*args, **kwargs):
+        nonlocal read_count
+        read_count += 1
+        if read_count == 2:
+            raise OSError("injected second-shard read failure")
+        return read_chunk(*args, **kwargs)
+
+    with monkeypatch.context() as read_failure:
+        read_failure.setattr(decoder, "_read_chunk", fail_second_source_read)
+        with pytest.raises(OSError, match="second-shard read failure"):
+            be.load_mps_4dstem(
+                str(master),
+                scan_shape=(2, 3),
+                det_bin=2,
+                verbose=False,
+            )
+
+    assert released_buffer_keys.count(retired_buffer_key) == 1
+    assert decoder._resident_output_recycle_pool == []
+    assert decoder._out_mtl is None
+    assert decoder._out_np is None
+    assert decoder._out_nbytes == 0
+
+    second = be.load_mps_4dstem(
+        str(master),
+        scan_shape=(2, 3),
+        det_bin=2,
+        verbose=False,
+    )
+    try:
+        np.testing.assert_array_equal(second.chunks[0], expected)
+    finally:
+        second.free()
+        be.clear_mps_cache()
+
+
+def test_binned_preallocation_failure_preserves_prior_live_output(
+    tmp_path,
+    monkeypatch,
+):
+    """A validation failure must not release a result owned by an earlier call."""
+    from quantem.gpu.io.backends.mps import decoder as be
+
+    values = (np.arange(6 * 64 * 64, dtype=np.uint16) % 100).reshape(6, 64, 64)
+    master = _write_bslz4_sharded_master(tmp_path, "prior-output", values, split=3)
+
+    be.clear_mps_cache()
+    prior = be.load_master(str(master), verbose=False)
+    decoder = next(iter(be._decompressor_cache.values()))
+    prior_mtl = decoder._out_mtl
+    prior_buffer_key = be._buffer_key(prior_mtl)
+    released_buffer_keys = []
+    release_metal_buffer = be._release_metal_buffer
+
+    def record_release(buffer) -> None:
+        if buffer is not None:
+            released_buffer_keys.append(be._buffer_key(buffer))
+        release_metal_buffer(buffer)
+
+    monkeypatch.setattr(be, "_release_metal_buffer", record_release)
+    try:
+        with pytest.raises(FileNotFoundError):
+            decoder.load_binned_masked(
+                str(tmp_path / "missing-master.h5"),
+                2,
+                verbose=False,
+            )
+
+        assert prior_buffer_key not in released_buffer_keys
+        np.testing.assert_array_equal(prior, values)
+        assert decoder._out_mtl is None
+        assert decoder._out_np is None
+        assert decoder._out_nbytes == 0
+    finally:
+        if prior_buffer_key not in released_buffer_keys:
+            release_metal_buffer(prior_mtl)
+        be.clear_mps_cache()
+
+
 @pytest.mark.parametrize("bin_factor", [2, 4, 8])
 def test_fused_bslz4_bins_preserve_exact_counts_and_declared_u8(
     tmp_path,
