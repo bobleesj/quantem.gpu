@@ -15,6 +15,7 @@ which optimizations were accepted, rejected, or remain provisional.
 | [Revision and change ledger](changes.md) | Latest documentation changes, implementation baselines, and why a retained number changed or remained historical |
 | [Backend coverage](../backends.md) | Capability and implementation-source status without duplicated timing tables |
 | [Native Swift and Metal](../platforms/swift-metal.md) | SwiftPM product structure, exact resident-summary contract, ownership boundary, and links to retained timing |
+| [Python MPS](../platforms/mps.md) | Direct-Metal output lifetime, resident-versus-driver memory accounting, profiling fields, and focused checks |
 | [Benchmark methodology](methodology.md) | Required timing stages, cold/warm definitions, memory reporting, and acceptance rules |
 | [Continuous profiling](continuous-profiling.md) | PR smoke, weekly physical profiles, manual signoff, comparison keys, run registry, and regression decisions |
 | [Cross-backend parity](parity.md) | Exact integer contracts, floating metrics, fixtures, and hardware gates |

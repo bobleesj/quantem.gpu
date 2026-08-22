@@ -198,7 +198,7 @@ def test_dashboard_is_the_dense_human_overview() -> None:
 
     for dashboard_value, results_value in (
         ("0.386 s", "0.386 s"),
-        ("0.605 s", "0.605 s"),
+        ("0.903 s", "0.902767 s"),
         ("0.824 s", "0.824 s"),
         ("6.711 s", "6.711 s"),
         ("20.803 ms", "20.803 ms"),
@@ -266,7 +266,7 @@ def test_intro_routes_to_benchmarks_without_copying_them() -> None:
     for copied_time in (
         "0.029 s",
         "0.386 s",
-        "0.605 s",
+        "0.903 s",
         "0.824 s",
         "0.578 s",
         "119.040 ms",
@@ -337,7 +337,22 @@ def test_platform_first_io_tables_expose_current_bins_devices_and_dates() -> Non
         for line in load_section.splitlines()
         if line.startswith("| [**") or line.startswith("| **CPU reference**")
     ]
-    assert len(rows) == 18
+    assert len(rows) == 21
+
+    mps_rows = [row for row in rows if "Python MPS" in row[0]]
+    assert len(mps_rows) == 8
+    assert {
+        (int(row[4]), row[9], row[13], row[14], row[16]) for row in mps_rows
+    } == {
+        (1, "Fresh process; warm source pages", "**1.163 s**", "**18.00 GiB**", "**19.815 GiB**"),
+        (2, "Fresh process; warm source pages", "**1.320 s**", "**4.50 GiB**", "**5.933 GiB**"),
+        (4, "Fresh process; warm source pages", "**1.220 s**", "**1.125 GiB**", "**2.558 GiB**"),
+        (8, "Fresh process; warm source pages", "**1.229 s**", "**0.28125 GiB**", "**1.714 GiB**"),
+        (1, "Warm process/source; output freed", "**0.903 s**", "**18.00 GiB**", "**19.815 GiB**"),
+        (2, "Warm process/source; output freed", "**0.907 s**", "**4.50 GiB**", "**5.933 GiB**"),
+        (4, "Warm process/source; output freed", "**0.764 s**", "**1.125 GiB**", "**2.558 GiB**"),
+        (8, "Warm process/source; output freed", "**0.751 s**", "**0.28125 GiB**", "**1.714 GiB**"),
+    }
 
     webgpu_rows = [row for row in rows if "WebGPU" in row[0]]
     observed = {
@@ -355,6 +370,70 @@ def test_platform_first_io_tables_expose_current_bins_devices_and_dates() -> Non
         assert historical not in load_section
     assert "Measured load configurations" not in intro
     assert "Device tested" not in intro
+
+
+def test_load_memory_rows_separate_payload_from_measured_peak() -> None:
+    dashboard = Path("docs/dashboard.md").read_text(encoding="utf-8")
+    load_section = dashboard.split("### Measured load configurations", 1)[1].split(
+        "(dtype-support-and-peak-memory)=", 1
+    )[0]
+    lines = [line for line in load_section.splitlines() if line.startswith("|")]
+    headers = [cell.strip() for cell in lines[0].strip("|").split("|")]
+    assert "Resident payload" in headers
+    assert "Peak boundary" in headers
+    assert "Measured peak" in headers
+
+    rows = [
+        [cell.strip() for cell in line.strip("|").split("|")]
+        for line in lines[2:]
+        if line.startswith("| [**") or line.startswith("| **CPU reference**")
+    ]
+    payload_index = headers.index("Resident payload")
+    boundary_index = headers.index("Peak boundary")
+    peak_index = headers.index("Measured peak")
+    bin_index = headers.index("Detector bin")
+    state_index = headers.index("Cache/process state")
+
+    expected = {
+        "CUDA": {
+            1: ("**18.00 GiB**", "**21.215 GiB**"),
+            2: ("**9.00 GiB**", "**11.561 GiB**"),
+            4: ("**2.25 GiB**", "**3.756 GiB**"),
+            8: ("**0.5625 GiB**", "**1.805 GiB**"),
+        },
+        "Python MPS": {
+            1: ("**18.00 GiB**", "**19.815 GiB**"),
+            2: ("**4.50 GiB**", "**5.933 GiB**"),
+            4: ("**1.125 GiB**", "**2.558 GiB**"),
+            8: ("**0.28125 GiB**", "**1.714 GiB**"),
+        },
+        "WebGPU": {
+            1: ("**9.00 GiB**", "**5.020 GiB**"),
+            2: ("**9.00 GiB**", "**5.363 GiB**"),
+            4: ("**2.25 GiB**", "**5.188 GiB**"),
+            8: ("**0.5625 GiB**", "**5.184 GiB**"),
+        },
+        "CPU reference": {
+            1: ("**18.00 GiB**", "**36.450 GiB**"),
+            2: ("**4.50 GiB**", "**9.634 GiB**"),
+            4: ("**1.125 GiB**", "**2.978 GiB**"),
+            8: ("**0.28125 GiB**", "**2.034 GiB**"),
+        },
+    }
+    for row in rows:
+        if "Native Swift/Metal" in row[0]:
+            continue
+        platform = next(name for name in expected if name in row[0])
+        detector_bin = int(row[bin_index])
+        assert (row[payload_index], row[peak_index]) == expected[platform][detector_bin]
+        if platform == "Python MPS":
+            assert row[boundary_index] == "Sampled Metal driver"
+            assert "output freed" in row[state_index] or "Fresh process" in row[state_index]
+
+    native = next(row for row in rows if "Native Swift/Metal" in row[0])
+    assert native[payload_index] == "**18.00 GiB**"
+    assert native[peak_index] == "**>=18.571 GiB**"
+    assert "sampled peak pending" in native[boundary_index]
 
 def test_dashboard_small_gpu_numbers_match_the_screening_planner() -> None:
     from quantem.gpu.screening.workflow import _memory_plan_for_shapes
@@ -438,6 +517,7 @@ def test_load_dtype_docs_keep_precision_and_peak_memory_distinct() -> None:
     io_api = Path("docs/api/io.md").read_text(encoding="utf-8")
     load_kernel = Path("docs/kernels/load-decode-bin.md").read_text(encoding="utf-8")
     methodology = Path("docs/performance/methodology.md").read_text(encoding="utf-8")
+    mps = Path("docs/platforms/mps.md").read_text(encoding="utf-8")
     native_api = Path("docs/api/native_4dstem_io.md").read_text(encoding="utf-8")
     public_load = Path("src/quantem/gpu/io/load.py").read_text(encoding="utf-8")
 
@@ -449,8 +529,21 @@ def test_load_dtype_docs_keep_precision_and_peak_memory_distinct() -> None:
         assert "peak" in text.lower()
 
     assert '`dtype="u8"` requests saturating unsigned 8-bit browse counts' in dashboard
+    assert "| Resident payload | Peak boundary | Measured peak |" in dashboard
+    assert "19,327,352,832 bytes" in dashboard
+    assert "19.815 GiB" in dashboard
+    assert "Process RSS does not include every direct Metal" in dashboard
+    assert "maximum-count audit of 53" in dashboard
+    assert "8x8 exact" in dashboard
+    assert "sum is at most 3,392" in dashboard
+    assert "2.273 s" not in dashboard
     assert "values above 255" in io_api
     assert "Do not call a payload size “peak memory.”" in methodology
+    assert "Metal-driver allocation after output release" in methodology
+    assert "loaded.data.free()" in mps
+    assert "19,327,352,832 bytes (18.00 GiB)" in mps
+    assert "torch.mps.driver_allocated_memory()" in mps
+    assert "maximum possible sums 212, 848, and 3,392" in mps
     assert "unsigned 8-bit and unsigned 16-bit detector" in native_api
     assert '``"u8"`` requests a saturating browse output' in public_load
 
@@ -463,7 +556,7 @@ def test_narrow_tables_scroll_without_compressing_provenance_columns() -> None:
     assert ".pst-scrollable-table-container > table.table" in css
     assert "min-width: 52rem" in css
     assert "table.table:has(th:nth-child(15))" in css
-    assert "min-width: 112rem" in css
+    assert "min-width: 128rem" in css
 
 
 def test_platform_tables_have_dependency_free_local_filters() -> None:
@@ -474,6 +567,7 @@ def test_platform_tables_have_dependency_free_local_filters() -> None:
     assert "benchmark-tables.js" in config
     assert 'headers.indexOf("Platform")' in script
     assert 'headers.indexOf(columnName)' in script
+    assert '"Cache/process state"' in script
     assert 'row.hidden = !(textMatches && selectionsMatch)' in script
     assert "fetch(" not in script
     assert ".qgpu-table-tools" in css
@@ -549,6 +643,7 @@ def test_current_benchmarks_have_complete_provenance_rows() -> None:
 
     for heading in (
         "### Current warm load/decode/bin",
+        "### Current Python MPS lifecycle and memory audit",
         "### Current controlled native exact resident load",
         "### Current native exact resident summary",
         "### Current streamed screening",
@@ -573,7 +668,7 @@ def test_current_benchmarks_have_complete_provenance_rows() -> None:
     ]
     assert len(rows) == 16
     for row in rows:
-        assert row.count("|") == 13
+        assert row.count("|") == 15
         assert "2026" not in row  # date is profile-level and not duplicated per row
         assert "| Pass |" in row or "Exact" in row or "adjudicator" in row
 

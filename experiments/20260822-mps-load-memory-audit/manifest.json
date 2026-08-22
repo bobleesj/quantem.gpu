@@ -1,0 +1,130 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260822-mps-load-memory-audit",
+  "status": "completed",
+  "question": "Do fresh-process Python MPS full-scan loads reproduce the historical timing without accumulating unified-memory pressure, and what are the distinct logical resident, MPS allocator, Metal driver, process RSS, and system-pressure measurements?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260822-mps-load-memory-audit/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "be035c41dcfb9176f541843caf959eee66ae9c2e",
+    "entrypoint": "quantem.gpu.io.load with fresh-process memory sampler",
+    "dirty": false,
+    "diff_sha256": null,
+    "snapshot_path": "local-snapshot://quantem-gpu-mps-load-memory-audit/source"
+  },
+  "inputs": [
+    {
+      "dataset_id": "real-512x512x192x192-u16-bslz4-27shard-master-fixture-c",
+      "path": "private-fixture://full-512-u16-bslz4-27shard/master-c",
+      "sha256": "c9c0d968fae70b8911ae925d676b90007886970fa99fe296a47cfe07844bbfe9"
+    }
+  ],
+  "parameters": {
+    "source_identity_sha256": "9f0ddb932c631b63cb573c38d747fa41941ee585c5389d33bdafb4add962b768",
+    "source_shape": [512, 512, 192, 192],
+    "source_dtype": "uint16",
+    "audited_maximum_source_count": 53,
+    "maximum_exact_detector_bin_counts": {"2": 212, "4": 848, "8": 3392},
+    "output_dtype_scope": "uint16 is proven sufficient only for this audited source identity",
+    "scan_crop": null,
+    "detector_crop": null,
+    "scan_bin": 1,
+    "detector_bins": [1, 2, 4, 8],
+    "output_dtype": "uint16",
+    "timing_repetitions_per_bin": 7,
+    "process_policy": [
+      "one fresh Python process per timed load",
+      "one process per detector bin with one warm-up, seven timed loads, explicit MPSChunked4DSTEM.free after every load, and reusable decoder retained"
+    ],
+    "source_page_state": "warm operating-system source pages; no purge or F_NOCACHE",
+    "timing_boundary": "public io.load return after final MPS command-buffer completion",
+    "memory_fields": [
+      "logical resident bytes",
+      "torch MPS current allocated bytes after load",
+      "torch MPS peak current allocated bytes",
+      "Metal driver allocated bytes after load",
+      "Metal driver peak allocated bytes",
+      "Metal driver allocated bytes after output release",
+      "process peak RSS bytes",
+      "system free-memory percentage before and after",
+      "system swap used before and after"
+    ]
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "mps",
+    "gpu_ids": ["Apple M5 Max integrated GPU"],
+    "gpu_model": "Apple M5 Max, 40-core GPU, 128 GB unified memory",
+    "runtime": "PyTorch 2.13.0 MPS"
+  },
+  "outputs": [
+    {
+      "kind": "fresh-process timing and memory evidence",
+      "artifact": "mps-load-memory-fresh-process.json",
+      "path": "local-evidence://20260822-mps-load-memory-audit/mps-load-memory-fresh-process.json",
+      "sha256": "a332552a98d8bc718b30f083a6e4afd4c6e7d56f10cbb1e09639cfab0042bc0d",
+      "result": "seven fresh-process full-scan loads per detector bin with wall p50/p95/max, resident bytes, sampled Metal-driver peak, process RSS, pressure, swap, and stable selected-frame hashes"
+    },
+    {
+      "kind": "warm-process explicit-release timing and memory evidence",
+      "artifact": "mps-load-memory-warm-process.json",
+      "path": "local-evidence://20260822-mps-load-memory-audit/mps-load-memory-warm-process.json",
+      "sha256": "07affa9decf0a8c99ac10b32db961c2c2681f5baf5f91a151ea121d93811bb50",
+      "result": "seven same-process loads per detector bin with explicit output release; bin1 p50 0.902767 s, 18 GiB resident, 19.814835 GiB Metal-driver peak, and zero swap growth"
+    },
+    {
+      "kind": "exact sparse detector-bin and detector-product parity",
+      "artifact": "current-sparse-parity.json",
+      "path": "local-evidence://20260822-mps-load-memory-audit/current-sparse-parity.json",
+      "sha256": "96a986274dd2ba2b8f175d5003eabffc3c52e94d069f1c4e899d669e710832be",
+      "result": "512-position detector-bin 2/4/8 and bin4 total/BF/ADF/DF maximum absolute error 0"
+    },
+    {
+      "kind": "fresh-process benchmark harness",
+      "artifact": "run_mps_load_memory_audit.py",
+      "path": "local-evidence://20260822-mps-load-memory-audit/run_mps_load_memory_audit.py",
+      "sha256": "1ff6c57dbc45dede06b4c9284241dd5f6e7f3a730c63c259c20575d6234a9535",
+      "result": "retained executable harness for one-process-per-load timing and memory sampling"
+    },
+    {
+      "kind": "warm-process benchmark harness",
+      "artifact": "run_mps_warm_process_audit.py",
+      "path": "local-evidence://20260822-mps-load-memory-audit/run_mps_warm_process_audit.py",
+      "sha256": "0481e652038a1a91ebaa628bb1e9a5110d6232d598a007bbeeb801e111141fdb",
+      "result": "retained executable harness for warm-process timing with explicit MPSChunked4DSTEM output release"
+    },
+    {
+      "kind": "current-source parity harness",
+      "artifact": "parity_sparse_detbins_current.py",
+      "path": "local-evidence://20260822-mps-load-memory-audit/parity_sparse_detbins_current.py",
+      "sha256": "cc5e31aaa4137ff0f88623219705678241b9ba68ae1eb2d2963214cb9841baac",
+      "result": "retained current-revision parity harness with fixed seed and detector-bin/product checks"
+    }
+  ],
+  "results": {
+    "fresh_process": {
+      "1": {"p50_seconds": 1.162922, "p95_seconds": 1.232134, "maximum_seconds": 1.239148, "resident_bytes": 19327352832, "metal_driver_peak_bytes": 21276016640, "process_rss_maximum_bytes": 739196928},
+      "2": {"p50_seconds": 1.320150, "p95_seconds": 1.437594, "maximum_seconds": 1.452454, "resident_bytes": 4831838208, "metal_driver_peak_bytes": 6370410496, "process_rss_maximum_bytes": 626950144},
+      "4": {"p50_seconds": 1.220299, "p95_seconds": 1.276742, "maximum_seconds": 1.293782, "resident_bytes": 1207959552, "metal_driver_peak_bytes": 2746531840, "process_rss_maximum_bytes": 619200512},
+      "8": {"p50_seconds": 1.228915, "p95_seconds": 1.456881, "maximum_seconds": 1.457247, "resident_bytes": 301989888, "metal_driver_peak_bytes": 1840562176, "process_rss_maximum_bytes": 620822528}
+    },
+    "warm_process_explicit_release": {
+      "1": {"p50_seconds": 0.902767, "p95_seconds": 0.988826, "maximum_seconds": 1.005018, "resident_bytes": 19327352832, "metal_driver_peak_bytes": 21276016640, "metal_driver_after_release_bytes": 1948663808, "process_rss_maximum_bytes": 734314496},
+      "2": {"p50_seconds": 0.907045, "p95_seconds": 0.919356, "maximum_seconds": 0.920723, "resident_bytes": 4831838208, "metal_driver_peak_bytes": 6370410496, "metal_driver_after_release_bytes": 1538572288, "process_rss_maximum_bytes": 613384192},
+      "4": {"p50_seconds": 0.763949, "p95_seconds": 0.796346, "maximum_seconds": 0.801575, "resident_bytes": 1207959552, "metal_driver_peak_bytes": 2746531840, "metal_driver_after_release_bytes": 1538572288, "process_rss_maximum_bytes": 613990400},
+      "8": {"p50_seconds": 0.750592, "p95_seconds": 0.818166, "maximum_seconds": 0.823454, "resident_bytes": 301989888, "metal_driver_peak_bytes": 1840562176, "metal_driver_after_release_bytes": 1538572288, "process_rss_maximum_bytes": 609746944}
+    },
+    "swap_delta_bytes": 0,
+    "parity": "exact detector-bin 2/4/8 and exact bin-4 total/BF/ADF/DF on 512 fixed random positions; maximum absolute error 0",
+    "superseded_claim": "The 2026-08-19 repeated-load MPS bin-1 p50 of 2.273 seconds is pressure-contaminated because its harness did not explicitly release direct Metal output buffers."
+  },
+  "timestamps": {
+    "created": "2026-08-22T00:55:56-07:00",
+    "started": "2026-08-22T00:55:56-07:00",
+    "finished": "2026-08-22T08:10:16Z"
+  }
+}

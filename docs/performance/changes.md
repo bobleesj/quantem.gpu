@@ -6,9 +6,10 @@ measurement of the current code.
 
 - **Ledger reviewed:** 2026-08-22
 - **Integration base:** `334b7b5`
-- **Current clean local stack:** `c0ea444`
+- **Current clean local stack before this documentation follow-up:** `be035c4`
 - **Current measured checkouts:** cross-platform `8c47a466` (source tree
-  `c3094dcf`); native controlled-source `c0ea444`
+  `c3094dcf`); native controlled-source `c0ea444`; Python MPS lifecycle audit
+  `be035c4`
 - **Documentation branch:** `metal-cold-300ms`
 
 The native stack extends exact prepared QH5 binning (`e0e92b4`), optimized
@@ -21,6 +22,7 @@ Python MPS, WebGPU, source-load, or application measurement.
 
 | Commit | Change | Performance-number effect |
 |---|---|---|
+| Current MPS lifecycle-audit follow-up | Separates resident payload, sampled Metal-driver peak, process RSS, release-state allocation, pressure, and swap | replaces the pressure-contaminated 2026-08-19 MPS load headline with revision `be035c4` fresh-process and explicit-release warm-process rows; no loader arithmetic changed |
 | `c0ea444` | Aligned the raw benchmark state with explicit macOS `F_NOCACHE` control and sealed seven replacement runs | promotes a controlled uncached-source-page full-native package row; its distribution replaces schema v7 only because the older raw state was contradictory, not because the IO path changed |
 | `00ba8bd` | Reused the immutable source identity while preserving controlled source reads | kept the same exact source/load boundary; the later `c0ea444` run owns durable timing because its state label is internally consistent |
 | `3bb3845` | Added exact full-native detector-bin-1 loading into private Metal residency | established the 18 GiB exact resident path; later controlled-source runs own the current distribution |
@@ -51,6 +53,8 @@ The current values and distributions live only in
 
 | Evidence change | Current disposition | Why |
 |---|---|---|
+| `20260822-mps-load-memory-audit` | Promoted for Python MPS process-state and memory reporting | Seven fresh processes per detector bin and seven explicit-release warm-process repetitions preserve exact selected-frame hashes, record logical payload plus sampled Metal-driver peak, process RSS, pressure, and swap, and pass independent exact detector-bin/product parity. Source pages were warm and uncontrolled, so neither protocol is cold-storage evidence. |
+| `20260819-platform-profile-mps` load headline | Superseded, preserved | Its repeated-load harness cleared the Torch cache but did not call `MPSChunked4DSTEM.free()` on direct PyObjC Metal outputs. Full bin1 accumulated roughly 18 GiB per repetition, free memory fell from 86% to 41%, and p50 rose to 2.273 s. The artifact remains useful as pressure-failure evidence, not current loader timing. |
 | `0822-97-fnocache-provenance-v8` | Promoted as controlled native package evidence | Seven fresh processes use a new index root, fresh private destination, and explicit `F_NOCACHE` source descriptors; volume and product hashes are exact. It is an audited-source package boundary, not arbitrary-source cold or application E2E, and the detailed result remains above the requested target. |
 | `0821-96-bin1-controlled-cold` schema v7 | Superseded, preserved | Its command applied `F_NOCACHE` but the raw state token said source pages were unspecified. The timing and raw trials remain retained; schema v8 replaces it only for state-consistent reporting. |
 | `20260819-air-exact-resident-summary` | Promoted as separate native Swift/Metal prepared-product evidence | Seven fresh-process reopens reproduce nine same-device products byte-for-byte on Phil and the physical 8 GB M2 Air. Summary creation, prepared reopen, resident load, compressed-source load, and GUI paint remain distinct boundaries. |
