@@ -31,6 +31,18 @@ It contains one cell for every capability/backend pair in the
 gaps. The registry is validated in PR CI; physical timing remains on the named
 hardware owner.
 
+The schedule is intentionally coarse. Exact computer, scan, detector, bin,
+dtype, cache state, timing boundary, memory, and parity gates live in the
+[benchmark coverage registry](coverage.md). That registry includes unrun rows
+and maps every open gate to a repository-owned command. Query it instead of
+copying an old experiment command:
+
+```bash
+python scripts/benchmark_registry.py next --limit 10
+python scripts/benchmark_registry.py show GATE_ID
+python scripts/benchmark_registry.py command GATE_ID
+```
+
 ## Four execution tiers
 
 | Tier | Runs when | What it proves | What it cannot prove |
@@ -80,13 +92,15 @@ reopen, and a native-detector source are four different scientific states.
 
 Before a run starts:
 
-1. Write a falsifiable question.
-2. Add a `running` row to
+1. Choose an exact gate with `benchmark_registry.py next` and inspect its
+   runbook with `benchmark_registry.py command GATE_ID`.
+2. Write a falsifiable question.
+3. Add a `running` row to
    [`experiments/RUNS.md`](https://github.com/bobleesj/quantem.gpu/blob/main/experiments/RUNS.md).
-3. Create `experiments/<id>/manifest.json` with the source revision, dirty diff,
+4. Create `experiments/<id>/manifest.json` with the source revision, dirty diff,
    input identities, parameters, host/device, cache state, and planned outputs.
-4. Check accelerator ownership and run one smoke configuration.
-5. Stop immediately if the smoke violates parity, memory admission, or device
+5. Check accelerator ownership and run one smoke configuration.
+6. Stop immediately if the smoke violates parity, memory admission, or device
    ownership.
 
 When the run ends:
@@ -104,7 +118,10 @@ Validate the plan and registry locally with:
 
 ```bash
 python scripts/check_profile_registry.py
-PYTHONPATH=src python -m pytest -q tests/test_profile_registry.py
+python scripts/benchmark_registry.py validate
+PYTHONPATH=src python -m pytest -q \
+  tests/test_profile_registry.py \
+  tests/test_benchmark_registry.py
 ```
 
 ## Regression decisions

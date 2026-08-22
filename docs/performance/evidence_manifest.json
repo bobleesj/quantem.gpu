@@ -11,7 +11,7 @@
     },
     {
       "path": "docs/dashboard.md",
-      "sha256": "9b38c1eb5f7756ece1d353e086b2266d18da270add2810e9e5c8a0dbbc98570a",
+      "sha256": "379955dec234257b7c70a1f9728bd33bd3583b1f98e2fd93e7c05950404a0a2c",
       "role": "Single human-facing current capability, speed, memory, and parity overview"
     },
     {
@@ -40,6 +40,11 @@
       "role": "Capability and implementation-source map without copied timings"
     },
     {
+      "path": "docs/performance/coverage.md",
+      "sha256": "a39a054b4d30f43d7a258be0200118bb626749f32ea08191c420610f23899fe6",
+      "role": "Filterable exact benchmark gates, retained measurements, missing coverage, and reproducible runbooks"
+    },
+    {
       "path": "docs/performance/results.md",
       "sha256": "600d0087124662c4077716bc533224501b1dcfb784a5c754ccbb9536c6b3f8d8",
       "role": "Authoritative current benchmark provenance ledger"
@@ -56,7 +61,7 @@
     },
     {
       "path": "docs/performance/continuous-profiling.md",
-      "sha256": "f38ba526825b9e437ffee0028153b68a071b9789a3e22deeec2241c92ce29122",
+      "sha256": "243988f682286ad4db72dc83a3507d7f6cba14714431ce679c588f88b5261838",
       "role": "Cross-platform cadence, comparison-key, run-registry, and promotion contract"
     },
     {
