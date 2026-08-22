@@ -1,0 +1,117 @@
+{
+  "schema": "quantem.gpu.cross-backend-verification/v1",
+  "coordinator_source_revision": "23d25619cfe22d5e89761fda2d2796a7c82ba090",
+  "checks": [
+    {
+      "command": "python3 -m json.tool experiments/20260822-cross-backend-optimization/manifest.json",
+      "result": "passed",
+      "status": "passed"
+    },
+    {
+      "command": "python3 scripts/check_profile_registry.py",
+      "result": "35 platform/module cells and 10 retained experiments at the frozen coordinator source",
+      "status": "passed"
+    },
+    {
+      "command": "PYTHONPATH=src pytest -q tests/test_profile_registry.py tests/test_docs_site.py",
+      "result": "36 passed",
+      "status": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "no whitespace errors",
+      "status": "passed"
+    },
+    {
+      "command": "recompute every referenced lane-manifest SHA-256",
+      "result": "11 of 11 declared manifest hashes matched",
+      "status": "passed"
+    },
+    {
+      "command": "inspect every retained lane worktree at its declared evidence revision",
+      "result": "10 of 10 retained lane worktrees were clean; MPS performance and cleanup share one clean evidence worktree",
+      "status": "passed"
+    },
+    {
+      "command": "git merge-base --is-ancestor for accepted source/evidence pairs",
+      "result": "All 10 retained source/evidence pairs plus the consolidated documentation evidence descend from their declared source revisions",
+      "status": "passed"
+    },
+    {
+      "command": "validate and build the consolidated documentation evidence index",
+      "result": "27 artifacts: 20 accepted, 5 refuted, 2 pending; 28 accepted atomic measurements; one refuted diagnostic; 14 unresolved cells; 36 focused tests, links, JSON, Ruff, diff hygiene, Jupyter Book build, visual review, and independent review passed",
+      "status": "passed"
+    },
+    {
+      "command": "scan public documentation and campaign report for private filesystem paths and private fixture labels",
+      "result": "no private path or dataset-name disclosure; only the validator's own forbidden-marker constants matched",
+      "status": "passed"
+    },
+    {
+      "command": "PYTHONPATH=src pytest -q tests/test_webgpu_sources.py and esbuild the preserved exact-integer WebGPU candidate",
+      "result": "10 passed; browser bundle passed; preserved full-index patch and untracked binner hashes matched hibernation",
+      "status": "passed"
+    },
+    {
+      "command": "run the exact-integer WebGPU scratch harness on Phil hardware",
+      "result": "physical Apple M5 Max Metal-3 adapter; complete small outputs byte exact; uint32 overflow plan rejected; all 4800000 outputs in the 300000-scan tiled case exact",
+      "status": "passed-hardware-parity-only"
+    },
+    {
+      "command": "validate retained WebGPU reproduction bundle and private-path hygiene",
+      "result": "8 of 8 retained-file hashes matched; raw final result matched the parent artifact; JavaScript and Python syntax passed; no private filesystem or fixture labels remained",
+      "status": "passed"
+    },
+    {
+      "command": "final Phil, Rodman, and MJGOAT process/GPU/memory audit",
+      "result": "no task-owned benchmark, browser, server, tunnel, or GPU process remained; unrelated relay and private GPU service preserved",
+      "status": "passed"
+    }
+  ],
+  "lane_manifest_sha256": {
+    "native-metal-private-fullnative": "e50076966dae25f51febc644a8b2dee85ec77e7837bb0ff92adf2b850d29b96f",
+    "mps-bin1-resident-lifecycle": "900e1e315fbf09c542e20ae2eb3db24bbce6837060be93d227d52c0f954eb695",
+    "webgpu-fullnative-com-dpc-idpc": "17e3b7bdc2daa96b0e5a76a613a660abbc8e90956a9b0fc4b85cf6bcc1b96daa",
+    "cuda-exact-screening": "5ca64a28a0915d00b94422efc0f1c4108f4f1b5c2eaa66569afe660ff935b6ba",
+    "cuda-screening-result-cache": "974b84364577f2e8043562d477e4b873d5a761fe3c253d654965af1a6f250ea3",
+    "selective-loading-contract-audit": "f7496356cdef6ce56ad2c98dc47e30394cd4e689e183f21ca170875283fc94ab",
+    "webgpu-fullnative-batch2-overlap": "7d3a462debcb1e4752a4bfe4ae5b835d9b0d80349be6fe524752d16becaa258a",
+    "mps-binned-resident-lifecycle": "e2b57949709c2bf70d0b987b3ca9a83950c8d80d92eaef1cfce850ab010cc7f9",
+    "mps-binned-failure-cleanup": "4cac5fa7f9cdb647f7e943e46bff27e6244459702b35680d2dde39ba0027a4ac",
+    "cuda-screening-pinned-slot-reuse": "2103a425526ebd2caf15d053867a6d8526481f9e833e19047bcaaf0e49c304de",
+    "webgpu-rectangle-selective-io": "98e1b24a4f80885213477aaaccc02cc60770284b3287a27cac6b66977ae26b59"
+  },
+  "consolidated_documentation": {
+    "revision": "9184aef2d0695b13be2fc1e30128a75cde05ddcc",
+    "manifest_sha256": "64ff960f1f7f46e49c9993e337202185986b14af2938300c98468b93b669ece9",
+    "evidence_index_sha256": "67922d42a0527bc71a40df0b742d906df497a9d878e9c1211b09719bb4e39bfe",
+    "report_sha256": "0799b040c1da4e569b67a1c5ebe61b993d0ec672693becab5a0451f46f4a1094",
+    "validation_sha256": "c0fad09527af6584bf403dfdb57e7259811e3c4ebc11e9de5a6989eb5eb4d20d",
+    "docs_evidence_manifest_sha256": "81608ee2020bfbe745d66f698182572f329afafa9adc36ee2aaeeebb5901b211"
+  },
+  "preserved_webgpu_exact_integer_followup": {
+    "base_revision": "a07121d7074d4146fcd1aa8d12ad2de8d47afcae",
+    "tracked_diff_sha256_full_index": "c702888cdee70d11fdadc1a1aa2c1206fd78bebdb99ba3b0541a74d7e174b1d4",
+    "untracked_binning_sha256": "5bdee03b8714d4afa418530fca94d4cb85a3e61f3e36bd23a028084e9d764692",
+    "artifact": "experiments/20260822-cross-backend-optimization/webgpu-exact-integer-hardware-followup.json",
+    "artifact_sha256": "91c7fe5284cafde87ab8319fac445d9cee0c6ebf281de9c2e8c1ed5967ada09c",
+    "status": "passed-hardware-parity-only; preserved dirty; not a consumer handoff"
+  },
+  "scientific_boundaries": {
+    "source_shape": [512, 512, 192, 192],
+    "source_dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bins": [1, 2, 4, 8],
+    "crop": null,
+    "precision": "exact integer counts and frozen full-precision floating-product contracts",
+    "forbidden_speed_shortcuts": [
+      "preview or sampling",
+      "scan crop or scan binning",
+      "hidden detector-bin escalation",
+      "downcast or lossy compression",
+      "reduced products",
+      "relaxed parity tolerances"
+    ]
+  },
+  "campaign_claim_boundary": "No accepted row proves arbitrary-source cold HDF5 or Live4DSTEM wall-to-wall performance. Prepared indexes, uncontrolled or warm source pages, resident-destination reuse, and prepared-result reopen remain separately labeled."
+}

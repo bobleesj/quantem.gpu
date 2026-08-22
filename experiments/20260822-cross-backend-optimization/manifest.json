@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "experiment_id": "20260822-cross-backend-optimization",
-  "status": "running",
+  "status": "completed",
   "question": "Can the remaining CUDA, MPS, native Swift/Metal, and hardware-WebGPU evidence gaps be closed or measurably accelerated on their owning physical devices while preserving exact source counts, declared geometry, full-precision products, calibration, metadata, and cache-state provenance?",
   "paper": {
     "authoritative_host": "phil",
@@ -10,9 +10,11 @@
   },
   "code": {
     "repository": "https://github.com/bobleesj/quantem.gpu",
-    "revision": "6df7237e7b90e4e6e2ee122f1082785a00ab844a",
+    "revision": "23d25619cfe22d5e89761fda2d2796a7c82ba090",
+    "revision_role": "clean coordinator source checkpoint; lane source and evidence revisions are recorded per output",
     "entrypoint": "backend-owned QuantEM.GPU load, detector-product, DPC/iDPC, screening, and SSB benchmark harnesses",
     "dirty": false,
+    "dirty_scope": "the frozen source checkpoint was clean; campaign report files are committed and sealed separately at completion",
     "diff_sha256": null,
     "snapshot_path": "local-snapshot://quantem-gpu-cross-backend-20260822/source"
   },
@@ -20,12 +22,45 @@
     {
       "dataset_id": "real-512x512x192x192-u16-bslz4-27shard-master-fixture-c",
       "path": "private-fixture://full-512-u16-bslz4-27shard/master-c",
-      "sha256": "c9c0d968fae70b8911ae925d676b90007886970fa99fe296a47cfe07844bbfe9"
+      "sha256": "c9c0d968fae70b8911ae925d676b90007886970fa99fe296a47cfe07844bbfe9",
+      "source_identity_sha256": "9f0ddb932c631b63cb573c38d747fa41941ee585c5389d33bdafb4add962b768"
+    },
+    {
+      "dataset_id": "webgpu-fullnative-source-identity",
+      "path": "local-evidence://platform-profile-20260819/webgpu-cpu/hdf5_source_identity.json",
+      "sha256": "8f4c5dc54d15433cf8be3087c94d42e0de4fdafbaec6a47b0bf3256fcbfc0de7"
+    },
+    {
+      "dataset_id": "webgpu-fullnative-fixture-view",
+      "path": "local-evidence://platform-profile-20260819/webgpu-cpu/fixture-view",
+      "sha256": "1be810b96fdff8e384ad4cb6ebd49adff9b4ab0a6503cd5fed9106e09f5aa286"
+    },
+    {
+      "dataset_id": "webgpu-fullnative-cpu-product-reference",
+      "path": "local-evidence://platform-profile-20260819/webgpu-cpu/cpu-reference/dpc-reference",
+      "sha256": "3bfcf8be8f9066a775bdbc6ed3609d0f0a102ff765959a406087977703a3dbd3"
+    },
+    {
+      "dataset_id": "real-512-native-detector-master",
+      "path": "private-fixture://real-512-native-detector/master",
+      "sha256": "4802ec16ba241fef439e9dcb1c28e94f9cf9d95f773df9c5c8c3b5f7ed8192c4",
+      "complete_fixture_hash_manifest_sha256": "fb48f4286ae6551801546e8e52d47b51182ca8b9f73aa6ad49219850cec98bdc"
+    },
+    {
+      "dataset_id": "cuda-exact-screening-reference-v3",
+      "path": "local-evidence://cuda-screening-20260822/reference-screening-v3.npz",
+      "sha256": "997707efafe3a2bba1bdc8c9d537c0019aaa5c66dc8bd6d10baae263fc81c89d"
     },
     {
       "dataset_id": "frozen-backend-parity-matrix",
       "path": "tests/parity/backend_matrix.json",
       "sha256": "f521c37931f68cec91a5df8d7f4c44387031bf6036187d1e3431bb7b5e31b5af"
+    },
+    {
+      "dataset_id": "synthetic-webgpu-exact-integer-300000x8x8-u16-ones",
+      "path": "generated://300000-scan-8x8-uint16-ones",
+      "sha256": "03a0e6aca5cafed5239f45607d2785fa408bb57b5f1c2f8e088b7f0fa122b268",
+      "expected_output_sha256": "0c2bd9a7d0a38ac3d5c7b590512882bcf90b66449cbd2a5254882846f69200ae"
     }
   ],
   "parameters": {
@@ -56,6 +91,7 @@
       "ssb.calibration-200-nelder-mead::mps"
     ],
     "timing_policy": "cold original source, first usable product, exact complete, warm source reopen, and prepared-cache reopen remain separate; every accepted result retains p50, p95, maximum, run-level records, memory, and cache state",
+    "cross_lane_fixture_policy": "Each output names its exact input_ids. Cross-lane timing comparisons are not fixture-controlled unless those identifiers and hashes match.",
     "host_policy": "Phil owns source and Apple profiling; Rodman is the physical 24 GB full-native gate; MJGOAT owns CUDA and source data; unrelated jobs are never displaced",
     "run_root": "local-evidence://cross-backend-optimization-20260822"
   },
@@ -69,10 +105,236 @@
     ],
     "gpu_model": "physical owner devices; no cross-device substitution"
   },
-  "outputs": [],
+  "outputs": [
+    {
+      "artifact": "native-metal-private-fullnative",
+      "input_ids": ["real-512x512x192x192-u16-bslz4-27shard-master-fixture-c"],
+      "source_revision": "531e5001f5a0a886c058f772ef42d770f000890b",
+      "evidence_revision": "afd5e06b2afa2c9c30e69ff5dc8d7825c28068f1",
+      "path": "local-manifest://20260822-metal-private-output-bin1",
+      "sha256": "e50076966dae25f51febc644a8b2dee85ec77e7837bb0ff92adf2b850d29b96f",
+      "status": "accepted",
+      "result": "Twelve exact ABBA loads; private full-native Metal p50 0.313870 s versus shared 0.530581 s, complete 18 GiB plus seven products exact, 19.941 GB Metal, 0.685 GB RSS, and zero swap growth"
+    },
+    {
+      "artifact": "mps-bin1-resident-lifecycle",
+      "input_ids": ["real-512x512x192x192-u16-bslz4-27shard-master-fixture-c"],
+      "source_revision": "e8293a1f2b9eef6ddccd2ed06ab6820008480e82",
+      "evidence_revision": "b7c22861ab3d987ca4e7076c791c195c735298f7",
+      "path": "local-manifest://20260822-mps-bin1-resident-lifecycle",
+      "sha256": "900e1e315fbf09c542e20ae2eb3db24bbce6837060be93d227d52c0f954eb695",
+      "status": "accepted",
+      "result": "Eight trials per ABBA arm; explicit caller-owned destination recycle reduced exact full-native warm-process p50 from 0.425533 to 0.259189 s with 19.801 GB Metal, about 0.738 GB RSS, and zero swap growth"
+    },
+    {
+      "artifact": "webgpu-fullnative-com-dpc-idpc",
+      "input_ids": [
+        "real-512-native-detector-master",
+        "webgpu-fullnative-source-identity",
+        "webgpu-fullnative-cpu-product-reference"
+      ],
+      "source_revision": "64b6eec675e566cc5b4f31343dc660788f10ee48",
+      "evidence_revision": "08c071fe96ab5afc725da6725c2afe72b2945e4b",
+      "path": "local-manifest://20260822-webgpu-com-idpc-fullnative-phil",
+      "sha256": "17e3b7bdc2daa96b0e5a76a613a660abbc8e90956a9b0fc4b85cf6bcc1b96daa",
+      "status": "accepted",
+      "result": "Physical Apple Metal-3 full-native load 1.080860 s from a prepared index with OS source-page state uncontrolled/unspecified and no eviction performed; DPC row and column byte exact, frozen iDPC gate passed, resident kernel p50 0.700/0.700/1.400 ms, 6.835 GB Chrome-tree RSS, and zero swap growth"
+    },
+    {
+      "artifact": "cuda-exact-screening",
+      "input_ids": [
+        "real-512-native-detector-master",
+        "cuda-exact-screening-reference-v3"
+      ],
+      "source_revision": "5ee2016e21528bcc05bf26801c3ff6b244359e21",
+      "evidence_revision": "47bb6e4276afde0387475b063a9744aba7f0b421",
+      "path": "local-manifest://20260822-cuda-exact-screening",
+      "sha256": "5ca64a28a0915d00b94422efc0f1c4108f4f1b5c2eaa66569afe660ff935b6ba",
+      "status": "accepted",
+      "result": "Exact contiguous-plan screening reduced warm-source wall p50 from 1.317555 to 1.208146 s and exact-complete p50 from 1.300837 to 1.104858 s; six arrays byte exact under the bounded 6 GiB process-reserve contract"
+    },
+    {
+      "artifact": "cuda-screening-result-cache",
+      "input_ids": ["real-512-native-detector-master"],
+      "source_revision": "8258ac2c62f9cc3c2739027352411df3bb3eae19",
+      "evidence_revision": "91ef7c7e3528aaa8dbaa4e19ed48e05d939097bc",
+      "path": "local-manifest://20260822-cuda-screening-cache-reopen",
+      "sha256": "974b84364577f2e8043562d477e4b873d5a761fe3c253d654965af1a6f250ea3",
+      "status": "accepted-after-refutation",
+      "result": "Exact prepared-result reopen p50/p95/max 0.005599/0.005771/0.005790 s versus 0.092367/0.093650/0.093792 s; six arrays byte exact, zero swap, and any master-path alias change fails closed to full HDF5 inspection"
+    },
+    {
+      "artifact": "selective-loading-contract-audit",
+      "input_ids": ["frozen-backend-parity-matrix"],
+      "evidence_revision": "58577c81390419d6237465092d50a8fb80dbe36d",
+      "path": "local-manifest://20260822-selective-load-contract-audit",
+      "sha256": "f7496356cdef6ce56ad2c98dc47e30394cd4e689e183f21ca170875283fc94ab",
+      "status": "accepted-source-audit; hardware performance incomplete",
+      "result": "CUDA and Python MPS provide true rectangular, arbitrary-order, and duplicate selective compressed-range reads; Swift lacks bulk selection and WebGPU remains rectangle-only. Physical WebGPU rectangle timing is now qualified separately, while comparable cross-backend physical timing remains pending"
+    },
+    {
+      "artifact": "morning-evidence-index",
+      "input_ids": [
+        "real-512x512x192x192-u16-bslz4-27shard-master-fixture-c",
+        "webgpu-fullnative-source-identity",
+        "webgpu-fullnative-fixture-view",
+        "webgpu-fullnative-cpu-product-reference",
+        "real-512-native-detector-master",
+        "cuda-exact-screening-reference-v3",
+        "frozen-backend-parity-matrix"
+      ],
+      "evidence_revision": "9184aef2d0695b13be2fc1e30128a75cde05ddcc",
+      "path": "local-evidence://20260822-morning-evidence-index/evidence-index.json",
+      "sha256": "67922d42a0527bc71a40df0b742d906df497a9d878e9c1211b09719bb4e39bfe",
+      "status": "accepted-source-only-reconciliation",
+      "result": "Twenty-seven immutable artifacts reconciled as 20 accepted, 5 refuted, and 2 pending with 28 accepted atomic metrics, one refuted diagnostic, zero source placeholders, and 14 explicit gaps; documentation build and independent review passed"
+    },
+    {
+      "artifact": "webgpu-fullnative-batch2-overlap",
+      "input_ids": [
+        "real-512-native-detector-master",
+        "webgpu-fullnative-fixture-view",
+        "webgpu-fullnative-cpu-product-reference"
+      ],
+      "source_revision": "64b6eec675e566cc5b4f31343dc660788f10ee48",
+      "evidence_revision": "75eec9cccd5c1a9814068a83a23e67253227a363",
+      "path": "local-manifest://20260822-webgpu-fullnative-load-subsecond",
+      "sha256": "7d3a462debcb1e4752a4bfe4ae5b835d9b0d80349be6fe524752d16becaa258a",
+      "status": "refuted",
+      "result": "Exact batch-2 overlap p50/p95/max 1.128484/1.140200/1.141501 s reduced internal work and Chrome-tree RSS but remained slower than the retained accepted 1.080860 s full-native WebGPU load; no production source change was promoted"
+    },
+    {
+      "artifact": "mps-binned-resident-lifecycle",
+      "input_ids": ["real-512x512x192x192-u16-bslz4-27shard-master-fixture-c"],
+      "source_revision": "b7f8ef3ff2a2d8458944e1e55a3296a39c854357",
+      "evidence_revision": "3fbd87a53acc1f4ab165b841175681b166bcb629",
+      "path": "local-manifest://20260822-mps-binned-resident-lifecycle",
+      "sha256": "e2b57949709c2bf70d0b987b3ca9a83950c8d80d92eaef1cfce850ab010cc7f9",
+      "status": "accepted-performance-evidence; cleanup-closed-by-follow-up; bin8-timing-inconclusive",
+      "result": "Caller-owned destination recycle reduced detector-bin-2 p50/p95/max from 0.462541/0.479014/0.483058 to 0.359606/0.361384/0.361995 s and bin-4 from 0.384264/0.385355/0.385638 to 0.352990/0.355048/0.355062 s; ABBA selected-frame hashes and a separate complete-volume smoke passed, the exception-cleanup blocker is closed by source 3c4d903e and evidence 08e50c5b, and bin-8 timing was not promoted"
+    },
+    {
+      "artifact": "mps-binned-failure-cleanup",
+      "input_ids": ["real-512x512x192x192-u16-bslz4-27shard-master-fixture-c"],
+      "source_revision": "3c4d903ea62e5e7b19c760efde908c75544b5eba",
+      "evidence_revision": "08e50c5baab0ad3ff492a48ff1ff4b723a9da876",
+      "path": "local-manifest://20260822-mps-binned-failure-cleanup",
+      "sha256": "4cac5fa7f9cdb647f7e943e46bff27e6244459702b35680d2dde39ba0027a4ac",
+      "status": "accepted",
+      "result": "Injected pre-allocation and second-shard failures preserve prior caller-owned output, wait for committed Metal work, release the failed invocation's recycled destination exactly once, and permit a subsequent exact load; full 4,831,838,208-byte bin-2 parity and memory passed, while the single 0.362440 s recycled smoke is retained only as non-regression evidence"
+    },
+    {
+      "artifact": "cuda-screening-pinned-slot-reuse",
+      "input_ids": [
+        "real-512-native-detector-master",
+        "cuda-exact-screening-reference-v3"
+      ],
+      "source_revision": "023a6c497b106b216c87205d3fbec63377d77177",
+      "evidence_revision": "5bcc89ebdb77663ea8c035a255a218079ee1ab31",
+      "path": "local-manifest://20260822-cuda-screening-pinned-slot-audit",
+      "sha256": "2103a425526ebd2caf15d053867a6d8526481f9e833e19047bcaaf0e49c304de",
+      "status": "accepted",
+      "result": "Bounded 4 MiB large-buffer registration sizing reduced exact warm-source screening p50/p95/max from 1.356516/1.642386/1.730328 to 1.204713/1.325760/1.329731 s, reduced pinned allocation p50 from 0.274093 to 0.184592 s, preserved six byte-exact arrays and GPU memory, and lowered host RSS"
+    },
+    {
+      "artifact": "webgpu-rectangle-selective-io",
+      "input_ids": [
+        "real-512-native-detector-master",
+        "webgpu-fullnative-fixture-view"
+      ],
+      "source_revision": "23d25619cfe22d5e89761fda2d2796a7c82ba090",
+      "evidence_revision": "54303cb88aab76c29ff884261b5973c8795c2495",
+      "path": "local-manifest://20260822-webgpu-rectangle-selective-io",
+      "sha256": "98e1b24a4f80885213477aaaccc02cc60770284b3287a27cac6b66977ae26b59",
+      "status": "accepted-prepared-shard-selective; intra-shard-range-pending",
+      "result": "Fifteen physical hardware WebGPU runs passed first/middle/last raw-frame checksum probes plus shape, dtype, order, and metadata gates; full-tensor readback parity was not performed. The 64/256/384-square scan regions used 4/14/20 of 27 shards at 0.147/0.381/0.574 s loader p50, while the no-frame-span negative control read all shards and is explicitly non-selective; intra-shard byte-range and arbitrary-position support remain pending"
+    },
+    {
+      "artifact": "webgpu-exact-integer-hardware-followup",
+      "input_ids": ["synthetic-webgpu-exact-integer-300000x8x8-u16-ones"],
+      "source_revision": "a07121d7074d4146fcd1aa8d12ad2de8d47afcae",
+      "evidence_revision": null,
+      "path": "experiments/20260822-cross-backend-optimization/webgpu-exact-integer-hardware-followup.json",
+      "sha256": "91c7fe5284cafde87ab8319fac445d9cee0c6ebf281de9c2e8c1ed5967ada09c",
+      "status": "passed-hardware-parity-only; candidate-preserved-dirty; not-consumer-eligible",
+      "result": "Physical Phil Metal-3 proved complete small exact integer bin-2 cases, fail-closed uint32 planning, and all 4800000 outputs exact for a 300000-scan tiled synthetic dispatch. The final raw retained run measured 7.500 ms plus 14.100 ms readback/full validation and retained a 21.200 ms tiny-repeat outlier. This excludes HDF5, a full real volume, products, memory, cold source, Steve Kerr, and app E2E; no production source was promoted"
+    },
+    {
+      "artifact": "campaign-morning-report",
+      "input_ids": [
+        "real-512x512x192x192-u16-bslz4-27shard-master-fixture-c",
+        "webgpu-fullnative-source-identity",
+        "webgpu-fullnative-fixture-view",
+        "webgpu-fullnative-cpu-product-reference",
+        "real-512-native-detector-master",
+        "cuda-exact-screening-reference-v3",
+        "frozen-backend-parity-matrix",
+        "synthetic-webgpu-exact-integer-300000x8x8-u16-ones"
+      ],
+      "source_revision": "23d25619cfe22d5e89761fda2d2796a7c82ba090",
+      "path": "experiments/20260822-cross-backend-optimization/MORNING-REPORT.md",
+      "sha256": "694b55b199523fb7e9239dfe705be710aaf11ec55ab78e7142727d2264d485c0",
+      "status": "accepted-sealed",
+      "result": "Evidence-backed campaign summary with timing-boundary, memory, parity, failure, ownership, and remaining-gate distinctions"
+    },
+    {
+      "artifact": "campaign-ledger",
+      "input_ids": [
+        "real-512x512x192x192-u16-bslz4-27shard-master-fixture-c",
+        "webgpu-fullnative-source-identity",
+        "webgpu-fullnative-fixture-view",
+        "webgpu-fullnative-cpu-product-reference",
+        "real-512-native-detector-master",
+        "cuda-exact-screening-reference-v3",
+        "frozen-backend-parity-matrix",
+        "synthetic-webgpu-exact-integer-300000x8x8-u16-ones"
+      ],
+      "source_revision": "23d25619cfe22d5e89761fda2d2796a7c82ba090",
+      "path": "experiments/20260822-cross-backend-optimization/ledger.md",
+      "sha256": "98bde78ac799d220012e42147e5f34846774d4c51393c9a32e5cd58a4ab16516",
+      "status": "accepted-sealed",
+      "result": "Timestamped append-only record of accepted, refuted, pending, and blocked campaign trials plus final host audit"
+    },
+    {
+      "artifact": "campaign-verification",
+      "input_ids": [
+        "real-512x512x192x192-u16-bslz4-27shard-master-fixture-c",
+        "webgpu-fullnative-source-identity",
+        "webgpu-fullnative-fixture-view",
+        "webgpu-fullnative-cpu-product-reference",
+        "real-512-native-detector-master",
+        "cuda-exact-screening-reference-v3",
+        "frozen-backend-parity-matrix",
+        "synthetic-webgpu-exact-integer-300000x8x8-u16-ones"
+      ],
+      "source_revision": "23d25619cfe22d5e89761fda2d2796a7c82ba090",
+      "path": "experiments/20260822-cross-backend-optimization/verification.json",
+      "sha256": "d64027216146aefd1e208bfc916f9f478460188ae89d9e2221fa619f150bc212",
+      "status": "accepted-sealed",
+      "result": "Machine-readable verification of source/evidence ancestry, hashes, tests, scientific boundaries, and process cleanup"
+    },
+    {
+      "artifact": "campaign-sha256sums",
+      "input_ids": [
+        "real-512x512x192x192-u16-bslz4-27shard-master-fixture-c",
+        "webgpu-fullnative-source-identity",
+        "webgpu-fullnative-fixture-view",
+        "webgpu-fullnative-cpu-product-reference",
+        "real-512-native-detector-master",
+        "cuda-exact-screening-reference-v3",
+        "frozen-backend-parity-matrix",
+        "synthetic-webgpu-exact-integer-300000x8x8-u16-ones"
+      ],
+      "source_revision": "23d25619cfe22d5e89761fda2d2796a7c82ba090",
+      "path": "experiments/20260822-cross-backend-optimization/SHA256SUMS",
+      "sha256": "16173d7bb55c84377972b3c9ea4726ba9d93967b7af1f6c1c955a2be11fcc3a2",
+      "status": "accepted-sealed",
+      "result": "SHA-256 seal for the report, ledger, verification record, and bounded WebGPU hardware follow-up"
+    }
+  ],
   "timestamps": {
     "created": "2026-08-22T02:35:24-07:00",
     "started": "2026-08-22T02:35:24-07:00",
-    "finished": null
+    "finished": "2026-08-22T10:27:21-07:00"
   }
 }

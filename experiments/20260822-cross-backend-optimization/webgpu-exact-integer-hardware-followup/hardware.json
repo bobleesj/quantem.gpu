@@ -1,0 +1,10 @@
+{
+  "host": "Phil",
+  "chipset_model": "Apple M5 Max",
+  "gpu_cores": 40,
+  "system_metal_support": "Metal 4",
+  "chrome_webgpu_backend": "Metal-3",
+  "software_adapter": false,
+  "browser_adapter_log": "Selected adapter: Apple M5 Max, arch=metal-3, vendor=apple, backend=Metal, adapterType=Integrated GPU",
+  "note": "Display identifiers were intentionally omitted. The browser adapter line was captured from the first retained hardware run; the final raw run used the same host, browser executable, flags, and harness."
+}
