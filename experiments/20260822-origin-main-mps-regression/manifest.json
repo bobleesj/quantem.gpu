@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "experiment_id": "20260822-origin-main-mps-regression",
-  "status": "running",
+  "status": "completed",
   "question": "Does the consolidated origin-main candidate preserve exact Python MPS detector bins 1, 2, 4, and 8 plus CoM, DPC, iDPC, detector-product, and display-FFT parity without a package-load regression?",
   "paper": {
     "authoritative_host": "phil",
@@ -10,11 +10,11 @@
   },
   "code": {
     "repository": "https://github.com/bobleesj/quantem.gpu",
-    "revision": "d741082400fa28cd0e02e93b0a75c89774391eaf",
+    "revision": "0bc9378b15285db4de69baa399cfc573936a2e41",
     "entrypoint": "scripts/benchmark_hdf5_load.py and the frozen DPC/product/display parity suites",
     "dirty": false,
     "diff_sha256": null,
-    "snapshot_path": "local-snapshot://aug-22-origin-main-integration/d741082"
+    "snapshot_path": "local-snapshot://aug-22-origin-main-integration/0bc9378"
   },
   "inputs": [
     {
@@ -76,11 +76,36 @@
       "artifact": "local-evidence://20260822-origin-main-mps-regression/warm-bin8.json",
       "sha256": "0f696dd4efbdf833e11d4d512f944cfd372bcd865771820e3d8c42ed0389bcb7",
       "result": "refuted timing matrix: pre-fix harness retained one binned Metal output per repetition"
+    },
+    {
+      "artifact": "local-evidence://20260822-origin-main-mps-regression/final-head-warm-bin1.json",
+      "sha256": "62de3bac576b249dbba0b863100d532cd6f449a109833bde3f89b7435f2010a3",
+      "result": "accepted post-warmup/uncontrolled-source-pages bin1 matrix: p50 0.414824334 s, p95/max 0.457260750 s, logical resident 19327352832 B, driver allocation sampled after load 19801456640 B, driver allocation sampled after release 474103808 B, process RSS high-water 741818368 B, whole-system swap unchanged"
+    },
+    {
+      "artifact": "local-evidence://20260822-origin-main-mps-regression/final-head-warm-bin2.json",
+      "sha256": "b0614566e19911500302f2a32e1fb6a5cb3ac97be4d1123d6d442d01040d3309",
+      "result": "accepted post-warmup/uncontrolled-source-pages exact bin2 matrix: p50 0.457153167 s, p95/max 0.461730250 s, logical resident 4831838208 B, driver allocation sampled after load 6107774976 B, driver allocation sampled after release 1275936768 B, process RSS high-water 616054784 B, whole-system swap unchanged"
+    },
+    {
+      "artifact": "local-evidence://20260822-origin-main-mps-regression/final-head-warm-bin4.json",
+      "sha256": "42bca4813d2183275016ce4a0fc03d535d42db18e51a0e851e874f2d5dac8e1c",
+      "result": "accepted post-warmup/uncontrolled-source-pages exact bin4 matrix: p50 0.382109417 s, p95/max 0.384352959 s, logical resident 1207959552 B, driver allocation sampled after load 2483896320 B, driver allocation sampled after release 1275936768 B, process RSS high-water 615825408 B, whole-system swap unchanged"
+    },
+    {
+      "artifact": "local-evidence://20260822-origin-main-mps-regression/final-head-warm-bin8.json",
+      "sha256": "d87f07905e39f3e6ebb299f54fc751ce31173f510e021fa24741a5da051ef467",
+      "result": "accepted post-warmup/uncontrolled-source-pages exact bin8 matrix: p50 0.356258125 s, p95/max 0.358651625 s, logical resident 301989888 B, driver allocation sampled after load 1577926656 B, driver allocation sampled after release 1275936768 B, process RSS high-water 616054784 B, whole-system swap unchanged"
+    },
+    {
+      "artifact": "local-evidence://20260822-origin-main-mps-regression/final-head-parity-junit.xml",
+      "sha256": "bacfe4bade2b2195d33afd4736899434a14e52728e023f58b076da9822d08e63",
+      "result": "accepted final-head parity suite: 12 passed and 7 environment-explicit skips; sparse bin2 matched exactly, full-scan bins 2, 4, and 8 matched six selected native bin1 frames exactly, and generic DPC rotation, NumPy CoM, integer-sum, and display-FFT checks passed; widget and CuPy product tests were skipped"
     }
   ],
   "timestamps": {
     "created": "2026-08-22T11:37:22-07:00",
     "started": "2026-08-22T11:37:22-07:00",
-    "finished": null
+    "finished": "2026-08-22T12:05:11-07:00"
   }
 }

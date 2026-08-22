@@ -58,7 +58,7 @@ def test_registry_validator_and_generated_table_agree() -> None:
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "73 gates, 29 measurements, and 14 runbooks" in result.stdout
+    assert "77 gates, 33 measurements, and 14 runbooks" in result.stdout
 
     rendered = GENERATED.read_text(encoding="utf-8")
     for field in (
@@ -73,6 +73,8 @@ def test_registry_validator_and_generated_table_agree() -> None:
         "p95",
         "Maximum",
         "Logical resident",
+        "Driver allocated after load",
+        "Driver allocated after release",
         "Accelerator peak",
         "Total-device peak",
         "Process/tree peak",

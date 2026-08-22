@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "source_revision": "23d25619cfe22d5e89761fda2d2796a7c82ba090",
-  "source_revision_scope": "Clean coordinator documentation baseline; later isolated source and evidence revisions are cited per retained measurement rather than implied by this field.",
+  "source_revision": "0bc9378b15285db4de69baa399cfc573936a2e41",
+  "source_revision_scope": "Clean consolidated implementation measured by the final-head Python MPS regression; other retained measurements remain bound to their per-row revisions.",
   "purpose": "Fingerprints for the current benchmark dashboard, authoritative provenance ledger, parity and methodology contracts, and canonical historical evidence. Landing, API, and backend capability pages intentionally do not duplicate measurements.",
   "pages": [
     {
@@ -11,7 +11,7 @@
     },
     {
       "path": "docs/dashboard.md",
-      "sha256": "379955dec234257b7c70a1f9728bd33bd3583b1f98e2fd93e7c05950404a0a2c",
+      "sha256": "7ec58a097815ff0424fe6b1820288ff5862f319b63461504ff51156424d52005",
       "role": "Single human-facing current capability, speed, memory, and parity overview"
     },
     {
@@ -21,7 +21,7 @@
     },
     {
       "path": "docs/platforms/mps.md",
-      "sha256": "f316442494f039c362f0b0200e6fd5cfa535fd68e0ae047d0fb5eea2bcea5d97",
+      "sha256": "491d7272df53b7a451766ade2f78c263ea6990bfedbb6b18e9302daba271a3f1",
       "role": "Python MPS direct-Metal lifetime and resident-versus-peak memory contract"
     },
     {
@@ -36,7 +36,7 @@
     },
     {
       "path": "docs/backends.md",
-      "sha256": "79f4df705f465f90217e6f2b01a14f4fec01f043422d37facad4f8c8866f0aa0",
+      "sha256": "ffcc1ddc2f27e26ff9f5aca75cf1f615ce2973402a2082c052249ad387857de0",
       "role": "Capability and implementation-source map without copied timings"
     },
     {
@@ -46,12 +46,12 @@
     },
     {
       "path": "docs/performance/results.md",
-      "sha256": "600d0087124662c4077716bc533224501b1dcfb784a5c754ccbb9536c6b3f8d8",
+      "sha256": "03e3bec2d9f8f2a2f8035d5aa0c12aef6d6e8105481897451b76fb62864e124c",
       "role": "Authoritative current benchmark provenance ledger"
     },
     {
       "path": "docs/performance/changes.md",
-      "sha256": "89f12698aed26e75bd7f8bcd31fbdb2e5826497d7b61cfef2239399860f212f2",
+      "sha256": "46baf15eb2f8cce12dea7bef8c1394fc03a9f520dfe7e2ff9576bfb6d6541e9c",
       "role": "Benchmark promotion, rejection, and supersession decisions without copied values"
     },
     {
@@ -71,12 +71,12 @@
     },
     {
       "path": "docs/maintainer/backend-optimization-matrix.md",
-      "sha256": "0a94d9be34317d21cc74ff41dda545ce48adad6e325296945b97cabaff01b01d",
+      "sha256": "ecc1a3d5359a89d8f7b0a7231d68e258637492836b79c8d7b4c2b2e8f6b7308c",
       "role": "Accepted and rejected optimization ledger"
     },
     {
       "path": "docs/maintainer/backend-4dstem-load-checklist.md",
-      "sha256": "67534f0157f7b333d868df3c522fbd19b2c100f77719dd98d40e28ed68bb0aaf",
+      "sha256": "cec20cf1cdee7edc301bcffa2f3bad443bf1c55f15847ae6605f95f34227a10f",
       "role": "Load and product acceptance evidence"
     },
     {

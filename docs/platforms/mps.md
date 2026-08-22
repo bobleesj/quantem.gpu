@@ -72,18 +72,21 @@ per repetition and measures memory pressure rather than steady-state loader
 speed.
 
 For the full `512x512x192x192 uint16` plan, the resident payload is exactly
-19,327,352,832 bytes (18.00 GiB). On the current 2026-08-22 Phil run, the
-sampled Metal-driver high-water mark was 19,801,456,640 bytes (18.441544 GiB),
-while maximum process RSS was 739,966,976 bytes (0.689148 GiB). The smaller RSS
-is not the GPU memory footprint: direct Metal allocations are outside the
-complete scope of that process counter.
+19,327,352,832 bytes (18.00 GiB). On the current 2026-08-22 Phil run, driver
+allocation sampled immediately after load was 19,801,456,640 bytes
+(18.441544 GiB), falling to 474,103,808 bytes after explicit output release;
+process RSS high-water was 741,818,368 bytes (0.690872 GiB). The smaller RSS is
+not the GPU memory footprint: direct Metal allocations are outside the complete
+scope of that process counter. The after-load sample is not a continuously
+observed Metal peak.
 
-At revision `f0f39c9`, persistent-process p50 for the exact full-scan source is
-0.523/0.498/0.421/0.417 seconds for detector bins 1/2/4/8. The corresponding
-independent-process first-public-load p50 is 0.649/0.700/0.643/0.632 seconds.
-Both protocols used warm, uncontrolled source pages, so neither is a cold-load
-claim. Full-output parity against the pre-optimization path is byte exact for
-all four bins.
+At consolidated revision `0bc9378`, post-warmup p50 for the exact full-scan
+source is 0.414824/0.457153/0.382109/0.356258 seconds for detector bins
+1/2/4/8. Each row has seven retained trials, a fresh returned destination that
+is released before the next trial, and uncontrolled OS source pages after one
+same-process warmup. These are not cold-load or application claims. The older
+`f0f39c9` 0.523/0.498/0.421/0.417-second rows remain historical pre-
+consolidation evidence.
 
 The retained binned timings use an identity-bound source audit whose maximum
 count is 53. That proves bin2, bin4, and bin8 exact sums fit `uint16` for this
@@ -113,16 +116,16 @@ process state, critical-path wall time, and command-buffer GPU intervals. For
 memory, record all of these separately:
 
 - exact logical resident payload from shape and dtype;
-- sampled Metal-driver allocation at the high-water mark;
+- Metal-driver allocation sampled after load and after output release;
 - Metal-driver allocation after output release;
 - process RSS/footprint; and
 - whole-system pressure and swap.
 
 `torch.mps.current_allocated_memory()` can remain zero for these direct
-Metal/PyObjC buffers. Use `torch.mps.driver_allocated_memory()` as the
-accelerator high-water signal and keep RSS as a separate diagnostic. Instruments
-Metal System Trace is useful when available; kernel timestamps and
-wall-to-first-product remain required.
+Metal/PyObjC buffers. `torch.mps.driver_allocated_memory()` is an instantaneous
+driver-allocation sample; keep it separate from RSS and do not label it a peak
+without continuous sampling. Instruments Metal System Trace is useful when
+available; kernel timestamps and wall-to-first-product remain required.
 
 ## Acceptance
 

@@ -66,6 +66,10 @@ outer browser harness. Resident payload and process/card peaks remain distinct.
 | **CUDA** | `8c47a466` | 2 | `96x96` | `uint32` | 7 | **0.396 s** | **0.401 s** | **0.402 s** | **9.00 GiB** | **11.561 GiB** | Pending | Total-card occupancy | Pass | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 |
 | **CUDA** | `8c47a466` | 4 | `48x48` | `uint32` | 7 | **0.390 s** | **0.413 s** | **0.419 s** | **2.25 GiB** | **3.756 GiB** | Pending | Total-card occupancy | Pass | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 |
 | **CUDA** | `8c47a466` | 8 | `24x24` | `uint32` | 7 | **0.381 s** | **0.401 s** | **0.402 s** | **0.5625 GiB** | **1.805 GiB** | Pending | Total-card occupancy | Pass | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 |
+| **Python MPS** | `0bc9378` | 1 | `192x192` | `uint16` | 7 | **0.414824 s** | **0.457261 s** | **0.457261 s** | **18.00 GiB** | **19,801,456,640 B** | **741,818,368 B** | Driver allocation sampled after load; continuous peak pending | Native bin1 reference plus generic parity suite | Apple M5 Max, 40-core GPU, 128 GB |
+| **Python MPS** | `0bc9378` | 2 | `96x96` | `uint16` | 7 | **0.457153 s** | **0.461730 s** | **0.461730 s** | **4.50 GiB** | **6,107,774,976 B** | **616,054,784 B** | Driver allocation sampled after load; continuous peak pending | Exact sparse and six-frame full-scan sums | Apple M5 Max, 40-core GPU, 128 GB |
+| **Python MPS** | `0bc9378` | 4 | `48x48` | `uint16` | 7 | **0.382109 s** | **0.384353 s** | **0.384353 s** | **1.125 GiB** | **2,483,896,320 B** | **615,825,408 B** | Driver allocation sampled after load; continuous peak pending | Exact six-frame full-scan sums | Apple M5 Max, 40-core GPU, 128 GB |
+| **Python MPS** | `0bc9378` | 8 | `24x24` | `uint16` | 7 | **0.356258 s** | **0.358652 s** | **0.358652 s** | **0.28125 GiB** | **1,577,926,656 B** | **616,054,784 B** | Driver allocation sampled after load; continuous peak pending | Exact six-frame full-scan sums | Apple M5 Max, 40-core GPU, 128 GB |
 | **WebGPU** | `334b7b5` | 1 | `192x192` | `uint8` | 5 | **0.824 s** | **0.892 s** | **0.892 s** | **9.00 GiB** | Pending | **5.020 GiB** | Device allocation incomplete; Chrome-tree RSS retained | Exact tested frames and products | Chrome 151, Apple M5 Max Metal-3 |
 | **WebGPU** | `334b7b5` | 2 | `96x96` | `float32` sums | 5 | **1.281 s** | **1.300 s** | **1.300 s** | **9.00 GiB** | Pending | **5.363 GiB** | Device allocation incomplete; Chrome-tree RSS retained | Exact sampled count sums | Chrome 151, Apple M5 Max Metal-3 |
 | **WebGPU** | `334b7b5` | 4 | `48x48` | `float32` sums | 5 | **1.044 s** | **1.050 s** | **1.050 s** | **2.25 GiB** | Pending | **5.188 GiB** | Device allocation incomplete; Chrome-tree RSS retained | Exact sampled count sums | Chrome 151, Apple M5 Max Metal-3 |
@@ -115,32 +119,42 @@ a cross-lane fixture-controlled comparison.
 
 All rows below use fixture C, full `512x512` scan coverage, native
 `192x192 uint16` detector data, scan bin 1, no crop, and exact `uint16` output.
-The source-page state is warm or uncontrolled after one same-lifecycle warmup.
-The timer spans the exact package load into a caller-selected resident
-destination. Recycle is explicit caller behavior, not automatic cache policy.
+The current source-page state is uncontrolled after one same-process warmup.
+The timer spans the exact public package load, backend synchronization, and
+return of a fresh destination. Each result is explicitly released before the
+next trial.
 
-| Detector bin | Output detector | Destination arm | Repetitions | p50 | p95 | Maximum | Logical resident | Metal peak | RSS statistic | Process RSS | Swap delta |
-|---:|---:|---|---:|---:|---:|---:|---:|---:|---|---:|---:|
-| 1 | `192x192` | fresh | 8 | **0.425533 s** | **0.436353 s** | **0.437419 s** | **19,327,352,832 B** | **19,801,456,640 B** | p50 | **737,763,328 B** | **0 B** |
-| 1 | `192x192` | recycled | 8 | **0.259189 s** | **0.263118 s** | **0.263375 s** | **19,327,352,832 B** | **19,801,456,640 B** | p50 | **738,426,880 B** | **0 B** |
-| 2 | `96x96` | fresh | 8 | **0.462541 s** | **0.479014 s** | **0.483058 s** | **4,831,838,208 B** | **6,107,774,976 B** | p50 | **613,564,416 B** | **0 B** |
-| 2 | `96x96` | recycled | 8 | **0.359606 s** | **0.361384 s** | **0.361995 s** | **4,831,838,208 B** | **6,107,774,976 B** | p50 | **612,622,336 B** | **0 B** |
-| 4 | `48x48` | fresh | 8 | **0.384264 s** | **0.385355 s** | **0.385638 s** | **1,207,959,552 B** | **2,483,896,320 B** | p50 | **613,212,160 B** | **0 B** |
-| 4 | `48x48` | recycled | 8 | **0.352990 s** | **0.355048 s** | **0.355062 s** | **1,207,959,552 B** | **2,483,896,320 B** | p50 | **613,728,256 B** | **0 B** |
-| 8 | `24x24` | earlier accepted fresh-process specialization | 6 | **0.356969 s** | **0.359302 s** | **0.359820 s** | **301,989,888 B** | **1,577,926,656 B** | peak | **613,924,864 B** | Pending |
+| Detector bin | Output detector | Repetitions | p50 | p95 | Maximum | Logical resident | Driver after load | Driver after release | Process RSS high-water | Whole-system swap delta |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | `192x192` | 7 | **0.414824 s** | **0.457261 s** | **0.457261 s** | **19,327,352,832 B** | **19,801,456,640 B** | **474,103,808 B** | **741,818,368 B** | **0 B** |
+| 2 | `96x96` | 7 | **0.457153 s** | **0.461730 s** | **0.461730 s** | **4,831,838,208 B** | **6,107,774,976 B** | **1,275,936,768 B** | **616,054,784 B** | **0 B** |
+| 4 | `48x48` | 7 | **0.382109 s** | **0.384353 s** | **0.384353 s** | **1,207,959,552 B** | **2,483,896,320 B** | **1,275,936,768 B** | **615,825,408 B** | **0 B** |
+| 8 | `24x24` | 7 | **0.356258 s** | **0.358652 s** | **0.358652 s** | **301,989,888 B** | **1,577,926,656 B** | **1,275,936,768 B** | **616,054,784 B** | **0 B** |
 
-Each timed bin-2/bin-4 ABBA load matched six selected frame hashes. Separate
-one-load smokes matched the complete output SHA-256, total, maximum, shape, and
-dtype; complete-volume hashing was deliberately outside the timed boundary.
-The new detector-bin-8 lifecycle trial was scientifically exact but drifted
-chronologically under ScreenSharingAgent and WindowServer activity, so its
-timing is inconclusive and the earlier `0.356969 s` accepted row remains.
+The driver values are instantaneous samples after load and after release, not a
+continuously sampled accelerator peak. RSS is a process-lifetime high-water;
+swap is whole-system absolute use and did not change during these runs.
 
-The timing rows remain bound to `b7f8ef3f/3fbd87a5`. The later
-`3c4d903e/08e50c5b` follow-up passed injected failure cleanup, prior-output
-ownership, full detector-bin-2 parity, and a non-regression smoke, closing the
-consumer-safety blocker without creating a new speed distribution. None of
-these rows is cold HDF5 or application E2E.
+Real-data exactness covers sparse bin2 plus six selected frames from each full
+bin2/bin4/bin8 result against native bin1 integer sums. Generic DPC rotation,
+NumPy CoM, integer-sum, and display-FFT checks also passed. Widget and CuPy
+product tests were skipped, so this evidence is not labeled complete
+full-volume product or iDPC parity.
+
+#### Historical explicit destination reuse
+
+The older ABBA rows remain accepted for their distinct caller-recycled
+destination boundary:
+
+| Detector bin | Output detector | Repetitions | p50 | p95 | Maximum | Source revision |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | `192x192` | 8 | **0.259189 s** | **0.263118 s** | **0.263375 s** | `b7f8ef3` |
+| 2 | `96x96` | 8 | **0.359606 s** | **0.361384 s** | **0.361995 s** | `b7f8ef3` |
+| 4 | `48x48` | 8 | **0.352990 s** | **0.355048 s** | **0.355062 s** | `b7f8ef3` |
+
+The current `0bc9378` source incorporates the accepted reuse behavior and its
+exception-safe cleanup. The historical timings remain a different lifecycle
+measurement; none of these rows is cold HDF5 or application E2E.
 
 ### Historical Python MPS topology comparison
 
@@ -159,7 +173,7 @@ non-fused topology under the same revision, process, source-page state, and
 lifecycle; “after” enables the accepted exact fused topology. This is a causal
 kernel/pipeline comparison, not a cold-source benchmark.
 
-| Detector bin | Before p50 | After p50 | After p95 | After maximum | p50 reduction | Logical resident | Metal-driver peak | Driver after release | Process RSS maximum |
+| Detector bin | Before p50 | After p50 | After p95 | After maximum | p50 reduction | Logical resident | Driver sampled after load | Driver after release | Process RSS maximum |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | 1 | **0.689148 s** | **0.522754 s** | **0.540934 s** | **0.544737 s** | **24.1%** | **18.00 GiB** | **18.441544 GiB** | **0.441544 GiB** | **0.689148 GiB** |
 | 2 | **0.573434 s** | **0.498435 s** | **0.514828 s** | **0.517209 s** | **13.1%** | **4.50 GiB** | **5.688309 GiB** | **1.188309 GiB** | **0.572571 GiB** |
@@ -179,7 +193,7 @@ first public load was measured. Source pages were again warm and uncontrolled.
 It measures per-process decoder and pipeline setup, not cold storage and not
 application launch.
 
-| Detector bin | Repetitions | p50 | p95 | Maximum | Logical resident | Metal-driver peak | Process RSS maximum |
+| Detector bin | Repetitions | p50 | p95 | Maximum | Logical resident | Driver sampled after load | Process RSS maximum |
 |---:|---:|---:|---:|---:|---:|---:|---:|
 | 1 | 7 | **0.648989 s** | **0.662009 s** | **0.663333 s** | **18.00 GiB** | **18.441544 GiB** | **0.687225 GiB** |
 | 2 | 7 | **0.700366 s** | **0.752164 s** | **0.768494 s** | **4.50 GiB** | **5.688309 GiB** | **0.573914 GiB** |
@@ -188,10 +202,10 @@ application launch.
 
 The full native detector payload is exactly 19,327,352,832 bytes: **18.00
 GiB**, not process RSS and not total device pressure. Direct buffers are
-allocated through Metal/PyObjC, so process RSS alone is incomplete. The sampled
-Metal-driver peak is the retained device-allocation high-water signal. The
-allocation remaining after output release is reusable decoder/runtime state,
-not resident 4D data.
+allocated through Metal/PyObjC, so process RSS alone is incomplete. The driver
+values are instantaneous samples after load, not continuously observed peaks.
+The allocation remaining after output release is reusable decoder/runtime
+state, not resident 4D data.
 
 Fixture C's retained complete value-range audit records a maximum source count
 of 53. The worst possible exact sums are therefore 212 at bin2, 848 at bin4,
