@@ -200,6 +200,11 @@ def test_load_matrix_tracks_every_compatible_platform_computer_pair() -> None:
     ):
         assert bins_by_pair[("Python MPS", computer)] == {1, 2, 4, 8}
         assert bins_by_pair[("WebGPU", computer)] == {1, 2, 4, 8}
+        assert bins_by_pair[("CPU reference", computer)] == {1, 2, 4, 8}
+
+    assert bins_by_pair[
+        ("CPU reference", "Linux CUDA workstation (dual 96 GB Blackwell GPUs)")
+    ] == {1, 2, 4, 8}
 
     assert bins_by_pair[("Native Swift/Metal", "MacBook Pro (M5 Max, 128 GB)")] == {
         1,

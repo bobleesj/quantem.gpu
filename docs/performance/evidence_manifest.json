@@ -108,12 +108,12 @@
   "authoritative_inputs": [
     {
       "path": "benchmarks/benchmark_registry.json",
-      "sha256": "fecd52210ba6a2632eeb4d4f65d309c77a594f85e7e9f6bd9774bd7a1ee80ee6",
+      "sha256": "02038c895b11b05201648e6c8594426222a06793911e1e40239ec0e2658f55ce",
       "role": "Atomic Platform, Computer, module, configuration, state, measurement, and runbook registry"
     },
     {
       "path": "docs/_generated/benchmark_coverage.md",
-      "sha256": "af1a81484e1e42a110e4be442cf5280665fdc62d04604b86bdd1723bca8f1d51",
+      "sha256": "954da20e7ae8e61618c31f1c6505bda7372a673adf10435d8b82ce78f4633fc4",
       "role": "Generated filterable coverage, retained-measurement, and runbook tables"
     },
     {
