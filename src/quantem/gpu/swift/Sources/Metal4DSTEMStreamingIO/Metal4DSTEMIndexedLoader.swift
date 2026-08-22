@@ -508,8 +508,10 @@ public struct Metal4DSTEMIndexedLoadProvenance: Codable, Equatable, Sendable {
 
 /// Timings from one synchronized package execution.
 ///
-/// Source-page state is deliberately unspecified. A benchmark harness must
-/// label first encounter, page-warm, and prepared-result reopen separately.
+/// Source-page state is reported in ``cacheState``. Normal application loads
+/// leave it unspecified; the package benchmark records its explicit macOS
+/// `F_NOCACHE` control. A benchmark harness must still distinguish first
+/// encounter, same-process repeats, and prepared-result reopen.
 public struct Metal4DSTEMIndexedLoadMetrics: Codable, Equatable, Sendable {
   public let wallSeconds: Double
   public let sourceMappingSeconds: Double
@@ -1544,7 +1546,8 @@ public final class Metal4DSTEMIndexedLoader {
       maximumMappedSourceBufferBytes: maximumMappedSourceBufferBytes,
       maximumDecodedSliceBytes: maximumDecodedSliceBytes,
       cacheState: binned?.cacheState
-        ?? "prepared_qh5_index_source_pages_unspecified",
+        ?? "prepared_qh5_index_"
+        + Native4DSTEMBenchmarkSourcePageControl.current.cacheStateComponent,
       synchronizedStageSeconds: stageProfiler?.snapshot()
     )
     return (
@@ -2738,7 +2741,8 @@ private final class BinnedOutputContext {
     storage = .resident(destinations)
     residentPreparations = preparations.map(Optional.some)
     cacheState =
-      "prepared_qh5_index_exact_binned_resident_source_pages_unspecified"
+      "prepared_qh5_index_exact_binned_resident_"
+      + Native4DSTEMBenchmarkSourcePageControl.current.cacheStateComponent
     peakWorkingMetalBytes = destinations.reduce(0) { total, buffer in
       total + UInt64(buffer.length)
     }
@@ -2752,7 +2756,8 @@ private final class BinnedOutputContext {
     storage = .streaming(consume)
     residentPreparations = []
     cacheState =
-      "prepared_qh5_index_exact_binned_transactional_file_source_pages_unspecified"
+      "prepared_qh5_index_exact_binned_transactional_file_"
+      + Native4DSTEMBenchmarkSourcePageControl.current.cacheStateComponent
   }
 
   func requiresDestinationTransition(for range: Range<Int>) throws -> Bool {
@@ -2945,9 +2950,9 @@ private final class MappedMetalSource {
         "Could not open indexed source \(url.lastPathComponent)."
       )
     }
-    if ProcessInfo.processInfo.environment[
-      "QUANTEM_GPU_BENCHMARK_UNCACHED_SOURCE_READS"
-    ] == "1" {
+    if Native4DSTEMBenchmarkSourcePageControl.current
+      == .macOSFNoCacheHashAndIndexedSourceDescriptors
+    {
       guard Darwin.fcntl(descriptor, F_NOCACHE, 1) == 0 else {
         close(descriptor)
         throw Metal4DSTEMStreamingIOError.invalidRequest(

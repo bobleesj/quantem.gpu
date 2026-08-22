@@ -469,11 +469,29 @@ private func run() throws {
   }
   let options = try Options.parse(arguments)
   if options.uncachedSourceReads {
-    guard Darwin.setenv("QUANTEM_GPU_BENCHMARK_UNCACHED_SOURCE_READS", "1", 1) == 0 else {
+    guard
+      Darwin.setenv(
+        Native4DSTEMBenchmarkSourcePageControl.environmentVariable,
+        "1",
+        1
+      ) == 0
+    else {
       throw BenchmarkError.invalid(
         "Could not enable the benchmark-only uncached source-read control."
       )
     }
+  }
+  let sourcePageControl = Native4DSTEMBenchmarkSourcePageControl.current
+  guard
+    sourcePageControl
+      == Native4DSTEMBenchmarkSourcePageControl(
+        uncachedSourceReads: options.uncachedSourceReads
+      )
+  else {
+    throw BenchmarkError.invalid(
+      "Source-page control must be selected with --uncached-source-reads, "
+        + "not by setting the benchmark's private environment variable."
+    )
   }
   if FileManager.default.fileExists(atPath: options.outputDirectory.path) {
     let existing = try FileManager.default.contentsOfDirectory(
@@ -886,16 +904,14 @@ private func run() throws {
     estimatedAllocatedMetalBytesIncludingSourceTransfer = total.partialValue
   }
   let summary = BenchmarkSummary(
-    schema: "quantem.gpu.metal-4dstem-indexed-load-benchmark/v7",
+    schema: "quantem.gpu.metal-4dstem-indexed-load-benchmark/v8",
     revision: options.revision,
     timestamp: ISO8601DateFormatter().string(from: Date()),
     host: ProcessInfo.processInfo.hostName,
     os: ProcessInfo.processInfo.operatingSystemVersionString,
     device: device.name,
     input: options.input.path,
-    sourcePageControl: options.uncachedSourceReads
-      ? "macos_f_nocache_hash_and_indexed_source_descriptors"
-      : "unspecified",
+    sourcePageControl: sourcePageControl.rawValue,
     sourceIdentitySHA256: productPlan.sourceIdentitySHA256,
     sourceShape: [
       productPlan.sourceScanRows,
