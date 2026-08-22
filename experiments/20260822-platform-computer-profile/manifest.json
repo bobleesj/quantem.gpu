@@ -99,13 +99,14 @@
       {
         "computer": "MacBook Air (M2, 8 GB)",
         "platforms": ["Python MPS", "Native Swift/Metal", "WebGPU", "CPU reference"],
-        "status_at_start": "network-unreachable; no physical claim permitted"
+        "status_at_start": "network-unreachable; no physical claim permitted",
+        "latest_audit": "2026-08-22T23:45:00Z: configured SSH route timed out after five seconds; no benchmark or device mutation was attempted"
       },
       {
         "computer": "Linux CUDA workstation (dual 96 GB Blackwell GPUs)",
         "platforms": ["CUDA", "CPU reference"],
         "status_at_start": "GPU 0 occupied by unrelated research; GPU 1 has a shared QuantEM.GPU service and requires ownership coordination",
-        "latest_audit": "2026-08-22T22:36:15Z: both GPUs at 100 percent compute utilization; no benchmark launched"
+        "latest_audit": "2026-08-22T23:32:17Z: both GPUs remained at 100 percent compute utilization with unrelated task ownership; no benchmark launched"
       }
     ]
   },
@@ -351,6 +352,24 @@
       "result": "Immutable checksum seal for the complete M5 24 GB Python MPS bin-4/bin-2 campaign and its retained failed preflight."
     },
     {
+      "id": "m5-24gb-python-mps-bin8-canonical-clean-r7-68dbe3a",
+      "artifact": "private-evidence://macbook-pro-m5-24gb/20260822-python-mps-macbook-pro-m5-24gb-bin8-68dbe3a-01/registry-ready.json",
+      "sha256": "b4625dc79d67b1de7f0c35967f97ea9ec91e65baa72634685d3408436107fb64",
+      "result": "Clean Python MPS bin-8 distribution at 68dbe3a: one warmup plus seven fresh destinations passed the complete canonical logical-pixel hash, uint16 dtype, geometry, metadata, and release contract; p50/p95/max 1.220057/1.228715/1.228715 seconds with zero swapout or pageout growth."
+    },
+    {
+      "id": "m5-24gb-python-mps-bin8-campaign-seal-68dbe3a",
+      "artifact": "private-evidence://macbook-pro-m5-24gb/20260822-python-mps-macbook-pro-m5-24gb-bin8-68dbe3a-01/FINAL-SHA256SUMS",
+      "sha256": "84c8f965240668d83fe1698393fe43a7f1d55c69fc7812d9e9f1e4b04a491379",
+      "result": "Immutable checksum seal for the complete physical MacBook Pro M5 24 GB exact Python MPS detector-bin-8 campaign."
+    },
+    {
+      "id": "linux-dual-blackwell-ownership-audit-02",
+      "artifact": "private-evidence://linux-cuda-workstation/20260822-linux-dual-blackwell-ownership-audit-02/audit.json",
+      "sha256": "fd8208c28f76235d37303e40a388a3906d8b98cb4ede32d5b4d127a7cb166fdc",
+      "result": "Read-only ownership audit found both 96 GB Blackwell GPUs at 100 percent compute utilization with unrelated owners. No CUDA benchmark or service mutation was attempted."
+    },
+    {
       "id": "m5-max-128gb-swift-metal-bin2-canonical-r7-5106ca4",
       "artifact": "private-evidence://macbook-pro-m5-max-128gb/20260822-swift-metal-m5max-128gb-canonical-bin2-fixture-c-reuse7-5106ca4-01/output/summary.json",
       "sha256": "1ed045c2270103b85cb5092f8f00fc2674f3040493fdfeb4329d9d655ef4ae8a",
@@ -420,6 +439,38 @@
       "driver_after_release_bytes": 1275936768,
       "process_peak_rss_bytes": 5536972800,
       "process_peak_physical_footprint_bytes": 6489739176,
+      "swap_delta_bytes": 0,
+      "swapout_delta_bytes": 0,
+      "pageout_delta_bytes": 0,
+      "cache_state": "source pages uncontrolled or warm; no prepared result; one same-process warmup; fresh returned destination per retained trial",
+      "timing_boundary": "public io.load return after MPS synchronization; full-volume hash and release excluded",
+      "parity": "All seven complete canonical logical-pixel hashes and explicit source/working dtype, geometry, scan coverage, metadata, detector-bin, and release checks passed.",
+      "cold_claim": false
+    },
+    "macbook_pro_m5_24gb_python_mps_bin8_68dbe3a": {
+      "source_revision": "68dbe3aa5f816e2d1c1ae976e1874790cffb4319",
+      "fixture_id": "real-512x512x192x192-u16-bslz4-27shard-master-fixture-c",
+      "source_identity_sha256": "9f0ddb932c631b63cb573c38d747fa41941ee585c5389d33bdafb4add962b768",
+      "source_shape": [512, 512, 192, 192],
+      "working_shape": [512, 512, 24, 24],
+      "source_dtype": "uint16",
+      "working_dtype": "uint16",
+      "scan_bin": 1,
+      "detector_bin": 8,
+      "scan_crop": null,
+      "detector_crop": null,
+      "logical_pixel_hash_schema": "quantem.gpu.4dstem-logical-pixels/v1",
+      "logical_pixel_sha256": "a15a6549c2452a400badea234fe672246eb195e986de6a5e4b363ffa848aba88",
+      "warmup_count": 1,
+      "sample_count": 7,
+      "p50_seconds": 1.220057208003709,
+      "p95_seconds": 1.2287148750037886,
+      "maximum_seconds": 1.2287148750037886,
+      "logical_resident_bytes": 301989888,
+      "sampled_driver_peak_bytes": 1577926656,
+      "driver_after_release_bytes": 1275936768,
+      "process_peak_rss_bytes": 1006436352,
+      "process_peak_physical_footprint_bytes": 2258962184,
       "swap_delta_bytes": 0,
       "swapout_delta_bytes": 0,
       "pageout_delta_bytes": 0,

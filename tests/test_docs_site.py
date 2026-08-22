@@ -425,7 +425,7 @@ def test_platform_first_io_tables_expose_current_bins_devices_and_dates() -> Non
         for row in rows
         if row[0] == "Python MPS" and row[1] == "MacBook Pro (M5, 24 GB)"
     ]
-    assert {int(row[bin_index]) for row in mps_24} == {2, 4}
+    assert {int(row[bin_index]) for row in mps_24} == {2, 4, 8}
     mps_24_bin2 = next(row for row in mps_24 if int(row[bin_index]) == 2)
     assert (
         mps_24_bin2[p50_index],
@@ -438,6 +438,22 @@ def test_platform_first_io_tables_expose_current_bins_devices_and_dates() -> Non
         mps_24_bin4[p95_index],
         mps_24_bin4[footprint_index],
     ) == ("1.250958 s", "1.255510 s", "3.791 GiB")
+    mps_24_bin8 = next(row for row in mps_24 if int(row[bin_index]) == 8)
+    assert (
+        mps_24_bin8[p50_index],
+        mps_24_bin8[p95_index],
+        mps_24_bin8[resident_index],
+        mps_24_bin8[accelerator_index],
+        mps_24_bin8[rss_index],
+        mps_24_bin8[footprint_index],
+    ) == (
+        "1.220057 s",
+        "1.228715 s",
+        "0.281 GiB",
+        "1.470 GiB",
+        "0.937 GiB",
+        "2.104 GiB",
+    )
     assert all(row[swap_index] == "0 B" for row in mps_24)
 
     native_max_bin2 = next(
