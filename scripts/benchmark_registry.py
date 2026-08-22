@@ -96,6 +96,12 @@ COMPUTER_SLUGS = {
     "Portable CI runner": "portable-ci",
 }
 
+PASSING_ZERO_VIOLATION_PHRASES = (
+    "zero tolerance violations",
+    "0 tolerance violations",
+    "no tolerance violations",
+)
+
 
 def _computer_label(device: Any, current: Any) -> str:
     """Return a reproducible hardware label instead of a local host nickname."""
@@ -151,6 +157,16 @@ def _artifact_lookup(evidence: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {item["id"]: item for item in evidence.get("artifacts", [])}
 
 
+def _parity_adjudication_text(value: Any) -> tuple[str, bool]:
+    """Remove explicitly passing zero-violation phrases before failure matching."""
+
+    text = str(value or "").lower()
+    zero_violations = any(phrase in text for phrase in PASSING_ZERO_VIOLATION_PHRASES)
+    for phrase in PASSING_ZERO_VIOLATION_PHRASES:
+        text = text.replace(phrase, "")
+    return text, zero_violations
+
+
 def _measurement_state(measurement: dict[str, Any]) -> str:
     explicit = measurement.get("state")
     if explicit in ALLOWED_STATES and explicit != "measured":
@@ -161,8 +177,9 @@ def _measurement_state(measurement: dict[str, Any]) -> str:
         measurement.get("wall_max_seconds"),
     )
     parity = str(measurement.get("parity") or "").lower()
+    adjudication_text, zero_violations = _parity_adjudication_text(parity)
     if any(
-        marker in parity
+        marker in adjudication_text
         for marker in (
             "mismatch",
             "did not match",
@@ -183,13 +200,12 @@ def _measurement_state(measurement: dict[str, Any]) -> str:
         )
     ):
         return "partial"
-    positive_parity = any(
+    positive_parity = zero_violations or any(
         marker in parity
         for marker in (
             "exact",
             "passed",
             "within tolerance",
-            "zero tolerance violations",
             "byte-identical",
         )
     )
@@ -387,6 +403,7 @@ def validate_registry(
 
     measurements = resolved_measurements(registry)
     measurement_ids = {row["measurement_id"] for row in measurements}
+    measurement_states = {row["measurement_id"]: row["state"] for row in measurements}
     if len(measurement_ids) != len(measurements):
         failures.append("retained measurement IDs must be unique")
     fixture_masters: dict[str, set[str]] = {}
@@ -508,6 +525,16 @@ def validate_registry(
             failures.append(f"{label} names unknown measurements {sorted(unknown)}")
         if gate["state"] in COMPLETE_STATES and not satisfied:
             failures.append(f"{label} measured gate needs satisfied_by evidence")
+        if gate["state"] in COMPLETE_STATES:
+            incomplete = {
+                measurement_id: measurement_states.get(measurement_id)
+                for measurement_id in satisfied
+                if measurement_states.get(measurement_id) not in COMPLETE_STATES
+            }
+            if incomplete:
+                failures.append(
+                    f"{label} measured gate names non-measured evidence {incomplete}"
+                )
         if gate["state"] in OPEN_STATES and not str(gate["next_gate"]).strip():
             failures.append(f"{label} open gate needs a concrete next_gate")
         if gate["state"] == "unsupported":
@@ -575,14 +602,7 @@ def _parity_label(value: Any) -> str:
     lower = str(value).lower()
     if "not performed" in lower or "incomplete" in lower:
         return "Qualified probes"
-    passing_zero_violation_phrases = (
-        "zero tolerance violations",
-        "0 tolerance violations",
-        "no tolerance violations",
-    )
-    adjudication_text = lower
-    for phrase in passing_zero_violation_phrases:
-        adjudication_text = adjudication_text.replace(phrase, "")
+    adjudication_text, _ = _parity_adjudication_text(lower)
     if any(
         marker in adjudication_text
         for marker in ("failed", "mismatch", "tolerance violation")

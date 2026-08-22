@@ -183,3 +183,76 @@ def test_trial_retains_mismatch_and_releases_result(
     )
     assert "full-volume SHA-256 mismatch" in failure
     assert managed.freed is True
+
+
+def test_trial_releases_result_after_shape_evidence_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    array = np.arange(24, dtype=np.uint16).reshape(2, 3, 4)
+    managed = _ManagedArray(array)
+    result = _Result(managed)
+    monkeypatch.setattr(benchmark, "_load_once", lambda master, args: result)
+    monkeypatch.setattr(benchmark, "_sync_backend", lambda backend: None)
+    monkeypatch.setattr(benchmark, "_clear_backend", lambda backend: None)
+    monkeypatch.setattr(benchmark, "_memory_snapshot", lambda backend: {})
+    monkeypatch.setattr(
+        benchmark, "MemorySampler", lambda backend, interval: _Sampler()
+    )
+    monkeypatch.setattr(
+        benchmark,
+        "_output_parity",
+        lambda data, args: {"errors": [], "passed": True},
+    )
+    monkeypatch.setattr(
+        benchmark,
+        "_scientific_metadata",
+        lambda loaded, args: {"errors": [], "passed": True},
+    )
+    monkeypatch.setattr(
+        benchmark,
+        "_shape",
+        lambda data: (_ for _ in ()).throw(RuntimeError("shape failed")),
+    )
+
+    record, failure = benchmark._run_timed_trial(
+        Path("unused-master.h5"), _trial_args(array), 1
+    )
+
+    assert record["status"] == "failed"
+    assert record["failure_stage"] == "result-metadata"
+    assert "shape failed" in failure
+    assert managed.freed is True
+
+
+def test_trial_releases_result_after_post_load_memory_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    array = np.arange(24, dtype=np.uint16).reshape(2, 3, 4)
+    managed = _ManagedArray(array)
+    result = _Result(managed)
+    snapshot_calls = 0
+
+    def memory_snapshot(backend: str) -> dict:
+        nonlocal snapshot_calls
+        snapshot_calls += 1
+        if snapshot_calls == 2:
+            raise RuntimeError("telemetry failed")
+        return {"snapshot": snapshot_calls}
+
+    monkeypatch.setattr(benchmark, "_load_once", lambda master, args: result)
+    monkeypatch.setattr(benchmark, "_sync_backend", lambda backend: None)
+    monkeypatch.setattr(benchmark, "_clear_backend", lambda backend: None)
+    monkeypatch.setattr(benchmark, "_memory_snapshot", memory_snapshot)
+    monkeypatch.setattr(
+        benchmark, "MemorySampler", lambda backend, interval: _Sampler()
+    )
+
+    record, failure = benchmark._run_timed_trial(
+        Path("unused-master.h5"), _trial_args(array), 1
+    )
+
+    assert record["status"] == "failed"
+    assert record["failure_stage"] == "post-load-memory"
+    assert "telemetry failed" in failure
+    assert record["memory_after_release"] == {"snapshot": 3}
+    assert managed.freed is True
