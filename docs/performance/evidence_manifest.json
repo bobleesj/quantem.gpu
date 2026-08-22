@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "source_revision": "c0ea44465e6346a8436a0b74f491a04af0b5dc32",
+  "source_revision": "be035c41dcfb9176f541843caf959eee66ae9c2e",
   "purpose": "Fingerprints for the current benchmark dashboard, authoritative provenance ledger, parity and methodology contracts, and canonical historical evidence. Landing, API, and backend capability pages intentionally do not duplicate measurements.",
   "pages": [
     {
@@ -10,13 +10,18 @@
     },
     {
       "path": "docs/dashboard.md",
-      "sha256": "b2c35c4e683bbcc14f1f5be55b6d42d050cbbba1e53de3ad1c821d6e12dea5d7",
+      "sha256": "de45cbe7bcebafbac21bb7b93ec827490803c5afad340696e3bc5859f887907f",
       "role": "Single human-facing current capability, speed, memory, and parity overview"
     },
     {
       "path": "docs/platforms/cuda.md",
       "sha256": "a748b94c3fdb9328dca9a1787ba3b0c70e84b49abf7d898da5e131e9b2841de1",
       "role": "CUDA 6 GiB minimum-device acceptance contract"
+    },
+    {
+      "path": "docs/platforms/mps.md",
+      "sha256": "529562b892e41d141ac0f2bd9ef9157b3e221823a3c55c5e1b85fe1ad81d14a1",
+      "role": "Python MPS direct-Metal lifetime and resident-versus-peak memory contract"
     },
     {
       "path": "docs/platforms/webgpu.md",
@@ -35,17 +40,17 @@
     },
     {
       "path": "docs/performance/results.md",
-      "sha256": "352d0afc03f7f6a26d0dae1690fb69cf2f537b98cacac0e378ebf39277c660a4",
+      "sha256": "ef4e292e546d485a120b75d07d3f6c211b2299ae224e52459212df0a4f536a18",
       "role": "Authoritative current benchmark provenance ledger"
     },
     {
       "path": "docs/performance/changes.md",
-      "sha256": "7b324a2dbcee11da2ea9e2526222febad34a997b0b808e4b13b8e7bdc5a8a6a3",
+      "sha256": "4b68ba5206b57f28053c680e483787c30b4e9d609aeb387ce6a20d1600c393ee",
       "role": "Benchmark promotion, rejection, and supersession decisions without copied values"
     },
     {
       "path": "docs/performance/methodology.md",
-      "sha256": "cda5715350374eed14613997bfe2de6566c0d34665e38c50856c4808a1f02b8c",
+      "sha256": "16e070d50764e3e4a94388f283702d09b5afedf6e87f922b8035cfa5b582be4a",
       "role": "Benchmark state, provenance, and scientific-resolution contract"
     },
     {

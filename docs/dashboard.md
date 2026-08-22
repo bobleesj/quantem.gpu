@@ -32,31 +32,35 @@ cache state, or timing statistic requires another row; slash-delimited bundles
 are not permitted. **Pending** means the combination is tracked but has no
 retained timing with complete provenance.
 
-The rendered site adds local filters for platform, device, detector bin, and
-free text. Filtering changes only which retained rows are visible; the static
-table remains the canonical source. On narrow screens the table scrolls so the
-timing, memory, parity, device, and date columns stay separate.
+The rendered site adds local filters for platform, device, detector bin,
+cache/process state, and free text. Filtering changes only which retained rows
+are visible; the static table remains the canonical source. On narrow screens
+the table scrolls so timing, resident payload, measured peak, parity, device,
+and date stay separate.
 
-| Platform | Selected scan | Scan plan | Source detector | Detector bin | Output detector | Source dtype | Decode dtype | Resident dtype | Cache state | Wall boundary | Fixture | Statistic | Time | Memory kind | Memory | Parity | Device tested | Date tested |
-|---|---:|---|---:|---:|---:|---|---|---|---|---|---|---|---:|---|---:|---|---|---|
-| [**CUDA**](platforms/cuda.md) | `512x512` | Full | `192x192` | 1 | `192x192` | `uint16` | `uint16` | `uint16` | Warm source | First usable resident | D | p50 | **0.386 s** | Total-card peak | **22.78 GB** | Pass | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 | 2026-08-19 |
-| [**CUDA**](platforms/cuda.md) | `512x512` | Full | `192x192` | 2 | `96x96` | `uint16` | `uint16` | `uint32` | Warm source | First usable resident | D | p50 | **0.396 s** | Total-card peak | **12.41 GB** | Pass | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 | 2026-08-19 |
-| [**CUDA**](platforms/cuda.md) | `512x512` | Full | `192x192` | 4 | `48x48` | `uint16` | `uint16` | `uint32` | Warm source | First usable resident | D | p50 | **0.390 s** | Total-card peak | **4.03 GB** | Pass | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 | 2026-08-19 |
-| [**CUDA**](platforms/cuda.md) | `512x512` | Full | `192x192` | 8 | `24x24` | `uint16` | `uint16` | `uint32` | Warm source | First usable resident | D | p50 | **0.381 s** | Total-card peak | **1.94 GB** | Pass | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 | 2026-08-19 |
-| [**Python MPS**](platforms/mps.md) | `512x512` | Full | `192x192` | 1 | `192x192` | `uint16` | `uint16` | `uint16` | Warm source | First usable resident | C | p50 | **2.273 s** | Process RSS | **0.93 GB** | Pass | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-19 |
-| [**Python MPS**](platforms/mps.md) | `512x512` | Full | `192x192` | 2 | `96x96` | `uint16` | `uint16` | `uint16` | Warm source | First usable resident | C | p50 | **0.707 s** | Process RSS | **0.73 GB** | Pass | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-19 |
-| [**Python MPS**](platforms/mps.md) | `512x512` | Full | `192x192` | 4 | `48x48` | `uint16` | `uint16` | `uint16` | Warm source | First usable resident | C | p50 | **0.605 s** | Process RSS | **0.73 GB** | Pass | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-19 |
-| [**Python MPS**](platforms/mps.md) | `512x512` | Full | `192x192` | 8 | `24x24` | `uint16` | `uint16` | `uint16` | Warm source | First usable resident | C | p50 | **0.586 s** | Process RSS | **0.74 GB** | Pass | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-19 |
-| [**Native Swift/Metal**](platforms/swift-metal.md) | `512x512` | Full | `192x192` | 1 | `192x192` | `uint16` | audit-bound `uint8` | `uint16` | Controlled `F_NOCACHE`; new index | Exact complete resident | C | p50 | **0.578 s** | Metal allocated after load | **19.94 GB** | Pass | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-22 |
-| [**Native Swift/Metal**](platforms/swift-metal.md) | `512x512` | Full | `192x192` | 4 | `48x48` | `uint16` | — | `uint16` | Prepared exact summary | First complete product | C | p50 | **0.029 s** | Process RSS max | **92.0 MB** | Pass | Apple M2 MacBook Air (`Mac14,2`, 8 GB) | 2026-08-19 |
-| [**WebGPU**](platforms/webgpu.md) | `512x512` | Full | `192x192` | 1 | `192x192` | `uint16` | `uint8` | `uint8` | Warm OS cache | First usable resident | D | p50 | **0.824 s** | Chrome-tree RSS max | **5.39 GB** | Pass | Chrome 151, Apple M5 Max Metal-3 | 2026-08-19 |
-| [**WebGPU**](platforms/webgpu.md) | `512x512` | Full | `192x192` | 2 | `96x96` | `uint16` | `uint16` | `float32` | Warm OS cache | First usable resident | D | p50 | **1.281 s** | Chrome-tree RSS max | **5.76 GB** | Pass | Chrome 151, Apple M5 Max Metal-3 | 2026-08-19 |
-| [**WebGPU**](platforms/webgpu.md) | `512x512` | Full | `192x192` | 4 | `48x48` | `uint16` | `uint16` | `float32` | Warm OS cache | First usable resident | D | p50 | **1.044 s** | Chrome-tree RSS max | **5.57 GB** | Pass | Chrome 151, Apple M5 Max Metal-3 | 2026-08-19 |
-| [**WebGPU**](platforms/webgpu.md) | `512x512` | Full | `192x192` | 8 | `24x24` | `uint16` | `uint16` | `float32` | Warm OS cache | First usable resident | D | p50 | **0.979 s** | Chrome-tree RSS max | **5.57 GB** | Pass | Chrome 151, Apple M5 Max Metal-3 | 2026-08-19 |
-| **CPU reference** | `512x512` | Full | `192x192` | 1 | `192x192` | `uint16` | `uint16` | `uint16` | Reference traversal | First usable host array | D | Single run | **34.37 s** | Peak RSS | **39.14 GB** | Ref | Apple M5 Max CPU | 2026-08-19 |
-| **CPU reference** | `512x512` | Full | `192x192` | 2 | `96x96` | `uint16` | `uint16` | `uint16` | Reference traversal | First usable host array | D | Single run | **54.22 s** | Peak RSS | **10.34 GB** | Ref | Apple M5 Max CPU | 2026-08-19 |
-| **CPU reference** | `512x512` | Full | `192x192` | 4 | `48x48` | `uint16` | `uint16` | `uint16` | Reference traversal | First usable host array | D | Single run | **43.04 s** | Peak RSS | **3.20 GB** | Ref | Apple M5 Max CPU | 2026-08-19 |
-| **CPU reference** | `512x512` | Full | `192x192` | 8 | `24x24` | `uint16` | `uint16` | `uint16` | Reference traversal | First usable host array | D | Single run | **38.13 s** | Peak RSS | **2.18 GB** | Ref | Apple M5 Max CPU | 2026-08-19 |
+| Platform | Selected scan | Scan plan | Source detector | Detector bin | Output detector | Source dtype | Decode dtype | Resident dtype | Cache/process state | Wall boundary | Fixture | Statistic | Time | Resident payload | Peak boundary | Measured peak | Parity | Device tested | Date tested |
+|---|---:|---|---:|---:|---:|---|---|---|---|---|---|---|---:|---:|---|---:|---|---|---|
+| [**CUDA**](platforms/cuda.md) | `512x512` | Full | `192x192` | 1 | `192x192` | `uint16` | `uint16` | `uint16` | Warm source | First usable resident | D | p50 | **0.386 s** | **18.00 GiB** | Total-card occupancy | **21.215 GiB** | Pass | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 | 2026-08-19 |
+| [**CUDA**](platforms/cuda.md) | `512x512` | Full | `192x192` | 2 | `96x96` | `uint16` | `uint16` | `uint32` | Warm source | First usable resident | D | p50 | **0.396 s** | **9.00 GiB** | Total-card occupancy | **11.561 GiB** | Pass | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 | 2026-08-19 |
+| [**CUDA**](platforms/cuda.md) | `512x512` | Full | `192x192` | 4 | `48x48` | `uint16` | `uint16` | `uint32` | Warm source | First usable resident | D | p50 | **0.390 s** | **2.25 GiB** | Total-card occupancy | **3.756 GiB** | Pass | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 | 2026-08-19 |
+| [**CUDA**](platforms/cuda.md) | `512x512` | Full | `192x192` | 8 | `24x24` | `uint16` | `uint16` | `uint32` | Warm source | First usable resident | D | p50 | **0.381 s** | **0.5625 GiB** | Total-card occupancy | **1.805 GiB** | Pass | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 | 2026-08-19 |
+| [**Python MPS**](platforms/mps.md) | `512x512` | Full | `192x192` | 1 | `192x192` | `uint16` | `uint16` | `uint16` | Fresh process; warm source pages | First usable resident | C | p50 | **1.163 s** | **18.00 GiB** | Sampled Metal driver | **19.815 GiB** | Pass | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-22 |
+| [**Python MPS**](platforms/mps.md) | `512x512` | Full | `192x192` | 2 | `96x96` | `uint16` | `uint16` | `uint16` | Fresh process; warm source pages | First usable resident | C | p50 | **1.320 s** | **4.50 GiB** | Sampled Metal driver | **5.933 GiB** | Pass | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-22 |
+| [**Python MPS**](platforms/mps.md) | `512x512` | Full | `192x192` | 4 | `48x48` | `uint16` | `uint16` | `uint16` | Fresh process; warm source pages | First usable resident | C | p50 | **1.220 s** | **1.125 GiB** | Sampled Metal driver | **2.558 GiB** | Pass | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-22 |
+| [**Python MPS**](platforms/mps.md) | `512x512` | Full | `192x192` | 8 | `24x24` | `uint16` | `uint16` | `uint16` | Fresh process; warm source pages | First usable resident | C | p50 | **1.229 s** | **0.28125 GiB** | Sampled Metal driver | **1.714 GiB** | Pass | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-22 |
+| [**Python MPS**](platforms/mps.md) | `512x512` | Full | `192x192` | 1 | `192x192` | `uint16` | `uint16` | `uint16` | Warm process/source; output freed | First usable resident | C | p50 | **0.903 s** | **18.00 GiB** | Sampled Metal driver | **19.815 GiB** | Pass | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-22 |
+| [**Python MPS**](platforms/mps.md) | `512x512` | Full | `192x192` | 2 | `96x96` | `uint16` | `uint16` | `uint16` | Warm process/source; output freed | First usable resident | C | p50 | **0.907 s** | **4.50 GiB** | Sampled Metal driver | **5.933 GiB** | Pass | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-22 |
+| [**Python MPS**](platforms/mps.md) | `512x512` | Full | `192x192` | 4 | `48x48` | `uint16` | `uint16` | `uint16` | Warm process/source; output freed | First usable resident | C | p50 | **0.764 s** | **1.125 GiB** | Sampled Metal driver | **2.558 GiB** | Pass | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-22 |
+| [**Python MPS**](platforms/mps.md) | `512x512` | Full | `192x192` | 8 | `24x24` | `uint16` | `uint16` | `uint16` | Warm process/source; output freed | First usable resident | C | p50 | **0.751 s** | **0.28125 GiB** | Sampled Metal driver | **1.714 GiB** | Pass | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-22 |
+| [**Native Swift/Metal**](platforms/swift-metal.md) | `512x512` | Full | `192x192` | 1 | `192x192` | `uint16` | audit-bound `uint8` | `uint16` | Controlled `F_NOCACHE`; new index | Exact complete resident | C | p50 | **0.578 s** | **18.00 GiB** | After-load Metal allocation; sampled peak pending | **>=18.571 GiB** | Pass | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-22 |
+| [**WebGPU**](platforms/webgpu.md) | `512x512` | Full | `192x192` | 1 | `192x192` | `uint16` | `uint8` | `uint8` | Warm OS cache | First usable resident | D | p50 | **0.824 s** | **9.00 GiB** | Chrome-tree RSS; device peak incomplete | **5.020 GiB** | Pass | Chrome 151, Apple M5 Max Metal-3 | 2026-08-19 |
+| [**WebGPU**](platforms/webgpu.md) | `512x512` | Full | `192x192` | 2 | `96x96` | `uint16` | `uint16` | `float32` | Warm OS cache | First usable resident | D | p50 | **1.281 s** | **9.00 GiB** | Chrome-tree RSS; device peak incomplete | **5.363 GiB** | Pass | Chrome 151, Apple M5 Max Metal-3 | 2026-08-19 |
+| [**WebGPU**](platforms/webgpu.md) | `512x512` | Full | `192x192` | 4 | `48x48` | `uint16` | `uint16` | `float32` | Warm OS cache | First usable resident | D | p50 | **1.044 s** | **2.25 GiB** | Chrome-tree RSS; device peak incomplete | **5.188 GiB** | Pass | Chrome 151, Apple M5 Max Metal-3 | 2026-08-19 |
+| [**WebGPU**](platforms/webgpu.md) | `512x512` | Full | `192x192` | 8 | `24x24` | `uint16` | `uint16` | `float32` | Warm OS cache | First usable resident | D | p50 | **0.979 s** | **0.5625 GiB** | Chrome-tree RSS; device peak incomplete | **5.184 GiB** | Pass | Chrome 151, Apple M5 Max Metal-3 | 2026-08-19 |
+| **CPU reference** | `512x512` | Full | `192x192` | 1 | `192x192` | `uint16` | `uint16` | `uint16` | Reference traversal | First usable host array | D | Single run | **34.37 s** | **18.00 GiB** | Process RSS | **36.450 GiB** | Ref | Apple M5 Max CPU | 2026-08-19 |
+| **CPU reference** | `512x512` | Full | `192x192` | 2 | `96x96` | `uint16` | `uint16` | `uint16` | Reference traversal | First usable host array | D | Single run | **54.22 s** | **4.50 GiB** | Process RSS | **9.634 GiB** | Ref | Apple M5 Max CPU | 2026-08-19 |
+| **CPU reference** | `512x512` | Full | `192x192` | 4 | `48x48` | `uint16` | `uint16` | `uint16` | Reference traversal | First usable host array | D | Single run | **43.04 s** | **1.125 GiB** | Process RSS | **2.978 GiB** | Ref | Apple M5 Max CPU | 2026-08-19 |
+| **CPU reference** | `512x512` | Full | `192x192` | 8 | `24x24` | `uint16` | `uint16` | `uint16` | Reference traversal | First usable host array | D | Single run | **38.13 s** | **0.28125 GiB** | Process RSS | **2.034 GiB** | Ref | Apple M5 Max CPU | 2026-08-19 |
 
 Fixtures C and D are independent real `512x512x192x192`, native-`uint16`,
 27-shard compressed-HDF5 sources. Fixture C contains 3,169,489,846 indexed
@@ -67,16 +71,37 @@ is an independent reference, never a silent fallback. Different fixtures and
 boundaries are not ranked.
 
 The 2026-08-19 source rows did not forcibly evict the source cache and therefore
-remain labeled warm. The 2026-08-22 native row instead applies macOS
+remain labeled warm. The 2026-08-22 MPS rows also used warm, uncontrolled source
+pages, but distinguish a new Python process from repeated calls in one process.
+Every repeated MPS call explicitly frees its `MPSChunked4DSTEM` output before
+the next trial. The former 2.273-second MPS bin-1 headline is superseded: its
+benchmark cleared the Torch cache but did not release direct PyObjC Metal
+buffers, so repeated 18 GiB outputs drove system free memory from 86% to 41%.
+The retained historical artifact remains in the results ledger.
+The exact full bin-1 resident payload is 19,327,352,832 bytes (18.00 GiB); its
+sampled Metal-driver peak is 19.815 GiB.
+The binned `uint16` rows are fixture-specific: source identity
+`9f0ddb93...` has a complete maximum-count audit of 53, so even an 8x8 exact
+sum is at most 3,392 and fits `uint16`. This does not authorize `uint16`
+summation for an unaudited source; such a source needs a sufficient wider dtype
+or a fail-closed range audit.
+
+The 2026-08-22 native row instead applies macOS
 `F_NOCACHE` to source hashing and every indexed source descriptor, creates a new
 index root and private Metal destination per process, and stops at the complete
 exact 18 GiB resident volume plus products. Its identity-bound value audit
 already exists, so it is controlled uncached-source-page evidence—not an
 audit-free arbitrary-source cold load and not application end to end. The
-0.029-second native row is a separate prepared exact-summary reopen that does
-not decode or traverse the resident 4D volume. The results ledger owns p95/max,
-exact revisions, fixture hashes, stage intervals, logical payloads, and parity
+0.029-second native prepared exact-summary reopen is intentionally kept in
+the screening section rather than this load table because it does not decode or
+traverse the resident 4D volume. The results ledger owns p95/max, exact
+revisions, fixture hashes, stage intervals, logical payloads, and parity
 artifacts.
+
+Resident payload and measured peak are different columns by design. Process RSS does not include every direct Metal
+or WebGPU allocation. A peak whose boundary
+is incomplete is labeled incomplete or as a lower bound; it is never allowed to
+stand in for total unified-memory demand.
 Historical cropped, superseded prepared, first-campaign, and application-level
 rows remain in the maintainer records linked from
 [Verified benchmark results](performance/results.md).
@@ -90,29 +115,36 @@ stages. A `uint8` row is scientifically exact only when the source is already
 `pixelsAbove255 == 0`. Otherwise an explicit `dtype="u8"` load saturates values
 above 255 and is a browse representation, not raw-count evidence.
 
-| Platform | Source dtype | Decode/working dtype | Resident dtype | Precision policy | Support | Memory kind | Retained memory |
-|---|---|---|---|---|---|---|---:|
-| [**CUDA**](platforms/cuda.md) | `uint8` | — | — | Native compressed source | — | — | — |
-| [**CUDA**](platforms/cuda.md) | `uint16` | `uint16` | `uint16` | Exact native counts | ✓ | Native-detector payload | **18.00 GiB** |
-| [**CUDA**](platforms/cuda.md) | `uint16` | `uint8` | `uint8` | Complete-audit lossless | ✓ | Decoded resident | **9.66 GB** |
-| [**CUDA**](platforms/cuda.md) | `uint32` | `uint32` | `uint32` | Exact native counts | ✓ | Process peak | **Pending** |
-| [**Python MPS**](platforms/mps.md) | `uint8` | — | — | Native compressed source | — | — | — |
-| [**Python MPS**](platforms/mps.md) | `uint16` | `uint16` | `uint16` | Exact native counts | ✓ | Native-detector payload | **18.00 GiB** |
-| [**Python MPS**](platforms/mps.md) | `uint16` | `uint8` | `uint8` | Complete-audit lossless | ✓ | Process/Metal peak | **Pending** |
-| [**Python MPS**](platforms/mps.md) | `uint32` | `uint16` | `uint16` | Guarded exact narrowing | ✓ | Process/Metal peak | **Pending** |
-| [**Python MPS**](platforms/mps.md) | `uint32` | `uint32` | `uint32` | Exact native counts | ✓ | Process/Metal peak | **Pending** |
-| [**Native Swift/Metal**](platforms/swift-metal.md) | `uint8` | `uint8` | `uint8` | Exact native counts | ✓ | Process peak | **Pending** |
-| [**Native Swift/Metal**](platforms/swift-metal.md) | `uint16` | audit-bound `uint8` | `uint16` | Exact native counts | ✓ | Metal allocated after load | **19.94 GB** |
-| [**Native Swift/Metal**](platforms/swift-metal.md) | `uint16` | `uint16` | `uint16` | Audited exact detector sum | ✓ | Process peak | **1.43 GB** |
-| [**Native Swift/Metal**](platforms/swift-metal.md) | `uint16` | `uint16` | `uint32` | General exact detector sum | ✓ | Process peak | **Pending** |
-| [**WebGPU**](platforms/webgpu.md) | `uint8` | `uint8` | `uint8` | Exact native counts | ✓ | Browser/device peak | **Pending** |
-| [**WebGPU**](platforms/webgpu.md) | `uint16` | `uint16` | `uint16` | Exact native counts | ✓ | Browser/device peak | **Pending** |
-| [**WebGPU**](platforms/webgpu.md) | `uint16` | `uint8` | `uint8` | Complete-audit lossless | ✓ | Decoded payload | **9.7 GB** |
-| [**WebGPU**](platforms/webgpu.md) | `uint16` | `uint8` | `float32` | Exact detector sum | ✓ | Browser/device peak | **Pending** |
-| [**WebGPU**](platforms/webgpu.md) | `uint16` | `uint16` | `float32` | Exact detector sum | ✓ | Browser/device peak | **Pending** |
-| [**WebGPU**](platforms/webgpu.md) | `uint32` | `uint32` | `uint32` | Exact native counts | ✓ | Browser/device peak | **Pending** |
-| **CPU reference** | `uint8` | `uint8` | `uint8` | Exact reference | Ref | Host peak | **Pending** |
-| **CPU reference** | `uint16` | `uint16` | `uint16` | Exact reference | Ref | Host peak | **Pending** |
+| Platform | Source dtype | Decode/working dtype | Resident dtype | Precision policy | Support | Resident payload example | Measured memory example | Measurement boundary |
+|---|---|---|---|---|---|---:|---:|---|
+| [**CUDA**](platforms/cuda.md) | `uint8` | — | — | Native compressed source | — | — | — | — |
+| [**CUDA**](platforms/cuda.md) | `uint16` | `uint16` | `uint16` | Exact native counts | ✓ | **18.00 GiB** | **21.215 GiB** | Full bin1 total-card peak |
+| [**CUDA**](platforms/cuda.md) | `uint16` | `uint8` | `uint8` | Complete-audit lossless | ✓ | **9.00 GiB** | **Pending** | Full native detector |
+| [**CUDA**](platforms/cuda.md) | `uint32` | `uint32` | `uint32` | Exact native counts | ✓ | Shape/bin dependent | **Pending** | — |
+| [**Python MPS**](platforms/mps.md) | `uint8` | — | — | Native compressed source | — | — | — | — |
+| [**Python MPS**](platforms/mps.md) | `uint16` | `uint16` | `uint16` | Exact native counts | ✓ | **18.00 GiB** | **19.815 GiB** | Full bin1 sampled Metal-driver peak |
+| [**Python MPS**](platforms/mps.md) | `uint16` | `uint8` | `uint8` | Complete-audit lossless | ✓ | **9.00 GiB** | **Pending** | Full native detector |
+| [**Python MPS**](platforms/mps.md) | `uint32` | `uint16` | `uint16` | Guarded exact narrowing | ✓ | Shape/bin dependent | **Pending** | — |
+| [**Python MPS**](platforms/mps.md) | `uint32` | `uint32` | `uint32` | Exact native counts | ✓ | Shape/bin dependent | **Pending** | — |
+| [**Native Swift/Metal**](platforms/swift-metal.md) | `uint8` | `uint8` | `uint8` | Exact native counts | ✓ | Shape/bin dependent | **Pending** | — |
+| [**Native Swift/Metal**](platforms/swift-metal.md) | `uint16` | audit-bound `uint8` | `uint16` | Exact native counts | ✓ | **18.00 GiB** | **>=18.571 GiB** | Full bin1 after-load allocation; sampled peak pending |
+| [**Native Swift/Metal**](platforms/swift-metal.md) | `uint16` | `uint16` | `uint16` | Audited exact detector sum | ✓ | **1.125 GiB** | **1.332 GiB** | Physical-Air bin4 process-footprint example |
+| [**Native Swift/Metal**](platforms/swift-metal.md) | `uint16` | `uint16` | `uint32` | General exact detector sum | ✓ | Shape/bin dependent | **Pending** | — |
+| [**WebGPU**](platforms/webgpu.md) | `uint8` | `uint8` | `uint8` | Exact native counts | ✓ | Shape/bin dependent | **Pending** | — |
+| [**WebGPU**](platforms/webgpu.md) | `uint16` | `uint16` | `uint16` | Exact native counts | ✓ | Shape/bin dependent | **Pending** | — |
+| [**WebGPU**](platforms/webgpu.md) | `uint16` | `uint8` | `uint8` | Complete-audit lossless | ✓ | **9.00 GiB** | **5.020 GiB** | Full bin1 Chrome-tree RSS; device peak incomplete |
+| [**WebGPU**](platforms/webgpu.md) | `uint16` | `uint8` | `float32` | Exact detector sum | ✓ | Shape/bin dependent | **Pending** | — |
+| [**WebGPU**](platforms/webgpu.md) | `uint16` | `uint16` | `float32` | Exact detector sum | ✓ | Shape/bin dependent | **Pending** | — |
+| [**WebGPU**](platforms/webgpu.md) | `uint32` | `uint32` | `uint32` | Exact native counts | ✓ | Shape/bin dependent | **Pending** | — |
+| **CPU reference** | `uint8` | `uint8` | `uint8` | Exact reference | Ref | Shape/bin dependent | **Pending** | — |
+| **CPU reference** | `uint16` | `uint16` | `uint16` | Exact reference | Ref | Shape/bin dependent | **Pending** | See measured load rows |
+
+Memory examples in this capability table are configuration-specific, not a
+promise for every shape. The main load table is authoritative for the matching
+scan, detector bin, dtype, device, and boundary. In particular, a browser RSS
+sample can be smaller than a resident WebGPU payload because it does not capture
+all device allocations; that is an incomplete peak, not evidence that the
+payload disappeared.
 
 The current C matrix measures native `uint16` input at detector bins 1/2/4/8.
 On Python MPS those resident payloads are 18.00/4.50/1.125/0.28125 GiB. On
@@ -250,7 +282,7 @@ not a default performance policy.
 | **CUDA** | ✓ | Exact streamed screening | Current comparable profile | — | **Pending** | — | — |
 | **Python MPS** | ✓ | Exact screening build | Full `512x512x192x192` `uint16`; no crop/bin; exact fallback pass | Single run | **6.711 s** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
 | **Python MPS** | ✓ | Validated screening-v3 reopen | Prepared derived products | p50 | **20.803 ms** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
-| **Native Swift/Metal** | — | — | — | — | — | — | — |
+| **Native Swift/Metal** | ✓ | Validated exact-summary reopen | Prepared derived products | p50 | **0.029 s** | Apple M2 MacBook Air (`Mac14,2`, 8 GB) | 2026-08-19 |
 | **WebGPU** | — | — | — | — | — | — | — |
 | **CPU reference** | Ref | Independent adjudication | Reference fixtures | — | **Pending** | — | — |
 

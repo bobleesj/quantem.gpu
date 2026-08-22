@@ -99,9 +99,31 @@ complete source-identity-bound audit records the corrected maximum and zero
 values above 255. A saturating `uint8` run records its saturation count and is
 labeled browse-only.
 
-On Apple unified memory, record process footprint, Metal allocated bytes,
-system pressure, and swap. On CUDA, record process allocated/reserved VRAM and
-total-card occupancy before, during, and after the run.
+On Apple unified memory, record four separate layers:
+
+1. **logical resident payload**, calculated exactly from output shape and dtype;
+2. **Metal-driver allocation**, sampled during the timed interval and again
+   after output release;
+3. **process RSS/footprint**, which does not necessarily include every direct
+   Metal allocation; and
+4. **whole-system pressure and swap** before, during, and after the run.
+
+`torch.mps.current_allocated_memory()` covers Torch-managed allocations. It may
+remain zero for buffers created directly through Metal/PyObjC; in that case it
+must not be presented as total accelerator memory. Record
+`torch.mps.driver_allocated_memory()` or an equivalent Metal counter alongside
+RSS, and name the counter precisely.
+
+A repeated-load protocol must explicitly release every caller-owned direct
+Metal output before the next repetition. Clearing a framework cache or deleting
+the Python wrapper is not proof that a `newBuffer...` allocation was released.
+Record the Metal-driver allocation after output release and fail the run if it
+grows across repetitions without an intentional cache explanation.
+
+On CUDA, record process allocated/reserved VRAM and total-card occupancy before,
+during, and after the run. On WebGPU, browser-process RSS is a useful host
+signal but is not a complete GPU-device allocation measurement; an 8 GB gate
+also requires whole-system pressure/swap and the physical device run.
 
 ## Minimum-device memory gates
 

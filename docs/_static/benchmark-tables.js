@@ -28,7 +28,13 @@ document.addEventListener("DOMContentLoaded", () => {
     tools.append(search);
 
     const selectors = [];
-    for (const columnName of ["Platform", "Device tested", "Detector bin", "Gate"]) {
+    for (const columnName of [
+      "Platform",
+      "Device tested",
+      "Detector bin",
+      "Cache/process state",
+      "Gate",
+    ]) {
       const columnIndex = headers.indexOf(columnName);
       if (columnIndex < 0) continue;
 
