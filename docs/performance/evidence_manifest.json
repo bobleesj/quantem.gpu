@@ -108,12 +108,12 @@
   "authoritative_inputs": [
     {
       "path": "benchmarks/benchmark_registry.json",
-      "sha256": "54a8d9c9704e0a4dca2b8d1a47acf6f7548e43b2ea76b9d3904763c988926199",
+      "sha256": "a4e78943f604033517776009749d88417b00b5c96e34c166132f82be77f69850",
       "role": "Atomic Platform, Computer, module, configuration, state, measurement, and runbook registry"
     },
     {
       "path": "docs/_generated/benchmark_coverage.md",
-      "sha256": "eeb1d45af6f24b2c855dc78815ecd9fe6040b23c790a55addf6508410b766e7c",
+      "sha256": "df3e285f9f5272ade5bddc7c120e640c0c48571696738a4d3306a26435a5063d",
       "role": "Generated filterable coverage, retained-measurement, and runbook tables"
     },
     {
@@ -128,7 +128,7 @@
     },
     {
       "path": "experiments/20260822-platform-computer-profile/manifest.json",
-      "sha256": "a952cc31709eb975070a7f481a349fa06a909ec9d06c9cab00fbd8b6104b1b17",
+      "sha256": "205c0caf771810ae0ec380b4b2dcc75c9946586d25c95adeba8be6cf065a87d7",
       "role": "Completed physical-device matrix ledger with accepted, partial, refuted, blocked, and pending atomic gates"
     }
   ]

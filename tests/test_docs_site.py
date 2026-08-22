@@ -365,7 +365,14 @@ def test_platform_first_io_tables_expose_current_bins_devices_and_dates() -> Non
         [cell.strip() for cell in line.strip("|").split("|")]
         for line in lines[2:]
     ]
-    assert len(rows) == 13
+    registry = json.loads(
+        Path("benchmarks/benchmark_registry.json").read_text(encoding="utf-8")
+    )
+    expected_current_rows = sum(
+        bool(measurement.get("dashboard_current"))
+        for measurement in registry["additional_measurements"]
+    )
+    assert len(rows) == expected_current_rows
     assert headers[:3] == ["Platform", "Computer", "State"]
     assert all(row[0] and row[1] for row in rows)
     assert all(name not in current.lower() for name in ("phil", "mjgoat", "rodman"))
@@ -387,15 +394,20 @@ def test_platform_first_io_tables_expose_current_bins_devices_and_dates() -> Non
     swap_index = headers.index("Swap delta")
     revision_index = headers.index("Revision")
 
-    mps_rows = [row for row in rows if row[0] == "Python MPS"]
-    assert {int(row[bin_index]) for row in mps_rows} == {1, 2, 4, 8}
+    mps_max_rows = [
+        row
+        for row in rows
+        if row[0] == "Python MPS"
+        and row[1] == "MacBook Pro (M5 Max, 128 GB)"
+    ]
+    assert {int(row[bin_index]) for row in mps_max_rows} == {1, 2, 4, 8}
     expected_mps = {
         1: ("0.406624 s", "0.428164 s", "18.000 GiB", "18.442 GiB", "18.692 GiB"),
         2: ("0.477740 s", "1.064425 s", "4.500 GiB", "5.688 GiB", "5.091 GiB"),
         4: ("0.370645 s", "0.939238 s", "1.125 GiB", "2.313 GiB", "1.726 GiB"),
         8: ("0.340210 s", "0.341541 s", "0.281 GiB", "1.470 GiB", "0.855 GiB"),
     }
-    for row in mps_rows:
+    for row in mps_max_rows:
         detector_bin = int(row[bin_index])
         expected = expected_mps[detector_bin]
         assert (
@@ -407,6 +419,40 @@ def test_platform_first_io_tables_expose_current_bins_devices_and_dates() -> Non
         ) == expected
         assert row[maximum_index] == row[p95_index]
         assert row[swap_index] == "0 B"
+
+    mps_24 = [
+        row
+        for row in rows
+        if row[0] == "Python MPS" and row[1] == "MacBook Pro (M5, 24 GB)"
+    ]
+    assert {int(row[bin_index]) for row in mps_24} == {2, 4}
+    mps_24_bin2 = next(row for row in mps_24 if int(row[bin_index]) == 2)
+    assert (
+        mps_24_bin2[p50_index],
+        mps_24_bin2[p95_index],
+        mps_24_bin2[footprint_index],
+    ) == ("1.337644 s", "1.338026 s", "6.044 GiB")
+    mps_24_bin4 = next(row for row in mps_24 if int(row[bin_index]) == 4)
+    assert (
+        mps_24_bin4[p50_index],
+        mps_24_bin4[p95_index],
+        mps_24_bin4[footprint_index],
+    ) == ("1.250958 s", "1.255510 s", "3.791 GiB")
+    assert all(row[swap_index] == "0 B" for row in mps_24)
+
+    native_max_bin2 = next(
+        row
+        for row in rows
+        if row[0] == "Native Swift/Metal"
+        and row[1] == "MacBook Pro (M5 Max, 128 GB)"
+        and int(row[bin_index]) == 2
+    )
+    assert (
+        native_max_bin2[p50_index],
+        native_max_bin2[p95_index],
+        native_max_bin2[footprint_index],
+    ) == ("0.225984 s", "0.231192 s", "5.336 GiB")
+    assert native_max_bin2[swap_index] == "0 B"
 
     native_24 = [
         row
