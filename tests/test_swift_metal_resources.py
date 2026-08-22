@@ -54,3 +54,23 @@ def test_native_4dstem_resources_exclude_experimental_entry_points() -> None:
     assert "kernel void h5lz4dc_unshuffle_u8_qh5idx" not in qh5idx
     assert "kernel void h5lz4dc_frame_low8_qh5idx" not in qh5idx
     assert "kernel void shuf_8192_16_batched" not in detector
+
+
+def test_packed_u16_decoder_keeps_its_four_simdgroup_launch_contract() -> None:
+    root = files("quantem.gpu")
+    qh5idx = (
+        root
+        / "swift"
+        / "Sources"
+        / "Metal4DSTEMKernels"
+        / "Resources"
+        / "qh5idx.metal"
+    ).read_text(encoding="utf-8")
+    decoder = (
+        root / "io" / "backends" / "mps" / "decoder.py"
+    ).read_text(encoding="utf-8")
+
+    assert "group < 128u; group += 4u" in qh5idx
+    assert "exactly four 32-lane SIMD groups (128 threads)" in qh5idx
+    assert "Metal.MTLSizeMake(128, 1, 1)" in decoder
+    assert "requires exactly 4 x 32 = 128 threads" in decoder

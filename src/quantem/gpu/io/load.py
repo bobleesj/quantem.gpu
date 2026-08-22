@@ -4453,8 +4453,15 @@ def _load_view(
         # matching the cuda path. Mask is detector-pixel-resolution, so it only
         # records into meta at det_bin == 1.
         mask = read_pixel_mask(str(path)) if apply_mask else None
+        backend_load_kwargs = {}
+        if backend == "mps" and mps_chunk_output_dtype == np.dtype(np.uint8):
+            backend_load_kwargs["output_dtype"] = mps_chunk_output_dtype
         data = _be.load_master(
-            str(path), det_bin=det_bin, pixel_mask=mask, verbose=verbose
+            str(path),
+            det_bin=det_bin,
+            pixel_mask=mask,
+            verbose=verbose,
+            **backend_load_kwargs,
         )
         if mask is not None and det_bin == 1:
             meta["pixel_mask"] = mask

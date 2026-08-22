@@ -787,6 +787,8 @@ kernel void h5lz4dc_unshuffle_u16_single_block_packed_h5(
     if (block < blockCounts[frame]) {
         const threadgroup uint *planes =
             (const threadgroup uint *)shuffledBlock;
+        // Launch contract: exactly four 32-lane SIMD groups (128 threads).
+        // The fixed stride is deliberate and shared with the Python launcher.
         for (uint group = simdgroup; group < 128u; group += 4u) {
             ushort value = 0u;
             for (uint bit = 0u; bit < 16u; ++bit) {
