@@ -21,6 +21,24 @@ from pathlib import Path
 from typing import Any
 
 import websocket
+from _benchmark_support import LOGICAL_PIXEL_AXIS_ORDER, LOGICAL_PIXEL_HASH_SCHEMA
+
+
+def _parse_resident_shape(text: str) -> tuple[int, int, int, int]:
+    try:
+        values = tuple(int(part.strip()) for part in text.split(","))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "expected-resident-shape must contain four integer dimensions; "
+            f"got {text!r}"
+        ) from exc
+    if len(values) != 4 or any(value <= 0 for value in values):
+        raise argparse.ArgumentTypeError(
+            "expected-resident-shape must contain four positive dimensions in "
+            "scan_row,scan_column,detector_row,detector_column order; "
+            f"got {text!r}"
+        )
+    return values[0], values[1], values[2], values[3]
 
 
 def _parse_args() -> argparse.Namespace:
@@ -158,6 +176,14 @@ def _parse_args() -> argparse.Namespace:
         choices=("uint8", "uint16", "uint32", "float32"),
         help="Require the browser resident dtype to match this exact width.",
     )
+    parser.add_argument(
+        "--expected-resident-shape",
+        type=_parse_resident_shape,
+        help=(
+            "Require the complete browser resident shape as "
+            "scan_row,scan_column,detector_row,detector_column."
+        ),
+    )
     parser.add_argument("--expected-full-output-sha256")
     parser.add_argument(
         "--require-full-output-parity",
@@ -199,7 +225,33 @@ def _exact_run_evidence(
     """Return exact-gate evidence or fail closed on any requested mismatch."""
 
     resident_dtype = profile.get("residentDtype")
+    resident_shape = [
+        profile.get("outputRows"),
+        profile.get("outputCols"),
+        profile.get("outputDetRows"),
+        profile.get("outputDetCols"),
+    ]
+    expected_resident_shape = (
+        None
+        if args.expected_resident_shape is None
+        else list(args.expected_resident_shape)
+    )
+    detector_bin = profile.get("detBin")
+    exact_metadata_required = bool(
+        args.require_integer_resident
+        or args.require_full_output_parity
+        or args.expected_resident_dtype is not None
+        or args.expected_resident_shape is not None
+    )
     errors: list[str] = []
+    if args.require_integer_resident and not args.require_full_output_parity:
+        errors.append(
+            "exact-integer WebGPU evidence requires full-output parity"
+        )
+    if exact_metadata_required and args.expected_resident_dtype is None:
+        errors.append("required expected resident dtype is missing")
+    if exact_metadata_required and expected_resident_shape is None:
+        errors.append("required expected resident shape is missing")
     if args.require_integer_resident and resident_dtype not in {
         "uint8",
         "uint16",
@@ -217,6 +269,18 @@ def _exact_run_evidence(
             "resident dtype mismatch: expected "
             f"{args.expected_resident_dtype}, got {resident_dtype!r}"
         )
+    if (
+        expected_resident_shape is not None
+        and resident_shape != expected_resident_shape
+    ):
+        errors.append(
+            "resident shape mismatch: expected "
+            f"{expected_resident_shape}, got {resident_shape}"
+        )
+    if exact_metadata_required and detector_bin != args.det_bin:
+        errors.append(
+            f"detector bin mismatch: expected {args.det_bin}, got {detector_bin!r}"
+        )
 
     sampled_parity = (
         None if reference_checksums is None else checksums == reference_checksums
@@ -228,9 +292,15 @@ def _exact_run_evidence(
             errors.append("diagnostic frame checksum mismatch")
 
     full_output_sha256 = profile.get("fullOutputSha256")
+    logical_pixel_hash_schema = profile.get("logicalPixelHashSchema")
     if args.require_full_output_parity:
         if args.expected_full_output_sha256 is None:
             errors.append("required full-output SHA-256 reference is missing")
+        elif logical_pixel_hash_schema != LOGICAL_PIXEL_HASH_SCHEMA:
+            errors.append(
+                "logical pixel hash schema mismatch: expected "
+                f"{LOGICAL_PIXEL_HASH_SCHEMA!r}, got {logical_pixel_hash_schema!r}"
+            )
         elif not isinstance(full_output_sha256, str) or not _SHA256.fullmatch(
             full_output_sha256.lower()
         ):
@@ -246,7 +316,14 @@ def _exact_run_evidence(
     evidence = {
         "residentDtype": resident_dtype,
         "expectedResidentDtype": args.expected_resident_dtype,
+        "residentShape": resident_shape,
+        "expectedResidentShape": expected_resident_shape,
+        "detectorBin": detector_bin,
+        "expectedDetectorBin": args.det_bin,
         "sampledFrameParity": sampled_parity,
+        "logicalPixelHashSchema": logical_pixel_hash_schema,
+        "logicalPixelAxisOrder": list(LOGICAL_PIXEL_AXIS_ORDER),
+        "logicalPixelByteOrder": "little_endian",
         "fullOutputSha256": full_output_sha256,
         "expectedFullOutputSha256": args.expected_full_output_sha256,
         "passed": not errors,
@@ -703,6 +780,25 @@ def main() -> None:
             "--require-full-output-parity also requires "
             "--expected-full-output-sha256"
         )
+    if args.require_full_output_parity:
+        missing_metadata = [
+            option
+            for option, value in (
+                ("--expected-resident-dtype", args.expected_resident_dtype),
+                ("--expected-resident-shape", args.expected_resident_shape),
+            )
+            if value is None
+        ]
+        if missing_metadata:
+            raise SystemExit(
+                "--require-full-output-parity also requires "
+                + ", ".join(missing_metadata)
+            )
+    if args.require_integer_resident and not args.require_full_output_parity:
+        raise SystemExit(
+            "--require-integer-resident exact evidence also requires "
+            "--require-full-output-parity"
+        )
     if args.require_checksum_parity and args.checksum_json is None:
         raise SystemExit(
             "--require-checksum-parity also requires --checksum-json"
@@ -764,8 +860,17 @@ def main() -> None:
             "sourceMode": "url" if args.url_source else "local-files",
             "requireIntegerResident": bool(args.require_integer_resident),
             "expectedResidentDtype": args.expected_resident_dtype,
+            "expectedResidentShape": (
+                None
+                if args.expected_resident_shape is None
+                else list(args.expected_resident_shape)
+            ),
+            "expectedDetectorBin": args.det_bin,
             "requireFullOutputParity": bool(args.require_full_output_parity),
             "expectedFullOutputSha256": args.expected_full_output_sha256,
+            "logicalPixelHashSchema": LOGICAL_PIXEL_HASH_SCHEMA,
+            "logicalPixelAxisOrder": list(LOGICAL_PIXEL_AXIS_ORDER),
+            "logicalPixelByteOrder": "little_endian",
             "requireChecksumParity": bool(args.require_checksum_parity),
         },
         "runs": runs,
