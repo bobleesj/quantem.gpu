@@ -744,9 +744,9 @@ public final class Metal4DSTEMIndexedLoader {
   /// Decode once and fill exact caller-owned resident shards.
   ///
   /// This overload separates reusable allocation and device-admission policy
-  /// from exact loading. `destinationShards` must contain one distinct shared
-  /// buffer for every shard in `plan`, in canonical shard order, with the
-  /// plan's declared residency and each buffer's length exactly equal to its
+  /// from exact loading. `destinationShards` must contain one distinct buffer
+  /// for every shard in `plan`, in canonical shard order, with the plan's
+  /// declared residency and each buffer's length exactly equal to its
   /// planned payload. On success every payload byte has been overwritten with
   /// the exact result. If loading throws, destination contents are unspecified
   /// and must not be published.
@@ -885,7 +885,9 @@ public final class Metal4DSTEMIndexedLoader {
   ///
   /// Only one output-shard buffer is allocated in Metal. Each shard is complete
   /// before it is appended to a unique temporary payload and the same bounded
-  /// buffer is reused for the next shard.
+  /// shared staging buffer is reused for the next shard. `residentStorage` is
+  /// retained as part of plan validation but does not change the canonical
+  /// file-backed payload or its transient shared staging.
   /// The metadata publication marker remains absent until the recomputed source
   /// audit, exact products, full byte coverage, fsync, and SHA-256 seal all
   /// succeed. The caller owns device admission and cache lifecycle.
@@ -904,6 +906,7 @@ public final class Metal4DSTEMIndexedLoader {
       detectorBin: plan.binningProvenance.detectorBin,
       sourceAudit: plan.sourceAudit,
       maximumShardBytes: plan.shardPlan.maximumShardBytes,
+      residentStorage: plan.residentStorage,
       sourceTransfer: plan.productPlan.sourceTransfer
     )
     guard expectedPlan == plan else {
