@@ -86,9 +86,9 @@ private func nativeSHA256(of url: URL) throws -> String {
     )
   }
   defer { Darwin.close(descriptor) }
-  if ProcessInfo.processInfo.environment[
-    "QUANTEM_GPU_BENCHMARK_UNCACHED_SOURCE_READS"
-  ] == "1" {
+  if Native4DSTEMBenchmarkSourcePageControl.current
+    == .macOSFNoCacheHashAndIndexedSourceDescriptors
+  {
     guard Darwin.fcntl(descriptor, F_NOCACHE, 1) == 0 else {
       throw Native4DSTEMIOError.invalidData(
         "Could not enable uncached benchmark reads for \(url.path)"

@@ -7,6 +7,29 @@ import XCTest
 @testable import Native4DSTEMIO
 
 final class Native4DSTEMIOTests: XCTestCase {
+  func testBenchmarkSourcePageControlKeepsRawStateAligned() {
+    let unspecified = Native4DSTEMBenchmarkSourcePageControl(
+      uncachedSourceReads: false
+    )
+    XCTAssertEqual(unspecified.rawValue, "unspecified")
+    XCTAssertEqual(
+      unspecified.cacheStateComponent,
+      "source_pages_unspecified"
+    )
+
+    let controlled = Native4DSTEMBenchmarkSourcePageControl(
+      uncachedSourceReads: true
+    )
+    XCTAssertEqual(
+      controlled.rawValue,
+      "macos_f_nocache_hash_and_indexed_source_descriptors"
+    )
+    XCTAssertEqual(
+      controlled.cacheStateComponent,
+      "source_page_control_macos_f_nocache_hash_and_indexed_source_descriptors"
+    )
+  }
+
   func testValueRangeAuditRequiresExactSourceAndBadPixelIdentity() throws {
     let audit = Native4DSTEMValueRangeAudit(
       sourceIdentitySHA256: String(repeating: "a", count: 64),
