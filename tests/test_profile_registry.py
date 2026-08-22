@@ -21,7 +21,7 @@ def test_profile_registry_validator_accepts_retained_evidence() -> None:
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "35 platform/module cells" in result.stdout
-    assert "11 retained experiments" in result.stdout
+    assert "12 retained experiments" in result.stdout
 
 
 def test_profile_matrix_has_one_atomic_cell_per_backend_capability() -> None:
