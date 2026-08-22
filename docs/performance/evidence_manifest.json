@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "source_revision": "f079df63bc6291adc7b51f4c1d305bcb487825e4",
-  "source_revision_scope": "Clean platform/computer matrix and fail-closed benchmark-harness revision. Every retained physical measurement remains bound to its own row revision, fixture identity, cache state, and timing boundary.",
+  "source_revision": "1a186804807cb6c2acf7c4f5d0c5073339bddc9a",
+  "source_revision_scope": "Clean platform/computer matrix, fail-closed benchmark harness, and backend-neutral logical-pixel parity revision. Every retained physical measurement remains bound to its own row revision, fixture identity, cache state, and timing boundary.",
   "purpose": "Fingerprints for the current benchmark dashboard, its authoritative registry and rendering inputs, provenance ledger, parity and methodology contracts, and canonical historical evidence. Landing, API, and backend capability pages intentionally do not duplicate measurements.",
   "pages": [
     {
@@ -46,7 +46,7 @@
     },
     {
       "path": "docs/performance/results.md",
-      "sha256": "e39837c9369f33a1f4d2c78b73b459fdcb3c733c97fb67172268b75167182d53",
+      "sha256": "29239812d13b535d6558f25461a8cd2d8d10871b614a6b058a1b8bf03b714e7f",
       "role": "Authoritative current benchmark provenance ledger"
     },
     {
@@ -108,12 +108,12 @@
   "authoritative_inputs": [
     {
       "path": "benchmarks/benchmark_registry.json",
-      "sha256": "16d2af50821a25988c6e12363370a4908c590b9abbd96673dbbcfc4533c84d59",
+      "sha256": "13ecd2d768f8737156d8a31138cfc6f2ddbb1ed62395484b42133f9d72c4af64",
       "role": "Atomic Platform, Computer, module, configuration, state, measurement, and runbook registry"
     },
     {
       "path": "docs/_generated/benchmark_coverage.md",
-      "sha256": "c6b7daaf07f57d26affc60f33eafc252b0b4357dd3b2051a9371ad94244ca71a",
+      "sha256": "eaba3269bbf5ab6d996245dde9aef5271466827705796ab9d4b830d4955fc1c5",
       "role": "Generated filterable coverage, retained-measurement, and runbook tables"
     },
     {
