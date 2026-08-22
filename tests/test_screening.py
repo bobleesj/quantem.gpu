@@ -326,7 +326,7 @@ def test_strong_cache_identity_accepts_unchanged_master_symlink(tmp_path) -> Non
     }
 
     assert workflow._strong_cached_source_match(source, master) is True
-    assert workflow._strong_cached_source_match(source, target) is True
+    assert workflow._strong_cached_source_match(source, target) is None
 
 
 def test_strong_cache_identity_rejects_repointed_master_symlink(tmp_path) -> None:
@@ -360,6 +360,46 @@ def test_strong_cache_identity_rejects_repointed_master_symlink(tmp_path) -> Non
     master.symlink_to(second.name)
 
     assert workflow._strong_cached_source_match(source, master) is False
+
+
+def test_strong_cache_identity_reinspects_master_alias_shard_mapping(tmp_path) -> None:
+    import h5py
+
+    from quantem.gpu.screening import workflow
+
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    master_target = source_dir / "scan_master.h5"
+    with h5py.File(master_target, "w") as handle:
+        group = handle.require_group("entry/data")
+        group["data_000001"] = h5py.ExternalLink(
+            "scan_data.h5",
+            "/entry/data/data",
+        )
+
+    aliases = []
+    for name, count in (("first", 3), ("second", 7)):
+        alias_dir = tmp_path / name
+        alias_dir.mkdir()
+        alias_master = alias_dir / master_target.name
+        alias_master.symlink_to(master_target)
+        with h5py.File(alias_dir / "scan_data.h5", "w") as handle:
+            handle.create_dataset(
+                "entry/data/data",
+                data=np.full((1, 2, 2), count, dtype=np.uint16),
+            )
+        aliases.append(alias_master)
+
+    first_source = workflow._source_fingerprint(aliases[0])
+    second_source = workflow._source_fingerprint(aliases[1])
+
+    assert first_source != second_source
+    assert workflow._strong_cached_source_match(first_source, aliases[0]) is True
+    assert workflow._strong_cached_source_match(first_source, aliases[1]) is None
+    assert not workflow._cache_matches(
+        {"version": workflow._CACHE_VERSION, "source": first_source},
+        aliases[1],
+    )
 
 
 def test_reduced_cache_identity_uses_full_inspection_fallback(

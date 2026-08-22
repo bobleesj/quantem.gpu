@@ -127,15 +127,13 @@ def _strong_cached_source_match(
     if any(not isinstance(item, dict) or not required <= item.keys() for item in files):
         return None
 
-    try:
-        requested_master = master.expanduser().absolute()
-        cached_master_path = Path(cached_master).expanduser().absolute()
-        requested_master_target = requested_master.resolve(strict=True)
-        cached_master_target = cached_master_path.resolve(strict=True)
-    except OSError:
-        return False
-    if requested_master_target != cached_master_target:
-        return False
+    requested_master = str(master.expanduser().absolute())
+    if cached_master != requested_master:
+        # Relative HDF5 external links resolve from the requested master
+        # spelling's parent. Two aliases can therefore name the same master
+        # inode but select different shards. Reinspect instead of treating
+        # canonical-path equality as scientific-source equality.
+        return None
 
     observed_paths: set[str] = set()
     for item in files:
