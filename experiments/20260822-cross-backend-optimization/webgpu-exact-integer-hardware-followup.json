@@ -1,0 +1,173 @@
+{
+  "schema": "quantem.gpu.webgpu-exact-integer-hardware-followup/v1",
+  "timestamp": "2026-08-22T09:55:00-07:00",
+  "status": "passed-hardware-parity-only",
+  "candidate": {
+    "worktree": "local-worktree://quantem-gpu-public-main",
+    "branch": "webgpu-exact-integer-binning",
+    "base_revision": "a07121d7074d4146fcd1aa8d12ad2de8d47afcae",
+    "tracked_diff_sha256_full_index": "c702888cdee70d11fdadc1a1aa2c1206fd78bebdb99ba3b0541a74d7e174b1d4",
+    "untracked_binning_sha256": "5bdee03b8714d4afa418530fca94d4cb85a3e61f3e36bd23a028084e9d764692",
+    "dirty_state_preserved": true,
+    "production_promoted": false
+  },
+  "execution": {
+    "host": "Phil",
+    "computer": "Apple M5 Max",
+    "browser_backend": "Chrome WebGPU on Apple Metal-3",
+    "software_adapter": false,
+    "bundle_sha256": "f2e1ca59358b5066cbbf9e5e9453dbe7a6efe0d43c7b3b2a8d60c41afeee0340",
+    "harness_html_sha256": "ccb4fca5922aa1d1b2d027d7068396f7286fa6a6f60b0a317418c1e7e56789f1",
+    "initial_probe_harness_js_sha256": "8f69cf49c5b930df9bb64e44193b7316e9948123f62e42b3f1e97d2c38e1f14c",
+    "full_output_harness_js_sha256": "d780f64219def1d1fdeb0f1f872a02de44ea6aadb8bd87e62d17f5771ea9d757"
+  },
+  "retained_evidence": {
+    "binning.js": "f2e1ca59358b5066cbbf9e5e9453dbe7a6efe0d43c7b3b2a8d60c41afeee0340",
+    "harness.html": "ccb4fca5922aa1d1b2d027d7068396f7286fa6a6f60b0a317418c1e7e56789f1",
+    "harness.js": "d780f64219def1d1fdeb0f1f872a02de44ea6aadb8bd87e62d17f5771ea9d757",
+    "inspect_page.py": "5a40c0a9b2a2e5f9822a4755376a9f3ba4ba10dfecc59b37b05400ab23e7cbd3",
+    "read_result.py": "496551399e6ad97e73d0bc7a8a6da567ae17cab0928678a8c33ad100056054f7",
+    "raw-result-final.json": "d9589f6dc98294f00123566864954fbe33763fb8b56d9ffaaec72532a47909d2",
+    "hardware.json": "6d63f5e80ca985bb30e287bf925d9a9766c644849f37bacd88ae8489d9aa9b6d",
+    "RUN-COMMANDS.md": "768d5397f505bd34479c76f4a2304bf992c184716c08a9077b6240add79a592b"
+  },
+  "planner": {
+    "uint8_bin2": {
+      "source_dtype": "uint8",
+      "resident_dtype": "uint16",
+      "maximum_binned_count": 1020,
+      "result": "passed"
+    },
+    "uint16_bin2": {
+      "source_dtype": "uint16",
+      "resident_dtype": "uint32",
+      "maximum_binned_count": 262140,
+      "result": "passed"
+    },
+    "uint32_bin2": {
+      "result": "rejected-before-dispatch",
+      "reason": "four-pixel exact sum cannot be represented in uint32"
+    }
+  },
+  "exact_cases": [
+    {
+      "label": "uint8-to-uint16 odd-packed multiple-chunk bad-pixel",
+      "wall_ms": 112.0,
+      "gpu_submit_wait_ms": 111.60000002384186,
+      "resident_bytes": 56,
+      "result": "byte-exact"
+    },
+    {
+      "label": "uint16-to-uint32 multiple-chunk",
+      "wall_ms": 16.300000071525574,
+      "gpu_submit_wait_ms": 16.300000071525574,
+      "resident_bytes": 192,
+      "result": "byte-exact"
+    }
+  ],
+  "warm_tiny_repeat": {
+    "samples": 12,
+    "wall_p50_ms": 0.30000007152557373,
+    "wall_p95_ms": 0.40000009536743164,
+    "wall_max_ms": 0.40000009536743164,
+    "gpu_submit_wait_p50_ms": 0.30000007152557373,
+    "gpu_submit_wait_p95_ms": 0.40000009536743164,
+    "gpu_submit_wait_max_ms": 0.40000009536743164
+  },
+  "tiled_dispatch_probe_run": {
+    "evidence_scope": "summary-only; initial harness source was overwritten and is not retained",
+    "scan_positions": 300000,
+    "source_shape_per_scan": [8, 8],
+    "detector_bin": 2,
+    "source_dtype": "uint16",
+    "resident_dtype": "uint32",
+    "source_values": 19200000,
+    "source_bytes": 38400000,
+    "output_values": 4800000,
+    "output_bytes": 19200000,
+    "wall_ms": 7.799999952316284,
+    "gpu_submit_wait_ms": 7.600000023841858,
+    "validated_probe_indices": [0, 2400000, 4799999],
+    "expected_probe_value": 4,
+    "result": "first/middle/last probes exact; full-output readback not performed"
+  },
+  "full_output_followup": {
+    "evidence_scope": "final harness retained; raw browser object was summarized here before the independently retained rerun",
+    "exact_cases": [
+      {
+        "label": "uint8-to-uint16 odd-packed multiple-chunk bad-pixel",
+        "wall_ms": 2.700000047683716,
+        "gpu_submit_wait_ms": 2.3000000715255737,
+        "result": "byte-exact"
+      },
+      {
+        "label": "uint16-to-uint32 multiple-chunk",
+        "wall_ms": 1.0,
+        "gpu_submit_wait_ms": 0.8999999761581421,
+        "result": "byte-exact"
+      }
+    ],
+    "warm_tiny_repeat": {
+      "samples": 12,
+      "wall_p50_ms": 0.19999992847442627,
+      "wall_p95_ms": 0.3999999761581421,
+      "wall_max_ms": 0.3999999761581421,
+      "gpu_submit_wait_p50_ms": 0.19999992847442627,
+      "gpu_submit_wait_p95_ms": 0.3999999761581421,
+      "gpu_submit_wait_max_ms": 0.3999999761581421
+    },
+    "tiled_dispatch": {
+      "scan_positions": 300000,
+      "source_shape_per_scan": [8, 8],
+      "detector_bin": 2,
+      "source_dtype": "uint16",
+      "resident_dtype": "uint32",
+      "source_values": 19200000,
+      "source_bytes": 38400000,
+      "packed_source_sha256": "03a0e6aca5cafed5239f45607d2785fa408bb57b5f1c2f8e088b7f0fa122b268",
+      "output_values": 4800000,
+      "output_bytes": 19200000,
+      "independent_expected_output_sha256": "0c2bd9a7d0a38ac3d5c7b590512882bcf90b66449cbd2a5254882846f69200ae",
+      "wall_ms": 8.600000023841858,
+      "gpu_submit_wait_ms": 8.299999952316284,
+      "readback_and_full_validation_ms": 14.700000047683716,
+      "mismatch_count": 0,
+      "checksum": 19200000,
+      "expected_checksum": 19200000,
+      "result": "complete 19.2 MB output exact"
+    }
+  },
+  "retained_final_run": {
+    "raw_result": "webgpu-exact-integer-hardware-followup/raw-result-final.json",
+    "exact_cases": "byte-exact",
+    "warm_tiny_repeat": {
+      "samples": 12,
+      "wall_p50_ms": 0.2999999523162842,
+      "wall_p95_ms": 21.199999928474426,
+      "wall_max_ms": 21.199999928474426,
+      "note": "The 21.2 ms outlier is retained and not removed from the distribution."
+    },
+    "tiled_dispatch": {
+      "scan_positions": 300000,
+      "wall_ms": 7.5,
+      "gpu_submit_wait_ms": 7.199999928474426,
+      "readback_and_full_validation_ms": 14.100000023841858,
+      "output_values": 4800000,
+      "mismatch_count": 0,
+      "checksum": 19200000,
+      "expected_checksum": 19200000,
+      "result": "complete 19.2 MB output exact"
+    }
+  },
+  "checks": [
+    {
+      "command": "PYTHONPATH=src pytest -q tests/test_webgpu_sources.py",
+      "result": "10 passed"
+    },
+    {
+      "command": "npx --yes esbuild@0.28.2 src/quantem/gpu/detector/compute/webgpu/binning.ts --bundle --format=esm --platform=browser",
+      "result": "passed"
+    }
+  ],
+  "claim_boundary": "Synthetic direct WebGPU parity and dispatch-topology evidence only. The full 19.2 MB tiled output was validated, but this still excludes HDF5 discovery and IO, decompression, source upload accounting, a full 512x512x192x192 real output, products, peak memory, cold source state, Steve Kerr, and Live4DSTEM wall-to-wall time. The deliberately dirty candidate is not a clean consumer handoff."
+}
