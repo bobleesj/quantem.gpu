@@ -324,6 +324,10 @@ def test_webgpu_local_h5_source_tracks_show4dstem_loader_contract() -> None:
     assert "Detector shape ${vol.detRows}x${vol.detCols} is not divisible by detBin=${detBin}" in source
     assert 'type DecodeDtypeRequest = DecodeDtype | "u1" | "u2" | "u4" | "u32" | "uint4" | "native" | "auto";' in source
     assert "decodeDtype?: DecodeDtypeRequest;" in source
+    assert "fullOutputHash?: boolean;" in source
+    assert "configuredDecodeDtype(options)" in source
+    assert "__QT_H5_DECODE_DTYPE" in source
+    assert "exposeGpuResidentLogicalPixelHash" in source
     assert "normalizeDecodeDtypeRequest" in source
     assert 'if (token === "u32") return "uint32";' in source
     assert "WebGPU decodeDtype='u4' means packed 4-bit counts" in source
@@ -333,6 +337,14 @@ def test_webgpu_local_h5_source_tracks_show4dstem_loader_contract() -> None:
     assert "load the native uint32 stack with decodeDtype='native'" in source
     assert "detBinMs" in source
     assert "badPixels: detBin > 1 ? new Uint32Array(0) : badPixels" in source
+
+    hash_source = source_text("io/backends/webgpu/logical-pixel-hash.ts")
+    assert "class StreamingSha256" in hash_source
+    assert "hashGpuResidentLogicalPixels" in hash_source
+    assert "__QT_H5_RUN_FULL_OUTPUT_HASH" in hash_source
+    assert 'fullOutputHashState = "ready"' in hash_source
+    assert 'fullOutputHashState = "complete"' in hash_source
+    assert 'fullOutputHashDomain = "corrected-logical-pixels"' in hash_source
 
 
 def test_webgpu_has_no_top_level_compatibility_namespace() -> None:
