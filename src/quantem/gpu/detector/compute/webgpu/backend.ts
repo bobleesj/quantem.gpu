@@ -28,6 +28,10 @@ import {
   IDPC_PACK_WGSL,
   IDPC_POISSON_WGSL,
 } from "../../../dpc/compute/webgpu/kernels";
+import {
+  EXACT_INTEGER_COM_WGSL,
+  planExactIntegerCoM,
+} from "./exact-com";
 
 // `mode`: 0 = uint16 (2 samples/u32), 1 = uint8 (4/u32), 2 = float32
 // bit-pattern, 3 = uint32 (1/u32). `sample(gp)` reads an integer detector value
@@ -137,7 +141,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 // One thread per scan position: intensity-weighted centroid (center of mass) of the
 // detector over the active mask pixels. Output is the per-position CoM in detector px:
 // comY at [gi], comX at [scanCount+gi]. Drives CoMx/CoMy/CoMmag/iCoM (DPC).
-// One WORKGROUP per scan position (same coalescing fix as MASKED_SUM): 64 threads cooperatively
+// One WORKGROUP per scan position (same coalescing fix as MASKED_SUM): WGSZ threads cooperatively
 // accumulate the intensity-weighted centroid over the aperture, three shared-memory reductions
 // (weight, y*weight, x*weight). gridX in u2.z for the 2D dispatch.
 const maskedComSrc = (sg: boolean) => `
@@ -146,31 +150,53 @@ ${sg ? "enable subgroups;" : ""}
 @group(0) @binding(1) var<storage,read> idx: array<u32>;   // ACTIVE detector pixel indices
 @group(0) @binding(2) var<storage,read_write> com: array<f32>;  // 2*scanCount: [gi]=comY, [scanCount+gi]=comX
 @group(0) @binding(3) var<uniform> u: vec4<u32>;   // startScan, nScanInChunk, detSize, mode
-@group(0) @binding(4) var<uniform> u2: vec4<u32>;  // detCols, scanCount, gridX, 0
+@group(0) @binding(4) var<uniform> u2: vec4<u32>;  // detCols, scanCount, gridX, integer flags: bit 0 sums, bit 1 products fit u32
 ${SAMPLE}
-fn ratioU32(num: u32, den: u32) -> f32 {
-  if (den == 0u) { return 0.0; }
-  let q = num / den;
-  let rem = num - q * den;
-  return f32(q) + f32(rem) / f32(den);
-}
+${EXACT_INTEGER_COM_WGSL}
 var<workgroup> pw: array<f32, ${WGSZ}>;
 var<workgroup> py: array<f32, ${WGSZ}>;
 var<workgroup> px: array<f32, ${WGSZ}>;
-var<workgroup> pwu: array<u32, ${WGSZ}>;
-var<workgroup> pyu: array<u32, ${WGSZ}>;
-var<workgroup> pxu: array<u32, ${WGSZ}>;
+var<workgroup> pwuLo: array<u32, ${WGSZ}>;
+var<workgroup> pwuHi: array<u32, ${WGSZ}>;
+var<workgroup> pyuLo: array<u32, ${WGSZ}>;
+var<workgroup> pyuHi: array<u32, ${WGSZ}>;
+var<workgroup> pxuLo: array<u32, ${WGSZ}>;
+var<workgroup> pxuHi: array<u32, ${WGSZ}>;
 @compute @workgroup_size(${WGSZ})
 fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {
   let sl = wid.y * u2.z + wid.x; let tid = lid.x;
   let base = sl * u.z; let n = arrayLength(&idx); let detCols = u2.x;
   var wsum: f32 = 0.0; var ysum: f32 = 0.0; var xsum: f32 = 0.0;
-  var wsumU: u32 = 0u; var ysumU: u32 = 0u; var xsumU: u32 = 0u;
-  if (u.w == 1u) {
-    if (sl < u.y) { for (var j: u32 = tid; j < n; j = j + ${WGSZ}u) {
-      let p = idx[j]; let v = sample(base + p, u.w);
-      wsumU = wsumU + v; ysumU = ysumU + (p / detCols) * v; xsumU = xsumU + (p % detCols) * v;
-    } }
+  var wsumN: u32 = 0u; var ysumN: u32 = 0u; var xsumN: u32 = 0u;
+  var wsumU = U64Words(0u, 0u); var ysumU = U64Words(0u, 0u); var xsumU = U64Words(0u, 0u);
+  // Modes 0/1/3 are packed uint16/uint8/native uint32 counts. Keep their
+  // accumulation and quotient construction in integer arithmetic; mode 2 is
+  // the only float32-resident path.
+  if (u.w != 2u) {
+    if ((u2.w & 1u) != 0u) {
+      // The host proved every complete nonnegative sum fits u32, so each
+      // per-thread partial and reduction-tree node also fits. Keep the common
+      // small-detector path free of paired-word multiply/add overhead.
+      if (sl < u.y) { for (var j: u32 = tid; j < n; j = j + ${WGSZ}u) {
+        let p = idx[j]; let v = sample(base + p, u.w);
+        wsumN = wsumN + v;
+        ysumN = ysumN + (p / detCols) * v;
+        xsumN = xsumN + (p % detCols) * v;
+      } }
+    } else {
+      if (sl < u.y) { for (var j: u32 = tid; j < n; j = j + ${WGSZ}u) {
+        let p = idx[j]; let v = sample(base + p, u.w);
+        let detectorRow = p / detCols; let detectorColumn = p % detCols;
+        wsumU = u64Add(wsumU, U64Words(v, 0u));
+        if ((u2.w & 2u) != 0u) {
+          ysumU = u64Add(ysumU, U64Words(detectorRow * v, 0u));
+          xsumU = u64Add(xsumU, U64Words(detectorColumn * v, 0u));
+        } else {
+          ysumU = u64Add(ysumU, u64MultiplyU32(detectorRow, v));
+          xsumU = u64Add(xsumU, u64MultiplyU32(detectorColumn, v));
+        }
+      } }
+    }
   } else {
     if (sl < u.y) { for (var j: u32 = tid; j < n; j = j + ${WGSZ}u) {
       let p = idx[j]; let v = sampleF(base + p, u.w);
@@ -178,15 +204,34 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
     } }
   }
 ${sg
-  ? `  if (u.w == 1u) {
-    wsumU = subgroupAdd(wsumU); ysumU = subgroupAdd(ysumU); xsumU = subgroupAdd(xsumU);
-    if (subgroupElect()) { let w = tid / ${SGSZ}u; pwu[w] = wsumU; pyu[w] = ysumU; pxu[w] = xsumU; }
-    workgroupBarrier();
-    if (tid == 0u && sl < u.y) {
-      var w = 0u; var y = 0u; var x = 0u;
-      for (var k = 0u; k < ${WGSZ / SGSZ}u; k = k + 1u) { w = w + pwu[k]; y = y + pyu[k]; x = x + pxu[k]; }
-      let gi = u.x + sl;
-      if (w > 0u) { com[gi] = ratioU32(y, w); com[u2.y + gi] = ratioU32(x, w); } else { com[gi] = 0.0; com[u2.y + gi] = 0.0; }
+  ? `  if (u.w != 2u) {
+    if ((u2.w & 1u) != 0u) {
+      let wLo = subgroupAdd(wsumN); let yLo = subgroupAdd(ysumN); let xLo = subgroupAdd(xsumN);
+      if (subgroupElect()) { let w = tid / ${SGSZ}u; pwuLo[w] = wLo; pyuLo[w] = yLo; pxuLo[w] = xLo; }
+      workgroupBarrier();
+      if (tid == 0u && sl < u.y) {
+        var w = 0u; var y = 0u; var x = 0u;
+        for (var k = 0u; k < ${WGSZ / SGSZ}u; k = k + 1u) { w = w + pwuLo[k]; y = y + pyuLo[k]; x = x + pxuLo[k]; }
+        let gi = u.x + sl;
+        if (w > 0u) { com[gi] = ratioU32Exact(y, w); com[u2.y + gi] = ratioU32Exact(x, w); } else { com[gi] = 0.0; com[u2.y + gi] = 0.0; }
+      }
+    } else {
+      pwuLo[tid] = wsumU.lo; pwuHi[tid] = wsumU.hi;
+      pyuLo[tid] = ysumU.lo; pyuHi[tid] = ysumU.hi;
+      pxuLo[tid] = xsumU.lo; pxuHi[tid] = xsumU.hi; workgroupBarrier();
+      for (var s: u32 = ${WGSZ / 2}u; s > 0u; s = s >> 1u) {
+        if (tid < s) {
+          let w = u64Add(U64Words(pwuLo[tid], pwuHi[tid]), U64Words(pwuLo[tid + s], pwuHi[tid + s]));
+          let y = u64Add(U64Words(pyuLo[tid], pyuHi[tid]), U64Words(pyuLo[tid + s], pyuHi[tid + s]));
+          let x = u64Add(U64Words(pxuLo[tid], pxuHi[tid]), U64Words(pxuLo[tid + s], pxuHi[tid + s]));
+          pwuLo[tid] = w.lo; pwuHi[tid] = w.hi; pyuLo[tid] = y.lo; pyuHi[tid] = y.hi; pxuLo[tid] = x.lo; pxuHi[tid] = x.hi;
+        }
+        workgroupBarrier();
+      }
+      if (tid == 0u && sl < u.y) {
+        let w = U64Words(pwuLo[0], pwuHi[0]); let gi = u.x + sl;
+        if (!u64IsZero(w)) { com[gi] = ratioU64(U64Words(pyuLo[0], pyuHi[0]), w); com[u2.y + gi] = ratioU64(U64Words(pxuLo[0], pxuHi[0]), w); } else { com[gi] = 0.0; com[u2.y + gi] = 0.0; }
+      }
     }
   } else {
     wsum = subgroupAdd(wsum); ysum = subgroupAdd(ysum); xsum = subgroupAdd(xsum);
@@ -199,15 +244,34 @@ ${sg
     if (w > 0.0) { com[gi] = y / w; com[u2.y + gi] = x / w; } else { com[gi] = 0.0; com[u2.y + gi] = 0.0; }
   }
   }`
-  : `  if (u.w == 1u) {
-    pwu[tid] = wsumU; pyu[tid] = ysumU; pxu[tid] = xsumU; workgroupBarrier();
-    for (var s: u32 = ${WGSZ / 2}u; s > 0u; s = s >> 1u) {
-      if (tid < s) { pwu[tid] = pwu[tid] + pwu[tid + s]; pyu[tid] = pyu[tid] + pyu[tid + s]; pxu[tid] = pxu[tid] + pxu[tid + s]; }
-      workgroupBarrier();
-    }
-    if (tid == 0u && sl < u.y) {
-      let gi = u.x + sl;
-      if (pwu[0] > 0u) { com[gi] = ratioU32(pyu[0], pwu[0]); com[u2.y + gi] = ratioU32(pxu[0], pwu[0]); } else { com[gi] = 0.0; com[u2.y + gi] = 0.0; }
+  : `  if (u.w != 2u) {
+    if ((u2.w & 1u) != 0u) {
+      pwuLo[tid] = wsumN; pyuLo[tid] = ysumN; pxuLo[tid] = xsumN; workgroupBarrier();
+      for (var s: u32 = ${WGSZ / 2}u; s > 0u; s = s >> 1u) {
+        if (tid < s) { pwuLo[tid] = pwuLo[tid] + pwuLo[tid + s]; pyuLo[tid] = pyuLo[tid] + pyuLo[tid + s]; pxuLo[tid] = pxuLo[tid] + pxuLo[tid + s]; }
+        workgroupBarrier();
+      }
+      if (tid == 0u && sl < u.y) {
+        let w = pwuLo[0]; let gi = u.x + sl;
+        if (w > 0u) { com[gi] = ratioU32Exact(pyuLo[0], w); com[u2.y + gi] = ratioU32Exact(pxuLo[0], w); } else { com[gi] = 0.0; com[u2.y + gi] = 0.0; }
+      }
+    } else {
+      pwuLo[tid] = wsumU.lo; pwuHi[tid] = wsumU.hi;
+      pyuLo[tid] = ysumU.lo; pyuHi[tid] = ysumU.hi;
+      pxuLo[tid] = xsumU.lo; pxuHi[tid] = xsumU.hi; workgroupBarrier();
+      for (var s: u32 = ${WGSZ / 2}u; s > 0u; s = s >> 1u) {
+        if (tid < s) {
+          let w = u64Add(U64Words(pwuLo[tid], pwuHi[tid]), U64Words(pwuLo[tid + s], pwuHi[tid + s]));
+          let y = u64Add(U64Words(pyuLo[tid], pyuHi[tid]), U64Words(pyuLo[tid + s], pyuHi[tid + s]));
+          let x = u64Add(U64Words(pxuLo[tid], pxuHi[tid]), U64Words(pxuLo[tid + s], pxuHi[tid + s]));
+          pwuLo[tid] = w.lo; pwuHi[tid] = w.hi; pyuLo[tid] = y.lo; pyuHi[tid] = y.hi; pxuLo[tid] = x.lo; pxuHi[tid] = x.hi;
+        }
+        workgroupBarrier();
+      }
+      if (tid == 0u && sl < u.y) {
+        let w = U64Words(pwuLo[0], pwuHi[0]); let gi = u.x + sl;
+        if (!u64IsZero(w)) { com[gi] = ratioU64(U64Words(pyuLo[0], pyuHi[0]), w); com[u2.y + gi] = ratioU64(U64Words(pxuLo[0], pxuHi[0]), w); } else { com[gi] = 0.0; com[u2.y + gi] = 0.0; }
+      }
     }
   } else {
     pw[tid] = wsum; py[tid] = ysum; px[tid] = xsum; workgroupBarrier();
@@ -630,7 +694,7 @@ export class DetectorCompute {
   // GPU-resident CoM maps. Caller owns the returned buffer.
   maskedCoMBuffer(mask: Uint32Array, detCols: number): { buffer: GPUBuffer; n: number } {
     const device = this.device;
-    const { idx, n } = this.detectorIndices(mask);
+    const { idx, n, integerFlags } = this.maskedCoMSelection(mask, detCols);
     const idxBuf = this.upload(idx, GPUBufferUsage.STORAGE);
     const com = device.createBuffer({ size: this.scanCount * 2 * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
     if (n === 0) {
@@ -639,7 +703,7 @@ export class DetectorCompute {
     }
     const enc = device.createCommandEncoder();
     const pass = enc.beginComputePass();
-    this.encodeMaskedCoM(pass, idxBuf, com, detCols);
+    this.encodeMaskedCoM(pass, idxBuf, com, detCols, integerFlags);
     pass.end();
     device.queue.submit([enc.finish()]);
     this.retireBuffers([idxBuf]);
@@ -650,7 +714,7 @@ export class DetectorCompute {
   // CoM reduction -> global mean -> component subtraction, with no JavaScript pass over scan pixels.
   maskedDpcBuffer(mask: Uint32Array, detCols: number, component: "row" | "col" | 0 | 1): { buffer: GPUBuffer; n: number; cleanup?: () => void } {
     const device = this.device;
-    const { idx, n } = this.detectorIndices(mask);
+    const { idx, n, integerFlags } = this.maskedCoMSelection(mask, detCols);
     const comp = component === "row" || component === 0 ? 0 : 1;
     const key = this.dpcCacheKey(mask, detCols, comp, n);
     const cached = this.dpcBufferCache.get(key);
@@ -666,7 +730,7 @@ export class DetectorCompute {
     const compDims = this.uniform([this.scanCount, comp, 0, 0]);
     const enc = device.createCommandEncoder();
     const pass = enc.beginComputePass();
-    this.encodeMaskedCoM(pass, idxBuf, com, detCols);
+    this.encodeMaskedCoM(pass, idxBuf, com, detCols, integerFlags);
     pass.setPipeline(this.dpcMeanPipe);
     pass.setBindGroup(0, device.createBindGroup({ layout: this.dpcMeanPipe.getBindGroupLayout(0), entries: [
       { binding: 0, resource: { buffer: com } }, { binding: 1, resource: { buffer: mean } }, { binding: 2, resource: { buffer: meanDims } } ] }));
@@ -707,7 +771,7 @@ export class DetectorCompute {
 
   private maskedDpcPairBuffers(mask: Uint32Array, detCols: number): { row: GPUBuffer; col: GPUBuffer; n: number; cleanup?: () => void } {
     const device = this.device;
-    const { idx, n } = this.detectorIndices(mask);
+    const { idx, n, integerFlags } = this.maskedCoMSelection(mask, detCols);
     const rowKey = this.dpcCacheKey(mask, detCols, 0, n);
     const colKey = this.dpcCacheKey(mask, detCols, 1, n);
     const rowCached = this.dpcBufferCache.get(rowKey);
@@ -728,7 +792,7 @@ export class DetectorCompute {
     const colDims = this.uniform([this.scanCount, 1, 0, 0]);
     const enc = device.createCommandEncoder();
     const pass = enc.beginComputePass();
-    this.encodeMaskedCoM(pass, idxBuf, com, detCols);
+    this.encodeMaskedCoM(pass, idxBuf, com, detCols, integerFlags);
     pass.setPipeline(this.dpcMeanPipe);
     pass.setBindGroup(0, device.createBindGroup({ layout: this.dpcMeanPipe.getBindGroupLayout(0), entries: [
       { binding: 0, resource: { buffer: com } }, { binding: 1, resource: { buffer: mean } }, { binding: 2, resource: { buffer: meanDims } } ] }));
@@ -833,23 +897,27 @@ export class DetectorCompute {
       return { buffer: out, n };
     }
     const complexBytes = this.scanCount * 8;
-    const gradFft = this.device.createBuffer({ size: complexBytes, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+    const rowFft = this.device.createBuffer({ size: complexBytes, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+    const colFft = this.device.createBuffer({ size: complexBytes, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
     const phaseFft = this.device.createBuffer({ size: complexBytes, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
     const theta = rotationDeg * Math.PI / 180.0;
     const packParams = this.idpcPackParams(Math.cos(theta), Math.sin(theta), useTranspose);
     const packBind = this.device.createBindGroup({ layout: this.idpcPackPipe.getBindGroupLayout(0), entries: [
       { binding: 0, resource: { buffer: dpc.row } },
       { binding: 1, resource: { buffer: dpc.col } },
-      { binding: 2, resource: { buffer: gradFft } },
-      { binding: 3, resource: { buffer: packParams } },
+      { binding: 2, resource: { buffer: rowFft } },
+      { binding: 3, resource: { buffer: colFft } },
+      { binding: 4, resource: { buffer: packParams } },
     ] });
     this.dispatch(this.idpcPackPipe, packBind, Math.ceil(this.scanCount / 256));
-    this.runFFT2DInPlace(gradFft, scanCols, scanRows, false);
+    this.runFFT2DInPlace(rowFft, scanCols, scanRows, false);
+    this.runFFT2DInPlace(colFft, scanCols, scanRows, false);
     const poissonDims = this.uniform([scanCols, scanRows, this.scanCount, 0]);
     const poissonBind = this.device.createBindGroup({ layout: this.idpcPoissonPipe.getBindGroupLayout(0), entries: [
-      { binding: 0, resource: { buffer: gradFft } },
-      { binding: 1, resource: { buffer: phaseFft } },
-      { binding: 2, resource: { buffer: poissonDims } },
+      { binding: 0, resource: { buffer: rowFft } },
+      { binding: 1, resource: { buffer: colFft } },
+      { binding: 2, resource: { buffer: phaseFft } },
+      { binding: 3, resource: { buffer: poissonDims } },
     ] });
     this.dispatch(this.idpcPoissonPipe, poissonBind, Math.ceil(this.scanCount / 256));
     this.runFFT2DInPlace(phaseFft, scanCols, scanRows, true);
@@ -860,7 +928,7 @@ export class DetectorCompute {
       { binding: 2, resource: { buffer: extractDims } },
     ] });
     this.dispatch(this.idpcExtractPipe, extractBind, Math.ceil(this.scanCount / 256));
-    this.retireBuffers([gradFft, phaseFft, packParams, poissonDims, extractDims]);
+    this.retireBuffers([rowFft, colFft, phaseFft, packParams, poissonDims, extractDims]);
     return { buffer: out, n };
   }
 
@@ -1390,26 +1458,27 @@ export class DetectorCompute {
     return this.u8WordMajorDeltaDimsCache.rows;
   }
 
-  private comDimsCache: { detCols: number; rows: { chunk: GPUBuffer; dims: GPUBuffer; dims2: GPUBuffer; gx: number; gy: number }[] } | null = null;
-  private comDims(detCols: number) {
-    if (!this.comDimsCache || this.comDimsCache.detCols !== detCols) {
+  private comDimsCache: { detCols: number; integerFlags: number; rows: { chunk: GPUBuffer; dims: GPUBuffer; dims2: GPUBuffer; gx: number; gy: number }[] } | null = null;
+  private comDims(detCols: number, integerFlags: number) {
+    if (!this.comDimsCache || this.comDimsCache.detCols !== detCols || this.comDimsCache.integerFlags !== integerFlags) {
       if (this.comDimsCache) {
         for (const cd of this.comDimsCache.rows) { cd.dims.destroy(); cd.dims2.destroy(); }
       }
       this.comDimsCache = {
         detCols,
+        integerFlags,
         rows: this.chunks.map((ch) => {
           const gx = Math.min(ch.nScan, MAX_WG), gy = Math.ceil(ch.nScan / MAX_WG);
-          return { chunk: ch.buffer, dims: this.uniform([ch.startScan, ch.nScan, this.detSize, this.mode]), dims2: this.uniform([detCols, this.scanCount, gx, 0]), gx, gy };
+          return { chunk: ch.buffer, dims: this.uniform([ch.startScan, ch.nScan, this.detSize, this.mode]), dims2: this.uniform([detCols, this.scanCount, gx, integerFlags]), gx, gy };
         }),
       };
     }
     return this.comDimsCache.rows;
   }
 
-  private encodeMaskedCoM(pass: GPUComputePassEncoder, idxBuf: GPUBuffer, com: GPUBuffer, detCols: number) {
+  private encodeMaskedCoM(pass: GPUComputePassEncoder, idxBuf: GPUBuffer, com: GPUBuffer, detCols: number, integerFlags: number) {
     pass.setPipeline(this.maskedComPipe);
-    for (const cd of this.comDims(detCols)) {
+    for (const cd of this.comDims(detCols, integerFlags)) {
       const bind = this.device.createBindGroup({ layout: this.maskedComPipe.getBindGroupLayout(0), entries: [
         { binding: 0, resource: { buffer: cd.chunk } }, { binding: 1, resource: { buffer: idxBuf } },
         { binding: 2, resource: { buffer: com } }, { binding: 3, resource: { buffer: cd.dims } }, { binding: 4, resource: { buffer: cd.dims2 } } ] });
@@ -1461,6 +1530,21 @@ export class DetectorCompute {
   private upload(arr: Uint32Array, usage: number): GPUBuffer {
     const b = this.device.createBuffer({ size: Math.max(16, arr.byteLength), usage: usage | GPUBufferUsage.COPY_DST });
     this.device.queue.writeBuffer(b, 0, arr.buffer as ArrayBuffer, arr.byteOffset, arr.byteLength); return b;
+  }
+  private maskedCoMSelection(mask: Uint32Array, detCols: number): { idx: Uint32Array; n: number; integerFlags: number } {
+    if (mask.length !== this.detSize) {
+      throw new RangeError(`WebGPU CoM mask length ${mask.length} does not match detector size ${this.detSize}.`);
+    }
+    if (!Number.isSafeInteger(detCols) || detCols < 1 || detCols > this.detSize || this.detSize % detCols !== 0) {
+      throw new RangeError(`WebGPU CoM detectorColumns must be a positive integer divisor of detector size ${this.detSize}; got ${detCols}.`);
+    }
+    if (this.mode !== 0 && this.mode !== 1 && this.mode !== 2 && this.mode !== 3) {
+      throw new RangeError(`WebGPU CoM does not support resident mode ${this.mode}; expected uint16, uint8, float32, or uint32.`);
+    }
+    const { idx, n } = this.detectorIndices(mask);
+    if (this.mode === 2 || n === 0) return { idx, n, integerFlags: 0 };
+    const { narrowInteger, narrowProducts } = planExactIntegerCoM(idx, n, detCols, this.mode);
+    return { idx, n, integerFlags: narrowInteger | (narrowProducts << 1) };
   }
   private detectorIndices(mask: Uint32Array): { idx: Uint32Array; n: number } {
     const bad = this.badPx.length ? new Set(this.badPx) : null;

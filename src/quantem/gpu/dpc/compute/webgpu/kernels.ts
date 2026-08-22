@@ -132,7 +132,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   values[i] = values[i] + delta;
 }`;
 
-// Pack centered DPC row/col maps into one complex dual-real FFT input for iDPC.
+// Pack centered DPC row/col maps into separate complex FFT inputs for iDPC.
+// Keeping the two real fields separate avoids the cancellation and extra
+// rounding introduced by dual-real conjugate unpacking after the forward FFT.
 // flags bit 0 selects the transpose convention used by the Python DPC solver.
 export const IDPC_PACK_WGSL = `
 struct PackParams {
@@ -144,8 +146,9 @@ struct PackParams {
 }
 @group(0) @binding(0) var<storage,read> rowDpc: array<f32>;
 @group(0) @binding(1) var<storage,read> colDpc: array<f32>;
-@group(0) @binding(2) var<storage,read_write> gradFft: array<vec2<f32>>;
-@group(0) @binding(3) var<uniform> u: PackParams;
+@group(0) @binding(2) var<storage,read_write> rowFft: array<vec2<f32>>;
+@group(0) @binding(3) var<storage,read_write> colFft: array<vec2<f32>>;
+@group(0) @binding(4) var<uniform> u: PackParams;
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let i = gid.x;
@@ -161,13 +164,15 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     gradRow = u.rot.x * row - u.rot.y * col;
     gradCol = u.rot.y * row + u.rot.x * col;
   }
-  gradFft[i] = vec2<f32>(gradRow, gradCol);
+  rowFft[i] = vec2<f32>(gradRow, 0.0);
+  colFft[i] = vec2<f32>(gradCol, 0.0);
 }`;
 
 export const IDPC_POISSON_WGSL = `
-@group(0) @binding(0) var<storage,read> gradFft: array<vec2<f32>>;
-@group(0) @binding(1) var<storage,read_write> phaseFft: array<vec2<f32>>;
-@group(0) @binding(2) var<uniform> u: vec4<u32>; // width, height, n, 0
+@group(0) @binding(0) var<storage,read> rowFft: array<vec2<f32>>;
+@group(0) @binding(1) var<storage,read> colFft: array<vec2<f32>>;
+@group(0) @binding(2) var<storage,read_write> phaseFft: array<vec2<f32>>;
+@group(0) @binding(3) var<uniform> u: vec4<u32>; // width, height, n, 0
 fn freq(i: u32, n: u32) -> f32 {
   if (i < (n + 1u) / 2u) {
     return f32(i) / f32(n);
@@ -184,18 +189,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   }
   let row = i / u.x;
   let col = i - row * u.x;
-  let mirrorRow = (u.y - row) % u.y;
-  let mirrorCol = (u.x - col) % u.x;
-  let mirror = mirrorRow * u.x + mirrorCol;
-  let z = gradFft[i];
-  let zMirrorConj = vec2<f32>(gradFft[mirror].x, -gradFft[mirror].y);
-  let rowF = 0.5 * (z + zMirrorConj);
-  let diff = z - zMirrorConj;
-  let colF = vec2<f32>(0.5 * diff.y, -0.5 * diff.x);
   let k0 = freq(row, u.y);
   let k1 = freq(col, u.x);
   let k2 = k0 * k0 + k1 * k1;
-  let g = rowF * k0 + colF * k1;
+  let g = rowFft[i] * k0 + colFft[i] * k1;
   let scale = 0.25 / k2;
   phaseFft[i] = vec2<f32>(g.y * scale, -g.x * scale);
 }`;
