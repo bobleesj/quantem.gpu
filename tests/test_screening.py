@@ -242,6 +242,92 @@ def test_screening_cache_rejects_changed_external_shard(tmp_path) -> None:
     assert workflow._prepare_cache(cache_path, master) is None
 
 
+def test_strong_cache_identity_avoids_hdf5_reinspection(monkeypatch, tmp_path) -> None:
+    from quantem.gpu.screening import workflow
+
+    master = tmp_path / "scan_master.h5"
+    master.write_bytes(b"placeholder")
+    stat = master.stat()
+    source = {
+        "master": str(master.resolve()),
+        "files": [
+            {
+                "path": str(master.resolve()),
+                "size": int(stat.st_size),
+                "mtime_ns": int(stat.st_mtime_ns),
+                "ctime_ns": int(stat.st_ctime_ns),
+                "device": int(stat.st_dev),
+                "inode": int(stat.st_ino),
+            }
+        ],
+        "datasets": [],
+        "expectation": {"frames": None, "basis": None},
+    }
+    monkeypatch.setattr(
+        workflow,
+        "_source_fingerprint",
+        lambda _master: (_ for _ in ()).throw(
+            AssertionError("strong cache identity must not re-inspect HDF5")
+        ),
+    )
+
+    assert workflow._cache_matches(
+        {"version": workflow._CACHE_VERSION, "source": source},
+        master,
+    )
+
+
+def test_strong_cache_identity_rejects_duplicate_or_changed_files(tmp_path) -> None:
+    from quantem.gpu.screening import workflow
+
+    master = tmp_path / "scan_master.h5"
+    master.write_bytes(b"first")
+    stat = master.stat()
+    record = {
+        "path": str(master.resolve()),
+        "size": int(stat.st_size),
+        "mtime_ns": int(stat.st_mtime_ns),
+        "ctime_ns": int(stat.st_ctime_ns),
+        "device": int(stat.st_dev),
+        "inode": int(stat.st_ino),
+    }
+    source = {"master": str(master.resolve()), "files": [record, dict(record)]}
+    assert workflow._strong_cached_source_match(source, master) is False
+
+    source["files"] = [record]
+    master.write_bytes(b"changed")
+    assert workflow._strong_cached_source_match(source, master) is False
+
+
+def test_reduced_cache_identity_uses_full_inspection_fallback(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    from quantem.gpu.screening import workflow
+
+    master = tmp_path / "scan_master.h5"
+    master.write_bytes(b"placeholder")
+    source = {
+        "master": str(master.resolve()),
+        "files": [
+            {
+                "path": str(master.resolve()),
+                "size": int(master.stat().st_size),
+                "mtime_ns": int(master.stat().st_mtime_ns),
+            }
+        ],
+        "datasets": [],
+        "expectation": {"frames": None, "basis": None},
+    }
+    monkeypatch.setattr(workflow, "_source_fingerprint", lambda _master: source)
+
+    assert workflow._strong_cached_source_match(source, master) is None
+    assert workflow._cache_matches(
+        {"version": workflow._CACHE_VERSION, "source": source},
+        master,
+    )
+
+
 def test_screening_forced_rotation_recomputes_phase(tmp_path) -> None:
     from quantem.gpu.screening import workflow
 
