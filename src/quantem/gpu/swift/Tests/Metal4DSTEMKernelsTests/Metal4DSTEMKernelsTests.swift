@@ -695,8 +695,13 @@ final class Metal4DSTEMKernelsTests: XCTestCase {
     let outputColumns = sourceColumns / 4
     let outputPixels = outputRows * outputColumns
     let outputWords = (outputPixels + 1) / 2
-    let values = (0..<(sourceRows * sourceColumns)).map {
-      UInt8(($0 * 7 + $0 / sourceColumns * 3) % 16)
+    let sourcePixelCount = sourceRows * sourceColumns
+    var values = [UInt8]()
+    values.reserveCapacity(sourcePixelCount)
+    for pixel in 0..<sourcePixelCount {
+      let scaled = pixel * 7
+      let rowOffset = (pixel / sourceColumns) * 3
+      values.append(UInt8((scaled + rowOffset) % 16))
     }
     let badPixels = [0, 139, 140, sourceRows * sourceColumns - 1]
     let badSet = Set(badPixels)
@@ -2347,8 +2352,13 @@ final class Metal4DSTEMKernelsTests: XCTestCase {
     let outputDetectorColumns = detectorColumns / 4
     let outputDetectorPixels = outputDetectorRows * outputDetectorColumns
     let outputDetectorWords = outputDetectorPixels / 2
-    let sourceValues: [UInt8] = (0..<(frameCount * detectorPixels)).map {
-      UInt8(($0 * 17 + $0 / detectorPixels * 11 + 3) % 54)
+    let sourceValueCount = frameCount * detectorPixels
+    var sourceValues = [UInt8]()
+    sourceValues.reserveCapacity(sourceValueCount)
+    for sourceIndex in 0..<sourceValueCount {
+      let scaled = sourceIndex * 17
+      let frameOffset = (sourceIndex / detectorPixels) * 11
+      sourceValues.append(UInt8((scaled + frameOffset + 3) % 54))
     }
     let membership: [UInt8] = (0..<detectorPixels).map { pixel in
       let row = pixel / detectorColumns
