@@ -1,0 +1,188 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260822-platform-computer-profile",
+  "status": "running",
+  "question": "Which exact QuantEM.GPU configurations have parity-qualified measurements on each supported platform and reproducible computer class, and which atomic physical gates remain to be run?",
+  "paper": {
+    "authoritative_computer": "MacBook Pro (M5 Max, 128 GB)",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260822-platform-computer-profile/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "snapshot_path": "local-snapshot://benchmark-platform-computer-matrix/75be74e",
+    "branch": "benchmark-platform-computer-matrix",
+    "revision": "75be74e899186dfb86f08f0c591de8c65f0c5e53",
+    "dirty": false,
+    "diff_sha256": null,
+    "baseline_revision": "75be74e899186dfb86f08f0c591de8c65f0c5e53",
+    "origin_main_at_start": "75be74e899186dfb86f08f0c591de8c65f0c5e53",
+    "dirty_at_start": false,
+    "current_uncommitted_diff_sha256": null,
+    "current_worktree_state": "intentional uncommitted benchmark/docs candidate; final diff hash is recorded only at a stable checkpoint",
+    "entrypoints": [
+      "scripts/benchmark_registry.py",
+      "scripts/benchmark_hdf5_load.py",
+      "scripts/benchmark_webgpu_h5_browser.py",
+      "src/quantem/gpu/swift/Benchmarks/Metal4DSTEMStreamingIOBenchmark/main.swift"
+    ]
+  },
+  "inputs": [
+    {
+      "dataset_id": "real-512x512x192x192-u16-bslz4-27shard-master-source-b",
+      "computer": "MacBook Pro (M5 Max, 128 GB)",
+      "path": "private-fixture://full-512-u16-bslz4-27shard/source-b-master",
+      "sha256": "4802ec16ba241fef439e9dcb1c28e94f9cf9d95f773df9c5c8c3b5f7ed8192c4",
+      "hash_role": "master file SHA-256",
+      "source_identity_sha256": "1be810b96fdff8e384ad4cb6ebd49adff9b4ab0a6503cd5fed9106e09f5aa286",
+      "compressed_shard_bytes": 3165121363
+    },
+    {
+      "dataset_id": "real-512x512x192x192-u16-bslz4-27shard-master-fixture-c",
+      "computer": "MacBook Pro (M5, 24 GB)",
+      "path": "private-fixture://full-512-u16-bslz4-27shard/source-c-master",
+      "sha256": "c9c0d968fae70b8911ae925d676b90007886970fa99fe296a47cfe07844bbfe9",
+      "hash_role": "master file SHA-256",
+      "source_identity_sha256": "9f0ddb932c631b63cb573c38d747fa41941ee585c5389d33bdafb4add962b768",
+      "on_disk_bytes_approximate": 3095000000
+    }
+  ],
+  "parameters": {
+    "source_shape": [512, 512, 192, 192],
+    "source_dtype": "uint16",
+    "selected_scan": [512, 512],
+    "scan_bin": 1,
+    "detector_bins": [1, 2, 4, 8],
+    "scan_crop": null,
+    "detector_crop": null,
+    "precision": "exact integer counts with source-identity-bound range proof where uint16 detector sums are retained",
+    "range_audit_source_identity_sha256": "9f0ddb932c631b63cb573c38d747fa41941ee585c5389d33bdafb4add962b768",
+    "range_audit_maximum_source_count": 53,
+    "matrix_order": ["platform", "computer", "module", "exact configuration"],
+    "timing_states": [
+      "cold original compressed source",
+      "prepared indexes with declared source-page state",
+      "post-warmup fresh destination",
+      "explicitly recycled destination"
+    ],
+    "required_statistics": ["p50", "p95", "maximum"],
+    "required_memory": [
+      "logical resident bytes",
+      "accelerator or driver allocation boundary",
+      "total-device peak where observable",
+      "process-tree high-water",
+      "compressed-memory and swap delta"
+    ],
+    "promotion_rule": "A pending row is not support evidence; a physical timing is promoted only with exact parity, immutable source identity, cache state, revision, run-level data, and memory telemetry."
+  },
+  "execution": {
+    "computers": [
+      {
+        "computer": "MacBook Pro (M5 Max, 128 GB)",
+        "model_identifier": "Mac17,6",
+        "platforms": ["Python MPS", "Native Swift/Metal", "WebGPU", "CPU reference"],
+        "status_at_start": "available"
+      },
+      {
+        "computer": "MacBook Pro (M5, 24 GB)",
+        "model_identifier": "Mac17,2",
+        "platforms": ["Python MPS", "Native Swift/Metal", "WebGPU", "CPU reference"],
+        "status_at_start": "available with about 25 GiB disk free and pre-existing swap; full 18 GiB resident trial requires a separate admission gate"
+      },
+      {
+        "computer": "MacBook Air (M2, 8 GB)",
+        "platforms": ["Python MPS", "Native Swift/Metal", "WebGPU", "CPU reference"],
+        "status_at_start": "network-unreachable; no physical claim permitted"
+      },
+      {
+        "computer": "Linux CUDA workstation (dual 96 GB Blackwell GPUs)",
+        "platforms": ["CUDA", "CPU reference"],
+        "status_at_start": "GPU 0 occupied by unrelated research; GPU 1 has a shared QuantEM.GPU service and requires ownership coordination"
+      }
+    ]
+  },
+  "outputs": [
+    {
+      "id": "m5-24gb-swift-metal-matrix-seal",
+      "artifact": "private-evidence://macbook-pro-m5-24gb/20260822-current-head-m5-preflight-01/MATRIX_SHA256SUMS",
+      "sha256": "a584943b1bd5a99d1bb0db69ba40367d63f81e7dd582c2eb19a25ce0db77b202",
+      "result": "Sealed physical Swift/Metal detector-bin-2 and detector-bin-4 matrix on committed revision 75be74e."
+    },
+    {
+      "id": "m5-24gb-swift-metal-bin2-current-head-reuse",
+      "artifact": "private-evidence://macbook-pro-m5-24gb/20260822-current-head-m5-preflight-01/bin2-summary",
+      "sha256": "857e4adaf964d58dcd5fb17c2644fd272b1d54ab6a564dbd69579910e3d0c9a2",
+      "result": "Six retained destination-reuse trials; wall p50/p95/max 0.671309/0.694479/0.694479 s; exact full-volume and seven-product parity; zero swap growth."
+    },
+    {
+      "id": "m5-24gb-swift-metal-bin4-current-head-reuse",
+      "artifact": "private-evidence://macbook-pro-m5-24gb/20260822-current-head-m5-preflight-01/bin4-summary",
+      "sha256": "2c9b105c8c6f9e970b6cb00377f8afaf4c180700cca047cc7106201f823e38c8",
+      "result": "Six retained destination-reuse trials; wall p50/p95/max 0.630903/0.638497/0.638497 s; exact full-volume and seven-product parity; zero swap growth."
+    },
+    {
+      "id": "m5-24gb-python-mps-preflight-report",
+      "artifact": "private-evidence://macbook-pro-m5-24gb/20260822-python-mps-current-head-preflight-02/REPORT.md",
+      "sha256": "5ed8c7ad2f61a0db57eec4bc26f0e092aebe3b8cb9e85db6b57c7691b02f6931",
+      "result": "Python MPS physical preflight stopped before fixture loading because the baseline benchmark did not verify a full-volume hash or observed dtype; no timing was promoted."
+    },
+    {
+      "id": "m5-24gb-python-mps-preflight-checksums",
+      "artifact": "private-evidence://macbook-pro-m5-24gb/20260822-python-mps-current-head-preflight-02/SHA256SUMS",
+      "sha256": "b950e067f1bf276f3261fd60f2078c6d0acfd2ccfa126ec224285583cf755916",
+      "result": "Sealed checksum inventory for the fail-closed Python MPS preflight."
+    }
+  ],
+  "results": {
+    "macbook_pro_m5_24gb_native_swift_metal": {
+      "source_revision": "75be74e899186dfb86f08f0c591de8c65f0c5e53",
+      "sample_policy": "seven iterations; trial 1 records fresh allocation and trials 2 through 7 form the destination-reuse distribution",
+      "detector_bin_2": {
+        "working_shape": [512, 512, 96, 96],
+        "fresh_wall_seconds": 1.313907,
+        "reuse_wall_p50_seconds": 0.671309,
+        "reuse_wall_p95_seconds": 0.694479,
+        "reuse_wall_maximum_seconds": 0.694479,
+        "gpu_p50_seconds": 0.655044,
+        "decode_and_audit_p50_seconds": 0.488991,
+        "products_and_binning_p50_seconds": 0.158643,
+        "logical_resident_bytes": 4831838208,
+        "maximum_metal_bytes_with_boundary_hash": 5445222400,
+        "process_peak_rss_bytes": 693960704,
+        "swap_delta_bytes": 0,
+        "pageout_delta_bytes": 2211840,
+        "working_volume_sha256": "cb9b682619d32dc9f80135916c7abaa1f866d7b8a0413cdbab3a369f3915ddf7"
+      },
+      "detector_bin_4": {
+        "working_shape": [512, 512, 48, 48],
+        "fresh_wall_seconds": 0.656082,
+        "reuse_wall_p50_seconds": 0.630903,
+        "reuse_wall_p95_seconds": 0.638497,
+        "reuse_wall_maximum_seconds": 0.638497,
+        "gpu_p50_seconds": 0.615709,
+        "decode_and_audit_p50_seconds": 0.488168,
+        "products_and_binning_p50_seconds": 0.119855,
+        "logical_resident_bytes": 1207959552,
+        "maximum_metal_bytes_with_boundary_hash": 1821343744,
+        "process_peak_rss_bytes": 698417152,
+        "swap_delta_bytes": 0,
+        "pageout_delta_bytes": 0,
+        "working_volume_sha256": "eee3afcc282a9d85fefe08eacd8d9a6ca283e63231120bb13b2080084ff782b5"
+      },
+      "parity": "Every retained full working-volume boundary and all seven product hashes matched the sealed reference exactly."
+    },
+    "macbook_pro_m5_24gb_python_mps_preflight": {
+      "source_revision": "75be74e899186dfb86f08f0c591de8c65f0c5e53",
+      "runtime": "Python 3.12.11; PyTorch 2.9.0; h5py 3.15.1; NumPy 2.3.5; MPS available",
+      "status": "failed-closed-before-fixture-load",
+      "reason": "The baseline load benchmark reported requested rather than observed dtype and released resident output without full-volume hashing or comparison.",
+      "timing_promoted": false,
+      "follow_up": "The isolated candidate now requires full-volume SHA-256, observed dtype, logical shape, and sampled peak memory; physical bin4 then bin2 validation remains pending on a clean revision."
+    }
+  },
+  "timestamps": {
+    "created": "2026-08-22T13:33:04-07:00",
+    "started": "2026-08-22T13:33:04-07:00",
+    "finished": null
+  }
+}

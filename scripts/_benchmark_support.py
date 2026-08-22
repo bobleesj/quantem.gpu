@@ -9,6 +9,7 @@ import platform
 import resource
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -98,6 +99,17 @@ def _process_peak_rss_bytes() -> int | None:
     return value * 1024
 
 
+def _process_current_rss_bytes() -> int | None:
+    """Return the process resident set at the sampling instant."""
+
+    try:
+        import psutil
+
+        return int(psutil.Process().memory_info().rss)
+    except (ImportError, AttributeError, OSError):
+        return None
+
+
 def _swap_used_bytes() -> int | None:
     """Return whole-system swap use when psutil is available."""
 
@@ -117,6 +129,7 @@ def _memory_snapshot(backend: str) -> dict[str, int | None]:
         "allocator_reserved_bytes": None,
         "driver_allocated_bytes": None,
         "total_card_used_bytes": None,
+        "process_current_rss_bytes": _process_current_rss_bytes(),
         "process_peak_rss_bytes": _process_peak_rss_bytes(),
         "system_swap_used_bytes": _swap_used_bytes(),
     }
@@ -150,6 +163,56 @@ def _memory_snapshot(backend: str) -> dict[str, int | None]:
         except (AttributeError, ImportError, RuntimeError):
             pass
     return snapshot
+
+
+class MemorySampler:
+    """Sample accelerator and process memory while one timed operation runs."""
+
+    def __init__(self, backend: str, interval_ms: float = 10.0) -> None:
+        if interval_ms <= 0:
+            raise ValueError(f"interval_ms must be positive; got {interval_ms}")
+        self.backend = backend
+        self.interval_seconds = interval_ms / 1000.0
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._samples: list[dict[str, int | None]] = []
+
+    def start(self) -> None:
+        """Start sampling; one sampler instance may be started once."""
+
+        if self._thread is not None:
+            raise RuntimeError("memory sampler has already been started")
+        self._samples.append(_memory_snapshot(self.backend))
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.interval_seconds):
+            self._samples.append(_memory_snapshot(self.backend))
+
+    def stop(self) -> dict[str, Any]:
+        """Stop sampling and return the maximum observed numeric fields."""
+
+        if self._thread is None:
+            raise RuntimeError("memory sampler has not been started")
+        self._stop.set()
+        self._thread.join()
+        self._samples.append(_memory_snapshot(self.backend))
+        numeric_fields = set().union(*(sample.keys() for sample in self._samples))
+        peak = {
+            field: max(
+                value
+                for sample in self._samples
+                if (value := sample.get(field)) is not None
+            )
+            for field in sorted(numeric_fields)
+            if any(sample.get(field) is not None for sample in self._samples)
+        }
+        return {
+            "interval_ms": self.interval_seconds * 1000.0,
+            "sample_count": len(self._samples),
+            "peak": peak,
+        }
 
 
 def _sync_backend(backend: str) -> None:

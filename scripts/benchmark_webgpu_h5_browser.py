@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import re
 import statistics
 import time
 import urllib.parse
@@ -143,10 +144,117 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Wait for a local-file load profile instead of accepting the URL/fetch fallback.",
     )
+    parser.add_argument(
+        "--require-integer-resident",
+        action="store_true",
+        help=(
+            "Reject a completed load unless the browser reports an integer "
+            "resident dtype. This prevents float-resident detector-binning "
+            "diagnostics from qualifying as exact-integer evidence."
+        ),
+    )
+    parser.add_argument(
+        "--expected-resident-dtype",
+        choices=("uint8", "uint16", "uint32", "float32"),
+        help="Require the browser resident dtype to match this exact width.",
+    )
+    parser.add_argument("--expected-full-output-sha256")
+    parser.add_argument(
+        "--require-full-output-parity",
+        action="store_true",
+        help=(
+            "Require profile.fullOutputSha256 to match the supplied full-volume "
+            "reference. Sampled frame checksums cannot satisfy this gate."
+        ),
+    )
+    parser.add_argument(
+        "--require-checksum-parity",
+        action="store_true",
+        help="Fail unless every supplied diagnostic frame checksum matches.",
+    )
     parser.add_argument("--screenshot", type=Path)
     parser.add_argument("--timeout-s", type=float, default=120.0)
     parser.add_argument("--json-out", type=Path)
     return parser.parse_args()
+
+
+_SHA256 = re.compile(r"[0-9a-f]{64}")
+
+
+def _normalized_sha256(value: str | None, option: str) -> str | None:
+    if value is None:
+        return None
+    normalized = value.lower()
+    if not _SHA256.fullmatch(normalized):
+        raise SystemExit(f"{option} must contain exactly 64 hexadecimal characters")
+    return normalized
+
+
+def _exact_run_evidence(
+    profile: dict[str, Any],
+    checksums: Any,
+    reference_checksums: Any,
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    """Return exact-gate evidence or fail closed on any requested mismatch."""
+
+    resident_dtype = profile.get("residentDtype")
+    errors: list[str] = []
+    if args.require_integer_resident and resident_dtype not in {
+        "uint8",
+        "uint16",
+        "uint32",
+    }:
+        errors.append(
+            "exact-integer WebGPU evidence requires an integer resident dtype; "
+            f"got {resident_dtype!r}"
+        )
+    if (
+        args.expected_resident_dtype is not None
+        and resident_dtype != args.expected_resident_dtype
+    ):
+        errors.append(
+            "resident dtype mismatch: expected "
+            f"{args.expected_resident_dtype}, got {resident_dtype!r}"
+        )
+
+    sampled_parity = (
+        None if reference_checksums is None else checksums == reference_checksums
+    )
+    if args.require_checksum_parity:
+        if reference_checksums is None:
+            errors.append("required diagnostic checksum reference is missing")
+        elif not sampled_parity:
+            errors.append("diagnostic frame checksum mismatch")
+
+    full_output_sha256 = profile.get("fullOutputSha256")
+    if args.require_full_output_parity:
+        if args.expected_full_output_sha256 is None:
+            errors.append("required full-output SHA-256 reference is missing")
+        elif not isinstance(full_output_sha256, str) or not _SHA256.fullmatch(
+            full_output_sha256.lower()
+        ):
+            errors.append(
+                "browser profile did not provide a valid fullOutputSha256; "
+                "sampled frame checksums are not full-volume parity"
+            )
+        elif full_output_sha256.lower() != args.expected_full_output_sha256:
+            errors.append(
+                "full-output SHA-256 mismatch: expected "
+                f"{args.expected_full_output_sha256}, got {full_output_sha256.lower()}"
+            )
+    evidence = {
+        "residentDtype": resident_dtype,
+        "expectedResidentDtype": args.expected_resident_dtype,
+        "sampledFrameParity": sampled_parity,
+        "fullOutputSha256": full_output_sha256,
+        "expectedFullOutputSha256": args.expected_full_output_sha256,
+        "passed": not errors,
+        "errors": errors,
+    }
+    if errors:
+        raise RuntimeError("; ".join(errors))
+    return evidence
 
 
 def _http_json(cdp: str, method: str, path: str) -> dict[str, Any]:
@@ -194,8 +302,9 @@ class CdpTarget:
     def close(self, cdp: str) -> None:
         try:
             self.call("Target.closeTarget", {"targetId": self.target_id}, timeout=5)
-        except Exception:
-            pass
+        except (OSError, RuntimeError, TimeoutError, websocket.WebSocketException):
+            self._ws.close()
+            return
         self._ws.close()
 
 
@@ -557,7 +666,9 @@ def _run_one(
             timeout=30,
             await_promise=True,
         )
-        parity = None if reference_checksums is None else checksums == reference_checksums
+        exact_evidence = _exact_run_evidence(
+            profile, checksums, reference_checksums, args
+        )
         dpc = None
         if args.dpc_reps > 0:
             dpc = target.eval(
@@ -574,7 +685,8 @@ def _run_one(
             "wallMs": round((time.perf_counter() - wall0) * 1000),
             "profile": state["loadprof"],
             "checksums": checksums,
-            "parity": parity,
+            "parity": exact_evidence["sampledFrameParity"],
+            "exactEvidence": exact_evidence,
             "dpc": dpc,
         }
     finally:
@@ -583,6 +695,18 @@ def _run_one(
 
 def main() -> None:
     args = _parse_args()
+    args.expected_full_output_sha256 = _normalized_sha256(
+        args.expected_full_output_sha256, "--expected-full-output-sha256"
+    )
+    if args.require_full_output_parity and args.expected_full_output_sha256 is None:
+        raise SystemExit(
+            "--require-full-output-parity also requires "
+            "--expected-full-output-sha256"
+        )
+    if args.require_checksum_parity and args.checksum_json is None:
+        raise SystemExit(
+            "--require-checksum-parity also requires --checksum-json"
+        )
     reference_checksums = None
     if args.checksum_json:
         reference_checksums = json.loads(args.checksum_json.read_text(encoding="utf-8"))["checksums"]
@@ -638,6 +762,11 @@ def main() -> None:
             "dpcWarmup": args.dpc_warmup,
             "fpsMs": args.fps_ms,
             "sourceMode": "url" if args.url_source else "local-files",
+            "requireIntegerResident": bool(args.require_integer_resident),
+            "expectedResidentDtype": args.expected_resident_dtype,
+            "requireFullOutputParity": bool(args.require_full_output_parity),
+            "expectedFullOutputSha256": args.expected_full_output_sha256,
+            "requireChecksumParity": bool(args.require_checksum_parity),
         },
         "runs": runs,
         "summary": _summary(runs),

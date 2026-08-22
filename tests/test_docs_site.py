@@ -189,7 +189,9 @@ def test_dashboard_is_the_dense_human_overview() -> None:
     assert "A calculated payload is never relabeled as a measured peak" in dashboard
     assert "6 GiB of dedicated VRAM for CUDA" in dashboard_words
     assert "8 GB of total laptop RAM for WebGPU" in dashboard_words
-    assert "| 8 GB ✓ at detector bin 4; SSB physical 8 GB Pending |" in dashboard
+    assert "previously made a refuted WebGPU SSB result look accepted" in dashboard
+    assert "Reconstruction ✓" not in dashboard
+    assert "Refuted diagnostic" in dashboard
 
     for scan_size in (128, 256, 512, 1024):
         assert f"`{scan_size}x{scan_size}`" in dashboard
@@ -241,7 +243,11 @@ def test_dashboard_is_the_dense_human_overview() -> None:
         "### Single-sideband ptychography — `quantem.gpu.SSB`",
         "### Cross-module platform map",
     )
-    for index, heading in enumerate(module_headings[:-1]):
+    io_section = dashboard.split(module_headings[0], 1)[1].split(
+        module_headings[1], 1
+    )[0]
+    assert "filterable coverage registry" in io_section
+    for index, heading in enumerate(module_headings[1:-1], start=1):
         section = dashboard.split(heading, 1)[1].split(module_headings[index + 1], 1)[0]
         for runtime in ("CUDA", "Python MPS", "Native Swift/Metal", "WebGPU", "CPU reference"):
             assert runtime in section
@@ -305,15 +311,22 @@ def test_dashboard_ssb_size_matrix_tracks_fixed_size_runtime_registries() -> Non
     ).read_text(encoding="utf-8")
 
     assert "square scan-grid sizes, not detector dimensions" in ssb_section
-    assert "| Platform | Scan grid | Source kind | BF policy | State |" in ssb_section
+    header = "| Platform | Computer | Scan grid | Source kind | BF policy | State |"
+    assert header in ssb_section
     assert "| Statistic | Time | Device tested | Date tested |" not in ssb_section.split(
-        "| Platform | Scan grid | Source kind | BF policy | State |", 1
+        header, 1
     )[1]
     for size in (128, 256, 512, 1024):
         assert f"{size}:" in cuda
         assert f"{size}:" in mps
         for platform in ("CUDA", "Python MPS", "Native Swift/Metal", "WebGPU", "CPU reference"):
-            assert ssb_section.count(f"| **{platform}** | `{size}x{size}` |") == 1
+            rows = [
+                line
+                for line in ssb_section.splitlines()
+                if line.startswith(f"| **{platform}** |")
+                and f"| `{size}x{size}` |" in line
+            ]
+            assert len(rows) == 1
     assert "SUPPORTED_SSB_SIZES = [128, 256, 512, 1024]" in webgpu
     assert "Incomplete frozen reference" in ssb_section
     assert "Native real acquisition | Full active BF" in ssb_section
@@ -330,7 +343,7 @@ def test_platform_first_io_tables_expose_current_bins_devices_and_dates() -> Non
     load_section = dashboard.split("### Measured load configurations", 1)[1].split(
         "(dtype-support-and-peak-memory)=", 1
     )[0]
-    assert "| Platform | Selected scan | Scan plan |" in load_section
+    assert "| Platform | Computer | State | Selected scan | Scan plan |" in load_section
     assert "supportedDetectorBins = [1, 2, 4]" in swift_plan
 
     main_load_table = load_section.split(
@@ -341,7 +354,8 @@ def test_platform_first_io_tables_expose_current_bins_devices_and_dates() -> Non
         for line in main_load_table.splitlines()
         if line.startswith(("| [**", "| **CPU reference**"))
     ]
-    assert len(rows) == 13
+    assert len(rows) == 15
+    assert all(row[1] for row in rows)
 
     mps_rows = [row for row in rows if "Python MPS" in row[0]]
     assert not mps_rows
@@ -357,14 +371,14 @@ def test_platform_first_io_tables_expose_current_bins_devices_and_dates() -> Non
     assert len(mps_rows) == 4
     assert {
         (
-            int(row[2]),
-            row[4],
+            int(row[3]),
             row[5],
-            row[8],
+            row[6],
             row[9],
             row[10],
             row[11],
             row[12],
+            row[13],
         )
         for row in mps_rows
     } == {
@@ -376,14 +390,46 @@ def test_platform_first_io_tables_expose_current_bins_devices_and_dates() -> Non
 
     webgpu_rows = [row for row in rows if "WebGPU" in row[0]]
     observed = {
-        (row[1], int(row[4]), row[5], row[7], row[8], row[13])
+        (row[2], row[3], int(row[6]), row[7], row[9], row[10], row[15])
         for row in webgpu_rows
     }
     assert observed == {
-        ("`512x512`", 1, "`192x192`", "`uint8`", "`uint8`", "**0.824 s**"),
-        ("`512x512`", 2, "`96x96`", "`uint16`", "`float32`", "**1.281 s**"),
-        ("`512x512`", 4, "`48x48`", "`uint16`", "`float32`", "**1.044 s**"),
-        ("`512x512`", 8, "`24x24`", "`uint16`", "`float32`", "**0.979 s**"),
+        (
+            "Historical diagnostic",
+            "`512x512`",
+            1,
+            "`192x192`",
+            "`uint8`",
+            "`uint8`",
+            "**0.824 s**",
+        ),
+        (
+            "Historical diagnostic",
+            "`512x512`",
+            2,
+            "`96x96`",
+            "`uint16`",
+            "`float32`",
+            "**1.281 s**",
+        ),
+        (
+            "Historical diagnostic",
+            "`512x512`",
+            4,
+            "`48x48`",
+            "`uint16`",
+            "`float32`",
+            "**1.044 s**",
+        ),
+        (
+            "Historical diagnostic",
+            "`512x512`",
+            8,
+            "`24x24`",
+            "`uint16`",
+            "`float32`",
+            "**0.979 s**",
+        ),
     }
 
     selective = dashboard.split("#### Selective scan rectangles", 1)[1].split(
@@ -528,22 +574,25 @@ def test_minimum_device_memory_gates_are_atomic_and_fail_closed() -> None:
         (4, "2.25 GiB", "Pending"),
         (8, "0.5625 GiB", "Pending"),
     ):
-        row = (
-            f"| [**CUDA**](platforms/cuda.md) | 6 GiB VRAM | `512x512` | "
-            f"Full | `192x192` | {detector_bin} |"
+        matching = next(
+            line
+            for line in dashboard.splitlines()
+            if line.startswith("| [**CUDA**](platforms/cuda.md) |")
+            and "| 6 GiB VRAM | `512x512` | Full | `192x192` |" in line
+            and f"| {detector_bin} |" in line
         )
-        matching = next(line for line in dashboard.splitlines() if line.startswith(row))
         assert f"**{payload}**" in matching
         assert f"**{gate}**" in matching
 
     for detector_bin, payload, gate in (
-        (1, "9.00 GiB", "No"),
-        (2, "9.00 GiB", "No"),
-        (4, "2.25 GiB", "Pending"),
-        (8, "0.5625 GiB", "Pending"),
+        (1, "18.00 GiB", "Blocked"),
+        (2, "4.50 GiB", "Pending"),
+        (4, "1.125 GiB", "Pending"),
+        (8, "0.28125 GiB", "Pending"),
     ):
         row = (
-            f"| [**WebGPU**](platforms/webgpu.md) | 8 GB total RAM | `512x512` "
+            f"| [**WebGPU**](platforms/webgpu.md) | MacBook Air (M2, 8 GB) | "
+            f"8 GB total RAM | `512x512` "
             f"| Full | `192x192` | {detector_bin} |"
         )
         matching = next(line for line in dashboard.splitlines() if line.startswith(row))
@@ -551,12 +600,12 @@ def test_minimum_device_memory_gates_are_atomic_and_fail_closed() -> None:
         assert f"**{gate}**" in matching
 
     native_row = (
-        "| [**Native Swift/Metal**](platforms/swift-metal.md) | 8 GB unified "
-        "RAM | `512x512` | Full | `192x192` | 4 |"
+        "| [**Native Swift/Metal**](platforms/swift-metal.md) | MacBook Air "
+        "(M2, 8 GB) | 8 GB unified RAM | `512x512` | Full | `192x192` | 4 |"
     )
     matching = next(line for line in dashboard.splitlines() if line.startswith(native_row))
     assert "**1.125 GiB**" in matching
-    assert "**✓**" in matching
+    assert "**Historical**" in matching
     assert "Apple M2 MacBook Air (`Mac14,2`, 8 GB)" in matching
 
     assert "A calculated payload can prove **No**" in " ".join(dashboard.split())
@@ -619,6 +668,8 @@ def test_platform_tables_have_dependency_free_local_filters() -> None:
     assert "benchmark-tables.js" in config
     assert 'headers.indexOf("Platform")' in script
     assert 'headers.indexOf(columnName)' in script
+    assert script.index('"Platform",') < script.index('"Computer",')
+    assert script.index('"Computer",') < script.index('"State",')
     assert '"Cache/process state"' in script
     assert 'row.hidden = !(textMatches && selectionsMatch)' in script
     assert "fetch(" not in script

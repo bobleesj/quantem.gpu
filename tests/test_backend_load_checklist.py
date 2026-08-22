@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
 CHECKLIST = Path("docs/maintainer/backend-4dstem-load-checklist.md")
 MATRIX = Path("docs/maintainer/backend-optimization-matrix.md")
 
@@ -198,3 +197,23 @@ def test_show4dstem_browser_benchmark_can_reject_url_fallback() -> None:
     assert '"blockIndex": bool(args.block_index_template)' in source
     assert "Fixture file(s) not found" in source
     assert "Browser mounted" in source
+
+
+def test_show4dstem_browser_benchmark_rejects_float_resident_exact_claims() -> None:
+    source = Path("scripts/benchmark_webgpu_h5_browser.py").read_text(
+        encoding="utf-8"
+    )
+    local_h5 = Path(
+        "src/quantem/gpu/io/backends/webgpu/local-h5.ts"
+    ).read_text(encoding="utf-8")
+
+    assert '"--require-integer-resident"' in source
+    assert '"--expected-resident-dtype"' in source
+    assert '"--require-full-output-parity"' in source
+    assert '"--require-checksum-parity"' in source
+    assert 'profile.get("residentDtype")' in source
+    assert "sampled frame checksums are not full-volume parity" in source
+    assert 'residentDtype: "uint8" | "uint16" | "uint32" | "float32";' in local_h5
+    assert 'mode === 3' in local_h5
+    assert '? "uint32"' in local_h5
+    assert ': "float32"' in local_h5

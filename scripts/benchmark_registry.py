@@ -49,6 +49,14 @@ PLATFORM_LABELS = {
     "webgpu": "WebGPU",
 }
 
+PLATFORM_ORDER = {
+    "CUDA": 0,
+    "Python MPS": 1,
+    "Native Swift/Metal": 2,
+    "WebGPU": 3,
+    "CPU reference": 4,
+}
+
 MODULE_LABELS = {
     "loading": "I/O and load",
     "loading-and-products": "I/O and load",
@@ -144,18 +152,48 @@ def _artifact_lookup(evidence: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 
 def _measurement_state(measurement: dict[str, Any]) -> str:
+    explicit = measurement.get("state")
+    if explicit in ALLOWED_STATES and explicit != "measured":
+        return str(explicit)
     timing = (
         measurement.get("wall_p50_seconds"),
         measurement.get("wall_p95_seconds"),
         measurement.get("wall_max_seconds"),
     )
     parity = str(measurement.get("parity") or "").lower()
-    if (
-        all(value is not None for value in timing)
-        and parity
-        and "not performed" not in parity
-        and "incomplete" not in parity
+    if any(
+        marker in parity
+        for marker in (
+            "mismatch",
+            "did not match",
+            "failed parity",
+            "parity failed",
+            "tolerance violation",
+        )
     ):
+        return "refuted"
+    if any(
+        marker in parity
+        for marker in (
+            "not performed",
+            "incomplete",
+            "selected frames",
+            "qualified probes",
+            "probe only",
+        )
+    ):
+        return "partial"
+    positive_parity = any(
+        marker in parity
+        for marker in (
+            "exact",
+            "passed",
+            "within tolerance",
+            "zero tolerance violations",
+            "byte-identical",
+        )
+    )
+    if all(value is not None for value in timing) and positive_parity:
         return "measured"
     return "partial"
 
@@ -246,6 +284,7 @@ def _measurement_row(
         "source_revision": revision,
         "fixture_id": measurement.get("fixture_id"),
         "fixture_sha256": measurement.get("fixture_sha256"),
+        "source_identity_sha256": measurement.get("source_identity_sha256"),
         "evidence": f"{evidence_path}#{measurement['id']}",
         "artifact_id": measurement.get("artifact_id"),
     }
@@ -266,9 +305,7 @@ def resolved_measurements(registry: dict[str, Any]) -> list[dict[str, Any]]:
             computer = _computer_label(
                 measurement.get("device"), measurement.get("computer")
             )
-            public_measurement_id = _public_measurement_id(
-                measurement["id"], computer
-            )
+            public_measurement_id = _public_measurement_id(measurement["id"], computer)
             rows.append(
                 _measurement_row(
                     measurement,
@@ -352,6 +389,7 @@ def validate_registry(
     measurement_ids = {row["measurement_id"] for row in measurements}
     if len(measurement_ids) != len(measurements):
         failures.append("retained measurement IDs must be unique")
+    fixture_masters: dict[str, set[str]] = {}
     for row in measurements:
         label = f"measurement {row['id']}"
         if row.get("computer") not in COMPUTER_LABELS:
@@ -366,6 +404,14 @@ def validate_registry(
         fixture_hash = row.get("fixture_sha256")
         if fixture_hash is not None and not FULL_SHA256.fullmatch(str(fixture_hash)):
             failures.append(f"{label} fixture SHA-256 is invalid")
+        source_identity_hash = row.get("source_identity_sha256")
+        if source_identity_hash is not None and not FULL_SHA256.fullmatch(
+            str(source_identity_hash)
+        ):
+            failures.append(f"{label} source-identity SHA-256 is invalid")
+        fixture_id = row.get("fixture_id")
+        if fixture_id and fixture_hash:
+            fixture_masters.setdefault(str(fixture_id), set()).add(str(fixture_hash))
         if row.get("state") == "measured":
             for field in ("p50_seconds", "p95_seconds", "max_seconds"):
                 value = row.get(field)
@@ -375,6 +421,11 @@ def validate_registry(
                 failures.append(f"{label} measured row lacks parity")
             if not row.get("tested_date") or not row.get("device"):
                 failures.append(f"{label} measured row lacks date or device")
+    for fixture_id, master_hashes in fixture_masters.items():
+        if len(master_hashes) > 1:
+            failures.append(
+                f"fixture {fixture_id} maps to multiple master SHA-256 values"
+            )
 
     gates = resolved_gates(registry)
     gate_ids: set[str] = set()
@@ -524,7 +575,18 @@ def _parity_label(value: Any) -> str:
     lower = str(value).lower()
     if "not performed" in lower or "incomplete" in lower:
         return "Qualified probes"
-    if "failed" in lower or "mismatch" in lower or "violations" in lower:
+    passing_zero_violation_phrases = (
+        "zero tolerance violations",
+        "0 tolerance violations",
+        "no tolerance violations",
+    )
+    adjudication_text = lower
+    for phrase in passing_zero_violation_phrases:
+        adjudication_text = adjudication_text.replace(phrase, "")
+    if any(
+        marker in adjudication_text
+        for marker in ("failed", "mismatch", "tolerance violation")
+    ):
         return "Failed"
     return "Pass"
 
@@ -539,25 +601,61 @@ def _markdown_table(headers: list[str], rows: list[list[Any]]) -> str:
     return "\n".join(output)
 
 
+def _platform_sort_key(platform: Any) -> tuple[int, str]:
+    """Return a stable accelerator-first ordering for benchmark platforms."""
+
+    label = str(platform or "")
+    return PLATFORM_ORDER.get(label, len(PLATFORM_ORDER)), label
+
+
+def _platform_computer_rows(gates: list[dict[str, Any]]) -> list[list[Any]]:
+    """Summarize required coverage without hiding unmeasured configurations."""
+
+    counts: dict[tuple[str, str], Counter[str]] = {}
+    for gate in gates:
+        key = gate["platform"], gate["computer"]
+        counts.setdefault(key, Counter())[gate["state"]] += 1
+
+    rows: list[list[Any]] = []
+    for (platform, computer), states in sorted(
+        counts.items(),
+        key=lambda item: (*_platform_sort_key(item[0][0]), item[0][1]),
+    ):
+        rows.append(
+            [
+                platform,
+                computer,
+                sum(states.values()),
+                states["measured"],
+                states["partial"],
+                states["pending"],
+                states["blocked"],
+                states["refuted"],
+                states["unsupported"],
+            ]
+        )
+    return rows
+
+
 def _gate_rows(registry: dict[str, Any]) -> list[list[Any]]:
     rows: list[list[Any]] = []
     for gate in sorted(
         resolved_gates(registry),
         key=lambda item: (
-            item["module"],
-            item["platform"],
+            *_platform_sort_key(item["platform"]),
             item["computer"],
+            item["module"],
             item["priority"],
             item["id"],
         ),
     ):
         rows.append(
             [
+                gate["platform"],
+                gate["computer"],
                 STATE_LABELS[gate["state"]],
                 gate["module"],
                 gate["operation"],
-                gate["platform"],
-                gate["computer"],
                 _shape(gate["selected_scan_rows"], gate["selected_scan_columns"]),
                 _shape(gate["source_detector_rows"], gate["source_detector_columns"]),
                 gate["detector_bin"],
@@ -579,20 +677,20 @@ def _measurement_rows(registry: dict[str, Any]) -> list[list[Any]]:
     for item in sorted(
         resolved_measurements(registry),
         key=lambda row: (
-            row["module"],
-            row["platform"],
+            *_platform_sort_key(row["platform"]),
             str(row.get("computer")),
+            row["module"],
             str(row["id"]),
         ),
     ):
         revision = item.get("source_revision")
         rows.append(
             [
+                item["platform"],
+                item["computer"],
                 STATE_LABELS[item["state"]],
                 item["module"],
                 item["operation"],
-                item["platform"],
-                item["computer"],
                 _shape(
                     item.get("selected_scan_rows"), item.get("selected_scan_columns")
                 ),
@@ -623,7 +721,14 @@ def _measurement_rows(registry: dict[str, Any]) -> list[list[Any]]:
                 _parity_label(item.get("parity")),
                 item.get("device"),
                 item.get("tested_date"),
-                str(revision)[:8] if revision else None,
+                f"`{revision}`" if revision else None,
+                item.get("fixture_id"),
+                (f"`{item['fixture_sha256']}`" if item.get("fixture_sha256") else None),
+                (
+                    f"`{item['source_identity_sha256']}`"
+                    if item.get("source_identity_sha256")
+                    else None
+                ),
                 f"`{item['measurement_id']}`",
             ]
         )
@@ -650,7 +755,30 @@ def render_document(registry: dict[str, Any]) -> str:
         "",
         _markdown_table(
             ["Platform", "Tracked gates"],
-            [[platform, count] for platform, count in sorted(platform_counts.items())],
+            [
+                [platform, platform_counts[platform]]
+                for platform in sorted(platform_counts, key=_platform_sort_key)
+            ],
+        ),
+        "",
+        "### Platform and computer coverage",
+        "",
+        "Each row identifies one reproducible hardware configuration. Counts describe tracked cells, including explicit unsupported contracts; a pending value remains a test to run.",
+        "Load, admission, memory, and performance gates are multiplied across compatible computers because hardware changes the result. Platform-wide correctness or unsupported contracts are recorded once instead of creating misleading duplicate hardware rows.",
+        "",
+        _markdown_table(
+            [
+                "Platform",
+                "Computer",
+                "Tracked cells",
+                "Measured",
+                "Partial",
+                "Pending",
+                "Blocked",
+                "Refuted",
+                "Unsupported",
+            ],
+            _platform_computer_rows(gates),
         ),
         "",
         "<!-- benchmark-coverage-summary-end -->",
@@ -661,11 +789,11 @@ def render_document(registry: dict[str, Any]) -> str:
         "",
         _markdown_table(
             [
+                "Platform",
+                "Computer",
                 "State",
                 "Module",
                 "Operation",
-                "Platform",
-                "Computer",
                 "Selected scan",
                 "Source detector",
                 "Detector bin",
@@ -687,11 +815,11 @@ def render_document(registry: dict[str, Any]) -> str:
         "",
         _markdown_table(
             [
+                "Platform",
+                "Computer",
                 "State",
                 "Module",
                 "Operation",
-                "Platform",
-                "Computer",
                 "Selected scan",
                 "Source detector",
                 "Detector bin",
@@ -715,6 +843,9 @@ def render_document(registry: dict[str, Any]) -> str:
                 "Device tested",
                 "Date tested",
                 "Revision",
+                "Fixture ID",
+                "Master SHA-256",
+                "Source identity SHA-256",
                 "Measurement ID",
             ],
             _measurement_rows(registry),
@@ -878,10 +1009,25 @@ def main() -> int:
                 if registry["runbooks"][gate["runbook"]]["evidence_level"]
                 == "physical performance"
             ]
-        gates.sort(key=lambda gate: (gate["priority"], gate["id"]))
+        gates.sort(
+            key=lambda gate: (
+                gate["priority"],
+                *_platform_sort_key(gate["platform"]),
+                gate["computer"],
+                gate["module"],
+                gate["id"],
+            )
+        )
         gates = gates[: max(0, args.limit)]
     else:
-        gates.sort(key=lambda gate: (gate["module"], gate["platform"], gate["id"]))
+        gates.sort(
+            key=lambda gate: (
+                *_platform_sort_key(gate["platform"]),
+                gate["computer"],
+                gate["module"],
+                gate["id"],
+            )
+        )
     for gate in gates:
         print(
             f"{gate['id']}\t{STATE_LABELS[gate['state']]}\t"
