@@ -93,10 +93,67 @@ def _source_fingerprint(master: Path) -> dict[str, Any]:
 
 
 def _cache_matches(metadata: dict[str, Any], master: Path) -> bool:
-    return (
-        int(metadata.get("version", -1)) == _CACHE_VERSION
-        and metadata.get("source") == _source_fingerprint(master)
-    )
+    if int(metadata.get("version", -1)) != _CACHE_VERSION:
+        return False
+    cached_source = metadata.get("source")
+    stat_match = _strong_cached_source_match(cached_source, master)
+    if stat_match is not None:
+        return stat_match
+    return cached_source == _source_fingerprint(master)
+
+
+def _strong_cached_source_match(
+    cached_source: object,
+    master: Path,
+) -> bool | None:
+    """Validate a cached source identity using fail-closed file statistics.
+
+    Complete HDF5 inspections retain size, modification/change times, device,
+    and inode for the master and every external shard. When all strong fields
+    are present, comparing them is equivalent to rediscovering the same HDF5
+    links but avoids reparsing every source header on each cache reopen.
+
+    ``None`` asks the caller to use full HDF5 inspection for an older or
+    reduced signature. A malformed complete signature returns ``False``.
+    """
+
+    if not isinstance(cached_source, dict):
+        return False
+    files = cached_source.get("files")
+    cached_master = cached_source.get("master")
+    if not isinstance(files, list) or not files or not isinstance(cached_master, str):
+        return False
+    required = {"path", "size", "mtime_ns", "ctime_ns", "device", "inode"}
+    if any(not isinstance(item, dict) or not required <= item.keys() for item in files):
+        return None
+
+    try:
+        master_path = str(master.expanduser().resolve(strict=True))
+    except OSError:
+        return False
+    if cached_master != master_path:
+        return False
+
+    observed_paths: set[str] = set()
+    for item in files:
+        path = item["path"]
+        if not isinstance(path, str) or path in observed_paths:
+            return False
+        observed_paths.add(path)
+        try:
+            stat = Path(path).stat()
+        except OSError:
+            return False
+        observed = {
+            "size": int(stat.st_size),
+            "mtime_ns": int(stat.st_mtime_ns),
+            "ctime_ns": int(stat.st_ctime_ns),
+            "device": int(stat.st_dev),
+            "inode": int(stat.st_ino),
+        }
+        if any(int(item[name]) != value for name, value in observed.items()):
+            return False
+    return master_path in observed_paths
 
 
 def _require_source_unchanged(
