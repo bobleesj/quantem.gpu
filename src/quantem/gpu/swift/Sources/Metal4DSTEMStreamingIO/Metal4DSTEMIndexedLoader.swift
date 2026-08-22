@@ -2911,6 +2911,7 @@ private final class BufferedMetalSourceFuture: @unchecked Sendable {
   private let group = DispatchGroup()
   private let lock = NSLock()
   private var result: Result<MappedMetalSource, Error>?
+  private let device: MTLDevice
   let expectedBufferBytes: UInt64
 
   init(
@@ -2919,6 +2920,7 @@ private final class BufferedMetalSourceFuture: @unchecked Sendable {
     expectedModificationNanoseconds: UInt64,
     device: MTLDevice
   ) throws {
+    self.device = device
     expectedBufferBytes = try Metal4DSTEMIndexedLoadPlan.mappedBufferBytes(
       expectedBytes
     )
@@ -2929,7 +2931,7 @@ private final class BufferedMetalSourceFuture: @unchecked Sendable {
           url: url,
           expectedBytes: expectedBytes,
           expectedModificationNanoseconds: expectedModificationNanoseconds,
-          device: device,
+          device: self.device,
           bufferedRead: true
         )
       }
