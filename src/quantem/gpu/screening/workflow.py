@@ -970,8 +970,6 @@ def prepare(
     reductions. The raw HDF5 master remains the evidence source for stochastic
     ptychography batches.
     """
-    from quantem.gpu.io import inspect as inspect_source
-
     master_path = Path(source).expanduser()
     if not master_path.exists():
         raise FileNotFoundError(f"HDF5 master not found: {master_path}")
@@ -981,6 +979,8 @@ def prepare(
         products = _prepare_cache(cache_path, master_path)
         if products is not None:
             return _with_rotation(products, rotation_angle_deg)
+
+    from quantem.gpu.io import inspect as inspect_source
 
     metadata = inspect_source(str(master_path)).metadata
     if scan_shape is None:
