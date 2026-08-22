@@ -1711,10 +1711,9 @@ def _get_libc():
 
 
 # Persistent pinned (page-locked) host memory pool. The compressed read_buffer
-# is allocated from it so (a) the subsequent H2D upload runs at full PCIe
-# bandwidth (~25 GiB/s vs ~3-13 GiB/s pageable) and (b) the page-lock cost is
-# paid once then amortized — freed blocks are reused across loads, unlike a
-# fresh cp.cuda.alloc_pinned_memory per call (which page-locks from scratch).
+# is allocated from it so the subsequent H2D upload can run asynchronously and
+# the page-lock cost is amortized. Freed blocks are reused across loads, unlike
+# a fresh cp.cuda.alloc_pinned_memory per call (which page-locks from scratch).
 # Guarded: the pinned-memory pool is a CUDA resource. On a non-CUDA box `cp` is
 # None and there is no pinned pool to set up; the cuda decompress path (the only
 # user) never runs there.
@@ -1724,18 +1723,37 @@ if cp is not None:
 else:
     _PINNED_POOL = None
 
-# Fast pinned host buffers for the compressed read_buffer. cudaHostAlloc
-# page-locks 4.5 GiB in ~2.0 s because it zeros every page first; an anonymous
-# mmap (page-aligned, lazily faulted) + cudaHostRegister does the SAME lock in
-# ~1.2 s with no zeroing — ~0.8 s saved on the first load of a process
-# (measured 2026-05-24 on the gold masters). The mlock path is serial in the
-# kernel so threading the register does not help. Registered buffers are kept
-# for the process and reused from a free list, so a session loading same-size
-# masters pays the lock once and later masters reuse the page-lock for free.
+# Fast pinned host buffers for the compressed read_buffer. An anonymous mmap
+# provides a page-aligned, lazily faulted region that cudaHostRegister can pin
+# without cudaHostAlloc's allocator-side initialization. Registered buffers are
+# kept for the process and reused from a free list, so compatible later batches
+# and loads reuse the page lock.
 # Redundant nearby sizes are unregistered on release so ascending file sizes do
 # not leave one multi-gigabyte mapping behind for every master.
 _PINNED_BUFS: list[dict] = []
 _PINNED_BUFS_LOCK = threading.Lock()
+_PINNED_LARGE_BUFFER_THRESHOLD = 64 * 1024 * 1024
+_PINNED_LARGE_BUFFER_GRANULARITY = 4 * 1024 * 1024
+
+
+def _pinned_registration_size(nbytes: int) -> int:
+    """Return a bounded-capacity registration size for a requested buffer.
+
+    Large sequential HDF5 batches from one source can differ by a fraction of
+    a percent in compressed size. Registering their exact byte counts can make
+    a later, slightly larger batch pay for a third page-locked buffer even
+    though the pipeline has only two staging slots. Round large registrations
+    to 4 MiB so nearby batches reuse those two slots. The extra pinned memory is
+    bounded below 4 MiB per slot; small sparse selections keep exact sizing.
+    """
+
+    nbytes = int(nbytes)
+    if nbytes <= 0:
+        raise ValueError("Pinned buffer size must be positive")
+    if nbytes < _PINNED_LARGE_BUFFER_THRESHOLD:
+        return nbytes
+    granularity = _PINNED_LARGE_BUFFER_GRANULARITY
+    return ((nbytes + granularity - 1) // granularity) * granularity
 
 
 def _alloc_pinned_fast(nbytes: int) -> np.ndarray:
@@ -1744,10 +1762,8 @@ def _alloc_pinned_fast(nbytes: int) -> np.ndarray:
     Reuses a registered buffer from the free list when one fits (size within
     1.5x, so a 1024-scan buffer is not wasted on a 512-scan load); otherwise
     mmaps a page-aligned anonymous region and cudaHostRegisters it once. The
-    page-lock is what makes the downstream H2D run at full PCIe Gen4
-    (~25 GiB/s vs ~3-13 GiB/s pageable). Without this the first load of a
-    process eats ~2 s in cudaHostAlloc; this trims that to ~1.2 s and to ~0 on
-    every subsequent same-size master.
+    page lock permits asynchronous downstream H2D transfer. Reusing a
+    compatible registered region amortizes that one-time registration cost.
     """
     with _PINNED_BUFS_LOCK:
         for entry in _PINNED_BUFS:
@@ -1760,15 +1776,22 @@ def _alloc_pinned_fast(nbytes: int) -> np.ndarray:
         from cuda.bindings import runtime as cudart
     except ModuleNotFoundError:
         return np.empty(nbytes, dtype=np.uint8)
-    region = mmap.mmap(-1, nbytes)  # anonymous → page-aligned base
+    registration_size = _pinned_registration_size(nbytes)
+    region = mmap.mmap(-1, registration_size)  # anonymous → page-aligned base
     addr = ctypes.addressof(ctypes.c_char.from_buffer(region))
-    err = cudart.cudaHostRegister(addr, nbytes, 0)
+    err = cudart.cudaHostRegister(addr, registration_size, 0)
     if int(err[0]) != 0:
         raise RuntimeError(f"cudaHostRegister failed: {int(err[0])}")
     arr = np.frombuffer(region, dtype=np.uint8)
     with _PINNED_BUFS_LOCK:
         _PINNED_BUFS.append(
-            {"region": region, "addr": addr, "arr": arr, "size": nbytes, "free": False}
+            {
+                "region": region,
+                "addr": addr,
+                "arr": arr,
+                "size": registration_size,
+                "free": False,
+            }
         )
     return arr[:nbytes]
 
