@@ -44,14 +44,6 @@ and date stay separate.
 | [**CUDA**](platforms/cuda.md) | `512x512` | Full | `192x192` | 2 | `96x96` | `uint16` | `uint16` | `uint32` | Warm source | First usable resident | D | p50 | **0.396 s** | **9.00 GiB** | Total-card occupancy | **11.561 GiB** | Pending | Pass | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 | 2026-08-19 |
 | [**CUDA**](platforms/cuda.md) | `512x512` | Full | `192x192` | 4 | `48x48` | `uint16` | `uint16` | `uint32` | Warm source | First usable resident | D | p50 | **0.390 s** | **2.25 GiB** | Total-card occupancy | **3.756 GiB** | Pending | Pass | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 | 2026-08-19 |
 | [**CUDA**](platforms/cuda.md) | `512x512` | Full | `192x192` | 8 | `24x24` | `uint16` | `uint16` | `uint32` | Warm source | First usable resident | D | p50 | **0.381 s** | **0.5625 GiB** | Total-card occupancy | **1.805 GiB** | Pending | Pass | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 | 2026-08-19 |
-| [**Python MPS**](platforms/mps.md) | `512x512` | Full | `192x192` | 1 | `192x192` | `uint16` | `uint16` | `uint16` | Independent process; warm source pages | First usable resident | C | p50 | **0.649 s** | **18.00 GiB** | Sampled Metal driver | **18.442 GiB** | **0.687 GiB** | Pass | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-22 |
-| [**Python MPS**](platforms/mps.md) | `512x512` | Full | `192x192` | 2 | `96x96` | `uint16` | `uint16` | `uint16` | Independent process; warm source pages | First usable resident | C | p50 | **0.700 s** | **4.50 GiB** | Sampled Metal driver | **5.688 GiB** | **0.574 GiB** | Pass | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-22 |
-| [**Python MPS**](platforms/mps.md) | `512x512` | Full | `192x192` | 4 | `48x48` | `uint16` | `uint16` | `uint16` | Independent process; warm source pages | First usable resident | C | p50 | **0.643 s** | **1.125 GiB** | Sampled Metal driver | **2.313 GiB** | **0.572 GiB** | Pass | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-22 |
-| [**Python MPS**](platforms/mps.md) | `512x512` | Full | `192x192` | 8 | `24x24` | `uint16` | `uint16` | `uint16` | Independent process; warm source pages | First usable resident | C | p50 | **0.632 s** | **0.28125 GiB** | Sampled Metal driver | **1.470 GiB** | **0.572 GiB** | Pass | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-22 |
-| [**Python MPS**](platforms/mps.md) | `512x512` | Full | `192x192` | 1 | `192x192` | `uint16` | `uint16` | `uint16` | Warm process/source; output freed | First usable resident | C | p50 | **0.523 s** | **18.00 GiB** | Sampled Metal driver | **18.442 GiB** | **0.689 GiB** | Pass | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-22 |
-| [**Python MPS**](platforms/mps.md) | `512x512` | Full | `192x192` | 2 | `96x96` | `uint16` | `uint16` | `uint16` | Warm process/source; output freed | First usable resident | C | p50 | **0.498 s** | **4.50 GiB** | Sampled Metal driver | **5.688 GiB** | **0.573 GiB** | Pass | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-22 |
-| [**Python MPS**](platforms/mps.md) | `512x512` | Full | `192x192` | 4 | `48x48` | `uint16` | `uint16` | `uint16` | Warm process/source; output freed | First usable resident | C | p50 | **0.421 s** | **1.125 GiB** | Sampled Metal driver | **2.313 GiB** | **0.572 GiB** | Pass | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-22 |
-| [**Python MPS**](platforms/mps.md) | `512x512` | Full | `192x192` | 8 | `24x24` | `uint16` | `uint16` | `uint16` | Warm process/source; output freed | First usable resident | C | p50 | **0.417 s** | **0.28125 GiB** | Sampled Metal driver | **1.470 GiB** | **0.574 GiB** | Pass | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-22 |
 | [**Native Swift/Metal**](platforms/swift-metal.md) | `512x512` | Full | `192x192` | 1 | `192x192` | `uint16` | audit-bound `uint8` | `uint16` | Controlled `F_NOCACHE`; new index | Exact complete resident | C | p50 | **0.578 s** | **18.00 GiB** | After-load Metal allocation; sampled peak pending | **>=18.571 GiB** | **0.874 GiB** | Pass | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-22 |
 | [**WebGPU**](platforms/webgpu.md) | `512x512` | Full | `192x192` | 1 | `192x192` | `uint16` | `uint8` | `uint8` | Warm OS cache | First usable resident | D | p50 | **0.824 s** | **9.00 GiB** | Device allocation incomplete | Pending | **5.020 GiB** | Pass | Chrome 151, Apple M5 Max Metal-3 | 2026-08-19 |
 | [**WebGPU**](platforms/webgpu.md) | `512x512` | Full | `192x192` | 2 | `96x96` | `uint16` | `uint16` | `float32` | Warm OS cache | First usable resident | D | p50 | **1.281 s** | **9.00 GiB** | Device allocation incomplete | Pending | **5.363 GiB** | Pass | Chrome 151, Apple M5 Max Metal-3 | 2026-08-19 |
@@ -62,6 +54,31 @@ and date stay separate.
 | **CPU reference** | `512x512` | Full | `192x192` | 4 | `48x48` | `uint16` | `uint16` | `uint16` | Reference traversal | First usable host array | D | Single run | **43.04 s** | **1.125 GiB** | Not separate | — | **2.978 GiB** | Ref | Apple M5 Max CPU | 2026-08-19 |
 | **CPU reference** | `512x512` | Full | `192x192` | 8 | `24x24` | `uint16` | `uint16` | `uint16` | Reference traversal | First usable host array | D | Single run | **38.13 s** | **0.28125 GiB** | Not separate | — | **2.034 GiB** | Ref | Apple M5 Max CPU | 2026-08-19 |
 
+#### Current Python MPS resident lifecycle
+
+These rows use fixture C, the full `512x512` scan, native `192x192 uint16`
+source data, scan bin 1, no crop, and exact `uint16` outputs. They start after
+one same-lifecycle warmup with warm or uncontrolled source pages. “Recycled”
+means the caller explicitly reuses a compatible resident destination; it is not
+an automatic cache or a cold-load result. Each timed bin-2/bin-4 load matched
+six selected frame hashes. A separate one-load smoke—not every timed trial—
+matched the complete output SHA-256, total, maximum, shape, and dtype.
+
+| Platform | Computer | Detector bin | Output detector | Destination state | Samples | p50 | p95 | Maximum | Logical resident | Metal peak | Process RSS statistic | Process RSS | Swap delta | Date tested |
+|---|---|---:|---:|---|---:|---:|---:|---:|---:|---:|---|---:|---:|---|
+| [**Python MPS**](platforms/mps.md) | Phil | 1 | `192x192` | Fresh | 8 | **0.425533 s** | **0.436353 s** | **0.437419 s** | **18.00 GiB** | **18.442 GiB** | p50 | **0.687 GiB** | **0 B** | 2026-08-22 |
+| [**Python MPS**](platforms/mps.md) | Phil | 1 | `192x192` | Recycled | 8 | **0.259189 s** | **0.263118 s** | **0.263375 s** | **18.00 GiB** | **18.442 GiB** | p50 | **0.688 GiB** | **0 B** | 2026-08-22 |
+| [**Python MPS**](platforms/mps.md) | Phil | 2 | `96x96` | Fresh | 8 | **0.462541 s** | **0.479014 s** | **0.483058 s** | **4.50 GiB** | **5.688 GiB** | p50 | **0.571 GiB** | **0 B** | 2026-08-22 |
+| [**Python MPS**](platforms/mps.md) | Phil | 2 | `96x96` | Recycled | 8 | **0.359606 s** | **0.361384 s** | **0.361995 s** | **4.50 GiB** | **5.688 GiB** | p50 | **0.571 GiB** | **0 B** | 2026-08-22 |
+| [**Python MPS**](platforms/mps.md) | Phil | 4 | `48x48` | Fresh | 8 | **0.384264 s** | **0.385355 s** | **0.385638 s** | **1.125 GiB** | **2.313 GiB** | p50 | **0.571 GiB** | **0 B** | 2026-08-22 |
+| [**Python MPS**](platforms/mps.md) | Phil | 4 | `48x48` | Recycled | 8 | **0.352990 s** | **0.355048 s** | **0.355062 s** | **1.125 GiB** | **2.313 GiB** | p50 | **0.572 GiB** | **0 B** | 2026-08-22 |
+| [**Python MPS**](platforms/mps.md) | Phil | 8 | `24x24` | Fresh process; earlier accepted specialization | 6 | **0.356969 s** | **0.359302 s** | **0.359820 s** | **0.28125 GiB** | **1.470 GiB** | peak | **0.572 GiB** | Pending | 2026-08-22 |
+
+The newer detector-bin-8 lifecycle run remained scientifically exact, but its
+arms drifted chronologically while ScreenSharingAgent and WindowServer were
+active. It is inconclusive for speed, so it does not replace the accepted
+`0.356969 s` fresh-process result.
+
 Fixtures C and D are independent real `512x512x192x192`, native-`uint16`,
 27-shard compressed-HDF5 sources. Fixture C contains 3,169,489,846 indexed
 compressed bytes plus its 430,347-byte master file. Every row selects the
@@ -71,19 +88,19 @@ is an independent reference, never a silent fallback. Different fixtures and
 boundaries are not ranked.
 
 The 2026-08-19 source rows did not forcibly evict the source cache and therefore
-remain labeled warm. The 2026-08-22 MPS rows also used warm, uncontrolled source
-pages, but distinguish an independent Python process from repeated calls in one
-process. Imports and package Metal-library initialization were complete before
-the independent-process timer. Every repeated MPS call explicitly frees its
-`MPSChunked4DSTEM` output before the next trial.
+remain labeled warm. The 2026-08-22 current MPS lifecycle rows also used warm or
+uncontrolled source pages. They compare fresh and explicitly recycled resident
+destinations in balanced order after one same-lifecycle warmup. Imports and
+Metal-library initialization were complete before the measured package load.
 
-Revision `f0f39c9` supersedes the earlier Python MPS timing rows with a
-scratch-free exact `uint16` decoder, fused exact detector-sum kernels, lazy LZ4
-scratch, and a three-deep compressed-input pipeline. Warm-process p50 is
-0.523/0.498/0.421/0.417 seconds for detector bins 1/2/4/8. Bins 2/4/8 meet the
-strict 0.5-second threshold; full native bin 1 remains 23 ms above it. The
-independent-process p50 is 0.649/0.700/0.643/0.632 seconds and is reported
-separately. Neither state is cold-storage evidence.
+The lifecycle timings are bound to source `b7f8ef3f` and sealed evidence
+`3fbd87a5`. Recycled p50 is 0.259189/0.359606/0.352990 seconds for detector
+bins 1/2/4. Consumer-safe exception cleanup is a separate accepted follow-up at
+source `3c4d903e` and evidence `08e50c5b`; its single smoke is not a replacement
+timing distribution. The accepted detector-bin-8 fresh-process result remains
+0.356969 seconds from earlier specialization evidence because the later
+lifecycle run was inconclusive under desktop contention. None is cold-storage
+or application evidence.
 
 The former 2.273-second MPS bin-1 headline is superseded: its benchmark cleared
 the Torch cache but did not release direct PyObjC Metal buffers, so repeated
@@ -286,11 +303,42 @@ not a default performance policy.
 | **WebGPU** | `512x512` full | `192x192` | 1, 2, 4, 8 | ✓ current timing | Physical 8 GB browser signoff |
 | **CPU reference** | `512x512` full | `192x192` | 1, 2, 4, 8 | Ref | Correctness adjudication only |
 
+#### Selective scan rectangles
+
+The physical WebGPU rows below are prepared **whole-shard-selective** rectangle
+loads. A retained frame-span manifest lets the loader omit nonintersecting
+shards and decode/upload only selected scan rows. It does not issue byte-range
+reads inside an intersecting shard and does not implement arbitrary ordered or
+duplicate position selectors.
+
+| Platform | Computer | Selected scan | Rectangle `(row_start,row_stop,column_start,column_stop)` | Source detector | Source dtype | Shards read | Storage bytes read | Samples | Loader p50 | Loader p95 | Loader maximum | Logical resident | Browser-tree RSS peak | Observed swap delta | Parity | Device tested | Date tested |
+|---|---|---:|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|
+| **WebGPU** | Phil | `64x64` | `(0,64,0,64)` | `192x192` | `uint16` | 4 of 27 | 488,224,242 B | 5 | **0.147 s** | **0.1544 s** | **0.156 s** | 301,989,888 B | 1,724,317,696 B | 0 B | ✓ | Chrome 151, Apple M5 Max Metal | 2026-08-22 |
+| **WebGPU** | Phil | `256x256` | `(128,384,128,384)` | `192x192` | `uint16` | 14 of 27 | 1,705,556,941 B | 5 | **0.381 s** | **0.3924 s** | **0.394 s** | 4,831,838,208 B | 3,002,875,904 B | 0 B | ✓ | Chrome 151, Apple M5 Max Metal | 2026-08-22 |
+| **WebGPU** | Phil | `384x384` | `(64,448,64,448)` | `192x192` | `uint16` | 20 of 27 | 2,432,636,897 B | 5 | **0.574 s** | **0.582 s** | **0.584 s** | 10,871,635,968 B | 3,896,934,400 B | 0 B | ✓ | Chrome 151, Apple M5 Max Metal | 2026-08-22 |
+
+All rows use prepared block indexes and a prepared frame-span manifest. The
+operating-system source-page state was uncontrolled/unspecified and no eviction
+was performed. Frame-manifest read/encoding, DevTools
+injection, checksum harness, products, and application E2E are excluded. A
+negative control without the frame-span manifest read all 27 shards (3.17 GB),
+so it is explicitly **not** selective evidence. CUDA and Python MPS selector
+semantics have source/portable qualification, while native Swift/Metal bulk
+selection and physical cross-backend timing remain pending.
+
+The parity check mark means all five runs for that rectangle passed independent
+CPU `uint16` checksum probes at the first, middle, and last retained raw frames,
+plus output shape, dtype, row-major order, and selection metadata. Full-tensor
+readback parity was not performed. The WebGPU fixture view records source
+identity `1be810b9...`; fixture C records `c9c0d968...`, and the CUDA master
+record is `4802ec16...`. These rows are not a cross-lane fixture-controlled
+comparison.
+
 ### Screening and prepared-product caches — `quantem.gpu.screening`
 
 | Platform | Support | Operation | Source plan | Statistic | Time | Device tested | Date tested |
 |---|---|---|---|---|---:|---|---|
-| **CUDA** | ✓ | Exact streamed screening | Current comparable profile | — | **Pending** | — | — |
+| **CUDA** | ✓ | Exact streamed screening | Full `512x512x192x192` `uint16`; no crop/bin; warm source pages unspecified; empty result cache | p50 of 6 | **1.205 s** | NVIDIA RTX PRO 6000 Blackwell Workstation Edition, GPU 0 | 2026-08-22 |
 | **Python MPS** | ✓ | Exact screening build | Full `512x512x192x192` `uint16`; no crop/bin; exact fallback pass | Single run | **6.711 s** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
 | **Python MPS** | ✓ | Validated screening-v3 reopen | Prepared derived products | p50 | **20.803 ms** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
 | **Native Swift/Metal** | ✓ | Validated exact-summary reopen | Prepared derived products | p50 | **0.029 s** | Apple M2 MacBook Air (`Mac14,2`, 8 GB) | 2026-08-19 |
@@ -302,6 +350,13 @@ When the provisional and final masks differ, BF/DF are recomputed exactly. The
 first-chunk-mask candidate failed parity and is retained only as a rejected
 experiment; its timing is not repeated on a current page. Saved-product reopen
 is likewise never presented as source load.
+
+The current CUDA pinned-slot candidate reduced the like-for-like package p50
+from `1.356516 s` to `1.204713 s`; candidate p95/max were
+`1.325760/1.329731 s`. All six public arrays were byte exact in every trial.
+This is warm/source-pages-unspecified exact screening, not cold HDF5 and not a
+prepared-result reopen. Detailed pinned-registration and memory measurements
+remain in the provenance ledger.
 
 ### Virtual images — `quantem.gpu.detector`
 

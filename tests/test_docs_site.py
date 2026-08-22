@@ -197,7 +197,7 @@ def test_dashboard_is_the_dense_human_overview() -> None:
 
     for dashboard_value, results_value in (
         ("0.386 s", "0.386 s"),
-        ("0.523 s", "0.522754 s"),
+        ("0.359606 s", "0.359606 s"),
         ("0.824 s", "0.824 s"),
         ("6.711 s", "6.711 s"),
         ("20.803 ms", "20.803 ms"),
@@ -331,27 +331,39 @@ def test_platform_first_io_tables_expose_current_bins_devices_and_dates() -> Non
     assert "| Platform | Selected scan | Scan plan |" in load_section
     assert "supportedDetectorBins = [1, 2, 4]" in swift_plan
 
+    main_load_table = load_section.split(
+        "#### Current Python MPS resident lifecycle", 1
+    )[0]
     rows = [
         [cell.strip() for cell in line.strip("|").split("|")]
-        for line in load_section.splitlines()
+        for line in main_load_table.splitlines()
         if line.startswith(("| [**", "| **CPU reference**"))
     ]
-    assert len(rows) == 21
+    assert len(rows) == 13
 
     mps_rows = [row for row in rows if "Python MPS" in row[0]]
-    assert len(mps_rows) == 8
+    assert not mps_rows
+
+    lifecycle = load_section.split(
+        "#### Current Python MPS resident lifecycle", 1
+    )[1].split("Fixtures C and D", 1)[0]
+    mps_rows = [
+        [cell.strip() for cell in line.strip("|").split("|")]
+        for line in lifecycle.splitlines()
+        if line.startswith("| [**Python MPS**]")
+    ]
+    assert len(mps_rows) == 7
     assert {
-        (int(row[4]), row[9], row[13], row[14], row[16], row[17])
+        (int(row[2]), row[4], row[6], row[9], row[10], row[12], row[13])
         for row in mps_rows
     } == {
-        (1, "Independent process; warm source pages", "**0.649 s**", "**18.00 GiB**", "**18.442 GiB**", "**0.687 GiB**"),
-        (2, "Independent process; warm source pages", "**0.700 s**", "**4.50 GiB**", "**5.688 GiB**", "**0.574 GiB**"),
-        (4, "Independent process; warm source pages", "**0.643 s**", "**1.125 GiB**", "**2.313 GiB**", "**0.572 GiB**"),
-        (8, "Independent process; warm source pages", "**0.632 s**", "**0.28125 GiB**", "**1.470 GiB**", "**0.572 GiB**"),
-        (1, "Warm process/source; output freed", "**0.523 s**", "**18.00 GiB**", "**18.442 GiB**", "**0.689 GiB**"),
-        (2, "Warm process/source; output freed", "**0.498 s**", "**4.50 GiB**", "**5.688 GiB**", "**0.573 GiB**"),
-        (4, "Warm process/source; output freed", "**0.421 s**", "**1.125 GiB**", "**2.313 GiB**", "**0.572 GiB**"),
-        (8, "Warm process/source; output freed", "**0.417 s**", "**0.28125 GiB**", "**1.470 GiB**", "**0.574 GiB**"),
+        (1, "Fresh", "**0.425533 s**", "**18.00 GiB**", "**18.442 GiB**", "**0.687 GiB**", "**0 B**"),
+        (1, "Recycled", "**0.259189 s**", "**18.00 GiB**", "**18.442 GiB**", "**0.688 GiB**", "**0 B**"),
+        (2, "Fresh", "**0.462541 s**", "**4.50 GiB**", "**5.688 GiB**", "**0.571 GiB**", "**0 B**"),
+        (2, "Recycled", "**0.359606 s**", "**4.50 GiB**", "**5.688 GiB**", "**0.571 GiB**", "**0 B**"),
+        (4, "Fresh", "**0.384264 s**", "**1.125 GiB**", "**2.313 GiB**", "**0.571 GiB**", "**0 B**"),
+        (4, "Recycled", "**0.352990 s**", "**1.125 GiB**", "**2.313 GiB**", "**0.572 GiB**", "**0 B**"),
+        (8, "Fresh process; earlier accepted specialization", "**0.356969 s**", "**0.28125 GiB**", "**1.470 GiB**", "**0.572 GiB**", "Pending"),
     }
 
     webgpu_rows = [row for row in rows if "WebGPU" in row[0]]
@@ -366,6 +378,26 @@ def test_platform_first_io_tables_expose_current_bins_devices_and_dates() -> Non
         ("`512x512`", 8, "`24x24`", "`uint16`", "`float32`", "**0.979 s**"),
     }
 
+    selective = dashboard.split("#### Selective scan rectangles", 1)[1].split(
+        "### Screening and prepared-product caches", 1
+    )[0]
+    selective_rows = [
+        [cell.strip() for cell in line.strip("|").split("|")]
+        for line in selective.splitlines()
+        if line.startswith("| **WebGPU**")
+    ]
+    assert {
+        (row[2], row[6], row[7], row[9], row[12], row[13], row[14])
+        for row in selective_rows
+    } == {
+        ("`64x64`", "4 of 27", "488,224,242 B", "**0.147 s**", "301,989,888 B", "1,724,317,696 B", "0 B"),
+        ("`256x256`", "14 of 27", "1,705,556,941 B", "**0.381 s**", "4,831,838,208 B", "3,002,875,904 B", "0 B"),
+        ("`384x384`", "20 of 27", "2,432,636,897 B", "**0.574 s**", "10,871,635,968 B", "3,896,934,400 B", "0 B"),
+    }
+    assert "whole-shard-selective" in selective
+    assert "does not issue byte-range reads" in " ".join(selective.split())
+    assert "read all 27 shards (3.17 GB)" in selective
+
     for historical in ("`256x256` | Explicit crop", "2.651 s", "1.985 s", "2.043 s"):
         assert historical not in load_section
     assert "Measured load configurations" not in intro
@@ -376,6 +408,9 @@ def test_load_memory_rows_separate_payload_from_measured_peak() -> None:
     dashboard = Path("docs/dashboard.md").read_text(encoding="utf-8")
     load_section = dashboard.split("### Measured load configurations", 1)[1].split(
         "(dtype-support-and-peak-memory)=", 1
+    )[0]
+    load_section = load_section.split(
+        "#### Current Python MPS resident lifecycle", 1
     )[0]
     lines = [line for line in load_section.splitlines() if line.startswith("|")]
     headers = [cell.strip() for cell in lines[0].strip("|").split("|")]
@@ -652,7 +687,7 @@ def test_current_benchmarks_have_complete_provenance_rows() -> None:
 
     for heading in (
         "### Current warm load/decode/bin",
-        "### Current exact Python MPS load",
+        "### Current exact Python MPS resident lifecycle",
         "### Current controlled native exact resident load",
         "### Current native exact resident summary",
         "### Current streamed screening",
@@ -665,7 +700,7 @@ def test_current_benchmarks_have_complete_provenance_rows() -> None:
         assert heading in text
 
     load = text.split("### Current warm load/decode/bin", 1)[1].split(
-        "### Current native exact resident summary", 1
+        "### Current prepared WebGPU shard-selective rectangles", 1
     )[0]
     rows = [
         line
@@ -679,7 +714,7 @@ def test_current_benchmarks_have_complete_provenance_rows() -> None:
             )
         )
     ]
-    assert len(rows) == 16
+    assert len(rows) == 12
     for row in rows:
         assert row.count("|") == 16
         assert "2026" not in row  # date is profile-level and not duplicated per row
