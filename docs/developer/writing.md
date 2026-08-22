@@ -127,6 +127,16 @@ performance claim includes the device, source state, shape, dtype, crop, bin,
 cache condition, repetitions, statistic, and memory measurement. A parity
 claim includes the reference, metric, tolerance, and result.
 
+### Benchmark device labels
+
+Identify a benchmark computer by reproducible hardware, never by a local host
+nickname. The **Computer** field uses the product class, chip or accelerator,
+and installed memory, such as `MacBook Pro (M5 Max, 128 GB)` or
+`Linux CUDA workstation (dual 96 GB Blackwell GPUs)`. Put the exact model
+identifier, GPU variant and index, driver, browser adapter, and runtime version
+in **Device tested**. This keeps tables comparable when machines are renamed
+and makes every row understandable outside the development lab.
+
 Use [benchmark methodology](../performance/methodology.md) and
 [cross-backend parity](../performance/parity.md) for the required evidence.
 

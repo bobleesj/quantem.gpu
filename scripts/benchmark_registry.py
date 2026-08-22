@@ -70,6 +70,56 @@ STATE_LABELS = {
     "superseded": "↺ Superseded",
 }
 
+COMPUTER_LABELS = frozenset(
+    {
+        "Linux CUDA workstation (dual 96 GB Blackwell GPUs)",
+        "MacBook Air (M2, 8 GB)",
+        "MacBook Pro (M5, 24 GB)",
+        "MacBook Pro (M5 Max, 128 GB)",
+        "Portable CI runner",
+    }
+)
+
+COMPUTER_SLUGS = {
+    "Linux CUDA workstation (dual 96 GB Blackwell GPUs)": "linux-dual-blackwell-96gb",
+    "MacBook Air (M2, 8 GB)": "macbook-air-m2-8gb",
+    "MacBook Pro (M5, 24 GB)": "macbook-pro-m5-24gb",
+    "MacBook Pro (M5 Max, 128 GB)": "macbook-pro-m5-max-128gb",
+    "Portable CI runner": "portable-ci",
+}
+
+
+def _computer_label(device: Any, current: Any) -> str:
+    """Return a reproducible hardware label instead of a local host nickname."""
+
+    current_label = str(current or "")
+    if current_label in COMPUTER_LABELS:
+        return current_label
+
+    device_label = str(device or "")
+    if "Apple M5 Max" in device_label:
+        return "MacBook Pro (M5 Max, 128 GB)"
+    if "Apple M5 10-core" in device_label:
+        return "MacBook Pro (M5, 24 GB)"
+    if "Apple M2" in device_label:
+        return "MacBook Air (M2, 8 GB)"
+    if "NVIDIA RTX PRO 6000 Blackwell" in device_label:
+        return "Linux CUDA workstation (dual 96 GB Blackwell GPUs)"
+    if current_label.lower() == "portable ci":
+        return "Portable CI runner"
+    return current_label
+
+
+def _public_measurement_id(raw_id: Any, computer: Any) -> str:
+    """Replace a source-machine prefix with a reproducible hardware prefix."""
+
+    value = str(raw_id or "")
+    computer_slug = COMPUTER_SLUGS.get(str(computer or ""), "unspecified-device")
+    if value.startswith(f"{computer_slug}-"):
+        return value
+    _, separator, suffix = value.partition("-")
+    return f"{computer_slug}-{suffix if separator else value}"
+
 
 def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
@@ -150,13 +200,16 @@ def _measurement_row(
         process_peak = browser_peak
     revision = artifact.get("implementation_revision") or artifact.get("observed_head")
     state = _measurement_state(measurement)
+    computer = _computer_label(measurement.get("device"), measurement.get("computer"))
+    public_measurement_id = _public_measurement_id(measurement["id"], computer)
     row: dict[str, Any] = {
-        "id": f"evidence::{measurement['id']}",
-        "measurement_id": measurement["id"],
+        "id": f"evidence::{public_measurement_id}",
+        "measurement_id": public_measurement_id,
+        "source_measurement_id": measurement["id"],
         "module": module,
         "operation": str(measurement.get("functional_area") or "measurement"),
         "platform": PLATFORM_LABELS.get(platform, platform),
-        "computer": measurement.get("computer"),
+        "computer": computer,
         "device": measurement.get("device"),
         "source_scan_rows": measurement.get("source_scan_rows"),
         "source_scan_columns": measurement.get("source_scan_columns"),
@@ -210,15 +263,28 @@ def resolved_measurements(registry: dict[str, Any]) -> list[dict[str, Any]]:
         artifacts = _artifact_lookup(evidence)
         overrides = source.get("measurement_overrides", {})
         for measurement in evidence.get("measurements", []):
+            computer = _computer_label(
+                measurement.get("device"), measurement.get("computer")
+            )
+            public_measurement_id = _public_measurement_id(
+                measurement["id"], computer
+            )
             rows.append(
                 _measurement_row(
                     measurement,
                     evidence_path=relative,
                     artifacts=artifacts,
-                    override=overrides.get(measurement["id"]),
+                    override=overrides.get(public_measurement_id),
                 )
             )
-    rows.extend(registry.get("additional_measurements", []))
+    for source_row in registry.get("additional_measurements", []):
+        row = dict(source_row)
+        row["computer"] = _computer_label(row.get("device"), row.get("computer"))
+        row["measurement_id"] = _public_measurement_id(
+            row.get("measurement_id"), row["computer"]
+        )
+        row["id"] = f"evidence::{row['measurement_id']}"
+        rows.append(row)
     return sorted(rows, key=lambda row: str(row["id"]))
 
 
@@ -288,6 +354,10 @@ def validate_registry(
         failures.append("retained measurement IDs must be unique")
     for row in measurements:
         label = f"measurement {row['id']}"
+        if row.get("computer") not in COMPUTER_LABELS:
+            failures.append(
+                f"{label} computer must identify a supported hardware configuration"
+            )
         if row.get("state") not in ALLOWED_STATES:
             failures.append(f"{label} has invalid state {row.get('state')}")
         revision = row.get("source_revision")
@@ -343,6 +413,10 @@ def validate_registry(
         if gate["id"] in gate_ids:
             failures.append(f"duplicate gate {gate['id']}")
         gate_ids.add(gate["id"])
+        if gate.get("computer") not in COMPUTER_LABELS:
+            failures.append(
+                f"{label} computer must identify a supported hardware configuration"
+            )
         if gate["state"] not in ALLOWED_STATES:
             failures.append(f"{label} has invalid state {gate['state']}")
         if gate["runbook"] not in runbooks:

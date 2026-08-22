@@ -11,7 +11,7 @@
     },
     {
       "path": "docs/dashboard.md",
-      "sha256": "7ec58a097815ff0424fe6b1820288ff5862f319b63461504ff51156424d52005",
+      "sha256": "dc203d1c6808bfbd2683541a2c7e6e97a6fcb739f25b484c2d9da698c4beebd8",
       "role": "Single human-facing current capability, speed, memory, and parity overview"
     },
     {
@@ -21,7 +21,7 @@
     },
     {
       "path": "docs/platforms/mps.md",
-      "sha256": "491d7272df53b7a451766ade2f78c263ea6990bfedbb6b18e9302daba271a3f1",
+      "sha256": "dc366cee7aab48987a29d43e088a68a95411fe0252ec485b3431a2c37ff60d1f",
       "role": "Python MPS direct-Metal lifetime and resident-versus-peak memory contract"
     },
     {
@@ -31,7 +31,7 @@
     },
     {
       "path": "docs/platforms/swift-metal.md",
-      "sha256": "a0637601ab619d94a8a051480ec2420b48bdef8b89d69b6947994d594b416e50",
+      "sha256": "6862e28a7129c43c19dd675b447f961f35cd14e574bfa0111a3cfb32d11ad893",
       "role": "Native Swift Metal exact resident-summary, bounded indexed-streaming, and ownership contract"
     },
     {
@@ -41,27 +41,27 @@
     },
     {
       "path": "docs/performance/coverage.md",
-      "sha256": "a39a054b4d30f43d7a258be0200118bb626749f32ea08191c420610f23899fe6",
+      "sha256": "77eaec3be9fe26ffbb243a5561dd457dc45f058f08cff9a5eb7276addb0e8668",
       "role": "Filterable exact benchmark gates, retained measurements, missing coverage, and reproducible runbooks"
     },
     {
       "path": "docs/performance/results.md",
-      "sha256": "03e3bec2d9f8f2a2f8035d5aa0c12aef6d6e8105481897451b76fb62864e124c",
+      "sha256": "e39837c9369f33a1f4d2c78b73b459fdcb3c733c97fb67172268b75167182d53",
       "role": "Authoritative current benchmark provenance ledger"
     },
     {
       "path": "docs/performance/changes.md",
-      "sha256": "46baf15eb2f8cce12dea7bef8c1394fc03a9f520dfe7e2ff9576bfb6d6541e9c",
+      "sha256": "41f07be5bc4264590323366478c5f204b46af60b2963c4011c754512373257e4",
       "role": "Benchmark promotion, rejection, and supersession decisions without copied values"
     },
     {
       "path": "docs/performance/methodology.md",
-      "sha256": "16e070d50764e3e4a94388f283702d09b5afedf6e87f922b8035cfa5b582be4a",
+      "sha256": "a3b8a9107fe2976499b0cb331991cfc12ffdc07d4217197238519f8fd1815078",
       "role": "Benchmark state, provenance, and scientific-resolution contract"
     },
     {
       "path": "docs/performance/continuous-profiling.md",
-      "sha256": "243988f682286ad4db72dc83a3507d7f6cba14714431ce679c588f88b5261838",
+      "sha256": "dcc01da1cd9f00b2b6182c2d3d0a90a44921dcbe407be6718795f2dc68d47bb0",
       "role": "Cross-platform cadence, comparison-key, run-registry, and promotion contract"
     },
     {
@@ -71,7 +71,7 @@
     },
     {
       "path": "docs/maintainer/backend-optimization-matrix.md",
-      "sha256": "ecc1a3d5359a89d8f7b0a7231d68e258637492836b79c8d7b4c2b2e8f6b7308c",
+      "sha256": "abbe41743f000035216e0a12d547cc8268679500f3ced07ba6ecda77db41361d",
       "role": "Accepted and rejected optimization ledger"
     },
     {

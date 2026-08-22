@@ -41,12 +41,12 @@ def test_every_module_platform_and_unrun_load_plan_stays_visible() -> None:
 
     gates = {gate["id"]: gate for gate in registry["gates"]}
     assert {
-        gates[f"io.mps.phil.bin{detector_bin}.cold-original"]["state"]
+        gates[f"io.mps.apple-m5-max-128gb.bin{detector_bin}.cold-original"]["state"]
         for detector_bin in (1, 2, 4, 8)
     } == {"pending"}
-    assert gates["io.swift.phil.bin8.contract"]["state"] == "unsupported"
-    assert gates["io.swift.steve-kerr.bin2.cold-original"]["state"] == "pending"
-    assert gates["io.swift.rodman.bin1.prepared"]["state"] == "partial"
+    assert gates["io.swift.apple-m5-max-128gb.bin8.contract"]["state"] == "unsupported"
+    assert gates["io.swift.apple-m2-air-8gb.bin2.cold-original"]["state"] == "pending"
+    assert gates["io.swift.apple-m5-24gb.bin1.prepared"]["state"] == "partial"
 
 
 def test_registry_validator_and_generated_table_agree() -> None:
@@ -88,6 +88,47 @@ def test_registry_validator_and_generated_table_agree() -> None:
         assert state in rendered
 
 
+def test_computer_labels_describe_reproducible_hardware() -> None:
+    registry = _registry()
+    allowed = {
+        "Linux CUDA workstation (dual 96 GB Blackwell GPUs)",
+        "MacBook Air (M2, 8 GB)",
+        "MacBook Pro (M5, 24 GB)",
+        "MacBook Pro (M5 Max, 128 GB)",
+        "Portable CI runner",
+    }
+
+    assert {gate["computer"] for gate in registry["gates"]} <= allowed
+    assert {
+        measurement["computer"]
+        for measurement in registry["additional_measurements"]
+    } <= allowed
+
+    rendered = GENERATED.read_text(encoding="utf-8")
+    for label in allowed - {"Portable CI runner"}:
+        assert label in rendered
+
+    measurements = rendered.split("## Retained atomic measurements", 1)[1].split(
+        "## Reproducible runbooks", 1
+    )[0]
+    public_prefixes = (
+        "`linux-dual-blackwell-96gb-",
+        "`macbook-air-m2-8gb-",
+        "`macbook-pro-m5-24gb-",
+        "`macbook-pro-m5-max-128gb-",
+    )
+    measurement_rows = [
+        line for line in measurements.splitlines() if line.startswith("| ✓")
+    ]
+    assert measurement_rows
+    assert all(
+        any(prefix in row for prefix in public_prefixes) for row in measurement_rows
+    )
+
+    writing = Path("docs/developer/writing.md").read_text(encoding="utf-8")
+    assert "Identify a benchmark computer by reproducible hardware" in writing
+
+
 def test_agent_can_resolve_the_next_gate_and_real_command() -> None:
     next_result = subprocess.run(
         [
@@ -95,21 +136,21 @@ def test_agent_can_resolve_the_next_gate_and_real_command() -> None:
             "scripts/benchmark_registry.py",
             "next",
             "--computer",
-            "Steve Kerr",
+            "MacBook Air (M2, 8 GB)",
         ],
         check=True,
         capture_output=True,
         text=True,
     )
-    assert "io.swift.steve-kerr.bin2.cold-original" in next_result.stdout
-    assert "io.webgpu.steve-kerr.bin2.minimum-memory" in next_result.stdout
+    assert "io.swift.apple-m2-air-8gb.bin2.cold-original" in next_result.stdout
+    assert "io.webgpu.apple-m2-air-8gb.bin2.minimum-memory" in next_result.stdout
 
     command = subprocess.run(
         [
             sys.executable,
             "scripts/benchmark_registry.py",
             "command",
-            "io.swift.steve-kerr.bin2.cold-original",
+            "io.swift.apple-m2-air-8gb.bin2.cold-original",
         ],
         check=True,
         capture_output=True,

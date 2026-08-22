@@ -5,7 +5,7 @@ changes source coverage, detector sampling, precision, mask, objective, or
 output meaning is a different experiment.
 
 The [continuous profiling plan](continuous-profiling.md) defines which checks
-belong on every pull request, which require named physical hardware, and how a
+belong on every pull request, which require specified physical hardware, and how a
 qualified measurement is promoted to the dashboard. Its machine-readable
 platform/module schedule is `benchmarks/profile_matrix.json`.
 
