@@ -131,6 +131,18 @@
       "artifact": "private-evidence://macbook-pro-m5-24gb/20260822-python-mps-current-head-preflight-02/SHA256SUMS",
       "sha256": "b950e067f1bf276f3261fd60f2078c6d0acfd2ccfa126ec224285583cf755916",
       "result": "Sealed checksum inventory for the fail-closed Python MPS preflight."
+    },
+    {
+      "id": "m5-24gb-python-mps-bin4-layout-mismatch-manifest",
+      "artifact": "private-evidence://macbook-pro-m5-24gb/20260822-python-mps-m5-24gb-b6ff8e8-01/manifest.json",
+      "sha256": "03d28fc33f1e467dc5d9ef6a4d31d26cc383335726d9ce62d7358646f915e329",
+      "result": "Physical bin-4 smoke passed dtype, shape, geometry, release, and memory checks but failed closed because the Python frame-major full-volume hash was compared with a Swift detector-word-major storage hash. The 2.064165-second smoke is not promoted."
+    },
+    {
+      "id": "m5-24gb-python-mps-bin4-layout-mismatch-checksums",
+      "artifact": "private-evidence://macbook-pro-m5-24gb/20260822-python-mps-m5-24gb-b6ff8e8-01/SHA256SUMS",
+      "sha256": "d6b35ce5c360f2e4d1240a58758d4ac7c3512cce40aa2a37b6e2aadc8e2e4e88",
+      "result": "Complete checksum inventory for the retained failed smoke; all files verified."
     }
   ],
   "results": {
@@ -178,6 +190,38 @@
       "reason": "The baseline load benchmark reported requested rather than observed dtype and released resident output without full-volume hashing or comparison.",
       "timing_promoted": false,
       "follow_up": "The isolated candidate now requires full-volume SHA-256, observed dtype, logical shape, and sampled peak memory; physical bin4 then bin2 validation remains pending on a clean revision."
+    },
+    "macbook_pro_m5_24gb_python_mps_bin4_layout_mismatch": {
+      "source_revision": "b6ff8e87e0fbb346287d5dd58f56f9e25574f225",
+      "runtime": "Python 3.12.11; PyTorch 2.9.0; h5py 3.15.1; NumPy 2.3.5; MPS available",
+      "status": "failed-closed-layout-domain-mismatch",
+      "cache_state": "prepared indexes; source pages unspecified; zero same-process warmups",
+      "sample_count": 1,
+      "detector_bin": 4,
+      "source_shape": [512, 512, 192, 192],
+      "working_shape": [512, 512, 48, 48],
+      "source_dtype": "uint16",
+      "working_dtype": "uint16",
+      "scan_crop": null,
+      "swift_detector_word_major_sha256": "eee3afcc282a9d85fefe08eacd8d9a6ca283e63231120bb13b2080084ff782b5",
+      "python_frame_major_sha256": "9af2f7eead0a42a4218f4fa20c3a9098ab2fd39ec3d2b4df978b47bb95f4c70e",
+      "metadata_parity": "passed",
+      "full_scientific_parity": "not adjudicated because the compared hashes cover different physical layouts",
+      "smoke_wall_seconds": 2.064165,
+      "timing_promoted": false,
+      "logical_resident_bytes": 1207959552,
+      "sampled_driver_peak_bytes": 2483896320,
+      "sampled_process_rss_peak_bytes": 712540160,
+      "process_lifetime_rss_bytes": 1920499712,
+      "process_peak_footprint_bytes": 2868595112,
+      "swap_before_and_after_bytes": 2387017728,
+      "pageout_delta_pages": 0,
+      "swapout_delta_pages": 0,
+      "compressor_delta_bytes": 65536,
+      "pagein_delta_pages": 177186,
+      "release_method": "free",
+      "release_error": null,
+      "follow_up": "Define and freeze one canonical logical pixel-order hash for cross-layout comparison, generate an independent exact reference in that domain, then rerun bin4 smoke before any bin4/bin2 distribution."
     }
   },
   "timestamps": {

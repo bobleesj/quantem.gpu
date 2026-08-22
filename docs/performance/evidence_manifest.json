@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "source_revision": "d01e5800db4f5878e36c5a0ef666cb9afb0adcfe",
+  "source_revision": "f079df63bc6291adc7b51f4c1d305bcb487825e4",
   "source_revision_scope": "Clean platform/computer matrix and fail-closed benchmark-harness revision. Every retained physical measurement remains bound to its own row revision, fixture identity, cache state, and timing boundary.",
   "purpose": "Fingerprints for the current benchmark dashboard, its authoritative registry and rendering inputs, provenance ledger, parity and methodology contracts, and canonical historical evidence. Landing, API, and backend capability pages intentionally do not duplicate measurements.",
   "pages": [
@@ -128,7 +128,7 @@
     },
     {
       "path": "experiments/20260822-platform-computer-profile/manifest.json",
-      "sha256": "4ebe97d933f4964d45ee87e67475d609a94c6e939fba47031ac4baea75db7965",
+      "sha256": "c3cdb729e151350a7f80a026b3060e571d439b23bb11c56376dd6f12c7dd19ce",
       "role": "Running physical-device matrix ledger; partial measurements may not be promoted while this manifest is nonterminal"
     }
   ]
