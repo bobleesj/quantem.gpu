@@ -253,6 +253,45 @@ def test_trial_releases_result_after_shape_evidence_failure(
     assert managed.freed is True
 
 
+def test_trial_releases_result_after_resident_byte_evidence_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    array = np.arange(24, dtype=np.uint16).reshape(2, 3, 4)
+    managed = _ManagedArray(array)
+    result = _Result(managed)
+    monkeypatch.setattr(benchmark, "_load_once", lambda master, args: result)
+    monkeypatch.setattr(benchmark, "_sync_backend", lambda backend: None)
+    monkeypatch.setattr(benchmark, "_clear_backend", lambda backend: None)
+    monkeypatch.setattr(benchmark, "_memory_snapshot", lambda backend: {})
+    monkeypatch.setattr(
+        benchmark, "MemorySampler", lambda backend, interval: _Sampler()
+    )
+    monkeypatch.setattr(
+        benchmark,
+        "_output_parity",
+        lambda data, args: {"errors": [], "passed": True},
+    )
+    monkeypatch.setattr(
+        benchmark,
+        "_scientific_metadata",
+        lambda loaded, args: {"errors": [], "passed": True},
+    )
+    monkeypatch.setattr(
+        benchmark,
+        "_nbytes",
+        lambda data: (_ for _ in ()).throw(RuntimeError("nbytes failed")),
+    )
+
+    record, failure = benchmark._run_timed_trial(
+        Path("unused-master.h5"), _trial_args(array), 1
+    )
+
+    assert record["status"] == "failed"
+    assert record["failure_stage"] == "result-metadata"
+    assert "nbytes failed" in failure
+    assert managed.freed is True
+
+
 def test_trial_releases_result_after_post_load_memory_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
