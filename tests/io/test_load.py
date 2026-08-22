@@ -950,6 +950,10 @@ def test_load_scan_indices_reads_sorted_unique_and_restores_order(
             "selected_frame_indices": frame_indices.copy(),
             "pixel_mask": np.zeros((1, 1), dtype=np.uint8),
             "dtype": np.dtype(np.uint16),
+            "total_compressed_bytes": 4096,
+            "read_span_count": 2,
+            "read_gap_bytes": 128,
+            "prepare_timing_s": {"compressed_pread": 0.001},
         }
 
     def fake_mps_decode(prepared, **kwargs):
@@ -982,6 +986,10 @@ def test_load_scan_indices_reads_sorted_unique_and_restores_order(
     assert result.metadata["unique_frame_count"] == 3
     assert result.metadata["duplicate_frame_count"] == 1
     assert result.metadata["read_order"] == "sorted_unique_hdf5_frame_indices"
+    assert result.metadata["total_compressed_bytes"] == 4096
+    assert result.metadata["read_span_count"] == 2
+    assert result.metadata["read_gap_bytes"] == 128
+    assert result.metadata["prepare_timing_s"] == {"compressed_pread": 0.001}
 
 
 def test_load_scan_indices_multi_file_accepts_per_file_batches(

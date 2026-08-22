@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260819-platform-profile-cpu-reference",
+  "status": "completed",
+  "question": "What are the independent CPU-reference outputs and diagnostic timings needed to adjudicate current GPU I/O, detector, screening-cache, and DPC/iDPC results?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260819-platform-profile-cpu-reference/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "334b7b5135fe29787540370a00f280fa138430a2",
+    "entrypoint": "public io.load backend=cpu followed by detector and DPC reference workflows; frozen SSB reference fixtures only",
+    "dirty": false,
+    "diff_sha256": null,
+    "snapshot_path": "local-snapshot://quantem-gpu-platform-profile-cpu-reference/source"
+  },
+  "inputs": [
+    {
+      "dataset_id": "real-512x512x192x192-u16-bslz4-27shard",
+      "path": "private-fixture://full-512-u16-bslz4-27shard/collection",
+      "sha256": "1be810b96fdff8e384ad4cb6ebd49adff9b4ab0a6503cd5fed9106e09f5aa286"
+    },
+    {
+      "dataset_id": "ssb-reference-512-mps-v1",
+      "path": "tests/fixtures/ssb_reference_512_mps.json",
+      "sha256": "00e56fa390db75d93673786d60c525956352b76f29937c84d2c40753185ca294"
+    }
+  ],
+  "parameters": {
+    "source_shape": [512, 512, 192, 192],
+    "source_dtype": "uint16",
+    "scan_crop": null,
+    "detector_crop": null,
+    "scan_bin": 1,
+    "detector_bins": [1, 2, 4, 8],
+    "production_status": "reference only; never a silent fallback",
+    "screening_status": "independent product adjudication and saved-cache read, not accelerated cache generation",
+    "ssb_status": "frozen reference fixture; no CPU production SSB backend or calibration timing",
+    "optimizer_trials": 200,
+    "refinement": "reference metadata only",
+    "levenberg_marquardt": "not implemented",
+    "timing_repetitions": 5,
+    "cache_states": ["first-process-not-cold", "warm-source"],
+    "parity": {
+      "integer_products": "byte-exact",
+      "floating_outputs": "existing frozen operation-specific gates"
+    },
+    "run_root": "local-evidence://platform-profile-20260819/webgpu-cpu/cpu-reference"
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "cpu-reference",
+    "gpu_ids": [],
+    "gpu_model": null
+  },
+  "outputs": [
+    {
+      "artifact": "cpu-reference/",
+      "sha256_manifest": "33ec049dd3f61cb6bbf2633eaa0510dbb2963e2b4ab4c731092b2662333d5083",
+      "result": "independent bins 1/2/4/8 shape, dtype, count, and product adjudication; CPU remains reference only"
+    },
+    {
+      "artifact": "RESULTS.md",
+      "sha256": "a2f75c7a595d5fc457b5c32afd0ea8aac5dd20f5db30c496b386e30acedce7d1",
+      "result": "one-load timing and peak RSS retained for every detector bin"
+    }
+  ],
+  "timestamps": {
+    "created": "2026-08-19T18:45:00-07:00",
+    "started": "2026-08-19T18:45:00-07:00",
+    "finished": "2026-08-19T19:33:54-07:00"
+  }
+}

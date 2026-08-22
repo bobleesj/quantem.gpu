@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 import importlib
+import pytest
 
 
 class _ChunkSource:
@@ -67,6 +68,38 @@ def test_mps_float32_columns_forward_direct_output():
     frames.vi = FakeVI()
 
     assert frames.columns_float32_into(rows, cols, expected) is expected
+
+
+def test_multi_chunked_frames_carries_and_validates_dtype_and_detector_bin():
+    from types import SimpleNamespace
+
+    from quantem.gpu.detector.compute.mps.kernels import MultiChunkedFrames
+
+    def dataset(dtype, detector_bin):
+        np_dtype = np.dtype(dtype)
+        return SimpleNamespace(
+            _det=(2, 2),
+            _frame_elems=4,
+            _np_dtype=np_dtype,
+            dtype=np_dtype,
+            det_bin=detector_bin,
+            _torch=None,
+            torch_dtype=None,
+            metadata={"scan_shape": (2, 2)},
+            _n=4,
+            device="mps",
+        )
+
+    multi = MultiChunkedFrames([dataset(np.uint8, 2)])
+
+    assert multi._np_dtype == np.dtype(np.uint8)
+    assert multi.dtype == np.dtype(np.uint8)
+    assert multi.det_bin == 2
+    assert multi.element_size() == 1
+    with pytest.raises(ValueError, match="dtype"):
+        multi._validate_compatible_dataset(dataset(np.uint16, 2))
+    with pytest.raises(ValueError, match="detector bin"):
+        multi._validate_compatible_dataset(dataset(np.uint8, 4))
 
 
 def test_masked_sum_dispatches_chunk_source_through_gpu_compute(monkeypatch):

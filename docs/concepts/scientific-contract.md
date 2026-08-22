@@ -6,8 +6,16 @@ before its performance can be compared.
 
 ## Coordinates and regions
 
-Spatial coordinates use `(row, column)` throughout Python, Swift, Metal, CUDA,
-and WebGPU. Scan and detector regions are half-open:
+Spatial coordinates use
+
+$$
+(\text{row},\text{column}) \equiv (r,c)
+$$
+
+throughout Python, Swift, Metal, CUDA, and WebGPU. Real-space probe/scan
+coordinates are $\mathbf R=(R_r,R_c)$, detector coordinates are
+$\mathbf k=(k_r,k_c)$, and logical 4D-STEM array order is
+$I[R_r,R_c,k_r,k_c]$. Scan and detector regions are half-open:
 
 ```text
 (row_start, row_stop, column_start, column_stop)
@@ -61,5 +69,4 @@ reduce a mask, or change precision. The CPU implementation is available only
 when explicitly selected as a reference.
 
 See [Cross-backend parity](../performance/parity.md) for numerical gates and
-[Repository architecture](../maintainer/backend-layout-and-parity.md) for the
-implementation boundary.
+[Kernel architecture](kernel-architecture.md) for the implementation boundary.

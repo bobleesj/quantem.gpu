@@ -80,7 +80,7 @@ bulk move:
 | `detector/compute/{cuda,mps,webgpu}` | `detector/backends/...` | Move only after public detector parity is frozen; leave import shims for one compatibility cycle. |
 | `dpc/compute/{cuda,mps,webgpu}` | `dpc/backends/...` | Move with the same row/column and dtype contract; do not duplicate DPC math. |
 | `ssb/compute/{cuda,mps,webgpu}` | `ssb/backends/...` | Move last because retained exact-performance evidence names these modules. |
-| `display/cuda.py`, `display/reference.py`, `display/webgpu/` | `display/backends/...` | Preserve packaged resource paths until widget source-sync tests accept the new manifest. |
+| `display/cuda.py`, `display/reference.py`, `display/webgpu/` | `display/backends/...` | Preserve packaged resource paths until browser-client source-sync tests accept the new manifest. |
 | Root-level parity tests and split fixture folders | `tests/parity/...` | Centralize by moving tests only after their node IDs and external harnesses are mapped. |
 
 `io/backends` is the naming reference for new Python backend directories.
@@ -97,7 +97,7 @@ Every backend result bundle must record:
 - half-open scan and detector regions;
 - scan bin, detector bin, output shape, output dtype, and accumulation dtype;
 - bad-pixel policy and detector-mask definition;
-- `(row, column)` coordinate convention;
+- `(row, column) ≡ (r, c)` coordinate convention;
 - backend, device, source revision, and kernel revision;
 - whether the result is native resolution, explicitly binned, or explicitly
   cropped; and
@@ -139,7 +139,7 @@ display, then SSB. For each move:
 2. add the new internal path plus import-only compatibility shims;
 3. run CPU-reference, CUDA, MPS/Metal, Swift, and WebGPU gates listed in
    `tests/parity/backend_matrix.json`;
-4. test Live4DSTEM and widget through a local package override;
+4. test supported native and browser clients through a local package override;
 5. commit the move independently and pin consumers to that exact revision; and
 6. delete shims only in a later reviewed change after all consumers migrate.
 

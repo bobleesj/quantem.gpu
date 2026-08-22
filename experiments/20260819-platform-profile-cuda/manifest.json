@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260819-platform-profile-cuda",
+  "status": "completed",
+  "question": "What are the parity-qualified load, detector, screening, DPC/iDPC, SSB redraw, 200-trial optimization, and Nelder-Mead refinement timings on the current CUDA source?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260819-platform-profile-cuda/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "8c47a466d573f74e425faff611939a17fa6efbf2",
+    "entrypoint": "public QuantEM.GPU APIs through the retained load/product harness, SSB native benchmark, and a run-root-only full calibration driver",
+    "dirty": false,
+    "diff_sha256": null,
+    "snapshot_path": "local-snapshot://quantem-gpu-platform-profile-cuda/source",
+    "followup_revision": "fa9ab6f",
+    "followup_purpose": "deterministic exact-objective reduction and stable Nelder-Mead ordering"
+  },
+  "inputs": [
+    {
+      "dataset_id": "real-512x512x192x192-u16-bslz4-27shard",
+      "path": "private-fixture://full-512-u16-bslz4-27shard/collection",
+      "sha256": "9d64487ce66705e52ae6f8d3dd92aa53f980b21f8996451e6ab2ffce7b4b0f21"
+    },
+    {
+      "dataset_id": "full-512-calibration-v1",
+      "path": "private-calibration://full-512/calibration.json",
+      "sha256": "4a2d9cc36943973dbe0f1d5e40858160f0a6393cd56d9f54e073a358b3eff8e8"
+    }
+  ],
+  "parameters": {
+    "source_shape": [512, 512, 192, 192],
+    "source_dtype": "uint16",
+    "scan_crop": null,
+    "detector_crop": null,
+    "scan_bin": 1,
+    "detector_bins": [1, 2, 4, 8],
+    "ssb_detector_bin": 1,
+    "ssb_bf_policy": "full active BF",
+    "optimizer": "Optuna TPE",
+    "optimizer_trials": 200,
+    "optimizer_seed": 42,
+    "optimizer_objective": "exact full-active-BF phase variance",
+    "refinement": "Nelder-Mead",
+    "levenberg_marquardt": "not implemented",
+    "timing_repetitions": 7,
+    "timing_warmups": 2,
+    "cache_states": ["first-process-not-cold", "warm-source", "prepared"],
+    "parity": {
+      "integer_products": "byte-exact",
+      "com_atol": 1e-5,
+      "idpc_rtol": 1e-5,
+      "idpc_atol": 1e-5,
+      "ssb": "existing frozen size- and objective-specific gates"
+    },
+    "gpu0_status": "requested but occupied by the display service at preflight",
+    "run_root": "local-evidence://platform-profile-20260819/cuda"
+  },
+  "execution": {
+    "host": "mjgoat",
+    "backend": "cuda",
+    "gpu_ids": ["1"],
+    "gpu_model": "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition"
+  },
+  "outputs": [
+    {
+      "artifact": "atomic_rows.jsonl",
+      "sha256": "e68c6b56a95b6844a9eb354b1c68ca68e2f2f815395dc74ee6b4a3e6f7945272",
+      "result": "51 atomic baseline rows; exact load/product parity passed; calibration baseline failed repeatability"
+    },
+    {
+      "artifact": "summary.json",
+      "sha256": "fd449c1a6391595a6c679b0fddf3a83fcf533c18866c607322dc0397942b4131",
+      "result": "baseline stopped at the SSB calibration parity gate; 6 GiB screening not run"
+    },
+    {
+      "artifact": "followup-deterministic-fit/full-fit-3.json",
+      "sha256": "d262c1ed8fa55728811735bc974ef4fcc413e60aff83dfcd7396b4ad681f4527",
+      "result": "three full 200-trial TPE plus Nelder-Mead fits byte-deterministic; p50 11.168 s"
+    }
+  ],
+  "timestamps": {
+    "created": "2026-08-19T18:40:00-07:00",
+    "started": "2026-08-19T18:40:00-07:00",
+    "finished": "2026-08-19T19:27:14-07:00"
+  }
+}

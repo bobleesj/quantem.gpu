@@ -34,6 +34,34 @@ CoM, DPC/iDPC, FFT, and SSB use frozen operation-specific metrics. Reports
 include maximum and high-percentile error where meaningful. Tolerances are not
 widened to make a new backend pass.
 
+## Current real-data gate
+
+The 2026-08-19 full-scan campaign used revision `8c47a466` and one
+byte-identical `512x512x192x192` `uint16` compressed-HDF5 fixture on CUDA GPU 0,
+Apple M5 Max, and Apple M5. No scan crop was used and detector bin was explicit.
+
+At detector bin 4, mean diffraction and exact total/BF/DF are byte-identical
+across the three machines. Apple-to-Apple CoM/iDPC is also byte-identical; CUDA
+CoM differs by at most `1.91e-6` and passes the frozen `1e-5` gate. CUDA-versus-
+MPS iDPC differs by `2.84e-5` and is blocked at the frozen `rtol=1e-5`,
+`atol=1e-5` gate.
+
+At detector bin 1, integer products are byte-identical, but the public MPS
+interaction sidecar uses detector bin 2 and therefore changes native-detector
+CoM/iDPC. A direct full-resolution Metal diagnostic passes CoM with `7.63e-6`
+maximum error, while iDPC remains blocked at `7.58e-5`. Detector-bin-2 and
+detector-bin-8 timings have no equivalent retained real-data product bundle and
+remain timing-only. See [Verified benchmark results](results.md) for the full
+matrix and device/runtime details.
+
+Native Swift/Metal SSB at `e1da9bc` has its own independently frozen 512×512
+phase reference. The complete-cache path passes at relative L2 `5.86952296e-5`
+and maximum wrapped error `5.62884106e-6` rad; the zero-cache exact path passes
+at relative L2 `2.30151898e-5` and maximum wrapped error `2.48712759e-6` rad.
+Three seed-42 200-trial TPE plus Nelder–Mead fits returned identical parameters
+and loss. These values do not adjudicate other scan sizes, raw-HDF5 preparation,
+or the physical 8 GB gate.
+
 ## Result bundle
 
 A cross-backend result bundle contains:
@@ -71,6 +99,7 @@ Native Apple parity additionally runs:
 
 ```bash
 swift test
+swift test -c release --filter MetalSSBKernelsTests
 ```
 
 Real CUDA, MPS/Metal, and WebGPU gates run only on their qualified hardware and

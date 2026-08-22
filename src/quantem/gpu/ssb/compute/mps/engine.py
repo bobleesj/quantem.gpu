@@ -26,6 +26,11 @@ from quantem.gpu.optics.physics import electron_wavelength_angstrom
 from quantem.gpu.ssb.bf_selector import BrightfieldDisk
 from quantem.gpu.ssb.results import SSBResult
 
+from ._bf_columns import (
+    _BfColumnCompanionNotDeclared,
+    _resolve_bf_column_companion,
+)
+
 _EXACT_ROW_PACK_STORAGE_BF_512 = 300
 _EXACT_ROW_STORAGE_CLASSES_BF_512 = (288, 320)
 # Keep the logical reduction boundaries used by the exact 512 pair path
@@ -273,6 +278,8 @@ class MpsBfColumnFrames:
         selection: BrightfieldDisk,
         scan_shape: tuple[int, int],
         dtype: np.dtype | str,
+        detector_bin: int = 1,
+        source_provenance: dict[str, object] | None = None,
         max_value: int | None = None,
         detector_sum: np.ndarray | None = None,
         dc_value: complex | None = None,
@@ -292,7 +299,10 @@ class MpsBfColumnFrames:
         self.dtype = self._np_dtype
         self.shape = (self._n, *self.det_shape)
         self.ndim = 3
-        self.det_bin = 1
+        self.det_bin = int(detector_bin)
+        if self.det_bin < 1:
+            raise ValueError("detector_bin must be a positive integer.")
+        self.source_provenance = dict(source_provenance or {})
         self.vi = _BfColumnDetectorView(self.det_shape)
         # detector.mean_dp recognizes GPU-frame objects through the common
         # chunk-backed dispatch. No detector chunks are present by design.
@@ -467,7 +477,7 @@ def load_bf_columns_mps(
         candidates = [source / "snapshots" / "cal.json", source / "cal.json"]
         cal_path = next((path for path in candidates if path.is_file()), None)
         if cal_path is None:
-            raise FileNotFoundError(
+            raise _BfColumnCompanionNotDeclared(
                 f"No ShowPtycho calibration found under {source}."
             )
     else:
@@ -476,8 +486,6 @@ def load_bf_columns_mps(
     if not isinstance(payload, dict):
         raise ValueError(f"ShowPtycho calibration must be a JSON object: {cal_path}")
     required_fields = (
-        "bf_column_companion_path",
-        "bf_column_encoding",
         "bf_rows",
         "bf_cols",
         "bf_center",
@@ -490,30 +498,7 @@ def load_bf_columns_mps(
             f"Calibration is missing required BF-column fields "
             f"{missing_fields}: {cal_path}"
         )
-    relative = payload["bf_column_companion_path"]
-    if not relative:
-        raise ValueError(f"BF-column companion path is empty: {cal_path}")
-    relative_path = Path(str(relative))
-    path_candidates = (
-        [relative_path]
-        if relative_path.is_absolute()
-        else [cal_path.parent / relative_path, cal_path.parent.parent / relative_path]
-    )
-    bf_path = next((path.resolve() for path in path_candidates if path.is_file()), None)
-    if bf_path is None:
-        raise FileNotFoundError(
-            "Exact BF-column companion was not found. Checked: "
-            + ", ".join(str(path) for path in path_candidates)
-        )
-    encoding = str(payload["bf_column_encoding"])
-    if encoding in {"u8", "uint8"}:
-        dtype = np.uint8
-    elif encoding in {"u16", "uint16"}:
-        dtype = np.uint16
-    else:
-        raise ValueError(
-            f"Unsupported BF-column encoding {encoding!r}: {cal_path}"
-        )
+    companion = _resolve_bf_column_companion(cal_path, payload)
     scan_region = payload["scan_region"]
     if not isinstance(scan_region, dict) or "shape" not in scan_region:
         raise ValueError(
@@ -545,19 +530,6 @@ def load_bf_columns_mps(
             f"lists: {cal_path}"
         )
 
-    max_value = None
-    manifest_candidates = [
-        cal_path.parent / "manifest.json",
-        cal_path.parent.parent / "manifest.json",
-    ]
-    for manifest_path in manifest_candidates:
-        if not manifest_path.is_file():
-            continue
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        bf_meta = (manifest.get("source") or {}).get("bf_columns") or {}
-        if bf_meta.get("max_value") is not None:
-            max_value = int(bf_meta["max_value"])
-            break
     rows_array = np.asarray(bf_rows, dtype=np.int32)
     cols_array = np.asarray(bf_cols, dtype=np.int32)
     center_row_col = tuple(float(value) for value in bf_center)
@@ -597,11 +569,13 @@ def load_bf_columns_mps(
             )
         dc_value = complex(float(dc_parts[0]), float(dc_parts[1]))
     return MpsBfColumnFrames(
-        bf_path,
+        companion.path,
         selection=selection,
         scan_shape=(int(scan_shape[0]), int(scan_shape[1])),
-        dtype=dtype,
-        max_value=max_value,
+        dtype=companion.dtype,
+        detector_bin=companion.detector_bin,
+        source_provenance=companion.provenance,
+        max_value=companion.max_value,
         dc_value=dc_value,
         verbose=verbose,
     )

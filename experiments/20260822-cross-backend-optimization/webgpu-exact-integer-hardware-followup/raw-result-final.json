@@ -1,0 +1,60 @@
+{
+  "status": "passed",
+  "adapterInfo": {},
+  "softwareAdapter": false,
+  "plans": {
+    "uint8Bin2": {
+      "sourceDtype": "uint8",
+      "residentDtype": "uint16",
+      "sourceMode": 1,
+      "residentMode": 0,
+      "detectorBin": 2,
+      "bytesPerValue": 2,
+      "maximumBinnedCount": 1020
+    },
+    "uint16Bin2": {
+      "sourceDtype": "uint16",
+      "residentDtype": "uint32",
+      "sourceMode": 0,
+      "residentMode": 3,
+      "detectorBin": 2,
+      "bytesPerValue": 4,
+      "maximumBinnedCount": 262140
+    }
+  },
+  "exactCases": [
+    {
+      "label": "uint8-to-uint16 odd-packed multiple-chunk bad-pixel",
+      "wallMs": 14.200000047683716,
+      "gpuSubmitWaitMs": 13.699999928474426,
+      "residentBytes": 56
+    },
+    {
+      "label": "uint16-to-uint32 multiple-chunk",
+      "wallMs": 1.1999999284744263,
+      "gpuSubmitWaitMs": 1,
+      "residentBytes": 192
+    }
+  ],
+  "repeat": {
+    "samples": 12,
+    "wallP50Ms": 0.2999999523162842,
+    "wallP95Ms": 21.199999928474426,
+    "wallMaxMs": 21.199999928474426,
+    "gpuSubmitWaitP50Ms": 0.2999999523162842,
+    "gpuSubmitWaitP95Ms": 21,
+    "gpuSubmitWaitMaxMs": 21
+  },
+  "tiledDispatch": {
+    "scans": 300000,
+    "sourceValues": 19200000,
+    "outputValues": 4800000,
+    "outputBytes": 19200000,
+    "wallMs": 7.5,
+    "gpuSubmitWaitMs": 7.199999928474426,
+    "readbackValidationMs": 14.100000023841858,
+    "mismatchCount": 0,
+    "checksum": 19200000,
+    "expectedChecksum": 19200000
+  }
+}

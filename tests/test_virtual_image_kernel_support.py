@@ -128,6 +128,10 @@ def test_mps_integer_reduction_kernel_sources_are_present() -> None:
     for name in (
         "masked_sum_u8",
         "detector_sum_u8",
+        "detector_sum_exact_u8",
+        "detector_sum_exact_u16",
+        "detector_sum_exact_u32",
+        "detector_sum_exact_prefix_u16",
         "bin_detector_u8",
         "mean_dp_sum_u8",
         "detector_sum_u8_block_partial",
@@ -142,6 +146,29 @@ def test_mps_integer_reduction_kernel_sources_are_present() -> None:
         "com_u32",
     ):
         assert f"kernel void {name}" in source
+
+
+def test_mps_exact_detector_sum_exceeds_uint32_without_overflow() -> None:
+    """The Metal exact reducer preserves sums beyond the uint32 range."""
+    pytest.importorskip("Metal")
+    from quantem.gpu.detector.compute.mps.kernels import MetalVirtualImage
+    from quantem.gpu.io.backends.mps import decoder
+
+    frame_count = 70_000
+    value = np.iinfo(np.uint16).max
+    buffer = decoder._metal_buffer_alloc(frame_count * np.dtype(np.uint16).itemsize)
+    chunk = decoder._mtl_array_from_buffer(
+        buffer,
+        np.dtype(np.uint16),
+        (frame_count, 1, 1),
+    )
+    chunk.fill(value)
+
+    result = MetalVirtualImage([chunk]).detector_sum_exact()
+
+    assert result.dtype == np.dtype(np.uint64)
+    assert int(result[0, 0]) == frame_count * int(value)
+    assert int(result[0, 0]) > np.iinfo(np.uint32).max
 
 
 def test_mps_u8_mean_dp_uses_resident_metal_detector_sum() -> None:

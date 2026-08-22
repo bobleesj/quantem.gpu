@@ -1,21 +1,77 @@
 {
   "schema_version": 1,
-  "source_revision": "25355d7bd6d07ce8ee0fd0be3f0342aa7b8d1373",
-  "purpose": "Fingerprints for retained numerical evidence pages after the historical documentation archive move; measured content is preserved and moved-page links are relative to the archive location.",
+  "source_revision": "23d25619cfe22d5e89761fda2d2796a7c82ba090",
+  "source_revision_scope": "Clean coordinator documentation baseline; later isolated source and evidence revisions are cited per retained measurement rather than implied by this field.",
+  "purpose": "Fingerprints for the current benchmark dashboard, authoritative provenance ledger, parity and methodology contracts, and canonical historical evidence. Landing, API, and backend capability pages intentionally do not duplicate measurements.",
   "pages": [
     {
+      "path": "docs/intro.md",
+      "sha256": "c5cd24f84aa6f28feffc19d0a9a181cee919f7ac01fe2df0f831c819ec5045b5",
+      "role": "Developer landing page and benchmark routing without copied measurements"
+    },
+    {
+      "path": "docs/dashboard.md",
+      "sha256": "379955dec234257b7c70a1f9728bd33bd3583b1f98e2fd93e7c05950404a0a2c",
+      "role": "Single human-facing current capability, speed, memory, and parity overview"
+    },
+    {
+      "path": "docs/platforms/cuda.md",
+      "sha256": "a748b94c3fdb9328dca9a1787ba3b0c70e84b49abf7d898da5e131e9b2841de1",
+      "role": "CUDA 6 GiB minimum-device acceptance contract"
+    },
+    {
+      "path": "docs/platforms/mps.md",
+      "sha256": "f316442494f039c362f0b0200e6fd5cfa535fd68e0ae047d0fb5eea2bcea5d97",
+      "role": "Python MPS direct-Metal lifetime and resident-versus-peak memory contract"
+    },
+    {
+      "path": "docs/platforms/webgpu.md",
+      "sha256": "9e52111495a3a885967b058ae63029a67ce282ad3922644201214c6eccac5054",
+      "role": "WebGPU 8 GB laptop acceptance contract"
+    },
+    {
+      "path": "docs/platforms/swift-metal.md",
+      "sha256": "a0637601ab619d94a8a051480ec2420b48bdef8b89d69b6947994d594b416e50",
+      "role": "Native Swift Metal exact resident-summary, bounded indexed-streaming, and ownership contract"
+    },
+    {
       "path": "docs/backends.md",
-      "sha256": "56008f2297de4037f35c4580bdf60a7474485ca1e48cf9642a39fe09f54a317d",
-      "role": "Current capability and measured summary"
+      "sha256": "79f4df705f465f90217e6f2b01a14f4fec01f043422d37facad4f8c8866f0aa0",
+      "role": "Capability and implementation-source map without copied timings"
+    },
+    {
+      "path": "docs/performance/coverage.md",
+      "sha256": "a39a054b4d30f43d7a258be0200118bb626749f32ea08191c420610f23899fe6",
+      "role": "Filterable exact benchmark gates, retained measurements, missing coverage, and reproducible runbooks"
     },
     {
       "path": "docs/performance/results.md",
-      "sha256": "5797eb9eaf9eb9b3ea98e3a5c8d68ade0bb70db5e9d4719f84ae962604a20fc0",
-      "role": "Verified benchmark provenance index"
+      "sha256": "600d0087124662c4077716bc533224501b1dcfb784a5c754ccbb9536c6b3f8d8",
+      "role": "Authoritative current benchmark provenance ledger"
+    },
+    {
+      "path": "docs/performance/changes.md",
+      "sha256": "89f12698aed26e75bd7f8bcd31fbdb2e5826497d7b61cfef2239399860f212f2",
+      "role": "Benchmark promotion, rejection, and supersession decisions without copied values"
+    },
+    {
+      "path": "docs/performance/methodology.md",
+      "sha256": "16e070d50764e3e4a94388f283702d09b5afedf6e87f922b8035cfa5b582be4a",
+      "role": "Benchmark state, provenance, and scientific-resolution contract"
+    },
+    {
+      "path": "docs/performance/continuous-profiling.md",
+      "sha256": "243988f682286ad4db72dc83a3507d7f6cba14714431ce679c588f88b5261838",
+      "role": "Cross-platform cadence, comparison-key, run-registry, and promotion contract"
+    },
+    {
+      "path": "docs/performance/parity.md",
+      "sha256": "ab3efdd27866605bacff0561ed5c178a78a426196976299745f744a3c0bc1498",
+      "role": "Current cross-platform numerical acceptance gates"
     },
     {
       "path": "docs/maintainer/backend-optimization-matrix.md",
-      "sha256": "bf3e8cf941958a98084611b44577b05da636de86ec8cf379de3684eaa24e9de1",
+      "sha256": "0a94d9be34317d21cc74ff41dda545ce48adad6e325296945b97cabaff01b01d",
       "role": "Accepted and rejected optimization ledger"
     },
     {
@@ -25,8 +81,13 @@
     },
     {
       "path": "docs/maintainer/ssb-performance.md",
-      "sha256": "e3dd8c1289ee2cf519d3ed7b4779fadddb843e92fe6529a02b5f67c683966c3e",
-      "role": "SSB backend performance history"
+      "sha256": "4af2955dbe5b53e241eec605d0ac944fa3c5313219e7526da06fb5176157aea3",
+      "role": "Chronological SSB optimization and rejected-experiment history"
+    },
+    {
+      "path": "docs/maintainer/native-metal-ssb-migration.md",
+      "sha256": "04fa4856a67f87088c68c41a88601e383203ea4a3c079c69d5418b6d67461a9c",
+      "role": "Native Swift Metal SSB lineage, parity, and benchmark record"
     },
     {
       "path": "docs/maintainer/native-metal-hdf5-postmortem.md",

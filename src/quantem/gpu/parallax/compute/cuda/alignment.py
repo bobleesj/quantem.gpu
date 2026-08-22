@@ -252,7 +252,7 @@ def align_vbf_stack_multiscale_cp(
 
         # For binning/correlation we need real-space images. But only for the
         # BINNED subset — so bin in Fourier domain then IFFT only the bins.
-        bf_mask_b, inds_ib, inds_jb, mapping = _bin_mapping_only(
+        bf_mask_b, inds_ib, _, mapping = _bin_mapping_only(
             bf_mask, inds_i, inds_j, bin_factor
         )
         Nb = int(inds_ib.shape[0])

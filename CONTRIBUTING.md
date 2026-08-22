@@ -63,6 +63,8 @@ Run the focused test first, then the relevant suite:
 
 ```bash
 PYTHONPATH=src python -m pytest -q
+python scripts/check_profile_registry.py
+python scripts/benchmark_registry.py validate
 python scripts/check_docs_links.py
 jupyter-book build docs
 python scripts/check_docs_links.py --html-root docs/_build/html
@@ -83,6 +85,19 @@ xcrun swift-format lint --strict --recursive \
 Hardware-gated tests may skip on a general CI runner. A skip is not backend
 signoff; attach the corresponding CUDA, MPS/Metal, Swift/Metal, or browser
 evidence to the pull request.
+
+Before a new physical benchmark, choose the exact gate and repository-owned
+entry point from the [coverage registry](docs/performance/coverage.md):
+
+```bash
+python scripts/benchmark_registry.py next --limit 10
+python scripts/benchmark_registry.py command GATE_ID
+```
+
+Add the experiment manifest and `experiments/RUNS.md` row before launch. Keep
+all repetitions and outliers. Update `benchmarks/benchmark_registry.json`, then
+run `python scripts/benchmark_registry.py render`; do not edit
+`docs/_generated/benchmark_coverage.md` by hand.
 
 ## Documentation and style
 

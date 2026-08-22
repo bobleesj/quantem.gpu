@@ -2,8 +2,27 @@
 
 QuantEM.GPU follows the coding and documentation conventions in
 [`ophusgroup/dev` Appendix D](https://github.com/ophusgroup/dev#appendix-d-coding-standards).
-Write for the scientist calling the API: state the scientific problem first,
-then explain the design needed to interpret the result.
+Write for scientific API authors, kernel/runtime implementers, and application
+integrators as well as scientists calling the API. State the scientific
+operation first, define its stable contract, map it to real source paths, and
+explain how to verify an implementation.
+
+## Audiences and page types
+
+Use the page type that matches the developer's question:
+
+| Reader question | Page type | Required content |
+|---|---|---|
+| What does this operation compute? | Scientific kernel | equations, coordinates, shapes/dtypes/units, optimization model, source map, parity gates |
+| How do I implement it on my device? | Kernel implementation | runtime boundary, sources, memory/execution model, build, profiling, acceptance |
+| What may my code call and rely on? | API contract | typed inputs/outputs/errors, provenance, minimal example, ownership |
+| Is this result correct and faster? | Evidence | revision, device, source and plan, cache state, memory, statistic, parity artifact |
+
+Primary documentation must not depend on a consumer UI framework. Application
+developers need integration ownership—what this package computes and what the
+client schedules or presents—not instructions for a particular screen or
+viewer. Product-specific details belong in that product's documentation unless
+they are necessary historical provenance.
 
 ## Docstrings
 
@@ -25,17 +44,21 @@ implementation details.
 
 ## Coordinates and shapes
 
-All public image and scan coordinates use `(row, col)` order. Row is the slow,
-vertical axis and column is the fast, horizontal axis. Write shapes in the same
-order:
+All public image and scan coordinates use `(row, col)` order with the explicit
+mathematical equivalence `(row, column) ≡ (r, c)`. Row/$r$ is the slow,
+vertical axis and column/$c$ is the fast, horizontal axis. Write shapes in the
+same order:
 
 ```text
 (scan_rows, scan_cols, detector_rows, detector_cols)
 ```
 
-Use `row` and `col` in public names, metadata, readouts, and error messages.
-Use `x` and `y` only for screen or plotting coordinates, where plotting a
-scientific point requires `(x, y) = (col, row)`.
+Use `row` and `col` in public names, metadata, and error messages. In equations,
+use $\mathbf R=(R_r,R_c)$ for real-space probe/scan coordinates and
+$\mathbf k=(k_r,k_c)$ for detector scattering coordinates.
+Some plotting libraries request the horizontal coordinate before the vertical
+coordinate. Document that adapter boundary without changing the scientific
+row/column array order.
 
 ## Quantities and units
 
@@ -68,10 +91,18 @@ unit, normalization, coordinate order, and calibration source.
 Use consistent roles:
 
 - italic lowercase letters for scalars;
-- bold lowercase letters for vectors, such as $\mathbf r$ and $\mathbf q$;
+- bold uppercase $\mathbf R$ for real-space probe position, bold lowercase
+  $\mathbf k$ for detector reciprocal coordinates, and
+  $\boldsymbol{\nu}$ for scan spatial-frequency coordinates;
 - uppercase letters for arrays, transforms, or operators when appropriate;
 - roman text for named operators, such as $\operatorname{argmin}$; and
-- semantic subscripts, such as $q_{\min}$, instead of unexplained indices.
+- semantic subscripts, such as $k_{\min}$, instead of unexplained indices.
+
+Current explanatory prose and equations use $\mathbf k$ for detector
+coordinates and $\boldsymbol{\nu}$ for scan frequency. Historical evidence may
+retain literal implementation identifiers such as `G_qk` when renaming them
+would falsify a benchmark artifact, source symbol, or archived command. Label
+those as legacy identifiers rather than treating them as current notation.
 
 In MyST Markdown, write inline math as `$k = 2\pi/\lambda$` and display math in
 `$$` blocks. In Python docstrings, use reStructuredText ``:math:`` for inline
@@ -83,6 +114,11 @@ bin, mask, dtype conversion, approximation, normalization, or calibration that
 changes the result. Code identifiers may follow an equation, but they do not
 replace the mathematical definition.
 
+Every scientific-kernel page also includes an **Optimization model** section.
+Describe reusable dataflow choices—residency, fusion, traversal count, buffer
+reuse, queue overlap, synchronization, and readback—without making an
+unmeasured speed claim or hard-coding one backend topology into the science.
+
 ## Scientific prose and evidence
 
 State facts, assumptions, limits, and measured values. Avoid evaluative terms
@@ -93,3 +129,29 @@ claim includes the reference, metric, tolerance, and result.
 
 Use [benchmark methodology](../performance/methodology.md) and
 [cross-backend parity](../performance/parity.md) for the required evidence.
+
+## Tables: one cell, one value
+
+Use long-form tables for capabilities and benchmarks. One row represents one
+exact configuration or one exact measurement; one cell contains one field.
+Repeat the row when the platform, scan size, detector size, bin, dtype, cache
+state, fixture, statistic, or timing boundary changes.
+
+For example, detector bins 2, 4, and 8 at `512x512` are three rows, not
+`2/4/8` in one cell with `1.199/1.212/1.106 s` in another. Split source,
+decode/working, accumulation, and resident dtype into separate columns. Split
+the timing statistic from the numerical time, and the memory kind from the
+memory value.
+
+Do not infer a Cartesian product from independent tests. Evidence that a
+runtime supports a `512x512` scan and separate evidence that it implements bin
+8 do not prove the joint `512x512`, bin-8 configuration. Add that exact row as
+**Pending** until its joint parity and physical timing are retained. This
+long-form form is deliberately repetitive: it is sortable, machine-checkable,
+and safe to extend without rewriting table structure.
+
+Use two levels of detail. A human-facing overview table ends with **Device
+tested** and **Date tested**. Do not add evidence-ID or source-revision columns
+to that overview; link the authoritative benchmark ledger once in nearby prose.
+The detailed ledger keeps the evidence ID, exact revision, command, distribution,
+memory record, calibration, and parity artifact.

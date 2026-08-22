@@ -1,6 +1,6 @@
 /* quantem.gpu pages contain wide backend matrices and numerical evidence.
-   Match quantem.widget's documentation geometry: give tables and code the
-   article width, keep navigation predictable, and avoid a duplicate right rail. */
+   Give tables and code the article width, keep navigation predictable, and
+   avoid a duplicate right rail. */
 
 .bd-sidebar-secondary,
 .bd-toc,
@@ -33,11 +33,34 @@ table {
   overflow-x: auto;
 }
 
+.pst-scrollable-table-container {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+/* Atomic benchmark tables deliberately keep one fact per column. Give tables
+   with at least fifteen columns enough intrinsic width to preserve readable
+   shapes, dtypes, timing, resident payload, measured peak, and device names;
+   the container owns scrolling. */
+.pst-scrollable-table-container > table.table:has(th:nth-child(15)) {
+  display: table;
+  min-width: 128rem;
+  max-width: none;
+  overflow: visible;
+}
+
 div.highlight pre {
   overflow-x: auto;
 }
 
 @media (max-width: 959.98px) {
+  .pst-scrollable-table-container > table.table {
+    display: table;
+    min-width: 52rem;
+    max-width: none;
+    overflow: visible;
+  }
+
   code.docutils.literal span.pre,
   dt.sig span.pre {
     white-space: normal;
@@ -56,4 +79,53 @@ div.highlight pre {
 
 code.literal {
   white-space: nowrap;
+}
+
+.qgpu-table-tools {
+  align-items: center;
+  background: color-mix(in srgb, var(--pst-color-surface) 92%, transparent);
+  border: 1px solid var(--pst-color-border);
+  border-radius: 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin: 0.75rem 0 0.45rem;
+  padding: 0.65rem;
+}
+
+.qgpu-table-tools input,
+.qgpu-table-tools select {
+  background: var(--pst-color-background);
+  border: 1px solid var(--pst-color-border);
+  border-radius: 0.35rem;
+  color: var(--pst-color-text-base);
+  font: inherit;
+  min-height: 2.15rem;
+  padding: 0.35rem 0.55rem;
+}
+
+.qgpu-table-tools input {
+  flex: 1 1 12rem;
+}
+
+.qgpu-table-count {
+  color: var(--pst-color-text-muted);
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+table tr[hidden] {
+  display: none !important;
+}
+
+@media (max-width: 640px) {
+  .qgpu-table-tools > * {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  .qgpu-table-count {
+    margin-left: 0;
+  }
 }

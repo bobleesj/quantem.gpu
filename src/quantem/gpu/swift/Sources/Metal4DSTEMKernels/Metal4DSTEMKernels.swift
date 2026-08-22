@@ -28,6 +28,10 @@ public enum Metal4DSTEMKernels {
     "h5lz4dc_unshuffle_u16_lossless_u8_qh5idx"
   public static let decodeU16AuditedLow8Function =
     "h5lz4dc_unshuffle_u16_audited_low8_qh5idx"
+  public static let decodeU16AuditedLow8DirectFunction =
+    "h5lz4dc_unshuffle_u16_audited_low8_direct_qh5idx"
+  public static let decodeU16AuditedLow8DirectOctet192Function =
+    "h5lz4dc_unshuffle_u16_audited_low8_direct_octet192_qh5idx"
   public static let decodeU16AuditedLow8Bin4U16WordMajorFunction =
     "h5lz4dc_unshuffle_u16_audited_low8_bin4_u16_word_major_qh5idx"
   public static let decodeU16AuditedLow8ScalarFunction =
@@ -36,6 +40,12 @@ public enum Metal4DSTEMKernels {
     "h5lz4dc_bin_u16_audited_low8_scalar_u16_word_major_qh5idx"
   public static let binU16AuditedLow8ScalarU16WordMajorFrameOwnedFunction =
     "h5lz4dc_bin_u16_audited_low8_scalar_u16_word_major_frame_owned_qh5idx"
+  public static let binU16AuditedLow8ScalarU16WordMajorFrameOwnedRow8Function =
+    "h5lz4dc_bin_u16_audited_low8_scalar_u16_word_major_frame_owned_row8_qh5idx"
+  public static let binU16AuditedLow8ScalarU16FrameMajorFunction =
+    "h5lz4dc_bin_u16_audited_low8_scalar_u16_frame_major_qh5idx"
+  public static let binU16AuditedLow8ScalarU16FrameMajorRow8Function =
+    "h5lz4dc_bin_u16_audited_low8_scalar_u16_frame_major_row8_qh5idx"
   public static let clearU16WordMajorRangeFunction =
     "clear_u16_word_major_range_qh5idx"
 
@@ -45,8 +55,20 @@ public enum Metal4DSTEMKernels {
   public static let detectorProductsU16Function = "detector_products_u16"
   public static let detectorProductsU16MomentsFunction =
     "detector_products_u16_with_u64_moments"
+  public static let detectorProductsU16ExactU64Function =
+    "detector_products_u16_exact_u64"
+  public static let detectorProductsU8ExactU64Function =
+    "detector_products_u8_exact_u64"
+  public static let detectorProductsU8ExactU32SIMDToU64Function =
+    "detector_products_u8_exact_u32_simd_to_u64"
+  public static let detectorProductsU8Detector192ExactU32SIMDToU64Function =
+    "detector_products_u8_detector192_exact_u32_simd_to_u64"
   public static let detectorSumU8Function = "detector_sum_u8"
   public static let detectorSumU16Function = "detector_sum_u16"
+  public static let detectorAccumulateU16U64Function =
+    "detector_accumulate_u16_u64"
+  public static let detectorAccumulateU8U64FrameTiledFunction =
+    "detector_accumulate_u8_u64_frame_tiled"
   public static let transposeScanWordsFunction = "transpose_scan_words"
   public static let transposeScanWords32x8Function = "transpose_scan_words_32x8"
   public static let scanBinU8Function = "scan_bin_u8_to_u32_word_major"
@@ -55,6 +77,24 @@ public enum Metal4DSTEMKernels {
     "scan_detector_bin_u8_to_u32_word_major"
   public static let scanDetectorBinU8ToU16Function =
     "scan_detector_bin_u8_to_u16_word_major"
+  public static let scanDetectorBinU16ToU16Function =
+    "scan_detector_bin_u16_to_u16_word_major"
+  public static let contiguousDetectorBinU16ToU16Function =
+    "contiguous_detector_bin_u16_to_u16_word_major"
+  public static let contiguousDetectorBinU8ToU16Function =
+    "contiguous_detector_bin_u8_to_u16_word_major"
+  public static let contiguousDetectorBin1U8ToU16Tiled32Function =
+    "contiguous_detector_bin1_u8_to_u16_word_major_tiled32"
+  public static let contiguousDetectorBin2U8ToU16Tiled32Function =
+    "contiguous_detector_bin2_u8_to_u16_word_major_tiled32"
+  public static let contiguousDetectorBin2U8ProductsDetectorPartialsTiled32x8Function =
+    "contiguous_detector_bin2_u8_products_detector_partials_tiled32x8"
+  public static let contiguousDetectorBin1U8ProductsDetectorPartialsTiled32x8Function =
+    "contiguous_detector_bin1_u8_products_detector_partials_tiled32x8"
+  public static let detectorAccumulateU16PartialsU64Function =
+    "detector_accumulate_u16_partials_u64"
+  public static let preparePrivateResidentPagesFunction =
+    "prepare_private_resident_pages"
   public static let scanDetectorBinU16Function =
     "scan_detector_bin_u16_to_u32_word_major"
   public static let residentRebinU8Function =
@@ -66,11 +106,15 @@ public enum Metal4DSTEMKernels {
   public static let detectorProductsU32Function = "detector_products_u32_word_major"
   public static let detectorProductsU16WordMajorFunction =
     "detector_products_u16_word_major"
+  public static let detectorProductsU16WordMajorMomentsFunction =
+    "detector_products_u16_word_major_with_u64_moments"
   public static let centerOfMassU8Function = "center_of_mass_u8_word_major"
   public static let centerOfMassU16Function = "center_of_mass_u16_word_major"
   public static let centerOfMassU32Function = "center_of_mass_u32_word_major"
   public static let centerOfMassU32MomentsFunction = "center_of_mass_u32_moments"
   public static let centerOfMassU64MomentsFunction = "center_of_mass_u64_moments"
+  public static let widenU32AccumulatorTripletToU64Function =
+    "widen_u32_accumulator_triplet_to_u64"
   public static let fullSumU8Function = "full_sum_u8_word_major"
   public static let signedDeltaU8Function = "signed_delta_u8_word_major"
   public static let fullSumU16Function = "full_sum_u16_word_major"

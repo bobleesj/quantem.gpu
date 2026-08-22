@@ -200,6 +200,18 @@ class MetalVirtualImage:
         self._pipe, _ = dev.newComputePipelineStateWithFunction_error_(
             lib.newFunctionWithName_(f"masked_sum_{suffix}"), None)
         self._detsum_pipe = None
+        self._detsum_exact_pipe, _ = (
+            dev.newComputePipelineStateWithFunction_error_(
+                lib.newFunctionWithName_(f"detector_sum_exact_{suffix}"),
+                None,
+            )
+        )
+        self._detsum_exact_prefix_pipe, _ = (
+            dev.newComputePipelineStateWithFunction_error_(
+                lib.newFunctionWithName_("detector_sum_exact_prefix_u16"),
+                None,
+            )
+        )
         self._detsum_u8_partial_pipe = None
         self._detsum_u8_merge_pipe = None
         if self._dtype != np.dtype(np.uint32):
@@ -293,6 +305,16 @@ class MetalVirtualImage:
             max_blocks = (max(int(c.shape[0]) for c in chunks) + 1023) // 1024
             self._detsum_u8_partial_mtl = _mps._metal_buffer_alloc(
                 max_blocks * self.ndet * np.dtype(np.int32).itemsize
+            )
+        self._detsum_exact_mtls = []
+        self._detsum_exact_nps = []
+        for _ in chunks:
+            exact_mtl = _mps._metal_buffer_alloc(
+                self.ndet * np.dtype(np.uint64).itemsize
+            )
+            self._detsum_exact_mtls.append(exact_mtl)
+            self._detsum_exact_nps.append(
+                _mps._numpy_view(exact_mtl, np.uint64, self.ndet)
             )
         # mask buffer (one detector frame, written per recompute)
         self._mask_mtl = _mps._metal_buffer_alloc(self.ndet)
@@ -1019,6 +1041,65 @@ class MetalVirtualImage:
             cmd.waitUntilCompleted()
         return ds_np.reshape(self.det).astype(np.float32)
 
+    def detector_sum_exact(self) -> np.ndarray:
+        """Return the exact uint64 detector sum over all resident chunks.
+
+        Each Metal dispatch writes a private uint64 detector plane for one
+        chunk. The small planes are merged in a fixed host order, avoiding the
+        overflow and nondeterministic ordering of the interactive int32 atomic
+        reducer used by :meth:`detector_sum`.
+        """
+        Metal = self._Metal
+        mps = self._mps
+        pipe = (
+            self._detsum_exact_prefix_pipe
+            if self._row_prefix
+            else self._detsum_exact_pipe
+        )
+        commands = []
+        for group in _chunk_groups(self.chunks):
+            command = mps._queue.commandBuffer()
+            encoder = command.computeCommandEncoder()
+            encoder.setComputePipelineState_(pipe)
+            for chunk_index in group:
+                encoder.setBuffer_offset_atIndex_(
+                    self.chunks[chunk_index]._mtl,
+                    0,
+                    0,
+                )
+                encoder.setBuffer_offset_atIndex_(
+                    self._detsum_exact_mtls[chunk_index],
+                    0,
+                    1,
+                )
+                encoder.setBuffer_offset_atIndex_(self._ndet_mtl, 0, 2)
+                if self._row_prefix:
+                    encoder.setBuffer_offset_atIndex_(self._detcols_mtl, 0, 3)
+                    encoder.setBuffer_offset_atIndex_(
+                        self._nf_mtls[chunk_index],
+                        0,
+                        4,
+                    )
+                else:
+                    encoder.setBuffer_offset_atIndex_(
+                        self._nf_mtls[chunk_index],
+                        0,
+                        3,
+                    )
+                encoder.dispatchThreadgroups_threadsPerThreadgroup_(
+                    Metal.MTLSizeMake((self.ndet + 255) // 256, 1, 1),
+                    Metal.MTLSizeMake(256, 1, 1),
+                )
+            encoder.endEncoding()
+            command.commit()
+            commands.append(command)
+        commands[-1].waitUntilCompleted()
+
+        total = np.zeros(self.ndet, dtype=np.uint64)
+        for chunk_sum in self._detsum_exact_nps:
+            np.add(total, chunk_sum, out=total)
+        return total.reshape(self.det)
+
     def gather_columns_float32(
         self,
         rows: np.ndarray,
@@ -1483,8 +1564,10 @@ class MultiChunkedFrames(ChunkedFrames):
         d0 = self.datasets[0]
         self._det = d0._det
         self._frame_elems = d0._frame_elems
-        self.det_bin = d0.det_bin
+        self._np_dtype = np.dtype(d0._np_dtype)
+        self.det_bin = int(d0.det_bin)
         self._torch = d0._torch
+        self.torch_dtype = d0.torch_dtype
         stored_scan = d0.metadata.get("scan_shape")
         if stored_scan is None:
             scan = int(round(d0._n ** 0.5))
@@ -1501,7 +1584,7 @@ class MultiChunkedFrames(ChunkedFrames):
             )
         self.shape = (n_total, *self._scan, *self._det)
         self.ndim = 5
-        self.dtype = d0.dtype
+        self.dtype = self._np_dtype
         self.device = d0.device
 
     @property
@@ -1514,6 +1597,17 @@ class MultiChunkedFrames(ChunkedFrames):
         if det != tuple(self._det):
             raise ValueError(
                 f"Dataset detector shape {det} does not match existing {tuple(self._det)}"
+            )
+        dtype = np.dtype(getattr(frames, "_np_dtype", frames.dtype))
+        if dtype != self._np_dtype:
+            raise ValueError(
+                f"Dataset dtype {dtype} does not match existing {self._np_dtype}"
+            )
+        detector_bin = int(getattr(frames, "det_bin", 1))
+        if detector_bin != self.det_bin:
+            raise ValueError(
+                f"Dataset detector bin {detector_bin} does not match existing "
+                f"{self.det_bin}"
             )
         stored_scan = frames.metadata.get("scan_shape")
         if stored_scan is None:
