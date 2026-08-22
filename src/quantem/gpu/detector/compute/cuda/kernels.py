@@ -476,6 +476,123 @@ void center_of_mass_full_warp128_4f_impl(
     }
 }
 
+template <typename T>
+__device__ __forceinline__
+void screening_sums_exact_warp128_4f_impl(
+    const T* __restrict__ data,
+    const unsigned char* __restrict__ detector_band_bits,
+    const int* __restrict__ guard_slots,
+    T* __restrict__ guard_out,
+    unsigned long long* __restrict__ out,
+    int guard_count,
+    int ndet,
+    int det_cols,
+    int nframes
+) {
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+    int frame = blockIdx.x * blockDim.y + ty;
+    int lane = tx & 31;
+    int warp = tx >> 5;
+    __shared__ unsigned long long partial[7][16];
+    unsigned long long total = 0;
+    unsigned long long row_moment = 0;
+    unsigned long long col_moment = 0;
+    unsigned long long bright_field = 0;
+    unsigned long long annular_bright_field = 0;
+    unsigned long long annular_dark_field = 0;
+    unsigned long long dark_field = 0;
+    if (frame < nframes) {
+        const T* frame_ptr =
+            data + (unsigned long long)frame * (unsigned int)ndet;
+        for (int detector = tx; detector < ndet; detector += 128) {
+            unsigned long long value =
+                (unsigned long long)frame_ptr[detector];
+            int row = detector / det_cols;
+            int col = detector - row * det_cols;
+            unsigned char bands = detector_band_bits[detector];
+            if (guard_count > 0) {
+                int guard_slot = guard_slots[detector];
+                if (guard_slot >= 0) {
+                    guard_out[(unsigned long long)guard_slot * nframes + frame] =
+                        (T)value;
+                }
+            }
+            total += value;
+            row_moment += value * (unsigned long long)row;
+            col_moment += value * (unsigned long long)col;
+            if (bands & 1U) bright_field += value;
+            if (bands & 2U) annular_bright_field += value;
+            if (bands & 4U) annular_dark_field += value;
+            if (bands & 8U) dark_field += value;
+        }
+    }
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        total += __shfl_down_sync(0xffffffff, total, offset);
+        row_moment += __shfl_down_sync(0xffffffff, row_moment, offset);
+        col_moment += __shfl_down_sync(0xffffffff, col_moment, offset);
+        bright_field += __shfl_down_sync(0xffffffff, bright_field, offset);
+        annular_bright_field += __shfl_down_sync(
+            0xffffffff, annular_bright_field, offset
+        );
+        annular_dark_field += __shfl_down_sync(
+            0xffffffff, annular_dark_field, offset
+        );
+        dark_field += __shfl_down_sync(0xffffffff, dark_field, offset);
+    }
+    if (lane == 0) {
+        int slot = ty * 4 + warp;
+        partial[0][slot] = total;
+        partial[1][slot] = row_moment;
+        partial[2][slot] = col_moment;
+        partial[3][slot] = bright_field;
+        partial[4][slot] = annular_bright_field;
+        partial[5][slot] = annular_dark_field;
+        partial[6][slot] = dark_field;
+    }
+    __syncthreads();
+    unsigned long long values[7];
+    #pragma unroll
+    for (int product = 0; product < 7; ++product) {
+        values[product] = (tx < 4) ? partial[product][ty * 4 + tx] : 0;
+    }
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        #pragma unroll
+        for (int product = 0; product < 7; ++product) {
+            values[product] += __shfl_down_sync(
+                0xffffffff, values[product], offset
+            );
+        }
+    }
+    if (tx == 0 && frame < nframes) {
+        #pragma unroll
+        for (int product = 0; product < 7; ++product) {
+            out[(unsigned long long)product * nframes + frame] = values[product];
+        }
+    }
+}
+
+#define DEFINE_SCREENING_SUMS_EXACT(NAME, TYPE)                                    \
+extern "C" __global__                                                             \
+void NAME(                                                                         \
+    const TYPE* __restrict__ data,                                                  \
+    const unsigned char* __restrict__ detector_band_bits,                           \
+    const int* __restrict__ guard_slots,                                             \
+    TYPE* __restrict__ guard_out,                                                    \
+    unsigned long long* __restrict__ out,                                           \
+    int guard_count,                                                                 \
+    int ndet,                                                                       \
+    int det_cols,                                                                   \
+    int nframes                                                                     \
+) {                                                                                 \
+    screening_sums_exact_warp128_4f_impl(                                           \
+        data, detector_band_bits, guard_slots, guard_out, out,                       \
+        guard_count, ndet, det_cols, nframes                                         \
+    );                                                                              \
+}
+
+DEFINE_SCREENING_SUMS_EXACT(screening_sums_exact_u16_4f, unsigned short)
+
 extern "C" __global__
 void total_sum_uint4_4f(
     const unsigned char* __restrict__ data,
@@ -1486,6 +1603,124 @@ def cuda_center_of_mass(data: Any, det_mask: Any | None = None) -> tuple[Any, An
         )
 
     return out_row.reshape(scan_shape), out_col.reshape(scan_shape)
+
+
+def _cuda_screening_sums_exact(
+    data: Any,
+    detector_band_bits: Any,
+    guard_slots: Any | None = None,
+    guard_count: int | None = None,
+) -> Any | tuple[Any, Any] | None:
+    """Return seven exact per-frame screening sums with one detector traversal.
+
+    ``detector_band_bits`` is a detector-shaped uint8 array. Bits 0 through 3
+    select BF, ABF, ADF, and DF respectively. The returned product-major
+    uint64 array contains total, row moment, column moment, BF, ABF, ADF, and
+    DF. When ``guard_slots`` maps detector pixels to non-negative compact
+    slots, the same traversal also returns exact frame-major guard counts.
+    This helper is private to the prepared-screening pipeline.
+    """
+
+    import cupy as cp
+
+    if type(data).__module__.split(".", 1)[0] != "cupy":
+        return None
+    if not data.flags.c_contiguous:
+        return None
+    dtype_key = _supported_raw_dtype(data.dtype)
+    if dtype_key != "u16":
+        return None
+    flat, _scan_shape, detector_shape = _flatten_scan(data)
+    if type(detector_band_bits).__module__.split(".", 1)[0] == "cupy":
+        if detector_band_bits.dtype != cp.uint8:
+            raise ValueError("detector_band_bits must have dtype uint8")
+        if tuple(int(value) for value in detector_band_bits.shape) != detector_shape:
+            raise ValueError(
+                f"detector_band_bits shape {detector_band_bits.shape} does not "
+                f"match detector shape {detector_shape}."
+            )
+        band_bits_gpu = detector_band_bits.reshape(-1)
+    else:
+        band_bits = np.asarray(detector_band_bits, dtype=np.uint8)
+        if band_bits.shape != detector_shape:
+            raise ValueError(
+                f"detector_band_bits shape {band_bits.shape} does not match "
+                f"detector shape {detector_shape}."
+            )
+        if np.any(band_bits & np.uint8(0xF0)):
+            raise ValueError("detector_band_bits may use only bits 0 through 3")
+        band_bits_gpu = cp.asarray(np.ascontiguousarray(band_bits).reshape(-1))
+    n_frames = int(flat.shape[0])
+    n_detector = int(flat.shape[1])
+    detector_columns = int(detector_shape[1])
+    out = cp.empty((7, n_frames), dtype=cp.uint64)
+    guard_out = data
+    resolved_guard_count = 0
+    guard_slots_gpu = band_bits_gpu
+    if guard_slots is not None:
+        if type(guard_slots).__module__.split(".", 1)[0] == "cupy":
+            if guard_slots.dtype != cp.int32:
+                raise ValueError("guard_slots must have dtype int32")
+            if tuple(int(value) for value in guard_slots.shape) != detector_shape:
+                raise ValueError(
+                    f"guard_slots shape {guard_slots.shape} does not match "
+                    f"detector shape {detector_shape}."
+                )
+            guard_slots_gpu = guard_slots.reshape(-1)
+            resolved_guard_count = (
+                int(guard_slots_gpu.max()) + 1
+                if guard_count is None
+                else int(guard_count)
+            )
+            observed_min = int(guard_slots_gpu.min())
+            observed_max = int(guard_slots_gpu.max())
+        else:
+            guard_slots_host = np.asarray(guard_slots, dtype=np.int32)
+            if guard_slots_host.shape != detector_shape:
+                raise ValueError(
+                    f"guard_slots shape {guard_slots_host.shape} does not match "
+                    f"detector shape {detector_shape}."
+                )
+            guard_slots_gpu = cp.asarray(guard_slots_host.reshape(-1))
+            resolved_guard_count = (
+                int(guard_slots_host.max(initial=-1)) + 1
+                if guard_count is None
+                else int(guard_count)
+            )
+            observed_min = int(guard_slots_host.min(initial=-1))
+            observed_max = int(guard_slots_host.max(initial=-1))
+        if resolved_guard_count < 0:
+            raise ValueError("guard_count must be non-negative")
+        if observed_min < -1 or observed_max >= resolved_guard_count:
+            raise ValueError(
+                "guard_slots values must be -1 or fall within guard_count"
+            )
+        if resolved_guard_count > 0:
+            guard_out = cp.empty(
+                (resolved_guard_count, n_frames),
+                dtype=data.dtype,
+            )
+    block = (128, 4, 1)
+    grid = ((n_frames + block[1] - 1) // block[1], 1, 1)
+    kernel = _cuda_vi_module().get_function(
+        f"screening_sums_exact_{dtype_key}_4f"
+    )
+    kernel(
+        grid,
+        block,
+        (
+            data,
+            band_bits_gpu,
+            guard_slots_gpu,
+            guard_out,
+            out,
+            np.int32(resolved_guard_count),
+            np.int32(n_detector),
+            np.int32(detector_columns),
+            np.int32(n_frames),
+        ),
+    )
+    return (out, guard_out) if resolved_guard_count > 0 else out
 
 
 def _flatten_uint4(data: Any) -> tuple[Any, tuple[int, ...], tuple[int, int], int, int] | None:

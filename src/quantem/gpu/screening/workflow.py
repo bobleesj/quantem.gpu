@@ -22,7 +22,6 @@ from ._mps import (
     _mps_mean_dp,
 )
 
-
 _CACHE_VERSION = 3
 
 
@@ -199,7 +198,7 @@ def _clear_cuda_pools() -> None:
         cp.cuda.Stream.null.synchronize()
         cp.get_default_memory_pool().free_all_blocks()
         cp.get_default_pinned_memory_pool().free_all_blocks()
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 - cleanup must remain best-effort
         pass
     gc.collect()
 
@@ -243,13 +242,35 @@ def _build_cuda_products(
     memory_plan: MemoryPlan,
     verbose: bool,
 ) -> ScreeningResult:
+    exact_dtype = _screening_output_dtype(output_dtype)
+    if int(sample_positions) == 0 and exact_dtype == np.dtype(np.uint16):
+        from ._cuda import _build_exact_cuda_products
+
+        try:
+            return _build_exact_cuda_products(
+                master,
+                scan_shape=scan_shape,
+                chunk_rows=chunk_rows,
+                rotation_steps=rotation_steps,
+                output_dtype=output_dtype,
+                memory_plan=memory_plan,
+                verbose=verbose,
+                source_fingerprint_fn=_source_fingerprint,
+            )
+        except BaseException:
+            _clear_cuda_pools()
+            raise
+
     import cupy as cp
 
-    from quantem.gpu.io import load
-    from quantem.gpu.detector.compute.cuda.kernels import cuda_center_of_mass, cuda_masked_sum
     from quantem.gpu.detector import auto_probe, detector_mask, mean_dp
+    from quantem.gpu.detector.compute.cuda.kernels import (
+        cuda_center_of_mass,
+        cuda_masked_sum,
+    )
     from quantem.gpu.dpc.workflow import find_optimal_rotation
     from quantem.gpu.io import inspect as inspect_source
+    from quantem.gpu.io import load
 
     t0 = time.perf_counter()
     metadata = inspect_source(str(master)).metadata
@@ -479,7 +500,7 @@ def _build_cuda_products(
         "stream_s": float(stream_s),
         "rotation_s": float(rotation_s),
         "elapsed_s": float(elapsed_s),
-        "chunk_count": int(len(chunk_timings)),
+        "chunk_count": len(chunk_timings),
         "chunk_load_median_s": float(np.median([c["load_s"] for c in chunk_timings])),
         "chunk_reduce_median_s": float(np.median([c["reduce_s"] for c in chunk_timings])),
         "chunk_load_min_s": float(np.min([c["load_s"] for c in chunk_timings])),
@@ -557,10 +578,10 @@ def _build_mps_products(
     verbose: bool,
     skip_mps_memory_check: bool | None,
 ) -> ScreeningResult:
-    from quantem.gpu.io import load
     from quantem.gpu.detector import auto_probe, detector_mask
     from quantem.gpu.dpc.workflow import find_optimal_rotation
     from quantem.gpu.io import inspect as inspect_source
+    from quantem.gpu.io import load
 
     t0 = time.perf_counter()
     metadata = inspect_source(str(master)).metadata
@@ -790,7 +811,7 @@ def _build_mps_products(
         "stream_s": float(stream_s),
         "rotation_s": float(rotation_s),
         "elapsed_s": float(elapsed_s),
-        "chunk_count": int(len(chunk_timings)),
+        "chunk_count": len(chunk_timings),
         "chunk_load_median_s": float(np.median([c["load_s"] for c in chunk_timings])),
         "chunk_reduce_median_s": float(np.median([c["reduce_s"] for c in chunk_timings])),
         "chunk_load_min_s": float(np.min([c["load_s"] for c in chunk_timings])),
@@ -929,6 +950,14 @@ def prepare(
     )
     if chunk_rows is not None:
         plan = _memory_plan_with_chunk_rows(plan, int(chunk_rows))
+    elif (
+        resolved_backend == "cuda"
+        and int(sample_positions) == 0
+        and plan_dtype == np.dtype(np.uint16)
+    ):
+        from ._cuda import _exact_cuda_memory_plan
+
+        plan = _exact_cuda_memory_plan(plan)
     if verbose:
         budget = f"{plan.memory_budget_gb:.1f} GB ({plan.memory_budget_source})"
         cuda = (

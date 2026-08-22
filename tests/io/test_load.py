@@ -1927,3 +1927,136 @@ def test_load_many_parallel_rejects_empty_gpu_list() -> None:
     load_module = import_module("quantem.gpu.io.load")
     with pytest.raises(ValueError, match="at least one CUDA device"):
         load_module._load_many_parallel(["scan_master.h5"], gpus=[])
+
+
+def test_source_aligned_ranges_group_complete_shards_without_splitting() -> None:
+    """Sequential screening should group shards and split only oversized ones."""
+
+    from quantem.gpu.io.load import _source_aligned_frame_ranges
+
+    assert _source_aligned_frame_ranges(
+        [0, 10_000, 20_000, 30_000, 40_000, 50_000, 55_000],
+        frame_count=55_000,
+        max_batch_frames=42_000,
+    ) == ((0, 40_000), (40_000, 55_000))
+    assert _source_aligned_frame_ranges(
+        [0, 50_000, 55_000],
+        frame_count=55_000,
+        max_batch_frames=42_000,
+    ) == ((0, 42_000), (42_000, 50_000), (50_000, 55_000))
+
+
+def test_source_aligned_ranges_fail_closed_on_incomplete_sources() -> None:
+    """The private range planner may never silently omit scan positions."""
+
+    from quantem.gpu.io.load import _source_aligned_frame_ranges
+
+    with pytest.raises(ValueError, match="but 11 are required"):
+        _source_aligned_frame_ranges(
+            [0, 10],
+            frame_count=11,
+            max_batch_frames=4,
+        )
+
+
+def test_contiguous_frame_read_plan_preserves_order_and_coalesces() -> None:
+    """The fast sequential planner must retain exact chunk destinations."""
+
+    from quantem.gpu.io.load import _contiguous_frame_read_plan
+
+    source_infos = [
+        {
+            "chunk_infos": [(100, 10), (115, 10), (1_000, 5)],
+            "n_frames": 3,
+        },
+        {
+            "chunk_infos": [(200, 12), (216, 8)],
+            "n_frames": 2,
+        },
+    ]
+    result = _contiguous_frame_read_plan(
+        source_infos,
+        [0, 3, 5],
+        np.arange(1, 5, dtype=np.int64),
+        max_gap_bytes=5,
+    )
+
+    assert result is not None
+    offsets, sizes, plan, total_bytes = result
+    np.testing.assert_array_equal(offsets, [0, 10, 15, 31])
+    np.testing.assert_array_equal(sizes, [10, 5, 12, 8])
+    assert plan == {
+        0: [(115, 0, 10), (1_000, 10, 5)],
+        1: [(200, 15, 24)],
+    }
+    assert total_bytes == 39
+
+
+def test_contiguous_frame_read_plan_defers_selector_semantics() -> None:
+    """Arbitrary order, duplicates, and physical reordering use the safe path."""
+
+    from quantem.gpu.io.load import _contiguous_frame_read_plan
+
+    source_infos = [{"chunk_infos": [(100, 10), (90, 10)], "n_frames": 2}]
+    assert (
+        _contiguous_frame_read_plan(
+            source_infos,
+            [0, 2],
+            np.array([0, 1]),
+            max_gap_bytes=0,
+        )
+        is None
+    )
+    assert (
+        _contiguous_frame_read_plan(
+            source_infos,
+            [0, 2],
+            np.array([0, 0]),
+            max_gap_bytes=0,
+        )
+        is None
+    )
+
+
+def test_frame_source_disk_cache_round_trips_compact_chunk_index(tmp_path) -> None:
+    """Prepared source indexes retain exact uint64 byte offsets and sizes."""
+
+    from quantem.gpu.io.load import (
+        _load_frame_source_disk_cache,
+        _write_frame_source_disk_cache,
+    )
+
+    cache_path = tmp_path / "source-index.pkl"
+    signature = {"source": "immutable-test-source"}
+    source_infos = [
+        {
+            "path": "data.h5",
+            "dataset_path": "/entry/data/data",
+            "n_frames": 2,
+            "frame_shape": (192, 192),
+            "dtype": np.dtype(np.uint16),
+            "chunk_infos": [(2**40 + 7, 12_345), (2**40 + 20_000, 13_579)],
+        }
+    ]
+    _write_frame_source_disk_cache(
+        str(cache_path),
+        signature=signature,
+        source_infos=source_infos,
+        pixel_mask=None,
+    )
+
+    loaded = _load_frame_source_disk_cache(
+        str(cache_path),
+        signature=signature,
+    )
+
+    assert loaded is not None
+    loaded_infos, loaded_mask = loaded
+    assert loaded_mask is None
+    assert loaded_infos[0]["dtype"] == np.dtype(np.uint16)
+    assert loaded_infos[0]["frame_shape"] == (192, 192)
+    assert loaded_infos[0]["chunk_infos"].dtype == np.dtype(np.uint64)
+    np.testing.assert_array_equal(
+        loaded_infos[0]["chunk_infos"],
+        np.asarray(source_infos[0]["chunk_infos"], dtype=np.uint64),
+    )
