@@ -232,10 +232,129 @@ extension Metal4DSTEMExactBinner {
     globalScanPositionOffset: Int,
     sourceAudit: Metal4DSTEMExactSourceAudit
   ) throws -> Metal4DSTEMExactBinningProvenance {
+    try encodeContiguousFrames(
+      commandBuffer: commandBuffer,
+      existingEncoder: nil,
+      stagedSource: stagedSource,
+      stagedSourceOffset: stagedSourceOffset,
+      destination: destination,
+      destinationView: destinationView,
+      plan: plan,
+      sourceFrameCount: sourceFrameCount,
+      globalScanPositionOffset: globalScanPositionOffset,
+      sourceAudit: sourceAudit,
+      stagingDtype: .uint16,
+      pipeline: contiguousU16ToU16
+    )
+  }
+
+  /// Encode identity-audited lossless uint8 staging into exact packed uint16 shards.
+  ///
+  /// This is the compact-staging counterpart of `encodeContiguousUInt16Frames`.
+  /// The source audit must prove every valid uint16 source value fits uint8;
+  /// otherwise validation fails before a command encoder is created.
+  @discardableResult
+  public func encodeContiguousAuditedUInt8Frames(
+    commandBuffer: MTLCommandBuffer,
+    stagedSource: MTLBuffer,
+    stagedSourceOffset: Int = 0,
+    destination: MTLBuffer,
+    destinationView: Metal4DSTEMExactBinningDestination = .complete,
+    plan: Metal4DSTEMLoadPlan,
+    sourceFrameCount: Int,
+    globalScanPositionOffset: Int,
+    sourceAudit: Metal4DSTEMExactSourceAudit
+  ) throws -> Metal4DSTEMExactBinningProvenance {
+    try encodeContiguousFrames(
+      commandBuffer: commandBuffer,
+      existingEncoder: nil,
+      stagedSource: stagedSource,
+      stagedSourceOffset: stagedSourceOffset,
+      destination: destination,
+      destinationView: destinationView,
+      plan: plan,
+      sourceFrameCount: sourceFrameCount,
+      globalScanPositionOffset: globalScanPositionOffset,
+      sourceAudit: sourceAudit,
+      stagingDtype: .uint8,
+      pipeline: contiguousU8ToU16
+    )
+  }
+
+  /// Package-internal exact uint16 staging path for an existing encoder.
+  package func encodeContiguousUInt16Frames(
+    encoder: MTLComputeCommandEncoder,
+    stagedSource: MTLBuffer,
+    stagedSourceOffset: Int = 0,
+    destination: MTLBuffer,
+    destinationView: Metal4DSTEMExactBinningDestination = .complete,
+    plan: Metal4DSTEMLoadPlan,
+    sourceFrameCount: Int,
+    globalScanPositionOffset: Int,
+    sourceAudit: Metal4DSTEMExactSourceAudit
+  ) throws -> Metal4DSTEMExactBinningProvenance {
+    try encodeContiguousFrames(
+      commandBuffer: nil,
+      existingEncoder: encoder,
+      stagedSource: stagedSource,
+      stagedSourceOffset: stagedSourceOffset,
+      destination: destination,
+      destinationView: destinationView,
+      plan: plan,
+      sourceFrameCount: sourceFrameCount,
+      globalScanPositionOffset: globalScanPositionOffset,
+      sourceAudit: sourceAudit,
+      stagingDtype: .uint16,
+      pipeline: contiguousU16ToU16
+    )
+  }
+
+  /// Package-internal audited uint8 staging path for an existing encoder.
+  package func encodeContiguousAuditedUInt8Frames(
+    encoder: MTLComputeCommandEncoder,
+    stagedSource: MTLBuffer,
+    stagedSourceOffset: Int = 0,
+    destination: MTLBuffer,
+    destinationView: Metal4DSTEMExactBinningDestination = .complete,
+    plan: Metal4DSTEMLoadPlan,
+    sourceFrameCount: Int,
+    globalScanPositionOffset: Int,
+    sourceAudit: Metal4DSTEMExactSourceAudit
+  ) throws -> Metal4DSTEMExactBinningProvenance {
+    try encodeContiguousFrames(
+      commandBuffer: nil,
+      existingEncoder: encoder,
+      stagedSource: stagedSource,
+      stagedSourceOffset: stagedSourceOffset,
+      destination: destination,
+      destinationView: destinationView,
+      plan: plan,
+      sourceFrameCount: sourceFrameCount,
+      globalScanPositionOffset: globalScanPositionOffset,
+      sourceAudit: sourceAudit,
+      stagingDtype: .uint8,
+      pipeline: contiguousU8ToU16
+    )
+  }
+
+  private func encodeContiguousFrames(
+    commandBuffer: MTLCommandBuffer?,
+    existingEncoder: MTLComputeCommandEncoder?,
+    stagedSource: MTLBuffer,
+    stagedSourceOffset: Int,
+    destination: MTLBuffer,
+    destinationView: Metal4DSTEMExactBinningDestination,
+    plan: Metal4DSTEMLoadPlan,
+    sourceFrameCount: Int,
+    globalScanPositionOffset: Int,
+    sourceAudit: Metal4DSTEMExactSourceAudit,
+    stagingDtype: Metal4DSTEMIntegerDType,
+    pipeline: MTLComputePipelineState
+  ) throws -> Metal4DSTEMExactBinningProvenance {
     let provenance = try Self.provenance(
       plan: plan,
       sourceAudit: sourceAudit,
-      stagingDtype: .uint16,
+      stagingDtype: stagingDtype,
       outputDtype: .uint16
     )
     guard plan.scanBin == 1,
@@ -256,7 +375,7 @@ extension Metal4DSTEMExactBinner {
       )
     }
     guard stagedSourceOffset >= 0,
-      stagedSourceOffset % MemoryLayout<UInt16>.stride == 0
+      stagedSourceOffset % stagingDtype.bytesPerValue == 0
     else {
       throw Metal4DSTEMExactBinnerError.invalidSourceOffset(stagedSourceOffset)
     }
@@ -265,7 +384,7 @@ extension Metal4DSTEMExactBinner {
         UInt64(sourceFrameCount), UInt64(plan.detectorPixels)
       ),
       let sourceBytes = Self.checkedProduct(
-        sourceValues, UInt64(MemoryLayout<UInt16>.stride)
+        sourceValues, UInt64(stagingDtype.bytesPerValue)
       ),
       let sourceOffsetBytes = UInt64(exactly: stagedSourceOffset),
       let requiredSourceBytes = Self.checkedSum(sourceOffsetBytes, sourceBytes)
@@ -347,10 +466,29 @@ extension Metal4DSTEMExactBinner {
     guard Self.fitsMetalUIntProduct(gridWidth, gridHeight) else {
       throw Metal4DSTEMExactBinnerError.arithmeticOverflow
     }
-    guard let encoder = commandBuffer.makeComputeCommandEncoder() else {
+    guard let encoder = existingEncoder ?? commandBuffer?.makeComputeCommandEncoder()
+    else {
       throw Metal4DSTEMExactBinnerError.commandEncoderUnavailable
     }
-    encoder.setComputePipelineState(contiguousU16ToU16)
+    let usesDetector192Bin1Tiled32 =
+      stagingDtype == .uint8
+      && plan.detectorRows == 192
+      && plan.detectorColumns == 192
+      && plan.detectorBin == 1
+      && plan.outputDetectorRows == 192
+      && plan.outputDetectorColumns == 192
+    let usesDetector192Bin2Tiled32 =
+      stagingDtype == .uint8
+      && plan.detectorRows == 192
+      && plan.detectorColumns == 192
+      && plan.detectorBin == 2
+      && plan.outputDetectorRows == 96
+      && plan.outputDetectorColumns == 96
+    encoder.setComputePipelineState(
+      usesDetector192Bin1Tiled32
+        ? contiguousBin1U8ToU16Tiled32
+        : (usesDetector192Bin2Tiled32 ? contiguousBin2U8ToU16Tiled32 : pipeline)
+    )
     encoder.setBuffer(stagedSource, offset: stagedSourceOffset, index: 0)
     encoder.setBuffer(destination, offset: 0, index: 1)
     encoder.setBytes(
@@ -358,11 +496,24 @@ extension Metal4DSTEMExactBinner {
       length: MemoryLayout<Metal4DSTEMContiguousDetectorBinParameters>.stride,
       index: 2
     )
-    encoder.dispatchThreads(
-      MTLSize(width: gridWidth, height: gridHeight, depth: 1),
-      threadsPerThreadgroup: MTLSize(width: 32, height: 8, depth: 1)
-    )
-    encoder.endEncoding()
+    if usesDetector192Bin1Tiled32 || usesDetector192Bin2Tiled32 {
+      encoder.dispatchThreadgroups(
+        MTLSize(
+          width: (gridWidth + 31) / 32,
+          height: (gridHeight + 31) / 32,
+          depth: 1
+        ),
+        threadsPerThreadgroup: MTLSize(width: 16, height: 16, depth: 1)
+      )
+    } else {
+      encoder.dispatchThreads(
+        MTLSize(width: gridWidth, height: gridHeight, depth: 1),
+        threadsPerThreadgroup: MTLSize(width: 32, height: 8, depth: 1)
+      )
+    }
+    if existingEncoder == nil {
+      encoder.endEncoding()
+    }
     return provenance
   }
 }

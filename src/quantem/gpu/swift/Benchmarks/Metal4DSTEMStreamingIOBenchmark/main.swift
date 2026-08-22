@@ -16,7 +16,10 @@ private struct Options {
       (--bands-file PATH | --all-bands) \\
       [--window-scan-rows N] \\
       [--iterations N] \\
+      [--buffered-read-ahead-shards N] \\
       [--exact-working-audit PATH --detector-bin N --maximum-shard-bytes N] \\
+      [--reuse-working-destinations] \\
+      [--boundary-working-volume-hashes] \\
       [--exact-working-cache-payload PATH \\
        --exact-working-cache-metadata PATH \\
        --cache-reopen-iterations N]
@@ -28,7 +31,10 @@ private struct Options {
     uint16 shards. Supplying both cache paths instead writes those same exact
     shards transactionally with only one output shard resident at a time;
     cache mode requires --iterations 1 and records separately labeled reopen
-    validation. Application UI and product presentation are not measured.
+    validation. --reuse-working-destinations retains the first resident load's
+    caller-owned Metal shards and exactly overwrites them on later trials; its
+    fresh-allocation trial and reused-buffer distribution remain separate.
+    Application UI and product presentation are not measured.
     """
 
   let input: URL
@@ -37,11 +43,14 @@ private struct Options {
   let revision: String
   let windowScanRows: Int
   let iterations: Int
+  let bufferedReadAheadShards: Int
   let bandsFile: URL?
   let allBands: Bool
   let exactWorkingAudit: URL?
   let detectorBin: Int?
   let maximumShardBytes: UInt64?
+  let reuseWorkingDestinations: Bool
+  let boundaryWorkingVolumeHashes: Bool
   let exactWorkingCachePayload: URL?
   let exactWorkingCacheMetadata: URL?
   let cacheReopenIterations: Int
@@ -52,7 +61,9 @@ private struct Options {
     var index = 0
     while index < arguments.count {
       let argument = arguments[index]
-      if argument == "--all-bands" {
+      if argument == "--all-bands" || argument == "--reuse-working-destinations"
+        || argument == "--boundary-working-volume-hashes"
+      {
         flags.insert(argument)
         index += 1
         continue
@@ -83,9 +94,12 @@ private struct Options {
     }
     let windowRows = Int(values["--window-scan-rows"] ?? "8") ?? 0
     let iterations = Int(values["--iterations"] ?? "1") ?? 0
-    guard windowRows > 0, iterations > 0 else {
+    let bufferedReadAheadShards =
+      Int(values["--buffered-read-ahead-shards"] ?? "0") ?? -1
+    guard windowRows > 0, iterations > 0, bufferedReadAheadShards >= 0 else {
       throw BenchmarkError.usage(
-        "--window-scan-rows and --iterations must be positive integers."
+        "Window rows and iterations must be positive; buffered read-ahead "
+          + "shards must be a nonnegative integer."
       )
     }
     let audit = values["--exact-working-audit"].map {
@@ -138,6 +152,18 @@ private struct Options {
         "--cache-reopen-iterations is valid only with exact cache paths."
       )
     }
+    let reuseWorkingDestinations = flags.contains("--reuse-working-destinations")
+    let boundaryWorkingVolumeHashes = flags.contains(
+      "--boundary-working-volume-hashes"
+    )
+    if reuseWorkingDestinations {
+      guard audit != nil, cachePayload == nil, iterations >= 2 else {
+        throw BenchmarkError.usage(
+          "--reuse-working-destinations requires resident exact-working options, "
+            + "no cache payload, and at least two iterations."
+        )
+      }
+    }
     return Self(
       input: URL(fileURLWithPath: input),
       cacheDirectory: URL(fileURLWithPath: cache, isDirectory: true),
@@ -145,11 +171,14 @@ private struct Options {
       revision: revision,
       windowScanRows: windowRows,
       iterations: iterations,
+      bufferedReadAheadShards: bufferedReadAheadShards,
       bandsFile: bandsFile,
       allBands: allBands,
       exactWorkingAudit: audit,
       detectorBin: detectorBin,
       maximumShardBytes: maximumShardBytes,
+      reuseWorkingDestinations: reuseWorkingDestinations,
+      boundaryWorkingVolumeHashes: boundaryWorkingVolumeHashes,
       exactWorkingCachePayload: cachePayload,
       exactWorkingCacheMetadata: cacheMetadata,
       cacheReopenIterations: cacheReopenIterations
@@ -171,6 +200,7 @@ private enum BenchmarkError: LocalizedError {
 private struct RunRecord: Codable {
   let trial: Int
   let state: String
+  let destinationReused: Bool
   let wallSeconds: Double
   let destinationAllocationSeconds: Double?
   let workingVolumeHashSeconds: Double?
@@ -179,10 +209,17 @@ private struct RunRecord: Codable {
   let peakWorkingMetalBytes: UInt64?
   let destinationStorage: String?
   let gpuSeconds: Double
+  let synchronizedStageSeconds: Metal4DSTEMIndexedStageSeconds?
   let sourceMappingSeconds: Double
+  let sourceOpenAndStatSeconds: Double
+  let sourceMmapSeconds: Double
+  let sourceReadSeconds: Double
+  let sourceMetalBufferSeconds: Double
+  let sourceTransfer: Metal4DSTEMIndexedSourceTransfer
   let commandBufferCount: Int
   let peakInFlightCommandBuffers: Int
   let peakInFlightMappedSourceBytes: UInt64
+  let peakRetainedSourceBufferBytes: UInt64
   let mappedCompressedSourceBytes: UInt64
   let maximumMappedCompressedSourceBytes: UInt64
   let maximumMappedSourceBufferBytes: UInt64
@@ -236,7 +273,11 @@ private struct BenchmarkSummary: Codable {
   let maximumDecodedWindowBytes: UInt64
   let requestedWindowScanRows: Int
   let maximumActualWindowBytes: UInt64
+  let maximumDetectorPartialScratchBytes: UInt64?
   let estimatedAllocatedMetalBytesExcludingMappedSource: UInt64
+  let estimatedAllocatedMetalBytesIncludingSourceTransfer: UInt64
+  let sourceTransfer: Metal4DSTEMIndexedSourceTransfer
+  let maximumRetainedSourceBufferBytes: UInt64
   let maximumMappedCompressedBytes: UInt64
   let maximumMappedSourceBufferBytes: UInt64
   let maximumInFlightMappedSourceBytes: UInt64
@@ -257,6 +298,9 @@ private struct BenchmarkSummary: Codable {
   let pipelineCompilationSeconds: Double
   let planSeconds: Double
   let firstPackageEndToEndSeconds: Double
+  let reusesResidentDestinationShards: Bool
+  let firstFreshDestinationWallSeconds: Double?
+  let reusedDestinationLoadWall: Distribution?
   let repeatedLoadWall: Distribution
   let runs: [RunRecord]
   let provenance: Metal4DSTEMIndexedLoadProvenance
@@ -336,6 +380,8 @@ private struct LoadedTrial {
   let workingVolumeSHA256: String?
   let workingVolumeHashSeconds: Double?
   let metalAllocatedBytesAfterLoad: UInt64
+  let destinationReused: Bool
+  let retainedWorkingVolumeShards: [MTLBuffer]?
 }
 
 private func run() throws {
@@ -409,11 +455,18 @@ private func run() throws {
     ],
     label: "decoded window"
   )
+  let sourceTransfer: Metal4DSTEMIndexedSourceTransfer =
+    options.bufferedReadAheadShards == 0
+    ? .memoryMapped
+    : .bufferedReadAhead(
+      prefetchShardCount: options.bufferedReadAheadShards
+    )
   let planStarted = CFAbsoluteTimeGetCurrent()
   let productPlan = try Metal4DSTEMIndexedLoadPlan(
     source: source,
     maximumDecodedWindowBytes: windowBytes,
-    detectorBands: bands
+    detectorBands: bands,
+    sourceTransfer: sourceTransfer
   )
   let binnedPlan: Metal4DSTEMIndexedBinnedLoadPlan?
   if let auditURL = options.exactWorkingAudit,
@@ -430,7 +483,8 @@ private func run() throws {
       detectorBands: bands,
       detectorBin: detectorBin,
       sourceAudit: audit,
-      maximumShardBytes: maximumShardBytes
+      maximumShardBytes: maximumShardBytes,
+      sourceTransfer: sourceTransfer
     )
   } else {
     binnedPlan = nil
@@ -448,6 +502,7 @@ private func run() throws {
   var acceptedProvenance: Metal4DSTEMIndexedLoadProvenance?
   var acceptedWorkingVolumeSHA256: String?
   var acceptedData: [String: Data] = [:]
+  var reusableWorkingVolumeShards: [MTLBuffer]?
   for trial in 1...options.iterations {
     let metalAllocatedBytesBeforeLoad = UInt64(device.currentAllocatedSize)
     let loaded: LoadedTrial = try autoreleasepool {
@@ -476,16 +531,37 @@ private func run() throws {
             binningDispatchCount: result.metrics.binningDispatchCount,
             workingVolumeSHA256: result.metadata.payloadSHA256,
             workingVolumeHashSeconds: nil,
-            metalAllocatedBytesAfterLoad: UInt64(device.currentAllocatedSize)
+            metalAllocatedBytesAfterLoad: UInt64(device.currentAllocatedSize),
+            destinationReused: false,
+            retainedWorkingVolumeShards: nil
           )
         }
-        let result = try loader.loadExactBinnedShards(
-          source: source,
-          plan: binnedPlan
-        )
+        let result: Metal4DSTEMIndexedBinnedLoadResult
+        let destinationReused: Bool
+        if let reusableWorkingVolumeShards {
+          result = try loader.loadExactBinnedShards(
+            source: source,
+            plan: binnedPlan,
+            destinationShards: reusableWorkingVolumeShards
+          )
+          destinationReused = true
+        } else {
+          result = try loader.loadExactBinnedShards(
+            source: source,
+            plan: binnedPlan
+          )
+          destinationReused = false
+        }
+        let hashesWorkingVolume =
+          !options.boundaryWorkingVolumeHashes
+          || trial == 1 || trial == options.iterations
         let hashStarted = CFAbsoluteTimeGetCurrent()
-        let workingVolumeSHA256 = try sha256(result.workingVolumeShards)
-        let hashSeconds = CFAbsoluteTimeGetCurrent() - hashStarted
+        let workingVolumeSHA256 =
+          hashesWorkingVolume
+          ? try sha256(result.workingVolumeShards) : nil
+        let hashSeconds =
+          hashesWorkingVolume
+          ? CFAbsoluteTimeGetCurrent() - hashStarted : nil
         return LoadedTrial(
           products: result.products,
           sourceAudit: result.sourceAudit,
@@ -500,7 +576,10 @@ private func run() throws {
           binningDispatchCount: result.metrics.binningDispatchCount,
           workingVolumeSHA256: workingVolumeSHA256,
           workingVolumeHashSeconds: hashSeconds,
-          metalAllocatedBytesAfterLoad: UInt64(device.currentAllocatedSize)
+          metalAllocatedBytesAfterLoad: UInt64(device.currentAllocatedSize),
+          destinationReused: destinationReused,
+          retainedWorkingVolumeShards:
+            options.reuseWorkingDestinations ? result.workingVolumeShards : nil
         )
       }
       let result = try loader.loadExactProducts(source: source, plan: productPlan)
@@ -518,8 +597,13 @@ private func run() throws {
         binningDispatchCount: nil,
         workingVolumeSHA256: nil,
         workingVolumeHashSeconds: nil,
-        metalAllocatedBytesAfterLoad: UInt64(device.currentAllocatedSize)
+        metalAllocatedBytesAfterLoad: UInt64(device.currentAllocatedSize),
+        destinationReused: false,
+        retainedWorkingVolumeShards: nil
       )
+    }
+    if let retained = loaded.retainedWorkingVolumeShards {
+      reusableWorkingVolumeShards = retained
     }
     let metalAllocatedBytesAfterRelease = UInt64(device.currentAllocatedSize)
     let data = productData(loaded.products)
@@ -552,9 +636,12 @@ private func run() throws {
     records.append(
       RunRecord(
         trial: trial,
-        state: trial == 1
-          ? "first_process_\(loaded.metrics.cacheState)"
-          : "same_process_repeat_\(loaded.metrics.cacheState)",
+        state: loaded.destinationReused
+          ? "same_process_\(loaded.metrics.cacheState)_caller_destination_reused"
+          : (trial == 1
+            ? "first_process_\(loaded.metrics.cacheState)_fresh_destination_allocation"
+            : "same_process_repeat_\(loaded.metrics.cacheState)"),
+        destinationReused: loaded.destinationReused,
         wallSeconds: loaded.wallSeconds,
         destinationAllocationSeconds: loaded.destinationAllocationSeconds,
         workingVolumeHashSeconds: loaded.workingVolumeHashSeconds,
@@ -563,10 +650,18 @@ private func run() throws {
         peakWorkingMetalBytes: loaded.peakWorkingMetalBytes,
         destinationStorage: loaded.destinationStorage,
         gpuSeconds: loaded.metrics.gpuSeconds,
+        synchronizedStageSeconds: loaded.metrics.synchronizedStageSeconds,
         sourceMappingSeconds: loaded.metrics.sourceMappingSeconds,
+        sourceOpenAndStatSeconds: loaded.metrics.sourceOpenAndStatSeconds,
+        sourceMmapSeconds: loaded.metrics.sourceMmapSeconds,
+        sourceReadSeconds: loaded.metrics.sourceReadSeconds,
+        sourceMetalBufferSeconds: loaded.metrics.sourceMetalBufferSeconds,
+        sourceTransfer: loaded.metrics.sourceTransfer,
         commandBufferCount: loaded.metrics.commandBufferCount,
         peakInFlightCommandBuffers: loaded.metrics.peakInFlightCommandBuffers,
         peakInFlightMappedSourceBytes: loaded.metrics.peakInFlightMappedSourceBytes,
+        peakRetainedSourceBufferBytes:
+          loaded.metrics.peakRetainedSourceBufferBytes,
         mappedCompressedSourceBytes: loaded.metrics.mappedCompressedSourceBytes,
         maximumMappedCompressedSourceBytes:
           loaded.metrics.maximumMappedCompressedSourceBytes,
@@ -623,12 +718,23 @@ private func run() throws {
     throw BenchmarkError.invalid("The benchmark produced no accepted load trial.")
   }
   let wall = records.map(\.wallSeconds)
+  let reusedDestinationWall = records.filter(\.destinationReused).map(\.wallSeconds)
+  let repeatedWall = reusedDestinationWall.isEmpty ? wall : reusedDestinationWall
   let distribution = Distribution(
-    samples: wall.count,
-    p50: percentile(wall, fraction: 0.50),
-    p95: percentile(wall, fraction: 0.95),
-    maximum: wall.max() ?? .nan
+    samples: repeatedWall.count,
+    p50: percentile(repeatedWall, fraction: 0.50),
+    p95: percentile(repeatedWall, fraction: 0.95),
+    maximum: repeatedWall.max() ?? .nan
   )
+  let reusedDestinationDistribution: Distribution? =
+    reusedDestinationWall.isEmpty
+    ? nil
+    : Distribution(
+      samples: reusedDestinationWall.count,
+      p50: percentile(reusedDestinationWall, fraction: 0.50),
+      p95: percentile(reusedDestinationWall, fraction: 0.95),
+      maximum: reusedDestinationWall.max() ?? .nan
+    )
   let cacheReopenDistribution: Distribution? =
     cacheReopenRuns.isEmpty
     ? nil
@@ -654,21 +760,48 @@ private func run() throws {
     ]
   let estimatedAllocatedMetalBytes: UInt64
   if options.exactWorkingCachePayload != nil, let binnedPlan {
-    let sum = productPlan.estimatedAllocatedMetalBytesExcludingMappedSource
+    let outputSum = productPlan.estimatedAllocatedMetalBytesExcludingMappedSource
       .addingReportingOverflow(binnedPlan.shardPlan.maximumActualShardBytes)
-    guard !sum.overflow else {
+    guard !outputSum.overflow else {
       throw BenchmarkError.invalid(
         "Bounded cache-build Metal allocation estimate overflows UInt64."
       )
     }
-    estimatedAllocatedMetalBytes = sum.partialValue
+    let scratchSum = outputSum.partialValue.addingReportingOverflow(
+      binnedPlan.maximumDetectorPartialScratchBytes
+    )
+    guard !scratchSum.overflow else {
+      throw BenchmarkError.invalid(
+        "Bounded cache-build scratch estimate overflows UInt64."
+      )
+    }
+    estimatedAllocatedMetalBytes = scratchSum.partialValue
   } else {
     estimatedAllocatedMetalBytes =
       binnedPlan?.estimatedAllocatedMetalBytesExcludingMappedSource
       ?? productPlan.estimatedAllocatedMetalBytesExcludingMappedSource
   }
+  let maximumRetainedSourceBufferBytes =
+    binnedPlan?.maximumRetainedSourceBufferBytes
+    ?? productPlan.maximumRetainedSourceBufferBytes
+  let estimatedAllocatedMetalBytesIncludingSourceTransfer: UInt64
+  switch sourceTransfer {
+  case .memoryMapped:
+    estimatedAllocatedMetalBytesIncludingSourceTransfer =
+      estimatedAllocatedMetalBytes
+  case .bufferedReadAhead:
+    let total = estimatedAllocatedMetalBytes.addingReportingOverflow(
+      maximumRetainedSourceBufferBytes
+    )
+    guard !total.overflow else {
+      throw BenchmarkError.invalid(
+        "Metal allocation including source transfer overflows UInt64."
+      )
+    }
+    estimatedAllocatedMetalBytesIncludingSourceTransfer = total.partialValue
+  }
   let summary = BenchmarkSummary(
-    schema: "quantem.gpu.metal-4dstem-indexed-load-benchmark/v3",
+    schema: "quantem.gpu.metal-4dstem-indexed-load-benchmark/v6",
     revision: options.revision,
     timestamp: ISO8601DateFormatter().string(from: Date()),
     host: ProcessInfo.processInfo.hostName,
@@ -696,8 +829,14 @@ private func run() throws {
     maximumDecodedWindowBytes: productPlan.maximumDecodedWindowBytes,
     requestedWindowScanRows: options.windowScanRows,
     maximumActualWindowBytes: productPlan.maximumActualWindowBytes,
+    maximumDetectorPartialScratchBytes:
+      binnedPlan?.maximumDetectorPartialScratchBytes,
     estimatedAllocatedMetalBytesExcludingMappedSource:
       estimatedAllocatedMetalBytes,
+    estimatedAllocatedMetalBytesIncludingSourceTransfer:
+      estimatedAllocatedMetalBytesIncludingSourceTransfer,
+    sourceTransfer: sourceTransfer,
+    maximumRetainedSourceBufferBytes: maximumRetainedSourceBufferBytes,
     maximumMappedCompressedBytes: productPlan.maximumMappedCompressedBytes,
     maximumMappedSourceBufferBytes: productPlan.maximumMappedSourceBufferBytes,
     maximumInFlightMappedSourceBytes: productPlan.maximumInFlightMappedSourceBytes,
@@ -721,6 +860,10 @@ private func run() throws {
     planSeconds: planSeconds,
     firstPackageEndToEndSeconds:
       catalogSeconds + compileSeconds + planSeconds + first.wallSeconds,
+    reusesResidentDestinationShards: options.reuseWorkingDestinations,
+    firstFreshDestinationWallSeconds:
+      options.reuseWorkingDestinations ? first.wallSeconds : nil,
+    reusedDestinationLoadWall: reusedDestinationDistribution,
     repeatedLoadWall: distribution,
     runs: records,
     provenance: provenance,

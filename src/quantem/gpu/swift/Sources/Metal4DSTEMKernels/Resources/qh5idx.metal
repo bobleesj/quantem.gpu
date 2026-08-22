@@ -910,6 +910,204 @@ kernel void h5lz4dc_unshuffle_u16_audited_low8_qh5idx(
     }
 }
 
+// Source-identity-audited compact path using the direct 4 KiB prefix decoder.
+// The durable audit proves that every valid high byte is zero, so the omitted
+// high bit planes contain no scientific information. Source and result dtypes
+// remain uint16; this uint8 buffer is transient exact staging only.
+kernel void h5lz4dc_unshuffle_u16_audited_low8_direct_qh5idx(
+    const device uchar *h5File [[buffer(0)]],
+    const device uint2 *blockMetadata [[buffer(1)]],
+    constant ulong &rangeStart [[buffer(2)]],
+    constant uint &blocksPerFrame [[buffer(3)]],
+    constant uint &frameElements [[buffer(4)]],
+    device uchar *output [[buffer(5)]],
+    constant uint &metadataFrameOffset [[buffer(6)]],
+    const device uchar *badPixelMask [[buffer(7)]],
+    device atomic_uint *countAudit [[buffer(8)]],
+    constant uint &globalFrameOffset [[buffer(9)]],
+    uint3 threadgroupPosition [[threadgroup_position_in_grid]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint simdgroup [[simdgroup_index_in_threadgroup]]
+) {
+    uint frame = threadgroupPosition.x;
+    uint block = threadgroupPosition.z;
+    threadgroup uchar lowPlanes[kBslz4BlockBytes / 2];
+    threadgroup atomic_uint blockMax;
+    if (simdgroup == 0 && lane == 0) {
+        atomic_store_explicit(&blockMax, 0u, memory_order_relaxed);
+    }
+    if (simdgroup == 0 && block < blocksPerFrame) {
+        uint2 metadata = blockMetadata[
+            ulong(metadataFrameOffset + frame) * blocksPerFrame + block
+        ];
+        bslz4DecompressPrefixDirectToThreadgroup(
+            lowPlanes,
+            h5File + rangeStart + ulong(metadata.x),
+            metadata.y,
+            kBslz4BlockBytes / 2,
+            lane
+        );
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    uint localMax = 0u;
+    if (block < blocksPerFrame) {
+        const threadgroup uint *planes =
+            (const threadgroup uint *)lowPlanes;
+        uint blockStart = block * 4096u;
+        uint blockStop = min(frameElements, blockStart + 4096u);
+        uint groups = (blockStop - blockStart + 31u) / 32u;
+        for (uint group = simdgroup; group < groups; group += 4u) {
+            uint detectorIndex = blockStart + group * 32u + lane;
+            if (detectorIndex >= blockStop) continue;
+            uchar value = 0;
+            for (uint bit = 0u; bit < 8u; ++bit) {
+                if (planes[bit * 128u + group] & (1u << lane)) {
+                    value |= uchar(1u << bit);
+                }
+            }
+            uchar stored = badPixelMask[detectorIndex] ? uchar(0) : value;
+            output[ulong(frame) * frameElements + detectorIndex] = stored;
+            localMax = max(localMax, uint(stored));
+        }
+        atomic_fetch_max_explicit(&blockMax, localMax, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (simdgroup == 0 && lane == 0) {
+        uint frameAudit = 2u * (globalFrameOffset + frame);
+        atomic_fetch_max_explicit(
+            &countAudit[frameAudit],
+            atomic_load_explicit(&blockMax, memory_order_relaxed),
+            memory_order_relaxed
+        );
+    }
+}
+
+// Exact 192x192 low-plane specialization. Every frame contains nine complete
+// 4 KiB low-plane blocks, so each thread can transpose eight detector pixels at
+// once without partial-block handling. The durable source audit still gates
+// this path; bad-pixel masking and the runtime maximum audit remain unchanged.
+kernel void h5lz4dc_unshuffle_u16_audited_low8_direct_octet192_qh5idx(
+    const device uchar *h5File [[buffer(0)]],
+    const device uint2 *blockMetadata [[buffer(1)]],
+    constant ulong &rangeStart [[buffer(2)]],
+    constant uint &blocksPerFrame [[buffer(3)]],
+    constant uint &frameElements [[buffer(4)]],
+    device uchar *output [[buffer(5)]],
+    constant uint &metadataFrameOffset [[buffer(6)]],
+    const device uchar *badPixelMask [[buffer(7)]],
+    device atomic_uint *countAudit [[buffer(8)]],
+    constant uint &globalFrameOffset [[buffer(9)]],
+    uint3 threadgroupPosition [[threadgroup_position_in_grid]],
+    uint threadIndex [[thread_index_in_threadgroup]],
+    uint3 threadsPerThreadgroup [[threads_per_threadgroup]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint simdgroup [[simdgroup_index_in_threadgroup]]
+) {
+    uint frame = threadgroupPosition.x;
+    uint block = threadgroupPosition.z;
+    threadgroup uchar lowPlanes[kBslz4BlockBytes / 2];
+    threadgroup atomic_uint blockMax;
+    if (threadIndex == 0u) {
+        atomic_store_explicit(&blockMax, 0u, memory_order_relaxed);
+    }
+    if (simdgroup == 0u && block < blocksPerFrame) {
+        uint2 metadata = blockMetadata[
+            ulong(metadataFrameOffset + frame) * blocksPerFrame + block
+        ];
+        bslz4DecompressPrefixDirectToThreadgroup(
+            lowPlanes,
+            h5File + rangeStart + ulong(metadata.x),
+            metadata.y,
+            kBslz4BlockBytes / 2,
+            lane
+        );
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    uint localMax = 0u;
+    if (block < blocksPerFrame && frameElements == 192u * 192u
+        && blocksPerFrame == 9u) {
+        const threadgroup uint *planes =
+            (const threadgroup uint *)lowPlanes;
+        uint blockStart = block * 4096u;
+        device uchar *frameOutput = output + ulong(frame) * frameElements;
+        uint threadsInGroup =
+            threadsPerThreadgroup.x * threadsPerThreadgroup.y
+            * threadsPerThreadgroup.z;
+        for (uint octet = threadIndex; octet < 512u; octet += threadsInGroup) {
+            uint group = octet >> 2u;
+            uint shift = (octet & 3u) * 8u;
+            ulong bitMatrix = 0ul;
+            for (uint bit = 0u; bit < 8u; ++bit) {
+                uint byteValues = (planes[bit * 128u + group] >> shift) & 0xffu;
+                bitMatrix |= ulong(byteValues) << (bit * 8u);
+            }
+            ulong swap =
+                (bitMatrix ^ (bitMatrix >> 7u)) & 0x00AA00AA00AA00AAul;
+            bitMatrix ^= swap ^ (swap << 7u);
+            swap =
+                (bitMatrix ^ (bitMatrix >> 14u)) & 0x0000CCCC0000CCCCul;
+            bitMatrix ^= swap ^ (swap << 14u);
+            swap =
+                (bitMatrix ^ (bitMatrix >> 28u)) & 0x00000000F0F0F0F0ul;
+            bitMatrix ^= swap ^ (swap << 28u);
+
+            uint packedLow = uint(bitMatrix);
+            uint packedHigh = uint(bitMatrix >> 32u);
+            uint detectorIndex = blockStart + octet * 8u;
+            device uchar *destination = frameOutput + detectorIndex;
+            const device uchar *mask = badPixelMask + detectorIndex;
+            uint maskLow = *((const device uint *)mask);
+            uint maskHigh = *((const device uint *)(mask + 4u));
+            if (maskLow == 0u) {
+                *((device uint *)destination) = packedLow;
+                localMax = max(
+                    localMax,
+                    max(
+                        max(packedLow & 0xffu, (packedLow >> 8u) & 0xffu),
+                        max((packedLow >> 16u) & 0xffu, packedLow >> 24u)
+                    )
+                );
+            } else {
+                for (uint valueIndex = 0u; valueIndex < 4u; ++valueIndex) {
+                    uchar value = uchar(packedLow >> (valueIndex * 8u));
+                    uchar stored = mask[valueIndex] ? uchar(0) : value;
+                    destination[valueIndex] = stored;
+                    localMax = max(localMax, uint(stored));
+                }
+            }
+            if (maskHigh == 0u) {
+                *((device uint *)(destination + 4u)) = packedHigh;
+                localMax = max(
+                    localMax,
+                    max(
+                        max(packedHigh & 0xffu, (packedHigh >> 8u) & 0xffu),
+                        max((packedHigh >> 16u) & 0xffu, packedHigh >> 24u)
+                    )
+                );
+            } else {
+                for (uint valueIndex = 0u; valueIndex < 4u; ++valueIndex) {
+                    uchar value = uchar(packedHigh >> (valueIndex * 8u));
+                    uchar stored = mask[4u + valueIndex] ? uchar(0) : value;
+                    destination[4u + valueIndex] = stored;
+                    localMax = max(localMax, uint(stored));
+                }
+            }
+        }
+        atomic_fetch_max_explicit(&blockMax, localMax, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (threadIndex == 0u) {
+        uint frameAudit = 2u * (globalFrameOffset + frame);
+        atomic_fetch_max_explicit(
+            &countAudit[frameAudit],
+            atomic_load_explicit(&blockMax, memory_order_relaxed),
+            memory_order_relaxed
+        );
+    }
+}
+
 struct QH5DirectDetectorBinParams {
     uint sourceDetectorRows;
     uint sourceDetectorColumns;
