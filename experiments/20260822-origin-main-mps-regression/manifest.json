@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260822-origin-main-mps-regression",
+  "status": "running",
+  "question": "Does the consolidated origin-main candidate preserve exact Python MPS detector bins 1, 2, 4, and 8 plus CoM, DPC, iDPC, detector-product, and display-FFT parity without a package-load regression?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260822-origin-main-mps-regression/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "c5d239ab88d8667ddfe12fe6519d60edadc1749c",
+    "entrypoint": "scripts/benchmark_hdf5_load.py and the frozen DPC/product/display parity suites",
+    "dirty": false,
+    "diff_sha256": null,
+    "snapshot_path": "local-snapshot://aug-22-origin-main-integration/c5d239a"
+  },
+  "inputs": [
+    {
+      "dataset_id": "real-512x512x192x192-u16-bslz4-27shard-master-fixture-c",
+      "path": "private-fixture://full-512-u16-bslz4-27shard/master-c",
+      "sha256": "c9c0d968fae70b8911ae925d676b90007886970fa99fe296a47cfe07844bbfe9"
+    }
+  ],
+  "parameters": {
+    "source_shape": [512, 512, 192, 192],
+    "source_dtype": "uint16",
+    "selected_scan": [512, 512],
+    "scan_bin": 1,
+    "detector_bins": [1, 2, 4, 8],
+    "scan_crop": null,
+    "detector_crop": null,
+    "output_dtype": "uint16",
+    "load_repetitions": 7,
+    "load_warmup": 1,
+    "source_page_state": "operating-system source pages uncontrolled; this run cannot satisfy a cold-source gate",
+    "timing_boundary": "public io.load return after backend synchronization",
+    "parity_entrypoints": [
+      "tests/test_dpc_rotation_agreement.py",
+      "tests/test_products_parity.py",
+      "tests/test_display_fft_parity.py",
+      "tests/test_integer_detector_products.py",
+      "tests/test_hdf5_real_agreement.py"
+    ],
+    "run_root": "local-evidence://20260822-origin-main-mps-regression"
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "mps",
+    "gpu_ids": ["Apple M5 Max integrated GPU"],
+    "gpu_model": "Apple M5 Max, 40-core GPU, 128 GB unified memory"
+  },
+  "outputs": [],
+  "timestamps": {
+    "created": "2026-08-22T11:37:22-07:00",
+    "started": "2026-08-22T11:37:22-07:00",
+    "finished": null
+  }
+}
