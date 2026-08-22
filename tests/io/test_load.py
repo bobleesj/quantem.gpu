@@ -46,7 +46,10 @@ def test_mps_dataset_path_u8_declares_clipping_before_detector_bin(monkeypatch) 
     from importlib import import_module
 
     load_module = import_module("quantem.gpu.io.load")
-    decoder = import_module("quantem.gpu.io.backends.mps.decoder")
+    mps_package = import_module("quantem.gpu.io.backends.mps")
+    decoder = types.ModuleType("quantem.gpu.io.backends.mps.decoder")
+    monkeypatch.setitem(sys.modules, decoder.__name__, decoder)
+    monkeypatch.setattr(mps_package, "decoder", decoder, raising=False)
     calls = {}
 
     monkeypatch.setattr(load_module, "get_metadata", lambda path: {})
@@ -56,7 +59,7 @@ def test_mps_dataset_path_u8_declares_clipping_before_detector_bin(monkeypatch) 
         calls.update(kwargs)
         return np.full((1, 1, 1), 255, dtype=np.uint8)
 
-    monkeypatch.setattr(decoder, "load_master", fake_load_master)
+    monkeypatch.setattr(decoder, "load_master", fake_load_master, raising=False)
     data, _ = load_module._load_view(
         "fixture.h5",
         "mps",
