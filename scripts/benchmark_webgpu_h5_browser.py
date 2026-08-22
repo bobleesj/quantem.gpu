@@ -386,14 +386,24 @@ class CdpTarget:
         msg_id = self._next_id
         self._ws.send(json.dumps({"id": msg_id, "method": method, "params": params or {}}))
         deadline = time.time() + timeout
-        while time.time() < deadline:
-            message = json.loads(self._ws.recv())
-            if message.get("id") != msg_id:
-                continue
-            if "error" in message:
-                raise RuntimeError(f"{method}: {message['error']}")
-            return message.get("result", {})
-        raise TimeoutError(method)
+        previous_timeout = self._ws.gettimeout()
+        try:
+            while True:
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    raise TimeoutError(method)
+                self._ws.settimeout(remaining)
+                try:
+                    message = json.loads(self._ws.recv())
+                except websocket.WebSocketTimeoutException as error:
+                    raise TimeoutError(method) from error
+                if message.get("id") != msg_id:
+                    continue
+                if "error" in message:
+                    raise RuntimeError(f"{method}: {message['error']}")
+                return message.get("result", {})
+        finally:
+            self._ws.settimeout(previous_timeout)
 
     def eval(self, expression: str, *, timeout: float = 30, await_promise: bool = False) -> Any:
         result = self.call(

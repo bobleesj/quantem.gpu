@@ -10,6 +10,7 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 from benchmark_webgpu_h5_browser import (
+    CdpTarget,
     _exact_run_evidence,
     _runtime_prelude,
     _summary,
@@ -202,3 +203,33 @@ def test_webgpu_summary_reports_nearest_rank_distribution() -> None:
     assert summary["wallMsP95"] == 110
     assert summary["evidenceWallMsP50"] == 104
     assert summary["evidenceWallMsP95"] == 200
+
+
+def test_cdp_call_uses_the_declared_timeout_for_long_running_evidence() -> None:
+    class FakeWebSocket:
+        def __init__(self) -> None:
+            self.timeout = 20.0
+            self.observed_timeouts: list[float | None] = []
+
+        def send(self, _message: str) -> None:
+            return None
+
+        def gettimeout(self) -> float | None:
+            return self.timeout
+
+        def settimeout(self, value: float | None) -> None:
+            self.timeout = value
+            self.observed_timeouts.append(value)
+
+        def recv(self) -> str:
+            return '{"id": 1, "result": {"result": {"value": true}}}'
+
+    target = object.__new__(CdpTarget)
+    target._next_id = 0
+    target._ws = FakeWebSocket()
+
+    result = target.call("Runtime.evaluate", timeout=900)
+
+    assert result == {"result": {"value": True}}
+    assert target._ws.observed_timeouts[0] > 899
+    assert target._ws.observed_timeouts[-1] == 20
