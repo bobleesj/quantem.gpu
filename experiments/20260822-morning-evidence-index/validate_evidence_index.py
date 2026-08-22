@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Validate the source-only overnight evidence index.
 
 This checker verifies references and provenance only. It never launches a
@@ -13,7 +12,6 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any
-
 
 INDEX_PATH = Path(__file__).with_name("evidence-index.json")
 CAMPAIGN_ROOT = Path(__file__).resolve().parents[4]
@@ -72,9 +70,23 @@ def verify_artifact_file(record: dict[str, Any], path_key: str, hash_key: str) -
         return
     assert isinstance(relative, str) and relative, f"{record['id']}: missing {path_key}"
     assert isinstance(expected, str) and len(expected) == 64, f"{record['id']}: bad {hash_key}"
-    path = resolve_campaign_path(relative)
-    assert path.is_file(), f"{record['id']}: missing {relative}"
-    actual = sha256_file(path)
+    if relative.startswith("git-object://"):
+        object_reference = relative.removeprefix("git-object://")
+        revision, separator, repository_path = object_reference.partition("/")
+        assert separator and len(revision) == 40, f"{record['id']}: bad Git object path"
+        assert all(character in "0123456789abcdef" for character in revision), (
+            f"{record['id']}: bad Git object revision"
+        )
+        path = Path(repository_path)
+        assert repository_path and not path.is_absolute() and ".." not in path.parts, (
+            f"{record['id']}: unsafe Git object path"
+        )
+        content = run_git(AUDIT_WORKTREE, "show", f"{revision}:{repository_path}")
+        actual = sha256_bytes(content)
+    else:
+        path = resolve_campaign_path(relative)
+        assert path.is_file(), f"{record['id']}: missing {relative}"
+        actual = sha256_file(path)
     assert actual == expected, f"{record['id']}: {hash_key} mismatch: {actual}"
 
 
@@ -183,12 +195,18 @@ def verify_measurement(
     assert measurement["scan_bin"] == 1
     assert measurement["crop"] == "none"
     assert measurement["cold_claim"] is False, f"{measurement['id']}: unsupported cold claim"
-    if measurement["platform"] == "cuda":
+    if (
+        measurement["platform"] == "cuda"
+        and measurement["functional_area"] == "screening"
+    ):
         assert measurement["working_dtype"] == "not-applicable-streamed-summaries"
         assert measurement["accumulation_dtype"] == "uint64"
         assert measurement["first_usable_p50_seconds"] == measurement[
             "exact_complete_p50_seconds"
         ]
+    if measurement["functional_area"] == "screening-cache-reopen":
+        assert measurement["working_dtype"] == "not-applicable-cached-results"
+        assert measurement["cache_bytes"] > measurement["comparison_baseline_cache_bytes"]
 
     count = measurement["sample_count"]
     assert isinstance(count, int) and count >= 1
@@ -264,6 +282,23 @@ def verify_pending_observation(
     assert observation["sample_count"] >= 1
 
 
+def verify_source_placeholder(placeholder: dict[str, Any]) -> None:
+    """Validate unpromoted source revisions and any observed working state."""
+
+    assert placeholder["status"] in {"pending-evidence", "awaiting-final-evidence-pin"}
+    assert placeholder["expected_evidence_revision"] is None
+    assert placeholder["claim_scope"]
+    for key in (
+        "implementation_revision",
+        "parent_evidence_revision",
+        "parent_revision",
+        "expected_evidence_revision",
+    ):
+        verify_revision(placeholder, key)
+    if placeholder.get("source_worktree"):
+        verify_worktree(placeholder)
+
+
 def verify_no_private_paths(index: dict[str, Any]) -> None:
     """Ensure the public-facing index contains no raw private filesystem path."""
 
@@ -317,6 +352,8 @@ def main() -> int:
         verify_refuted_diagnostic(diagnostic, artifacts, fixtures)
     for observation in index.get("pending_observations", []):
         verify_pending_observation(observation, artifacts)
+    for placeholder in index.get("source_placeholders", []):
+        verify_source_placeholder(placeholder)
 
     assert len(index["unresolved_metric_cells"]) >= 1
     assert len(index["incomparable_or_stale"]) >= 1
@@ -329,6 +366,7 @@ def main() -> int:
         f"({counts['accepted']} accepted, {counts['refuted']} refuted, {counts['pending']} pending), "
         f"{len(measurements)} accepted atomic metrics, "
         f"{len(index.get('refuted_diagnostics', []))} refuted diagnostic, "
+        f"{len(index.get('source_placeholders', []))} source placeholders, "
         f"{len(index['unresolved_metric_cells'])} unresolved cells"
     )
     return 0

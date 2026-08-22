@@ -51,46 +51,47 @@
       "kind": "machine-readable evidence index",
       "artifact": "evidence-index.json",
       "path": "experiments/20260822-morning-evidence-index/evidence-index.json",
-      "sha256": "08fc3fda97de2b20a3aece1cc44e48b4ed1ef5b663fbf1118bf0b6d424f2e0b4",
-      "result": "19 referenced artifacts: 13 accepted, 4 refuted, and 2 pending; 13 accepted atomic measurements; one refuted diagnostic; 13 unresolved cells"
+      "sha256": "7077dafec960bf122c2357735c040b75050219f0b309da8c849c998941eecf85",
+      "result": "22 referenced artifacts: 16 accepted, 4 refuted, and 2 pending; 19 accepted atomic measurements; one refuted diagnostic; two source placeholders; 15 unresolved cells"
     },
     {
       "kind": "human morning-report draft",
       "artifact": "MORNING-REPORT-DRAFT.md",
       "path": "experiments/20260822-morning-evidence-index/MORNING-REPORT-DRAFT.md",
-      "sha256": "050e40d068968f84b4352108741c0d680e162a9862c174d16e6d76a56fefce9e",
+      "sha256": "16d37f5ea2729cad01e982d902deb2c8a42cd06b5a35a5d9668b0f274581c02f",
       "result": "accepted, refuted, and pending claims remain separated by platform, computer, cache state, timing boundary, and memory definition"
     },
     {
       "kind": "source-only validator",
       "artifact": "validate_evidence_index.py",
       "path": "experiments/20260822-morning-evidence-index/validate_evidence_index.py",
-      "sha256": "dcb13f123d744e3741a0dd61799fde6b9755e9c5bb4c261b80ab3dbd858f384e",
-      "result": "all referenced hashes, revisions, worktree states, fixture bindings, and atomic metric contracts passed"
+      "sha256": "285b61a3b04373f5eee889efa31e76c85eef58978031c962df986dacddd48ac7",
+      "result": "all referenced hashes, immutable Git objects, revisions, worktree states, fixture bindings, source placeholders, and atomic metric contracts passed"
     },
     {
       "kind": "validation record",
       "artifact": "validation.json",
       "path": "experiments/20260822-morning-evidence-index/validation.json",
-      "sha256": "e8e8915f9bd6f9cf779797f44a601bc1d13a8c8ff9c264ab9e6c8aca70b7b406",
-      "result": "profile registry, registry tests, documentation source links, JSON syntax, and diff hygiene passed"
+      "sha256": "10f8f551d8c367e87a5291984bbc3c3d7f04e18ce2810be6eb499e9d3714c04e",
+      "result": "profile registry, 36 registry/documentation tests, documentation source links, JSON syntax, Ruff, and diff hygiene passed"
     }
   ],
   "results": {
     "decision": "mixed",
-    "accepted_artifacts": 13,
+    "accepted_artifacts": 16,
     "refuted_artifacts": 4,
     "pending_artifacts": 2,
-    "accepted_atomic_measurements": 13,
+    "accepted_atomic_measurements": 19,
     "refuted_diagnostics": 1,
     "pending_observations": 1,
-    "unresolved_metric_cells": 13,
+    "source_placeholders": 2,
+    "unresolved_metric_cells": 15,
     "consumer_handoff": false,
     "documentation_promoted": false
   },
   "timestamps": {
     "created": "2026-08-22T07:00:05-07:00",
     "started": "2026-08-22T07:00:05-07:00",
-    "finished": "2026-08-22T07:53:30-07:00"
+    "finished": "2026-08-22T08:34:44-07:00"
   }
 }
