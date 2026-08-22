@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260822-native-metal-controlled-resident",
+  "status": "completed",
+  "question": "Can the native Swift and Metal package build a full exact private-resident 512x512x192x192 uint16 volume with controlled source-page reuse while retaining complete scientific parity and memory provenance?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260822-native-metal-controlled-resident/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "c0ea44465e6346a8436a0b74f491a04af0b5dc32",
+    "entrypoint": "metal-4dstem-indexed-load-benchmark",
+    "dirty": false,
+    "diff_sha256": null,
+    "snapshot_path": "local-snapshot://quantem-gpu-native-metal-controlled-resident/source"
+  },
+  "inputs": [
+    {
+      "dataset_id": "real-512x512x192x192-u16-bslz4-27shard-master-fixture-c",
+      "path": "private-fixture://full-512-u16-bslz4-27shard/master-c",
+      "sha256": "c9c0d968fae70b8911ae925d676b90007886970fa99fe296a47cfe07844bbfe9"
+    }
+  ],
+  "parameters": {
+    "source_identity_sha256": "9f0ddb932c631b63cb573c38d747fa41941ee585c5389d33bdafb4add962b768",
+    "source_shape": [512, 512, 192, 192],
+    "working_shape": [512, 512, 192, 192],
+    "source_dtype": "uint16",
+    "staging_dtype": "uint8 after complete identity-bound audit",
+    "working_dtype": "uint16",
+    "scan_crop": null,
+    "detector_crop": null,
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "resident_storage": "private Metal",
+    "source_transfer": "buffered read-ahead, two prefetched shards",
+    "source_page_control": "macOS F_NOCACHE on source hashing and every indexed source descriptor",
+    "source_qualification": "existing sealed value-range audit",
+    "index_state": "new empty QH5 index root per process",
+    "destination_state": "fresh private Metal allocation per process",
+    "timing_repetitions": 7,
+    "timing_boundary": "complete exact resident volume, products, and provenance",
+    "post_boundary_check": "complete resident-volume SHA-256",
+    "target_seconds": 0.3,
+    "target_met": false
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": ["Apple M5 Max integrated GPU"],
+    "gpu_model": "Apple M5 Max, 40-core GPU, 128 GB unified memory",
+    "operating_system": "macOS 26.4 (25E246)",
+    "runtime": "Metal 4"
+  },
+  "outputs": [
+    {
+      "artifact": "local-evidence://0822-97-fnocache-provenance-v8/manifest.json",
+      "sha256": "2480cfd2ea78f24637cc542edceb1c4f39f7e4ba324d15969acdc3115a9dfcee",
+      "result": "Seven fresh-process exact runs; package wall p50/p95/max 0.577793/0.900979/0.900979 s; the first outlier is retained; 0.3 s target not met"
+    },
+    {
+      "artifact": "local-evidence://0822-97-fnocache-provenance-v8/verification.json",
+      "sha256": "8aaca6b7877c521a6f6789b78ca99b099442668502c91e9aa937171d984dd2eb",
+      "result": "Seven of seven working-volume and product hashes exact; maximum RSS 938524672 bytes; Metal allocated after load 19940737024 bytes"
+    },
+    {
+      "artifact": "local-evidence://0822-97-fnocache-provenance-v8/SHA256SUMS",
+      "sha256": "536db47bb9e548aaf7344d4a207d629fc798fca1baefb67702be6ef83c5de5a6",
+      "result": "All 289 retained evidence checksums verified"
+    }
+  ],
+  "timestamps": {
+    "created": "2026-08-22T00:27:00-07:00",
+    "started": "2026-08-22T00:27:00-07:00",
+    "finished": "2026-08-22T00:30:00-07:00"
+  }
+}

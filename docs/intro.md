@@ -1,134 +1,194 @@
 # quantem.gpu
 
 One scientific GPU contract for electron microscopy—from compressed detector
-data to exact products—across NVIDIA CUDA, Apple MPS/Metal, native Swift, and
-browser WebGPU.
+data to exact products—across NVIDIA CUDA, Apple MPS/Metal, native Swift,
+WebGPU, and an explicit CPU reference.
 
-`quantem.gpu` owns the reusable, performance-critical layer shared by QuantEM
-applications: 4D-STEM IO, bitshuffle/LZ4 decode, detector reductions, CoM/DPC,
-display math, SSB, resource estimation, and scientific provenance. User
-interfaces call this package rather than copying kernels or changing the
-scientific workflow for each platform.
+```{admonition} Living pre-release draft
+:class: important
+This site documents an evolving `0.0.1` release-candidate series. Public APIs,
+runtime coverage, and recommendations may change between candidates. Python
+examples currently pin the exact TestPyPI candidate
+`quantem.gpu==0.0.1rc6`; Swift consumers pin an exact verified Git revision.
 
-## Start with a full-resolution load
-
-After [installing](install.md), load one HDF5 master with native detector
-sampling and precision:
-
-```python
-from quantem.gpu import detector, dpc, io
-
-loaded = io.load(
-    "scan_master.h5",
-    backend="auto",
-    dtype="u16",
-    det_bin=1,
-)
-
-bright_field = detector.bf(loaded.data)
-dpc_result = dpc.run(loaded.data)
-
-print(loaded.data.shape, loaded.data.dtype)
-print(loaded.metadata)
+The documentation is a draft, but retained performance and parity rows are not
+draft estimates: each is a frozen historical measurement tied to its stated
+date, source revision, device, data plan, cache state, and acceptance rule. A
+newer candidate replaces the documented pin only after those gates are rerun.
 ```
 
-`det_bin=1` means no detector binning. Any detector bin, scan bin, detector
-region, or scan region must be explicit and preserved in provenance. A reduced
-result is never represented as native-resolution evidence.
+```{admonition} Choose how you want to enter
+:class: tip
+**Whole project:** start with the
+[implementation overview](dashboard.md).
 
-Continue with [loading HDF5](tutorials/load_hdf5.md),
-[virtual detectors](tutorials/bf_df_adf.md), or [DPC](tutorials/dpc.md).
+**Scientific operation:** start with [Scientific kernels](kernels/index.md).
 
-## One contract, several runtimes
+**Kernel implementation:** start with [Kernel implementations](platforms/index.md).
 
-| Runtime | Primary use | Implementation boundary |
-|---|---|---|
-| CUDA | Linux workstations, servers, and large-memory GPUs | Python API with CuPy and CUDA kernels |
-| Python MPS | Apple Silicon scripts and shared Python workflows | Python API with MLX/PyObjC/Metal implementations |
-| Native Swift/Metal | macOS and iOS applications | SwiftPM libraries with Metal resources; no Python runtime |
-| WebGPU | Browser and exported-HTML compute | Domain-owned TypeScript/WGSL bundled by `quantem.widget` |
-| CPU reference | Portable adjudication and small tests | Explicit reference only; never a silent accelerated fallback |
+**Correctness or speed claim:** start with
+[Benchmarks and parity](performance/index.md).
+```
 
-Choose a runtime in [Platforms](platforms/index.md). The public scientific
-workflow, coordinate order, dtype meaning, and provenance remain consistent.
+## Implementation and benchmark overview
 
-## Scientific capabilities
+This landing page explains the package contract and routes developers to the
+right implementation surface. Numerical results are maintained in two places
+only:
 
-| Domain | Public entry point | What stays shared |
-|---|---|---|
-| IO | `quantem.gpu.io` | discovery, inspection, load/save, decode, crop/bin geometry, provenance |
-| Detector | `quantem.gpu.detector` | mean diffraction, BF/ABF/ADF/DF, masks, exact integer reductions |
-| DPC | `quantem.gpu.dpc` | CoM row/column convention, rotation, centering, iDPC normalization |
-| Display | `quantem.gpu.display` and Swift products | range, histogram, colormap, log transform, FFT conventions |
-| SSB | `quantem.gpu.SSB` | BF selection, aberrations, precision, objective, results |
-| Remote | `quantem.gpu.remote` | exact array transport, source identity, device admission telemetry |
+- the [implementation dashboard](dashboard.md) is the friendly, module-first
+  view of current support, representative timing, memory, and parity state; and
+- [verified benchmark results](performance/results.md) is the authoritative
+  row-level ledger with revision, fixture, cache state, load plan, distribution,
+  memory observation, and numerical gate.
 
-The [API reference](api/index.md) documents the public surface. Backend modules
-are implementation details.
+| If you are… | Start here |
+|---|---|
+| choosing a runtime or checking current support | [Implementation dashboard](dashboard.md) |
+| comparing a measured configuration | [Verified benchmark results](performance/results.md) |
+| adding or rerunning a benchmark | [Benchmark methodology](performance/methodology.md) and [continuous profiling](performance/continuous-profiling.md) |
+| investigating an older or rejected experiment | [Optimization ledger](maintainer/backend-optimization-matrix.md) and [historical experiments](maintainer/history/index.md) |
 
-## Performance numbers are evidence
+```{admonition} One claim, one owner
+:class: important
+The landing page does not copy benchmark tables. Current overview values belong
+on the dashboard; complete provenance belongs in the results ledger; superseded
+or rejected experiments belong in the maintainer archive. A cached reopen is
+not a first source load, and a cropped or explicitly binned result is never
+reported as native resolution.
+```
 
-Performance is a first-class part of this documentation—not a marketing
-footnote. The dedicated [Performance & parity](performance/index.md) section
-keeps current numbers, hardware, shapes, dtypes, parity metrics, memory, cold
-versus warm state, and rejected experiments easy to navigate.
-
-Start with:
-
-- [Current verified results](backends.md) for the capability and timing summary;
-- [Benchmark methodology](performance/methodology.md) for what each number means;
-- [Cross-backend parity](performance/parity.md) for exactness and tolerances;
-- [Optimization ledger](maintainer/backend-optimization-matrix.md) for accepted
-  and rejected paths; and
-- [SSB performance evidence](maintainer/ssb-performance.md) for the full kernel
-  history.
-
-Numbers are retained with exact source and hardware context. A cache reopen is
-not called a cold source load, a reduced fixture is not called full resolution,
-and a software adapter is not called GPU evidence.
-
-## Repository and application boundaries
+## How loading becomes a usable product
 
 ```text
-file -> quantem.gpu IO/decode -> backend-resident arrays
-     -> quantem.gpu detector/DPC/SSB/display math -> consumer UI
-
-file -> Native4DSTEMIO / Metal4DSTEMKernels -> resident products
-     -> MetalImageFFT / MetalImageRuntime -> Live4DSTEM UI
+START WALL CLOCK
+      │
+      ▼
+HDF5 master + compressed shards
+      │  open, metadata, source identity, prepared index lookup/build
+      ▼
+Verified source geometry: scan shape, detector shape, dtype, calibration
+      │  estimate resident + scratch + product memory
+      ▼
+Explicit load plan: full scan; no automatic real-space crop;
+                    detector bin; source/accumulation/output dtype; reason
+      │  plan source-aligned chunks and reusable buffers
+      ▼
+Storage read ──overlap──► GPU bitshuffle/LZ4 decode
+                              │  bad-pixel policy + dtype conversion
+                              │  + exact detector sum/bin when selected
+                              ▼
+Resident I[R_r,R_c,k_r,k_c] + complete provenance
+      │  fused/reused GPU reductions
+      ▼
+Mean diffraction, BF/ADF/DF, CoM, DPC, iDPC
+      │
+      ▼
+FIRST COMPLETE USABLE PRODUCT  ← STOP WALL CLOCK
+      │
+      └── optional cache/finalization, reported separately
 ```
 
-- `quantem.gpu` owns reusable accelerated IO, math, kernels, result contracts,
-  resource estimation, and scientific provenance.
-- `quantem.widget` owns browser UI, interaction, and export while bundling this
-  package's canonical WebGPU sources.
-- Live4DSTEM and `quantem.live` own application UI, acquisition lifecycle,
-  cache policy, and reconstruction orchestration while consuming exact package
-  revisions.
+Detector binning is exact block summation, not interpolation or cropping. It
+may run while chunks are decoded so the unbinned 4D volume is never
+materialized unnecessarily. The metadata still reports the original detector
+shape, selected bin, output shape, accumulation/output dtype, memory estimate,
+and policy reason. See [Load, decode, and bin](kernels/load-decode-bin.md) for
+the mathematical contract and [Benchmark methodology](performance/methodology.md)
+for every timed stage.
 
-Read [Repository architecture](maintainer/backend-layout-and-parity.md) before
-adding or moving a backend.
+## The shared coordinate contract
 
-## Documentation map
+Every backend interprets 4D-STEM data as
 
-- **New users:** [Install](install.md) → [Choose a platform](platforms/index.md)
-  → [What the scientific products measure](tutorials/workflow_math.md)
-  → [Load an HDF5 master](tutorials/load_hdf5.md)
-- **Scientists validating results:** [Performance & parity](performance/index.md)
-  → [Current verified results](backends.md)
-- **API users:** [API reference](api/index.md)
-- **Kernel developers:** [Developer guide](developer/index.md)
-- **Release and migration owners:** [Maintainer guide](maintainer/index.md)
+$$
+I[R_r,R_c,k_r,k_c],
+\qquad (\text{row},\text{column})\equiv(r,c),
+$$
 
-## Citing and getting help
+where $\mathbf R=(R_r,R_c)$ is the real-space probe/scan coordinate and
+$\mathbf k=(k_r,k_c)$ is the detector coordinate. A private device layout may
+be flattened, transposed, tiled, packed, or detector-major, but the public
+shape, masks, metadata, and results preserve this meaning.
 
-If the quantEM interactive framework—including `quantem.gpu`, GPU-accelerated
-I/O, analysis, or reconstruction workflows on MPS or CUDA—contributed to your
-research, please consider citing Lee et al., *Interactive Framework for
-Real-Time 4DSTEM Analysis and Reconstruction*, *Microscopy and Microanalysis*
-32 (Supplement 1), ozag053.941 (2026),
-[https://doi.org/10.1093/mam/ozag053.941](https://doi.org/10.1093/mam/ozag053.941).
+Read [Data model and coordinates](kernels/data-model.md) before implementing a
+new kernel.
 
+## Find the operation you are implementing
+
+| Operation | Meaning | Kernel page |
+|---|---|---|
+| Load/decode/bin | compressed source to typed resident counts | [Load, decode, and bin](kernels/load-decode-bin.md) |
+| Virtual detector | BF/DF/ADF and mean-diffraction reductions | [BF, DF, and ADF](kernels/virtual-detectors.md) |
+| Detector moments | CoM row, CoM column, DPC, and iDPC | [CoM, DPC, and iDPC](kernels/com-dpc-idpc.md) |
+| Ptychography | SSB object, phase, loss, and aberrations | [Single-sideband ptychography](kernels/ssb.md) |
+| Scan selection | explicit half-open real-space subsets | [Explicit scan regions](kernels/scan-regions.md) |
+| Presentation math | ranges, histograms, colormaps, FFT views, movies | [Display and export kernels](kernels/display-export.md) |
+
+Each page combines the scientific equations, exactness and provenance rules,
+optimization model, backend source map, and parity gate. This keeps the math
+beside the operation instead of separating it into a generic tutorial.
+
+## Choose the runtime you are implementing
+
+| Runtime | Start here | Primary implementation boundary |
+|---|---|---|
+| CUDA | [CUDA](platforms/cuda.md) | Python adapters, CuPy, CUDA C/RawKernel |
+| Python MPS | [Python MPS](platforms/mps.md) | Python adapters, MLX/PyObjC, Metal kernels |
+| Native Swift/Metal | [Native Swift and Metal](platforms/swift-metal.md) | SwiftPM products and bundled Metal resources |
+| WebGPU | [WebGPU](platforms/webgpu.md) | TypeScript adapters and WGSL resources |
+| CPU reference | [CPU reference](platforms/cpu-reference.md) | independent NumPy/reference implementation |
+
+All runtimes implement the same operation contract. They do not expose
+platform-specific scientific workflows.
+
+To run the CUDA implementation as a service, use
+[QuantEM.GPU Remote](remote/index.md). Remote access is deployment and
+communication, not another kernel runtime.
+
+## What belongs in this package
+
+`quantem.gpu` owns reusable accelerated IO, math, kernels, result contracts,
+resource estimation, and scientific provenance. A consuming application owns
+presentation, user-visible resource-policy choices, scheduling, and lifecycle.
+No application framework or view state is required to build or test this
+package.
+
+Read [Kernel architecture](concepts/kernel-architecture.md) for the source tree
+and [Kernel development lifecycle](developer/kernel-lifecycle.md) before adding
+an implementation.
+
+## How to interpret performance evidence
+
+The [implementation overview](dashboard.md) is the dense one-page view
+of implementation coverage and headline measurements. The
+[Benchmarks and parity](performance/index.md) section keeps the complete
+current and historical evidence with source revision, hardware, data
+shape/dtype, cache state, load plan, memory peak, parity artifact, and
+benchmark definition.
+
+A cached reopen is not a first source load. A cropped or binned fixture is not
+full-resolution evidence. A compile test is not a hardware benchmark. Rejected
+experiments remain recorded so kernel developers can avoid repeating known
+regressions.
+
+## Start coding
+
+Install the runtime you need, run the smallest relevant parity test, then use
+the physical target device for performance evidence:
+
+```bash
+python -m pip install -e ".[dev,docs]"
+PYTHONPATH=src python -m pytest -q
+swift test
+```
+
+See [Install](install.md), [API contracts](api/index.md), and
+[Contributing](developer/index.md).
+
+## Citing and support
+
+If this package contributed to your research, see
+[CITATION.cff](https://github.com/bobleesj/quantem.gpu/blob/main/CITATION.cff).
 Questions and bug reports belong in the
-[quantem.gpu issue tracker](https://github.com/bobleesj/quantem.gpu/issues).
-The package is maintained by the Ophus group and distributed under the MIT
-License.
+[issue tracker](https://github.com/bobleesj/quantem.gpu/issues).

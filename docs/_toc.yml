@@ -1,57 +1,63 @@
-# quantem.gpu documentation follows the same audience-first hierarchy as
-# quantem.widget: practical workflows first, exhaustive API and evidence later.
 format: jb-book
 root: intro
 parts:
-  - caption: Getting started
+  - caption: Start here
     chapters:
+      - file: dashboard
+        title: Implementation overview
       - file: install
       - file: concepts/scientific-contract
         title: Scientific contract
-      - file: platforms/index
-        title: Choose a platform
-        sections:
-          - file: platforms/cuda
-          - file: platforms/mps
-            title: Python MPS
-          - file: platforms/swift-metal
-            title: Native Swift and Metal
-          - file: platforms/webgpu
-          - file: platforms/cpu-reference
-            title: CPU reference
+      - file: concepts/kernel-architecture
+        title: Kernel architecture
+      - file: kernels/index
+        title: Choose a scientific operation
 
-  - caption: Scientific workflows
+  - caption: Scientific kernels
     chapters:
-      - file: tutorials/workflow_math
-        title: What do the products measure?
-      - file: tutorials/load_hdf5
-      - file: tutorials/bf_df_adf
-      - file: tutorials/dpc
-      - file: tutorials/ssb
-      - file: tutorials/display_widget
-      - file: tutorials/movie_rendering
-      - file: tutorials/remote_cuda
-      - file: tutorials/scan_region
+      - file: kernels/data-model
+        title: Data model and coordinates
+      - file: kernels/load-decode-bin
+        title: Load, decode, and bin
+      - file: kernels/virtual-detectors
+        title: BF, DF, and ADF reductions
+      - file: kernels/com-dpc-idpc
+        title: CoM, DPC, and iDPC
+      - file: kernels/ssb
+        title: Single-sideband ptychography
+      - file: kernels/scan-regions
         title: Explicit scan regions
+      - file: kernels/display-export
+        title: Display and export kernels
 
-  - caption: Performance & parity
+  - caption: Kernel implementations
     chapters:
-      - file: performance/index
-        title: Evidence overview
-        sections:
-          - file: performance/results
-          - file: backends
-            title: Current verified results
-          - file: performance/methodology
-          - file: performance/parity
-          - file: maintainer/backend-optimization-matrix
-            title: Optimization ledger
-          - file: maintainer/backend-4dstem-load-checklist
-            title: Load acceptance evidence
-          - file: maintainer/ssb-performance
-            title: SSB performance evidence
+      - file: platforms/index
+        title: Choose a kernel runtime
+      - file: platforms/cuda
+      - file: platforms/mps
+        title: Python MPS
+      - file: platforms/swift-metal
+        title: Native Swift and Metal
+      - file: platforms/webgpu
+      - file: platforms/cpu-reference
+        title: CPU reference
 
-  - caption: Developers
+  - caption: Remote compute
+    chapters:
+      - file: remote/index
+        title: QuantEM.GPU Remote
+        sections:
+          - file: remote/deployment
+            title: Deploy a Linux CUDA host
+          - file: remote/connect
+            title: Connect locally or over SSH
+          - file: remote/protocol
+            title: Protocol and integration
+          - file: remote/admission
+            title: GPU admission and residency
+
+  - caption: API contracts
     chapters:
       - file: api/index
         title: API reference
@@ -62,19 +68,48 @@ parts:
           - file: api/movie
           - file: api/metal_image
           - file: api/native_4dstem_io
+          - file: api/core
+            title: Device, optics, screening, and parallax
+
+  - caption: Benchmarks and parity
+    chapters:
+      - file: performance/index
+        title: Benchmark overview
+        sections:
+          - file: performance/coverage
+            title: Coverage and runbooks
+          - file: performance/results
+            title: Verified benchmark results
+          - file: performance/changes
+            title: Revision and change ledger
+          - file: backends
+            title: Backend coverage
+          - file: performance/methodology
+          - file: performance/continuous-profiling
+            title: Continuous profiling
+          - file: performance/parity
+          - file: maintainer/backend-optimization-matrix
+            title: Optimization ledger
+          - file: maintainer/backend-4dstem-load-checklist
+            title: Load acceptance evidence
+          - file: maintainer/ssb-performance
+            title: SSB performance evidence
+
+  - caption: Contributing
+    chapters:
       - file: developer/index
         title: Developer guide
         sections:
+          - file: developer/kernel-lifecycle
+            title: Kernel development lifecycle
           - file: maintainer/backend-layout-and-parity
             title: Repository architecture
           - file: developer/adding-backend
           - file: developer/writing
             title: Writing, notation, and units
           - file: developer/testing
-
-  - chapters:
       - file: maintainer/index
-        title: Maintainer guide
+        title: Maintainer archive
         sections:
           - file: maintainer/migration
           - file: maintainer/native-metal-hdf5-postmortem
@@ -83,6 +118,8 @@ parts:
           - file: maintainer/remote-cuda-real-data-2026-08-15
             title: Remote CUDA evidence
           - file: maintainer/ssb-architecture
+          - file: maintainer/native-metal-ssb-migration
+            title: Native Metal SSB migration
           - file: maintainer/virtual-image-kernel-checklist
           - file: maintainer/history/index
             title: Historical experiments

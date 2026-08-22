@@ -79,13 +79,70 @@ private func nativeContentSnapshot(for url: URL) throws -> NativeContentSnapshot
 }
 
 private func nativeSHA256(of url: URL) throws -> String {
-  let handle = try FileHandle(forReadingFrom: url)
-  defer { try? handle.close() }
+  let descriptor = Darwin.open(url.path, O_RDONLY)
+  guard descriptor >= 0 else {
+    throw Native4DSTEMIOError.invalidData(
+      "Could not open \(url.path) for exact source hashing"
+    )
+  }
+  defer { Darwin.close(descriptor) }
+  if Native4DSTEMBenchmarkSourcePageControl.current
+    == .macOSFNoCacheHashAndIndexedSourceDescriptors
+  {
+    guard Darwin.fcntl(descriptor, F_NOCACHE, 1) == 0 else {
+      throw Native4DSTEMIOError.invalidData(
+        "Could not enable uncached benchmark reads for \(url.path)"
+      )
+    }
+  }
+  let bufferBytes = 8 * 1024 * 1024
+  let buffer = UnsafeMutableRawPointer.allocate(
+    byteCount: bufferBytes,
+    alignment: Int(getpagesize())
+  )
+  defer { buffer.deallocate() }
   var digest = SHA256()
-  while let data = try handle.read(upToCount: 8 * 1024 * 1024), !data.isEmpty {
-    digest.update(data: data)
+  while true {
+    let count = Darwin.read(descriptor, buffer, bufferBytes)
+    if count < 0 && errno == EINTR { continue }
+    guard count >= 0 else {
+      throw Native4DSTEMIOError.invalidData(
+        "Could not read \(url.path) for exact source hashing"
+      )
+    }
+    if count == 0 { break }
+    digest.update(
+      bufferPointer: UnsafeRawBufferPointer(start: buffer, count: count)
+    )
   }
   return digest.finalize().map { String(format: "%02x", $0) }.joined()
+}
+
+private func nativeSHA256(of files: [URL]) throws -> [String] {
+  guard !files.isEmpty else { return [] }
+  let workerCount = min(8, files.count)
+  let resultLock = NSLock()
+  nonisolated(unsafe) var results = [Result<String, Error>?](
+    repeating: nil,
+    count: files.count
+  )
+
+  DispatchQueue.concurrentPerform(iterations: workerCount) { worker in
+    for index in stride(from: worker, to: files.count, by: workerCount) {
+      let result = Result { try nativeSHA256(of: files[index]) }
+      resultLock.lock()
+      results[index] = result
+      resultLock.unlock()
+    }
+  }
+  return try results.enumerated().map { index, result in
+    guard let result else {
+      throw Native4DSTEMIOError.invalidData(
+        "Could not verify the exact identity of \(files[index].path)"
+      )
+    }
+    return try result.get()
+  }
 }
 
 private struct NativeSourceHashCache: Codable {
@@ -124,7 +181,7 @@ func nativeSourceHashes(
       aggregate: cached.aggregateHash
     )
   }
-  let hashes = try files.map(nativeSHA256)
+  let hashes = try nativeSHA256(of: files)
   guard before == (try files.map(nativeContentSnapshot)) else {
     throw Native4DSTEMIOError.invalidData(
       "A source file changed while its exact identity was being verified; retry"

@@ -93,6 +93,32 @@ inline void bslz4CopyDeviceToThreadgroup(
     }
 }
 
+inline void bslz4CopyRepeatDeviceToThreadgroup(
+    threadgroup uchar *destination,
+    const device uchar *source,
+    uint distance,
+    uint length,
+    uint threadIndex
+) {
+    uint repeatMask = distance - 1u;
+    if (distance == 2u) {
+        // A 32-lane stride preserves lane parity, so every write by this lane
+        // uses the same one of the two stable history bytes. Load it once.
+        uchar repeated = source[threadIndex & 1u];
+        for (uint index = threadIndex; index < length; index += kLZ4Threads) {
+            destination[index] = repeated;
+        }
+    } else if (distance != 0u && (distance & repeatMask) == 0u) {
+        for (uint index = threadIndex; index < length; index += kLZ4Threads) {
+            destination[index] = source[index & repeatMask];
+        }
+    } else {
+        for (uint index = threadIndex; index < length; index += kLZ4Threads) {
+            destination[index] = source[index % distance];
+        }
+    }
+}
+
 inline void bslz4CopyThreadgroupToThreadgroup(
     threadgroup uchar *destination,
     threadgroup const uchar *source,
@@ -114,8 +140,22 @@ inline void bslz4CopyRepeatThreadgroupToThreadgroup(
     // Every lane reads only the already-produced history window. Keep this
     // byte-addressed: packed threadgroup stores were not reliably aligned on
     // all Apple GPU generations and corrupted rare legal LZ4 repeats.
-    for (uint index = threadIndex; index < length; index += kLZ4Threads) {
-        destination[index] = source[index % distance];
+    uint repeatMask = distance - 1u;
+    if (distance == 2u) {
+        // A 32-lane stride preserves lane parity, so every write by this lane
+        // uses the same one of the two stable history bytes. Load it once.
+        uchar repeated = source[threadIndex & 1u];
+        for (uint index = threadIndex; index < length; index += kLZ4Threads) {
+            destination[index] = repeated;
+        }
+    } else if (distance != 0u && (distance & repeatMask) == 0u) {
+        for (uint index = threadIndex; index < length; index += kLZ4Threads) {
+            destination[index] = source[index & repeatMask];
+        }
+    } else {
+        for (uint index = threadIndex; index < length; index += kLZ4Threads) {
+            destination[index] = source[index % distance];
+        }
     }
 }
 
@@ -212,6 +252,74 @@ inline void bslz4DecompressStreamToThreadgroup(
                     decompressed + outputIndex,
                     inputCache + literalStart + literalCount - matchOffset
                         - uint(bufferOffset),
+                    matchOffset,
+                    matchLength,
+                    threadIndex
+                );
+                bslz4Barrier();
+            } else {
+                bslz4Barrier();
+                bslz4CopyOverlapThreadgroupToThreadgroup(
+                    decompressed + outputIndex,
+                    decompressed + outputIndex - matchOffset,
+                    matchOffset,
+                    matchLength,
+                    threadIndex
+                );
+            }
+            outputIndex += matchLength;
+        }
+    }
+    bslz4Barrier();
+}
+
+// Full-precision direct-input variant. It preserves every byte of the complete
+// LZ4 stream while removing the 256-byte compressed-input cache and its refill
+// barriers. Matches that point into the immediately preceding literal run read
+// the same compressed bytes directly; all other matches retain the exact
+// dependency-safe threadgroup history copy.
+inline void bslz4DecompressStreamDirectToThreadgroup(
+    threadgroup uchar *decompressed,
+    const device uchar *compressed,
+    uint compressedLength,
+    uint threadIndex
+) {
+    uint outputIndex = 0;
+    uint inputIndex = 0;
+    while (inputIndex < compressedLength) {
+        BSLZ4Token token = bslz4DecodeToken(compressed[inputIndex++]);
+        uint literalCount = token.literals;
+        if (token.literals == 15) {
+            uchar next = 0xff;
+            while (next == 0xff) {
+                next = compressed[inputIndex++];
+                literalCount += next;
+            }
+        }
+        uint literalStart = inputIndex;
+        bslz4CopyDeviceToThreadgroup(
+            decompressed + outputIndex,
+            compressed + inputIndex,
+            literalCount,
+            threadIndex
+        );
+        inputIndex += literalCount;
+        outputIndex += literalCount;
+        if (inputIndex < compressedLength) {
+            ushort matchOffset = bslz4ReadWordDevice(compressed + inputIndex);
+            inputIndex += 2;
+            uint matchLength = 4 + token.matches;
+            if (token.matches == 15) {
+                uchar next = 0xff;
+                while (next == 0xff) {
+                    next = compressed[inputIndex++];
+                    matchLength += next;
+                }
+            }
+            if (matchOffset <= literalCount) {
+                bslz4CopyRepeatDeviceToThreadgroup(
+                    decompressed + outputIndex,
+                    compressed + literalStart + literalCount - matchOffset,
                     matchOffset,
                     matchLength,
                     threadIndex
@@ -558,7 +666,7 @@ kernel void h5lz4dc_unshuffle_u16_qh5idx(
 // One compressed bitshuffle block per 128-thread threadgroup. The two-block
 // kernel above uses fewer threadgroups, but its 16.5 KiB threadgroup-memory
 // footprint limits concurrent groups on smaller Apple GPUs. This topology uses
-// about 8.5 KiB and therefore exposes more independent LZ4 streams while
+// 8 KiB and therefore exposes more independent LZ4 streams while
 // preserving the identical uint16 output and exact count audit.
 kernel void h5lz4dc_unshuffle_u16_single_block_qh5idx(
     const device uchar *h5File [[buffer(0)]],
@@ -577,7 +685,6 @@ kernel void h5lz4dc_unshuffle_u16_single_block_qh5idx(
 ) {
     uint frame = threadgroupPosition.x;
     uint block = threadgroupPosition.z;
-    threadgroup uchar inputCache[kInputBufferBytes];
     threadgroup uchar shuffledBlock[kBslz4BlockBytes];
     threadgroup atomic_uint blockMax;
     threadgroup atomic_uint blockAbove255;
@@ -589,8 +696,7 @@ kernel void h5lz4dc_unshuffle_u16_single_block_qh5idx(
         uint2 metadata = blockMetadata[
             ulong(metadataFrameOffset + frame) * blocksPerFrame + block
         ];
-        bslz4DecompressStreamToThreadgroup(
-            inputCache,
+        bslz4DecompressStreamDirectToThreadgroup(
             shuffledBlock,
             h5File + rangeStart + ulong(metadata.x),
             metadata.y,
@@ -637,6 +743,62 @@ kernel void h5lz4dc_unshuffle_u16_single_block_qh5idx(
             atomic_load_explicit(&blockAbove255, memory_order_relaxed),
             memory_order_relaxed
         );
+    }
+}
+
+// Python MPS companion for the same accepted full-precision single-block
+// topology. Python's HDF5 reader packs raw frame chunks into a shared Metal
+// buffer and already provides the five metadata arrays consumed here. Keeping
+// this entry point in the package-owned QH5 resource lets native Swift and
+// Python MPS share the dependency-safe LZ4 and uint16 bit-unshuffle code while
+// preserving their distinct IO metadata representations.
+kernel void h5lz4dc_unshuffle_u16_single_block_packed_h5(
+    const device uchar *compressed [[buffer(0)]],
+    const device uint *chunkOffsets [[buffer(1)]],
+    const device uint *blockStarts [[buffer(2)]],
+    const device uint *blockCounts [[buffer(3)]],
+    const device uint *blockOffsets [[buffer(4)]],
+    constant uint &frameElements [[buffer(5)]],
+    device ushort *output [[buffer(6)]],
+    uint3 threadgroupPosition [[threadgroup_position_in_grid]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint simdgroup [[simdgroup_index_in_threadgroup]]
+) {
+    uint frame = threadgroupPosition.x;
+    uint block = threadgroupPosition.z;
+    threadgroup uchar shuffledBlock[kBslz4BlockBytes];
+    if (simdgroup == 0u && block < blockCounts[frame]) {
+        uint blockIndex = blockOffsets[frame] + block;
+        uint header = chunkOffsets[frame] + blockStarts[blockIndex];
+        uint compressedLength =
+            (uint(compressed[header]) << 24u)
+            | (uint(compressed[header + 1u]) << 16u)
+            | (uint(compressed[header + 2u]) << 8u)
+            | uint(compressed[header + 3u]);
+        bslz4DecompressStreamDirectToThreadgroup(
+            shuffledBlock,
+            compressed + header + 4u,
+            compressedLength,
+            lane
+        );
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    if (block < blockCounts[frame]) {
+        const threadgroup uint *planes =
+            (const threadgroup uint *)shuffledBlock;
+        for (uint group = simdgroup; group < 128u; group += 4u) {
+            ushort value = 0u;
+            for (uint bit = 0u; bit < 16u; ++bit) {
+                if (planes[bit * 128u + group] & (1u << lane)) {
+                    value |= ushort(1u << bit);
+                }
+            }
+            uint detectorIndex = block * 4096u + group * 32u + lane;
+            if (detectorIndex < frameElements) {
+                output[ulong(frame) * frameElements + detectorIndex] = value;
+            }
+        }
     }
 }
 
@@ -795,6 +957,204 @@ kernel void h5lz4dc_unshuffle_u16_audited_low8_qh5idx(
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
     if (simdgroup == 0 && lane == 0) {
+        uint frameAudit = 2u * (globalFrameOffset + frame);
+        atomic_fetch_max_explicit(
+            &countAudit[frameAudit],
+            atomic_load_explicit(&blockMax, memory_order_relaxed),
+            memory_order_relaxed
+        );
+    }
+}
+
+// Source-identity-audited compact path using the direct 4 KiB prefix decoder.
+// The durable audit proves that every valid high byte is zero, so the omitted
+// high bit planes contain no scientific information. Source and result dtypes
+// remain uint16; this uint8 buffer is transient exact staging only.
+kernel void h5lz4dc_unshuffle_u16_audited_low8_direct_qh5idx(
+    const device uchar *h5File [[buffer(0)]],
+    const device uint2 *blockMetadata [[buffer(1)]],
+    constant ulong &rangeStart [[buffer(2)]],
+    constant uint &blocksPerFrame [[buffer(3)]],
+    constant uint &frameElements [[buffer(4)]],
+    device uchar *output [[buffer(5)]],
+    constant uint &metadataFrameOffset [[buffer(6)]],
+    const device uchar *badPixelMask [[buffer(7)]],
+    device atomic_uint *countAudit [[buffer(8)]],
+    constant uint &globalFrameOffset [[buffer(9)]],
+    uint3 threadgroupPosition [[threadgroup_position_in_grid]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint simdgroup [[simdgroup_index_in_threadgroup]]
+) {
+    uint frame = threadgroupPosition.x;
+    uint block = threadgroupPosition.z;
+    threadgroup uchar lowPlanes[kBslz4BlockBytes / 2];
+    threadgroup atomic_uint blockMax;
+    if (simdgroup == 0 && lane == 0) {
+        atomic_store_explicit(&blockMax, 0u, memory_order_relaxed);
+    }
+    if (simdgroup == 0 && block < blocksPerFrame) {
+        uint2 metadata = blockMetadata[
+            ulong(metadataFrameOffset + frame) * blocksPerFrame + block
+        ];
+        bslz4DecompressPrefixDirectToThreadgroup(
+            lowPlanes,
+            h5File + rangeStart + ulong(metadata.x),
+            metadata.y,
+            kBslz4BlockBytes / 2,
+            lane
+        );
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    uint localMax = 0u;
+    if (block < blocksPerFrame) {
+        const threadgroup uint *planes =
+            (const threadgroup uint *)lowPlanes;
+        uint blockStart = block * 4096u;
+        uint blockStop = min(frameElements, blockStart + 4096u);
+        uint groups = (blockStop - blockStart + 31u) / 32u;
+        for (uint group = simdgroup; group < groups; group += 4u) {
+            uint detectorIndex = blockStart + group * 32u + lane;
+            if (detectorIndex >= blockStop) continue;
+            uchar value = 0;
+            for (uint bit = 0u; bit < 8u; ++bit) {
+                if (planes[bit * 128u + group] & (1u << lane)) {
+                    value |= uchar(1u << bit);
+                }
+            }
+            uchar stored = badPixelMask[detectorIndex] ? uchar(0) : value;
+            output[ulong(frame) * frameElements + detectorIndex] = stored;
+            localMax = max(localMax, uint(stored));
+        }
+        atomic_fetch_max_explicit(&blockMax, localMax, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (simdgroup == 0 && lane == 0) {
+        uint frameAudit = 2u * (globalFrameOffset + frame);
+        atomic_fetch_max_explicit(
+            &countAudit[frameAudit],
+            atomic_load_explicit(&blockMax, memory_order_relaxed),
+            memory_order_relaxed
+        );
+    }
+}
+
+// Exact 192x192 low-plane specialization. Every frame contains nine complete
+// 4 KiB low-plane blocks, so each thread can transpose eight detector pixels at
+// once without partial-block handling. The durable source audit still gates
+// this path; bad-pixel masking and the runtime maximum audit remain unchanged.
+kernel void h5lz4dc_unshuffle_u16_audited_low8_direct_octet192_qh5idx(
+    const device uchar *h5File [[buffer(0)]],
+    const device uint2 *blockMetadata [[buffer(1)]],
+    constant ulong &rangeStart [[buffer(2)]],
+    constant uint &blocksPerFrame [[buffer(3)]],
+    constant uint &frameElements [[buffer(4)]],
+    device uchar *output [[buffer(5)]],
+    constant uint &metadataFrameOffset [[buffer(6)]],
+    const device uchar *badPixelMask [[buffer(7)]],
+    device atomic_uint *countAudit [[buffer(8)]],
+    constant uint &globalFrameOffset [[buffer(9)]],
+    uint3 threadgroupPosition [[threadgroup_position_in_grid]],
+    uint threadIndex [[thread_index_in_threadgroup]],
+    uint3 threadsPerThreadgroup [[threads_per_threadgroup]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint simdgroup [[simdgroup_index_in_threadgroup]]
+) {
+    uint frame = threadgroupPosition.x;
+    uint block = threadgroupPosition.z;
+    threadgroup uchar lowPlanes[kBslz4BlockBytes / 2];
+    threadgroup atomic_uint blockMax;
+    if (threadIndex == 0u) {
+        atomic_store_explicit(&blockMax, 0u, memory_order_relaxed);
+    }
+    if (simdgroup == 0u && block < blocksPerFrame) {
+        uint2 metadata = blockMetadata[
+            ulong(metadataFrameOffset + frame) * blocksPerFrame + block
+        ];
+        bslz4DecompressPrefixDirectToThreadgroup(
+            lowPlanes,
+            h5File + rangeStart + ulong(metadata.x),
+            metadata.y,
+            kBslz4BlockBytes / 2,
+            lane
+        );
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    uint localMax = 0u;
+    if (block < blocksPerFrame && frameElements == 192u * 192u
+        && blocksPerFrame == 9u) {
+        const threadgroup uint *planes =
+            (const threadgroup uint *)lowPlanes;
+        uint blockStart = block * 4096u;
+        device uchar *frameOutput = output + ulong(frame) * frameElements;
+        uint threadsInGroup =
+            threadsPerThreadgroup.x * threadsPerThreadgroup.y
+            * threadsPerThreadgroup.z;
+        for (uint octet = threadIndex; octet < 512u; octet += threadsInGroup) {
+            uint group = octet >> 2u;
+            uint shift = (octet & 3u) * 8u;
+            ulong bitMatrix = 0ul;
+            for (uint bit = 0u; bit < 8u; ++bit) {
+                uint byteValues = (planes[bit * 128u + group] >> shift) & 0xffu;
+                bitMatrix |= ulong(byteValues) << (bit * 8u);
+            }
+            ulong swap =
+                (bitMatrix ^ (bitMatrix >> 7u)) & 0x00AA00AA00AA00AAul;
+            bitMatrix ^= swap ^ (swap << 7u);
+            swap =
+                (bitMatrix ^ (bitMatrix >> 14u)) & 0x0000CCCC0000CCCCul;
+            bitMatrix ^= swap ^ (swap << 14u);
+            swap =
+                (bitMatrix ^ (bitMatrix >> 28u)) & 0x00000000F0F0F0F0ul;
+            bitMatrix ^= swap ^ (swap << 28u);
+
+            uint packedLow = uint(bitMatrix);
+            uint packedHigh = uint(bitMatrix >> 32u);
+            uint detectorIndex = blockStart + octet * 8u;
+            device uchar *destination = frameOutput + detectorIndex;
+            const device uchar *mask = badPixelMask + detectorIndex;
+            uint maskLow = *((const device uint *)mask);
+            uint maskHigh = *((const device uint *)(mask + 4u));
+            if (maskLow == 0u) {
+                *((device uint *)destination) = packedLow;
+                localMax = max(
+                    localMax,
+                    max(
+                        max(packedLow & 0xffu, (packedLow >> 8u) & 0xffu),
+                        max((packedLow >> 16u) & 0xffu, packedLow >> 24u)
+                    )
+                );
+            } else {
+                for (uint valueIndex = 0u; valueIndex < 4u; ++valueIndex) {
+                    uchar value = uchar(packedLow >> (valueIndex * 8u));
+                    uchar stored = mask[valueIndex] ? uchar(0) : value;
+                    destination[valueIndex] = stored;
+                    localMax = max(localMax, uint(stored));
+                }
+            }
+            if (maskHigh == 0u) {
+                *((device uint *)(destination + 4u)) = packedHigh;
+                localMax = max(
+                    localMax,
+                    max(
+                        max(packedHigh & 0xffu, (packedHigh >> 8u) & 0xffu),
+                        max((packedHigh >> 16u) & 0xffu, packedHigh >> 24u)
+                    )
+                );
+            } else {
+                for (uint valueIndex = 0u; valueIndex < 4u; ++valueIndex) {
+                    uchar value = uchar(packedHigh >> (valueIndex * 8u));
+                    uchar stored = mask[4u + valueIndex] ? uchar(0) : value;
+                    destination[4u + valueIndex] = stored;
+                    localMax = max(localMax, uint(stored));
+                }
+            }
+        }
+        atomic_fetch_max_explicit(&blockMax, localMax, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (threadIndex == 0u) {
         uint frameAudit = 2u * (globalFrameOffset + frame);
         atomic_fetch_max_explicit(
             &countAudit[frameAudit],
@@ -1447,6 +1807,404 @@ kernel void h5lz4dc_bin_u16_audited_low8_scalar_u16_word_major_frame_owned_qh5id
         atomic_fetch_add_explicit(
             &groupRowMoment, localRowMoment, memory_order_relaxed
         );
+        atomic_fetch_add_explicit(
+            &groupColumnMoment, localColumnMoment, memory_order_relaxed
+        );
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (threadIndex == 0u) {
+        uint outputFrame = globalFrameOffset + frame;
+        uint frameAudit = 2u * outputFrame;
+        atomic_fetch_max_explicit(
+            &countAudit[frameAudit],
+            atomic_load_explicit(&groupMax, memory_order_relaxed),
+            memory_order_relaxed
+        );
+        atomic_fetch_add_explicit(
+            &bfMap[outputFrame],
+            atomic_load_explicit(&groupBF, memory_order_relaxed),
+            memory_order_relaxed
+        );
+        atomic_fetch_add_explicit(
+            &abfMap[outputFrame],
+            atomic_load_explicit(&groupABF, memory_order_relaxed),
+            memory_order_relaxed
+        );
+        atomic_fetch_add_explicit(
+            &dfMap[outputFrame],
+            atomic_load_explicit(&groupDF, memory_order_relaxed),
+            memory_order_relaxed
+        );
+        atomic_fetch_add_explicit(
+            &comTotal[outputFrame],
+            atomic_load_explicit(&groupTotal, memory_order_relaxed),
+            memory_order_relaxed
+        );
+        atomic_fetch_add_explicit(
+            &comRowMoment[outputFrame],
+            atomic_load_explicit(&groupRowMoment, memory_order_relaxed),
+            memory_order_relaxed
+        );
+        atomic_fetch_add_explicit(
+            &comColumnMoment[outputFrame],
+            atomic_load_explicit(&groupColumnMoment, memory_order_relaxed),
+            memory_order_relaxed
+        );
+    }
+}
+
+// Frame-major companion for Python MPS consumers. Each thread owns one packed
+// pair of detector-bin-4 pixels and writes it exactly once. The source audit
+// proves that the uint16 source has no populated high byte after masking and
+// that each exact 4x4 sum fits in uint16. This keeps the public Python load
+// layout (frame, detector row, detector column) without a 1.2 GB transpose.
+kernel void h5lz4dc_bin_u16_audited_low8_scalar_u16_frame_major_qh5idx(
+    const device uchar *lowPlaneScratch [[buffer(0)]],
+    device uint *output [[buffer(1)]],
+    const device uchar *badPixelMask [[buffer(2)]],
+    device atomic_uint *countAudit [[buffer(3)]],
+    constant uint &globalFrameOffset [[buffer(4)]],
+    constant uint &frameElements [[buffer(5)]],
+    constant QH5DirectDetectorBinParams &params [[buffer(6)]],
+    uint linearGroup [[threadgroup_position_in_grid]],
+    uint threadIndex [[thread_index_in_threadgroup]],
+    uint lane [[thread_index_in_simdgroup]]
+) {
+    uint outputRows = params.sourceDetectorRows / 4u;
+    uint outputPixels = outputRows * params.outputDetectorColumns;
+    uint outputWords = outputPixels / 2u;
+    uint groupsPerFrame = (outputWords + 127u) / 128u;
+    uint frame = linearGroup / groupsPerFrame;
+    uint groupInFrame = linearGroup - frame * groupsPerFrame;
+    uint outputWord = groupInFrame * 128u + threadIndex;
+
+    threadgroup atomic_uint groupMax;
+    if (threadIndex == 0u) {
+        atomic_store_explicit(&groupMax, 0u, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    uint localMax = 0u;
+    if (outputWord < outputWords) {
+        uint packedOutput = 0u;
+        for (uint pair = 0u; pair < 2u; ++pair) {
+            uint outputPixel = outputWord * 2u + pair;
+            uint outputRow = outputPixel / params.outputDetectorColumns;
+            uint outputColumn = outputPixel - outputRow * params.outputDetectorColumns;
+            uint sum = 0u;
+            for (uint rowOffset = 0u; rowOffset < 4u; ++rowOffset) {
+                uint sourceRow = outputRow * 4u + rowOffset;
+                uint sourcePixel = sourceRow * params.sourceDetectorColumns
+                    + outputColumn * 4u;
+                sum += bslz4Low8AlignedRow4(
+                    lowPlaneScratch,
+                    badPixelMask,
+                    frame,
+                    frameElements,
+                    sourcePixel,
+                    localMax
+                );
+            }
+            packedOutput |= pair == 0u ? sum : (sum << 16u);
+        }
+        ulong outputFrame = ulong(globalFrameOffset + frame);
+        output[outputFrame * outputWords + outputWord] = packedOutput;
+    }
+
+    localMax = simd_max(localMax);
+    if (lane == 0u) {
+        atomic_fetch_max_explicit(&groupMax, localMax, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (threadIndex == 0u) {
+        atomic_fetch_max_explicit(
+            &countAudit[globalFrameOffset + frame],
+            atomic_load_explicit(&groupMax, memory_order_relaxed),
+            memory_order_relaxed
+        );
+    }
+}
+
+inline uint2 bslz4Low8AlignedRow8(
+    const device uchar *lowPlaneScratch,
+    const device uchar *badPixelMask,
+    uint frame,
+    uint frameElements,
+    uint sourcePixel,
+    thread uint &localMax
+) {
+    uint block = sourcePixel >> 12u;
+    uint localPixel = sourcePixel & 4095u;
+    uint group = localPixel >> 5u;
+    uint shift = localPixel & 31u;
+    const device uint *planes = (const device uint *)(
+        lowPlaneScratch + ulong(frame) * frameElements + block * 4096u
+    );
+    uint validMask = 0u;
+    for (uint offset = 0u; offset < 8u; ++offset) {
+        if (!badPixelMask[sourcePixel + offset]) {
+            validMask |= 1u << offset;
+        }
+    }
+    ulong bitMatrix = 0ul;
+    for (uint bit = 0u; bit < 8u; ++bit) {
+        uint byteValues = (planes[bit * 128u + group] >> shift) & validMask;
+        bitMatrix |= ulong(byteValues) << (bit * 8u);
+    }
+    ulong swap = (bitMatrix ^ (bitMatrix >> 7u)) & 0x00AA00AA00AA00AAul;
+    bitMatrix ^= swap ^ (swap << 7u);
+    swap = (bitMatrix ^ (bitMatrix >> 14u)) & 0x0000CCCC0000CCCCul;
+    bitMatrix ^= swap ^ (swap << 14u);
+    swap = (bitMatrix ^ (bitMatrix >> 28u)) & 0x00000000F0F0F0F0ul;
+    bitMatrix ^= swap ^ (swap << 28u);
+    uint packedLow = uint(bitMatrix);
+    uint packedHigh = uint(bitMatrix >> 32u);
+    uint value0 = packedLow & 0xffu;
+    uint value1 = (packedLow >> 8u) & 0xffu;
+    uint value2 = (packedLow >> 16u) & 0xffu;
+    uint value3 = packedLow >> 24u;
+    uint value4 = packedHigh & 0xffu;
+    uint value5 = (packedHigh >> 8u) & 0xffu;
+    uint value6 = (packedHigh >> 16u) & 0xffu;
+    uint value7 = packedHigh >> 24u;
+    localMax = max(
+        localMax,
+        max(
+            max(max(value0, value1), max(value2, value3)),
+            max(max(value4, value5), max(value6, value7))
+        )
+    );
+    return uint2(
+        value0 + value1 + value2 + value3,
+        value4 + value5 + value6 + value7
+    );
+}
+
+// Two adjacent detector-bin-4 pixels share each source-row bit-plane load.
+// The caller selects this kernel only when detector rows begin on 32-pixel
+// bit-plane groups and the output detector width is even, so every row-8 read
+// stays within one block word. Masking and runtime count auditing remain exact.
+kernel void h5lz4dc_bin_u16_audited_low8_scalar_u16_frame_major_row8_qh5idx(
+    const device uchar *lowPlaneScratch [[buffer(0)]],
+    device uint *output [[buffer(1)]],
+    const device uchar *badPixelMask [[buffer(2)]],
+    device atomic_uint *countAudit [[buffer(3)]],
+    constant uint &globalFrameOffset [[buffer(4)]],
+    constant uint &frameElements [[buffer(5)]],
+    constant QH5DirectDetectorBinParams &params [[buffer(6)]],
+    uint linearGroup [[threadgroup_position_in_grid]],
+    uint threadIndex [[thread_index_in_threadgroup]],
+    uint lane [[thread_index_in_simdgroup]]
+) {
+    uint outputRows = params.sourceDetectorRows / 4u;
+    uint outputPixels = outputRows * params.outputDetectorColumns;
+    uint outputWords = outputPixels / 2u;
+    uint groupsPerFrame = (outputWords + 127u) / 128u;
+    uint frame = linearGroup / groupsPerFrame;
+    uint groupInFrame = linearGroup - frame * groupsPerFrame;
+    uint outputWord = groupInFrame * 128u + threadIndex;
+
+    threadgroup atomic_uint groupMax;
+    if (threadIndex == 0u) {
+        atomic_store_explicit(&groupMax, 0u, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    uint localMax = 0u;
+    if (outputWord < outputWords) {
+        uint firstOutputPixel = outputWord * 2u;
+        uint outputRow = firstOutputPixel / params.outputDetectorColumns;
+        uint outputColumn = firstOutputPixel
+            - outputRow * params.outputDetectorColumns;
+        uint2 sums = uint2(0u);
+        for (uint rowOffset = 0u; rowOffset < 4u; ++rowOffset) {
+            uint sourceRow = outputRow * 4u + rowOffset;
+            uint sourcePixel = sourceRow * params.sourceDetectorColumns
+                + outputColumn * 4u;
+            sums += bslz4Low8AlignedRow8(
+                lowPlaneScratch,
+                badPixelMask,
+                frame,
+                frameElements,
+                sourcePixel,
+                localMax
+            );
+        }
+        ulong outputFrame = ulong(globalFrameOffset + frame);
+        output[outputFrame * outputWords + outputWord] = sums.x | (sums.y << 16u);
+    }
+
+    localMax = simd_max(localMax);
+    if (lane == 0u) {
+        atomic_fetch_max_explicit(&groupMax, localMax, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (threadIndex == 0u) {
+        atomic_fetch_max_explicit(
+            &countAudit[globalFrameOffset + frame],
+            atomic_load_explicit(&groupMax, memory_order_relaxed),
+            memory_order_relaxed
+        );
+    }
+}
+
+// Word-major companion for native consumers. One thread owns the two adjacent
+// detector-bin-4 pixels packed into each destination word. When both pixels
+// occupy one detector row, their eight source columns share each bit-plane
+// load. The guarded scalar fallback preserves exact behavior for incomplete or
+// unaligned detector geometry.
+kernel void h5lz4dc_bin_u16_audited_low8_scalar_u16_word_major_frame_owned_row8_qh5idx(
+    const device uchar *lowPlaneScratch [[buffer(0)]],
+    device uint *output [[buffer(1)]],
+    const device uchar *badPixelMask [[buffer(2)]],
+    device atomic_uint *countAudit [[buffer(3)]],
+    constant uint &globalFrameOffset [[buffer(4)]],
+    constant uint &blocksPerFrame [[buffer(5)]],
+    constant uint &frameElements [[buffer(6)]],
+    constant QH5DirectDetectorBinParams &params [[buffer(7)]],
+    const device uchar *detectorBands [[buffer(8)]],
+    device atomic_uint *bfMap [[buffer(9)]],
+    device atomic_uint *abfMap [[buffer(10)]],
+    device atomic_uint *dfMap [[buffer(11)]],
+    device atomic_uint *comTotal [[buffer(12)]],
+    device atomic_uint *comRowMoment [[buffer(13)]],
+    device atomic_uint *comColumnMoment [[buffer(14)]],
+    uint linearGroup [[threadgroup_position_in_grid]],
+    uint threadIndex [[thread_index_in_threadgroup]],
+    uint lane [[thread_index_in_simdgroup]]
+) {
+    (void)blocksPerFrame;
+    uint outputRows = (params.sourceDetectorRows + 3u) / 4u;
+    uint outputPixels = outputRows * params.outputDetectorColumns;
+    uint outputWords = (outputPixels + 1u) / 2u;
+    uint groupsPerFrame = (outputWords + 127u) / 128u;
+    uint frame = linearGroup / groupsPerFrame;
+    uint groupInFrame = linearGroup - frame * groupsPerFrame;
+    uint outputWord = groupInFrame * 128u + threadIndex;
+
+    threadgroup atomic_uint groupMax;
+    threadgroup atomic_uint groupBF;
+    threadgroup atomic_uint groupABF;
+    threadgroup atomic_uint groupDF;
+    threadgroup atomic_uint groupTotal;
+    threadgroup atomic_uint groupRowMoment;
+    threadgroup atomic_uint groupColumnMoment;
+    if (threadIndex == 0u) {
+        atomic_store_explicit(&groupMax, 0u, memory_order_relaxed);
+        atomic_store_explicit(&groupBF, 0u, memory_order_relaxed);
+        atomic_store_explicit(&groupABF, 0u, memory_order_relaxed);
+        atomic_store_explicit(&groupDF, 0u, memory_order_relaxed);
+        atomic_store_explicit(&groupTotal, 0u, memory_order_relaxed);
+        atomic_store_explicit(&groupRowMoment, 0u, memory_order_relaxed);
+        atomic_store_explicit(&groupColumnMoment, 0u, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    uint localMax = 0u;
+    uint localBF = 0u;
+    uint localABF = 0u;
+    uint localDF = 0u;
+    uint localTotal = 0u;
+    uint localRowMoment = 0u;
+    uint localColumnMoment = 0u;
+    if (outputWord < outputWords) {
+        uint firstOutputPixel = outputWord * 2u;
+        uint firstOutputRow = firstOutputPixel / params.outputDetectorColumns;
+        uint firstOutputColumn = firstOutputPixel
+            - firstOutputRow * params.outputDetectorColumns;
+        uint2 sums = uint2(0u);
+        bool completePair = firstOutputPixel + 1u < outputPixels
+            && firstOutputColumn + 1u < params.outputDetectorColumns
+            && firstOutputRow * 4u + 3u < params.sourceDetectorRows
+            && firstOutputColumn * 4u + 7u < params.sourceDetectorColumns;
+        if (completePair) {
+            bool aligned = true;
+            for (uint rowOffset = 0u; rowOffset < 4u; ++rowOffset) {
+                uint sourceRow = firstOutputRow * 4u + rowOffset;
+                uint sourcePixel = sourceRow * params.sourceDetectorColumns
+                    + firstOutputColumn * 4u;
+                uint localPixel = sourcePixel & 4095u;
+                aligned = aligned
+                    && (sourcePixel & 31u) <= 24u
+                    && localPixel <= 4088u;
+            }
+            if (aligned) {
+                for (uint rowOffset = 0u; rowOffset < 4u; ++rowOffset) {
+                    uint sourceRow = firstOutputRow * 4u + rowOffset;
+                    uint sourcePixel = sourceRow * params.sourceDetectorColumns
+                        + firstOutputColumn * 4u;
+                    sums += bslz4Low8AlignedRow8(
+                        lowPlaneScratch,
+                        badPixelMask,
+                        frame,
+                        frameElements,
+                        sourcePixel,
+                        localMax
+                    );
+                }
+            } else {
+                completePair = false;
+            }
+        }
+        if (!completePair) {
+            sums = uint2(0u);
+            for (uint pair = 0u; pair < 2u; ++pair) {
+                uint outputPixel = firstOutputPixel + pair;
+                if (outputPixel >= outputPixels) continue;
+                uint outputRow = outputPixel / params.outputDetectorColumns;
+                uint outputColumn = outputPixel
+                    - outputRow * params.outputDetectorColumns;
+                uint sum = 0u;
+                for (uint rowOffset = 0u; rowOffset < 4u; ++rowOffset) {
+                    uint sourceRow = outputRow * 4u + rowOffset;
+                    if (sourceRow >= params.sourceDetectorRows) continue;
+                    uint sourcePixel = sourceRow * params.sourceDetectorColumns
+                        + outputColumn * 4u;
+                    sum += bslz4Low8AlignedRow4(
+                        lowPlaneScratch,
+                        badPixelMask,
+                        frame,
+                        frameElements,
+                        sourcePixel,
+                        localMax
+                    );
+                }
+                sums[pair] = sum;
+            }
+        }
+        output[ulong(outputWord) * params.outputScanCount
+            + globalFrameOffset + frame] = sums.x | (sums.y << 16u);
+
+        for (uint pair = 0u; pair < 2u; ++pair) {
+            uint outputPixel = firstOutputPixel + pair;
+            if (outputPixel >= outputPixels) continue;
+            uint outputRow = outputPixel / params.outputDetectorColumns;
+            uint outputColumn = outputPixel - outputRow * params.outputDetectorColumns;
+            uint sum = sums[pair];
+            uchar bands = detectorBands[outputPixel];
+            localBF += (bands & 1u) == 0u ? 0u : sum;
+            localABF += (bands & 2u) == 0u ? 0u : sum;
+            localDF += (bands & 4u) == 0u ? 0u : sum;
+            localTotal += sum;
+            localRowMoment += sum * outputRow;
+            localColumnMoment += sum * outputColumn;
+        }
+    }
+
+    localMax = simd_max(localMax);
+    localBF = simd_sum(localBF);
+    localABF = simd_sum(localABF);
+    localDF = simd_sum(localDF);
+    localTotal = simd_sum(localTotal);
+    localRowMoment = simd_sum(localRowMoment);
+    localColumnMoment = simd_sum(localColumnMoment);
+    if (lane == 0u) {
+        atomic_fetch_max_explicit(&groupMax, localMax, memory_order_relaxed);
+        atomic_fetch_add_explicit(&groupBF, localBF, memory_order_relaxed);
+        atomic_fetch_add_explicit(&groupABF, localABF, memory_order_relaxed);
+        atomic_fetch_add_explicit(&groupDF, localDF, memory_order_relaxed);
+        atomic_fetch_add_explicit(&groupTotal, localTotal, memory_order_relaxed);
+        atomic_fetch_add_explicit(&groupRowMoment, localRowMoment, memory_order_relaxed);
         atomic_fetch_add_explicit(
             &groupColumnMoment, localColumnMoment, memory_order_relaxed
         );

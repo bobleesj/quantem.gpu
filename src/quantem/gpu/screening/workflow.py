@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import gc
 import json
-import math
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -11,8 +10,20 @@ from typing import Any
 
 import numpy as np
 
+from ._memory import (
+    MemoryPlan,
+    _memory_plan_for_shapes,
+    _memory_plan_with_chunk_rows,
+)
+from ._mps import (
+    _clear_mps_transients,
+    _metadata_dtype,
+    _mps_chunked_frames_for,
+    _mps_mean_dp,
+)
 
-_CACHE_VERSION = 2
+
+_CACHE_VERSION = 3
 
 
 def _screening_output_dtype(output_dtype) -> np.dtype:
@@ -46,24 +57,6 @@ class ScreeningResult:
     elapsed_s: float = 0.0
 
 
-@dataclass(frozen=True)
-class MemoryPlan:
-    """Memory plan for streaming BF/DF/CoM/rotation cache generation."""
-
-    memory_budget_gb: float
-    memory_budget_source: str
-    raw_target_gb: float
-    chunk_rows: int
-    chunk_rows_source: str
-    chunk_count: int
-    chunk_resident_gb: float
-    scan_shape: tuple[int, int]
-    detector_shape: tuple[int, int]
-    dtype: str
-    cuda_free_gb: float | None = None
-    cuda_total_gb: float | None = None
-
-
 def _cache_path(
     master: str | Path,
     cache_dir: str | Path | None = None,
@@ -74,27 +67,51 @@ def _cache_path(
         cache_root = master_path.parent / ".quantem_gpu_cache"
     else:
         cache_root = Path(cache_dir).expanduser()
-    return cache_root / f"{master_path.stem}.screening-v2.npz"
+    return cache_root / f"{master_path.stem}.screening-v{_CACHE_VERSION}.npz"
 
 
 def _source_fingerprint(master: Path) -> dict[str, Any]:
+    """Return the complete master-and-shard source identity."""
+    from quantem.gpu.io import inspect as inspect_source
+
+    inspection = inspect_source(str(master))
+    signature = inspection.source_signature
+    if signature:
+        return dict(signature)
     stat = master.stat()
     return {
-        "source_name": master.name,
-        "source_size": int(stat.st_size),
-        "source_mtime_ns": int(stat.st_mtime_ns),
+        "master": str(master.resolve()),
+        "files": [
+            {
+                "path": str(master.resolve()),
+                "size": int(stat.st_size),
+                "mtime_ns": int(stat.st_mtime_ns),
+            }
+        ],
+        "datasets": [],
+        "expectation": {"frames": None, "basis": None},
     }
 
 
 def _cache_matches(metadata: dict[str, Any], master: Path) -> bool:
-    source = metadata.get("source", {})
-    current = _source_fingerprint(master)
     return (
         int(metadata.get("version", -1)) == _CACHE_VERSION
-        and source.get("source_name") == current["source_name"]
-        and int(source.get("source_size", -1)) == current["source_size"]
-        and int(source.get("source_mtime_ns", -1)) == current["source_mtime_ns"]
+        and metadata.get("source") == _source_fingerprint(master)
     )
+
+
+def _require_source_unchanged(
+    master: Path,
+    expected: dict[str, Any],
+    *,
+    stage: str,
+) -> None:
+    """Fail closed if a source file changed during a screening pass."""
+    if _source_fingerprint(master) != expected:
+        raise RuntimeError(
+            "The 4D-STEM source changed while screening products were being "
+            f"computed ({stage}). Wait for acquisition to finish, then retry."
+        )
 
 
 def _metadata_array(metadata: dict[str, Any]) -> np.ndarray:
@@ -187,111 +204,6 @@ def _clear_cuda_pools() -> None:
     gc.collect()
 
 
-def _clear_mps_transients() -> None:
-    """Release Python references after a chunked MPS cache-build step."""
-    gc.collect()
-
-
-def _cuda_memory_info_gb() -> tuple[float, float] | None:
-    try:
-        import cupy as cp
-
-        free_bytes, total_bytes = cp.cuda.runtime.memGetInfo()
-    except Exception:
-        return None
-    return float(free_bytes) / 1e9, float(total_bytes) / 1e9
-
-
-def _resolve_memory_budget_gb(
-    memory_budget_gb: float | None,
-) -> tuple[float, str, float | None, float | None]:
-    if memory_budget_gb is not None:
-        budget = float(memory_budget_gb)
-        if not math.isfinite(budget) or budget <= 0.0:
-            raise ValueError(
-                f"memory_budget_gb must be positive, got {memory_budget_gb!r}"
-            )
-        return budget, "user", None, None
-
-    info = _cuda_memory_info_gb()
-    if info is None:
-        return 12.0, "fallback", None, None
-    free_gb, total_gb = info
-    # This is a streaming working-set budget, not "consume all free VRAM".
-    # Use the actual free-device memory so 48/96 GB cards can automatically
-    # choose larger row chunks or a full-master read, while leaving headroom for
-    # decoder scratch, masks, product buffers, and allocator fragmentation.
-    budget = max(4.0, free_gb * 0.90)
-    return budget, "auto_cuda", free_gb, total_gb
-
-
-def _memory_plan_for_shapes(
-    scan_shape: tuple[int, int],
-    detector_shape: tuple[int, int],
-    itemsize: int,
-    memory_budget_gb: float | None,
-) -> MemoryPlan:
-    """Choose scan-row chunks and report the effective memory budget."""
-    scan_cols = int(scan_shape[1])
-    bytes_per_row = scan_cols * int(detector_shape[0]) * int(detector_shape[1]) * int(itemsize)
-    budget_gb, source, free_gb, total_gb = _resolve_memory_budget_gb(memory_budget_gb)
-    budget_bytes = budget_gb * (1 << 30)
-    full_raw_bytes = int(scan_shape[0]) * bytes_per_row
-    if full_raw_bytes <= budget_bytes * 0.90:
-        target_raw_bytes = full_raw_bytes
-    else:
-        target_raw_bytes = max(512 * 1024**2, budget_bytes * 0.50)
-    # Leave room for masks, decoder scratch, HDF5 staging, and the allocator
-    # pool. The raw output chunk is the dominant VRAM resident allocation.
-    rows = max(1, int(target_raw_bytes // max(1, bytes_per_row)))
-    chunk_rows = max(1, min(int(scan_shape[0]), rows))
-    chunk_count = int(math.ceil(int(scan_shape[0]) / chunk_rows))
-    chunk_resident_gb = float(chunk_rows * bytes_per_row) / 1e9
-    return MemoryPlan(
-        memory_budget_gb=float(budget_gb),
-        memory_budget_source=source,
-        raw_target_gb=float(target_raw_bytes) / 1e9,
-        chunk_rows=int(chunk_rows),
-        chunk_rows_source="budget",
-        chunk_count=chunk_count,
-        chunk_resident_gb=chunk_resident_gb,
-        scan_shape=(int(scan_shape[0]), int(scan_shape[1])),
-        detector_shape=(int(detector_shape[0]), int(detector_shape[1])),
-        dtype=str(np.dtype(f"u{itemsize}")),
-        cuda_free_gb=free_gb,
-        cuda_total_gb=total_gb,
-    )
-
-
-def _memory_plan_with_chunk_rows(
-    plan: MemoryPlan,
-    chunk_rows: int,
-) -> MemoryPlan:
-    """Return ``plan`` with an explicit user chunk-row override applied."""
-    rows = int(max(1, min(int(chunk_rows), plan.scan_shape[0])))
-    itemsize = np.dtype(plan.dtype).itemsize
-    bytes_per_row = (
-        int(plan.scan_shape[1])
-        * int(plan.detector_shape[0])
-        * int(plan.detector_shape[1])
-        * int(itemsize)
-    )
-    return MemoryPlan(
-        memory_budget_gb=plan.memory_budget_gb,
-        memory_budget_source=plan.memory_budget_source,
-        raw_target_gb=plan.raw_target_gb,
-        chunk_rows=rows,
-        chunk_rows_source="user",
-        chunk_count=int(math.ceil(int(plan.scan_shape[0]) / rows)),
-        chunk_resident_gb=float(rows * bytes_per_row) / 1e9,
-        scan_shape=plan.scan_shape,
-        detector_shape=plan.detector_shape,
-        dtype=plan.dtype,
-        cuda_free_gb=plan.cuda_free_gb,
-        cuda_total_gb=plan.cuda_total_gb,
-    )
-
-
 def _memory_plan(
     master: str | Path,
     *,
@@ -341,6 +253,7 @@ def _build_cuda_products(
 
     t0 = time.perf_counter()
     metadata = inspect_source(str(master)).metadata
+    source_fingerprint = _source_fingerprint(master)
     detector_shape = tuple(int(v) for v in metadata.get("detector_shape") or ())
     if len(detector_shape) != 2:
         raise ValueError("Could not determine detector_shape from HDF5 metadata")
@@ -354,12 +267,14 @@ def _build_cuda_products(
     sample_load_s = 0.0
     sample_product_s = 0.0
     sample_positions_used = 0
-    probe_source = "pending"
     dp = None
     center = None
     radius = None
     bf_mask = None
     df_mask = None
+    detector_sum = np.zeros(detector_shape, dtype=np.uint64)
+    full_frame_count = 0
+    bootstrap_source = "pending"
     if int(sample_positions) > 0 and not full_scan_single_chunk:
         sample_t0 = time.perf_counter()
         sample = load(
@@ -382,9 +297,15 @@ def _build_cuda_products(
         cp.cuda.Stream.null.synchronize()
         sample_product_s = time.perf_counter() - dp_t0
         sample_positions_used = int(sample_positions)
-        probe_source = "random_scan_sample"
+        bootstrap_source = "random_scan_sample"
         del sample
         _clear_cuda_pools()
+
+    _require_source_unchanged(
+        master,
+        source_fingerprint,
+        stage="before the primary CUDA stream",
+    )
 
     chunk_timings: list[dict[str, float]] = []
     stream_t0 = time.perf_counter()
@@ -421,7 +342,16 @@ def _build_cuda_products(
             cp.cuda.Stream.null.synchronize()
             sample_product_s = time.perf_counter() - product_t0
             sample_positions_used = int(np.prod(data.shape[:2]))
-            probe_source = "full_scan" if full_scan_single_chunk else "first_chunk"
+            bootstrap_source = (
+                "full_scan" if full_scan_single_chunk else "first_chunk"
+            )
+        exact_sum_t0 = time.perf_counter()
+        flat = data.reshape(-1, *data.shape[-2:])
+        chunk_sum = flat.sum(axis=0, dtype=cp.uint64)
+        cp.cuda.Stream.null.synchronize()
+        np.add(detector_sum, cp.asnumpy(chunk_sum), out=detector_sum)
+        full_frame_count += int(flat.shape[0])
+        exact_sum_s = time.perf_counter() - exact_sum_t0
         reduce_t0 = time.perf_counter()
         if dp is None or center is None or radius is None or bf_mask is None or df_mask is None:
             raise RuntimeError("Screening masks were not initialized")
@@ -438,16 +368,91 @@ def _build_cuda_products(
         chunk_timings.append(
             {
                 "load_s": float(load_s),
+                "exact_sum_s": float(exact_sum_s),
                 "reduce_s": float(reduce_s),
                 "resident_gb": float(data.nbytes / 1e9),
             }
         )
-        del result, data, bf_gpu, df_gpu, row_gpu, col_gpu
+        del result, data, flat, chunk_sum, bf_gpu, df_gpu, row_gpu, col_gpu
         _clear_cuda_pools()
         if verbose:
             print(f"  rows {r0}:{r1} load={load_s:.3f}s reduce={reduce_s:.3f}s")
 
     stream_s = time.perf_counter() - stream_t0
+    _require_source_unchanged(
+        master,
+        source_fingerprint,
+        stage="after the primary CUDA stream",
+    )
+
+    if full_frame_count != int(np.prod(scan_shape)):
+        raise RuntimeError(
+            "CUDA screening visited "
+            f"{full_frame_count} frames, expected {int(np.prod(scan_shape))}."
+        )
+    provisional_bf_mask = np.asarray(bf_mask, dtype=bool)
+    provisional_df_mask = np.asarray(df_mask, dtype=bool)
+    dp = detector_sum.astype(np.float32) / float(full_frame_count)
+    center, radius = auto_probe(dp)
+    bf_mask = detector_mask(center, 0.0, radius, dp.shape)
+    df_mask = detector_mask(center, radius, np.inf, dp.shape)
+    masks_identical = bool(
+        np.array_equal(provisional_bf_mask, bf_mask)
+        and np.array_equal(provisional_df_mask, df_mask)
+    )
+
+    fallback_s = 0.0
+    fallback_load_s = 0.0
+    fallback_reduce_s = 0.0
+    pass_count = 1
+    if not masks_identical:
+        pass_count = 2
+        fallback_t0 = time.perf_counter()
+        for r0 in range(0, scan_shape[0], chunk_rows):
+            r1 = min(scan_shape[0], r0 + chunk_rows)
+            load_t0 = time.perf_counter()
+            if r0 == 0 and r1 == scan_shape[0]:
+                result = load(
+                    str(master),
+                    scan_shape=scan_shape,
+                    backend="cuda",
+                    dtype=output_dtype,
+                    verbose=False,
+                )
+            else:
+                result = load(
+                    str(master),
+                    scan_region=(r0, r1, 0, scan_shape[1]),
+                    scan_shape=scan_shape,
+                    backend="cuda",
+                    dtype=output_dtype,
+                    verbose=False,
+                )
+            cp.cuda.Stream.null.synchronize()
+            fallback_load_s += time.perf_counter() - load_t0
+            reduce_t0 = time.perf_counter()
+            bf_gpu = cuda_masked_sum(result.data, bf_mask)
+            df_gpu = cuda_masked_sum(result.data, df_mask)
+            cp.cuda.Stream.null.synchronize()
+            fallback_reduce_s += time.perf_counter() - reduce_t0
+            bf_map[r0:r1, :] = cp.asnumpy(bf_gpu).reshape(
+                r1 - r0,
+                scan_shape[1],
+            )
+            df_map[r0:r1, :] = cp.asnumpy(df_gpu).reshape(
+                r1 - r0,
+                scan_shape[1],
+            )
+            del result, bf_gpu, df_gpu
+            _clear_cuda_pools()
+        fallback_s = time.perf_counter() - fallback_t0
+        _require_source_unchanged(
+            master,
+            source_fingerprint,
+            stage="after the authoritative CUDA BF/DF pass",
+        )
+
+    probe_source = "full_scan_exact"
     com_row -= float(com_row.mean())
     com_col -= float(com_col.mean())
     rotation_t0 = time.perf_counter()
@@ -463,6 +468,14 @@ def _build_cuda_products(
         "sample_load_s": float(sample_load_s),
         "sample_product_s": float(sample_product_s),
         "probe_source": probe_source,
+        "bootstrap_source": bootstrap_source,
+        "exact_sum_method": "CUDA uint64 chunk sums with fixed host merge",
+        "full_frame_count": int(full_frame_count),
+        "masks_identical": masks_identical,
+        "pass_count": int(pass_count),
+        "fallback_s": float(fallback_s),
+        "fallback_load_s": float(fallback_load_s),
+        "fallback_reduce_s": float(fallback_reduce_s),
         "stream_s": float(stream_s),
         "rotation_s": float(rotation_s),
         "elapsed_s": float(elapsed_s),
@@ -473,6 +486,9 @@ def _build_cuda_products(
         "chunk_load_max_s": float(np.max([c["load_s"] for c in chunk_timings])),
         "chunk_reduce_min_s": float(np.min([c["reduce_s"] for c in chunk_timings])),
         "chunk_reduce_max_s": float(np.max([c["reduce_s"] for c in chunk_timings])),
+        "chunk_exact_sum_median_s": float(
+            np.median([c["exact_sum_s"] for c in chunk_timings])
+        ),
     }
     params = {
         "scan_shape": [int(v) for v in scan_shape],
@@ -481,6 +497,10 @@ def _build_cuda_products(
         "sample_positions": int(sample_positions),
         "sample_positions_used": int(sample_positions_used),
         "probe_source": probe_source,
+        "bootstrap_source": bootstrap_source,
+        "full_frame_count": int(full_frame_count),
+        "masks_identical": masks_identical,
+        "pass_count": int(pass_count),
         "seed": None if seed is None else int(seed),
         "rotation_steps": int(rotation_steps),
         "center": [float(center[0]), float(center[1])],
@@ -513,7 +533,7 @@ def _build_cuda_products(
         transposed=bool(transposed),
         metadata={
             "version": _CACHE_VERSION,
-            "source": _source_fingerprint(master),
+            "source": source_fingerprint,
             "parameters": params,
             "timing": timing,
             "memory": asdict(memory_plan),
@@ -523,67 +543,6 @@ def _build_cuda_products(
         from_cache=False,
         elapsed_s=elapsed_s,
     )
-
-
-def _metadata_dtype(metadata: dict[str, Any], fallback) -> np.dtype:
-    """Return the native detector dtype from metadata when it is available."""
-    dtype = metadata.get("dtype")
-    if dtype is None:
-        return _screening_output_dtype(fallback)
-    try:
-        return np.dtype(dtype)
-    except TypeError:
-        return _screening_output_dtype(fallback)
-
-
-def _metal_buffer_for(array):
-    """Return an MPS ndarray's backing Metal buffer, following base views."""
-    current = array
-    seen: set[int] = set()
-    while current is not None and id(current) not in seen:
-        seen.add(id(current))
-        buffer = getattr(current, "_mtl", None)
-        if buffer is not None:
-            return buffer
-        current = getattr(current, "base", None)
-    return None
-
-
-def _mps_chunked_frames_for(data):
-    """Return a ``ChunkedFrames`` view over MPS-loaded data.
-
-    Full MPS master loads already return ``ChunkedFrames``. Crop/sparse MPS
-    loads return a Metal-backed ndarray view; wrap that view as one temporary
-    chunk so BF/DF/CoM reductions still run in raw Metal rather than through
-    CPU/Torch fallback code.
-    """
-    if getattr(data, "_is_gpu_frames", False):
-        return data
-    mtl = _metal_buffer_for(data)
-    if mtl is None:
-        raise RuntimeError(
-            "MPS screening products require Metal-backed load output; got "
-            f"{type(data).__name__}. Use backend='cuda' or backend='mps'."
-        )
-    from quantem.gpu.detector.compute.mps.kernels import ChunkedFrames
-    from quantem.gpu.io.backends import mps as _mps
-
-    arr = data
-    if arr.ndim == 4:
-        flat_shape = (int(arr.shape[0]) * int(arr.shape[1]), *arr.shape[-2:])
-        arr = arr.reshape(flat_shape)
-    elif arr.ndim != 3:
-        raise ValueError(f"Expected 3D or 4D MPS detector data, got shape {arr.shape}.")
-    try:
-        arr._mtl = mtl
-    except AttributeError:
-        arr = np.asarray(arr).reshape(arr.shape).view(_mps._MtlArray)
-        arr._mtl = mtl
-    return ChunkedFrames([arr])
-
-
-def _mps_mean_dp(frames) -> np.ndarray:
-    return np.asarray(frames.vi.detector_sum(), dtype=np.float32) / int(frames.vi.n)
 
 
 def _build_mps_products(
@@ -605,6 +564,7 @@ def _build_mps_products(
 
     t0 = time.perf_counter()
     metadata = inspect_source(str(master)).metadata
+    source_fingerprint = _source_fingerprint(master)
     detector_shape = tuple(int(v) for v in metadata.get("detector_shape") or ())
     if len(detector_shape) != 2:
         raise ValueError("Could not determine detector_shape from HDF5 metadata")
@@ -618,12 +578,14 @@ def _build_mps_products(
     sample_load_s = 0.0
     sample_product_s = 0.0
     sample_positions_used = 0
-    probe_source = "pending"
     dp = None
     center = None
     radius = None
     bf_mask = None
     df_mask = None
+    detector_sum = np.zeros(detector_shape, dtype=np.uint64)
+    full_frame_count = 0
+    bootstrap_source = "pending"
 
     if int(sample_positions) > 0 and not full_scan_single_chunk:
         sample_t0 = time.perf_counter()
@@ -645,9 +607,15 @@ def _build_mps_products(
         df_mask = detector_mask(center, radius, np.inf, dp.shape)
         sample_product_s = time.perf_counter() - dp_t0
         sample_positions_used = int(sample_positions)
-        probe_source = "random_scan_sample"
+        bootstrap_source = "random_scan_sample"
         del sample, sample_frames
         _clear_mps_transients()
+
+    _require_source_unchanged(
+        master,
+        source_fingerprint,
+        stage="before the primary MPS stream",
+    )
 
     chunk_timings: list[dict[str, float]] = []
     stream_t0 = time.perf_counter()
@@ -681,7 +649,13 @@ def _build_mps_products(
             df_mask = detector_mask(center, radius, np.inf, dp.shape)
             sample_product_s = time.perf_counter() - product_t0
             sample_positions_used = int(frames.vi.n)
-            probe_source = "full_scan" if full_scan_single_chunk else "first_chunk"
+            bootstrap_source = (
+                "full_scan" if full_scan_single_chunk else "first_chunk"
+            )
+        exact_sum_t0 = time.perf_counter()
+        np.add(detector_sum, frames.vi.detector_sum_exact(), out=detector_sum)
+        full_frame_count += int(frames.vi.n)
+        exact_sum_s = time.perf_counter() - exact_sum_t0
         reduce_t0 = time.perf_counter()
         if dp is None or center is None or radius is None or bf_mask is None or df_mask is None:
             raise RuntimeError("Screening masks were not initialized")
@@ -701,6 +675,7 @@ def _build_mps_products(
         chunk_timings.append(
             {
                 "load_s": float(load_s),
+                "exact_sum_s": float(exact_sum_s),
                 "reduce_s": float(reduce_s),
                 "resident_gb": float(getattr(data, "nbytes", 0) / 1e9),
             }
@@ -711,6 +686,83 @@ def _build_mps_products(
             print(f"  rows {r0}:{r1} load={load_s:.3f}s reduce={reduce_s:.3f}s")
 
     stream_s = time.perf_counter() - stream_t0
+    _require_source_unchanged(
+        master,
+        source_fingerprint,
+        stage="after the primary MPS stream",
+    )
+
+    if full_frame_count != int(np.prod(scan_shape)):
+        raise RuntimeError(
+            "MPS screening visited "
+            f"{full_frame_count} frames, expected {int(np.prod(scan_shape))}."
+        )
+    provisional_bf_mask = np.asarray(bf_mask, dtype=bool)
+    provisional_df_mask = np.asarray(df_mask, dtype=bool)
+    dp = detector_sum.astype(np.float32) / float(full_frame_count)
+    center, radius = auto_probe(dp)
+    bf_mask = detector_mask(center, 0.0, radius, dp.shape)
+    df_mask = detector_mask(center, radius, np.inf, dp.shape)
+    masks_identical = bool(
+        np.array_equal(provisional_bf_mask, bf_mask)
+        and np.array_equal(provisional_df_mask, df_mask)
+    )
+
+    fallback_s = 0.0
+    fallback_load_s = 0.0
+    fallback_reduce_s = 0.0
+    pass_count = 1
+    if not masks_identical:
+        pass_count = 2
+        fallback_t0 = time.perf_counter()
+        for r0 in range(0, scan_shape[0], chunk_rows):
+            r1 = min(scan_shape[0], r0 + chunk_rows)
+            load_t0 = time.perf_counter()
+            if r0 == 0 and r1 == scan_shape[0]:
+                result = load(
+                    str(master),
+                    scan_shape=scan_shape,
+                    backend="mps",
+                    verbose=False,
+                )
+            else:
+                result = load(
+                    str(master),
+                    scan_region=(r0, r1, 0, scan_shape[1]),
+                    scan_shape=scan_shape,
+                    backend="mps",
+                    verbose=False,
+                )
+            fallback_load_s += time.perf_counter() - load_t0
+            frames = _mps_chunked_frames_for(result.data)
+            reduce_t0 = time.perf_counter()
+            bf_flat = np.asarray(
+                frames.vi.masked_sum(bf_mask),
+                dtype=np.float32,
+            ).copy()
+            df_flat = np.asarray(
+                frames.vi.masked_sum(df_mask),
+                dtype=np.float32,
+            ).copy()
+            fallback_reduce_s += time.perf_counter() - reduce_t0
+            bf_map[r0:r1, :] = bf_flat.reshape(
+                r1 - r0,
+                scan_shape[1],
+            )
+            df_map[r0:r1, :] = df_flat.reshape(
+                r1 - r0,
+                scan_shape[1],
+            )
+            del result, frames, bf_flat, df_flat
+            _clear_mps_transients()
+        fallback_s = time.perf_counter() - fallback_t0
+        _require_source_unchanged(
+            master,
+            source_fingerprint,
+            stage="after the authoritative MPS BF/DF pass",
+        )
+
+    probe_source = "full_scan_exact"
     com_row -= float(com_row.mean())
     com_col -= float(com_col.mean())
     rotation_t0 = time.perf_counter()
@@ -727,6 +779,14 @@ def _build_mps_products(
         "sample_load_s": float(sample_load_s),
         "sample_product_s": float(sample_product_s),
         "probe_source": probe_source,
+        "bootstrap_source": bootstrap_source,
+        "exact_sum_method": "Metal uint64 chunk sums with fixed host merge",
+        "full_frame_count": int(full_frame_count),
+        "masks_identical": masks_identical,
+        "pass_count": int(pass_count),
+        "fallback_s": float(fallback_s),
+        "fallback_load_s": float(fallback_load_s),
+        "fallback_reduce_s": float(fallback_reduce_s),
         "stream_s": float(stream_s),
         "rotation_s": float(rotation_s),
         "elapsed_s": float(elapsed_s),
@@ -737,6 +797,9 @@ def _build_mps_products(
         "chunk_load_max_s": float(np.max([c["load_s"] for c in chunk_timings])),
         "chunk_reduce_min_s": float(np.min([c["reduce_s"] for c in chunk_timings])),
         "chunk_reduce_max_s": float(np.max([c["reduce_s"] for c in chunk_timings])),
+        "chunk_exact_sum_median_s": float(
+            np.median([c["exact_sum_s"] for c in chunk_timings])
+        ),
     }
     params = {
         "scan_shape": [int(v) for v in scan_shape],
@@ -745,6 +808,10 @@ def _build_mps_products(
         "sample_positions": int(sample_positions),
         "sample_positions_used": int(sample_positions_used),
         "probe_source": probe_source,
+        "bootstrap_source": bootstrap_source,
+        "full_frame_count": int(full_frame_count),
+        "masks_identical": masks_identical,
+        "pass_count": int(pass_count),
         "seed": None if seed is None else int(seed),
         "rotation_steps": int(rotation_steps),
         "center": [float(center[0]), float(center[1])],
@@ -777,7 +844,7 @@ def _build_mps_products(
         transposed=bool(transposed),
         metadata={
             "version": _CACHE_VERSION,
-            "source": _source_fingerprint(master),
+            "source": source_fingerprint,
             "parameters": params,
             "timing": timing,
             "memory": asdict(memory_plan),
@@ -809,11 +876,13 @@ def prepare(
     """Load or build cached BF/DF/CoM/rotation products for one HDF5 master.
 
     Cached products are intended for instant UI launch and ptychography
-    calibration setup. A cache miss streams raw HDF5 once, using GPU
-    bitshuffle/LZ4 decode plus backend-native BF/DF/CoM reductions, then stores
-    only small derived arrays. CUDA uses the optimized RawKernel path; MPS uses
-    chunk-backed Metal reductions. The raw HDF5 master remains the evidence
-    source for stochastic ptychography batches.
+    calibration setup. A cache miss first streams raw HDF5 with GPU
+    bitshuffle/LZ4 decode and backend-native reductions. If the bootstrap
+    BF/DF masks differ from the exact full-scan masks, only BF/DF are streamed
+    a second time; that fallback and its reason are recorded in metadata. CUDA
+    uses the optimized RawKernel path, while MPS uses chunk-backed Metal
+    reductions. The raw HDF5 master remains the evidence source for stochastic
+    ptychography batches.
     """
     from quantem.gpu.io import inspect as inspect_source
 

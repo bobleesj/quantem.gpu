@@ -5036,6 +5036,11 @@ def _decode_scan_indices_prepared(
     meta["backend"] = backend
     meta["prepare_seconds"] = float(prepared_item["prepare_seconds"])
     meta["decode_seconds"] = float(time.perf_counter() - t0)
+    meta["total_compressed_bytes"] = int(prepared.get("total_compressed_bytes", 0))
+    meta["read_span_count"] = int(prepared.get("read_span_count", 0))
+    meta["read_gap_bytes"] = int(prepared.get("read_gap_bytes", 0))
+    if "prepare_timing_s" in prepared:
+        meta["prepare_timing_s"] = dict(prepared["prepare_timing_s"])
     if verbose:
         size_gb = data.nbytes / 1e9
         print(
@@ -5658,8 +5663,10 @@ def load(
     """Load one or more 4D-STEM sources through an accelerated backend.
 
     All spatial arguments use ``(row, col)`` order. ``dtype`` is the only
-    output-precision control; use ``"u8"`` only when the count range proves it
-    lossless, and use ``"u16"`` or the native dtype for scientific workflows.
+    output-precision control. ``"u8"`` requests a saturating browse output;
+    it is lossless only when a complete source audit proves every corrected
+    count is at most 255. Use ``"u16"`` or the native dtype for exact
+    raw-count workflows, widening detector sums when required.
     ``backend="auto"`` selects CUDA or MPS and never selects CPU silently.
     ``output="native"`` preserves the backend-native payload; use
     ``output="torch"`` when the consumer expects a Torch tensor.
@@ -5670,7 +5677,9 @@ def load(
         One master/data HDF5 path, a folder, or a list of master paths.
     dtype
         Requested output dtype, such as ``"u8"``, ``"u16"``, ``"u32"``,
-        ``"f32"``, ``"u4"``, ``"native"``, or ``"auto"``.
+        ``"f32"``, ``"u4"``, ``"native"``, or ``"auto"``. Explicit
+        ``"u8"`` saturates values above 255; ``"auto"`` is an advisory
+        compact-dtype choice and is not a complete-source losslessness audit.
     backend
         ``"auto"``, ``"cuda"``, ``"mps"``, or explicit reference ``"cpu"``.
     output

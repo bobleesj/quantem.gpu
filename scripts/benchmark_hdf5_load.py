@@ -9,12 +9,19 @@ WebGPU profiles. Paths are anonymized in the output by default; pass
 from __future__ import annotations
 
 import argparse
-import gc
 import json
-import statistics
 import time
 from pathlib import Path
 from typing import Any
+
+from _benchmark_support import (
+    _clear_backend,
+    _git_state,
+    _host_info,
+    _memory_snapshot,
+    _nearest_rank_summary,
+    _sync_backend,
+)
 
 
 def _parse_region(text: str | None) -> tuple[int, int, int, int] | None:
@@ -29,65 +36,25 @@ def _parse_region(text: str | None) -> tuple[int, int, int, int] | None:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("masters", nargs="+", help="HDF5 master files.")
-    parser.add_argument("--backend", default="cuda", choices=("cuda", "mps", "cpu", "auto"))
+    parser.add_argument(
+        "--backend", default="cuda", choices=("cuda", "mps", "cpu", "auto")
+    )
     parser.add_argument("--dtype", default=None, help="Optional browse dtype, e.g. u8.")
     parser.add_argument("--det-bin", type=int, default=1)
     parser.add_argument("--scan-region", type=_parse_region)
     parser.add_argument("--reps", type=int, default=1)
     parser.add_argument("--warmup", type=int, default=0)
+    parser.add_argument(
+        "--cache-state",
+        default="unspecified",
+        help="Observed or controlled source/cache state; this script does not infer it.",
+    )
+    parser.add_argument("--fixture-id", default="anonymous-fixture")
+    parser.add_argument("--source-sha256")
     parser.add_argument("--json-out", type=Path)
     parser.add_argument("--show-paths", action="store_true")
     parser.add_argument("--skip-mps-memory-check", action="store_true")
     return parser.parse_args()
-
-
-def _sync_backend(backend: str) -> None:
-    if backend == "cuda":
-        try:
-            import cupy as cp
-
-            cp.cuda.Stream.null.synchronize()
-        except Exception:
-            pass
-    elif backend == "mps":
-        try:
-            import mlx.core as mx
-
-            mx.eval(mx.array(0))
-        except Exception:
-            pass
-
-
-def _clear_backend(backend: str) -> None:
-    gc.collect()
-    if backend == "cuda":
-        try:
-            import cupy as cp
-
-            cp.cuda.Stream.null.synchronize()
-            cp.get_default_memory_pool().free_all_blocks()
-            cp.get_default_pinned_memory_pool().free_all_blocks()
-        except Exception:
-            pass
-    elif backend == "mps":
-        try:
-            from quantem.gpu.io import clear_mps_cache
-
-            clear_mps_cache()
-        except Exception:
-            pass
-
-
-def _device_memory(backend: str) -> dict[str, float] | None:
-    if backend == "cuda":
-        try:
-            import cupy as cp
-
-            free, total = cp.cuda.runtime.memGetInfo()
-            return {"free_gb": free / 1e9, "total_gb": total / 1e9}
-        except Exception:
-            return None
-    return None
 
 
 def _nbytes(data: Any) -> int | None:
@@ -125,6 +92,18 @@ def _load_once(master: Path, args: argparse.Namespace):
 
 def main() -> None:
     args = _parse_args()
+    if args.reps < 1 or args.warmup < 0:
+        raise SystemExit(
+            f"reps must be positive and warmup nonnegative; got {args.reps}, {args.warmup}"
+        )
+    if args.source_sha256 is not None:
+        value = args.source_sha256.lower()
+        if len(value) != 64 or any(
+            character not in "0123456789abcdef" for character in value
+        ):
+            raise SystemExit(
+                "source-sha256 must contain exactly 64 lowercase hex characters"
+            )
     masters = [Path(path).expanduser() for path in args.masters]
     rows: list[dict[str, Any]] = []
 
@@ -139,16 +118,25 @@ def main() -> None:
             _clear_backend(args.backend)
 
         times: list[float] = []
+        run_records: list[dict[str, Any]] = []
         last = None
-        for _ in range(max(1, args.reps)):
+        for trial in range(1, args.reps + 1):
             _clear_backend(args.backend)
-            mem_before = _device_memory(args.backend)
+            memory_before = _memory_snapshot(args.backend)
             t0 = time.perf_counter()
             result = _load_once(master, args)
             _sync_backend(args.backend)
             elapsed = time.perf_counter() - t0
-            mem_after = _device_memory(args.backend)
+            memory_after = _memory_snapshot(args.backend)
             times.append(elapsed)
+            run_records.append(
+                {
+                    "trial": trial,
+                    "wall_seconds": elapsed,
+                    "memory_before": memory_before,
+                    "memory_after": memory_after,
+                }
+            )
             last = {
                 "label": label,
                 "backend": args.backend,
@@ -156,27 +144,52 @@ def main() -> None:
                 "det_bin": args.det_bin,
                 "scan_region": list(args.scan_region) if args.scan_region else None,
                 "shape": _shape(result.data),
-                "resident_gb": None if _nbytes(result.data) is None else _nbytes(result.data) / 1e9,
-                "memory_before": mem_before,
-                "memory_after": mem_after,
+                "resident_gb": None
+                if _nbytes(result.data) is None
+                else _nbytes(result.data) / 1e9,
+                "memory_before": memory_before,
+                "memory_after": memory_after,
             }
             del result
 
         assert last is not None
+        summary = _nearest_rank_summary(times)
         last.update(
             {
                 "reps": len(times),
-                "median_s": statistics.median(times),
+                "median_s": summary["p50_seconds"],
+                "p50_s": summary["p50_seconds"],
+                "p95_s": summary["p95_seconds"],
                 "min_s": min(times),
-                "max_s": max(times),
+                "max_s": summary["max_seconds"],
+                "runs": run_records,
             }
         )
         rows.append(last)
 
-    print(json.dumps(rows, indent=2))
+    report = {
+        "schema": "quantem-gpu-hdf5-load-benchmark/v2",
+        "benchmark_definition": {
+            "timing_boundary": "public io.load return after backend synchronization",
+            "cache_state": args.cache_state,
+            "warmup_count": args.warmup,
+            "repetitions": args.reps,
+        },
+        "code": _git_state(),
+        "host": _host_info(),
+        "fixture_id": args.fixture_id,
+        "source_sha256": args.source_sha256,
+        "source_paths_included": bool(args.show_paths),
+        "rows": rows,
+        "limitations": [
+            "The caller-declared cache state is recorded but not controlled by this process.",
+            "Output parity and application wall time require separate retained artifacts.",
+        ],
+    }
+    print(json.dumps(report, indent=2))
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
-        args.json_out.write_text(json.dumps(rows, indent=2) + "\n", encoding="utf-8")
+        args.json_out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

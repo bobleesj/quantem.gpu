@@ -1,0 +1,590 @@
+{
+  "schema_version": 1,
+  "protocol_version": "quantem-gpu-benchmark-coverage/v1",
+  "purpose": "Atomic, filterable coverage gates plus retained benchmark measurements and repository-owned reproduction entry points.",
+  "evidence_imports": [
+    {
+      "path": "experiments/20260822-morning-evidence-index/evidence-index.json",
+      "measurement_overrides": {
+        "phil-swift-metal-controlled-fullnative": {
+          "state": "superseded",
+          "notes": "Superseded by the later schema-v8 controlled F_NOCACHE evidence registered below."
+        }
+      }
+    }
+  ],
+  "additional_measurements": [
+    {
+      "id": "evidence::phil-swift-metal-controlled-fullnative-current",
+      "measurement_id": "phil-swift-metal-controlled-fullnative-current",
+      "module": "I/O and load",
+      "operation": "controlled uncached exact resident load and products",
+      "platform": "Native Swift/Metal",
+      "computer": "Phil",
+      "device": "Apple M5 Max 40-core integrated GPU; 128 GB unified memory",
+      "source_scan_rows": 512,
+      "source_scan_columns": 512,
+      "selected_scan_rows": 512,
+      "selected_scan_columns": 512,
+      "source_detector_rows": 192,
+      "source_detector_columns": 192,
+      "scan_bin": 1,
+      "detector_bin": 1,
+      "output_detector_rows": 192,
+      "output_detector_columns": 192,
+      "source_dtype": "uint16",
+      "working_dtype": "uint16",
+      "cache_state": "fresh QH5 index root and destination; macOS F_NOCACHE on source hashing and indexed descriptors; immutable source already audited",
+      "timing_boundary": "catalog, pipeline compilation, plan, complete exact private-resident volume, seven products, metadata, and provenance",
+      "sample_count": 7,
+      "p50_seconds": 0.577793,
+      "p95_seconds": 0.900979,
+      "max_seconds": 0.900979,
+      "logical_resident_bytes": 19327352832,
+      "accelerator_peak_bytes": 19940737024,
+      "total_device_peak_bytes": null,
+      "process_tree_peak_bytes": 938524672,
+      "swap_delta_bytes": null,
+      "parity": "Seven of seven working-volume and product hashes were exact; the first timing outlier is retained.",
+      "state": "measured",
+      "tested_date": "2026-08-22",
+      "source_revision": "c0ea44465e6346a8436a0b74f491a04af0b5dc32",
+      "fixture_id": "real-512x512x192x192-u16-bslz4-27shard-master-fixture-c",
+      "fixture_sha256": "9f0ddb932c631b63cb573c38d747fa41941ee585c5389d33bdafb4add962b768",
+      "evidence": "experiments/20260822-native-metal-controlled-resident/manifest.json",
+      "artifact_id": "swift-metal-controlled-fullnative-v8"
+    }
+  ],
+  "configurations": {
+    "full-native-bin1-u16": {
+      "source_scan_rows": 512,
+      "source_scan_columns": 512,
+      "selected_scan_rows": 512,
+      "selected_scan_columns": 512,
+      "source_detector_rows": 192,
+      "source_detector_columns": 192,
+      "scan_bin": 1,
+      "detector_bin": 1,
+      "output_detector_rows": 192,
+      "output_detector_columns": 192,
+      "source_dtype": "uint16",
+      "working_dtype": "uint16",
+      "cache_state": "gate-specific",
+      "timing_boundary": "gate-specific"
+    },
+    "full-native-bin2-u16": {
+      "source_scan_rows": 512,
+      "source_scan_columns": 512,
+      "selected_scan_rows": 512,
+      "selected_scan_columns": 512,
+      "source_detector_rows": 192,
+      "source_detector_columns": 192,
+      "scan_bin": 1,
+      "detector_bin": 2,
+      "output_detector_rows": 96,
+      "output_detector_columns": 96,
+      "source_dtype": "uint16",
+      "working_dtype": "uint16",
+      "cache_state": "gate-specific",
+      "timing_boundary": "gate-specific"
+    },
+    "full-native-bin4-u16": {
+      "source_scan_rows": 512,
+      "source_scan_columns": 512,
+      "selected_scan_rows": 512,
+      "selected_scan_columns": 512,
+      "source_detector_rows": 192,
+      "source_detector_columns": 192,
+      "scan_bin": 1,
+      "detector_bin": 4,
+      "output_detector_rows": 48,
+      "output_detector_columns": 48,
+      "source_dtype": "uint16",
+      "working_dtype": "uint16",
+      "cache_state": "gate-specific",
+      "timing_boundary": "gate-specific"
+    },
+    "full-native-bin8-u16": {
+      "source_scan_rows": 512,
+      "source_scan_columns": 512,
+      "selected_scan_rows": 512,
+      "selected_scan_columns": 512,
+      "source_detector_rows": 192,
+      "source_detector_columns": 192,
+      "scan_bin": 1,
+      "detector_bin": 8,
+      "output_detector_rows": 24,
+      "output_detector_columns": 24,
+      "source_dtype": "uint16",
+      "working_dtype": "uint16",
+      "cache_state": "gate-specific",
+      "timing_boundary": "gate-specific"
+    },
+    "selective-64-native-bin1-u16": {
+      "source_scan_rows": 512,
+      "source_scan_columns": 512,
+      "selected_scan_rows": 64,
+      "selected_scan_columns": 64,
+      "source_detector_rows": 192,
+      "source_detector_columns": 192,
+      "scan_bin": 1,
+      "detector_bin": 1,
+      "output_detector_rows": 192,
+      "output_detector_columns": 192,
+      "source_dtype": "uint16",
+      "working_dtype": "uint16",
+      "cache_state": "prepared indexes; source-page state must be declared by the run",
+      "timing_boundary": "exact selected resident output"
+    },
+    "selective-sparse-native-bin1-u16": {
+      "source_scan_rows": 512,
+      "source_scan_columns": 512,
+      "selected_scan_rows": null,
+      "selected_scan_columns": null,
+      "source_detector_rows": 192,
+      "source_detector_columns": 192,
+      "scan_bin": 1,
+      "detector_bin": 1,
+      "output_detector_rows": 192,
+      "output_detector_columns": 192,
+      "source_dtype": "uint16",
+      "working_dtype": "uint16",
+      "cache_state": "prepared indexes; source-page state must be declared by the run",
+      "timing_boundary": "exact ordered selected resident output including duplicates"
+    },
+    "resident-map-suite-f32": {
+      "source_scan_rows": 512,
+      "source_scan_columns": 512,
+      "selected_scan_rows": 512,
+      "selected_scan_columns": 512,
+      "source_detector_rows": null,
+      "source_detector_columns": null,
+      "scan_bin": 1,
+      "detector_bin": null,
+      "output_detector_rows": null,
+      "output_detector_columns": null,
+      "source_dtype": "float32 maps",
+      "working_dtype": "float32",
+      "cache_state": "resident inputs; source load excluded",
+      "timing_boundary": "synchronized exact product publication"
+    },
+    "ssb-512-complex64": {
+      "source_scan_rows": 512,
+      "source_scan_columns": 512,
+      "selected_scan_rows": 512,
+      "selected_scan_columns": 512,
+      "source_detector_rows": null,
+      "source_detector_columns": null,
+      "scan_bin": 1,
+      "detector_bin": null,
+      "output_detector_rows": null,
+      "output_detector_columns": null,
+      "source_dtype": "full active BF evidence",
+      "working_dtype": "complex64",
+      "cache_state": "prepared BF evidence; kernel cache state declared per run",
+      "timing_boundary": "synchronized reconstruction, phase, loss, and requested calibration"
+    }
+  },
+  "runbooks": {
+    "registry-smoke": {
+      "title": "Portable registry and parity smoke",
+      "owner": "portable CI",
+      "tier": "PR smoke",
+      "evidence_level": "parity preflight",
+      "command": "PYTHONPATH=src python -m pytest -q tests/test_profile_registry.py tests/test_benchmark_registry.py",
+      "preflight": [
+        "Use a clean or explicitly fingerprinted source revision.",
+        "Do not interpret portable skips as backend timing evidence."
+      ],
+      "required_environment": [],
+      "required_artifacts": [
+        "pytest terminal log",
+        "registry validator output"
+      ],
+      "promotion_boundary": "This command can prove registry/parity contracts only; it cannot promote a physical timing row."
+    },
+    "python-load-matrix": {
+      "title": "Python CUDA, MPS, or CPU exact HDF5 load",
+      "owner": "named physical backend owner",
+      "tier": "scheduled physical profile",
+      "evidence_level": "physical performance",
+      "command": "PYTHONPATH=src python scripts/benchmark_hdf5_load.py \"$QGPU_MASTER\" --backend \"$QGPU_BACKEND\" --det-bin {detector_bin} --reps 7 --warmup 1 --cache-state \"$QGPU_CACHE_STATE\" --fixture-id \"$QGPU_FIXTURE_ID\" --source-sha256 \"$QGPU_SOURCE_SHA256\" --json-out \"$QGPU_OUTPUT_JSON\"",
+      "preflight": [
+        "Record branch, full HEAD, dirty diff hash, host, device owner, runtime, and source identity before launch.",
+        "Coordinate exclusive accelerator ownership and declare source-page/cache state.",
+        "Run one smoke before a matrix and preserve every repetition and outlier."
+      ],
+      "required_environment": [
+        "QGPU_MASTER",
+        "QGPU_BACKEND",
+        "QGPU_CACHE_STATE",
+        "QGPU_FIXTURE_ID",
+        "QGPU_SOURCE_SHA256",
+        "QGPU_OUTPUT_JSON"
+      ],
+      "required_artifacts": [
+        "run-level JSON with p50, p95, and maximum",
+        "exact output parity hashes",
+        "logical resident, accelerator peak, process/tree peak, and swap telemetry",
+        "experiment manifest and RUNS.md row"
+      ],
+      "promotion_boundary": "A warm package result cannot satisfy a cold-source or application gate."
+    },
+    "swift-indexed-load": {
+      "title": "Native Swift/Metal exact indexed load",
+      "owner": "Phil, Steve Kerr, or Rodman",
+      "tier": "scheduled physical profile",
+      "evidence_level": "physical performance",
+      "command": "swift run -c release metal-4dstem-indexed-load-benchmark --input \"$QGPU_MASTER\" --cache-dir \"$QGPU_INDEX_DIR\" --output-dir \"$QGPU_OUTPUT_DIR\" --revision \"$QGPU_REVISION\" --all-bands --exact-working-audit \"$QGPU_AUDIT_JSON\" --detector-bin {detector_bin} --maximum-shard-bytes \"$QGPU_MAX_SHARD_BYTES\" --destination-storage private --iterations 7 --buffered-read-ahead-shards 2 --uncached-source-reads --boundary-working-volume-hashes",
+      "preflight": [
+        "Use an empty output directory and a source-identity-bound value-range audit.",
+        "Verify the detector bin is supported by Metal4DSTEMLoadPlan; bin 8 must fail closed in the current Swift contract.",
+        "Coordinate physical-device ownership and record maxBufferLength and recommended working-set size."
+      ],
+      "required_environment": [
+        "QGPU_MASTER",
+        "QGPU_INDEX_DIR",
+        "QGPU_OUTPUT_DIR",
+        "QGPU_REVISION",
+        "QGPU_AUDIT_JSON",
+        "QGPU_MAX_SHARD_BYTES"
+      ],
+      "required_artifacts": [
+        "benchmark JSON and complete working-volume hashes",
+        "source and working geometry/dtype/provenance",
+        "Metal allocation, process RSS/footprint, pressure, and swap telemetry",
+        "experiment manifest and RUNS.md row"
+      ],
+      "promotion_boundary": "The package benchmark excludes Live4DSTEM policy, UI, cache lifecycle, and headed wall-to-wall acceptance."
+    },
+    "webgpu-load": {
+      "title": "Hardware-WebGPU local HDF5 load",
+      "owner": "Phil or Steve Kerr",
+      "tier": "scheduled physical profile",
+      "evidence_level": "physical performance",
+      "command": "python scripts/benchmark_webgpu_h5_browser.py --html-url \"$QGPU_EXPORT_URL\" --fixture-dir \"$QGPU_FIXTURE_DIR\" --det-bin {detector_bin} --reps 7 --require-local-profile --checksum-json \"$QGPU_CHECKSUM_JSON\" --json-out \"$QGPU_OUTPUT_JSON\"",
+      "preflight": [
+        "Confirm the browser adapter is hardware Metal WebGPU, software=false.",
+        "Record the exact exported HTML/source revision and browser version.",
+        "Verify source dtype, output dtype, exact integer range, and device limits before timing."
+      ],
+      "required_environment": [
+        "QGPU_EXPORT_URL",
+        "QGPU_FIXTURE_DIR",
+        "QGPU_CHECKSUM_JSON",
+        "QGPU_OUTPUT_JSON"
+      ],
+      "required_artifacts": [
+        "browser profile JSON with run-level timings",
+        "independent exact checksum or full-tensor parity",
+        "browser-tree RSS, adapter allocation when available, and swap telemetry",
+        "experiment manifest and RUNS.md row"
+      ],
+      "promotion_boundary": "Software adapters, float32 resident substitutions, and uncontrolled single runs cannot satisfy exact integer or minimum-memory gates."
+    },
+    "screening-profile": {
+      "title": "Exact screening products and prepared-result lifecycle",
+      "owner": "MJGOAT or Phil",
+      "tier": "scheduled physical profile",
+      "evidence_level": "physical performance",
+      "command": "PYTHONPATH=src python scripts/benchmark_screening.py \"$QGPU_MASTER\" --backend \"$QGPU_BACKEND\" --cache-dir \"$QGPU_SCREENING_CACHE_DIR\" --cache-state \"$QGPU_CACHE_STATE\" --fixture-id \"$QGPU_FIXTURE_ID\" --source-sha256 \"$QGPU_SOURCE_SHA256\" --reps 7 --warmup 1 --reopen-reps 7 --memory-budget-gb \"$QGPU_MEMORY_BUDGET_GB\" --reference-hashes-json \"$QGPU_REFERENCE_HASHES_JSON\" --json-out \"$QGPU_OUTPUT_JSON\"",
+      "preflight": [
+        "Check accelerator ownership and retain the concurrent-service baseline.",
+        "Use a frozen mask/calibration or record bootstrap validation and any second-pass fallback.",
+        "Keep source build, first usable, exact complete, and prepared-result reopen separate."
+      ],
+      "required_environment": [
+        "QGPU_MASTER",
+        "QGPU_BACKEND",
+        "QGPU_SCREENING_CACHE_DIR",
+        "QGPU_CACHE_STATE",
+        "QGPU_FIXTURE_ID",
+        "QGPU_SOURCE_SHA256",
+        "QGPU_MEMORY_BUDGET_GB",
+        "QGPU_REFERENCE_HASHES_JSON",
+        "QGPU_OUTPUT_JSON"
+      ],
+      "required_artifacts": [
+        "run-level timing and cache lifecycle JSON",
+        "mean DP, total, BF, DF, CoM, rotation, and iDPC parity",
+        "GPU allocation/reserve/total-card and host RSS/swap telemetry",
+        "experiment manifest and RUNS.md row"
+      ],
+      "promotion_boundary": "Prepared-result reopen is reported separately from source screening construction."
+    },
+    "python-selective-load": {
+      "title": "CUDA or MPS evidence-selective load",
+      "owner": "MJGOAT or Phil",
+      "tier": "scheduled physical profile",
+      "evidence_level": "physical performance",
+      "command": "PYTHONPATH=src python scripts/benchmark_selective_load.py \"$QGPU_MASTER\" --backend \"$QGPU_BACKEND\" --selector \"$QGPU_SELECTOR_JSON\" --det-bin {detector_bin} --cache-state \"$QGPU_CACHE_STATE\" --fixture-id \"$QGPU_FIXTURE_ID\" --source-sha256 \"$QGPU_SOURCE_SHA256\" --reps 7 --json-out \"$QGPU_OUTPUT_JSON\"",
+      "preflight": [
+        "Freeze selector order, duplicates, coordinate convention, source identity, and detector selection.",
+        "Record bytes read, decompressed, copied, and uploaded; load-then-slice is a failure.",
+        "Run rectangle, sparse/random, and duplicate/order smoke cases before scale tests."
+      ],
+      "required_environment": [
+        "QGPU_MASTER",
+        "QGPU_BACKEND",
+        "QGPU_SELECTOR_JSON",
+        "QGPU_CACHE_STATE",
+        "QGPU_FIXTURE_ID",
+        "QGPU_SOURCE_SHA256",
+        "QGPU_OUTPUT_JSON"
+      ],
+      "required_artifacts": [
+        "run-level timing/bytes JSON",
+        "exact ordered output and metadata parity",
+        "allocation and peak-memory telemetry",
+        "experiment manifest and RUNS.md row"
+      ],
+      "promotion_boundary": "Only evidence-selective reads qualify; full-scan decode followed by slicing is rejected."
+    },
+    "webgpu-selective-load": {
+      "title": "Hardware-WebGPU rectangle-selective load",
+      "owner": "Phil or Steve Kerr",
+      "tier": "scheduled physical profile",
+      "evidence_level": "physical performance",
+      "command": "python scripts/benchmark_webgpu_h5_browser.py --html-url \"$QGPU_EXPORT_URL\" --fixture-dir \"$QGPU_FIXTURE_DIR\" --source-scan-shape 512,512 --scan-region \"$QGPU_SCAN_REGION\" --det-bin {detector_bin} --reps 7 --frame-index-json \"$QGPU_FRAME_INDEX_JSON\" --require-local-profile --checksum-json \"$QGPU_CHECKSUM_JSON\" --json-out \"$QGPU_OUTPUT_JSON\"",
+      "preflight": [
+        "Confirm a physical hardware adapter and fresh browser target per repetition.",
+        "Freeze the rectangle in row-start,row-stop,column-start,column-stop order.",
+        "Retain shard/range bytes and reject a no-frame-span all-shard fallback."
+      ],
+      "required_environment": [
+        "QGPU_EXPORT_URL",
+        "QGPU_FIXTURE_DIR",
+        "QGPU_SCAN_REGION",
+        "QGPU_FRAME_INDEX_JSON",
+        "QGPU_CHECKSUM_JSON",
+        "QGPU_OUTPUT_JSON"
+      ],
+      "required_artifacts": [
+        "browser timing and source-byte JSON",
+        "full selected-tensor parity or explicitly qualified probe coverage",
+        "browser-tree memory and swap telemetry",
+        "experiment manifest and RUNS.md row"
+      ],
+      "promotion_boundary": "Prepared shard selection does not prove intra-shard byte-range selection or arbitrary ordered positions."
+    },
+    "detector-product-parity": {
+      "title": "Detector-product exactness preflight",
+      "owner": "portable CI plus named backend owner",
+      "tier": "PR smoke",
+      "evidence_level": "parity preflight",
+      "command": "PYTHONPATH=src python -m pytest -q tests/test_integer_detector_products.py tests/test_products_parity.py tests/test_cuda_virtual_image.py",
+      "preflight": [
+        "Do not change masks, scan coverage, detector bin, dtype, or accumulation range.",
+        "Backend skips remain open hardware gates."
+      ],
+      "required_environment": [],
+      "required_artifacts": [
+        "pytest log",
+        "backend-specific physical timing from a separate runbook"
+      ],
+      "promotion_boundary": "Parity-only execution does not satisfy a speed or memory gate."
+    },
+    "dpc-parity": {
+      "title": "CoM, DPC, rotation, and iDPC parity preflight",
+      "owner": "portable CI plus named backend owner",
+      "tier": "PR smoke",
+      "evidence_level": "parity preflight",
+      "command": "PYTHONPATH=src python -m pytest -q tests/test_dpc_rotation_agreement.py tests/test_products_parity.py tests/test_display_fft_parity.py",
+      "preflight": [
+        "Preserve explicit row/column order and frozen Fourier conventions.",
+        "Record full-precision max, p99, normalized error, and signal range on hardware."
+      ],
+      "required_environment": [],
+      "required_artifacts": [
+        "pytest log",
+        "physical backend synchronized timing and parity artifact"
+      ],
+      "promotion_boundary": "Portable agreement cannot replace a physical backend run."
+    },
+    "display-fft-parity": {
+      "title": "Display transform, histogram, color, and FFT parity",
+      "owner": "portable CI plus named backend owner",
+      "tier": "PR smoke",
+      "evidence_level": "parity preflight",
+      "command": "PYTHONPATH=src python -m pytest -q tests/test_display_parity.py tests/test_display_fft_parity.py tests/test_display_shared_goldens.py",
+      "preflight": [
+        "Keep source dtype, transform, normalization, color limits, and FFT convention fixed.",
+        "Measure physical first execution and warm publication separately."
+      ],
+      "required_environment": [],
+      "required_artifacts": [
+        "pytest log",
+        "physical first-execution and warm timing artifact"
+      ],
+      "promotion_boundary": "Golden parity is necessary but not a frame-pacing result."
+    },
+    "mps-ssb": {
+      "title": "Python MPS SSB reconstruction and calibration",
+      "owner": "Phil",
+      "tier": "scheduled physical profile",
+      "evidence_level": "physical performance",
+      "command": "PYTHONPATH=src python scripts/benchmark_ssb_mps_scaling.py \"$QGPU_SOURCE\" --calibration \"$QGPU_CALIBRATION\" --sizes 512 --scan-sampling-a \"$QGPU_SCAN_SAMPLING_A\" --trials 200 --pair-iters 12 --parity-pairs 20 --reference-engine \"$QGPU_REFERENCE_ENGINE\" --jsonl-out \"$QGPU_OUTPUT_JSONL\"",
+      "preflight": [
+        "Use native acquisition evidence; do not promote a Fourier-resized microscope.",
+        "Freeze detector sampling, seed, objective, bounds, and reference engine.",
+        "Separate preparation, pair/object/phase/loss, 200 trials, and Nelder-Mead."
+      ],
+      "required_environment": [
+        "QGPU_SOURCE",
+        "QGPU_CALIBRATION",
+        "QGPU_SCAN_SAMPLING_A",
+        "QGPU_REFERENCE_ENGINE",
+        "QGPU_OUTPUT_JSONL"
+      ],
+      "required_artifacts": [
+        "run-level reconstruction and fit JSONL",
+        "phase/loss parity and fitted parameters",
+        "allocator/driver/process/swap memory",
+        "experiment manifest and RUNS.md row"
+      ],
+      "promotion_boundary": "A fixed-pair kernel timing cannot replace the complete 200-trial plus Nelder-Mead workflow."
+    },
+    "swift-ssb": {
+      "title": "Native Swift/Metal SSB reconstruction and calibration",
+      "owner": "Phil or Rodman",
+      "tier": "scheduled physical profile",
+      "evidence_level": "physical performance",
+      "command": "swift run -c release metal-ssb-benchmark \"$QGPU_METADATA_JSON\" \"$QGPU_BF_U8\" \"$QGPU_REFERENCE_PHASE_F32\" 7 full 200 3",
+      "preflight": [
+        "Verify metadata, BF plane order, phase reference, and package revision hashes.",
+        "Keep complete and finite cache policies as separate rows.",
+        "Retain every fit repetition and output fingerprint."
+      ],
+      "required_environment": [
+        "QGPU_METADATA_JSON",
+        "QGPU_BF_U8",
+        "QGPU_REFERENCE_PHASE_F32"
+      ],
+      "required_artifacts": [
+        "benchmark JSON",
+        "phase/loss/fitted-parameter parity",
+        "Metal and process memory telemetry",
+        "experiment manifest and RUNS.md row"
+      ],
+      "promotion_boundary": "Package timing excludes application interaction and presentation."
+    },
+    "cuda-ssb-preflight": {
+      "title": "CUDA SSB parity preflight",
+      "owner": "MJGOAT",
+      "tier": "PR smoke",
+      "evidence_level": "parity preflight",
+      "command": "PYTHONPATH=src python -m pytest -q tests/test_ssb_cuda_128.py tests/test_ssb_backend_contract.py tests/test_ssb_persistence.py",
+      "preflight": [
+        "Confirm the intended GPU is unoccupied before any later physical profile.",
+        "Use the frozen full-precision reference and deterministic seed."
+      ],
+      "required_environment": [],
+      "required_artifacts": [
+        "pytest log",
+        "separate physical reconstruction/calibration timing artifact"
+      ],
+      "promotion_boundary": "The current repository entry point is parity-only; a stable CUDA SSB performance harness remains an explicit gate."
+    },
+    "webgpu-ssb-preflight": {
+      "title": "WebGPU SSB hardware parity preflight",
+      "owner": "Phil",
+      "tier": "manual hardware diagnostic",
+      "evidence_level": "parity preflight",
+      "command": "PYTHONPATH=src python -m pytest -q tests/test_ssb_backend_contract.py tests/test_webgpu_sources.py tests/test_webgpu_widget_sync.py",
+      "preflight": [
+        "Treat software WebGPU as smoke only.",
+        "Do not promote a phase result that misses the frozen wrapped-error tolerance."
+      ],
+      "required_environment": [],
+      "required_artifacts": [
+        "pytest log",
+        "physical browser phase/loss parity and timing artifact"
+      ],
+      "promotion_boundary": "The retained physical WebGPU SSB phase mismatch stays refuted until exact parity is restored."
+    }
+  },
+  "gates": [
+    {"id": "io.mps.phil.bin1.warm-recycled", "module": "I/O and load", "operation": "exact warm package load with explicit destination reuse", "platform": "Python MPS", "computer": "Phil", "configuration": "full-native-bin1-u16", "state": "measured", "satisfied_by": ["phil-python-mps-bin1-recycled-destination"], "runbook": "python-load-matrix", "priority": 3, "next_gate": "", "cache_state": "warm or uncontrolled source pages; explicit resident destination recycled", "timing_boundary": "public package load return after final Metal completion"},
+    {"id": "io.mps.phil.bin2.warm-recycled", "module": "I/O and load", "operation": "exact warm package load with explicit destination reuse", "platform": "Python MPS", "computer": "Phil", "configuration": "full-native-bin2-u16", "state": "measured", "satisfied_by": ["phil-python-mps-bin2-recycled-destination"], "runbook": "python-load-matrix", "priority": 3, "next_gate": "", "cache_state": "warm or uncontrolled source pages; explicit resident destination recycled", "timing_boundary": "public package load return after final Metal completion"},
+    {"id": "io.mps.phil.bin4.warm-recycled", "module": "I/O and load", "operation": "exact warm package load with explicit destination reuse", "platform": "Python MPS", "computer": "Phil", "configuration": "full-native-bin4-u16", "state": "measured", "satisfied_by": ["phil-python-mps-bin4-recycled-destination"], "runbook": "python-load-matrix", "priority": 3, "next_gate": "", "cache_state": "warm or uncontrolled source pages; explicit resident destination recycled", "timing_boundary": "public package load return after final Metal completion"},
+    {"id": "io.mps.phil.bin8.warm", "module": "I/O and load", "operation": "exact warm package load", "platform": "Python MPS", "computer": "Phil", "configuration": "full-native-bin8-u16", "state": "measured", "satisfied_by": ["phil-python-mps-bin8-specialized"], "runbook": "python-load-matrix", "priority": 3, "next_gate": "", "cache_state": "warm source pages; fresh process after excluded warmup", "timing_boundary": "public package load return after final Metal completion"},
+    {"id": "io.mps.phil.bin1.cold-original", "module": "I/O and load", "operation": "cold original compressed-source first encounter", "platform": "Python MPS", "computer": "Phil", "configuration": "full-native-bin1-u16", "state": "pending", "runbook": "python-load-matrix", "priority": 1, "next_gate": "Run seven independently controlled cold-source trials with stage timing, complete parity, and full memory telemetry.", "cache_state": "cold original compressed source; control not yet qualified", "timing_boundary": "source open through exact complete resident output"},
+    {"id": "io.mps.phil.bin2.cold-original", "module": "I/O and load", "operation": "cold original compressed-source first encounter", "platform": "Python MPS", "computer": "Phil", "configuration": "full-native-bin2-u16", "state": "pending", "runbook": "python-load-matrix", "priority": 1, "next_gate": "Run seven independently controlled cold-source trials and prove exact uint16 detector sums and memory.", "cache_state": "cold original compressed source; control not yet qualified", "timing_boundary": "source open through exact complete resident output"},
+    {"id": "io.mps.phil.bin4.cold-original", "module": "I/O and load", "operation": "cold original compressed-source first encounter", "platform": "Python MPS", "computer": "Phil", "configuration": "full-native-bin4-u16", "state": "pending", "runbook": "python-load-matrix", "priority": 2, "next_gate": "Run seven independently controlled cold-source trials with exact parity and memory telemetry.", "cache_state": "cold original compressed source; control not yet qualified", "timing_boundary": "source open through exact complete resident output"},
+    {"id": "io.mps.phil.bin8.cold-original", "module": "I/O and load", "operation": "cold original compressed-source first encounter", "platform": "Python MPS", "computer": "Phil", "configuration": "full-native-bin8-u16", "state": "pending", "runbook": "python-load-matrix", "priority": 2, "next_gate": "Run seven independently controlled cold-source trials; retain source-read, decode/bin, exact parity, and memory.", "cache_state": "cold original compressed source; control not yet qualified", "timing_boundary": "source open through exact complete resident output"},
+
+    {"id": "io.swift.phil.bin1.prepared-private", "module": "I/O and load", "operation": "prepared-index exact private-resident load and products", "platform": "Native Swift/Metal", "computer": "Phil", "configuration": "full-native-bin1-u16", "state": "measured", "satisfied_by": ["phil-swift-metal-private-bin1-load"], "runbook": "swift-indexed-load", "priority": 3, "next_gate": "", "cache_state": "prepared immutable QH5 indexes; source pages unspecified", "timing_boundary": "complete exact resident volume, products, metadata, calibration, and provenance"},
+    {"id": "io.swift.phil.bin1.controlled-uncached", "module": "I/O and load", "operation": "controlled uncached exact private-resident load and products", "platform": "Native Swift/Metal", "computer": "Phil", "configuration": "full-native-bin1-u16", "state": "measured", "satisfied_by": ["phil-swift-metal-controlled-fullnative-current"], "runbook": "swift-indexed-load", "priority": 2, "next_gate": "", "cache_state": "fresh QH5 index root and destination; F_NOCACHE; already-audited immutable source", "timing_boundary": "catalog through exact complete resident volume and seven products"},
+    {"id": "io.swift.phil.bin1.cold-arbitrary", "module": "I/O and load", "operation": "audit-free arbitrary-source cold first encounter", "platform": "Native Swift/Metal", "computer": "Phil", "configuration": "full-native-bin1-u16", "state": "pending", "runbook": "swift-indexed-load", "priority": 1, "next_gate": "Measure discovery, value-range audit, index creation, load, products, and peak memory from an unaudited source without relabeling controlled F_NOCACHE evidence.", "cache_state": "cold arbitrary source; no audit or index prepared", "timing_boundary": "source selection through exact complete resident output and products"},
+    {"id": "io.swift.phil.bin2.prepared", "module": "I/O and load", "operation": "prepared-index exact private-resident load", "platform": "Native Swift/Metal", "computer": "Phil", "configuration": "full-native-bin2-u16", "state": "pending", "runbook": "swift-indexed-load", "priority": 2, "next_gate": "Run a seven-trial exact private-resident distribution on Phil with complete output hash and memory telemetry.", "cache_state": "prepared indexes; source-page state declared by run", "timing_boundary": "complete exact resident working volume and products"},
+    {"id": "io.swift.phil.bin4.prepared", "module": "I/O and load", "operation": "prepared-index exact private-resident load", "platform": "Native Swift/Metal", "computer": "Phil", "configuration": "full-native-bin4-u16", "state": "pending", "runbook": "swift-indexed-load", "priority": 3, "next_gate": "Run a seven-trial exact private-resident distribution on Phil with complete output hash and memory telemetry.", "cache_state": "prepared indexes; source-page state declared by run", "timing_boundary": "complete exact resident working volume and products"},
+    {"id": "io.swift.phil.bin8.contract", "module": "I/O and load", "operation": "exact detector-bin-8 resident load", "platform": "Native Swift/Metal", "computer": "Phil", "configuration": "full-native-bin8-u16", "state": "unsupported", "runbook": "registry-smoke", "priority": 5, "next_gate": "", "reason": "Metal4DSTEMLoadPlan currently supports detector bins 1, 2, and 4 only; bin 8 must fail closed.", "cache_state": "not applicable", "timing_boundary": "unsupported contract test"},
+    {"id": "io.swift.steve-kerr.bin2.cold-original", "module": "I/O and load", "operation": "cold original compressed-source exact detector-bin-2 load", "platform": "Native Swift/Metal", "computer": "Steve Kerr", "configuration": "full-native-bin2-u16", "state": "pending", "runbook": "swift-indexed-load", "priority": 1, "next_gate": "Run coordinated physical 8 GB trials with full scan, no crop, exact uint16 sums, pressure, RSS, compressed memory, and swap.", "cache_state": "cold original source; no prepared-result substitution", "timing_boundary": "source open through exact complete 4.5 GiB working volume and products"},
+    {"id": "io.swift.steve-kerr.bin2.prepared", "module": "I/O and load", "operation": "prepared-index exact detector-bin-2 load", "platform": "Native Swift/Metal", "computer": "Steve Kerr", "configuration": "full-native-bin2-u16", "state": "pending", "runbook": "swift-indexed-load", "priority": 1, "next_gate": "Run repeated uncontended physical 8 GB prepared-index loads and prove admission, parity, memory, and recovery.", "cache_state": "prepared immutable index; source pages declared per run", "timing_boundary": "exact complete 4.5 GiB working volume and products"},
+    {"id": "io.swift.rodman.bin1.prepared", "module": "I/O and load", "operation": "prepared-index full-native exact load", "platform": "Native Swift/Metal", "computer": "Rodman", "configuration": "full-native-bin1-u16", "state": "partial", "satisfied_by": ["rodman-swift-metal-bin1-single-admission"], "runbook": "swift-indexed-load", "priority": 1, "next_gate": "Repeat uncontended full-native bin-1 loads for p50, p95, maximum, full-volume hash, pressure, and paging telemetry.", "cache_state": "prepared indexes; source-page state unspecified", "timing_boundary": "exact package indexed load and full-scan products; app excluded"},
+    {"id": "io.swift.rodman.bin1.cold-original", "module": "I/O and load", "operation": "cold original compressed-source full-native load", "platform": "Native Swift/Metal", "computer": "Rodman", "configuration": "full-native-bin1-u16", "state": "pending", "runbook": "swift-indexed-load", "priority": 1, "next_gate": "Run arbitrary-source cold discovery, audit, index, full-native load, products, and complete memory/page-fault telemetry on physical Rodman.", "cache_state": "cold original source; no prepared index", "timing_boundary": "source selection through exact complete resident output and products"},
+    {"id": "io.swift.rodman.bin2.prepared", "module": "I/O and load", "operation": "prepared-index exact detector-bin-2 load with destination reuse", "platform": "Native Swift/Metal", "computer": "Rodman", "configuration": "full-native-bin2-u16", "state": "measured", "satisfied_by": ["rodman-swift-metal-bin2-reuse"], "runbook": "swift-indexed-load", "priority": 4, "next_gate": "", "cache_state": "prepared indexes; F_NOCACHE descriptors; destination reused", "timing_boundary": "exact package indexed load and products; app excluded"},
+    {"id": "io.swift.rodman.bin4.prepared", "module": "I/O and load", "operation": "prepared-index exact detector-bin-4 fused load with destination reuse", "platform": "Native Swift/Metal", "computer": "Rodman", "configuration": "full-native-bin4-u16", "state": "measured", "satisfied_by": ["rodman-swift-metal-bin4-fused-reuse"], "runbook": "swift-indexed-load", "priority": 4, "next_gate": "", "cache_state": "prepared indexes; F_NOCACHE descriptors; destination reused", "timing_boundary": "exact package load and seven products; app excluded"},
+
+    {"id": "io.webgpu.phil.bin1.prepared", "module": "I/O and load", "operation": "prepared-index hardware-WebGPU full-native load", "platform": "WebGPU", "computer": "Phil", "configuration": "full-native-bin1-u16", "state": "partial", "satisfied_by": ["phil-webgpu-fullnative-load-single"], "runbook": "webgpu-load", "priority": 2, "next_gate": "Repeat exact production-path load with p50, p95, maximum, full-tensor parity, total adapter allocation, browser-tree peak, and source-page state.", "cache_state": "prepared block indexes; source pages unspecified", "timing_boundary": "exact full-native resident output"},
+    {"id": "io.webgpu.phil.bin2.exact", "module": "I/O and load", "operation": "exact integer detector-bin-2 hardware load", "platform": "WebGPU", "computer": "Phil", "configuration": "full-native-bin2-u16", "state": "pending", "runbook": "webgpu-load", "priority": 1, "next_gate": "Promote only a clean exact-integer production implementation, then run full real-volume parity and physical memory/timing distributions.", "cache_state": "prepared and cold states both required as separate measurements", "timing_boundary": "exact uint16 working volume; no float32 resident substitution"},
+    {"id": "io.webgpu.phil.bin4.exact", "module": "I/O and load", "operation": "exact integer detector-bin-4 hardware load", "platform": "WebGPU", "computer": "Phil", "configuration": "full-native-bin4-u16", "state": "pending", "runbook": "webgpu-load", "priority": 2, "next_gate": "Run clean production exact-integer full-volume parity, repeated timing, adapter allocation, browser-tree memory, and swap.", "cache_state": "prepared and cold states both required as separate measurements", "timing_boundary": "exact uint16 working volume; no float32 resident substitution"},
+    {"id": "io.webgpu.phil.bin8.exact", "module": "I/O and load", "operation": "exact integer detector-bin-8 hardware load", "platform": "WebGPU", "computer": "Phil", "configuration": "full-native-bin8-u16", "state": "pending", "runbook": "webgpu-load", "priority": 3, "next_gate": "Run clean production exact-integer full-volume parity, repeated timing, adapter allocation, browser-tree memory, and swap.", "cache_state": "prepared and cold states both required as separate measurements", "timing_boundary": "exact uint16 working volume; no float32 resident substitution"},
+    {"id": "io.webgpu.phil.bin1.cold-original", "module": "I/O and load", "operation": "cold original compressed-source hardware load", "platform": "WebGPU", "computer": "Phil", "configuration": "full-native-bin1-u16", "state": "pending", "runbook": "webgpu-load", "priority": 1, "next_gate": "Run seven independently controlled arbitrary-source cold browser loads with full parity and memory.", "cache_state": "cold original source; no prepared index", "timing_boundary": "file selection through exact complete resident output"},
+    {"id": "io.webgpu.phil.bin2.cold-original", "module": "I/O and load", "operation": "cold original compressed-source exact detector-bin-2 load", "platform": "WebGPU", "computer": "Phil", "configuration": "full-native-bin2-u16", "state": "pending", "runbook": "webgpu-load", "priority": 1, "next_gate": "After clean exact-integer integration, run controlled arbitrary-source cold trials with full parity and memory.", "cache_state": "cold original source; no prepared index", "timing_boundary": "file selection through exact complete uint16 working output"},
+    {"id": "io.webgpu.steve-kerr.bin2.minimum-memory", "module": "I/O and load", "operation": "8 GB exact detector-bin-2 admission and load", "platform": "WebGPU", "computer": "Steve Kerr", "configuration": "full-native-bin2-u16", "state": "pending", "runbook": "webgpu-load", "priority": 1, "next_gate": "Run physical hardware-WebGPU full-volume exact parity, browser-tree peak, pressure, swap, device loss, and repeated cold/prepared timings on 8 GB.", "cache_state": "cold and prepared states tracked separately", "timing_boundary": "exact complete 4.5 GiB working output on physical 8 GB device"},
+
+    {"id": "io.cuda.mjgoat.bin1.warm", "module": "I/O and load", "operation": "warm-source full-native resident load", "platform": "CUDA", "computer": "MJGOAT", "configuration": "full-native-bin1-u16", "state": "partial", "runbook": "python-load-matrix", "priority": 2, "next_gate": "Re-run the current clean revision for seven trials with p95, maximum, process RSS, total-card peak, and exact hashes.", "cache_state": "warm source; historical p50 exists but complete current distribution is missing", "timing_boundary": "first usable exact resident output"},
+    {"id": "io.cuda.mjgoat.bin2.warm", "module": "I/O and load", "operation": "warm-source exact detector-bin-2 resident load", "platform": "CUDA", "computer": "MJGOAT", "configuration": "full-native-bin2-u16", "state": "partial", "runbook": "python-load-matrix", "priority": 3, "next_gate": "Re-run the current clean revision for seven trials with full exact-sum parity and complete memory telemetry.", "cache_state": "warm source; historical p50 exists but complete current distribution is missing", "timing_boundary": "first usable exact resident output"},
+    {"id": "io.cuda.mjgoat.bin4.warm", "module": "I/O and load", "operation": "warm-source exact detector-bin-4 resident load", "platform": "CUDA", "computer": "MJGOAT", "configuration": "full-native-bin4-u16", "state": "partial", "runbook": "python-load-matrix", "priority": 3, "next_gate": "Re-run the current clean revision for seven trials with full exact-sum parity and complete memory telemetry.", "cache_state": "warm source; historical p50 exists but complete current distribution is missing", "timing_boundary": "first usable exact resident output"},
+    {"id": "io.cuda.mjgoat.bin8.warm", "module": "I/O and load", "operation": "warm-source exact detector-bin-8 resident load", "platform": "CUDA", "computer": "MJGOAT", "configuration": "full-native-bin8-u16", "state": "partial", "runbook": "python-load-matrix", "priority": 4, "next_gate": "Re-run the current clean revision for seven trials with full exact-sum parity and complete memory telemetry.", "cache_state": "warm source; historical p50 exists but complete current distribution is missing", "timing_boundary": "first usable exact resident output"},
+    {"id": "io.cuda.mjgoat.bin1.cold-original", "module": "I/O and load", "operation": "cold arbitrary-source full-native load", "platform": "CUDA", "computer": "MJGOAT", "configuration": "full-native-bin1-u16", "state": "pending", "runbook": "python-load-matrix", "priority": 1, "next_gate": "Run controlled cold-source discovery/read/decode/load distributions without disturbing unrelated GPU owners.", "cache_state": "cold arbitrary source; control not yet qualified", "timing_boundary": "source open through exact resident output"},
+    {"id": "io.cpu-reference.bin1.parity", "module": "I/O and load", "operation": "independent exact load/bin reference", "platform": "CPU reference", "computer": "portable CI", "configuration": "full-native-bin1-u16", "state": "partial", "runbook": "registry-smoke", "priority": 4, "next_gate": "Retain a standardized full-size CPU reference timing only when a practical physical memory envelope is available; parity remains the primary role.", "cache_state": "portable reference; performance not promoted", "timing_boundary": "exact reference output"},
+
+    {"id": "products.cpu-reference.full-suite", "module": "Detector products", "operation": "mean DP, total, BF, ABF, ADF, and DF reference", "platform": "CPU reference", "computer": "portable CI", "configuration": "full-native-bin1-u16", "state": "partial", "runbook": "detector-product-parity", "priority": 4, "next_gate": "Keep exact reference tests current; no CPU speed claim is required.", "cache_state": "resident reference input", "timing_boundary": "complete reference product suite"},
+    {"id": "products.cuda.full-suite", "module": "Detector products", "operation": "mean DP, total, BF, ABF, ADF, and DF", "platform": "CUDA", "computer": "MJGOAT", "configuration": "full-native-bin1-u16", "state": "partial", "satisfied_by": ["mjgoat-cuda-pinned-slot-candidate"], "runbook": "detector-product-parity", "priority": 2, "next_gate": "Add and verify the missing public ABF/ADF/total statistics, then retain full-suite timing and parity.", "cache_state": "warm streamed screening source", "timing_boundary": "complete exact product suite"},
+    {"id": "products.mps.full-suite", "module": "Detector products", "operation": "mean DP, total, BF, ABF, ADF, and DF", "platform": "Python MPS", "computer": "Phil", "configuration": "full-native-bin1-u16", "state": "partial", "runbook": "detector-product-parity", "priority": 2, "next_gate": "Run the complete current product suite on physical MPS with full precision, synchronized timing, peak memory, and exact/tolerance artifacts.", "cache_state": "resident MPS input", "timing_boundary": "complete product suite publication"},
+    {"id": "products.swift.full-suite", "module": "Detector products", "operation": "mean DP, total, BF, ABF, ADF, and DF", "platform": "Native Swift/Metal", "computer": "Phil", "configuration": "full-native-bin1-u16", "state": "measured", "satisfied_by": ["phil-swift-metal-private-bin1-load"], "runbook": "detector-product-parity", "priority": 3, "next_gate": "", "cache_state": "prepared exact resident input", "timing_boundary": "complete exact resident volume and seven products"},
+    {"id": "products.webgpu.full-suite", "module": "Detector products", "operation": "mean DP, total, BF, ABF, ADF, and DF", "platform": "WebGPU", "computer": "Phil", "configuration": "full-native-bin1-u16", "state": "pending", "runbook": "detector-product-parity", "priority": 2, "next_gate": "Run the complete hardware-WebGPU product suite with full-precision parity, synchronized timing, and browser/device memory.", "cache_state": "resident exact hardware-WebGPU input", "timing_boundary": "complete product suite publication"},
+
+    {"id": "screening.cpu-reference.complete", "module": "Screening", "operation": "complete screening reference", "platform": "CPU reference", "computer": "portable CI", "configuration": "full-native-bin1-u16", "state": "partial", "runbook": "screening-profile", "priority": 4, "next_gate": "Maintain the frozen reference arrays; physical timing is not a CPU release gate.", "cache_state": "reference source", "timing_boundary": "complete reference screening result"},
+    {"id": "screening.cuda.complete", "module": "Screening", "operation": "one-pass exact screening products", "platform": "CUDA", "computer": "MJGOAT", "configuration": "full-native-bin1-u16", "state": "measured", "satisfied_by": ["mjgoat-cuda-pinned-slot-candidate"], "runbook": "screening-profile", "priority": 2, "next_gate": "", "cache_state": "warm source; empty result cache", "timing_boundary": "complete six-array screening result"},
+    {"id": "screening.mps.complete", "module": "Screening", "operation": "one-pass exact screening products", "platform": "Python MPS", "computer": "Phil", "configuration": "full-native-bin1-u16", "state": "pending", "runbook": "screening-profile", "priority": 2, "next_gate": "Run complete MPS screening construction and prepared reopen with full product parity, memory, and p50/p95/max.", "cache_state": "cold construction and prepared reopen are separate gates", "timing_boundary": "first usable and exact complete screening result"},
+    {"id": "screening.swift.unsupported", "module": "Screening", "operation": "prepared screening workflow", "platform": "Native Swift/Metal", "computer": "Phil", "configuration": "full-native-bin1-u16", "state": "unsupported", "runbook": "registry-smoke", "priority": 5, "next_gate": "", "reason": "The backend parity contract currently marks the prepared screening workflow not implemented for native Swift/Metal.", "cache_state": "not applicable", "timing_boundary": "unsupported contract test"},
+    {"id": "screening.webgpu.unsupported", "module": "Screening", "operation": "prepared screening workflow", "platform": "WebGPU", "computer": "Phil", "configuration": "full-native-bin1-u16", "state": "unsupported", "runbook": "registry-smoke", "priority": 5, "next_gate": "", "reason": "The backend parity contract currently marks the prepared screening workflow not implemented for WebGPU.", "cache_state": "not applicable", "timing_boundary": "unsupported contract test"},
+
+    {"id": "dpc.cpu-reference.full-suite", "module": "CoM, DPC, and iDPC", "operation": "CoM row/column, rotation, and iDPC reference", "platform": "CPU reference", "computer": "portable CI", "configuration": "resident-map-suite-f32", "state": "partial", "runbook": "dpc-parity", "priority": 4, "next_gate": "Maintain frozen full-precision references and signal-range checks.", "cache_state": "resident reference inputs", "timing_boundary": "complete reference publication"},
+    {"id": "dpc.cuda.full-suite", "module": "CoM, DPC, and iDPC", "operation": "CoM row/column, rotation, and iDPC", "platform": "CUDA", "computer": "MJGOAT", "configuration": "resident-map-suite-f32", "state": "pending", "runbook": "dpc-parity", "priority": 2, "next_gate": "Add a stable physical timing entry point and retain complete full-precision parity, synchronized timing, and memory.", "cache_state": "resident CUDA inputs", "timing_boundary": "complete synchronized product publication"},
+    {"id": "dpc.mps.full-suite", "module": "CoM, DPC, and iDPC", "operation": "CoM row/column, rotation, and iDPC", "platform": "Python MPS", "computer": "Phil", "configuration": "resident-map-suite-f32", "state": "pending", "runbook": "dpc-parity", "priority": 2, "next_gate": "Add a stable physical timing entry point and retain complete full-precision parity, synchronized timing, and memory.", "cache_state": "resident MPS inputs", "timing_boundary": "complete synchronized product publication"},
+    {"id": "dpc.swift.full-suite", "module": "CoM, DPC, and iDPC", "operation": "rotation and Fourier iDPC from resident CoM maps", "platform": "Native Swift/Metal", "computer": "Rodman", "configuration": "resident-map-suite-f32", "state": "measured", "satisfied_by": ["rodman-swift-metal-resident-dpc-idpc"], "runbook": "dpc-parity", "priority": 3, "next_gate": "", "cache_state": "resident float32 CoM row and column maps", "timing_boundary": "synchronized rotation and iDPC publication"},
+    {"id": "dpc.webgpu.full-suite", "module": "CoM, DPC, and iDPC", "operation": "DPC row/column and optimized-rotation iDPC", "platform": "WebGPU", "computer": "Phil", "configuration": "resident-map-suite-f32", "state": "measured", "satisfied_by": ["phil-webgpu-resident-dpc-row", "phil-webgpu-resident-dpc-column", "phil-webgpu-resident-idpc-optimized"], "runbook": "dpc-parity", "priority": 3, "next_gate": "", "cache_state": "resident exact full-native WebGPU state", "timing_boundary": "awaited GPU readback for each published product"},
+
+    {"id": "display.cpu-reference.maps", "module": "Display and FFT", "operation": "transform, histogram, color, and FFT reference", "platform": "CPU reference", "computer": "portable CI", "configuration": "resident-map-suite-f32", "state": "partial", "runbook": "display-fft-parity", "priority": 4, "next_gate": "Maintain shared goldens and frozen conventions.", "cache_state": "resident reference maps", "timing_boundary": "complete reference outputs"},
+    {"id": "display.cuda.maps", "module": "Display and FFT", "operation": "transform, histogram, color, and FFT", "platform": "CUDA", "computer": "MJGOAT", "configuration": "resident-map-suite-f32", "state": "pending", "runbook": "display-fft-parity", "priority": 3, "next_gate": "Add a stable CUDA physical timing harness for first execution and warm publication with parity and memory.", "cache_state": "resident CUDA maps", "timing_boundary": "synchronized display-ready outputs"},
+    {"id": "display.mps.maps", "module": "Display and FFT", "operation": "transform, histogram, color, and FFT", "platform": "Python MPS", "computer": "Phil", "configuration": "resident-map-suite-f32", "state": "pending", "runbook": "display-fft-parity", "priority": 3, "next_gate": "Add a stable MPS physical timing harness for first execution and warm publication with parity and memory.", "cache_state": "resident MPS maps", "timing_boundary": "synchronized display-ready outputs"},
+    {"id": "display.swift.maps", "module": "Display and FFT", "operation": "transform, histogram, color, and FFT", "platform": "Native Swift/Metal", "computer": "Phil", "configuration": "resident-map-suite-f32", "state": "partial", "runbook": "display-fft-parity", "priority": 3, "next_gate": "Register the current Metal display and FFT benchmark distributions with exact revision, device, parity, peak memory, and first-versus-warm states.", "cache_state": "resident Metal maps", "timing_boundary": "synchronized display-ready outputs"},
+    {"id": "display.webgpu.maps", "module": "Display and FFT", "operation": "transform, histogram, color, and FFT", "platform": "WebGPU", "computer": "Phil", "configuration": "resident-map-suite-f32", "state": "pending", "runbook": "display-fft-parity", "priority": 3, "next_gate": "Add a hardware-browser timing entry point with parity, presentation, browser-tree memory, and device-loss checks.", "cache_state": "resident hardware-WebGPU maps", "timing_boundary": "synchronized display-ready publication"},
+
+    {"id": "ssb.object.cpu-reference.512", "module": "Single-sideband ptychography", "operation": "object, phase, and loss reference", "platform": "CPU reference", "computer": "portable CI", "configuration": "ssb-512-complex64", "state": "partial", "runbook": "registry-smoke", "priority": 4, "next_gate": "Maintain the frozen full-precision reference fixture and objective.", "cache_state": "prepared reference BF evidence", "timing_boundary": "complete reference object, phase, and loss"},
+    {"id": "ssb.object.cuda.512", "module": "Single-sideband ptychography", "operation": "object, phase, and loss", "platform": "CUDA", "computer": "MJGOAT", "configuration": "ssb-512-complex64", "state": "partial", "runbook": "cuda-ssb-preflight", "priority": 2, "next_gate": "Add a stable CUDA performance entry point and retain physical full-size timing, memory, phase/loss parity, and hashes.", "cache_state": "prepared BF evidence", "timing_boundary": "complete synchronized object, phase, and loss"},
+    {"id": "ssb.object.mps.512", "module": "Single-sideband ptychography", "operation": "object, phase, and loss", "platform": "Python MPS", "computer": "Phil", "configuration": "ssb-512-complex64", "state": "pending", "runbook": "mps-ssb", "priority": 2, "next_gate": "Run native 512 evidence with the frozen reference engine, full parity, memory, and repeat distributions.", "cache_state": "prepared BF evidence", "timing_boundary": "complete synchronized object, phase, and loss"},
+    {"id": "ssb.object.swift.512", "module": "Single-sideband ptychography", "operation": "object, phase, and loss", "platform": "Native Swift/Metal", "computer": "Phil", "configuration": "ssb-512-complex64", "state": "partial", "runbook": "swift-ssb", "priority": 2, "next_gate": "Register a current clean physical 512 distribution with exact phase/loss parity, cache policy, and memory.", "cache_state": "prepared BF evidence", "timing_boundary": "complete synchronized object, phase, and loss"},
+    {"id": "ssb.object.webgpu.512", "module": "Single-sideband ptychography", "operation": "object, phase, and loss", "platform": "WebGPU", "computer": "Phil", "configuration": "ssb-512-complex64", "state": "refuted", "runbook": "webgpu-ssb-preflight", "priority": 1, "next_gate": "Restore frozen phase parity before any performance promotion; retain the current mismatch as refuted.", "reason": "The retained physical WebGPU phase missed the frozen wrapped-error tolerance even though loss passed.", "cache_state": "prepared detector-bin-2 evidence", "timing_boundary": "complete physical browser object, phase, and loss"},
+    {"id": "ssb.fit.cpu-reference.512", "module": "Single-sideband ptychography", "operation": "200 trials plus Nelder-Mead reference", "platform": "CPU reference", "computer": "portable CI", "configuration": "ssb-512-complex64", "state": "partial", "runbook": "registry-smoke", "priority": 5, "next_gate": "Maintain the frozen deterministic reference objective and fitted parameters.", "cache_state": "prepared reference BF evidence", "timing_boundary": "complete 200-trial plus Nelder-Mead fit"},
+    {"id": "ssb.fit.cuda.512", "module": "Single-sideband ptychography", "operation": "200 trials plus Nelder-Mead", "platform": "CUDA", "computer": "MJGOAT", "configuration": "ssb-512-complex64", "state": "pending", "runbook": "cuda-ssb-preflight", "priority": 2, "next_gate": "Add a stable physical calibration harness and retain complete fit timing, parameters, repeatability, parity, and memory.", "cache_state": "prepared BF evidence", "timing_boundary": "complete 200-trial plus Nelder-Mead fit"},
+    {"id": "ssb.fit.mps.512", "module": "Single-sideband ptychography", "operation": "200 trials plus Nelder-Mead", "platform": "Python MPS", "computer": "Phil", "configuration": "ssb-512-complex64", "state": "pending", "runbook": "mps-ssb", "priority": 1, "next_gate": "Run the frozen 200-trial plus Nelder-Mead workflow on physical MPS with deterministic repeatability and full memory telemetry.", "cache_state": "prepared BF evidence", "timing_boundary": "complete 200-trial plus Nelder-Mead fit"},
+    {"id": "ssb.fit.swift.512", "module": "Single-sideband ptychography", "operation": "200 trials plus Nelder-Mead", "platform": "Native Swift/Metal", "computer": "Phil", "configuration": "ssb-512-complex64", "state": "partial", "runbook": "swift-ssb", "priority": 2, "next_gate": "Register a current clean full-fit distribution with fitted-parameter parity, repeatability, cache policy, and memory.", "cache_state": "prepared BF evidence", "timing_boundary": "complete 200-trial plus Nelder-Mead fit"},
+    {"id": "ssb.fit.webgpu.unsupported", "module": "Single-sideband ptychography", "operation": "200 trials plus Nelder-Mead", "platform": "WebGPU", "computer": "Phil", "configuration": "ssb-512-complex64", "state": "unsupported", "runbook": "registry-smoke", "priority": 5, "next_gate": "", "reason": "The frozen backend contract does not implement WebGPU calibration fitting.", "cache_state": "not applicable", "timing_boundary": "unsupported contract test"},
+
+    {"id": "select.rectangle.cpu-reference.64", "module": "Selective loading", "operation": "64 by 64 rectangular scan selection", "platform": "CPU reference", "computer": "portable CI", "configuration": "selective-64-native-bin1-u16", "state": "partial", "runbook": "registry-smoke", "priority": 4, "next_gate": "Maintain exact reference ordering, metadata, and validation cases.", "cache_state": "reference source", "timing_boundary": "exact selected reference output"},
+    {"id": "select.rectangle.cuda.64", "module": "Selective loading", "operation": "64 by 64 evidence-selective rectangle", "platform": "CUDA", "computer": "MJGOAT", "configuration": "selective-64-native-bin1-u16", "state": "partial", "runbook": "python-selective-load", "priority": 2, "next_gate": "Retain current-revision physical timing, bytes read/decompressed/uploaded, allocations, and exact full-selection parity.", "cache_state": "prepared indexes; source-page state declared", "timing_boundary": "exact selected resident output"},
+    {"id": "select.rectangle.mps.64", "module": "Selective loading", "operation": "64 by 64 evidence-selective rectangle", "platform": "Python MPS", "computer": "Phil", "configuration": "selective-64-native-bin1-u16", "state": "partial", "runbook": "python-selective-load", "priority": 2, "next_gate": "Retain physical timing, bytes read/decompressed/uploaded, allocations, and exact full-selection parity.", "cache_state": "prepared indexes; source-page state declared", "timing_boundary": "exact selected resident output"},
+    {"id": "select.rectangle.swift.64", "module": "Selective loading", "operation": "64 by 64 evidence-selective rectangle", "platform": "Native Swift/Metal", "computer": "Phil", "configuration": "selective-64-native-bin1-u16", "state": "pending", "runbook": "swift-indexed-load", "priority": 2, "next_gate": "Implement and expose the backend-neutral bulk selection contract, then prove source-range selectivity, order, metadata, parity, bytes, memory, and timing.", "cache_state": "prepared indexes; source-page state declared", "timing_boundary": "exact selected resident output"},
+    {"id": "select.rectangle.webgpu.64", "module": "Selective loading", "operation": "64 by 64 prepared-shard rectangle", "platform": "WebGPU", "computer": "Phil", "configuration": "selective-64-native-bin1-u16", "state": "partial", "satisfied_by": ["phil-webgpu-selective-64x64"], "runbook": "webgpu-selective-load", "priority": 2, "next_gate": "Add full selected-tensor parity and true intra-shard range reads; current evidence uses qualified frame probes and shard-level selection.", "cache_state": "prepared block indexes and frame-span manifest", "timing_boundary": "exact selected resident output; harness setup excluded"},
+    {"id": "select.sparse.cpu-reference.ordered-duplicates", "module": "Selective loading", "operation": "arbitrary ordered scan positions with duplicates", "platform": "CPU reference", "computer": "portable CI", "configuration": "selective-sparse-native-bin1-u16", "state": "partial", "runbook": "registry-smoke", "priority": 4, "next_gate": "Maintain the reference order, duplicate, empty, and bounds behavior.", "cache_state": "reference source", "timing_boundary": "exact ordered selected output"},
+    {"id": "select.sparse.cuda.ordered-duplicates", "module": "Selective loading", "operation": "arbitrary evidence-selective positions with order and duplicates", "platform": "CUDA", "computer": "MJGOAT", "configuration": "selective-sparse-native-bin1-u16", "state": "partial", "runbook": "python-selective-load", "priority": 2, "next_gate": "Retain identical real selectors across backends with bytes read/decompressed/uploaded, exact ordering/duplicates, memory, and timing.", "cache_state": "prepared indexes; source-page state declared", "timing_boundary": "exact ordered selected resident output"},
+    {"id": "select.sparse.mps.ordered-duplicates", "module": "Selective loading", "operation": "arbitrary evidence-selective positions with order and duplicates", "platform": "Python MPS", "computer": "Phil", "configuration": "selective-sparse-native-bin1-u16", "state": "partial", "runbook": "python-selective-load", "priority": 2, "next_gate": "Retain identical real selectors across backends with bytes read/decompressed/uploaded, exact ordering/duplicates, memory, and timing.", "cache_state": "prepared indexes; source-page state declared", "timing_boundary": "exact ordered selected resident output"},
+    {"id": "select.sparse.swift.ordered-duplicates", "module": "Selective loading", "operation": "arbitrary evidence-selective positions with order and duplicates", "platform": "Native Swift/Metal", "computer": "Phil", "configuration": "selective-sparse-native-bin1-u16", "state": "pending", "runbook": "swift-indexed-load", "priority": 2, "next_gate": "Implement the canonical selector contract without UI policy, then prove evidence-selective IO, order, duplicates, parity, bytes, memory, and timing.", "cache_state": "prepared indexes; source-page state declared", "timing_boundary": "exact ordered selected resident output"},
+    {"id": "select.sparse.webgpu.ordered-duplicates", "module": "Selective loading", "operation": "arbitrary evidence-selective positions with order and duplicates", "platform": "WebGPU", "computer": "Phil", "configuration": "selective-sparse-native-bin1-u16", "state": "pending", "runbook": "webgpu-selective-load", "priority": 2, "next_gate": "Implement ordered/duplicate sparse selectors and true range reads, then run full physical parity, bytes, memory, and timing.", "cache_state": "prepared indexes; source-page state declared", "timing_boundary": "exact ordered selected resident output"}
+  ]
+}

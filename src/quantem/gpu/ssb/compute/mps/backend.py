@@ -488,7 +488,6 @@ class MpsSSBBackend:
         """Return no reduced-evidence preview for the exact MPS path."""
 
         del num_bf
-        return None
 
     def export_brightfield(
         self,

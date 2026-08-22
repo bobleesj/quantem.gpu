@@ -175,3 +175,77 @@ def test_real_mps_sparse_det_bin_matches_no_bin_sum() -> None:
     assert det_bin2.metadata["backend"] == "mps"
     assert det_bin2.metadata["det_bin"] == 2
     assert det_bin2.metadata["unique_frame_count"] == n_positions
+
+
+@pytest.mark.skipif(
+    not os.environ.get("QUANTEM_GPU_MPS_FULL_PARITY_MASTER"),
+    reason=(
+        "set QUANTEM_GPU_MPS_FULL_PARITY_MASTER on a high-memory Apple "
+        "Silicon device for full exact detector-bin parity"
+    ),
+)
+def test_real_mps_full_bins_match_exact_no_bin_sums() -> None:
+    """Full detector bins 2, 4, and 8 exactly sum selected native frames."""
+    Metal = pytest.importorskip("Metal")
+    import numpy as np
+
+    from quantem.gpu.io import load
+
+    if Metal.MTLCreateSystemDefaultDevice() is None:
+        pytest.skip("Metal device is not available")
+    master = os.environ["QUANTEM_GPU_MPS_FULL_PARITY_MASTER"]
+    scan_shape = tuple(
+        int(value)
+        for value in os.environ.get(
+            "QUANTEM_GPU_MPS_FULL_PARITY_SCAN_SHAPE",
+            "512,512",
+        ).split(",")
+    )
+    selected = (0, 1, 511, 512, 131_071, 262_143)
+
+    native = load(
+        master,
+        backend="mps",
+        scan_shape=scan_shape,
+        det_bin=1,
+        verbose=False,
+    )
+    native_frames = []
+    for frame_index in selected:
+        frame_offset = 0
+        for chunk in native.data.chunks:
+            if frame_index < frame_offset + int(chunk.shape[0]):
+                native_frames.append(
+                    np.array(chunk[frame_index - frame_offset], copy=True)
+                )
+                break
+            frame_offset += int(chunk.shape[0])
+        else:
+            raise IndexError(f"selected frame {frame_index} is unavailable")
+    native.data.free()
+
+    native_frames = np.stack(native_frames)
+    assert native_frames.dtype == np.uint16
+    for detector_bin in (2, 4, 8):
+        rows = native_frames.shape[1] // detector_bin
+        columns = native_frames.shape[2] // detector_bin
+        expected = native_frames.reshape(
+            len(selected),
+            rows,
+            detector_bin,
+            columns,
+            detector_bin,
+        ).sum(axis=(2, 4), dtype=np.uint64)
+        assert int(expected.max()) <= np.iinfo(np.uint16).max
+
+        binned = load(
+            master,
+            backend="mps",
+            scan_shape=scan_shape,
+            det_bin=detector_bin,
+            verbose=False,
+        )
+        got = np.asarray(binned.data.chunks[0])[list(selected)]
+        np.testing.assert_array_equal(got, expected.astype(np.uint16))
+        assert binned.data.dtype == np.uint16
+        binned.data.free()

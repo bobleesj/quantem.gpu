@@ -42,6 +42,7 @@ sphinx:
       - custom.css
     html_js_files:
       - nav-toggle-fix.js
+      - benchmark-tables.js
     suppress_warnings:
       - "etoc.toctree"
     copyright: "2026, ophusgroup"

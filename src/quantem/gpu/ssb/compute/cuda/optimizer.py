@@ -318,7 +318,7 @@ def batch_nelder_mead(
 
     for iteration in range(max_iter):
         # Sort vertices by function value
-        order = np.argsort(f_values)
+        order = np.argsort(f_values, kind="stable")
         simplex = simplex[order]
         f_values = f_values[order]
 
@@ -392,7 +392,7 @@ def batch_nelder_mead(
         f_values[1:] = cp.asnumpy(losses_gpu[:3]).astype(np.float64)
         n_evals += 3
 
-    best_idx = np.argmin(f_values)
+    best_idx = np.argsort(f_values, kind="stable")[0]
     return simplex[best_idx], float(f_values[best_idx]), n_evals
 
 

@@ -201,6 +201,16 @@ def clear_mps_cache() -> None:
     _decompressor_cache.clear()
 
 
+def _fused_full_u16_enabled() -> bool:
+    """Return whether the exact scratch-free uint16 decoder is enabled."""
+    return os.environ.get("QT_MPS_FUSED_FULL_U16", "1") != "0"
+
+
+def _fused_bin_enabled() -> bool:
+    """Return whether exact fused uint16 detector binning is enabled."""
+    return os.environ.get("QT_MPS_FUSED_BIN", "1") != "0"
+
+
 def _format_gib(nbytes: int | float | None) -> str:
     if nbytes is None:
         return "unknown"
@@ -477,7 +487,19 @@ def load_master(
     # memory (fits a 24 GB Mac) and runs at the GPU decompress floor. Bit-
     # identical to a cuda integer-sum bin (mask applied pre-bin in the kernel).
     frame_bytes = int(np.prod(det_shape) * np.dtype(dtype).itemsize)
-    dec = _get_decompressor(frame_bytes, max_frames=max(chunk_n_frames))
+    max_frames = max(chunk_n_frames)
+    fused_whole_shard = (
+        dtype == np.dtype(np.uint16)
+        and det_bin in (2, 4, 8)
+        and det_shape[1] % 32 == 0
+        and int(np.prod(det_shape)) % 4096 == 0
+        and _fused_bin_enabled()
+    )
+    dec = _get_decompressor(
+        frame_bytes,
+        max_frames=max_frames,
+        whole_shard=fused_whole_shard,
+    )
     return dec.load_binned_masked(filepath, det_bin, mask=pixel_mask, verbose=verbose)
 
 # ---------------------------------------------------------------------------
@@ -507,6 +529,12 @@ _shuf16_fn = _library.newFunctionWithName_("shuf_8192_16_batched")
 _shuf16_u8_fn = _library.newFunctionWithName_("shuf_8192_16_to_u8_batched")
 _shuf16_u8_masked_fn = _library.newFunctionWithName_(
     "shuf_8192_16_to_u8_masked_batched"
+)
+_shuf_bin16_fn = _library.newFunctionWithName_(
+    "shuf_bin_sum_8192_16_batched"
+)
+_shuf_bin2_16_fn = _library.newFunctionWithName_(
+    "shuf_bin2_sum_8192_16_batched"
 )
 _detsum_u8_decode_partial_fn = _library.newFunctionWithName_(
     "detector_sum_u8_decode_partial"
@@ -550,6 +578,14 @@ _shuf16_u8_pipeline = _make_pipeline(
 _shuf16_u8_masked_pipeline = _make_pipeline(
     _shuf16_u8_masked_fn,
     "shuf_8192_16_to_u8_masked_batched",
+)
+_shuf_bin16_pipeline = _make_pipeline(
+    _shuf_bin16_fn,
+    "shuf_bin_sum_8192_16_batched",
+)
+_shuf_bin2_16_pipeline = _make_pipeline(
+    _shuf_bin2_16_fn,
+    "shuf_bin2_sum_8192_16_batched",
 )
 _detsum_u8_decode_partial_pipeline = _make_pipeline(
     _detsum_u8_decode_partial_fn,
@@ -844,7 +880,11 @@ class MPSDecompressor:
         self._comp_mtl = _metal_buffer_alloc(max_compressed_bytes)
         self._comp_np = _numpy_view(self._comp_mtl, np.uint8, max_compressed_bytes)
         gpu_output = self.gpu_batch * frame_bytes
-        self._lz4_mtl = _metal_buffer_alloc(gpu_output)
+        # The direct fused uint16 decoder writes into the final output and does
+        # not need a full-size LZ4 intermediate.  Keep all LZ4 scratch lazy so
+        # that path does not reserve memory it can never touch.
+        self._lz4_mtl = None
+        self._lz4_nbytes = gpu_output
         # Second LZ4 scratch for the D=2 chunked pipeline (two command buffers
         # in flight need separate scratch). Allocated lazily on first chunked use.
         self._lz4_mtl_b = None
@@ -1012,6 +1052,12 @@ class MPSDecompressor:
                 self._shuf_mtl, np.uint8, self._shuf_nbytes
             )
 
+    def _ensure_lz4_buffer(self):
+        """Return the primary LZ4 scratch, allocating it only when required."""
+        if self._lz4_mtl is None:
+            self._lz4_mtl = _metal_buffer_alloc(self._lz4_nbytes)
+        return self._lz4_mtl
+
     def _read_chunk(self, filepath, comp_np, co_np, chunk_sizes):
         """Read raw compressed HDF5 chunks into pre-allocated buffers.
 
@@ -1090,10 +1136,60 @@ class MPSDecompressor:
         """
         if out_mtl is None:
             out_mtl = self._out_mtl
-        if lz4_mtl is None:
-            lz4_mtl = self._lz4_mtl
         cmd = _queue.commandBuffer()
         enc = cmd.computeCommandEncoder()
+        fused_full_u16 = (
+            elem_size == 2
+            and not row_prefix
+            and fast_out_mtl is None
+            and cast_u8_out_mtl is None
+            and cast_u16_out_mtl is None
+            and detector_sum_out_mtl is None
+            and _fused_full_u16_enabled()
+        )
+        if fused_full_u16:
+            from .qh5 import _packed_u16_pipeline
+
+            frame_elems = frame_bytes // 2
+            enc.setComputePipelineState_(_packed_u16_pipeline(_device))
+            enc.setBuffer_offset_atIndex_(comp_mtl, 0, 0)
+            enc.setBuffer_offset_atIndex_(co_mtl, 0, 1)
+            enc.setBuffer_offset_atIndex_(bs_mtl, 0, 2)
+            enc.setBuffer_offset_atIndex_(bc_mtl, 0, 3)
+            enc.setBuffer_offset_atIndex_(bo_mtl, 0, 4)
+            enc.setBytes_length_atIndex_(
+                np.array([frame_elems], dtype=np.uint32).tobytes(), 4, 5
+            )
+            enc.setBuffer_offset_atIndex_(out_mtl, out_byte_offset, 6)
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                Metal.MTLSizeMake(n_frames, 1, max_blocks),
+                Metal.MTLSizeMake(128, 1, 1),
+            )
+            if zero_bad and self._bad_idx_count:
+                enc.memoryBarrierWithScope_(Metal.MTLBarrierScopeBuffers)
+                nbad = int(self._bad_idx_count)
+                enc.setComputePipelineState_(_zero_bad_u16_pipeline)
+                enc.setBuffer_offset_atIndex_(out_mtl, out_byte_offset, 0)
+                enc.setBuffer_offset_atIndex_(self._bad_idx_mtl, 0, 1)
+                enc.setBytes_length_atIndex_(
+                    np.array([frame_elems], dtype=np.uint32).tobytes(), 4, 2
+                )
+                enc.setBytes_length_atIndex_(
+                    np.array([nbad], dtype=np.uint32).tobytes(), 4, 3
+                )
+                enc.setBytes_length_atIndex_(
+                    np.array([n_frames], dtype=np.uint32).tobytes(), 4, 4
+                )
+                total = n_frames * nbad
+                enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                    Metal.MTLSizeMake((total + 255) // 256, 1, 1),
+                    Metal.MTLSizeMake(256, 1, 1),
+                )
+            enc.endEncoding()
+            cmd.commit()
+            return cmd
+        if lz4_mtl is None:
+            lz4_mtl = self._ensure_lz4_buffer()
         # LZ4 — n_frames in X (unlimited), per-frame blocks in Z (small)
         enc.setComputePipelineState_(_h5lz4dc_pipeline)
         enc.setBuffer_offset_atIndex_(comp_mtl, 0, 0)
@@ -1397,9 +1493,19 @@ class MPSDecompressor:
         meta_frame_offset: offset into metadata buffers (co, bc, bo) for
         sub-batch processing. bs (block_starts) uses absolute indexing.
         """
-        self._ensure_shuf_buffer()
         if out_mtl is None:
             out_mtl = self._out_mtl
+        lz4_mtl = self._ensure_lz4_buffer()
+        frame_elems = frame_bytes // elem_size
+        fused_bin = (
+            elem_size == 2
+            and bin_factor in (2, 4, 8)
+            and det_col % 32 == 0
+            and frame_elems % 4096 == 0
+            and _fused_bin_enabled()
+        )
+        if not fused_bin:
+            self._ensure_shuf_buffer()
         meta_off = meta_frame_offset * 4  # bytes (uint32 arrays)
         cmd = _queue.commandBuffer()
         enc = cmd.computeCommandEncoder()
@@ -1416,12 +1522,50 @@ class MPSDecompressor:
         enc.setBytes_length_atIndex_(
             np.array([frame_bytes], dtype=np.uint32).tobytes(), 4, 6
         )
-        enc.setBuffer_offset_atIndex_(self._lz4_mtl, 0, 7)
+        enc.setBuffer_offset_atIndex_(lz4_mtl, 0, 7)
         enc.dispatchThreadgroups_threadsPerThreadgroup_(
             Metal.MTLSizeMake(n_frames, 1, (max_blocks + _LZ4_Y - 1) // _LZ4_Y),
             Metal.MTLSizeMake(32, _LZ4_Y, 1),
         )
         enc.memoryBarrierWithScope_(Metal.MTLBarrierScopeBuffers)
+        if fused_bin:
+            out_det_row = det_row // bin_factor
+            out_det_col = det_col // bin_factor
+            enc.setComputePipelineState_(
+                _shuf_bin2_16_pipeline if bin_factor == 2 else _shuf_bin16_pipeline
+            )
+            enc.setBuffer_offset_atIndex_(lz4_mtl, 0, 0)
+            enc.setBuffer_offset_atIndex_(out_mtl, out_byte_offset, 1)
+            enc.setBuffer_offset_atIndex_(self._mask_mtl, 0, 2)
+            enc.setBytes_length_atIndex_(
+                np.array([det_row], dtype=np.uint32).tobytes(), 4, 3
+            )
+            enc.setBytes_length_atIndex_(
+                np.array([det_col], dtype=np.uint32).tobytes(), 4, 4
+            )
+            enc.setBytes_length_atIndex_(
+                np.array([frame_elems], dtype=np.uint32).tobytes(), 4, 5
+            )
+            enc.setBytes_length_atIndex_(
+                np.array([out_det_row], dtype=np.uint32).tobytes(), 4, 6
+            )
+            enc.setBytes_length_atIndex_(
+                np.array([out_det_col], dtype=np.uint32).tobytes(), 4, 7
+            )
+            enc.setBytes_length_atIndex_(
+                np.array([bin_factor], dtype=np.uint32).tobytes(), 4, 8
+            )
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                Metal.MTLSizeMake(
+                    n_frames,
+                    (out_det_row + 7) // 8,
+                    (out_det_col + 15) // 16,
+                ),
+                Metal.MTLSizeMake(256, 1, 1),
+            )
+            enc.endEncoding()
+            cmd.commit()
+            return cmd
         # Bitshuffle → _shuf_mtl (temporary) — n_frames in X
         n_8kb = frame_bytes // 8192
         if elem_size == 2:
@@ -1429,7 +1573,7 @@ class MPSDecompressor:
             groups_per_frame = n_8kb * groups_per_block
             frame_elems = frame_bytes // 2
             enc.setComputePipelineState_(_shuf16_pipeline)
-            enc.setBuffer_offset_atIndex_(self._lz4_mtl, 0, 0)
+            enc.setBuffer_offset_atIndex_(lz4_mtl, 0, 0)
             enc.setBuffer_offset_atIndex_(self._shuf_mtl, 0, 1)
             enc.setBytes_length_atIndex_(
                 np.array([frame_elems], dtype=np.uint32).tobytes(), 4, 2
@@ -1450,7 +1594,7 @@ class MPSDecompressor:
             groups_per_frame = n_8kb * groups_per_block
             frame_elems = frame_bytes // 4
             enc.setComputePipelineState_(_shuf32_pipeline)
-            enc.setBuffer_offset_atIndex_(self._lz4_mtl, 0, 0)
+            enc.setBuffer_offset_atIndex_(lz4_mtl, 0, 0)
             enc.setBuffer_offset_atIndex_(self._shuf_mtl, 0, 1)
             enc.setBytes_length_atIndex_(
                 np.array([frame_elems], dtype=np.uint32).tobytes(), 4, 2
@@ -1603,8 +1747,9 @@ class MPSDecompressor:
         if verbose:
             iterable = tqdm(iterable, desc="mps", leave=False)
         for ci in iterable:
-            comp_np, co_np, bs_np, bc_np, bo_np, csizes, comp_mtl, co_mtl, \
-                bs_mtl, bc_mtl, bo_mtl = bufs[ci % 2]
+            _, _, _, bc_np, _, _, comp_mtl, co_mtl, bs_mtl, bc_mtl, bo_mtl = (
+                bufs[ci % 2]
+            )
             nf = chunk_n_frames[ci]
             read_next_done = False
             for s in range(0, nf, gpu_batch):
@@ -1867,6 +2012,15 @@ class MPSDecompressor:
             self._cast_overflow_np[0] = 0
         if fast_det_bin:
             self._set_mask(pixel_mask, int(frame_shape[0]), int(frame_shape[1]))
+        fused_full_u16 = (
+            elem_size == 2
+            and not row_prefix
+            and not output_u8
+            and not output_u16_narrow
+            and not fast_det_bin
+            and not precompute_detector_sum
+            and _fused_full_u16_enabled()
+        )
         bufs = [
             (self._comp_np, self._co_np, self._bs_np, self._bc_np,
              self._bo_np, self._chunk_sizes,
@@ -1882,24 +2036,30 @@ class MPSDecompressor:
         if n_chunks >= 3 and os.environ.get("QT_MPS_READAHEAD", "1") != "0":
             bufs.append(self._read_ahead_buffer())
         comp_depth = len(bufs)
-        # Native uint16 keeps two command buffers in flight: a third scratch
-        # buffer can push its 19.3 GB result into memory pressure. Lossless-u8
-        # output has enough headroom for depth 3, which lowers the single-file
-        # GPU wait floor without changing decode or clipping semantics.
-        default_gpu_depth = 3 if output_u8 else 2
+        # The fused native-uint16 path has no full-size LZ4 intermediate, so its
+        # in-flight depth is bounded only by the compressed-input slots.  Other
+        # native-uint16 paths stay at depth two to avoid another large scratch.
+        default_gpu_depth = 3 if (output_u8 or fused_full_u16) else 2
         gpu_depth = int(
             os.environ.get("QT_MPS_GPU_DEPTH", str(default_gpu_depth))
         )
-        D = min(max(1, gpu_depth), n_chunks)
-        if D >= 2 and self._lz4_mtl_b is None:
-            self._lz4_mtl_b = _metal_buffer_alloc(self.gpu_batch * frame_bytes)
-        while len(self._lz4_mtl_extra) < max(0, D - 2):
-            self._lz4_mtl_extra.append(_metal_buffer_alloc(self.gpu_batch * frame_bytes))
-        lz4s = [self._lz4_mtl]
-        if D >= 2:
-            lz4s.append(self._lz4_mtl_b)
-        if D > 2:
-            lz4s.extend(self._lz4_mtl_extra[: D - 2])
+        D = min(max(1, gpu_depth), n_chunks, comp_depth)
+        if fused_full_u16:
+            lz4s = [None] * D
+        else:
+            lz4s = [self._ensure_lz4_buffer()]
+            if D >= 2 and self._lz4_mtl_b is None:
+                self._lz4_mtl_b = _metal_buffer_alloc(
+                    self.gpu_batch * frame_bytes
+                )
+            while len(self._lz4_mtl_extra) < max(0, D - 2):
+                self._lz4_mtl_extra.append(
+                    _metal_buffer_alloc(self.gpu_batch * frame_bytes)
+                )
+            if D >= 2:
+                lz4s.append(self._lz4_mtl_b)
+            if D > 2:
+                lz4s.extend(self._lz4_mtl_extra[: D - 2])
         # Persistent per-chunk output buffer pool: allocate once, reuse every
         # load. Avoids the ~19.3 GB alloc/free churn (page re-zeroing) that made
         # repeated loads 4s instead of 2.6s. Trade-off: a prior load's arrays
@@ -2124,7 +2284,7 @@ class MPSDecompressor:
                     else:
                         fast_pool.append(fast_out_mtl)
                 fast_out_mtls[ci] = fast_out_mtl
-            if ci >= D:  # free LZ4 scratch slot before reuse
+            if ci >= D and D < comp_depth:  # free LZ4 scratch slot before reuse
                 cmds[ci - D].waitUntilCompleted()
             comp_mtl, co_mtl, bs_mtl, bc_mtl, bo_mtl = bufs[ci % comp_depth][6:11]
             cmds[ci] = self._submit_gpu(
@@ -2286,6 +2446,7 @@ class MPSDecompressor:
         t_parse = time.perf_counter()
 
         # ---- Single command buffer: LZ4 + barrier + bitshuffle ----
+        lz4_mtl = self._ensure_lz4_buffer()
         cmd = _queue.commandBuffer()
         enc = cmd.computeCommandEncoder()
 
@@ -2302,7 +2463,7 @@ class MPSDecompressor:
         enc.setBytes_length_atIndex_(
             np.array([frame_bytes], dtype=np.uint32).tobytes(), 4, 6
         )
-        enc.setBuffer_offset_atIndex_(self._lz4_mtl, 0, 7)
+        enc.setBuffer_offset_atIndex_(lz4_mtl, 0, 7)
         enc.dispatchThreadgroups_threadsPerThreadgroup_(
             Metal.MTLSizeMake(n_frames, 1, (max_blocks_per_frame + 1) // 2),
             Metal.MTLSizeMake(32, 2, 1),
@@ -2319,7 +2480,7 @@ class MPSDecompressor:
             groups_per_frame = n_8kb * groups_per_block   # 1152
             frame_u16s = frame_bytes // 2
             enc.setComputePipelineState_(_shuf16_pipeline)
-            enc.setBuffer_offset_atIndex_(self._lz4_mtl, 0, 0)
+            enc.setBuffer_offset_atIndex_(lz4_mtl, 0, 0)
             enc.setBuffer_offset_atIndex_(self._shuf_mtl, 0, 1)
             enc.setBytes_length_atIndex_(
                 np.array([frame_u16s], dtype=np.uint32).tobytes(), 4, 2
@@ -2341,7 +2502,7 @@ class MPSDecompressor:
             groups_per_frame = n_8kb * groups_per_block
             frame_u32s = frame_bytes // 4
             enc.setComputePipelineState_(_shuf32_pipeline)
-            enc.setBuffer_offset_atIndex_(self._lz4_mtl, 0, 0)
+            enc.setBuffer_offset_atIndex_(lz4_mtl, 0, 0)
             enc.setBuffer_offset_atIndex_(self._shuf_mtl, 0, 1)
             enc.setBytes_length_atIndex_(
                 np.array([frame_u32s], dtype=np.uint32).tobytes(), 4, 2
@@ -2854,7 +3015,7 @@ def load_prepared_frames(
     )
 
 
-_decompressor_cache: dict[int, MPSDecompressor] = {}
+_decompressor_cache: dict[tuple[int, int, int], MPSDecompressor] = {}
 
 # GPU sub-batch sizing.
 #
@@ -2864,8 +3025,10 @@ _decompressor_cache: dict[int, MPSDecompressor] = {}
 # exceeds 24 GB, causing Metal to swap to SSD and GPU time to spike from
 # ~3s to 30s+.
 #
-# Solution: process each chunk in sub-batches of ~7K frames (0.5 GB target
-# per intermediate buffer, ~2 GB total Metal). Benchmarked on M5 24 GB:
+# Large source shards retain ~7K-frame sub-batches (0.5 GB per intermediate).
+# Normal ~10K-frame detector shards use one source-shard-aligned batch only
+# when the fused exact-bin kernel removes the full-resolution unshuffle scratch.
+# The established large-shard policy was benchmarked on M5 24 GB:
 #   batch=5000  → 4.9s total  (optimal — fits L2/SLC well)
 #   batch=10000 → 5.5s        (slight pressure)
 #   batch=20000 → 6.5s
@@ -2878,17 +3041,29 @@ _decompressor_cache: dict[int, MPSDecompressor] = {}
 _GPU_BATCH_TARGET_GB = 0.5
 
 
-def _get_decompressor(frame_bytes, max_frames=11_000):
-    """Get or create a decompressor sized for the given frame byte size."""
-    cache_key = (frame_bytes, max_frames)
+def _get_decompressor(
+    frame_bytes: int,
+    max_frames: int = 11_000,
+    *,
+    whole_shard: bool = False,
+) -> MPSDecompressor:
+    """Get a decompressor with bounded or source-shard-aligned scratch."""
+    bounded_batch = min(
+        max_frames,
+        int(_GPU_BATCH_TARGET_GB * 1e9 / frame_bytes),
+    )
+    whole_shard_bytes = max_frames * frame_bytes
+    gpu_batch = (
+        max_frames
+        if whole_shard and whole_shard_bytes <= 1_000_000_000
+        else bounded_batch
+    )
+    cache_key = (frame_bytes, max_frames, gpu_batch)
     if cache_key not in _decompressor_cache:
         n_blocks = (frame_bytes + 8191) // 8192
         # Scale compressed buffer: worst observed bitshuffle+LZ4 ratio ~7:1,
         # use //4 for headroom (386 MB for uint32, 256 MB for uint16)
         max_comp = max(256 * 1024 * 1024, max_frames * frame_bytes // 4)
-        # Cap _lz4/_shuf buffers to ~3 GB each to avoid Metal memory pressure
-        gpu_batch = min(max_frames,
-                        int(_GPU_BATCH_TARGET_GB * 1e9 / frame_bytes))
         _decompressor_cache[cache_key] = MPSDecompressor(
             max_compressed_bytes=max_comp,
             max_frames=max_frames,

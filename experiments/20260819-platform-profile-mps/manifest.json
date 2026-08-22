@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260819-platform-profile-mps",
+  "status": "completed",
+  "question": "What are the parity-qualified load, detector, screening, DPC/iDPC, SSB redraw, 200-trial optimization, and Nelder-Mead refinement timings on the current Python MPS source?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260819-platform-profile-mps/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "334b7b5135fe29787540370a00f280fa138430a2",
+    "entrypoint": "public QuantEM.GPU load, detector, screening, DPC, and SSB APIs plus scripts/benchmark_ssb_mps_scaling.py",
+    "dirty": false,
+    "diff_sha256": null,
+    "snapshot_path": "local-snapshot://quantem-gpu-platform-profile-mps/source",
+    "followup_revisions": ["5d56535", "1d2e3c9"],
+    "followup_purpose": "exact streamed screening and fail-closed BF-column source validation"
+  },
+  "inputs": [
+    {
+      "dataset_id": "real-512x512x192x192-u16-bslz4-27shard",
+      "path": "private-fixture://full-512-u16-bslz4-27shard/collection",
+      "sha256": "741e7bcf13ffd77bcacfeeabc0b7edb7b427448273ceba2a166426b8f73f509a"
+    },
+    {
+      "dataset_id": "prepared-ssb-512-detector-bin-2-v1",
+      "path": "private-fixture://prepared-ssb-512-detector-bin-2/manifest",
+      "sha256": "d777b70bdb1947608e9292ef5d56ccdf2882c1a7c3b9426b9fbd4ebf94850a11"
+    },
+    {
+      "dataset_id": "prepared-ssb-512-detector-bin-2-calibration-v1",
+      "path": "private-calibration://prepared-ssb-512-detector-bin-2/calibration.json",
+      "sha256": "8815ddd710f33973ac11d504cd679f16d9f5d6bf3043d0480e682ecc0a053941"
+    }
+  ],
+  "parameters": {
+    "source_shape": [512, 512, 192, 192],
+    "source_dtype": "uint16",
+    "scan_crop": null,
+    "detector_crop": null,
+    "scan_bin": 1,
+    "detector_bins": [1, 2, 4, 8],
+    "ssb_prepared_detector_bin": 2,
+    "ssb_prepared_detector_shape": [96, 96],
+    "ssb_prepared_bf_count": 2275,
+    "ssb_native_detector_rerun": "completed from raw source at explicit detector bin 2; never presented as native detector resolution",
+    "ssb_sizes": [128, 256, 512, 1024],
+    "ssb_non_512_source_kind": "Fourier-resized kernel microscope",
+    "optimizer": "Optuna TPE",
+    "optimizer_trials": 200,
+    "optimizer_seed": 0,
+    "optimizer_objective": "exact full-active-BF phase variance for the stated prepared fixture",
+    "refinement": "Nelder-Mead",
+    "levenberg_marquardt": "not implemented",
+    "load_warm_repetitions": 7,
+    "product_repetitions": 21,
+    "product_warmups": 3,
+    "ssb_repetitions": 12,
+    "parity_pairs": 20,
+    "cache_states": ["first-campaign-encounter-not-cold", "warm-source", "prepared"],
+    "parity": {
+      "integer_products": "byte-exact",
+      "floating_gate": 1e-5,
+      "ssb": "existing frozen size- and objective-specific gates"
+    },
+    "physical_8gb_followup": "separate coordinated fail-closed run; not authorized by this manifest",
+    "run_root": "local-evidence://platform-profile-20260819/apple"
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "mps",
+    "gpu_ids": ["Apple M5 Max integrated GPU"],
+    "gpu_model": "Apple M5 Max, 40-core GPU, 128 GB unified memory"
+  },
+  "outputs": [
+    {
+      "artifact": "apple-matrix.jsonl",
+      "sha256": "358da791e27433a7f2cd5bab3e7880d1907a8f07976bd9fa529882685de0c84e",
+      "result": "current load bins 1/2/4/8 and resident product distributions; baseline screening and prepared SSB blocks retained"
+    },
+    {
+      "artifact": "followup-exact-screening/adjudication-v2.json",
+      "sha256": "1094cc68e2bf9952916fb12ac6489119a4f4ee4be2ece7f8b1c1a4f1ed411fa3",
+      "result": "exact full-scan screening passed; build 6.711 s; validated warm reopen p50 20.803 ms"
+    },
+    {
+      "artifact": "followup-mps-ssb/raw-mps-cuda-parity.json",
+      "sha256": "17a7ef5750444377c7d16c18bfadef39607ea3d684c91dad93681ca887d7154e",
+      "result": "raw explicit-detector-bin-2 phase/loss passed CUDA; prepared companion rejected for coordinate-grid mismatch"
+    }
+  ],
+  "timestamps": {
+    "created": "2026-08-19T18:42:00-07:00",
+    "started": "2026-08-19T18:42:00-07:00",
+    "finished": "2026-08-19T19:40:05-07:00"
+  }
+}
