@@ -700,8 +700,9 @@ def test_dashboard_tables_use_device_and_date_while_landing_stays_timing_free() 
             assert cells[device_index] != "—"
             assert re.fullmatch(r"20\d{2}-\d{2}-\d{2}", cells[date_index])
 
-    assert "human-facing overview table ends with **Device" in writing
-    assert "Do not add evidence-ID or source-revision columns" in writing
+    assert "human-facing current-measurement table ends with" in writing
+    assert "**Device tested**, **Date tested**, and **Revision**" in writing
+    assert "Do not add opaque evidence" in writing
 
 def test_api_guide_maps_every_public_namespace() -> None:
     api = Path("docs/api/index.md").read_text(encoding="utf-8")

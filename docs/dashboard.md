@@ -12,9 +12,9 @@ never presented as native resolution. Check the complete provenance ledger
 before using a number in a design or release decision.
 ```
 
-**Dashboard review:** 2026-08-22. Every measured timing below shows the device
-and test date. The overview deliberately omits evidence IDs and source revisions;
-it does not replace the
+**Dashboard review:** 2026-08-22. Every current measured timing below shows the
+device, test date, and exact source revision. The overview omits opaque evidence
+IDs and does not replace the
 [complete benchmark provenance ledger](performance/results.md).
 
 (coverage-and-next-runs)=

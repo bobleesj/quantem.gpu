@@ -11,7 +11,7 @@
     },
     {
       "path": "docs/dashboard.md",
-      "sha256": "000789aa63c6d3de32f9f49950418eb43e95ec628504dc137cd666586a5a785e",
+      "sha256": "737d4434285a89f20f7643a0d2714636c8e1712ec40816f7367149efce121a78",
       "role": "Single human-facing current capability, speed, memory, and parity overview"
     },
     {
@@ -51,7 +51,7 @@
     },
     {
       "path": "docs/performance/changes.md",
-      "sha256": "6407edee4bb8938e740043ba034e4a9342b2eda1b0d624f55923b5035e4dde22",
+      "sha256": "ac8cd018f6c8ac28bcbc14086ac8c843cb096ca7600df989f95017c65df0d931",
       "role": "Benchmark promotion, rejection, and supersession decisions without copied values"
     },
     {

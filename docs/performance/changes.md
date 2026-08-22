@@ -5,7 +5,7 @@ that produced a benchmark. A documentation edit never makes an older timing a
 measurement of the current code.
 
 - **Ledger reviewed:** 2026-08-22
-- **Integration base:** origin/main `2768ccee`
+- **Integration base:** origin/main `75be74e`
 - **Current clean benchmark source checkpoints:** canonical Python/CPU metadata
   and parity `68dbe3a`; canonical native Swift/Metal load `5106ca4`
 - **Historical measured checkouts:** consolidated Python MPS `0bc9378`;

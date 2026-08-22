@@ -160,8 +160,9 @@ runtime supports a `512x512` scan and separate evidence that it implements bin
 long-form form is deliberately repetitive: it is sortable, machine-checkable,
 and safe to extend without rewriting table structure.
 
-Use two levels of detail. A human-facing overview table ends with **Device
-tested** and **Date tested**. Do not add evidence-ID or source-revision columns
-to that overview; link the authoritative benchmark ledger once in nearby prose.
-The detailed ledger keeps the evidence ID, exact revision, command, distribution,
-memory record, calibration, and parity artifact.
+Use two levels of detail. A human-facing current-measurement table ends with
+**Device tested**, **Date tested**, and **Revision**. Do not add opaque evidence
+IDs to that overview; keep the source revision as one separate field and link
+the authoritative benchmark ledger once in nearby prose. The detailed ledger
+keeps the evidence ID, exact revision, command, distribution, memory record,
+calibration, and parity artifact.
