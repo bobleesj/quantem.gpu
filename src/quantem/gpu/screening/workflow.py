@@ -128,10 +128,13 @@ def _strong_cached_source_match(
         return None
 
     try:
-        master_path = str(master.expanduser().resolve(strict=True))
+        requested_master = master.expanduser().absolute()
+        cached_master_path = Path(cached_master).expanduser().absolute()
+        requested_master_target = requested_master.resolve(strict=True)
+        cached_master_target = cached_master_path.resolve(strict=True)
     except OSError:
         return False
-    if cached_master != master_path:
+    if requested_master_target != cached_master_target:
         return False
 
     observed_paths: set[str] = set()
@@ -140,8 +143,9 @@ def _strong_cached_source_match(
         if not isinstance(path, str) or path in observed_paths:
             return False
         observed_paths.add(path)
+        file_path = Path(path)
         try:
-            stat = Path(path).stat()
+            stat = file_path.stat()
         except OSError:
             return False
         observed = {
@@ -151,9 +155,46 @@ def _strong_cached_source_match(
             "device": int(stat.st_dev),
             "inode": int(stat.st_ino),
         }
-        if any(int(item[name]) != value for name, value in observed.items()):
+        try:
+            file_changed = any(
+                int(item[name]) != value for name, value in observed.items()
+            )
+        except (TypeError, ValueError, OverflowError):
             return False
-    return master_path in observed_paths
+        if file_changed:
+            return False
+
+        symlink_fields = {
+            "symlink_target",
+            "symlink_mtime_ns",
+            "symlink_ctime_ns",
+        }
+        cached_symlink_fields = symlink_fields.intersection(item)
+        if cached_symlink_fields and cached_symlink_fields != symlink_fields:
+            return False
+        if "symlink_unreadable" in item:
+            return None
+        if file_path.is_symlink() != bool(cached_symlink_fields):
+            return False
+        if cached_symlink_fields:
+            try:
+                link_stat = file_path.lstat()
+                link_target = file_path.readlink()
+            except OSError:
+                return False
+            try:
+                symlink_changed = (
+                    str(link_target) != item["symlink_target"]
+                    or int(link_stat.st_mtime_ns)
+                    != int(item["symlink_mtime_ns"])
+                    or int(link_stat.st_ctime_ns)
+                    != int(item["symlink_ctime_ns"])
+                )
+            except (TypeError, ValueError, OverflowError):
+                return False
+            if symlink_changed:
+                return False
+    return cached_master in observed_paths
 
 
 def _require_source_unchanged(
