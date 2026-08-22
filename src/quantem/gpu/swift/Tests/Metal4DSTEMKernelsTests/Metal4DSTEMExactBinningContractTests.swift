@@ -4,6 +4,24 @@ import XCTest
 @testable import Metal4DSTEMKernels
 
 final class Metal4DSTEMExactBinningContractTests: XCTestCase {
+  func testDetectorBin8FailsClosed() throws {
+    let region = try Metal4DSTEMScanRegion.full(sourceRows: 512, sourceColumns: 512)
+
+    XCTAssertThrowsError(
+      try Metal4DSTEMLoadPlan(
+        sourceScanRows: 512,
+        sourceScanColumns: 512,
+        detectorRows: 192,
+        detectorColumns: 192,
+        sourceBytesPerValue: 2,
+        scanRegion: region,
+        detectorBin: 8
+      )
+    ) { error in
+      XCTAssertEqual(error as? Metal4DSTEMLoadPlanError, .invalidDetectorBin(8))
+    }
+  }
+
   func testLoadPlanAccountsForExactDetectorSumBinning() throws {
     let region = try Metal4DSTEMScanRegion.full(sourceRows: 8, sourceColumns: 8)
     let plan = try Metal4DSTEMLoadPlan(
