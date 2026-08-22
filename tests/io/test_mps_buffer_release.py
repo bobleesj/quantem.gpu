@@ -90,6 +90,52 @@ def test_compressed_buffer_bound_uses_file_metadata(tmp_path):
     assert be._max_compressed_bytes_for_plan(plan) == 201 * 1024 * 1024
 
 
+def test_exact_fused_loaders_are_default_on_and_can_be_disabled(monkeypatch):
+    """The verified exact paths are defaults, with an explicit diagnostic opt-out."""
+    from quantem.gpu.io.backends.mps import decoder as be
+
+    monkeypatch.delenv("QT_MPS_FUSED_FULL_U16", raising=False)
+    monkeypatch.delenv("QT_MPS_FUSED_BIN", raising=False)
+    assert be._fused_full_u16_enabled()
+    assert be._fused_bin_enabled()
+
+    monkeypatch.setenv("QT_MPS_FUSED_FULL_U16", "0")
+    monkeypatch.setenv("QT_MPS_FUSED_BIN", "0")
+    assert not be._fused_full_u16_enabled()
+    assert not be._fused_bin_enabled()
+
+
+def test_whole_shard_batch_is_bounded_to_one_gigabyte(monkeypatch):
+    """Small fused shards stay intact; unusually large shards remain bounded."""
+    from quantem.gpu.io.backends.mps import decoder as be
+
+    created = []
+
+    class FakeDecompressor:
+        def __init__(self, **kwargs):
+            created.append(kwargs)
+            self.gpu_batch = kwargs["gpu_batch"]
+
+    monkeypatch.setattr(be, "MPSDecompressor", FakeDecompressor)
+    be._decompressor_cache.clear()
+    frame_bytes = 192 * 192 * 2
+
+    small = be._get_decompressor(
+        frame_bytes,
+        max_frames=10_000,
+        whole_shard=True,
+    )
+    large = be._get_decompressor(
+        frame_bytes,
+        max_frames=100_000,
+        whole_shard=True,
+    )
+
+    assert small.gpu_batch == 10_000
+    assert large.gpu_batch == int(be._GPU_BATCH_TARGET_GB * 1e9 / frame_bytes)
+    assert len(created) == 2
+
+
 MAPED_TEST_DIR = os.environ.get("MAPED_TEST_DIR", "")
 
 

@@ -746,6 +746,62 @@ kernel void h5lz4dc_unshuffle_u16_single_block_qh5idx(
     }
 }
 
+// Python MPS companion for the same accepted full-precision single-block
+// topology. Python's HDF5 reader packs raw frame chunks into a shared Metal
+// buffer and already provides the five metadata arrays consumed here. Keeping
+// this entry point in the package-owned QH5 resource lets native Swift and
+// Python MPS share the dependency-safe LZ4 and uint16 bit-unshuffle code while
+// preserving their distinct IO metadata representations.
+kernel void h5lz4dc_unshuffle_u16_single_block_packed_h5(
+    const device uchar *compressed [[buffer(0)]],
+    const device uint *chunkOffsets [[buffer(1)]],
+    const device uint *blockStarts [[buffer(2)]],
+    const device uint *blockCounts [[buffer(3)]],
+    const device uint *blockOffsets [[buffer(4)]],
+    constant uint &frameElements [[buffer(5)]],
+    device ushort *output [[buffer(6)]],
+    uint3 threadgroupPosition [[threadgroup_position_in_grid]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint simdgroup [[simdgroup_index_in_threadgroup]]
+) {
+    uint frame = threadgroupPosition.x;
+    uint block = threadgroupPosition.z;
+    threadgroup uchar shuffledBlock[kBslz4BlockBytes];
+    if (simdgroup == 0u && block < blockCounts[frame]) {
+        uint blockIndex = blockOffsets[frame] + block;
+        uint header = chunkOffsets[frame] + blockStarts[blockIndex];
+        uint compressedLength =
+            (uint(compressed[header]) << 24u)
+            | (uint(compressed[header + 1u]) << 16u)
+            | (uint(compressed[header + 2u]) << 8u)
+            | uint(compressed[header + 3u]);
+        bslz4DecompressStreamDirectToThreadgroup(
+            shuffledBlock,
+            compressed + header + 4u,
+            compressedLength,
+            lane
+        );
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    if (block < blockCounts[frame]) {
+        const threadgroup uint *planes =
+            (const threadgroup uint *)shuffledBlock;
+        for (uint group = simdgroup; group < 128u; group += 4u) {
+            ushort value = 0u;
+            for (uint bit = 0u; bit < 16u; ++bit) {
+                if (planes[bit * 128u + group] & (1u << lane)) {
+                    value |= ushort(1u << bit);
+                }
+            }
+            uint detectorIndex = block * 4096u + group * 32u + lane;
+            if (detectorIndex < frameElements) {
+                output[ulong(frame) * frameElements + detectorIndex] = value;
+            }
+        }
+    }
+}
+
 // Decode a uint16 bitshuffle/LZ4 source into a compact uint8 staging buffer
 // while auditing every omitted high bit. The caller may use this output only
 // when the exact `above255` audit is zero; otherwise it must rerun the native
