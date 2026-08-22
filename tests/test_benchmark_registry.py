@@ -7,6 +7,8 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
+from scripts.benchmark_registry import _measurement_state
+
 REGISTRY = Path("benchmarks/benchmark_registry.json")
 GENERATED = Path("docs/_generated/benchmark_coverage.md")
 
@@ -47,6 +49,21 @@ def test_every_module_platform_and_unrun_load_plan_stays_visible() -> None:
     assert gates["io.swift.apple-m5-max-128gb.bin8.contract"]["state"] == "unsupported"
     assert gates["io.swift.apple-m2-air-8gb.bin2.cold-original"]["state"] == "pending"
     assert gates["io.swift.apple-m5-24gb.bin1.prepared"]["state"] == "partial"
+    assert {
+        gate["state"]
+        for gate in registry["gates"]
+        if gate["id"].startswith("io.webgpu.")
+        and any(f".bin{detector_bin}." in gate["id"] for detector_bin in (2, 4, 8))
+    } == {"blocked"}
+    assert {
+        gate["computer"]
+        for gate in registry["gates"]
+        if gate["platform"] == "WebGPU" and gate["module"] == "I/O and load"
+    } == {
+        "MacBook Air (M2, 8 GB)",
+        "MacBook Pro (M5, 24 GB)",
+        "MacBook Pro (M5 Max, 128 GB)",
+    }
 
 
 def test_registry_validator_and_generated_table_agree() -> None:
@@ -58,7 +75,15 @@ def test_registry_validator_and_generated_table_agree() -> None:
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "77 gates, 33 measurements, and 14 runbooks" in result.stdout
+    registry = _registry()
+    measurement_count = len(registry["additional_measurements"])
+    for evidence_import in registry["evidence_imports"]:
+        evidence = json.loads(Path(evidence_import["path"]).read_text(encoding="utf-8"))
+        measurement_count += len(evidence["measurements"])
+    assert (
+        f"{len(registry['gates'])} gates, {measurement_count} measurements, and "
+        f"{len(registry['runbooks'])} runbooks"
+    ) in result.stdout
 
     rendered = GENERATED.read_text(encoding="utf-8")
     for field in (
@@ -86,6 +111,162 @@ def test_registry_validator_and_generated_table_agree() -> None:
         assert field in rendered
     for state in ("✓ Measured", "◐ Partial", "○ Pending", "× Refuted", "Not supported"):
         assert state in rendered
+    assert "### Platform and computer coverage" in rendered
+    assert "| Platform | Computer | Tracked cells |" in rendered
+    assert "Master SHA-256" in rendered
+    assert "Source identity SHA-256" in rendered
+
+
+def test_generated_registry_is_ordered_by_platform_then_computer() -> None:
+    rendered = GENERATED.read_text(encoding="utf-8")
+    required = rendered.split("## Required coverage gates", 1)[1].split(
+        "## Retained atomic measurements", 1
+    )[0]
+
+    platform_offsets = [
+        required.index(f"| {platform} |")
+        for platform in (
+            "CUDA",
+            "Python MPS",
+            "Native Swift/Metal",
+            "WebGPU",
+            "CPU reference",
+        )
+    ]
+    assert platform_offsets == sorted(platform_offsets)
+
+    mps_rows = [line for line in required.splitlines() if "| Python MPS |" in line]
+    computers = [row.split("|")[2].strip() for row in mps_rows]
+    assert computers == sorted(computers)
+
+
+def test_load_matrix_tracks_every_compatible_platform_computer_pair() -> None:
+    registry = _registry()
+    bins_by_pair: dict[tuple[str, str], set[int]] = defaultdict(set)
+    for gate in registry["gates"]:
+        if gate["module"] != "I/O and load":
+            continue
+        match = re.search(r"full-native-bin([1248])-u16", gate["configuration"])
+        if match:
+            bins_by_pair[(gate["platform"], gate["computer"])].add(int(match.group(1)))
+
+    assert bins_by_pair[
+        ("CUDA", "Linux CUDA workstation (dual 96 GB Blackwell GPUs)")
+    ] == {1, 2, 4, 8}
+    for computer in (
+        "MacBook Air (M2, 8 GB)",
+        "MacBook Pro (M5, 24 GB)",
+        "MacBook Pro (M5 Max, 128 GB)",
+    ):
+        assert bins_by_pair[("Python MPS", computer)] == {1, 2, 4, 8}
+        assert bins_by_pair[("WebGPU", computer)] == {1, 2, 4, 8}
+
+    assert bins_by_pair[("Native Swift/Metal", "MacBook Pro (M5 Max, 128 GB)")] == {
+        1,
+        2,
+        4,
+        8,
+    }
+    for computer in ("MacBook Air (M2, 8 GB)", "MacBook Pro (M5, 24 GB)"):
+        assert bins_by_pair[("Native Swift/Metal", computer)] == {1, 2, 4}
+
+
+def test_performance_modules_track_each_compatible_apple_computer() -> None:
+    registry = _registry()
+    modules_by_pair: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for gate in registry["gates"]:
+        modules_by_pair[(gate["platform"], gate["computer"])].add(gate["module"])
+
+    all_runtime_modules = {
+        "I/O and load",
+        "Detector products",
+        "Screening",
+        "CoM, DPC, and iDPC",
+        "Display and FFT",
+        "Single-sideband ptychography",
+        "Selective loading",
+    }
+    for computer in (
+        "MacBook Air (M2, 8 GB)",
+        "MacBook Pro (M5, 24 GB)",
+        "MacBook Pro (M5 Max, 128 GB)",
+    ):
+        assert modules_by_pair[("Python MPS", computer)] == all_runtime_modules
+
+    for computer in ("MacBook Air (M2, 8 GB)", "MacBook Pro (M5, 24 GB)"):
+        assert {
+            "I/O and load",
+            "Detector products",
+            "CoM, DPC, and iDPC",
+            "Display and FFT",
+            "Single-sideband ptychography",
+        } <= modules_by_pair[("Native Swift/Metal", computer)]
+        assert {
+            "I/O and load",
+            "Detector products",
+            "CoM, DPC, and iDPC",
+            "Display and FFT",
+            "Selective loading",
+        } <= modules_by_pair[("WebGPU", computer)]
+
+
+def test_failed_or_probe_parity_cannot_be_promoted_as_measured() -> None:
+    timing = {
+        "wall_p50_seconds": 0.1,
+        "wall_p95_seconds": 0.2,
+        "wall_max_seconds": 0.3,
+    }
+    assert _measurement_state({**timing, "parity": "full output exact"}) == "measured"
+    assert _measurement_state({**timing, "parity": "phase mismatch"}) == "refuted"
+    assert (
+        _measurement_state({**timing, "parity": "qualified probes only"}) == "partial"
+    )
+
+
+def test_running_platform_computer_manifest_stays_partial_and_resolves_outputs() -> (
+    None
+):
+    registry = _registry()
+    manifest_path = Path("experiments/20260822-platform-computer-profile/manifest.json")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["status"] == "running"
+
+    output_ids = {output["id"] for output in manifest["outputs"]}
+    measurements = {
+        measurement["measurement_id"]: measurement
+        for measurement in registry["additional_measurements"]
+        if measurement.get("evidence") == manifest_path.as_posix()
+    }
+    assert measurements
+    assert all(
+        measurement["state"] == "partial" for measurement in measurements.values()
+    )
+    assert {
+        measurement["artifact_id"] for measurement in measurements.values()
+    } <= output_ids
+
+    gates = {
+        gate["id"]: gate
+        for gate in registry["gates"]
+        if gate["id"].startswith("io.swift.apple-m5-24gb.bin")
+        and gate.get("satisfied_by")
+        and any(
+            measurement_id in measurements for measurement_id in gate["satisfied_by"]
+        )
+    }
+    assert gates
+    assert all(gate["state"] == "partial" for gate in gates.values())
+
+
+def test_zero_tolerance_violations_render_as_passing_parity() -> None:
+    rendered = GENERATED.read_text(encoding="utf-8")
+    idpc_row = next(
+        line
+        for line in rendered.splitlines()
+        if "webgpu-resident-idpc-optimized" in line
+    )
+    assert "| Pass |" in idpc_row
+    assert "| Failed |" not in idpc_row
 
 
 def test_computer_labels_describe_reproducible_hardware() -> None:
@@ -100,8 +281,7 @@ def test_computer_labels_describe_reproducible_hardware() -> None:
 
     assert {gate["computer"] for gate in registry["gates"]} <= allowed
     assert {
-        measurement["computer"]
-        for measurement in registry["additional_measurements"]
+        measurement["computer"] for measurement in registry["additional_measurements"]
     } <= allowed
 
     rendered = GENERATED.read_text(encoding="utf-8")
@@ -117,9 +297,13 @@ def test_computer_labels_describe_reproducible_hardware() -> None:
         "`macbook-pro-m5-24gb-",
         "`macbook-pro-m5-max-128gb-",
     )
-    measurement_rows = [
-        line for line in measurements.splitlines() if line.startswith("| ✓")
-    ]
+    measurement_rows = []
+    for line in measurements.splitlines():
+        if not line.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        if len(cells) > 2 and cells[2] == "✓ Measured":
+            measurement_rows.append(line)
     assert measurement_rows
     assert all(
         any(prefix in row for prefix in public_prefixes) for row in measurement_rows
@@ -137,13 +321,16 @@ def test_agent_can_resolve_the_next_gate_and_real_command() -> None:
             "next",
             "--computer",
             "MacBook Air (M2, 8 GB)",
+            "--limit",
+            "50",
         ],
         check=True,
         capture_output=True,
         text=True,
     )
     assert "io.swift.apple-m2-air-8gb.bin2.cold-original" in next_result.stdout
-    assert "io.webgpu.apple-m2-air-8gb.bin2.minimum-memory" in next_result.stdout
+    assert "io.webgpu.apple-m2-air-8gb.bin2.cold-original" in next_result.stdout
+    assert "io.mps.apple-m2-air-8gb.bin2.cold-original" in next_result.stdout
 
     command = subprocess.run(
         [
@@ -161,6 +348,40 @@ def test_agent_can_resolve_the_next_gate_and_real_command() -> None:
     assert "Preflight:" in command
     assert "Required artifacts:" in command
     assert "Live4DSTEM policy, UI, cache lifecycle" in command
+
+    webgpu_command = subprocess.run(
+        [
+            sys.executable,
+            "scripts/benchmark_registry.py",
+            "command",
+            "io.webgpu.apple-m5-max-128gb.bin1.prepared",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert "--require-integer-resident" in webgpu_command
+    assert "--expected-resident-dtype uint16" in webgpu_command
+    assert "--require-checksum-parity" in webgpu_command
+    assert "--require-full-output-parity" in webgpu_command
+
+    mps_command = subprocess.run(
+        [
+            sys.executable,
+            "scripts/benchmark_registry.py",
+            "command",
+            "io.mps.apple-m5-24gb.bin4.warm-fresh",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert "--require-full-output-parity" in mps_command
+    assert "--expected-output-sha256" in mps_command
+    assert "--expected-scan-shape" in mps_command
+    assert "--expected-source-detector-shape" in mps_command
+    assert "--expected-working-detector-shape" in mps_command
+    assert "--memory-sample-ms 10" in mps_command
 
 
 def test_every_runbook_command_resolves_to_repository_source() -> None:

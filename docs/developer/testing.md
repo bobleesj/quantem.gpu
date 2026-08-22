@@ -50,7 +50,7 @@ The standard reusable entry points are:
 
 | Operation | Entry point | Primary output |
 |---|---|---|
-| Python CUDA/MPS/CPU HDF5 load | `scripts/benchmark_hdf5_load.py` | Run-level p50/p95/max, geometry, resident bytes, and memory snapshots |
+| Python CUDA/MPS/CPU HDF5 load | `scripts/benchmark_hdf5_load.py` | Run-level p50/p95/max, full-volume hash/dtype/shape parity, logical resident bytes, sampled accelerator/process peak, and release snapshots |
 | CUDA/MPS selective load | `scripts/benchmark_selective_load.py` | Selector identity, bytes/stages, exact ordered hash, p50/p95/max, and memory |
 | CUDA/MPS screening | `scripts/benchmark_screening.py` | Separate build and prepared-reopen distributions, product hashes, stages, cache bytes, and memory |
 | Native Swift/Metal indexed load | `metal-4dstem-indexed-load-benchmark` | Exact resident volume/products, stage timing, hashes, and Metal/process memory |

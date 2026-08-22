@@ -29,10 +29,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const selectors = [];
     for (const columnName of [
-      "State",
-      "Module",
       "Platform",
       "Computer",
+      "State",
+      "Module",
       "Device tested",
       "Selected scan",
       "Source detector",

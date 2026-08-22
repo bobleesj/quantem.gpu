@@ -61,6 +61,7 @@ export interface LocalH5LoadProfile {
   decodeCompressedMB: number;
   sourceDtype: SourceDtype | "unknown";
   decodeDtype: DecodeDtype;
+  residentDtype: "uint8" | "uint16" | "uint32" | "float32";
   detBin: number;
   sourceDetRows: number;
   sourceDetCols: number;
@@ -1307,6 +1308,13 @@ export async function loadShow4DSTEMLocalH5Master(
     decodeCompressedMB: Math.round(decodeProfile.compressedMB),
     sourceDtype,
     decodeDtype,
+    residentDtype: mode === 0
+      ? "uint16"
+      : mode === 1
+        ? "uint8"
+        : mode === 3
+          ? "uint32"
+          : "float32",
     detBin,
     sourceDetRows,
     sourceDetCols,
