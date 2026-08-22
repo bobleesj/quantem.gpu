@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260822-cross-backend-optimization",
+  "status": "running",
+  "question": "Can the remaining CUDA, MPS, native Swift/Metal, and hardware-WebGPU evidence gaps be closed or measurably accelerated on their owning physical devices while preserving exact source counts, declared geometry, full-precision products, calibration, metadata, and cache-state provenance?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260822-cross-backend-optimization/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "6df7237e7b90e4e6e2ee122f1082785a00ab844a",
+    "entrypoint": "backend-owned QuantEM.GPU load, detector-product, DPC/iDPC, screening, and SSB benchmark harnesses",
+    "dirty": false,
+    "diff_sha256": null,
+    "snapshot_path": "local-snapshot://quantem-gpu-cross-backend-20260822/source"
+  },
+  "inputs": [
+    {
+      "dataset_id": "real-512x512x192x192-u16-bslz4-27shard-master-fixture-c",
+      "path": "private-fixture://full-512-u16-bslz4-27shard/master-c",
+      "sha256": "c9c0d968fae70b8911ae925d676b90007886970fa99fe296a47cfe07844bbfe9"
+    },
+    {
+      "dataset_id": "frozen-backend-parity-matrix",
+      "path": "tests/parity/backend_matrix.json",
+      "sha256": "f521c37931f68cec91a5df8d7f4c44387031bf6036187d1e3431bb7b5e31b5af"
+    }
+  ],
+  "parameters": {
+    "campaign_duration_hours": 8,
+    "source_shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "source_dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bins": [
+      1,
+      2,
+      4,
+      8
+    ],
+    "detector_crop": null,
+    "scan_crop": null,
+    "precision_policy": "exact integer counts and frozen full-precision floating-product tolerances; no preview, sampling, crop, downcast, hidden binning, reduced products, or relaxed parity",
+    "priority_cells": [
+      "io.decode-bin-provenance::swift-metal",
+      "detector.integer-products::swift-metal",
+      "screening.prepared-products::cuda",
+      "dpc.com-rotation-idpc::swift-metal",
+      "dpc.com-rotation-idpc::webgpu",
+      "ssb.calibration-200-nelder-mead::mps"
+    ],
+    "timing_policy": "cold original source, first usable product, exact complete, warm source reopen, and prepared-cache reopen remain separate; every accepted result retains p50, p95, maximum, run-level records, memory, and cache state",
+    "host_policy": "Phil owns source and Apple profiling; Rodman is the physical 24 GB full-native gate; MJGOAT owns CUDA and source data; unrelated jobs are never displaced",
+    "run_root": "local-evidence://cross-backend-optimization-20260822"
+  },
+  "execution": {
+    "host": "phil-coordinated multi-host campaign",
+    "backend": "cuda,mps,swift-metal,webgpu",
+    "gpu_ids": [
+      "Phil Apple M5 Max 40-core integrated GPU",
+      "Rodman Apple M5 10-core integrated GPU",
+      "MJGOAT RTX PRO 6000 Blackwell GPU 0 and GPU 1 only when unoccupied"
+    ],
+    "gpu_model": "physical owner devices; no cross-device substitution"
+  },
+  "outputs": [],
+  "timestamps": {
+    "created": "2026-08-22T02:35:24-07:00",
+    "started": "2026-08-22T02:35:24-07:00",
+    "finished": null
+  }
+}
