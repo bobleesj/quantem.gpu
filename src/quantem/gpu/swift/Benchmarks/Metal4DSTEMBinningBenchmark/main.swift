@@ -104,6 +104,10 @@ private struct Report: Codable {
   let maximumOutputCount: UInt64
   let stagedSourceBytes: UInt64
   let batchOutputBytes: UInt64
+  let metalAllocatedBytesBeforeBuffers: UInt64
+  let metalAllocatedBytesAfterBuffers: UInt64
+  let peakSampledMetalAllocatedBytes: UInt64
+  let metalAllocatedBytesAfterBenchmark: UInt64
   let full512OutputBytes: UInt64
   let full512BytesPerScanRow: UInt64
   let full512ShardCount: Int
@@ -298,6 +302,7 @@ private func run() throws {
   guard batchProvenance.outputPayloadBytes <= UInt64(Int.max) else {
     throw BenchmarkError.bufferAllocationFailed("destination", batchProvenance.outputPayloadBytes)
   }
+  let metalAllocatedBytesBeforeBuffers = UInt64(device.currentAllocatedSize)
   let source = try makeSharedBuffer(device: device, length: sourceBytes, role: "source")
   let sourceValues = source.contents().bindMemory(to: UInt16.self, capacity: sourceValueCount)
   for index in 0..<sourceValueCount {
@@ -308,6 +313,8 @@ private func run() throws {
     length: Int(batchProvenance.outputPayloadBytes),
     role: "destination"
   )
+  let metalAllocatedBytesAfterBuffers = UInt64(device.currentAllocatedSize)
+  var peakSampledMetalAllocatedBytes = metalAllocatedBytesAfterBuffers
   memset(destination.contents(), 0, destination.length)
   let binner = try Metal4DSTEMExactBinner(device: device)
   var wallSamples: [Double] = []
@@ -330,6 +337,10 @@ private func run() throws {
     )
     command.commit()
     command.waitUntilCompleted()
+    peakSampledMetalAllocatedBytes = max(
+      peakSampledMetalAllocatedBytes,
+      UInt64(device.currentAllocatedSize)
+    )
     guard command.status == .completed else {
       throw BenchmarkError.commandFailed(command.error?.localizedDescription ?? "unknown error")
     }
@@ -382,6 +393,10 @@ private func run() throws {
     maximumOutputCount: batchProvenance.maximumOutputCount,
     stagedSourceBytes: UInt64(sourceBytes),
     batchOutputBytes: batchProvenance.outputPayloadBytes,
+    metalAllocatedBytesBeforeBuffers: metalAllocatedBytesBeforeBuffers,
+    metalAllocatedBytesAfterBuffers: metalAllocatedBytesAfterBuffers,
+    peakSampledMetalAllocatedBytes: peakSampledMetalAllocatedBytes,
+    metalAllocatedBytesAfterBenchmark: UInt64(device.currentAllocatedSize),
     full512OutputBytes: fullProvenance.outputPayloadBytes,
     full512BytesPerScanRow: fullShardPlan.bytesPerOutputScanRow,
     full512ShardCount: fullShardPlan.shards.count,
