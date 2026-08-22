@@ -50,10 +50,9 @@ a cold-load target on Phil, Steve Kerr, or Rodman.
   `64b6eec6` and evidence `08c071fe`: the one warm/source-unspecified load was
   `1.080860 s`, while resident DPC row/column were `0.700 ms` p50 and optimized
   iDPC was `1.400 ms` p50 over seven synchronized readbacks.
-- Exact CUDA prepared-result reopen at source `eaf76953` reduced p50 from
-  `0.132600 s` to `0.103284 s` with byte-exact arrays. Later strong-validation
-  work culminates in clean source candidate `3a85bef4`, which remains an
-  evidence placeholder.
+- Exact CUDA prepared-result reopen at source `8258ac2c` reduced p50 from
+  `0.092367 s` to `0.005599 s` (`16.4965x`) with byte-exact arrays and reduced
+  host peak-RSS p50 from `1,027,584,000 B` to `938,602,496 B`.
 
 ## Main caveat
 
@@ -135,23 +134,24 @@ into this Phil evidence-index worktree.
 
 | Arm | Computer | Cache state | Samples | p50 (s) | p95 (s) | Max (s) | Host RSS p50 (B) | Cache bytes |
 |---|---|---|---:|---:|---:|---:|---:|---:|
-| legacy recomputed phase | MJGOAT | prepared immutable result cache; fresh process | 3 | 0.132600 | 0.139285 | 0.140027 | 1,027,305,472 | 4,408,850 |
-| retained exact phase | MJGOAT | prepared immutable result cache; fresh process | 3 | 0.103284 | 0.104044 | 0.104129 | 1,026,908,160 | 5,457,672 |
+| eager raw-I/O import plus strong stat | MJGOAT | prepared immutable result cache; fresh process; exact master spelling | 3 | 0.092367 | 0.093650 | 0.093792 | 1,027,584,000 | 5,457,672 |
+| lazy import plus alias-fail-closed stat | MJGOAT | prepared immutable result cache; fresh process; exact master spelling | 3 | 0.005599 | 0.005771 | 0.005790 | 938,602,496 | 5,457,672 |
 
-Source `eaf76953d752e3e419916157aa6bcc7883b85813` and evidence revision
-`387314dcb1e61df20893bdeb1ccc5b8304ec93fd` support only this exact cache-reopen
-comparison. All six retained public arrays, including DPC phase, are byte exact;
-version-3 caches retain exact recomputation compatibility. The retained phase
-adds `1,048,822 B` to the cache. Source creation is excluded: the recorded
-one-shot builds (`1.446016 s` legacy and `1.969606 s` candidate) were sequential
-and host-variable, not A-B-B-A, so they do not support a source-build speed
-claim.
+Source `8258ac2c62f9cc3c2739027352411df3bb3eae19` and evidence revision
+`91ef7c7e3528aaa8dbaa4e19ed48e05d939097bc` support this exact prepared-cache
+comparison. All six retained public arrays, including DPC phase, are byte exact
+in every final A-B-B-A trial, and swap growth was zero. The exact-spelling stage
+profile reports p50 archive open `0.116 ms`, metadata decode `0.278 ms`, strong
+identity validation `0.201 ms`, and six-array materialization `4.482 ms`.
 
-Later strong-validation and lazy-I/O work culminates in clean source candidate
-`3a85bef4ccac47576cbbcde21c76802137d053f5`. It supersedes `310b5e4` and
-`a23ae3b` after a cross-alias/external-shard validation defect was found and
-fixed. This report keeps it source-only and assigns no parity, timing, memory,
-or consumer-readiness claim until its final clean evidence revision is supplied.
+The `5,457,672 B` retained-phase cache is `1,048,822 B` larger than the older
+phase-recomputing cache; both final comparison arms reopen the same retained
+cache. Source build, cold HDF5, screening construction, and application E2E are
+excluded. The earlier `a23ae3b` shortcut reopened one particular master alias
+in `0.006208621 s`, but it is refuted: aliases to the same master inode can
+resolve relative HDF5 external links to different shards. The accepted reader
+requires exact normalized master spelling for the fast path and otherwise
+performs full HDF5 inspection.
 
 ## Peak-memory definitions and measurements
 
@@ -290,11 +290,9 @@ failure or promote its rejected timings.
 10. Public CUDA result fields for the exact internal ABF, ADF, and total maps.
 11. CUDA result-cache source-build A-B-B-A distribution; retained one-shot
     build observations are not a speed comparison.
-12. Final evidence pin for CUDA source candidate `3a85bef`, including strong
-    validation and lazy cache-hit I/O.
-13. MPS SSB clean 200-trial calibration under the frozen engine.
-14. Rodman detector-bin-2 candidate device qualification.
-15. A repeated Rodman full-native distribution without paging contamination.
+12. MPS SSB clean 200-trial calibration under the frozen engine.
+13. Rodman detector-bin-2 candidate device qualification.
+14. A repeated Rodman full-native distribution without paging contamination.
 
 ## Review surfaces
 
