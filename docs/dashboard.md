@@ -12,7 +12,7 @@ never presented as native resolution. Check the complete provenance ledger
 before using a number in a design or release decision.
 ```
 
-**Dashboard review:** 2026-08-20. Every measured timing below shows the device
+**Dashboard review:** 2026-08-22. Every measured timing below shows the device
 and test date. The overview deliberately omits evidence IDs and source revisions;
 it does not replace the
 [complete benchmark provenance ledger](performance/results.md).
@@ -32,8 +32,10 @@ cache state, or timing statistic requires another row; slash-delimited bundles
 are not permitted. **Pending** means the combination is tracked but has no
 retained timing with complete provenance.
 
-The table scrolls horizontally on narrow screens so fields remain separate;
-the timing, memory, parity, device, and date columns are to the right.
+The rendered site adds local filters for platform, device, detector bin, and
+free text. Filtering changes only which retained rows are visible; the static
+table remains the canonical source. On narrow screens the table scrolls so the
+timing, memory, parity, device, and date columns stay separate.
 
 | Platform | Selected scan | Scan plan | Source detector | Detector bin | Output detector | Source dtype | Decode dtype | Resident dtype | Cache state | Wall boundary | Fixture | Statistic | Time | Memory kind | Memory | Parity | Device tested | Date tested |
 |---|---:|---|---:|---:|---:|---|---|---|---|---|---|---|---:|---|---:|---|---|---|
@@ -45,6 +47,7 @@ the timing, memory, parity, device, and date columns are to the right.
 | [**Python MPS**](platforms/mps.md) | `512x512` | Full | `192x192` | 2 | `96x96` | `uint16` | `uint16` | `uint16` | Warm source | First usable resident | C | p50 | **0.707 s** | Process RSS | **0.73 GB** | Pass | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-19 |
 | [**Python MPS**](platforms/mps.md) | `512x512` | Full | `192x192` | 4 | `48x48` | `uint16` | `uint16` | `uint16` | Warm source | First usable resident | C | p50 | **0.605 s** | Process RSS | **0.73 GB** | Pass | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-19 |
 | [**Python MPS**](platforms/mps.md) | `512x512` | Full | `192x192` | 8 | `24x24` | `uint16` | `uint16` | `uint16` | Warm source | First usable resident | C | p50 | **0.586 s** | Process RSS | **0.74 GB** | Pass | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-19 |
+| [**Native Swift/Metal**](platforms/swift-metal.md) | `512x512` | Full | `192x192` | 1 | `192x192` | `uint16` | audit-bound `uint8` | `uint16` | Controlled `F_NOCACHE`; new index | Exact complete resident | C | p50 | **0.578 s** | Metal allocated after load | **19.94 GB** | Pass | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-22 |
 | [**Native Swift/Metal**](platforms/swift-metal.md) | `512x512` | Full | `192x192` | 4 | `48x48` | `uint16` | — | `uint16` | Prepared exact summary | First complete product | C | p50 | **0.029 s** | Process RSS max | **92.0 MB** | Pass | Apple M2 MacBook Air (`Mac14,2`, 8 GB) | 2026-08-19 |
 | [**WebGPU**](platforms/webgpu.md) | `512x512` | Full | `192x192` | 1 | `192x192` | `uint16` | `uint8` | `uint8` | Warm OS cache | First usable resident | D | p50 | **0.824 s** | Chrome-tree RSS max | **5.39 GB** | Pass | Chrome 151, Apple M5 Max Metal-3 | 2026-08-19 |
 | [**WebGPU**](platforms/webgpu.md) | `512x512` | Full | `192x192` | 2 | `96x96` | `uint16` | `uint16` | `float32` | Warm OS cache | First usable resident | D | p50 | **1.281 s** | Chrome-tree RSS max | **5.76 GB** | Pass | Chrome 151, Apple M5 Max Metal-3 | 2026-08-19 |
@@ -56,17 +59,24 @@ the timing, memory, parity, device, and date columns are to the right.
 | **CPU reference** | `512x512` | Full | `192x192` | 8 | `24x24` | `uint16` | `uint16` | `uint16` | Reference traversal | First usable host array | D | Single run | **38.13 s** | Peak RSS | **2.18 GB** | Ref | Apple M5 Max CPU | 2026-08-19 |
 
 Fixtures C and D are independent real `512x512x192x192`, native-`uint16`,
-27-shard compressed-HDF5 sources. Every row selects the complete scan, uses no
-scan crop, keeps scan bin 1, and records the detector bin explicitly. CUDA and
-WebGPU use D; Python MPS and Native Swift/Metal use C; CPU is an independent
-reference, never a silent fallback. Different fixtures and boundaries are not
-ranked.
+27-shard compressed-HDF5 sources. Fixture C contains 3,169,489,846 indexed
+compressed bytes plus its 430,347-byte master file. Every row selects the
+complete scan, uses no scan crop, keeps scan bin 1, and records the detector bin
+explicitly. CUDA and WebGPU use D; Python MPS and Native Swift/Metal use C; CPU
+is an independent reference, never a silent fallback. Different fixtures and
+boundaries are not ranked.
 
-The source cache was not forcibly evicted, so source rows are labeled warm
-rather than cold. The Native Swift/Metal row is explicitly a prepared exact
-summary: it validates compact products and sufficient statistics and does not
-decode or traverse the resident 4D volume. The results ledger owns p95/max,
-exact revisions, fixture hashes, logical payloads, and parity artifacts.
+The 2026-08-19 source rows did not forcibly evict the source cache and therefore
+remain labeled warm. The 2026-08-22 native row instead applies macOS
+`F_NOCACHE` to source hashing and every indexed source descriptor, creates a new
+index root and private Metal destination per process, and stops at the complete
+exact 18 GiB resident volume plus products. Its identity-bound value audit
+already exists, so it is controlled uncached-source-page evidence—not an
+audit-free arbitrary-source cold load and not application end to end. The
+0.029-second native row is a separate prepared exact-summary reopen that does
+not decode or traverse the resident 4D volume. The results ledger owns p95/max,
+exact revisions, fixture hashes, stage intervals, logical payloads, and parity
+artifacts.
 Historical cropped, superseded prepared, first-campaign, and application-level
 rows remain in the maintainer records linked from
 [Verified benchmark results](performance/results.md).
@@ -92,7 +102,7 @@ above 255 and is a browse representation, not raw-count evidence.
 | [**Python MPS**](platforms/mps.md) | `uint32` | `uint16` | `uint16` | Guarded exact narrowing | ✓ | Process/Metal peak | **Pending** |
 | [**Python MPS**](platforms/mps.md) | `uint32` | `uint32` | `uint32` | Exact native counts | ✓ | Process/Metal peak | **Pending** |
 | [**Native Swift/Metal**](platforms/swift-metal.md) | `uint8` | `uint8` | `uint8` | Exact native counts | ✓ | Process peak | **Pending** |
-| [**Native Swift/Metal**](platforms/swift-metal.md) | `uint16` | `uint16` | `uint16` | Exact native counts | ✓ | Process peak | **Pending** |
+| [**Native Swift/Metal**](platforms/swift-metal.md) | `uint16` | audit-bound `uint8` | `uint16` | Exact native counts | ✓ | Metal allocated after load | **19.94 GB** |
 | [**Native Swift/Metal**](platforms/swift-metal.md) | `uint16` | `uint16` | `uint16` | Audited exact detector sum | ✓ | Process peak | **1.43 GB** |
 | [**Native Swift/Metal**](platforms/swift-metal.md) | `uint16` | `uint16` | `uint32` | General exact detector sum | ✓ | Process peak | **Pending** |
 | [**WebGPU**](platforms/webgpu.md) | `uint8` | `uint8` | `uint8` | Exact native counts | ✓ | Browser/device peak | **Pending** |
@@ -229,7 +239,7 @@ not a default performance policy.
 |---|---:|---:|---|---|---|
 | **CUDA** | `512x512` full | `192x192` | 1, 2, 4, 8 | ✓ current timing | Physical 6 GiB signoff for admissible binned plans |
 | **Python MPS** | `512x512` full | `192x192` | 1, 2, 4, 8 | ✓ current timing | Physical 8 GB Python-MPS signoff |
-| **Native Swift/Metal** | `512x512` full | `192x192` | 1, 2, 4 | Test; bin 4 physical application gate ✓ | Package-level full-scan timing for bins 1/2/4; bin 8 unsupported |
+| **Native Swift/Metal** | `512x512` full | `192x192` | 1, 2, 4 | Bin 1 controlled package timing ✓; bin 4 physical application gate ✓ | Package timing for bins 2/4, arbitrary-source cold, and application E2E; bin 8 unsupported |
 | **WebGPU** | `512x512` full | `192x192` | 1, 2, 4, 8 | ✓ current timing | Physical 8 GB browser signoff |
 | **CPU reference** | `512x512` full | `192x192` | 1, 2, 4, 8 | Ref | Correctness adjudication only |
 
@@ -262,6 +272,7 @@ is likewise never presented as source load.
 | **Python MPS** | BF exact sum | `512x512` | `48x48` | 4 | Warm resident | p50 | **2.502 ms** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
 | **Python MPS** | ADF exact sum | `512x512` | `48x48` | 4 | Warm resident | p50 | **4.404 ms** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
 | **Python MPS** | DF exact sum | `512x512` | `48x48` | 4 | Warm resident | p50 | **2.642 ms** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-19 |
+| **Native Swift/Metal** | Fused BF, ABF, ADF, total, and row/column moments | `512x512` | `192x192` | 1 | Controlled source load | p50 | **119.040 ms** | Apple M5 Max (`Mac17,6`, 40-core GPU) | 2026-08-22 |
 | **Native Swift/Metal** | BF, ABF, ADF, total, and row/column moments | `512x512` | `48x48` | 4 | Prepared resident-cache fallback | Single run | **103.0 ms** | Apple M2 MacBook Air (`Mac14,2`, 8 GB) | 2026-08-19 |
 | **Native Swift/Metal** | Exact moment widening for resident summary | `512x512` | `48x48` | 4 | Same validated fused source pass; no resident traversal | Single run | **0.569 ms** | Apple M2 MacBook Air (`Mac14,2`, 8 GB) | 2026-08-20 |
 | **WebGPU** | Mean diffraction | `512x512` | `192x192` | 1 | Warm resident | p50 | **50.9 ms** | Chrome 151, Apple M5 Max Metal-3 | 2026-08-19 |
@@ -272,13 +283,15 @@ is likewise never presented as source load.
 
 The current integer and mean-DP rows pass their independent CPU reference. CUDA
 uses native detector resolution on fixture D; MPS uses explicit detector bin 4
-on fixture C. WebGPU uses native detector resolution on D. The native fused pass
-produces three virtual images and exact `uint32` total and detector moments.
-Revision `70bc366` proves when those accumulators fit, then widens the three
+on fixture C. WebGPU uses native detector resolution on D. The current native
+bin-1 source pass produces three virtual images, detector sums, and exact
+`uint32` total and detector moments in one fused stage. That stage overlaps
+source IO and is not additive with the package-wall measurement.
+Revision `70bc366` proves when bin-4 accumulators fit, then widens the three
 moment maps to `uint64` in one small dispatch. The 0.569 ms row is only that
 incremental widening; it is not the full source pass. The cache-only fallback
-row remains because it has a different input state.
-Neither row is a compressed-source load time.
+row remains because it has a different input state. Neither historical bin-4
+row is a compressed-source load time.
 
 ### Detector moments and phase contrast — `quantem.gpu.dpc`
 
@@ -384,7 +397,7 @@ dashboard and the verified-results ledger.
 |---|---|---|---|---|---|---|---|
 | **CUDA** | ✓ | ✓ | ✓ | CoM ✓; historical cross-backend iDPC Block | ✓; deterministic 200-trial fit ✓ | 6 GiB Pending | Display ✓; movie via NVENC; parallax CUDA-only |
 | **Python MPS** | ✓ | ✓ | ✓ | Bin-4 CoM ✓; native sidecar Block | Raw detector-bin-2 parity ✓; current fit Pending | 8 GB Pending | Display ✓; movie via VideoToolbox; parallax — |
-| **Native Swift/Metal** | ✓ | — | ✓ | Physical bin-4 products exact; package-level DPC parity Pending | 512×512 exact ✓ | 8 GB ✓ at detector bin 4; SSB physical 8 GB Pending | `MetalDisplayKernels`/`MetalImageFFT`/`MetalSSBKernels` ✓ |
+| **Native Swift/Metal** | Controlled full-native package load ✓ | — | ✓ | Physical bin-4 products exact; package-level DPC parity Pending | 512×512 exact ✓ | 8 GB ✓ at detector bin 4; SSB physical 8 GB Pending | `MetalDisplayKernels`/`MetalImageFFT`/`MetalSSBKernels` ✓ |
 | **WebGPU** | ✓ | — | ✓ | Timing ✓; per-pixel float parity Pending | Reconstruction ✓; calibration — | 8 GB Pending | Display ✓; movie and parallax are not targets |
 | **CPU reference** | Ref | Ref | Ref | Ref | Ref | — | Explicit adjudication/fallback paths only |
 
@@ -425,8 +438,9 @@ crop/bin/load plan, benchmark definition, peak memory or swap where available,
 and numerical or hash parity. Keep an older result when the newer experiment
 changes any of those conditions; label both instead of silently replacing one.
 Keep every row atomic: a different bin, dtype path, fixture, cache state, or
-statistic is another row. Documentation tests enforce that the landing page stays timing-free and that
-current overview values remain owned by this dashboard.
+statistic is another row. Documentation tests enforce that the landing page
+stays timing-free and that current overview values remain owned by this
+dashboard.
 
 Accepted and rejected experiments remain in the
 [optimization ledger](maintainer/backend-optimization-matrix.md), and the

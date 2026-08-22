@@ -94,6 +94,12 @@ Profile these stages separately where the storage/runtime makes that possible:
 On unified memory, storage page-in, decode, and device access may overlap. Do
 not invent a separate “upload” number when bytes are mapped without a copy.
 
+Source-page control is one stage label, not a synonym for every kind of cold
+state. A controlled `F_NOCACHE` run may still reuse a sealed source audit, while
+a new index root and destination allocation have their own state. Report those
+facts independently so a prepared artifact is never mistaken for first-source
+work.
+
 ## Count-preserving detector binning
 
 For detector bin factor $b$, each output detector pixel is the exact sum of one

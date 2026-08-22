@@ -291,6 +291,53 @@ The direct threadgroup decode/bin kernel remains diagnostic. Do not enable it
 as the consumer default. The removed frame-owned binning experiment was never
 dispatched and is not part of this contract.
 
+## Exact sharded working-volume residency
+
+`Metal4DSTEMIndexedBinnedLoadPlan` composes the indexed product pass with one
+complete exact working volume. Despite the historical type name, detector bin 1
+is supported and preserves the native detector grid. The caller selects shared
+or GPU-private residency and a source-transfer strategy explicitly:
+
+```swift
+let residentPlan = try Metal4DSTEMIndexedBinnedLoadPlan(
+  source: indexedSource,
+  maximumDecodedWindowBytes: decodedWindowBudget,
+  detectorBands: bands,
+  detectorBin: 1,
+  sourceAudit: sourceAudit,
+  maximumShardBytes: maximumResidentShardBytes,
+  residentStorage: .privateGPU,
+  sourceTransfer: .bufferedReadAhead(prefetchShardCount: 2)
+)
+
+let resident = try loader.loadExactBinnedShards(
+  source: indexedSource,
+  plan: residentPlan,
+  shouldCancel: cancellationCheck
+)
+```
+
+`resident.workingVolumeShards` are physical Metal shards; together they encode
+the one logical shape and packed-`uint16` detector-word-major layout declared by
+`binningProvenance`. Sharding and private storage do not change scan coverage,
+detector resolution, integer counts, sampling, or output dtype. GPU-private
+shards require an explicit GPU copy before CPU inspection. The result reports
+destination storage, allocation wall, package-owned Metal bytes, retained
+source-buffer bytes, shard geometry, exact products, source audit, and sampling
+propagation.
+
+Callers may instead allocate distinct destination shards and pass them to the
+`destinationShards:` overload. Their count, order, device, storage mode, and
+byte lengths must exactly match the plan. On failure their contents are
+unspecified and must not be published.
+
+`loadExactBinnedCache(...)` writes the same canonical logical bytes through one
+bounded shared staging shard, then atomically publishes the payload and sealed
+metadata. A `.privateGPU` plan remains valid for this file-backed path: its
+resident policy is retained and validated, while the transient cache writer is
+necessarily CPU-addressable. Cache construction is not evidence that an 18 GiB
+private resident volume was admitted.
+
 ## Resident cache
 
 `Metal4DSTEMResidentCacheMetadata` format 2 records scientific meaning as well
@@ -387,10 +434,14 @@ requires an exact revision, immutable output directory, explicit detector-band
 file or `--all-bands`, decoded scan-row ceiling, and iteration count. Its JSON
 separates catalog/index preparation, pipeline compilation, plan construction,
 source mapping, synchronized GPU work, and package wall time. It labels source
-page state as unspecified rather than calling an unpurged run cold, writes
-little-endian `uint64` artifacts, and rejects changing hashes or provenance
-between repetitions. Application first-usable-product and headed wall time
-remain separate acceptance boundaries.
+page state as unspecified unless the caller passes the public
+`--uncached-source-reads` flag. On macOS that flag applies `F_NOCACHE` to source
+hashing and every indexed source descriptor; the private environment seam alone
+cannot opt a run into controlled reporting. Even a controlled run separately
+records whether the source audit, QH5 index, destination, and process are new or
+prepared. The benchmark writes little-endian `uint64` artifacts and rejects
+changing hashes or provenance between repetitions. Application
+first-usable-product and headed wall time remain separate acceptance boundaries.
 
 ## Client ownership
 

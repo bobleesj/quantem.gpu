@@ -210,6 +210,15 @@ def test_dashboard_is_the_dense_human_overview() -> None:
         assert dashboard.count(dashboard_value) == 1
         assert results.count(results_value) == 1
 
+    assert dashboard.count("0.578 s") == 1
+    assert dashboard.count("119.040 ms") == 1
+    controlled = results.split(
+        "### Current controlled native exact resident load", 1
+    )[1].split("### Current native exact resident summary", 1)[0]
+    assert "0.577793 s" in controlled
+    assert "119.040 s" not in controlled
+    assert "0.119040 s" in controlled
+
     for removed_value in (
         "0.338 s",
         "1.695 s",
@@ -259,6 +268,8 @@ def test_intro_routes_to_benchmarks_without_copying_them() -> None:
         "0.386 s",
         "0.605 s",
         "0.824 s",
+        "0.578 s",
+        "119.040 ms",
         "11.168 s",
         "11.389 ms",
         "103.0 ms",
@@ -326,7 +337,7 @@ def test_platform_first_io_tables_expose_current_bins_devices_and_dates() -> Non
         for line in load_section.splitlines()
         if line.startswith("| [**") or line.startswith("| **CPU reference**")
     ]
-    assert len(rows) == 17
+    assert len(rows) == 18
 
     webgpu_rows = [row for row in rows if "WebGPU" in row[0]]
     observed = {
@@ -455,6 +466,20 @@ def test_narrow_tables_scroll_without_compressing_provenance_columns() -> None:
     assert "min-width: 112rem" in css
 
 
+def test_platform_tables_have_dependency_free_local_filters() -> None:
+    config = Path("docs/_config.yml").read_text(encoding="utf-8")
+    script = Path("docs/_static/benchmark-tables.js").read_text(encoding="utf-8")
+    css = Path("docs/_static/custom.css").read_text(encoding="utf-8")
+
+    assert "benchmark-tables.js" in config
+    assert 'headers.indexOf("Platform")' in script
+    assert 'headers.indexOf(columnName)' in script
+    assert 'row.hidden = !(textMatches && selectionsMatch)' in script
+    assert "fetch(" not in script
+    assert ".qgpu-table-tools" in css
+    assert "table tr[hidden]" in css
+
+
 def test_dashboard_tables_use_device_and_date_while_landing_stays_timing_free() -> None:
     dashboard = Path("docs/dashboard.md").read_text(encoding="utf-8")
     intro = Path("docs/intro.md").read_text(encoding="utf-8")
@@ -524,6 +549,7 @@ def test_current_benchmarks_have_complete_provenance_rows() -> None:
 
     for heading in (
         "### Current warm load/decode/bin",
+        "### Current controlled native exact resident load",
         "### Current native exact resident summary",
         "### Current streamed screening",
         "### Current resident products",
@@ -557,6 +583,7 @@ def test_current_benchmarks_have_complete_provenance_rows() -> None:
         "Fixture C:",
         "Fixture D:",
         "not called cold",
+        "controlled uncached source pages",
         "complete `512x512` scan",
         "no scan or detector crop",
         "Current evidence fingerprints",
