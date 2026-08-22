@@ -73,21 +73,23 @@ speed.
 
 For the full `512x512x192x192 uint16` plan, the resident payload is exactly
 19,327,352,832 bytes (18.00 GiB). On the current 2026-08-22 MacBook Pro
-(M5 Max, 128 GB) run, driver allocation sampled immediately after load was
-19,801,456,640 bytes
-(18.441544 GiB), falling to 474,103,808 bytes after explicit output release;
-process RSS high-water was 741,818,368 bytes (0.690872 GiB). The smaller RSS is
-not the GPU memory footprint: direct Metal allocations are outside the complete
-scope of that process counter. The after-load sample is not a continuously
-observed Metal peak.
+(M5 Max, 128 GB) canonical run, the sampled driver peak was 19,801,456,640
+bytes (18.441544 GiB) and the post-release driver allocation was 474,103,808
+bytes. The process RSS high-water was 20,070,498,304 bytes because the same
+process later performed full-volume hash validation; process RSS and Metal
+driver allocation remain separate observations and are not additive. The
+driver value is a sampled peak, not a theoretical allocation estimate.
 
-At consolidated revision `0bc9378`, post-warmup p50 for the exact full-scan
-source is 0.414824/0.457153/0.382109/0.356258 seconds for detector bins
-1/2/4/8. Each row has seven retained trials, a fresh returned destination that
-is released before the next trial, and uncontrolled OS source pages after one
-same-process warmup. These are not cold-load or application claims. The older
-`f0f39c9` 0.523/0.498/0.421/0.417-second rows remain historical pre-
-consolidation evidence.
+At clean revision `68dbe3a`, the current exact full-scan p50 values are
+0.406624/0.477740/0.370645/0.340210 seconds for detector bins 1/2/4/8.
+The corresponding p95 values are
+0.428164/1.064425/0.939238/0.341541 seconds. Every row has seven retained
+full-volume canonical-hash, dtype, geometry, metadata, and release passes.
+Bins 1 and 8 follow one same-process warmup; bins 2 and 4 have no same-process
+warmup but leave operating-system source pages unspecified. These are prepared
+or uncontrolled-page package boundaries, not cold arbitrary-source or
+application claims. The older `0bc9378` and `f0f39c9` rows remain historical
+evidence in the results ledger.
 
 The retained binned timings use an identity-bound source audit whose maximum
 count is 53. That proves bin2, bin4, and bin8 exact sums fit `uint16` for this

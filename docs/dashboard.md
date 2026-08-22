@@ -46,140 +46,56 @@ their reproduction entry points.
 (speed-and-memory-at-a-glance)=
 ## Speed and memory at a glance
 
-The rows below are deliberately not a leaderboard. Each one keeps its cache
-state, scientific plan, device, wall-clock boundary, and memory observation in
-the same row. Measurement tables are keyed first by **Platform**, then by the
-reproducible **Computer** class; local host nicknames are never public benchmark
-identifiers.
+The rows below are deliberately not a leaderboard: results with different
+fixtures, cache states, scientific plans, or wall-clock boundaries are not
+ranked against one another. Each row keeps those conditions together.
+Measurement tables are keyed first by **Platform**, then by the reproducible
+**Computer** class; local host nicknames are never public benchmark identifiers.
 
-### Measured load configurations
+### Current qualified load measurements
 
-One row is one exact configuration and one headline statistic. Source, decode,
-and resident dtype are separate columns. A second fixture, bin, dtype path,
-cache state, or timing statistic requires another row; slash-delimited bundles
-are not permitted. **Pending** means the combination is tracked but has no
-retained timing with complete provenance.
+One row is one exact configuration on one reproducible computer. Platform and
+computer are the first two columns; scan geometry, detector geometry, bin,
+dtype, cache state, statistic, memory observations, device, date, and revision
+remain separate data. The table is generated from the benchmark registry so a
+superseded result cannot remain the dashboard headline.
 
-The WebGPU rows in this measured table are retained historical implementation
-measurements. In particular, detector bins 2/4/8 used a `float32` resident
-representation; they are not evidence for the pending exact-integer production
-contract shown in the coverage matrix.
+```{include} _generated/benchmark_coverage.md
+:start-after: <!-- benchmark-current-load-start -->
+:end-before: <!-- benchmark-current-load-end -->
+```
 
-The rendered site adds local filters for platform, computer, device, detector bin,
-cache/process state, and free text. Filtering changes only which retained rows
-are visible; the static table remains the canonical source. On narrow screens
-the table scrolls so timing, resident payload, measured peak, parity, device,
-and date stay separate.
+These measurements use the complete `512x512` scan and native
+`192x192 uint16` source detector from fixture
+`real-512x512x192x192-u16-bslz4-27shard-master-fixture-c`, with scan bin 1
+and no crop. Detector bin is explicit. Exact binned `uint16` output is
+source-identity-bound to the retained maximum-count audit; it is not a general
+license to narrow arbitrary input.
 
-| Platform | Computer | State | Selected scan | Scan plan | Source detector | Detector bin | Output detector | Source dtype | Decode dtype | Resident dtype | Cache/process state | Wall boundary | Fixture | Statistic | Time | Logical resident | Device/driver boundary | Device/driver peak | Process/tree RSS | Parity | Device tested | Date tested |
-|---|---|---|---:|---|---:|---:|---:|---|---|---|---|---|---|---|---:|---:|---|---:|---:|---|---|---|
-| [**CUDA**](platforms/cuda.md) | Linux CUDA workstation (dual 96 GB Blackwell GPUs) | Partial | `512x512` | Full | `192x192` | 1 | `192x192` | `uint16` | `uint16` | `uint16` | Warm source | First usable resident | D | p50 | **0.386 s** | **18.00 GiB** | Total-card occupancy | **21.215 GiB** | Pending | Qualified products | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 | 2026-08-19 |
-| [**CUDA**](platforms/cuda.md) | Linux CUDA workstation (dual 96 GB Blackwell GPUs) | Partial | `512x512` | Full | `192x192` | 2 | `96x96` | `uint16` | `uint16` | `uint32` | Warm source | First usable resident | D | p50 | **0.396 s** | **9.00 GiB** | Total-card occupancy | **11.561 GiB** | Pending | Qualified products | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 | 2026-08-19 |
-| [**CUDA**](platforms/cuda.md) | Linux CUDA workstation (dual 96 GB Blackwell GPUs) | Partial | `512x512` | Full | `192x192` | 4 | `48x48` | `uint16` | `uint16` | `uint32` | Warm source | First usable resident | D | p50 | **0.390 s** | **2.25 GiB** | Total-card occupancy | **3.756 GiB** | Pending | Qualified products | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 | 2026-08-19 |
-| [**CUDA**](platforms/cuda.md) | Linux CUDA workstation (dual 96 GB Blackwell GPUs) | Partial | `512x512` | Full | `192x192` | 8 | `24x24` | `uint16` | `uint16` | `uint32` | Warm source | First usable resident | D | p50 | **0.381 s** | **0.5625 GiB** | Total-card occupancy | **1.805 GiB** | Pending | Qualified products | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 | 2026-08-19 |
-| [**Native Swift/Metal**](platforms/swift-metal.md) | MacBook Pro (M5 Max, 128 GB) | Measured | `512x512` | Full | `192x192` | 1 | `192x192` | `uint16` | audit-bound `uint8` | `uint16` | Controlled `F_NOCACHE`; new index | Exact complete resident | C | p50 | **0.578 s** | **18.00 GiB** | After-load Metal allocation; sampled peak pending | **>=18.571 GiB** | **0.874 GiB** | Full volume + products exact | Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB) | 2026-08-22 |
-| [**Native Swift/Metal**](platforms/swift-metal.md) | MacBook Pro (M5, 24 GB) | Partial | `512x512` | Full | `192x192` | 2 | `96x96` | `uint16` | audit-bound `uint8` | `uint16` | Prepared index; `F_NOCACHE`; destination reused | Exact indexed load and seven products | C | p50 | **0.671 s** | **4.50 GiB** | Maximum Metal allocation with boundary hash | **5.071 GiB** | **0.646 GiB** | Full volume + products exact; terminal manifest pending | Apple M5 (`Mac17,2`, 10-core GPU, 24 GB) | 2026-08-22 |
-| [**Native Swift/Metal**](platforms/swift-metal.md) | MacBook Pro (M5, 24 GB) | Partial | `512x512` | Full | `192x192` | 4 | `48x48` | `uint16` | audit-bound `uint8` | `uint16` | Prepared index; `F_NOCACHE`; destination reused | Exact indexed load and seven products | C | p50 | **0.631 s** | **1.125 GiB** | Maximum Metal allocation with boundary hash | **1.696 GiB** | **0.650 GiB** | Full volume + products exact; terminal manifest pending | Apple M5 (`Mac17,2`, 10-core GPU, 24 GB) | 2026-08-22 |
-| [**WebGPU**](platforms/webgpu.md) | MacBook Pro (M5 Max, 128 GB) | Historical diagnostic | `512x512` | Full | `192x192` | 1 | `192x192` | `uint16` | `uint8` | `uint8` | Warm OS cache | First usable resident | D | p50 | **0.824 s** | **9.00 GiB** | Device allocation incomplete | Pending | **5.020 GiB** | Sampled frames only | Chrome 151, Apple M5 Max Metal-3 | 2026-08-19 |
-| [**WebGPU**](platforms/webgpu.md) | MacBook Pro (M5 Max, 128 GB) | Historical diagnostic | `512x512` | Full | `192x192` | 2 | `96x96` | `uint16` | `uint16` | `float32` | Warm OS cache | First usable resident | D | p50 | **1.281 s** | **9.00 GiB** | Device allocation incomplete | Pending | **5.363 GiB** | Sampled frames; wrong resident dtype for exact gate | Chrome 151, Apple M5 Max Metal-3 | 2026-08-19 |
-| [**WebGPU**](platforms/webgpu.md) | MacBook Pro (M5 Max, 128 GB) | Historical diagnostic | `512x512` | Full | `192x192` | 4 | `48x48` | `uint16` | `uint16` | `float32` | Warm OS cache | First usable resident | D | p50 | **1.044 s** | **2.25 GiB** | Device allocation incomplete | Pending | **5.188 GiB** | Sampled frames; wrong resident dtype for exact gate | Chrome 151, Apple M5 Max Metal-3 | 2026-08-19 |
-| [**WebGPU**](platforms/webgpu.md) | MacBook Pro (M5 Max, 128 GB) | Historical diagnostic | `512x512` | Full | `192x192` | 8 | `24x24` | `uint16` | `uint16` | `float32` | Warm OS cache | First usable resident | D | p50 | **0.979 s** | **0.5625 GiB** | Device allocation incomplete | Pending | **5.184 GiB** | Sampled frames; wrong resident dtype for exact gate | Chrome 151, Apple M5 Max Metal-3 | 2026-08-19 |
-| **CPU reference** | MacBook Pro (M5 Max, 128 GB) | Reference | `512x512` | Full | `192x192` | 1 | `192x192` | `uint16` | `uint16` | `uint16` | Reference traversal | First usable host array | D | Single run | **34.37 s** | **18.00 GiB** | Not separate | — | **36.450 GiB** | Reference | Apple M5 Max CPU | 2026-08-19 |
-| **CPU reference** | MacBook Pro (M5 Max, 128 GB) | Reference | `512x512` | Full | `192x192` | 2 | `96x96` | `uint16` | `uint16` | `uint16` | Reference traversal | First usable host array | D | Single run | **54.22 s** | **4.50 GiB** | Not separate | — | **9.634 GiB** | Reference | Apple M5 Max CPU | 2026-08-19 |
-| **CPU reference** | MacBook Pro (M5 Max, 128 GB) | Reference | `512x512` | Full | `192x192` | 4 | `48x48` | `uint16` | `uint16` | `uint16` | Reference traversal | First usable host array | D | Single run | **43.04 s** | **1.125 GiB** | Not separate | — | **2.978 GiB** | Reference | Apple M5 Max CPU | 2026-08-19 |
-| **CPU reference** | MacBook Pro (M5 Max, 128 GB) | Reference | `512x512` | Full | `192x192` | 8 | `24x24` | `uint16` | `uint16` | `uint16` | Reference traversal | First usable host array | D | Single run | **38.13 s** | **0.28125 GiB** | Not separate | — | **2.034 GiB** | Reference | Apple M5 Max CPU | 2026-08-19 |
+For this immutable source, the complete maximum-count audit of 53 proves that
+an 8x8 exact detector sum is at most 3,392, so bins through 8 fit in `uint16`.
+Other sources must pass their own complete range audit or use a provably
+sufficient wider integer dtype.
 
-#### Current Python MPS resident lifecycle
+The package rows are prepared-index measurements. Python MPS source pages were
+uncontrolled after one same-process warmup. Native Swift/Metal uses prepared
+immutable indexes and controlled `F_NOCACHE` source descriptors. Neither is a
+cold arbitrary-source or application end-to-end result. Historical CUDA,
+WebGPU, earlier CPU, destination-reuse, and superseded measurements remain in
+[Verified benchmark results](performance/results.md) and the complete
+[coverage registry](performance/coverage.md); they are not silently discarded
+or mixed into this current table.
 
-These current-head rows use fixture C, the full `512x512` scan, native
-`192x192 uint16` source data, scan bin 1, no crop, and exact `uint16`
-outputs. Revision `0bc9378` was measured after one same-process warmup; OS
-source pages were uncontrolled and no eviction was performed. Every trial
-returned a fresh resident destination and explicitly released it before the
-next trial. The timed outputs retained six selected-frame parity probes rather
-than a full-volume hash, so every row remains **Qualified probes / Partial**.
-These are post-warmup package measurements, not cold-source or application
-timings.
-
-The MacBook Pro (M5, 24 GB) Python MPS rows remain **Pending** in the coverage
-matrix. Its 2026-08-22 preflight stopped before loading because the baseline
-runner did not hash the complete resident output or record observed dtype. The
-current runbook now requires a full-volume SHA-256, dtype, shape, and sampled
-peak-memory check before any timing can be promoted.
-
-| Platform | Computer | Evidence state | Detector bin | Output detector | Samples | p50 | p95 | Maximum | Logical resident | Driver allocated after load | Driver allocated after release | Process RSS high-water | Whole-system swap delta | Date tested |
-|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
-| [**Python MPS**](platforms/mps.md) | MacBook Pro (M5 Max, 128 GB) | Qualified probes / Partial | 1 | `192x192` | 7 | **0.414824 s** | **0.457261 s** | **0.457261 s** | **19,327,352,832 B** | **19,801,456,640 B** | **474,103,808 B** | **741,818,368 B** | **0 B** | 2026-08-22 |
-| [**Python MPS**](platforms/mps.md) | MacBook Pro (M5 Max, 128 GB) | Qualified probes / Partial | 2 | `96x96` | 7 | **0.457153 s** | **0.461730 s** | **0.461730 s** | **4,831,838,208 B** | **6,107,774,976 B** | **1,275,936,768 B** | **616,054,784 B** | **0 B** | 2026-08-22 |
-| [**Python MPS**](platforms/mps.md) | MacBook Pro (M5 Max, 128 GB) | Qualified probes / Partial | 4 | `48x48` | 7 | **0.382109 s** | **0.384353 s** | **0.384353 s** | **1,207,959,552 B** | **2,483,896,320 B** | **1,275,936,768 B** | **615,825,408 B** | **0 B** | 2026-08-22 |
-| [**Python MPS**](platforms/mps.md) | MacBook Pro (M5 Max, 128 GB) | Qualified probes / Partial | 8 | `24x24` | 7 | **0.356258 s** | **0.358652 s** | **0.358652 s** | **301,989,888 B** | **1,577,926,656 B** | **1,275,936,768 B** | **616,054,784 B** | **0 B** | 2026-08-22 |
-
-“Driver allocated after load” and “after release” are instantaneous
-`torch.mps.driver_allocated_memory()` samples, not continuously sampled
-peaks. Process RSS is the process-lifetime high-water; swap is whole-system
-usage and remained unchanged during each retained run.
-
-##### Historical explicit destination reuse
-
-The accepted isolated-candidate ABBA experiment remains useful because it
-measures a different lifecycle: the caller reuses a compatible resident
-destination. It is retained as history and is not substituted for the
-current-head fresh-destination rows.
-
-| Detector bin | Output detector | Destination | Samples | p50 | p95 | Maximum | Source revision |
-|---:|---:|---|---:|---:|---:|---:|---|
-| 1 | `192x192` | Explicitly recycled | 8 | **0.259189 s** | **0.263118 s** | **0.263375 s** | `b7f8ef3` |
-| 2 | `96x96` | Explicitly recycled | 8 | **0.359606 s** | **0.361384 s** | **0.361995 s** | `b7f8ef3` |
-| 4 | `48x48` | Explicitly recycled | 8 | **0.352990 s** | **0.355048 s** | **0.355062 s** | `b7f8ef3` |
-
-Fixtures C and D are independent real `512x512x192x192`, native-`uint16`,
-27-shard compressed-HDF5 sources. Fixture C contains 3,169,489,846 indexed
-compressed bytes plus its 430,347-byte master file. Every row selects the
-complete scan, uses no scan crop, keeps scan bin 1, and records the detector bin
-explicitly. CUDA and WebGPU use D; Python MPS and Native Swift/Metal use C; CPU
-is an independent reference, never a silent fallback. Different fixtures and
-boundaries are not ranked.
-
-The 2026-08-19 source rows did not forcibly evict the source cache and therefore
-remain labeled warm. The final-head MPS rows also used uncontrolled source
-pages after one same-process warmup. Imports and Metal-library initialization
-were complete before the measured package load. None is cold-storage or
-application evidence.
-
-The former 2.273-second MPS bin-1 headline is superseded: its benchmark cleared
-the Torch cache but did not release direct PyObjC Metal buffers, so repeated
-18 GiB outputs drove system free memory from 86% to 41%. The retained historical
-artifact remains in the results ledger. The exact full bin-1 resident payload
-is 19,327,352,832 bytes (18.00 GiB); driver allocation sampled immediately
-after load is 19,801,456,640 bytes (18.442 GiB), while process RSS high-water is
-only 0.691 GiB. This sampling boundary does not prove a continuously observed
-Metal peak.
-The binned `uint16` rows are fixture-specific: source identity
-`9f0ddb93...` has a complete maximum-count audit of 53, so even an 8x8 exact
-sum is at most 3,392 and fits `uint16`. This does not authorize `uint16`
-summation for an unaudited source; such a source needs a sufficient wider dtype
-or a fail-closed range audit.
-
-The 2026-08-22 native row instead applies macOS
-`F_NOCACHE` to source hashing and every indexed source descriptor, creates a new
-index root and private Metal destination per process, and stops at the complete
-exact 18 GiB resident volume plus products. Its identity-bound value audit
-already exists, so it is controlled uncached-source-page evidence—not an
-audit-free arbitrary-source cold load and not application end to end. The
-0.029-second native prepared exact-summary reopen is intentionally kept in
-the screening section rather than this load table because it does not decode or
-traverse the resident 4D volume. The results ledger owns p95/max, exact
-revisions, fixture hashes, stage intervals, logical payloads, and parity
-artifacts.
-
-Logical resident payload, device/driver peak, and process/tree RSS are different
-columns by design. Process RSS does not include every direct Metal or WebGPU
-allocation. A peak whose boundary is incomplete is labeled incomplete or as a
-lower bound; it is never allowed to stand in for total unified-memory demand.
-Historical cropped, superseded prepared, first-campaign, and application-level
-rows remain in the maintainer records linked from
-[Verified benchmark results](performance/results.md).
-
+Logical resident bytes, accelerator/driver peak, process RSS high-water,
+process physical-footprint peak, and swap delta are distinct observations and
+are not additive. A missing physical-footprint value is displayed as `n/a`,
+not inferred from RSS. Process RSS does not include every direct Metal
+allocation, so it cannot replace accelerator or physical-footprint telemetry.
+On the 24 GB MacBook Pro, the full-native bin-1 smoke
+passed every exact volume and product hash but produced approximately
+723.31 MiB additional swap use and 758,448,128 B of swapouts. The safety gate
+therefore stopped after one trial; it is partial evidence, not a repeatable
+performance distribution.
 (dtype-support-and-peak-memory)=
 ### Dtype support and peak memory
 
@@ -220,7 +136,9 @@ all device allocations; that is an incomplete peak, not evidence that the
 payload disappeared.
 
 The current C matrix measures native `uint16` input at detector bins 1/2/4/8.
-On Python MPS those resident payloads are 18.00/4.50/1.125/0.28125 GiB. On
+The full-native logical payload is exactly 19,327,352,832 bytes (18.00 GiB).
+On Python MPS the bin-1/2/4/8 resident payloads are
+18.00/4.50/1.125/0.28125 GiB. On
 CUDA, exact detector summation retains `uint32` for bins 2/4/8, giving
 9.00/2.25/0.5625 GiB. The native primitive has admitted one full 18.00 GiB
 resident load on the 24 GB Apple M5, but repeated uncontended memory and paging
@@ -272,9 +190,9 @@ signoff.
 | [**Native Swift/Metal**](platforms/swift-metal.md) | MacBook Air (M2, 8 GB) | 8 GB unified RAM | `512x512` | Full | `192x192` | 4 | `48x48` | `uint16` | **1.125 GiB** | **Historical** | Earlier physical run passed; current clean-revision repeat remains pending | Apple M2 MacBook Air (`Mac14,2`, 8 GB) | 2026-08-18 |
 | [**Native Swift/Metal**](platforms/swift-metal.md) | MacBook Air (M2, 8 GB) | 8 GB unified RAM | `512x512` | Full | `192x192` | 8 | `24x24` | — | — | **Not supported** | Current native load-plan contract supports bins 1, 2, and 4 | — | — |
 | [**WebGPU**](platforms/webgpu.md) | MacBook Air (M2, 8 GB) | 8 GB total RAM | `512x512` | Full | `192x192` | 1 | `192x192` | `uint16` | **18.00 GiB** | **Blocked** | Resident payload exceeds total machine RAM | — | — |
-| [**WebGPU**](platforms/webgpu.md) | MacBook Air (M2, 8 GB) | 8 GB total RAM | `512x512` | Full | `192x192` | 2 | `96x96` | `uint16` | **4.50 GiB** | **Pending** | Exact-integer production path and complete physical peak are not retained | — | — |
-| [**WebGPU**](platforms/webgpu.md) | MacBook Air (M2, 8 GB) | 8 GB total RAM | `512x512` | Full | `192x192` | 4 | `48x48` | `uint16` | **1.125 GiB** | **Pending** | Exact-integer production path and complete physical peak are not retained | — | — |
-| [**WebGPU**](platforms/webgpu.md) | MacBook Air (M2, 8 GB) | 8 GB total RAM | `512x512` | Full | `192x192` | 8 | `24x24` | `uint16` | **0.28125 GiB** | **Pending** | Exact-integer production path and complete physical peak are not retained | — | — |
+| [**WebGPU**](platforms/webgpu.md) | MacBook Air (M2, 8 GB) | 8 GB total RAM | `512x512` | Full | `192x192` | 2 | `96x96` | `uint16` | **4.50 GiB** | **Blocked** | Production detector binning stores `float32`; exact-integer accumulation and residency must be integrated before the physical pressure/parity gate | — | — |
+| [**WebGPU**](platforms/webgpu.md) | MacBook Air (M2, 8 GB) | 8 GB total RAM | `512x512` | Full | `192x192` | 4 | `48x48` | `uint16` | **1.125 GiB** | **Blocked** | Production detector binning stores `float32`; exact-integer accumulation and residency must be integrated before the physical pressure/parity gate | — | — |
+| [**WebGPU**](platforms/webgpu.md) | MacBook Air (M2, 8 GB) | 8 GB total RAM | `512x512` | Full | `192x192` | 8 | `24x24` | `uint16` | **0.28125 GiB** | **Blocked** | Production detector binning stores `float32`; exact-integer accumulation and residency must be integrated before the physical pressure/parity gate | — | — |
 
 The exact integer bin-2/4/8 payloads can fit within the nominal 8 GB total-RAM
 floor, but payload arithmetic alone is not acceptance. Production WebGPU still

@@ -29,14 +29,11 @@ operating-system storage cache was not forcibly evicted. It is not called cold.
   exact private Metal residency, controlled macOS source-page measurement, and
   state-consistent benchmark provenance. It does not relabel the 2026-08-19
   cross-platform rows.
-- **Current Python MPS lifecycle evidence:** clean local evidence revision
-  `3fbd87a53acc1f4ab165b841175681b166bcb629` records accepted historical
-  performance for source `b7f8ef3ff2a2d8458944e1e55a3296a39c854357`.
-  It extends explicit caller-owned resident-destination recycling to detector
-  bins 2/4/8. Consumer-safe exception cleanup is separately sealed at source
-  `3c4d903ea62e5e7b19c760efde908c75544b5eba` and evidence
-  `08e50c5baab0ad3ff492a48ff1ff4b723a9da876`; its single smoke does not
-  replace the historical timing distributions.
+- **Current exact load matrix:** clean source revisions `5106ca48349231549c440b40609983fd3a8dacda`
+  and `68dbe3aa5f816e2d1c1ae976e1874790cffb4319` provide the current canonical
+  logical-pixel hashes, explicit source/working metadata, and physical memory
+  observations for the rows generated below. Older `0bc9378` lifecycle rows
+  remain historical evidence for a distinct implementation checkpoint.
 - **Fixture C:** independent real `512x512x192x192` native-`uint16` source,
   27 compressed shards plus one master file, 3,169,920,193 total bytes and
   3,169,489,846 indexed compressed bytes, 28-file manifest SHA-256
@@ -54,9 +51,22 @@ did not forcibly evict the operating-system storage cache and is therefore
 reuse explicitly and is documented in its own section. CUDA and WebGPU use D;
 MPS/Swift use C. They are not a fixture-controlled backend ranking.
 
-### Current warm load/decode/bin
+### Current qualified exact loads
 
-The boundary is synchronized first-usable resident output from the public
+This is the same registry-generated current matrix used by the dashboard. One
+row is one platform, computer class, scan/detector plan, dtype, cache/process
+state, and timing boundary. It is the only current headline table; detailed
+historical and rejected experiments remain below.
+
+```{include} ../_generated/benchmark_coverage.md
+:start-after: <!-- benchmark-current-load-start -->
+:end-before: <!-- benchmark-current-load-end -->
+```
+
+### Historical 2026-08-19 warm load/decode/bin
+
+This retained comparison predates the canonical 2026-08-22 rows above. The
+boundary is synchronized first-usable resident output from the public
 loader. WebGPU uses the loader's internal library boundary rather than the
 outer browser harness. Resident payload and process/card peaks remain distinct.
 
@@ -115,11 +125,11 @@ This WebGPU fixture view records source identity `1be810b9...`; fixture C is
 `c9c0d968...`, while the CUDA master record is `4802ec16...`. The rows are not
 a cross-lane fixture-controlled comparison.
 
-### Current exact Python MPS resident lifecycle
+### Historical consolidated Python MPS resident lifecycle
 
-All rows below use fixture C, full `512x512` scan coverage, native
+These superseded `0bc9378` rows use fixture C, full `512x512` scan coverage, native
 `192x192 uint16` detector data, scan bin 1, no crop, and exact `uint16` output.
-The current source-page state is uncontrolled after one same-process warmup.
+Their source-page state is uncontrolled after one same-process warmup.
 The timer spans the exact public package load, backend synchronization, and
 return of a fresh destination. Each result is explicitly released before the
 next trial.

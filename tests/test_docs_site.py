@@ -116,6 +116,9 @@ def test_performance_landing_keeps_every_evidence_page_navigable() -> None:
 def test_dashboard_is_the_dense_human_overview() -> None:
     dashboard = Path("docs/dashboard.md").read_text(encoding="utf-8")
     dashboard_words = " ".join(dashboard.split())
+    generated = Path("docs/_generated/benchmark_coverage.md").read_text(
+        encoding="utf-8"
+    )
     results = Path("docs/performance/results.md").read_text(encoding="utf-8")
     intro = Path("docs/intro.md").read_text(encoding="utf-8")
     toc = TOC.read_text(encoding="utf-8")
@@ -129,7 +132,7 @@ def test_dashboard_is_the_dense_human_overview() -> None:
     for heading in (
         "## Platform-first module dashboard",
         "## Speed and memory at a glance",
-        "### Measured load configurations",
+        "### Current qualified load measurements",
         "### Dtype support and peak memory",
         "### Minimum-device memory gates",
         "### What a 4 or 6 GiB budget can hold",
@@ -157,12 +160,13 @@ def test_dashboard_is_the_dense_human_overview() -> None:
     for evidence_state in ("✓", "Test", "Pending", "Ref", "unsupported or not a target"):
         assert evidence_state in dashboard
 
+    dashboard_surface = dashboard + "\n" + generated
     for device in (
         "NVIDIA RTX PRO 6000 Blackwell",
-        "Apple M5 Max (`Mac17,6`, 40-core GPU, 128 GB)",
+        "Apple M5 Max 40-core integrated GPU; 128 GB unified memory",
         "Apple M2 MacBook Air (`Mac14,2`, 8 GB)",
     ):
-        assert device in dashboard
+        assert device in dashboard_surface
 
     for provenance in (
         "measurement date",
@@ -178,7 +182,7 @@ def test_dashboard_is_the_dense_human_overview() -> None:
         assert provenance in dashboard_words
 
     assert "I[R_r,R_c,k_r,k_c]" in dashboard
-    assert "not ranked" in dashboard
+    assert "not ranked" in dashboard_words
     assert "18.00 GiB" in dashboard
     assert "9.00 GiB" in dashboard
     assert "1.125 GiB" in dashboard
@@ -200,9 +204,6 @@ def test_dashboard_is_the_dense_human_overview() -> None:
     assert "square scan-grid sizes, not detector dimensions" in dashboard
 
     for dashboard_value, results_value in (
-        ("0.386 s", "0.386 s"),
-        ("0.359606 s", "0.359606 s"),
-        ("0.824 s", "0.824 s"),
         ("6.711 s", "6.711 s"),
         ("20.803 ms", "20.803 ms"),
         ("11.168 s", "11.168/11.235/11.242 s"),
@@ -213,7 +214,14 @@ def test_dashboard_is_the_dense_human_overview() -> None:
         assert dashboard.count(dashboard_value) == 1
         assert results.count(results_value) == 1
 
-    assert dashboard.count("0.578 s") == 1
+    for historical_load in ("0.386 s", "0.359606 s", "0.824 s"):
+        assert historical_load not in dashboard
+        assert historical_load in results
+
+    current_load = generated.split("<!-- benchmark-current-load-start -->", 1)[1].split(
+        "<!-- benchmark-current-load-end -->", 1
+    )[0]
+    assert current_load.count("0.577793 s") == 1
     assert dashboard.count("119.040 ms") == 1
     controlled = results.split(
         "### Current controlled native exact resident load", 1
@@ -336,101 +344,96 @@ def test_dashboard_ssb_size_matrix_tracks_fixed_size_runtime_registries() -> Non
 def test_platform_first_io_tables_expose_current_bins_devices_and_dates() -> None:
     dashboard = Path("docs/dashboard.md").read_text(encoding="utf-8")
     intro = Path("docs/intro.md").read_text(encoding="utf-8")
+    generated = Path("docs/_generated/benchmark_coverage.md").read_text(
+        encoding="utf-8"
+    )
     swift_plan = Path(
         "src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Metal4DSTEMLoadPlan.swift"
     ).read_text(encoding="utf-8")
 
-    load_section = dashboard.split("### Measured load configurations", 1)[1].split(
-        "(dtype-support-and-peak-memory)=", 1
-    )[0]
-    assert "| Platform | Computer | State | Selected scan | Scan plan |" in load_section
+    assert "### Current qualified load measurements" in dashboard
+    assert ":start-after: <!-- benchmark-current-load-start -->" in dashboard
+    assert ":end-before: <!-- benchmark-current-load-end -->" in dashboard
     assert "supportedDetectorBins = [1, 2, 4]" in swift_plan
 
-    main_load_table = load_section.split(
-        "#### Current Python MPS resident lifecycle", 1
+    current = generated.split("<!-- benchmark-current-load-start -->", 1)[1].split(
+        "<!-- benchmark-current-load-end -->", 1
     )[0]
+    lines = [line for line in current.splitlines() if line.startswith("|")]
+    headers = [cell.strip() for cell in lines[0].strip("|").split("|")]
     rows = [
         [cell.strip() for cell in line.strip("|").split("|")]
-        for line in main_load_table.splitlines()
-        if line.startswith(("| [**", "| **CPU reference**"))
+        for line in lines[2:]
     ]
-    assert len(rows) == 15
-    assert all(row[1] for row in rows)
+    assert len(rows) == 13
+    assert headers[:3] == ["Platform", "Computer", "State"]
+    assert all(row[0] and row[1] for row in rows)
+    assert all(name not in current.lower() for name in ("phil", "mjgoat", "rodman"))
 
-    mps_rows = [row for row in rows if "Python MPS" in row[0]]
-    assert not mps_rows
+    platform_order = {
+        platform: current.index(f"| {platform} |")
+        for platform in ("Python MPS", "Native Swift/Metal", "CPU reference")
+    }
+    assert list(platform_order.values()) == sorted(platform_order.values())
 
-    lifecycle = load_section.split(
-        "#### Current Python MPS resident lifecycle", 1
-    )[1].split("Fixtures C and D", 1)[0]
-    mps_rows = [
-        [cell.strip() for cell in line.strip("|").split("|")]
-        for line in lifecycle.splitlines()
-        if line.startswith("| [**Python MPS**]")
+    bin_index = headers.index("Detector bin")
+    p50_index = headers.index("p50")
+    p95_index = headers.index("p95")
+    maximum_index = headers.index("Maximum")
+    resident_index = headers.index("Logical resident")
+    accelerator_index = headers.index("Accelerator/driver peak")
+    rss_index = headers.index("Process/tree peak")
+    footprint_index = headers.index("Process physical-footprint peak")
+    swap_index = headers.index("Swap delta")
+    revision_index = headers.index("Revision")
+
+    mps_rows = [row for row in rows if row[0] == "Python MPS"]
+    assert {int(row[bin_index]) for row in mps_rows} == {1, 2, 4, 8}
+    expected_mps = {
+        1: ("0.406624 s", "0.428164 s", "18.000 GiB", "18.442 GiB", "18.692 GiB"),
+        2: ("0.477740 s", "1.064425 s", "4.500 GiB", "5.688 GiB", "5.091 GiB"),
+        4: ("0.370645 s", "0.939238 s", "1.125 GiB", "2.313 GiB", "1.726 GiB"),
+        8: ("0.340210 s", "0.341541 s", "0.281 GiB", "1.470 GiB", "0.855 GiB"),
+    }
+    for row in mps_rows:
+        detector_bin = int(row[bin_index])
+        expected = expected_mps[detector_bin]
+        assert (
+            row[p50_index],
+            row[p95_index],
+            row[resident_index],
+            row[accelerator_index],
+            row[rss_index],
+        ) == expected
+        assert row[maximum_index] == row[p95_index]
+        assert row[swap_index] == "0 B"
+
+    native_24 = [
+        row
+        for row in rows
+        if row[0] == "Native Swift/Metal"
+        and row[1] == "MacBook Pro (M5, 24 GB)"
     ]
-    assert len(mps_rows) == 4
-    assert {
-        (
-            int(row[3]),
-            row[5],
-            row[6],
-            row[9],
-            row[10],
-            row[11],
-            row[12],
-            row[13],
-        )
-        for row in mps_rows
-    } == {
-        (1, "7", "**0.414824 s**", "**19,327,352,832 B**", "**19,801,456,640 B**", "**474,103,808 B**", "**741,818,368 B**", "**0 B**"),
-        (2, "7", "**0.457153 s**", "**4,831,838,208 B**", "**6,107,774,976 B**", "**1,275,936,768 B**", "**616,054,784 B**", "**0 B**"),
-        (4, "7", "**0.382109 s**", "**1,207,959,552 B**", "**2,483,896,320 B**", "**1,275,936,768 B**", "**615,825,408 B**", "**0 B**"),
-        (8, "7", "**0.356258 s**", "**301,989,888 B**", "**1,577,926,656 B**", "**1,275,936,768 B**", "**616,054,784 B**", "**0 B**"),
-    }
+    assert {int(row[bin_index]) for row in native_24} == {1, 2, 4}
+    bin1 = next(row for row in native_24 if int(row[bin_index]) == 1)
+    assert bin1[p50_index] == "3.424108 s"
+    assert bin1[footprint_index] == "18.673 GiB"
+    assert bin1[swap_index] == "~0.706 GiB"
+    assert bin1[2] == "◐ Partial"
 
-    webgpu_rows = [row for row in rows if "WebGPU" in row[0]]
-    observed = {
-        (row[2], row[3], int(row[6]), row[7], row[9], row[10], row[15])
-        for row in webgpu_rows
-    }
-    assert observed == {
-        (
-            "Historical diagnostic",
-            "`512x512`",
-            1,
-            "`192x192`",
-            "`uint8`",
-            "`uint8`",
-            "**0.824 s**",
-        ),
-        (
-            "Historical diagnostic",
-            "`512x512`",
-            2,
-            "`96x96`",
-            "`uint16`",
-            "`float32`",
-            "**1.281 s**",
-        ),
-        (
-            "Historical diagnostic",
-            "`512x512`",
-            4,
-            "`48x48`",
-            "`uint16`",
-            "`float32`",
-            "**1.044 s**",
-        ),
-        (
-            "Historical diagnostic",
-            "`512x512`",
-            8,
-            "`24x24`",
-            "`uint16`",
-            "`float32`",
-            "**0.979 s**",
-        ),
-    }
+    bin2 = next(row for row in native_24 if int(row[bin_index]) == 2)
+    assert (bin2[p50_index], bin2[p95_index], bin2[footprint_index]) == (
+        "0.678703 s",
+        "0.697179 s",
+        "5.271 GiB",
+    )
+    bin4 = next(row for row in native_24 if int(row[bin_index]) == 4)
+    assert (bin4[p50_index], bin4[p95_index], bin4[footprint_index]) == (
+        "0.640942 s",
+        "0.651931 s",
+        "2.319 GiB",
+    )
+    assert all(row[revision_index].startswith("`") for row in rows)
 
     selective = dashboard.split("#### Selective scan rectangles", 1)[1].split(
         "### Screening and prepared-product caches", 1
@@ -452,87 +455,71 @@ def test_platform_first_io_tables_expose_current_bins_devices_and_dates() -> Non
     assert "does not issue byte-range reads" in " ".join(selective.split())
     assert "read all 27 shards (3.17 GB)" in selective
 
-    for historical in ("`256x256` | Explicit crop", "2.651 s", "1.985 s", "2.043 s"):
-        assert historical not in load_section
     assert "Measured load configurations" not in intro
     assert "Device tested" not in intro
-
-
 def test_load_memory_rows_separate_payload_from_measured_peak() -> None:
-    dashboard = Path("docs/dashboard.md").read_text(encoding="utf-8")
-    load_section = dashboard.split("### Measured load configurations", 1)[1].split(
-        "(dtype-support-and-peak-memory)=", 1
+    generated = Path("docs/_generated/benchmark_coverage.md").read_text(
+        encoding="utf-8"
+    )
+    current = generated.split("<!-- benchmark-current-load-start -->", 1)[1].split(
+        "<!-- benchmark-current-load-end -->", 1
     )[0]
-    load_section = load_section.split(
-        "#### Current Python MPS resident lifecycle", 1
-    )[0]
-    lines = [line for line in load_section.splitlines() if line.startswith("|")]
+    lines = [line for line in current.splitlines() if line.startswith("|")]
     headers = [cell.strip() for cell in lines[0].strip("|").split("|")]
-    assert "Logical resident" in headers
-    assert "Device/driver boundary" in headers
-    assert "Device/driver peak" in headers
-    assert "Process/tree RSS" in headers
-
     rows = [
         [cell.strip() for cell in line.strip("|").split("|")]
         for line in lines[2:]
-        if line.startswith(("| [**", "| **CPU reference**"))
     ]
-    payload_index = headers.index("Logical resident")
-    boundary_index = headers.index("Device/driver boundary")
-    peak_index = headers.index("Device/driver peak")
-    rss_index = headers.index("Process/tree RSS")
+
+    for field in (
+        "Logical resident",
+        "Accelerator/driver peak",
+        "Process/tree peak",
+        "Process physical-footprint peak",
+        "Swap delta",
+    ):
+        assert field in headers
+
+    resident_index = headers.index("Logical resident")
+    accelerator_index = headers.index("Accelerator/driver peak")
+    rss_index = headers.index("Process/tree peak")
+    footprint_index = headers.index("Process physical-footprint peak")
+    swap_index = headers.index("Swap delta")
     bin_index = headers.index("Detector bin")
-    state_index = headers.index("Cache/process state")
 
-    expected = {
-        "CUDA": {
-            1: ("**18.00 GiB**", "**21.215 GiB**", "Pending"),
-            2: ("**9.00 GiB**", "**11.561 GiB**", "Pending"),
-            4: ("**2.25 GiB**", "**3.756 GiB**", "Pending"),
-            8: ("**0.5625 GiB**", "**1.805 GiB**", "Pending"),
-        },
-        "Python MPS": {
-            1: ("**18.00 GiB**", "**18.442 GiB**"),
-            2: ("**4.50 GiB**", "**5.688 GiB**"),
-            4: ("**1.125 GiB**", "**2.313 GiB**"),
-            8: ("**0.28125 GiB**", "**1.470 GiB**"),
-        },
-        "WebGPU": {
-            1: ("**9.00 GiB**", "Pending", "**5.020 GiB**"),
-            2: ("**9.00 GiB**", "Pending", "**5.363 GiB**"),
-            4: ("**2.25 GiB**", "Pending", "**5.188 GiB**"),
-            8: ("**0.5625 GiB**", "Pending", "**5.184 GiB**"),
-        },
-        "CPU reference": {
-            1: ("**18.00 GiB**", "—", "**36.450 GiB**"),
-            2: ("**4.50 GiB**", "—", "**9.634 GiB**"),
-            4: ("**1.125 GiB**", "—", "**2.978 GiB**"),
-            8: ("**0.28125 GiB**", "—", "**2.034 GiB**"),
-        },
-    }
-    for row in rows:
-        if "Native Swift/Metal" in row[0]:
-            continue
-        platform = next(name for name in expected if name in row[0])
-        detector_bin = int(row[bin_index])
-        if platform == "Python MPS":
-            assert (row[payload_index], row[peak_index]) == expected[platform][detector_bin]
-            assert row[rss_index].endswith("GiB**")
-        else:
-            assert (row[payload_index], row[peak_index], row[rss_index]) == expected[
-                platform
-            ][detector_bin]
-        if platform == "Python MPS":
-            assert row[boundary_index] == "Sampled Metal driver"
-            assert "output freed" in row[state_index] or "Independent process" in row[state_index]
+    full_native_mps = next(
+        row
+        for row in rows
+        if row[0] == "Python MPS" and int(row[bin_index]) == 1
+    )
+    assert (
+        full_native_mps[resident_index],
+        full_native_mps[accelerator_index],
+        full_native_mps[rss_index],
+        full_native_mps[footprint_index],
+        full_native_mps[swap_index],
+    ) == ("18.000 GiB", "18.442 GiB", "18.692 GiB", "n/a", "0 B")
 
-    native = next(row for row in rows if "Native Swift/Metal" in row[0])
-    assert native[payload_index] == "**18.00 GiB**"
-    assert native[peak_index] == "**>=18.571 GiB**"
-    assert native[rss_index] == "**0.874 GiB**"
-    assert "sampled peak pending" in native[boundary_index]
+    full_native_24gb = next(
+        row
+        for row in rows
+        if row[0] == "Native Swift/Metal"
+        and row[1] == "MacBook Pro (M5, 24 GB)"
+        and int(row[bin_index]) == 1
+    )
+    assert (
+        full_native_24gb[resident_index],
+        full_native_24gb[accelerator_index],
+        full_native_24gb[rss_index],
+        full_native_24gb[footprint_index],
+        full_native_24gb[swap_index],
+    ) == ("18.000 GiB", "18.587 GiB", "0.611 GiB", "18.673 GiB", "~0.706 GiB")
 
+    dashboard = Path("docs/dashboard.md").read_text(encoding="utf-8")
+    dashboard_words = " ".join(dashboard.split())
+    assert "are distinct observations and are not additive" in dashboard_words
+    assert "758,448,128 B of swapouts" in dashboard
+    assert "partial evidence, not a repeatable" in dashboard
 def test_dashboard_small_gpu_numbers_match_the_screening_planner() -> None:
     from quantem.gpu.screening.workflow import _memory_plan_for_shapes
 
@@ -586,9 +573,9 @@ def test_minimum_device_memory_gates_are_atomic_and_fail_closed() -> None:
 
     for detector_bin, payload, gate in (
         (1, "18.00 GiB", "Blocked"),
-        (2, "4.50 GiB", "Pending"),
-        (4, "1.125 GiB", "Pending"),
-        (8, "0.28125 GiB", "Pending"),
+        (2, "4.50 GiB", "Blocked"),
+        (4, "1.125 GiB", "Blocked"),
+        (8, "0.28125 GiB", "Blocked"),
     ):
         row = (
             f"| [**WebGPU**](platforms/webgpu.md) | MacBook Air (M2, 8 GB) | "
@@ -615,6 +602,9 @@ def test_minimum_device_memory_gates_are_atomic_and_fail_closed() -> None:
 
 def test_load_dtype_docs_keep_precision_and_peak_memory_distinct() -> None:
     dashboard = Path("docs/dashboard.md").read_text(encoding="utf-8")
+    generated = Path("docs/_generated/benchmark_coverage.md").read_text(
+        encoding="utf-8"
+    )
     io_api = Path("docs/api/io.md").read_text(encoding="utf-8")
     load_kernel = Path("docs/kernels/load-decode-bin.md").read_text(encoding="utf-8")
     methodology = Path("docs/performance/methodology.md").read_text(encoding="utf-8")
@@ -630,7 +620,10 @@ def test_load_dtype_docs_keep_precision_and_peak_memory_distinct() -> None:
         assert "peak" in text.lower()
 
     assert '`dtype="u8"` requests saturating unsigned 8-bit browse counts' in dashboard
-    assert "| Logical resident | Device/driver boundary | Device/driver peak | Process/tree RSS |" in dashboard
+    assert (
+        "| Logical resident | Accelerator/driver peak | Process/tree peak | "
+        "Process physical-footprint peak |" in generated
+    )
     assert "19,327,352,832 bytes" in dashboard
     assert "18.442 GiB" in dashboard
     assert "Process RSS does not include every direct Metal" in dashboard
@@ -745,8 +738,9 @@ def test_current_benchmarks_have_complete_provenance_rows() -> None:
     text = Path("docs/performance/results.md").read_text(encoding="utf-8")
 
     for heading in (
-        "### Current warm load/decode/bin",
-        "### Current exact Python MPS resident lifecycle",
+        "### Current qualified exact loads",
+        "### Historical 2026-08-19 warm load/decode/bin",
+        "### Historical consolidated Python MPS resident lifecycle",
         "### Current controlled native exact resident load",
         "### Current native exact resident summary",
         "### Current streamed screening",
@@ -758,7 +752,7 @@ def test_current_benchmarks_have_complete_provenance_rows() -> None:
     ):
         assert heading in text
 
-    load = text.split("### Current warm load/decode/bin", 1)[1].split(
+    load = text.split("### Historical 2026-08-19 warm load/decode/bin", 1)[1].split(
         "### Current prepared WebGPU shard-selective rectangles", 1
     )[0]
     rows = [

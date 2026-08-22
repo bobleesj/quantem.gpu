@@ -252,6 +252,9 @@ def _measurement_row(
     browser_peak = measurement.get("browser_tree_peak_rss_bytes")
     if browser_peak is not None:
         process_peak = browser_peak
+    process_footprint_peak = measurement.get("process_peak_footprint_bytes")
+    if process_footprint_peak is None:
+        process_footprint_peak = measurement.get("process_footprint_peak_bytes")
     revision = artifact.get("implementation_revision") or artifact.get("observed_head")
     state = _measurement_state(measurement)
     computer = _computer_label(measurement.get("device"), measurement.get("computer"))
@@ -293,6 +296,7 @@ def _measurement_row(
         "accelerator_peak_bytes": device_peak,
         "total_device_peak_bytes": total_device_peak,
         "process_tree_peak_bytes": process_peak,
+        "process_footprint_peak_bytes": process_footprint_peak,
         "swap_delta_bytes": measurement.get("swap_delta_bytes"),
         "parity": measurement.get("parity"),
         "state": state,
@@ -407,6 +411,7 @@ def validate_registry(
     if len(measurement_ids) != len(measurements):
         failures.append("retained measurement IDs must be unique")
     fixture_masters: dict[str, set[str]] = {}
+    current_load_keys: dict[tuple[Any, ...], str] = {}
     for row in measurements:
         label = f"measurement {row['id']}"
         if row.get("computer") not in COMPUTER_LABELS:
@@ -438,6 +443,32 @@ def validate_registry(
                 failures.append(f"{label} measured row lacks parity")
             if not row.get("tested_date") or not row.get("device"):
                 failures.append(f"{label} measured row lacks date or device")
+        if row.get("dashboard_current") is True:
+            if row.get("module") != "I/O and load":
+                failures.append(f"{label} dashboard_current must be an I/O load row")
+            if row.get("state") in {"refuted", "superseded"}:
+                failures.append(
+                    f"{label} dashboard_current cannot be {row.get('state')}"
+                )
+            current_key = (
+                row.get("platform"),
+                row.get("computer"),
+                row.get("selected_scan_rows"),
+                row.get("selected_scan_columns"),
+                row.get("source_detector_rows"),
+                row.get("source_detector_columns"),
+                row.get("detector_bin"),
+                row.get("source_dtype"),
+                row.get("working_dtype"),
+            )
+            prior = current_load_keys.get(current_key)
+            if prior is not None:
+                failures.append(
+                    f"{label} duplicates dashboard current configuration {prior}"
+                )
+            current_load_keys[current_key] = row["measurement_id"]
+    if not current_load_keys:
+        failures.append("benchmark registry needs at least one dashboard_current row")
     for fixture_id, master_hashes in fixture_masters.items():
         if len(master_hashes) > 1:
             failures.append(
@@ -587,13 +618,14 @@ def _seconds(value: Any) -> str:
     return f"{seconds:.6f} s"
 
 
-def _bytes(value: Any) -> str:
+def _bytes(value: Any, *, approximate: bool = False) -> str:
     if value is None:
         return "n/a"
     count = int(value)
     if count == 0:
         return "0 B"
-    return f"{count / (1 << 30):.3f} GiB"
+    prefix = "~" if approximate else ""
+    return f"{prefix}{count / (1 << 30):.3f} GiB"
 
 
 def _parity_label(value: Any) -> str:
@@ -737,7 +769,11 @@ def _measurement_rows(registry: dict[str, Any]) -> list[list[Any]]:
                 _bytes(item.get("accelerator_peak_bytes")),
                 _bytes(item.get("total_device_peak_bytes")),
                 _bytes(item.get("process_tree_peak_bytes")),
-                _bytes(item.get("swap_delta_bytes")),
+                _bytes(item.get("process_footprint_peak_bytes")),
+                _bytes(
+                    item.get("swap_delta_bytes"),
+                    approximate=bool(item.get("swap_delta_approximate")),
+                ),
                 _parity_label(item.get("parity")),
                 item.get("device"),
                 item.get("tested_date"),
@@ -755,6 +791,70 @@ def _measurement_rows(registry: dict[str, Any]) -> list[list[Any]]:
     return rows
 
 
+def _current_load_rows(registry: dict[str, Any]) -> list[list[Any]]:
+    """Render one current, explicitly selected row per exact load configuration."""
+
+    rows: list[list[Any]] = []
+    measurements = [
+        item
+        for item in resolved_measurements(registry)
+        if item.get("dashboard_current") is True
+    ]
+    for item in sorted(
+        measurements,
+        key=lambda row: (
+            *_platform_sort_key(row["platform"]),
+            str(row.get("computer")),
+            int(row.get("detector_bin") or 0),
+            str(row["id"]),
+        ),
+    ):
+        revision = item.get("source_revision")
+        accelerator_peak = item.get("accelerator_peak_bytes")
+        if accelerator_peak is None:
+            accelerator_peak = item.get("driver_allocated_after_load_bytes")
+        rows.append(
+            [
+                item["platform"],
+                item["computer"],
+                STATE_LABELS[item["state"]],
+                _shape(
+                    item.get("selected_scan_rows"), item.get("selected_scan_columns")
+                ),
+                _shape(
+                    item.get("source_detector_rows"),
+                    item.get("source_detector_columns"),
+                ),
+                item.get("detector_bin"),
+                _shape(
+                    item.get("output_detector_rows"),
+                    item.get("output_detector_columns"),
+                ),
+                item.get("source_dtype"),
+                item.get("working_dtype"),
+                item.get("cache_state"),
+                item.get("timing_boundary"),
+                item.get("sample_count"),
+                _seconds(item.get("p50_seconds")),
+                _seconds(item.get("p95_seconds")),
+                _seconds(item.get("max_seconds")),
+                _bytes(item.get("logical_resident_bytes")),
+                _bytes(accelerator_peak),
+                _bytes(item.get("process_tree_peak_bytes")),
+                _bytes(item.get("process_footprint_peak_bytes")),
+                _bytes(
+                    item.get("swap_delta_bytes"),
+                    approximate=bool(item.get("swap_delta_approximate")),
+                ),
+                _parity_label(item.get("parity")),
+                item.get("device"),
+                item.get("tested_date"),
+                f"`{revision}`" if revision else None,
+            ]
+        )
+    return rows
+
+
 def render_document(registry: dict[str, Any]) -> str:
     """Return the generated Markdown coverage fragment."""
 
@@ -763,6 +863,44 @@ def render_document(registry: dict[str, Any]) -> str:
     platform_counts = Counter(gate["platform"] for gate in gates)
     lines = [
         "<!-- Generated by scripts/benchmark_registry.py; do not edit by hand. -->",
+        "",
+        "## Current qualified load measurements",
+        "",
+        "<!-- benchmark-current-load-start -->",
+        "",
+        "Only explicitly designated current rows appear here. Historical, superseded, refuted, and unmeasured configurations remain in the complete tables below rather than being silently deleted.",
+        "",
+        _markdown_table(
+            [
+                "Platform",
+                "Computer",
+                "State",
+                "Selected scan",
+                "Source detector",
+                "Detector bin",
+                "Output detector",
+                "Source dtype",
+                "Working dtype",
+                "Cache/process state",
+                "Wall boundary",
+                "Samples",
+                "p50",
+                "p95",
+                "Maximum",
+                "Logical resident",
+                "Accelerator/driver peak",
+                "Process/tree peak",
+                "Process physical-footprint peak",
+                "Swap delta",
+                "Parity",
+                "Device tested",
+                "Date tested",
+                "Revision",
+            ],
+            _current_load_rows(registry),
+        ),
+        "",
+        "<!-- benchmark-current-load-end -->",
         "",
         "## Coverage summary",
         "",
@@ -858,6 +996,7 @@ def render_document(registry: dict[str, Any]) -> str:
                 "Accelerator peak",
                 "Total-device peak",
                 "Process/tree peak",
+                "Process physical-footprint peak",
                 "Swap delta",
                 "Parity",
                 "Device tested",

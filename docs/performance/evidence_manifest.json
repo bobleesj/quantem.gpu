@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "source_revision": "1a186804807cb6c2acf7c4f5d0c5073339bddc9a",
-  "source_revision_scope": "Clean platform/computer matrix, fail-closed benchmark harness, and backend-neutral logical-pixel parity revision. Every retained physical measurement remains bound to its own row revision, fixture identity, cache state, and timing boundary.",
+  "source_revision": "68dbe3aa5f816e2d1c1ae976e1874790cffb4319",
+  "source_revision_scope": "Latest clean canonical source/working metadata and cross-backend logical-pixel parity revision used by the current Python MPS and CPU rows. Native Swift/Metal rows remain bound to clean revision 5106ca4; every retained physical measurement keeps its own revision, fixture identity, cache state, and timing boundary.",
   "purpose": "Fingerprints for the current benchmark dashboard, its authoritative registry and rendering inputs, provenance ledger, parity and methodology contracts, and canonical historical evidence. Landing, API, and backend capability pages intentionally do not duplicate measurements.",
   "pages": [
     {
@@ -11,7 +11,7 @@
     },
     {
       "path": "docs/dashboard.md",
-      "sha256": "4411684058266c2bd6647de9a9083cc3c926f8f5524dca94508cafb7e2b0d022",
+      "sha256": "000789aa63c6d3de32f9f49950418eb43e95ec628504dc137cd666586a5a785e",
       "role": "Single human-facing current capability, speed, memory, and parity overview"
     },
     {
@@ -21,7 +21,7 @@
     },
     {
       "path": "docs/platforms/mps.md",
-      "sha256": "dc366cee7aab48987a29d43e088a68a95411fe0252ec485b3431a2c37ff60d1f",
+      "sha256": "ee46b1a08da8741b2f30dbc694eb0aac5f328b51853436a57848bcbaf82cd19e",
       "role": "Python MPS direct-Metal lifetime and resident-versus-peak memory contract"
     },
     {
@@ -46,12 +46,12 @@
     },
     {
       "path": "docs/performance/results.md",
-      "sha256": "29239812d13b535d6558f25461a8cd2d8d10871b614a6b058a1b8bf03b714e7f",
+      "sha256": "69bd849013d28c1276aa6926be97e9fa8fbb6a920bfc744540d6d281fd3ccd0a",
       "role": "Authoritative current benchmark provenance ledger"
     },
     {
       "path": "docs/performance/changes.md",
-      "sha256": "41f07be5bc4264590323366478c5f204b46af60b2963c4011c754512373257e4",
+      "sha256": "6407edee4bb8938e740043ba034e4a9342b2eda1b0d624f55923b5035e4dde22",
       "role": "Benchmark promotion, rejection, and supersession decisions without copied values"
     },
     {
@@ -108,12 +108,12 @@
   "authoritative_inputs": [
     {
       "path": "benchmarks/benchmark_registry.json",
-      "sha256": "13ecd2d768f8737156d8a31138cfc6f2ddbb1ed62395484b42133f9d72c4af64",
+      "sha256": "54a8d9c9704e0a4dca2b8d1a47acf6f7548e43b2ea76b9d3904763c988926199",
       "role": "Atomic Platform, Computer, module, configuration, state, measurement, and runbook registry"
     },
     {
       "path": "docs/_generated/benchmark_coverage.md",
-      "sha256": "eaba3269bbf5ab6d996245dde9aef5271466827705796ab9d4b830d4955fc1c5",
+      "sha256": "eeb1d45af6f24b2c855dc78815ecd9fe6040b23c790a55addf6508410b766e7c",
       "role": "Generated filterable coverage, retained-measurement, and runbook tables"
     },
     {
@@ -123,13 +123,13 @@
     },
     {
       "path": "scripts/benchmark_registry.py",
-      "sha256": "0c0458f61aa0bb0b0b3fdaf073644460035a4067840538bec2c29f751f2e7600",
+      "sha256": "06d2cae0b618e0e017061f26e83791fcab2478a0563d2cb0d3199b9c80d73573",
       "role": "Registry validation, rendering, next-gate selection, and reproducible-command entry point"
     },
     {
       "path": "experiments/20260822-platform-computer-profile/manifest.json",
-      "sha256": "c3cdb729e151350a7f80a026b3060e571d439b23bb11c56376dd6f12c7dd19ce",
-      "role": "Running physical-device matrix ledger; partial measurements may not be promoted while this manifest is nonterminal"
+      "sha256": "a952cc31709eb975070a7f481a349fa06a909ec9d06c9cab00fbd8b6104b1b17",
+      "role": "Completed physical-device matrix ledger with accepted, partial, refuted, blocked, and pending atomic gates"
     }
   ]
 }
