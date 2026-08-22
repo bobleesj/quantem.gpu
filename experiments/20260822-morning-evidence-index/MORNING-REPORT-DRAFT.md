@@ -13,8 +13,8 @@ experiment, and which remain pending?
 
 ## Decision
 
-**Mixed.** Thirteen artifacts support their stated bounded claims, four
-record refuted experiments, and two remain pending. Thirteen atomic measurements
+**Mixed.** Sixteen artifacts support their stated bounded claims, four
+record refuted experiments, and two remain pending. Nineteen atomic measurements
 are admissible under their original boundaries. None is arbitrary-source cold
 HDF5 or Live4DSTEM wall-to-wall evidence, so the campaign does **not** establish
 a cold-load target on Phil, Steve Kerr, or Rodman.
@@ -26,14 +26,16 @@ a cold-load target on Phil, Steve Kerr, or Rodman.
   catalog time are outside that boundary.
 - The controlled Swift/Metal package boundary on Phil reached `0.524590 s` p50
   across seven processes. Its `1.572781 s` p95/max outlier is retained.
-- Current accepted Python MPS warm/uncontrolled-page p50 values are `0.522754 s`,
+- Current accepted Python MPS warm/uncontrolled-page p50 values are `0.259189 s`,
   `0.498708 s`, `0.383772 s`, and `0.356969 s` for detector bins 1, 2, 4, and 8.
+  The bin-1 value requires explicit resident destination recycling; the matched
+  fresh-destination bin-1 p50 is `0.425533 s`.
 - Rodman admitted the full `512x512x192x192 uint16` volume once at `3.827780 s`.
   One sample is not a percentile distribution, and swap increased materially.
 - The historical WebGPU full packed-uint16 candidate is refuted. Resident mode
   0 bypassed its integer CoM branch, and iDPC exceeded the frozen tolerance.
-  A later paired-u32 implementation has only a six-case hardware smoke, not a
-  full-fixture parity or performance qualification.
+  A separate clean paired-u32 implementation now passes physical full-native
+  DPC/iDPC parity; this does not relabel the historical failed bundle.
 - Selective loading is source-qualified for CUDA and Python MPS semantics, but
   native Swift/Metal lacks bulk indexed selection and WebGPU still reads whole
   intersecting files. All physical selective-I/O benchmark cells remain open.
@@ -44,6 +46,14 @@ a cold-load target on Phil, Steve Kerr, or Rodman.
 - Physical WebGPU SSB completed on Phil, but phase parity is refuted: maximum
   wrapped error was about `0.0597773 rad` against a frozen `0.0002 rad` limit.
   Its `329 ms` first-use and `17.9 ms` repeated p50 timings are diagnostic only.
+- Physical full-native WebGPU paired-u32 DPC/iDPC is accepted at source
+  `64b6eec6` and evidence `08c071fe`: the one warm/source-unspecified load was
+  `1.080860 s`, while resident DPC row/column were `0.700 ms` p50 and optimized
+  iDPC was `1.400 ms` p50 over seven synchronized readbacks.
+- Exact CUDA prepared-result reopen at source `eaf76953` reduced p50 from
+  `0.132600 s` to `0.103284 s` with byte-exact arrays. Later strong-validation
+  work culminates in clean source candidate `3a85bef4`, which remains an
+  evidence placeholder.
 
 ## Main caveat
 
@@ -58,15 +68,23 @@ leaderboard.
 |---|---|---:|---:|---|---|---:|
 | `real-512x512x192x192-u16-bslz4-27shard-master-fixture-c` | `c9c0d968fae70b8911ae925d676b90007886970fa99fe296a47cfe07844bbfe9` | `512x512` | `192x192` | `uint16` | bitshuffle-LZ4 | 27 |
 | `real-512-native-detector` | `4802ec16ba241fef439e9dcb1c28e94f9cf9d95f773df9c5c8c3b5f7ed8192c4` | `512x512` | `192x192` | `uint16` | bitshuffle-LZ4 | — |
+| `full-native-webgpu-512x512x192x192-u16` | `4802ec16ba241fef439e9dcb1c28e94f9cf9d95f773df9c5c8c3b5f7ed8192c4` | `512x512` | `192x192` | `uint16` | bitshuffle-LZ4 | 27 |
 
 Private filesystem paths are intentionally absent. Every accepted timing row
 in the machine index binds to one listed identifier and hash.
+
+The CUDA and WebGPU identifiers resolve to the same master-file SHA-256 but
+record different compressed-byte definitions (`3,164,436,015 B` and
+`3,165,551,746 B`). They remain separate fixture records until that provenance
+difference is reconciled; the index does not infer that the byte counts are
+interchangeable.
 
 ## Accepted load and product measurements
 
 | Platform | Computer | Area | Scan | Source detector | Detector bin | Working detector | Working dtype | Cache state | Samples | p50 (s) | p95 (s) | Max (s) | Single wall (s) |
 |---|---|---|---:|---:|---:|---:|---|---|---:|---:|---:|---:|---:|
-| Python MPS | Phil | loading | `512x512` | `192x192` | 1 | `192x192` | `uint16` | warm OS pages; uncontrolled | 6 | 0.522754 | 0.540934 | 0.544737 | — |
+| Python MPS | Phil | loading | `512x512` | `192x192` | 1 | `192x192` | `uint16` | warm/uncontrolled pages after one lifecycle warmup; fresh destination | 8 | 0.425533 | 0.436353 | 0.437419 | — |
+| Python MPS | Phil | loading | `512x512` | `192x192` | 1 | `192x192` | `uint16` | warm/uncontrolled pages after one lifecycle warmup; destination recycled | 8 | 0.259189 | 0.263118 | 0.263375 | — |
 | Python MPS | Phil | loading | `512x512` | `192x192` | 2 | `96x96` | `uint16` | warm OS pages; uncontrolled | 14 | 0.498708 | 0.503702 | 0.505150 | — |
 | Python MPS | Phil | loading | `512x512` | `192x192` | 4 | `48x48` | `uint16` | prepared plans; warm or uncontrolled OS pages | 6 | 0.383772 | 0.390006 | 0.391839 | — |
 | Python MPS | Phil | loading | `512x512` | `192x192` | 8 | `24x24` | `uint16` | warm OS pages; uncontrolled | 6 | 0.356969 | 0.359302 | 0.359820 | — |
@@ -75,6 +93,19 @@ in the machine index binds to one listed identifier and hash.
 | Native Swift/Metal | Rodman | loading and products | `512x512` | `192x192` | 1 | `192x192` | `uint16` | prepared indexes; source pages unspecified | 1 | — | — | — | 3.827780 |
 | Native Swift/Metal | Rodman | loading and products | `512x512` | `192x192` | 2 | `96x96` | `uint16` | prepared indexes; destination reused | 6 | 0.683492 | 0.690893 | 0.690893 | — |
 | Native Swift/Metal | Rodman | loading and products | `512x512` | `192x192` | 4 | `48x48` | `uint16` | prepared indexes; destination reused | 12 | 0.631540 | 0.645521 | 0.645521 | — |
+| WebGPU | Phil | loading | `512x512` | `192x192` | 1 | `192x192` | `uint16` | prepared block indexes; warm after parity; source pages otherwise unspecified | 1 | — | — | — | 1.080860 |
+
+The Python MPS bin-1 rows are the two arms of one balanced
+A-B-B-A-B-A-A-B resident-lifecycle comparison. Recycling is an explicit
+caller-selected destination lifecycle, not a cold-load result or an automatic
+device policy. The complete-volume exact hash passed in a separate
+unconfounded lifecycle smoke; timed trials used exact selected-frame hashes to
+avoid adding an 18-GiB CPU readback to the measured boundary.
+
+The WebGPU load is one observation, not a percentile distribution. Its
+instrumented stage counters overlap: `0.245 s` read wait, `2.828 s` aggregate
+read-worker time, `0.705 s` decompression, `0.232 s` upload, and `0.599 s` GPU
+wait must not be added together or treated as a sequential wall decomposition.
 
 ## Accepted CUDA screening measurements
 
@@ -100,6 +131,28 @@ locally resolved and hash-verified. Raw CUDA trial bundles remain external
 `local-evidence://` references with sealed manifest hashes; they were not copied
 into this Phil evidence-index worktree.
 
+## Accepted CUDA prepared-result cache reopen
+
+| Arm | Computer | Cache state | Samples | p50 (s) | p95 (s) | Max (s) | Host RSS p50 (B) | Cache bytes |
+|---|---|---|---:|---:|---:|---:|---:|---:|
+| legacy recomputed phase | MJGOAT | prepared immutable result cache; fresh process | 3 | 0.132600 | 0.139285 | 0.140027 | 1,027,305,472 | 4,408,850 |
+| retained exact phase | MJGOAT | prepared immutable result cache; fresh process | 3 | 0.103284 | 0.104044 | 0.104129 | 1,026,908,160 | 5,457,672 |
+
+Source `eaf76953d752e3e419916157aa6bcc7883b85813` and evidence revision
+`387314dcb1e61df20893bdeb1ccc5b8304ec93fd` support only this exact cache-reopen
+comparison. All six retained public arrays, including DPC phase, are byte exact;
+version-3 caches retain exact recomputation compatibility. The retained phase
+adds `1,048,822 B` to the cache. Source creation is excluded: the recorded
+one-shot builds (`1.446016 s` legacy and `1.969606 s` candidate) were sequential
+and host-variable, not A-B-B-A, so they do not support a source-build speed
+claim.
+
+Later strong-validation and lazy-I/O work culminates in clean source candidate
+`3a85bef4ccac47576cbbcde21c76802137d053f5`. It supersedes `310b5e4` and
+`a23ae3b` after a cross-alias/external-shard validation defect was found and
+fixed. This report keeps it source-only and assigns no parity, timing, memory,
+or consumer-readiness claim until its final clean evidence revision is supplied.
+
 ## Peak-memory definitions and measurements
 
 - **Logical resident bytes** are the scientifically addressable working tensor,
@@ -111,17 +164,18 @@ into this Phil evidence-index worktree.
 - **Process peak footprint** is the operating-system physical-footprint metric
   when the artifact recorded it. It is not interchangeable with RSS.
 
-| Platform | Computer | Detector bin | Logical resident (B) | Accelerator peak (B) | Process peak RSS (B) | Process peak footprint (B) |
-|---|---|---:|---:|---:|---:|---:|
-| Python MPS | Phil | 1 | 19,327,352,832 | 19,801,456,640 | 739,966,976 | — |
-| Python MPS | Phil | 2 | 4,831,838,208 | 6,107,774,976 | 617,414,656 | — |
-| Python MPS | Phil | 4 | 1,207,959,552 | 2,483,896,320 | — | — |
-| Python MPS | Phil | 8 | 301,989,888 | 1,577,926,656 | 613,924,864 | — |
-| Native Swift/Metal | Phil | 1 | 19,327,352,832 | 19,940,737,024 | 1,064,058,880 | — |
-| Native Swift/Metal | Phil | 1 | 19,327,352,832 | 19,940,737,024 | 685,670,400 | — |
-| Native Swift/Metal | Rodman | 1 | 19,327,352,832 | 19,940,737,024 | 669,876,224 | 20,033,504,288 |
-| Native Swift/Metal | Rodman | 2 | 4,831,838,208 | 5,445,222,400 | 694,779,904 | 5,563,728,952 |
-| Native Swift/Metal | Rodman | 4 | 1,207,959,552 | 1,821,343,744 | 702,283,776 | — |
+| Platform | Computer | Detector bin | Destination arm | Logical resident (B) | Accelerator peak (B) | RSS statistic | Process RSS (B) | Process peak footprint (B) |
+|---|---|---:|---|---:|---:|---|---:|---:|
+| Python MPS | Phil | 1 | fresh | 19,327,352,832 | 19,801,456,640 | p50 | 737,763,328 | — |
+| Python MPS | Phil | 1 | recycled | 19,327,352,832 | 19,801,456,640 | p50 | 738,426,880 | — |
+| Python MPS | Phil | 2 | fresh | 4,831,838,208 | 6,107,774,976 | peak | 617,414,656 | — |
+| Python MPS | Phil | 4 | fresh | 1,207,959,552 | 2,483,896,320 | — | — | — |
+| Python MPS | Phil | 8 | fresh | 301,989,888 | 1,577,926,656 | peak | 613,924,864 | — |
+| Native Swift/Metal | Phil | 1 | controlled package | 19,327,352,832 | 19,940,737,024 | peak | 1,064,058,880 | — |
+| Native Swift/Metal | Phil | 1 | private resident | 19,327,352,832 | 19,940,737,024 | peak | 685,670,400 | — |
+| Native Swift/Metal | Rodman | 1 | fresh | 19,327,352,832 | 19,940,737,024 | peak | 669,876,224 | 20,033,504,288 |
+| Native Swift/Metal | Rodman | 2 | recycled | 4,831,838,208 | 5,445,222,400 | peak | 694,779,904 | 5,563,728,952 |
+| Native Swift/Metal | Rodman | 4 | recycled | 1,207,959,552 | 1,821,343,744 | peak | 702,283,776 | — |
 
 The CUDA final-source distribution streamed the `19,327,352,832` decoded bytes
 instead of retaining a full logical tensor. Median per-trial host peak RSS was
@@ -131,22 +185,40 @@ GPU reserved peak was `5,050,266,112 B`; and total-card peak was
 baseline. Thus the process reserve stayed below the six-GiB gate, while the
 separately reported total-card peak must not be mislabeled process memory.
 
-The two Phil detector-bin-1 rows have different timing boundaries and process
-measurements; their equal logical/Metal allocation does not make them duplicate
-benchmarks. The missing Python MPS detector-bin-4 RSS is an unresolved evidence
-cell, not zero.
+The two native Swift/Metal Phil detector-bin-1 rows have different timing
+boundaries and process measurements; their equal logical/Metal allocation does
+not make them duplicate benchmarks. The missing Python MPS detector-bin-4 RSS
+is an unresolved evidence cell, not zero. The MPS lifecycle artifact reports
+bin-1 RSS p50, not peak RSS; the table labels that distinction explicitly.
 
-## Accepted resident DPC/iDPC measurement
+For the accepted WebGPU full-native run, Chrome's process-tree peak RSS was
+`6,835,355,648 B`, last sampled RSS was `3,982,147,584 B`, JavaScript heap was
+`66,190,770 B`, and observed swap growth was zero. WebGPU did not expose total
+device memory, so neither logical resident bytes nor accelerator peak bytes are
+claimed for that row.
 
-| Platform | Computer | Input | Samples | Wall p50 (ms) | Wall p95 (ms) | Wall max (ms) | Peak Metal (B) | Peak RSS (B) | Peak footprint (B) |
-|---|---|---|---:|---:|---:|---:|---:|---:|---:|
-| Native Swift/Metal | Rodman | resident `512x512 float32` CoM row/column maps | 15 | 1.979 | 3.640 | 3.640 | 9,895,936 | 36,618,240 | 69,141,104 |
+## Accepted resident DPC/iDPC measurements
+
+| Platform | Computer | Product | Input | Samples | Wall p50 (ms) | Wall p95 (ms) | Wall max (ms) |
+|---|---|---|---|---:|---:|---:|---:|
+| Native Swift/Metal | Rodman | rotation plus iDPC | resident `512x512 float32` CoM row/column maps | 15 | 1.979 | 3.640 | 3.640 |
+| WebGPU | Phil | DPC row | resident exact full-native state | 7 | 0.700 | 0.900 | 0.900 |
+| WebGPU | Phil | DPC column | resident exact full-native state | 7 | 0.700 | 0.800 | 0.800 |
+| WebGPU | Phil | optimized-rotation iDPC | resident exact full-native state | 7 | 1.400 | 1.500 | 1.500 |
 
 This boundary starts after loading and CoM reduction. Rotation row/column maximum
 absolute error is `1.1920928955078125e-7`. iDPC maximum absolute error is
 `9.5367431640625e-6`, p99 is `4.76837158203125e-6`, and normalized maximum
 error is `1.6974102170991063e-7` against float64 NumPy followed by float32
 publication.
+
+The Rodman resident kernel recorded `9,895,936 B` peak Metal,
+`36,618,240 B` peak RSS, and `69,141,104 B` peak physical footprint. The WebGPU
+rows are synchronized wall time through awaited GPU readback, not GPU-only
+timestamp intervals. DPC row and column are byte exact. Zero- and
+optimized-rotation iDPC each have zero frozen-tolerance violations; optimized
+iDPC maximum absolute error is `1.52587890625e-5` and maximum tolerance ratio
+is `0.8993483035`.
 
 ## Accepted correctness and contract artifacts without a promoted speed row
 
@@ -192,12 +264,13 @@ not evidence for native uint8 HDF5-source decode.
 | Family | Artifact | Verified so far | Missing gate |
 |---|---|---|---|
 | Python MPS SSB | fixture recovery | exact detector-bin-2 companion and explicitly sampled bounded pass | clean source; frozen randomized-pair engine; 200-trial plus Nelder-Mead gate |
-| WebGPU | paired-u32 CoM | six row/column bitwise hardware-smoke cases, including saturation | full real-fixture DPC/iDPC parity and performance |
 | Rodman Swift/Metal | bin-2 barrier consolidation | source tests only | uncontended physical smoke and A-B-B-A |
 
-The WebGPU iDPC artifact family is classified refuted overall because its only
-full real-fixture run failed. The later smoke is retained inside that family as
-pending work; it is not a parity fix or performance claim.
+The historical WebGPU packed-uint16 candidate remains refuted because resident
+mode 0 bypassed its uint8-only integer path. The later paired-u32 source is a
+separate clean lineage whose full real-fixture DPC/iDPC parity and synchronized
+resident timings are now accepted. That success does not rewrite the historical
+failure or promote its rejected timings.
 
 ## Unresolved metric cells
 
@@ -209,14 +282,19 @@ pending work; it is not a parity fix or performance claim.
 4. Live4DSTEM wall-to-wall load, prepared reopen, A-B-A switching, and headed
    interaction evidence.
 5. Python MPS detector-bin-4 atomic accepted-arm process RSS.
-6. WebGPU full-fixture paired-u32 DPC/iDPC parity and performance.
+6. WebGPU arbitrary-source cold-load distribution and total device-memory
+   measurement for the accepted paired-u32 lineage.
 7. WebGPU true range-read selective I/O with ordered and duplicate selectors.
 8. Native Swift/Metal bulk indexed selective loading.
 9. CUDA arbitrary-source controlled-cold and Live4DSTEM application evidence.
 10. Public CUDA result fields for the exact internal ABF, ADF, and total maps.
-11. MPS SSB clean 200-trial calibration under the frozen engine.
-12. Rodman detector-bin-2 candidate device qualification.
-13. A repeated Rodman full-native distribution without paging contamination.
+11. CUDA result-cache source-build A-B-B-A distribution; retained one-shot
+    build observations are not a speed comparison.
+12. Final evidence pin for CUDA source candidate `3a85bef`, including strong
+    validation and lazy cache-hit I/O.
+13. MPS SSB clean 200-trial calibration under the frozen engine.
+14. Rodman detector-bin-2 candidate device qualification.
+15. A repeated Rodman full-native distribution without paging contamination.
 
 ## Review surfaces
 
