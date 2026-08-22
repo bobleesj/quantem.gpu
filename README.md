@@ -233,16 +233,12 @@ jupyter-book build docs
 
 ## Citing quantem.gpu
 
-If `quantem.gpu` accelerated IO, detector or DPC analysis, display math, SSB
-reconstruction, or CUDA/MPS/Metal/WebGPU workflows contributed to your
-research, please consider citing:
-
-> Sangjoon Lee et al., “Interactive Framework for Real-Time 4DSTEM Analysis
-> and Reconstruction,” *Microscopy and Microanalysis* 32 (Supplement 1),
-> ozag053.941 (2026). https://doi.org/10.1093/mam/ozag053.941
-
-Machine-readable software and preferred article citation metadata are provided
-in [CITATION.cff](CITATION.cff).
+If the quantEM interactive framework—including `quantem.gpu`, GPU-accelerated
+I/O, analysis, or reconstruction workflows on MPS or CUDA—contributed to your
+research, please consider citing Lee et al., *Interactive Framework for
+Real-Time 4DSTEM Analysis and Reconstruction*, *Microscopy and Microanalysis*
+32 (Supplement 1), ozag053.941 (2026),
+[https://doi.org/10.1093/mam/ozag053.941](https://doi.org/10.1093/mam/ozag053.941).
 
 ## Package boundaries
 

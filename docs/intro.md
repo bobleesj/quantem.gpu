@@ -121,15 +121,14 @@ adding or moving a backend.
 
 ## Citing and getting help
 
-If the QuantEM interactive framework—including `quantem.gpu` accelerated IO,
-analysis, or reconstruction—contributed to your research, please consider
-citing Lee et al., *Interactive Framework for Real-Time 4DSTEM Analysis and
-Reconstruction*, *Microscopy and Microanalysis* 32 (Supplement 1),
-ozag053.941 (2026), https://doi.org/10.1093/mam/ozag053.941.
+If the quantEM interactive framework—including `quantem.gpu`, GPU-accelerated
+I/O, analysis, or reconstruction workflows on MPS or CUDA—contributed to your
+research, please consider citing Lee et al., *Interactive Framework for
+Real-Time 4DSTEM Analysis and Reconstruction*, *Microscopy and Microanalysis*
+32 (Supplement 1), ozag053.941 (2026),
+[https://doi.org/10.1093/mam/ozag053.941](https://doi.org/10.1093/mam/ozag053.941).
 
 Questions and bug reports belong in the
 [quantem.gpu issue tracker](https://github.com/bobleesj/quantem.gpu/issues).
-Machine-readable citation metadata is available in
-[CITATION.cff](https://github.com/bobleesj/quantem.gpu/blob/main/CITATION.cff).
 The package is maintained by the Ophus group and distributed under the MIT
 License.
