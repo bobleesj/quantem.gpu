@@ -1,0 +1,51 @@
+{
+  "schema": "quantem.gpu.morning-evidence-validation/v1",
+  "validated_at": "2026-08-22T07:15:23-07:00",
+  "runtime_or_hardware_execution": false,
+  "coordinator_base": "23d25619cfe22d5e89761fda2d2796a7c82ba090",
+  "artifact_count": 18,
+  "accepted_artifact_count": 12,
+  "refuted_artifact_count": 3,
+  "pending_artifact_count": 3,
+  "accepted_atomic_measurement_count": 10,
+  "unresolved_metric_cell_count": 12,
+  "unique_source_worktree_states": {
+    "clean": 13,
+    "dirty": 3,
+    "not_applicable": 1
+  },
+  "checks": [
+    {
+      "command": "python experiments/20260822-morning-evidence-index/validate_evidence_index.py",
+      "result": "passed; all referenced artifact hashes, revisions, observed source states, atomic measurement contracts, and fixture bindings verified"
+    },
+    {
+      "command": "python scripts/check_profile_registry.py",
+      "result": "passed; 35 platform/module cells and 11 retained experiments"
+    },
+    {
+      "command": "PYTHONPATH=src pytest -q tests/test_profile_registry.py",
+      "result": "passed; 3 tests"
+    },
+    {
+      "command": "python scripts/check_docs_links.py",
+      "result": "passed; source links resolve"
+    },
+    {
+      "command": "python -m json.tool experiments/20260822-morning-evidence-index/evidence-index.json",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "policy_assertions": [
+    "no accepted measurement is labeled cold",
+    "no refuted or pending artifact contributes an accepted performance row",
+    "native uint8-source bitshuffle support is not claimed for Python MPS",
+    "the rejected packed-uint16 WebGPU timing is not promoted",
+    "the Rodman full-native single sample is not labeled p50 or p95",
+    "no private fixture filesystem path is present in the index or report"
+  ]
+}
