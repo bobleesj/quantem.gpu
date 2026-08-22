@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260822-morning-evidence-index",
+  "status": "completed",
+  "question": "Which artifacts from the overnight backend campaign are accepted, refuted, or pending under their original measurement definitions?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260822-morning-evidence-index/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "23d25619cfe22d5e89761fda2d2796a7c82ba090",
+    "entrypoint": "source-only artifact and lineage validation",
+    "dirty": false,
+    "diff_sha256": null,
+    "snapshot_path": "local-snapshot://quantem-gpu-morning-evidence-index-20260822/source"
+  },
+  "inputs": [
+    {
+      "dataset_id": "coordinator-profile-registry-at-23d2561",
+      "path": "git-object://23d25619cfe22d5e89761fda2d2796a7c82ba090/experiments/RUNS.md",
+      "sha256": "dc9da7d7a0c5cf0f3811a090eb65de332b9e927308dc6a74dc56f2b3bab71fb3"
+    }
+  ],
+  "parameters": {
+    "runtime_or_hardware_execution": false,
+    "copy_source_artifacts": false,
+    "promote_documentation": false,
+    "allowed_dispositions": ["accepted", "refuted", "pending"],
+    "required_fields": [
+      "artifact path and SHA-256",
+      "source and evidence revisions",
+      "cache and timing boundary",
+      "sample count",
+      "source and working geometry",
+      "dtype, scan bin, detector bin, and crop",
+      "parity claim",
+      "memory definitions",
+      "limitations"
+    ]
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "source-only",
+    "gpu_ids": [],
+    "gpu_model": "not used"
+  },
+  "outputs": [
+    {
+      "kind": "machine-readable evidence index",
+      "artifact": "evidence-index.json",
+      "path": "experiments/20260822-morning-evidence-index/evidence-index.json",
+      "sha256": "f636ba9ad630139fb0ee8a50822751bf772db7797a1e0942b8bcae8f93316113",
+      "result": "18 referenced artifacts: 12 accepted, 3 refuted, and 3 pending; 10 accepted atomic measurements; 12 unresolved cells"
+    },
+    {
+      "kind": "human morning-report draft",
+      "artifact": "MORNING-REPORT-DRAFT.md",
+      "path": "experiments/20260822-morning-evidence-index/MORNING-REPORT-DRAFT.md",
+      "sha256": "2a3fdd5e582d2be8858d8d4e48dbe342919c73c466a8eb95331372e3e4019db8",
+      "result": "accepted, refuted, and pending claims remain separated by platform, computer, cache state, timing boundary, and memory definition"
+    },
+    {
+      "kind": "source-only validator",
+      "artifact": "validate_evidence_index.py",
+      "path": "experiments/20260822-morning-evidence-index/validate_evidence_index.py",
+      "sha256": "154b7961d7079cd50ad1106f4d3cbeb1f5ac4fcefc7d0ee92a5c9972d7fb58d7",
+      "result": "all referenced hashes, revisions, worktree states, fixture bindings, and atomic metric contracts passed"
+    },
+    {
+      "kind": "validation record",
+      "artifact": "validation.json",
+      "path": "experiments/20260822-morning-evidence-index/validation.json",
+      "sha256": "cdf84df594d0ed82e1ebf9fb9ddfaf72bb8342852f1f980eb6aa87277721f309",
+      "result": "profile registry, registry tests, documentation source links, JSON syntax, and diff hygiene passed"
+    }
+  ],
+  "results": {
+    "decision": "mixed",
+    "accepted_artifacts": 12,
+    "refuted_artifacts": 3,
+    "pending_artifacts": 3,
+    "accepted_atomic_measurements": 10,
+    "unresolved_metric_cells": 12,
+    "consumer_handoff": false,
+    "documentation_promoted": false
+  },
+  "timestamps": {
+    "created": "2026-08-22T07:00:05-07:00",
+    "started": "2026-08-22T07:00:05-07:00",
+    "finished": "2026-08-22T07:16:10-07:00"
+  }
+}
