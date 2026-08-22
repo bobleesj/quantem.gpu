@@ -125,9 +125,11 @@ private struct Options {
       }
     }
     let residentStorageRaw = values["--destination-storage"] ?? "shared"
-    guard let residentStorage = Metal4DSTEMResidentStorage(
-      rawValue: residentStorageRaw
-    ) else {
+    guard
+      let residentStorage = Metal4DSTEMResidentStorage(
+        rawValue: residentStorageRaw
+      )
+    else {
       throw BenchmarkError.usage(
         "--destination-storage must be shared or private."
       )
