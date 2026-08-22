@@ -1,17 +1,19 @@
 {
   "schema": "quantem.gpu.morning-evidence-validation/v1",
-  "validated_at": "2026-08-22T07:15:23-07:00",
+  "validated_at": "2026-08-22T07:53:30-07:00",
   "runtime_or_hardware_execution": false,
   "coordinator_base": "23d25619cfe22d5e89761fda2d2796a7c82ba090",
-  "artifact_count": 18,
-  "accepted_artifact_count": 12,
-  "refuted_artifact_count": 3,
-  "pending_artifact_count": 3,
-  "accepted_atomic_measurement_count": 10,
-  "unresolved_metric_cell_count": 12,
+  "artifact_count": 19,
+  "accepted_artifact_count": 13,
+  "refuted_artifact_count": 4,
+  "pending_artifact_count": 2,
+  "accepted_atomic_measurement_count": 13,
+  "refuted_diagnostic_count": 1,
+  "pending_observation_count": 1,
+  "unresolved_metric_cell_count": 13,
   "unique_source_worktree_states": {
-    "clean": 13,
-    "dirty": 3,
+    "clean": 15,
+    "dirty": 2,
     "not_applicable": 1
   },
   "checks": [
@@ -45,6 +47,8 @@
     "no refuted or pending artifact contributes an accepted performance row",
     "native uint8-source bitshuffle support is not claimed for Python MPS",
     "the rejected packed-uint16 WebGPU timing is not promoted",
+    "the refuted WebGPU SSB timing is diagnostic and not promoted",
+    "the provisional CUDA compact-index package distribution is not an accepted measurement",
     "the Rodman full-native single sample is not labeled p50 or p95",
     "no private fixture filesystem path is present in the index or report"
   ]
