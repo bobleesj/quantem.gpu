@@ -1351,6 +1351,63 @@ final class Native4DSTEMIOTests: XCTestCase {
     XCTAssertEqual(result.metrics.workingPayloadBytes, UInt64(packedWordCount * 4))
     XCTAssertEqual(result.metrics.destinationStorageMode, "shared")
 
+    let privatePlan = try Metal4DSTEMIndexedBinnedLoadPlan(
+      source: source,
+      maximumDecodedWindowBytes: source.decodedBytesPerFrame,
+      detectorBands: bands,
+      detectorBin: 2,
+      sourceAudit: audit,
+      maximumShardBytes: 1 << 20,
+      residentStorage: .privateGPU
+    )
+    let privateResult = try loader.loadExactBinnedShards(
+      source: source,
+      plan: privatePlan
+    )
+    XCTAssertEqual(privateResult.products, result.products)
+    XCTAssertEqual(privateResult.binningProvenance, result.binningProvenance)
+    XCTAssertEqual(privateResult.metrics.destinationStorageMode, "private")
+    let privateShard = try XCTUnwrap(privateResult.workingVolumeShards.first)
+    XCTAssertEqual(privateShard.storageMode, .private)
+    let readback = try XCTUnwrap(
+      device.makeBuffer(length: privateShard.length, options: .storageModeShared)
+    )
+    let readbackQueue = try XCTUnwrap(device.makeCommandQueue())
+    let readbackCommand = try XCTUnwrap(readbackQueue.makeCommandBuffer())
+    let readbackEncoder = try XCTUnwrap(readbackCommand.makeBlitCommandEncoder())
+    readbackEncoder.copy(
+      from: privateShard,
+      sourceOffset: 0,
+      to: readback,
+      destinationOffset: 0,
+      size: privateShard.length
+    )
+    readbackEncoder.endEncoding()
+    readbackCommand.commit()
+    readbackCommand.waitUntilCompleted()
+    XCTAssertEqual(readbackCommand.status, .completed)
+    XCTAssertNil(readbackCommand.error)
+    XCTAssertEqual(
+      memcmp(
+        readback.contents(),
+        result.workingVolumeShards[0].contents(),
+        privateShard.length
+      ),
+      0
+    )
+    let incompatibleSharedDestination = try XCTUnwrap(
+      device.makeBuffer(length: privateShard.length, options: .storageModeShared)
+    )
+    XCTAssertThrowsError(
+      try loader.loadExactBinnedShards(
+        source: source,
+        plan: privatePlan,
+        destinationShards: [incompatibleSharedDestination]
+      )
+    ) { error in
+      XCTAssertTrue(error.localizedDescription.contains("must use private Metal storage"))
+    }
+
     let bufferedPlan = try Metal4DSTEMIndexedBinnedLoadPlan(
       source: source,
       maximumDecodedWindowBytes: source.decodedBytesPerFrame,

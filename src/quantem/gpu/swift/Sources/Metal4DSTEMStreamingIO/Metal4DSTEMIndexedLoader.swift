@@ -585,8 +585,10 @@ public final class Metal4DSTEMIndexedLoader {
   private let auditedLow8Detector192SIMDProductPipeline: MTLComputePipelineState
   private let detectorSumPipeline: MTLComputePipelineState
   private let auditedLow8TiledDetectorSumPipeline: MTLComputePipelineState
+  private let fusedTiledLow8Bin1ProductsDetectorPartialsPipeline: MTLComputePipelineState
   private let fusedTiledLow8Bin2ProductsDetectorPartialsPipeline: MTLComputePipelineState
   private let detectorAccumulateU16PartialsPipeline: MTLComputePipelineState
+  private let privateResidentPagePreparationPipeline: MTLComputePipelineState
   private let exactBinner: Metal4DSTEMExactBinner
   private let stageProfiler: IndexedStageProfiler?
   private var profiledPreviousGPUEndTime: CFTimeInterval?
@@ -631,12 +633,19 @@ public final class Metal4DSTEMIndexedLoader {
         let auditedLow8TiledDetectorSum = detector.makeFunction(
           name: Metal4DSTEMKernels.detectorAccumulateU8U64FrameTiledFunction
         ),
+        let fusedTiledLow8Bin1ProductsDetectorPartials = detector.makeFunction(
+          name: Metal4DSTEMKernels
+            .contiguousDetectorBin1U8ProductsDetectorPartialsTiled32x8Function
+        ),
         let fusedTiledLow8Bin2ProductsDetectorPartials = detector.makeFunction(
           name: Metal4DSTEMKernels
             .contiguousDetectorBin2U8ProductsDetectorPartialsTiled32x8Function
         ),
         let detectorAccumulateU16Partials = detector.makeFunction(
           name: Metal4DSTEMKernels.detectorAccumulateU16PartialsU64Function
+        ),
+        let privateResidentPagePreparation = detector.makeFunction(
+          name: Metal4DSTEMKernels.preparePrivateResidentPagesFunction
         )
       else {
         throw Metal4DSTEMStreamingIOError.metalUnavailable(
@@ -664,6 +673,10 @@ public final class Metal4DSTEMIndexedLoader {
       auditedLow8TiledDetectorSumPipeline = try device.makeComputePipelineState(
         function: auditedLow8TiledDetectorSum
       )
+      fusedTiledLow8Bin1ProductsDetectorPartialsPipeline =
+        try device.makeComputePipelineState(
+          function: fusedTiledLow8Bin1ProductsDetectorPartials
+        )
       fusedTiledLow8Bin2ProductsDetectorPartialsPipeline =
         try device
         .makeComputePipelineState(
@@ -671,6 +684,9 @@ public final class Metal4DSTEMIndexedLoader {
         )
       detectorAccumulateU16PartialsPipeline = try device.makeComputePipelineState(
         function: detectorAccumulateU16Partials
+      )
+      privateResidentPagePreparationPipeline = try device.makeComputePipelineState(
+        function: privateResidentPagePreparation
       )
       exactBinner = try Metal4DSTEMExactBinner(
         device: device,
@@ -712,18 +728,13 @@ public final class Metal4DSTEMIndexedLoader {
     let totalStarted = CFAbsoluteTimeGetCurrent()
     try validateBinnedLoadPlan(source: source, plan: plan)
     let allocationStarted = CFAbsoluteTimeGetCurrent()
-    let destinations = try plan.shardPlan.shards.map { shard in
-      try makeBuffer(
-        bytes: shard.payloadBytes,
-        options: .storageModeShared,
-        label: "exact working-volume shard \(shard.index)"
-      )
-    }
+    let allocation = try makeResidentDestinations(plan: plan)
     let allocationSeconds = CFAbsoluteTimeGetCurrent() - allocationStarted
     return try loadExactBinnedShards(
       source: source,
       plan: plan,
-      destinations: destinations,
+      destinations: allocation.buffers,
+      destinationPreparations: allocation.preparations,
       destinationAllocationSeconds: allocationSeconds,
       totalStarted: totalStarted,
       shouldCancel: shouldCancel
@@ -734,10 +745,11 @@ public final class Metal4DSTEMIndexedLoader {
   ///
   /// This overload separates reusable allocation and device-admission policy
   /// from exact loading. `destinationShards` must contain one distinct shared
-  /// buffer for every shard in `plan`, in canonical shard order, with each
-  /// buffer's length exactly equal to its planned payload. On success every
-  /// payload byte has been overwritten with the exact result. If loading throws,
-  /// destination contents are unspecified and must not be published.
+  /// buffer for every shard in `plan`, in canonical shard order, with the
+  /// plan's declared residency and each buffer's length exactly equal to its
+  /// planned payload. On success every payload byte has been overwritten with
+  /// the exact result. If loading throws, destination contents are unspecified
+  /// and must not be published.
   ///
   /// The caller owns buffer allocation, reuse, synchronization outside this
   /// synchronous call, retention, eviction, and device-memory admission.
@@ -754,6 +766,7 @@ public final class Metal4DSTEMIndexedLoader {
       source: source,
       plan: plan,
       destinations: destinationShards,
+      destinationPreparations: [],
       destinationAllocationSeconds: 0,
       totalStarted: totalStarted,
       shouldCancel: shouldCancel
@@ -764,13 +777,15 @@ public final class Metal4DSTEMIndexedLoader {
     source: Native4DSTEMIndexedSource,
     plan: Metal4DSTEMIndexedBinnedLoadPlan,
     destinations: [MTLBuffer],
+    destinationPreparations: [MTLCommandBuffer],
     destinationAllocationSeconds: Double,
     totalStarted: CFAbsoluteTime,
     shouldCancel: () -> Bool
   ) throws -> Metal4DSTEMIndexedBinnedLoadResult {
     let context = BinnedOutputContext(
       resident: plan,
-      destinations: destinations
+      destinations: destinations,
+      preparations: destinationPreparations
     )
     let loaded = try loadExactProductsInternal(
       source: source,
@@ -810,6 +825,7 @@ public final class Metal4DSTEMIndexedLoader {
       detectorBin: plan.binningProvenance.detectorBin,
       sourceAudit: plan.sourceAudit,
       maximumShardBytes: plan.shardPlan.maximumShardBytes,
+      residentStorage: plan.residentStorage,
       sourceTransfer: plan.productPlan.sourceTransfer
     )
     guard expectedPlan == plan else {
@@ -849,10 +865,11 @@ public final class Metal4DSTEMIndexedLoader {
             + "Metal device. Allocate every shard on the loader's device."
         )
       }
-      guard destination.storageMode == .shared else {
+      guard destination.storageMode == plan.residentStorage.metalStorageMode else {
         throw Metal4DSTEMStreamingIOError.invalidRequest(
-          "Exact resident destination shard \(shard.index) must use shared Metal "
-            + "storage; received \(destination.storageMode.rawValue)."
+          "Exact resident destination shard \(shard.index) must use "
+            + "\(plan.destinationStorageMode) Metal storage; received "
+            + "\(destination.storageMode.rawValue)."
         )
       }
       guard UInt64(destination.length) == shard.payloadBytes else {
@@ -997,18 +1014,27 @@ public final class Metal4DSTEMIndexedLoader {
         )
       }
     }
-    let usesFusedTiledLow8Bin2Products = try supportsFusedAuditedLow8Bin2(
+    let usesFusedTiledLow8Bin1Products = try supportsFusedAuditedLow8(
       plan: plan,
       binned: binned,
-      stagingDtype: stagingDtype
+      stagingDtype: stagingDtype,
+      detectorBin: 1
     )
+    let usesFusedTiledLow8Bin2Products = try supportsFusedAuditedLow8(
+      plan: plan,
+      binned: binned,
+      stagingDtype: stagingDtype,
+      detectorBin: 2
+    )
+    let usesFusedTiledLow8Products =
+      usesFusedTiledLow8Bin1Products || usesFusedTiledLow8Bin2Products
     let started = CFAbsoluteTimeGetCurrent()
     let frameCount = plan.logicalFrameCount
     let detectorPixels = plan.sourceDetectorRows * plan.sourceDetectorColumns
     let mapBytes = try byteCount(
       count: frameCount,
       stride:
-        usesFusedTiledLow8Bin2Products ? 4 : 8,
+        usesFusedTiledLow8Products ? 4 : 8,
       label: "one scan-map accumulator"
     )
     let detectorBytes = try byteCount(
@@ -1051,7 +1077,7 @@ public final class Metal4DSTEMIndexedLoader {
       label: "decoded exact staging window"
     )
     let detectorPartialScratch: MTLBuffer?
-    if usesFusedTiledLow8Bin2Products {
+    if usesFusedTiledLow8Products {
       guard let binned,
         binned.plan.maximumDetectorPartialScratchBytes > 0
       else {
@@ -1321,6 +1347,7 @@ public final class Metal4DSTEMIndexedLoader {
             detectorSum: detectorSum,
             detectorPartialScratch: detectorPartialScratch,
             stagingDtype: stagingDtype,
+            usesFusedTiledLow8Bin1Products: usesFusedTiledLow8Bin1Products,
             usesFusedTiledLow8Bin2Products: usesFusedTiledLow8Bin2Products,
             binned: binned,
             command: command,
@@ -1407,7 +1434,7 @@ public final class Metal4DSTEMIndexedLoader {
     }
     let auditFinished = CFAbsoluteTimeGetCurrent()
     func exactMapValues(from buffer: MTLBuffer) -> [UInt64] {
-      if usesFusedTiledLow8Bin2Products {
+      if usesFusedTiledLow8Products {
         return values(from: buffer, count: frameCount, as: UInt32.self).map(UInt64.init)
       }
       return values(from: buffer, count: frameCount, as: UInt64.self)
@@ -1619,19 +1646,21 @@ public final class Metal4DSTEMIndexedLoader {
     )
   }
 
-  private func supportsFusedAuditedLow8Bin2(
+  private func supportsFusedAuditedLow8(
     plan: Metal4DSTEMIndexedLoadPlan,
     binned: BinnedOutputContext?,
-    stagingDtype: Metal4DSTEMIntegerDType
+    stagingDtype: Metal4DSTEMIntegerDType,
+    detectorBin: Int
   ) throws -> Bool {
     guard stagingDtype == .uint8, let binned,
-      binned.plan.binningProvenance.detectorBin == 2,
+      detectorBin == 1 || detectorBin == 2,
+      binned.plan.binningProvenance.detectorBin == detectorBin,
       binned.plan.binningProvenance.outputDtype == .uint16,
       binned.plan.sourceAudit.provesLosslessUInt8Staging,
       plan.sourceDetectorRows == 192,
       plan.sourceDetectorColumns == 192,
-      binned.plan.binningProvenance.outputDetectorRows == 96,
-      binned.plan.binningProvenance.outputDetectorColumns == 96,
+      binned.plan.binningProvenance.outputDetectorRows == 192 / detectorBin,
+      binned.plan.binningProvenance.outputDetectorColumns == 192 / detectorBin,
       binned.plan.maximumDetectorPartialScratchBytes > 0
     else { return false }
 
@@ -1699,6 +1728,7 @@ public final class Metal4DSTEMIndexedLoader {
     detectorSum: MTLBuffer,
     detectorPartialScratch: MTLBuffer?,
     stagingDtype: Metal4DSTEMIntegerDType,
+    usesFusedTiledLow8Bin1Products: Bool,
     usesFusedTiledLow8Bin2Products: Bool,
     binned: BinnedOutputContext?,
     command: MTLCommandBuffer,
@@ -1794,7 +1824,9 @@ public final class Metal4DSTEMIndexedLoader {
       stageIndex: 1
     )
 
-    if usesFusedTiledLow8Bin2Products {
+    let usesFusedTiledLow8Products =
+      usesFusedTiledLow8Bin1Products || usesFusedTiledLow8Bin2Products
+    if usesFusedTiledLow8Products {
       guard let binned,
         let outputShard = binned.plan.shardPlan.shards.first(where: { candidate in
           let stop =
@@ -1836,7 +1868,9 @@ public final class Metal4DSTEMIndexedLoader {
         outputDetectorColumns: outputDetectorColumns
       )
       encoder.setComputePipelineState(
-        fusedTiledLow8Bin2ProductsDetectorPartialsPipeline
+        usesFusedTiledLow8Bin1Products
+          ? fusedTiledLow8Bin1ProductsDetectorPartialsPipeline
+          : fusedTiledLow8Bin2ProductsDetectorPartialsPipeline
       )
       encoder.setBuffer(scratch, offset: 0, index: 0)
       encoder.setBuffer(destination, offset: 0, index: 1)
@@ -1889,7 +1923,7 @@ public final class Metal4DSTEMIndexedLoader {
     )
 
     var mutableFrameCount = frameCount
-    if usesFusedTiledLow8Bin2Products {
+    if usesFusedTiledLow8Products {
       guard let detectorPartialScratch else {
         throw Metal4DSTEMStreamingIOError.invalidRequest(
           "The fused exact detector-partial reduction lost its scratch storage."
@@ -1935,7 +1969,7 @@ public final class Metal4DSTEMIndexedLoader {
     }
     encoder.endEncoding()
     let totalBinningDispatchCount: Int
-    if usesFusedTiledLow8Bin2Products {
+    if usesFusedTiledLow8Products {
       totalBinningDispatchCount = binningDispatchCount
     } else {
       totalBinningDispatchCount =
@@ -2295,6 +2329,73 @@ public final class Metal4DSTEMIndexedLoader {
     return buffer
   }
 
+  private func makeResidentDestinations(
+    plan: Metal4DSTEMIndexedBinnedLoadPlan
+  ) throws -> ResidentDestinationAllocation {
+    let buffers = try plan.shardPlan.shards.map { shard in
+      try makeBuffer(
+        bytes: shard.payloadBytes,
+        options: plan.residentStorage.resourceOptions,
+        label: "exact working-volume shard \(shard.index)"
+      )
+    }
+    guard plan.residentStorage == .privateGPU else {
+      return ResidentDestinationAllocation(buffers: buffers, preparations: [])
+    }
+    let preparationQueues = try (0..<4).map { queueIndex in
+      guard let queue = device.makeCommandQueue() else {
+        throw Metal4DSTEMStreamingIOError.metalUnavailable(
+          "Metal could not create exact private-residency preparation queue "
+            + "\(queueIndex)."
+        )
+      }
+      queue.label = "exact private-residency preparation queue \(queueIndex)"
+      return queue
+    }
+    let preparations = try buffers.enumerated().map { index, buffer in
+      let preparationQueue = preparationQueues[index % preparationQueues.count]
+      guard let command = preparationQueue.makeCommandBuffer(),
+        let encoder = command.makeComputeCommandEncoder()
+      else {
+        throw Metal4DSTEMStreamingIOError.metalUnavailable(
+          "Metal could not encode private-residency preparation for shard \(index)."
+        )
+      }
+      command.label = "prepare exact private working-volume shard \(index)"
+      encoder.setComputePipelineState(privateResidentPagePreparationPipeline)
+      encoder.setBuffer(buffer, offset: 0, index: 0)
+      var byteCount = UInt64(buffer.length)
+      var pageStride = UInt64(getpagesize())
+      encoder.setBytes(
+        &byteCount,
+        length: MemoryLayout<UInt64>.stride,
+        index: 1
+      )
+      encoder.setBytes(
+        &pageStride,
+        length: MemoryLayout<UInt64>.stride,
+        index: 2
+      )
+      let pageStrideInt = Int(pageStride)
+      let pageCount = (buffer.length + pageStrideInt - 1) / pageStrideInt
+      let threadWidth = min(
+        privateResidentPagePreparationPipeline.maxTotalThreadsPerThreadgroup,
+        max(1, privateResidentPagePreparationPipeline.threadExecutionWidth * 8)
+      )
+      encoder.dispatchThreads(
+        MTLSize(width: pageCount, height: 1, depth: 1),
+        threadsPerThreadgroup: MTLSize(width: threadWidth, height: 1, depth: 1)
+      )
+      encoder.endEncoding()
+      command.commit()
+      return command
+    }
+    return ResidentDestinationAllocation(
+      buffers: buffers,
+      preparations: preparations
+    )
+  }
+
   private func byteCount(
     count: Int,
     stride: Int,
@@ -2598,6 +2699,11 @@ private final class IndexedStageProfiler {
   }
 }
 
+private struct ResidentDestinationAllocation {
+  let buffers: [MTLBuffer]
+  let preparations: [MTLCommandBuffer]
+}
+
 private final class BinnedOutputContext {
   private enum Storage {
     case resident([MTLBuffer])
@@ -2607,6 +2713,7 @@ private final class BinnedOutputContext {
   let plan: Metal4DSTEMIndexedBinnedLoadPlan
   let cacheState: String
   private let storage: Storage
+  private var residentPreparations: [MTLCommandBuffer?]
   private var activeShardIndex: Int?
   private var streamingDestination: MTLBuffer?
   private(set) var destinationAllocationSeconds = 0.0
@@ -2621,10 +2728,12 @@ private final class BinnedOutputContext {
 
   init(
     resident plan: Metal4DSTEMIndexedBinnedLoadPlan,
-    destinations: [MTLBuffer]
+    destinations: [MTLBuffer],
+    preparations: [MTLCommandBuffer]
   ) {
     self.plan = plan
     storage = .resident(destinations)
+    residentPreparations = preparations.map(Optional.some)
     cacheState =
       "prepared_qh5_index_exact_binned_resident_source_pages_unspecified"
     peakWorkingMetalBytes = destinations.reduce(0) { total, buffer in
@@ -2638,6 +2747,7 @@ private final class BinnedOutputContext {
   ) {
     self.plan = plan
     storage = .streaming(consume)
+    residentPreparations = []
     cacheState =
       "prepared_qh5_index_exact_binned_transactional_file_source_pages_unspecified"
   }
@@ -2696,6 +2806,18 @@ private final class BinnedOutputContext {
         throw Metal4DSTEMStreamingIOError.invalidRequest(
           "Exact destination shard index \(shardIndex) is outside the resident plan."
         )
+      }
+      if residentPreparations.indices.contains(shardIndex),
+        let preparation = residentPreparations[shardIndex]
+      {
+        preparation.waitUntilCompleted()
+        guard preparation.status == .completed else {
+          throw Metal4DSTEMStreamingIOError.metalUnavailable(
+            preparation.error?.localizedDescription
+              ?? "Private-residency preparation failed for shard \(shardIndex)."
+          )
+        }
+        residentPreparations[shardIndex] = nil
       }
       return destinations[shardIndex]
     case .streaming:

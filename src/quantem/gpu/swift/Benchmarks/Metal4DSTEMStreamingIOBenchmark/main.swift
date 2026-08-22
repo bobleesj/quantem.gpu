@@ -18,6 +18,7 @@ private struct Options {
       [--iterations N] \\
       [--buffered-read-ahead-shards N] \\
       [--exact-working-audit PATH --detector-bin N --maximum-shard-bytes N] \\
+      [--destination-storage shared|private] \\
       [--reuse-working-destinations] \\
       [--boundary-working-volume-hashes] \\
       [--exact-working-cache-payload PATH \\
@@ -49,6 +50,7 @@ private struct Options {
   let exactWorkingAudit: URL?
   let detectorBin: Int?
   let maximumShardBytes: UInt64?
+  let residentStorage: Metal4DSTEMResidentStorage
   let reuseWorkingDestinations: Bool
   let boundaryWorkingVolumeHashes: Bool
   let exactWorkingCachePayload: URL?
@@ -122,6 +124,19 @@ private struct Options {
         )
       }
     }
+    let residentStorageRaw = values["--destination-storage"] ?? "shared"
+    guard let residentStorage = Metal4DSTEMResidentStorage(
+      rawValue: residentStorageRaw
+    ) else {
+      throw BenchmarkError.usage(
+        "--destination-storage must be shared or private."
+      )
+    }
+    if values["--destination-storage"] != nil, audit == nil {
+      throw BenchmarkError.usage(
+        "--destination-storage requires resident exact-working options."
+      )
+    }
     let cachePayload = values["--exact-working-cache-payload"].map {
       URL(fileURLWithPath: $0)
     }
@@ -141,10 +156,12 @@ private struct Options {
       throw BenchmarkError.usage("--cache-reopen-iterations must be nonnegative.")
     }
     if cachePayload != nil {
-      guard audit != nil, iterations == 1, cacheReopenIterations > 0 else {
+      guard audit != nil, iterations == 1, cacheReopenIterations > 0,
+        residentStorage == .shared
+      else {
         throw BenchmarkError.usage(
           "Exact cache mode requires exact-working options, --iterations 1, "
-            + "and at least one cache-reopen iteration."
+            + "shared destination storage, and at least one cache-reopen iteration."
         )
       }
     } else if values["--cache-reopen-iterations"] != nil {
@@ -177,6 +194,7 @@ private struct Options {
       exactWorkingAudit: audit,
       detectorBin: detectorBin,
       maximumShardBytes: maximumShardBytes,
+      residentStorage: residentStorage,
       reuseWorkingDestinations: reuseWorkingDestinations,
       boundaryWorkingVolumeHashes: boundaryWorkingVolumeHashes,
       exactWorkingCachePayload: cachePayload,
@@ -335,17 +353,65 @@ private func sha256(_ data: Data) -> String {
   SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
 }
 
-private func sha256(_ buffers: [MTLBuffer]) throws -> String {
+private func sha256(_ buffers: [MTLBuffer], device: MTLDevice) throws -> String {
   var hasher = SHA256()
-  for buffer in buffers {
-    guard buffer.storageMode == .shared else {
+  let maximumLength = buffers.map(\.length).max() ?? 0
+  let privateReadback: MTLBuffer?
+  let privateQueue: MTLCommandQueue?
+  if buffers.contains(where: { $0.storageMode == .private }) {
+    privateReadback = device.makeBuffer(
+      length: maximumLength,
+      options: .storageModeShared
+    )
+    privateQueue = device.makeCommandQueue()
+    guard privateReadback != nil, privateQueue != nil else {
       throw BenchmarkError.invalid(
-        "Working-volume hashing requires shared Metal shards."
+        "Metal could not allocate the explicit private-volume parity readback."
+      )
+    }
+  } else {
+    privateReadback = nil
+    privateQueue = nil
+  }
+  for buffer in buffers {
+    let readable: MTLBuffer
+    switch buffer.storageMode {
+    case .shared:
+      readable = buffer
+    case .private:
+      guard let privateReadback, let privateQueue,
+        let command = privateQueue.makeCommandBuffer(),
+        let encoder = command.makeBlitCommandEncoder()
+      else {
+        throw BenchmarkError.invalid(
+          "Metal could not create the explicit private-volume parity copy."
+        )
+      }
+      encoder.copy(
+        from: buffer,
+        sourceOffset: 0,
+        to: privateReadback,
+        destinationOffset: 0,
+        size: buffer.length
+      )
+      encoder.endEncoding()
+      command.commit()
+      command.waitUntilCompleted()
+      guard command.status == .completed else {
+        throw BenchmarkError.invalid(
+          "The explicit private-volume parity copy failed: "
+            + (command.error?.localizedDescription ?? "unknown Metal error")
+        )
+      }
+      readable = privateReadback
+    default:
+      throw BenchmarkError.invalid(
+        "Working-volume hashing supports shared or private Metal shards."
       )
     }
     hasher.update(
       bufferPointer: UnsafeRawBufferPointer(
-        start: buffer.contents(),
+        start: readable.contents(),
         count: buffer.length
       )
     )
@@ -484,6 +550,7 @@ private func run() throws {
       detectorBin: detectorBin,
       sourceAudit: audit,
       maximumShardBytes: maximumShardBytes,
+      residentStorage: options.residentStorage,
       sourceTransfer: sourceTransfer
     )
   } else {
@@ -558,7 +625,7 @@ private func run() throws {
         let hashStarted = CFAbsoluteTimeGetCurrent()
         let workingVolumeSHA256 =
           hashesWorkingVolume
-          ? try sha256(result.workingVolumeShards) : nil
+          ? try sha256(result.workingVolumeShards, device: device) : nil
         let hashSeconds =
           hashesWorkingVolume
           ? CFAbsoluteTimeGetCurrent() - hashStarted : nil
