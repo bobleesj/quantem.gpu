@@ -216,4 +216,4 @@ def test_show4dstem_browser_benchmark_rejects_float_resident_exact_claims() -> N
     assert 'residentDtype: "uint8" | "uint16" | "uint32" | "float32";' in local_h5
     assert 'mode === 3' in local_h5
     assert '? "uint32"' in local_h5
-    assert ': "float32"' in local_h5
+    assert 'return "float32";' in local_h5

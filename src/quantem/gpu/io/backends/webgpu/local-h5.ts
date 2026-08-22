@@ -20,6 +20,12 @@ import {
 } from "./bslz4";
 import { getGPUInfo, isSoftwareGPUAdapter } from "../../../device/webgpu";
 import {
+  clearGpuResidentLogicalPixelHash,
+  exposeGpuResidentLogicalPixelHash,
+  type LogicalPixelDtype,
+  type LogicalPixelHashProfile,
+} from "./logical-pixel-hash";
+import {
   readBslz4SelectedBlockMetadata,
   readBslz4SelectedBlockVolume,
   readH5VolumeFromBlockIndex,
@@ -39,7 +45,7 @@ export interface LocalH5GpuChunk {
   nScan: number;
 }
 
-export interface LocalH5LoadProfile {
+export interface LocalH5LoadProfile extends LogicalPixelHashProfile {
   acquisitionMode: "local-file";
   totalMs: number;
   masterReadMs: number;
@@ -117,6 +123,7 @@ export interface LocalH5LoadOptions {
   workerCount?: number;
   detBin?: number;
   decodeDtype?: DecodeDtypeRequest;
+  fullOutputHash?: boolean;
 }
 
 export interface LocalH5MaskedSumOptions extends LocalH5LoadOptions {
@@ -748,6 +755,27 @@ function normalizeDecodeDtypeRequest(value: unknown): DecodeDtypeRequest | "" {
   return "";
 }
 
+function configuredDecodeDtype(options: LocalH5LoadOptions): DecodeDtypeRequest | "" {
+  const globalValue = (
+    globalThis as { __QT_H5_DECODE_DTYPE?: DecodeDtypeRequest }
+  ).__QT_H5_DECODE_DTYPE;
+  return normalizeDecodeDtypeRequest(options.decodeDtype ?? globalValue);
+}
+
+function fullOutputHashRequested(options: LocalH5LoadOptions): boolean {
+  if (options.fullOutputHash !== undefined) return options.fullOutputHash;
+  return Boolean(
+    (globalThis as { __QT_H5_FULL_OUTPUT_HASH?: boolean }).__QT_H5_FULL_OUTPUT_HASH,
+  );
+}
+
+function residentDtypeForMode(mode: number): LogicalPixelDtype {
+  if (mode === 0) return "uint16";
+  if (mode === 1) return "uint8";
+  if (mode === 3) return "uint32";
+  return "float32";
+}
+
 function safeInt(value: number | undefined, fallback: number, min: number, max: number): number {
   const raw = Number(value);
   return Math.max(min, Math.min(max, Number.isFinite(raw) ? Math.round(raw) : fallback));
@@ -1076,6 +1104,7 @@ export async function loadShow4DSTEMLocalH5Master(
   options: LocalH5LoadOptions,
 ): Promise<LocalH5LoadResult | null> {
   if (!/_master\.h5(?:[?#].*)?$/i.test(masterUrl)) return null;
+  clearGpuResidentLogicalPixelHash();
   const master = localFileFor(masterUrl);
   const dataFiles = localDataFilesForMaster(masterUrl);
   if (!master || dataFiles.length === 0) return null;
@@ -1221,7 +1250,7 @@ export async function loadShow4DSTEMLocalH5Master(
       // Count-audited low8 browse sources can be detector-binned directly from
       // the same lossless low8 decode. This preserves the explicit detBin
       // evidence policy while avoiding the slower full uint16 intermediate.
-      const requestedDecode = normalizeDecodeDtypeRequest(options.decodeDtype);
+      const requestedDecode = configuredDecodeDtype(options);
       if (requestedDecode === "uint4") {
         throw new Error(
           "WebGPU decodeDtype='u4' means packed 4-bit counts (0..15), not "
@@ -1308,13 +1337,7 @@ export async function loadShow4DSTEMLocalH5Master(
     decodeCompressedMB: Math.round(decodeProfile.compressedMB),
     sourceDtype,
     decodeDtype,
-    residentDtype: mode === 0
-      ? "uint16"
-      : mode === 1
-        ? "uint8"
-        : mode === 3
-          ? "uint32"
-          : "float32",
+    residentDtype: residentDtypeForMode(mode),
     detBin,
     sourceDetRows,
     sourceDetCols,
@@ -1350,6 +1373,17 @@ export async function loadShow4DSTEMLocalH5Master(
     maxBufferGB: +(Number(profileDevice.limits.maxBufferSize || 0) / 1e9).toFixed(2),
     maxStorageBufferGB: +(Number(profileDevice.limits.maxStorageBufferBindingSize || 0) / 1e9).toFixed(2),
   };
+  if (fullOutputHashRequested(options)) {
+    exposeGpuResidentLogicalPixelHash(
+      profileDevice,
+      gpuChunks,
+      scanCount,
+      detSize,
+      profile.residentDtype,
+      profile,
+      detBin > 1 ? new Uint32Array(0) : badPixels,
+    );
+  }
   if (frames < scanCount) {
     console.warn(`Local HDF5 load decoded ${frames} scan positions, fewer than target scan shape ${scanCount}.`);
   }

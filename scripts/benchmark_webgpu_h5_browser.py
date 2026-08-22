@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import math
 import re
 import statistics
 import time
@@ -83,6 +84,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--workers", type=int)
     parser.add_argument("--group-size", type=int)
     parser.add_argument("--decode-batch", type=int)
+    parser.add_argument(
+        "--decode-dtype",
+        choices=("uint8", "uint16", "uint32", "float32", "native", "auto"),
+        help=(
+            "Force the exported local-HDF5 loader to use this decode width. "
+            "Exact-integer runs otherwise infer the override from "
+            "--expected-resident-dtype."
+        ),
+    )
     parser.add_argument("--det-bin", type=int, default=1)
     parser.add_argument(
         "--frame-low8",
@@ -293,9 +303,26 @@ def _exact_run_evidence(
 
     full_output_sha256 = profile.get("fullOutputSha256")
     logical_pixel_hash_schema = profile.get("logicalPixelHashSchema")
+    full_output_hash_state = profile.get("fullOutputHashState")
+    full_output_hash_domain = profile.get("fullOutputHashDomain")
     if args.require_full_output_parity:
         if args.expected_full_output_sha256 is None:
             errors.append("required full-output SHA-256 reference is missing")
+        elif full_output_hash_state == "failed":
+            errors.append(
+                "browser full-output hash failed: "
+                f"{profile.get('fullOutputHashError') or 'unknown error'}"
+            )
+        elif full_output_hash_state != "complete":
+            errors.append(
+                "browser full-output hash did not complete; "
+                f"state={full_output_hash_state!r}"
+            )
+        elif full_output_hash_domain != "corrected-logical-pixels":
+            errors.append(
+                "full-output hash domain mismatch: expected "
+                f"'corrected-logical-pixels', got {full_output_hash_domain!r}"
+            )
         elif logical_pixel_hash_schema != LOGICAL_PIXEL_HASH_SCHEMA:
             errors.append(
                 "logical pixel hash schema mismatch: expected "
@@ -321,6 +348,13 @@ def _exact_run_evidence(
         "detectorBin": detector_bin,
         "expectedDetectorBin": args.det_bin,
         "sampledFrameParity": sampled_parity,
+        "fullOutputHashState": full_output_hash_state,
+        "fullOutputHashError": profile.get("fullOutputHashError"),
+        "fullOutputHashMs": profile.get("fullOutputHashMs"),
+        "fullOutputHashBytes": profile.get("fullOutputHashBytes"),
+        "fullOutputHashReadbackBytes": profile.get("fullOutputHashReadbackBytes"),
+        "fullOutputHashBadPixels": profile.get("fullOutputHashBadPixels"),
+        "fullOutputHashDomain": full_output_hash_domain,
         "logicalPixelHashSchema": logical_pixel_hash_schema,
         "logicalPixelAxisOrder": list(LOGICAL_PIXEL_AXIS_ORDER),
         "logicalPixelByteOrder": "little_endian",
@@ -385,6 +419,18 @@ class CdpTarget:
         self._ws.close()
 
 
+def _decode_dtype_override(args: argparse.Namespace) -> str | None:
+    if args.decode_dtype is not None:
+        return str(args.decode_dtype)
+    if args.require_integer_resident and args.expected_resident_dtype in {
+        "uint8",
+        "uint16",
+        "uint32",
+    }:
+        return str(args.expected_resident_dtype)
+    return None
+
+
 def _runtime_prelude(args: argparse.Namespace) -> str:
     statements: list[str] = []
     if args.source_scan_shape:
@@ -400,6 +446,13 @@ def _runtime_prelude(args: argparse.Namespace) -> str:
         statements.append(f"globalThis.__QT_H5_LOCAL_GROUP={int(args.group_size)};")
     if args.decode_batch is not None:
         statements.append(f"globalThis.__QT_H5_DECODE_BATCH={int(args.decode_batch)};")
+    decode_dtype = _decode_dtype_override(args)
+    if decode_dtype is not None:
+        statements.append(
+            f"globalThis.__QT_H5_DECODE_DTYPE={json.dumps(decode_dtype)};"
+        )
+    if args.require_full_output_parity:
+        statements.append("globalThis.__QT_H5_FULL_OUTPUT_HASH=true;")
     if args.det_bin and int(args.det_bin) > 1:
         statements.append(f"globalThis.__QT_H5_DET_BIN={int(args.det_bin)};")
     if args.frame_index_json:
@@ -470,19 +523,36 @@ def _fixture_files(args: argparse.Namespace) -> list[str]:
 def _summary(runs: list[dict[str, Any]]) -> dict[str, Any]:
     totals = [int(run["profile"]["totalMs"]) for run in runs]
     walls = [int(run["wallMs"]) for run in runs]
+    evidence_walls = [
+        int(run.get("evidenceWallMs", run["wallMs"])) for run in runs
+    ]
     parity = [run["parity"] for run in runs if isinstance(run.get("parity"), bool)]
+
+    def nearest_rank(values: list[int], probability: float) -> int:
+        ordered = sorted(values)
+        rank = max(1, math.ceil(probability * len(ordered)))
+        return ordered[min(rank - 1, len(ordered) - 1)]
+
     summary: dict[str, Any] = {
         "n": len(runs),
+        "percentileMethod": "nearest-rank",
         "parityChecked": len(parity) == len(runs),
         "allParity": all(parity) if parity else None,
         "totalProfileMsSum": sum(totals),
         "totalProfileMsMedian": statistics.median(totals),
+        "totalProfileMsP50": nearest_rank(totals, 0.50),
+        "totalProfileMsP95": nearest_rank(totals, 0.95),
         "totalProfileMsMin": min(totals),
         "totalProfileMsMax": max(totals),
         "wallMsSum": sum(walls),
         "wallMsMedian": statistics.median(walls),
+        "wallMsP50": nearest_rank(walls, 0.50),
+        "wallMsP95": nearest_rank(walls, 0.95),
         "wallMsMin": min(walls),
         "wallMsMax": max(walls),
+        "evidenceWallMsP50": nearest_rank(evidence_walls, 0.50),
+        "evidenceWallMsP95": nearest_rank(evidence_walls, 0.95),
+        "evidenceWallMsMax": max(evidence_walls),
     }
     dpc = _dpc_summary(runs)
     if dpc:
@@ -743,9 +813,42 @@ def _run_one(
             timeout=30,
             await_promise=True,
         )
+        load_wall_ms = round((time.perf_counter() - wall0) * 1000)
+        if args.require_full_output_parity:
+            hash_result = target.eval(
+                """(async () => {
+                  const runHash = globalThis.__QT_H5_RUN_FULL_OUTPUT_HASH;
+                  if (typeof runHash !== "function") {
+                    return { ok: false, error: "export did not expose the streaming full-output hash" };
+                  }
+                  try {
+                    const evidence = await runHash();
+                    Object.assign(globalThis.__loadprof, evidence);
+                    return {
+                      ok: evidence.fullOutputHashState === "complete",
+                      error: evidence.fullOutputHashError || null,
+                    };
+                  } catch (error) {
+                    return {
+                      ok: false,
+                      error: error instanceof Error ? error.message : String(error),
+                    };
+                  }
+                })()""",
+                timeout=max(30, args.timeout_s),
+                await_promise=True,
+            )
+            profile = target.eval("globalThis.__loadprof || null")
+            state["loadprof"] = profile
+            if not hash_result.get("ok"):
+                raise RuntimeError(
+                    "browser full-output hash failed: "
+                    f"{hash_result.get('error') or 'unknown error'}"
+                )
         exact_evidence = _exact_run_evidence(
             profile, checksums, reference_checksums, args
         )
+        evidence_wall_ms = round((time.perf_counter() - wall0) * 1000)
         dpc = None
         if args.dpc_reps > 0:
             dpc = target.eval(
@@ -759,7 +862,8 @@ def _run_one(
             args.screenshot.write_bytes(base64.b64decode(png))
         return {
             "rep": index,
-            "wallMs": round((time.perf_counter() - wall0) * 1000),
+            "wallMs": load_wall_ms,
+            "evidenceWallMs": evidence_wall_ms,
             "profile": state["loadprof"],
             "checksums": checksums,
             "parity": exact_evidence["sampledFrameParity"],
@@ -842,6 +946,7 @@ def main() -> None:
             "workers": args.workers,
             "groupSize": args.group_size,
             "decodeBatch": args.decode_batch,
+            "decodeDtypeOverride": _decode_dtype_override(args),
             "frameLow8": args.frame_low8,
             "u32SharedLow8": bool(args.u32_shared_low8),
             "singleParseLow8": bool(args.single_parse_low8),
@@ -867,6 +972,7 @@ def main() -> None:
             ),
             "expectedDetectorBin": args.det_bin,
             "requireFullOutputParity": bool(args.require_full_output_parity),
+            "fullOutputHashTimingBoundary": "after load wall timing",
             "expectedFullOutputSha256": args.expected_full_output_sha256,
             "logicalPixelHashSchema": LOGICAL_PIXEL_HASH_SCHEMA,
             "logicalPixelAxisOrder": list(LOGICAL_PIXEL_AXIS_ORDER),
