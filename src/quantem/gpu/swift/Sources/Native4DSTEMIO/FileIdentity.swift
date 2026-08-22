@@ -79,20 +79,41 @@ private func nativeContentSnapshot(for url: URL) throws -> NativeContentSnapshot
 }
 
 private func nativeSHA256(of url: URL) throws -> String {
-  let handle = try FileHandle(forReadingFrom: url)
-  defer { try? handle.close() }
+  let descriptor = Darwin.open(url.path, O_RDONLY)
+  guard descriptor >= 0 else {
+    throw Native4DSTEMIOError.invalidData(
+      "Could not open \(url.path) for exact source hashing"
+    )
+  }
+  defer { Darwin.close(descriptor) }
   if ProcessInfo.processInfo.environment[
     "QUANTEM_GPU_BENCHMARK_UNCACHED_SOURCE_READS"
   ] == "1" {
-    guard Darwin.fcntl(handle.fileDescriptor, F_NOCACHE, 1) == 0 else {
+    guard Darwin.fcntl(descriptor, F_NOCACHE, 1) == 0 else {
       throw Native4DSTEMIOError.invalidData(
         "Could not enable uncached benchmark reads for \(url.path)"
       )
     }
   }
+  let bufferBytes = 8 * 1024 * 1024
+  let buffer = UnsafeMutableRawPointer.allocate(
+    byteCount: bufferBytes,
+    alignment: Int(getpagesize())
+  )
+  defer { buffer.deallocate() }
   var digest = SHA256()
-  while let data = try handle.read(upToCount: 8 * 1024 * 1024), !data.isEmpty {
-    digest.update(data: data)
+  while true {
+    let count = Darwin.read(descriptor, buffer, bufferBytes)
+    if count < 0 && errno == EINTR { continue }
+    guard count >= 0 else {
+      throw Native4DSTEMIOError.invalidData(
+        "Could not read \(url.path) for exact source hashing"
+      )
+    }
+    if count == 0 { break }
+    digest.update(
+      bufferPointer: UnsafeRawBufferPointer(start: buffer, count: count)
+    )
   }
   return digest.finalize().map { String(format: "%02x", $0) }.joined()
 }
