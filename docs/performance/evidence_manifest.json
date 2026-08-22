@@ -108,12 +108,12 @@
   "authoritative_inputs": [
     {
       "path": "benchmarks/benchmark_registry.json",
-      "sha256": "1a1ef28085d44c4fbcb2f130d8bf21515ddfac94015dda8b0fc0a871e9e68b96",
+      "sha256": "16d2af50821a25988c6e12363370a4908c590b9abbd96673dbbcfc4533c84d59",
       "role": "Atomic Platform, Computer, module, configuration, state, measurement, and runbook registry"
     },
     {
       "path": "docs/_generated/benchmark_coverage.md",
-      "sha256": "a3c4ebeea8283431897836259cc8f7dab3f3bd31c78646b82765035c7eaa0da4",
+      "sha256": "c6b7daaf07f57d26affc60f33eafc252b0b4357dd3b2051a9371ad94244ca71a",
       "role": "Generated filterable coverage, retained-measurement, and runbook tables"
     },
     {
@@ -123,7 +123,7 @@
     },
     {
       "path": "scripts/benchmark_registry.py",
-      "sha256": "5f90945da0006431ce93330175f20d22a3492d5227df9a7b28b5dffe18e95de9",
+      "sha256": "0c0458f61aa0bb0b0b3fdaf073644460035a4067840538bec2c29f751f2e7600",
       "role": "Registry validation, rendering, next-gate selection, and reproducible-command entry point"
     },
     {

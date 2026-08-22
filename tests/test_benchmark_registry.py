@@ -7,7 +7,7 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-from scripts.benchmark_registry import _measurement_state
+from scripts.benchmark_registry import _measurement_state, resolved_measurements
 
 REGISTRY = Path("benchmarks/benchmark_registry.json")
 GENERATED = Path("docs/_generated/benchmark_coverage.md")
@@ -217,6 +217,10 @@ def test_failed_or_probe_parity_cannot_be_promoted_as_measured() -> None:
         "wall_max_seconds": 0.3,
     }
     assert _measurement_state({**timing, "parity": "full output exact"}) == "measured"
+    assert (
+        _measurement_state({**timing, "parity": "zero tolerance violations"})
+        == "measured"
+    )
     assert _measurement_state({**timing, "parity": "phase mismatch"}) == "refuted"
     assert (
         _measurement_state({**timing, "parity": "qualified probes only"}) == "partial"
@@ -256,6 +260,22 @@ def test_running_platform_computer_manifest_stays_partial_and_resolves_outputs()
     }
     assert gates
     assert all(gate["state"] == "partial" for gate in gates.values())
+
+
+def test_measured_gates_only_name_measured_evidence() -> None:
+    registry = _registry()
+    measurement_states = {
+        row["measurement_id"]: row["state"] for row in resolved_measurements(registry)
+    }
+
+    for gate in registry["gates"]:
+        if gate["state"] != "measured":
+            continue
+        assert gate.get("satisfied_by")
+        assert {
+            measurement_states[measurement_id]
+            for measurement_id in gate["satisfied_by"]
+        } == {"measured"}
 
 
 def test_zero_tolerance_violations_render_as_passing_parity() -> None:

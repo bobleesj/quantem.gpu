@@ -326,33 +326,55 @@ def _run_timed_trial(
             else:
                 failure = f"{failure}; memory sampler {sampler_failure}"
 
-    memory_after = _memory_snapshot(args.backend)
-    if result is not None and failure is None:
-        try:
-            output_parity = _output_parity(result.data, args)
-            scientific_metadata = _scientific_metadata(result, args)
-            parity_errors = [
-                *output_parity["errors"],
-                *scientific_metadata["errors"],
-            ]
-            if parity_errors:
-                failure_stage = "parity"
-                failure = "; ".join(parity_errors)
-        except Exception as exc:  # noqa: BLE001 - retain parity failure evidence
-            failure_stage = "parity-evaluation"
-            failure = f"{type(exc).__name__}: {exc}"
+    memory_after = None
+    memory_after_release = None
+    shape = None
+    resident_bytes = None
+    release_method = None
+    release_error = None
 
-    shape = None if result is None else _shape(result.data)
-    resident_bytes = None if result is None else _nbytes(result.data)
-    release_method, release_error = _release_result(result, args.backend)
-    result = None
-    memory_after_release = _memory_snapshot(args.backend)
-    if release_error is not None:
+    def retain_failure(stage: str, message: str) -> None:
+        nonlocal failure, failure_stage
         if failure is None:
-            failure_stage = "release"
-            failure = release_error
+            failure_stage = stage
+            failure = message
         else:
-            failure = f"{failure}; cleanup {release_error}"
+            failure = f"{failure}; {stage} {message}"
+
+    try:
+        try:
+            memory_after = _memory_snapshot(args.backend)
+        except Exception as exc:  # noqa: BLE001 - retain telemetry failure evidence
+            retain_failure("post-load-memory", f"{type(exc).__name__}: {exc}")
+
+        if result is not None and failure is None:
+            try:
+                output_parity = _output_parity(result.data, args)
+                scientific_metadata = _scientific_metadata(result, args)
+                parity_errors = [
+                    *output_parity["errors"],
+                    *scientific_metadata["errors"],
+                ]
+                if parity_errors:
+                    retain_failure("parity", "; ".join(parity_errors))
+            except Exception as exc:  # noqa: BLE001 - retain parity failure evidence
+                retain_failure("parity-evaluation", f"{type(exc).__name__}: {exc}")
+
+        if result is not None:
+            try:
+                shape = _shape(result.data)
+                resident_bytes = _nbytes(result.data)
+            except Exception as exc:  # noqa: BLE001 - retain metadata failure evidence
+                retain_failure("result-metadata", f"{type(exc).__name__}: {exc}")
+    finally:
+        release_method, release_error = _release_result(result, args.backend)
+        result = None
+        if release_error is not None:
+            retain_failure("release", release_error)
+        try:
+            memory_after_release = _memory_snapshot(args.backend)
+        except Exception as exc:  # noqa: BLE001 - retain telemetry failure evidence
+            retain_failure("post-release-memory", f"{type(exc).__name__}: {exc}")
 
     record = {
         "trial": trial,
