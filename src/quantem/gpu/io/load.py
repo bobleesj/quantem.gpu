@@ -1211,6 +1211,7 @@ def get_metadata(filepath: str) -> dict:
                 metadata.setdefault("scan_shape", tuple(int(x) for x in data_ds.attrs["scan_shape"]))
             if "det_shape" in data_ds.attrs:
                 metadata.setdefault("detector_shape", tuple(int(x) for x in data_ds.attrs["det_shape"]))
+            metadata.setdefault("source_dtype", str(data_ds.dtype))
             if data_ds.ndim >= 3:
                 metadata.setdefault("n_frames", int(np.prod(data_ds.shape[:-2])))
     _derive_fields(metadata)
@@ -4365,6 +4366,37 @@ def _load_sharded(
     return LoadResult(shards, meta)
 
 
+def _normalize_view_metadata(
+    metadata: dict,
+    data,
+    *,
+    detector_bin: int,
+    source_dtype=None,
+) -> None:
+    """Record immutable source and returned detector-array metadata."""
+    source_detector_shape = None
+    for key in ("source_detector_shape", "raw_detector_shape", "detector_shape"):
+        if metadata.get(key) is not None:
+            source_detector_shape = tuple(int(value) for value in metadata[key])
+            break
+
+    working_detector_shape = tuple(int(value) for value in data.shape[-2:])
+    if source_detector_shape is None:
+        source_detector_shape = tuple(
+            value * int(detector_bin) for value in working_detector_shape
+        )
+
+    resolved_source_dtype = metadata.get("source_dtype", source_dtype)
+    if resolved_source_dtype is None:
+        resolved_source_dtype = data.dtype
+    metadata["source_detector_shape"] = source_detector_shape
+    metadata.setdefault("raw_detector_shape", source_detector_shape)
+    metadata["detector_shape"] = working_detector_shape
+    metadata["det_bin"] = int(detector_bin)
+    metadata["source_dtype"] = str(np.dtype(resolved_source_dtype))
+    metadata["dtype"] = str(np.dtype(data.dtype))
+
+
 def _load_view(
     filepath,
     backend: str,
@@ -4441,6 +4473,7 @@ def _load_view(
                 skip_mps_memory_check=skip_mps_memory_check,
             )
             meta.update(data.metadata)
+            _normalize_view_metadata(meta, data, detector_bin=det_bin)
             meta["scan_order"] = _normalize_scan_order(scan_order)
             if apply_mask:
                 mask = read_pixel_mask(str(path))
@@ -4463,6 +4496,7 @@ def _load_view(
             verbose=verbose,
             **backend_load_kwargs,
         )
+        source_dtype = np.dtype(data.dtype)
         if mask is not None and det_bin == 1:
             meta["pixel_mask"] = mask
         if auto_narrow and data.dtype == np.uint32 and int(data.max()) < 65536:
@@ -4480,6 +4514,12 @@ def _load_view(
             else:
                 data = data.astype(out_dtype)
         data = _apply_scan_shape(data, scan_shape, meta, scan_order)
+        _normalize_view_metadata(
+            meta,
+            data,
+            detector_bin=det_bin,
+            source_dtype=source_dtype,
+        )
         meta["scan_order"] = _normalize_scan_order(scan_order)
         if backend == "mps":
             # Torch MPS tensor is the first-class GPU citizen on Apple, the peer

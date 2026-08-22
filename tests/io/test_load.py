@@ -63,7 +63,14 @@ def test_mps_dataset_path_u8_declares_clipping_before_detector_bin(monkeypatch) 
     torch_module.from_numpy = lambda array: FakeMPSTensor()
     monkeypatch.setitem(sys.modules, "torch", torch_module)
 
-    monkeypatch.setattr(load_module, "get_metadata", lambda path: {})
+    monkeypatch.setattr(
+        load_module,
+        "get_metadata",
+        lambda path: {
+            "detector_shape": (2, 2),
+            "source_dtype": "uint16",
+        },
+    )
     monkeypatch.setattr(load_module, "read_pixel_mask", lambda path: None)
 
     def fake_load_master(path, **kwargs):
@@ -71,7 +78,7 @@ def test_mps_dataset_path_u8_declares_clipping_before_detector_bin(monkeypatch) 
         return np.full((1, 1, 1), 255, dtype=np.uint8)
 
     monkeypatch.setattr(decoder, "load_master", fake_load_master, raising=False)
-    data, _ = load_module._load_view(
+    data, metadata = load_module._load_view(
         "fixture.h5",
         "mps",
         dataset_path="entry/data/data",
@@ -84,6 +91,76 @@ def test_mps_dataset_path_u8_declares_clipping_before_detector_bin(monkeypatch) 
     assert str(data.dtype) == "torch.uint8"
     assert calls["output_dtype"] == np.dtype(np.uint8)
     assert calls["device"] == "mps"
+    assert metadata["source_detector_shape"] == (2, 2)
+    assert metadata["detector_shape"] == (1, 1)
+    assert metadata["det_bin"] == 2
+    assert metadata["source_dtype"] == "uint16"
+    assert metadata["dtype"] == "uint8"
+
+
+def test_cpu_detector_bin_metadata_preserves_source_and_working_geometry(
+    monkeypatch,
+) -> None:
+    """CPU detector binning reports the source separately from returned pixels."""
+    from importlib import import_module
+
+    load_module = import_module("quantem.gpu.io.load")
+    reference = import_module("quantem.gpu.io.backends.cpu.reference")
+    source = np.arange(4 * 4 * 4, dtype=np.uint16).reshape(4, 4, 4)
+    expected = source.reshape(4, 2, 2, 2, 2).sum(axis=(2, 4), dtype=np.uint64)
+    expected = expected.astype(np.uint16)
+
+    monkeypatch.setattr(
+        load_module,
+        "get_metadata",
+        lambda path: {
+            "scan_shape": (2, 2),
+            "detector_shape": (4, 4),
+        },
+    )
+    monkeypatch.setattr(load_module, "read_pixel_mask", lambda path: None)
+    monkeypatch.setattr(
+        reference,
+        "load_master",
+        lambda path, **kwargs: expected.copy(),
+    )
+
+    result = load_module._load_view(
+        "fixture.h5",
+        "cpu",
+        scan_shape=(2, 2),
+        det_bin=2,
+        verbose=False,
+    )
+
+    np.testing.assert_array_equal(result.data, expected.reshape(2, 2, 2, 2))
+    assert result.metadata["source_detector_shape"] == (4, 4)
+    assert result.metadata["detector_shape"] == (2, 2)
+    assert result.metadata["det_bin"] == 2
+    assert result.metadata["source_dtype"] == "uint16"
+    assert result.metadata["dtype"] == "uint16"
+
+
+def test_get_metadata_reports_detector_source_dtype(tmp_path) -> None:
+    """Metadata inspection records the stored count dtype before load transforms."""
+    import h5py
+
+    from quantem.gpu.io.load import get_metadata
+
+    master = tmp_path / "fixture.h5"
+    with h5py.File(master, "w") as h5_file:
+        data = h5_file.create_dataset(
+            "entry/data/data",
+            shape=(4, 6, 6),
+            dtype=np.uint16,
+        )
+        data.attrs["scan_shape"] = (2, 2)
+        data.attrs["det_shape"] = (6, 6)
+
+    metadata = get_metadata(str(master))
+
+    assert metadata["source_dtype"] == "uint16"
+    assert metadata["detector_shape"] == (6, 6)
 
 
 def test_load_uint32_routes_to_native_uint32_output_dtype(monkeypatch) -> None:
