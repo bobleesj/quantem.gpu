@@ -95,7 +95,7 @@ def test_numerical_evidence_pages_keep_frozen_fingerprints() -> None:
     assert all(character in "0123456789abcdef" for character in source_revision)
 
     changed: list[tuple[str, str, str]] = []
-    for entry in manifest["pages"]:
+    for entry in manifest["pages"] + manifest["authoritative_inputs"]:
         path = Path(entry["path"])
         actual = hashlib.sha256(path.read_bytes()).hexdigest()
         if actual != entry["sha256"]:
