@@ -61,11 +61,11 @@ accepted sessions establish a stable same-key device baseline.
 
 | Platform | Profiling owner | Scheduled responsibility | Minimum-device signoff |
 |---|---|---|---|
-| CPU reference | Phil portable CPU | Independent exact adjudication; never a silent fallback | Not applicable |
-| CUDA | MJGOAT physical CUDA | Load/decode, resident products, screening, SSB reconstruction, and deterministic calibration | Physical or equivalently constrained 6 GiB dedicated-VRAM run, including other card occupants |
-| Python MPS | Phil physical MPS | Load/decode, products, screening, SSB, process footprint, pressure, and swap | Physical 8 GB unified-memory run |
-| Native Swift/Metal | Phil physical native toolchain | Swift tests, Metal compilation, QH5/native IO, FFT/display, SSB reconstruction/loss/calibration, and package-owned numerical kernels | Physical 8 GB unified-memory run plus application signoff where the claim is wall-to-wall |
-| WebGPU | Phil hardware browser | Browser load/decode, products, DPC/iDPC, SSB reconstruction, adapter limits, browser-tree memory, and device loss | Physical 8 GB laptop run; software/fallback adapters never qualify |
+| CPU reference | MacBook Pro (M5 Max, 128 GB) portable CPU | Independent exact adjudication; never a silent fallback | Not applicable |
+| CUDA | Linux CUDA workstation (dual 96 GB Blackwell GPUs) physical CUDA | Load/decode, resident products, screening, SSB reconstruction, and deterministic calibration | Physical or equivalently constrained 6 GiB dedicated-VRAM run, including other card occupants |
+| Python MPS | MacBook Pro (M5 Max, 128 GB) physical MPS | Load/decode, products, screening, SSB, process footprint, pressure, and swap | Physical 8 GB unified-memory run |
+| Native Swift/Metal | MacBook Pro (M5 Max, 128 GB) physical native toolchain | Swift tests, Metal compilation, QH5/native IO, FFT/display, SSB reconstruction/loss/calibration, and package-owned numerical kernels | Physical 8 GB unified-memory run plus application signoff where the claim is wall-to-wall |
+| WebGPU | MacBook Pro (M5 Max, 128 GB) hardware browser | Browser load/decode, products, DPC/iDPC, SSB reconstruction, adapter limits, browser-tree memory, and device loss | Physical 8 GB laptop run; software/fallback adapters never qualify |
 
 The physical 8 GB Apple gate is coordinated: only one memory/GPU campaign may
 own the device at a time. A larger Apple device, Chrome RSS estimate, prepared
@@ -144,7 +144,7 @@ versions, storage state, and unified-memory pressure have different variance.
 The registry validator and portable parity suite run in PR CI now. The physical
 CUDA, MPS, Swift/Metal, WebGPU, and minimum-memory campaigns are intentionally
 not assigned to generic GitHub-hosted runners. They become scheduled jobs only
-after each named physical runner has stable device ownership, fixture access,
+after each specified physical runner has stable device ownership, fixture access,
 artifact retention, and a fail-closed preflight.
 
 This prevents an unavailable runner, software WebGPU adapter, occupied GPU, or

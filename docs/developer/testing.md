@@ -35,9 +35,9 @@ for the open rows on the backend or computer you own:
 
 ```bash
 python scripts/benchmark_registry.py next --platform "Python MPS"
-python scripts/benchmark_registry.py next --computer "Steve Kerr"
-python scripts/benchmark_registry.py show io.mps.phil.bin2.cold-original
-python scripts/benchmark_registry.py command io.mps.phil.bin2.cold-original
+python scripts/benchmark_registry.py next --computer "MacBook Air (M2, 8 GB)"
+python scripts/benchmark_registry.py show io.mps.apple-m5-max-128gb.bin2.cold-original
+python scripts/benchmark_registry.py command io.mps.apple-m5-max-128gb.bin2.cold-original
 ```
 
 The command view prints the preflight, required environment, repository-owned

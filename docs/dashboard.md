@@ -91,10 +91,10 @@ application timings.
 
 | Platform | Computer | Detector bin | Output detector | Samples | p50 | p95 | Maximum | Logical resident | Driver allocated after load | Driver allocated after release | Process RSS high-water | Whole-system swap delta | Date tested |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
-| [**Python MPS**](platforms/mps.md) | Phil | 1 | `192x192` | 7 | **0.414824 s** | **0.457261 s** | **0.457261 s** | **19,327,352,832 B** | **19,801,456,640 B** | **474,103,808 B** | **741,818,368 B** | **0 B** | 2026-08-22 |
-| [**Python MPS**](platforms/mps.md) | Phil | 2 | `96x96` | 7 | **0.457153 s** | **0.461730 s** | **0.461730 s** | **4,831,838,208 B** | **6,107,774,976 B** | **1,275,936,768 B** | **616,054,784 B** | **0 B** | 2026-08-22 |
-| [**Python MPS**](platforms/mps.md) | Phil | 4 | `48x48` | 7 | **0.382109 s** | **0.384353 s** | **0.384353 s** | **1,207,959,552 B** | **2,483,896,320 B** | **1,275,936,768 B** | **615,825,408 B** | **0 B** | 2026-08-22 |
-| [**Python MPS**](platforms/mps.md) | Phil | 8 | `24x24` | 7 | **0.356258 s** | **0.358652 s** | **0.358652 s** | **301,989,888 B** | **1,577,926,656 B** | **1,275,936,768 B** | **616,054,784 B** | **0 B** | 2026-08-22 |
+| [**Python MPS**](platforms/mps.md) | MacBook Pro (M5 Max, 128 GB) | 1 | `192x192` | 7 | **0.414824 s** | **0.457261 s** | **0.457261 s** | **19,327,352,832 B** | **19,801,456,640 B** | **474,103,808 B** | **741,818,368 B** | **0 B** | 2026-08-22 |
+| [**Python MPS**](platforms/mps.md) | MacBook Pro (M5 Max, 128 GB) | 2 | `96x96` | 7 | **0.457153 s** | **0.461730 s** | **0.461730 s** | **4,831,838,208 B** | **6,107,774,976 B** | **1,275,936,768 B** | **616,054,784 B** | **0 B** | 2026-08-22 |
+| [**Python MPS**](platforms/mps.md) | MacBook Pro (M5 Max, 128 GB) | 4 | `48x48` | 7 | **0.382109 s** | **0.384353 s** | **0.384353 s** | **1,207,959,552 B** | **2,483,896,320 B** | **1,275,936,768 B** | **615,825,408 B** | **0 B** | 2026-08-22 |
+| [**Python MPS**](platforms/mps.md) | MacBook Pro (M5 Max, 128 GB) | 8 | `24x24` | 7 | **0.356258 s** | **0.358652 s** | **0.358652 s** | **301,989,888 B** | **1,577,926,656 B** | **1,275,936,768 B** | **616,054,784 B** | **0 B** | 2026-08-22 |
 
 “Driver allocated after load” and “after release” are instantaneous
 `torch.mps.driver_allocated_memory()` samples, not continuously sampled
@@ -341,9 +341,9 @@ duplicate position selectors.
 
 | Platform | Computer | Selected scan | Rectangle `(row_start,row_stop,column_start,column_stop)` | Source detector | Source dtype | Shards read | Storage bytes read | Samples | Loader p50 | Loader p95 | Loader maximum | Logical resident | Browser-tree RSS peak | Observed swap delta | Parity | Device tested | Date tested |
 |---|---|---:|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|
-| **WebGPU** | Phil | `64x64` | `(0,64,0,64)` | `192x192` | `uint16` | 4 of 27 | 488,224,242 B | 5 | **0.147 s** | **0.1544 s** | **0.156 s** | 301,989,888 B | 1,724,317,696 B | 0 B | ✓ | Chrome 151, Apple M5 Max Metal | 2026-08-22 |
-| **WebGPU** | Phil | `256x256` | `(128,384,128,384)` | `192x192` | `uint16` | 14 of 27 | 1,705,556,941 B | 5 | **0.381 s** | **0.3924 s** | **0.394 s** | 4,831,838,208 B | 3,002,875,904 B | 0 B | ✓ | Chrome 151, Apple M5 Max Metal | 2026-08-22 |
-| **WebGPU** | Phil | `384x384` | `(64,448,64,448)` | `192x192` | `uint16` | 20 of 27 | 2,432,636,897 B | 5 | **0.574 s** | **0.582 s** | **0.584 s** | 10,871,635,968 B | 3,896,934,400 B | 0 B | ✓ | Chrome 151, Apple M5 Max Metal | 2026-08-22 |
+| **WebGPU** | MacBook Pro (M5 Max, 128 GB) | `64x64` | `(0,64,0,64)` | `192x192` | `uint16` | 4 of 27 | 488,224,242 B | 5 | **0.147 s** | **0.1544 s** | **0.156 s** | 301,989,888 B | 1,724,317,696 B | 0 B | ✓ | Chrome 151, Apple M5 Max Metal | 2026-08-22 |
+| **WebGPU** | MacBook Pro (M5 Max, 128 GB) | `256x256` | `(128,384,128,384)` | `192x192` | `uint16` | 14 of 27 | 1,705,556,941 B | 5 | **0.381 s** | **0.3924 s** | **0.394 s** | 4,831,838,208 B | 3,002,875,904 B | 0 B | ✓ | Chrome 151, Apple M5 Max Metal | 2026-08-22 |
+| **WebGPU** | MacBook Pro (M5 Max, 128 GB) | `384x384` | `(64,448,64,448)` | `192x192` | `uint16` | 20 of 27 | 2,432,636,897 B | 5 | **0.574 s** | **0.582 s** | **0.584 s** | 10,871,635,968 B | 3,896,934,400 B | 0 B | ✓ | Chrome 151, Apple M5 Max Metal | 2026-08-22 |
 
 All rows use prepared block indexes and a prepared frame-span manifest. The
 operating-system source-page state was uncontrolled/unspecified and no eviction

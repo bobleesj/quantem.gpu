@@ -13,7 +13,7 @@ operating-system storage cache was not forcibly evicted. It is not called cold.
 
 - **Date tested:** the cross-platform profile was measured 2026-08-19 local
   time; retained follow-up artifacts extend through 2026-08-22.
-- **Baseline revisions:** Phil `334b7b5135fe29787540370a00f280fa138430a2`;
+- **Baseline revisions:** MacBook Pro (M5 Max, 128 GB) `334b7b5135fe29787540370a00f280fa138430a2`;
   CUDA execution mirror `8c47a466d573f74e425faff611939a17fa6efbf2`.
   Their production compute trees are byte-equivalent for the profiled paths.
 - **Clean follow-up stack:** local branch `mps-subsecond-pipeline` at
@@ -384,9 +384,10 @@ sequence, not independent repetitions, so none is promoted into the current
 warm-load table. The follow-up changed only post-pass summary materialization;
 it did not make the compressed source sub-second.
 
-All seven summary artifact hashes match across Phil and the Air. Every reopen
-also reproduced same-device BF, ABF, ADF, CoM row/column, DPC row/column, iDPC,
-and selected diffraction byte-for-byte against the full resident calculation.
+All seven summary artifact hashes match across the MacBook Pro (M5 Max,
+128 GB) and MacBook Air (M2, 8 GB). Every reopen also reproduced same-device
+BF, ABF, ADF, CoM row/column, DPC row/column, iDPC, and selected diffraction
+byte-for-byte against the full resident calculation.
 This is prepared-product evidence, not the original compressed-source first
 encounter and not a headed application-paint measurement.
 

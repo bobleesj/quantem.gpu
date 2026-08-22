@@ -29,10 +29,10 @@ guess a command from an old experiment page.
 ```bash
 python scripts/benchmark_registry.py validate
 python scripts/benchmark_registry.py next --limit 10
-python scripts/benchmark_registry.py next --computer "Steve Kerr"
+python scripts/benchmark_registry.py next --computer "MacBook Air (M2, 8 GB)"
 python scripts/benchmark_registry.py next --platform "Python MPS"
-python scripts/benchmark_registry.py show io.mps.phil.bin2.cold-original
-python scripts/benchmark_registry.py command io.mps.phil.bin2.cold-original
+python scripts/benchmark_registry.py show io.mps.apple-m5-max-128gb.bin2.cold-original
+python scripts/benchmark_registry.py command io.mps.apple-m5-max-128gb.bin2.cold-original
 ```
 
 Use `--performance-entrypoint-only` to hide gates whose current repository

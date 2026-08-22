@@ -72,8 +72,9 @@ per repetition and measures memory pressure rather than steady-state loader
 speed.
 
 For the full `512x512x192x192 uint16` plan, the resident payload is exactly
-19,327,352,832 bytes (18.00 GiB). On the current 2026-08-22 Phil run, driver
-allocation sampled immediately after load was 19,801,456,640 bytes
+19,327,352,832 bytes (18.00 GiB). On the current 2026-08-22 MacBook Pro
+(M5 Max, 128 GB) run, driver allocation sampled immediately after load was
+19,801,456,640 bytes
 (18.441544 GiB), falling to 474,103,808 bytes after explicit output release;
 process RSS high-water was 741,818,368 bytes (0.690872 GiB). The smaller RSS is
 not the GPU memory footprint: direct Metal allocations are outside the complete

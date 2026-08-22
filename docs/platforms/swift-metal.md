@@ -96,7 +96,8 @@ scheduling, eviction, memory-pressure response, and the user-visible reason for
 any detector bin or prepared reopen. The client must not describe a summary
 reopen as a first source encounter or a binned detector as native resolution.
 See [Verified benchmark results](../performance/results.md) for the physical
-Phil and 8 GB M2 Air measurements; this platform page does not duplicate them.
+MacBook Pro (M5 Max, 128 GB) and MacBook Air (M2, 8 GB) measurements; this
+platform page does not duplicate them.
 
 `MetalSSBEngine` is intentionally narrower than the Python source loader. It
 accepts plane-major lossless `uint8` bright-field columns with shape

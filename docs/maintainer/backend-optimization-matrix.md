@@ -84,7 +84,8 @@ and optimizer state, not the full acquisition.
 The accepted path keeps the complete `512x512` scan, native `uint16` counts,
 scan bin 1, no crop, and explicit detector bins 1/2/4/8. All output bytes match
 the pre-optimization path. Source pages were warm and uncontrolled; these are
-library load measurements on Phil, not cold storage or Live4DSTEM E2E.
+library load measurements on MacBook Pro (M5 Max, 128 GB), not cold storage or
+Live4DSTEM E2E.
 
 | Hypothesis | Measured result | Decision |
 |---|---|---|

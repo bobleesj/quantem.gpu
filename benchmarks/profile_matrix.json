@@ -8,7 +8,7 @@
       "timing_policy": "No PR timing is promoted as a hardware performance result."
     },
     "scheduled-profile": {
-      "purpose": "Measure stable frozen configurations on named physical devices and retain run-level distributions.",
+      "purpose": "Measure stable frozen configurations on specified physical device configurations and retain run-level distributions.",
       "cadence": "Weekly when the owning runner is available, and after a relevant kernel or IO change."
     },
     "release-signoff": {
@@ -22,27 +22,27 @@
   },
   "platforms": {
     "cpu-reference": {
-      "authority": "phil",
+      "authority": "macbook-pro-m5-max-128gb",
       "runner": "portable-cpu",
       "minimum_memory_gate": null
     },
     "cuda": {
-      "authority": "mjgoat",
+      "authority": "linux-dual-blackwell-96gb",
       "runner": "physical-cuda",
       "minimum_memory_gate": "6 GiB dedicated VRAM"
     },
     "mps": {
-      "authority": "phil",
+      "authority": "macbook-pro-m5-max-128gb",
       "runner": "physical-python-mps",
       "minimum_memory_gate": "8 GB unified RAM"
     },
     "swift-metal": {
-      "authority": "phil",
+      "authority": "macbook-pro-m5-max-128gb",
       "runner": "physical-native-swift-metal",
       "minimum_memory_gate": "8 GB unified RAM"
     },
     "webgpu": {
-      "authority": "phil",
+      "authority": "macbook-pro-m5-max-128gb",
       "runner": "physical-hardware-browser",
       "minimum_memory_gate": "8 GB total laptop RAM"
     }
