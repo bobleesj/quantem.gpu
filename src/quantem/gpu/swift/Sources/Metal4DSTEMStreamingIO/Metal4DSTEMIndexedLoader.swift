@@ -2945,6 +2945,16 @@ private final class MappedMetalSource {
         "Could not open indexed source \(url.lastPathComponent)."
       )
     }
+    if ProcessInfo.processInfo.environment[
+      "QUANTEM_GPU_BENCHMARK_UNCACHED_SOURCE_READS"
+    ] == "1" {
+      guard Darwin.fcntl(descriptor, F_NOCACHE, 1) == 0 else {
+        close(descriptor)
+        throw Metal4DSTEMStreamingIOError.invalidRequest(
+          "Could not enable uncached benchmark reads for \(url.lastPathComponent)."
+        )
+      }
+    }
     var status = stat()
     let statResult = fstat(descriptor, &status)
     let seconds = UInt64(exactly: status.st_mtimespec.tv_sec)

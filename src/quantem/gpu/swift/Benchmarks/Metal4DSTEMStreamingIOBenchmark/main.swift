@@ -19,15 +19,19 @@ private struct Options {
       [--buffered-read-ahead-shards N] \\
       [--exact-working-audit PATH --detector-bin N --maximum-shard-bytes N] \\
       [--destination-storage shared|private] \\
+      [--uncached-source-reads] \\
       [--reuse-working-destinations] \\
       [--boundary-working-volume-hashes] \\
       [--exact-working-cache-payload PATH \\
        --exact-working-cache-metadata PATH \\
        --cache-reopen-iterations N]
 
-    Source-page state is not purged or inferred. The first trial is labeled as
-    a first process encounter with prepared indexes and unspecified source pages;
-    later trials are same-process repeats. Supplying all three exact-working
+    Source-page state is not purged or inferred unless
+    --uncached-source-reads is supplied. That benchmark-only control applies
+    macOS F_NOCACHE to exact source hashing and indexed source descriptors and
+    fails closed if the control cannot be enabled. Without it, the first trial
+    is labeled as a first process encounter with prepared indexes and unspecified
+    source pages; later trials are same-process repeats. Supplying all three exact-working
     options retains the complete full-scan working volume as bounded packed
     uint16 shards. Supplying both cache paths instead writes those same exact
     shards transactionally with only one output shard resident at a time;
@@ -51,6 +55,7 @@ private struct Options {
   let detectorBin: Int?
   let maximumShardBytes: UInt64?
   let residentStorage: Metal4DSTEMResidentStorage
+  let uncachedSourceReads: Bool
   let reuseWorkingDestinations: Bool
   let boundaryWorkingVolumeHashes: Bool
   let exactWorkingCachePayload: URL?
@@ -63,7 +68,8 @@ private struct Options {
     var index = 0
     while index < arguments.count {
       let argument = arguments[index]
-      if argument == "--all-bands" || argument == "--reuse-working-destinations"
+      if argument == "--all-bands" || argument == "--uncached-source-reads"
+        || argument == "--reuse-working-destinations"
         || argument == "--boundary-working-volume-hashes"
       {
         flags.insert(argument)
@@ -171,6 +177,7 @@ private struct Options {
         "--cache-reopen-iterations is valid only with exact cache paths."
       )
     }
+    let uncachedSourceReads = flags.contains("--uncached-source-reads")
     let reuseWorkingDestinations = flags.contains("--reuse-working-destinations")
     let boundaryWorkingVolumeHashes = flags.contains(
       "--boundary-working-volume-hashes"
@@ -197,6 +204,7 @@ private struct Options {
       detectorBin: detectorBin,
       maximumShardBytes: maximumShardBytes,
       residentStorage: residentStorage,
+      uncachedSourceReads: uncachedSourceReads,
       reuseWorkingDestinations: reuseWorkingDestinations,
       boundaryWorkingVolumeHashes: boundaryWorkingVolumeHashes,
       exactWorkingCachePayload: cachePayload,
@@ -279,6 +287,7 @@ private struct BenchmarkSummary: Codable {
   let os: String
   let device: String
   let input: String
+  let sourcePageControl: String
   let sourceIdentitySHA256: String
   let sourceShape: [Int]
   let workingShape: [Int]
@@ -459,6 +468,13 @@ private func run() throws {
     return
   }
   let options = try Options.parse(arguments)
+  if options.uncachedSourceReads {
+    guard Darwin.setenv("QUANTEM_GPU_BENCHMARK_UNCACHED_SOURCE_READS", "1", 1) == 0 else {
+      throw BenchmarkError.invalid(
+        "Could not enable the benchmark-only uncached source-read control."
+      )
+    }
+  }
   if FileManager.default.fileExists(atPath: options.outputDirectory.path) {
     let existing = try FileManager.default.contentsOfDirectory(
       at: options.outputDirectory,
@@ -870,13 +886,16 @@ private func run() throws {
     estimatedAllocatedMetalBytesIncludingSourceTransfer = total.partialValue
   }
   let summary = BenchmarkSummary(
-    schema: "quantem.gpu.metal-4dstem-indexed-load-benchmark/v6",
+    schema: "quantem.gpu.metal-4dstem-indexed-load-benchmark/v7",
     revision: options.revision,
     timestamp: ISO8601DateFormatter().string(from: Date()),
     host: ProcessInfo.processInfo.hostName,
     os: ProcessInfo.processInfo.operatingSystemVersionString,
     device: device.name,
     input: options.input.path,
+    sourcePageControl: options.uncachedSourceReads
+      ? "macos_f_nocache_hash_and_indexed_source_descriptors"
+      : "unspecified",
     sourceIdentitySHA256: productPlan.sourceIdentitySHA256,
     sourceShape: [
       productPlan.sourceScanRows,
