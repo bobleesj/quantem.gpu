@@ -505,7 +505,7 @@
       "owner": "MacBook Pro (M5 Max, 128 GB), MacBook Air (M2, 8 GB), or MacBook Pro (M5, 24 GB)",
       "tier": "scheduled physical profile",
       "evidence_level": "physical performance",
-      "command": "swift run -c release metal-4dstem-indexed-load-benchmark --input \"$QGPU_MASTER\" --cache-dir \"$QGPU_INDEX_DIR\" --output-dir \"$QGPU_OUTPUT_DIR\" --revision \"$QGPU_REVISION\" --all-bands --exact-working-audit \"$QGPU_AUDIT_JSON\" --detector-bin {detector_bin} --maximum-shard-bytes \"$QGPU_MAX_SHARD_BYTES\" --destination-storage private --iterations 7 --buffered-read-ahead-shards 2 --uncached-source-reads --boundary-working-volume-hashes",
+      "command": "swift run -c release metal-4dstem-indexed-load-benchmark --input \"$QGPU_MASTER\" --cache-dir \"$QGPU_INDEX_DIR\" --output-dir \"$QGPU_OUTPUT_DIR\" --revision \"$QGPU_REVISION\" --all-bands --exact-working-audit \"$QGPU_AUDIT_JSON\" --detector-bin {detector_bin} --maximum-shard-bytes \"$QGPU_MAX_SHARD_BYTES\" --destination-storage private --iterations 7 --buffered-read-ahead-shards 2 --uncached-source-reads --boundary-working-volume-hashes --expected-logical-pixel-sha256 \"$QGPU_EXPECTED_LOGICAL_PIXEL_SHA256\"",
       "preflight": [
         "Use an empty output directory and a source-identity-bound value-range audit.",
         "Verify the detector bin is supported by Metal4DSTEMLoadPlan; bin 8 must fail closed in the current Swift contract.",
@@ -517,10 +517,11 @@
         "QGPU_OUTPUT_DIR",
         "QGPU_REVISION",
         "QGPU_AUDIT_JSON",
-        "QGPU_MAX_SHARD_BYTES"
+        "QGPU_MAX_SHARD_BYTES",
+        "QGPU_EXPECTED_LOGICAL_PIXEL_SHA256"
       ],
       "required_artifacts": [
-        "benchmark JSON and complete working-volume hashes",
+        "benchmark JSON, physical-storage hashes, and canonical logical-pixel hashes",
         "source and working geometry/dtype/provenance",
         "Metal allocation, process RSS/footprint, pressure, and swap telemetry",
         "experiment manifest and RUNS.md row"

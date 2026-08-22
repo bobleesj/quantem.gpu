@@ -311,8 +311,18 @@ allocation was 19,940,737,024 bytes. Peak retained source-buffer bytes were
 to 720,896 bytes after release. On unified memory, RSS is not a substitute for
 Metal allocation.
 
-The working-volume SHA-256 was
+The schema-v8 `workingVolumeSHA256` was the physical detector-word-major shard
+hash
 `1b555fb64b2c54d4f58b750c381d69ed5fe5452361d39cd65e36cf4d5d7358e5`.
+It proves repeatability within that native storage layout, but it is not
+comparable to a frame-major Python, CUDA, or WebGPU digest. Schema v9 therefore
+records `physicalStorageSHA256` separately from a backend-neutral
+`logicalPixelSHA256`. The latter uses
+`quantem.gpu.4dstem-logical-pixels/v1`: exact little-endian payload bytes in
+`[scan_row, scan_column, detector_row, detector_column]` C order, excluding
+shape headers, shard boundaries, and packed-word padding. Shape, dtype, source
+identity, detector binning, and crop provenance remain mandatory adjacent
+fields.
 All seven exact product hashes repeated in every trial. Package-wall p50 is
 0.577793 seconds, so the 0.3-second target was not met. The previous schema-v7
 measurement is preserved but superseded for durable reporting because its raw

@@ -126,6 +126,10 @@ public enum Metal4DSTEMKernels {
   public static let extractU8Function = "extract_u8_word_major_frame"
   public static let extractU16Function = "extract_u16_word_major_frame"
   public static let extractU32Function = "extract_u32_word_major_frame"
+  public static let extractU16FramesFunction =
+    "extract_u16_word_major_frames"
+  public static let extractU32FramesFunction =
+    "extract_u32_word_major_frames"
   public static let extractU8ToU32Function =
     "extract_u8_word_major_frame_to_u32"
   public static let extractU16ToU32Function =
