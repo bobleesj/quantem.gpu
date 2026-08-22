@@ -81,28 +81,38 @@ and date stay separate.
 
 #### Current Python MPS resident lifecycle
 
-These rows use fixture C, the full `512x512` scan, native `192x192 uint16`
-source data, scan bin 1, no crop, and exact `uint16` outputs. They start after
-one same-lifecycle warmup with warm or uncontrolled source pages. “Recycled”
-means the caller explicitly reuses a compatible resident destination; it is not
-an automatic cache or a cold-load result. Each timed bin-2/bin-4 load matched
-six selected frame hashes. A separate one-load smoke—not every timed trial—
-matched the complete output SHA-256, total, maximum, shape, and dtype.
+These current-head rows use fixture C, the full `512x512` scan, native
+`192x192 uint16` source data, scan bin 1, no crop, and exact `uint16`
+outputs. Revision `0bc9378` was measured after one same-process warmup; OS
+source pages were uncontrolled and no eviction was performed. Every trial
+returned a fresh resident destination and explicitly released it before the
+next trial. These are post-warmup package measurements, not cold-source or
+application timings.
 
-| Platform | Computer | Detector bin | Output detector | Destination state | Samples | p50 | p95 | Maximum | Logical resident | Metal peak | Process RSS statistic | Process RSS | Swap delta | Date tested |
-|---|---|---:|---:|---|---:|---:|---:|---:|---:|---:|---|---:|---:|---|
-| [**Python MPS**](platforms/mps.md) | Phil | 1 | `192x192` | Fresh | 8 | **0.425533 s** | **0.436353 s** | **0.437419 s** | **18.00 GiB** | **18.442 GiB** | p50 | **0.687 GiB** | **0 B** | 2026-08-22 |
-| [**Python MPS**](platforms/mps.md) | Phil | 1 | `192x192` | Recycled | 8 | **0.259189 s** | **0.263118 s** | **0.263375 s** | **18.00 GiB** | **18.442 GiB** | p50 | **0.688 GiB** | **0 B** | 2026-08-22 |
-| [**Python MPS**](platforms/mps.md) | Phil | 2 | `96x96` | Fresh | 8 | **0.462541 s** | **0.479014 s** | **0.483058 s** | **4.50 GiB** | **5.688 GiB** | p50 | **0.571 GiB** | **0 B** | 2026-08-22 |
-| [**Python MPS**](platforms/mps.md) | Phil | 2 | `96x96` | Recycled | 8 | **0.359606 s** | **0.361384 s** | **0.361995 s** | **4.50 GiB** | **5.688 GiB** | p50 | **0.571 GiB** | **0 B** | 2026-08-22 |
-| [**Python MPS**](platforms/mps.md) | Phil | 4 | `48x48` | Fresh | 8 | **0.384264 s** | **0.385355 s** | **0.385638 s** | **1.125 GiB** | **2.313 GiB** | p50 | **0.571 GiB** | **0 B** | 2026-08-22 |
-| [**Python MPS**](platforms/mps.md) | Phil | 4 | `48x48` | Recycled | 8 | **0.352990 s** | **0.355048 s** | **0.355062 s** | **1.125 GiB** | **2.313 GiB** | p50 | **0.572 GiB** | **0 B** | 2026-08-22 |
-| [**Python MPS**](platforms/mps.md) | Phil | 8 | `24x24` | Fresh process; earlier accepted specialization | 6 | **0.356969 s** | **0.359302 s** | **0.359820 s** | **0.28125 GiB** | **1.470 GiB** | peak | **0.572 GiB** | Pending | 2026-08-22 |
+| Platform | Computer | Detector bin | Output detector | Samples | p50 | p95 | Maximum | Logical resident | Driver allocated after load | Driver allocated after release | Process RSS high-water | Whole-system swap delta | Date tested |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| [**Python MPS**](platforms/mps.md) | Phil | 1 | `192x192` | 7 | **0.414824 s** | **0.457261 s** | **0.457261 s** | **19,327,352,832 B** | **19,801,456,640 B** | **474,103,808 B** | **741,818,368 B** | **0 B** | 2026-08-22 |
+| [**Python MPS**](platforms/mps.md) | Phil | 2 | `96x96` | 7 | **0.457153 s** | **0.461730 s** | **0.461730 s** | **4,831,838,208 B** | **6,107,774,976 B** | **1,275,936,768 B** | **616,054,784 B** | **0 B** | 2026-08-22 |
+| [**Python MPS**](platforms/mps.md) | Phil | 4 | `48x48` | 7 | **0.382109 s** | **0.384353 s** | **0.384353 s** | **1,207,959,552 B** | **2,483,896,320 B** | **1,275,936,768 B** | **615,825,408 B** | **0 B** | 2026-08-22 |
+| [**Python MPS**](platforms/mps.md) | Phil | 8 | `24x24` | 7 | **0.356258 s** | **0.358652 s** | **0.358652 s** | **301,989,888 B** | **1,577,926,656 B** | **1,275,936,768 B** | **616,054,784 B** | **0 B** | 2026-08-22 |
 
-The newer detector-bin-8 lifecycle run remained scientifically exact, but its
-arms drifted chronologically while ScreenSharingAgent and WindowServer were
-active. It is inconclusive for speed, so it does not replace the accepted
-`0.356969 s` fresh-process result.
+“Driver allocated after load” and “after release” are instantaneous
+`torch.mps.driver_allocated_memory()` samples, not continuously sampled
+peaks. Process RSS is the process-lifetime high-water; swap is whole-system
+usage and remained unchanged during each retained run.
+
+##### Historical explicit destination reuse
+
+The accepted isolated-candidate ABBA experiment remains useful because it
+measures a different lifecycle: the caller reuses a compatible resident
+destination. It is retained as history and is not substituted for the
+current-head fresh-destination rows.
+
+| Detector bin | Output detector | Destination | Samples | p50 | p95 | Maximum | Source revision |
+|---:|---:|---|---:|---:|---:|---:|---|
+| 1 | `192x192` | Explicitly recycled | 8 | **0.259189 s** | **0.263118 s** | **0.263375 s** | `b7f8ef3` |
+| 2 | `96x96` | Explicitly recycled | 8 | **0.359606 s** | **0.361384 s** | **0.361995 s** | `b7f8ef3` |
+| 4 | `48x48` | Explicitly recycled | 8 | **0.352990 s** | **0.355048 s** | **0.355062 s** | `b7f8ef3` |
 
 Fixtures C and D are independent real `512x512x192x192`, native-`uint16`,
 27-shard compressed-HDF5 sources. Fixture C contains 3,169,489,846 indexed
@@ -113,26 +123,19 @@ is an independent reference, never a silent fallback. Different fixtures and
 boundaries are not ranked.
 
 The 2026-08-19 source rows did not forcibly evict the source cache and therefore
-remain labeled warm. The 2026-08-22 current MPS lifecycle rows also used warm or
-uncontrolled source pages. They compare fresh and explicitly recycled resident
-destinations in balanced order after one same-lifecycle warmup. Imports and
-Metal-library initialization were complete before the measured package load.
-
-The lifecycle timings are bound to source `b7f8ef3f` and sealed evidence
-`3fbd87a5`. Recycled p50 is 0.259189/0.359606/0.352990 seconds for detector
-bins 1/2/4. Consumer-safe exception cleanup is a separate accepted follow-up at
-source `3c4d903e` and evidence `08e50c5b`; its single smoke is not a replacement
-timing distribution. The accepted detector-bin-8 fresh-process result remains
-0.356969 seconds from earlier specialization evidence because the later
-lifecycle run was inconclusive under desktop contention. None is cold-storage
-or application evidence.
+remain labeled warm. The final-head MPS rows also used uncontrolled source
+pages after one same-process warmup. Imports and Metal-library initialization
+were complete before the measured package load. None is cold-storage or
+application evidence.
 
 The former 2.273-second MPS bin-1 headline is superseded: its benchmark cleared
 the Torch cache but did not release direct PyObjC Metal buffers, so repeated
 18 GiB outputs drove system free memory from 86% to 41%. The retained historical
 artifact remains in the results ledger. The exact full bin-1 resident payload
-is 19,327,352,832 bytes (18.00 GiB); its sampled Metal-driver peak is
-19,801,456,640 bytes (18.442 GiB), while maximum process RSS is only 0.689 GiB.
+is 19,327,352,832 bytes (18.00 GiB); driver allocation sampled immediately
+after load is 19,801,456,640 bytes (18.442 GiB), while process RSS high-water is
+only 0.691 GiB. This sampling boundary does not prove a continuously observed
+Metal peak.
 The binned `uint16` rows are fixture-specific: source identity
 `9f0ddb93...` has a complete maximum-count audit of 53, so even an 8x8 exact
 sum is at most 3,392 and fits `uint16`. This does not authorize `uint16`
@@ -175,11 +178,11 @@ above 255 and is a browse representation, not raw-count evidence.
 | [**CUDA**](platforms/cuda.md) | `uint16` | `uint8` | `uint8` | Complete-audit lossless | ✓ | **9.00 GiB** | **Pending** | Full native detector |
 | [**CUDA**](platforms/cuda.md) | `uint32` | `uint32` | `uint32` | Exact native counts | ✓ | Shape/bin dependent | **Pending** | — |
 | [**Python MPS**](platforms/mps.md) | `uint8` | — | — | Native compressed source | — | — | — | — |
-| [**Python MPS**](platforms/mps.md) | `uint16` | `uint16` | `uint16` | Exact native counts | ✓ | **18.00 GiB** | **18.442 GiB** | Full bin1 sampled Metal-driver peak; process RSS is 0.689 GiB |
+| [**Python MPS**](platforms/mps.md) | `uint16` | `uint16` | `uint16` | Exact native counts | ✓ | **18.00 GiB** | **18.442 GiB** | Driver allocation sampled after full bin1 load; process RSS high-water is 0.691 GiB; continuous peak pending |
 | [**Python MPS**](platforms/mps.md) | `uint16` | `uint8` | `uint8` | Complete-audit lossless | ✓ | **9.00 GiB** | **Pending** | Full native detector |
 | [**Python MPS**](platforms/mps.md) | `uint32` | `uint16` | `uint16` | Guarded exact narrowing | ✓ | Shape/bin dependent | **Pending** | — |
 | [**Python MPS**](platforms/mps.md) | `uint32` | `uint32` | `uint32` | Exact native counts | ✓ | Shape/bin dependent | **Pending** | — |
-| [**Native Swift/Metal**](platforms/swift-metal.md) | `uint8` | `uint8` | `uint8` | Exact native counts | ✓ | Shape/bin dependent | **Pending** | — |
+| [**Native Swift/Metal**](platforms/swift-metal.md) | `uint8` | — | — | Native compressed-source decode | Pending | — | — | No retained native-`uint8` bitshuffle-source decode evidence |
 | [**Native Swift/Metal**](platforms/swift-metal.md) | `uint16` | audit-bound `uint8` | `uint16` | Exact native counts | ✓ | **18.00 GiB** | **>=18.571 GiB** | Full bin1 after-load allocation; sampled peak pending |
 | [**Native Swift/Metal**](platforms/swift-metal.md) | `uint16` | `uint16` | `uint16` | Audited exact detector sum | ✓ | **1.125 GiB** | **1.332 GiB** | Physical-Air bin4 process-footprint example |
 | [**Native Swift/Metal**](platforms/swift-metal.md) | `uint16` | `uint16` | `uint32` | General exact detector sum | ✓ | Shape/bin dependent | **Pending** | — |

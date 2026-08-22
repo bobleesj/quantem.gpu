@@ -88,7 +88,7 @@ library load measurements on Phil, not cold storage or Live4DSTEM E2E.
 
 | Hypothesis | Measured result | Decision |
 |---|---|---|
-| Decode full `uint16` without an unnecessary full-volume scratch buffer and pipeline three compressed inputs. | Bin1 ABBA p50 improved from 0.689 to 0.523 s; sampled Metal-driver peak fell to 18.442 GiB for an 18.00 GiB logical resident. | Promote. |
+| Decode full `uint16` without an unnecessary full-volume scratch buffer and pipeline three compressed inputs. | Bin1 ABBA p50 improved from 0.689 to 0.523 s; driver allocation sampled after load was 18.442 GiB for an 18.00 GiB logical resident. | Promote. |
 | Fuse bit-unshuffle and exact detector summation for bins 2/4/8, with a specialized bin-2 kernel. | Candidate p50 reached 0.498/0.421/0.417 s for bins 2/4/8; full-output hashes are byte exact. | Promote. |
 | Allocate LZ4 scratch only for chunks that need it. | Reduced persistent decoder allocation without changing output; retained as part of the accepted topology. | Promote. |
 | Use 64 threads for the full exact decoder. | Neutral to slower than 128 threads in the retained ABBA trial. | Reject as default; retain artifact. |
@@ -150,7 +150,7 @@ Final Apple Silicon full-run results:
 | Path | Load | Save | Load + best save | Output size | Agreement gate |
 | --- | ---: | ---: | ---: | ---: | --- |
 | `uint16` exact, chunk-backed MPS source | `0.81-0.98 s` in final runs | `1.69-1.96 s`; default path `1.753 s` | `2.58 s` default-path load + save | `1.205 GB` | 4096 random frame/pixel samples exact in the earlier full gate; default-path 512 decoded samples also exact, mismatches `0`. |
-| `uint8` display, chunk-backed MPS `dtype='u8'` source | `0.62 s` in the final run | `1.42-1.55 s` | `2.05 s` | `1.078 GB` | 4096 random frame/pixel samples exact versus `min(uint16, 255)`; mismatches `0`. |
+| `uint8` display output from a chunk-backed native-`uint16` MPS source with `dtype='u8'` | `0.62 s` in the final run | `1.42-1.55 s` | `2.05 s` | `1.078 GB` | 4096 random frame/pixel samples exact versus explicit `min(uint16, 255)`; mismatches `0`. This is output conversion, not native-`uint8` source decode. |
 
 Backend gap/use-case summary:
 

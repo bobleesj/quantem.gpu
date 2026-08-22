@@ -354,18 +354,24 @@ def test_platform_first_io_tables_expose_current_bins_devices_and_dates() -> Non
         for line in lifecycle.splitlines()
         if line.startswith("| [**Python MPS**]")
     ]
-    assert len(mps_rows) == 7
+    assert len(mps_rows) == 4
     assert {
-        (int(row[2]), row[4], row[6], row[9], row[10], row[12], row[13])
+        (
+            int(row[2]),
+            row[4],
+            row[5],
+            row[8],
+            row[9],
+            row[10],
+            row[11],
+            row[12],
+        )
         for row in mps_rows
     } == {
-        (1, "Fresh", "**0.425533 s**", "**18.00 GiB**", "**18.442 GiB**", "**0.687 GiB**", "**0 B**"),
-        (1, "Recycled", "**0.259189 s**", "**18.00 GiB**", "**18.442 GiB**", "**0.688 GiB**", "**0 B**"),
-        (2, "Fresh", "**0.462541 s**", "**4.50 GiB**", "**5.688 GiB**", "**0.571 GiB**", "**0 B**"),
-        (2, "Recycled", "**0.359606 s**", "**4.50 GiB**", "**5.688 GiB**", "**0.571 GiB**", "**0 B**"),
-        (4, "Fresh", "**0.384264 s**", "**1.125 GiB**", "**2.313 GiB**", "**0.571 GiB**", "**0 B**"),
-        (4, "Recycled", "**0.352990 s**", "**1.125 GiB**", "**2.313 GiB**", "**0.572 GiB**", "**0 B**"),
-        (8, "Fresh process; earlier accepted specialization", "**0.356969 s**", "**0.28125 GiB**", "**1.470 GiB**", "**0.572 GiB**", "Pending"),
+        (1, "7", "**0.414824 s**", "**19,327,352,832 B**", "**19,801,456,640 B**", "**474,103,808 B**", "**741,818,368 B**", "**0 B**"),
+        (2, "7", "**0.457153 s**", "**4,831,838,208 B**", "**6,107,774,976 B**", "**1,275,936,768 B**", "**616,054,784 B**", "**0 B**"),
+        (4, "7", "**0.382109 s**", "**1,207,959,552 B**", "**2,483,896,320 B**", "**1,275,936,768 B**", "**615,825,408 B**", "**0 B**"),
+        (8, "7", "**0.356258 s**", "**301,989,888 B**", "**1,577,926,656 B**", "**1,275,936,768 B**", "**616,054,784 B**", "**0 B**"),
     }
 
     webgpu_rows = [row for row in rows if "WebGPU" in row[0]]
@@ -716,11 +722,16 @@ def test_current_benchmarks_have_complete_provenance_rows() -> None:
             )
         )
     ]
-    assert len(rows) == 12
+    assert len(rows) == 16
     for row in rows:
         assert row.count("|") == 16
         assert "2026" not in row  # date is profile-level and not duplicated per row
-        assert "| Pass |" in row or "Exact" in row or "adjudicator" in row
+        assert (
+            "| Pass |" in row
+            or "Exact" in row
+            or "adjudicator" in row
+            or "Native bin1 reference" in row
+        )
 
     for required in (
         "Date tested:",
@@ -784,8 +795,8 @@ def test_public_repository_links_and_citation_copy() -> None:
     assert "the quantEM interactive framework" in readme
     assert "https://doi.org/10.1093/mam/ozag053.941" in readme
     assert '"CONTRIBUTING.md"' in package
-    assert not Path("CITATION.cff").exists()
-    assert "CITATION.cff" not in package
+    assert Path("CITATION.cff").is_file()
+    assert '"CITATION.cff"' in package
 
 
 def test_prerelease_docs_pin_the_exact_declared_candidate() -> None:

@@ -177,6 +177,12 @@ def _measurement_row(
         "p95_seconds": measurement.get("wall_p95_seconds"),
         "max_seconds": measurement.get("wall_max_seconds"),
         "logical_resident_bytes": measurement.get("logical_resident_bytes"),
+        "driver_allocated_after_load_bytes": measurement.get(
+            "driver_allocated_after_load_bytes"
+        ),
+        "driver_allocated_after_release_bytes": measurement.get(
+            "driver_allocated_after_release_bytes"
+        ),
         "accelerator_peak_bytes": device_peak,
         "total_device_peak_bytes": total_device_peak,
         "process_tree_peak_bytes": process_peak,
@@ -534,6 +540,8 @@ def _measurement_rows(registry: dict[str, Any]) -> list[list[Any]]:
                 _seconds(item.get("p95_seconds")),
                 _seconds(item.get("max_seconds")),
                 _bytes(item.get("logical_resident_bytes")),
+                _bytes(item.get("driver_allocated_after_load_bytes")),
+                _bytes(item.get("driver_allocated_after_release_bytes")),
                 _bytes(item.get("accelerator_peak_bytes")),
                 _bytes(item.get("total_device_peak_bytes")),
                 _bytes(item.get("process_tree_peak_bytes")),
@@ -623,6 +631,8 @@ def render_document(registry: dict[str, Any]) -> str:
                 "p95",
                 "Maximum",
                 "Logical resident",
+                "Driver allocated after load",
+                "Driver allocated after release",
                 "Accelerator peak",
                 "Total-device peak",
                 "Process/tree peak",
