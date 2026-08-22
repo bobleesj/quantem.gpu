@@ -145,6 +145,61 @@ final class Metal4DSTEMExactBinningContractTests: XCTestCase {
     }
   }
 
+  func testExactBinnerFullBin4ProvenanceAndSampling() throws {
+    let plan = try Metal4DSTEMLoadPlan(
+      sourceScanRows: 512,
+      sourceScanColumns: 512,
+      detectorRows: 192,
+      detectorColumns: 192,
+      sourceBytesPerValue: 2,
+      scanRegion: Metal4DSTEMScanRegion.full(sourceRows: 512, sourceColumns: 512),
+      detectorBin: 4
+    )
+    let audit = try Metal4DSTEMExactSourceAudit(
+      sourceIdentitySHA256: String(repeating: "b", count: 64),
+      sourceDtype: .uint16,
+      badPixelIndices: [],
+      maximumSourceCount: 53,
+      pixelsAbove255: 0
+    )
+    let provenance = try Metal4DSTEMExactBinner.provenance(
+      plan: plan,
+      sourceAudit: audit,
+      stagingDtype: .uint16,
+      outputDtype: .uint16
+    )
+
+    XCTAssertEqual(provenance.outputDetectorRows, 48)
+    XCTAssertEqual(provenance.outputDetectorColumns, 48)
+    XCTAssertEqual(provenance.maximumOutputCount, 848)
+    XCTAssertEqual(provenance.outputPayloadBytes, 1_207_959_552)
+    let sampling = try provenance.propagatingSampling(
+      sourceScan: Metal4DSTEMAxisSampling(
+        row: 0.08,
+        column: 0.11,
+        unit: "nm",
+        provenance: "acquisition metadata",
+        evidence: "fixture scan calibration"
+      ),
+      sourceDetector: Metal4DSTEMAxisSampling(
+        row: 0.02,
+        column: 0.03,
+        unit: "1/nm",
+        provenance: "acquisition metadata",
+        evidence: "fixture diffraction calibration"
+      )
+    )
+
+    XCTAssertEqual(sampling.scanState, .unchanged)
+    XCTAssertEqual(sampling.detectorState, .uniformlyScaled)
+    XCTAssertEqual(sampling.workingScan?.row, 0.08)
+    XCTAssertEqual(sampling.workingScan?.column, 0.11)
+    XCTAssertEqual(sampling.workingDetector?.row, 0.08)
+    XCTAssertEqual(sampling.workingDetector?.column, 0.12)
+    XCTAssertEqual(sampling.firstWorkingDetectorCenterRowInSourcePixels, 1.5)
+    XCTAssertEqual(sampling.firstWorkingDetectorCenterColumnInSourcePixels, 1.5)
+  }
+
   func testExactBinningShardPlanFailsClosed() throws {
     let plan = try Metal4DSTEMLoadPlan(
       sourceScanRows: 4,
