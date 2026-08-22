@@ -120,7 +120,7 @@ def _result(master, workflow):
     )
 
 
-def test_screening_cache_roundtrip(tmp_path) -> None:
+def test_screening_cache_roundtrip(monkeypatch, tmp_path) -> None:
     from quantem.gpu.screening import workflow
 
     master = tmp_path / "scan_master.h5"
@@ -129,6 +129,13 @@ def test_screening_cache_roundtrip(tmp_path) -> None:
     expected = _result(master, workflow)
 
     workflow._save_cache(expected, cache_path)
+    monkeypatch.setattr(
+        workflow,
+        "_dpc_phase",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("a current cache must load the retained phase")
+        ),
+    )
     actual = workflow._prepare_cache(cache_path, master)
 
     assert actual is not None
@@ -139,7 +146,35 @@ def test_screening_cache_roundtrip(tmp_path) -> None:
     np.testing.assert_array_equal(actual.mean_dp, expected.mean_dp)
     np.testing.assert_array_equal(actual.bright_field, expected.bright_field)
     np.testing.assert_array_equal(actual.dark_field, expected.dark_field)
+    np.testing.assert_array_equal(actual.dpc_phase, expected.dpc_phase)
     assert actual.dpc_phase.dtype == np.float32
+
+
+def test_screening_cache_without_retained_phase_recomputes(tmp_path) -> None:
+    """Version-3 caches created by older readers remain compatible."""
+    from quantem.gpu.screening import workflow
+
+    master = tmp_path / "scan_master.h5"
+    master.write_bytes(b"placeholder")
+    cache_path = workflow._cache_path(master, tmp_path / "cache")
+    expected = _result(master, workflow)
+    cache_path.parent.mkdir(parents=True)
+    np.savez(
+        cache_path,
+        metadata_json=workflow._metadata_array(expected.metadata),
+        mean_dp=expected.mean_dp,
+        bright_field=expected.bright_field,
+        dark_field=expected.dark_field,
+        com_row=expected.com_row,
+        com_col=expected.com_col,
+    )
+
+    actual = workflow._prepare_cache(cache_path, master)
+
+    assert actual is not None
+    assert actual.from_cache is True
+    assert actual.dpc_phase.dtype == np.float32
+    assert actual.dpc_phase.shape == expected.dpc_phase.shape
 
 
 def test_screening_cache_path_tracks_exact_cache_version(tmp_path) -> None:
