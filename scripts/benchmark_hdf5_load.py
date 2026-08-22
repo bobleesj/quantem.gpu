@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,7 @@ from _benchmark_support import (
     _host_info,
     _memory_snapshot,
     _nearest_rank_summary,
+    _release_array,
     _sync_backend,
 )
 
@@ -83,11 +85,20 @@ def _load_once(master: Path, args: argparse.Namespace):
     }
     if args.dtype is not None:
         kwargs["dtype"] = args.dtype
-    if args.skip_mps_memory_check and args.scan_region is None:
-        kwargs["skip_mps_memory_check"] = True
     if args.scan_region is not None:
         kwargs["scan_region"] = args.scan_region
-    return load(str(master), **kwargs)
+    override_key = "QUANTEM_GPU_MPS_SKIP_MEMORY_CHECK"
+    override = args.skip_mps_memory_check and args.scan_region is None
+    previous = os.environ.get(override_key)
+    if override:
+        os.environ[override_key] = "1"
+    try:
+        return load(str(master), **kwargs)
+    finally:
+        if override and previous is None:
+            os.environ.pop(override_key, None)
+        elif override:
+            os.environ[override_key] = previous
 
 
 def main() -> None:
@@ -114,6 +125,7 @@ def main() -> None:
         for _ in range(max(0, args.warmup)):
             result = _load_once(master, args)
             _sync_backend(args.backend)
+            _release_array(result.data)
             del result
             _clear_backend(args.backend)
 
@@ -128,6 +140,12 @@ def main() -> None:
             _sync_backend(args.backend)
             elapsed = time.perf_counter() - t0
             memory_after = _memory_snapshot(args.backend)
+            shape = _shape(result.data)
+            resident_bytes = _nbytes(result.data)
+            release_method = _release_array(result.data)
+            del result
+            _clear_backend(args.backend)
+            memory_after_release = _memory_snapshot(args.backend)
             times.append(elapsed)
             run_records.append(
                 {
@@ -135,6 +153,8 @@ def main() -> None:
                     "wall_seconds": elapsed,
                     "memory_before": memory_before,
                     "memory_after": memory_after,
+                    "release_method": release_method,
+                    "memory_after_release": memory_after_release,
                 }
             )
             last = {
@@ -143,14 +163,13 @@ def main() -> None:
                 "dtype": args.dtype or "native",
                 "det_bin": args.det_bin,
                 "scan_region": list(args.scan_region) if args.scan_region else None,
-                "shape": _shape(result.data),
-                "resident_gb": None
-                if _nbytes(result.data) is None
-                else _nbytes(result.data) / 1e9,
+                "shape": shape,
+                "resident_gb": None if resident_bytes is None else resident_bytes / 1e9,
                 "memory_before": memory_before,
                 "memory_after": memory_after,
+                "release_method": release_method,
+                "memory_after_release": memory_after_release,
             }
-            del result
 
         assert last is not None
         summary = _nearest_rank_summary(times)
@@ -168,7 +187,7 @@ def main() -> None:
         rows.append(last)
 
     report = {
-        "schema": "quantem-gpu-hdf5-load-benchmark/v2",
+        "schema": "quantem-gpu-hdf5-load-benchmark/v3",
         "benchmark_definition": {
             "timing_boundary": "public io.load return after backend synchronization",
             "cache_state": args.cache_state,

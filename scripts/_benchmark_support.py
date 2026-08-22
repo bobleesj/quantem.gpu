@@ -194,6 +194,21 @@ def _clear_backend(backend: str) -> None:
     gc.collect()
 
 
+def _release_array(array: Any) -> str | None:
+    """Release an explicitly managed benchmark output when supported.
+
+    Native MPS chunk containers own Metal buffers outside Python's garbage
+    collector and expose ``free()`` for deterministic release. Ordinary NumPy,
+    CuPy, and Torch arrays have no such method and remain allocator-managed.
+    """
+
+    free = getattr(array, "free", None)
+    if not callable(free):
+        return None
+    free()
+    return "free"
+
+
 def _array_chunks(array: Any) -> list[np.ndarray]:
     """Return host views for one array or chunk-backed result."""
 
