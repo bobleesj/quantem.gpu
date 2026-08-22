@@ -3,6 +3,35 @@ import Metal
 import Metal4DSTEMKernels
 import Native4DSTEMIO
 
+/// Caller-selected residency for exact working-volume shards.
+///
+/// Shared storage permits direct CPU access. GPU-private storage keeps the
+/// exact volume Metal-resident and requires an explicit GPU copy before CPU
+/// inspection. QuantEM.GPU preserves the same logical bytes in both modes; the
+/// application owns device admission and lifecycle policy.
+public enum Metal4DSTEMResidentStorage: String, Codable, Equatable, Sendable {
+  case shared
+  case privateGPU = "private"
+
+  internal var resourceOptions: MTLResourceOptions {
+    switch self {
+    case .shared:
+      .storageModeShared
+    case .privateGPU:
+      [.storageModePrivate, .hazardTrackingModeUntracked]
+    }
+  }
+
+  internal var metalStorageMode: MTLStorageMode {
+    switch self {
+    case .shared:
+      .shared
+    case .privateGPU:
+      .private
+    }
+  }
+}
+
 /// Policy-free plan for exact indexed products plus a sharded working volume.
 ///
 /// QuantEM.GPU reports package-owned allocation sizes and validates scientific
@@ -22,7 +51,11 @@ public struct Metal4DSTEMIndexedBinnedLoadPlan: Equatable, Sendable {
   public let maximumRetainedSourceBufferBytes: UInt64
   public let estimatedAllocatedMetalBytesIncludingSourceTransfer: UInt64
   public let maximumIndividualMetalBufferBytes: UInt64
-  public let destinationStorageMode: String
+  public let residentStorage: Metal4DSTEMResidentStorage
+
+  public var destinationStorageMode: String {
+    residentStorage.rawValue
+  }
 
   internal var binningPlan: Metal4DSTEMLoadPlan {
     get throws {
@@ -46,6 +79,7 @@ public struct Metal4DSTEMIndexedBinnedLoadPlan: Equatable, Sendable {
     detectorBin: Int,
     sourceAudit: Metal4DSTEMExactSourceAudit,
     maximumShardBytes: UInt64,
+    residentStorage: Metal4DSTEMResidentStorage = .shared,
     sourceTransfer: Metal4DSTEMIndexedSourceTransfer = .memoryMapped
   ) throws {
     try sourceAudit.validate()
@@ -137,7 +171,7 @@ public struct Metal4DSTEMIndexedBinnedLoadPlan: Equatable, Sendable {
       }.max() ?? 0
     let detectorPartialScratchBytes: UInt64
     if stagingDtype == .uint8,
-      detectorBin == 2,
+      (detectorBin == 1 || detectorBin == 2),
       productPlan.sourceDetectorRows == 192,
       productPlan.sourceDetectorColumns == 192
     {
@@ -184,7 +218,7 @@ public struct Metal4DSTEMIndexedBinnedLoadPlan: Equatable, Sendable {
       shards.maximumActualShardBytes,
       detectorPartialScratchBytes
     )
-    destinationStorageMode = "shared"
+    self.residentStorage = residentStorage
   }
 
   private static func sampling(
