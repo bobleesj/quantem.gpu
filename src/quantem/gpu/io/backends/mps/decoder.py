@@ -452,41 +452,53 @@ def load_master(
     det_bin: int = 1,
     pixel_mask: "np.ndarray | None" = None,
     verbose: bool = True,
+    output_dtype: type | np.dtype | str | None = None,
 ) -> np.ndarray:
     """Decompress an arina master to numpy ``(n_frames, det_row, det_col)`` on
-    the Apple GPU. Same signature + contract as the cpu backend's load_master:
-    native uint16 dtype, dead-pixel mask applied BEFORE binning, integer-sum
-    detector binning (host-side) when det_bin > 1.
+    the Apple GPU. It preserves the CPU backend's native-count contract:
+    dead-pixel masking occurs BEFORE integer-sum detector binning. Native output
+    fails closed when an exact sum cannot fit its declared dtype; explicit
+    ``uint8`` output is declared clipping.
 
     No-bin uses the eager full-stack decompressor (needs the stack in RAM).
     det_bin > 1 uses a fused GPU LZ4+bitshuffle+integer-sum-bin (mask-aware,
-    uint16, double-buffered) that keeps only the binned result in memory and
-    matches the cuda integer-sum bin bit-for-bit.
+    uint16, double-buffered) that keeps only the binned result in memory.
+    Representable sums match the CUDA integer-sum bin bit-for-bit.
     """
     plan = plan_master(filepath)
     det_shape = plan.detector_shape
     dtype = plan.dtype
+    final_dtype = _normalize_output_dtype(output_dtype) or dtype
     chunk_n_frames = plan.chunk_n_frames
+    frame_bytes = int(np.prod(det_shape) * np.dtype(dtype).itemsize)
+    _bitshuffle_tail_elements(frame_bytes, np.dtype(dtype).itemsize)
+
+    if final_dtype not in (dtype, np.dtype(np.uint8)):
+        raise ValueError(
+            "MPS load_master detector binning supports native dtype or "
+            "output_dtype='u8' browse clipping. Widened detector-bin output "
+            "is not implemented."
+        )
 
     if det_bin <= 1:
         # No-bin: the eager full-stack decompressor. Native uint16,
         # bit-identical to cuda. Needs the whole stack in RAM (e.g. 19.3 GB),
         # so on a memory-constrained Mac this is for small stacks; use det_bin
         # > 1 for big ones (the streaming path below).
-        frame_bytes = int(np.prod(det_shape) * np.dtype(dtype).itemsize)
         dec = _get_decompressor(frame_bytes, max_frames=max(chunk_n_frames))
         out = dec.load_master(filepath)
         if pixel_mask is not None:
             bad = np.asarray(pixel_mask) != 0
             if bad.shape == out.shape[1:]:
                 out[:, bad] = 0  # zero dead pixels (raw frames, matches cuda)
+        if final_dtype == np.dtype(np.uint8):
+            return np.minimum(out, 255).astype(np.uint8)
         return out
 
     # det_bin > 1: fused GPU LZ4+bitshuffle+integer-sum-bin, dead-pixel masked,
-    # native uint16, double-buffered. Keeps only the 4.8 GB binned result in
-    # memory (fits a 24 GB Mac) and runs at the GPU decompress floor. Bit-
-    # identical to a cuda integer-sum bin (mask applied pre-bin in the kernel).
-    frame_bytes = int(np.prod(det_shape) * np.dtype(dtype).itemsize)
+    # native uint16, double-buffered. Keeps only the binned result in memory and
+    # runs at the GPU decompress floor. Representable sums match CUDA exactly;
+    # unrepresentable native output fails closed instead of saturating silently.
     max_frames = max(chunk_n_frames)
     fused_whole_shard = (
         dtype == np.dtype(np.uint16)
@@ -500,7 +512,20 @@ def load_master(
         max_frames=max_frames,
         whole_shard=fused_whole_shard,
     )
-    return dec.load_binned_masked(filepath, det_bin, mask=pixel_mask, verbose=verbose)
+    out = dec.load_binned_masked(
+        filepath,
+        det_bin,
+        mask=pixel_mask,
+        verbose=verbose,
+        allow_integer_saturation_for_u8=final_dtype == np.dtype(np.uint8),
+    )
+    if final_dtype == np.dtype(np.uint8):
+        clipped = _cast_mtl_integer_to_u8(out)
+        source_mtl = out._mtl
+        out._mtl = None
+        _release_metal_buffer(source_mtl)
+        return clipped
+    return out
 
 # ---------------------------------------------------------------------------
 # Metal Shading Language kernels
@@ -530,11 +555,25 @@ _shuf16_u8_fn = _library.newFunctionWithName_("shuf_8192_16_to_u8_batched")
 _shuf16_u8_masked_fn = _library.newFunctionWithName_(
     "shuf_8192_16_to_u8_masked_batched"
 )
+_shuf_tail16_fn = _library.newFunctionWithName_("shuf_tail_16_batched")
+_shuf_tail32_fn = _library.newFunctionWithName_("shuf_tail_32_batched")
+_shuf_tail16_u8_fn = _library.newFunctionWithName_(
+    "shuf_tail_16_to_u8_batched"
+)
+_shuf_tail16_u8_masked_fn = _library.newFunctionWithName_(
+    "shuf_tail_16_to_u8_masked_batched"
+)
 _shuf_bin16_fn = _library.newFunctionWithName_(
     "shuf_bin_sum_8192_16_batched"
 )
 _shuf_bin2_16_fn = _library.newFunctionWithName_(
     "shuf_bin2_sum_8192_16_batched"
+)
+_shuf_bin4_16_fn = _library.newFunctionWithName_(
+    "shuf_bin4_sum_8192_16_batched"
+)
+_shuf_bin8_16_fn = _library.newFunctionWithName_(
+    "shuf_bin8_sum_8192_16_batched"
 )
 _detsum_u8_decode_partial_fn = _library.newFunctionWithName_(
     "detector_sum_u8_decode_partial"
@@ -579,6 +618,22 @@ _shuf16_u8_masked_pipeline = _make_pipeline(
     _shuf16_u8_masked_fn,
     "shuf_8192_16_to_u8_masked_batched",
 )
+_shuf_tail16_pipeline = _make_pipeline(
+    _shuf_tail16_fn,
+    "shuf_tail_16_batched",
+)
+_shuf_tail32_pipeline = _make_pipeline(
+    _shuf_tail32_fn,
+    "shuf_tail_32_batched",
+)
+_shuf_tail16_u8_pipeline = _make_pipeline(
+    _shuf_tail16_u8_fn,
+    "shuf_tail_16_to_u8_batched",
+)
+_shuf_tail16_u8_masked_pipeline = _make_pipeline(
+    _shuf_tail16_u8_masked_fn,
+    "shuf_tail_16_to_u8_masked_batched",
+)
 _shuf_bin16_pipeline = _make_pipeline(
     _shuf_bin16_fn,
     "shuf_bin_sum_8192_16_batched",
@@ -587,6 +642,155 @@ _shuf_bin2_16_pipeline = _make_pipeline(
     _shuf_bin2_16_fn,
     "shuf_bin2_sum_8192_16_batched",
 )
+_shuf_bin4_16_pipeline = _make_pipeline(
+    _shuf_bin4_16_fn,
+    "shuf_bin4_sum_8192_16_batched",
+)
+_shuf_bin8_16_pipeline = _make_pipeline(
+    _shuf_bin8_16_fn,
+    "shuf_bin8_sum_8192_16_batched",
+)
+
+
+def _bitshuffle_tail_elements(frame_bytes: int, elem_size: int) -> int:
+    """Return an admissible final partial-block element count."""
+    if int(elem_size) not in (2, 4):
+        raise ValueError(
+            "MPS bitshuffle/LZ4 GPU decode supports only 2-byte uint16 and "
+            "4-byte uint32 source elements. Use the CPU backend or repack "
+            "this source into a supported integer dtype."
+        )
+    tail_bytes = int(frame_bytes) % 8192
+    if tail_bytes == 0:
+        return 0
+    if tail_bytes % int(elem_size):
+        raise ValueError(
+            "MPS bitshuffle/LZ4 load cannot exactly decode a partial final "
+            f"block of {tail_bytes} bytes for {elem_size}-byte elements. Use "
+            "the CPU backend or repack this source."
+        )
+    tail_elements = tail_bytes // int(elem_size)
+    if tail_elements % 8:
+        raise ValueError(
+            "MPS bitshuffle/LZ4 load supports a partial final block only "
+            "when it contains a multiple of 8 elements; got "
+            f"{tail_elements}. Use the CPU backend or repack this source."
+        )
+    return tail_elements
+
+
+def _encode_bitshuffle_tail(
+    encoder,
+    *,
+    in_mtl,
+    out_mtl,
+    out_byte_offset: int,
+    n_frames: int,
+    frame_bytes: int,
+    elem_size: int,
+    output_u8: bool = False,
+    mask_mtl=None,
+) -> int:
+    """Encode the canonical CUDA-equivalent final-block unshuffle."""
+    tail_elements = _bitshuffle_tail_elements(frame_bytes, elem_size)
+    if tail_elements == 0:
+        return 0
+    if output_u8:
+        if elem_size != 2:
+            raise ValueError("Direct uint8 tail output requires uint16 source data.")
+        pipeline = (
+            _shuf_tail16_u8_masked_pipeline
+            if mask_mtl is not None
+            else _shuf_tail16_u8_pipeline
+        )
+    else:
+        pipeline = (
+            _shuf_tail16_pipeline if elem_size == 2 else _shuf_tail32_pipeline
+        )
+    encoder.setComputePipelineState_(pipeline)
+    encoder.setBuffer_offset_atIndex_(in_mtl, 0, 0)
+    encoder.setBuffer_offset_atIndex_(out_mtl, int(out_byte_offset), 1)
+    encoder.setBytes_length_atIndex_(
+        np.array([frame_bytes], dtype=np.uint32).tobytes(), 4, 2
+    )
+    if mask_mtl is not None:
+        encoder.setBuffer_offset_atIndex_(mask_mtl, 0, 3)
+    encoder.dispatchThreadgroups_threadsPerThreadgroup_(
+        Metal.MTLSizeMake(n_frames, 1, (tail_elements + 255) // 256),
+        Metal.MTLSizeMake(256, 1, 1),
+    )
+    return tail_elements
+
+
+def _fused_bin_pipeline_for(bin_factor: int):
+    """Return the exact fused uint16 pipeline for a supported detector bin."""
+    return {
+        2: _shuf_bin2_16_pipeline,
+        4: _shuf_bin4_16_pipeline,
+        8: _shuf_bin8_16_pipeline,
+    }[bin_factor]
+
+
+def _fused_bin_output_tile_shape(bin_factor: int) -> tuple[int, int]:
+    """Return the fixed output-tile row and column counts of a fused kernel."""
+    return {
+        2: (16, 32),
+        4: (8, 16),
+        8: (8, 8),
+    }[bin_factor]
+
+
+def _raise_if_binned_integer_overflow(
+    overflow: np.ndarray,
+    bin_factor: int,
+    output_dtype: np.dtype,
+) -> None:
+    """Fail closed instead of returning a saturated detector sum."""
+    if int(overflow[0]) != 0:
+        dtype_name = np.dtype(output_dtype).name
+        raise OverflowError(
+            f"Exact detector bin {bin_factor} exceeds {dtype_name} range. "
+            "Use native detector resolution, a smaller explicit detector bin, "
+            "or exact wider-integer binning on a backend that supports it. "
+            "MPS widened detector-bin output is not implemented; no saturated "
+            f"{dtype_name} result was returned."
+        )
+
+
+def _release_and_raise_if_binned_integer_overflow(
+    overflow: np.ndarray,
+    bin_factor: int,
+    output_dtype: np.dtype,
+    *out_mtls,
+) -> None:
+    """Release a rejected result before reporting exact-sum overflow."""
+    if int(overflow[0]) == 0:
+        return
+    released = set()
+    for out_mtl in out_mtls:
+        if out_mtl is None:
+            continue
+        key = _buffer_key(out_mtl)
+        if key in released:
+            continue
+        released.add(key)
+        _release_metal_buffer(out_mtl)
+    _raise_if_binned_integer_overflow(overflow, bin_factor, output_dtype)
+
+
+def _release_unique_metal_buffers(*buffers) -> None:
+    """Release each non-null Metal allocation at most once."""
+    released = set()
+    for buffer in buffers:
+        if buffer is None:
+            continue
+        key = _buffer_key(buffer)
+        if key in released:
+            continue
+        released.add(key)
+        _release_metal_buffer(buffer)
+
+
 _detsum_u8_decode_partial_pipeline = _make_pipeline(
     _detsum_u8_decode_partial_fn,
     "detector_sum_u8_decode_partial",
@@ -704,8 +908,9 @@ def _release_metal_buffer(buf) -> None:
     this a single no-bin tilt load retains ~45 GB forever, and a handful of
     tilts exhausts even a 128 GB Mac.
 
-    Releasing twice is a no-op rather than an over-release, because a buffer can
-    be reachable from a returned array and a scratch pool at the same time.
+    Each +1-retained buffer must reach this function exactly once. Callers that
+    transfer or reject outputs must detach old references and deduplicate by
+    ``_buffer_key`` first; a second raw Objective-C ``release`` can crash.
     """
     if buf is None:
         return
@@ -743,17 +948,17 @@ def _numpy_view(mtl_buf, dtype, count):
 
 
 class _MtlArray(np.ndarray):
-    """ndarray that keeps its backing Metal buffer alive via ``_mtl``.
+    """ndarray that keeps a reference to its backing Metal buffer via ``_mtl``.
 
     The binned load returns a zero-copy view into a Metal unified-memory
-    buffer (no host memcpy). This subclass holds an ``_MtlOwner`` for that
-    buffer so it is not freed while the array is in use; the buffer is
-    allocated fresh per load so the view can never be aliased by a later
-    decompress.
+    buffer (no host memcpy). Current arrays store the raw ``MTLBuffer`` wrapper;
+    explicit owner APIs release it exactly once when the scientific consumer is
+    finished. The buffer is allocated fresh per load so the view cannot be
+    aliased by a later decompress.
 
-    ``__array_finalize__`` carries the owner onto every slice and reshape.
-    Without it a view kept the memory readable but dropped the owner, so the
-    buffer could be released out from under a live view.
+    ``__array_finalize__`` carries that reference onto every slice and reshape.
+    Without it a view kept the memory readable but lost the release/lifetime
+    handle, so the buffer could be released out from under a live view.
     """
     _mtl = None
     _row_prefix = False
@@ -1134,6 +1339,7 @@ class MPSDecompressor:
         two command buffers concurrently without the second clobbering the
         first's scratch — recovers the ~0.6s per-chunk CPU<->GPU drain gap.
         """
+        tail_elements = _bitshuffle_tail_elements(frame_bytes, elem_size)
         if out_mtl is None:
             out_mtl = self._out_mtl
         cmd = _queue.commandBuffer()
@@ -1145,6 +1351,7 @@ class MPSDecompressor:
             and cast_u8_out_mtl is None
             and cast_u16_out_mtl is None
             and detector_sum_out_mtl is None
+            and tail_elements == 0
             and _fused_full_u16_enabled()
         )
         if fused_full_u16:
@@ -1161,6 +1368,9 @@ class MPSDecompressor:
                 np.array([frame_elems], dtype=np.uint32).tobytes(), 4, 5
             )
             enc.setBuffer_offset_atIndex_(out_mtl, out_byte_offset, 6)
+            # The shader's unshuffle loop advances by four SIMD groups.  It
+            # therefore requires exactly 4 x 32 = 128 threads: 64 leaves half
+            # the bit-plane groups unwritten, while 256 overlaps group writes.
             enc.dispatchThreadgroups_threadsPerThreadgroup_(
                 Metal.MTLSizeMake(n_frames, 1, max_blocks),
                 Metal.MTLSizeMake(128, 1, 1),
@@ -1248,11 +1458,12 @@ class MPSDecompressor:
             )
             if fused_shuf_u8 and zero_bad:
                 enc.setBuffer_offset_atIndex_(self._mask_mtl, 0, 5)
-            tg_count = (groups_per_frame + 31) // 32
-            enc.dispatchThreadgroups_threadsPerThreadgroup_(
-                Metal.MTLSizeMake(n_frames, 1, tg_count),
-                Metal.MTLSizeMake(32, 32, 1),
-            )
+            if groups_per_frame:
+                tg_count = (groups_per_frame + 31) // 32
+                enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                    Metal.MTLSizeMake(n_frames, 1, tg_count),
+                    Metal.MTLSizeMake(32, 32, 1),
+                )
         else:
             groups_per_block = 2048 // 32
             groups_per_frame = n_8kb * groups_per_block
@@ -1269,10 +1480,27 @@ class MPSDecompressor:
             enc.setBytes_length_atIndex_(
                 np.array([groups_per_frame], dtype=np.uint32).tobytes(), 4, 4
             )
-            tg_count = (groups_per_frame + 31) // 32
-            enc.dispatchThreadgroups_threadsPerThreadgroup_(
-                Metal.MTLSizeMake(n_frames, 1, tg_count),
-                Metal.MTLSizeMake(32, 32, 1),
+            if groups_per_frame:
+                tg_count = (groups_per_frame + 31) // 32
+                enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                    Metal.MTLSizeMake(n_frames, 1, tg_count),
+                    Metal.MTLSizeMake(32, 32, 1),
+                )
+        if tail_elements:
+            tail_output_mtl = cast_u8_out_mtl if fused_shuf_u8 else out_mtl
+            tail_output_offset = (
+                cast_u8_out_byte_offset if fused_shuf_u8 else out_byte_offset
+            )
+            _encode_bitshuffle_tail(
+                enc,
+                in_mtl=lz4_mtl,
+                out_mtl=tail_output_mtl,
+                out_byte_offset=tail_output_offset,
+                n_frames=n_frames,
+                frame_bytes=frame_bytes,
+                elem_size=elem_size,
+                output_u8=fused_shuf_u8,
+                mask_mtl=self._mask_mtl if fused_shuf_u8 and zero_bad else None,
             )
         if detector_sum_out_mtl is not None:
             if not fused_shuf_u8 or detector_sum_partial_mtl is None:
@@ -1398,35 +1626,17 @@ class MPSDecompressor:
                     f"fast_det_bin={bin_factor}."
                 )
             enc.memoryBarrierWithScope_(Metal.MTLBarrierScopeBuffers)
-            out_det_row = det_row // bin_factor
-            out_det_col = det_col // bin_factor
-            out_frame_elems = out_det_row * out_det_col
-            in_frame_elems = det_row * det_col
-            bin_pipeline = _bin_u16_pipeline if elem_size == 2 else _bin_u32_pipeline
-            enc.setComputePipelineState_(bin_pipeline)
-            enc.setBuffer_offset_atIndex_(out_mtl, out_byte_offset, 0)
-            enc.setBuffer_offset_atIndex_(fast_out_mtl, fast_out_byte_offset, 1)
-            enc.setBytes_length_atIndex_(
-                np.array([det_col], dtype=np.uint32).tobytes(), 4, 2
-            )
-            enc.setBytes_length_atIndex_(
-                np.array([in_frame_elems], dtype=np.uint32).tobytes(), 4, 3
-            )
-            enc.setBytes_length_atIndex_(
-                np.array([out_det_col], dtype=np.uint32).tobytes(), 4, 4
-            )
-            enc.setBytes_length_atIndex_(
-                np.array([out_frame_elems], dtype=np.uint32).tobytes(), 4, 5
-            )
-            enc.setBytes_length_atIndex_(
-                np.array([bin_factor], dtype=np.uint32).tobytes(), 4, 6
-            )
-            enc.setBuffer_offset_atIndex_(self._mask_mtl, 0, 7)
-            grid_x = (out_det_col + 15) // 16
-            grid_y = (out_det_row + 15) // 16
-            enc.dispatchThreadgroups_threadsPerThreadgroup_(
-                Metal.MTLSizeMake(n_frames, grid_y, grid_x),
-                Metal.MTLSizeMake(1, 16, 16),
+            self._encode_detector_bin_sum(
+                enc,
+                in_mtl=out_mtl,
+                in_byte_offset=out_byte_offset,
+                out_mtl=fast_out_mtl,
+                out_byte_offset=fast_out_byte_offset,
+                n_frames=n_frames,
+                elem_size=elem_size,
+                det_row=det_row,
+                det_col=det_col,
+                bin_factor=bin_factor,
             )
         if cast_u16_out_mtl is not None:
             if elem_size != 4:
@@ -1484,6 +1694,56 @@ class MPSDecompressor:
         cmd.commit()
         return cmd
 
+    def _encode_detector_bin_sum(
+        self,
+        enc,
+        *,
+        in_mtl,
+        in_byte_offset,
+        out_mtl,
+        out_byte_offset,
+        n_frames,
+        elem_size,
+        det_row,
+        det_col,
+        bin_factor,
+    ) -> None:
+        """Encode the shared exact detector-sum fallback with all bindings."""
+        out_det_row = det_row // bin_factor
+        out_det_col = det_col // bin_factor
+        out_frame_elems = out_det_row * out_det_col
+        in_frame_elems = det_row * det_col
+        enc.setComputePipelineState_(
+            _bin_u16_pipeline if elem_size == 2 else _bin_u32_pipeline
+        )
+        enc.setBuffer_offset_atIndex_(in_mtl, in_byte_offset, 0)
+        enc.setBuffer_offset_atIndex_(out_mtl, out_byte_offset, 1)
+        for index, value in (
+            (2, det_col),
+            (3, in_frame_elems),
+            (4, out_det_col),
+            (5, out_frame_elems),
+            (6, bin_factor),
+        ):
+            enc.setBytes_length_atIndex_(
+                np.array([value], dtype=np.uint32).tobytes(),
+                4,
+                index,
+            )
+        enc.setBuffer_offset_atIndex_(self._mask_mtl, 0, 7)
+        enc.setBytes_length_atIndex_(
+            np.array([out_det_row], dtype=np.uint32).tobytes(),
+            4,
+            8,
+        )
+        enc.setBuffer_offset_atIndex_(self._cast_overflow_mtl, 0, 9)
+        grid_x = (out_det_col + 15) // 16
+        grid_y = (out_det_row + 15) // 16
+        enc.dispatchThreadgroups_threadsPerThreadgroup_(
+            Metal.MTLSizeMake(n_frames, grid_y, grid_x),
+            Metal.MTLSizeMake(1, 16, 16),
+        )
+
     def _submit_gpu_binned(self, n_frames, frame_bytes, elem_size,
                            out_byte_offset, det_row, det_col, bin_factor,
                            comp_mtl, co_mtl, bs_mtl, bc_mtl, bo_mtl,
@@ -1497,6 +1757,7 @@ class MPSDecompressor:
             out_mtl = self._out_mtl
         lz4_mtl = self._ensure_lz4_buffer()
         frame_elems = frame_bytes // elem_size
+        tail_elements = _bitshuffle_tail_elements(frame_bytes, elem_size)
         fused_bin = (
             elem_size == 2
             and bin_factor in (2, 4, 8)
@@ -1531,9 +1792,7 @@ class MPSDecompressor:
         if fused_bin:
             out_det_row = det_row // bin_factor
             out_det_col = det_col // bin_factor
-            enc.setComputePipelineState_(
-                _shuf_bin2_16_pipeline if bin_factor == 2 else _shuf_bin16_pipeline
-            )
+            enc.setComputePipelineState_(_fused_bin_pipeline_for(bin_factor))
             enc.setBuffer_offset_atIndex_(lz4_mtl, 0, 0)
             enc.setBuffer_offset_atIndex_(out_mtl, out_byte_offset, 1)
             enc.setBuffer_offset_atIndex_(self._mask_mtl, 0, 2)
@@ -1555,11 +1814,15 @@ class MPSDecompressor:
             enc.setBytes_length_atIndex_(
                 np.array([bin_factor], dtype=np.uint32).tobytes(), 4, 8
             )
+            enc.setBuffer_offset_atIndex_(self._cast_overflow_mtl, 0, 9)
+            output_tile_rows, output_tile_cols = _fused_bin_output_tile_shape(
+                bin_factor
+            )
             enc.dispatchThreadgroups_threadsPerThreadgroup_(
                 Metal.MTLSizeMake(
                     n_frames,
-                    (out_det_row + 7) // 8,
-                    (out_det_col + 15) // 16,
+                    (out_det_row + output_tile_rows - 1) // output_tile_rows,
+                    (out_det_col + output_tile_cols - 1) // output_tile_cols,
                 ),
                 Metal.MTLSizeMake(256, 1, 1),
             )
@@ -1584,11 +1847,12 @@ class MPSDecompressor:
             enc.setBytes_length_atIndex_(
                 np.array([groups_per_frame], dtype=np.uint32).tobytes(), 4, 4
             )
-            tg_count = (groups_per_frame + 31) // 32
-            enc.dispatchThreadgroups_threadsPerThreadgroup_(
-                Metal.MTLSizeMake(n_frames, 1, tg_count),
-                Metal.MTLSizeMake(32, 32, 1),
-            )
+            if groups_per_frame:
+                tg_count = (groups_per_frame + 31) // 32
+                enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                    Metal.MTLSizeMake(n_frames, 1, tg_count),
+                    Metal.MTLSizeMake(32, 32, 1),
+                )
         else:
             groups_per_block = 2048 // 32
             groups_per_frame = n_8kb * groups_per_block
@@ -1605,52 +1869,34 @@ class MPSDecompressor:
             enc.setBytes_length_atIndex_(
                 np.array([groups_per_frame], dtype=np.uint32).tobytes(), 4, 4
             )
-            tg_count = (groups_per_frame + 31) // 32
-            enc.dispatchThreadgroups_threadsPerThreadgroup_(
-                Metal.MTLSizeMake(n_frames, 1, tg_count),
-                Metal.MTLSizeMake(32, 32, 1),
+            if groups_per_frame:
+                tg_count = (groups_per_frame + 31) // 32
+                enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                    Metal.MTLSizeMake(n_frames, 1, tg_count),
+                    Metal.MTLSizeMake(32, 32, 1),
+                )
+        if tail_elements:
+            _encode_bitshuffle_tail(
+                enc,
+                in_mtl=lz4_mtl,
+                out_mtl=self._shuf_mtl,
+                out_byte_offset=0,
+                n_frames=n_frames,
+                frame_bytes=frame_bytes,
+                elem_size=elem_size,
             )
         enc.memoryBarrierWithScope_(Metal.MTLBarrierScopeBuffers)
-        # Bin: _shuf_mtl → _out_mtl at offset — n_frames in X
-        out_det_row = det_row // bin_factor
-        out_det_col = det_col // bin_factor
-        out_frame_elems = out_det_row * out_det_col
-        in_frame_elems = det_row * det_col
-        # uint16: scalar sum kernel. (A threadgroup-tiled bin was tried and
-        # regressed on M5 — barrier + reduced occupancy beat the coalescing
-        # win; Apple's cache absorbs the strided 2x2 gather fine.)
-        tiled = False
-        bin_pipeline = (_bin_tiled_u16_pipeline if tiled
-                        else (_bin_u16_pipeline if elem_size == 2 else _bin_u32_pipeline))
-        enc.setComputePipelineState_(bin_pipeline)
-        enc.setBuffer_offset_atIndex_(self._shuf_mtl, 0, 0)
-        enc.setBuffer_offset_atIndex_(out_mtl, out_byte_offset, 1)
-        enc.setBytes_length_atIndex_(
-            np.array([det_col], dtype=np.uint32).tobytes(), 4, 2
-        )
-        enc.setBytes_length_atIndex_(
-            np.array([in_frame_elems], dtype=np.uint32).tobytes(), 4, 3
-        )
-        enc.setBytes_length_atIndex_(
-            np.array([out_det_col], dtype=np.uint32).tobytes(), 4, 4
-        )
-        enc.setBytes_length_atIndex_(
-            np.array([out_frame_elems], dtype=np.uint32).tobytes(), 4, 5
-        )
-        enc.setBytes_length_atIndex_(
-            np.array([bin_factor], dtype=np.uint32).tobytes(), 4, 6
-        )
-        # Dead-pixel mask (buffer 7): one detector frame, uchar, nonzero = dead.
-        enc.setBuffer_offset_atIndex_(self._mask_mtl, 0, 7)
-        if tiled:
-            enc.setBytes_length_atIndex_(
-                np.array([out_det_row], dtype=np.uint32).tobytes(), 4, 8
-            )
-        grid_x = (out_det_col + 15) // 16
-        grid_y = (out_det_row + 15) // 16
-        enc.dispatchThreadgroups_threadsPerThreadgroup_(
-            Metal.MTLSizeMake(n_frames, grid_y, grid_x),
-            Metal.MTLSizeMake(1, 16, 16),
+        self._encode_detector_bin_sum(
+            enc,
+            in_mtl=self._shuf_mtl,
+            in_byte_offset=0,
+            out_mtl=out_mtl,
+            out_byte_offset=out_byte_offset,
+            n_frames=n_frames,
+            elem_size=elem_size,
+            det_row=det_row,
+            det_col=det_col,
+            bin_factor=bin_factor,
         )
         enc.endEncoding()
         cmd.commit()
@@ -1690,13 +1936,22 @@ class MPSDecompressor:
             )
         self._bad_idx_np[:nbad] = bad
 
-    def load_binned_masked(self, master_path, det_bin, mask=None, verbose=False):
+    def load_binned_masked(
+        self,
+        master_path,
+        det_bin,
+        mask=None,
+        verbose=False,
+        *,
+        allow_integer_saturation_for_u8=False,
+    ):
         """Fast det_bin>1 path: GPU LZ4+bitshuffle+integer-sum-bin, dead-pixel
-        masked, native uint16, double-buffered (read next chunk while the GPU
-        bins the current one). Writes binned uint16 straight into one full
+        masked, native unsigned-integer dtype, double-buffered (read next chunk
+        while the GPU bins the current one). Writes the native binned dtype into one full
         output buffer at each frame offset — no per-batch host copy — so it
         runs at the GPU decompress floor instead of paying a float32 memcpy
-        tax. Bit-identical to a cuda integer-sum bin.
+        tax. Representable sums are bit-identical to the CUDA integer-sum bin;
+        native output fails closed instead of exposing a saturated count.
         """
         plan = plan_master(master_path)
         det_shape = plan.detector_shape
@@ -1706,11 +1961,14 @@ class MPSDecompressor:
         det_row, det_col = det_shape
         frame_bytes = int(np.prod(det_shape) * np.dtype(dtype).itemsize)
         elem_size = np.dtype(dtype).itemsize
+        _bitshuffle_tail_elements(frame_bytes, elem_size)
         n_blocks_per_frame = (frame_bytes + 8191) // 8192
         out_row, out_col = det_row // det_bin, det_col // det_bin
-        out_frame_bytes = out_row * out_col * elem_size  # uint16 binned
+        out_frame_bytes = out_row * out_col * elem_size
         total_frames = sum(chunk_n_frames)
         self._set_mask(mask, det_row, det_col)
+        if elem_size in (2, 4):
+            self._cast_overflow_np[0] = 0
         # Fresh output buffer per call (NOT the reused _ensure_output_buffer
         # pool) so the zero-copy view we return below can't be aliased by a
         # later load. The returned array keeps this buffer alive via _mtl.
@@ -1774,6 +2032,21 @@ class MPSDecompressor:
                 if not read_next_done and e >= nf:
                     read_next_done = True
             frame_offset += nf
+        if (
+            elem_size in (2, 4)
+            and int(self._cast_overflow_np[0]) != 0
+            and not allow_integer_saturation_for_u8
+        ):
+            rejected_mtl = self._out_mtl
+            self._out_mtl = None
+            self._out_np = None
+            self._out_nbytes = 0
+            _release_and_raise_if_binned_integer_overflow(
+                self._cast_overflow_np,
+                det_bin,
+                dtype,
+                rejected_mtl,
+            )
         # Zero-copy: return a view straight into the Metal unified-memory output
         # buffer (no 4.8 GB host memcpy). _MtlArray holds a reference to the
         # Metal buffer so it stays alive as long as the array does; we allocated
@@ -1815,6 +2088,7 @@ class MPSDecompressor:
         dtype = plan.dtype
         frame_bytes = plan.frame_bytes
         elem_size = plan.elem_size
+        _bitshuffle_tail_elements(frame_bytes, elem_size)
         chunk_files = list(plan.chunk_files)
         chunk_n_frames = list(plan.chunk_n_frames)
         total_frames = sum(chunk_n_frames)
@@ -1930,6 +2204,7 @@ class MPSDecompressor:
         dtype = plan.dtype
         frame_bytes = plan.frame_bytes
         elem_size = plan.elem_size
+        _bitshuffle_tail_elements(frame_bytes, elem_size)
         final_dtype = _normalize_output_dtype(output_dtype) or dtype
         final_elem_size = int(final_dtype.itemsize)
         frame_elems = int(np.prod(frame_shape, dtype=np.uint64))
@@ -2012,6 +2287,8 @@ class MPSDecompressor:
             self._cast_overflow_np[0] = 0
         if fast_det_bin:
             self._set_mask(pixel_mask, int(frame_shape[0]), int(frame_shape[1]))
+            if elem_size in (2, 4):
+                self._cast_overflow_np[0] = 0
         fused_full_u16 = (
             elem_size == 2
             and not row_prefix
@@ -2019,6 +2296,7 @@ class MPSDecompressor:
             and not output_u16_narrow
             and not fast_det_bin
             and not precompute_detector_sum
+            and frame_bytes % 8192 == 0
             and _fused_full_u16_enabled()
         )
         bufs = [
@@ -2345,6 +2623,19 @@ class MPSDecompressor:
                 _release_metal_buffer(buffer)
             _release_metal_buffer(detector_sum_chunks_mtl)
             _release_metal_buffer(detector_sum_final_mtl)
+        if (
+            fast_det_bin
+            and elem_size in (2, 4)
+            and int(self._cast_overflow_np[0]) != 0
+        ):
+            rejected_fast_outputs = tuple(fast_out_mtls)
+            self._chunk_fast_pool = []
+            _release_and_raise_if_binned_integer_overflow(
+                self._cast_overflow_np,
+                fast_det_bin,
+                dtype,
+                *rejected_fast_outputs,
+            )
         if output_u16_narrow and int(self._cast_overflow_np[0]) != 0:
             raise RuntimeError(
                 "output_dtype=np.uint16 cannot losslessly represent this "
@@ -2408,7 +2699,6 @@ class MPSDecompressor:
         np.ndarray
             Numpy array with shape (n_frames, height, width).
         """
-        self._ensure_shuf_buffer()
         t0 = time.perf_counter()
 
         # ---- Read raw chunks directly into pre-allocated Metal buffer ----
@@ -2419,6 +2709,9 @@ class MPSDecompressor:
             frame_shape = ds.shape[1:]
             dtype = ds.dtype
             frame_bytes = int(np.prod(frame_shape) * np.dtype(dtype).itemsize)
+            elem_size = np.dtype(dtype).itemsize
+            tail_elements = _bitshuffle_tail_elements(frame_bytes, elem_size)
+            self._ensure_shuf_buffer()
             offset = 0
             for i in range(n_frames):
                 _, raw = ds.id.read_direct_chunk((i, 0, 0))
@@ -2473,7 +2766,6 @@ class MPSDecompressor:
         enc.memoryBarrierWithScope_(Metal.MTLBarrierScopeBuffers)
 
         # Bitshuffle unshuffle — n_frames in X
-        elem_size = np.dtype(dtype).itemsize
         n_8kb = frame_bytes // 8192
         if elem_size == 2:
             groups_per_block = 8192 // (elem_size * 32)  # 128
@@ -2492,11 +2784,12 @@ class MPSDecompressor:
                 np.array([groups_per_frame], dtype=np.uint32).tobytes(), 4, 4
             )
             # 32 SIMD groups per threadgroup → 32x fewer launches
-            tg_count = (groups_per_frame + 31) // 32
-            enc.dispatchThreadgroups_threadsPerThreadgroup_(
-                Metal.MTLSizeMake(n_frames, 1, tg_count),
-                Metal.MTLSizeMake(32, 32, 1),
-            )
+            if groups_per_frame:
+                tg_count = (groups_per_frame + 31) // 32
+                enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                    Metal.MTLSizeMake(n_frames, 1, tg_count),
+                    Metal.MTLSizeMake(32, 32, 1),
+                )
         else:
             groups_per_block = 2048 // 32  # 64
             groups_per_frame = n_8kb * groups_per_block
@@ -2513,10 +2806,21 @@ class MPSDecompressor:
             enc.setBytes_length_atIndex_(
                 np.array([groups_per_frame], dtype=np.uint32).tobytes(), 4, 4
             )
-            tg_count = (groups_per_frame + 31) // 32
-            enc.dispatchThreadgroups_threadsPerThreadgroup_(
-                Metal.MTLSizeMake(n_frames, 1, tg_count),
-                Metal.MTLSizeMake(32, 32, 1),
+            if groups_per_frame:
+                tg_count = (groups_per_frame + 31) // 32
+                enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                    Metal.MTLSizeMake(n_frames, 1, tg_count),
+                    Metal.MTLSizeMake(32, 32, 1),
+                )
+        if tail_elements:
+            _encode_bitshuffle_tail(
+                enc,
+                in_mtl=lz4_mtl,
+                out_mtl=self._shuf_mtl,
+                out_byte_offset=0,
+                n_frames=n_frames,
+                frame_bytes=frame_bytes,
+                elem_size=elem_size,
             )
 
         enc.endEncoding()
@@ -2572,6 +2876,7 @@ class MPSDecompressor:
         final_dtype = _normalize_output_dtype(output_dtype) or dtype
         frame_bytes = int(prepared["frame_bytes"])
         elem_size = int(dtype.itemsize)
+        _bitshuffle_tail_elements(frame_bytes, elem_size)
         output_u8 = final_dtype == np.dtype(np.uint8)
         output_u16_narrow = (
             final_dtype == np.dtype(np.uint16)
@@ -2630,93 +2935,152 @@ class MPSDecompressor:
                     f"Detector shape {frame_shape} is not divisible by det_bin={det_bin}."
                 )
             self._set_mask(pixel_mask, det_row, det_col)
+            if elem_size in (2, 4):
+                self._cast_overflow_np[0] = 0
             out_shape = (det_row // det_bin, det_col // det_bin)
             out_frame_bytes = out_shape[0] * out_shape[1] * elem_size
             out_total_bytes = total_frames * out_frame_bytes
-            out_mtl = _metal_buffer_alloc(out_total_bytes)
-            out_np = _numpy_view(out_mtl, np.uint8, out_total_bytes)
-            cmd = self._submit_gpu_binned(
-                total_frames,
-                frame_bytes,
-                elem_size,
-                0,
-                det_row,
-                det_col,
-                det_bin,
-                self._comp_mtl,
-                self._co_mtl,
-                self._bs_mtl,
-                self._bc_mtl,
-                self._bo_mtl,
-                max_blocks,
-                out_mtl=out_mtl,
-            )
-            cmd.waitUntilCompleted()
-            out = out_np.view(dtype).reshape((total_frames,) + out_shape).view(_MtlArray)
-            out._mtl = out_mtl
-            if output_u8:
-                out = _cast_mtl_integer_to_u8(out)
+            out_mtl = None
+            try:
+                out_mtl = _metal_buffer_alloc(out_total_bytes)
+                out_np = _numpy_view(out_mtl, np.uint8, out_total_bytes)
+                cmd = self._submit_gpu_binned(
+                    total_frames,
+                    frame_bytes,
+                    elem_size,
+                    0,
+                    det_row,
+                    det_col,
+                    det_bin,
+                    self._comp_mtl,
+                    self._co_mtl,
+                    self._bs_mtl,
+                    self._bc_mtl,
+                    self._bo_mtl,
+                    max_blocks,
+                    out_mtl=out_mtl,
+                )
+                cmd.waitUntilCompleted()
+                if (
+                    elem_size in (2, 4)
+                    and int(self._cast_overflow_np[0]) != 0
+                    and not output_u8
+                ):
+                    _raise_if_binned_integer_overflow(
+                        self._cast_overflow_np,
+                        det_bin,
+                        dtype,
+                    )
+                out = (
+                    out_np.view(dtype)
+                    .reshape((total_frames,) + out_shape)
+                    .view(_MtlArray)
+                )
+                out._mtl = out_mtl
+                if output_u8:
+                    clipped = _cast_mtl_integer_to_u8(out)
+                    out._mtl = None
+                    _release_metal_buffer(out_mtl)
+                    out_mtl = None
+                    out = clipped
+                else:
+                    out_mtl = None
+            except Exception:
+                _release_unique_metal_buffers(out_mtl)
+                raise
         else:
+            if output_u8 or output_u16_narrow:
+                self._set_mask(
+                    pixel_mask,
+                    int(frame_shape[0]),
+                    int(frame_shape[1]),
+                )
             self._set_bad_pixels(pixel_mask, frame_shape)
             zero_bad = bool(self._bad_idx_count and elem_size in (2, 4))
             frame_elems = int(np.prod(frame_shape, dtype=np.uint64))
             final_frame_bytes = frame_elems * int(final_dtype.itemsize)
             out_total_bytes = total_frames * frame_bytes
-            out_mtl = _metal_buffer_alloc(out_total_bytes)
-            out_np = _numpy_view(out_mtl, np.uint8, out_total_bytes)
+            out_mtl = None
             cast_u8_out_mtl = None
             cast_u16_out_mtl = None
-            if output_u8:
-                cast_u8_out_mtl = _metal_buffer_alloc(total_frames * final_frame_bytes)
-            elif output_u16_narrow:
-                cast_u16_out_mtl = _metal_buffer_alloc(total_frames * final_frame_bytes)
-                self._set_mask(pixel_mask, int(frame_shape[0]), int(frame_shape[1]))
-                self._cast_overflow_np[0] = 0
-            cmd = self._submit_gpu(
-                total_frames,
-                frame_bytes,
-                elem_size,
-                0,
-                self._comp_mtl,
-                self._co_mtl,
-                self._bs_mtl,
-                self._bc_mtl,
-                self._bo_mtl,
-                max_blocks,
-                out_mtl=out_mtl,
-                zero_bad=zero_bad,
-                det_shape=frame_shape,
-                cast_u8_out_mtl=cast_u8_out_mtl,
-                cast_u8_nelem=total_frames * frame_elems if output_u8 else None,
-                cast_u16_out_mtl=cast_u16_out_mtl,
-                cast_u16_nelem=(
-                    total_frames * frame_elems if output_u16_narrow else None
-                ),
-                cast_u16_ndet=frame_elems if output_u16_narrow else None,
-                cast_u16_overflow_mtl=(
-                    self._cast_overflow_mtl if output_u16_narrow else None
-                ),
-            )
-            cmd.waitUntilCompleted()
-            if output_u16_narrow and int(self._cast_overflow_np[0]) != 0:
-                raise RuntimeError(
-                    "output_dtype=np.uint16 cannot losslessly represent this "
-                    "uint32 detector data after dead-pixel masking. Use the "
-                    "native uint32 path."
+            try:
+                out_mtl = _metal_buffer_alloc(out_total_bytes)
+                if output_u8:
+                    cast_u8_out_mtl = _metal_buffer_alloc(
+                        total_frames * final_frame_bytes
+                    )
+                elif output_u16_narrow:
+                    cast_u16_out_mtl = _metal_buffer_alloc(
+                        total_frames * final_frame_bytes
+                    )
+                    self._cast_overflow_np[0] = 0
+                cmd = self._submit_gpu(
+                    total_frames,
+                    frame_bytes,
+                    elem_size,
+                    0,
+                    self._comp_mtl,
+                    self._co_mtl,
+                    self._bs_mtl,
+                    self._bc_mtl,
+                    self._bo_mtl,
+                    max_blocks,
+                    out_mtl=out_mtl,
+                    zero_bad=zero_bad,
+                    det_shape=frame_shape,
+                    cast_u8_out_mtl=cast_u8_out_mtl,
+                    cast_u8_nelem=(
+                        total_frames * frame_elems if output_u8 else None
+                    ),
+                    cast_u16_out_mtl=cast_u16_out_mtl,
+                    cast_u16_nelem=(
+                        total_frames * frame_elems if output_u16_narrow else None
+                    ),
+                    cast_u16_ndet=(
+                        frame_elems if output_u16_narrow else None
+                    ),
+                    cast_u16_overflow_mtl=(
+                        self._cast_overflow_mtl
+                        if output_u16_narrow
+                        else None
+                    ),
                 )
-            final_mtl = (
-                cast_u8_out_mtl
-                if output_u8
-                else cast_u16_out_mtl
-                if output_u16_narrow
-                else out_mtl
-            )
-            out = _numpy_view(
-                final_mtl,
-                final_dtype,
-                total_frames * frame_elems,
-            ).reshape((total_frames,) + frame_shape).view(_MtlArray)
-            out._mtl = final_mtl
+                cmd.waitUntilCompleted()
+                if output_u16_narrow and int(self._cast_overflow_np[0]) != 0:
+                    raise RuntimeError(
+                        "output_dtype=np.uint16 cannot losslessly represent "
+                        "this uint32 detector data after dead-pixel masking. "
+                        "Use the native uint32 path."
+                    )
+                if output_u8:
+                    final_mtl = cast_u8_out_mtl
+                    _release_metal_buffer(out_mtl)
+                    out_mtl = None
+                elif output_u16_narrow:
+                    final_mtl = cast_u16_out_mtl
+                    _release_metal_buffer(out_mtl)
+                    out_mtl = None
+                else:
+                    final_mtl = out_mtl
+                out = _numpy_view(
+                    final_mtl,
+                    final_dtype,
+                    total_frames * frame_elems,
+                ).reshape((total_frames,) + frame_shape).view(_MtlArray)
+                out._mtl = final_mtl
+                if output_u8:
+                    cast_u8_out_mtl = None
+                elif output_u16_narrow:
+                    cast_u16_out_mtl = None
+                else:
+                    out_mtl = None
+            except Exception:
+                _release_unique_metal_buffers(
+                    out_mtl,
+                    cast_u8_out_mtl,
+                    cast_u16_out_mtl,
+                )
+                raise
         if verbose:
             print(
                 f"MPS sparse crop: {total_frames} frames, "
@@ -2743,6 +3107,7 @@ def load_master_chunked(
 ) -> list:
     """Explicit zero-copy MPS no-bin IO step returning Metal-backed chunks."""
     plan = plan_master(master_path)
+    _bitshuffle_tail_elements(plan.frame_bytes, plan.elem_size)
     if pixel_mask is None and apply_mask:
         pixel_mask = _read_pixel_mask(plan.master_path)
     dec = _get_cached_decompressor(
@@ -2827,6 +3192,7 @@ def load_mps_4dstem(
     """
     t0 = time.perf_counter()
     plan = plan_master(master_path)
+    _bitshuffle_tail_elements(plan.frame_bytes, plan.elem_size)
     final_dtype = _normalize_output_dtype(output_dtype) or plan.dtype
     det_bin = int(det_bin)
     if det_bin < 1:
@@ -2896,9 +3262,8 @@ def load_mps_4dstem(
             det_bin=det_bin,
             pixel_mask=pixel_mask,
             verbose=False,
+            output_dtype=final_dtype if final_dtype != plan.dtype else None,
         )
-        if final_dtype == np.dtype(np.uint8):
-            arr = _cast_mtl_integer_to_u8(arr)
         chunks = [arr]
     else:
         result = load_master_chunked(
@@ -2995,6 +3360,7 @@ def load_prepared_frames(
     frames and packed their compressed HDF5 chunks.
     """
     frame_bytes = int(prepared["frame_bytes"])
+    _bitshuffle_tail_elements(frame_bytes, np.dtype(prepared["dtype"]).itemsize)
     total_frames = int(prepared["total_frames"])
     read_buffer = prepared["read_buffer"]
     n_blocks_per_frame = (frame_bytes + 8191) // 8192

@@ -371,6 +371,141 @@ kernel void shuf_8192_16_to_u8_masked_batched(
         = mask[detector_index] ? uchar(0) : uchar(min(result, ushort(255)));
 }
 
+// Final partial-block unshuffle. This is the Metal port of QuantEM.GPU's
+// canonical CUDA tail kernels: the shortened block uses its actual bit-plane
+// stride instead of the complete 8192-byte block stride. The host admits only
+// tails containing a multiple of eight elements.
+kernel void shuf_tail_16_batched(
+    const device uchar* in          [[buffer(0)]],
+    device ushort*      out         [[buffer(1)]],
+    constant uint&      frame_bytes [[buffer(2)]],
+    uint3 group_position            [[threadgroup_position_in_grid]],
+    uint thread_index               [[thread_index_in_threadgroup]]
+) {
+    uint tail_bytes = frame_bytes % 8192u;
+    if (tail_bytes == 0u) return;
+    uint frame = group_position.x;
+    uint full_blocks = frame_bytes / 8192u;
+    uint tail_elements = tail_bytes / 2u;
+    uint bitplane_bytes = tail_elements / 8u;
+    uint element = group_position.z * 256u + thread_index;
+    if (element >= tail_elements) return;
+
+    const device uchar* block = in
+        + ulong(frame) * ulong(frame_bytes)
+        + ulong(full_blocks) * 8192u;
+    uint byte_in_plane = element / 8u;
+    uint bit_in_byte = element % 8u;
+    ushort value = 0u;
+    for (uint bit = 0u; bit < 16u; ++bit) {
+        if (block[ulong(bit) * bitplane_bytes + byte_in_plane]
+            & (1u << bit_in_byte)) {
+            value |= ushort(1u << bit);
+        }
+    }
+    out[ulong(frame) * ulong(frame_bytes / 2u)
+        + ulong(full_blocks) * 4096u + element] = value;
+}
+
+kernel void shuf_tail_32_batched(
+    const device uchar* in          [[buffer(0)]],
+    device uint*        out         [[buffer(1)]],
+    constant uint&      frame_bytes [[buffer(2)]],
+    uint3 group_position            [[threadgroup_position_in_grid]],
+    uint thread_index               [[thread_index_in_threadgroup]]
+) {
+    uint tail_bytes = frame_bytes % 8192u;
+    if (tail_bytes == 0u) return;
+    uint frame = group_position.x;
+    uint full_blocks = frame_bytes / 8192u;
+    uint tail_elements = tail_bytes / 4u;
+    uint bitplane_bytes = tail_elements / 8u;
+    uint element = group_position.z * 256u + thread_index;
+    if (element >= tail_elements) return;
+
+    const device uchar* block = in
+        + ulong(frame) * ulong(frame_bytes)
+        + ulong(full_blocks) * 8192u;
+    uint byte_in_plane = element / 8u;
+    uint bit_in_byte = element % 8u;
+    uint value = 0u;
+    for (uint bit = 0u; bit < 32u; ++bit) {
+        if (block[ulong(bit) * bitplane_bytes + byte_in_plane]
+            & (1u << bit_in_byte)) {
+            value |= 1u << bit;
+        }
+    }
+    out[ulong(frame) * ulong(frame_bytes / 4u)
+        + ulong(full_blocks) * 2048u + element] = value;
+}
+
+kernel void shuf_tail_16_to_u8_batched(
+    const device uchar* in          [[buffer(0)]],
+    device uchar*       out         [[buffer(1)]],
+    constant uint&      frame_bytes [[buffer(2)]],
+    uint3 group_position            [[threadgroup_position_in_grid]],
+    uint thread_index               [[thread_index_in_threadgroup]]
+) {
+    uint tail_bytes = frame_bytes % 8192u;
+    if (tail_bytes == 0u) return;
+    uint frame = group_position.x;
+    uint full_blocks = frame_bytes / 8192u;
+    uint tail_elements = tail_bytes / 2u;
+    uint bitplane_bytes = tail_elements / 8u;
+    uint element = group_position.z * 256u + thread_index;
+    if (element >= tail_elements) return;
+
+    const device uchar* block = in
+        + ulong(frame) * ulong(frame_bytes)
+        + ulong(full_blocks) * 8192u;
+    uint byte_in_plane = element / 8u;
+    uint bit_in_byte = element % 8u;
+    ushort value = 0u;
+    for (uint bit = 0u; bit < 16u; ++bit) {
+        if (block[ulong(bit) * bitplane_bytes + byte_in_plane]
+            & (1u << bit_in_byte)) {
+            value |= ushort(1u << bit);
+        }
+    }
+    out[ulong(frame) * ulong(frame_bytes / 2u)
+        + ulong(full_blocks) * 4096u + element]
+        = uchar(min(value, ushort(255)));
+}
+
+kernel void shuf_tail_16_to_u8_masked_batched(
+    const device uchar* in          [[buffer(0)]],
+    device uchar*       out         [[buffer(1)]],
+    constant uint&      frame_bytes [[buffer(2)]],
+    const device uchar* mask        [[buffer(3)]],
+    uint3 group_position            [[threadgroup_position_in_grid]],
+    uint thread_index               [[thread_index_in_threadgroup]]
+) {
+    uint tail_bytes = frame_bytes % 8192u;
+    if (tail_bytes == 0u) return;
+    uint frame = group_position.x;
+    uint full_blocks = frame_bytes / 8192u;
+    uint tail_elements = tail_bytes / 2u;
+    uint bitplane_bytes = tail_elements / 8u;
+    uint element = group_position.z * 256u + thread_index;
+    if (element >= tail_elements) return;
+
+    const device uchar* block = in
+        + ulong(frame) * ulong(frame_bytes)
+        + ulong(full_blocks) * 8192u;
+    uint byte_in_plane = element / 8u;
+    uint bit_in_byte = element % 8u;
+    ushort value = 0u;
+    for (uint bit = 0u; bit < 16u; ++bit) {
+        if (block[ulong(bit) * bitplane_bytes + byte_in_plane]
+            & (1u << bit_in_byte)) {
+            value |= ushort(1u << bit);
+        }
+    }
+    uint detector_pixel = full_blocks * 4096u + element;
+    out[ulong(frame) * ulong(frame_bytes / 2u) + detector_pixel]
+        = mask[detector_pixel] == 0u ? uchar(min(value, ushort(255))) : 0u;
+}
+
 // Fused generic uint16 bit-unshuffle + exact detector sum-bin. A 256-thread
 // group reconstructs one 8x16 output tile from bit-plane words into a bounded
 // threadgroup tile, then sums each explicit BxB detector region. This removes
@@ -388,6 +523,7 @@ kernel void shuf_bin_sum_8192_16_batched(
     constant uint&      out_rows       [[buffer(6)]],
     constant uint&      out_cols       [[buffer(7)]],
     constant uint&      bin_factor     [[buffer(8)]],
+    device atomic_uint* overflow       [[buffer(9)]],
     uint3 group_position               [[threadgroup_position_in_grid]],
     uint thread_index                  [[thread_index_in_threadgroup]],
     uint lane                          [[thread_index_in_simdgroup]],
@@ -471,14 +607,19 @@ kernel void shuf_bin_sum_8192_16_batched(
             );
         }
     }
+    if (sum > 65535u) {
+        atomic_fetch_or_explicit(&overflow[0], 1u, memory_order_relaxed);
+    }
     uint output_frame_elements = out_rows * out_cols;
     out[ulong(frame) * ulong(output_frame_elements) + output_row * out_cols
         + output_col] = ushort(min(sum, 65535u));
 }
 
-// Bin-2 specialization of the fused kernel above. Its 1 KiB input tile keeps
-// substantially more threadgroups resident than the generic bin-8-sized tile,
-// and the fixed four-value sum is fully unrolled by the Metal compiler.
+// Bin-2 specialization of the fused kernel above. Its 4 KiB input tile keeps
+// substantially more threadgroups resident than the generic bin-8-sized tile.
+// A 16x32 output tile lets each of 256 threads publish two fixed four-value
+// sums and reduces the threadgroup grid to one quarter of the original 8x16
+// layout.
 kernel void shuf_bin2_sum_8192_16_batched(
     const device uint*  in             [[buffer(0)]],
     device ushort*      out            [[buffer(1)]],
@@ -489,14 +630,17 @@ kernel void shuf_bin2_sum_8192_16_batched(
     constant uint&      out_rows       [[buffer(6)]],
     constant uint&      out_cols       [[buffer(7)]],
     constant uint&      bin_factor     [[buffer(8)]],
+    device atomic_uint* overflow       [[buffer(9)]],
     uint3 group_position               [[threadgroup_position_in_grid]],
     uint thread_index                  [[thread_index_in_threadgroup]],
     uint lane                          [[thread_index_in_simdgroup]],
     uint simdgroup_index               [[simdgroup_index_in_threadgroup]]
 ) {
     (void)bin_factor;
-    constexpr uint input_tile_rows = 16u;
-    constexpr uint input_tile_cols = 32u;
+    constexpr uint input_tile_rows = 32u;
+    constexpr uint input_tile_cols = 64u;
+    constexpr uint row_word_groups = input_tile_cols / 32u;
+    constexpr uint tile_word_groups = input_tile_rows * row_word_groups;
     constexpr uint groups_per_block = 128u;
     constexpr uint simdgroups_per_threadgroup = 8u;
     uint frame = group_position.x;
@@ -506,16 +650,19 @@ kernel void shuf_bin2_sum_8192_16_batched(
     threadgroup uint planes[simdgroups_per_threadgroup][16u];
 
     for (
-        uint local_row = simdgroup_index;
-        local_row < input_tile_rows;
-        local_row += simdgroups_per_threadgroup
+        uint tile_group = simdgroup_index;
+        tile_group < tile_word_groups;
+        tile_group += simdgroups_per_threadgroup
     ) {
+        uint local_row = tile_group / row_word_groups;
+        uint local_word_group = tile_group - local_row * row_word_groups;
         uint source_row = input_origin_row + local_row;
-        bool valid_group = source_row < in_rows && input_origin_col < in_cols;
+        uint source_col = input_origin_col + local_word_group * 32u;
+        bool valid_group = source_row < in_rows && source_col < in_cols;
         if (lane < 16u) {
             uint plane_word = 0u;
             if (valid_group) {
-                uint source_pixel = source_row * in_cols + input_origin_col;
+                uint source_pixel = source_row * in_cols + source_col;
                 uint block = source_pixel >> 12u;
                 uint group_in_block = (source_pixel & 4095u) >> 5u;
                 const device uint* block_in = in
@@ -533,29 +680,251 @@ kernel void shuf_bin2_sum_8192_16_batched(
                 value |= ushort(1u << bit);
             }
         }
-        uint detector_col = input_origin_col + lane;
+        uint detector_col = source_col + lane;
         bool valid_pixel = valid_group && detector_col < in_cols;
         uint detector_pixel = source_row * in_cols + detector_col;
         if (!valid_pixel || mask[detector_pixel] != 0u) {
             value = 0u;
         }
-        tile[local_row * input_tile_cols + lane] = value;
+        tile[local_row * input_tile_cols + local_word_group * 32u + lane] = value;
         simdgroup_barrier(mem_flags::mem_threadgroup);
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    if (thread_index >= 128u) return;
-    uint local_output_row = thread_index / 16u;
-    uint local_output_col = thread_index - local_output_row * 16u;
-    uint output_row = group_position.y * 8u + local_output_row;
-    uint output_col = group_position.z * 16u + local_output_col;
+    constexpr uint output_tile_elements = 16u * 32u;
+    for (
+        uint output_index = thread_index;
+        output_index < output_tile_elements;
+        output_index += 256u
+    ) {
+        uint local_output_row = output_index / 32u;
+        uint local_output_col = output_index - local_output_row * 32u;
+        uint output_row = group_position.y * 16u + local_output_row;
+        uint output_col = group_position.z * 32u + local_output_col;
+        if (output_row >= out_rows || output_col >= out_cols) continue;
+        uint tile_row = local_output_row * 2u;
+        uint tile_col = local_output_col * 2u;
+        uint first_row = tile_row * input_tile_cols + tile_col;
+        uint second_row = first_row + input_tile_cols;
+        uint sum = uint(tile[first_row]) + uint(tile[first_row + 1u])
+            + uint(tile[second_row]) + uint(tile[second_row + 1u]);
+        if (sum > 65535u) {
+            atomic_fetch_or_explicit(&overflow[0], 1u, memory_order_relaxed);
+        }
+        uint output_frame_elements = out_rows * out_cols;
+        out[ulong(frame) * ulong(output_frame_elements) + output_row * out_cols
+            + output_col] = ushort(min(sum, 65535u));
+    }
+}
+
+// Bin-4 specialization of the generic fused kernel. The generic kernel must
+// reserve a bin-8-sized 16 KiB detector tile at compile time. Bin 4 needs only
+// a 32x64 input tile (4 KiB), which allows more resident threadgroups while
+// preserving the same explicit uint32 accumulation and fail-closed uint16
+// range check.
+kernel void shuf_bin4_sum_8192_16_batched(
+    const device uint*  in             [[buffer(0)]],
+    device ushort*      out            [[buffer(1)]],
+    const device uchar* mask           [[buffer(2)]],
+    constant uint&      in_rows        [[buffer(3)]],
+    constant uint&      in_cols        [[buffer(4)]],
+    constant uint&      frame_u16s     [[buffer(5)]],
+    constant uint&      out_rows       [[buffer(6)]],
+    constant uint&      out_cols       [[buffer(7)]],
+    constant uint&      bin_factor     [[buffer(8)]],
+    device atomic_uint* overflow       [[buffer(9)]],
+    uint3 group_position               [[threadgroup_position_in_grid]],
+    uint thread_index                  [[thread_index_in_threadgroup]],
+    uint lane                          [[thread_index_in_simdgroup]],
+    uint simdgroup_index               [[simdgroup_index_in_threadgroup]]
+) {
+    (void)bin_factor;
+    constexpr uint output_tile_rows = 8u;
+    constexpr uint output_tile_cols = 16u;
+    constexpr uint input_tile_rows = output_tile_rows * 4u;
+    constexpr uint input_tile_cols = output_tile_cols * 4u;
+    constexpr uint row_word_groups = input_tile_cols / 32u;
+    constexpr uint tile_word_groups = input_tile_rows * row_word_groups;
+    constexpr uint groups_per_block = 128u;
+    constexpr uint simdgroups_per_threadgroup = 8u;
+
+    uint frame = group_position.x;
+    uint input_origin_row = group_position.y * input_tile_rows;
+    uint input_origin_col = group_position.z * input_tile_cols;
+    threadgroup ushort tile[input_tile_rows * input_tile_cols];
+    threadgroup uint planes[simdgroups_per_threadgroup][16u];
+
+    for (
+        uint tile_group = simdgroup_index;
+        tile_group < tile_word_groups;
+        tile_group += simdgroups_per_threadgroup
+    ) {
+        uint local_row = tile_group / row_word_groups;
+        uint local_word_group = tile_group - local_row * row_word_groups;
+        uint source_row = input_origin_row + local_row;
+        uint source_col = input_origin_col + local_word_group * 32u;
+        bool valid_group = source_row < in_rows && source_col < in_cols;
+
+        if (lane < 16u) {
+            uint plane_word = 0u;
+            if (valid_group) {
+                uint source_pixel = source_row * in_cols + source_col;
+                uint block = source_pixel >> 12u;
+                uint group_in_block = (source_pixel & 4095u) >> 5u;
+                const device uint* block_in = in
+                    + ulong(frame) * ulong(frame_u16s / 2u)
+                    + block * 2048u;
+                plane_word = block_in[lane * groups_per_block + group_in_block];
+            }
+            planes[simdgroup_index][lane] = plane_word;
+        }
+        simdgroup_barrier(mem_flags::mem_threadgroup);
+
+        ushort value = 0u;
+        for (uint bit = 0u; bit < 16u; ++bit) {
+            if (planes[simdgroup_index][bit] & (1u << lane)) {
+                value |= ushort(1u << bit);
+            }
+        }
+        uint detector_col = source_col + lane;
+        bool valid_pixel = valid_group && detector_col < in_cols;
+        uint detector_pixel = source_row * in_cols + detector_col;
+        if (!valid_pixel || mask[detector_pixel] != 0u) {
+            value = 0u;
+        }
+        tile[local_row * input_tile_cols + local_word_group * 32u + lane] = value;
+        simdgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    if (thread_index >= output_tile_rows * output_tile_cols) return;
+    uint local_output_row = thread_index / output_tile_cols;
+    uint local_output_col = thread_index - local_output_row * output_tile_cols;
+    uint output_row = group_position.y * output_tile_rows + local_output_row;
+    uint output_col = group_position.z * output_tile_cols + local_output_col;
     if (output_row >= out_rows || output_col >= out_cols) return;
-    uint tile_row = local_output_row * 2u;
-    uint tile_col = local_output_col * 2u;
-    uint first_row = tile_row * input_tile_cols + tile_col;
-    uint second_row = first_row + input_tile_cols;
-    uint sum = uint(tile[first_row]) + uint(tile[first_row + 1u])
-        + uint(tile[second_row]) + uint(tile[second_row + 1u]);
+
+    uint tile_row = local_output_row * 4u;
+    uint tile_col = local_output_col * 4u;
+    uint sum = 0u;
+    for (uint row_offset = 0u; row_offset < 4u; ++row_offset) {
+        for (uint col_offset = 0u; col_offset < 4u; ++col_offset) {
+            sum += uint(
+                tile[(tile_row + row_offset) * input_tile_cols
+                     + tile_col + col_offset]
+            );
+        }
+    }
+    if (sum > 65535u) {
+        atomic_fetch_or_explicit(&overflow[0], 1u, memory_order_relaxed);
+    }
+    uint output_frame_elements = out_rows * out_cols;
+    out[ulong(frame) * ulong(output_frame_elements) + output_row * out_cols
+        + output_col] = ushort(min(sum, 65535u));
+}
+
+// Bin-8 specialization of the generic fused kernel. A 24x24 detector result
+// does not fill the generic 8x16 output grid: its final column stages and
+// computes eight padded output columns. This 8x8 output tile stages exactly a
+// 64x64 input region (8 KiB), so a 192x192 detector is covered by a 3x3 grid
+// without padded detector work. Accumulation and overflow semantics remain
+// identical to the generic exact path.
+kernel void shuf_bin8_sum_8192_16_batched(
+    const device uint*  in             [[buffer(0)]],
+    device ushort*      out            [[buffer(1)]],
+    const device uchar* mask           [[buffer(2)]],
+    constant uint&      in_rows        [[buffer(3)]],
+    constant uint&      in_cols        [[buffer(4)]],
+    constant uint&      frame_u16s     [[buffer(5)]],
+    constant uint&      out_rows       [[buffer(6)]],
+    constant uint&      out_cols       [[buffer(7)]],
+    constant uint&      bin_factor     [[buffer(8)]],
+    device atomic_uint* overflow       [[buffer(9)]],
+    uint3 group_position               [[threadgroup_position_in_grid]],
+    uint thread_index                  [[thread_index_in_threadgroup]],
+    uint lane                          [[thread_index_in_simdgroup]],
+    uint simdgroup_index               [[simdgroup_index_in_threadgroup]]
+) {
+    (void)bin_factor;
+    constexpr uint output_tile_rows = 8u;
+    constexpr uint output_tile_cols = 8u;
+    constexpr uint input_tile_rows = output_tile_rows * 8u;
+    constexpr uint input_tile_cols = output_tile_cols * 8u;
+    constexpr uint row_word_groups = input_tile_cols / 32u;
+    constexpr uint tile_word_groups = input_tile_rows * row_word_groups;
+    constexpr uint groups_per_block = 128u;
+    constexpr uint simdgroups_per_threadgroup = 8u;
+
+    uint frame = group_position.x;
+    uint input_origin_row = group_position.y * input_tile_rows;
+    uint input_origin_col = group_position.z * input_tile_cols;
+    threadgroup ushort tile[input_tile_rows * input_tile_cols];
+    threadgroup uint planes[simdgroups_per_threadgroup][16u];
+
+    for (
+        uint tile_group = simdgroup_index;
+        tile_group < tile_word_groups;
+        tile_group += simdgroups_per_threadgroup
+    ) {
+        uint local_row = tile_group / row_word_groups;
+        uint local_word_group = tile_group - local_row * row_word_groups;
+        uint source_row = input_origin_row + local_row;
+        uint source_col = input_origin_col + local_word_group * 32u;
+        bool valid_group = source_row < in_rows && source_col < in_cols;
+
+        if (lane < 16u) {
+            uint plane_word = 0u;
+            if (valid_group) {
+                uint source_pixel = source_row * in_cols + source_col;
+                uint block = source_pixel >> 12u;
+                uint group_in_block = (source_pixel & 4095u) >> 5u;
+                const device uint* block_in = in
+                    + ulong(frame) * ulong(frame_u16s / 2u)
+                    + block * 2048u;
+                plane_word = block_in[lane * groups_per_block + group_in_block];
+            }
+            planes[simdgroup_index][lane] = plane_word;
+        }
+        simdgroup_barrier(mem_flags::mem_threadgroup);
+
+        ushort value = 0u;
+        for (uint bit = 0u; bit < 16u; ++bit) {
+            if (planes[simdgroup_index][bit] & (1u << lane)) {
+                value |= ushort(1u << bit);
+            }
+        }
+        uint detector_col = source_col + lane;
+        bool valid_pixel = valid_group && detector_col < in_cols;
+        uint detector_pixel = source_row * in_cols + detector_col;
+        if (!valid_pixel || mask[detector_pixel] != 0u) {
+            value = 0u;
+        }
+        tile[local_row * input_tile_cols + local_word_group * 32u + lane] = value;
+        simdgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    if (thread_index >= output_tile_rows * output_tile_cols) return;
+    uint local_output_row = thread_index / output_tile_cols;
+    uint local_output_col = thread_index - local_output_row * output_tile_cols;
+    uint output_row = group_position.y * output_tile_rows + local_output_row;
+    uint output_col = group_position.z * output_tile_cols + local_output_col;
+    if (output_row >= out_rows || output_col >= out_cols) return;
+
+    uint tile_row = local_output_row * 8u;
+    uint tile_col = local_output_col * 8u;
+    uint sum = 0u;
+    for (uint row_offset = 0u; row_offset < 8u; ++row_offset) {
+        for (uint col_offset = 0u; col_offset < 8u; ++col_offset) {
+            sum += uint(
+                tile[(tile_row + row_offset) * input_tile_cols
+                     + tile_col + col_offset]
+            );
+        }
+    }
+    if (sum > 65535u) {
+        atomic_fetch_or_explicit(&overflow[0], 1u, memory_order_relaxed);
+    }
     uint output_frame_elements = out_rows * out_cols;
     out[ulong(frame) * ulong(output_frame_elements) + output_row * out_cols
         + output_col] = ushort(min(sum, 65535u));
@@ -632,24 +1001,29 @@ kernel void bin_sum_u16(
     constant uint& out_frame_elems [[buffer(5)]],
     constant uint& bin_factor     [[buffer(6)]],
     const device uchar* mask [[buffer(7)]],
+    constant uint& out_rows [[buffer(8)]],
+    device atomic_uint* overflow [[buffer(9)]],
     uint3 pos [[thread_position_in_grid]]
 ) {
     uint frame = pos.x;
     uint out_r = pos.y;
     uint out_c = pos.z;
-    if (out_c >= out_cols || out_r >= out_cols) return;
+    if (out_c >= out_cols || out_r >= out_rows) return;
     uint in_r = out_r * bin_factor;
     uint in_c = out_c * bin_factor;
     ulong in_base = ulong(frame) * ulong(in_frame_elems);
-    uint sum = 0u;
+    ulong sum = 0ul;
     for (uint br = 0; br < bin_factor; br++)
         for (uint bc = 0; bc < bin_factor; bc++) {
             uint pix = (in_r + br) * in_row_stride + in_c + bc;
             if (mask[pix] == 0)  // skip dead pixels (treat as 0)
                 sum += uint(in[in_base + pix]);
         }
+    if (sum > 65535u) {
+        atomic_fetch_or_explicit(&overflow[0], 1u, memory_order_relaxed);
+    }
     out[ulong(frame) * ulong(out_frame_elems) + out_r * out_cols + out_c] =
-        ushort(min(sum, 65535u));
+        ushort(min(sum, ulong(65535u)));
 }
 
 kernel void bin_sum_u32(
@@ -661,23 +1035,30 @@ kernel void bin_sum_u32(
     constant uint& out_frame_elems [[buffer(5)]],
     constant uint& bin_factor     [[buffer(6)]],
     const device uchar* mask [[buffer(7)]],
+    constant uint& out_rows [[buffer(8)]],
+    device atomic_uint* overflow [[buffer(9)]],
     uint3 pos [[thread_position_in_grid]]
 ) {
     uint frame = pos.x;
     uint out_r = pos.y;
     uint out_c = pos.z;
-    if (out_c >= out_cols || out_r >= out_cols) return;
+    if (out_c >= out_cols || out_r >= out_rows) return;
     uint in_r = out_r * bin_factor;
     uint in_c = out_c * bin_factor;
     ulong in_base = ulong(frame) * ulong(in_frame_elems);
-    uint sum = 0u;
+    ulong sum = 0ul;
     for (uint br = 0; br < bin_factor; br++)
         for (uint bc = 0; bc < bin_factor; bc++) {
             uint pix = (in_r + br) * in_row_stride + in_c + bc;
             if (mask[pix] == 0)
-                sum += in[in_base + pix];
+                sum += ulong(in[in_base + pix]);
         }
-    out[ulong(frame) * ulong(out_frame_elems) + out_r * out_cols + out_c] = sum;
+    constexpr ulong uint_max = 0xfffffffful;
+    if (sum > uint_max) {
+        atomic_fetch_or_explicit(&overflow[0], 1u, memory_order_relaxed);
+    }
+    out[ulong(frame) * ulong(out_frame_elems) + out_r * out_cols + out_c] =
+        uint(min(sum, ulong(uint_max)));
 }
 
 // =====================================================================
@@ -700,6 +1081,7 @@ kernel void bin_sum_tiled_u16(
     constant uint& bin_factor     [[buffer(6)]],
     const device uchar* mask [[buffer(7)]],
     constant uint& out_rows       [[buffer(8)]],
+    device atomic_uint* overflow  [[buffer(9)]],
     uint3 tg  [[threadgroup_position_in_grid]],
     uint3 lid [[thread_position_in_threadgroup]]
 ) {
@@ -728,6 +1110,9 @@ kernel void bin_sum_tiled_u16(
     for (uint br = 0; br < B; br++)
         for (uint bc = 0; bc < B; bc++)
             sum += uint(tile[(base_r + br) * ts + base_c + bc]);
+    if (sum > 65535u) {
+        atomic_fetch_or_explicit(&overflow[0], 1u, memory_order_relaxed);
+    }
     out[ulong(tg.x) * ulong(out_frame_elems) + out_r * out_cols + out_c] =
         ushort(min(sum, 65535u));
 }

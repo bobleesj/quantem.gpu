@@ -41,6 +41,36 @@ def test_load_stacked_u8_routes_to_direct_output_dtype(monkeypatch) -> None:
     assert calls["kwargs"]["output_dtype"] is np.uint8
 
 
+def test_mps_dataset_path_u8_declares_clipping_before_detector_bin(monkeypatch) -> None:
+    """The generic MPS branch must not hide uint8 intent until after binning."""
+    from importlib import import_module
+
+    load_module = import_module("quantem.gpu.io.load")
+    decoder = import_module("quantem.gpu.io.backends.mps.decoder")
+    calls = {}
+
+    monkeypatch.setattr(load_module, "get_metadata", lambda path: {})
+    monkeypatch.setattr(load_module, "read_pixel_mask", lambda path: None)
+
+    def fake_load_master(path, **kwargs):
+        calls.update(kwargs)
+        return np.full((1, 1, 1), 255, dtype=np.uint8)
+
+    monkeypatch.setattr(decoder, "load_master", fake_load_master)
+    data, _ = load_module._load_view(
+        "fixture.h5",
+        "mps",
+        dataset_path="entry/data/data",
+        scan_shape=(1, 1),
+        det_bin=2,
+        output_dtype=np.uint8,
+        verbose=False,
+    )
+
+    assert str(data.dtype) == "torch.uint8"
+    assert calls["output_dtype"] == np.dtype(np.uint8)
+
+
 def test_load_uint32_routes_to_native_uint32_output_dtype(monkeypatch) -> None:
     """Public dtype='uint32' should request 4-byte detector counts."""
     from importlib import import_module
