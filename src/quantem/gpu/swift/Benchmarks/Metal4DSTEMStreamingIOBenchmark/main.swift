@@ -22,6 +22,7 @@ private struct Options {
       [--uncached-source-reads] \\
       [--reuse-working-destinations] \\
       [--boundary-working-volume-hashes] \\
+      [--expected-logical-pixel-sha256 64_HEX_DIGITS] \\
       [--exact-working-cache-payload PATH \\
        --exact-working-cache-metadata PATH \\
        --cache-reopen-iterations N]
@@ -58,6 +59,7 @@ private struct Options {
   let uncachedSourceReads: Bool
   let reuseWorkingDestinations: Bool
   let boundaryWorkingVolumeHashes: Bool
+  let expectedLogicalPixelSHA256: String?
   let exactWorkingCachePayload: URL?
   let exactWorkingCacheMetadata: URL?
   let cacheReopenIterations: Int
@@ -182,6 +184,20 @@ private struct Options {
     let boundaryWorkingVolumeHashes = flags.contains(
       "--boundary-working-volume-hashes"
     )
+    let expectedLogicalPixelSHA256 = values["--expected-logical-pixel-sha256"]?
+      .lowercased()
+    if let expectedLogicalPixelSHA256 {
+      guard expectedLogicalPixelSHA256.utf8.count == 64,
+        expectedLogicalPixelSHA256.utf8.allSatisfy({
+          (48...57).contains($0) || (97...102).contains($0)
+        }), audit != nil, cachePayload == nil
+      else {
+        throw BenchmarkError.usage(
+          "--expected-logical-pixel-sha256 requires 64 hexadecimal digits, "
+            + "resident exact-working options, and no cache payload."
+        )
+      }
+    }
     if reuseWorkingDestinations {
       guard audit != nil, cachePayload == nil, iterations >= 2 else {
         throw BenchmarkError.usage(
@@ -207,6 +223,7 @@ private struct Options {
       uncachedSourceReads: uncachedSourceReads,
       reuseWorkingDestinations: reuseWorkingDestinations,
       boundaryWorkingVolumeHashes: boundaryWorkingVolumeHashes,
+      expectedLogicalPixelSHA256: expectedLogicalPixelSHA256,
       exactWorkingCachePayload: cachePayload,
       exactWorkingCacheMetadata: cacheMetadata,
       cacheReopenIterations: cacheReopenIterations
@@ -231,7 +248,7 @@ private struct RunRecord: Codable {
   let destinationReused: Bool
   let wallSeconds: Double
   let destinationAllocationSeconds: Double?
-  let workingVolumeHashSeconds: Double?
+  let physicalStorageHashSeconds: Double?
   let payloadWriteSeconds: Double?
   let payloadFinalizeSeconds: Double?
   let peakWorkingMetalBytes: UInt64?
@@ -255,7 +272,9 @@ private struct RunRecord: Codable {
   let maximumSourceCount: UInt32
   let pixelsAbove255: UInt64
   let binningDispatchCount: Int?
-  let workingVolumeSHA256: String?
+  let physicalStorageSHA256: String?
+  let logicalPixelSHA256: String?
+  let logicalPixelHashSeconds: Double?
   let metalAllocatedBytesBeforeLoad: UInt64
   let metalAllocatedBytesAfterLoad: UInt64
   let metalAllocatedBytesAfterRelease: UInt64
@@ -316,7 +335,10 @@ private struct BenchmarkSummary: Codable {
   let shardCount: Int?
   let maximumActualShardBytes: UInt64?
   let valueRangeAuditSHA256: String?
-  let workingVolumeSHA256: String?
+  let physicalStorageSHA256: String?
+  let logicalPixelHashSchema: String?
+  let logicalPixelSHA256: String?
+  let expectedLogicalPixelSHA256: String?
   let destinationStorage: String?
   let cachePayload: String?
   let cacheMetadata: String?
@@ -456,6 +478,8 @@ private struct LoadedTrial {
   let binningDispatchCount: Int?
   let workingVolumeSHA256: String?
   let workingVolumeHashSeconds: Double?
+  let logicalPixelSHA256: String?
+  let logicalPixelHashSeconds: Double?
   let metalAllocatedBytesAfterLoad: UInt64
   let destinationReused: Bool
   let retainedWorkingVolumeShards: [MTLBuffer]?
@@ -604,6 +628,7 @@ private func run() throws {
   var acceptedHashes: [String: String]?
   var acceptedProvenance: Metal4DSTEMIndexedLoadProvenance?
   var acceptedWorkingVolumeSHA256: String?
+  var acceptedLogicalPixelSHA256: String?
   var acceptedData: [String: Data] = [:]
   var reusableWorkingVolumeShards: [MTLBuffer]?
   for trial in 1...options.iterations {
@@ -634,6 +659,8 @@ private func run() throws {
             binningDispatchCount: result.metrics.binningDispatchCount,
             workingVolumeSHA256: result.metadata.payloadSHA256,
             workingVolumeHashSeconds: nil,
+            logicalPixelSHA256: nil,
+            logicalPixelHashSeconds: nil,
             metalAllocatedBytesAfterLoad: UInt64(device.currentAllocatedSize),
             destinationReused: false,
             retainedWorkingVolumeShards: nil
@@ -665,6 +692,17 @@ private func run() throws {
         let hashSeconds =
           hashesWorkingVolume
           ? CFAbsoluteTimeGetCurrent() - hashStarted : nil
+        let logicalHashStarted = CFAbsoluteTimeGetCurrent()
+        let logicalPixelSHA256 =
+          hashesWorkingVolume
+          ? try Metal4DSTEMLogicalPixelHash.sha256(
+            buffers: result.workingVolumeShards,
+            shardPlan: binnedPlan.shardPlan,
+            device: device
+          ) : nil
+        let logicalHashSeconds =
+          hashesWorkingVolume
+          ? CFAbsoluteTimeGetCurrent() - logicalHashStarted : nil
         return LoadedTrial(
           products: result.products,
           sourceAudit: result.sourceAudit,
@@ -679,6 +717,8 @@ private func run() throws {
           binningDispatchCount: result.metrics.binningDispatchCount,
           workingVolumeSHA256: workingVolumeSHA256,
           workingVolumeHashSeconds: hashSeconds,
+          logicalPixelSHA256: logicalPixelSHA256,
+          logicalPixelHashSeconds: logicalHashSeconds,
           metalAllocatedBytesAfterLoad: UInt64(device.currentAllocatedSize),
           destinationReused: destinationReused,
           retainedWorkingVolumeShards:
@@ -700,6 +740,8 @@ private func run() throws {
         binningDispatchCount: nil,
         workingVolumeSHA256: nil,
         workingVolumeHashSeconds: nil,
+        logicalPixelSHA256: nil,
+        logicalPixelHashSeconds: nil,
         metalAllocatedBytesAfterLoad: UInt64(device.currentAllocatedSize),
         destinationReused: false,
         retainedWorkingVolumeShards: nil
@@ -733,6 +775,24 @@ private func run() throws {
       }
       acceptedWorkingVolumeSHA256 = workingVolumeSHA256
     }
+    if let logicalPixelSHA256 = loaded.logicalPixelSHA256 {
+      if let acceptedLogicalPixelSHA256,
+        acceptedLogicalPixelSHA256 != logicalPixelSHA256
+      {
+        throw BenchmarkError.invalid(
+          "Canonical logical-pixel SHA-256 changed between repeated load trials."
+        )
+      }
+      if let expected = options.expectedLogicalPixelSHA256,
+        expected != logicalPixelSHA256
+      {
+        throw BenchmarkError.invalid(
+          "Canonical logical-pixel SHA-256 mismatch: expected \(expected), "
+            + "got \(logicalPixelSHA256)."
+        )
+      }
+      acceptedLogicalPixelSHA256 = logicalPixelSHA256
+    }
     acceptedHashes = hashes
     acceptedProvenance = loaded.provenance
     acceptedData = data
@@ -747,7 +807,7 @@ private func run() throws {
         destinationReused: loaded.destinationReused,
         wallSeconds: loaded.wallSeconds,
         destinationAllocationSeconds: loaded.destinationAllocationSeconds,
-        workingVolumeHashSeconds: loaded.workingVolumeHashSeconds,
+        physicalStorageHashSeconds: loaded.workingVolumeHashSeconds,
         payloadWriteSeconds: loaded.payloadWriteSeconds,
         payloadFinalizeSeconds: loaded.payloadFinalizeSeconds,
         peakWorkingMetalBytes: loaded.peakWorkingMetalBytes,
@@ -774,7 +834,9 @@ private func run() throws {
         maximumSourceCount: loaded.sourceAudit.maximumSourceCount,
         pixelsAbove255: loaded.sourceAudit.pixelsAbove255,
         binningDispatchCount: loaded.binningDispatchCount,
-        workingVolumeSHA256: loaded.workingVolumeSHA256,
+        physicalStorageSHA256: loaded.workingVolumeSHA256,
+        logicalPixelSHA256: loaded.logicalPixelSHA256,
+        logicalPixelHashSeconds: loaded.logicalPixelHashSeconds,
         metalAllocatedBytesBeforeLoad: metalAllocatedBytesBeforeLoad,
         metalAllocatedBytesAfterLoad: loaded.metalAllocatedBytesAfterLoad,
         metalAllocatedBytesAfterRelease: metalAllocatedBytesAfterRelease,
@@ -904,7 +966,7 @@ private func run() throws {
     estimatedAllocatedMetalBytesIncludingSourceTransfer = total.partialValue
   }
   let summary = BenchmarkSummary(
-    schema: "quantem.gpu.metal-4dstem-indexed-load-benchmark/v8",
+    schema: "quantem.gpu.metal-4dstem-indexed-load-benchmark/v9",
     revision: options.revision,
     timestamp: ISO8601DateFormatter().string(from: Date()),
     host: ProcessInfo.processInfo.hostName,
@@ -952,7 +1014,11 @@ private func run() throws {
     shardCount: binnedPlan?.shardPlan.shards.count,
     maximumActualShardBytes: binnedPlan?.shardPlan.maximumActualShardBytes,
     valueRangeAuditSHA256: binnedPlan?.sourceAudit.auditSHA256,
-    workingVolumeSHA256: acceptedWorkingVolumeSHA256,
+    physicalStorageSHA256: acceptedWorkingVolumeSHA256,
+    logicalPixelHashSchema:
+      acceptedLogicalPixelSHA256 == nil ? nil : Metal4DSTEMLogicalPixelHash.schema,
+    logicalPixelSHA256: acceptedLogicalPixelSHA256,
+    expectedLogicalPixelSHA256: options.expectedLogicalPixelSHA256,
     destinationStorage: first.destinationStorage,
     cachePayload: options.exactWorkingCachePayload?.path,
     cacheMetadata: options.exactWorkingCacheMetadata?.path,

@@ -289,12 +289,28 @@ def _array_chunks(array: Any) -> list[np.ndarray]:
     return host_chunks
 
 
+LOGICAL_PIXEL_HASH_SCHEMA = "quantem.gpu.4dstem-logical-pixels/v1"
+LOGICAL_PIXEL_AXIS_ORDER = (
+    "scan_row",
+    "scan_column",
+    "detector_row",
+    "detector_column",
+)
+
+
 def _array_sha256(array: Any) -> str:
-    """Return a deterministic SHA-256 over logical chunk order."""
+    """Hash logical pixels in C order using canonical little-endian bytes.
+
+    Chunk boundaries are excluded from the digest. Callers separately validate
+    scan/detector shape and dtype so storage layouts cannot be conflated.
+    """
 
     digest = hashlib.sha256()
     for chunk in _array_chunks(array):
-        digest.update(np.ascontiguousarray(chunk).view(np.uint8))
+        dtype = np.dtype(chunk.dtype)
+        little_endian = dtype.newbyteorder("<")
+        canonical = np.ascontiguousarray(chunk.astype(little_endian, copy=False))
+        digest.update(canonical.view(np.uint8))
     return digest.hexdigest()
 
 

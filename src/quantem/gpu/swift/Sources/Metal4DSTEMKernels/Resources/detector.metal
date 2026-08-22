@@ -2218,6 +2218,26 @@ kernel void extract_u16_word_major_frame(
     output[pixel] = ushort((word >> ((pixel & 1u) * 16u)) & 0xffffu);
 }
 
+// Convert a bounded batch from the private detector-word-major resident layout
+// into the backend-neutral logical pixel order used by parity evidence. The
+// output is frame-major, with detector column varying fastest. Odd detector
+// counts intentionally omit the unused high lane of the final packed word.
+kernel void extract_u16_word_major_frames(
+    device const uint *data [[buffer(0)]],
+    device ushort *output [[buffer(1)]],
+    constant uint &scanStart [[buffer(2)]],
+    constant uint &scanCount [[buffer(3)]],
+    constant uint &pixelCount [[buffer(4)]],
+    uint2 position [[thread_position_in_grid]]
+) {
+    uint pixel = position.x;
+    uint localScan = position.y;
+    if (pixel >= pixelCount || scanStart + localScan >= scanCount) return;
+    uint word = data[ulong(pixel >> 1u) * scanCount + scanStart + localScan];
+    output[ulong(localScan) * pixelCount + pixel] =
+        ushort((word >> ((pixel & 1u) * 16u)) & 0xffffu);
+}
+
 kernel void extract_u16_word_major_frame_to_u32(
     device const uint *data [[buffer(0)]],
     device uint *output [[buffer(1)]],
@@ -2284,6 +2304,21 @@ kernel void extract_u32_word_major_frame(
 ) {
     if (pixel >= pixelCount) return;
     output[pixel] = data[ulong(pixel) * scanCount + scanIndex];
+}
+
+kernel void extract_u32_word_major_frames(
+    device const uint *data [[buffer(0)]],
+    device uint *output [[buffer(1)]],
+    constant uint &scanStart [[buffer(2)]],
+    constant uint &scanCount [[buffer(3)]],
+    constant uint &pixelCount [[buffer(4)]],
+    uint2 position [[thread_position_in_grid]]
+) {
+    uint pixel = position.x;
+    uint localScan = position.y;
+    if (pixel >= pixelCount || scanStart + localScan >= scanCount) return;
+    output[ulong(localScan) * pixelCount + pixel] =
+        data[ulong(pixel) * scanCount + scanStart + localScan];
 }
 
 kernel void extract_u32_word_major_frame_to_u32(

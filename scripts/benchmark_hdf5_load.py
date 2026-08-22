@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Any
 
 from _benchmark_support import (
+    LOGICAL_PIXEL_AXIS_ORDER,
+    LOGICAL_PIXEL_HASH_SCHEMA,
     MemorySampler,
     _array_description,
     _array_sha256,
@@ -156,6 +158,9 @@ def _output_parity(data: Any, args: argparse.Namespace) -> dict[str, Any]:
     return {
         **description,
         "full_volume_sha256": output_sha256,
+        "logical_pixel_hash_schema": LOGICAL_PIXEL_HASH_SCHEMA,
+        "logical_pixel_axis_order": list(LOGICAL_PIXEL_AXIS_ORDER),
+        "logical_pixel_byte_order": "little_endian",
         "validation_seconds": validation_seconds,
         "passed": not errors,
         "errors": errors,
@@ -451,6 +456,9 @@ def main() -> None:
         },
         "reference_contract": {
             "full_volume_sha256": args.expected_output_sha256,
+            "logical_pixel_hash_schema": LOGICAL_PIXEL_HASH_SCHEMA,
+            "logical_pixel_axis_order": list(LOGICAL_PIXEL_AXIS_ORDER),
+            "logical_pixel_byte_order": "little_endian",
             "storage_dtype": args.expected_output_dtype,
             "storage_shape": _shape_field(args.expected_output_shape),
             "scan_shape": _shape_field(args.expected_scan_shape),

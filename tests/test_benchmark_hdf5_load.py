@@ -12,6 +12,7 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 import benchmark_hdf5_load as benchmark
+from _benchmark_support import _array_sha256
 from benchmark_hdf5_load import _output_parity, _parse_shape
 
 
@@ -40,6 +41,34 @@ def test_output_parity_hashes_full_array_and_checks_dtype_and_shape() -> None:
     assert evidence["dtype"] == "uint16"
     assert evidence["logical_resident_bytes"] == 48
     assert evidence["full_volume_sha256"] == hashlib.sha256(array.tobytes()).hexdigest()
+    assert evidence["logical_pixel_hash_schema"] == (
+        "quantem.gpu.4dstem-logical-pixels/v1"
+    )
+    assert evidence["logical_pixel_axis_order"] == [
+        "scan_row",
+        "scan_column",
+        "detector_row",
+        "detector_column",
+    ]
+    assert evidence["logical_pixel_byte_order"] == "little_endian"
+
+
+def test_logical_pixel_hash_matches_cross_language_vector() -> None:
+    values = np.arange(2 * 3 * 3 * 5, dtype=np.uint16).reshape(2, 3, 3, 5)
+
+    assert _array_sha256(values) == (
+        "cae677456d8bcae7bd20864213c1c380b694f075e1980e2645a707db8301b977"
+    )
+
+
+def test_logical_pixel_hash_normalizes_endianness_and_chunk_boundaries() -> None:
+    values = np.arange(90, dtype=np.uint16).reshape(6, 3, 5)
+
+    class Chunked:
+        def __init__(self) -> None:
+            self.chunks = [values[:2].astype(">u2"), values[2:5], values[5:]]
+
+    assert _array_sha256(Chunked()) == _array_sha256(values)
 
 
 def test_output_parity_fails_closed_on_changed_bytes() -> None:
