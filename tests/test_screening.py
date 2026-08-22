@@ -327,6 +327,8 @@ def test_strong_cache_identity_accepts_unchanged_master_symlink(tmp_path) -> Non
 
     assert workflow._strong_cached_source_match(source, master) is True
     assert workflow._strong_cached_source_match(source, target) is None
+    dotted_master = master.parent / "unused" / ".." / master.name
+    assert workflow._strong_cached_source_match(source, dotted_master) is True
 
 
 def test_strong_cache_identity_rejects_repointed_master_symlink(tmp_path) -> None:

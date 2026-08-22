@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import gc
 import json
+import os
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -127,7 +128,7 @@ def _strong_cached_source_match(
     if any(not isinstance(item, dict) or not required <= item.keys() for item in files):
         return None
 
-    requested_master = str(master.expanduser().absolute())
+    requested_master = os.path.abspath(os.path.expanduser(os.fspath(master)))
     if cached_master != requested_master:
         # Relative HDF5 external links resolve from the requested master
         # spelling's parent. Two aliases can therefore name the same master
