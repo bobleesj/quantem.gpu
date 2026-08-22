@@ -299,6 +299,69 @@ def test_strong_cache_identity_rejects_duplicate_or_changed_files(tmp_path) -> N
     assert workflow._strong_cached_source_match(source, master) is False
 
 
+def test_strong_cache_identity_accepts_unchanged_master_symlink(tmp_path) -> None:
+    from quantem.gpu.screening import workflow
+
+    target = tmp_path / "target_master.h5"
+    target.write_bytes(b"stable")
+    master = tmp_path / "scan_master.h5"
+    master.symlink_to(target.name)
+    target_stat = master.stat()
+    link_stat = master.lstat()
+    source = {
+        "master": str(master.absolute()),
+        "files": [
+            {
+                "path": str(master.absolute()),
+                "size": int(target_stat.st_size),
+                "mtime_ns": int(target_stat.st_mtime_ns),
+                "ctime_ns": int(target_stat.st_ctime_ns),
+                "device": int(target_stat.st_dev),
+                "inode": int(target_stat.st_ino),
+                "symlink_target": target.name,
+                "symlink_mtime_ns": int(link_stat.st_mtime_ns),
+                "symlink_ctime_ns": int(link_stat.st_ctime_ns),
+            }
+        ],
+    }
+
+    assert workflow._strong_cached_source_match(source, master) is True
+    assert workflow._strong_cached_source_match(source, target) is True
+
+
+def test_strong_cache_identity_rejects_repointed_master_symlink(tmp_path) -> None:
+    from quantem.gpu.screening import workflow
+
+    first = tmp_path / "first_master.h5"
+    first.write_bytes(b"same-size")
+    second = tmp_path / "second_master.h5"
+    second.write_bytes(b"same-size")
+    master = tmp_path / "scan_master.h5"
+    master.symlink_to(first.name)
+    target_stat = master.stat()
+    link_stat = master.lstat()
+    source = {
+        "master": str(master.absolute()),
+        "files": [
+            {
+                "path": str(master.absolute()),
+                "size": int(target_stat.st_size),
+                "mtime_ns": int(target_stat.st_mtime_ns),
+                "ctime_ns": int(target_stat.st_ctime_ns),
+                "device": int(target_stat.st_dev),
+                "inode": int(target_stat.st_ino),
+                "symlink_target": first.name,
+                "symlink_mtime_ns": int(link_stat.st_mtime_ns),
+                "symlink_ctime_ns": int(link_stat.st_ctime_ns),
+            }
+        ],
+    }
+    master.unlink()
+    master.symlink_to(second.name)
+
+    assert workflow._strong_cached_source_match(source, master) is False
+
+
 def test_reduced_cache_identity_uses_full_inspection_fallback(
     monkeypatch,
     tmp_path,
