@@ -328,6 +328,47 @@ def test_reduced_cache_identity_uses_full_inspection_fallback(
     )
 
 
+def test_current_cache_hit_does_not_import_raw_io(monkeypatch, tmp_path) -> None:
+    import builtins
+
+    from quantem.gpu.screening import workflow
+
+    master = tmp_path / "scan_master.h5"
+    master.write_bytes(b"placeholder")
+    stat = master.stat()
+    expected = _result(master, workflow)
+    expected.metadata["source"] = {
+        "master": str(master.resolve()),
+        "files": [
+            {
+                "path": str(master.resolve()),
+                "size": int(stat.st_size),
+                "mtime_ns": int(stat.st_mtime_ns),
+                "ctime_ns": int(stat.st_ctime_ns),
+                "device": int(stat.st_dev),
+                "inode": int(stat.st_ino),
+            }
+        ],
+        "datasets": [],
+        "expectation": {"frames": None, "basis": None},
+    }
+    cache_dir = tmp_path / "cache"
+    workflow._save_cache(expected, workflow._cache_path(master, cache_dir))
+    real_import = builtins.__import__
+
+    def reject_raw_io_import(name, *args, **kwargs):
+        if name == "quantem.gpu.io":
+            raise AssertionError("a current cache hit must not import raw I/O")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", reject_raw_io_import)
+
+    actual = workflow.prepare(master, cache=True, cache_dir=cache_dir)
+
+    assert actual.from_cache is True
+    np.testing.assert_array_equal(actual.dpc_phase, expected.dpc_phase)
+
+
 def test_screening_forced_rotation_recomputes_phase(tmp_path) -> None:
     from quantem.gpu.screening import workflow
 
