@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "source_revision": "b6ff8e87e0fbb346287d5dd58f56f9e25574f225",
+  "source_revision": "d01e5800db4f5878e36c5a0ef666cb9afb0adcfe",
   "source_revision_scope": "Clean platform/computer matrix and fail-closed benchmark-harness revision. Every retained physical measurement remains bound to its own row revision, fixture identity, cache state, and timing boundary.",
   "purpose": "Fingerprints for the current benchmark dashboard, its authoritative registry and rendering inputs, provenance ledger, parity and methodology contracts, and canonical historical evidence. Landing, API, and backend capability pages intentionally do not duplicate measurements.",
   "pages": [
