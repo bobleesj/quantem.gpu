@@ -6,12 +6,12 @@ measurement of the current code.
 
 - **Ledger reviewed:** 2026-08-22
 - **Integration base:** origin/main `2768ccee`
-- **Current clean implementation stack before this documentation follow-up:**
-  `0bc9378`
-- **Current measured checkouts:** consolidated Python MPS `0bc9378`;
+- **Current clean benchmark source checkpoints:** canonical Python/CPU metadata
+  and parity `68dbe3a`; canonical native Swift/Metal load `5106ca4`
+- **Historical measured checkouts:** consolidated Python MPS `0bc9378`;
   native controlled-source `c0ea444`; retained CUDA and WebGPU rows remain
   bound to the exact revisions shown in the results ledger
-- **Documentation branch:** `aug-22-origin-main-integration`
+- **Documentation branch:** `benchmark-platform-computer-matrix`
 
 The native stack extends exact prepared QH5 binning (`e0e92b4`), optimized
 word-major detector binning (`ff3c7fd`), and exact resident summaries
@@ -23,6 +23,8 @@ Python MPS, WebGPU, source-load, or application measurement.
 
 | Commit | Change | Performance-number effect |
 |---|---|---|
+| `68dbe3a` | Normalized source and working detector metadata, then reran canonical CPU/Python MPS bins 1/2/4/8 | replaces the `0bc9378` headline with exact full-volume current rows: MPS p50 0.406624/0.477740/0.370645/0.340210 s; cache/source-page states remain explicit and none is arbitrary-source cold |
+| `5106ca4` | Added the canonical cross-layout logical-pixel contract used by native Swift/Metal evidence | adds current physical M5 24 GB bin2/bin4 distributions and one pressure-gated full-native bin1 smoke; the bin1 smoke is partial because it caused 758,448,128 B of swapouts |
 | `0bc9378` | Consolidated exact MPS bin1/2/4/8 kernels, overflow and partial-tail guards, resident reuse, and exception-safe cleanup | adds final-head post-warmup fresh-destination p50 0.414824/0.457153/0.382109/0.356258 s for bins 1/2/4/8; controlled cold and application E2E remain open |
 | `e4a35f9` | Adopted the accepted exact WebGPU integer CoM/DPC/iDPC source without importing obsolete campaign harnesses | no new timing claim; preserves the existing physical-Apple numerical evidence at the consolidated source boundary |
 | `f0f39c9` | Added scratch-free exact full-`uint16` decode, fused exact detector-sum kernels for bins 2/4/8, bin-2 specialization, lazy LZ4 scratch, and source-shard-aligned pipelining | historical pre-consolidation MPS rows remain retained; they no longer headline current source |

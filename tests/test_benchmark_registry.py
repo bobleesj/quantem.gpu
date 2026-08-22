@@ -7,7 +7,7 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-from scripts.benchmark_registry import _measurement_state, resolved_measurements
+from scripts.benchmark_registry import _bytes, _measurement_state, resolved_measurements
 
 REGISTRY = Path("benchmarks/benchmark_registry.json")
 GENERATED = Path("docs/_generated/benchmark_coverage.md")
@@ -15,6 +15,11 @@ GENERATED = Path("docs/_generated/benchmark_coverage.md")
 
 def _registry() -> dict:
     return json.loads(REGISTRY.read_text(encoding="utf-8"))
+
+
+def test_approximate_memory_is_visibly_qualified() -> None:
+    assert _bytes(1 << 30) == "1.000 GiB"
+    assert _bytes(1 << 30, approximate=True) == "~1.000 GiB"
 
 
 def test_every_module_platform_and_unrun_load_plan_stays_visible() -> None:
@@ -103,6 +108,7 @@ def test_registry_validator_and_generated_table_agree() -> None:
         "Accelerator peak",
         "Total-device peak",
         "Process/tree peak",
+        "Process physical-footprint peak",
         "Swap delta",
         "Device tested",
         "Date tested",
@@ -138,6 +144,40 @@ def test_generated_registry_is_ordered_by_platform_then_computer() -> None:
     mps_rows = [line for line in required.splitlines() if "| Python MPS |" in line]
     computers = [row.split("|")[2].strip() for row in mps_rows]
     assert computers == sorted(computers)
+
+
+def test_current_load_table_has_one_explicit_row_per_configuration() -> None:
+    registry = _registry()
+    current = [
+        row for row in resolved_measurements(registry) if row.get("dashboard_current")
+    ]
+    assert current
+    assert all(row["module"] == "I/O and load" for row in current)
+    assert all(row["state"] not in {"refuted", "superseded"} for row in current)
+
+    keys = {
+        (
+            row["platform"],
+            row["computer"],
+            row.get("selected_scan_rows"),
+            row.get("selected_scan_columns"),
+            row.get("source_detector_rows"),
+            row.get("source_detector_columns"),
+            row.get("detector_bin"),
+            row.get("source_dtype"),
+            row.get("working_dtype"),
+        )
+        for row in current
+    }
+    assert len(keys) == len(current)
+
+    rendered = GENERATED.read_text(encoding="utf-8")
+    section = rendered.split("<!-- benchmark-current-load-start -->", 1)[1].split(
+        "<!-- benchmark-current-load-end -->", 1
+    )[0]
+    assert section.index("| Python MPS |") < section.index("| Native Swift/Metal |")
+    assert "Process physical-footprint peak" in section
+    assert "~0.706 GiB" in section
 
 
 def test_load_matrix_tracks_every_compatible_platform_computer_pair() -> None:
@@ -227,13 +267,11 @@ def test_failed_or_probe_parity_cannot_be_promoted_as_measured() -> None:
     )
 
 
-def test_running_platform_computer_manifest_stays_partial_and_resolves_outputs() -> (
-    None
-):
+def test_platform_computer_manifest_lifecycle_resolves_outputs() -> None:
     registry = _registry()
     manifest_path = Path("experiments/20260822-platform-computer-profile/manifest.json")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert manifest["status"] == "running"
+    assert manifest["status"] in {"running", "completed"}
 
     output_ids = {output["id"] for output in manifest["outputs"]}
     measurements = {
@@ -242,12 +280,22 @@ def test_running_platform_computer_manifest_stays_partial_and_resolves_outputs()
         if measurement.get("evidence") == manifest_path.as_posix()
     }
     assert measurements
-    assert all(
-        measurement["state"] == "partial" for measurement in measurements.values()
-    )
     assert {
         measurement["artifact_id"] for measurement in measurements.values()
     } <= output_ids
+
+    if manifest["status"] == "running":
+        assert manifest["timestamps"]["finished"] is None
+        assert all(
+            measurement["state"] == "partial"
+            for measurement in measurements.values()
+        )
+    else:
+        assert manifest["timestamps"]["finished"]
+        assert any(
+            measurement["state"] == "measured"
+            for measurement in measurements.values()
+        )
 
     gates = {
         gate["id"]: gate
@@ -259,7 +307,10 @@ def test_running_platform_computer_manifest_stays_partial_and_resolves_outputs()
         )
     }
     assert gates
-    assert all(gate["state"] == "partial" for gate in gates.values())
+    if manifest["status"] == "running":
+        assert all(gate["state"] == "partial" for gate in gates.values())
+    else:
+        assert all(gate["state"] in {"measured", "partial"} for gate in gates.values())
 
 
 def test_measured_gates_only_name_measured_evidence() -> None:
