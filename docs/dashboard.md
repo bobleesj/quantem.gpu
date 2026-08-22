@@ -17,6 +17,31 @@ and test date. The overview deliberately omits evidence IDs and source revisions
 it does not replace the
 [complete benchmark provenance ledger](performance/results.md).
 
+(coverage-and-next-runs)=
+## Coverage and next runs
+
+The [filterable coverage registry](performance/coverage.md) now keeps every
+required configuration visible, including configurations that have never run.
+It separates complete measurements, partial evidence, pending work, refuted
+experiments, and fail-closed unsupported paths. Each open row names a stable
+runbook, its physical owner, and the exact artifact required for promotion.
+
+```{include} _generated/benchmark_coverage.md
+:start-after: <!-- benchmark-coverage-summary-start -->
+:end-before: <!-- benchmark-coverage-summary-end -->
+```
+
+Agents and maintainers should begin with:
+
+```bash
+python scripts/benchmark_registry.py next --limit 10
+python scripts/benchmark_registry.py command GATE_ID
+```
+
+The overview tables below retain the current promoted numerical claims. The
+coverage registry is the canonical place to find missing combinations and
+their reproduction entry points.
+
 (speed-and-memory-at-a-glance)=
 ## Speed and memory at a glance
 

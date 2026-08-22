@@ -10,6 +10,7 @@ which optimizations were accepted, rejected, or remain provisional.
 |---|---|
 | [Documentation landing page](../intro.md) | Package contract and routes for API, kernel, and application developers; intentionally contains no benchmark tables |
 | [Implementation dashboard](../dashboard.md) | The single friendly current overview of platform, bin, dtype, cache state, memory, parity, device, and test date |
+| [Coverage and runbooks](coverage.md) | Filterable measured, partial, pending, refuted, and unsupported configurations plus stable commands for closing each open gate |
 | {ref}`Minimum-device gates <minimum-device-memory-gates>` | CUDA 6 GiB VRAM and WebGPU 8 GB laptop acceptance status; runtime details on [CUDA](../platforms/cuda.md) and [WebGPU](../platforms/webgpu.md) |
 | [Verified benchmark results](results.md) | Metrics with date, revision, device, shape/dtype, cache state, load plan, benchmark definition, calibration, and parity provenance |
 | [Revision and change ledger](changes.md) | Latest documentation changes, implementation baselines, and why a retained number changed or remained historical |
@@ -36,6 +37,12 @@ The machine-readable execution schedule lives in
 [`benchmarks/profile_matrix.json`](https://github.com/bobleesj/quantem.gpu/blob/main/benchmarks/profile_matrix.json),
 and completed, failed, refuted, or superseded runs remain indexed in
 [`experiments/RUNS.md`](https://github.com/bobleesj/quantem.gpu/blob/main/experiments/RUNS.md).
+
+Exact configuration coverage and agent runbooks live in
+[`benchmarks/benchmark_registry.json`](https://github.com/bobleesj/quantem.gpu/blob/main/benchmarks/benchmark_registry.json).
+Regenerate the filterable page with
+`python scripts/benchmark_registry.py render`; CI fails if the generated table
+drifts from the registry.
 
 ## Reading a result
 

@@ -56,6 +56,7 @@ def test_docs_navigation_has_world_class_top_level_sections() -> None:
         "maintainer/native-metal-ssb-migration",
         "developer/writing",
         "performance/index",
+        "performance/coverage",
         "performance/results",
         "performance/changes",
         "performance/methodology",
@@ -140,6 +141,7 @@ def test_dashboard_is_the_dense_human_overview() -> None:
         "### Cross-module platform map",
         "## Where an implementer starts",
         "## Dashboard maintenance rule",
+        "## Coverage and next runs",
     ):
         assert heading in dashboard
 

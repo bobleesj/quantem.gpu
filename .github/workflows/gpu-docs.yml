@@ -14,10 +14,12 @@ on:
       - "scripts/check_docs_links.py"
       - "scripts/check_docs_nav_toggle.py"
       - "scripts/check_profile_registry.py"
+      - "scripts/benchmark_registry.py"
       - "benchmarks/**"
       - "experiments/**"
       - "tests/test_docs_site.py"
       - "tests/test_profile_registry.py"
+      - "tests/test_benchmark_registry.py"
       - ".github/workflows/gpu-docs.yml"
   workflow_dispatch:
 
@@ -46,7 +48,7 @@ jobs:
         run: |
           python scripts/check_profile_registry.py
           python scripts/check_docs_links.py
-          python -m pytest -q tests/test_docs_site.py tests/test_backend_load_checklist.py tests/test_profile_registry.py
+          python -m pytest -q tests/test_docs_site.py tests/test_backend_load_checklist.py tests/test_profile_registry.py tests/test_benchmark_registry.py
           jupyter-book build docs
           python scripts/check_docs_links.py --html-root docs/_build/html
           python scripts/check_docs_nav_toggle.py docs/_build/html

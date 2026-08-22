@@ -5036,6 +5036,11 @@ def _decode_scan_indices_prepared(
     meta["backend"] = backend
     meta["prepare_seconds"] = float(prepared_item["prepare_seconds"])
     meta["decode_seconds"] = float(time.perf_counter() - t0)
+    meta["total_compressed_bytes"] = int(prepared.get("total_compressed_bytes", 0))
+    meta["read_span_count"] = int(prepared.get("read_span_count", 0))
+    meta["read_gap_bytes"] = int(prepared.get("read_gap_bytes", 0))
+    if "prepare_timing_s" in prepared:
+        meta["prepare_timing_s"] = dict(prepared["prepare_timing_s"])
     if verbose:
         size_gb = data.nbytes / 1e9
         print(

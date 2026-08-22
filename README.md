@@ -34,6 +34,9 @@ Choose your entry point:
   loopback service and connect locally or through SSH.
 - [Verified performance](docs/performance/results.md): dated, revision-pinned
   measurements with hardware, data shape/dtype, cache state, and load plan.
+- [Benchmark coverage and runbooks](docs/performance/coverage.md): filterable
+  measured, partial, pending, refuted, and unsupported configurations with
+  stable commands for closing each open gate.
 - [Developer guide](docs/developer/index.md): adding and reviewing kernels.
 
 The README is deliberately a doorway. Detailed implementation notes and
@@ -160,6 +163,7 @@ evidence file.
 ```bash
 python -m pip install -e ".[dev,docs]"
 PYTHONPATH=src python -m pytest -q
+python scripts/benchmark_registry.py validate
 swift test
 jupyter-book build docs
 ```

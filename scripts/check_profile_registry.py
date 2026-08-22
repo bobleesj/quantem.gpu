@@ -4,6 +4,8 @@ import json
 import re
 from pathlib import Path
 
+from benchmark_registry import validate_registry
+
 ROOT = Path(__file__).resolve().parents[1]
 PROFILE_MATRIX = ROOT / "benchmarks" / "profile_matrix.json"
 PARITY_MATRIX = ROOT / "tests" / "parity" / "backend_matrix.json"
@@ -256,6 +258,7 @@ def main() -> int:
     cell_count, _ = _validate_profile_matrix(errors)
     experiment_count, experiment_ids = _validate_experiments(errors)
     _validate_runs_index(experiment_ids, errors)
+    coverage = validate_registry(errors)
 
     if errors:
         for error in errors:
@@ -265,7 +268,10 @@ def main() -> int:
     print(
         "check_profile_registry: OK -- "
         f"{cell_count} platform/module cells and "
-        f"{experiment_count} retained experiments"
+        f"{experiment_count} retained experiments; "
+        f"{coverage['gates']} exact benchmark gates, "
+        f"{coverage['measurements']} measurements, and "
+        f"{coverage['runbooks']} runbooks"
     )
     return 0
 

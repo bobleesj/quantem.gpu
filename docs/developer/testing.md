@@ -18,12 +18,49 @@ environment:
 
 ```bash
 python scripts/check_profile_registry.py
+python scripts/benchmark_registry.py validate
 ```
 
 This checks that every parity capability has exactly one cell for CPU reference,
 CUDA, Python MPS, native Swift/Metal, and WebGPU; unsupported cells stay
 fail-closed; and terminal experiment manifests retain full revisions, input and
-output hashes, timestamps, and a human registry row.
+output hashes, timestamps, and a human registry row. It also checks every exact
+benchmark gate, evidence import, runbook command, generated coverage table, and
+measured-row timing/parity requirement.
+
+## Choosing a reproducible performance gate
+
+Do not begin from a command copied out of an old experiment. Ask the registry
+for the open rows on the backend or computer you own:
+
+```bash
+python scripts/benchmark_registry.py next --platform "Python MPS"
+python scripts/benchmark_registry.py next --computer "Steve Kerr"
+python scripts/benchmark_registry.py show io.mps.phil.bin2.cold-original
+python scripts/benchmark_registry.py command io.mps.phil.bin2.cold-original
+```
+
+The command view prints the preflight, required environment, repository-owned
+entry point, required artifacts, and promotion boundary. If it says
+`parity preflight`, the command cannot produce a physical timing claim. If a
+performance harness is missing, the coverage row stays partial or pending until
+one is added.
+
+The standard reusable entry points are:
+
+| Operation | Entry point | Primary output |
+|---|---|---|
+| Python CUDA/MPS/CPU HDF5 load | `scripts/benchmark_hdf5_load.py` | Run-level p50/p95/max, geometry, resident bytes, and memory snapshots |
+| CUDA/MPS selective load | `scripts/benchmark_selective_load.py` | Selector identity, bytes/stages, exact ordered hash, p50/p95/max, and memory |
+| CUDA/MPS screening | `scripts/benchmark_screening.py` | Separate build and prepared-reopen distributions, product hashes, stages, cache bytes, and memory |
+| Native Swift/Metal indexed load | `metal-4dstem-indexed-load-benchmark` | Exact resident volume/products, stage timing, hashes, and Metal/process memory |
+| Hardware-WebGPU HDF5 load | `scripts/benchmark_webgpu_h5_browser.py` | Browser-local profile, checksums, run timing, and browser telemetry |
+| Python MPS SSB | `scripts/benchmark_ssb_mps_scaling.py` | Reconstruction, parity-pair, and complete-fit JSONL |
+| Native Swift/Metal SSB | `metal-ssb-benchmark` | Reconstruction, phase/loss, calibration, and cache-policy report |
+
+Each physical run still needs a manifest and `experiments/RUNS.md` row before
+launch. The harness JSON is evidence, not permission to promote a dashboard
+number without review.
 
 ## Native Swift and Metal
 
