@@ -16,6 +16,7 @@ def test_webgpu_sources_are_shipped_and_readable() -> None:
         "device/webgpu.ts",
         "detector/geometry.ts",
         "detector/compute/webgpu/backend.ts",
+        "detector/compute/webgpu/exact-com.ts",
         "dpc/compute/webgpu/fft.ts",
         "dpc/compute/webgpu/kernels.ts",
         "ssb/compute/webgpu/backend.ts",
@@ -29,8 +30,9 @@ def test_webgpu_sources_are_shipped_and_readable() -> None:
 
 def test_webgpu_compute_source_tracks_vi_and_dpc_kernels() -> None:
     detector_source = source_text("detector/compute/webgpu/backend.ts")
+    exact_com_source = source_text("detector/compute/webgpu/exact-com.ts")
     dpc_source = source_text("dpc/compute/webgpu/kernels.ts")
-    source = detector_source + "\n" + dpc_source
+    source = detector_source + "\n" + exact_com_source + "\n" + dpc_source
 
     assert "const maskedSumSrc" in source
     assert "export function buildDetectorMask" in source
@@ -41,6 +43,32 @@ def test_webgpu_compute_source_tracks_vi_and_dpc_kernels() -> None:
     assert "detectorComplementIndices(mask: Uint32Array)" in source
     assert "totalSumBuffer()" in source
     assert "const maskedComSrc" in source
+    assert "struct U64Words { lo: u32, hi: u32 }" in source
+    assert "fn u64Add(a: U64Words, b: U64Words)" in source
+    assert "fn u64MultiplyU32(a: u32, b: u32)" in source
+    assert "fn u64DoubleStep(remainder: U64Words" in source
+    assert "fn ratioU32Exact(numerator: u32, denominator: u32)" in source
+    assert "fn ratioU64(numerator: U64Words, denominator: U64Words)" in source
+    assert "var significand = 1u << 23u" in source
+    assert "let roundComparison = u64CompareTwice" in source
+    assert "roundComparison == 0i" in source
+    assert "(significand & 1u) != 0u" in source
+    assert "return bitcast<f32>(exponentBits | (significand & 0x7fffffu))" in source
+    assert "fma(-estimate" not in source
+    assert "fn ratioU32(num: u32, den: u32)" not in source
+    # Modes 0/1/3 are uint16/uint8/uint32. Only mode 2 may use float
+    # accumulation and division; the native uint16 path must not bypass the
+    # exact integer ratio used by the parity fixture.
+    assert detector_source.count("if (u.w != 2u)") == 3
+    assert "if (u.w == 1u)" not in detector_source
+    assert "if ((u2.w & 1u) != 0u)" in detector_source
+    assert "if ((u2.w & 2u) != 0u)" in detector_source
+    assert "wsumN = wsumN + v" in detector_source
+    assert "wsumU = u64Add" in detector_source
+    assert "U64Words(detectorRow * v, 0u)" in detector_source
+    assert "pwuHi: array<u32" in detector_source
+    assert 'from "./exact-com"' in detector_source
+    assert "maskedCoMSelection(mask: Uint32Array" in detector_source
     assert "maskedCoM(mask: Uint32Array" in source
     assert "const DPC_MEAN_WGSL" in source
     assert "const DPC_COMPONENT_WGSL" in source
@@ -55,8 +83,12 @@ def test_webgpu_compute_source_tracks_vi_and_dpc_kernels() -> None:
     assert "maskedDpcPairBuffers(mask: Uint32Array" in source
     assert "maskedIDpcBuffer(" in source
     assert "maskedIDpc(" in source
-    assert "gradFft[i] = vec2<f32>(gradRow, gradCol)" in source
-    assert "let zMirrorConj = vec2<f32>(gradFft[mirror].x, -gradFft[mirror].y)" in source
+    assert "rowFft[i] = vec2<f32>(gradRow, 0.0)" in source
+    assert "colFft[i] = vec2<f32>(gradCol, 0.0)" in source
+    assert "let g = rowFft[i] * k0 + colFft[i] * k1" in source
+    assert "runFFT2DInPlace(rowFft" in source
+    assert "runFFT2DInPlace(colFft" in source
+    assert "zMirrorConj" not in source
     assert "runFFT2DInPlace" in source
     assert "getDevice(): GPUDevice" in source
     assert "readFloatBuffer(buf: GPUBuffer" in source
@@ -67,6 +99,33 @@ def test_webgpu_compute_source_tracks_vi_and_dpc_kernels() -> None:
     assert "if (mode == 3u) { return data[gp]; }" in source
     assert "const values = new Uint32Array(mapped, 0, this.detSize);" in source
     assert "subgroupAdd" in source
+
+
+def test_webgpu_integer_com_source_fails_closed_on_unsupported_contracts() -> None:
+    backend_source = source_text("detector/compute/webgpu/backend.ts")
+    exact_source = source_text("detector/compute/webgpu/exact-com.ts")
+    source = backend_source + "\n" + exact_source
+
+    assert "mask.length !== this.detSize" in backend_source
+    assert "Number.isSafeInteger(detCols)" in backend_source
+    assert "this.detSize % detCols !== 0" in backend_source
+    assert (
+        "this.mode !== 0 && this.mode !== 1 && this.mode !== 2 && this.mode !== 3"
+        in backend_source
+    )
+    assert 'const MAX_U64 = BigInt("18446744073709551615")' in exact_source
+    assert "totalBound > MAX_U64" in exact_source
+    assert "rowMomentBound > MAX_U64" in exact_source
+    assert "columnMomentBound > MAX_U64" in exact_source
+    assert "exceeds its two-u32 accumulation contract" in source
+    assert "will not downcast, crop, or approximate" in source
+    assert "totalBound <= MAX_U32" in exact_source
+    assert "rowMomentBound <= MAX_U32" in exact_source
+    assert "columnMomentBound <= MAX_U32" in exact_source
+    assert "BigInt(maximumRow) * maximum <= MAX_U32" in exact_source
+    assert "BigInt(maximumColumn) * maximum <= MAX_U32" in exact_source
+    assert "Number.MAX_SAFE_INTEGER - detectorRow" in exact_source
+    assert "Number.MAX_SAFE_INTEGER - detectorColumn" in exact_source
 
 
 def test_detector_geometry_source_is_shared() -> None:
