@@ -145,6 +145,58 @@ class MPSChunked4DSTEM:
         self.chunks = []
         self.fast_chunks = None
 
+    def recycle(self) -> None:
+        """Return exact compact output buffers for the next compatible load.
+
+        This is an explicit resident-lifecycle operation. It differs from
+        :meth:`free`, which immediately returns the output memory to the
+        system. Recycling keeps one exact output generation resident so a
+        later compatible load can overwrite it without allocating and wiring
+        another full resident destination. Callers must stop using this result
+        and all of its views before calling ``recycle()``.
+
+        The decoder attaches this capability only to native-dtype compact
+        detector-bin-1 results and native-dtype detector-bin-2/4/8 results,
+        all without a sidecar. Other layouts fail closed.
+        """
+        if not self.chunks:
+            return
+        if self.det_bin not in (1, 2, 4, 8) or self.fast_chunks:
+            raise RuntimeError(
+                "Only native MPS detector-bin-1/2/4/8 output without a "
+                "sidecar can be recycled."
+            )
+        decoders = {
+            id(decoder): decoder
+            for chunk in self.chunks
+            if (decoder := getattr(chunk, "_recycle_decoder", None)) is not None
+        }
+        if len(decoders) != 1 or any(
+            getattr(chunk, "_recycle_decoder", None) is None
+            for chunk in self.chunks
+        ):
+            raise RuntimeError(
+                "This MPS result does not own a compatible recyclable destination."
+            )
+        buffers = [getattr(chunk, "_mtl", None) for chunk in self.chunks]
+        if any(buffer is None for buffer in buffers):
+            raise RuntimeError(
+                "This MPS result has already released an output buffer."
+            )
+        keys = [_buffer_key(buffer) for buffer in buffers]
+        if len(set(keys)) != len(keys):
+            raise RuntimeError(
+                "A recyclable MPS result contains aliased output buffers."
+            )
+
+        decoder = next(iter(decoders.values()))
+        decoder._recycle_output_buffers(buffers)
+        for chunk in self.chunks:
+            chunk._mtl = None
+            chunk._recycle_decoder = None
+        self.chunks = []
+        self.fast_chunks = None
+
 
 @dataclass(frozen=True)
 class _ChunkReadPlan:
@@ -525,6 +577,7 @@ def load_master(
         out._mtl = None
         _release_metal_buffer(source_mtl)
         return clipped
+    out._recycle_decoder = dec
     return out
 
 # ---------------------------------------------------------------------------
@@ -962,12 +1015,14 @@ class _MtlArray(np.ndarray):
     """
     _mtl = None
     _row_prefix = False
+    _recycle_decoder = None
 
     def __array_finalize__(self, obj):
         if obj is None:
             return
         self._mtl = getattr(obj, "_mtl", None)
         self._row_prefix = getattr(obj, "_row_prefix", False)
+        self._recycle_decoder = getattr(obj, "_recycle_decoder", None)
 
 
 def _normalize_output_dtype(output_dtype: type | np.dtype | str | None) -> np.dtype | None:
@@ -1149,6 +1204,9 @@ class MPSDecompressor:
         self._chunk_u16_pool: list = []
         self._chunk_narrow_scratch_pool: list = []
         self._chunk_fast_pool: list = []
+        # One explicitly recycled native output generation. Unlike scratch
+        # pools, this remains fully resident between compatible loads.
+        self._resident_output_recycle_pool: list = []
         self._bad_idx_mtl = None
         self._bad_idx_np = None
         self._bad_idx_capacity = 0
@@ -1177,6 +1235,31 @@ class MPSDecompressor:
         self._out_mtl = None
         self._out_np = None
         self._out_nbytes = 0
+
+    def _take_recycled_output_buffers(
+        self,
+        sizes: list[int],
+    ) -> list | None:
+        """Transfer one exact compatible resident destination generation."""
+        pool = self._resident_output_recycle_pool
+        if not pool:
+            return None
+        if len(pool) != len(sizes) or any(
+            int(buffer.length()) != int(size)
+            for buffer, size in zip(pool, sizes, strict=True)
+        ):
+            for buffer in pool:
+                _release_metal_buffer(buffer)
+            self._resident_output_recycle_pool = []
+            return None
+        self._resident_output_recycle_pool = []
+        return pool
+
+    def _recycle_output_buffers(self, buffers: list) -> None:
+        """Keep only the newest caller-released native output generation."""
+        for buffer in self._resident_output_recycle_pool:
+            _release_metal_buffer(buffer)
+        self._resident_output_recycle_pool = list(buffers)
 
     def free(self) -> None:
         """Release every Metal buffer this decompressor still owns.
@@ -1953,6 +2036,41 @@ class MPSDecompressor:
         tax. Representable sums are bit-identical to the CUDA integer-sum bin;
         native output fails closed instead of exposing a saturated count.
         """
+        # This invocation owns only a destination assigned below. A stale
+        # reference can belong to a still-live caller or alias the recycle pool;
+        # detach it without releasing before establishing the new boundary.
+        self._out_mtl = None
+        self._out_np = None
+        self._out_nbytes = 0
+        try:
+            return self._load_binned_masked(
+                master_path,
+                det_bin,
+                mask=mask,
+                verbose=verbose,
+                allow_integer_saturation_for_u8=allow_integer_saturation_for_u8,
+            )
+        except BaseException:
+            self._release_pending_binned_output()
+            raise
+
+    def _release_pending_binned_output(self) -> None:
+        """Release an eager binned destination that was not handed to a caller."""
+        output_mtl = self._out_mtl
+        self._out_mtl = None
+        self._out_np = None
+        self._out_nbytes = 0
+        _release_metal_buffer(output_mtl)
+
+    def _load_binned_masked(
+        self,
+        master_path,
+        det_bin,
+        mask=None,
+        verbose=False,
+        *,
+        allow_integer_saturation_for_u8=False,
+    ):
         plan = plan_master(master_path)
         det_shape = plan.detector_shape
         dtype = plan.dtype
@@ -1969,11 +2087,16 @@ class MPSDecompressor:
         self._set_mask(mask, det_row, det_col)
         if elem_size in (2, 4):
             self._cast_overflow_np[0] = 0
-        # Fresh output buffer per call (NOT the reused _ensure_output_buffer
-        # pool) so the zero-copy view we return below can't be aliased by a
-        # later load. The returned array keeps this buffer alive via _mtl.
+        # A normal call allocates a fresh output so its zero-copy view cannot be
+        # aliased by a later load. An explicit caller recycle transfers one
+        # retired, size-compatible native destination back for overwrite.
         out_total_bytes = total_frames * out_frame_bytes
-        self._out_mtl = _metal_buffer_alloc(out_total_bytes)
+        recycled_outputs = self._take_recycled_output_buffers([out_total_bytes])
+        self._out_mtl = (
+            recycled_outputs[0]
+            if recycled_outputs is not None
+            else _metal_buffer_alloc(out_total_bytes)
+        )
         self._out_np = _numpy_view(self._out_mtl, np.uint8, out_total_bytes)
         self._out_nbytes = out_total_bytes
         bufs = [
@@ -2022,12 +2145,16 @@ class MPSDecompressor:
                     comp_mtl, co_mtl, bs_mtl, bc_mtl, bo_mtl,
                     max_blk, meta_frame_offset=s,
                 )
-                # Overlap: read+parse next chunk while the last sub-batch runs.
-                if not read_next_done and e >= nf and ci + 1 < n_chunks:
-                    _tr = _t.perf_counter()
-                    _read_parse((ci + 1) % 2, ci + 1)
-                    t_read += _t.perf_counter() - _tr
-                cmd.waitUntilCompleted()
+                try:
+                    # Overlap: read+parse next chunk while the last sub-batch runs.
+                    if not read_next_done and e >= nf and ci + 1 < n_chunks:
+                        _tr = _t.perf_counter()
+                        _read_parse((ci + 1) % 2, ci + 1)
+                        t_read += _t.perf_counter() - _tr
+                finally:
+                    # A read failure must not release the destination while the
+                    # committed command is still writing into it.
+                    cmd.waitUntilCompleted()
                 t_gpu += _t.perf_counter() - _tg
                 if not read_next_done and e >= nf:
                     read_next_done = True
@@ -2370,13 +2497,18 @@ class MPSDecompressor:
                 current_frames += nf
                 output_n_frames[current_group] = current_frames
             out_views: list = [None] * len(output_n_frames)
+            output_sizes = [nf * frame_bytes for nf in output_n_frames]
+            recycled_outputs = (
+                self._take_recycled_output_buffers(output_sizes)
+                if not output_u8 and not output_u16_narrow
+                else None
+            )
             out_mtls: list = (
                 [None] * len(output_n_frames)
                 if output_u8
-                else [
-                    _metal_buffer_alloc(nf * frame_bytes)
-                    for nf in output_n_frames
-                ]
+                else recycled_outputs
+                if recycled_outputs is not None
+                else [_metal_buffer_alloc(size) for size in output_sizes]
             )
             u8_out_mtls: list = (
                 [
@@ -3127,6 +3259,17 @@ def load_master_chunked(
         precompute_detector_sum=precompute_detector_sum,
     )
     detector_sum = dec.last_detector_sum
+    recyclable = (
+        target_bytes is not None
+        and not row_prefix
+        and fast_det_bin is None
+        and output_dtype is None
+        and not precompute_detector_sum
+        and not isinstance(result, tuple)
+    )
+    if recyclable:
+        for chunk in result:
+            chunk._recycle_decoder = dec
     # The returned arrays own their buffers (released by MPSChunked4DSTEM.free).
     # Anything still sitting in a pool is scratch this load allocated and never
     # handed out; dropping the pool alone strands it forever, because PyObjC does
