@@ -1676,6 +1676,25 @@ def test_pinned_buffer_release_prunes_redundant_smaller_size(monkeypatch) -> Non
     assert small == {}
 
 
+def test_large_pinned_registration_rounds_to_bounded_reuse_class() -> None:
+    from quantem.gpu.io.load import _pinned_registration_size
+
+    mebibyte = 1024 * 1024
+
+    assert _pinned_registration_size(63 * mebibyte) == 63 * mebibyte
+    assert _pinned_registration_size(64 * mebibyte) == 64 * mebibyte
+    assert _pinned_registration_size(345 * mebibyte + 700_000) == 348 * mebibyte
+    assert _pinned_registration_size(347 * mebibyte + 900_000) == 348 * mebibyte
+
+
+@pytest.mark.parametrize("nbytes", [0, -1])
+def test_pinned_registration_requires_positive_size(nbytes: int) -> None:
+    from quantem.gpu.io.load import _pinned_registration_size
+
+    with pytest.raises(ValueError, match="must be positive"):
+        _pinned_registration_size(nbytes)
+
+
 def test_pinned_buffer_release_keeps_distinct_size_classes(monkeypatch) -> None:
     from importlib import import_module
 
