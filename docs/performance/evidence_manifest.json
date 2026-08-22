@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "source_revision": "0bc9378b15285db4de69baa399cfc573936a2e41",
-  "source_revision_scope": "Clean consolidated implementation measured by the final-head Python MPS regression; other retained measurements remain bound to their per-row revisions.",
-  "purpose": "Fingerprints for the current benchmark dashboard, authoritative provenance ledger, parity and methodology contracts, and canonical historical evidence. Landing, API, and backend capability pages intentionally do not duplicate measurements.",
+  "source_revision": "b6ff8e87e0fbb346287d5dd58f56f9e25574f225",
+  "source_revision_scope": "Clean platform/computer matrix and fail-closed benchmark-harness revision. Every retained physical measurement remains bound to its own row revision, fixture identity, cache state, and timing boundary.",
+  "purpose": "Fingerprints for the current benchmark dashboard, its authoritative registry and rendering inputs, provenance ledger, parity and methodology contracts, and canonical historical evidence. Landing, API, and backend capability pages intentionally do not duplicate measurements.",
   "pages": [
     {
       "path": "docs/intro.md",
@@ -103,6 +103,33 @@
       "path": "docs/maintainer/m2-air-lz4-match-unroll-2026-08-18.md",
       "sha256": "fc5ce5fcc3295cec11a411161de7270f196857e927013971935f8512ee2125a1",
       "role": "Physical M2 Air Metal load/decode evidence"
+    }
+  ],
+  "authoritative_inputs": [
+    {
+      "path": "benchmarks/benchmark_registry.json",
+      "sha256": "e7cdb026b11fc553f16b60aa2245ee85f48fbb8ec0bf18d14da94ca780b80273",
+      "role": "Atomic Platform, Computer, module, configuration, state, measurement, and runbook registry"
+    },
+    {
+      "path": "docs/_generated/benchmark_coverage.md",
+      "sha256": "2efc951f22136cf43beb4a5a0b0f49ac3c263ebbd07a7de4d8007ef8d35270e9",
+      "role": "Generated filterable coverage, retained-measurement, and runbook tables"
+    },
+    {
+      "path": "docs/_static/benchmark-tables.js",
+      "sha256": "bc3845e490c5900cf1911c60cfcd7ac77515fed9571479f22e618fe189ec5e4f",
+      "role": "Client-side Platform and Computer table filtering"
+    },
+    {
+      "path": "scripts/benchmark_registry.py",
+      "sha256": "d5b93ec1e5d55bedc2512bd23eeed9e0f399145d0816f5861706cf8dd6e59219",
+      "role": "Registry validation, rendering, next-gate selection, and reproducible-command entry point"
+    },
+    {
+      "path": "experiments/20260822-platform-computer-profile/manifest.json",
+      "sha256": "4ebe97d933f4964d45ee87e67475d609a94c6e939fba47031ac4baea75db7965",
+      "role": "Running physical-device matrix ledger; partial measurements may not be promoted while this manifest is nonterminal"
     }
   ]
 }
