@@ -51,44 +51,46 @@
       "kind": "machine-readable evidence index",
       "artifact": "evidence-index.json",
       "path": "experiments/20260822-morning-evidence-index/evidence-index.json",
-      "sha256": "f636ba9ad630139fb0ee8a50822751bf772db7797a1e0942b8bcae8f93316113",
-      "result": "18 referenced artifacts: 12 accepted, 3 refuted, and 3 pending; 10 accepted atomic measurements; 12 unresolved cells"
+      "sha256": "08fc3fda97de2b20a3aece1cc44e48b4ed1ef5b663fbf1118bf0b6d424f2e0b4",
+      "result": "19 referenced artifacts: 13 accepted, 4 refuted, and 2 pending; 13 accepted atomic measurements; one refuted diagnostic; 13 unresolved cells"
     },
     {
       "kind": "human morning-report draft",
       "artifact": "MORNING-REPORT-DRAFT.md",
       "path": "experiments/20260822-morning-evidence-index/MORNING-REPORT-DRAFT.md",
-      "sha256": "2a3fdd5e582d2be8858d8d4e48dbe342919c73c466a8eb95331372e3e4019db8",
+      "sha256": "050e40d068968f84b4352108741c0d680e162a9862c174d16e6d76a56fefce9e",
       "result": "accepted, refuted, and pending claims remain separated by platform, computer, cache state, timing boundary, and memory definition"
     },
     {
       "kind": "source-only validator",
       "artifact": "validate_evidence_index.py",
       "path": "experiments/20260822-morning-evidence-index/validate_evidence_index.py",
-      "sha256": "154b7961d7079cd50ad1106f4d3cbeb1f5ac4fcefc7d0ee92a5c9972d7fb58d7",
+      "sha256": "dcb13f123d744e3741a0dd61799fde6b9755e9c5bb4c261b80ab3dbd858f384e",
       "result": "all referenced hashes, revisions, worktree states, fixture bindings, and atomic metric contracts passed"
     },
     {
       "kind": "validation record",
       "artifact": "validation.json",
       "path": "experiments/20260822-morning-evidence-index/validation.json",
-      "sha256": "cdf84df594d0ed82e1ebf9fb9ddfaf72bb8342852f1f980eb6aa87277721f309",
+      "sha256": "e8e8915f9bd6f9cf779797f44a601bc1d13a8c8ff9c264ab9e6c8aca70b7b406",
       "result": "profile registry, registry tests, documentation source links, JSON syntax, and diff hygiene passed"
     }
   ],
   "results": {
     "decision": "mixed",
-    "accepted_artifacts": 12,
-    "refuted_artifacts": 3,
-    "pending_artifacts": 3,
-    "accepted_atomic_measurements": 10,
-    "unresolved_metric_cells": 12,
+    "accepted_artifacts": 13,
+    "refuted_artifacts": 4,
+    "pending_artifacts": 2,
+    "accepted_atomic_measurements": 13,
+    "refuted_diagnostics": 1,
+    "pending_observations": 1,
+    "unresolved_metric_cells": 13,
     "consumer_handoff": false,
     "documentation_promoted": false
   },
   "timestamps": {
     "created": "2026-08-22T07:00:05-07:00",
     "started": "2026-08-22T07:00:05-07:00",
-    "finished": "2026-08-22T07:16:10-07:00"
+    "finished": "2026-08-22T07:53:30-07:00"
   }
 }

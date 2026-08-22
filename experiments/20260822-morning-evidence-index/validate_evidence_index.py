@@ -183,6 +183,12 @@ def verify_measurement(
     assert measurement["scan_bin"] == 1
     assert measurement["crop"] == "none"
     assert measurement["cold_claim"] is False, f"{measurement['id']}: unsupported cold claim"
+    if measurement["platform"] == "cuda":
+        assert measurement["working_dtype"] == "not-applicable-streamed-summaries"
+        assert measurement["accumulation_dtype"] == "uint64"
+        assert measurement["first_usable_p50_seconds"] == measurement[
+            "exact_complete_p50_seconds"
+        ]
 
     count = measurement["sample_count"]
     assert isinstance(count, int) and count >= 1
@@ -210,6 +216,54 @@ def verify_measurement(
         )
 
 
+def verify_external_evidence(artifact: dict[str, Any]) -> None:
+    """Validate a sealed external URI without claiming local resolution."""
+
+    for record in artifact.get("external_evidence", []):
+        assert record["uri"].startswith("local-evidence://")
+        assert len(record["sha256_manifest"]) == 64
+        assert record["resolved_in_phil_campaign"] is False
+
+
+def verify_refuted_diagnostic(
+    diagnostic: dict[str, Any],
+    artifacts: dict[str, dict[str, Any]],
+    fixtures: dict[str, dict[str, Any]],
+) -> None:
+    """Require refuted timing to stay bound to failed scientific parity."""
+
+    artifact = artifacts[diagnostic["artifact_id"]]
+    fixture = fixtures[diagnostic["fixture_id"]]
+    assert diagnostic["disposition"] == "refuted"
+    assert artifact["disposition"] == "refuted"
+    assert diagnostic["promotion_allowed"] is False
+    assert diagnostic["fixture_sha256"] == fixture["sha256"]
+    assert diagnostic["phase_parity_pass"] is False
+    assert diagnostic["loss_parity_pass"] is True
+    assert diagnostic["phase_wrapped_max_vs_cuda_radians"] > diagnostic[
+        "phase_wrapped_max_tolerance_radians"
+    ]
+    assert diagnostic["phase_wrapped_max_vs_mps_radians"] > diagnostic[
+        "phase_wrapped_max_tolerance_radians"
+    ]
+    assert diagnostic["cache_state"]
+    assert diagnostic["repeated_sample_count"] >= 2
+    assert 0 < diagnostic["repeated_wall_p50_seconds"] <= diagnostic[
+        "repeated_wall_p95_seconds"
+    ] <= diagnostic["repeated_wall_max_seconds"]
+
+
+def verify_pending_observation(
+    observation: dict[str, Any], artifacts: dict[str, dict[str, Any]]
+) -> None:
+    """Keep provisional sub-results outside accepted measurement rows."""
+
+    assert observation["artifact_id"] in artifacts
+    assert observation["observation"]
+    assert observation["cache_state"]
+    assert observation["sample_count"] >= 1
+
+
 def verify_no_private_paths(index: dict[str, Any]) -> None:
     """Ensure the public-facing index contains no raw private filesystem path."""
 
@@ -223,6 +277,7 @@ def main() -> int:
 
     index = json.loads(INDEX_PATH.read_text())
     assert index["schema"] == "quantem.gpu.morning-evidence-index/v1"
+    assert index["reconciled_at"] >= index["generated_at"]
     assert index["coordinator_base"] == "23d25619cfe22d5e89761fda2d2796a7c82ba090"
     assert index["runtime_or_hardware_execution"] is False
     assert set(index["disposition_vocabulary"]) == ALLOWED_DISPOSITIONS
@@ -252,11 +307,16 @@ def main() -> int:
         verify_artifact_file(artifact, "secondary_evidence_path", "secondary_evidence_sha256")
         verify_artifact_file(artifact, "seal_path", "seal_sha256")
         verify_worktree(artifact)
+        verify_external_evidence(artifact)
         for key in ("observed_head", "implementation_revision", "test_revision", "evidence_revision"):
             verify_revision(artifact, key)
 
     for measurement in measurements:
         verify_measurement(measurement, artifacts, fixtures)
+    for diagnostic in index.get("refuted_diagnostics", []):
+        verify_refuted_diagnostic(diagnostic, artifacts, fixtures)
+    for observation in index.get("pending_observations", []):
+        verify_pending_observation(observation, artifacts)
 
     assert len(index["unresolved_metric_cells"]) >= 1
     assert len(index["incomparable_or_stale"]) >= 1
@@ -268,6 +328,7 @@ def main() -> int:
         f"{len(artifacts_list)} artifacts "
         f"({counts['accepted']} accepted, {counts['refuted']} refuted, {counts['pending']} pending), "
         f"{len(measurements)} accepted atomic metrics, "
+        f"{len(index.get('refuted_diagnostics', []))} refuted diagnostic, "
         f"{len(index['unresolved_metric_cells'])} unresolved cells"
     )
     return 0
