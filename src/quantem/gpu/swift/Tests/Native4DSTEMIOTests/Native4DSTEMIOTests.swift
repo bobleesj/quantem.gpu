@@ -674,6 +674,39 @@ final class Native4DSTEMIOTests: XCTestCase {
     XCTAssertEqual(after, before)
   }
 
+  func testParallelSourceHashingPreservesOrderedExactIdentity() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("Native4DSTEMSourceHashTests-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+    let alpha = root.appendingPathComponent("alpha.h5")
+    let beta = root.appendingPathComponent("beta.h5")
+    let cache = root.appendingPathComponent("source-hashes.json")
+    try Data("alpha".utf8).write(to: alpha)
+    try Data("beta".utf8).write(to: beta)
+
+    let hashes = try nativeSourceHashes(
+      master: nil,
+      dataFiles: [alpha, beta],
+      cacheFile: cache
+    )
+    XCTAssertEqual(
+      hashes.members,
+      [
+        "8ed3f6ad685b959ead7022518e1af76cd816f8e8ec7ccdda1ed4018e8f2223f8",
+        "f44e64e75f3948e9f73f8dfa94721c4ce8cbb4f265c4790c702b2d41cfbf2753",
+      ]
+    )
+    XCTAssertEqual(
+      hashes.aggregate,
+      "3b96afb211a410a2397a07111091c59e2ac8e0a17cc7eb2ad87bf54a3fb1217d"
+    )
+    XCTAssertEqual(
+      try nativeSourceHashes(master: nil, dataFiles: [alpha, beta], cacheFile: cache).aggregate,
+      hashes.aggregate
+    )
+  }
+
   func testConcurrentNativeInspection() throws {
     let fixture = try copiedFixture()
     let queue = DispatchQueue(label: "native-hdf5-test", attributes: .concurrent)
