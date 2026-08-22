@@ -10,11 +10,11 @@
   },
   "code": {
     "repository": "https://github.com/bobleesj/quantem.gpu",
-    "revision": "c5d239ab88d8667ddfe12fe6519d60edadc1749c",
+    "revision": "d741082400fa28cd0e02e93b0a75c89774391eaf",
     "entrypoint": "scripts/benchmark_hdf5_load.py and the frozen DPC/product/display parity suites",
     "dirty": false,
     "diff_sha256": null,
-    "snapshot_path": "local-snapshot://aug-22-origin-main-integration/c5d239a"
+    "snapshot_path": "local-snapshot://aug-22-origin-main-integration/d741082"
   },
   "inputs": [
     {
@@ -51,7 +51,33 @@
     "gpu_ids": ["Apple M5 Max integrated GPU"],
     "gpu_model": "Apple M5 Max, 40-core GPU, 128 GB unified memory"
   },
-  "outputs": [],
+  "outputs": [
+    {
+      "artifact": "local-evidence://20260822-origin-main-mps-regression/lifecycle-bin1-smoke.json",
+      "sha256": "ebc2be5a1d978ebc712a1a945eb8bf2a1aa063a9cc86736ba10336e5c7cdb677",
+      "result": "accepted lifecycle smoke: two native bin1 loads released 19.80 GB Metal residency to a stable 0.474 GB scratch baseline after each trial; OS source-page state uncontrolled"
+    },
+    {
+      "artifact": "local-evidence://20260822-origin-main-mps-regression/warm-bin1.json",
+      "sha256": "bd6f2556f9c60bc5aca10a27bda32c84bcd7414f7e5d7f2af42f21ffa4150867",
+      "result": "refuted timing matrix: pre-fix harness retained one native Metal output per repetition"
+    },
+    {
+      "artifact": "local-evidence://20260822-origin-main-mps-regression/warm-bin2.json",
+      "sha256": "035d96d421becb5b0fe7c3ffe8377003137c23b8242cf18c0ec54149541afc77",
+      "result": "refuted timing matrix: pre-fix harness retained one binned Metal output per repetition"
+    },
+    {
+      "artifact": "local-evidence://20260822-origin-main-mps-regression/warm-bin4.json",
+      "sha256": "1cea7912e1e6c80155fcc0197bf8ea727a3f152720181677748adedf58e01998",
+      "result": "refuted timing matrix: pre-fix harness retained one binned Metal output per repetition"
+    },
+    {
+      "artifact": "local-evidence://20260822-origin-main-mps-regression/warm-bin8.json",
+      "sha256": "0f696dd4efbdf833e11d4d512f944cfd372bcd865771820e3d8c42ed0389bcb7",
+      "result": "refuted timing matrix: pre-fix harness retained one binned Metal output per repetition"
+    }
+  ],
   "timestamps": {
     "created": "2026-08-22T11:37:22-07:00",
     "started": "2026-08-22T11:37:22-07:00",
