@@ -51,28 +51,28 @@
       "kind": "machine-readable evidence index",
       "artifact": "evidence-index.json",
       "path": "experiments/20260822-morning-evidence-index/evidence-index.json",
-      "sha256": "7077dafec960bf122c2357735c040b75050219f0b309da8c849c998941eecf85",
-      "result": "22 referenced artifacts: 16 accepted, 4 refuted, and 2 pending; 19 accepted atomic measurements; one refuted diagnostic; two source placeholders; 15 unresolved cells"
+      "sha256": "7e2049ff0ef32093a067c5bdbc320d446371c454551fc3a077e4ecd063d86d25",
+      "result": "22 referenced artifacts: 16 accepted, 4 refuted, and 2 pending; 19 accepted atomic measurements; one refuted diagnostic; zero source placeholders; 14 unresolved cells"
     },
     {
       "kind": "human morning-report draft",
       "artifact": "MORNING-REPORT-DRAFT.md",
       "path": "experiments/20260822-morning-evidence-index/MORNING-REPORT-DRAFT.md",
-      "sha256": "16d37f5ea2729cad01e982d902deb2c8a42cd06b5a35a5d9668b0f274581c02f",
+      "sha256": "c4c404e6af24faa09e85f95b6b9e78e0ef2aefd1bafe1ceda4abf072bf2a7c8f",
       "result": "accepted, refuted, and pending claims remain separated by platform, computer, cache state, timing boundary, and memory definition"
     },
     {
       "kind": "source-only validator",
       "artifact": "validate_evidence_index.py",
       "path": "experiments/20260822-morning-evidence-index/validate_evidence_index.py",
-      "sha256": "285b61a3b04373f5eee889efa31e76c85eef58978031c962df986dacddd48ac7",
+      "sha256": "8912e30d3cae7ef81f32a62759770e1f4d4b76f3cd8fb47a16a1e18e1b1ba920",
       "result": "all referenced hashes, immutable Git objects, revisions, worktree states, fixture bindings, source placeholders, and atomic metric contracts passed"
     },
     {
       "kind": "validation record",
       "artifact": "validation.json",
       "path": "experiments/20260822-morning-evidence-index/validation.json",
-      "sha256": "10f8f551d8c367e87a5291984bbc3c3d7f04e18ce2810be6eb499e9d3714c04e",
+      "sha256": "54371c869adb8b5157a8803273cd3b87b4f88ebb295503b0cf36215de306648e",
       "result": "profile registry, 36 registry/documentation tests, documentation source links, JSON syntax, Ruff, and diff hygiene passed"
     }
   ],
@@ -84,14 +84,14 @@
     "accepted_atomic_measurements": 19,
     "refuted_diagnostics": 1,
     "pending_observations": 1,
-    "source_placeholders": 2,
-    "unresolved_metric_cells": 15,
+    "source_placeholders": 0,
+    "unresolved_metric_cells": 14,
     "consumer_handoff": false,
     "documentation_promoted": false
   },
   "timestamps": {
     "created": "2026-08-22T07:00:05-07:00",
     "started": "2026-08-22T07:00:05-07:00",
-    "finished": "2026-08-22T08:34:44-07:00"
+    "finished": "2026-08-22T08:42:38-07:00"
   }
 }

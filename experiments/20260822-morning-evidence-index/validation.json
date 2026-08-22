@@ -1,6 +1,6 @@
 {
   "schema": "quantem.gpu.morning-evidence-validation/v1",
-  "validated_at": "2026-08-22T08:34:44-07:00",
+  "validated_at": "2026-08-22T08:42:38-07:00",
   "runtime_or_hardware_execution": false,
   "coordinator_base": "23d25619cfe22d5e89761fda2d2796a7c82ba090",
   "artifact_count": 22,
@@ -10,8 +10,8 @@
   "accepted_atomic_measurement_count": 19,
   "refuted_diagnostic_count": 1,
   "pending_observation_count": 1,
-  "source_placeholder_count": 2,
-  "unresolved_metric_cell_count": 15,
+  "source_placeholder_count": 0,
+  "unresolved_metric_cell_count": 14,
   "unique_source_worktree_states": {
     "clean": 18,
     "dirty": 2,
@@ -20,7 +20,7 @@
   "checks": [
     {
       "command": "python experiments/20260822-morning-evidence-index/validate_evidence_index.py",
-      "result": "passed; 22 artifact hashes, immutable Git-object evidence, revisions, observed source states, 19 atomic measurement contracts, two source placeholders, and fixture bindings verified"
+      "result": "passed; 22 artifact hashes, immutable Git-object evidence, revisions, observed source states, 19 atomic measurement contracts, zero source placeholders, and fixture bindings verified"
     },
     {
       "command": "python scripts/check_profile_registry.py",
@@ -55,8 +55,8 @@
     "the accepted paired-u32 WebGPU full-native lineage is not used to relabel the rejected packed-uint16 lineage",
     "the refuted WebGPU SSB timing is diagnostic and not promoted",
     "the accepted MPS bin-1 recycled-destination timing remains labeled as an explicit resident lifecycle rather than cold load",
-    "CUDA source candidate 3a85bef remains evidence-pending and contributes no accepted metric",
-    "the accepted eaf7695 CUDA cache manifest and ledger are verified from immutable Git objects rather than the advancing source worktree",
+    "the refuted a23ae3b CUDA cross-alias shortcut contributes no accepted metric",
+    "the accepted 8258ac2 CUDA cache manifest and ledger are verified from immutable Git objects rather than the advancing source worktree",
     "the provisional CUDA compact-index package distribution is not an accepted measurement",
     "the Rodman full-native single sample is not labeled p50 or p95",
     "no private fixture filesystem path is present in the index or report"

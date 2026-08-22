@@ -206,7 +206,13 @@ def verify_measurement(
         ]
     if measurement["functional_area"] == "screening-cache-reopen":
         assert measurement["working_dtype"] == "not-applicable-cached-results"
-        assert measurement["cache_bytes"] > measurement["comparison_baseline_cache_bytes"]
+        assert measurement["cache_bytes"] == measurement["comparison_baseline_cache_bytes"]
+        assert measurement["cache_bytes"] > measurement["legacy_cache_bytes"]
+        assert measurement["retained_phase_cache_size_delta_bytes"] == (
+            measurement["cache_bytes"] - measurement["legacy_cache_bytes"]
+        )
+        assert measurement["wall_p50_seconds"] < 0.006
+        assert measurement["comparison_baseline_wall_p50_seconds"] > 0.09
 
     count = measurement["sample_count"]
     assert isinstance(count, int) and count >= 1

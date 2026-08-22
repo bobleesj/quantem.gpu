@@ -1,7 +1,7 @@
 {
   "schema": "quantem.gpu.morning-evidence-index/v1",
   "generated_at": "2026-08-22T07:00:05-07:00",
-  "reconciled_at": "2026-08-22T08:32:03-07:00",
+  "reconciled_at": "2026-08-22T08:42:38-07:00",
   "coordinator_base": "23d25619cfe22d5e89761fda2d2796a7c82ba090",
   "campaign_root": "quantem-gpu-phil",
   "runtime_or_hardware_execution": false,
@@ -499,51 +499,38 @@
       "limitations": ["Source-qualified but not consumer-promoted.", "No arbitrary-source controlled-cold distribution was measured.", "The <=1.0-second package target was not reached.", "First usable equals exact complete; there is no preview path.", "ABF, ADF, and total-intensity statistics are exact internally but are not public ScreeningResult fields.", "No Live4DSTEM integration or headed acceptance was performed.", "The final source distribution was affected by unrelated CPU scheduling load.", "Raw trial bundles remain referenced by sealed external URIs and hashes rather than copied into the Phil campaign."]
     },
     {
-      "id": "cuda-screening-cache-reopen-phase",
+      "id": "cuda-screening-cache-reopen-final",
       "family": "mjgoat-cuda",
       "disposition": "accepted",
-      "claim_scope": "Exact immutable result-cache reopen with retained DPC phase at the frozen eaf7695 source revision.",
-      "path": "git-object://387314dcb1e61df20893bdeb1ccc5b8304ec93fd/experiments/20260822-cuda-screening-cache-reopen/manifest.json",
-      "sha256": "839e7143d581946c251c41bcac88f173bdfbe97bc9e92a09c0f7446f466f7d0b",
-      "primary_evidence_path": "git-object://387314dcb1e61df20893bdeb1ccc5b8304ec93fd/experiments/20260822-cuda-screening-cache-reopen/ledger.md",
-      "primary_evidence_sha256": "c494d7ff2ff478f8aa596fd1a91fd0a72fc228c22ef794a2311e7cf319ee535f",
+      "claim_scope": "Exact prepared-result cache reopen with retained DPC phase, lazy raw-I/O import, strong source validation, exact-spelling fast path, and fail-closed full HDF5 inspection across master aliases.",
+      "path": "git-object://91ef7c7e3528aaa8dbaa4e19ed48e05d939097bc/experiments/20260822-cuda-screening-cache-reopen/manifest.json",
+      "sha256": "974b84364577f2e8043562d477e4b873d5a761fe3c253d654965af1a6f250ea3",
+      "primary_evidence_path": "git-object://91ef7c7e3528aaa8dbaa4e19ed48e05d939097bc/experiments/20260822-cuda-screening-cache-reopen/ledger.md",
+      "primary_evidence_sha256": "fed82d81c73294ffd0b41f3736e14744e01e9ddf438ba3127b43994388bfa470",
       "source_worktree": null,
       "branch": "cuda-screening-cache-reopen-20260822",
-      "observed_head": "387314dcb1e61df20893bdeb1ccc5b8304ec93fd",
+      "observed_head": "91ef7c7e3528aaa8dbaa4e19ed48e05d939097bc",
       "observed_clean": null,
-      "implementation_revision": "eaf76953d752e3e419916157aa6bcc7883b85813",
-      "evidence_revision": "387314dcb1e61df20893bdeb1ccc5b8304ec93fd",
+      "implementation_revision": "8258ac2c62f9cc3c2739027352411df3bb3eae19",
+      "evidence_revision": "91ef7c7e3528aaa8dbaa4e19ed48e05d939097bc",
       "consumer_eligible": true,
       "external_evidence": [
         {"uri": "local-evidence://cuda-screening-cache-reopen-20260822/baseline", "sha256_manifest": "2d993fd6d93cf2a984956613fbac1f6556e28cedf5536f80e195da5f5b657c2a", "resolved_in_phil_campaign": false},
         {"uri": "local-evidence://cuda-screening-cache-reopen-20260822/candidate", "sha256_manifest": "6c3d8ef46a51a5c9442ce30f0ed7067bc753cb8bd3018fb912ef6f140ffabafe", "resolved_in_phil_campaign": false},
         {"uri": "local-evidence://cuda-screening-cache-reopen-20260822/abba", "sha256_manifest": "5337f0f40f19617a034202f3b59d05d1465d47a49852a70141563c2a03394317", "resolved_in_phil_campaign": false},
-        {"uri": "local-evidence://cuda-screening-cache-reopen-20260822/result-cache-phase", "sha256_manifest": "f73aa3dd45b42b70ac8aea61c8b2f1e1a90900f41586a84d1ba7beaa8e596944", "resolved_in_phil_campaign": false}
+        {"uri": "local-evidence://cuda-screening-cache-reopen-20260822/result-cache-phase", "sha256_manifest": "f73aa3dd45b42b70ac8aea61c8b2f1e1a90900f41586a84d1ba7beaa8e596944", "resolved_in_phil_campaign": false},
+        {"uri": "local-evidence://cuda-screening-cache-reopen-20260822/strong-stat-abba", "sha256_manifest": "a32267ea256598433e0dfa4aae5add83c176914647a51524e2be2142bfc9631a", "resolved_in_phil_campaign": false},
+        {"uri": "local-evidence://cuda-screening-cache-reopen-20260822/final-symlink-safe-abba", "sha256_manifest": "09e1abd78b17c0aa7e53bd87c128aa3f2a5ca071c7325c51562052bfad65458d", "resolved_in_phil_campaign": false},
+        {"uri": "local-evidence://cuda-screening-cache-reopen-20260822/stage-profile", "sha256_manifest": "c0ca1407e928dbb7ea4cce08165f613d6d7dc97607e258cc09740d627e7ebdc5", "resolved_in_phil_campaign": false},
+        {"uri": "local-evidence://cuda-screening-cache-reopen-20260822/symlink-alias-smoke", "sha256_manifest": "bf1693ef5a406c36337333109b0475e561c1399f3b10b28de60e58fe7bdd059b", "resolved_in_phil_campaign": false},
+        {"uri": "local-evidence://cuda-screening-cache-reopen-20260822/fixed-alias-abba", "sha256_manifest": "48ef9a03edf90f6a858c7d004b22296ba0d3dd3d74922ae06485be9b2b7addc3", "resolved_in_phil_campaign": false},
+        {"uri": "local-evidence://cuda-screening-cache-reopen-20260822/final-stage-profile", "sha256_manifest": "f10f7b2c9a6f7816325fd3af287d2499a86e41ca1d119fe1f91d5f570672283b", "resolved_in_phil_campaign": false},
+        {"uri": "local-evidence://cuda-screening-cache-reopen-20260822/cross-alias-rejection", "sha256_manifest": "7124cd3a993edc1ddb8964ff7ffbde4bd46ac647cb1b3f11edb0f18619745329", "resolved_in_phil_campaign": false}
       ],
-      "limitations": ["Prepared result-cache reopen, not source build or cold HDF5.", "The one-shot source-build observations were sequential and host-variable, so no build-speed claim is accepted.", "The candidate cache is 1,048,822 bytes larger than the legacy cache.", "The accepted timing applies exactly to source eaf7695 and evidence 387314d; later validation and lazy-I/O source revisions require their own evidence pins.", "Raw trial bundles remain sealed external URIs rather than copied into the Phil campaign."]
+      "limitations": ["Prepared result-cache reopen, not source build, cold HDF5, screening construction, or application E2E.", "The fast path requires the exact normalized master spelling; changed aliases or older reduced signatures trigger full HDF5 inspection.", "The candidate cache is 1,048,822 bytes larger than the legacy cache.", "The a23ae3b cross-alias shortcut and its 6.209-ms observation are refuted, not promoted.", "Raw trial bundles remain sealed external URIs rather than copied into the Phil campaign."]
     }
   ],
-  "source_placeholders": [
-    {
-      "id": "cuda-strong-cache-validation",
-      "implementation_revision": "eb926d38a89e1613632ecd32a00adb621dffa431",
-      "parent_evidence_revision": "387314dcb1e61df20893bdeb1ccc5b8304ec93fd",
-      "status": "pending-evidence",
-      "claim_scope": "Strong cache-validation source optimization only; no timing or consumer promotion is assigned in this index.",
-      "expected_evidence_revision": null
-    },
-    {
-      "id": "cuda-cache-hit-final-source-candidate",
-      "implementation_revision": "3a85bef4ccac47576cbbcde21c76802137d053f5",
-      "parent_revision": "a23ae3bfca070cb301a4f894b48e13c499267eea",
-      "source_worktree": null,
-      "observed_head": null,
-      "observed_clean": null,
-      "status": "awaiting-final-evidence-pin",
-      "claim_scope": "Final clean source candidate for exact-spelling validation, full reinspection across alias changes, symlink-safe validation, and lazy cache-hit I/O. It supersedes 310b5e4 and a23ae3b, but has no performance, parity, memory, or consumer claim until the final evidence revision is supplied.",
-      "expected_evidence_revision": null
-    }
-  ],
+  "source_placeholders": [],
   "measurements": [
     {
       "id": "phil-python-mps-bin1-fresh-destination",
@@ -1258,8 +1245,8 @@
       "comparability_group": "mjgoat-cuda-final-warm-screening-source"
     },
     {
-      "id": "mjgoat-cuda-result-cache-phase-reopen",
-      "artifact_id": "cuda-screening-cache-reopen-phase",
+      "id": "mjgoat-cuda-result-cache-final-reopen",
+      "artifact_id": "cuda-screening-cache-reopen-final",
       "disposition": "accepted",
       "functional_area": "screening-cache-reopen",
       "platform": "cuda",
@@ -1281,26 +1268,35 @@
       "crop": "none",
       "cache_state": "prepared immutable screening result cache; fresh-process reopen; source build excluded",
       "cold_claim": false,
-      "timing_boundary": "strong cache validation, deserialization, and immutable ScreeningResult reopen with retained exact DPC phase",
+      "timing_boundary": "fresh-process exact-spelling prepared-result reopen through strong source validation, lazy raw-I/O import boundary, six-array materialization, and immutable ScreeningResult publication",
       "sample_count": 3,
-      "comparison_baseline_wall_p50_seconds": 0.13259994704276323,
-      "comparison_baseline_wall_p95_seconds": 0.1392845273949206,
-      "comparison_baseline_wall_max_seconds": 0.1400272585451603,
-      "wall_p50_seconds": 0.10328361298888922,
-      "wall_p95_seconds": 0.1040443385951221,
-      "wall_max_seconds": 0.10412886366248131,
+      "comparison_baseline_wall_p50_seconds": 0.09236698783934116,
+      "comparison_baseline_wall_p95_seconds": 0.09364989846944809,
+      "comparison_baseline_wall_max_seconds": 0.09379244409501553,
+      "wall_p50_seconds": 0.005599196068942547,
+      "wall_p95_seconds": 0.005771173443645239,
+      "wall_max_seconds": 0.005790282040834427,
+      "wall_p50_speedup": 16.4965,
       "single_wall_seconds": null,
       "logical_resident_bytes": null,
       "accelerator_peak_bytes": null,
       "process_peak_rss_bytes": null,
-      "host_peak_rss_p50_bytes": 1026908160,
-      "comparison_baseline_host_peak_rss_p50_bytes": 1027305472,
+      "host_peak_rss_p50_bytes": 938602496,
+      "comparison_baseline_host_peak_rss_p50_bytes": 1027584000,
       "process_peak_footprint_bytes": null,
+      "swap_delta_bytes": 0,
       "cache_bytes": 5457672,
-      "comparison_baseline_cache_bytes": 4408850,
-      "cache_size_delta_bytes": 1048822,
-      "parity": "All six retained public arrays, including dpc_phase, are byte exact in every build and reopen trial; version-3 caches retain the exact recomputation fallback.",
-      "comparability_group": "mjgoat-cuda-result-cache-phase-reopen"
+      "comparison_baseline_cache_bytes": 5457672,
+      "legacy_cache_bytes": 4408850,
+      "retained_phase_cache_size_delta_bytes": 1048822,
+      "stage_profile_p50_seconds": {
+        "archive_open": 0.0001163901761174202,
+        "metadata_decode": 0.0002782512456178665,
+        "strong_source_match": 0.00020121224224567413,
+        "array_materialization": 0.004481704905629158
+      },
+      "parity": "All six retained public arrays, including dpc_phase, are byte exact in every final A-B-B-A trial. Exact source identity accepts unchanged exact spelling and rejects changed source, shard, symlink, or cross-directory alias mapping; version-3 caches retain exact phase recomputation.",
+      "comparability_group": "mjgoat-cuda-result-cache-final-exact-spelling-reopen"
     }
   ],
   "refuted_observations": [
@@ -1323,6 +1319,10 @@
     {
       "artifact_id": "webgpu-ssb-phil",
       "observation": "Physical Apple Metal-3 execution completed, but the exact 512x512 prepared detector-bin-2 phase missed the frozen 0.0002-radian maximum wrapped-error tolerance: 0.0597772896 rad versus CUDA and 0.0597773492 rad versus MPS. Loss absolute error 1.0248147e-8 passed; phase parity did not."
+    },
+    {
+      "artifact_id": "cuda-screening-cache-reopen-final",
+      "observation": "The a23ae3b canonical-target alias shortcut reopened one particular alias in 0.006208621 s with byte-exact products, but review proved that two aliases to the same master inode can resolve relative HDF5 links to different shards. The shortcut is refuted; the accepted reader requires exact normalized master spelling or full HDF5 reinspection."
     }
   ],
   "refuted_diagnostics": [
@@ -1408,7 +1408,6 @@
     "CUDA arbitrary-source controlled-cold distribution and Live4DSTEM application integration.",
     "CUDA public ScreeningResult fields for exact ABF, ADF, and total-intensity statistics.",
     "CUDA result-cache source-build A-B-B-A distribution; the retained one-shot build observations are not a speed comparison.",
-    "Final evidence pin for CUDA source candidate 3a85bef, including strong validation and lazy cache-hit I/O.",
     "MPS SSB 200-trial plus Nelder-Mead calibration with the frozen randomized-pair engine.",
     "Rodman bin-2 barrier candidate uncontended physical smoke and A-B-B-A.",
     "Repeated Rodman full-native detector-bin-1 distribution without paging contamination."
@@ -1428,8 +1427,8 @@
     "The MPS SSB 0.599306-second reconstruction and 1.399665-second wrapper values are warm parity-only single observations, not a performance distribution.",
     "CUDA exact-guard, contiguous-read-plan, final-source, and compact-index rows have different experiment phases and contention/cache states; only like-for-like A-B-B-A arms may be compared.",
     "The compact CUDA source-index lookup is accepted, but its prepared end-to-end distribution remains provisional and is excluded from accepted measurements.",
-    "CUDA result-cache reopen at eaf7695 is saved-result reuse; its sequential one-shot source builds are not an accepted before/after speed comparison.",
-    "CUDA source candidate 3a85bef supersedes 310b5e4 and a23ae3b but remains a placeholder until its clean final evidence pin is supplied.",
+    "CUDA result-cache reopen at 8258ac2 is saved-result reuse; source build, cold HDF5, screening construction, and application E2E remain outside its accepted timing boundary.",
+    "The a23ae3b cross-alias shortcut's 0.006208621-second observation is refuted because relative HDF5 external links can select different shards through another master alias; it is not an accepted fast-path result.",
     "The WebGPU SSB 329-ms first-use and 17.9-ms repeated phase/loss values come from a scientifically refuted phase implementation and are diagnostic only."
   ]
 }
