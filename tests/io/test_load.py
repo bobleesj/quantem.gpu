@@ -52,6 +52,17 @@ def test_mps_dataset_path_u8_declares_clipping_before_detector_bin(monkeypatch) 
     monkeypatch.setattr(mps_package, "decoder", decoder, raising=False)
     calls = {}
 
+    class FakeMPSTensor:
+        dtype = "torch.uint8"
+
+        def to(self, device):
+            calls["device"] = device
+            return self
+
+    torch_module = types.ModuleType("torch")
+    torch_module.from_numpy = lambda array: FakeMPSTensor()
+    monkeypatch.setitem(sys.modules, "torch", torch_module)
+
     monkeypatch.setattr(load_module, "get_metadata", lambda path: {})
     monkeypatch.setattr(load_module, "read_pixel_mask", lambda path: None)
 
@@ -72,6 +83,7 @@ def test_mps_dataset_path_u8_declares_clipping_before_detector_bin(monkeypatch) 
 
     assert str(data.dtype) == "torch.uint8"
     assert calls["output_dtype"] == np.dtype(np.uint8)
+    assert calls["device"] == "mps"
 
 
 def test_load_uint32_routes_to_native_uint32_output_dtype(monkeypatch) -> None:
