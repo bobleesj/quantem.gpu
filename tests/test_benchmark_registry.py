@@ -382,6 +382,21 @@ def test_agent_can_resolve_the_next_gate_and_real_command() -> None:
     assert "--expected-source-detector-shape" in mps_command
     assert "--expected-working-detector-shape" in mps_command
     assert "--memory-sample-ms 10" in mps_command
+    assert "--warmup 1" in mps_command
+
+    cold_mps_command = subprocess.run(
+        [
+            sys.executable,
+            "scripts/benchmark_registry.py",
+            "command",
+            "io.mps.apple-m5-24gb.bin4.cold-original",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert "--warmup 0" in cold_mps_command
+    assert "--warmup 1" not in cold_mps_command
 
 
 def test_every_runbook_command_resolves_to_repository_source() -> None:
