@@ -20,8 +20,9 @@ import tempfile
 import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
+from itertools import pairwise
 from pathlib import Path
-from typing import Any, Literal, NamedTuple
+from typing import Any, Literal, NamedTuple, Self
 
 # cupy is the CUDA toolkit, absent on a Mac / plain laptop. Guard it so this
 # module imports anywhere and the view/screen path (backend='cpu'/'mps') works
@@ -2111,9 +2112,10 @@ def _load_frame_source_disk_cache(
         item = dict(info)
         item["dtype"] = np.dtype(item["dtype"])
         item["frame_shape"] = tuple(int(v) for v in item["frame_shape"])
-        item["chunk_infos"] = [
-            (int(offset), int(size)) for offset, size in item["chunk_infos"]
-        ]
+        chunk_infos = np.asarray(item["chunk_infos"], dtype=np.uint64)
+        if chunk_infos.ndim != 2 or chunk_infos.shape[1:] != (2,):
+            return None
+        item["chunk_infos"] = chunk_infos
         source_infos.append(item)
     if not source_infos:
         return None
@@ -2133,9 +2135,7 @@ def _write_frame_source_disk_cache(
         item = dict(info)
         item["dtype"] = np.dtype(item["dtype"]).str
         item["frame_shape"] = [int(v) for v in item["frame_shape"]]
-        item["chunk_infos"] = [
-            (int(offset), int(size)) for offset, size in item["chunk_infos"]
-        ]
+        item["chunk_infos"] = np.asarray(item["chunk_infos"], dtype=np.uint64)
         serial_infos.append(item)
     payload = {
         "signature": signature,
@@ -2377,7 +2377,7 @@ def _get_master_frame_sources(
                     "n_frames": int(ds.shape[0]),
                     "frame_shape": tuple(int(v) for v in ds.shape[1:]),
                     "dtype": ds.dtype,
-                    "chunk_infos": chunk_infos,
+                    "chunk_infos": np.asarray(chunk_infos, dtype=np.uint64),
                 }
             )
     cached = (source_infos, pixel_mask)
@@ -2392,11 +2392,312 @@ def _get_master_frame_sources(
     return cached
 
 
+class _SparseFrameReadSession:
+    """Own reusable host resources for selected reads from one HDF5 master.
+
+    The session is intentionally private.  Public callers continue to use
+    :func:`load`; streamed screening uses this object only to avoid reopening
+    immutable source shards and recreating a thread pool for every batch.
+    """
+
+    def __init__(
+        self,
+        filepath: str,
+        chunk_names: list[str],
+        *,
+        apply_mask: bool,
+    ) -> None:
+        import time
+        from concurrent.futures import ThreadPoolExecutor
+
+        self.filepath = os.path.abspath(filepath)
+        self.chunk_names = tuple(chunk_names)
+        self.apply_mask = bool(apply_mask)
+        self.closed = False
+
+        started = time.perf_counter()
+        metadata_started = time.perf_counter()
+        self.meta = get_metadata(filepath)
+        metadata_seconds = time.perf_counter() - metadata_started
+        source_started = time.perf_counter()
+        self.source_infos, self.pixel_mask = _get_master_frame_sources(
+            filepath,
+            chunk_names,
+            apply_mask=apply_mask,
+        )
+        source_seconds = time.perf_counter() - source_started
+        if not self.source_infos:
+            raise ValueError(f"No detector data chunks found in {filepath}")
+        chunk_index_started = time.perf_counter()
+        self.chunk_index_arrays = tuple(
+            np.asarray(info["chunk_infos"], dtype=np.uint64)
+            for info in self.source_infos
+        )
+        chunk_index_seconds = time.perf_counter() - chunk_index_started
+        self.source_starts = np.cumsum(
+            [0] + [info["n_frames"] for info in self.source_infos],
+            dtype=np.int64,
+        )
+
+        file_open_started = time.perf_counter()
+        self.fds: dict[int, int] = {}
+        try:
+            for source_index, info in enumerate(self.source_infos):
+                self.fds[source_index] = os.open(info["path"], os.O_RDONLY)
+        except Exception:
+            for descriptor in self.fds.values():
+                os.close(descriptor)
+            raise
+        file_open_seconds = time.perf_counter() - file_open_started
+
+        pool_started = time.perf_counter()
+        self.thread_pool = (
+            ThreadPoolExecutor(max_workers=min(12, len(self.source_infos)))
+            if len(self.source_infos) > 1
+            else None
+        )
+        pool_seconds = time.perf_counter() - pool_started
+        self._initial_timing = {
+            "metadata_discovery": float(metadata_seconds),
+            "source_index": float(source_seconds),
+            "chunk_index_array_build": float(chunk_index_seconds),
+            "persistent_file_open": float(file_open_seconds),
+            "persistent_thread_pool_create": float(pool_seconds),
+            "persistent_session_total": float(time.perf_counter() - started),
+        }
+
+    def take_initial_timing(self) -> dict[str, float]:
+        """Return one-time initialization costs on the first prepared batch."""
+
+        timing = dict(self._initial_timing)
+        self._initial_timing = {name: 0.0 for name in timing}
+        return timing
+
+    def source_aligned_ranges(
+        self,
+        *,
+        frame_count: int,
+        max_batch_frames: int,
+    ) -> tuple[tuple[int, int], ...]:
+        """Group complete source shards into bounded sequential batches."""
+
+        return _source_aligned_frame_ranges(
+            self.source_starts,
+            frame_count=frame_count,
+            max_batch_frames=max_batch_frames,
+        )
+
+    def close(self) -> None:
+        """Close the persistent descriptors and preparation worker pool."""
+
+        if self.closed:
+            return
+        self.closed = True
+        if self.thread_pool is not None:
+            self.thread_pool.shutdown(wait=True)
+        for descriptor in self.fds.values():
+            os.close(descriptor)
+        self.fds.clear()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, _exc_type, _exc_value, _traceback) -> None:
+        self.close()
+
+
+def _source_aligned_frame_ranges(
+    source_starts,
+    *,
+    frame_count: int,
+    max_batch_frames: int,
+) -> tuple[tuple[int, int], ...]:
+    """Return complete, ordered, bounded ranges aligned to source shards.
+
+    Whole adjacent source shards are combined while they fit.  A source shard
+    is split only when that shard alone exceeds ``max_batch_frames``.
+    """
+
+    starts = np.asarray(source_starts, dtype=np.int64).reshape(-1)
+    frame_count = int(frame_count)
+    max_batch_frames = int(max_batch_frames)
+    if frame_count < 1:
+        raise ValueError("frame_count must be positive")
+    if max_batch_frames < 1:
+        raise ValueError("max_batch_frames must be positive")
+    if starts.size < 2 or int(starts[0]) != 0:
+        raise ValueError("source_starts must begin at zero and contain a stop")
+    if np.any(starts[1:] < starts[:-1]):
+        raise ValueError("source_starts must be monotonically non-decreasing")
+    if int(starts[-1]) < frame_count:
+        raise ValueError(
+            f"Source shards expose {int(starts[-1])} frames, "
+            f"but {frame_count} are required"
+        )
+
+    ranges: list[tuple[int, int]] = []
+    pending_start: int | None = None
+    pending_stop: int | None = None
+    for raw_start, raw_stop in pairwise(starts):
+        source_start = min(int(raw_start), frame_count)
+        source_stop = min(int(raw_stop), frame_count)
+        if source_start >= source_stop:
+            continue
+        source_size = source_stop - source_start
+        if source_size > max_batch_frames:
+            if pending_start is not None and pending_stop is not None:
+                ranges.append((pending_start, pending_stop))
+                pending_start = None
+                pending_stop = None
+            for split_start in range(source_start, source_stop, max_batch_frames):
+                ranges.append(
+                    (split_start, min(split_start + max_batch_frames, source_stop))
+                )
+            continue
+        if (
+            pending_start is not None
+            and pending_stop is not None
+            and source_stop - pending_start > max_batch_frames
+        ):
+            ranges.append((pending_start, pending_stop))
+            pending_start = None
+            pending_stop = None
+        if pending_start is None:
+            pending_start = source_start
+        pending_stop = source_stop
+
+    if pending_start is not None and pending_stop is not None:
+        ranges.append((pending_start, pending_stop))
+    if not ranges or ranges[0][0] != 0 or ranges[-1][1] != frame_count:
+        raise RuntimeError("Source-aligned range planning did not cover the scan")
+    if any(stop - start > max_batch_frames for start, stop in ranges):
+        raise RuntimeError("Source-aligned range exceeded max_batch_frames")
+    return tuple(ranges)
+
+
+def _contiguous_frame_read_plan(
+    source_infos: list[dict[str, Any]],
+    source_starts,
+    selected,
+    *,
+    max_gap_bytes: int,
+    chunk_index_arrays: Sequence[np.ndarray] | None = None,
+) -> tuple[
+    np.ndarray,
+    np.ndarray,
+    dict[int, list[tuple[int, int, int]]],
+    int,
+] | None:
+    """Plan monotonic contiguous frame reads without per-frame Python work.
+
+    The screening path requests source-aligned consecutive scan positions.  A
+    vectorized planner is substantially cheaper for that common case, while
+    arbitrary order, duplicates, and non-monotonic physical chunk layouts
+    deliberately fall back to the general selector-preserving planner.
+    """
+
+    selected = np.asarray(selected, dtype=np.int64).reshape(-1)
+    if selected.size == 0:
+        return None
+    first = int(selected[0])
+    if int(selected[-1]) - first + 1 != int(selected.size):
+        return None
+    if selected.size > 1 and not np.all(selected[1:] == selected[:-1] + 1):
+        return None
+
+    starts = np.asarray(source_starts, dtype=np.int64).reshape(-1)
+    if starts.size != len(source_infos) + 1:
+        return None
+    if chunk_index_arrays is not None and len(chunk_index_arrays) != len(source_infos):
+        return None
+
+    chunk_offsets = np.empty(selected.size, dtype=np.uint64)
+    chunk_sizes = np.empty(selected.size, dtype=np.uint32)
+    read_plan: dict[int, list[tuple[int, int, int]]] = {}
+    cursor = 0
+    stop = first + int(selected.size)
+
+    for source_index, info in enumerate(source_infos):
+        source_start = int(starts[source_index])
+        source_stop = int(starts[source_index + 1])
+        selected_start = max(first, source_start)
+        selected_stop = min(stop, source_stop)
+        if selected_start >= selected_stop:
+            continue
+
+        local_start = selected_start - source_start
+        local_stop = selected_stop - source_start
+        all_chunks = (
+            np.asarray(chunk_index_arrays[source_index], dtype=np.uint64)
+            if chunk_index_arrays is not None
+            else np.asarray(info["chunk_infos"], dtype=np.uint64)
+        )
+        if (
+            all_chunks.ndim != 2
+            or all_chunks.shape[1:] != (2,)
+            or local_stop > int(all_chunks.shape[0])
+        ):
+            return None
+        chunks = all_chunks[local_start:local_stop]
+        offsets = chunks[:, 0]
+        sizes_u64 = chunks[:, 1]
+        if np.any(sizes_u64 > np.iinfo(np.uint32).max):
+            raise ValueError("Compressed HDF5 chunk exceeds uint32 size range")
+        if offsets.size > 1 and np.any(offsets[1:] < offsets[:-1]):
+            return None
+
+        ends = offsets + sizes_u64
+        if np.any(ends < offsets):
+            raise ValueError("Compressed HDF5 chunk byte range overflowed uint64")
+        running_ends = np.maximum.accumulate(ends)
+        split_points = np.flatnonzero(
+            offsets[1:] > running_ends[:-1] + np.uint64(max_gap_bytes)
+        ) + 1
+        group_starts = np.concatenate((np.array([0]), split_points))
+        group_stops = np.concatenate((split_points, np.array([offsets.size])))
+
+        destination_start = cursor
+        source_plan: list[tuple[int, int, int]] = []
+        for group_start, group_stop in zip(group_starts, group_stops, strict=True):
+            group_start = int(group_start)
+            group_stop = int(group_stop)
+            span_start = int(offsets[group_start])
+            span_stop = int(running_ends[group_stop - 1])
+            span_nbytes = span_stop - span_start
+            source_plan.append((span_start, cursor, span_nbytes))
+            cursor += span_nbytes
+        read_plan[source_index] = source_plan
+
+        order_start = selected_start - first
+        order_stop = selected_stop - first
+        group_destinations = np.empty(offsets.size, dtype=np.uint64)
+        group_cursors = np.cumsum(
+            np.asarray([0] + [item[2] for item in source_plan[:-1]], dtype=np.uint64)
+        ) + np.uint64(destination_start)
+        for group_number, (group_start, group_stop) in enumerate(
+            zip(group_starts, group_stops, strict=True)
+        ):
+            group_start = int(group_start)
+            group_stop = int(group_stop)
+            group_destinations[group_start:group_stop] = (
+                group_cursors[group_number]
+                + offsets[group_start:group_stop]
+                - offsets[group_start]
+            )
+        chunk_offsets[order_start:order_stop] = group_destinations
+        chunk_sizes[order_start:order_stop] = sizes_u64.astype(np.uint32, copy=False)
+
+    if sum(len(plan) for plan in read_plan.values()) == 0:
+        return None
+    return chunk_offsets, chunk_sizes, read_plan, int(cursor)
+
+
 def _prepare_master_frames(
     filepath: str,
     chunk_names: list[str],
     frame_indices: np.ndarray,
     apply_mask: bool = True,
+    read_session: _SparseFrameReadSession | None = None,
 ) -> dict:
     """Read selected compressed detector frames and index them for GPU decode.
 
@@ -2418,12 +2719,32 @@ def _prepare_master_frames(
         raise ValueError("frame_indices must be non-negative")
 
     t_sources = time.perf_counter()
-    source_infos, pixel_mask = _get_master_frame_sources(
-        filepath,
-        chunk_names,
-        apply_mask=apply_mask,
-    )
-    source_seconds = time.perf_counter() - t_sources
+    if read_session is None:
+        source_infos, pixel_mask = _get_master_frame_sources(
+            filepath,
+            chunk_names,
+            apply_mask=apply_mask,
+        )
+        source_seconds = time.perf_counter() - t_sources
+        session_timing = {
+            "metadata_discovery": 0.0,
+            "persistent_file_open": 0.0,
+            "persistent_thread_pool_create": 0.0,
+            "persistent_session_total": 0.0,
+        }
+    else:
+        if read_session.closed:
+            raise RuntimeError("Sparse frame read session is already closed")
+        if read_session.filepath != os.path.abspath(filepath):
+            raise ValueError("Sparse frame read session belongs to another master")
+        if read_session.chunk_names != tuple(chunk_names):
+            raise ValueError("Sparse frame read session chunk names changed")
+        if read_session.apply_mask != bool(apply_mask):
+            raise ValueError("Sparse frame read session mask policy changed")
+        source_infos = read_session.source_infos
+        pixel_mask = read_session.pixel_mask
+        session_timing = read_session.take_initial_timing()
+        source_seconds = float(session_timing.pop("source_index"))
 
     if not source_infos:
         raise ValueError(f"No detector data chunks found in {filepath}")
@@ -2433,7 +2754,11 @@ def _prepare_master_frames(
         if info["frame_shape"] != frame_shape or np.dtype(info["dtype"]) != np.dtype(dtype):
             raise ValueError("Detector chunk files have inconsistent shape or dtype")
 
-    source_starts = np.cumsum([0] + [info["n_frames"] for info in source_infos])
+    source_starts = (
+        read_session.source_starts
+        if read_session is not None
+        else np.cumsum([0] + [info["n_frames"] for info in source_infos])
+    )
     total_available = int(source_starts[-1])
     if int(selected.max()) >= total_available:
         raise ValueError(
@@ -2441,63 +2766,80 @@ def _prepare_master_frames(
         )
 
     t_plan = time.perf_counter()
-    chunk_offsets_arr = np.empty(selected.size, dtype=np.uint64)
-    chunk_sizes_arr = np.empty(selected.size, dtype=np.uint32)
-    entries_by_source: dict[int, list[tuple[int, int, int]]] = {}
-    for order_pos, global_idx in enumerate(selected):
-        source_idx = bisect.bisect_right(source_starts, int(global_idx)) - 1
-        local_idx = int(global_idx) - int(source_starts[source_idx])
-        chunk_infos = source_infos[source_idx]["chunk_infos"]
-        if local_idx >= len(chunk_infos):
-            raise ValueError(
-                f"Requested local frame {local_idx}, but only "
-                f"{len(chunk_infos)} HDF5 chunks were indexed"
-            )
-        byte_offset, chunk_size = chunk_infos[local_idx]
-        entries_by_source.setdefault(source_idx, []).append(
-            (order_pos, int(byte_offset), int(chunk_size))
-        )
-
     max_gap_bytes = _scan_crop_max_gap_bytes()
-    read_plan_by_source: dict[int, list[tuple[int, int, int]]] = {}
-    cursor = 0
-
-    def append_span(
-        source_index: int,
-        start: int,
-        stop: int,
-        span: list[tuple[int, int, int]],
-        destination: int,
-    ) -> int:
-        span_nbytes = int(stop - start)
-        read_plan_by_source.setdefault(source_index, []).append(
-            (int(start), int(destination), span_nbytes)
-        )
-        for order_pos, byte_offset, chunk_size in span:
-            chunk_offsets_arr[order_pos] = destination + int(byte_offset - start)
-            chunk_sizes_arr[order_pos] = int(chunk_size)
-        return destination + span_nbytes
-
-    for source_idx, entries in entries_by_source.items():
-        entries = sorted(entries, key=lambda item: item[1])
-        span_start = entries[0][1]
-        span_end = entries[0][1] + entries[0][2]
-        span_entries = [entries[0]]
-
-        for entry in entries[1:]:
-            _, byte_offset, chunk_size = entry
-            next_end = int(byte_offset + chunk_size)
-            if int(byte_offset) <= span_end + max_gap_bytes:
-                span_end = max(span_end, next_end)
-                span_entries.append(entry)
-            else:
-                cursor = append_span(
-                    source_idx, span_start, span_end, span_entries, cursor
+    fast_plan = _contiguous_frame_read_plan(
+        source_infos,
+        source_starts,
+        selected,
+        max_gap_bytes=max_gap_bytes,
+        chunk_index_arrays=(
+            read_session.chunk_index_arrays if read_session is not None else None
+        ),
+    )
+    if fast_plan is not None:
+        (
+            chunk_offsets_arr,
+            chunk_sizes_arr,
+            read_plan_by_source,
+            cursor,
+        ) = fast_plan
+    else:
+        chunk_offsets_arr = np.empty(selected.size, dtype=np.uint64)
+        chunk_sizes_arr = np.empty(selected.size, dtype=np.uint32)
+        entries_by_source: dict[int, list[tuple[int, int, int]]] = {}
+        for order_pos, global_idx in enumerate(selected):
+            source_idx = bisect.bisect_right(source_starts, int(global_idx)) - 1
+            local_idx = int(global_idx) - int(source_starts[source_idx])
+            chunk_infos = source_infos[source_idx]["chunk_infos"]
+            if local_idx >= len(chunk_infos):
+                raise ValueError(
+                    f"Requested local frame {local_idx}, but only "
+                    f"{len(chunk_infos)} HDF5 chunks were indexed"
                 )
-                span_start = int(byte_offset)
-                span_end = next_end
-                span_entries = [entry]
-        cursor = append_span(source_idx, span_start, span_end, span_entries, cursor)
+            byte_offset, chunk_size = chunk_infos[local_idx]
+            entries_by_source.setdefault(source_idx, []).append(
+                (order_pos, int(byte_offset), int(chunk_size))
+            )
+
+        read_plan_by_source = {}
+        cursor = 0
+
+        def append_span(
+            source_index: int,
+            start: int,
+            stop: int,
+            span: list[tuple[int, int, int]],
+            destination: int,
+        ) -> int:
+            span_nbytes = int(stop - start)
+            read_plan_by_source.setdefault(source_index, []).append(
+                (int(start), int(destination), span_nbytes)
+            )
+            for order_pos, byte_offset, chunk_size in span:
+                chunk_offsets_arr[order_pos] = destination + int(byte_offset - start)
+                chunk_sizes_arr[order_pos] = int(chunk_size)
+            return destination + span_nbytes
+
+        for source_idx, entries in entries_by_source.items():
+            entries = sorted(entries, key=lambda item: item[1])
+            span_start = entries[0][1]
+            span_end = entries[0][1] + entries[0][2]
+            span_entries = [entries[0]]
+
+            for entry in entries[1:]:
+                _, byte_offset, chunk_size = entry
+                next_end = int(byte_offset + chunk_size)
+                if int(byte_offset) <= span_end + max_gap_bytes:
+                    span_end = max(span_end, next_end)
+                    span_entries.append(entry)
+                else:
+                    cursor = append_span(
+                        source_idx, span_start, span_end, span_entries, cursor
+                    )
+                    span_start = int(byte_offset)
+                    span_end = next_end
+                    span_entries = [entry]
+            cursor = append_span(source_idx, span_start, span_end, span_entries, cursor)
     plan_seconds = time.perf_counter() - t_plan
 
     total_compressed = int(cursor)
@@ -2526,11 +2868,23 @@ def _prepare_master_frames(
             remaining -= int(got)
             view_offset += int(got)
 
-    def read_source(item: tuple[int, list[tuple[int, int, int]]]) -> None:
+    def read_source(
+        item: tuple[int, list[tuple[int, int, int]]],
+    ) -> tuple[float, float, float]:
         source_idx, reads = item
-        fd = os.open(source_infos[source_idx]["path"], os.O_RDONLY)
+        opened_here = read_session is None
+        fd_started = time.perf_counter()
+        fd = (
+            os.open(source_infos[source_idx]["path"], os.O_RDONLY)
+            if opened_here
+            else read_session.fds[source_idx]
+        )
+        file_seconds = time.perf_counter() - fd_started
+        advice_seconds = 0.0
+        pread_seconds = 0.0
         try:
             if libc is not None:
+                advice_started = time.perf_counter()
                 for file_offset, _, nbytes in reads:
                     libc.posix_fadvise(
                         fd,
@@ -2538,20 +2892,43 @@ def _prepare_master_frames(
                         ctypes.c_long(nbytes),
                         _POSIX_FADV_WILLNEED,
                     )
+                advice_seconds = time.perf_counter() - advice_started
+            pread_started = time.perf_counter()
             for file_offset, dst_offset, nbytes in reads:
                 read_exact_at(fd, dst_offset, nbytes, file_offset)
+            pread_seconds = time.perf_counter() - pread_started
         finally:
-            os.close(fd)
+            if opened_here:
+                close_started = time.perf_counter()
+                os.close(fd)
+                file_seconds += time.perf_counter() - close_started
+        return file_seconds, advice_seconds, pread_seconds
 
     worker_count = min(12, max(1, len(read_plan_by_source)))
     t_read = time.perf_counter()
+    pool_create_seconds = 0.0
     if worker_count > 1:
-        with ThreadPoolExecutor(max_workers=worker_count) as pool:
-            list(pool.map(read_source, read_plan_by_source.items()))
+        if read_session is not None and read_session.thread_pool is not None:
+            read_metrics = list(
+                read_session.thread_pool.map(
+                    read_source,
+                    read_plan_by_source.items(),
+                )
+            )
+        else:
+            pool_started = time.perf_counter()
+            pool = ThreadPoolExecutor(max_workers=worker_count)
+            pool_create_seconds = time.perf_counter() - pool_started
+            try:
+                read_metrics = list(pool.map(read_source, read_plan_by_source.items()))
+            finally:
+                pool.shutdown(wait=True)
     else:
-        for item in read_plan_by_source.items():
-            read_source(item)
+        read_metrics = [read_source(item) for item in read_plan_by_source.items()]
     read_seconds = time.perf_counter() - t_read
+    file_open_close_seconds = sum(metric[0] for metric in read_metrics)
+    fadvise_seconds = sum(metric[1] for metric in read_metrics)
+    pread_seconds = sum(metric[2] for metric in read_metrics)
 
     frame_bytes = int(np.prod(frame_shape) * np.dtype(dtype).itemsize)
     n_blocks_per_frame = (frame_bytes + BLOCK_SIZE - 1) // BLOCK_SIZE
@@ -2560,9 +2937,13 @@ def _prepare_master_frames(
     block_offsets_arr = np.zeros(selected.size + 1, dtype=np.uint32)
     t_headers = time.perf_counter()
     _parse_headers_bulk(
-        read_buffer, chunk_sizes_arr, chunk_offsets_arr,
-        block_starts_flat, block_counts,
-        int(selected.size), n_blocks_per_frame,
+        read_buffer,
+        chunk_sizes_arr,
+        chunk_offsets_arr,
+        block_starts_flat,
+        block_counts,
+        int(selected.size),
+        n_blocks_per_frame,
     )
     block_offsets_arr[1:selected.size + 1] = np.cumsum(block_counts[:selected.size])
     total_blocks = int(block_offsets_arr[selected.size])
@@ -2592,8 +2973,13 @@ def _prepare_master_frames(
             "read_plan": float(plan_seconds),
             "pinned_alloc": float(alloc_seconds),
             "compressed_read": float(read_seconds),
+            "compressed_pread_cpu": float(pread_seconds),
+            "posix_fadvise_cpu": float(fadvise_seconds),
+            "file_open_close_cpu": float(file_open_close_seconds),
+            "thread_pool_create": float(pool_create_seconds),
             "header_parse": float(header_seconds),
             "total": float(total_seconds),
+            **session_timing,
         },
     }
 
@@ -2629,6 +3015,7 @@ def _decompress_prepared_impl(
     streaming_bin: bool = False,
     output_dtype: type | np.dtype | None = None,
     streaming_upload: bool | None = None,
+    prune_device_pool: bool = True,
 ) -> cp.ndarray:
     """GPU phase: transfer compressed bytes and decompress on GPU.
 
@@ -3037,7 +3424,8 @@ def _decompress_prepared_impl(
     del lz4_scratch, shuf_scratch
     del compressed_gpu, chunk_offsets_gpu, block_starts_gpu
     del block_counts_gpu, block_offsets_gpu
-    cp.get_default_memory_pool().free_all_blocks()
+    if prune_device_pool:
+        cp.get_default_memory_pool().free_all_blocks()
     # pixel_mask already applied per-batch above; no final touch needed.
 
     t_total = time.perf_counter() - t0
@@ -3068,6 +3456,7 @@ def _decompress_prepared(
     output_dtype: type | np.dtype | None = None,
     streaming_upload: bool | None = None,
     prune_pinned: bool = True,
+    prune_device_pool: bool = True,
 ) -> cp.ndarray:
     """Consume one prepared master and always release its host staging buffer."""
     read_buffer = prepared["read_buffer"]
@@ -3081,6 +3470,7 @@ def _decompress_prepared(
             streaming_bin=streaming_bin,
             output_dtype=output_dtype,
             streaming_upload=streaming_upload,
+            prune_device_pool=prune_device_pool,
         )
     except BaseException:
         # A failed kernel or allocation may follow an asynchronous H2D from the

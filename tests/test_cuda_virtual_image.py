@@ -108,6 +108,61 @@ def test_cuda_center_of_mass_masked_matches_reference() -> None:
     cp.testing.assert_allclose(got_col, expected_col, rtol=0, atol=1e-6)
 
 
+def test_cuda_fused_screening_sums_are_integer_exact() -> None:
+    """The fused screening pass must match independent uint64 reductions."""
+
+    cp = _cupy_with_device()
+    from quantem.gpu.detector.compute.cuda.kernels import (
+        _cuda_screening_sums_exact,
+    )
+
+    rng = np.random.default_rng(83)
+    data_np = rng.integers(0, 200, size=(3, 5, 13, 11), dtype=np.uint16)
+    data = cp.asarray(data_np)
+    band_bits = np.zeros((13, 11), dtype=np.uint8)
+    band_bits[_mask((13, 11), 4.5)] |= 1
+    band_bits[_mask((13, 11), 4.5) & ~_mask((13, 11), 2.0)] |= 2
+    band_bits[_mask((13, 11), 5.5) & ~_mask((13, 11), 3.5)] |= 4
+    band_bits[_mask((13, 11), 3.5, invert=True)] |= 8
+
+    got = cp.asnumpy(_cuda_screening_sums_exact(data, band_bits))
+    flat = data_np.reshape(-1, 13, 11).astype(np.uint64)
+    detector_row = np.arange(13, dtype=np.uint64)[:, None]
+    detector_col = np.arange(11, dtype=np.uint64)[None, :]
+    expected = np.stack(
+        [
+            flat.sum(axis=(1, 2), dtype=np.uint64),
+            (flat * detector_row).sum(axis=(1, 2), dtype=np.uint64),
+            (flat * detector_col).sum(axis=(1, 2), dtype=np.uint64),
+            flat[:, (band_bits & 1) != 0].sum(axis=1, dtype=np.uint64),
+            flat[:, (band_bits & 2) != 0].sum(axis=1, dtype=np.uint64),
+            flat[:, (band_bits & 4) != 0].sum(axis=1, dtype=np.uint64),
+            flat[:, (band_bits & 8) != 0].sum(axis=1, dtype=np.uint64),
+        ]
+    )
+
+    np.testing.assert_array_equal(got, expected)
+
+    guard_indices = np.asarray([0, 7, 51, 142], dtype=np.int32)
+    guard_slots = np.full((13, 11), -1, dtype=np.int32)
+    guard_slots.reshape(-1)[guard_indices] = np.arange(
+        guard_indices.size,
+        dtype=np.int32,
+    )
+    got_with_guard, guard = _cuda_screening_sums_exact(
+        data,
+        band_bits,
+        guard_slots,
+    )
+    np.testing.assert_array_equal(cp.asnumpy(got_with_guard), expected)
+    np.testing.assert_array_equal(
+        cp.asnumpy(guard),
+        data_np.reshape(-1, 13 * 11)[:, guard_indices].T,
+    )
+    assert _cuda_screening_sums_exact(data.astype(cp.uint8), band_bits) is None
+    assert _cuda_screening_sums_exact(data.astype(cp.uint32), band_bits) is None
+
+
 def test_cuda_dense_mask_uses_integer_complement_and_matches_cupy() -> None:
     cp = _cupy_with_device()
     from quantem.gpu.detector.compute.cuda.kernels import cuda_masked_sum
@@ -149,6 +204,7 @@ def test_cuda_virtual_image_kernel_source_uses_warp_and_fused_dense_path() -> No
     assert "center_of_mass_selected_u16_4f" in _CUDA_VI_CODE
     assert "center_of_mass_selected_u32_4f" in _CUDA_VI_CODE
     assert "center_of_mass_selected_uint4_4f" in _CUDA_VI_CODE
+    assert "screening_sums_exact_u16_4f" in _CUDA_VI_CODE
     assert "frame_uint4_to_u8" in _CUDA_VI_CODE
     assert "mean_dp_uint4" in _CUDA_VI_CODE
     assert "selected_frame_sum_u64_u16" in _CUDA_VI_CODE

@@ -46,7 +46,7 @@ def _run_fake_mps_screening(monkeypatch, tmp_path, chunks):
 
     def fake_detector_mask(center, inner, _outer, shape):
         mask = np.zeros(shape, dtype=bool)
-        mask[int(round(center[0])), int(round(center[1]))] = True
+        mask[round(center[0]), round(center[1])] = True
         return ~mask if inner > 0 else mask
 
     monkeypatch.setattr(io, "inspect", lambda _path: SimpleNamespace(
@@ -314,3 +314,167 @@ def test_mps_screening_restreams_bf_df_when_full_scan_mask_changes(
         result.bright_field,
         np.asarray([[0], [30]], dtype=np.float32),
     )
+
+
+def test_cuda_screening_band_bits_preserve_overlapping_mask_membership() -> None:
+    """Canonical detector bands may overlap at exact radial boundaries."""
+
+    from quantem.gpu.screening._cuda import _band_bits
+
+    masks = {
+        "bright_field": np.asarray([[True, True], [False, False]]),
+        "annular_bright_field": np.asarray([[False, True], [False, False]]),
+        "annular_dark_field": np.asarray([[False, True], [True, False]]),
+        "dark_field": np.asarray([[False, True], [True, True]]),
+    }
+
+    np.testing.assert_array_equal(
+        _band_bits(masks),
+        np.asarray([[1, 15], [12, 8]], dtype=np.uint8),
+    )
+
+
+def test_cuda_screening_com_uses_exact_uint64_moments() -> None:
+    """CoM conversion must not first downcast large exact count statistics."""
+
+    from quantem.gpu.screening._cuda import _center_of_mass_from_exact
+
+    total = np.asarray([0, 2**54 + 2], dtype=np.uint64)
+    row_moment = np.asarray([7, 3 * (2**54 + 2)], dtype=np.uint64)
+    column_moment = np.asarray([9, 5 * (2**54 + 2)], dtype=np.uint64)
+
+    row, column = _center_of_mass_from_exact(
+        total,
+        row_moment,
+        column_moment,
+    )
+
+    np.testing.assert_array_equal(row, np.asarray([0.0, 3.0], dtype=np.float32))
+    np.testing.assert_array_equal(
+        column,
+        np.asarray([0.0, 5.0], dtype=np.float32),
+    )
+
+
+def test_cuda_mask_guard_correction_matches_authoritative_integer_sums() -> None:
+    """Retained changed pixels must replace provisional band sums exactly."""
+
+    from quantem.gpu.screening._cuda import _apply_mask_guard_correction
+
+    rng = np.random.default_rng(91)
+    counts = rng.integers(0, 65536, size=(7, 12), dtype=np.uint16)
+    provisional = np.asarray(
+        [1, 1, 2, 2, 4, 4, 8, 8, 3, 5, 10, 12],
+        dtype=np.uint8,
+    )
+    authoritative = provisional.copy()
+    authoritative[[1, 4, 8, 10]] ^= np.asarray([1, 4, 2, 8], dtype=np.uint8)
+    guard_indices = np.asarray([1, 4, 8, 10], dtype=np.int32)
+    exact_flat = np.zeros((7, counts.shape[0]), dtype=np.uint64)
+    for bit in range(4):
+        exact_flat[3 + bit] = counts[:, (provisional & (1 << bit)) != 0].sum(
+            axis=1,
+            dtype=np.uint64,
+        )
+
+    corrected, changed = _apply_mask_guard_correction(
+        exact_flat,
+        [(0, counts.shape[0], counts[:, guard_indices].T)],
+        guard_indices,
+        provisional,
+        authoritative,
+    )
+
+    assert corrected is True
+    assert changed == (1, 1, 1, 1)
+    for bit in range(4):
+        expected = counts[:, (authoritative & (1 << bit)) != 0].sum(
+            axis=1,
+            dtype=np.uint64,
+        )
+        np.testing.assert_array_equal(exact_flat[3 + bit], expected)
+
+
+def test_cuda_mask_guard_fails_closed_when_changed_pixel_was_not_retained() -> None:
+    """An uncovered authoritative mask change must trigger the second pass."""
+
+    from quantem.gpu.screening._cuda import _apply_mask_guard_correction
+
+    exact_flat = np.zeros((7, 2), dtype=np.uint64)
+    guard_counts = np.asarray([[3], [4]], dtype=np.uint16)
+    provisional = np.asarray([1, 0], dtype=np.uint8)
+    authoritative = np.asarray([1, 8], dtype=np.uint8)
+
+    corrected, changed = _apply_mask_guard_correction(
+        exact_flat,
+        [(0, 2, guard_counts.T)],
+        np.asarray([0], dtype=np.int32),
+        provisional,
+        authoritative,
+    )
+
+    assert corrected is False
+    assert changed == (0, 0, 0, 0)
+    np.testing.assert_array_equal(exact_flat, 0)
+
+
+def test_cuda_screening_zero_sample_uses_private_exact_engine(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """The default public verb should route internally without a second API."""
+
+    from quantem.gpu.screening import _cuda, workflow
+
+    sentinel = object()
+    calls = []
+
+    def fake_build(master, **kwargs):
+        calls.append((master, kwargs))
+        return sentinel
+
+    monkeypatch.setattr(_cuda, "_build_exact_cuda_products", fake_build)
+    master = tmp_path / "scan_master.h5"
+    plan = workflow._memory_plan_for_shapes((2, 3), (4, 5), 2, 1.0)
+
+    result = workflow._build_cuda_products(
+        master,
+        scan_shape=(2, 3),
+        chunk_rows=1,
+        sample_positions=0,
+        seed=0,
+        rotation_steps=90,
+        output_dtype=np.uint16,
+        memory_plan=plan,
+        verbose=False,
+    )
+
+    assert result is sentinel
+    assert calls[0][0] == master
+    assert calls[0][1]["scan_shape"] == (2, 3)
+
+
+def test_exact_cuda_six_gib_auto_plan_accounts_for_decoder_working_set() -> None:
+    """The 6 GiB plan must include decode scratch and upload buffers."""
+
+    from quantem.gpu.screening._cuda import (
+        _CUDA_WORKING_SET_FRACTION,
+        _exact_cuda_memory_plan,
+        _exact_cuda_working_set_bytes,
+    )
+    from quantem.gpu.screening._memory import _memory_plan_for_shapes
+
+    initial = _memory_plan_for_shapes(
+        (512, 512),
+        (192, 192),
+        np.dtype(np.uint16).itemsize,
+        6.0,
+    )
+    planned = _exact_cuda_memory_plan(initial)
+    limit = int(6.0 * (1 << 30) * _CUDA_WORKING_SET_FRACTION)
+
+    assert initial.chunk_rows == 85
+    assert planned.chunk_rows == 64
+    assert planned.chunk_rows_source == "budget_cuda_exact"
+    assert _exact_cuda_working_set_bytes(planned, 64) <= limit
+    assert _exact_cuda_working_set_bytes(planned, 65) > limit
