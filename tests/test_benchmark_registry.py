@@ -223,6 +223,40 @@ def test_current_webgpu_full_native_row_requires_complete_output_parity() -> Non
     ]
 
 
+def test_webgpu_full_native_product_distribution_closes_only_product_gates() -> None:
+    registry = _registry()
+    rows = {
+        row["measurement_id"]: row for row in resolved_measurements(registry)
+    }
+    measurement_id = (
+        "macbook-pro-m5-max-128gb-webgpu-fullnative-bin1-products-r7-d8e6f56"
+    )
+    measurement = rows[measurement_id]
+
+    assert measurement["module"] == "Detector products"
+    assert measurement["state"] == "measured"
+    assert measurement["sample_count"] == 7
+    assert measurement["p50_seconds"] == 0.482
+    assert measurement["p95_seconds"] == 0.4836
+    assert measurement["max_seconds"] == 0.4836
+    assert measurement["logical_resident_bytes"] == 19_327_352_832
+    assert measurement["process_tree_peak_bytes"] == 6_970_589_184
+    assert measurement["cold_claim"] is False
+    assert "byte exact in all seven runs" in measurement["parity"]
+    assert "zero violations at rtol=atol=1e-5" in measurement["parity"]
+
+    gates = {gate["id"]: gate for gate in registry["gates"]}
+    assert gates["products.webgpu.full-suite"]["state"] == "measured"
+    assert gates["products.webgpu.full-suite"]["satisfied_by"] == [measurement_id]
+    assert measurement_id in gates["dpc.webgpu.full-suite"]["satisfied_by"]
+    assert measurement_id not in gates[
+        "io.webgpu.apple-m5-max-128gb.bin1.prepared"
+    ]["satisfied_by"]
+    assert gates["io.webgpu.apple-m5-max-128gb.bin1.cold-original"]["state"] == (
+        "pending"
+    )
+
+
 def test_m5_24gb_mps_product_smoke_keeps_fft_failure_atomic() -> None:
     registry = _registry()
     rows = {
