@@ -11,8 +11,8 @@
     },
     {
       "path": "docs/dashboard.md",
-      "sha256": "1403484ab972104362bddafb16e642d72cff7cfa31033789bb43903292de1e1e",
-      "role": "Single human-facing current capability, speed, memory, and parity overview"
+      "sha256": "32e11d426cf9b5aac9cbfa01f8f759f9b5bcb04d71afef9f159909f00b010d09",
+      "role": "Single human-facing current capability, speed, memory, dtype, residency, and parity overview"
     },
     {
       "path": "docs/platforms/cuda.md",
@@ -108,13 +108,13 @@
   "authoritative_inputs": [
     {
       "path": "benchmarks/benchmark_registry.json",
-      "sha256": "524b71531d75e58fe1ee6c3710f5dfb4ded76e0a542ee1d9ed290631df87ac3b",
-      "role": "Atomic Platform, Computer, module, configuration, state, measurement, and runbook registry"
+      "sha256": "b62c8596990c90cc8aa9b9a79e2676aa1e637ad4f7b9bfebd86f94083612479d",
+      "role": "Atomic Platform, Computer, module, dtype/residency configuration, state, measurement, and runbook registry"
     },
     {
       "path": "docs/_generated/benchmark_coverage.md",
-      "sha256": "38ffa1f3ad1004d84a60dd9d7e9c49c41f96aebad6e34784077e7ab0f0f9cf78",
-      "role": "Generated filterable coverage, retained-measurement, and runbook tables"
+      "sha256": "9b17b2e5c2a5257813fbb4c8588b5addd2582537ffd8da8032ee6f99b23b99ee",
+      "role": "Generated filterable dtype/residency, coverage, retained-measurement, and runbook tables"
     },
     {
       "path": "docs/_static/benchmark-tables.js",
@@ -123,8 +123,8 @@
     },
     {
       "path": "scripts/benchmark_registry.py",
-      "sha256": "06e8fc9ee8360b0a66eab695b77544f982432a44d859fdab8b34ea63922e0b7f",
-      "role": "Registry validation, rendering, next-gate selection, and reproducible-command entry point"
+      "sha256": "df73f3efb4b28f7058b034e004009dd4cd16c775e416c61ef46e48867e45d1d8",
+      "role": "Registry validation, dtype/residency gating, rendering, next-gate selection, and reproducible-command entry point"
     },
     {
       "path": "experiments/20260822-platform-computer-profile/manifest.json",

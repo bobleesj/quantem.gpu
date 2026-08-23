@@ -745,6 +745,13 @@ def test_load_dtype_docs_keep_precision_and_peak_memory_distinct() -> None:
         assert "peak" in text.lower()
 
     assert '`dtype="u8"` requests saturating unsigned 8-bit browse counts' in dashboard
+    assert "<!-- benchmark-dtype-residency-start -->" in generated
+    assert "Staging dtype" in generated
+    assert "Resident dtype" in generated
+    assert "Scientific gate" in generated
+    assert ":start-after: <!-- benchmark-dtype-residency-start -->" in dashboard
+    assert ":end-before: <!-- benchmark-dtype-residency-end -->" in dashboard
+    assert "cannot satisfy an exact scientific gate" in dashboard
     assert (
         "| Logical resident | Accelerator/driver peak | Process/tree peak | "
         "Process physical-footprint peak |" in generated
