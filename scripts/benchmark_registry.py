@@ -36,6 +36,7 @@ STATE_ORDER = (
 ALLOWED_STATES = set(STATE_ORDER)
 COMPLETE_STATES = {"measured"}
 OPEN_STATES = {"partial", "pending", "blocked"}
+SCIENTIFIC_GATES = {"exact", "full-precision", "browse-only"}
 FULL_GIT_SHA = re.compile(r"[0-9a-f]{40}")
 FULL_SHA256 = re.compile(r"[0-9a-f]{64}")
 
@@ -55,6 +56,16 @@ PLATFORM_ORDER = {
     "Native Swift/Metal": 2,
     "WebGPU": 3,
     "CPU reference": 4,
+}
+
+DTYPE_CONFIGURATION_ORDER = {
+    "dtype-full-native-bin1-u8-exact": 0,
+    "dtype-full-native-bin1-u16-exact": 1,
+    "dtype-full-native-bin1-u32-exact": 2,
+    "dtype-full-native-bin1-u16-to-u8-audited-lossless": 3,
+    "dtype-full-native-bin1-u16-to-u8-saturating-browse": 4,
+    "dtype-full-native-bin1-u16-to-u32-exact": 5,
+    "dtype-full-native-bin1-u16-via-audited-u8-staging": 6,
 }
 
 MODULE_LABELS = {
@@ -279,7 +290,12 @@ def _measurement_row(
         "output_detector_rows": measurement.get("working_detector_rows"),
         "output_detector_columns": measurement.get("working_detector_columns"),
         "source_dtype": measurement.get("source_dtype"),
+        "staging_dtype": measurement.get("staging_dtype"),
         "working_dtype": measurement.get("working_dtype"),
+        "resident_dtype": measurement.get(
+            "resident_dtype", measurement.get("working_dtype")
+        ),
+        "scientific_gate": measurement.get("scientific_gate"),
         "cache_state": measurement.get("cache_state"),
         "timing_boundary": measurement.get("timing_boundary"),
         "sample_count": measurement.get("sample_count"),
@@ -341,6 +357,9 @@ def resolved_measurements(registry: dict[str, Any]) -> list[dict[str, Any]]:
             row.get("measurement_id"), row["computer"]
         )
         row["id"] = f"evidence::{row['measurement_id']}"
+        row.setdefault("staging_dtype", None)
+        row.setdefault("resident_dtype", row.get("working_dtype"))
+        row.setdefault("scientific_gate", None)
         rows.append(row)
     return sorted(rows, key=lambda row: str(row["id"]))
 
@@ -573,6 +592,39 @@ def validate_registry(
                 failures.append(f"{label} unsupported gate needs a reason")
             if satisfied:
                 failures.append(f"{label} unsupported gate cannot name timing evidence")
+        if gate.get("coverage_group") == "dtype-residency":
+            for field in (
+                "staging_dtype",
+                "resident_dtype",
+                "scientific_gate",
+                "precision_contract",
+                "support_basis",
+                "crop",
+            ):
+                if not str(gate.get(field) or "").strip():
+                    failures.append(f"{label} dtype/residency gate lacks {field}")
+            if gate.get("scientific_gate") not in SCIENTIFIC_GATES:
+                failures.append(
+                    f"{label} has invalid scientific_gate "
+                    f"{gate.get('scientific_gate')}"
+                )
+            configuration = registry.get("configurations", {}).get(
+                gate["configuration"], {}
+            )
+            if (
+                configuration.get("scientific_gate") == "browse-only"
+                and gate.get("scientific_gate") != "browse-only"
+            ):
+                failures.append(
+                    f"{label} cannot promote a lossy browse configuration to an "
+                    "exact scientific gate"
+                )
+            if gate.get("scientific_gate") == "browse-only" and gate.get(
+                "exact_scientific_gate"
+            ) is not False:
+                failures.append(
+                    f"{label} browse-only row must set exact_scientific_gate=false"
+                )
 
     if check_render and GENERATED_PATH.is_file():
         expected = render_document(registry)
@@ -718,12 +770,59 @@ def _gate_rows(registry: dict[str, Any]) -> list[list[Any]]:
                 gate["detector_bin"],
                 _shape(gate["output_detector_rows"], gate["output_detector_columns"]),
                 gate["source_dtype"],
-                gate["working_dtype"],
+                gate.get("staging_dtype"),
+                gate.get("resident_dtype", gate["working_dtype"]),
+                gate.get("scientific_gate"),
                 gate["cache_state"],
                 gate["timing_boundary"],
                 gate["priority"],
                 f"`{gate['runbook']}`",
                 gate["next_gate"] or gate.get("reason"),
+            ]
+        )
+    return rows
+
+
+def _dtype_residency_rows(registry: dict[str, Any]) -> list[list[Any]]:
+    """Render atomic dtype and residency contracts without inferred support."""
+
+    rows: list[list[Any]] = []
+    gates = [
+        gate
+        for gate in resolved_gates(registry)
+        if gate.get("coverage_group") == "dtype-residency"
+    ]
+    for gate in sorted(
+        gates,
+        key=lambda item: (
+            *_platform_sort_key(item["platform"]),
+            item["computer"],
+            DTYPE_CONFIGURATION_ORDER.get(item["configuration"], math.inf),
+            item["id"],
+        ),
+    ):
+        rows.append(
+            [
+                gate["platform"],
+                gate["computer"],
+                STATE_LABELS[gate["state"]],
+                _shape(gate["selected_scan_rows"], gate["selected_scan_columns"]),
+                _shape(
+                    gate["source_detector_rows"], gate["source_detector_columns"]
+                ),
+                gate["scan_bin"],
+                gate["detector_bin"],
+                _shape(
+                    gate["output_detector_rows"], gate["output_detector_columns"]
+                ),
+                gate["crop"],
+                gate["source_dtype"],
+                gate["staging_dtype"],
+                gate["resident_dtype"],
+                gate["scientific_gate"],
+                gate["precision_contract"],
+                gate["support_basis"],
+                gate.get("next_gate") or gate.get("reason"),
             ]
         )
     return rows
@@ -761,7 +860,9 @@ def _measurement_rows(registry: dict[str, Any]) -> list[list[Any]]:
                     item.get("output_detector_columns"),
                 ),
                 item.get("source_dtype"),
-                item.get("working_dtype"),
+                item.get("staging_dtype"),
+                item.get("resident_dtype", item.get("working_dtype")),
+                item.get("scientific_gate"),
                 item.get("cache_state"),
                 item.get("timing_boundary"),
                 item.get("sample_count"),
@@ -844,7 +945,9 @@ def _current_load_rows(registry: dict[str, Any]) -> list[list[Any]]:
                     item.get("output_detector_columns"),
                 ),
                 item.get("source_dtype"),
-                item.get("working_dtype"),
+                item.get("staging_dtype"),
+                item.get("resident_dtype", item.get("working_dtype")),
+                item.get("scientific_gate"),
                 item.get("cache_state"),
                 item.get("timing_boundary"),
                 item.get("sample_count"),
@@ -901,7 +1004,9 @@ def render_document(registry: dict[str, Any]) -> str:
                 "Detector bin",
                 "Output detector",
                 "Source dtype",
-                "Working dtype",
+                "Staging dtype",
+                "Resident dtype",
+                "Scientific gate",
                 "Cache/process state",
                 "Wall boundary",
                 "Samples",
@@ -922,6 +1027,36 @@ def render_document(registry: dict[str, Any]) -> str:
         ),
         "",
         "<!-- benchmark-current-load-end -->",
+        "",
+        "## Dtype and residency coverage",
+        "",
+        "<!-- benchmark-dtype-residency-start -->",
+        "",
+        "Each row is one atomic source, staging, and resident dtype contract. Exact rows preserve scientific counts; browse-only rows are explicit saturating representations and cannot satisfy an exact gate.",
+        "",
+        _markdown_table(
+            [
+                "Platform",
+                "Computer",
+                "State",
+                "Selected scan",
+                "Source detector",
+                "Scan bin",
+                "Detector bin",
+                "Output detector",
+                "Crop",
+                "Source dtype",
+                "Staging dtype",
+                "Resident dtype",
+                "Scientific gate",
+                "Precision contract",
+                "Implementation basis",
+                "Next gate or reason",
+            ],
+            _dtype_residency_rows(registry),
+        ),
+        "",
+        "<!-- benchmark-dtype-residency-end -->",
         "",
         "## Coverage summary",
         "",
@@ -978,7 +1113,9 @@ def render_document(registry: dict[str, Any]) -> str:
                 "Detector bin",
                 "Output detector",
                 "Source dtype",
-                "Working dtype",
+                "Staging dtype",
+                "Resident dtype",
+                "Scientific gate",
                 "Cache/process state",
                 "Wall boundary",
                 "Priority",
@@ -1004,7 +1141,9 @@ def render_document(registry: dict[str, Any]) -> str:
                 "Detector bin",
                 "Output detector",
                 "Source dtype",
-                "Working dtype",
+                "Staging dtype",
+                "Resident dtype",
+                "Scientific gate",
                 "Cache/process state",
                 "Wall boundary",
                 "Samples",
@@ -1077,6 +1216,10 @@ def _command_values(gate: dict[str, Any]) -> _SafeFormat:
     values = _SafeFormat(gate)
     cache_state = str(gate.get("cache_state") or "").lower()
     values["warmup_count"] = 0 if cache_state.startswith("cold ") else 1
+    values["resident_dtype"] = gate.get("resident_dtype") or gate.get(
+        "working_dtype"
+    )
+    values["staging_dtype"] = gate.get("staging_dtype") or "not-recorded"
     return values
 
 

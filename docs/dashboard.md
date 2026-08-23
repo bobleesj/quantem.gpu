@@ -95,6 +95,9 @@ process physical-footprint peak, and swap delta are distinct observations and
 are not additive. A missing physical-footprint value is displayed as `n/a`,
 not inferred from RSS. Process RSS does not include every direct Metal
 allocation, so it cannot replace accelerator or physical-footprint telemetry.
+For example, the current full-native Python MPS row reports **18.442 GiB** of
+driver allocation for an 18.00 GiB logical resident tensor; that is a measured
+after-load boundary, not a universal peak estimate.
 On the 24 GB MacBook Pro, the full-native bin-1 smoke
 passed every exact volume and product hash but produced approximately
 723.31 MiB additional swap use and 758,448,128 B of swapouts. The safety gate
@@ -103,41 +106,28 @@ performance distribution.
 (dtype-support-and-peak-memory)=
 ### Dtype support and peak memory
 
-“Source,” “working,” “accumulation,” and “resident” dtype describe different
+“Source,” “staging,” “accumulation,” and “resident” dtype describe different
 stages. A `uint8` row is scientifically exact only when the source is already
-`uint8` or a complete source audit proves `maximum <= 255` and
-`pixelsAbove255 == 0`. Otherwise an explicit `dtype="u8"` load saturates values
-above 255 and is a browse representation, not raw-count evidence.
+`uint8` or a source-identity-bound complete audit proves
+`maximum <= 255` and `pixelsAbove255 == 0`. Otherwise an explicit
+`dtype="u8"` load saturates values above 255 and is a browse representation,
+not raw-count evidence.
 
-| Platform | Computer | Source dtype | Decode/working dtype | Resident dtype | Precision policy | Support | Resident payload example | Measured memory example | Measurement boundary |
-|---|---|---|---|---|---|---|---:|---:|---|
-| [**CUDA**](platforms/cuda.md) | No physical result | `uint8` | — | — | Native compressed source | — | — | — | Capability only |
-| [**CUDA**](platforms/cuda.md) | Linux CUDA workstation (dual 96 GB Blackwell GPUs) | `uint16` | `uint16` | `uint16` | Exact native counts | ✓ | **18.00 GiB** | **21.215 GiB** | Full bin1 total-card peak |
-| [**CUDA**](platforms/cuda.md) | No physical result | `uint16` | `uint8` | `uint8` | Complete-audit lossless | ✓ | **9.00 GiB** | **Pending** | Full native detector |
-| [**CUDA**](platforms/cuda.md) | No physical result | `uint32` | `uint32` | `uint32` | Exact native counts | ✓ | Shape/bin dependent | **Pending** | Capability only |
-| [**Python MPS**](platforms/mps.md) | No physical result | `uint8` | — | — | Native compressed source | — | — | — | Capability only |
-| [**Python MPS**](platforms/mps.md) | MacBook Pro (M5 Max, 128 GB) | `uint16` | `uint16` | `uint16` | Exact native counts | ✓ | **18.00 GiB** | **18.442 GiB** | After-load driver allocation; qualified probes only; continuous peak pending |
-| [**Python MPS**](platforms/mps.md) | No physical result | `uint16` | `uint8` | `uint8` | Complete-audit lossless | ✓ | **9.00 GiB** | **Pending** | Full native detector |
-| [**Python MPS**](platforms/mps.md) | No physical result | `uint32` | `uint16` | `uint16` | Guarded exact narrowing | ✓ | Shape/bin dependent | **Pending** | Capability only |
-| [**Python MPS**](platforms/mps.md) | No physical result | `uint32` | `uint32` | `uint32` | Exact native counts | ✓ | Shape/bin dependent | **Pending** | Capability only |
-| [**Native Swift/Metal**](platforms/swift-metal.md) | No physical result | `uint8` | — | — | Native compressed-source decode | Pending | — | — | No retained native-`uint8` bitshuffle-source decode evidence |
-| [**Native Swift/Metal**](platforms/swift-metal.md) | MacBook Pro (M5 Max, 128 GB) | `uint16` | audit-bound `uint8` | `uint16` | Exact native counts | ✓ | **18.00 GiB** | **>=18.571 GiB** | Full bin1 after-load allocation; sampled peak pending |
-| [**Native Swift/Metal**](platforms/swift-metal.md) | MacBook Air (M2, 8 GB) | `uint16` | `uint16` | `uint16` | Audited exact detector sum | ✓ | **1.125 GiB** | **1.332 GiB** | Historical physical bin4 process-footprint example |
-| [**Native Swift/Metal**](platforms/swift-metal.md) | No physical result | `uint16` | `uint16` | `uint32` | General exact detector sum | ✓ | Shape/bin dependent | **Pending** | Capability only |
-| [**WebGPU**](platforms/webgpu.md) | No physical result | `uint8` | `uint8` | `uint8` | Exact native counts | ✓ | Shape/bin dependent | **Pending** | Capability only |
-| [**WebGPU**](platforms/webgpu.md) | MacBook Pro (M5 Max, 128 GB) | `uint16` | `uint16` | `uint16` | Exact native counts | Partial | **18.00 GiB** | **6.500 GiB** | Seven-run physical exact full-volume distribution; complete browser-tree RSS peak; WebGPU device allocation unavailable |
-| [**WebGPU**](platforms/webgpu.md) | MacBook Pro (M5 Max, 128 GB) | `uint16` | `uint8` | `uint8` | Complete-audit lossless | Diagnostic | **9.00 GiB** | **5.020 GiB** | Historical Chrome-tree RSS; device peak and full-volume parity incomplete |
-| [**WebGPU**](platforms/webgpu.md) | No physical result | `uint16` | `uint32` | `uint32` | General exact detector sum | Pending | Shape/bin dependent | **Pending** | Exact-integer production binning is not integrated |
-| [**WebGPU**](platforms/webgpu.md) | No physical result | `uint32` | `uint32` | `uint32` | Exact native counts | Pending | Shape/bin dependent | **Pending** | Hardware full-volume proof not retained |
-| **CPU reference** | Portable CI runner | `uint8` | `uint8` | `uint8` | Exact reference | Ref | Shape/bin dependent | **Pending** | Reference contract |
-| **CPU reference** | Portable CI runner | `uint16` | `uint16` | `uint16` | Exact reference | Ref | Shape/bin dependent | **Pending** | See measured load rows |
+The registry below separates those cases. Each row fixes one platform,
+computer class, scan, detector, bin, crop, source dtype, staging dtype,
+resident dtype, and scientific gate. **Browse-only** can be benchmarked, but it
+cannot satisfy an exact scientific gate.
 
-Memory examples in this capability table are configuration-specific, not a
-promise for every shape. The main load table is authoritative for the matching
-scan, detector bin, dtype, device, and boundary. In particular, a browser RSS
-sample can be smaller than a resident WebGPU payload because it does not capture
-all device allocations; that is an incomplete peak, not evidence that the
-payload disappeared.
+```{include} _generated/benchmark_coverage.md
+:start-after: <!-- benchmark-dtype-residency-start -->
+:end-before: <!-- benchmark-dtype-residency-end -->
+```
+
+This capability matrix does not infer peak memory. The current load table is
+authoritative only for its matching shape, dtype, device, cache state, and wall
+boundary. In particular, browser RSS may be smaller than a WebGPU resident
+payload because it does not capture every device allocation; that is an
+incomplete peak, not evidence that the payload disappeared.
 
 The current C matrix measures native `uint16` input at detector bins 1/2/4/8.
 The full-native logical payload is exactly 19,327,352,832 bytes (18.00 GiB).
@@ -155,6 +145,9 @@ stores `float32`. Those historical timings remain useful implementation
 history, but they do not satisfy the exact-integer resident contract. The
 platform/computer registry therefore marks exact WebGPU bins 2/4/8 **blocked**
 until integer accumulation and residency pass full-volume parity.
+Seven-run physical exact full-volume distribution evidence remains in the
+retained-measurement table; unavailable WebGPU device-allocation telemetry is
+still shown as `n/a`, never inferred from browser RSS.
 
 The public Python selector is intentionally explicit:
 

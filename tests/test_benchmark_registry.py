@@ -7,7 +7,14 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-from scripts.benchmark_registry import _bytes, _measurement_state, resolved_measurements
+from scripts.benchmark_registry import (
+    _bytes,
+    _dtype_residency_rows,
+    _measurement_state,
+    resolved_gates,
+    resolved_measurements,
+    validate_registry,
+)
 
 REGISTRY = Path("benchmarks/benchmark_registry.json")
 GENERATED = Path("docs/_generated/benchmark_coverage.md")
@@ -100,6 +107,9 @@ def test_registry_validator_and_generated_table_agree() -> None:
         "Selected scan",
         "Source detector",
         "Detector bin",
+        "Staging dtype",
+        "Resident dtype",
+        "Scientific gate",
         "p50",
         "p95",
         "Maximum",
@@ -122,6 +132,9 @@ def test_registry_validator_and_generated_table_agree() -> None:
     assert "| Platform | Computer | Tracked cells |" in rendered
     assert "Master SHA-256" in rendered
     assert "Source identity SHA-256" in rendered
+    assert "<!-- benchmark-dtype-residency-start -->" in rendered
+    assert "<!-- benchmark-dtype-residency-end -->" in rendered
+    assert "browse-only rows are explicit saturating representations" in rendered
 
 
 def test_generated_registry_is_ordered_by_platform_then_computer() -> None:
@@ -330,6 +343,124 @@ def test_load_matrix_tracks_every_compatible_platform_computer_pair() -> None:
     }
     for computer in ("MacBook Air (M2, 8 GB)", "MacBook Pro (M5, 24 GB)"):
         assert bins_by_pair[("Native Swift/Metal", computer)] == {1, 2, 4}
+
+
+def test_dtype_residency_matrix_is_atomic_and_source_audited() -> None:
+    registry = _registry()
+    gates = [
+        gate
+        for gate in resolved_gates(registry)
+        if gate.get("coverage_group") == "dtype-residency"
+    ]
+
+    configurations = {
+        "dtype-full-native-bin1-u8-exact",
+        "dtype-full-native-bin1-u16-exact",
+        "dtype-full-native-bin1-u32-exact",
+        "dtype-full-native-bin1-u16-to-u8-audited-lossless",
+        "dtype-full-native-bin1-u16-to-u8-saturating-browse",
+        "dtype-full-native-bin1-u16-to-u32-exact",
+        "dtype-full-native-bin1-u16-via-audited-u8-staging",
+    }
+    platforms = {
+        "CPU reference",
+        "CUDA",
+        "Python MPS",
+        "Native Swift/Metal",
+        "WebGPU",
+    }
+
+    assert len(gates) == 35
+    assert {gate["configuration"] for gate in gates} == configurations
+    assert {gate["platform"] for gate in gates} == platforms
+    assert all(
+        len([gate for gate in gates if gate["platform"] == platform]) == 7
+        for platform in platforms
+    )
+    for gate in gates:
+        assert (gate["selected_scan_rows"], gate["selected_scan_columns"]) == (
+            512,
+            512,
+        )
+        assert (gate["source_detector_rows"], gate["source_detector_columns"]) == (
+            192,
+            192,
+        )
+        assert (gate["output_detector_rows"], gate["output_detector_columns"]) == (
+            192,
+            192,
+        )
+        assert gate["scan_bin"] == 1
+        assert gate["detector_bin"] == 1
+        assert gate["crop"] == "none"
+        assert gate["source_dtype"] in {"uint8", "uint16", "uint32"}
+        assert gate["staging_dtype"] in {"uint8", "uint16", "uint32"}
+        assert gate["resident_dtype"] in {"uint8", "uint16", "uint32"}
+        assert gate["scientific_gate"] in {"exact", "browse-only"}
+        assert gate["support_basis"]
+
+    by_id = {gate["id"]: gate for gate in gates}
+    assert by_id["dtype.mps.native-u8-exact"]["state"] == "unsupported"
+    assert by_id["dtype.webgpu.native-u8-exact"]["state"] == "pending"
+    assert by_id["dtype.mps.native-u32-exact"]["state"] == "pending"
+    assert by_id["dtype.swift.native-u32-exact"]["state"] == "unsupported"
+    assert by_id["dtype.swift.u16-to-u32-exact"]["state"] == "partial"
+    assert by_id["dtype.webgpu.u16-to-u32-exact"]["state"] == "unsupported"
+    assert by_id["dtype.swift.audited-u8-staging-to-u16"]["state"] == (
+        "measured"
+    )
+    assert by_id["dtype.swift.audited-u8-staging-to-u16"]["satisfied_by"] == [
+        "macbook-pro-m5-max-128gb-swift-metal-controlled-fullnative-current"
+    ]
+
+
+def test_dtype_residency_table_uses_scientific_contract_order() -> None:
+    registry = _registry()
+    cuda_rows = [
+        row
+        for row in _dtype_residency_rows(registry)
+        if row[0] == "CUDA"
+    ]
+
+    assert [(row[9], row[10], row[11], row[12]) for row in cuda_rows] == [
+        ("uint8", "uint8", "uint8", "exact"),
+        ("uint16", "uint16", "uint16", "exact"),
+        ("uint32", "uint32", "uint32", "exact"),
+        ("uint16", "uint8", "uint8", "exact"),
+        ("uint16", "uint16", "uint8", "browse-only"),
+        ("uint16", "uint16", "uint32", "exact"),
+        ("uint16", "uint8", "uint16", "exact"),
+    ]
+
+
+def test_lossy_dtype_rows_cannot_satisfy_an_exact_gate(tmp_path: Path) -> None:
+    registry = _registry()
+    gates = [
+        gate
+        for gate in resolved_gates(registry)
+        if gate.get("coverage_group") == "dtype-residency"
+        and gate["configuration"]
+        == "dtype-full-native-bin1-u16-to-u8-saturating-browse"
+    ]
+
+    assert len(gates) == 5
+    assert {gate["scientific_gate"] for gate in gates} == {"browse-only"}
+    assert {gate["exact_scientific_gate"] for gate in gates} == {False}
+
+    raw_gate = next(
+        gate
+        for gate in registry["gates"]
+        if gate["id"] == "dtype.cuda.u16-to-u8-saturating-browse"
+    )
+    raw_gate["scientific_gate"] = "exact"
+    invalid = tmp_path / "invalid-browse-promotion.json"
+    invalid.write_text(json.dumps(registry), encoding="utf-8")
+    errors: list[str] = []
+    validate_registry(errors, check_render=False, registry_path=invalid)
+
+    assert any(
+        "cannot promote a lossy browse configuration" in error for error in errors
+    )
 
 
 def test_cuda_binned_load_gates_use_the_general_u32_contract() -> None:
