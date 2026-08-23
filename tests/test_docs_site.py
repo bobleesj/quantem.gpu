@@ -516,7 +516,7 @@ def test_platform_first_io_tables_expose_current_bins_devices_and_dates() -> Non
         "1.094000 s",
         "1.094000 s",
         "18.000 GiB",
-        "6.604 GiB",
+        "≥6.604 GiB",
         "0 B",
     )
     assert webgpu_full_native[headers.index("Samples")] == "1"
