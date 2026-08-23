@@ -215,6 +215,35 @@ def test_current_webgpu_full_native_row_requires_complete_output_parity() -> Non
     assert "Repeat the exact full-volume production path" in gate["next_gate"]
 
 
+def test_m5_24gb_mps_product_smoke_keeps_fft_failure_atomic() -> None:
+    registry = _registry()
+    rows = {
+        row["measurement_id"]: row for row in resolved_measurements(registry)
+    }
+    products_id = (
+        "macbook-pro-m5-24gb-python-mps-bin2-detector-products-smoke-68dbe3a"
+    )
+    dpc_id = "macbook-pro-m5-24gb-python-mps-bin2-dpc-idpc-smoke-68dbe3a"
+    fft_id = "macbook-pro-m5-24gb-python-mps-bin2-display-fft-refuted-68dbe3a"
+
+    assert rows[products_id]["state"] == "partial"
+    assert "byte exact" in rows[products_id]["parity"]
+    assert rows[dpc_id]["state"] == "partial"
+    assert "frozen full-precision" in rows[dpc_id]["parity"]
+    assert rows[fft_id]["state"] == "refuted"
+    assert "0.001680374" in rows[fft_id]["parity"]
+    assert all(rows[row_id]["p50_seconds"] is None for row_id in (products_id, dpc_id, fft_id))
+    assert all(
+        rows[row_id]["pageout_delta_pages"] == 73
+        for row_id in (products_id, dpc_id, fft_id)
+    )
+
+    gates = {gate["id"]: gate for gate in registry["gates"]}
+    assert gates["products.mps.apple-m5-24gb.bin2.full-suite"]["state"] == "partial"
+    assert gates["dpc.mps.apple-m5-24gb.full-suite"]["state"] == "partial"
+    assert gates["display.mps.apple-m5-24gb.maps"]["state"] == "refuted"
+
+
 def test_load_matrix_tracks_every_compatible_platform_computer_pair() -> None:
     registry = _registry()
     bins_by_pair: dict[tuple[str, str], set[int]] = defaultdict(set)
