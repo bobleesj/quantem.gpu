@@ -76,6 +76,7 @@ def test_exact_webgpu_gate_accepts_only_matching_width_and_full_output() -> None
         "quantem.gpu.4dstem-logical-pixels/v1"
     )
     assert evidence["fullOutputSha256"] == FULL_HASH
+    assert evidence["fullOutputParity"] is True
 
 
 @pytest.mark.parametrize("dtype", ["uint8", "uint32", "float32", None])
@@ -205,6 +206,32 @@ def test_webgpu_summary_reports_nearest_rank_distribution() -> None:
     assert summary["wallMsP95"] == 110
     assert summary["evidenceWallMsP50"] == 104
     assert summary["evidenceWallMsP95"] == 200
+
+
+def test_webgpu_summary_reports_full_output_parity_without_frame_probes() -> None:
+    runs = [
+        {
+            "profile": {"totalMs": value},
+            "wallMs": value + 10,
+            "evidenceWallMs": value + 20,
+            "parity": None,
+            "exactEvidence": {
+                "passed": True,
+                "sampledFrameParity": None,
+                "fullOutputParity": True,
+            },
+        }
+        for value in (10, 11, 12)
+    ]
+
+    summary = _summary(runs)
+
+    assert summary["parityChecked"] is True
+    assert summary["allParity"] is True
+    assert summary["sampledFrameParityChecked"] is False
+    assert summary["allSampledFrameParity"] is None
+    assert summary["fullOutputParityChecked"] is True
+    assert summary["allFullOutputParity"] is True
 
 
 def test_cdp_call_uses_the_declared_timeout_for_long_running_evidence() -> None:

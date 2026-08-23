@@ -13,7 +13,8 @@ export interface LogicalPixelGpuChunk {
 export interface LogicalPixelHashResult {
   sha256: string;
   bytes: number;
-  readbackBytes: number;
+  transferredBytes: number;
+  readbackBufferBytes: number;
   badPixels: number;
   elapsedMs: number;
 }
@@ -28,7 +29,8 @@ export interface LogicalPixelHashProfile {
   fullOutputHashError?: string;
   fullOutputHashMs?: number;
   fullOutputHashBytes?: number;
-  fullOutputHashReadbackBytes?: number;
+  fullOutputHashTransferredBytes?: number;
+  fullOutputHashReadbackBufferBytes?: number;
   fullOutputHashBadPixels?: number;
   fullOutputHashDomain?: "corrected-logical-pixels";
   fullOutputSha256?: string;
@@ -245,7 +247,10 @@ export async function hashGpuResidentLogicalPixels(
   options: LogicalPixelHashOptions = {},
 ): Promise<LogicalPixelHashResult> {
   const maximumReadbackBytes = options.maximumReadbackBytes ?? 32 * 1024 * 1024;
-  const readbackBytes = Math.max(4, Math.floor(maximumReadbackBytes / 4) * 4);
+  const readbackBufferBytes = Math.max(
+    4,
+    Math.floor(maximumReadbackBytes / 4) * 4,
+  );
   const pixelBytes = bytesPerPixel(dtype);
   const badPixels = Array.from(new Set(Array.from(options.badPixels ?? [])))
     .sort((left, right) => left - right);
@@ -277,12 +282,13 @@ export async function hashGpuResidentLogicalPixels(
   }
 
   const readback = device.createBuffer({
-    size: readbackBytes,
+    size: readbackBufferBytes,
     usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
   });
   const digest = new StreamingSha256();
   const started = performance.now();
   let mapped = false;
+  let transferredBytes = 0;
   try {
     for (const chunk of chunks) {
       const logicalChunkBytes = chunk.nScan * detectorSize * pixelBytes;
@@ -294,7 +300,10 @@ export async function hashGpuResidentLogicalPixels(
       }
       let sourceOffset = 0;
       while (sourceOffset < logicalChunkBytes) {
-        const logicalCopyBytes = Math.min(readbackBytes, logicalChunkBytes - sourceOffset);
+        const logicalCopyBytes = Math.min(
+          readbackBufferBytes,
+          logicalChunkBytes - sourceOffset,
+        );
         const alignedCopyBytes = Math.ceil(logicalCopyBytes / 4) * 4;
         const encoder = device.createCommandEncoder();
         encoder.copyBufferToBuffer(
@@ -317,6 +326,7 @@ export async function hashGpuResidentLogicalPixels(
           pixelBytes,
           badPixels,
         ));
+        transferredBytes += logicalCopyBytes;
         readback.unmap();
         mapped = false;
         sourceOffset += logicalCopyBytes;
@@ -326,10 +336,16 @@ export async function hashGpuResidentLogicalPixels(
     if (mapped) readback.unmap();
     readback.destroy();
   }
+  if (transferredBytes !== expectedBytes) {
+    throw new Error(
+      `Logical-pixel hash transferred ${transferredBytes} bytes, expected ${expectedBytes}.`,
+    );
+  }
   return {
     sha256: digest.digestHex(),
     bytes: expectedBytes,
-    readbackBytes,
+    transferredBytes,
+    readbackBufferBytes,
     badPixels: badPixels.length,
     elapsedMs: performance.now() - started,
   };
@@ -369,7 +385,8 @@ export function exposeGpuResidentLogicalPixelHash(
       profile.logicalPixelHashSchema = LOGICAL_PIXEL_HASH_SCHEMA;
       profile.fullOutputHashMs = result.elapsedMs;
       profile.fullOutputHashBytes = result.bytes;
-      profile.fullOutputHashReadbackBytes = result.readbackBytes;
+      profile.fullOutputHashTransferredBytes = result.transferredBytes;
+      profile.fullOutputHashReadbackBufferBytes = result.readbackBufferBytes;
       profile.fullOutputHashBadPixels = result.badPixels;
       profile.fullOutputHashDomain = "corrected-logical-pixels";
       profile.fullOutputHashState = "complete";

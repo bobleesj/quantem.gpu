@@ -345,6 +345,9 @@ def test_webgpu_local_h5_source_tracks_show4dstem_loader_contract() -> None:
     assert 'fullOutputHashState = "ready"' in hash_source
     assert 'fullOutputHashState = "complete"' in hash_source
     assert 'fullOutputHashDomain = "corrected-logical-pixels"' in hash_source
+    assert "fullOutputHashTransferredBytes" in hash_source
+    assert "fullOutputHashReadbackBufferBytes" in hash_source
+    assert "fullOutputHashReadbackBytes" not in hash_source
 
 
 def test_webgpu_has_no_top_level_compatibility_namespace() -> None:
