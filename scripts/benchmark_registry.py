@@ -618,13 +618,18 @@ def _seconds(value: Any) -> str:
     return f"{seconds:.6f} s"
 
 
-def _bytes(value: Any, *, approximate: bool = False) -> str:
+def _bytes(
+    value: Any,
+    *,
+    approximate: bool = False,
+    lower_bound: bool = False,
+) -> str:
     if value is None:
         return "n/a"
     count = int(value)
     if count == 0:
         return "0 B"
-    prefix = "~" if approximate else ""
+    prefix = "≥" if lower_bound else "~" if approximate else ""
     return f"{prefix}{count / (1 << 30):.3f} GiB"
 
 
@@ -768,8 +773,16 @@ def _measurement_rows(registry: dict[str, Any]) -> list[list[Any]]:
                 _bytes(item.get("driver_allocated_after_release_bytes")),
                 _bytes(item.get("accelerator_peak_bytes")),
                 _bytes(item.get("total_device_peak_bytes")),
-                _bytes(item.get("process_tree_peak_bytes")),
-                _bytes(item.get("process_footprint_peak_bytes")),
+                _bytes(
+                    item.get("process_tree_peak_bytes"),
+                    lower_bound=bool(item.get("process_tree_peak_is_lower_bound")),
+                ),
+                _bytes(
+                    item.get("process_footprint_peak_bytes"),
+                    lower_bound=bool(
+                        item.get("process_footprint_peak_is_lower_bound")
+                    ),
+                ),
                 _bytes(
                     item.get("swap_delta_bytes"),
                     approximate=bool(item.get("swap_delta_approximate")),
@@ -840,8 +853,16 @@ def _current_load_rows(registry: dict[str, Any]) -> list[list[Any]]:
                 _seconds(item.get("max_seconds")),
                 _bytes(item.get("logical_resident_bytes")),
                 _bytes(accelerator_peak),
-                _bytes(item.get("process_tree_peak_bytes")),
-                _bytes(item.get("process_footprint_peak_bytes")),
+                _bytes(
+                    item.get("process_tree_peak_bytes"),
+                    lower_bound=bool(item.get("process_tree_peak_is_lower_bound")),
+                ),
+                _bytes(
+                    item.get("process_footprint_peak_bytes"),
+                    lower_bound=bool(
+                        item.get("process_footprint_peak_is_lower_bound")
+                    ),
+                ),
                 _bytes(
                     item.get("swap_delta_bytes"),
                     approximate=bool(item.get("swap_delta_approximate")),

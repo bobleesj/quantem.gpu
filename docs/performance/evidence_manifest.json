@@ -113,7 +113,7 @@
     },
     {
       "path": "docs/_generated/benchmark_coverage.md",
-      "sha256": "3cf386a2bbc154caa1f1d182abd470c4bf7080aa8f0401b7a602b9a6b12377f1",
+      "sha256": "5f5d9ead8c28f2ebaf90e20f397e29f40c0f7f15f06e7a805813a7e3f6f42322",
       "role": "Generated filterable coverage, retained-measurement, and runbook tables"
     },
     {
@@ -123,7 +123,7 @@
     },
     {
       "path": "scripts/benchmark_registry.py",
-      "sha256": "06d2cae0b618e0e017061f26e83791fcab2478a0563d2cb0d3199b9c80d73573",
+      "sha256": "06e8fc9ee8360b0a66eab695b77544f982432a44d859fdab8b34ea63922e0b7f",
       "role": "Registry validation, rendering, next-gate selection, and reproducible-command entry point"
     },
     {
