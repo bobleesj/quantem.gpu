@@ -386,7 +386,11 @@ def test_platform_first_io_tables_expose_current_bins_devices_and_dates() -> Non
     assert len(rows) == expected_current_rows
     assert headers[:3] == ["Platform", "Computer", "State"]
     assert all(row[0] and row[1] for row in rows)
-    assert all(name not in current.lower() for name in ("phil", "mjgoat", "rodman"))
+    assert not re.search(
+        r"\b(?:phil|mjgoat|rodman|steve[ -]?kerr)\b",
+        current,
+        flags=re.IGNORECASE,
+    )
 
     platform_order = {
         platform: current.index(f"| {platform} |")
@@ -561,6 +565,23 @@ def test_platform_first_io_tables_expose_current_bins_devices_and_dates() -> Non
 
     assert "Measured load configurations" not in intro
     assert "Device tested" not in intro
+
+
+def test_public_docs_use_hardware_names_not_local_host_nicknames() -> None:
+    nickname = re.compile(
+        r"\b(?:phil|mjgoat|rodman|steve[ -]?kerr)\b",
+        flags=re.IGNORECASE,
+    )
+    public_sources = [Path("README.md"), *Path("docs").rglob("*.md")]
+    leaked = [
+        path.as_posix()
+        for path in public_sources
+        if nickname.search(path.read_text(encoding="utf-8"))
+    ]
+
+    assert not leaked
+
+
 def test_load_memory_rows_separate_payload_from_measured_peak() -> None:
     generated = Path("docs/_generated/benchmark_coverage.md").read_text(
         encoding="utf-8"
