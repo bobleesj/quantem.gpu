@@ -48,7 +48,7 @@ products = screening.prepare(
 print(products.metadata["memory"])
 ```
 
-`screening.prepare` builds or reopens derived BF/DF/CoM/rotation products and
+`screening.prepare` builds or reopens derived detector and DPC products and
 returns `ScreeningResult`. Its public controls include `scan_shape`, optional
 rotation, cache/refresh policy, explicit memory budget, chunk rows, sampling
 seed/count, rotation search steps, and dtype. A cache reopen is not a raw HDF5
@@ -63,10 +63,15 @@ selects 85 rows: **2.99 GiB** across 7 chunks. Decoder scratch, allocator
 reserve, other processes, and the final measured peak remain separate gates.
 The historical API name says `gb`, while the planner uses binary GiB bytes.
 
-This public cache currently produces mean DP, BF, DF, CoM, rotation, and iDPC.
-ADF has accelerated detector kernels, but is not yet part of this one-pass
-screening result. No automatic scan crop is allowed, and a client-selected
-detector bin must remain explicit in provenance.
+Every current preparation path publishes mean DP, BF, DF, CoM, rotation, and
+iDPC. The default exact `uint16` CUDA stream also publishes
+`total_intensity`, `annular_bright_field`, and `annular_dark_field` as exact
+`uint64` count maps. Those three optional fields are `None` for older caches
+and preparation paths that do not yet expose the fused exact statistics; a
+caller must check them explicitly rather than infer support from the selected
+backend. New caches contain either all three exact maps or none, and malformed
+partial or non-`uint64` sets fail closed. No automatic scan crop is allowed,
+and a client-selected detector bin must remain explicit in provenance.
 
 `screening.prepare` is currently a Python CUDA/MPS API. Native Swift/Metal and
 WebGPU expose reusable detector and DPC operations, but they do not implement

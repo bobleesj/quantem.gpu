@@ -36,7 +36,7 @@
     },
     {
       "path": "docs/backends.md",
-      "sha256": "ffcc1ddc2f27e26ff9f5aca75cf1f615ce2973402a2082c052249ad387857de0",
+      "sha256": "3234920493408cb13fd496d6ee80538f695b96572d818aa2d3867b3efd4085aa",
       "role": "Capability and implementation-source map without copied timings"
     },
     {
@@ -128,7 +128,7 @@
     },
     {
       "path": "experiments/20260822-platform-computer-profile/manifest.json",
-      "sha256": "ad1a3625e0b999a69d8fb6532e637a095895d23dd77bfd60bfb7e9f0044cc025",
+      "sha256": "7a3eb8c443ebcadf9b2f483e9acd06188e73c4fc883e9cd7847c70188041dc73",
       "role": "Completed physical-device matrix ledger with accepted, partial, refuted, blocked, and pending atomic gates"
     }
   ]
