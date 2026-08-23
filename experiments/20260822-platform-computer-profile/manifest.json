@@ -16,7 +16,8 @@
     "benchmarked_source_revisions": [
       "5106ca48349231549c440b40609983fd3a8dacda",
       "68dbe3aa5f816e2d1c1ae976e1874790cffb4319",
-      "34f0029c9fe3b92c2709283547301a91899e4d66"
+      "34f0029c9fe3b92c2709283547301a91899e4d66",
+      "d8e6f562a8ab43086a4ddea9eecfe6fd26b7beea"
     ],
     "dirty": false,
     "diff_sha256": null,
@@ -423,9 +424,62 @@
       "artifact": "private-evidence://macbook-pro-m5-24gb/20260822-python-mps-products-bin2-68dbe3a-01/FINAL-SHA256SUMS",
       "sha256": "cd0890ea52f372922c2952467b2d6f9cd94765afe717ac8be6c69d82de0dcd33",
       "result": "Immutable 126-file checksum inventory for the complete physical product campaign, including every failed attempt and final idle audit."
+    },
+    {
+      "id": "m5-max-128gb-webgpu-fullnative-exact-r7-d8e6f56",
+      "artifact": "private-evidence://macbook-pro-m5-max-128gb/20260822-webgpu-fullnative-bin1-d8e6f56-01/MANIFEST.json",
+      "sha256": "bb7a3d2fec3c03b7cfdcd5325e7dc5065649e4cd540be1bf4b88ce6dc92d75cd",
+      "result": "Clean physical WebGPU full-native detector-bin-1 campaign at d8e6f56: one warmup plus seven retained fresh browser targets all matched the complete corrected 19,327,352,832-byte logical-output SHA-256. Prepared-index warm-source harness wall p50/p95/max was 1.358/1.594/1.594 seconds; complete browser-tree RSS peak was 6,979,485,696 bytes with zero swap growth."
+    },
+    {
+      "id": "m5-max-128gb-webgpu-fullnative-exact-r7-seal-d8e6f56",
+      "artifact": "private-evidence://macbook-pro-m5-max-128gb/20260822-webgpu-fullnative-bin1-d8e6f56-01/SHA256SUMS",
+      "sha256": "4885c6bf8074dbcfbf41e5765bbf4aa6d015b586c79adcb9d43c1ce293bae94e",
+      "result": "Immutable checksum inventory for the repeated physical WebGPU campaign, including raw runs, complete memory telemetry, bundle, and final idle audit."
     }
   ],
   "results": {
+    "macbook_pro_m5_max_128gb_webgpu_fullnative_exact_r7_d8e6f56": {
+      "source_revision": "d8e6f562a8ab43086a4ddea9eecfe6fd26b7beea",
+      "fixture_id": "full-native-webgpu-512x512x192x192-u16",
+      "fixture_sha256": "4802ec16ba241fef439e9dcb1c28e94f9cf9d95f773df9c5c8c3b5f7ed8192c4",
+      "source_identity_sha256": "1be810b96fdff8e384ad4cb6ebd49adff9b4ab0a6503cd5fed9106e09f5aa286",
+      "source_shape": [512, 512, 192, 192],
+      "working_shape": [512, 512, 192, 192],
+      "source_dtype": "uint16",
+      "working_dtype": "uint16",
+      "scan_bin": 1,
+      "detector_bin": 1,
+      "scan_crop": null,
+      "detector_crop": null,
+      "logical_pixel_hash_schema": "quantem.gpu.4dstem-logical-pixels/v1",
+      "logical_pixel_sha256": "f7b32c4529cd08be196d0eb6b0caa52fe75b3d0bc3a459d228c88b48ae670822",
+      "warmup_count": 1,
+      "sample_count": 7,
+      "profile_min_seconds": 0.975,
+      "profile_p50_seconds": 1.024,
+      "profile_p95_seconds": 1.138,
+      "profile_maximum_seconds": 1.138,
+      "harness_wall_p50_seconds": 1.358,
+      "harness_wall_p95_seconds": 1.594,
+      "harness_wall_maximum_seconds": 1.594,
+      "full_output_hash_p50_seconds": 63.9128,
+      "full_output_hash_p95_seconds": 64.6252,
+      "full_output_hash_maximum_seconds": 64.6252,
+      "logical_resident_bytes": 19327352832,
+      "browser_tree_peak_rss_bytes": 6979485696,
+      "minimum_available_memory_bytes": 50531778560,
+      "adapter_allocation_bytes": null,
+      "swap_delta_bytes": 0,
+      "swapout_delta_pages": 0,
+      "pageout_delta_pages": 699,
+      "cache_state": "prepared immutable block indexes; explicitly warm source pages; fresh browser target per retained run; no dropped runs",
+      "timing_boundary": "navigation through scientifically usable exact resident output and diagnostic frame checksums; exhaustive full-volume hash and application E2E excluded",
+      "parity": "Warmup plus all seven retained complete corrected-logical-output hashes matched exactly; dtype, geometry, axis order, scan coverage, detector bin, and calibrated bad-pixel correction passed.",
+      "cold_claim": false,
+      "state": "partial because WebGPU device-allocation telemetry is unavailable",
+      "target_adjudication": "One internal profile reached 0.975 seconds, but profile p50 was 1.024 seconds and harness wall p50 was 1.358 seconds; repeated at-or-below-one-second loading is not supported."
+    },
     "macbook_pro_m5_24gb_python_mps_products_bin2_smoke_68dbe3a": {
       "source_revision": "68dbe3aa5f816e2d1c1ae976e1874790cffb4319",
       "fixture_id": "real-512x512x192x192-u16-bslz4-27shard-master-fixture-c",
@@ -1041,6 +1095,6 @@
     "created": "2026-08-22T13:33:04-07:00",
     "started": "2026-08-22T13:33:04-07:00",
     "finished": "2026-08-22T15:57:42-07:00",
-    "last_updated": "2026-08-22T17:18:22-07:00"
+    "last_updated": "2026-08-22T17:31:03-07:00"
   }
 }

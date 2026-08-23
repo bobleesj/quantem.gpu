@@ -163,7 +163,7 @@ def test_dashboard_is_the_dense_human_overview() -> None:
     )
     assert "full-native-webgpu-512x512x192x192-u16" in dashboard_words
     assert (
-        "One physical exact full-volume smoke; browser-tree RSS lower bound"
+        "Seven-run physical exact full-volume distribution"
         in dashboard
     )
     assert "Production full-volume `uint16` resident proof not retained" not in dashboard
@@ -523,18 +523,18 @@ def test_platform_first_io_tables_expose_current_bins_devices_and_dates() -> Non
         webgpu_full_native[rss_index],
         webgpu_full_native[swap_index],
     ) == (
-        "1.094000 s",
-        "1.094000 s",
-        "1.094000 s",
+        "1.358000 s",
+        "1.594000 s",
+        "1.594000 s",
         "18.000 GiB",
-        "≥6.604 GiB",
+        "6.500 GiB",
         "0 B",
     )
-    assert webgpu_full_native[headers.index("Samples")] == "1"
-    assert "warm from the immediately preceding independent CPU reference" in (
+    assert webgpu_full_native[headers.index("Samples")] == "7"
+    assert "explicitly warm source pages" in (
         webgpu_full_native[headers.index("Cache/process state")]
     )
-    assert "full-volume verification hash" in webgpu_full_native[
+    assert "exhaustive full-volume hash" in webgpu_full_native[
         headers.index("Wall boundary")
     ]
     assert all(row[revision_index].startswith("`") for row in rows)
