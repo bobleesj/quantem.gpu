@@ -24,6 +24,11 @@ from ._mps import (
 )
 
 _CACHE_VERSION = 3
+_EXACT_COUNT_PRODUCT_FIELDS = (
+    "total_intensity",
+    "annular_bright_field",
+    "annular_dark_field",
+)
 
 
 def _screening_output_dtype(output_dtype) -> np.dtype:
@@ -39,7 +44,13 @@ def _screening_output_dtype(output_dtype) -> np.dtype:
 
 @dataclass
 class ScreeningResult:
-    """Small screening products for instant UI and ptychography setup."""
+    """Small screening products for instant UI and ptychography setup.
+
+    The default exact CUDA stream publishes ``total_intensity``,
+    ``annular_bright_field``, and ``annular_dark_field`` as exact uint64 count
+    maps. They remain ``None`` for older caches and preparation paths that do
+    not provide the fused exact sufficient statistics.
+    """
 
     mean_dp: np.ndarray
     bright_field: np.ndarray
@@ -55,6 +66,9 @@ class ScreeningResult:
     cache_path: Path | None = None
     from_cache: bool = False
     elapsed_s: float = 0.0
+    total_intensity: np.ndarray | None = None
+    annular_bright_field: np.ndarray | None = None
+    annular_dark_field: np.ndarray | None = None
 
 
 def _cache_path(
@@ -221,16 +235,43 @@ def _read_metadata_array(array: np.ndarray) -> dict[str, Any]:
 def _save_cache(products: ScreeningResult, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     metadata = dict(products.metadata)
-    np.savez(
-        path,
-        metadata_json=_metadata_array(metadata),
-        mean_dp=np.asarray(products.mean_dp, dtype=np.float32),
-        bright_field=np.asarray(products.bright_field, dtype=np.float32),
-        dark_field=np.asarray(products.dark_field, dtype=np.float32),
-        dpc_phase=np.asarray(products.dpc_phase, dtype=np.float32),
-        com_row=np.asarray(products.com_row, dtype=np.float32),
-        com_col=np.asarray(products.com_col, dtype=np.float32),
-    )
+    payload = {
+        "metadata_json": _metadata_array(metadata),
+        "mean_dp": np.asarray(products.mean_dp, dtype=np.float32),
+        "bright_field": np.asarray(products.bright_field, dtype=np.float32),
+        "dark_field": np.asarray(products.dark_field, dtype=np.float32),
+        "dpc_phase": np.asarray(products.dpc_phase, dtype=np.float32),
+        "com_row": np.asarray(products.com_row, dtype=np.float32),
+        "com_col": np.asarray(products.com_col, dtype=np.float32),
+    }
+    exact_values = [
+        getattr(products, name) for name in _EXACT_COUNT_PRODUCT_FIELDS
+    ]
+    if any(value is not None for value in exact_values):
+        if any(value is None for value in exact_values):
+            raise ValueError(
+                "Exact screening cache products must include total_intensity, "
+                "annular_bright_field, and annular_dark_field together."
+            )
+        expected_shape = np.asarray(products.bright_field).shape
+        for name, value in zip(
+            _EXACT_COUNT_PRODUCT_FIELDS,
+            exact_values,
+            strict=True,
+        ):
+            array = np.asarray(value)
+            if array.dtype != np.dtype(np.uint64):
+                raise TypeError(
+                    f"{name} must preserve exact uint64 detector counts; "
+                    f"got {array.dtype}."
+                )
+            if array.shape != expected_shape:
+                raise ValueError(
+                    f"{name} has shape {array.shape}, expected scan shape "
+                    f"{expected_shape}."
+                )
+            payload[name] = array
+    np.savez(path, **payload)
 
 
 def _prepare_cache(path: Path, master: Path) -> ScreeningResult | None:
@@ -254,6 +295,21 @@ def _prepare_cache(path: Path, master: Path) -> ScreeningResult | None:
                 bool(params["transposed"]),
             )
         )
+        exact_present = [
+            name in data.files for name in _EXACT_COUNT_PRODUCT_FIELDS
+        ]
+        if any(exact_present) and not all(exact_present):
+            return None
+        exact_products: dict[str, np.ndarray | None] = {
+            name: None for name in _EXACT_COUNT_PRODUCT_FIELDS
+        }
+        if all(exact_present):
+            expected_shape = com_row.shape
+            for name in _EXACT_COUNT_PRODUCT_FIELDS:
+                array = np.asarray(data[name])
+                if array.dtype != np.dtype(np.uint64) or array.shape != expected_shape:
+                    return None
+                exact_products[name] = array
         products = ScreeningResult(
             mean_dp=np.asarray(data["mean_dp"], dtype=np.float32),
             bright_field=np.asarray(data["bright_field"], dtype=np.float32),
@@ -269,6 +325,7 @@ def _prepare_cache(path: Path, master: Path) -> ScreeningResult | None:
             cache_path=path,
             from_cache=True,
             elapsed_s=time.perf_counter() - t0,
+            **exact_products,
         )
     return products
 
@@ -999,7 +1056,7 @@ def prepare(
     dtype=np.uint16,
     verbose: bool = False,
 ) -> ScreeningResult:
-    """Load or build cached BF/DF/CoM/rotation products for one HDF5 master.
+    """Load or build cached detector and DPC products for one HDF5 master.
 
     Cached products are intended for instant UI launch and ptychography
     calibration setup. A cache miss first streams raw HDF5 with GPU
@@ -1008,7 +1065,9 @@ def prepare(
     a second time; that fallback and its reason are recorded in metadata. CUDA
     uses the optimized RawKernel path, while MPS uses chunk-backed Metal
     reductions. The raw HDF5 master remains the evidence source for stochastic
-    ptychography batches.
+    ptychography batches. The default exact uint16 CUDA stream additionally
+    publishes exact uint64 total-intensity, annular-bright-field, and
+    annular-dark-field maps on the returned :class:`ScreeningResult`.
     """
     master_path = Path(source).expanduser()
     if not master_path.exists():

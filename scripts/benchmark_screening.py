@@ -35,6 +35,22 @@ PRODUCT_FIELDS = (
     "com_row",
     "com_col",
 )
+EXACT_INTEGER_PRODUCT_FIELDS = (
+    "total_intensity",
+    "annular_bright_field",
+    "annular_dark_field",
+)
+FULL_PRODUCT_FIELDS = (
+    "mean_dp",
+    "total_intensity",
+    "bright_field",
+    "annular_bright_field",
+    "annular_dark_field",
+    "dark_field",
+    "dpc_phase",
+    "com_row",
+    "com_col",
+)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -52,6 +68,14 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--reps", type=int, default=7)
     parser.add_argument("--reopen-reps", type=int, default=7)
+    parser.add_argument(
+        "--require-exact-full-suite",
+        action="store_true",
+        help=(
+            "Require and hash exact uint64 total/ABF/ADF in addition to the "
+            "historical six screening products."
+        ),
+    )
     parser.add_argument("--reference-hashes-json", type=Path)
     parser.add_argument("--json-out", type=Path, required=True)
     return parser.parse_args()
@@ -87,25 +111,72 @@ def _validate_args(args: argparse.Namespace) -> None:
     args.cache_dir.mkdir(parents=True, exist_ok=True)
 
 
-def _product_hashes(result: Any) -> dict[str, str]:
+def _product_arrays(
+    result: Any,
+    product_fields: tuple[str, ...] = FULL_PRODUCT_FIELDS,
+) -> dict[str, np.ndarray]:
+    arrays: dict[str, np.ndarray] = {}
+    for name in product_fields:
+        value = getattr(result, name, None)
+        if value is None:
+            raise RuntimeError(
+                "The requested screening path did not publish the full exact "
+                f"product suite; missing {name}. Use the default exact uint16 "
+                "CUDA preparation path."
+            )
+        arrays[name] = np.ascontiguousarray(value)
+    expected_scan_shape = arrays["bright_field"].shape
+    for name in product_fields:
+        if name == "mean_dp":
+            continue
+        if arrays[name].shape != expected_scan_shape:
+            raise RuntimeError(
+                f"{name} has shape {arrays[name].shape}, expected scan shape "
+                f"{expected_scan_shape}."
+            )
+    for name in EXACT_INTEGER_PRODUCT_FIELDS:
+        if name not in arrays:
+            continue
+        if arrays[name].dtype != np.dtype(np.uint64):
+            raise RuntimeError(
+                f"{name} must preserve exact uint64 detector counts; "
+                f"got {arrays[name].dtype}."
+            )
+    return arrays
+
+
+def _product_hashes(arrays: dict[str, np.ndarray]) -> dict[str, str]:
     hashes: dict[str, str] = {}
-    for name in PRODUCT_FIELDS:
-        array = np.ascontiguousarray(getattr(result, name))
+    for name, array in arrays.items():
         hashes[name] = hashlib.sha256(array.view(np.uint8)).hexdigest()
     return hashes
 
 
-def _reference_hashes(path: Path | None) -> dict[str, str] | None:
+def _product_specs(arrays: dict[str, np.ndarray]) -> dict[str, dict[str, Any]]:
+    return {
+        name: {
+            "shape": [int(value) for value in array.shape],
+            "dtype": str(array.dtype),
+            "nbytes": int(array.nbytes),
+        }
+        for name, array in arrays.items()
+    }
+
+
+def _reference_hashes(
+    path: Path | None,
+    product_fields: tuple[str, ...] = PRODUCT_FIELDS,
+) -> dict[str, str] | None:
     if path is None:
         return None
     values = json.loads(path.read_text(encoding="utf-8"))
-    missing = set(PRODUCT_FIELDS) - set(values)
+    missing = set(product_fields) - set(values)
     if missing:
         raise SystemExit(
             "reference-hashes-json must contain all screening products; missing "
             + ", ".join(sorted(missing))
         )
-    return {name: str(values[name]) for name in PRODUCT_FIELDS}
+    return {name: str(values[name]) for name in product_fields}
 
 
 def _cache_bytes(cache_dir: Path) -> int:
@@ -133,12 +204,17 @@ def _run_once(args: argparse.Namespace, *, refresh: bool) -> tuple[Any, dict[str
     _sync_backend(args.backend)
     wall_seconds = time.perf_counter() - started
     after = _memory_snapshot(args.backend)
-    hashes = _product_hashes(result)
+    product_fields = (
+        FULL_PRODUCT_FIELDS if args.require_exact_full_suite else PRODUCT_FIELDS
+    )
+    arrays = _product_arrays(result, product_fields)
+    hashes = _product_hashes(arrays)
     metadata = result.metadata
     record = {
         "wall_seconds": wall_seconds,
         "from_saved_result": bool(result.from_cache),
         "product_hashes": hashes,
+        "product_specs": _product_specs(arrays),
         "product_hash_set_sha256": _stable_json_sha256(hashes),
         "probe_center_row": float(result.probe_center[0]),
         "probe_center_column": float(result.probe_center[1]),
@@ -185,7 +261,10 @@ def main() -> None:
 
     args = _parse_args()
     _validate_args(args)
-    reference = _reference_hashes(args.reference_hashes_json)
+    product_fields = (
+        FULL_PRODUCT_FIELDS if args.require_exact_full_suite else PRODUCT_FIELDS
+    )
+    reference = _reference_hashes(args.reference_hashes_json, product_fields)
 
     for _ in range(args.warmup):
         result, _ = _run_once(args, refresh=True)
@@ -217,6 +296,11 @@ def main() -> None:
             "warmup_count": args.warmup,
             "build_repetitions": args.reps,
             "reopen_repetitions": args.reopen_reps,
+            "product_suite": (
+                "exact-full"
+                if args.require_exact_full_suite
+                else "historical-six-product"
+            ),
         },
         "code": _git_state(),
         "host": _host_info(),
