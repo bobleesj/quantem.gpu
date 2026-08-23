@@ -247,6 +247,35 @@ def _center_of_mass_from_exact(
     return row.astype(np.float32), column.astype(np.float32)
 
 
+def _screening_product_views(
+    exact_flat: np.ndarray,
+    scan_shape: tuple[int, int],
+) -> dict[str, np.ndarray]:
+    """Map the fused CUDA statistic order to exact scan-shaped products."""
+
+    exact = np.asarray(exact_flat)
+    expected_shape = (7, int(np.prod(scan_shape, dtype=np.int64)))
+    if exact.dtype != np.dtype(np.uint64):
+        raise TypeError(
+            "Fused CUDA screening statistics must use uint64; "
+            f"got {exact.dtype}."
+        )
+    if exact.shape != expected_shape:
+        raise ValueError(
+            f"Fused CUDA screening statistics have shape {exact.shape}, "
+            f"expected {expected_shape}."
+        )
+    return {
+        "total_intensity": exact[0].reshape(scan_shape),
+        "detector_row_moment": exact[1].reshape(scan_shape),
+        "detector_column_moment": exact[2].reshape(scan_shape),
+        "bright_field": exact[3].reshape(scan_shape),
+        "annular_bright_field": exact[4].reshape(scan_shape),
+        "annular_dark_field": exact[5].reshape(scan_shape),
+        "dark_field": exact[6].reshape(scan_shape),
+    }
+
+
 def _host_peak_rss_bytes() -> int | None:
     """Return process high-water RSS on Unix hosts."""
 
@@ -663,15 +692,11 @@ def _build_exact_cuda_products(
         stage="after exact CUDA screening",
     )
 
-    total = exact_flat[0].reshape(scan_shape)
-    detector_row_moment = exact_flat[1].reshape(scan_shape)
-    detector_column_moment = exact_flat[2].reshape(scan_shape)
-    bright_field = exact_flat[3].reshape(scan_shape)
-    dark_field = exact_flat[6].reshape(scan_shape)
+    exact_products = _screening_product_views(exact_flat, scan_shape)
     com_row, com_col = _center_of_mass_from_exact(
-        total,
-        detector_row_moment,
-        detector_column_moment,
+        exact_products["total_intensity"],
+        exact_products["detector_row_moment"],
+        exact_products["detector_column_moment"],
     )
     com_row -= float(com_row.mean())
     com_col -= float(com_col.mean())
@@ -795,8 +820,8 @@ def _build_exact_cuda_products(
     }
     return ScreeningResult(
         mean_dp=np.asarray(mean_dp, dtype=np.float32),
-        bright_field=bright_field.astype(np.float32),
-        dark_field=dark_field.astype(np.float32),
+        bright_field=exact_products["bright_field"].astype(np.float32),
+        dark_field=exact_products["dark_field"].astype(np.float32),
         dpc_phase=phase,
         com_row=com_row.astype(np.float32, copy=False),
         com_col=com_col.astype(np.float32, copy=False),
@@ -820,6 +845,11 @@ def _build_exact_cuda_products(
             },
             "exact_accumulation": {
                 "dtype": "uint64",
+                "published_uint64_products": [
+                    "total_intensity",
+                    "annular_bright_field",
+                    "annular_dark_field",
+                ],
                 "detector_band_order": ["BF", "ABF", "ADF", "DF"],
                 "detector_band_radius_multipliers": [
                     [0.0, 1.0],
@@ -833,13 +863,16 @@ def _build_exact_cuda_products(
             "mode": "cached-screening-products",
             "note": (
                 "The primary pass used exact uint64 sufficient statistics for "
-                "the cached BF/DF/CoM products. A changed bootstrap mask is "
+                "the cached total/BF/ABF/ADF/DF/CoM products. A changed "
+                "bootstrap mask is "
                 "resolved by validated exact guard-pixel correction or an exact "
-                "second source pass. ABF, ADF, and total-intensity results are "
-                "not public ScreeningResult fields in this candidate; the raw "
-                "HDF5 remains the reconstruction evidence source."
+                "second source pass. The raw HDF5 remains the reconstruction "
+                "evidence source."
             ),
         },
         from_cache=False,
         elapsed_s=elapsed_s,
+        total_intensity=exact_products["total_intensity"],
+        annular_bright_field=exact_products["annular_bright_field"],
+        annular_dark_field=exact_products["annular_dark_field"],
     )

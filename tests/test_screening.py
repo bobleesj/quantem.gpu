@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 
 def _run_fake_mps_screening(monkeypatch, tmp_path, chunks):
@@ -150,6 +151,78 @@ def test_screening_cache_roundtrip(monkeypatch, tmp_path) -> None:
     assert actual.dpc_phase.dtype == np.float32
 
 
+def test_screening_cache_roundtrip_preserves_exact_uint64_products(
+    tmp_path,
+) -> None:
+    """Exact count products must survive cache persistence without conversion."""
+
+    from quantem.gpu.screening import workflow
+
+    master = tmp_path / "scan_master.h5"
+    master.write_bytes(b"placeholder")
+    cache_path = workflow._cache_path(master, tmp_path / "cache")
+    expected = _result(master, workflow)
+    maximum = np.iinfo(np.uint64).max
+    expected.total_intensity = np.full((4, 4), maximum, dtype=np.uint64)
+    expected.annular_bright_field = np.full(
+        (4, 4),
+        maximum - np.uint64(1),
+        dtype=np.uint64,
+    )
+    expected.annular_dark_field = np.full(
+        (4, 4),
+        np.uint64(2**63 + 17),
+        dtype=np.uint64,
+    )
+
+    workflow._save_cache(expected, cache_path)
+    actual = workflow._prepare_cache(cache_path, master)
+
+    assert actual is not None
+    for name in (
+        "total_intensity",
+        "annular_bright_field",
+        "annular_dark_field",
+    ):
+        observed = getattr(actual, name)
+        assert observed is not None
+        assert observed.dtype == np.uint64
+        np.testing.assert_array_equal(observed, getattr(expected, name))
+
+
+def test_screening_cache_rejects_partial_or_inexact_count_products(tmp_path) -> None:
+    """A cache may contain all exact count maps or none, never a partial set."""
+
+    from quantem.gpu.screening import workflow
+
+    master = tmp_path / "scan_master.h5"
+    master.write_bytes(b"placeholder")
+    cache_path = workflow._cache_path(master, tmp_path / "cache")
+    result = _result(master, workflow)
+    result.total_intensity = np.ones((4, 4), dtype=np.uint64)
+
+    with pytest.raises(ValueError, match="must include"):
+        workflow._save_cache(result, cache_path)
+
+    result.annular_bright_field = np.ones((4, 4), dtype=np.uint64)
+    result.annular_dark_field = np.ones((4, 4), dtype=np.float32)
+    with pytest.raises(TypeError, match="must preserve exact uint64"):
+        workflow._save_cache(result, cache_path)
+
+    np.savez(
+        cache_path,
+        metadata_json=workflow._metadata_array(result.metadata),
+        mean_dp=result.mean_dp,
+        bright_field=result.bright_field,
+        dark_field=result.dark_field,
+        dpc_phase=result.dpc_phase,
+        com_row=result.com_row,
+        com_col=result.com_col,
+        total_intensity=result.total_intensity,
+    )
+    assert workflow._prepare_cache(cache_path, master) is None
+
+
 def test_screening_cache_without_retained_phase_recomputes(tmp_path) -> None:
     """Version-3 caches created by older readers remain compatible."""
     from quantem.gpu.screening import workflow
@@ -175,6 +248,38 @@ def test_screening_cache_without_retained_phase_recomputes(tmp_path) -> None:
     assert actual.from_cache is True
     assert actual.dpc_phase.dtype == np.float32
     assert actual.dpc_phase.shape == expected.dpc_phase.shape
+    assert actual.total_intensity is None
+    assert actual.annular_bright_field is None
+    assert actual.annular_dark_field is None
+
+
+def test_screening_result_legacy_positional_constructor_is_compatible() -> None:
+    """Appending exact products must not move any historical positional field."""
+
+    from quantem.gpu.screening import ScreeningResult
+
+    scan = np.zeros((2, 3), dtype=np.float32)
+    result = ScreeningResult(
+        scan,
+        scan,
+        scan,
+        scan,
+        scan,
+        scan,
+        (1.0, 2.0),
+        3.0,
+        4.0,
+        False,
+        {},
+        None,
+        False,
+        5.0,
+    )
+
+    assert result.elapsed_s == 5.0
+    assert result.total_intensity is None
+    assert result.annular_bright_field is None
+    assert result.annular_dark_field is None
 
 
 def test_screening_cache_path_tracks_exact_cache_version(tmp_path) -> None:
@@ -621,6 +726,40 @@ def test_cuda_screening_com_uses_exact_uint64_moments() -> None:
         column,
         np.asarray([0.0, 5.0], dtype=np.float32),
     )
+
+
+def test_cuda_screening_maps_all_fused_exact_products_without_conversion() -> None:
+    """The fused product-major contract must preserve order and uint64 range."""
+
+    from quantem.gpu.screening._cuda import _screening_product_views
+
+    exact = np.arange(28, dtype=np.uint64).reshape(7, 4)
+    exact[0, 0] = np.iinfo(np.uint64).max
+
+    products = _screening_product_views(exact, (2, 2))
+
+    expected_names = (
+        "total_intensity",
+        "detector_row_moment",
+        "detector_column_moment",
+        "bright_field",
+        "annular_bright_field",
+        "annular_dark_field",
+        "dark_field",
+    )
+    assert tuple(products) == expected_names
+    for index, name in enumerate(expected_names):
+        assert products[name].dtype == np.uint64
+        np.testing.assert_array_equal(products[name], exact[index].reshape(2, 2))
+
+
+def test_cuda_screening_product_mapping_fails_closed_on_dtype_or_shape() -> None:
+    from quantem.gpu.screening._cuda import _screening_product_views
+
+    with pytest.raises(TypeError, match="must use uint64"):
+        _screening_product_views(np.zeros((7, 4), dtype=np.float32), (2, 2))
+    with pytest.raises(ValueError, match="expected"):
+        _screening_product_views(np.zeros((7, 3), dtype=np.uint64), (2, 2))
 
 
 def test_cuda_mask_guard_correction_matches_authoritative_integer_sums() -> None:
