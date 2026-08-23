@@ -85,13 +85,22 @@ def _parse_args() -> argparse.Namespace:
         required=True,
     )
     parser.add_argument("--reference-npz", type=Path, required=True)
+    parser.add_argument(
+        "--reference-sha256",
+        required=True,
+        help="SHA-256 of the independently sealed reference NPZ.",
+    )
     parser.add_argument("--scan-shape", type=_parse_shape, required=True)
     parser.add_argument("--source-detector-shape", type=_parse_shape, required=True)
     parser.add_argument("--working-detector-shape", type=_parse_shape, required=True)
     parser.add_argument("--source-dtype", required=True)
     parser.add_argument("--working-dtype", required=True)
     parser.add_argument("--source-value-maximum", type=int, required=True)
-    parser.add_argument("--source-value-maximum-basis", required=True)
+    parser.add_argument(
+        "--source-value-maximum-basis",
+        required=True,
+        help="SHA-256 of the sealed source-range audit.",
+    )
     parser.add_argument("--det-bin", type=int, required=True)
     parser.add_argument("--center-row", type=float, required=True)
     parser.add_argument("--center-column", type=float, required=True)
@@ -284,6 +293,12 @@ def _reference_bundle(
         raise ValueError(
             f"reference-npz must be an existing sealed bundle; got {args.reference_npz}"
         )
+    observed_bundle_sha256 = _file_sha256(args.reference_npz)
+    if observed_bundle_sha256 != args.reference_sha256:
+        raise ValueError(
+            "reference NPZ SHA-256 mismatch: "
+            f"expected {args.reference_sha256}, got {observed_bundle_sha256}"
+        )
     with np.load(args.reference_npz, allow_pickle=False) as bundle:
         required = {*ARRAY_PRODUCT_NAMES, "contract_json"}
         missing = required - set(bundle.files)
@@ -332,7 +347,9 @@ def _reference_bundle(
     reference = dict(arrays)
     evidence = {
         "schema": REFERENCE_SCHEMA,
-        "bundle_sha256": _file_sha256(args.reference_npz),
+        "expected_bundle_sha256": args.reference_sha256,
+        "bundle_sha256": observed_bundle_sha256,
+        "bundle_sha256_passed": True,
         "bundle_bytes": args.reference_npz.stat().st_size,
         "contract": metadata,
         "contract_sha256": _stable_json_sha256(metadata),
@@ -536,8 +553,6 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ValueError(
             f"bf-radius-pixels must be positive; got {args.bf_radius_pixels}"
         )
-    if not args.source_value_maximum_basis.strip():
-        raise ValueError("source-value-maximum-basis must identify a sealed audit")
     expected_source_shape = tuple(
         value * args.det_bin for value in args.working_detector_shape
     )
@@ -558,6 +573,12 @@ def _validate_args(args: argparse.Namespace) -> None:
         )
     args.source_sha256 = _validate_sha256(args.source_sha256, "source-sha256")
     assert args.source_sha256 is not None
+    args.reference_sha256 = _validate_sha256(args.reference_sha256, "reference-sha256")
+    assert args.reference_sha256 is not None
+    args.source_value_maximum_basis = _validate_sha256(
+        args.source_value_maximum_basis, "source-value-maximum-basis"
+    )
+    assert args.source_value_maximum_basis is not None
     args.expected_volume_sha256 = _validate_sha256(
         args.expected_volume_sha256, "expected-volume-sha256"
     )
