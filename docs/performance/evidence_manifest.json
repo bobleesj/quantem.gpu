@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_revision": "68dbe3aa5f816e2d1c1ae976e1874790cffb4319",
-  "source_revision_scope": "Latest clean canonical source/working metadata and cross-backend logical-pixel parity revision used by the current Python MPS and CPU rows. Native Swift/Metal rows remain bound to clean revision 5106ca4; every retained physical measurement keeps its own revision, fixture identity, cache state, and timing boundary.",
+  "source_revision_scope": "Latest clean canonical source/working metadata and cross-backend logical-pixel parity revision used by the current Python MPS and CPU rows. Native Swift/Metal rows remain bound to clean revision 5106ca4, and the current exact full-volume WebGPU smoke is bound to clean revision 34f0029; every retained physical measurement keeps its own revision, fixture identity, cache state, and timing boundary.",
   "purpose": "Fingerprints for the current benchmark dashboard, its authoritative registry and rendering inputs, provenance ledger, parity and methodology contracts, and canonical historical evidence. Landing, API, and backend capability pages intentionally do not duplicate measurements.",
   "pages": [
     {
@@ -108,12 +108,12 @@
   "authoritative_inputs": [
     {
       "path": "benchmarks/benchmark_registry.json",
-      "sha256": "02038c895b11b05201648e6c8594426222a06793911e1e40239ec0e2658f55ce",
+      "sha256": "c4853d03c12ccb74e5aa099379456e77269451fb865b3c665981708c0f2eb2b2",
       "role": "Atomic Platform, Computer, module, configuration, state, measurement, and runbook registry"
     },
     {
       "path": "docs/_generated/benchmark_coverage.md",
-      "sha256": "954da20e7ae8e61618c31f1c6505bda7372a673adf10435d8b82ce78f4633fc4",
+      "sha256": "3cf386a2bbc154caa1f1d182abd470c4bf7080aa8f0401b7a602b9a6b12377f1",
       "role": "Generated filterable coverage, retained-measurement, and runbook tables"
     },
     {
@@ -128,7 +128,7 @@
     },
     {
       "path": "experiments/20260822-platform-computer-profile/manifest.json",
-      "sha256": "8f1be9e155e19ca626114a8edd21a2c58567578a69baa0b3219c22be0fa969c5",
+      "sha256": "905fa48aa832bee03bfcc03fe0dad6573e24d5c006b01af27a048e68c184246f",
       "role": "Completed physical-device matrix ledger with accepted, partial, refuted, blocked, and pending atomic gates"
     }
   ]

@@ -180,6 +180,41 @@ def test_current_load_table_has_one_explicit_row_per_configuration() -> None:
     assert "~0.706 GiB" in section
 
 
+def test_current_webgpu_full_native_row_requires_complete_output_parity() -> None:
+    registry = _registry()
+    rows = {
+        row["measurement_id"]: row for row in resolved_measurements(registry)
+    }
+    current_id = (
+        "macbook-pro-m5-max-128gb-webgpu-fullnative-exact-smoke-34f0029"
+    )
+    historical_id = "macbook-pro-m5-max-128gb-webgpu-fullnative-load-single"
+
+    current = rows[current_id]
+    assert current["dashboard_current"] is True
+    assert current["state"] == "partial"
+    assert current["sample_count"] == 1
+    assert current["logical_resident_bytes"] == 19_327_352_832
+    assert current["process_tree_peak_is_lower_bound"] is True
+    assert current["source_revision"] == (
+        "34f0029c9fe3b92c2709283547301a91899e4d66"
+    )
+    assert "complete corrected 19,327,352,832-byte logical output" in current["parity"]
+    assert current["cold_claim"] is False
+
+    historical = rows[historical_id]
+    assert historical["state"] == "superseded"
+    assert historical["dashboard_current"] is False
+
+    gate = next(
+        gate
+        for gate in registry["gates"]
+        if gate["id"] == "io.webgpu.apple-m5-max-128gb.bin1.prepared"
+    )
+    assert gate["satisfied_by"] == [current_id]
+    assert "Repeat the exact full-volume production path" in gate["next_gate"]
+
+
 def test_load_matrix_tracks_every_compatible_platform_computer_pair() -> None:
     registry = _registry()
     bins_by_pair: dict[tuple[str, str], set[int]] = defaultdict(set)
