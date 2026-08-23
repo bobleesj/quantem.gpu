@@ -20,7 +20,7 @@ def test_profile_registry_validator_accepts_retained_evidence() -> None:
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "35 platform/module cells" in result.stdout
+    assert "40 platform/module cells" in result.stdout
     experiment_count = len(list(Path("experiments").glob("*/manifest.json")))
     assert f"{experiment_count} retained experiments" in result.stdout
 
@@ -29,7 +29,7 @@ def test_profile_matrix_has_one_atomic_cell_per_backend_capability() -> None:
     plan = json.loads(PROFILE_MATRIX.read_text(encoding="utf-8"))
     cells = plan["cells"]
 
-    assert len(cells) == 35
+    assert len(cells) == 40
     assert len({cell["id"] for cell in cells}) == len(cells)
     assert all(
         cell["id"] == f"{cell['capability']}::{cell['backend']}" for cell in cells
@@ -45,6 +45,11 @@ def test_profile_matrix_keeps_current_gaps_and_unsupported_paths_explicit() -> N
     assert cells["ssb.calibration-200-nelder-mead::mps"]["state"] == "evidence-gap"
     assert cells["ssb.object-phase-loss::swift-metal"]["state"] == "ready"
     assert cells["ssb.calibration-200-nelder-mead::swift-metal"]["state"] == "ready"
+    assert cells["io.selective-scan-loading::cpu-reference"]["state"] == "unsupported"
+    assert cells["io.selective-scan-loading::cuda"]["state"] == "evidence-gap"
+    assert cells["io.selective-scan-loading::mps"]["state"] == "evidence-gap"
+    assert cells["io.selective-scan-loading::swift-metal"]["state"] == "unsupported"
+    assert cells["io.selective-scan-loading::webgpu"]["state"] == "evidence-gap"
 
     for cell in cells.values():
         if cell["support_level"] == "not-implemented":

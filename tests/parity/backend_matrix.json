@@ -57,6 +57,170 @@
       }
     },
     {
+      "id": "io.selective-scan-loading",
+      "contract_version": "quantem-gpu-selective-scan/v1",
+      "public_owner": "quantem.gpu.io.load",
+      "parity": "Exact selected detector evidence with backend-neutral row/column selectors, request order, duplicates, dtype, shape, failure behavior, and provenance.",
+      "selectors": {
+        "mutually_exclusive": [
+          "scan_region",
+          "scan_indices",
+          "random_positions"
+        ],
+        "scan_region": {
+          "coordinates": [
+            "scan_row_start",
+            "scan_row_stop",
+            "scan_column_start",
+            "scan_column_stop"
+          ],
+          "interval": "half-open",
+          "bounds": "nonempty-and-contained-in-source-scan",
+          "output_order": "logical-row-major",
+          "output_shape": "(selected_scan_rows, selected_scan_columns, detector_rows, detector_columns)"
+        },
+        "scan_indices": {
+          "coordinate_forms": [
+            "logical-flat-row-major",
+            "ordered-(scan_row,scan_column)-pairs"
+          ],
+          "bounds": "nonempty-and-contained-in-source-scan",
+          "output_order": "request-order-preserved",
+          "duplicates": "preserved",
+          "output_shape": "(requested_positions, detector_rows, detector_columns)"
+        },
+        "random_positions": {
+          "index_space": "logical-row-major-scan",
+          "seed": "same-integer-seed-reproduces-selection",
+          "replace_default": false,
+          "replace_false": "unique-positions",
+          "replace_true": "duplicates-allowed",
+          "output_contract": "scan_indices"
+        }
+      },
+      "detector_region": {
+        "requires_selector": "scan_region",
+        "coordinates": [
+          "detector_row_start",
+          "detector_row_stop",
+          "detector_column_start",
+          "detector_column_stop"
+        ],
+        "interval": "half-open",
+        "bounds": "nonempty-and-contained-in-working-detector",
+        "application_order": "after-explicit-detector-bin",
+        "output_shape": "(selected_scan_rows, selected_scan_columns, selected_detector_rows, selected_detector_columns)"
+      },
+      "exact_result": {
+        "scan_bin": 1,
+        "counts": "unchanged-exact-integer-counts",
+        "detector_bin_1_dtype": "source-dtype-unless-caller-requests-a-proven-lossless-output-dtype",
+        "detector_bin_gt_1_dtype": "provably-sufficient-exact-integer-dtype",
+        "lossy_or_saturating_output": "outside-this-parity-contract",
+        "required_provenance": [
+          "source_identity",
+          "source_shape",
+          "source_dtype",
+          "scan_selector",
+          "selected_scan_positions",
+          "scan_region",
+          "detector_region",
+          "scan_order",
+          "scan_bin",
+          "detector_bin",
+          "output_shape",
+          "output_dtype",
+          "backend",
+          "device",
+          "source_revision"
+        ]
+      },
+      "failure_contract": {
+        "empty_selection": "error-before-decode",
+        "out_of_bounds": "error-before-decode",
+        "conflicting_selectors": "error-before-source-load",
+        "detector_region_without_scan_region": "error-before-source-load",
+        "unsupported_backend": "error-without-fallback"
+      },
+      "coverage": {
+        "cpu-reference": {
+          "level": "not-implemented",
+          "implemented_selectors": [],
+          "limitations": [
+            "public-io-load-selectors-rejected",
+            "reference-oracle-is-separate"
+          ],
+          "gates": [
+            "src/quantem/gpu/io/backends/cpu/reference.py",
+            "tests/io/test_load.py"
+          ]
+        },
+        "cuda": {
+          "level": "required",
+          "implemented_selectors": [
+            "scan_region",
+            "scan_indices",
+            "random_positions"
+          ],
+          "qualification": "source-and-portable-parity-implemented; physical-performance-and-complete-durable-provenance-pending",
+          "gates": [
+            "tests/io/test_load.py",
+            "tests/test_hdf5_real_agreement.py"
+          ]
+        },
+        "mps": {
+          "level": "required",
+          "implemented_selectors": [
+            "scan_region",
+            "scan_indices",
+            "random_positions"
+          ],
+          "qualification": "source-and-portable-parity-implemented; detector-bin-range-proof-physical-performance-and-complete-durable-provenance-pending",
+          "gates": [
+            "tests/io/test_load.py",
+            "tests/io/test_mps_buffer_release.py",
+            "tests/test_hdf5_real_agreement.py"
+          ]
+        },
+        "swift-metal": {
+          "level": "not-implemented",
+          "implemented_selectors": [],
+          "implemented_subset": [
+            "strict-half-open-rectangle-load-plan",
+            "single-position-indexed-accessor"
+          ],
+          "limitations": [
+            "no-bulk-rectangle-loader",
+            "no-ordered-duplicate-index-loader",
+            "no-random-position-loader",
+            "no-detector-region-selective-loader"
+          ],
+          "gates": [
+            "src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Metal4DSTEMLoadPlan.swift",
+            "src/quantem/gpu/swift/Sources/Native4DSTEMIO/Native4DSTEMIndexedSource.swift",
+            "src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/Metal4DSTEMIndexedLoader.swift"
+          ]
+        },
+        "webgpu": {
+          "level": "partial-hardware",
+          "implemented_selectors": [
+            "scan_region"
+          ],
+          "limitations": [
+            "bounds-round-and-clamp-instead-of-strict-rejection",
+            "no-ordered-duplicate-index-loader",
+            "no-random-position-loader",
+            "no-detector-region-selective-loader",
+            "whole-intersecting-files-read-before-selective-decode"
+          ],
+          "gates": [
+            "src/quantem/gpu/io/backends/webgpu/local-h5.ts",
+            "tests/test_webgpu_sources.py"
+          ]
+        }
+      }
+    },
+    {
       "id": "detector.integer-products",
       "parity": "Exact mean-DP integer accumulation and BF/ABF/ADF/DF sums using one mask definition.",
       "coverage": {
