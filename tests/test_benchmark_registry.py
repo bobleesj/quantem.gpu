@@ -434,6 +434,33 @@ def test_detector_product_matrix_tracks_each_platform_computer_and_bin() -> None
         assert bins_by_pair[("WebGPU", computer)] == {1, 2, 4, 8}
 
 
+def test_detector_product_rows_use_runtime_specific_reproduction_entrypoints() -> None:
+    registry = _registry()
+    gates = [
+        gate for gate in registry["gates"] if gate["module"] == "Detector products"
+    ]
+
+    for gate in gates:
+        expected = {
+            "CPU reference": "detector-product-profile",
+            "CUDA": "detector-product-profile",
+            "Python MPS": "detector-product-profile",
+            "Native Swift/Metal": "swift-indexed-load",
+            "WebGPU": "detector-product-parity",
+        }[gate["platform"]]
+        assert gate["runbook"] == expected
+
+    runbook = registry["runbooks"]["detector-product-profile"]
+    command = runbook["command"]
+    assert "scripts/benchmark_detector_products.py" in command
+    assert "--reference-sha256" in command
+    assert "--source-value-maximum-basis" in command
+    assert "--det-bin {detector_bin}" in command
+    assert "resident detector-product timing excludes source load" in runbook[
+        "promotion_boundary"
+    ].lower()
+
+
 def test_detector_product_matrix_promotes_only_complete_product_evidence() -> None:
     registry = _registry()
     gates = {
