@@ -9,12 +9,14 @@ import pytest
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
+from _webgpu_cdp import CdpTarget as CanonicalCdpTarget
 from benchmark_webgpu_h5_browser import (
     CdpTarget,
     _exact_run_evidence,
     _runtime_prelude,
     _summary,
 )
+from benchmark_webgpu_h5_product_browser import CdpTarget as ProductCdpTarget
 
 FULL_HASH = "a" * 64
 
@@ -233,3 +235,8 @@ def test_cdp_call_uses_the_declared_timeout_for_long_running_evidence() -> None:
     assert result == {"result": {"value": True}}
     assert target._ws.observed_timeouts[0] > 899
     assert target._ws.observed_timeouts[-1] == 20
+
+
+def test_webgpu_browser_runners_share_one_cdp_transport() -> None:
+    assert CdpTarget is CanonicalCdpTarget
+    assert ProductCdpTarget is CanonicalCdpTarget

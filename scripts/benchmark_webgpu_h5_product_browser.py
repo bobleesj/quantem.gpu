@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """Benchmark WebGPU product-first HDF5 virtual-image decode in Chrome."""
 
 from __future__ import annotations
@@ -7,12 +6,10 @@ import argparse
 import base64
 import json
 import time
-import urllib.parse
-import urllib.request
 from pathlib import Path
 from typing import Any
 
-import websocket
+from _webgpu_cdp import CdpTarget
 
 
 def _parse_args() -> argparse.Namespace:
@@ -50,56 +47,6 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--screenshot", type=Path)
     parser.add_argument("--json-out", type=Path)
     return parser.parse_args()
-
-
-def _http_json(cdp: str, method: str, path: str) -> dict[str, Any]:
-    request = urllib.request.Request(f"{cdp}{path}", method=method)
-    with urllib.request.urlopen(request, timeout=10) as response:
-        return json.loads(response.read().decode("utf-8"))
-
-
-class CdpTarget:
-    def __init__(self, cdp: str, url: str):
-        target = _http_json(cdp, "PUT", "/json/new?" + urllib.parse.quote(url, safe=""))
-        self.target_id = str(target["id"])
-        self._ws = websocket.create_connection(target["webSocketDebuggerUrl"], timeout=20)
-        self._next_id = 0
-
-    def call(self, method: str, params: dict[str, Any] | None = None, timeout: float = 30) -> dict[str, Any]:
-        self._next_id += 1
-        msg_id = self._next_id
-        self._ws.send(json.dumps({"id": msg_id, "method": method, "params": params or {}}))
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            message = json.loads(self._ws.recv())
-            if message.get("id") != msg_id:
-                continue
-            if "error" in message:
-                raise RuntimeError(f"{method}: {message['error']}")
-            return message.get("result", {})
-        raise TimeoutError(method)
-
-    def eval(self, expression: str, *, timeout: float = 30, await_promise: bool = False) -> Any:
-        result = self.call(
-            "Runtime.evaluate",
-            {
-                "expression": expression,
-                "returnByValue": True,
-                "awaitPromise": await_promise,
-            },
-            timeout=timeout,
-        )
-        value = result.get("result", {})
-        if value.get("subtype") == "error":
-            raise RuntimeError(value)
-        return value.get("value")
-
-    def close(self, cdp: str) -> None:
-        try:
-            self.call("Target.closeTarget", {"targetId": self.target_id}, timeout=5)
-        except Exception:
-            pass
-        self._ws.close()
 
 
 def _prelude(args: argparse.Namespace) -> str:
@@ -301,7 +248,7 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
             args.screenshot.write_bytes(base64.b64decode(png))
         return {"wallMs": round((time.perf_counter() - wall0) * 1000), "profile": state}
     finally:
-        target.close(args.cdp)
+        target.close()
 
 
 def main() -> None:

@@ -17,12 +17,11 @@ import re
 import statistics
 import time
 import urllib.parse
-import urllib.request
 from pathlib import Path
 from typing import Any
 
-import websocket
 from _benchmark_support import LOGICAL_PIXEL_AXIS_ORDER, LOGICAL_PIXEL_HASH_SCHEMA
+from _webgpu_cdp import CdpTarget
 
 
 def _parse_resident_shape(text: str) -> tuple[int, int, int, int]:
@@ -366,67 +365,6 @@ def _exact_run_evidence(
     if errors:
         raise RuntimeError("; ".join(errors))
     return evidence
-
-
-def _http_json(cdp: str, method: str, path: str) -> dict[str, Any]:
-    request = urllib.request.Request(f"{cdp}{path}", method=method)
-    with urllib.request.urlopen(request, timeout=10) as response:
-        return json.loads(response.read().decode("utf-8"))
-
-
-class CdpTarget:
-    def __init__(self, cdp: str, url: str):
-        target = _http_json(cdp, "PUT", "/json/new?" + urllib.parse.quote(url, safe=""))
-        self.target_id = str(target["id"])
-        self._ws = websocket.create_connection(target["webSocketDebuggerUrl"], timeout=20)
-        self._next_id = 0
-
-    def call(self, method: str, params: dict[str, Any] | None = None, timeout: float = 30) -> dict[str, Any]:
-        self._next_id += 1
-        msg_id = self._next_id
-        self._ws.send(json.dumps({"id": msg_id, "method": method, "params": params or {}}))
-        deadline = time.time() + timeout
-        previous_timeout = self._ws.gettimeout()
-        try:
-            while True:
-                remaining = deadline - time.time()
-                if remaining <= 0:
-                    raise TimeoutError(method)
-                self._ws.settimeout(remaining)
-                try:
-                    message = json.loads(self._ws.recv())
-                except websocket.WebSocketTimeoutException as error:
-                    raise TimeoutError(method) from error
-                if message.get("id") != msg_id:
-                    continue
-                if "error" in message:
-                    raise RuntimeError(f"{method}: {message['error']}")
-                return message.get("result", {})
-        finally:
-            self._ws.settimeout(previous_timeout)
-
-    def eval(self, expression: str, *, timeout: float = 30, await_promise: bool = False) -> Any:
-        result = self.call(
-            "Runtime.evaluate",
-            {
-                "expression": expression,
-                "returnByValue": True,
-                "awaitPromise": await_promise,
-            },
-            timeout=timeout,
-        )
-        value = result.get("result", {})
-        if value.get("subtype") == "error":
-            raise RuntimeError(value)
-        return value.get("value")
-
-    def close(self, cdp: str) -> None:
-        try:
-            self.call("Target.closeTarget", {"targetId": self.target_id}, timeout=5)
-        except (OSError, RuntimeError, TimeoutError, websocket.WebSocketException):
-            self._ws.close()
-            return
-        self._ws.close()
 
 
 def _decode_dtype_override(args: argparse.Namespace) -> str | None:
@@ -881,7 +819,7 @@ def _run_one(
             "dpc": dpc,
         }
     finally:
-        target.close(args.cdp)
+        target.close()
 
 
 def main() -> None:

@@ -186,7 +186,8 @@ function bytesPerPixel(dtype: LogicalPixelDtype): number {
   return 4;
 }
 
-function correctedLogicalBytes(
+/** @internal Pure correction seam used by the streaming hash and its oracle tests. */
+export function correctedLogicalBytesForHash(
   bytes: Uint8Array,
   logicalBytes: number,
   firstPixel: number,
@@ -194,6 +195,30 @@ function correctedLogicalBytes(
   pixelBytes: number,
   badPixels: readonly number[],
 ): Uint8Array {
+  if (!Number.isSafeInteger(logicalBytes) || logicalBytes < 0 || logicalBytes > bytes.byteLength) {
+    throw new Error(
+      `Logical byte count must be an integer in [0, ${bytes.byteLength}]; got ${logicalBytes}.`,
+    );
+  }
+  if (!Number.isSafeInteger(firstPixel) || firstPixel < 0) {
+    throw new Error(`First logical pixel must be a non-negative integer; got ${firstPixel}.`);
+  }
+  if (!Number.isSafeInteger(detectorSize) || detectorSize <= 0) {
+    throw new Error(`Detector size must be a positive integer; got ${detectorSize}.`);
+  }
+  if (![1, 2, 4].includes(pixelBytes) || logicalBytes % pixelBytes !== 0) {
+    throw new Error(
+      `Logical bytes ${logicalBytes} must contain complete 1-, 2-, or 4-byte pixels; got ${pixelBytes}.`,
+    );
+  }
+  const invalidBadPixel = badPixels.find(
+    (pixel) => !Number.isSafeInteger(pixel) || pixel < 0 || pixel >= detectorSize,
+  );
+  if (invalidBadPixel !== undefined) {
+    throw new Error(
+      `Bad-pixel index must be in [0, ${detectorSize}); got ${invalidBadPixel}.`,
+    );
+  }
   if (badPixels.length === 0) return bytes.subarray(0, logicalBytes);
   const corrected = bytes.slice(0, logicalBytes);
   const firstFrame = Math.floor(firstPixel / detectorSize);
@@ -284,7 +309,7 @@ export async function hashGpuResidentLogicalPixels(
         mapped = true;
         const bytes = new Uint8Array(readback.getMappedRange(0, alignedCopyBytes));
         const firstPixel = chunk.startScan * detectorSize + sourceOffset / pixelBytes;
-        digest.update(correctedLogicalBytes(
+        digest.update(correctedLogicalBytesForHash(
           bytes,
           logicalCopyBytes,
           firstPixel,
