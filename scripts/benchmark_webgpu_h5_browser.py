@@ -304,6 +304,15 @@ def _exact_run_evidence(
     logical_pixel_hash_schema = profile.get("logicalPixelHashSchema")
     full_output_hash_state = profile.get("fullOutputHashState")
     full_output_hash_domain = profile.get("fullOutputHashDomain")
+    full_output_parity = None
+    if args.expected_full_output_sha256 is not None:
+        full_output_parity = (
+            full_output_hash_state == "complete"
+            and full_output_hash_domain == "corrected-logical-pixels"
+            and logical_pixel_hash_schema == LOGICAL_PIXEL_HASH_SCHEMA
+            and isinstance(full_output_sha256, str)
+            and full_output_sha256.lower() == args.expected_full_output_sha256
+        )
     if args.require_full_output_parity:
         if args.expected_full_output_sha256 is None:
             errors.append("required full-output SHA-256 reference is missing")
@@ -351,7 +360,12 @@ def _exact_run_evidence(
         "fullOutputHashError": profile.get("fullOutputHashError"),
         "fullOutputHashMs": profile.get("fullOutputHashMs"),
         "fullOutputHashBytes": profile.get("fullOutputHashBytes"),
-        "fullOutputHashReadbackBytes": profile.get("fullOutputHashReadbackBytes"),
+        "fullOutputHashTransferredBytes": profile.get(
+            "fullOutputHashTransferredBytes"
+        ),
+        "fullOutputHashReadbackBufferBytes": profile.get(
+            "fullOutputHashReadbackBufferBytes"
+        ),
         "fullOutputHashBadPixels": profile.get("fullOutputHashBadPixels"),
         "fullOutputHashDomain": full_output_hash_domain,
         "logicalPixelHashSchema": logical_pixel_hash_schema,
@@ -359,6 +373,7 @@ def _exact_run_evidence(
         "logicalPixelByteOrder": "little_endian",
         "fullOutputSha256": full_output_sha256,
         "expectedFullOutputSha256": args.expected_full_output_sha256,
+        "fullOutputParity": full_output_parity,
         "passed": not errors,
         "errors": errors,
     }
@@ -474,7 +489,24 @@ def _summary(runs: list[dict[str, Any]]) -> dict[str, Any]:
     evidence_walls = [
         int(run.get("evidenceWallMs", run["wallMs"])) for run in runs
     ]
-    parity = [run["parity"] for run in runs if isinstance(run.get("parity"), bool)]
+    sampled_parity = [
+        run["parity"] for run in runs if isinstance(run.get("parity"), bool)
+    ]
+    full_output_parity = [
+        run["exactEvidence"]["fullOutputParity"]
+        for run in runs
+        if isinstance(
+            (run.get("exactEvidence") or {}).get("fullOutputParity"), bool
+        )
+    ]
+    combined_parity = []
+    for run in runs:
+        exact = (run.get("exactEvidence") or {}).get("passed")
+        sampled = run.get("parity")
+        if isinstance(exact, bool):
+            combined_parity.append(exact)
+        elif isinstance(sampled, bool):
+            combined_parity.append(sampled)
 
     def nearest_rank(values: list[int], probability: float) -> int:
         ordered = sorted(values)
@@ -484,8 +516,14 @@ def _summary(runs: list[dict[str, Any]]) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "n": len(runs),
         "percentileMethod": "nearest-rank",
-        "parityChecked": len(parity) == len(runs),
-        "allParity": all(parity) if parity else None,
+        "parityChecked": len(combined_parity) == len(runs),
+        "allParity": all(combined_parity) if combined_parity else None,
+        "sampledFrameParityChecked": len(sampled_parity) == len(runs),
+        "allSampledFrameParity": all(sampled_parity) if sampled_parity else None,
+        "fullOutputParityChecked": len(full_output_parity) == len(runs),
+        "allFullOutputParity": (
+            all(full_output_parity) if full_output_parity else None
+        ),
         "totalProfileMsSum": sum(totals),
         "totalProfileMsMedian": statistics.median(totals),
         "totalProfileMsP50": nearest_rank(totals, 0.50),
