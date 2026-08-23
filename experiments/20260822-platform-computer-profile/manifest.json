@@ -16,6 +16,8 @@
     "benchmarked_source_revisions": [
       "5106ca48349231549c440b40609983fd3a8dacda",
       "68dbe3aa5f816e2d1c1ae976e1874790cffb4319",
+      "75be74e899186dfb86f08f0c591de8c65f0c5e53",
+      "b8df61b55920cb098e2848301f6d30c45870511d",
       "34f0029c9fe3b92c2709283547301a91899e4d66",
       "d8e6f562a8ab43086a4ddea9eecfe6fd26b7beea"
     ],
@@ -448,6 +450,42 @@
       "artifact": "private-evidence://macbook-pro-m5-max-128gb/20260822-webgpu-m5max-products-d8e6f56-01/SHA256SUMS",
       "sha256": "215dfdd3545b77e1df9826d6be2db091f1192f28b92aefab99b315989d924960",
       "result": "Immutable checksum inventory for the physical full-native WebGPU product campaign, including raw trials, parity references, memory telemetry, failed-oracle smoke, and final idle audit."
+    },
+    {
+      "id": "m5-max-128gb-python-mps-fullnative-products-smoke-b8df61b",
+      "artifact": "private-evidence://macbook-pro-m5-max-128gb/20260822-python-mps-m5max-128gb-products-bin1-b8df61b-01/manifest.json",
+      "sha256": "25b697297937f4f0c38b5e8697651232175cfc71a4895328fad8d79eebd9030a",
+      "result": "One physical Python MPS full-native detector-product smoke at clean b8df61b. The exact resident volume, mean DP, total, BF, ABF, ADF, DF, CoM, rotation, and aligned DPC passed; iDPC and the independently timed MPS FFT exceeded their frozen tolerances. Five pageouts and one sample prohibit distribution promotion."
+    },
+    {
+      "id": "m5-max-128gb-python-mps-fullnative-products-smoke-seal-b8df61b",
+      "artifact": "private-evidence://macbook-pro-m5-max-128gb/20260822-python-mps-m5max-128gb-products-bin1-b8df61b-01/SHA256SUMS",
+      "sha256": "cec197f9a5ad6347335b4a6f155da5b616a40111202653c2458f8d925eb57f9b",
+      "result": "Immutable checksum inventory for the physical Python MPS full-native product smoke, including parity references, timing diagnostics, memory telemetry, and the final device audit."
+    },
+    {
+      "id": "m5-24gb-python-mps-products-bin2-contention-preflight-68dbe3a",
+      "artifact": "private-evidence://macbook-pro-m5-24gb/20260823-python-mps-products-bin2-preflight-68dbe3a-02/SUMMARY.md",
+      "sha256": "188d9f87cb78a20dbe96a2ae092eda19f763287ac3cec29320d3e4cc3de6d16e",
+      "result": "Blocked before source open or GPU allocation: active Screen Sharing and WindowServer contention plus 2,927.75 MiB pre-existing swap made the physical lane ineligible. No timing, parity, or memory result was promoted."
+    },
+    {
+      "id": "m5-24gb-python-mps-products-bin2-contention-preflight-seal-68dbe3a",
+      "artifact": "private-evidence://macbook-pro-m5-24gb/20260823-python-mps-products-bin2-preflight-68dbe3a-02/FINAL-SHA256SUMS",
+      "sha256": "f3fbe9ad655682a3dba35b09d7919eca1ea519a9a71dff45b4218828f54dd95d",
+      "result": "Immutable checksum inventory for the preflight-only physical-device audit; the source and accelerator remained untouched."
+    },
+    {
+      "id": "linux-cuda-current-source-and-ownership-audit-75be74e",
+      "artifact": "private-evidence://linux-cuda-workstation/20260822-cuda-current-audit-75be74e-01/MANIFEST.json",
+      "sha256": "86a1df00bb53abef26a6713fb6e11b33158b62220dc5613408e4dcd2d341cc13",
+      "result": "Read-only current-source and ownership audit. No CUDA context was created because both devices retained preserved owners. Source tests passed, historical source-equivalent screening evidence was reconciled, and the missing public total/ABF/ADF result fields were identified without promoting current-head timing."
+    },
+    {
+      "id": "linux-cuda-current-source-and-ownership-audit-seal-75be74e",
+      "artifact": "private-evidence://linux-cuda-workstation/20260822-cuda-current-audit-75be74e-01/SHA256SUMS",
+      "sha256": "6fd7861f7bea19a4c243d9c8a63907538dc6a6e1bd242e2f2c20efadcfcb7724",
+      "result": "Immutable checksum inventory for the CUDA source and ownership audit; no fixture, service, checkout, or GPU owner was changed."
     }
   ],
   "results": {
@@ -542,6 +580,65 @@
       "cold_claim": false,
       "state": "accepted physical full-precision product evidence",
       "remaining_gate": "Cold original-source and application-E2E load-plus-product timing remain separate; WebGPU device-allocation telemetry is unavailable in this browser runtime."
+    },
+    "macbook_pro_m5_max_128gb_python_mps_fullnative_products_smoke_b8df61b": {
+      "source_revision": "b8df61b55920cb098e2848301f6d30c45870511d",
+      "fixture_id": "real-512x512x192x192-u16-bslz4-27shard-master-fixture-c",
+      "fixture_sha256": "c9c0d968fae70b8911ae925d676b90007886970fa99fe296a47cfe07844bbfe9",
+      "source_identity_sha256": "9f0ddb932c631b63cb573c38d747fa41941ee585c5389d33bdafb4add962b768",
+      "source_shape": [512, 512, 192, 192],
+      "working_shape": [512, 512, 192, 192],
+      "source_dtype": "uint16",
+      "working_dtype": "uint16",
+      "scan_bin": 1,
+      "detector_bin": 1,
+      "scan_crop": null,
+      "detector_crop": null,
+      "sample_count": 1,
+      "resident_suite_wall_seconds": 1.039591,
+      "detector_product_seconds": 0.4999087090836838,
+      "dpc_pipeline_seconds": 0.15902245801407844,
+      "mps_fft_first_execution_seconds": 0.29135033406782895,
+      "logical_resident_bytes": 19327352832,
+      "mps_driver_allocated_peak_bytes": 29538418688,
+      "process_peak_rss_bytes": 21943271424,
+      "process_peak_physical_footprint_bytes": 30065328016,
+      "swapout_delta_pages": 0,
+      "pageout_delta_pages": 5,
+      "cache_state": "exact resident detector-bin-1 MPS input; source pages uncontrolled or warm; no prepared product result",
+      "timing_boundary": "single first-execution resident-product diagnostic with explicit MPS synchronization; independent reference, hashes, release, and application E2E excluded",
+      "parity": "Mean DP, total, BF, ABF, ADF, DF, CoM, rotation, and aligned DPC passed. iDPC maximum absolute error 2.980232e-5 exceeded the frozen 2e-5 gate. FFT maximum absolute error 1.354218e-3 and normalized maximum error 8.148040e-5 exceeded the frozen 2e-4 and 2e-6 gates.",
+      "timing_promoted": false,
+      "cold_claim": false,
+      "state": "partial detector-product evidence; iDPC and FFT refuted"
+    },
+    "macbook_pro_m5_24gb_python_mps_products_bin2_contention_preflight_68dbe3a": {
+      "source_revision": "68dbe3aa5f816e2d1c1ae976e1874790cffb4319",
+      "configuration": "full scan; scan bin 1; exact detector sum-bin 2; no crop; uint16 working volume",
+      "logical_resident_bytes": 4831838208,
+      "hardware_execution": false,
+      "source_opened": false,
+      "accelerator_allocation_created": false,
+      "memory_free_percent": 82,
+      "preexisting_swap_bytes": 3078352896,
+      "blocking_processes": "Screen Sharing and sustained WindowServer activity",
+      "state": "blocked before load",
+      "timing_promoted": false,
+      "cold_claim": false
+    },
+    "linux_cuda_current_source_and_ownership_audit_75be74e": {
+      "source_revision": "75be74e899186dfb86f08f0c591de8c65f0c5e53",
+      "hardware_execution": false,
+      "cuda_context_created": false,
+      "current_head_physically_retimed": false,
+      "source_test_results": "22 selective tests passed; 39 CPU/source product tests passed with 3 explicit skips; broader hidden CUDA collection had 6 no-device guard failures",
+      "retained_source_equivalent_screening_wall_p50_seconds": 1.5465799048542976,
+      "retained_source_equivalent_prepared_reopen_p50_seconds": 0.005599196068942547,
+      "retained_timing_classification": "historical accepted source-equivalent evidence; not current-head, cold-source, service, or application timing",
+      "source_gap": "The fused reduction already computes exact total, ABF, and ADF, but the public ScreeningResult and retained harness did not expose them.",
+      "state": "blocked before CUDA context; source API gap identified",
+      "timing_promoted": false,
+      "cold_claim": false
     },
     "macbook_pro_m5_24gb_python_mps_products_bin2_smoke_68dbe3a": {
       "source_revision": "68dbe3aa5f816e2d1c1ae976e1874790cffb4319",
@@ -1158,6 +1255,6 @@
     "created": "2026-08-22T13:33:04-07:00",
     "started": "2026-08-22T13:33:04-07:00",
     "finished": "2026-08-22T15:57:42-07:00",
-    "last_updated": "2026-08-22T18:01:16-07:00"
+    "last_updated": "2026-08-22T18:27:31-07:00"
   }
 }
