@@ -828,6 +828,121 @@ def _dtype_residency_rows(registry: dict[str, Any]) -> list[list[Any]]:
     return rows
 
 
+def _detector_product_rows(registry: dict[str, Any]) -> list[list[Any]]:
+    """Render one detector-product row per platform, computer, and bin.
+
+    A partial gate may point at useful diagnostic evidence, but its timing is
+    intentionally hidden.  Distribution timings are shown only when both the
+    gate and its retained measurement are fully measured.
+    """
+
+    measurements = {
+        measurement["measurement_id"]: measurement
+        for measurement in resolved_measurements(registry)
+    }
+    gates = [
+        gate
+        for gate in resolved_gates(registry)
+        if gate["module"] == "Detector products"
+    ]
+    rows: list[list[Any]] = []
+    for gate in sorted(
+        gates,
+        key=lambda item: (
+            *_platform_sort_key(item["platform"]),
+            item["computer"],
+            int(item.get("detector_bin") or 0),
+            item["id"],
+        ),
+    ):
+        evidence = next(
+            (
+                measurements[measurement_id]
+                for measurement_id in gate.get("satisfied_by", [])
+                if measurement_id in measurements
+            ),
+            {},
+        )
+        timing_is_qualified = (
+            gate["state"] == "measured" and evidence.get("state") == "measured"
+        )
+        revision = evidence.get("source_revision")
+        accelerator_peak = evidence.get("accelerator_peak_bytes")
+        if accelerator_peak is None:
+            accelerator_peak = evidence.get("driver_allocated_after_load_bytes")
+        if evidence:
+            parity = _parity_label(evidence.get("parity"))
+        elif gate["state"] == "unsupported":
+            parity = "Not applicable"
+        elif gate["state"] == "blocked":
+            parity = "Not run"
+        else:
+            parity = "Pending"
+        reason = gate.get("reason")
+        next_gate = gate.get("next_gate")
+        if reason and next_gate:
+            next_gate_or_reason = f"{reason} Next: {next_gate}"
+        else:
+            next_gate_or_reason = next_gate or reason
+        rows.append(
+            [
+                gate["platform"],
+                gate["computer"],
+                STATE_LABELS[gate["state"]],
+                _shape(
+                    gate.get("selected_scan_rows"),
+                    gate.get("selected_scan_columns"),
+                ),
+                _shape(
+                    gate.get("source_detector_rows"),
+                    gate.get("source_detector_columns"),
+                ),
+                gate.get("detector_bin"),
+                _shape(
+                    gate.get("output_detector_rows"),
+                    gate.get("output_detector_columns"),
+                ),
+                gate.get("resident_dtype", gate.get("working_dtype")),
+                evidence.get("cache_state", gate.get("cache_state")),
+                evidence.get("timing_boundary", gate.get("timing_boundary")),
+                evidence.get("sample_count"),
+                (
+                    _seconds(evidence.get("p50_seconds"))
+                    if timing_is_qualified
+                    else "n/a"
+                ),
+                (
+                    _seconds(evidence.get("p95_seconds"))
+                    if timing_is_qualified
+                    else "n/a"
+                ),
+                (
+                    _seconds(evidence.get("max_seconds"))
+                    if timing_is_qualified
+                    else "n/a"
+                ),
+                _bytes(evidence.get("logical_resident_bytes")),
+                _bytes(accelerator_peak),
+                _bytes(
+                    evidence.get("process_tree_peak_bytes"),
+                    lower_bound=bool(
+                        evidence.get("process_tree_peak_is_lower_bound")
+                    ),
+                ),
+                _bytes(
+                    evidence.get("swap_delta_bytes"),
+                    approximate=bool(evidence.get("swap_delta_approximate")),
+                ),
+                parity,
+                evidence.get("device"),
+                evidence.get("tested_date"),
+                f"`{revision}`" if revision else None,
+                next_gate_or_reason,
+            ]
+        )
+    return rows
+
+
 def _measurement_rows(registry: dict[str, Any]) -> list[list[Any]]:
     rows: list[list[Any]] = []
     for item in sorted(
@@ -1057,6 +1172,43 @@ def render_document(registry: dict[str, Any]) -> str:
         ),
         "",
         "<!-- benchmark-dtype-residency-end -->",
+        "",
+        "## Detector-product coverage",
+        "",
+        "<!-- benchmark-detector-products-start -->",
+        "",
+        "Each row fixes one platform, reproducible computer, detector bin, and exact product-suite boundary. Partial diagnostics retain their sample and memory context, but only fully measured gates display p50, p95, and maximum timing.",
+        "",
+        _markdown_table(
+            [
+                "Platform",
+                "Computer",
+                "State",
+                "Selected scan",
+                "Source detector",
+                "Detector bin",
+                "Output detector",
+                "Resident dtype",
+                "Cache/process state",
+                "Wall boundary",
+                "Samples",
+                "p50",
+                "p95",
+                "Maximum",
+                "Logical resident",
+                "Accelerator/driver peak",
+                "Process/tree peak",
+                "Swap delta",
+                "Parity",
+                "Device tested",
+                "Date tested",
+                "Revision",
+                "Next gate or reason",
+            ],
+            _detector_product_rows(registry),
+        ),
+        "",
+        "<!-- benchmark-detector-products-end -->",
         "",
         "## Coverage summary",
         "",

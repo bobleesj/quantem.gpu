@@ -328,6 +328,26 @@ remain in the provenance ledger.
 
 ### Virtual images — `quantem.gpu.detector`
 
+#### Complete platform, computer, and detector-bin matrix
+
+The registry keeps one row per exact product configuration instead of hiding
+an unrun combination. Use the **Platform**, **Computer**, **State**, and
+**Detector bin** filters to isolate the implementation or physical computer
+you care about. A pending, blocked, or unsupported row is intentionally
+visible; only a measured row publishes a timing distribution.
+
+The 8 GB MacBook Air detector-bin-2 row is the locked downstream acceptance
+configuration. Detector bins 4 and 8 remain separate library-capability cells,
+not silent application fallbacks. Detector bin 1 is explicitly blocked where
+its 18 GiB exact resident input cannot be admitted.
+
+```{include} _generated/benchmark_coverage.md
+:start-after: <!-- benchmark-detector-products-start -->
+:end-before: <!-- benchmark-detector-products-end -->
+```
+
+#### Retained operation-level timings
+
 | Platform | Computer | Operation | Scan grid | Detector | Detector bin | Input state | Statistic | Time | Device tested | Date tested |
 |---|---|---|---:|---:|---:|---|---|---:|---|---|
 | **CUDA** | Linux CUDA workstation (dual 96 GB Blackwell GPUs) | Mean diffraction | `512x512` | `192x192` | 1 | Warm resident | p50 | **18.392 ms** | NVIDIA RTX PRO 6000 Blackwell Max-Q, GPU 1 | 2026-08-19 |

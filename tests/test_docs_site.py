@@ -567,6 +567,53 @@ def test_platform_first_io_tables_expose_current_bins_devices_and_dates() -> Non
     assert "Device tested" not in intro
 
 
+def test_dashboard_exposes_filterable_detector_product_matrix() -> None:
+    dashboard = Path("docs/dashboard.md").read_text(encoding="utf-8")
+    generated = Path("docs/_generated/benchmark_coverage.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "#### Complete platform, computer, and detector-bin matrix" in dashboard
+    assert ":start-after: <!-- benchmark-detector-products-start -->" in dashboard
+    assert ":end-before: <!-- benchmark-detector-products-end -->" in dashboard
+    section = generated.split(
+        "<!-- benchmark-detector-products-start -->", 1
+    )[1].split("<!-- benchmark-detector-products-end -->", 1)[0]
+    lines = [line for line in section.splitlines() if line.startswith("|")]
+    headers = [cell.strip() for cell in lines[0].strip("|").split("|")]
+    rows = [
+        [cell.strip() for cell in line.strip("|").split("|")]
+        for line in lines[2:]
+    ]
+
+    assert headers[:3] == ["Platform", "Computer", "State"]
+    assert "Detector bin" in headers
+    assert "Accelerator/driver peak" in headers
+    assert "Process/tree peak" in headers
+    assert "Date tested" in headers
+    assert len(rows) == 60
+    assert all(row[0] and row[1] for row in rows)
+    assert not re.search(
+        r"\b(?:phil|mjgoat|rodman|steve[ -]?kerr)\b",
+        section,
+        flags=re.IGNORECASE,
+    )
+    assert any(
+        row[0] == "Native Swift/Metal"
+        and row[1] == "MacBook Pro (M5 Max, 128 GB)"
+        and row[2] == "✓ Measured"
+        and row[headers.index("Detector bin")] == "2"
+        for row in rows
+    )
+    assert any(
+        row[0] == "WebGPU"
+        and row[1] == "MacBook Air (M2, 8 GB)"
+        and row[2] == "! Blocked"
+        and row[headers.index("Detector bin")] == "4"
+        for row in rows
+    )
+
+
 def test_public_docs_use_hardware_names_not_local_host_nicknames() -> None:
     nickname = re.compile(
         r"\b(?:phil|mjgoat|rodman|steve[ -]?kerr)\b",
