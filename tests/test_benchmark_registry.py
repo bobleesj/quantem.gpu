@@ -185,26 +185,31 @@ def test_current_webgpu_full_native_row_requires_complete_output_parity() -> Non
     rows = {
         row["measurement_id"]: row for row in resolved_measurements(registry)
     }
-    current_id = (
-        "macbook-pro-m5-max-128gb-webgpu-fullnative-exact-smoke-34f0029"
+    current_id = "macbook-pro-m5-max-128gb-webgpu-fullnative-exact-r7-d8e6f56"
+    historical_ids = (
+        "macbook-pro-m5-max-128gb-webgpu-fullnative-load-single",
+        "macbook-pro-m5-max-128gb-webgpu-fullnative-exact-smoke-34f0029",
     )
-    historical_id = "macbook-pro-m5-max-128gb-webgpu-fullnative-load-single"
 
     current = rows[current_id]
     assert current["dashboard_current"] is True
     assert current["state"] == "partial"
-    assert current["sample_count"] == 1
+    assert current["sample_count"] == 7
     assert current["logical_resident_bytes"] == 19_327_352_832
-    assert current["process_tree_peak_is_lower_bound"] is True
+    assert current["process_tree_peak_bytes"] == 6_979_485_696
+    assert current.get("process_tree_peak_is_lower_bound") is not True
     assert current["source_revision"] == (
-        "34f0029c9fe3b92c2709283547301a91899e4d66"
+        "d8e6f562a8ab43086a4ddea9eecfe6fd26b7beea"
     )
-    assert "complete corrected 19,327,352,832-byte logical output" in current["parity"]
+    assert "all seven retained runs" in current["parity"]
+    assert current["profile_min_seconds"] == 0.975
+    assert current["p50_seconds"] == 1.358
     assert current["cold_claim"] is False
 
-    historical = rows[historical_id]
-    assert historical["state"] == "superseded"
-    assert historical["dashboard_current"] is False
+    for historical_id in historical_ids:
+        historical = rows[historical_id]
+        assert historical["state"] == "superseded"
+        assert historical["dashboard_current"] is False
 
     gate = next(
         gate
@@ -212,7 +217,9 @@ def test_current_webgpu_full_native_row_requires_complete_output_parity() -> Non
         if gate["id"] == "io.webgpu.apple-m5-max-128gb.bin1.prepared"
     )
     assert gate["satisfied_by"] == [current_id]
-    assert "Repeat the exact full-volume production path" in gate["next_gate"]
+    assert "Repeated harness wall is not yet at or below one second" in gate[
+        "next_gate"
+    ]
 
 
 def test_m5_24gb_mps_product_smoke_keeps_fft_failure_atomic() -> None:

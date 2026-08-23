@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_revision": "68dbe3aa5f816e2d1c1ae976e1874790cffb4319",
-  "source_revision_scope": "Latest clean canonical source/working metadata and cross-backend logical-pixel parity revision used by the current Python MPS and CPU rows. Native Swift/Metal rows remain bound to clean revision 5106ca4, and the current exact full-volume WebGPU smoke is bound to clean revision 34f0029; every retained physical measurement keeps its own revision, fixture identity, cache state, and timing boundary.",
+  "source_revision_scope": "Latest clean canonical source/working metadata and cross-backend logical-pixel parity revision used by the current Python MPS and CPU rows. Native Swift/Metal rows remain bound to clean revision 5106ca4, and the current exact full-volume WebGPU distribution is bound to clean revision d8e6f56; every retained physical measurement keeps its own revision, fixture identity, cache state, and timing boundary.",
   "purpose": "Fingerprints for the current benchmark dashboard, its authoritative registry and rendering inputs, provenance ledger, parity and methodology contracts, and canonical historical evidence. Landing, API, and backend capability pages intentionally do not duplicate measurements.",
   "pages": [
     {
@@ -11,7 +11,7 @@
     },
     {
       "path": "docs/dashboard.md",
-      "sha256": "bba3938913c7f5f0693cccac18777248fe2278e766e7317a4c68a02c4a556600",
+      "sha256": "1403484ab972104362bddafb16e642d72cff7cfa31033789bb43903292de1e1e",
       "role": "Single human-facing current capability, speed, memory, and parity overview"
     },
     {
@@ -108,12 +108,12 @@
   "authoritative_inputs": [
     {
       "path": "benchmarks/benchmark_registry.json",
-      "sha256": "c120e678833534e0fb458cccd80fc3257bd24a17f7f5671262b510ca3f40e555",
+      "sha256": "ffb6480c5fb60ebb2eae3e17ddd0e32962ab45c9ae35af9dcd2c96ad51266834",
       "role": "Atomic Platform, Computer, module, configuration, state, measurement, and runbook registry"
     },
     {
       "path": "docs/_generated/benchmark_coverage.md",
-      "sha256": "bc0df6b32714690b5d941493698ed5cbb6abd1703b3cf06dbc7e6dc43e8ad670",
+      "sha256": "454507e6b22b43cbd6d5a34ba05cade54066614d450d91e84d7dd9e26efe82d7",
       "role": "Generated filterable coverage, retained-measurement, and runbook tables"
     },
     {
@@ -128,7 +128,7 @@
     },
     {
       "path": "experiments/20260822-platform-computer-profile/manifest.json",
-      "sha256": "db6d5c385d9a2fc27644d5252d061a9944d8457c5fefff623dc98b9298594f7d",
+      "sha256": "0338298358b2d7dca891f13c49709119d10404cc9c35e017dec4556fd0d604f1",
       "role": "Completed physical-device matrix ledger with accepted, partial, refuted, blocked, and pending atomic gates"
     }
   ]
