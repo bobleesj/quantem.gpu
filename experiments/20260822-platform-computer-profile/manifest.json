@@ -405,9 +405,63 @@
       "artifact": "private-evidence://macbook-pro-m5-max-128gb/20260822-webgpu-exact-load-evidence/MANIFEST.json",
       "sha256": "cb147beb064a99481ab813e6e7e96bd227e17454144649c8a4d246aaef1458b4",
       "result": "Immutable accepted-smoke manifest recording source revision, physical hardware, fixture identities, full-output parity, stage timings, memory limitations, refuted infrastructure attempt, tests, and released task-owned resources."
+    },
+    {
+      "id": "m5-24gb-python-mps-products-bin2-smoke-68dbe3a",
+      "artifact": "private-evidence://macbook-pro-m5-24gb/20260822-python-mps-products-bin2-68dbe3a-01/smoke-04/report.json",
+      "sha256": "65dc9acb6ea3e0dc40bbffadae36160f56709eec29317057e21bfc5a5b706d8a",
+      "result": "One physical Python MPS detector-bin-2 resident-product smoke at clean 68dbe3a. Exact resident volume, mean DP, total, BF, ABF, ADF, DF, CoM, rotation, and iDPC passed; the separate first-execution display FFT failed both frozen maximum-error gates. Screen Sharing and 73 pageouts prohibit timing-distribution promotion."
+    },
+    {
+      "id": "m5-24gb-python-mps-products-bin2-campaign-manifest-68dbe3a",
+      "artifact": "private-evidence://macbook-pro-m5-24gb/20260822-python-mps-products-bin2-68dbe3a-01/manifest.json",
+      "sha256": "63df669e1cbec7cee693a7fc5cd56254005e91fb321f1aaad03ee22aadb35e57",
+      "result": "Campaign manifest retaining two pre-load harness failures, one post-load public-surface harness failure, the completed parity smoke, exact device/runtime/fixture identity, unsupported timing claims, memory pressure, and the stop decision."
+    },
+    {
+      "id": "m5-24gb-python-mps-products-bin2-campaign-seal-68dbe3a",
+      "artifact": "private-evidence://macbook-pro-m5-24gb/20260822-python-mps-products-bin2-68dbe3a-01/FINAL-SHA256SUMS",
+      "sha256": "cd0890ea52f372922c2952467b2d6f9cd94765afe717ac8be6c69d82de0dcd33",
+      "result": "Immutable 126-file checksum inventory for the complete physical product campaign, including every failed attempt and final idle audit."
     }
   ],
   "results": {
+    "macbook_pro_m5_24gb_python_mps_products_bin2_smoke_68dbe3a": {
+      "source_revision": "68dbe3aa5f816e2d1c1ae976e1874790cffb4319",
+      "fixture_id": "real-512x512x192x192-u16-bslz4-27shard-master-fixture-c",
+      "fixture_sha256": "c9c0d968fae70b8911ae925d676b90007886970fa99fe296a47cfe07844bbfe9",
+      "source_identity_sha256": "9f0ddb932c631b63cb573c38d747fa41941ee585c5389d33bdafb4add962b768",
+      "source_shape": [512, 512, 192, 192],
+      "working_shape": [512, 512, 96, 96],
+      "source_dtype": "uint16",
+      "working_dtype": "uint16",
+      "scan_bin": 1,
+      "detector_bin": 2,
+      "scan_crop": null,
+      "detector_crop": null,
+      "logical_pixel_hash_schema": "quantem.gpu.4dstem-logical-pixels/v1",
+      "logical_pixel_sha256": "f81f9f4fb1b03baf7c8523b60877a59ce9bc817f4475978e9ab1555665816ff6",
+      "sample_count": 1,
+      "timing_promoted": false,
+      "diagnostic_product_suite_seconds": 0.5864567920216359,
+      "diagnostic_detector_dpc_seconds": 0.35190745900035836,
+      "diagnostic_dpc_seconds": 0.08007862500380725,
+      "diagnostic_display_fft_seconds": 0.2126178340113256,
+      "logical_resident_bytes": 4831838208,
+      "observed_driver_peak_bytes": 6158450688,
+      "process_peak_rss_bytes": 10369613824,
+      "process_peak_physical_footprint_bytes": 11283407248,
+      "swap_delta_bytes": 0,
+      "swapout_delta_pages": 0,
+      "pageout_delta_pages": 73,
+      "cache_state": "exact resident detector-bin-2 MPS input; source pages uncontrolled or warm; no prepared product result; Screen Sharing active",
+      "detector_product_parity": "Mean DP zero error; total, BF, ABF, ADF, and DF byte exact.",
+      "dpc_parity": "CoM row/column, aligned fields, rotation, transpose decision, and iDPC passed the frozen full-precision gates.",
+      "display_fft_parity": "Refuted: maximum absolute error 0.001680374 exceeded 0.0002 and normalized maximum error 0.000102138 exceeded 0.000002; no tolerance was relaxed.",
+      "state": "partially accepted scientific evidence; complete campaign refuted",
+      "cold_claim": false,
+      "remaining_gate": "Diagnose the FFT discrepancy, fix child-PID telemetry, remove display contention, require stable pageout counters, and rerun only after the pressure preflight passes."
+    },
     "macbook_pro_m5_max_128gb_webgpu_fullnative_exact_smoke_34f0029": {
       "source_revision": "34f0029c9fe3b92c2709283547301a91899e4d66",
       "fixture_id": "full-native-webgpu-512x512x192x192-u16",
@@ -987,6 +1041,6 @@
     "created": "2026-08-22T13:33:04-07:00",
     "started": "2026-08-22T13:33:04-07:00",
     "finished": "2026-08-22T15:57:42-07:00",
-    "last_updated": "2026-08-22T17:06:58-07:00"
+    "last_updated": "2026-08-22T17:18:22-07:00"
   }
 }

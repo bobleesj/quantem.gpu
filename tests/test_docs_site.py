@@ -157,6 +157,17 @@ def test_dashboard_is_the_dense_human_overview() -> None:
     ):
         assert runtime in dashboard
 
+    assert (
+        "The physical WebGPU smoke uses the separately fingerprinted"
+        in dashboard_words
+    )
+    assert "full-native-webgpu-512x512x192x192-u16" in dashboard_words
+    assert (
+        "One physical exact full-volume smoke; browser-tree RSS lower bound"
+        in dashboard
+    )
+    assert "Production full-volume `uint16` resident proof not retained" not in dashboard
+
     for evidence_state in ("✓", "Test", "Pending", "Ref", "unsupported or not a target"):
         assert evidence_state in dashboard
 

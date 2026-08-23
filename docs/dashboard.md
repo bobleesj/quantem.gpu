@@ -65,12 +65,16 @@ superseded result cannot remain the dashboard headline.
 :end-before: <!-- benchmark-current-load-end -->
 ```
 
-These measurements use the complete `512x512` scan and native
-`192x192 uint16` source detector from fixture
-`real-512x512x192x192-u16-bslz4-27shard-master-fixture-c`, with scan bin 1
-and no crop. Detector bin is explicit. Exact binned `uint16` output is
-source-identity-bound to the retained maximum-count audit; it is not a general
-license to narrow arbitrary input.
+These measurements use a complete `512x512` scan and native
+`192x192 uint16` source detector, with scan bin 1 and no crop. The current
+Python MPS, Native Swift/Metal, and CPU rows use fixture
+`real-512x512x192x192-u16-bslz4-27shard-master-fixture-c`. The physical WebGPU
+smoke uses the separately fingerprinted
+`full-native-webgpu-512x512x192x192-u16` fixture; it is not a cross-fixture
+speed comparison. Every row retains its own fixture SHA-256 and source identity
+in the complete registry. Detector bin is explicit. Exact binned `uint16`
+output is source-identity-bound to its retained maximum-count audit; it is not
+a general license to narrow arbitrary input.
 
 For this immutable source, the complete maximum-count audit of 53 proves that
 an 8x8 exact detector sum is at most 3,392, so bins through 8 fit in `uint16`.
@@ -121,7 +125,7 @@ above 255 and is a browse representation, not raw-count evidence.
 | [**Native Swift/Metal**](platforms/swift-metal.md) | MacBook Air (M2, 8 GB) | `uint16` | `uint16` | `uint16` | Audited exact detector sum | ✓ | **1.125 GiB** | **1.332 GiB** | Historical physical bin4 process-footprint example |
 | [**Native Swift/Metal**](platforms/swift-metal.md) | No physical result | `uint16` | `uint16` | `uint32` | General exact detector sum | ✓ | Shape/bin dependent | **Pending** | Capability only |
 | [**WebGPU**](platforms/webgpu.md) | No physical result | `uint8` | `uint8` | `uint8` | Exact native counts | ✓ | Shape/bin dependent | **Pending** | Capability only |
-| [**WebGPU**](platforms/webgpu.md) | No physical result | `uint16` | `uint16` | `uint16` | Exact native counts | Pending | Shape/bin dependent | **Pending** | Production full-volume `uint16` resident proof not retained |
+| [**WebGPU**](platforms/webgpu.md) | MacBook Pro (M5 Max, 128 GB) | `uint16` | `uint16` | `uint16` | Exact native counts | Partial | **18.00 GiB** | **>=6.604 GiB** | One physical exact full-volume smoke; browser-tree RSS lower bound; repeat distribution and adapter allocation pending |
 | [**WebGPU**](platforms/webgpu.md) | MacBook Pro (M5 Max, 128 GB) | `uint16` | `uint8` | `uint8` | Complete-audit lossless | Diagnostic | **9.00 GiB** | **5.020 GiB** | Historical Chrome-tree RSS; device peak and full-volume parity incomplete |
 | [**WebGPU**](platforms/webgpu.md) | No physical result | `uint16` | `uint32` | `uint32` | General exact detector sum | Pending | Shape/bin dependent | **Pending** | Exact-integer production binning is not integrated |
 | [**WebGPU**](platforms/webgpu.md) | No physical result | `uint32` | `uint32` | `uint32` | Exact native counts | Pending | Shape/bin dependent | **Pending** | Hardware full-volume proof not retained |

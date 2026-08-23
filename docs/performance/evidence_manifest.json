@@ -11,7 +11,7 @@
     },
     {
       "path": "docs/dashboard.md",
-      "sha256": "737d4434285a89f20f7643a0d2714636c8e1712ec40816f7367149efce121a78",
+      "sha256": "bba3938913c7f5f0693cccac18777248fe2278e766e7317a4c68a02c4a556600",
       "role": "Single human-facing current capability, speed, memory, and parity overview"
     },
     {
@@ -108,12 +108,12 @@
   "authoritative_inputs": [
     {
       "path": "benchmarks/benchmark_registry.json",
-      "sha256": "c4853d03c12ccb74e5aa099379456e77269451fb865b3c665981708c0f2eb2b2",
+      "sha256": "c120e678833534e0fb458cccd80fc3257bd24a17f7f5671262b510ca3f40e555",
       "role": "Atomic Platform, Computer, module, configuration, state, measurement, and runbook registry"
     },
     {
       "path": "docs/_generated/benchmark_coverage.md",
-      "sha256": "5f5d9ead8c28f2ebaf90e20f397e29f40c0f7f15f06e7a805813a7e3f6f42322",
+      "sha256": "bc0df6b32714690b5d941493698ed5cbb6abd1703b3cf06dbc7e6dc43e8ad670",
       "role": "Generated filterable coverage, retained-measurement, and runbook tables"
     },
     {
@@ -128,7 +128,7 @@
     },
     {
       "path": "experiments/20260822-platform-computer-profile/manifest.json",
-      "sha256": "905fa48aa832bee03bfcc03fe0dad6573e24d5c006b01af27a048e68c184246f",
+      "sha256": "db6d5c385d9a2fc27644d5252d061a9944d8457c5fefff623dc98b9298594f7d",
       "role": "Completed physical-device matrix ledger with accepted, partial, refuted, blocked, and pending atomic gates"
     }
   ]
