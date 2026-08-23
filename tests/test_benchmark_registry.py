@@ -40,7 +40,8 @@ def test_every_module_platform_and_unrun_load_plan_stays_visible() -> None:
         "Detector products",
         "Screening",
         "CoM, DPC, and iDPC",
-        "Display and FFT",
+        "Display kernels",
+        "FFT",
         "Single-sideband ptychography",
         "Selective loading",
     }
@@ -248,7 +249,16 @@ def test_m5_24gb_mps_product_smoke_keeps_fft_failure_atomic() -> None:
     gates = {gate["id"]: gate for gate in registry["gates"]}
     assert gates["products.mps.apple-m5-24gb.bin2.full-suite"]["state"] == "partial"
     assert gates["dpc.mps.apple-m5-24gb.full-suite"]["state"] == "partial"
-    assert gates["display.mps.apple-m5-24gb.maps"]["state"] == "refuted"
+    assert gates["display.mps.apple-m5-24gb.maps"]["state"] == "pending"
+    assert gates["display.mps.apple-m5-24gb.maps"].get("satisfied_by") is None
+    assert gates["fft.mps.apple-m5-24gb.maps"]["state"] == "refuted"
+    assert gates["fft.mps.apple-m5-24gb.maps"]["satisfied_by"] == [fft_id]
+    assert rows[fft_id]["module"] == "FFT"
+    assert all(
+        fft_id not in gate.get("satisfied_by", [])
+        for gate_id, gate in gates.items()
+        if gate_id != "fft.mps.apple-m5-24gb.maps"
+    )
 
 
 def test_load_matrix_tracks_every_compatible_platform_computer_pair() -> None:
@@ -257,9 +267,10 @@ def test_load_matrix_tracks_every_compatible_platform_computer_pair() -> None:
     for gate in registry["gates"]:
         if gate["module"] != "I/O and load":
             continue
-        match = re.search(r"full-native-bin([1248])-u16", gate["configuration"])
-        if match:
-            bins_by_pair[(gate["platform"], gate["computer"])].add(int(match.group(1)))
+        configuration = registry["configurations"][gate["configuration"]]
+        detector_bin = configuration["detector_bin"]
+        if detector_bin in {1, 2, 4, 8}:
+            bins_by_pair[(gate["platform"], gate["computer"])].add(detector_bin)
 
     assert bins_by_pair[
         ("CUDA", "Linux CUDA workstation (dual 96 GB Blackwell GPUs)")
@@ -287,6 +298,62 @@ def test_load_matrix_tracks_every_compatible_platform_computer_pair() -> None:
         assert bins_by_pair[("Native Swift/Metal", computer)] == {1, 2, 4}
 
 
+def test_cuda_binned_load_gates_use_the_general_u32_contract() -> None:
+    registry = _registry()
+    gates = [
+        gate
+        for gate in registry["gates"]
+        if gate["platform"] == "CUDA"
+        and gate["module"] == "I/O and load"
+        and registry["configurations"][gate["configuration"]]["detector_bin"] > 1
+    ]
+
+    assert len(gates) == 6
+    for gate in gates:
+        configuration = registry["configurations"][gate["configuration"]]
+        detector_bin = configuration["detector_bin"]
+        assert gate["configuration"] == f"full-native-bin{detector_bin}-u16-to-u32"
+        assert configuration["source_dtype"] == "uint16"
+        assert configuration["working_dtype"] == "uint32"
+
+    command = registry["runbooks"]["python-load-matrix"]["command"]
+    assert '--dtype "$QGPU_EXPECTED_OUTPUT_DTYPE"' in command
+    assert '--expected-output-dtype "$QGPU_EXPECTED_OUTPUT_DTYPE"' in command
+
+
+def test_cpu_binning_and_selective_loading_do_not_overclaim_general_support() -> None:
+    registry = _registry()
+    selectors = [
+        gate
+        for gate in registry["gates"]
+        if gate["platform"] == "CPU reference"
+        and gate["module"] == "Selective loading"
+    ]
+    assert len(selectors) == 2
+    assert {gate["state"] for gate in selectors} == {"unsupported"}
+    assert all("public quantem.gpu.io.load" in gate["reason"] for gate in selectors)
+    assert all("CUDA and Python MPS" in gate["reason"] for gate in selectors)
+
+    binned = [
+        gate
+        for gate in registry["gates"]
+        if gate["platform"] == "CPU reference"
+        and gate["module"] == "I/O and load"
+        and registry["configurations"][gate["configuration"]]["detector_bin"] > 1
+    ]
+    assert len(binned) == 12
+    for gate in binned:
+        assert "incomplete detector edges" in gate["reason"]
+        assert "overflow" in gate["reason"]
+        if gate["computer"] == "MacBook Pro (M5 Max, 128 GB)":
+            assert gate["state"] == "partial"
+            assert gate["satisfied_by"]
+            assert "Fixture C is exact" in gate["reason"]
+        else:
+            assert gate["state"] == "blocked"
+            assert not gate.get("satisfied_by")
+
+
 def test_performance_modules_track_each_compatible_apple_computer() -> None:
     registry = _registry()
     modules_by_pair: dict[tuple[str, str], set[str]] = defaultdict(set)
@@ -298,7 +365,8 @@ def test_performance_modules_track_each_compatible_apple_computer() -> None:
         "Detector products",
         "Screening",
         "CoM, DPC, and iDPC",
-        "Display and FFT",
+        "Display kernels",
+        "FFT",
         "Single-sideband ptychography",
         "Selective loading",
     }
@@ -314,14 +382,16 @@ def test_performance_modules_track_each_compatible_apple_computer() -> None:
             "I/O and load",
             "Detector products",
             "CoM, DPC, and iDPC",
-            "Display and FFT",
+            "Display kernels",
+            "FFT",
             "Single-sideband ptychography",
         } <= modules_by_pair[("Native Swift/Metal", computer)]
         assert {
             "I/O and load",
             "Detector products",
             "CoM, DPC, and iDPC",
-            "Display and FFT",
+            "Display kernels",
+            "FFT",
             "Selective loading",
         } <= modules_by_pair[("WebGPU", computer)]
 
