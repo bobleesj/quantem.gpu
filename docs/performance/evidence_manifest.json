@@ -108,12 +108,12 @@
   "authoritative_inputs": [
     {
       "path": "benchmarks/benchmark_registry.json",
-      "sha256": "071c4e4e0ca8ee5c8d18888f7a786a1c368aedcb08375b52b0ce85f3c6b897d8",
+      "sha256": "c5d82bf616d8b061dd1042301daa448ff9fa498b569c7f07c0f4995392146981",
       "role": "Atomic Platform, Computer, module, detector-bin, dtype/residency configuration, state, measurement, and runbook registry"
     },
     {
       "path": "docs/_generated/benchmark_coverage.md",
-      "sha256": "b4a7ff239b9f47c7f0173b016c9dec5f552d271de788a7c35c8408e75398d82f",
+      "sha256": "e87e0bd93ffa8ccfb90cf4faa298109b08f99738275c96c3b50252acfb4ab419",
       "role": "Generated filterable detector-product, dtype/residency, coverage, retained-measurement, and runbook tables"
     },
     {
@@ -125,6 +125,21 @@
       "path": "scripts/benchmark_registry.py",
       "sha256": "47c42fa00f522d4da096fbc87dbd9e7bfcce439fb647cfaa20a3451c7fc9102a",
       "role": "Registry validation, detector-product and dtype/residency rendering, next-gate selection, and reproducible-command entry point"
+    },
+    {
+      "path": "scripts/benchmark_detector_products.py",
+      "sha256": "654c438c90b211bd554f95355f7e73112a3e346f6f4845558ff40fa27f7329e6",
+      "role": "Exact CPU, CUDA, and Python MPS resident detector-product timing, parity, overflow, and memory entry point"
+    },
+    {
+      "path": "scripts/benchmark_hdf5_load.py",
+      "sha256": "a4def0c2450c09097f5c041843b51817e7b9ceeba47a78d547ae61babd56dcb0",
+      "role": "Shared public HDF5 load, logical-volume parity, metadata, and release boundary"
+    },
+    {
+      "path": "scripts/_benchmark_support.py",
+      "sha256": "a438e4741c818c1a7dd5462420b36dfa116189e93e9bd085f89c56429db3cf76",
+      "role": "Shared immutable hashing, atomic report, accelerator/process, and whole-system memory telemetry"
     },
     {
       "path": "experiments/20260822-platform-computer-profile/manifest.json",
