@@ -1656,8 +1656,16 @@ def test_load_with_detector_region_rejects_uint4(monkeypatch) -> None:
         )
 
 
-def test_load_with_scan_region_rejects_cpu_backend(monkeypatch) -> None:
-    """Crop-first loading should fail honestly when no accelerated backend exists."""
+@pytest.mark.parametrize(
+    "selector",
+    [
+        {"scan_region": (0, 1, 0, 1)},
+        {"scan_indices": [0]},
+        {"random_positions": 1, "seed": 7},
+    ],
+)
+def test_selective_scan_loading_rejects_cpu_backend(monkeypatch, selector) -> None:
+    """The public CPU loader must not pretend to implement selective GPU IO."""
     from importlib import import_module
     load_module = import_module("quantem.gpu.io.load")
 
@@ -1666,9 +1674,10 @@ def test_load_with_scan_region_rejects_cpu_backend(monkeypatch) -> None:
     with pytest.raises(RuntimeError, match="CUDA and MPS"):
         load_module.load(
             "scan_master.h5",
-            scan_region=(0, 1, 0, 1),
             backend="cpu",
+            scan_shape=(1, 1),
             verbose=False,
+            **selector,
         )
 
 

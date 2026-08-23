@@ -58,6 +58,17 @@
         "peak_memory"
       ]
     },
+    "io.selective-scan-loading": {
+      "required_metrics": [
+        "selection_prepare_ms",
+        "compressed_bytes_read",
+        "compressed_bytes_decoded",
+        "transfer_bytes",
+        "total_wall_ms",
+        "peak_memory",
+        "output_hashes"
+      ]
+    },
     "detector.integer-products": {
       "required_metrics": [
         "mean_dp_ms",
@@ -167,6 +178,12 @@
     {"id": "io.decode-bin-provenance::mps", "capability": "io.decode-bin-provenance", "backend": "mps", "support_level": "required", "pr_gate": "source-contract-and-synthetic-parity", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-python-mps", "state": "ready"},
     {"id": "io.decode-bin-provenance::swift-metal", "capability": "io.decode-bin-provenance", "backend": "swift-metal", "support_level": "required", "pr_gate": "swift-test-and-metal-compile", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-native-swift-metal", "state": "evidence-gap"},
     {"id": "io.decode-bin-provenance::webgpu", "capability": "io.decode-bin-provenance", "backend": "webgpu", "support_level": "required-hardware", "pr_gate": "source-contract-and-browser-smoke", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-hardware-browser", "state": "ready"},
+
+    {"id": "io.selective-scan-loading::cpu-reference", "capability": "io.selective-scan-loading", "backend": "cpu-reference", "support_level": "not-implemented", "pr_gate": "unsupported-contract", "scheduled_profile": "none", "release_signoff": false, "runner": "portable-ci", "state": "unsupported"},
+    {"id": "io.selective-scan-loading::cuda", "capability": "io.selective-scan-loading", "backend": "cuda", "support_level": "required", "pr_gate": "source-contract-and-synthetic-parity", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-cuda", "state": "evidence-gap"},
+    {"id": "io.selective-scan-loading::mps", "capability": "io.selective-scan-loading", "backend": "mps", "support_level": "required", "pr_gate": "source-contract-and-synthetic-parity", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-python-mps", "state": "evidence-gap"},
+    {"id": "io.selective-scan-loading::swift-metal", "capability": "io.selective-scan-loading", "backend": "swift-metal", "support_level": "not-implemented", "pr_gate": "unsupported-contract", "scheduled_profile": "none", "release_signoff": false, "runner": "portable-ci", "state": "unsupported"},
+    {"id": "io.selective-scan-loading::webgpu", "capability": "io.selective-scan-loading", "backend": "webgpu", "support_level": "partial-hardware", "pr_gate": "source-contract-and-browser-smoke", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-hardware-browser", "state": "evidence-gap"},
 
     {"id": "detector.integer-products::cpu-reference", "capability": "detector.integer-products", "backend": "cpu-reference", "support_level": "reference", "pr_gate": "portable-parity", "scheduled_profile": "weekly", "release_signoff": true, "runner": "portable-cpu", "state": "ready"},
     {"id": "detector.integer-products::cuda", "capability": "detector.integer-products", "backend": "cuda", "support_level": "required", "pr_gate": "source-contract-and-synthetic-parity", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-cuda", "state": "ready"},
