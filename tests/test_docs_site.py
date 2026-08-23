@@ -495,6 +495,37 @@ def test_platform_first_io_tables_expose_current_bins_devices_and_dates() -> Non
         "0.651931 s",
         "2.319 GiB",
     )
+
+    webgpu_full_native = next(
+        row
+        for row in rows
+        if row[0] == "WebGPU"
+        and row[1] == "MacBook Pro (M5 Max, 128 GB)"
+        and int(row[bin_index]) == 1
+    )
+    assert webgpu_full_native[2] == "◐ Partial"
+    assert (
+        webgpu_full_native[p50_index],
+        webgpu_full_native[p95_index],
+        webgpu_full_native[maximum_index],
+        webgpu_full_native[resident_index],
+        webgpu_full_native[rss_index],
+        webgpu_full_native[swap_index],
+    ) == (
+        "1.094000 s",
+        "1.094000 s",
+        "1.094000 s",
+        "18.000 GiB",
+        "6.604 GiB",
+        "0 B",
+    )
+    assert webgpu_full_native[headers.index("Samples")] == "1"
+    assert "warm from the immediately preceding independent CPU reference" in (
+        webgpu_full_native[headers.index("Cache/process state")]
+    )
+    assert "full-volume verification hash" in webgpu_full_native[
+        headers.index("Wall boundary")
+    ]
     assert all(row[revision_index].startswith("`") for row in rows)
 
     selective = dashboard.split("#### Selective scan rectangles", 1)[1].split(

@@ -9,6 +9,11 @@
         "macbook-pro-m5-max-128gb-swift-metal-controlled-fullnative": {
           "state": "superseded",
           "notes": "Superseded by the later schema-v8 controlled F_NOCACHE evidence registered below."
+        },
+        "macbook-pro-m5-max-128gb-webgpu-fullnative-load-single": {
+          "state": "superseded",
+          "dashboard_current": false,
+          "notes": "Superseded on the dashboard by the later full-volume corrected-logical-pixel hash smoke. The original product-parity observation remains retained as historical evidence."
         }
       }
     }
@@ -1101,6 +1106,53 @@
       "source_identity_sha256": "9f0ddb932c631b63cb573c38d747fa41941ee585c5389d33bdafb4add962b768",
       "evidence": "experiments/20260822-platform-computer-profile/manifest.json",
       "artifact_id": "m5-24gb-swift-metal-bin1-canonical-smoke"
+    },
+    {
+      "id": "evidence::macbook-pro-m5-max-128gb-webgpu-fullnative-exact-smoke-34f0029",
+      "measurement_id": "macbook-pro-m5-max-128gb-webgpu-fullnative-exact-smoke-34f0029",
+      "dashboard_current": true,
+      "module": "I/O and load",
+      "operation": "prepared-index full-native exact hardware-WebGPU smoke",
+      "platform": "WebGPU",
+      "computer": "MacBook Pro (M5 Max, 128 GB)",
+      "device": "Apple M5 Max 40-core integrated GPU; Chrome 151; Apple Metal-3 hardware adapter; software=false",
+      "source_scan_rows": 512,
+      "source_scan_columns": 512,
+      "selected_scan_rows": 512,
+      "selected_scan_columns": 512,
+      "source_detector_rows": 192,
+      "source_detector_columns": 192,
+      "scan_bin": 1,
+      "detector_bin": 1,
+      "output_detector_rows": 192,
+      "output_detector_columns": 192,
+      "source_dtype": "uint16",
+      "working_dtype": "uint16",
+      "cache_state": "prepared immutable block indexes; source pages warm from the immediately preceding independent CPU reference; fresh hardware browser target",
+      "timing_boundary": "hardware harness load wall through exact resident output; 63.153-second full-volume verification hash and application E2E excluded",
+      "sample_count": 1,
+      "p50_seconds": 1.094,
+      "p95_seconds": 1.094,
+      "max_seconds": 1.094,
+      "profile_load_seconds": 0.979,
+      "logical_resident_bytes": 19327352832,
+      "accelerator_peak_bytes": null,
+      "total_device_peak_bytes": null,
+      "process_tree_peak_bytes": 7090847744,
+      "process_tree_peak_is_lower_bound": true,
+      "swap_delta_bytes": 0,
+      "swapout_delta_bytes": 0,
+      "pageout_delta_bytes": 0,
+      "cold_claim": false,
+      "parity": "The complete corrected 19,327,352,832-byte logical output matched the independent CPU SHA-256 exactly, including four source-calibrated bad-pixel corrections; output dtype, shape, row-major order, full scan coverage, and detector bin passed. This is one smoke, not a timing distribution; 7,090,847,744 bytes is an observed browser-tree RSS lower bound because sampling became partial, and WebGPU adapter allocation was unavailable.",
+      "state": "partial",
+      "tested_date": "2026-08-22",
+      "source_revision": "34f0029c9fe3b92c2709283547301a91899e4d66",
+      "fixture_id": "full-native-webgpu-512x512x192x192-u16",
+      "fixture_sha256": "4802ec16ba241fef439e9dcb1c28e94f9cf9d95f773df9c5c8c3b5f7ed8192c4",
+      "source_identity_sha256": "1be810b96fdff8e384ad4cb6ebd49adff9b4ab0a6503cd5fed9106e09f5aa286",
+      "evidence": "experiments/20260822-platform-computer-profile/manifest.json",
+      "artifact_id": "m5-max-128gb-webgpu-fullnative-exact-smoke-34f0029"
     }
   ],
   "configurations": {
@@ -1623,7 +1675,7 @@
     {"id": "io.swift.apple-m5-24gb.bin2.cold-original", "module": "I/O and load", "operation": "cold original compressed-source exact detector-bin-2 load", "platform": "Native Swift/Metal", "computer": "MacBook Pro (M5, 24 GB)", "configuration": "full-native-bin2-u16", "state": "pending", "runbook": "swift-indexed-load", "priority": 1, "next_gate": "Run arbitrary-source cold discovery, audit, index creation, exact sum-bin-2 load, products, and complete memory/page-fault telemetry.", "cache_state": "cold original source; no prepared index", "timing_boundary": "source selection through exact complete working output and products"},
     {"id": "io.swift.apple-m5-24gb.bin4.cold-original", "module": "I/O and load", "operation": "cold original compressed-source exact detector-bin-4 load", "platform": "Native Swift/Metal", "computer": "MacBook Pro (M5, 24 GB)", "configuration": "full-native-bin4-u16", "state": "pending", "runbook": "swift-indexed-load", "priority": 2, "next_gate": "Run arbitrary-source cold discovery, audit, index creation, exact sum-bin-4 load, products, and complete memory/page-fault telemetry.", "cache_state": "cold original source; no prepared index", "timing_boundary": "source selection through exact complete working output and products"},
 
-    {"id": "io.webgpu.apple-m5-max-128gb.bin1.prepared", "module": "I/O and load", "operation": "prepared-index hardware-WebGPU full-native load", "platform": "WebGPU", "computer": "MacBook Pro (M5 Max, 128 GB)", "configuration": "full-native-bin1-u16", "state": "partial", "satisfied_by": ["macbook-pro-m5-max-128gb-webgpu-fullnative-load-single"], "runbook": "webgpu-load", "priority": 2, "next_gate": "Repeat exact production-path load with p50, p95, maximum, full-tensor parity, total adapter allocation, browser-tree peak, and source-page state.", "cache_state": "prepared block indexes; source pages unspecified", "timing_boundary": "exact full-native resident output"},
+    {"id": "io.webgpu.apple-m5-max-128gb.bin1.prepared", "module": "I/O and load", "operation": "prepared-index hardware-WebGPU full-native load", "platform": "WebGPU", "computer": "MacBook Pro (M5 Max, 128 GB)", "configuration": "full-native-bin1-u16", "state": "partial", "satisfied_by": ["macbook-pro-m5-max-128gb-webgpu-fullnative-exact-smoke-34f0029"], "runbook": "webgpu-load", "priority": 2, "next_gate": "Repeat the exact full-volume production path for p50, p95, and maximum with complete browser-tree peak and total adapter allocation telemetry; add declared cold-source and application-E2E runs separately.", "cache_state": "prepared block indexes; source pages declared by each run", "timing_boundary": "exact full-native resident output"},
     {"id": "io.webgpu.apple-m5-max-128gb.bin2.prepared-exact", "module": "I/O and load", "operation": "prepared-index exact integer detector-bin-2 hardware load", "platform": "WebGPU", "computer": "MacBook Pro (M5 Max, 128 GB)", "configuration": "full-native-bin2-u16", "state": "blocked", "runbook": "webgpu-load", "priority": 1, "next_gate": "Integrate and qualify exact-integer accumulation and residency, then run full-volume parity, repeated prepared timing, adapter/browser memory, and device-loss checks.", "reason": "Production detector binning accumulates and stores float32; it cannot satisfy the exact-integer resident contract.", "cache_state": "prepared block indexes; source-page state declared by run", "timing_boundary": "exact uint16 working volume; no float32 resident substitution"},
     {"id": "io.webgpu.apple-m5-max-128gb.bin4.prepared-exact", "module": "I/O and load", "operation": "prepared-index exact integer detector-bin-4 hardware load", "platform": "WebGPU", "computer": "MacBook Pro (M5 Max, 128 GB)", "configuration": "full-native-bin4-u16", "state": "blocked", "runbook": "webgpu-load", "priority": 2, "next_gate": "Integrate and qualify exact-integer accumulation and residency, then run full-volume parity, repeated prepared timing, adapter/browser memory, and device-loss checks.", "reason": "Production detector binning accumulates and stores float32; it cannot satisfy the exact-integer resident contract.", "cache_state": "prepared block indexes; source-page state declared by run", "timing_boundary": "exact uint16 working volume; no float32 resident substitution"},
     {"id": "io.webgpu.apple-m5-max-128gb.bin8.prepared-exact", "module": "I/O and load", "operation": "prepared-index exact integer detector-bin-8 hardware load", "platform": "WebGPU", "computer": "MacBook Pro (M5 Max, 128 GB)", "configuration": "full-native-bin8-u16", "state": "blocked", "runbook": "webgpu-load", "priority": 3, "next_gate": "Integrate and qualify exact-integer accumulation and residency, then run full-volume parity, repeated prepared timing, adapter/browser memory, and device-loss checks.", "reason": "Production detector binning accumulates and stores float32; it cannot satisfy the exact-integer resident contract.", "cache_state": "prepared block indexes; source-page state declared by run", "timing_boundary": "exact uint16 working volume; no float32 resident substitution"},

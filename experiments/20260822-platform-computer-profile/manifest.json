@@ -15,7 +15,8 @@
     "revision": "68dbe3aa5f816e2d1c1ae976e1874790cffb4319",
     "benchmarked_source_revisions": [
       "5106ca48349231549c440b40609983fd3a8dacda",
-      "68dbe3aa5f816e2d1c1ae976e1874790cffb4319"
+      "68dbe3aa5f816e2d1c1ae976e1874790cffb4319",
+      "34f0029c9fe3b92c2709283547301a91899e4d66"
     ],
     "dirty": false,
     "diff_sha256": null,
@@ -380,9 +381,66 @@
       "artifact": "private-evidence://macbook-pro-m5-max-128gb/20260822-swift-metal-m5max-128gb-canonical-bin2-fixture-c-reuse7-5106ca4-01/FINAL-SHA256SUMS",
       "sha256": "b4fd65c45a9615dd24a9e36bf94f7261489d3063b58ec88eb2e9e85a8b5f41db",
       "result": "Immutable checksum seal for the exact M5 Max Swift/Metal detector-bin-2 distribution."
+    },
+    {
+      "id": "m5-max-128gb-webgpu-fullnative-exact-smoke-34f0029",
+      "artifact": "private-evidence://macbook-pro-m5-max-128gb/20260822-webgpu-exact-load-evidence/hardware-smoke-r2.json",
+      "sha256": "ceae30087ecc25f56742094e0dbaa61b103a55c3e49911edc402d0196c3ae84b",
+      "result": "One physical Chrome/WebGPU full-native bin-1 smoke at 34f0029 loaded an exact uint16 resident tensor in 1.094 seconds harness wall (0.979 seconds internal load profile) and matched the complete corrected 19,327,352,832-byte logical output SHA-256. Prepared indexes and warm source pages make this partial non-cold evidence, not a timing distribution."
+    },
+    {
+      "id": "m5-max-128gb-webgpu-fullnative-exact-smoke-rss-34f0029",
+      "artifact": "private-evidence://macbook-pro-m5-max-128gb/20260822-webgpu-exact-load-evidence/hardware-smoke-r2-chrome-rss.json",
+      "sha256": "cdf5ec42c0b7de72bbc843b53b06ea7d148dad9b55e97fb36ff68ecbc9334243",
+      "result": "Retained 20-millisecond Chrome-tree sampling observed a 7,090,847,744-byte RSS peak with zero swapout or pageout growth. Sampling became partial after an unrelated process lookup was denied, so the value is a lower bound rather than a guaranteed complete peak."
+    },
+    {
+      "id": "m5-max-128gb-webgpu-fullnative-timeout-refuted-35f2681",
+      "artifact": "private-evidence://macbook-pro-m5-max-128gb/20260822-webgpu-exact-load-evidence/hardware-smoke-chrome-rss.json",
+      "sha256": "9e7be1252d8ec0c3d33c09e74e8d95bb6ee5241bf1e71fd6bcfb465eeef23aaa",
+      "result": "Retained infrastructure-refuted attempt: the CDP WebSocket inherited a 20-second construction timeout and exited before a full-output result. It provides no scientific parity or timing claim; follow-up commit 34f0029 corrected the timeout propagation."
+    },
+    {
+      "id": "m5-max-128gb-webgpu-fullnative-exact-evidence-manifest-34f0029",
+      "artifact": "private-evidence://macbook-pro-m5-max-128gb/20260822-webgpu-exact-load-evidence/MANIFEST.json",
+      "sha256": "cb147beb064a99481ab813e6e7e96bd227e17454144649c8a4d246aaef1458b4",
+      "result": "Immutable accepted-smoke manifest recording source revision, physical hardware, fixture identities, full-output parity, stage timings, memory limitations, refuted infrastructure attempt, tests, and released task-owned resources."
     }
   ],
   "results": {
+    "macbook_pro_m5_max_128gb_webgpu_fullnative_exact_smoke_34f0029": {
+      "source_revision": "34f0029c9fe3b92c2709283547301a91899e4d66",
+      "fixture_id": "full-native-webgpu-512x512x192x192-u16",
+      "fixture_sha256": "4802ec16ba241fef439e9dcb1c28e94f9cf9d95f773df9c5c8c3b5f7ed8192c4",
+      "source_identity_sha256": "1be810b96fdff8e384ad4cb6ebd49adff9b4ab0a6503cd5fed9106e09f5aa286",
+      "source_shape": [512, 512, 192, 192],
+      "working_shape": [512, 512, 192, 192],
+      "source_dtype": "uint16",
+      "working_dtype": "uint16",
+      "scan_bin": 1,
+      "detector_bin": 1,
+      "scan_crop": null,
+      "detector_crop": null,
+      "logical_pixel_hash_schema": "quantem.gpu.4dstem-logical-pixels/v1",
+      "logical_pixel_sha256": "f7b32c4529cd08be196d0eb6b0caa52fe75b3d0bc3a459d228c88b48ae670822",
+      "sample_count": 1,
+      "profile_load_seconds": 0.979,
+      "harness_load_seconds": 1.094,
+      "full_output_hash_seconds": 63.1526,
+      "logical_resident_bytes": 19327352832,
+      "observed_browser_tree_peak_rss_bytes": 7090847744,
+      "browser_tree_peak_is_lower_bound": true,
+      "adapter_allocation_bytes": null,
+      "swap_delta_bytes": 0,
+      "swapout_delta_bytes": 0,
+      "pageout_delta_bytes": 0,
+      "cache_state": "prepared immutable block indexes; source pages warm from the immediately preceding independent CPU reference; fresh hardware browser target",
+      "timing_boundary": "hardware harness load wall through exact resident output; full-volume verification hash and application E2E excluded",
+      "parity": "The complete corrected logical output matched the independent CPU SHA-256 exactly, including calibrated bad-pixel correction, uint16 dtype, full geometry, scan coverage, and row-major order.",
+      "cold_claim": false,
+      "state": "partial",
+      "remaining_gate": "Run repeated exact full-volume observations with complete browser-tree and adapter allocation telemetry, then add separately labeled cold-source and application-E2E trials."
+    },
     "macbook_pro_m5_24gb_python_mps_bin4_68dbe3a": {
       "source_revision": "68dbe3aa5f816e2d1c1ae976e1874790cffb4319",
       "fixture_id": "real-512x512x192x192-u16-bslz4-27shard-master-fixture-c",
@@ -929,6 +987,6 @@
     "created": "2026-08-22T13:33:04-07:00",
     "started": "2026-08-22T13:33:04-07:00",
     "finished": "2026-08-22T15:57:42-07:00",
-    "last_updated": "2026-08-22T16:24:28-07:00"
+    "last_updated": "2026-08-22T17:06:58-07:00"
   }
 }
