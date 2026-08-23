@@ -11,8 +11,8 @@
     },
     {
       "path": "docs/dashboard.md",
-      "sha256": "32e11d426cf9b5aac9cbfa01f8f759f9b5bcb04d71afef9f159909f00b010d09",
-      "role": "Single human-facing current capability, speed, memory, dtype, residency, and parity overview"
+      "sha256": "ccf6741c7054eb96b8e9711aa65d9e6af6d251a6a568613a4c6c35d49400f2f3",
+      "role": "Single human-facing current capability, speed, memory, dtype, residency, detector-product, and parity overview"
     },
     {
       "path": "docs/platforms/cuda.md",
@@ -108,13 +108,13 @@
   "authoritative_inputs": [
     {
       "path": "benchmarks/benchmark_registry.json",
-      "sha256": "b62c8596990c90cc8aa9b9a79e2676aa1e637ad4f7b9bfebd86f94083612479d",
-      "role": "Atomic Platform, Computer, module, dtype/residency configuration, state, measurement, and runbook registry"
+      "sha256": "071c4e4e0ca8ee5c8d18888f7a786a1c368aedcb08375b52b0ce85f3c6b897d8",
+      "role": "Atomic Platform, Computer, module, detector-bin, dtype/residency configuration, state, measurement, and runbook registry"
     },
     {
       "path": "docs/_generated/benchmark_coverage.md",
-      "sha256": "9b17b2e5c2a5257813fbb4c8588b5addd2582537ffd8da8032ee6f99b23b99ee",
-      "role": "Generated filterable dtype/residency, coverage, retained-measurement, and runbook tables"
+      "sha256": "b4a7ff239b9f47c7f0173b016c9dec5f552d271de788a7c35c8408e75398d82f",
+      "role": "Generated filterable detector-product, dtype/residency, coverage, retained-measurement, and runbook tables"
     },
     {
       "path": "docs/_static/benchmark-tables.js",
@@ -123,8 +123,8 @@
     },
     {
       "path": "scripts/benchmark_registry.py",
-      "sha256": "df73f3efb4b28f7058b034e004009dd4cd16c775e416c61ef46e48867e45d1d8",
-      "role": "Registry validation, dtype/residency gating, rendering, next-gate selection, and reproducible-command entry point"
+      "sha256": "47c42fa00f522d4da096fbc87dbd9e7bfcce439fb647cfaa20a3451c7fc9102a",
+      "role": "Registry validation, detector-product and dtype/residency rendering, next-gate selection, and reproducible-command entry point"
     },
     {
       "path": "experiments/20260822-platform-computer-profile/manifest.json",

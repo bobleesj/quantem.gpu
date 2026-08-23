@@ -9,6 +9,7 @@ from pathlib import Path
 
 from scripts.benchmark_registry import (
     _bytes,
+    _detector_product_rows,
     _dtype_residency_rows,
     _measurement_state,
     resolved_gates,
@@ -134,6 +135,8 @@ def test_registry_validator_and_generated_table_agree() -> None:
     assert "Source identity SHA-256" in rendered
     assert "<!-- benchmark-dtype-residency-start -->" in rendered
     assert "<!-- benchmark-dtype-residency-end -->" in rendered
+    assert "<!-- benchmark-detector-products-start -->" in rendered
+    assert "<!-- benchmark-detector-products-end -->" in rendered
     assert "browse-only rows are explicit saturating representations" in rendered
 
 
@@ -308,6 +311,58 @@ def test_m5_24gb_mps_product_smoke_keeps_fft_failure_atomic() -> None:
     )
 
 
+def test_m5_max_mps_product_smoke_preserves_refuted_idpc_and_fft() -> None:
+    registry = _registry()
+    rows = {
+        row["measurement_id"]: row for row in resolved_measurements(registry)
+    }
+    products_id = (
+        "macbook-pro-m5-max-128gb-python-mps-bin1-detector-products-smoke-"
+        "b8df61b"
+    )
+    dpc_id = (
+        "macbook-pro-m5-max-128gb-python-mps-bin1-dpc-idpc-refuted-b8df61b"
+    )
+    fft_id = "macbook-pro-m5-max-128gb-python-mps-bin1-fft-refuted-b8df61b"
+
+    assert rows[products_id]["state"] == "partial"
+    assert "byte exact" in rows[products_id]["parity"]
+    assert rows[dpc_id]["state"] == "refuted"
+    assert "2.980232e-5" in rows[dpc_id]["parity"]
+    assert rows[fft_id]["state"] == "refuted"
+    assert "0.001354218" in rows[fft_id]["parity"]
+    assert all(
+        rows[row_id]["p50_seconds"] is None
+        for row_id in (products_id, dpc_id, fft_id)
+    )
+    assert all(
+        rows[row_id]["pageout_delta_pages"] == 5
+        for row_id in (products_id, dpc_id, fft_id)
+    )
+
+    gates = {gate["id"]: gate for gate in registry["gates"]}
+    assert gates["products.mps.full-suite"]["state"] == "partial"
+    assert gates["products.mps.full-suite"]["satisfied_by"] == [products_id]
+    assert gates["dpc.mps.full-suite"]["state"] == "refuted"
+    assert gates["dpc.mps.full-suite"]["satisfied_by"] == [dpc_id]
+    assert gates["display.mps.maps"]["state"] == "pending"
+    assert gates["display.mps.maps"].get("satisfied_by") is None
+    assert gates["fft.mps.maps"]["state"] == "refuted"
+    assert gates["fft.mps.maps"]["satisfied_by"] == [fft_id]
+
+
+def test_cuda_full_product_gate_tracks_new_public_api_before_physical_run() -> None:
+    registry = _registry()
+    gate = next(
+        gate for gate in registry["gates"] if gate["id"] == "products.cuda.full-suite"
+    )
+
+    assert gate["state"] == "partial"
+    assert "--require-exact-full-suite" in gate["next_gate"]
+    assert "existing fused seven-stat CUDA buffer" in gate["support_basis"]
+    assert "physical full-suite evidence remains pending" in gate["support_basis"]
+
+
 def test_load_matrix_tracks_every_compatible_platform_computer_pair() -> None:
     registry = _registry()
     bins_by_pair: dict[tuple[str, str], set[int]] = defaultdict(set)
@@ -343,6 +398,140 @@ def test_load_matrix_tracks_every_compatible_platform_computer_pair() -> None:
     }
     for computer in ("MacBook Air (M2, 8 GB)", "MacBook Pro (M5, 24 GB)"):
         assert bins_by_pair[("Native Swift/Metal", computer)] == {1, 2, 4}
+
+
+def test_detector_product_matrix_tracks_each_platform_computer_and_bin() -> None:
+    registry = _registry()
+    gates = [
+        gate for gate in registry["gates"] if gate["module"] == "Detector products"
+    ]
+    bins_by_pair: dict[tuple[str, str], set[int]] = defaultdict(set)
+    for gate in gates:
+        configuration = registry["configurations"][gate["configuration"]]
+        bins_by_pair[(gate["platform"], gate["computer"])].add(
+            configuration["detector_bin"]
+        )
+
+    assert len(gates) == 60
+    assert bins_by_pair[
+        ("CUDA", "Linux CUDA workstation (dual 96 GB Blackwell GPUs)")
+    ] == {1, 2, 4, 8}
+    for computer in (
+        "Linux CUDA workstation (dual 96 GB Blackwell GPUs)",
+        "MacBook Air (M2, 8 GB)",
+        "MacBook Pro (M5, 24 GB)",
+        "MacBook Pro (M5 Max, 128 GB)",
+        "Portable CI runner",
+    ):
+        assert bins_by_pair[("CPU reference", computer)] == {1, 2, 4, 8}
+    for computer in (
+        "MacBook Air (M2, 8 GB)",
+        "MacBook Pro (M5, 24 GB)",
+        "MacBook Pro (M5 Max, 128 GB)",
+    ):
+        assert bins_by_pair[("Python MPS", computer)] == {1, 2, 4, 8}
+        assert bins_by_pair[("Native Swift/Metal", computer)] == {1, 2, 4, 8}
+        assert bins_by_pair[("WebGPU", computer)] == {1, 2, 4, 8}
+
+
+def test_detector_product_matrix_promotes_only_complete_product_evidence() -> None:
+    registry = _registry()
+    gates = {
+        gate["id"]: gate
+        for gate in registry["gates"]
+        if gate["module"] == "Detector products"
+    }
+
+    measured = {
+        "products.swift.full-suite": (
+            "macbook-pro-m5-max-128gb-swift-metal-private-bin1-load"
+        ),
+        "products.swift.apple-m5-max-128gb.bin2.full-suite": (
+            "macbook-pro-m5-max-128gb-swift-metal-bin2-canonical-r7"
+        ),
+        "products.swift.apple-m5-max-128gb.bin4.full-suite": (
+            "macbook-pro-m5-max-128gb-swift-metal-bin4-canonical-r7"
+        ),
+        "products.swift.apple-m5-24gb.bin2.full-suite": (
+            "macbook-pro-m5-24gb-swift-metal-bin2-canonical-r7"
+        ),
+        "products.swift.apple-m5-24gb.bin4.full-suite": (
+            "macbook-pro-m5-24gb-swift-metal-bin4-canonical-r7"
+        ),
+        "products.webgpu.full-suite": (
+            "macbook-pro-m5-max-128gb-webgpu-fullnative-bin1-products-r7-d8e6f56"
+        ),
+    }
+    assert {
+        gate_id for gate_id, gate in gates.items() if gate["state"] == "measured"
+    } == set(measured)
+    for gate_id, measurement_id in measured.items():
+        assert gates[gate_id]["satisfied_by"] == [measurement_id]
+
+    for platform in ("Python MPS", "WebGPU"):
+        pending_or_blocked = [
+            gate
+            for gate in gates.values()
+            if gate["platform"] == platform
+            and registry["configurations"][gate["configuration"]]["detector_bin"]
+            in {2, 4, 8}
+        ]
+        assert pending_or_blocked
+        assert all(gate["state"] != "measured" for gate in pending_or_blocked)
+
+
+def test_detector_product_table_hides_partial_timing_distributions() -> None:
+    rows = _detector_product_rows(_registry())
+    partial_mps = next(
+        row
+        for row in rows
+        if row[0] == "Python MPS"
+        and row[1] == "MacBook Pro (M5 Max, 128 GB)"
+        and row[5] == 1
+    )
+    measured_swift = next(
+        row
+        for row in rows
+        if row[0] == "Native Swift/Metal"
+        and row[1] == "MacBook Pro (M5 Max, 128 GB)"
+        and row[5] == 2
+    )
+
+    assert partial_mps[2] == "◐ Partial"
+    assert partial_mps[10] == 1
+    assert partial_mps[11:14] == ["n/a", "n/a", "n/a"]
+    assert measured_swift[2] == "✓ Measured"
+    assert measured_swift[10] == 6
+    assert measured_swift[11:14] == [
+        "0.225984 s",
+        "0.231192 s",
+        "0.231192 s",
+    ]
+
+
+def test_physical_cpu_product_reference_remains_partial_without_abf() -> None:
+    registry = _registry()
+    rows = {
+        row["measurement_id"]: row for row in resolved_measurements(registry)
+    }
+    measurement_id = (
+        "macbook-pro-m5-max-128gb-cpu-reference-bin1-products-334b7b5"
+    )
+    measurement = rows[measurement_id]
+    gate = next(
+        gate
+        for gate in registry["gates"]
+        if gate["id"]
+        == "products.cpu-reference.apple-m5-max-128gb.bin1.full-suite"
+    )
+
+    assert measurement["state"] == "partial"
+    assert measurement["sample_count"] == 1
+    assert measurement["process_tree_peak_bytes"] == 39_137_427_456
+    assert "ABF" in measurement["parity"]
+    assert "not retained" in measurement["parity"]
+    assert gate["state"] == "partial"
+    assert gate["satisfied_by"] == [measurement_id]
 
 
 def test_dtype_residency_matrix_is_atomic_and_source_audited() -> None:
