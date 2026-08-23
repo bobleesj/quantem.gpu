@@ -436,6 +436,18 @@
       "artifact": "private-evidence://macbook-pro-m5-max-128gb/20260822-webgpu-fullnative-bin1-d8e6f56-01/SHA256SUMS",
       "sha256": "4885c6bf8074dbcfbf41e5765bbf4aa6d015b586c79adcb9d43c1ce293bae94e",
       "result": "Immutable checksum inventory for the repeated physical WebGPU campaign, including raw runs, complete memory telemetry, bundle, and final idle audit."
+    },
+    {
+      "id": "m5-max-128gb-webgpu-fullnative-bin1-products-r7-d8e6f56",
+      "artifact": "private-evidence://macbook-pro-m5-max-128gb/20260822-webgpu-m5max-products-d8e6f56-01/MANIFEST.json",
+      "sha256": "82d66fda9b6b7a1730b203aedb4946ade94fd044e7820f2df4255aee96fb22db",
+      "result": "Clean physical WebGPU full-native detector-product and CoM/DPC/iDPC campaign at d8e6f56. One smoke plus seven retained fresh browser targets passed the frozen full-precision contracts. The internal complete product suite p50/p95/max was 0.4820/0.4836/0.4836 seconds from exact resident input; this is prepared-index warm-source evidence, not cold-source or application E2E."
+    },
+    {
+      "id": "m5-max-128gb-webgpu-fullnative-bin1-products-r7-seal-d8e6f56",
+      "artifact": "private-evidence://macbook-pro-m5-max-128gb/20260822-webgpu-m5max-products-d8e6f56-01/SHA256SUMS",
+      "sha256": "215dfdd3545b77e1df9826d6be2db091f1192f28b92aefab99b315989d924960",
+      "result": "Immutable checksum inventory for the physical full-native WebGPU product campaign, including raw trials, parity references, memory telemetry, failed-oracle smoke, and final idle audit."
     }
   ],
   "results": {
@@ -479,6 +491,57 @@
       "cold_claim": false,
       "state": "partial because WebGPU device-allocation telemetry is unavailable",
       "target_adjudication": "One internal profile reached 0.975 seconds, but profile p50 was 1.024 seconds and harness wall p50 was 1.358 seconds; repeated at-or-below-one-second loading is not supported."
+    },
+    "macbook_pro_m5_max_128gb_webgpu_fullnative_bin1_products_r7_d8e6f56": {
+      "source_revision": "d8e6f562a8ab43086a4ddea9eecfe6fd26b7beea",
+      "fixture_id": "full-native-webgpu-512x512x192x192-u16",
+      "fixture_sha256": "4802ec16ba241fef439e9dcb1c28e94f9cf9d95f773df9c5c8c3b5f7ed8192c4",
+      "source_identity_sha256": "1be810b96fdff8e384ad4cb6ebd49adff9b4ab0a6503cd5fed9106e09f5aa286",
+      "source_shape": [512, 512, 192, 192],
+      "working_shape": [512, 512, 192, 192],
+      "source_dtype": "uint16",
+      "working_dtype": "uint16",
+      "scan_bin": 1,
+      "detector_bin": 1,
+      "scan_crop": null,
+      "detector_crop": null,
+      "bad_pixel_count": 4,
+      "warmup_count": 1,
+      "sample_count": 7,
+      "complete_product_suite_p50_seconds": 0.482,
+      "complete_product_suite_p95_seconds": 0.4836,
+      "complete_product_suite_maximum_seconds": 0.4836,
+      "mean_dp_p50_seconds": 0.0501,
+      "total_p50_seconds": 0.0517,
+      "bf_p50_seconds": 0.0053,
+      "abf_p50_seconds": 0.0051,
+      "adf_p50_seconds": 0.0153,
+      "df_p50_seconds": 0.0489,
+      "raw_com_p50_seconds": 0.1006,
+      "dpc_row_p50_seconds": 0.1,
+      "dpc_column_p50_seconds": 0.099,
+      "idpc_zero_rotation_p50_seconds": 0.0021,
+      "idpc_optimized_rotation_p50_seconds": 0.0013,
+      "harness_load_p50_seconds": 1.233371749985963,
+      "harness_load_p95_seconds": 1.2513955410104245,
+      "harness_load_maximum_seconds": 1.2513955410104245,
+      "harness_load_plus_internal_products_p50_seconds": 1.7139703750452027,
+      "harness_load_plus_internal_products_p95_seconds": 1.7349955410342664,
+      "harness_load_plus_internal_products_maximum_seconds": 1.7349955410342664,
+      "logical_resident_bytes": 19327352832,
+      "browser_tree_peak_rss_bytes": 6970589184,
+      "minimum_available_memory_bytes": 52705394688,
+      "adapter_allocation_bytes": null,
+      "swap_delta_bytes": 0,
+      "swapout_delta_bytes": 0,
+      "pageout_delta_pages": 0,
+      "throttled_delta": 0,
+      "cache_state": "prepared QH5 indexes; warm source pages; exact full-native uint16 resident input; fresh browser target per retained run",
+      "timing_boundary": "complete internal GPU product suite from exact resident input through awaited readbacks; parity hashing, sorting, and encoding excluded",
+      "parity": "Mean DP, total, BF, ABF, ADF, DF, raw CoM row/column, and centered DPC row/column were byte exact in all seven runs. Zero- and optimized-rotation iDPC had maximum absolute error 1.52587890625e-5 with zero violations at rtol=atol=1e-5; rotation matched.",
+      "cold_claim": false,
+      "state": "accepted physical full-precision product evidence",
+      "remaining_gate": "Cold original-source and application-E2E load-plus-product timing remain separate; WebGPU device-allocation telemetry is unavailable in this browser runtime."
     },
     "macbook_pro_m5_24gb_python_mps_products_bin2_smoke_68dbe3a": {
       "source_revision": "68dbe3aa5f816e2d1c1ae976e1874790cffb4319",
@@ -1095,6 +1158,6 @@
     "created": "2026-08-22T13:33:04-07:00",
     "started": "2026-08-22T13:33:04-07:00",
     "finished": "2026-08-22T15:57:42-07:00",
-    "last_updated": "2026-08-22T17:31:03-07:00"
+    "last_updated": "2026-08-22T18:01:16-07:00"
   }
 }
