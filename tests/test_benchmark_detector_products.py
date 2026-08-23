@@ -53,13 +53,16 @@ def _args(tmp_path: Path, data: np.ndarray) -> argparse.Namespace:
         expected_volume_sha256=benchmark._array_sha256(data),
         expected_storage_shape=data.shape,
         reference_npz=tmp_path / "reference.npz",
+        reference_sha256="0" * 64,
         scan_shape=(3, 3),
         source_detector_shape=(4, 4),
         working_detector_shape=(4, 4),
         source_dtype="uint16",
         working_dtype="uint16",
         source_value_maximum=int(data.max()),
-        source_value_maximum_basis="complete synthetic array maximum",
+        source_value_maximum_basis=hashlib.sha256(
+            b"complete synthetic array maximum"
+        ).hexdigest(),
         det_bin=1,
         center_row=1.5,
         center_column=1.5,
@@ -96,6 +99,7 @@ def _write_reference(
         contract_json=np.asarray(json.dumps(benchmark._reference_contract(args))),
         **{name: reference[name] for name in benchmark.ARRAY_PRODUCT_NAMES},
     )
+    args.reference_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _patch_telemetry(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -120,6 +124,8 @@ def test_reference_bundle_is_complete_and_product_parity_is_fail_closed(
 
     assert parity["passed"] is True
     assert evidence["schema"] == benchmark.REFERENCE_SCHEMA
+    assert evidence["expected_bundle_sha256"] == args.reference_sha256
+    assert evidence["bundle_sha256_passed"] is True
     assert (
         evidence["bundle_sha256"]
         == hashlib.sha256(args.reference_npz.read_bytes()).hexdigest()
@@ -131,6 +137,51 @@ def test_reference_bundle_is_complete_and_product_parity_is_fail_closed(
     failed = benchmark._product_parity(changed, loaded)
     assert failed["passed"] is False
     assert failed["exact_integer_products"]["bright_field"]["passed"] is False
+
+
+def test_reference_bundle_rejects_hash_mismatch_before_np_load(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data = _data()
+    args = _args(tmp_path, data)
+    reference = _reference(data, args)
+    _write_reference(args.reference_npz, args, reference)
+    args.reference_sha256 = "f" * 64
+
+    monkeypatch.setattr(
+        benchmark.np,
+        "load",
+        lambda *unused_args, **unused_kwargs: pytest.fail(
+            "np.load must not run before reference SHA-256 validation"
+        ),
+    )
+
+    with pytest.raises(ValueError, match="reference NPZ SHA-256 mismatch"):
+        benchmark._reference_bundle(args)
+
+
+def test_range_audit_sha_is_validated_and_bound_to_reference(
+    tmp_path: Path,
+) -> None:
+    data = _data()
+    args = _args(tmp_path, data)
+    reference = _reference(data, args)
+    _write_reference(args.reference_npz, args, reference)
+
+    malformed = _args(tmp_path, data)
+    malformed.reference_sha256 = "not-a-sha256"
+    with pytest.raises(ValueError, match="reference-sha256"):
+        benchmark._validate_args(malformed)
+
+    malformed = _args(tmp_path, data)
+    malformed.source_value_maximum_basis = "not-a-sha256"
+    with pytest.raises(ValueError, match="source-value-maximum-basis"):
+        benchmark._validate_args(malformed)
+
+    args.source_value_maximum_basis = "a" * 64
+    with pytest.raises(ValueError, match="changed fields: source_value_maximum_basis"):
+        benchmark._reference_bundle(args)
 
 
 def test_overflow_proof_rejects_unsafe_detector_bin(
