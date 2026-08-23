@@ -92,6 +92,48 @@ def test_expected_output_shape_uses_positive_explicit_dimensions() -> None:
     assert _parse_shape("262144,96,96") == (262144, 96, 96)
 
 
+def test_load_once_reuses_explicit_geometry_mask_and_dtype_contract(
+    monkeypatch,
+) -> None:
+    calls = []
+
+    def fake_load(source, **kwargs):
+        calls.append((source, kwargs))
+        return object()
+
+    from quantem.gpu import io
+
+    monkeypatch.setattr(io, "load", fake_load)
+    args = argparse.Namespace(
+        backend="cpu",
+        det_bin=4,
+        dtype="uint16",
+        expected_scan_shape=(2, 3),
+        apply_mask=False,
+        auto_narrow=False,
+        scan_region=None,
+        skip_mps_memory_check=False,
+    )
+
+    result = benchmark._load_once(Path("fixture.h5"), args)
+
+    assert result is not None
+    assert calls == [
+        (
+            "fixture.h5",
+            {
+                "backend": "cpu",
+                "det_bin": 4,
+                "verbose": False,
+                "dtype": "uint16",
+                "scan_shape": (2, 3),
+                "apply_mask": False,
+                "auto_narrow": False,
+            },
+        )
+    ]
+
+
 class _ManagedArray:
     def __init__(self, array: np.ndarray) -> None:
         self.array = array

@@ -9,7 +9,6 @@ WebGPU profiles. Paths are anonymized in the output by default; pass
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import time
 from pathlib import Path
@@ -28,6 +27,8 @@ from _benchmark_support import (
     _nearest_rank_summary,
     _release_array,
     _sync_backend,
+    _validate_sha256,
+    _write_json_report,
 )
 
 
@@ -109,17 +110,6 @@ def _shape(data: Any) -> list[int] | None:
     if shape is None:
         return None
     return [int(value) for value in shape]
-
-
-def _validate_sha256(value: str | None, option: str) -> str | None:
-    if value is None:
-        return None
-    normalized = value.lower()
-    if len(normalized) != 64 or any(
-        character not in "0123456789abcdef" for character in normalized
-    ):
-        raise SystemExit(f"{option} must contain exactly 64 hexadecimal characters")
-    return normalized
 
 
 def _output_parity(data: Any, args: argparse.Namespace) -> dict[str, Any]:
@@ -224,21 +214,6 @@ def _scientific_metadata(result: Any, args: argparse.Namespace) -> dict[str, Any
     }
 
 
-def _write_report(report: dict[str, Any], path: Path | None) -> None:
-    """Print a report and atomically persist it when a destination is set."""
-
-    rendered = json.dumps(report, indent=2) + "\n"
-    if path is not None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-        try:
-            temporary.write_text(rendered, encoding="utf-8")
-            temporary.replace(path)
-        finally:
-            temporary.unlink(missing_ok=True)
-    print(rendered, end="")
-
-
 def _load_once(master: Path, args: argparse.Namespace):
     from quantem.gpu.io import load
 
@@ -249,6 +224,12 @@ def _load_once(master: Path, args: argparse.Namespace):
     }
     if args.dtype is not None:
         kwargs["dtype"] = args.dtype
+    if getattr(args, "expected_scan_shape", None) is not None:
+        kwargs["scan_shape"] = tuple(args.expected_scan_shape)
+    if hasattr(args, "apply_mask"):
+        kwargs["apply_mask"] = bool(args.apply_mask)
+    if hasattr(args, "auto_narrow"):
+        kwargs["auto_narrow"] = bool(args.auto_narrow)
     if args.scan_region is not None:
         kwargs["scan_region"] = args.scan_region
     override_key = "QUANTEM_GPU_MPS_SKIP_MEMORY_CHECK"
@@ -407,10 +388,13 @@ def main() -> None:
         raise SystemExit(
             f"reps must be positive and warmup nonnegative; got {args.reps}, {args.warmup}"
         )
-    args.source_sha256 = _validate_sha256(args.source_sha256, "source-sha256")
-    args.expected_output_sha256 = _validate_sha256(
-        args.expected_output_sha256, "expected-output-sha256"
-    )
+    try:
+        args.source_sha256 = _validate_sha256(args.source_sha256, "source-sha256")
+        args.expected_output_sha256 = _validate_sha256(
+            args.expected_output_sha256, "expected-output-sha256"
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     if args.memory_sample_ms <= 0:
         raise SystemExit(
             f"memory-sample-ms must be positive; got {args.memory_sample_ms}"
@@ -569,7 +553,7 @@ def main() -> None:
         row["status"] = "passed"
 
     report["status"] = "failed" if terminal_failure is not None else "passed"
-    _write_report(report, args.json_out)
+    _write_json_report(report, args.json_out)
     if terminal_failure is not None:
         raise SystemExit(f"benchmark failed closed: {terminal_failure}")
 

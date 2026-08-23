@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 
+from scripts import _benchmark_support as support
 from scripts._benchmark_support import MemorySampler, _release_array
 
 
@@ -39,3 +42,23 @@ def test_memory_sampler_reports_numeric_peaks() -> None:
     assert sample["sample_count"] >= 2
     assert sample["interval_ms"] == 1
     assert sample["peak"]["process_peak_rss_bytes"] > 0
+
+
+def test_darwin_vm_stat_normalizes_counters_to_bytes(monkeypatch) -> None:
+    output = """Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPageouts: 3.\nSwapins: 5.\nSwapouts: 7.\nPages occupied by compressor: 11.\n"""
+    monkeypatch.setattr(support.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        support.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(stdout=output),
+    )
+
+    snapshot = support._darwin_vm_stat()
+
+    assert snapshot == {
+        "page_size_bytes": 16_384,
+        "pageout_bytes": 3 * 16_384,
+        "swapin_bytes": 5 * 16_384,
+        "swapout_bytes": 7 * 16_384,
+        "compressor_bytes": 11 * 16_384,
+    }
