@@ -1011,6 +1011,8 @@ def test_docs_build_is_hardware_independent() -> None:
 
 def test_public_repository_links_and_citation_copy() -> None:
     readme = Path("README.md").read_text(encoding="utf-8")
+    intro = Path("docs/intro.md").read_text(encoding="utf-8")
+    config = Path("docs/_config.yml").read_text(encoding="utf-8")
     package = Path("pyproject.toml").read_text(encoding="utf-8")
 
     assert "https://bobleesj.github.io/quantem.gpu/" in readme
@@ -1019,9 +1021,15 @@ def test_public_repository_links_and_citation_copy() -> None:
     assert "## Citing quantem.gpu" in readme
     assert "the quantEM interactive framework" in readme
     assert "https://doi.org/10.1093/mam/ozag053.941" in readme
+    assert "Sangjoon Lee et al." in intro
+    assert "https://doi.org/10.1093/mam/ozag053.941" in intro
+    assert "author: Sangjoon Lee et al." in config
+    assert '{name = "Sangjoon Lee"}' in package
     assert '"CONTRIBUTING.md"' in package
-    assert Path("CITATION.cff").is_file()
-    assert '"CITATION.cff"' in package
+    assert not Path("CITATION.cff").exists()
+    for public_source in (readme, intro, config, package):
+        assert "CITATION.cff" not in public_source
+        assert re.search(r"\bBob\b", public_source) is None
 
 
 def test_prerelease_docs_pin_the_exact_declared_candidate() -> None:

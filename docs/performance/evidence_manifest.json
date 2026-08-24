@@ -6,7 +6,7 @@
   "pages": [
     {
       "path": "docs/intro.md",
-      "sha256": "c5cd24f84aa6f28feffc19d0a9a181cee919f7ac01fe2df0f831c819ec5045b5",
+      "sha256": "cd8d1c3dea06ddd7619ef9d08dcdb4f934892fc8c50f14b2b487737b2af12dbb",
       "role": "Developer landing page and benchmark routing without copied measurements"
     },
     {
