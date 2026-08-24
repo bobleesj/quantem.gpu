@@ -114,12 +114,11 @@ function validateBslz4ChunkHeader(
   if (!Number.isFinite(offset) || offset < 0 || offset + 12 > fileBytes.byteLength) {
     throw new Error(`${name}: HDF5 raw chunk offset is outside the file; cannot read bslz4 header.`);
   }
-  const blockBytes = readBE32(fileBytes, offset + 8);
+  const declaredBlockBytes = readBE32(fileBytes, offset + 8);
   const maxFrameBytes = detSize * srcBytes;
   if (
-    !finitePositiveInteger(blockBytes)
-    || blockBytes % srcBytes !== 0
-    || blockBytes > maxFrameBytes
+    !finitePositiveInteger(declaredBlockBytes)
+    || declaredBlockBytes % srcBytes !== 0
   ) {
     throw new Error(
       `${name}: unsupported HDF5 chunk codec or uncompressed detector chunks. `
@@ -128,6 +127,10 @@ function validateBslz4ChunkHeader(
       + "export the BF-column sidecar fallback.",
     );
   }
+  // Bitshuffle keeps its declared block size in the chunk header even when a
+  // whole detector frame is one smaller final block. The effective block then
+  // contains exactly the frame bytes, as in detector-binned 48x48 uint16 data.
+  const blockBytes = Math.min(declaredBlockBytes, maxFrameBytes);
   const blockElems = blockBytes / srcBytes;
   const nBlocksPerFrame = Math.ceil(detSize / blockElems);
   if (!finitePositiveInteger(blockElems) || !finitePositiveInteger(nBlocksPerFrame)) {

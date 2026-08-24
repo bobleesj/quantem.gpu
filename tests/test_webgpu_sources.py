@@ -181,6 +181,9 @@ def test_webgpu_h5reader_keeps_single_pass_block_metadata_parse() -> None:
 
     assert "unsupported HDF5 chunk codec or uncompressed detector chunks" in source
     assert "validateBslz4ChunkHeader" in source
+    assert "const declaredBlockBytes = readBE32(fileBytes, offset + 8);" in source
+    assert "const blockBytes = Math.min(declaredBlockBytes, maxFrameBytes);" in source
+    assert "declaredBlockBytes > maxFrameBytes" not in source
     assert "const meta = new Uint32Array(framesThisChunk * nBlocksPerFrame * 2);" in source
     assert "meta[m++] = addr + pos + 4;" in source
     assert "meta[i] -= rangeStart;" in source
