@@ -11,7 +11,7 @@ license = "MIT"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 requires-python = ">=3.11"
 authors = [
-    {name = "Sangjoon Bob Lee"}
+    {name = "Sangjoon Lee"}
 ]
 keywords = [
     "4dstem",
@@ -105,7 +105,6 @@ include = [
     "Package.swift",
     "README.md",
     "CONTRIBUTING.md",
-    "CITATION.cff",
     "environment-remote-cuda.yml",
     "pyproject.toml",
 ]

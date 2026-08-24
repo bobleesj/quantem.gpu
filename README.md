@@ -200,8 +200,6 @@ citing:
 > and Reconstruction,” *Microscopy and Microanalysis* 32 (Supplement 1),
 > ozag053.941 (2026). https://doi.org/10.1093/mam/ozag053.941
 
-Machine-readable citation metadata is provided in [CITATION.cff](CITATION.cff).
-
 ## Package boundary
 
 `quantem.gpu` owns reusable accelerated IO, math, kernels, result contracts,

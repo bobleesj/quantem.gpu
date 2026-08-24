@@ -2,7 +2,7 @@
 # intentionally hardware-independent: qualified CUDA, Metal/MPS, and WebGPU
 # runs publish retained evidence rather than rerunning private data on Pages CI.
 title: quantem.gpu
-author: Sangjoon Bob Lee, et al
+author: Sangjoon Lee et al.
 logo: ""
 only_build_toc_files: true
 exclude_patterns:
