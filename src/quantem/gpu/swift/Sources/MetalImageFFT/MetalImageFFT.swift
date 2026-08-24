@@ -89,6 +89,7 @@ public final class MetalImageFFT: @unchecked Sendable {
   private let packUInt32: MTLComputePipelineState
   private let packFloat32: MTLComputePipelineState
   private let lock = NSLock()
+  private let executionLock = NSLock()
   private var plans: [ShapeKey: GraphPlan] = [:]
   private var workspaces: [ShapeKey: Workspace] = [:]
 
@@ -167,6 +168,12 @@ public final class MetalImageFFT: @unchecked Sendable {
     let key = ShapeKey(rows: rows, columns: columns)
     let plan = try lockedPlan(for: key)
     let workspace = try lockedWorkspace(for: key, count: count)
+
+    // Plans and scratch buffers are shared between callers for warm reuse.
+    // Keep one transform in flight so a concurrent same-shape request cannot
+    // replace the packed input or maximum before the first graph consumes it.
+    executionLock.lock()
+    defer { executionLock.unlock() }
 
     guard let command = queue.makeCommandBuffer(),
       let encoder = command.makeComputeCommandEncoder()
