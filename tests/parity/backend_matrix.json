@@ -29,7 +29,39 @@
       "source_revision"
     ]
   },
+  "gold_fixtures": {
+    "scan_rotation_v1": {
+      "path": "src/quantem/gpu/parity/scan_rotation_v1.json",
+      "sha256": "8dde7144ae5f297dffc7b1330b6db66301ff42849a39b6adadfb078acb6fd35f"
+    }
+  },
   "capabilities": [
+    {
+      "id": "geometry.scan-quarter-turn",
+      "parity": "Byte-exact scan-row/column quarter turns with unchanged detector patterns, dtype, and coordinate convention.",
+      "coverage": {
+        "cpu-reference": {
+          "level": "reference-fixture",
+          "gates": ["tests/test_geometry.py", "src/quantem/gpu/parity/scan_rotation_v1.json"]
+        },
+        "cuda": {
+          "level": "required",
+          "gates": ["tests/test_geometry.py"]
+        },
+        "mps": {
+          "level": "required",
+          "gates": ["tests/test_geometry.py"]
+        },
+        "swift-metal": {
+          "level": "required",
+          "gates": ["src/quantem/gpu/swift/Tests/Metal4DSTEMKernelsTests/ScanRotationParityTests.swift"]
+        },
+        "webgpu": {
+          "level": "required-hardware",
+          "gates": ["src/quantem/gpu/geometry/compute/webgpu/quarter-turn.ts", "tests/test_webgpu_sources.py"]
+        }
+      }
+    },
     {
       "id": "io.decode-bin-provenance",
       "parity": "Exact corrected integer values, shape, dtype, crop/bin geometry, and provenance.",

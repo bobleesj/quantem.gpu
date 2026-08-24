@@ -88,6 +88,8 @@ artifacts = [
     "src/quantem/gpu/io/backends/webgpu/*.ts",
     "src/quantem/gpu/display/webgpu/*.ts",
     "src/quantem/gpu/display/goldens/*.json",
+    "src/quantem/gpu/parity/*.json",
+    "src/quantem/gpu/geometry/compute/webgpu/*.ts",
     "src/quantem/gpu/detector/compute/mps/metal/*.msl",
     "src/quantem/gpu/device/*.ts",
     "src/quantem/gpu/detector/*.ts",

@@ -48,6 +48,12 @@
     }
   },
   "capabilities": {
+    "geometry.scan-quarter-turn": {
+      "required_metrics": [
+        "rotation_ms",
+        "output_hashes"
+      ]
+    },
     "io.decode-bin-provenance": {
       "required_metrics": [
         "open_metadata_ms",
@@ -173,6 +179,12 @@
     "timestamps"
   ],
   "cells": [
+    {"id": "geometry.scan-quarter-turn::cpu-reference", "capability": "geometry.scan-quarter-turn", "backend": "cpu-reference", "support_level": "reference-fixture", "pr_gate": "frozen-reference-fixture", "scheduled_profile": "weekly", "release_signoff": true, "runner": "portable-cpu", "state": "ready"},
+    {"id": "geometry.scan-quarter-turn::cuda", "capability": "geometry.scan-quarter-turn", "backend": "cuda", "support_level": "required", "pr_gate": "source-contract-and-synthetic-parity", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-cuda", "state": "ready"},
+    {"id": "geometry.scan-quarter-turn::mps", "capability": "geometry.scan-quarter-turn", "backend": "mps", "support_level": "required", "pr_gate": "source-contract-and-synthetic-parity", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-python-mps", "state": "ready"},
+    {"id": "geometry.scan-quarter-turn::swift-metal", "capability": "geometry.scan-quarter-turn", "backend": "swift-metal", "support_level": "required", "pr_gate": "swift-test-and-metal-compile", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-native-swift-metal", "state": "ready"},
+    {"id": "geometry.scan-quarter-turn::webgpu", "capability": "geometry.scan-quarter-turn", "backend": "webgpu", "support_level": "required-hardware", "pr_gate": "source-contract-and-browser-smoke", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-hardware-browser", "state": "ready"},
+
     {"id": "io.decode-bin-provenance::cpu-reference", "capability": "io.decode-bin-provenance", "backend": "cpu-reference", "support_level": "reference", "pr_gate": "portable-parity", "scheduled_profile": "weekly", "release_signoff": true, "runner": "portable-cpu", "state": "ready"},
     {"id": "io.decode-bin-provenance::cuda", "capability": "io.decode-bin-provenance", "backend": "cuda", "support_level": "required", "pr_gate": "source-contract", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-cuda", "state": "ready"},
     {"id": "io.decode-bin-provenance::mps", "capability": "io.decode-bin-provenance", "backend": "mps", "support_level": "required", "pr_gate": "source-contract-and-synthetic-parity", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-python-mps", "state": "ready"},
