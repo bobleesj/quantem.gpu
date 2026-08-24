@@ -71,6 +71,8 @@ public enum Metal4DSTEMKernels {
     "detector_accumulate_u8_u64_frame_tiled"
   public static let transposeScanWordsFunction = "transpose_scan_words"
   public static let transposeScanWords32x8Function = "transpose_scan_words_32x8"
+  public static let rotateScanWordsQuarterTurnFunction =
+    "rotate_scan_words_quarter_turn"
   public static let scanBinU8Function = "scan_bin_u8_to_u32_word_major"
   public static let scanBinU16Function = "scan_bin_u16_to_u32_word_major"
   public static let scanDetectorBinU8Function =

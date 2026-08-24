@@ -1,4 +1,5 @@
 """GPU-accelerated scientific workflows for QuantEM."""
+
 from __future__ import annotations
 
 from importlib import import_module
@@ -16,6 +17,7 @@ _NAMESPACES = {
     "detector",
     "device",
     "dpc",
+    "geometry",
     "io",
     "movie",
     "optics",
@@ -26,15 +28,16 @@ _NAMESPACES = {
 __all__ = [
     "SSB",
     "SSBResult",
+    "__version__",
     "detector",
     "device",
     "dpc",
+    "geometry",
     "io",
     "movie",
     "optics",
     "parallax",
     "screening",
-    "__version__",
 ]
 
 

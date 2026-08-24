@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -12,6 +13,7 @@ EXPECTED_BACKENDS = {
     "webgpu",
 }
 EXPECTED_CAPABILITIES = {
+    "geometry.scan-quarter-turn",
     "io.decode-bin-provenance",
     "io.selective-scan-loading",
     "detector.integer-products",
@@ -200,3 +202,13 @@ def test_selective_scan_loading_support_matches_retained_sources() -> None:
     assert "no-ordered-duplicate-index-loader" in coverage["webgpu"][
         "limitations"
     ]
+
+
+def test_backend_parity_manifest_freezes_shared_gold_fixtures() -> None:
+    fixtures = _manifest()["gold_fixtures"]
+
+    assert set(fixtures) == {"scan_rotation_v1"}
+    for fixture in fixtures.values():
+        path = Path(fixture["path"])
+        assert path.is_file()
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == fixture["sha256"]

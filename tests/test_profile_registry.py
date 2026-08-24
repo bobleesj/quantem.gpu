@@ -20,7 +20,7 @@ def test_profile_registry_validator_accepts_retained_evidence() -> None:
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "40 platform/module cells" in result.stdout
+    assert "45 platform/module cells" in result.stdout
     experiment_count = len(list(Path("experiments").glob("*/manifest.json")))
     assert f"{experiment_count} retained experiments" in result.stdout
 
@@ -29,7 +29,7 @@ def test_profile_matrix_has_one_atomic_cell_per_backend_capability() -> None:
     plan = json.loads(PROFILE_MATRIX.read_text(encoding="utf-8"))
     cells = plan["cells"]
 
-    assert len(cells) == 40
+    assert len(cells) == 45
     assert len({cell["id"] for cell in cells}) == len(cells)
     assert all(
         cell["id"] == f"{cell['capability']}::{cell['backend']}" for cell in cells

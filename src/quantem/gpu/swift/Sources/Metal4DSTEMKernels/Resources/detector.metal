@@ -756,6 +756,53 @@ kernel void transpose_scan_words_32x8(
     }
 }
 
+struct ScanQuarterTurnParams {
+    uint sourceRows;
+    uint sourceColumns;
+    uint wordsPerScan;
+    uint quarterTurns;
+    uint outputRows;
+    uint outputColumns;
+    uint totalWords;
+    uint padding;
+};
+
+// Reindex only scan rows and columns. Every payload word belonging to a
+// detector pattern is copied unchanged and remains contiguous.
+kernel void rotate_scan_words_quarter_turn(
+    device const uint *source [[buffer(0)]],
+    device uint *destination [[buffer(1)]],
+    constant ScanQuarterTurnParams &params [[buffer(2)]],
+    uint outputWord [[thread_position_in_grid]]
+) {
+    if (outputWord >= params.totalWords) return;
+    uint outputScan = outputWord / params.wordsPerScan;
+    uint wordInScan = outputWord - outputScan * params.wordsPerScan;
+    uint outputRow = outputScan / params.outputColumns;
+    uint outputColumn = outputScan - outputRow * params.outputColumns;
+    uint sourceRow = outputRow;
+    uint sourceColumn = outputColumn;
+    switch (params.quarterTurns) {
+        case 1u:
+            sourceRow = outputColumn;
+            sourceColumn = params.sourceColumns - 1u - outputRow;
+            break;
+        case 2u:
+            sourceRow = params.sourceRows - 1u - outputRow;
+            sourceColumn = params.sourceColumns - 1u - outputColumn;
+            break;
+        case 3u:
+            sourceRow = params.sourceRows - 1u - outputColumn;
+            sourceColumn = outputRow;
+            break;
+        default:
+            break;
+    }
+    uint sourceScan = sourceRow * params.sourceColumns + sourceColumn;
+    destination[outputWord] =
+        source[ulong(sourceScan) * params.wordsPerScan + wordInScan];
+}
+
 struct ScanBinParams {
     uint sourceRows;
     uint sourceCols;
