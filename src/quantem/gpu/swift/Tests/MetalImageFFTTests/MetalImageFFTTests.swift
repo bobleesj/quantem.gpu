@@ -1,9 +1,31 @@
-import Metal
+@preconcurrency import Metal
 import XCTest
 
 @testable import MetalImageFFT
 
 final class MetalImageFFTTests: XCTestCase {
+  private final class ConcurrentOutputs: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [Result<[Float], Error>?] = [nil, nil]
+
+    func set(_ result: Result<[Float], Error>, at index: Int) {
+      lock.withLock { storage[index] = result }
+    }
+
+    func value(at index: Int) throws -> [Float] {
+      try lock.withLock {
+        guard let result = storage[index] else {
+          throw NSError(
+            domain: "MetalImageFFTTests",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "Concurrent FFT result was not published."]
+          )
+        }
+        return try result.get()
+      }
+    }
+  }
+
   func testFloatArbitraryShapeMatchesDirectDFTAndFFTShift() throws {
     let device = try metalDevice()
     let fft = try MetalImageFFT(device: device)
@@ -20,7 +42,7 @@ final class MetalImageFFTTests: XCTestCase {
       columns: columns,
       scalarType: .float32
     )
-    let actual = floatValues(result.buffer, count: values.count)
+    let actual = Self.floatValues(result.buffer, count: values.count)
     var expectedMaximum: Float = 0
     for outputRow in 0..<rows {
       for outputColumn in 0..<columns {
@@ -90,7 +112,7 @@ final class MetalImageFFTTests: XCTestCase {
     )
 
     for result in [uint8Result, uint16Result, uint32Result] {
-      for value in floatValues(result.buffer, count: rows * columns) {
+      for value in Self.floatValues(result.buffer, count: rows * columns) {
         XCTAssertEqual(value, expected, accuracy: 2e-5)
       }
       XCTAssertEqual(result.maximum, expected, accuracy: 2e-5)
@@ -110,7 +132,7 @@ final class MetalImageFFTTests: XCTestCase {
       scalarType: .float32
     )
 
-    let unchanged = floatValues(source, count: values.count)
+    let unchanged = Self.floatValues(source, count: values.count)
     XCTAssertEqual(unchanged[0], 1)
     XCTAssertTrue(unchanged[1].isNaN)
     XCTAssertEqual(unchanged[2], 2)
@@ -164,6 +186,79 @@ final class MetalImageFFTTests: XCTestCase {
       16.0,
       "Warm 256×256 FFT should stay inside a 60 Hz frame, but p50 was \(median) ms"
     )
+  }
+
+  func testConcurrentTransformsDoNotOverwriteSharedShapeWorkspace() throws {
+    let device = try metalDevice()
+    let fft = try MetalImageFFT(device: device)
+    let rows = 256
+    let columns = 256
+    let count = rows * columns
+    let firstValues = (0..<count).map { index -> Float in
+      let row = index / columns
+      let column = index - row * columns
+      return sin(Float(row) * 0.031) + cos(Float(column) * 0.071)
+    }
+    let secondValues = (0..<count).map { index -> Float in
+      let row = index / columns
+      let column = index - row * columns
+      return 5 * sin(Float(row) * 0.113) - 3 * cos(Float(column) * 0.047)
+    }
+    let sources = [
+      try makeBuffer(device: device, values: firstValues),
+      try makeBuffer(device: device, values: secondValues),
+    ]
+    let expected = try sources.map { source in
+      let reference = try MetalImageFFT(device: device)
+      let result = try reference.logMagnitude(
+        source: source,
+        rows: rows,
+        columns: columns,
+        scalarType: .float32
+      )
+      return Self.floatValues(result.buffer, count: count)
+    }
+
+    for _ in 0..<20 {
+      let gate = DispatchSemaphore(value: 0)
+      let group = DispatchGroup()
+      let outputs = ConcurrentOutputs()
+      for index in sources.indices {
+        group.enter()
+        DispatchQueue.global(qos: .userInitiated).async {
+          gate.wait()
+          outputs.set(
+            Result {
+              let result = try fft.logMagnitude(
+                source: sources[index],
+                rows: rows,
+                columns: columns,
+                scalarType: .float32
+              )
+              return Self.floatValues(result.buffer, count: count)
+            },
+            at: index
+          )
+          group.leave()
+        }
+      }
+      gate.signal()
+      gate.signal()
+      XCTAssertEqual(group.wait(timeout: .now() + 10), .success)
+
+      for index in sources.indices {
+        let actual = try outputs.value(at: index)
+        XCTAssertEqual(actual.count, expected[index].count)
+        for sample in stride(from: 0, to: count, by: 257) {
+          XCTAssertEqual(
+            actual[sample],
+            expected[index][sample],
+            accuracy: 2e-4,
+            "Concurrent FFT \(index) was overwritten at sample \(sample)."
+          )
+        }
+      }
+    }
   }
 
   func testWarm512UInt32BrightFieldFFTStaysInside120Hz() throws {
@@ -311,7 +406,7 @@ final class MetalImageFFTTests: XCTestCase {
     }
   }
 
-  private func floatValues(_ buffer: MTLBuffer, count: Int) -> [Float] {
+  private static func floatValues(_ buffer: MTLBuffer, count: Int) -> [Float] {
     let pointer = buffer.contents().bindMemory(to: Float.self, capacity: count)
     return Array(UnsafeBufferPointer(start: pointer, count: count))
   }
