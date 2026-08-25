@@ -8,6 +8,16 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
     self.cacheDirectory = cacheDirectory
   }
 
+  public func resolvedAcquisitionInput(_ input: URL) throws -> URL {
+    let source = nativeCanonicalURL(input)
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: source.path, isDirectory: &isDirectory) else {
+      throw Native4DSTEMIOError.invalidData("HDF5 input does not exist: \(source.path)")
+    }
+    guard !isDirectory.boolValue else { return source }
+    return try masters(for: source).first ?? source
+  }
+
   public func prepare(
     inputs: [URL],
     mode: Native4DSTEMCatalogMode = .indexed
@@ -24,9 +34,28 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
     mode: Native4DSTEMCatalogMode = .indexed
   ) throws -> Native4DSTEMCatalog {
     let source = nativeCanonicalURL(input)
-    let datasets = try masters(for: source).map { try prepareDataset(source: $0, mode: mode) }
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: source.path, isDirectory: &isDirectory) else {
+      throw Native4DSTEMIOError.invalidData("HDF5 input does not exist: \(source.path)")
+    }
+    let candidates = try masters(for: source)
+    var datasets: [Native4DSTEMDataset] = []
+    var issues: [Native4DSTEMCatalogIssue] = []
+    datasets.reserveCapacity(candidates.count)
+    for candidate in candidates {
+      do {
+        datasets.append(try prepareDataset(source: candidate, mode: mode))
+      } catch {
+        guard isDirectory.boolValue else { throw error }
+        issues.append(
+          Native4DSTEMCatalogIssue(
+            input: candidate.path,
+            message: error.localizedDescription
+          ))
+      }
+    }
     guard !datasets.isEmpty else { throw Native4DSTEMIOError.noDatasets }
-    return Native4DSTEMCatalog(input: source.path, datasets: datasets)
+    return Native4DSTEMCatalog(input: source.path, datasets: datasets, issues: issues)
   }
 
   private func prepareDataset(
@@ -577,6 +606,15 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
         .appendingPathComponent(stem + "_master.h5")
       if FileManager.default.fileExists(atPath: master.path) {
         return [nativeCanonicalURL(master)]
+      }
+    }
+    if input.pathExtension.caseInsensitiveCompare("h5") == .orderedSame {
+      let companionMaster = input.deletingLastPathComponent()
+        .appendingPathComponent(
+          input.deletingPathExtension().lastPathComponent + "_master.h5"
+        )
+      if FileManager.default.fileExists(atPath: companionMaster.path) {
+        return [nativeCanonicalURL(companionMaster)]
       }
     }
     return [input]

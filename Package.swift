@@ -77,8 +77,16 @@ let package = Package(
     ),
     .target(
       name: "Metal4DSTEMStreamingIO",
-      dependencies: ["Metal4DSTEMKernels", "Native4DSTEMIO"],
+      dependencies: [
+        "CMetal4DSTEMInteractions",
+        "Metal4DSTEMKernels",
+        "Native4DSTEMIO",
+      ],
       path: "src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO"
+    ),
+    .target(
+      name: "CMetal4DSTEMInteractions",
+      path: "src/quantem/gpu/swift/Sources/CMetal4DSTEMInteractions"
     ),
     .target(
       name: "MetalImageFFT",

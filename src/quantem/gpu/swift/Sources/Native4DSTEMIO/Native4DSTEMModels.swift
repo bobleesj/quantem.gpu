@@ -35,15 +35,32 @@ public struct Native4DSTEMScanCalibration: Codable, Equatable, Sendable {
   }
 }
 
+public struct Native4DSTEMCatalogIssue: Codable, Equatable, Sendable {
+  public let input: String
+  public let message: String
+
+  public init(input: String, message: String) {
+    self.input = input
+    self.message = message
+  }
+}
+
 public struct Native4DSTEMCatalog: Codable, Sendable {
   public let version: Int
   public let input: String
   public let datasets: [Native4DSTEMDataset]
+  public let issues: [Native4DSTEMCatalogIssue]?
 
-  public init(version: Int = 1, input: String, datasets: [Native4DSTEMDataset]) {
+  public init(
+    version: Int = 1,
+    input: String,
+    datasets: [Native4DSTEMDataset],
+    issues: [Native4DSTEMCatalogIssue] = []
+  ) {
     self.version = version
     self.input = input
     self.datasets = datasets
+    self.issues = issues.isEmpty ? nil : issues
   }
 
   public static func merging(
@@ -56,7 +73,8 @@ public struct Native4DSTEMCatalog: Codable, Sendable {
     return Native4DSTEMCatalog(
       version: catalogs.map(\.version).max() ?? 1,
       input: inputs.map(\.path).joined(separator: " | "),
-      datasets: datasets
+      datasets: datasets,
+      issues: catalogs.flatMap { $0.issues ?? [] }
     )
   }
 }
