@@ -156,9 +156,15 @@ public struct Metal4DSTEMIndexedLoadPlan: Equatable, Sendable {
     source: Native4DSTEMIndexedSource,
     maximumDecodedWindowBytes: UInt64,
     detectorBands: Metal4DSTEMDetectorBands,
+    maximumInFlightCommandBuffers: Int = Self.defaultMaximumInFlightCommandBuffers,
     sourceTransfer: Metal4DSTEMIndexedSourceTransfer = .memoryMapped
   ) throws {
     try sourceTransfer.validate()
+    guard maximumInFlightCommandBuffers > 0 else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "Indexed streaming requires at least one in-flight command buffer."
+      )
+    }
     let dataset = source.dataset
     guard dataset.sourceDtype == Metal4DSTEMIntegerDType.uint16.rawValue,
       source.sourceBytesPerValue == Metal4DSTEMIntegerDType.uint16.bytesPerValue
@@ -296,7 +302,7 @@ public struct Metal4DSTEMIndexedLoadPlan: Equatable, Sendable {
       try Self.mappedBufferBytes($0.index.metadata.sourceBytes)
     }
     maximumMappedSourceBufferBytes = mappedSourceBytes.max() ?? 0
-    maximumInFlightCommandBuffers = Self.defaultMaximumInFlightCommandBuffers
+    self.maximumInFlightCommandBuffers = maximumInFlightCommandBuffers
     maximumInFlightMappedSourceBytes = try Self.sum(
       Array(mappedSourceBytes.sorted(by: >).prefix(maximumInFlightCommandBuffers)),
       label: "in-flight mapped source buffers"
@@ -571,11 +577,6 @@ public struct Metal4DSTEMDecodedFrame: Equatable, Sendable {
 /// and presentation. This loader owns bounded decode, exact reductions, and
 /// source/shape/dtype provenance only.
 public final class Metal4DSTEMIndexedLoader {
-  // All commands use one ordered queue, so a single bounded scratch buffer is
-  // reused without overlap while CPU mapping and command encoding run ahead.
-  private static let maximumInFlightCommandBuffers =
-    Metal4DSTEMIndexedLoadPlan.defaultMaximumInFlightCommandBuffers
-
   private let device: MTLDevice
   private let queue: MTLCommandQueue
   private let decodePipeline: MTLComputePipelineState
@@ -838,6 +839,7 @@ public final class Metal4DSTEMIndexedLoader {
       sourceAudit: plan.sourceAudit,
       maximumShardBytes: plan.shardPlan.maximumShardBytes,
       residentStorage: plan.residentStorage,
+      maximumInFlightCommandBuffers: plan.productPlan.maximumInFlightCommandBuffers,
       sourceTransfer: plan.productPlan.sourceTransfer
     )
     guard expectedPlan == plan else {
@@ -919,6 +921,7 @@ public final class Metal4DSTEMIndexedLoader {
       sourceAudit: plan.sourceAudit,
       maximumShardBytes: plan.shardPlan.maximumShardBytes,
       residentStorage: plan.residentStorage,
+      maximumInFlightCommandBuffers: plan.productPlan.maximumInFlightCommandBuffers,
       sourceTransfer: plan.productPlan.sourceTransfer
     )
     guard expectedPlan == plan else {
@@ -1006,6 +1009,7 @@ public final class Metal4DSTEMIndexedLoader {
       source: source,
       maximumDecodedWindowBytes: plan.maximumDecodedWindowBytes,
       detectorBands: plan.detectorBands,
+      maximumInFlightCommandBuffers: plan.maximumInFlightCommandBuffers,
       sourceTransfer: plan.sourceTransfer
     )
     guard expectedPlan == plan else {
@@ -1220,7 +1224,7 @@ public final class Metal4DSTEMIndexedLoader {
     }
 
     let streamStarted = CFAbsoluteTimeGetCurrent()
-    let maximumPendingCommandCount = Self.maximumInFlightCommandBuffers
+    let maximumPendingCommandCount = plan.maximumInFlightCommandBuffers
     for shardIndex in 0..<min(bufferedPrefetchDepth, source.shards.count) {
       try scheduleBufferedSource(shardIndex)
     }
