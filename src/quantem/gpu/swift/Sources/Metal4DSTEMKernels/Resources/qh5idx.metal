@@ -866,11 +866,20 @@ kernel void h5lz4dc_unshuffle_u16_lossless_u8_qh5idx(
             uint detectorIndex = block * 4096 + group * 32 + lane;
             if (detectorIndex < frameElements) {
                 bool valid = badPixelMask[detectorIndex] == 0;
+                uint laneMask = 1u << lane;
+                bool above255 = (highWord & laneMask) != 0u;
+                uint decodedValue = uint(value);
+                if (above255) {
+                    for (uint bit = 8; bit < 16; bit++) {
+                        if (planes[bit * 128 + group] & laneMask) {
+                            decodedValue |= 1u << bit;
+                        }
+                    }
+                }
                 uchar stored = valid ? value : uchar(0);
                 output[ulong(frame) * frameElements + detectorIndex] = stored;
-                localMax = max(localMax, uint(stored));
-                localAbove255 +=
-                    valid && (highWord & (1u << lane)) != 0u ? 1u : 0u;
+                localMax = max(localMax, valid ? decodedValue : 0u);
+                localAbove255 += valid && above255 ? 1u : 0u;
             }
         }
         atomic_fetch_max_explicit(&blockMax, localMax, memory_order_relaxed);

@@ -665,14 +665,49 @@ final class Native4DSTEMIOTests: XCTestCase {
     )
   }
 
-  func testFolderMasterAndShardResolveToSameDataset() throws {
+  func testFolderMasterShardAndCompanionResolveToSameDataset() throws {
     let fixture = try copiedFixture()
+    let companion = fixture.root.appendingPathComponent("fixture.h5")
+    try Data("companion metadata".utf8).write(to: companion)
     let builder = Native4DSTEMCatalogBuilder(cacheDirectory: fixture.cache)
+    XCTAssertEqual(try builder.resolvedAcquisitionInput(fixture.root), fixture.root)
+    XCTAssertEqual(try builder.resolvedAcquisitionInput(fixture.master), fixture.master)
+    XCTAssertEqual(try builder.resolvedAcquisitionInput(fixture.data), fixture.master)
+    XCTAssertEqual(try builder.resolvedAcquisitionInput(companion), fixture.master)
     let folder = try builder.prepare(input: fixture.root, mode: .catalogOnly)
     let master = try builder.prepare(input: fixture.master, mode: .catalogOnly)
     let shard = try builder.prepare(input: fixture.data, mode: .catalogOnly)
+    let related = try builder.prepare(input: companion, mode: .catalogOnly)
     XCTAssertEqual(folder.datasets.map(\.id), master.datasets.map(\.id))
     XCTAssertEqual(shard.datasets.map(\.id), master.datasets.map(\.id))
+    XCTAssertEqual(related.datasets.map(\.id), master.datasets.map(\.id))
+  }
+
+  func testFolderCatalogSkipsIncompleteAcquisitionAndReportsIssue() throws {
+    let fixture = try copiedFixture()
+    let incompleteRoot = fixture.root.appendingPathComponent(
+      "incomplete",
+      isDirectory: true
+    )
+    try FileManager.default.createDirectory(
+      at: incompleteRoot,
+      withIntermediateDirectories: true
+    )
+    let incompleteMaster = incompleteRoot.appendingPathComponent("incomplete_master.h5")
+    try FileManager.default.copyItem(at: fixture.master, to: incompleteMaster)
+    let builder = Native4DSTEMCatalogBuilder(cacheDirectory: fixture.cache)
+
+    let folder = try builder.prepare(input: fixture.root, mode: .catalogOnly)
+    XCTAssertEqual(folder.datasets.count, 1)
+    let issue = try XCTUnwrap(folder.issues?.first)
+    XCTAssertEqual(issue.input, incompleteMaster.path)
+    XCTAssertTrue(issue.message.contains("Missing HDF5 shard"))
+
+    XCTAssertThrowsError(
+      try builder.prepare(input: incompleteMaster, mode: .catalogOnly)
+    ) { error in
+      XCTAssertTrue(error.localizedDescription.contains("Missing HDF5 shard"))
+    }
   }
 
   func testMultipleInputsPreserveOrderAndDeduplicateDatasets() throws {
@@ -1374,6 +1409,67 @@ final class Native4DSTEMIOTests: XCTestCase {
     XCTAssertEqual(result.metrics.workingPayloadBytes, UInt64(packedWordCount * 4))
     XCTAssertEqual(result.metrics.destinationStorageMode, "shared")
 
+    let interactions = try Metal4DSTEMShardedInteractions(device: device)
+    let selectedOutput = try XCTUnwrap(
+      device.makeBuffer(
+        length: expectedWorking.count * MemoryLayout<UInt32>.stride,
+        options: .storageModeShared
+      )
+    )
+    try interactions.extractDiffraction(
+      shards: result.workingVolumeShards,
+      plan: result.shardPlan,
+      scanRow: 0,
+      scanColumn: 0,
+      into: selectedOutput
+    )
+    XCTAssertEqual(
+      Array(
+        UnsafeBufferPointer(
+          start: selectedOutput.contents().bindMemory(
+            to: UInt32.self,
+            capacity: expectedWorking.count
+          ),
+          count: expectedWorking.count
+        )
+      ),
+      expectedWorking.map(UInt32.init)
+    )
+    let virtualOutput = try XCTUnwrap(
+      device.makeBuffer(
+        length: MemoryLayout<UInt32>.stride,
+        options: .storageModeShared
+      )
+    )
+    var firstMask = [UInt8](repeating: 0, count: expectedWorking.count)
+    firstMask[0] = 1
+    firstMask[1] = 1
+    try interactions.updateVirtualDetector(
+      shards: result.workingVolumeShards,
+      plan: result.shardPlan,
+      previousMask: nil,
+      nextMask: firstMask,
+      into: virtualOutput
+    )
+    XCTAssertEqual(
+      virtualOutput.contents().load(as: UInt32.self),
+      UInt32(expectedWorking[0]) + UInt32(expectedWorking[1])
+    )
+    var secondMask = firstMask
+    secondMask[0] = 0
+    secondMask[2] = 1
+    try interactions.updateVirtualDetector(
+      shards: result.workingVolumeShards,
+      plan: result.shardPlan,
+      previousMask: firstMask,
+      nextMask: secondMask,
+      into: virtualOutput
+    )
+    XCTAssertEqual(
+      virtualOutput.contents().load(as: UInt32.self),
+      UInt32(expectedWorking[1]) + UInt32(expectedWorking[2])
+    )
+
     let privatePlan = try Metal4DSTEMIndexedBinnedLoadPlan(
       source: source,
       maximumDecodedWindowBytes: source.decodedBytesPerFrame,
@@ -1392,6 +1488,17 @@ final class Native4DSTEMIOTests: XCTestCase {
     XCTAssertEqual(privateResult.metrics.destinationStorageMode, "private")
     let privateShard = try XCTUnwrap(privateResult.workingVolumeShards.first)
     XCTAssertEqual(privateShard.storageMode, .private)
+    try interactions.extractDiffraction(
+      shards: privateResult.workingVolumeShards,
+      plan: privateResult.shardPlan,
+      scanRow: 0,
+      scanColumn: 0,
+      into: selectedOutput
+    )
+    XCTAssertEqual(
+      selectedOutput.contents().load(as: UInt32.self),
+      UInt32(expectedWorking[0])
+    )
     let readback = try XCTUnwrap(
       device.makeBuffer(length: privateShard.length, options: .storageModeShared)
     )

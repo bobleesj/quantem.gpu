@@ -2369,7 +2369,12 @@ public final class Metal4DSTEMIndexedLoader {
         label: "exact working-volume shard \(shard.index)"
       )
     }
-    guard plan.residentStorage == .privateGPU else {
+    // Decode overwrites every destination byte. Eagerly touching a private
+    // payload larger than Metal's recommended working set only forces an
+    // avoidable whole-volume commitment and can push unified memory into swap.
+    guard plan.residentStorage == .privateGPU,
+      plan.workingPayloadBytes <= device.recommendedMaxWorkingSetSize
+    else {
       return ResidentDestinationAllocation(buffers: buffers, preparations: [])
     }
     let preparationQueues = try (0..<4).map { queueIndex in
