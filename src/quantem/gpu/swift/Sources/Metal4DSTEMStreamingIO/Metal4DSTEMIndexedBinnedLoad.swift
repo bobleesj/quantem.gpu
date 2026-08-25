@@ -80,6 +80,8 @@ public struct Metal4DSTEMIndexedBinnedLoadPlan: Equatable, Sendable {
     sourceAudit: Metal4DSTEMExactSourceAudit,
     maximumShardBytes: UInt64,
     residentStorage: Metal4DSTEMResidentStorage = .shared,
+    maximumInFlightCommandBuffers: Int =
+      Metal4DSTEMIndexedLoadPlan.defaultMaximumInFlightCommandBuffers,
     sourceTransfer: Metal4DSTEMIndexedSourceTransfer = .memoryMapped
   ) throws {
     try sourceAudit.validate()
@@ -87,6 +89,7 @@ public struct Metal4DSTEMIndexedBinnedLoadPlan: Equatable, Sendable {
       source: source,
       maximumDecodedWindowBytes: maximumDecodedWindowBytes,
       detectorBands: detectorBands,
+      maximumInFlightCommandBuffers: maximumInFlightCommandBuffers,
       sourceTransfer: sourceTransfer
     )
     guard sourceAudit.sourceIdentitySHA256 == productPlan.sourceIdentitySHA256,

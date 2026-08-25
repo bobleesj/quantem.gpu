@@ -1129,6 +1129,23 @@ final class Native4DSTEMIOTests: XCTestCase {
       plan.maximumInFlightMappedSourceBytes,
       plan.maximumMappedSourceBufferBytes
     )
+    let widerPlan = try Metal4DSTEMIndexedLoadPlan(
+      source: source,
+      maximumDecodedWindowBytes: source.decodedBytesPerFrame,
+      detectorBands: bands,
+      maximumInFlightCommandBuffers: 8
+    )
+    XCTAssertEqual(widerPlan.maximumInFlightCommandBuffers, 8)
+    XCTAssertThrowsError(
+      try Metal4DSTEMIndexedLoadPlan(
+        source: source,
+        maximumDecodedWindowBytes: source.decodedBytesPerFrame,
+        detectorBands: bands,
+        maximumInFlightCommandBuffers: 0
+      )
+    ) { error in
+      XCTAssertTrue(error.localizedDescription.contains("at least one in-flight"))
+    }
 
     XCTAssertNoThrow(
       try Metal4DSTEMIndexedLoadPlan.validateExactProductBounds(
