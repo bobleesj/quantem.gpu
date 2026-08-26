@@ -173,15 +173,18 @@ public struct Metal4DSTEMIndexedBinnedLoadPlan: Equatable, Sendable {
         UInt64($0.globalFrameRange.count)
       }.max() ?? 0
     let detectorPartialScratchBytes: UInt64
-    if stagingDtype == .uint8,
-      detectorBin == 1 || detectorBin == 2 || detectorBin == 4,
+    if detectorBin == 1 || (stagingDtype == .uint8 && (detectorBin == 2 || detectorBin == 4)),
       productPlan.sourceDetectorRows == 192,
       productPlan.sourceDetectorColumns == 192
     {
       detectorPartialScratchBytes = try Self.exactDetectorPartialScratchBytes(
         maximumSliceFrames: maximumSliceFrames,
         detectorRows: UInt64(productPlan.sourceDetectorRows),
-        detectorColumns: UInt64(productPlan.sourceDetectorColumns)
+        detectorColumns: UInt64(productPlan.sourceDetectorColumns),
+        bytesPerPartial: UInt64(
+          stagingDtype == .uint8
+            ? MemoryLayout<UInt16>.stride : MemoryLayout<UInt32>.stride
+        )
       )
     } else {
       detectorPartialScratchBytes = 0
@@ -279,9 +282,12 @@ public struct Metal4DSTEMIndexedBinnedLoadPlan: Equatable, Sendable {
   static func exactDetectorPartialScratchBytes(
     maximumSliceFrames: UInt64,
     detectorRows: UInt64,
-    detectorColumns: UInt64
+    detectorColumns: UInt64,
+    bytesPerPartial: UInt64 = UInt64(MemoryLayout<UInt16>.stride)
   ) throws -> UInt64 {
-    guard maximumSliceFrames > 0, detectorRows > 0, detectorColumns > 0 else {
+    guard maximumSliceFrames > 0, detectorRows > 0, detectorColumns > 0,
+      bytesPerPartial > 0
+    else {
       return 0
     }
     let groupNumerator = maximumSliceFrames.addingReportingOverflow(31)
@@ -297,7 +303,7 @@ public struct Metal4DSTEMIndexedBinnedLoadPlan: Equatable, Sendable {
         detectorColumns,
         label: "detector partial elements"
       ),
-      UInt64(MemoryLayout<UInt16>.stride),
+      bytesPerPartial,
       label: "detector partial scratch"
     )
   }

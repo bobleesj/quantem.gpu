@@ -584,10 +584,12 @@ public enum Metal4DSTEMResidentCacheIO {
         UInt64(metadata.outputDetectorRows), UInt64(metadata.outputDetectorColumns)
       )
     else { try invalid("output shape overflows UInt64") }
-    let wordsPerFrame =
-      metadata.outputDtype == "uint16"
-      ? (outputDetectorPixels + 1) / 2
-      : outputDetectorPixels
+    let wordsPerFrame: UInt64
+    switch metadata.outputDtype {
+    case "uint8": wordsPerFrame = (outputDetectorPixels + 3) / 4
+    case "uint16": wordsPerFrame = (outputDetectorPixels + 1) / 2
+    default: wordsPerFrame = outputDetectorPixels
+    }
     guard let payloadWords = checkedProduct(outputScanPositions, wordsPerFrame),
       let expectedPayloadBytes = checkedProduct(
         payloadWords, UInt64(MemoryLayout<UInt32>.stride)
@@ -631,7 +633,7 @@ public enum Metal4DSTEMResidentCacheIO {
         "maxCount and pixelsAbove255 cannot describe \(metadata.sourceDtype) source values"
       )
     }
-    guard metadata.outputDtype == "uint16" || metadata.outputDtype == "uint32" else {
+    guard ["uint8", "uint16", "uint32"].contains(metadata.outputDtype) else {
       try invalid("output dtype \(metadata.outputDtype) is not supported")
     }
     guard
@@ -650,9 +652,12 @@ public enum Metal4DSTEMResidentCacheIO {
         UInt64(metadata.maxCount), maximumContributions
       )
     else { try invalid("exact output count bound overflows UInt64") }
-    let outputMaximum =
-      metadata.outputDtype == "uint16"
-      ? UInt64(UInt16.max) : UInt64(UInt32.max)
+    let outputMaximum: UInt64
+    switch metadata.outputDtype {
+    case "uint8": outputMaximum = UInt64(UInt8.max)
+    case "uint16": outputMaximum = UInt64(UInt16.max)
+    default: outputMaximum = UInt64(UInt32.max)
+    }
     guard maximumOutputCount <= outputMaximum else {
       try invalid(
         "exact output bound \(maximumOutputCount) does not fit \(metadata.outputDtype)"

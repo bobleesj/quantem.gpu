@@ -242,6 +242,60 @@ final class Native4DSTEMIOTests: XCTestCase {
     )
   }
 
+  func testResidentCacheAcceptsIdentityAuditedPackedUInt8() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(
+        "Metal4DSTEMResidentCacheUInt8Tests-\(UUID().uuidString)",
+        isDirectory: true
+      )
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+    let sourceURL = root.appendingPathComponent("source.h5")
+    try Data([1, 2, 3, 4]).write(to: sourceURL)
+    let sourceIdentity = String(repeating: "c", count: 64)
+    let audit = Native4DSTEMValueRangeAudit(
+      sourceIdentitySHA256: sourceIdentity,
+      sourceDtype: "uint16",
+      badPixelIndices: [3],
+      maximum: 53,
+      pixelsAbove255: 0
+    )
+    let metadata = Metal4DSTEMResidentCacheMetadata(
+      datasetID: "exact-uint8-fixture",
+      sourceIdentitySHA256: sourceIdentity,
+      valueRangeAuditSHA256: try audit.sha256(),
+      valueRangeAudit: audit,
+      sources: [try Metal4DSTEMSourceIdentity(url: sourceURL)],
+      sourceScanRows: 2,
+      sourceScanColumns: 2,
+      sourceDetectorRows: 4,
+      sourceDetectorColumns: 4,
+      sourceDtype: "uint16",
+      outputScanRows: 2,
+      outputScanColumns: 2,
+      outputDetectorRows: 4,
+      outputDetectorColumns: 4,
+      outputDtype: "uint8",
+      scanRowStart: 0,
+      scanRowStop: 2,
+      scanColumnStart: 0,
+      scanColumnStop: 2,
+      scanBin: 1,
+      detectorBin: 1,
+      badPixelIndices: [3],
+      maxCount: 53,
+      pixelsAbove255: 0,
+      payloadBytes: 64
+    )
+
+    XCTAssertNoThrow(
+      try Metal4DSTEMResidentCacheIO.validateMetadata(
+        metadata,
+        requireSealedPayload: false
+      )
+    )
+  }
+
   func testVeloxEMDFieldOfViewRequiresTwoPositiveAxes() throws {
     let json = Data(
       #"{"Optics":{"FullScanFieldOfView":{"x":{"type":"double","value":"5e-8"},"y":2.5e-8}}}"#.utf8
@@ -1645,6 +1699,15 @@ final class Native4DSTEMIOTests: XCTestCase {
     )
     XCTAssertEqual(
       try Metal4DSTEMIndexedBinnedLoadPlan.exactDetectorPartialScratchBytes(
+        maximumSliceFrames: 10_000,
+        detectorRows: 192,
+        detectorColumns: 192,
+        bytesPerPartial: UInt64(MemoryLayout<UInt32>.stride)
+      ),
+      46_153_728
+    )
+    XCTAssertEqual(
+      try Metal4DSTEMIndexedBinnedLoadPlan.exactDetectorPartialScratchBytes(
         maximumSliceFrames: 0,
         detectorRows: 192,
         detectorColumns: 192
@@ -1666,6 +1729,27 @@ final class Native4DSTEMIOTests: XCTestCase {
     XCTAssertFalse(
       Metal4DSTEMIndexedLoader.exactDetectorPartialFitsUInt16(
         maximumSourceCount: 2_048
+      )
+    )
+    XCTAssertTrue(
+      Metal4DSTEMIndexedLoader.exactTiledUInt16LaneMomentsFitUInt32(
+        maximumSourceCount: 2_254,
+        detectorRows: 192,
+        detectorColumns: 192
+      )
+    )
+    XCTAssertFalse(
+      Metal4DSTEMIndexedLoader.exactTiledUInt16LaneMomentsFitUInt32(
+        maximumSourceCount: UInt32.max,
+        detectorRows: 192,
+        detectorColumns: 192
+      )
+    )
+    XCTAssertFalse(
+      Metal4DSTEMIndexedLoader.exactTiledUInt16LaneMomentsFitUInt32(
+        maximumSourceCount: 1,
+        detectorRows: 0,
+        detectorColumns: 192
       )
     )
   }
