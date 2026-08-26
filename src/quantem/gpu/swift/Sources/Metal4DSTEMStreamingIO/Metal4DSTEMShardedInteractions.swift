@@ -1,8 +1,8 @@
+import CMetal4DSTEMInteractions
 import Darwin
 import Foundation
 import Metal
 import Metal4DSTEMKernels
-import CMetal4DSTEMInteractions
 
 public struct Metal4DSTEMInteractionPrewarmMetrics: Equatable, Sendable {
   public let wordCount: Int
@@ -387,7 +387,8 @@ public final class Metal4DSTEMShardedInteractions {
     let requestedBlockCount = ProcessInfo.processInfo.environment[
       "QUANTEM_SHARED_U8_BLOCKS"
     ].flatMap(Int.init)
-    let defaultBlockCount = min(16, ProcessInfo.processInfo.activeProcessorCount)
+    let processorCount = ProcessInfo.processInfo.activeProcessorCount
+    let defaultBlockCount = min(processorCount <= 10 ? 8 : 16, processorCount)
     let blockCount = min(
       max(1, requestedBlockCount ?? defaultBlockCount),
       (scanCount - 1) / 8_192 + 1
@@ -484,9 +485,9 @@ public final class Metal4DSTEMShardedInteractions {
       let line = String(
         format:
           "SHARDED_INTERACTION entries=%d shards=%d workers=%d cpu=1 wall_ms=%.3f allocated_bytes=%llu recommended_bytes=%llu\n",
-          entries.count,
-          shards.count,
-          workerCount,
+        entries.count,
+        shards.count,
+        workerCount,
         wallMilliseconds,
         device.currentAllocatedSize,
         device.recommendedMaxWorkingSetSize

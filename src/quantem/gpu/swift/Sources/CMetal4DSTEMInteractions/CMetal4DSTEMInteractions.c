@@ -334,6 +334,79 @@ static void apply_u8_entry(
   }
 }
 
+#if defined(__aarch64__) && defined(__ARM_FEATURE_DOTPROD)
+static uint32_t u8_coefficient_bytes(uint32_t coefficients, uint32_t target) {
+  uint32_t bytes = 0;
+  for (uint32_t lane = 0; lane < 4; ++lane) {
+    if (((coefficients >> (lane * 2)) & UINT32_C(3)) == target) {
+      bytes |= UINT32_C(1) << (lane * 8);
+    }
+  }
+  return bytes;
+}
+
+static void apply_four_u8_entries(
+    const uint32_t *first,
+    const uint32_t *second,
+    const uint32_t *third,
+    const uint32_t *fourth,
+    uint32_t *output,
+    size_t count,
+    const QDetectorWordEntry *entries) {
+  const uint8x16_t add_coefficients[4] = {
+      vreinterpretq_u8_u32(vdupq_n_u32(
+          u8_coefficient_bytes(entries[0].coefficients, 1))),
+      vreinterpretq_u8_u32(vdupq_n_u32(
+          u8_coefficient_bytes(entries[1].coefficients, 1))),
+      vreinterpretq_u8_u32(vdupq_n_u32(
+          u8_coefficient_bytes(entries[2].coefficients, 1))),
+      vreinterpretq_u8_u32(vdupq_n_u32(
+          u8_coefficient_bytes(entries[3].coefficients, 1))),
+  };
+  const uint8x16_t subtract_coefficients[4] = {
+      vreinterpretq_u8_u32(vdupq_n_u32(
+          u8_coefficient_bytes(entries[0].coefficients, 2))),
+      vreinterpretq_u8_u32(vdupq_n_u32(
+          u8_coefficient_bytes(entries[1].coefficients, 2))),
+      vreinterpretq_u8_u32(vdupq_n_u32(
+          u8_coefficient_bytes(entries[2].coefficients, 2))),
+      vreinterpretq_u8_u32(vdupq_n_u32(
+          u8_coefficient_bytes(entries[3].coefficients, 2))),
+  };
+  const uint32_t *sources[4] = {first, second, third, fourth};
+  size_t scan = 0;
+  for (; scan + 4 <= count; scan += 4) {
+    uint32x4_t additions = vdupq_n_u32(0);
+    uint32x4_t subtractions = vdupq_n_u32(0);
+    for (size_t entry = 0; entry < 4; ++entry) {
+      uint8x16_t packed =
+          vreinterpretq_u8_u32(vld1q_u32(sources[entry] + scan));
+      additions = vdotq_u32(additions, packed, add_coefficients[entry]);
+      subtractions =
+          vdotq_u32(subtractions, packed, subtract_coefficients[entry]);
+    }
+    uint32x4_t destination = vld1q_u32(output + scan);
+    vst1q_u32(
+        output + scan,
+        vsubq_u32(vaddq_u32(destination, additions), subtractions));
+  }
+  for (; scan < count; ++scan) {
+    uint32_t delta = 0;
+    for (size_t entry = 0; entry < 4; ++entry) {
+      uint32_t packed = sources[entry][scan];
+      uint32_t coefficients = entries[entry].coefficients;
+      for (uint32_t lane = 0; lane < 4; ++lane) {
+        uint32_t coefficient = (coefficients >> (lane * 2)) & UINT32_C(3);
+        uint32_t sample = (packed >> (lane * 8)) & UINT32_C(0xff);
+        if (coefficient == 1) delta += sample;
+        else if (coefficient == 2) delta -= sample;
+      }
+    }
+    output[scan] += delta;
+  }
+}
+#endif
+
 void q_update_virtual_detector_u8_range(
     const uint32_t *data,
     uint32_t *output,
@@ -342,7 +415,20 @@ void q_update_virtual_detector_u8_range(
     size_t scan_count,
     const QDetectorWordEntry *entries,
     size_t entry_count) {
-  for (size_t entry = 0; entry < entry_count; ++entry) {
+  size_t entry = 0;
+#if defined(__aarch64__) && defined(__ARM_FEATURE_DOTPROD)
+  for (; entry + 4 <= entry_count; entry += 4) {
+    apply_four_u8_entries(
+        data + (size_t)entries[entry].word * data_scan_count + scan_offset,
+        data + (size_t)entries[entry + 1].word * data_scan_count + scan_offset,
+        data + (size_t)entries[entry + 2].word * data_scan_count + scan_offset,
+        data + (size_t)entries[entry + 3].word * data_scan_count + scan_offset,
+        output + scan_offset,
+        scan_count,
+        entries + entry);
+  }
+#endif
+  for (; entry < entry_count; ++entry) {
     const QDetectorWordEntry spec = entries[entry];
     apply_u8_entry(
         data + (size_t)spec.word * data_scan_count + scan_offset,

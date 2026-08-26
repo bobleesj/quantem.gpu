@@ -22,6 +22,8 @@ public enum Metal4DSTEMKernels {
     "h5lz4dc_unshuffle_source_u8_qh5idx"
   public static let decodeU16Function =
     "h5lz4dc_unshuffle_u16_single_block_qh5idx"
+  public static let decodeU16IdentityAuditedFunction =
+    "h5lz4dc_unshuffle_u16_identity_audited_single_block_qh5idx"
   public static let decodeU16TwoBlockFunction =
     "h5lz4dc_unshuffle_u16_qh5idx"
   public static let decodeU16LosslessU8Function =
@@ -32,6 +34,8 @@ public enum Metal4DSTEMKernels {
     "h5lz4dc_unshuffle_u16_audited_low8_direct_qh5idx"
   public static let decodeU16AuditedLow8DirectOctet192Function =
     "h5lz4dc_unshuffle_u16_audited_low8_direct_octet192_qh5idx"
+  public static let decodeU16AuditedLow8Tile4Octet192WordMajorProductsFunction =
+    "h5lz4dc_unshuffle_u16_audited_low8_tile4_octet192_word_major_products_qh5idx"
   public static let decodeU16AuditedLow8Bin4U16WordMajorFunction =
     "h5lz4dc_unshuffle_u16_audited_low8_bin4_u16_word_major_qh5idx"
   public static let decodeU16AuditedLow8ScalarFunction =
@@ -95,8 +99,12 @@ public enum Metal4DSTEMKernels {
     "contiguous_detector_bin4_u8_products_detector_partials_tiled32x8"
   public static let contiguousDetectorBin1U8ProductsDetectorPartialsTiled32x8Function =
     "contiguous_detector_bin1_u8_products_detector_partials_tiled32x8"
+  public static let contiguousDetectorBin1U16ProductsDetectorPartialsTiled32x8Function =
+    "contiguous_detector_bin1_u16_products_detector_partials_tiled32x8"
   public static let detectorAccumulateU16PartialsU64Function =
     "detector_accumulate_u16_partials_u64"
+  public static let detectorAccumulateU32PartialsU64Function =
+    "detector_accumulate_u32_partials_u64"
   public static let preparePrivateResidentPagesFunction =
     "prepare_private_resident_pages"
   public static let scanDetectorBinU16Function =
@@ -108,6 +116,8 @@ public enum Metal4DSTEMKernels {
   public static let residentRebinU32Function =
     "resident_rebin_u32_word_major_to_u32_word_major"
   public static let detectorProductsU32Function = "detector_products_u32_word_major"
+  public static let detectorProductsU8WordMajorFunction =
+    "detector_products_u8_word_major"
   public static let detectorProductsU16WordMajorFunction =
     "detector_products_u16_word_major"
   public static let detectorProductsU16WordMajorMomentsFunction =

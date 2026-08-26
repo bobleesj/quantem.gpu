@@ -897,9 +897,11 @@ final class Metal4DSTEMKernelsTests: XCTestCase {
     let names = [
       Metal4DSTEMKernels.decodeU8Function,
       Metal4DSTEMKernels.decodeU16Function,
+      Metal4DSTEMKernels.decodeU16IdentityAuditedFunction,
       Metal4DSTEMKernels.decodeU16TwoBlockFunction,
       Metal4DSTEMKernels.decodeU16LosslessU8Function,
       Metal4DSTEMKernels.decodeU16AuditedLow8Function,
+      Metal4DSTEMKernels.decodeU16AuditedLow8Tile4Octet192WordMajorProductsFunction,
       Metal4DSTEMKernels.decodeU16AuditedLow8Bin4U16WordMajorFunction,
       Metal4DSTEMKernels.decodeU16AuditedLow8ScalarFunction,
       Metal4DSTEMKernels.binU16AuditedLow8ScalarU16WordMajorFunction,
@@ -920,6 +922,9 @@ final class Metal4DSTEMKernelsTests: XCTestCase {
       Metal4DSTEMKernels.detectorProductsU16MomentsFunction,
       Metal4DSTEMKernels.detectorSumU8Function,
       Metal4DSTEMKernels.detectorSumU16Function,
+      Metal4DSTEMKernels
+        .contiguousDetectorBin1U16ProductsDetectorPartialsTiled32x8Function,
+      Metal4DSTEMKernels.detectorAccumulateU32PartialsU64Function,
       Metal4DSTEMKernels.transposeScanWordsFunction,
       Metal4DSTEMKernels.transposeScanWords32x8Function,
       Metal4DSTEMKernels.scanBinU8Function,

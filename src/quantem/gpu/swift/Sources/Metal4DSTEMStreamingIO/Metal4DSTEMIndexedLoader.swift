@@ -580,6 +580,7 @@ public final class Metal4DSTEMIndexedLoader {
   private let device: MTLDevice
   private let queue: MTLCommandQueue
   private let decodePipeline: MTLComputePipelineState
+  private let identityAuditedU16DecodePipeline: MTLComputePipelineState
   private let auditedLow8DecodePipeline: MTLComputePipelineState
   private let auditedLow8Octet192DecodePipeline: MTLComputePipelineState
   private let productPipeline: MTLComputePipelineState
@@ -589,9 +590,11 @@ public final class Metal4DSTEMIndexedLoader {
   private let detectorSumPipeline: MTLComputePipelineState
   private let auditedLow8TiledDetectorSumPipeline: MTLComputePipelineState
   private let fusedTiledLow8Bin1ProductsDetectorPartialsPipeline: MTLComputePipelineState
+  private let fusedTiledU16Bin1ProductsDetectorPartialsPipeline: MTLComputePipelineState
   private let fusedTiledLow8Bin2ProductsDetectorPartialsPipeline: MTLComputePipelineState
   private let fusedTiledLow8Bin4ProductsDetectorPartialsPipeline: MTLComputePipelineState
   private let detectorAccumulateU16PartialsPipeline: MTLComputePipelineState
+  private let detectorAccumulateU32PartialsPipeline: MTLComputePipelineState
   private let privateResidentPagePreparationPipeline: MTLComputePipelineState
   private let exactBinner: Metal4DSTEMExactBinner
   private let stageProfiler: IndexedStageProfiler?
@@ -612,6 +615,9 @@ public final class Metal4DSTEMIndexedLoader {
       let hdf5 = try Metal4DSTEMKernels.makeHDF5Library(device: device)
       let detector = try Metal4DSTEMKernels.makeDetectorLibrary(device: device)
       guard let decode = hdf5.makeFunction(name: Metal4DSTEMKernels.decodeU16Function),
+        let identityAuditedU16Decode = hdf5.makeFunction(
+          name: Metal4DSTEMKernels.decodeU16IdentityAuditedFunction
+        ),
         let auditedLow8Decode = hdf5.makeFunction(
           name: Metal4DSTEMKernels.decodeU16AuditedLow8DirectFunction
         ),
@@ -641,6 +647,10 @@ public final class Metal4DSTEMIndexedLoader {
           name: Metal4DSTEMKernels
             .contiguousDetectorBin1U8ProductsDetectorPartialsTiled32x8Function
         ),
+        let fusedTiledU16Bin1ProductsDetectorPartials = detector.makeFunction(
+          name: Metal4DSTEMKernels
+            .contiguousDetectorBin1U16ProductsDetectorPartialsTiled32x8Function
+        ),
         let fusedTiledLow8Bin2ProductsDetectorPartials = detector.makeFunction(
           name: Metal4DSTEMKernels
             .contiguousDetectorBin2U8ProductsDetectorPartialsTiled32x8Function
@@ -652,6 +662,9 @@ public final class Metal4DSTEMIndexedLoader {
         let detectorAccumulateU16Partials = detector.makeFunction(
           name: Metal4DSTEMKernels.detectorAccumulateU16PartialsU64Function
         ),
+        let detectorAccumulateU32Partials = detector.makeFunction(
+          name: Metal4DSTEMKernels.detectorAccumulateU32PartialsU64Function
+        ),
         let privateResidentPagePreparation = detector.makeFunction(
           name: Metal4DSTEMKernels.preparePrivateResidentPagesFunction
         )
@@ -661,6 +674,9 @@ public final class Metal4DSTEMIndexedLoader {
         )
       }
       decodePipeline = try device.makeComputePipelineState(function: decode)
+      identityAuditedU16DecodePipeline = try device.makeComputePipelineState(
+        function: identityAuditedU16Decode
+      )
       auditedLow8DecodePipeline = try device.makeComputePipelineState(
         function: auditedLow8Decode
       )
@@ -685,6 +701,10 @@ public final class Metal4DSTEMIndexedLoader {
         try device.makeComputePipelineState(
           function: fusedTiledLow8Bin1ProductsDetectorPartials
         )
+      fusedTiledU16Bin1ProductsDetectorPartialsPipeline =
+        try device.makeComputePipelineState(
+          function: fusedTiledU16Bin1ProductsDetectorPartials
+        )
       fusedTiledLow8Bin2ProductsDetectorPartialsPipeline =
         try device
         .makeComputePipelineState(
@@ -697,6 +717,9 @@ public final class Metal4DSTEMIndexedLoader {
         )
       detectorAccumulateU16PartialsPipeline = try device.makeComputePipelineState(
         function: detectorAccumulateU16Partials
+      )
+      detectorAccumulateU32PartialsPipeline = try device.makeComputePipelineState(
+        function: detectorAccumulateU32Partials
       )
       privateResidentPagePreparationPipeline = try device.makeComputePipelineState(
         function: privateResidentPagePreparation
@@ -1054,6 +1077,11 @@ public final class Metal4DSTEMIndexedLoader {
     let usesFusedTiledLow8Products =
       usesFusedTiledLow8Bin1Products || usesFusedTiledLow8Bin2Products
       || usesFusedTiledLow8Bin4Products
+    let usesFusedStagedU16Bin1Products = try supportsFusedNativeUInt16(
+      plan: plan,
+      binned: binned,
+      stagingDtype: stagingDtype
+    )
     let started = CFAbsoluteTimeGetCurrent()
     let frameCount = plan.logicalFrameCount
     let detectorPixels = plan.sourceDetectorRows * plan.sourceDetectorColumns
@@ -1103,7 +1131,7 @@ public final class Metal4DSTEMIndexedLoader {
       label: "decoded exact staging window"
     )
     let detectorPartialScratch: MTLBuffer?
-    if usesFusedTiledLow8Products {
+    if usesFusedTiledLow8Products || usesFusedStagedU16Bin1Products {
       guard let binned,
         binned.plan.maximumDetectorPartialScratchBytes > 0
       else {
@@ -1376,6 +1404,7 @@ public final class Metal4DSTEMIndexedLoader {
             usesFusedTiledLow8Bin1Products: usesFusedTiledLow8Bin1Products,
             usesFusedTiledLow8Bin2Products: usesFusedTiledLow8Bin2Products,
             usesFusedTiledLow8Bin4Products: usesFusedTiledLow8Bin4Products,
+            usesFusedStagedU16Bin1Products: usesFusedStagedU16Bin1Products,
             binned: binned,
             command: command,
             counterSamples: counterSamples
@@ -1428,30 +1457,34 @@ public final class Metal4DSTEMIndexedLoader {
     }
 
     let sourceAudit: Metal4DSTEMExactSourceAudit
-    let auditValues = values(
-      from: countAudit, count: frameCount * 2, as: UInt32.self
-    )
-    var maximum: UInt32 = 0
-    var above255: UInt64 = 0
-    for frame in 0..<frameCount {
-      maximum = max(maximum, auditValues[2 * frame])
-      let sum = above255.addingReportingOverflow(
-        UInt64(auditValues[2 * frame + 1])
+    if usesFusedStagedU16Bin1Products, let sealedAudit = binned?.plan.sourceAudit {
+      sourceAudit = sealedAudit
+    } else {
+      let auditValues = values(
+        from: countAudit, count: frameCount * 2, as: UInt32.self
       )
-      guard !sum.overflow else {
-        throw Metal4DSTEMStreamingIOError.invalidRequest(
-          "The decoded above-255 audit overflows UInt64."
+      var maximum: UInt32 = 0
+      var above255: UInt64 = 0
+      for frame in 0..<frameCount {
+        maximum = max(maximum, auditValues[2 * frame])
+        let sum = above255.addingReportingOverflow(
+          UInt64(auditValues[2 * frame + 1])
         )
+        guard !sum.overflow else {
+          throw Metal4DSTEMStreamingIOError.invalidRequest(
+            "The decoded above-255 audit overflows UInt64."
+          )
+        }
+        above255 = sum.partialValue
       }
-      above255 = sum.partialValue
+      sourceAudit = try Metal4DSTEMExactSourceAudit(
+        sourceIdentitySHA256: plan.sourceIdentitySHA256,
+        sourceDtype: .uint16,
+        badPixelIndices: plan.badPixelIndices,
+        maximumSourceCount: maximum,
+        pixelsAbove255: above255
+      )
     }
-    sourceAudit = try Metal4DSTEMExactSourceAudit(
-      sourceIdentitySHA256: plan.sourceIdentitySHA256,
-      sourceDtype: .uint16,
-      badPixelIndices: plan.badPixelIndices,
-      maximumSourceCount: maximum,
-      pixelsAbove255: above255
-    )
     if let binned, sourceAudit != binned.plan.sourceAudit {
       throw Metal4DSTEMStreamingIOError.invalidRequest(
         "The decoded value-range audit does not match the source-identity-bound "
@@ -1739,6 +1772,67 @@ public final class Metal4DSTEMIndexedLoader {
     return !bound.overflow && bound.partialValue <= UInt64(UInt16.max)
   }
 
+  static func exactTiledUInt16LaneMomentsFitUInt32(
+    maximumSourceCount: UInt32,
+    detectorRows: Int,
+    detectorColumns: Int
+  ) -> Bool {
+    guard detectorRows > 0, detectorColumns > 0,
+      let rows = UInt64(exactly: detectorRows),
+      let columns = UInt64(exactly: detectorColumns)
+    else { return false }
+    let pixels = rows.multipliedReportingOverflow(by: columns)
+    guard !pixels.overflow else { return false }
+    let roundedPixels = pixels.partialValue.addingReportingOverflow(1)
+    guard !roundedPixels.overflow else { return false }
+    let words = roundedPixels.partialValue / 2
+    let roundedWords = words.addingReportingOverflow(31)
+    guard !roundedWords.overflow else { return false }
+    let valuesPerLane = (roundedWords.partialValue / 32)
+      .multipliedReportingOverflow(by: 2)
+    guard !valuesPerLane.overflow else { return false }
+    let maximumCoordinate = max(rows - 1, columns - 1)
+    let coordinateValues = valuesPerLane.partialValue
+      .multipliedReportingOverflow(by: maximumCoordinate)
+    guard !coordinateValues.overflow else { return false }
+    let bound = coordinateValues.partialValue.multipliedReportingOverflow(
+      by: UInt64(maximumSourceCount)
+    )
+    return !bound.overflow && bound.partialValue <= UInt64(UInt32.max)
+  }
+
+  private func supportsFusedNativeUInt16(
+    plan: Metal4DSTEMIndexedLoadPlan,
+    binned: BinnedOutputContext?,
+    stagingDtype: Metal4DSTEMIntegerDType
+  ) throws -> Bool {
+    guard stagingDtype == .uint16, let binned,
+      binned.plan.binningProvenance.detectorBin == 1,
+      binned.plan.binningProvenance.outputDtype == .uint16,
+      plan.sourceDetectorRows == 192,
+      plan.sourceDetectorColumns == 192,
+      binned.plan.binningProvenance.outputDetectorRows == 192,
+      binned.plan.binningProvenance.outputDetectorColumns == 192,
+      Self.exactTiledUInt16LaneMomentsFitUInt32(
+        maximumSourceCount: binned.plan.sourceAudit.maximumSourceCount,
+        detectorRows: plan.sourceDetectorRows,
+        detectorColumns: plan.sourceDetectorColumns
+      )
+    else { return false }
+
+    for window in plan.windows {
+      for slice in window.slices {
+        let fitsOneShard = binned.plan.shardPlan.shards.contains { shard in
+          let stop = shard.outputScanPositionStart + shard.outputScanPositionCount
+          return slice.globalFrameRange.lowerBound >= shard.outputScanPositionStart
+            && slice.globalFrameRange.upperBound <= stop
+        }
+        if !fitsOneShard { return false }
+      }
+    }
+    return true
+  }
+
   private func encodeSlice(
     source: Native4DSTEMIndexedSource,
     slice: Native4DSTEMIndexedSlice,
@@ -1759,6 +1853,7 @@ public final class Metal4DSTEMIndexedLoader {
     usesFusedTiledLow8Bin1Products: Bool,
     usesFusedTiledLow8Bin2Products: Bool,
     usesFusedTiledLow8Bin4Products: Bool,
+    usesFusedStagedU16Bin1Products: Bool,
     binned: BinnedOutputContext?,
     command: MTLCommandBuffer,
     counterSamples: MTLCounterSampleBuffer?
@@ -1803,12 +1898,14 @@ public final class Metal4DSTEMIndexedLoader {
       ? auditedLow8TiledDetectorSumPipeline : detectorSumPipeline
     let binningDispatchCount: Int
     let selectedDecodePipeline =
-      stagingDtype == .uint8
-      ? (detectorPixels == 192 * 192
-        && source.dataset.detectorRows == 192
-        && source.dataset.detectorCols == 192
-        ? auditedLow8Octet192DecodePipeline : auditedLow8DecodePipeline)
-      : decodePipeline
+      usesFusedStagedU16Bin1Products
+      ? identityAuditedU16DecodePipeline
+      : stagingDtype == .uint8
+        ? (detectorPixels == 192 * 192
+          && source.dataset.detectorRows == 192
+          && source.dataset.detectorCols == 192
+          ? auditedLow8Octet192DecodePipeline : auditedLow8DecodePipeline)
+        : decodePipeline
     let usesDetector192OctetDecode =
       stagingDtype == .uint8
       && detectorPixels == 192 * 192
@@ -1856,7 +1953,70 @@ public final class Metal4DSTEMIndexedLoader {
     let usesFusedTiledLow8Products =
       usesFusedTiledLow8Bin1Products || usesFusedTiledLow8Bin2Products
       || usesFusedTiledLow8Bin4Products
-    if usesFusedTiledLow8Products {
+    if usesFusedStagedU16Bin1Products {
+      guard let binned,
+        let outputShard = binned.plan.shardPlan.shards.first(where: { candidate in
+          let stop =
+            candidate.outputScanPositionStart
+            + candidate.outputScanPositionCount
+          return slice.globalFrameRange.lowerBound
+            >= candidate.outputScanPositionStart
+            && slice.globalFrameRange.upperBound <= stop
+        }),
+        let sourceDetectorRows = UInt32(exactly: source.dataset.detectorRows),
+        let destinationScanCount = UInt32(
+          exactly: outputShard.outputScanPositionCount
+        ),
+        let destinationScanOffset = UInt32(
+          exactly:
+            slice.globalFrameRange.lowerBound
+            - outputShard.outputScanPositionStart
+        ),
+        let outputDetectorRows = UInt32(
+          exactly: binned.plan.binningProvenance.outputDetectorRows
+        ),
+        let outputDetectorColumns = UInt32(
+          exactly: binned.plan.binningProvenance.outputDetectorColumns
+        ),
+        let detectorPartialScratch
+      else {
+        throw Metal4DSTEMStreamingIOError.invalidRequest(
+          "The fused staged uint16 slice does not fit one validated destination shard."
+        )
+      }
+      let destination = try binned.destination(for: outputShard.index)
+      var fusedParameters = ContiguousBin2ProductsParameters(
+        frameCount: frameCount,
+        sourceDetectorRows: sourceDetectorRows,
+        sourceDetectorColumns: detectorColumns,
+        destinationScanCount: destinationScanCount,
+        destinationScanOffset: destinationScanOffset,
+        globalFrameOffset: globalFrameOffset,
+        outputDetectorRows: outputDetectorRows,
+        outputDetectorColumns: outputDetectorColumns
+      )
+      encoder.setComputePipelineState(
+        fusedTiledU16Bin1ProductsDetectorPartialsPipeline
+      )
+      encoder.setBuffer(scratch, offset: 0, index: 0)
+      encoder.setBuffer(destination, offset: 0, index: 1)
+      withUnsafeBytes(of: &fusedParameters) {
+        encoder.setBytes($0.baseAddress!, length: $0.count, index: 2)
+      }
+      encoder.setBuffer(detectorBands, offset: 0, index: 3)
+      encoder.setBuffer(band1, offset: 0, index: 4)
+      encoder.setBuffer(band2, offset: 0, index: 5)
+      encoder.setBuffer(band4, offset: 0, index: 6)
+      encoder.setBuffer(total, offset: 0, index: 7)
+      encoder.setBuffer(rowMoment, offset: 0, index: 8)
+      encoder.setBuffer(columnMoment, offset: 0, index: 9)
+      encoder.setBuffer(detectorPartialScratch, offset: 0, index: 10)
+      encoder.dispatchThreadgroups(
+        MTLSize(width: (Int(frameCount) + 31) / 32, height: 1, depth: 1),
+        threadsPerThreadgroup: MTLSize(width: 32, height: 8, depth: 1)
+      )
+      binningDispatchCount = 1
+    } else if usesFusedTiledLow8Products {
       guard let binned,
         let outputShard = binned.plan.shardPlan.shards.first(where: { candidate in
           let stop =
@@ -1957,7 +2117,23 @@ public final class Metal4DSTEMIndexedLoader {
     )
 
     var mutableFrameCount = frameCount
-    if usesFusedTiledLow8Products {
+    if usesFusedStagedU16Bin1Products {
+      guard let detectorPartialScratch else {
+        throw Metal4DSTEMStreamingIOError.invalidRequest(
+          "The fused staged uint16 path lost its detector-partial storage."
+        )
+      }
+      var partialCount = (frameCount + 31) / 32
+      encoder.setComputePipelineState(detectorAccumulateU32PartialsPipeline)
+      encoder.setBuffer(detectorPartialScratch, offset: 0, index: 0)
+      encoder.setBuffer(detectorSum, offset: 0, index: 1)
+      encoder.setBytes(&detectorPixelCount, length: 4, index: 2)
+      encoder.setBytes(&partialCount, length: 4, index: 3)
+      encoder.dispatchThreads(
+        MTLSize(width: detectorPixels, height: 1, depth: 1),
+        threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
+      )
+    } else if usesFusedTiledLow8Products {
       guard let detectorPartialScratch else {
         throw Metal4DSTEMStreamingIOError.invalidRequest(
           "The fused exact detector-partial reduction lost its scratch storage."
@@ -2003,7 +2179,7 @@ public final class Metal4DSTEMIndexedLoader {
     }
     encoder.endEncoding()
     let totalBinningDispatchCount: Int
-    if usesFusedTiledLow8Products {
+    if usesFusedTiledLow8Products || usesFusedStagedU16Bin1Products {
       totalBinningDispatchCount = binningDispatchCount
     } else {
       totalBinningDispatchCount =

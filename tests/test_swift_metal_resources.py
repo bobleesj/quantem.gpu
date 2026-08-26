@@ -26,6 +26,11 @@ def test_native_4dstem_metal_resources_are_packaged() -> None:
     assert "kernel void h5lz4dc_unshuffle_source_u8_qh5idx" in qh5idx
     assert "kernel void h5lz4dc_unshuffle_u16_qh5idx" in qh5idx
     assert (
+        "kernel void "
+        "h5lz4dc_unshuffle_u16_identity_audited_single_block_qh5idx"
+        in qh5idx
+    )
+    assert (
         "kernel void h5lz4dc_unshuffle_u16_single_block_packed_h5"
         in qh5idx
     )
@@ -34,7 +39,19 @@ def test_native_4dstem_metal_resources_are_packaged() -> None:
         "h5lz4dc_bin_u16_audited_low8_scalar_u16_frame_major_row8_qh5idx"
         in qh5idx
     )
+    assert (
+        "kernel void "
+        "h5lz4dc_unshuffle_u16_audited_low8_tile4_octet192_"
+        "word_major_products_qh5idx"
+        in qh5idx
+    )
     assert "kernel void detector_products_u8" in detector
+    assert "kernel void detector_products_u8_word_major" in detector
+    assert (
+        "kernel void contiguous_detector_bin1_u16_products_"
+        "detector_partials_tiled32x8" in detector
+    )
+    assert "kernel void detector_accumulate_u32_partials_u64" in detector
     assert "kernel void transpose_scan_words" in detector
     assert "kernel void signed_delta_u16_word_major" in detector
 
