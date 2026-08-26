@@ -94,7 +94,8 @@ final class ScanRotationParityTests: XCTestCase {
     for _ in 0..<4 {
       root.deleteLastPathComponent()
     }
-    let url = root
+    let url =
+      root
       .appendingPathComponent("parity", isDirectory: true)
       .appendingPathComponent("scan_rotation_v1.json")
     let decoder = JSONDecoder()

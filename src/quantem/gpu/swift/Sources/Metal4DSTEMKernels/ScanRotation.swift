@@ -174,8 +174,8 @@ public final class MetalScanRotator: @unchecked Sendable {
   }
 }
 
-private extension MTLLibrary {
-  func function(named name: String) throws -> MTLFunction {
+extension MTLLibrary {
+  fileprivate func function(named name: String) throws -> MTLFunction {
     guard let function = makeFunction(name: name) else {
       throw Metal4DSTEMKernelsError.missingResource("Metal function \(name)")
     }
