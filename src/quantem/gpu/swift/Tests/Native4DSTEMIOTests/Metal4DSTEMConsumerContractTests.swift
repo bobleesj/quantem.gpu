@@ -1,0 +1,263 @@
+import Metal
+import XCTest
+
+@testable import Metal4DSTEMStreamingIO
+
+final class Metal4DSTEMConsumerContractTests: XCTestCase {
+  private let sourceA = String(repeating: "a", count: 64)
+  private let sourceB = String(repeating: "b", count: 64)
+
+  func testExactProductsDeriveMeanDPAndCenteredDPC() throws {
+    let products = Metal4DSTEMExactProducts(
+      detectorSum: [6, 12],
+      band1: [0, 0, 0, 0],
+      band2: [0, 0, 0, 0],
+      band4: [0, 0, 0, 0],
+      total: [2, 2, 0, 4],
+      detectorRowMoment: [0, 2, 0, 4],
+      detectorColumnMoment: [2, 0, 0, 4]
+    )
+
+    XCTAssertEqual(try products.meanDiffractionPattern(frameCount: 3), [2, 4])
+    let dpc = try products.centeredDPC(
+      scanRows: 2,
+      scanColumns: 2,
+      detectorRows: 2,
+      detectorColumns: 2
+    )
+    XCTAssertEqual(dpc.row, [-0.5, 0.5, -0.5, 0.5])
+    XCTAssertEqual(dpc.column, [0.5, -0.5, -0.5, 0.5])
+  }
+
+  func testCenteredDPCRejectsImpossibleMoment() throws {
+    let products = Metal4DSTEMExactProducts(
+      detectorSum: [1],
+      band1: [1],
+      band2: [1],
+      band4: [1],
+      total: [1],
+      detectorRowMoment: [2],
+      detectorColumnMoment: [0]
+    )
+
+    XCTAssertThrowsError(
+      try products.centeredDPC(
+        scanRows: 1,
+        scanColumns: 1,
+        detectorRows: 2,
+        detectorColumns: 2
+      )
+    )
+  }
+
+  func testCapabilitiesRequireEveryProduct() {
+    let products = Metal4DSTEMResidentProduct.allCases.map {
+      Metal4DSTEMResidentProductCapability(
+        product: $0,
+        availability: .residentOnDemand,
+        numerics: .exactInteger
+      )
+    }
+    let complete = Metal4DSTEMResidentCapabilities(
+      schema: Metal4DSTEMResidentCapabilities.currentSchema,
+      representation: .indexedResidentInteger,
+      sourceIdentitySHA256: sourceA,
+      scanRows: 2,
+      scanColumns: 2,
+      detectorRows: 3,
+      detectorColumns: 4,
+      storageSchema: "quantem.gpu.indexed-resident-integer/v1",
+      workingDtype: "uint16",
+      exactIntegerBits: 16,
+      logicalTensorBytes: 96,
+      completeSourceResident: true,
+      residentBytes: 96,
+      residentStorageBytes: 96,
+      lossless: true,
+      products: products
+    )
+    XCTAssertTrue(complete.fullInteractiveResident)
+
+    let lossy = Metal4DSTEMResidentCapabilities(
+      schema: complete.schema,
+      representation: complete.representation,
+      sourceIdentitySHA256: complete.sourceIdentitySHA256,
+      scanRows: complete.scanRows,
+      scanColumns: complete.scanColumns,
+      detectorRows: complete.detectorRows,
+      detectorColumns: complete.detectorColumns,
+      storageSchema: complete.storageSchema,
+      workingDtype: complete.workingDtype,
+      exactIntegerBits: complete.exactIntegerBits,
+      logicalTensorBytes: complete.logicalTensorBytes,
+      completeSourceResident: true,
+      residentBytes: complete.residentBytes,
+      residentStorageBytes: complete.residentStorageBytes,
+      lossless: false,
+      products: products
+    )
+    XCTAssertFalse(lossy.fullInteractiveResident)
+
+    let missing = Metal4DSTEMResidentCapabilities(
+      schema: complete.schema,
+      representation: complete.representation,
+      sourceIdentitySHA256: complete.sourceIdentitySHA256,
+      scanRows: complete.scanRows,
+      scanColumns: complete.scanColumns,
+      detectorRows: complete.detectorRows,
+      detectorColumns: complete.detectorColumns,
+      storageSchema: complete.storageSchema,
+      workingDtype: complete.workingDtype,
+      exactIntegerBits: complete.exactIntegerBits,
+      logicalTensorBytes: complete.logicalTensorBytes,
+      completeSourceResident: true,
+      residentBytes: complete.residentBytes,
+      residentStorageBytes: complete.residentStorageBytes,
+      lossless: complete.lossless,
+      products: Array(products.dropLast())
+    )
+    XCTAssertFalse(missing.fullInteractiveResident)
+  }
+
+  func testPublicationRecorderRejectsStaleABA() throws {
+    let recorder = Metal4DSTEMPublicationRecorder(signpostsEnabled: false)
+    XCTAssertTrue(
+      try recorder.begin(
+        generation: 1,
+        sourceIdentitySHA256: sourceA,
+        representation: .indexedResidentInteger,
+        counters: .init(
+          sourceBytes: 10,
+          residentBytes: 20,
+          peakProcessRSSBytes: 30,
+          peakDeviceAllocatedBytes: 40
+        )
+      )
+    )
+    XCTAssertTrue(try recorder.record(generation: 1, milestone: .sourceAdmitted))
+    XCTAssertTrue(try recorder.record(generation: 1, milestone: .residentReady))
+    XCTAssertTrue(
+      try recorder.begin(
+        generation: 2,
+        sourceIdentitySHA256: sourceB,
+        representation: .compactQGIXV3UInt8
+      )
+    )
+    XCTAssertFalse(
+      try recorder.record(generation: 1, milestone: .firstResidentPresent)
+    )
+    XCTAssertTrue(
+      try recorder.begin(
+        generation: 3,
+        sourceIdentitySHA256: sourceA,
+        representation: .indexedResidentInteger
+      )
+    )
+    XCTAssertTrue(try recorder.record(generation: 3, milestone: .residentReady))
+    XCTAssertTrue(
+      try recorder.record(generation: 3, milestone: .firstResidentPresent)
+    )
+
+    XCTAssertEqual(
+      recorder.events().map(\.milestone),
+      [
+        .requested,
+        .sourceAdmitted,
+        .residentReady,
+        .requested,
+        .supersededRejected,
+        .requested,
+        .residentReady,
+        .firstResidentPresent,
+      ]
+    )
+    XCTAssertEqual(recorder.events().first?.counters.residentBytes, 20)
+    XCTAssertEqual(recorder.events().first?.counters.peakProcessRSSBytes, 30)
+    XCTAssertEqual(recorder.events().first?.counters.peakDeviceAllocatedBytes, 40)
+    XCTAssertEqual(recorder.events()[4].sourceIdentitySHA256, sourceA)
+  }
+
+  func testPresentAndRecoveryRequireOrderedMilestones() throws {
+    let recorder = Metal4DSTEMPublicationRecorder(signpostsEnabled: false)
+    XCTAssertTrue(
+      try recorder.begin(
+        generation: 7,
+        sourceIdentitySHA256: sourceA,
+        representation: .indexedResidentInteger
+      )
+    )
+    XCTAssertThrowsError(
+      try recorder.record(generation: 7, milestone: .firstResidentPresent)
+    )
+    XCTAssertThrowsError(try recorder.record(generation: 7, milestone: .recoveryReady))
+    XCTAssertTrue(try recorder.record(generation: 7, milestone: .deviceLost))
+    XCTAssertTrue(try recorder.record(generation: 7, milestone: .recoveryReady))
+    XCTAssertTrue(
+      try recorder.record(generation: 7, milestone: .firstResidentPresent)
+    )
+  }
+
+  func testTimingSummaryUsesNearestRank() throws {
+    let summary = try Metal4DSTEMTimingSummary(
+      samplesSeconds: [0.4, 0.1, 0.3, 0.2, 0.5]
+    )
+    XCTAssertEqual(summary.sampleCount, 5)
+    XCTAssertEqual(summary.p50Seconds, 0.3)
+    XCTAssertEqual(summary.p95Seconds, 0.5)
+    XCTAssertEqual(summary.maximumSeconds, 0.5)
+    XCTAssertNotEqual(
+      Metal4DSTEMTimingBoundary.coldArbitraryToResidentReady.rawValue,
+      Metal4DSTEMTimingBoundary.preparedReopenToResidentReady.rawValue
+    )
+    XCTAssertThrowsError(
+      try Metal4DSTEMTimingSummary(samplesSeconds: [Double.nan])
+    )
+  }
+
+  func testDPCProcessorPublishesResidentPhaseAndFFTSeams() throws {
+    guard let device = MTLCreateSystemDefaultDevice() else {
+      throw XCTSkip("This functional DPC test requires a Metal device.")
+    }
+    let processor = try Metal4DSTEMDPCProcessor(device: device)
+    let row: [Float] = [
+      -1.5, -0.5, 0.5, 1.5,
+      -1.5, -0.5, 0.5, 1.5,
+      -1.5, -0.5, 0.5, 1.5,
+      -1.5, -0.5, 0.5, 1.5,
+    ]
+    let column: [Float] = [
+      -1.5, -1.5, -1.5, -1.5,
+      -0.5, -0.5, -0.5, -0.5,
+      0.5, 0.5, 0.5, 0.5,
+      1.5, 1.5, 1.5, 1.5,
+    ]
+    let expected: [Float] = [
+      0, 0.58474338, 0.58474338, 0,
+      -0.58474338, 0, 0, -0.58474338,
+      -0.58474338, 0, 0, -0.58474338,
+      0, 0.58474338, 0.58474338, 0,
+    ]
+    let result = try processor.process(
+      centeredDPC: Metal4DSTEMCenteredDPC(row: row, column: column),
+      configuration: Metal4DSTEMDPCConfiguration(
+        scanRows: 4,
+        scanColumns: 4,
+        rotationDegrees: 17,
+        transposeComponents: false
+      )
+    )
+
+    let phase = result.phaseBuffer.contents().bindMemory(to: Float.self, capacity: 16)
+    for index in expected.indices {
+      XCTAssertEqual(phase[index], expected[index], accuracy: 2e-5)
+    }
+    XCTAssertEqual(result.phaseBuffer.storageMode, .shared)
+    XCTAssertEqual(result.gradientFFTBuffer.storageMode, .private)
+    XCTAssertEqual(result.phaseFFTBuffer.storageMode, .private)
+    XCTAssertEqual(result.metrics.fftDispatchCount, 13)
+    XCTAssertEqual(result.metrics.totalDispatchCount, 16)
+    XCTAssertEqual(result.metrics.uploadBytes, 128)
+    XCTAssertEqual(result.metrics.readbackBytes, 0)
+    XCTAssertEqual(result.metrics.synchronizationCount, 1)
+  }
+}

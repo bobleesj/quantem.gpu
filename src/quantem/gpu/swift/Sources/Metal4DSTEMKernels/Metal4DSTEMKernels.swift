@@ -52,6 +52,17 @@ public enum Metal4DSTEMKernels {
     "h5lz4dc_bin_u16_audited_low8_scalar_u16_frame_major_row8_qh5idx"
   public static let clearU16WordMajorRangeFunction =
     "clear_u16_word_major_range_qh5idx"
+  public static let compactH5DecodeFunction = "compact_h5_lz4_decode"
+  public static let compactH5ValidateDescriptorsFunction =
+    "compact_h5_validate_descriptors"
+  public static let compactH5SelectedDiffractionFunction =
+    "compact_h5_selected_diffraction"
+  public static let compactH5DetectorUpdateFunction =
+    "compact_h5_detector_update"
+  public static let compactH5FullDecodeU8Function =
+    "compact_h5_full_decode_u8"
+  public static let compactH5DetectorSumFunction =
+    "compact_h5_detector_sum_u64"
 
   public static let detectorProductsU8Function = "detector_products_u8"
   public static let detectorProductsU8MomentsFunction =
@@ -174,6 +185,11 @@ public enum Metal4DSTEMKernels {
   /// Compile the detector reduction and interactive-drag library.
   public static func makeDetectorLibrary(device: MTLDevice) throws -> MTLLibrary {
     try makeLibrary(resource: "detector", device: device)
+  }
+
+  /// Compile compact HDF5 decode, validation, and interaction kernels.
+  public static func makeCompactH5Library(device: MTLDevice) throws -> MTLLibrary {
+    try makeLibrary(resource: "packed_h5", device: device)
   }
 
   /// Compile the shared CoM/DPC/iDPC small-field library.

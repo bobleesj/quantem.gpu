@@ -1,0 +1,296 @@
+#include <metal_stdlib>
+using namespace metal;
+
+struct DescriptorParameters {
+    uint descriptorCount;
+    uint payloadWords;
+    uint tileCount;
+    uint headerWordsPerPixel;
+    uint scanTile;
+    uint headerEncoding;
+};
+
+struct SelectedParameters {
+    uint scan;
+    uint tileCount;
+    uint pixelCount;
+    uint scanTile;
+    uint headerWordsPerPixel;
+    uint headerEncoding;
+};
+
+struct DetectorEntry {
+    uint pixel;
+    int coefficient;
+};
+
+struct DetectorParameters {
+    uint scanCount;
+    uint tileCount;
+    uint entryCount;
+    uint outputOffset;
+    uint mode;
+    uint scanTile;
+    uint headerWordsPerPixel;
+    uint headerEncoding;
+};
+
+struct FullDecodeParameters {
+    uint scanCount;
+    uint pixelCount;
+    uint tileCount;
+    uint scanTile;
+    uint headerWordsPerPixel;
+    uint headerEncoding;
+    uint outputWordCount;
+};
+
+struct DetectorSumParameters {
+    uint scanCount;
+    uint tileCount;
+    uint pixelCount;
+    uint scanTile;
+    uint headerWordsPerPixel;
+    uint headerEncoding;
+};
+
+inline uint sumWidthNibbles(uint packed, uint count) {
+    uint mask = count >= 8u
+        ? 0xffffffffu
+        : (count == 0u ? 0u : (1u << (count * 4u)) - 1u);
+    packed &= mask;
+    uint bytes = (packed & 0x0f0f0f0fu) + ((packed >> 4u) & 0x0f0f0f0fu);
+    return (bytes & 0xffu) + ((bytes >> 8u) & 0xffu)
+        + ((bytes >> 16u) & 0xffu) + ((bytes >> 24u) & 0xffu);
+}
+
+inline uint descriptorFor(
+    device const uint *headers,
+    uint tileCount,
+    uint headerWordsPerPixel,
+    uint pixel,
+    uint tile
+) {
+    uint checkpointWords = (tileCount + 31u) / 32u;
+    uint headerBase = pixel * headerWordsPerPixel;
+    uint checkpoint = tile / 32u;
+    uint offset = headers[headerBase];
+    if (checkpoint != 0u) offset += headers[headerBase + checkpoint];
+    uint firstWidthWord = checkpoint * 4u;
+    uint tileWidthWord = tile / 8u;
+    for (uint word = firstWidthWord; word < tileWidthWord; ++word) {
+        offset += sumWidthNibbles(
+            headers[headerBase + checkpointWords + word], 8u
+        );
+    }
+    uint packed = headers[headerBase + checkpointWords + tileWidthWord];
+    offset += sumWidthNibbles(packed, tile & 7u);
+    uint width = (packed >> ((tile & 7u) * 4u)) & 15u;
+    return (offset << 5u) | width;
+}
+
+inline uint sampleValue(
+    device const uint *payload,
+    device const uint *headers,
+    uint tileCount,
+    uint scanTile,
+    uint headerWordsPerPixel,
+    uint pixel,
+    uint scan
+) {
+    uint descriptor = descriptorFor(
+        headers, tileCount, headerWordsPerPixel, pixel, scan / scanTile
+    );
+    uint width = descriptor & 31u;
+    if (width == 0u) return 0u;
+    uint bit = (scan % scanTile) * width;
+    uint index = (descriptor >> 5u) + bit / 32u;
+    uint shift = bit % 32u;
+    uint value = payload[index] >> shift;
+    if (shift + width > 32u) {
+        value |= payload[index + 1u] << (32u - shift);
+    }
+    return value & ((1u << width) - 1u);
+}
+
+kernel void compact_v3_validate_headers(
+    device const uint *headers [[buffer(0)]],
+    device atomic_uint *status [[buffer(1)]],
+    constant DescriptorParameters &parameters [[buffer(2)]],
+    device atomic_uint *maximumWidths [[buffer(3)]],
+    uint pixel [[thread_position_in_grid]]
+) {
+    if (pixel >= parameters.descriptorCount) return;
+    uint checkpointWords = (parameters.tileCount + 31u) / 32u;
+    uint widthWords = (parameters.tileCount + 7u) / 8u;
+    uint errors = 0u;
+    if (
+        parameters.headerEncoding != 1u
+        || parameters.scanTile != 32u
+        || parameters.headerWordsPerPixel != checkpointWords + widthWords
+    ) {
+        errors |= 16u;
+    } else {
+        uint headerBase = pixel * parameters.headerWordsPerPixel;
+        uint payloadBase = headers[headerBase];
+        uint cursor = payloadBase;
+        uint maximumWidth = 0u;
+        if (payloadBase >= (1u << 27u)) errors |= 2u;
+        for (uint tile = 0u; tile < parameters.tileCount; ++tile) {
+            if (
+                tile != 0u
+                && (tile & 31u) == 0u
+                && headers[headerBase + tile / 32u] != cursor - payloadBase
+            ) {
+                errors |= 32u;
+            }
+            uint packed = headers[
+                headerBase + checkpointWords + tile / 8u
+            ];
+            uint width = (packed >> ((tile & 7u) * 4u)) & 15u;
+            maximumWidth = max(maximumWidth, width);
+            if (cursor > 0xffffffffu - width) {
+                errors |= 1u;
+                break;
+            }
+            cursor += width;
+        }
+        uint expectedNext = pixel + 1u < parameters.descriptorCount
+            ? headers[headerBase + parameters.headerWordsPerPixel]
+            : parameters.payloadWords;
+        if (cursor != expectedNext) errors |= 4u;
+        if (cursor > parameters.payloadWords) errors |= 8u;
+        atomic_fetch_max_explicit(
+            &maximumWidths[pixel], maximumWidth, memory_order_relaxed
+        );
+    }
+    if (errors != 0u) {
+        atomic_fetch_or_explicit(status, errors, memory_order_relaxed);
+    }
+}
+
+kernel void compact_v3_selected_diffraction(
+    device const uint *payload [[buffer(0)]],
+    device const uint *headers [[buffer(1)]],
+    device const uint *excluded [[buffer(2)]],
+    device uint *diffraction [[buffer(3)]],
+    constant SelectedParameters &parameters [[buffer(4)]],
+    uint pixel [[thread_position_in_grid]]
+) {
+    if (pixel >= parameters.pixelCount) return;
+    diffraction[pixel] = excluded[pixel] != 0u
+        ? 0u
+        : sampleValue(
+            payload,
+            headers,
+            parameters.tileCount,
+            parameters.scanTile,
+            parameters.headerWordsPerPixel,
+            pixel,
+            parameters.scan
+        );
+}
+
+kernel void compact_v3_full_decode_u8(
+    device const uint *payload [[buffer(0)]],
+    device const uint *headers [[buffer(1)]],
+    device const uint *excluded [[buffer(2)]],
+    device uint *output [[buffer(3)]],
+    constant FullDecodeParameters &parameters [[buffer(4)]],
+    uint outputWord [[thread_position_in_grid]]
+) {
+    if (outputWord >= parameters.outputWordCount) return;
+    uint packed = 0u;
+    for (uint byteIndex = 0u; byteIndex < 4u; ++byteIndex) {
+        uint linear = outputWord * 4u + byteIndex;
+        uint scan = linear / parameters.pixelCount;
+        uint pixel = linear - scan * parameters.pixelCount;
+        uint value = excluded[pixel] != 0u
+            ? 0u
+            : sampleValue(
+                payload,
+                headers,
+                parameters.tileCount,
+                parameters.scanTile,
+                parameters.headerWordsPerPixel,
+                pixel,
+                scan
+            );
+        packed |= value << (byteIndex * 8u);
+    }
+    output[outputWord] = packed;
+}
+
+kernel void compact_v3_detector_sum_u64(
+    device const uint *payload [[buffer(0)]],
+    device const uint *headers [[buffer(1)]],
+    device const uint *excluded [[buffer(2)]],
+    device ulong *detectorSum [[buffer(3)]],
+    constant DetectorSumParameters &parameters [[buffer(4)]],
+    uint pixel [[thread_position_in_grid]]
+) {
+    if (pixel >= parameters.pixelCount || excluded[pixel] != 0u) return;
+    ulong total = 0ul;
+    for (uint scan = 0u; scan < parameters.scanCount; ++scan) {
+        total += ulong(sampleValue(
+            payload,
+            headers,
+            parameters.tileCount,
+            parameters.scanTile,
+            parameters.headerWordsPerPixel,
+            pixel,
+            scan
+        ));
+    }
+    detectorSum[pixel] += total;
+}
+
+kernel void compact_v3_detector_update(
+    device const uint *payload [[buffer(0)]],
+    device const uint *headers [[buffer(1)]],
+    device const DetectorEntry *entries [[buffer(2)]],
+    device const uint *previous [[buffer(3)]],
+    device uint *next [[buffer(4)]],
+    constant DetectorParameters &parameters [[buffer(5)]],
+    uint group [[threadgroup_position_in_grid]],
+    uint lane [[thread_index_in_threadgroup]]
+) {
+    constexpr uint lanesPerScan = 4u;
+    constexpr uint scansPerGroup = 32u;
+    uint scanLane = lane % scansPerGroup;
+    uint entryLane = lane / scansPerGroup;
+    uint scan = group * scansPerGroup + scanLane;
+    uint partial = 0u;
+    if (scan < parameters.scanCount) {
+        for (
+            uint index = entryLane;
+            index < parameters.entryCount;
+            index += lanesPerScan
+        ) {
+            DetectorEntry entry = entries[index];
+            uint value = sampleValue(
+                payload,
+                headers,
+                parameters.tileCount,
+                parameters.scanTile,
+                parameters.headerWordsPerPixel,
+                entry.pixel,
+                scan
+            );
+            if (entry.coefficient == 1) partial += value;
+            else partial -= value;
+        }
+    }
+    threadgroup uint partials[128];
+    partials[lane] = partial;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (entryLane == 0u && scan < parameters.scanCount) {
+        uint output = parameters.mode == 1u
+            ? 0u
+            : previous[parameters.outputOffset + scan];
+        for (uint part = 0u; part < lanesPerScan; ++part) {
+            output += partials[scanLane + part * scansPerGroup];
+        }
+        next[parameters.outputOffset + scan] = output;
+    }
+}

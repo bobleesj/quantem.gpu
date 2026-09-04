@@ -1,0 +1,972 @@
+import CryptoKit
+import Metal
+import XCTest
+
+@testable import Metal4DSTEMStreamingIO
+
+final class CompactH5LoaderTests: XCTestCase {
+  func testSyntheticCompactSourceLoadsAndInteractsExactly() throws {
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let fixture = try makeCompactFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.url) }
+
+    let source = try MetalCompactH5Loader.load(
+      sourceURL: fixture.url,
+      device: device
+    )
+    XCTAssertEqual(source.metadata.scanRows, 8)
+    XCTAssertEqual(source.metadata.scanColumns, 16)
+    XCTAssertEqual(source.metadata.detectorRows, 2)
+    XCTAssertEqual(source.metadata.detectorColumns, 3)
+    XCTAssertEqual(source.metadata.excludedDetectorPixels, [3])
+    XCTAssertEqual(source.metadata.rawAccessMode, "mask_applied_only_legacy")
+    XCTAssertNil(source.metadata.maskedDetectorPixelsSHA256)
+    XCTAssertNil(source.metadata.maskedDetectorRawValues)
+    XCTAssertEqual(source.metadata.detectorCalibration?.detectorCenterRow, 0.75)
+    XCTAssertEqual(source.metadata.detectorCalibration?.detectorCenterColumn, 1.25)
+    XCTAssertEqual(source.metadata.detectorCalibration?.brightFieldRadius, 1.5)
+    XCTAssertEqual(source.metadata.detectorCalibration?.dpcRotationDegrees, 176.25)
+    XCTAssertEqual(source.metadata.detectorCalibration?.dpcComponentOrderExchanged, false)
+    XCTAssertEqual(source.loadMetrics.decodedShardSHA256Checks, 1)
+    XCTAssertGreaterThan(fixture.values[4].max()!, 255)
+    XCTAssertThrowsError(try Metal4DSTEMResidentCapabilities.compact(source))
+
+    let selectedScan = 77
+    XCTAssertEqual(
+      try source.extractDiffraction(scanRow: 4, scanColumn: 13),
+      fixture.values.map { $0[selectedScan] }
+    )
+
+    let mask: [UInt8] = [1, 0, 1, 0, 1, 0]
+    let rebase = try source.updateVirtualDetector(mask: mask)
+    XCTAssertEqual(rebase.mode, "rebase")
+    XCTAssertEqual(rebase.fftDispatchCount, 0)
+    let expected = (0..<128).map { scan in
+      fixture.values[0][scan] + fixture.values[2][scan] + fixture.values[4][scan]
+    }
+    XCTAssertEqual(try source.virtualDetectorValues(), expected)
+
+    let translatedMask: [UInt8] = [0, 1, 1, 0, 1, 0]
+    let delta = try source.updateVirtualDetector(mask: translatedMask)
+    XCTAssertEqual(delta.mode, "delta")
+    XCTAssertEqual(delta.changedDetectorPixels, 2)
+    let translatedExpected = (0..<128).map { scan in
+      fixture.values[1][scan] + fixture.values[2][scan] + fixture.values[4][scan]
+    }
+    XCTAssertEqual(try source.virtualDetectorValues(), translatedExpected)
+    let fresh = try source.updateVirtualDetector(
+      mask: translatedMask,
+      forceRebase: true
+    )
+    XCTAssertEqual(fresh.mode, "rebase")
+    XCTAssertEqual(try source.virtualDetectorValues(), translatedExpected)
+  }
+
+  func testChangedDecodedPayloadFailsItsAuthenticatedHash() throws {
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let fixture = try makeCompactFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.url) }
+    var changed = try Data(contentsOf: fixture.url)
+    changed[8_204] ^= 1
+    try changed.write(to: fixture.url, options: .atomic)
+
+    XCTAssertThrowsError(
+      try MetalCompactH5Loader.load(sourceURL: fixture.url, device: device)
+    ) { error in
+      XCTAssertTrue(error.localizedDescription.contains("decoded SHA-256"))
+    }
+  }
+
+  func testSyntheticDirectV3SourceLoadsAndInteractsExactly() throws {
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let fixture = try makeDirectCompactFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.url) }
+
+    let source = try MetalCompactH5Loader.load(
+      sourceURL: fixture.url,
+      device: device
+    )
+    XCTAssertEqual(source.metadata.schema, "quantem.gpu.packed-detector-h5/v3")
+    XCTAssertEqual(source.metadata.payloadCodec, "direct-bitpacked-u32")
+    XCTAssertEqual(source.metadata.rawAccessMode, "mask_applied_only_legacy")
+    XCTAssertNil(source.metadata.maskedDetectorPixelsSHA256)
+    XCTAssertNil(source.metadata.maskedDetectorRawValues)
+    XCTAssertEqual(source.metadata.scanTile, 32)
+    XCTAssertEqual(source.metadata.payloadChunkBytes, 0)
+    XCTAssertEqual(source.metadata.excludedDetectorPixels, [3])
+    XCTAssertNil(source.metadata.detectorCalibration)
+    let logicalHash = try source.hashLogicalWorkingU8()
+    XCTAssertEqual(logicalHash.sha256, source.metadata.workingLogicalSHA256)
+    XCTAssertEqual(logicalHash.logicalBytes, 128 * 6)
+    XCTAssertEqual(logicalHash.stagingBytes, 128 * 6)
+    XCTAssertGreaterThan(
+      source.loadMetrics.totalResidentBytes,
+      source.loadMetrics.residentBytes
+    )
+
+    let expectedDetectorSum = fixture.values.map {
+      $0.reduce(UInt64(0)) { $0 + UInt64($1) }
+    }
+    let mean = try source.meanDiffractionPattern()
+    XCTAssertEqual(mean.detectorSum, expectedDetectorSum)
+    XCTAssertEqual(
+      mean.mean,
+      expectedDetectorSum.map { Float($0) / 128 }
+    )
+    XCTAssertEqual(mean.dispatchCount, 1)
+    XCTAssertEqual(mean.readbackBytes, 6 * 8)
+    let cachedMean = try source.meanDiffractionPattern()
+    XCTAssertEqual(cachedMean.detectorSum, expectedDetectorSum)
+    XCTAssertEqual(cachedMean.dispatchCount, 0)
+    XCTAssertEqual(cachedMean.wallMilliseconds, 0)
+    XCTAssertEqual(cachedMean.gpuMilliseconds, 0)
+    let capabilities = try Metal4DSTEMResidentCapabilities.compact(source)
+    XCTAssertFalse(capabilities.fullInteractiveResident)
+    XCTAssertEqual(capabilities.residentBytes, source.loadMetrics.totalResidentBytes)
+    XCTAssertEqual(
+      capabilities.products.first {
+        $0.product == .meanDiffractionPattern
+      }?.availability,
+      .residentOnDemand
+    )
+
+    let selectedScan = 77
+    XCTAssertEqual(
+      try source.extractDiffraction(scanRow: 4, scanColumn: 13),
+      fixture.values.map { $0[selectedScan] }
+    )
+
+    let mask: [UInt8] = [1, 0, 1, 1, 1, 0]
+    let rebase = try source.updateVirtualDetector(mask: mask)
+    XCTAssertEqual(rebase.mode, "rebase")
+    let expected = (0..<128).map { scan in
+      fixture.values[0][scan] + fixture.values[2][scan] + fixture.values[4][scan]
+    }
+    XCTAssertEqual(try source.virtualDetectorValues(), expected)
+
+    let translatedMask: [UInt8] = [0, 1, 1, 0, 1, 0]
+    let delta = try source.updateVirtualDetector(mask: translatedMask)
+    XCTAssertEqual(delta.mode, "delta")
+    XCTAssertEqual(delta.changedDetectorPixels, 2)
+    let translatedExpected = (0..<128).map { scan in
+      fixture.values[1][scan] + fixture.values[2][scan] + fixture.values[4][scan]
+    }
+    XCTAssertEqual(try source.virtualDetectorValues(), translatedExpected)
+  }
+
+  func testChangedDirectV3HeaderFailsCanonicalCoverage() throws {
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let fixture = try makeDirectCompactFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.url) }
+    var changed = try Data(contentsOf: fixture.url)
+    changed[fixture.headerOffset + 4] ^= 1
+    try changed.write(to: fixture.url, options: .atomic)
+
+    XCTAssertThrowsError(
+      try MetalCompactH5Loader.load(sourceURL: fixture.url, device: device)
+    ) { error in
+      XCTAssertTrue(error.localizedDescription.contains("direct-header validation"))
+    }
+  }
+
+  func testParallelMappedAuthenticationLoadsExactDirectV3Payload() throws {
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let fixture = try makeDirectCompactFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.url) }
+
+    let source = try MetalCompactH5Loader.load(
+      sourceURL: fixture.url,
+      device: device,
+      authenticationPolicy: .parallelMapped
+    )
+    XCTAssertEqual(
+      source.loadMetrics.mappedAuthenticationBytes,
+      try FileManager.default.attributesOfItem(atPath: fixture.url.path)[.size]
+        as? UInt64
+    )
+    XCTAssertEqual(
+      try source.extractDiffraction(scanRow: 4, scanColumn: 13),
+      fixture.values.map { $0[77] }
+    )
+  }
+
+  func testParallelMappedAuthenticationRejectsChangedDirectV3Payload() throws {
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let fixture = try makeDirectCompactFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.url) }
+    var changed = try Data(contentsOf: fixture.url)
+    changed[8_192] ^= 1
+    try changed.write(to: fixture.url, options: .atomic)
+
+    XCTAssertThrowsError(
+      try MetalCompactH5Loader.load(
+        sourceURL: fixture.url,
+        device: device,
+        authenticationPolicy: .parallelMapped
+      )
+    ) { error in
+      XCTAssertTrue(error.localizedDescription.contains("parallel authentication failed"))
+    }
+  }
+
+  func testDirectV3BindsRawExclusionConstantsToOrderedPixels() throws {
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let fixture = try makeDirectCompactFixture(rawExclusions: true)
+    defer { try? FileManager.default.removeItem(at: fixture.url) }
+
+    let source = try MetalCompactH5Loader.load(
+      sourceURL: fixture.url,
+      device: device
+    )
+    XCTAssertEqual(source.metadata.rawAccessMode, "exact_exclusion_constants")
+    XCTAssertEqual(source.metadata.maskedDetectorRawValues, [UInt16.max])
+    var pixel = UInt32(3).littleEndian
+    let expected = Swift.withUnsafeBytes(of: &pixel) {
+      SHA256.hash(data: Data($0)).map { String(format: "%02x", $0) }.joined()
+    }
+    XCTAssertEqual(source.metadata.maskedDetectorPixelsSHA256, expected)
+  }
+
+  func testCancelledDirectV3GenerationNeverPublishes() throws {
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    for cancelAt in [1, 3] {
+      let fixture = try makeDirectCompactFixture()
+      defer { try? FileManager.default.removeItem(at: fixture.url) }
+      var calls = 0
+
+      XCTAssertThrowsError(
+        try MetalCompactH5Loader.load(
+          sourceURL: fixture.url,
+          device: device,
+          shouldCancel: {
+            calls += 1
+            return calls == cancelAt
+          }
+        )
+      ) { error in
+        guard case Metal4DSTEMStreamingIOError.cancelled = error else {
+          XCTFail("Expected cancellation before resident publication, got \(error)")
+          return
+        }
+      }
+    }
+  }
+
+  func testPartialRawExclusionFieldsRemainNonportable() throws {
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let fixture = try makeDirectCompactFixture(partialRawExclusions: true)
+    defer { try? FileManager.default.removeItem(at: fixture.url) }
+
+    let source = try MetalCompactH5Loader.load(
+      sourceURL: fixture.url,
+      device: device
+    )
+    XCTAssertEqual(source.metadata.rawAccessMode, "mask_applied_only_legacy")
+    XCTAssertNil(source.metadata.maskedDetectorPixelsSHA256)
+    XCTAssertNil(source.metadata.maskedDetectorRawValues)
+  }
+
+  func testPreparedDPCMomentsPrimeExactCenteredDisplayMaps() throws {
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let fixture = try makeDirectCompactFixture(preparedDPC: true)
+    defer { try? FileManager.default.removeItem(at: fixture.url) }
+
+    let source = try MetalCompactH5Loader.load(
+      sourceURL: fixture.url,
+      device: device
+    )
+    let contract = try XCTUnwrap(source.metadata.preparedDPCMoments)
+    XCTAssertEqual(contract.scanCount, 128)
+    XCTAssertEqual(contract.fileBytes, 128 * 8 * 4)
+    XCTAssertEqual(contract.selectedDetectorPixels, 5)
+    let maps = try XCTUnwrap(source.preparedDPCValues())
+    XCTAssertNotNil(
+      try source.preparedDPCDisplayBuffer(component: .row)
+    )
+    let residentDPC = try Metal4DSTEMDPCProcessor(device: device).process(
+      centeredRowBuffer: try XCTUnwrap(
+        source.preparedDPCDisplayBuffer(component: .row)
+      ),
+      centeredColumnBuffer: try XCTUnwrap(
+        source.preparedDPCDisplayBuffer(component: .column)
+      ),
+      configuration: Metal4DSTEMDPCConfiguration(
+        scanRows: 8,
+        scanColumns: 16,
+        rotationDegrees: 0,
+        transposeComponents: false
+      )
+    )
+    XCTAssertEqual(residentDPC.phaseBuffer.length, 128 * 4)
+    XCTAssertEqual(residentDPC.gradientFFTBuffer.length, 128 * 8)
+    XCTAssertEqual(residentDPC.phaseFFTBuffer.length, 128 * 8)
+    XCTAssertEqual(residentDPC.metrics.uploadBytes, 0)
+    XCTAssertEqual(residentDPC.metrics.readbackBytes, 0)
+    let selectedPixels = [0, 1, 2, 4, 5]
+    var expectedRow = [Float](repeating: 0, count: 128)
+    var expectedColumn = [Float](repeating: 0, count: 128)
+    var expectedTotal = [UInt64](repeating: 0, count: 128)
+    var expectedRowMoment = [UInt64](repeating: 0, count: 128)
+    var expectedColumnMoment = [UInt64](repeating: 0, count: 128)
+    for scan in 0..<128 {
+      let total = selectedPixels.reduce(UInt64(0)) {
+        $0 + UInt64(fixture.values[$1][scan])
+      }
+      let rowMoment = selectedPixels.reduce(UInt64(0)) {
+        $0 + UInt64(fixture.values[$1][scan]) * UInt64($1 / 3)
+      }
+      let columnMoment = selectedPixels.reduce(UInt64(0)) {
+        $0 + UInt64(fixture.values[$1][scan]) * UInt64($1 % 3)
+      }
+      expectedTotal[scan] = total
+      expectedRowMoment[scan] = rowMoment
+      expectedColumnMoment[scan] = columnMoment
+      if total != 0 {
+        expectedRow[scan] = Float(Double(rowMoment) / Double(total))
+        expectedColumn[scan] = Float(Double(columnMoment) / Double(total))
+      }
+    }
+    let rowMean = Float(expectedRow.reduce(Double(0)) { $0 + Double($1) } / 128)
+    let columnMean = Float(
+      expectedColumn.reduce(Double(0)) { $0 + Double($1) } / 128
+    )
+    for scan in 0..<128 {
+      expectedRow[scan] -= rowMean
+      expectedColumn[scan] -= columnMean
+    }
+    XCTAssertEqual(maps.row, expectedRow)
+    XCTAssertEqual(maps.column, expectedColumn)
+    let moments = try XCTUnwrap(source.preparedDPCMomentValues())
+    XCTAssertEqual(moments.total, expectedTotal)
+    XCTAssertEqual(moments.detectorRowMoment, expectedRowMoment)
+    XCTAssertEqual(moments.detectorColumnMoment, expectedColumnMoment)
+    XCTAssertTrue(
+      try Metal4DSTEMResidentCapabilities.compact(source)
+        .fullInteractiveResident
+    )
+    XCTAssertEqual(source.loadMetrics.preparedDPCBytes, 128 * 8 * 4)
+    XCTAssertGreaterThan(source.loadMetrics.preparedDPCReadMilliseconds, 0)
+    XCTAssertGreaterThan(source.loadMetrics.preparedDPCAuthenticationMilliseconds, 0)
+    XCTAssertGreaterThan(source.loadMetrics.preparedDPCPrimeMilliseconds, 0)
+  }
+
+  func testPreparedDPCManifestMismatchesFailClosed() throws {
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let cases: [([String: Any], String)] = [
+      (["working_uint8_sha256": String(repeating: "0", count: 64)], "working_uint8_sha256"),
+      (["detector_mask_sha256": String(repeating: "0", count: 64)], "detector_mask_sha256"),
+      (["file_bytes": 4], "byte range"),
+      (["file_offset": 8_192], "overlaps shard 0 payload"),
+      (["layout": ["total_lo"]], "word layout"),
+    ]
+    for (overrides, message) in cases {
+      let fixture = try makeDirectCompactFixture(
+        preparedDPC: true,
+        preparedDPCOverrides: overrides
+      )
+      defer { try? FileManager.default.removeItem(at: fixture.url) }
+      XCTAssertThrowsError(
+        try MetalCompactH5Loader.load(sourceURL: fixture.url, device: device)
+      ) { error in
+        XCTAssertTrue(error.localizedDescription.contains(message))
+      }
+    }
+  }
+
+  func testChangedPreparedDPCBytesFailAuthenticatedLoad() throws {
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let fixture = try makeDirectCompactFixture(preparedDPC: true)
+    defer { try? FileManager.default.removeItem(at: fixture.url) }
+    var changed = try Data(contentsOf: fixture.url)
+    changed[changed.count - 1] ^= 1
+    try changed.write(to: fixture.url, options: .atomic)
+
+    XCTAssertThrowsError(
+      try MetalCompactH5Loader.load(sourceURL: fixture.url, device: device)
+    ) { error in
+      XCTAssertTrue(error.localizedDescription.contains("prepared DPC SHA-256"))
+    }
+  }
+
+  func testPreparedDetectorProductsActivateByAuthenticatedCopy() throws {
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let fixture = try makeDirectCompactFixture(preparedDetectorProducts: true)
+    defer { try? FileManager.default.removeItem(at: fixture.url) }
+
+    let source = try MetalCompactH5Loader.load(
+      sourceURL: fixture.url,
+      device: device
+    )
+    let prepared = try XCTUnwrap(source.metadata.preparedDetectorProducts)
+    XCTAssertEqual(prepared.products.map(\.name), ["bf", "abf", "adf"])
+    for name in [
+      MetalCompactH5PreparedDetectorProductName.bf,
+      .abf,
+      .adf,
+    ] {
+      let product = try XCTUnwrap(
+        prepared.products.first { $0.name == name.rawValue }
+      )
+      let file = try Data(contentsOf: fixture.url)
+      let maskStart = Int(product.maskFileOffset)
+      let maskEnd = Int(product.maskFileOffset + product.maskFileBytes)
+      let mask = [UInt8](file[maskStart..<maskEnd])
+      let expected = (0..<128).map { scan in
+        mask.indices.reduce(UInt32(0)) {
+          $0 + (mask[$1] == 0 ? 0 : fixture.values[$1][scan])
+        }
+      }
+      let metrics = try source.activatePreparedDetectorProduct(name)
+      XCTAssertEqual(metrics.mode, "prepared")
+      XCTAssertEqual(try source.virtualDetectorValues(), expected)
+    }
+    XCTAssertEqual(source.loadMetrics.preparedDetectorProductBytes, 3 * (6 + 512))
+    XCTAssertGreaterThan(source.loadMetrics.preparedDetectorProductReadMilliseconds, 0)
+    XCTAssertGreaterThan(
+      source.loadMetrics.preparedDetectorProductAuthenticationMilliseconds,
+      0
+    )
+  }
+
+  func testPreparedDetectorProductManifestMismatchesFailClosed() throws {
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let cases: [([String: Any], [String: [String: Any]], String)] = [
+      (
+        ["working_uint8_sha256": String(repeating: "0", count: 64)],
+        [:],
+        "working_uint8_sha256"
+      ),
+      (
+        ["detector_calibration_sha256": String(repeating: "0", count: 64)],
+        [:],
+        "detector_calibration_sha256"
+      ),
+      (["product_order": ["adf", "abf", "bf"]], [:], "shape or order"),
+      ([:], ["bf": ["mask_file_offset": 8_192]], "overlap"),
+      ([:], ["abf": ["outer_radius_px": 9.0]], "geometry"),
+    ]
+    for (rootOverrides, productOverrides, message) in cases {
+      let fixture = try makeDirectCompactFixture(
+        preparedDetectorProducts: true,
+        preparedDetectorOverrides: rootOverrides,
+        preparedDetectorProductOverrides: productOverrides
+      )
+      defer { try? FileManager.default.removeItem(at: fixture.url) }
+      XCTAssertThrowsError(
+        try MetalCompactH5Loader.load(sourceURL: fixture.url, device: device)
+      ) { error in
+        XCTAssertTrue(error.localizedDescription.contains(message))
+      }
+    }
+  }
+
+  func testChangedPreparedDetectorValuesFailAuthenticatedLoad() throws {
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let fixture = try makeDirectCompactFixture(preparedDetectorProducts: true)
+    defer { try? FileManager.default.removeItem(at: fixture.url) }
+    var changed = try Data(contentsOf: fixture.url)
+    changed[changed.count - 1] ^= 1
+    try changed.write(to: fixture.url, options: .atomic)
+
+    XCTAssertThrowsError(
+      try MetalCompactH5Loader.load(sourceURL: fixture.url, device: device)
+    ) { error in
+      XCTAssertTrue(error.localizedDescription.contains("prepared ADF values SHA-256"))
+    }
+  }
+
+  func testPreparedDetectorSelectedCountMismatchFailsLoad() throws {
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let fixture = try makeDirectCompactFixture(
+      preparedDetectorProducts: true,
+      preparedDetectorProductOverrides: [
+        "bf": ["selected_detector_pixels": 0]
+      ]
+    )
+    defer { try? FileManager.default.removeItem(at: fixture.url) }
+
+    XCTAssertThrowsError(
+      try MetalCompactH5Loader.load(sourceURL: fixture.url, device: device)
+    ) { error in
+      XCTAssertTrue(error.localizedDescription.contains("BF mask selects"))
+    }
+  }
+}
+
+private struct CompactFixture {
+  let url: URL
+  let values: [[UInt32]]
+  let headerOffset: Int
+}
+
+private func makeCompactFixture() throws -> CompactFixture {
+  let widths: [UInt8] = [2, 3, 4, 16, 9, 2]
+  var values = widths.enumerated().map { pixel, width in
+    (0..<128).map { scan in
+      pixel == 3
+        ? UInt32(0)
+        : UInt32((scan * (pixel + 3) + pixel) % (1 << Int(width)))
+    }
+  }
+  values[3] = [UInt32](repeating: 0, count: 128)
+  var decodedWords = [UInt32](
+    repeating: 0,
+    count: widths.reduce(0) { $0 + Int($1) * 4 }
+  )
+  var wordOffset = 0
+  for pixel in widths.indices {
+    let width = Int(widths[pixel])
+    for scan in 0..<128 {
+      let bit = scan * width
+      let word = wordOffset + bit / 32
+      let shift = bit % 32
+      decodedWords[word] |= values[pixel][scan] << UInt32(shift)
+      if shift + width > 32 {
+        decodedWords[word + 1] |= values[pixel][scan] >> UInt32(32 - shift)
+      }
+    }
+    wordOffset += width * 4
+  }
+  var decoded = Data()
+  for word in decodedWords { decoded.appendLE(word) }
+  var payload = Data()
+  var lengths: [UInt8] = []
+  for offset in stride(from: 0, to: decoded.count, by: 128) {
+    let block = decoded[offset..<min(offset + 128, decoded.count)]
+    var encoded = Data([0xf0, UInt8(block.count - 15)])
+    encoded.append(block)
+    lengths.append(UInt8(encoded.count - 1))
+    payload.append(encoded)
+  }
+  let decodedSHA = SHA256.hash(data: decoded).map {
+    String(format: "%02x", $0)
+  }.joined()
+  let sourceIdentityBytes = Data(0..<32)
+  let sourceIdentity = sourceIdentityBytes.map {
+    String(format: "%02x", $0)
+  }.joined()
+  let manifest: [String: Any] = [
+    "schema": "quantem.gpu.packed-detector-h5/v1",
+    "status": "complete",
+    "source_shape": [8, 16, 2, 3],
+    "source_dtype": "uint16",
+    "working_dtype": "uint16",
+    "source_identity_sha256": sourceIdentity,
+    "source_raw_logical_sha256": String(repeating: "f", count: 64),
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": NSNull(),
+    "shard_count": 1,
+    "scans_per_shard": 128,
+    "payload_chunk_bytes": 128,
+    "payload_chunk_codec": "independent raw LZ4 blocks",
+    "payload_chunk_length_codec": "uint8 encoded_bytes_minus_one",
+    "descriptor_codec": "uint8 five-bit widths",
+    "masked_detector_pixels": [[1, 0]],
+    "detector_calibration": [
+      "schema": "quantem.gpu.detector-calibration/v1",
+      "source_identity_sha256": sourceIdentity,
+      "detector_center_px": [0.75, 1.25],
+      "bright_field_radius_px": 1.5,
+      "dpc_rotation_degrees": 176.25,
+      "dpc_component_order_exchanged": false,
+      "method": "test-fixture",
+    ],
+  ]
+  let header = try JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys])
+  let binaryOffset: UInt32 = 4_096
+  let binaryBytes: UInt32 = 8 + 7 * 4 + 4 + 4 + 32 + 96
+  let payloadOffset: UInt64 = 8_192
+  let lengthsOffset = payloadOffset + UInt64(payload.count)
+  let widthsOffset = lengthsOffset + UInt64(lengths.count)
+
+  var binary = Data([0x51, 0x47, 0x49, 0x58, 0x00, 0x00, 0x00, 0x01])
+  for value: UInt32 in [1, 128, 8, 16, 2, 3, 128] { binary.appendLE(value) }
+  binary.appendLE(UInt32(1))
+  binary.appendLE(UInt32(3))
+  binary.append(sourceIdentityBytes)
+  for value: UInt64 in [
+    payloadOffset,
+    UInt64(payload.count),
+    lengthsOffset,
+    UInt64(lengths.count),
+    widthsOffset,
+    UInt64(widths.count),
+    UInt64(decoded.count),
+  ] { binary.appendLE(value) }
+  binary.appendLE(UInt32(widths.count))
+  binary.appendLE(UInt32(lengths.count))
+  binary.append(Data(hex: decodedSHA))
+  XCTAssertEqual(binary.count, Int(binaryBytes))
+
+  var prelude = Data([0x51, 0x47, 0x50, 0x55, 0x48, 0x35, 0x00, 0x01])
+  prelude.appendLE(UInt32(header.count))
+  prelude.appendLE(crc32ForFixture(header))
+  prelude.appendLE(binaryOffset)
+  prelude.appendLE(binaryBytes)
+  var file = Data(count: Int(widthsOffset) + widths.count)
+  file.replaceSubrange(0..<prelude.count, with: prelude)
+  file.replaceSubrange(24..<(24 + header.count), with: header)
+  file.replaceSubrange(
+    Int(binaryOffset)..<(Int(binaryOffset) + binary.count),
+    with: binary
+  )
+  file.replaceSubrange(
+    Int(payloadOffset)..<(Int(payloadOffset) + payload.count),
+    with: payload
+  )
+  file.replaceSubrange(
+    Int(lengthsOffset)..<(Int(lengthsOffset) + lengths.count),
+    with: lengths
+  )
+  file.replaceSubrange(
+    Int(widthsOffset)..<(Int(widthsOffset) + widths.count),
+    with: widths
+  )
+  let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "quantem-compact-\(UUID().uuidString).h5"
+  )
+  try file.write(to: url, options: .atomic)
+  return CompactFixture(url: url, values: values, headerOffset: Int(widthsOffset))
+}
+
+private func makeDirectCompactFixture(
+  rawExclusions: Bool = false,
+  partialRawExclusions: Bool = false,
+  preparedDPC: Bool = false,
+  preparedDPCOverrides: [String: Any] = [:],
+  preparedDetectorProducts: Bool = false,
+  preparedDetectorOverrides: [String: Any] = [:],
+  preparedDetectorProductOverrides: [String: [String: Any]] = [:]
+) throws -> CompactFixture {
+  let tileWidths: [[UInt8]] = [
+    [2, 3, 4, 5],
+    [3, 3, 3, 3],
+    [4, 4, 4, 4],
+    [0, 0, 0, 0],
+    [8, 7, 8, 6],
+    [2, 2, 2, 2],
+  ]
+  var values = [[UInt32]](
+    repeating: [UInt32](repeating: 0, count: 128),
+    count: tileWidths.count
+  )
+  var payloadWords: [UInt32] = []
+  var headers: [UInt32] = []
+  for pixel in tileWidths.indices {
+    let base = UInt32(payloadWords.count)
+    var packedWidths: UInt32 = 0
+    for tile in 0..<4 {
+      let width = Int(tileWidths[pixel][tile])
+      packedWidths |= UInt32(width) << UInt32(tile * 4)
+      let tileBase = payloadWords.count
+      payloadWords.append(contentsOf: repeatElement(0, count: width))
+      for localScan in 0..<32 {
+        let scan = tile * 32 + localScan
+        let value =
+          pixel == 3 || width == 0
+          ? UInt32(0)
+          : UInt32((scan * (pixel + 3) + pixel) % (1 << width))
+        values[pixel][scan] = value
+        if width != 0 {
+          let bit = localScan * width
+          let word = tileBase + bit / 32
+          let shift = bit % 32
+          payloadWords[word] |= value << UInt32(shift)
+          if shift + width > 32 {
+            payloadWords[word + 1] |= value >> UInt32(32 - shift)
+          }
+        }
+      }
+    }
+    headers.append(base)
+    headers.append(packedWidths)
+  }
+  var payload = Data()
+  for word in payloadWords { payload.appendLE(word) }
+  var headerData = Data()
+  for word in headers { headerData.appendLE(word) }
+  let payloadSHA = SHA256.hash(data: payload).map {
+    String(format: "%02x", $0)
+  }.joined()
+  var logicalValues = Data()
+  for scan in 0..<128 {
+    for pixel in values.indices {
+      logicalValues.append(UInt8(values[pixel][scan]))
+    }
+  }
+  let logicalSHA = SHA256.hash(data: logicalValues).map {
+    String(format: "%02x", $0)
+  }.joined()
+  let sourceIdentityBytes = Data((32..<64).map(UInt8.init))
+  let sourceIdentity = sourceIdentityBytes.map {
+    String(format: "%02x", $0)
+  }.joined()
+  var manifest: [String: Any] = [
+    "schema": "quantem.gpu.packed-detector-h5/v3",
+    "status": "complete",
+    "payload_codec": "direct-bitpacked-u32",
+    "source_identity_sha256": sourceIdentity,
+    "source_raw_logical_sha256": String(repeating: "d", count: 64),
+    "source_shape": [8, 16, 2, 3],
+    "source_dtype": "uint16",
+    "working_dtype": "uint8",
+    "working_value_definition":
+      "all admitted source counts exactly; authenticated dead pixels set to zero",
+    "prepared_uint8_sha256": logicalSHA,
+    "detector_mask_sha256": String(repeating: "a", count: 64),
+    "masked_detector_pixels": [3],
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": NSNull(),
+    "scan_tile": 32,
+    "shard_count": 1,
+  ]
+  if rawExclusions || partialRawExclusions {
+    manifest["masked_detector_raw_values"] = [Int(UInt16.max)]
+  }
+  if rawExclusions {
+    var pixel = UInt32(3).littleEndian
+    let pixelSHA = Swift.withUnsafeBytes(of: &pixel) {
+      SHA256.hash(data: Data($0)).map { String(format: "%02x", $0) }.joined()
+    }
+    manifest["masked_detector_pixels_sha256"] = pixelSHA
+  }
+  let binaryOffset: UInt32 = 4_096
+  let binaryBytes: UInt32 = 8 + 9 * 4 + 4 + 4 + 32 + 96
+  let payloadOffset: UInt64 = 8_192
+  let headersOffset = payloadOffset + UInt64(payload.count)
+  var cursor = headersOffset + UInt64(headerData.count)
+  let preparedOffset = cursor
+  var preparedData = Data()
+  var extraRanges: [(UInt64, Data)] = []
+  if preparedDPC {
+    let selectedPixels = [0, 1, 2, 4, 5]
+    for scan in 0..<128 {
+      let total = selectedPixels.reduce(UInt64(0)) {
+        $0 + UInt64(values[$1][scan])
+      }
+      let rowMoment = selectedPixels.reduce(UInt64(0)) {
+        $0 + UInt64(values[$1][scan]) * UInt64($1 / 3)
+      }
+      let columnMoment = selectedPixels.reduce(UInt64(0)) {
+        $0 + UInt64(values[$1][scan]) * UInt64($1 % 3)
+      }
+      for value in [total, rowMoment, columnMoment] {
+        preparedData.appendLE(UInt32(value & 0xffff_ffff))
+        preparedData.appendLE(UInt32(value >> 32))
+      }
+      preparedData.appendLE(UInt32(0))
+      preparedData.appendLE(UInt32(0))
+    }
+    var contract: [String: Any] = [
+      "schema": "quantem.gpu.prepared-dpc-moments/v1",
+      "source_identity_sha256": sourceIdentity,
+      "working_uint8_sha256": logicalSHA,
+      "detector_mask_sha256": String(repeating: "a", count: 64),
+      "detector_selection": "all-nonexcluded-v1",
+      "scan_count": 128,
+      "selected_detector_pixels": 5,
+      "detector_columns": 3,
+      "dtype": "little-endian-u32",
+      "word_order": "little-endian-u32-pairs",
+      "words_per_scan": 8,
+      "layout": [
+        "total_lo", "total_hi", "row_lo", "row_hi",
+        "column_lo", "column_hi", "padding_0", "padding_1",
+      ],
+      "file_offset": preparedOffset,
+      "file_bytes": preparedData.count,
+      "sha256": SHA256.hash(data: preparedData).map {
+        String(format: "%02x", $0)
+      }.joined(),
+      "total_bound": String(5 * 255),
+      "row_moment_bound": String(2 * 255),
+      "column_moment_bound": String(6 * 255),
+      "narrow_integer": true,
+      "narrow_products": true,
+    ]
+    contract.merge(preparedDPCOverrides) { _, replacement in replacement }
+    manifest["prepared_dpc_moments"] = contract
+    extraRanges.append((preparedOffset, preparedData))
+    cursor += UInt64(preparedData.count)
+  }
+  if preparedDetectorProducts {
+    let calibration: [String: Any] = [
+      "schema": "quantem.gpu.detector-calibration/v1",
+      "source_identity_sha256": sourceIdentity,
+      "detector_center_px": [0, 0],
+      "bright_field_radius_px": 1,
+      "method": "synthetic-test",
+    ]
+    manifest["detector_calibration"] = calibration
+    let canonicalCalibration =
+      "{\"bright_field_radius_px\":\"f64be:3ff0000000000000\","
+      + "\"detector_center_px\":[\"f64be:0000000000000000\","
+      + "\"f64be:0000000000000000\"],"
+      + "\"method\":\"synthetic-test\","
+      + "\"schema\":\"quantem.gpu.detector-calibration/v1\","
+      + "\"source_identity_sha256\":\"\(sourceIdentity)\"}"
+    let calibrationSHA = SHA256.hash(data: Data(canonicalCalibration.utf8)).map {
+      String(format: "%02x", $0)
+    }.joined()
+    let geometries: [(String, Double, Double)] = [
+      ("bf", 0, 1),
+      ("abf", 0.5, 1),
+      ("adf", 1, 2),
+    ]
+    var records: [[String: Any]] = []
+    for (name, inner, outer) in geometries {
+      var mask = [UInt8](repeating: 0, count: 6)
+      for pixel in 0..<6 where pixel != 3 {
+        let row = Double(pixel / 3)
+        let column = Double(pixel % 3)
+        let distance = (row * row + column * column).squareRoot()
+        mask[pixel] = distance >= inner && distance <= outer ? 1 : 0
+      }
+      let maskData = Data(mask)
+      var productValues = Data()
+      for scan in 0..<128 {
+        let sum = mask.indices.reduce(UInt32(0)) {
+          $0 + (mask[$1] == 0 ? 0 : values[$1][scan])
+        }
+        productValues.appendLE(sum)
+      }
+      let maskOffset = cursor
+      extraRanges.append((maskOffset, maskData))
+      cursor += UInt64(maskData.count)
+      cursor = (cursor + 3) & ~UInt64(3)
+      let valuesOffset = cursor
+      extraRanges.append((valuesOffset, productValues))
+      cursor += UInt64(productValues.count)
+      var record: [String: Any] = [
+        "name": name,
+        "center_px": [0, 0],
+        "inner_radius_px": inner,
+        "outer_radius_px": outer,
+        "selected_detector_pixels": mask.reduce(0) { $0 + Int($1) },
+        "mask_file_offset": maskOffset,
+        "mask_file_bytes": maskData.count,
+        "mask_sha256": SHA256.hash(data: maskData).map {
+          String(format: "%02x", $0)
+        }.joined(),
+        "values_file_offset": valuesOffset,
+        "values_file_bytes": productValues.count,
+        "values_sha256": SHA256.hash(data: productValues).map {
+          String(format: "%02x", $0)
+        }.joined(),
+      ]
+      record.merge(preparedDetectorProductOverrides[name] ?? [:]) {
+        _, replacement in replacement
+      }
+      records.append(record)
+    }
+    var contract: [String: Any] = [
+      "schema": "quantem.gpu.prepared-detector-products/v1",
+      "source_identity_sha256": sourceIdentity,
+      "working_uint8_sha256": logicalSHA,
+      "detector_mask_sha256": String(repeating: "a", count: 64),
+      "detector_calibration_sha256": calibrationSHA,
+      "detector_calibration_digest_encoding":
+        "canonical-json-numbers-as-f64be-hex/v1",
+      "scan_shape": [8, 16],
+      "detector_shape": [2, 3],
+      "product_dtype": "little-endian-u32",
+      "mask_dtype": "uint8-binary-row-major",
+      "mask_rule": "quantem.gpu.detector-mask-inclusive/v1",
+      "product_order": ["bf", "abf", "adf"],
+      "products": records,
+    ]
+    contract.merge(preparedDetectorOverrides) { _, replacement in replacement }
+    manifest["prepared_detector_products"] = contract
+  }
+  let header = try JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys])
+
+  var binary = Data([0x51, 0x47, 0x49, 0x58, 0x00, 0x00, 0x00, 0x03])
+  for value: UInt32 in [1, 0, 8, 16, 2, 3, 128, 32, 1] {
+    binary.appendLE(value)
+  }
+  binary.appendLE(UInt32(1))
+  binary.appendLE(UInt32(3))
+  binary.append(sourceIdentityBytes)
+  for value: UInt64 in [
+    payloadOffset,
+    UInt64(payload.count),
+    0,
+    0,
+    headersOffset,
+    UInt64(headerData.count),
+    UInt64(payload.count),
+  ] { binary.appendLE(value) }
+  binary.appendLE(UInt32(headers.count))
+  binary.appendLE(UInt32(0))
+  binary.append(Data(hex: payloadSHA))
+  XCTAssertEqual(binary.count, Int(binaryBytes))
+
+  var prelude = Data([0x51, 0x47, 0x50, 0x55, 0x48, 0x35, 0x00, 0x01])
+  prelude.appendLE(UInt32(header.count))
+  prelude.appendLE(crc32ForFixture(header))
+  prelude.appendLE(binaryOffset)
+  prelude.appendLE(binaryBytes)
+  XCTAssertLessThanOrEqual(24 + header.count, Int(binaryOffset))
+  var file = Data(count: Int(cursor))
+  file.replaceSubrange(0..<prelude.count, with: prelude)
+  file.replaceSubrange(24..<(24 + header.count), with: header)
+  file.replaceSubrange(
+    Int(binaryOffset)..<(Int(binaryOffset) + binary.count),
+    with: binary
+  )
+  file.replaceSubrange(
+    Int(payloadOffset)..<(Int(payloadOffset) + payload.count),
+    with: payload
+  )
+  file.replaceSubrange(
+    Int(headersOffset)..<(Int(headersOffset) + headerData.count),
+    with: headerData
+  )
+  for (offset, data) in extraRanges {
+    file.replaceSubrange(Int(offset)..<(Int(offset) + data.count), with: data)
+  }
+  let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "quantem-compact-direct-v3-\(UUID().uuidString).h5"
+  )
+  try file.write(to: url, options: .atomic)
+  return CompactFixture(
+    url: url,
+    values: values,
+    headerOffset: Int(headersOffset)
+  )
+}
+
+private func crc32ForFixture(_ data: Data) -> UInt32 {
+  var crc = UInt32.max
+  for byte in data {
+    crc ^= UInt32(byte)
+    for _ in 0..<8 {
+      crc = (crc >> 1) ^ (0xedb8_8320 & (UInt32(0) &- (crc & 1)))
+    }
+  }
+  return ~crc
+}
+
+extension Data {
+  fileprivate init(hex: String) {
+    self.init()
+    var index = hex.startIndex
+    while index < hex.endIndex {
+      let next = hex.index(index, offsetBy: 2)
+      append(UInt8(hex[index..<next], radix: 16)!)
+      index = next
+    }
+  }
+
+  fileprivate mutating func appendLE(_ value: UInt32) {
+    var little = value.littleEndian
+    Swift.withUnsafeBytes(of: &little) { append(contentsOf: $0) }
+  }
+
+  fileprivate mutating func appendLE(_ value: UInt64) {
+    var little = value.littleEndian
+    Swift.withUnsafeBytes(of: &little) { append(contentsOf: $0) }
+  }
+}
