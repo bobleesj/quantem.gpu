@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Sequence
 from importlib.metadata import version
+from pathlib import Path
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -38,6 +39,14 @@ def _parser() -> argparse.ArgumentParser:
         "--implementation-revision",
         required=True,
         help="exact immutable quantem.gpu Git revision served in provenance",
+    )
+    serve.add_argument(
+        "--compact-sources",
+        type=Path,
+        help=(
+            "trusted JSON registry binding catalogued masters to immutable "
+            "compact artifacts"
+        ),
     )
     mps = commands.add_parser(
         "serve-ssb-mps",
@@ -86,11 +95,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             "pip install 'quantem.gpu[cuda,remote]'"
         ) from exc
 
-    from quantem.gpu.remote import create_app
+    from quantem.gpu.remote import create_app, load_compact_browse_sources
+
+    compact_sources = (
+        load_compact_browse_sources(args.compact_sources, args.data_folder)
+        if args.compact_sources is not None
+        else None
+    )
 
     app = create_app(
         args.data_folder,
         gpus=gpus,
+        compact_sources=compact_sources,
         implementation_revision=args.implementation_revision,
     )
     service = app.state.browse_service

@@ -48,6 +48,28 @@ conda run -n quantem-gpu-remote \
 when the host is shared and QuantEM.GPU owns only selected devices. Dataset
 placement and fit are explained in [GPU admission and residency](admission.md).
 
+To keep existing clients on the same catalogued master identity while using an
+immutable compact resident artifact, create a trusted server-side registry:
+
+```json
+{
+  "schema": "quantem.gpu.compact-browse-sources/v1",
+  "sources": [
+    {
+      "master": "detector/session/sample_master.h5",
+      "compact": "prepared/sample-exact-qgix-v1.h5",
+      "expected_whole_file_sha256": "<lowercase SHA-256>"
+    }
+  ]
+}
+```
+
+Then add `--compact-sources /path/to/compact-sources.json` to the same
+`quantem-gpu serve` command. This is trusted deployment configuration, not a
+client path. The service rejects missing files, duplicate master bindings,
+masters outside the served data folder, missing whole-file seals, shape drift,
+and compact requests that ask for crop or bin transformations.
+
 The default loopback binding is intentional. Do not expose the HTTP listener
 directly on a public interface; use the connection patterns on the next page.
 
@@ -62,3 +84,8 @@ A service deployment is ready only when:
 4. exact output shape, dtype, bin/crop plan, and checksum match the frozen
    in-process CUDA reference; and
 5. an over-budget request fails without changing scientific parameters.
+
+For a compact deployment, also require a matching whole-file seal, exact
+selected-diffraction and detector-product parity, and a residency telemetry
+receipt. A service launch or successful HTTP response alone is not CUDA
+runtime qualification.

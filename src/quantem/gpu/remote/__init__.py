@@ -4,15 +4,32 @@ from .maped_api import MAPEDProtocolError, MAPEDProtocolService
 
 __all__ = [
     "BrowseService",
+    "CompactBrowseSource",
     "MAPEDProtocolError",
     "MAPEDProtocolService",
     "create_app",
+    "load_compact_browse_sources",
 ]
 
 
 def __getattr__(name: str) -> object:
-    if name in {"BrowseService", "create_app"}:
-        from .server import BrowseService, create_app
+    if name in {
+        "BrowseService",
+        "CompactBrowseSource",
+        "create_app",
+        "load_compact_browse_sources",
+    }:
+        from .server import (
+            BrowseService,
+            CompactBrowseSource,
+            create_app,
+            load_compact_browse_sources,
+        )
 
-        return {"BrowseService": BrowseService, "create_app": create_app}[name]
+        return {
+            "BrowseService": BrowseService,
+            "CompactBrowseSource": CompactBrowseSource,
+            "create_app": create_app,
+            "load_compact_browse_sources": load_compact_browse_sources,
+        }[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

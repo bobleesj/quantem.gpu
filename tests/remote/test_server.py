@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -17,9 +19,11 @@ from quantem.gpu.remote.server import (
     PROTOCOL_NAME,
     PROTOCOL_VERSION,
     BrowseService,
+    CompactBrowseSource,
     _scan_roi_indices,
     _wire_image,
     create_app,
+    load_compact_browse_sources,
 )
 
 
@@ -104,6 +108,34 @@ class _RecordingDevice:
         return None
 
 
+class _FakeCompactSource:
+    def __init__(self, data: np.ndarray) -> None:
+        self.data = data
+        self.metadata = SimpleNamespace(
+            manifest={"working_dtype": "uint16"},
+            source_identity_sha256="b" * 64,
+        )
+        self.memory_pool_used_bytes = 1234
+        self.result: np.ndarray | None = None
+        self.is_released = False
+
+    def update_virtual_detector(self, mask: np.ndarray) -> None:
+        self.result = self.data[..., np.asarray(mask, dtype=bool)].sum(
+            axis=-1,
+            dtype=np.uint64,
+        )
+
+    def virtual_detector_values(self) -> np.ndarray:
+        assert self.result is not None
+        return self.result
+
+    def extract_diffraction(self, scan_row: int, scan_column: int) -> np.ndarray:
+        return self.data[scan_row, scan_column]
+
+    def release_resident_storage(self) -> None:
+        self.is_released = True
+
+
 def test_capabilities_identify_quantem_gpu_protocol(tmp_path):
     service = _service(tmp_path)
     client = TestClient(create_app(tmp_path, service=service))
@@ -119,6 +151,179 @@ def test_capabilities_identify_quantem_gpu_protocol(tmp_path):
     assert payload["data_folders"] == [str(tmp_path)]
     assert payload["features"]["exact_integer_images"] is True
     assert payload["features"]["multi_gpu_residency"] is False
+    assert payload["features"]["compact_exact_residency"]["enabled"] is False
+
+
+def test_existing_browse_routes_dispatch_to_bound_compact_source(tmp_path):
+    master = _master(tmp_path)
+    compact_path = tmp_path / "prepared" / "sample.compact.h5"
+    service = BrowseService(
+        tmp_path,
+        gpu=2,
+        compact_sources={
+            master: CompactBrowseSource(
+                compact_path,
+                "a" * 64,
+            )
+        },
+        initialize_cuda=False,
+    )
+    service.backend = "cuda"
+    service.device_name = "Test CUDA"
+    service.cache_budget_bytes = 1 << 30
+    service.refresh_catalog()
+    data = np.arange(2 * 2 * 4 * 4, dtype=np.uint16).reshape(2, 2, 4, 4)
+    compact = _FakeCompactSource(data)
+    key = service._plan_key(master, 1, 1, None)
+    service._master_cache[key] = {
+        "gpu": 2,
+        "data": None,
+        "compute": None,
+        "compact_source": compact,
+        "source_kind": "compact_h5",
+        "scan_shape": (2, 2),
+        "detector_shape": (4, 4),
+        "mean_dp": None,
+        "bf_geometry": (1.5, 1.5, 1.0),
+        "com_row": None,
+        "com_column": None,
+        "load_metrics": {"total_ms": 12.5, "source_read_ms": 4.0},
+    }
+    client = TestClient(create_app(tmp_path, service=service))
+    common = {
+        "session": "detector/20260101_session",
+        "file": master.name,
+        "det_bin": 1,
+        "scan_bin": 1,
+    }
+
+    capabilities = client.get("/api/browse/capabilities").json()
+    bright_field = client.get(
+        "/api/browse/realspace",
+        params={**common, "mode": "BF", "inner": 0, "outer": 1},
+    )
+    diffraction = client.get(
+        "/api/browse/cbed",
+        params={**common, "sx": 1, "sy": 0},
+    )
+    residency = client.get("/api/browse/residency", params=common).json()
+
+    assert capabilities["features"]["compact_exact_residency"]["enabled"] is True
+    assert bright_field.status_code == 200
+    mask = (
+        (np.arange(4)[:, None] - 1.5) ** 2
+        + (np.arange(4)[None, :] - 1.5) ** 2
+        <= 1
+    )
+    np.testing.assert_array_equal(
+        np.frombuffer(bright_field.content, dtype="<u4").reshape(2, 2),
+        data[..., mask].sum(axis=-1, dtype=np.uint64),
+    )
+    assert diffraction.status_code == 200
+    np.testing.assert_array_equal(
+        np.frombuffer(diffraction.content, dtype="<u4").reshape(4, 4),
+        data[1, 0],
+    )
+    assert service._entry_bytes(service._master_cache[key]) == 1234
+    assert residency == {
+        "resident": True,
+        "stale": False,
+        "source_kind": "compact_h5",
+        "gpu": 2,
+        "resident_bytes": 1234,
+        "scan_shape": [2, 2],
+        "detector_shape": [4, 4],
+        "working_dtype": "uint16",
+        "source_identity_sha256": "b" * 64,
+        "load_metrics": {"total_ms": 12.5, "source_read_ms": 4.0},
+        "plan": {"detector_bin": 1, "scan_bin": 1, "scan_region": None},
+    }
+
+    service._master_cache[key]["source_signature"] = (("stale", 0, 0),)
+    stale = client.get("/api/browse/residency", params=common).json()
+    assert stale["resident"] is True
+    assert stale["stale"] is True
+    with pytest.raises(HTTPException, match="catalogued source changed") as error:
+        service.entry(
+            common["session"],
+            common["file"],
+            det_bin=1,
+            scan_bin=1,
+            scan_region=None,
+        )
+    assert error.value.status_code == 409
+
+
+def test_bound_compact_source_rejects_transformed_plan(tmp_path):
+    master = _master(tmp_path)
+    service = BrowseService(
+        tmp_path,
+        gpu=2,
+        compact_sources={master: CompactBrowseSource(tmp_path / "compact.h5")},
+        initialize_cuda=False,
+    )
+    service.backend = "cuda"
+    service.device_name = "Test CUDA"
+    service.cache_budget_bytes = 1 << 30
+    service.refresh_catalog()
+
+    with pytest.raises(HTTPException, match="requires detector_bin=1") as error:
+        service.entry(
+            "detector/20260101_session",
+            master.name,
+            det_bin=2,
+            scan_bin=1,
+            scan_region=None,
+        )
+
+    assert error.value.status_code == 409
+
+
+def test_compact_source_registry_keeps_client_paths_catalogued(tmp_path):
+    master = _master(tmp_path)
+    registry_root = tmp_path / "prepared"
+    registry_root.mkdir()
+    compact = registry_root / "sample.compact.h5"
+    compact.write_bytes(b"sealed compact placeholder")
+    registry = registry_root / "compact-sources.json"
+    registry.write_text(
+        json.dumps(
+            {
+                "schema": "quantem.gpu.compact-browse-sources/v1",
+                "sources": [
+                    {
+                        "master": str(master.relative_to(tmp_path)),
+                        "compact": compact.name,
+                        "expected_whole_file_sha256": "c" * 64,
+                    }
+                ],
+            }
+        )
+    )
+
+    sources = load_compact_browse_sources(registry, tmp_path)
+
+    assert sources == {
+        master: CompactBrowseSource(compact, "c" * 64),
+    }
+
+
+def test_compact_source_registry_requires_whole_file_seal(tmp_path):
+    master = _master(tmp_path)
+    compact = tmp_path / "compact.h5"
+    compact.write_bytes(b"placeholder")
+    registry = tmp_path / "compact-sources.json"
+    registry.write_text(
+        json.dumps(
+            {
+                "schema": "quantem.gpu.compact-browse-sources/v1",
+                "sources": [{"master": str(master), "compact": str(compact)}],
+            }
+        )
+    )
+
+    with pytest.raises(TypeError, match="requires a whole-file seal"):
+        load_compact_browse_sources(registry, tmp_path)
 
 
 def test_capabilities_report_live_admission_bytes(tmp_path, monkeypatch):

@@ -44,6 +44,14 @@ budget, active resident bytes, evictable bytes, physical free bytes, requested
 shape/dtype, crop/bin plan, and response status. These values are admission
 evidence, not a substitute for measured peak VRAM.
 
+For a compact entry, `/api/browse/residency` also exposes separately measured
+metadata, whole-file integrity, source read, host validation, GPU upload,
+NVRTC compile, GPU validation/decode, decoded-integrity, total-load, and private
+CUDA-pool byte fields. A zero phase means that phase was not part of the
+selected QGIX version; it is not an unmeasured timing. Client decode, transport,
+display upload, first presentation, and A-B-A switch latency remain client-side
+measurements and must not be inferred from server load time.
+
 Physical acceptance also samples process allocation/reserve and total-card
 occupancy while loading and computing. A memory-only regression can preserve
 all numerical outputs, so value parity alone is insufficient.

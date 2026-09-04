@@ -18,9 +18,10 @@ import os
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, contextmanager, nullcontext
+from dataclasses import asdict, dataclass, is_dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -56,6 +57,75 @@ _MAX_IMAGE_ENTRIES = 64
 _MASTER_RESCAN_INTERVAL_SECONDS = 10.0
 
 logger = logging.getLogger("quantem.gpu.remote")
+
+
+@dataclass(frozen=True)
+class CompactBrowseSource:
+    """Bind one catalogued master to an immutable compact resident source.
+
+    The master remains the client-visible dataset identity. The compact path is
+    an internal execution artifact and never becomes a client-supplied path.
+    """
+
+    path: str | os.PathLike[str]
+    expected_whole_file_sha256: str | None = None
+
+
+def load_compact_browse_sources(
+    registry_path: str | os.PathLike[str],
+    data_folder: str | os.PathLike[str],
+) -> dict[Path, CompactBrowseSource]:
+    """Load one trusted server-side master-to-compact binding registry."""
+    registry_path = Path(registry_path).expanduser().absolute()
+    data_folder = Path(data_folder).expanduser().absolute()
+    value = json.loads(registry_path.read_text())
+    if not isinstance(value, dict):
+        raise TypeError("compact source registry must contain one JSON object")
+    if value.get("schema") != "quantem.gpu.compact-browse-sources/v1":
+        raise ValueError("compact source registry has an unsupported schema")
+    rows = value.get("sources")
+    if not isinstance(rows, list) or not rows:
+        raise ValueError("compact source registry must contain at least one source")
+    result: dict[Path, CompactBrowseSource] = {}
+    for ordinal, row in enumerate(rows):
+        if not isinstance(row, dict):
+            raise TypeError(f"compact source registry row {ordinal} is not an object")
+        master_value = row.get("master")
+        compact_value = row.get("compact")
+        if not isinstance(master_value, str) or not isinstance(compact_value, str):
+            raise TypeError(
+                f"compact source registry row {ordinal} requires string paths"
+            )
+        expected_sha256 = row.get("expected_whole_file_sha256")
+        if not isinstance(expected_sha256, str):
+            raise TypeError(
+                f"compact source registry row {ordinal} requires a whole-file seal"
+            )
+        master = Path(master_value).expanduser()
+        if not master.is_absolute():
+            master = data_folder / master
+        master = master.absolute()
+        try:
+            master.relative_to(data_folder)
+        except ValueError as error:
+            raise ValueError(
+                f"compact source registry master {ordinal} is outside data_folder"
+            ) from error
+        compact = Path(compact_value).expanduser()
+        if not compact.is_absolute():
+            compact = registry_path.parent / compact
+        compact = compact.absolute()
+        if not master.is_file():
+            raise FileNotFoundError(f"catalogued master does not exist: {master}")
+        if not compact.is_file():
+            raise FileNotFoundError(f"compact artifact does not exist: {compact}")
+        if master in result:
+            raise ValueError(f"duplicate compact binding for {master}")
+        result[master] = CompactBrowseSource(
+            compact,
+            expected_sha256,
+        )
+    return result
 
 
 def _format_size(n_bytes: int) -> str:
@@ -236,9 +306,14 @@ class BrowseService:
         *,
         gpu: int = 0,
         gpus: Sequence[int] | str | None = None,
+        compact_sources: Mapping[
+            str | os.PathLike[str], CompactBrowseSource
+        ]
+        | None = None,
         initialize_cuda: bool = True,
     ) -> None:
         self.data_folder = Path(data_folder).expanduser().absolute()
+        self._compact_sources = self._normalize_compact_sources(compact_sources)
         if isinstance(gpus, str):
             if gpus != "auto":
                 raise ValueError("gpus must be 'auto' or a sequence of CUDA indices")
@@ -293,6 +368,34 @@ class BrowseService:
         self._compute_locks_lock = threading.Lock()
         if initialize_cuda:
             self._initialize_cuda()
+
+    def _normalize_compact_sources(
+        self,
+        sources: Mapping[str | os.PathLike[str], CompactBrowseSource] | None,
+    ) -> dict[Path, CompactBrowseSource]:
+        """Normalize trusted server-side compact bindings without touching CUDA."""
+        normalized: dict[Path, CompactBrowseSource] = {}
+        for master_value, source in (sources or {}).items():
+            if not isinstance(source, CompactBrowseSource):
+                raise TypeError("compact source values must be CompactBrowseSource")
+            master = Path(master_value).expanduser()
+            if not master.is_absolute():
+                master = self.data_folder / master
+            master = master.absolute()
+            compact = Path(source.path).expanduser()
+            if not compact.is_absolute():
+                compact = self.data_folder / compact
+            compact = compact.absolute()
+            expected = source.expected_whole_file_sha256
+            if expected is not None and (
+                len(expected) != 64
+                or any(character not in "0123456789abcdef" for character in expected)
+            ):
+                raise ValueError(
+                    "expected_whole_file_sha256 must be one lowercase SHA-256 digest"
+                )
+            normalized[master] = CompactBrowseSource(compact, expected)
+        return normalized
 
     def _initialize_cuda(self) -> None:
         try:
@@ -387,6 +490,20 @@ class BrowseService:
                 "acquisition_events": True,
                 "exact_integer_images": True,
                 "multi_gpu_residency": len(devices) > 1,
+                "compact_exact_residency": {
+                    "enabled": bool(self._compact_sources),
+                    "schema_versions": [1, 3],
+                    "working_dtypes": ["uint8", "uint16"],
+                    "requires_full_coverage": True,
+                    "scan_bin": 1,
+                    "detector_bin": 1,
+                    "crop": None,
+                    "selected_diffraction": True,
+                    "virtual_detectors": True,
+                    "scan_roi_diffraction": False,
+                    "center_of_mass": False,
+                },
+                "residency_telemetry": True,
                 "ssb": SSBProtocolService.advertised_capability(),
             },
         }
@@ -729,6 +846,44 @@ class BrowseService:
         scan_bin: int,
         scan_region: tuple[int, int, int, int] | None,
     ) -> tuple[int, int]:
+        compact = self._compact_sources.get(path)
+        if compact is not None:
+            if det_bin != 1 or scan_bin != 1 or scan_region is not None:
+                raise HTTPException(
+                    409,
+                    "Compact exact residency requires detector_bin=1, "
+                    "scan_bin=1, and the complete scan region. Request the "
+                    "native source for an explicitly transformed plan.",
+                )
+            from quantem.gpu.io._compact_h5 import CompactH5Index
+
+            index = CompactH5Index.from_file(compact.path)
+            inspection = self._inspect(path)
+            if inspection.scan_shape is None or inspection.detector_shape is None:
+                raise HTTPException(422, "The master does not report a usable 4D shape.")
+            expected_shape = (*inspection.scan_shape, *inspection.detector_shape)
+            if tuple(index.shape) != tuple(expected_shape):
+                raise HTTPException(
+                    409,
+                    f"Compact source shape {index.shape} does not match catalogued "
+                    f"master shape {expected_shape}.",
+                )
+            scan_count = index.shape[0] * index.shape[1]
+            detector_pixels = index.shape[2] * index.shape[3]
+            auxiliary_bytes = (2 * scan_count + 2 * detector_pixels) * 4
+            resident_bytes = index.resident_bytes + auxiliary_bytes
+            maximum_shard_transient = max(
+                (
+                    shard.payload_bytes
+                    + shard.lengths_bytes
+                    + shard.widths_bytes
+                    + shard.decoded_bytes
+                    + shard.descriptor_count * 4
+                    + (shard.chunk_count + 1) * 4
+                )
+                for shard in index.shards
+            )
+            return resident_bytes, resident_bytes + maximum_shard_transient
         inspection = self._inspect(path)
         if inspection.scan_shape is None or inspection.detector_shape is None:
             raise HTTPException(422, "The master does not report a usable 4D shape.")
@@ -769,6 +924,9 @@ class BrowseService:
 
     @staticmethod
     def _entry_bytes(entry: dict[str, Any]) -> int:
+        compact = entry.get("compact_source")
+        if compact is not None:
+            return int(compact.memory_pool_used_bytes)
         data = entry.get("data")
         return int(getattr(data, "nbytes", 0) or 0)
 
@@ -883,6 +1041,9 @@ class BrowseService:
                 compute = entry.get("compute")
                 if compute is not None:
                     compute.close()
+                compact = entry.get("compact_source")
+                if compact is not None:
+                    compact.release_resident_storage()
                 data = entry.get("data")
                 if data is not None and hasattr(data, "free"):
                     try:
@@ -893,6 +1054,69 @@ class BrowseService:
         if cache_key is not None:
             with self._compute_locks_lock:
                 self._compute_locks.pop(cache_key, None)
+
+    @staticmethod
+    def _entry_source_is_fresh(path: Path, entry: dict[str, Any]) -> bool:
+        """Return whether a resident entry still matches its catalogued source."""
+        signature = entry.get("source_signature")
+        return signature is None or signature == _file_signature(path)
+
+    def residency_snapshot(
+        self,
+        session: str,
+        filename: str,
+        *,
+        det_bin: int,
+        scan_bin: int,
+        scan_region: tuple[int, int, int, int] | None,
+    ) -> dict[str, Any]:
+        """Describe one resident plan without loading or changing cache state."""
+        path = self.resolve_master(session, filename)
+        scan_region = self._normalize_scan_region(path, scan_region)
+        key = self._plan_key(path, det_bin, scan_bin, scan_region)
+        with self._master_lock:
+            entry = self._master_cache.get(key)
+            if entry is None:
+                return {
+                    "resident": False,
+                    "stale": False,
+                    "source_kind": None,
+                    "plan": {
+                        "detector_bin": det_bin,
+                        "scan_bin": scan_bin,
+                        "scan_region": scan_region,
+                    },
+                }
+            stale = not self._entry_source_is_fresh(path, entry)
+            metrics = entry.get("load_metrics")
+            metric_values = asdict(metrics) if is_dataclass(metrics) else metrics
+            compact = entry.get("compact_source")
+            metadata = getattr(compact, "metadata", None)
+            return {
+                "resident": True,
+                "stale": stale,
+                "source_kind": entry.get("source_kind", "dense"),
+                "gpu": int(entry.get("gpu", self.gpu)),
+                "resident_bytes": self._entry_bytes(entry),
+                "scan_shape": list(entry["scan_shape"]),
+                "detector_shape": list(entry["detector_shape"]),
+                "working_dtype": (
+                    metadata.manifest.get("working_dtype")
+                    if metadata is not None
+                    else str(getattr(entry.get("data"), "dtype", "unknown"))
+                ),
+                "source_identity_sha256": (
+                    metadata.source_identity_sha256
+                    if metadata is not None
+                    else None
+                ),
+                "load_metrics": metric_values,
+                "plan": {
+                    "detector_bin": det_bin,
+                    "scan_bin": scan_bin,
+                    "scan_region": scan_region,
+                },
+            }
 
     def _flush_cuda_pool(self, gpu: int) -> None:
         try:
@@ -1003,6 +1227,48 @@ class BrowseService:
     ) -> dict[str, Any]:
         if self.backend != "cuda" or self._device_for(gpu) is None:
             raise HTTPException(503, f"CUDA unavailable: {self.device_error}")
+        compact = self._compact_sources.get(path)
+        if compact is not None:
+            if det_bin != 1 or scan_bin != 1 or scan_region is not None:
+                raise HTTPException(
+                    409,
+                    "Compact exact residency cannot crop or bin the source.",
+                )
+            from quantem.gpu.io.backends.cuda.compact_h5 import (
+                load_compact_h5_cuda,
+            )
+
+            with self._cuda_context(gpu):
+                source = load_compact_h5_cuda(
+                    compact.path,
+                    expected_whole_file_sha256=(
+                        compact.expected_whole_file_sha256
+                    ),
+                )
+            calibration = source.metadata.detector_calibration
+            geometry = None
+            if calibration is not None:
+                center = calibration["detector_center_px"]
+                geometry = (
+                    float(center[0]),
+                    float(center[1]),
+                    float(calibration["bright_field_radius_px"]),
+                )
+            return {
+                "gpu": gpu,
+                "data": None,
+                "compute": None,
+                "compact_source": source,
+                "source_kind": "compact_h5",
+                "scan_shape": tuple(source.metadata.shape[:2]),
+                "detector_shape": tuple(source.metadata.shape[2:]),
+                "mean_dp": None,
+                "bf_geometry": geometry,
+                "com_row": None,
+                "com_column": None,
+                "load_metrics": source.load_metrics,
+                "source_signature": _file_signature(path),
+            }
         from quantem.gpu import detector
         from quantem.gpu.io import load
 
@@ -1038,6 +1304,8 @@ class BrowseService:
             "bf_geometry": None,
             "com_row": None,
             "com_column": None,
+            "source_kind": "dense",
+            "source_signature": _file_signature(path),
         }
 
     def entry(
@@ -1062,6 +1330,13 @@ class BrowseService:
         with self._master_lock:
             cached = self._master_cache.get(key)
             if cached is not None:
+                if not self._entry_source_is_fresh(path, cached):
+                    raise HTTPException(
+                        409,
+                        "The catalogued source changed after this resident plan "
+                        "was loaded. Reload an authenticated compact artifact "
+                        "bound to the new source identity.",
+                    )
                 self._master_cache.move_to_end(key)
                 if reserve:
                     cached["resident_pins"] = int(cached.get("resident_pins", 0)) + 1
@@ -1083,6 +1358,13 @@ class BrowseService:
             with self._master_lock:
                 cached = self._master_cache.get(key)
                 if cached is not None:
+                    if not self._entry_source_is_fresh(path, cached):
+                        raise HTTPException(
+                            409,
+                            "The catalogued source changed after this resident "
+                            "plan was loaded. Reload an authenticated compact "
+                            "artifact bound to the new source identity.",
+                        )
                     self._master_cache.move_to_end(key)
                     if reserve:
                         cached["resident_pins"] = int(cached.get("resident_pins", 0)) + 1
@@ -1196,6 +1478,12 @@ class BrowseService:
     def _bf_geometry(self, entry: dict[str, Any]) -> tuple[float, float, float]:
         geometry = entry.get("bf_geometry")
         if geometry is None:
+            if entry.get("compact_source") is not None:
+                raise HTTPException(
+                    422,
+                    "This compact source has no authenticated detector "
+                    "calibration. Embed one before requesting preset detectors.",
+                )
             from quantem.gpu import detector
 
             center, radius = detector.auto_probe(entry["mean_dp"])
@@ -1278,6 +1566,12 @@ class BrowseService:
                     distance_squared <= outer_pixels**2
                 )
             elif mode in {"CoMx", "CoMy", "CoMmag", "DPC", "iCoM"}:
+                if resident.get("compact_source") is not None:
+                    raise HTTPException(
+                        501,
+                        "Compact exact residency does not yet expose a "
+                        "center-of-mass reducer.",
+                    )
                 with self._cuda_context(int(resident.get("gpu", self.gpu))):
                     if (
                         resident.get("com_row") is None
@@ -1300,9 +1594,14 @@ class BrowseService:
             else:
                 raise HTTPException(400, f"unknown virtual-image mode: {mode!r}")
             with self._cuda_context(int(resident.get("gpu", self.gpu))):
-                result = resident["compute"].masked_sum_exact(
-                    np.asarray(mask, dtype=bool)
-                )
+                compact = resident.get("compact_source")
+                if compact is None:
+                    result = resident["compute"].masked_sum_exact(
+                        np.asarray(mask, dtype=bool)
+                    )
+                else:
+                    compact.update_virtual_detector(np.asarray(mask, dtype=bool))
+                    result = compact.virtual_detector_values()
             return np.asarray(result, dtype=np.uint64).reshape(resident["scan_shape"])
 
     def custom_detector(
@@ -1332,9 +1631,14 @@ class BrowseService:
                 if shape == "annulus":
                     mask &= distance_squared >= inner_radius**2
             with self._cuda_context(int(resident.get("gpu", self.gpu))):
-                result = resident["compute"].masked_sum_exact(
-                    np.asarray(mask, dtype=bool)
-                )
+                compact = resident.get("compact_source")
+                if compact is None:
+                    result = resident["compute"].masked_sum_exact(
+                        np.asarray(mask, dtype=bool)
+                    )
+                else:
+                    compact.update_virtual_detector(np.asarray(mask, dtype=bool))
+                    result = compact.virtual_detector_values()
             return np.asarray(result, dtype=np.uint64).reshape(resident["scan_shape"])
 
     def scan_region_diffraction(
@@ -1357,6 +1661,12 @@ class BrowseService:
         scan_region = self._normalize_scan_region(path, scan_region)
         key = self._plan_key(path, det_bin, scan_bin, scan_region)
         with self._resident_entry(key, expected) as entry:
+            if entry.get("compact_source") is not None:
+                raise HTTPException(
+                    501,
+                    "Compact exact residency does not yet expose scan-ROI "
+                    "diffraction reduction.",
+                )
             indices = _scan_roi_indices(
                 entry["scan_shape"],
                 shape=shape,
@@ -1400,6 +1710,9 @@ class BrowseService:
             row = max(0, min(scan_rows - 1, int(scan_row)))
             column = max(0, min(scan_columns - 1, int(scan_column)))
             with self._cuda_context(int(entry.get("gpu", self.gpu))):
+                compact = entry.get("compact_source")
+                if compact is not None:
+                    return np.asarray(compact.extract_diffraction(row, column))
                 frame = entry["data"][row, column]
                 if hasattr(frame, "get"):
                     frame = frame.get()
@@ -1437,13 +1750,20 @@ def create_app(
     *,
     gpu: int = 0,
     gpus: Sequence[int] | str | None = None,
+    compact_sources: Mapping[str | os.PathLike[str], CompactBrowseSource]
+    | None = None,
     service: BrowseService | None = None,
     ssb_service: SSBProtocolService | None = None,
     maped_service: MAPEDProtocolService | None = None,
     implementation_revision: str | None = None,
 ) -> FastAPI:
     """Create the loopback remote-viewer application."""
-    browse = service or BrowseService(data_folder, gpu=gpu, gpus=gpus)
+    browse = service or BrowseService(
+        data_folder,
+        gpu=gpu,
+        gpus=gpus,
+        compact_sources=compact_sources,
+    )
     resolved_revision = (
         implementation_revision
         or getattr(ssb_service, "implementation_revision", None)
@@ -1782,6 +2102,27 @@ def create_app(
     async def acquisitions() -> dict[str, Any]:
         return await asyncio.to_thread(browse.acquisitions)
 
+    @app.get("/api/browse/residency")
+    async def residency(
+        session: str,
+        file: str,
+        det_bin: int = 1,
+        scan_bin: int = 1,
+        row_start: int | None = None,
+        row_stop: int | None = None,
+        column_start: int | None = None,
+        column_stop: int | None = None,
+    ) -> dict[str, Any]:
+        region = _scan_region(row_start, row_stop, column_start, column_stop)
+        return await asyncio.to_thread(
+            browse.residency_snapshot,
+            session,
+            file,
+            det_bin=max(1, det_bin),
+            scan_bin=scan_bin,
+            scan_region=region,
+        )
+
     @app.get("/api/browse/cbed")
     async def cbed(
         session: str,
@@ -2004,5 +2345,7 @@ __all__ = [
     "PROTOCOL_NAME",
     "PROTOCOL_VERSION",
     "BrowseService",
+    "CompactBrowseSource",
     "create_app",
+    "load_compact_browse_sources",
 ]

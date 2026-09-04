@@ -27,7 +27,7 @@ scientific meaning requires a protocol version change.
 
 | Prefix | Contract |
 |---|---|
-| `/api/browse` | capabilities, sessions, acquisitions, selected diffraction, real-space products |
+| `/api/browse` | capabilities, sessions, acquisitions, residency telemetry, selected diffraction, real-space products |
 | `/api/ssb` | source identity, preparation, reconstruction, interactive and queued jobs |
 | `/api/maped` | inventory, previews, selected diffraction, payloads, cache validation, jobs |
 
@@ -46,3 +46,28 @@ uses `(row, column) ≡ (r, c)` for all public coordinates.
 The service may add scheduling, cache reuse, or a faster kernel without
 changing this contract. It may not silently alter coverage, detector geometry,
 precision, masks, calibration, or reconstruction parameters.
+
+## Compact exact residency
+
+The server can bind a catalogued `*_master.h5` acquisition to one immutable
+QGIX compact artifact with `CompactBrowseSource`. Clients continue to send the
+same session and master filename to the existing browse routes. The compact
+path is trusted server configuration and is never accepted from a client.
+The normal CLI loads these bindings from `--compact-sources`; each registry
+entry names the catalogued master, compact artifact, and required whole-file
+SHA-256. Relative master paths are rooted at the served data folder, while
+relative compact paths are rooted at the registry directory.
+
+Compact bindings are full-coverage plans with scan bin 1, detector bin 1, no
+crop, and exact integer output. A request for a transformed plan fails rather
+than silently loading a different representation. Preset BF, ABF, ADF, HAADF,
+and DF require source-bound detector calibration. Custom detector masks and
+selected diffraction use the resident packed source. Scan-ROI diffraction and
+center-of-mass products remain explicitly unsupported until exact compact
+reducers are implemented.
+
+`GET /api/browse/residency` reports whether the requested plan is resident, its
+source kind, CUDA device, measured resident bytes, exact shapes and dtype,
+source identity, load-phase metrics, and whether the catalogued source changed
+after loading. It never triggers a load. A stale resident entry fails closed on
+the next scientific request.
