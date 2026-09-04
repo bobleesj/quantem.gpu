@@ -80,6 +80,55 @@ final class CompactH5LoaderTests: XCTestCase {
     XCTAssertNoThrow(try capabilities.residentReceipt.validate())
   }
 
+  func testPreparedV1MomentsAndMaskedOriginalsLoadExactly() throws {
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let fixture = try makeCompactFixture(portable: true, preparedDPC: true)
+    defer { try? FileManager.default.removeItem(at: fixture.url) }
+
+    let source = try MetalCompactH5Loader.load(sourceURL: fixture.url, device: device)
+    let contract = try XCTUnwrap(source.metadata.preparedDPCMoments)
+    XCTAssertEqual(contract.workingDtype, "uint16")
+    XCTAssertEqual(contract.workingLogicalSHA256, source.metadata.workingLogicalSHA256)
+    XCTAssertEqual(source.metadata.maskedDetectorRawValues, [0])
+    XCTAssertNotNil(source.metadata.maskedDetectorPixelsSHA256)
+
+    let selectedPixels = [0, 1, 2, 4, 5]
+    let expectedTotal = (0..<128).map { scan in
+      selectedPixels.reduce(UInt64(0)) { $0 + UInt64(fixture.values[$1][scan]) }
+    }
+    let expectedRow = (0..<128).map { scan in
+      selectedPixels.reduce(UInt64(0)) {
+        $0 + UInt64(fixture.values[$1][scan]) * UInt64($1 / 3)
+      }
+    }
+    let expectedColumn = (0..<128).map { scan in
+      selectedPixels.reduce(UInt64(0)) {
+        $0 + UInt64(fixture.values[$1][scan]) * UInt64($1 % 3)
+      }
+    }
+    let moments = try XCTUnwrap(source.preparedDPCMomentValues())
+    XCTAssertEqual(moments.total, expectedTotal)
+    XCTAssertEqual(moments.detectorRowMoment, expectedRow)
+    XCTAssertEqual(moments.detectorColumnMoment, expectedColumn)
+    XCTAssertNotNil(try source.preparedDPCValues())
+  }
+
+  func testPreparedV1MomentIdentityMismatchFailsClosed() throws {
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let fixture = try makeCompactFixture(
+      portable: true,
+      preparedDPC: true,
+      preparedDPCOverrides: ["working_logical_sha256": String(repeating: "0", count: 64)]
+    )
+    defer { try? FileManager.default.removeItem(at: fixture.url) }
+
+    XCTAssertThrowsError(
+      try MetalCompactH5Loader.load(sourceURL: fixture.url, device: device)
+    ) { error in
+      XCTAssertTrue(error.localizedDescription.contains("working_logical_sha256"))
+    }
+  }
+
   func testChangedDecodedPayloadFailsItsAuthenticatedHash() throws {
     let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
     let fixture = try makeCompactFixture()
@@ -512,7 +561,11 @@ private struct CompactFixture {
   let headerOffset: Int
 }
 
-private func makeCompactFixture(portable: Bool = false) throws -> CompactFixture {
+private func makeCompactFixture(
+  portable: Bool = false,
+  preparedDPC: Bool = false,
+  preparedDPCOverrides: [String: Any] = [:]
+) throws -> CompactFixture {
   let widths: [UInt8] = [2, 3, 4, 16, 9, 2]
   var values = widths.enumerated().map { pixel, width in
     (0..<128).map { scan in
@@ -558,6 +611,13 @@ private func makeCompactFixture(portable: Bool = false) throws -> CompactFixture
   let sourceIdentity = sourceIdentityBytes.map {
     String(format: "%02x", $0)
   }.joined()
+  let binaryOffset: UInt32 = 4_096
+  let binaryBytes: UInt32 = 8 + 7 * 4 + 4 + 4 + 32 + 96
+  let payloadOffset: UInt64 = 8_192
+  let lengthsOffset = payloadOffset + UInt64(payload.count)
+  let widthsOffset = lengthsOffset + UInt64(lengths.count)
+  let preparedOffset = (widthsOffset + UInt64(widths.count) + 3) & ~UInt64(3)
+  var preparedData = Data()
   var manifest: [String: Any] = [
     "schema": "quantem.gpu.packed-detector-h5/v1",
     "status": "complete",
@@ -593,12 +653,73 @@ private func makeCompactFixture(portable: Bool = false) throws -> CompactFixture
     }
     manifest["masked_detector_payload_policy"] = "retained_exactly_in_payload"
   }
+  if preparedDPC {
+    var workingData = Data()
+    for scan in 0..<128 {
+      for pixel in values.indices {
+        workingData.appendLE(UInt16(values[pixel][scan]))
+      }
+    }
+    let workingSHA = SHA256.hash(data: workingData).map {
+      String(format: "%02x", $0)
+    }.joined()
+    manifest["working_logical_sha256"] = workingSHA
+    manifest["masked_detector_raw_values"] = [0]
+    var pixel = UInt32(3).littleEndian
+    manifest["masked_detector_pixels_sha256"] = Swift.withUnsafeBytes(of: &pixel) {
+      SHA256.hash(data: Data($0)).map { String(format: "%02x", $0) }.joined()
+    }
+    let selectedPixels = [0, 1, 2, 4, 5]
+    for scan in 0..<128 {
+      let total = selectedPixels.reduce(UInt64(0)) {
+        $0 + UInt64(values[$1][scan])
+      }
+      let rowMoment = selectedPixels.reduce(UInt64(0)) {
+        $0 + UInt64(values[$1][scan]) * UInt64($1 / 3)
+      }
+      let columnMoment = selectedPixels.reduce(UInt64(0)) {
+        $0 + UInt64(values[$1][scan]) * UInt64($1 % 3)
+      }
+      for value in [total, rowMoment, columnMoment] {
+        preparedData.appendLE(UInt32(value & 0xffff_ffff))
+        preparedData.appendLE(UInt32(value >> 32))
+      }
+      preparedData.appendLE(UInt32(0))
+      preparedData.appendLE(UInt32(0))
+    }
+    var contract: [String: Any] = [
+      "schema": "quantem.gpu.prepared-dpc-moments/v2",
+      "source_identity_sha256": sourceIdentity,
+      "working_logical_sha256": workingSHA,
+      "working_dtype": "uint16",
+      "detector_mask_sha256": manifest["detector_mask_sha256"]!,
+      "detector_selection": "all-nonexcluded-v1",
+      "scan_count": 128,
+      "selected_detector_pixels": 5,
+      "detector_columns": 3,
+      "maximum_value": Int(UInt16.max),
+      "dtype": "little-endian-u32",
+      "word_order": "little-endian-u32-pairs",
+      "words_per_scan": 8,
+      "layout": [
+        "total_lo", "total_hi", "row_lo", "row_hi",
+        "column_lo", "column_hi", "padding_0", "padding_1",
+      ],
+      "file_offset": preparedOffset,
+      "file_bytes": preparedData.count,
+      "sha256": SHA256.hash(data: preparedData).map {
+        String(format: "%02x", $0)
+      }.joined(),
+      "total_bound": String(5 * Int(UInt16.max)),
+      "row_moment_bound": String(2 * Int(UInt16.max)),
+      "column_moment_bound": String(6 * Int(UInt16.max)),
+      "narrow_integer": true,
+      "narrow_products": true,
+    ]
+    contract.merge(preparedDPCOverrides) { _, replacement in replacement }
+    manifest["prepared_dpc_moments"] = contract
+  }
   let header = try JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys])
-  let binaryOffset: UInt32 = 4_096
-  let binaryBytes: UInt32 = 8 + 7 * 4 + 4 + 4 + 32 + 96
-  let payloadOffset: UInt64 = 8_192
-  let lengthsOffset = payloadOffset + UInt64(payload.count)
-  let widthsOffset = lengthsOffset + UInt64(lengths.count)
 
   var binary = Data([0x51, 0x47, 0x49, 0x58, 0x00, 0x00, 0x00, 0x01])
   for value: UInt32 in [1, 128, 8, 16, 2, 3, 128] { binary.appendLE(value) }
@@ -624,7 +745,7 @@ private func makeCompactFixture(portable: Bool = false) throws -> CompactFixture
   prelude.appendLE(crc32ForFixture(header))
   prelude.appendLE(binaryOffset)
   prelude.appendLE(binaryBytes)
-  var file = Data(count: Int(widthsOffset) + widths.count)
+  var file = Data(count: Int(preparedOffset) + preparedData.count)
   file.replaceSubrange(0..<prelude.count, with: prelude)
   file.replaceSubrange(24..<(24 + header.count), with: header)
   file.replaceSubrange(
@@ -643,6 +764,12 @@ private func makeCompactFixture(portable: Bool = false) throws -> CompactFixture
     Int(widthsOffset)..<(Int(widthsOffset) + widths.count),
     with: widths
   )
+  if !preparedData.isEmpty {
+    file.replaceSubrange(
+      Int(preparedOffset)..<(Int(preparedOffset) + preparedData.count),
+      with: preparedData
+    )
+  }
   let url = FileManager.default.temporaryDirectory.appendingPathComponent(
     "quantem-compact-\(UUID().uuidString).h5"
   )
@@ -978,6 +1105,11 @@ extension Data {
       append(UInt8(hex[index..<next], radix: 16)!)
       index = next
     }
+  }
+
+  fileprivate mutating func appendLE(_ value: UInt16) {
+    var little = value.littleEndian
+    Swift.withUnsafeBytes(of: &little) { append(contentsOf: $0) }
   }
 
   fileprivate mutating func appendLE(_ value: UInt32) {

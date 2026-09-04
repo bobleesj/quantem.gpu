@@ -8,6 +8,8 @@ import hashlib
 import json
 from pathlib import Path
 
+import numpy as np
+
 from quantem.gpu.io._compact_h5 import prepare_compact_h5_metadata_copy
 
 
@@ -58,9 +60,34 @@ def main() -> None:
     )
     parser.add_argument(
         "--expected-source-sha256",
-        help="required immutable whole-file SHA-256 for a QGIX v3 source",
+        help="immutable input SHA-256; required for QGIX v3 and optional for v1",
     )
+    parser.add_argument(
+        "--working-logical-sha256",
+        help="verified mask-applied uint16 logical SHA-256 for QGIX v1",
+    )
+    parser.add_argument("--total-moments", type=Path)
+    parser.add_argument("--row-moments", type=Path)
+    parser.add_argument("--column-moments", type=Path)
     arguments = parser.parse_args()
+
+    moment_paths = (
+        arguments.total_moments,
+        arguments.row_moments,
+        arguments.column_moments,
+    )
+    if any(path is not None for path in moment_paths) and any(
+        path is None for path in moment_paths
+    ):
+        parser.error(
+            "--total-moments, --row-moments, and --column-moments "
+            "must be supplied together"
+        )
+    prepared_moments = (
+        tuple(np.load(path, allow_pickle=False).reshape(-1) for path in moment_paths)
+        if all(path is not None for path in moment_paths)
+        else None
+    )
 
     detector_values = (
         arguments.center_row,
@@ -118,6 +145,8 @@ def main() -> None:
             else None
         ),
         expected_source_sha256=arguments.expected_source_sha256,
+        working_logical_sha256=arguments.working_logical_sha256,
+        prepared_dpc_moments=prepared_moments,
     )
     summary = {
         "source": str(arguments.source.resolve()),
@@ -135,6 +164,16 @@ def main() -> None:
         "masked_detector_raw_values": prepared.masked_detector_raw_values,
         "raw_reconstruction_available": prepared.raw_reconstruction_available,
         "detector_calibration": prepared.manifest.get("detector_calibration"),
+        "working_logical_sha256": prepared.manifest.get("working_logical_sha256"),
+        "prepared_dpc_moments": (
+            {
+                "schema": prepared.manifest["prepared_dpc_moments"]["schema"],
+                "file_bytes": prepared.prepared_dpc_moments.file_bytes,
+                "sha256": prepared.prepared_dpc_moments.sha256,
+            }
+            if prepared.prepared_dpc_moments is not None
+            else None
+        ),
     }
     print(json.dumps(summary, indent=2, sort_keys=True))
 

@@ -10,7 +10,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from quantem.gpu.io._compact_h5 import CompactH5Index, CompactH5ReferenceDecoder
+from quantem.gpu.io._compact_h5 import (
+    CompactH5Index,
+    CompactH5ReferenceDecoder,
+    prepare_compact_h5_metadata_copy,
+)
 
 
 def _packed_detector_major(values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -140,6 +144,67 @@ def test_uint16_builder_preserves_width_16_and_mask_applied_products(
             output,
             expected_whole_file_sha256="0" * 64,
         )
+
+    original = output.read_bytes()
+    working = values.copy()
+    working[:, 1] = 0
+    total = working.sum(axis=1, dtype=np.uint64)
+    row_moment = np.zeros_like(total)
+    column_moment = working[:, 1].astype(np.uint64)
+    prepared_output = tmp_path / "exact-uint16-prepared.h5"
+    prepared = prepare_compact_h5_metadata_copy(
+        output,
+        prepared_output,
+        expected_source_sha256=hashlib.sha256(original).hexdigest(),
+        working_logical_sha256=hashlib.sha256(working.tobytes()).hexdigest(),
+        masked_detector_raw_values=(65535,),
+        prepared_dpc_moments=(total, row_moment, column_moment),
+    )
+    assert output.read_bytes() == original
+    assert prepared_output.stat().st_size > output.stat().st_size
+    assert (
+        prepared.manifest["working_logical_sha256"]
+        == hashlib.sha256(working.tobytes()).hexdigest()
+    )
+    assert prepared.masked_detector_raw_values == (65535,)
+    assert prepared.prepared_dpc_moments is not None
+    prepared_values = CompactH5ReferenceDecoder(prepared).prepared_dpc_moment_values()
+    assert prepared_values is not None
+    assert all(
+        np.array_equal(observed, expected)
+        for observed, expected in zip(
+            prepared_values,
+            (total, row_moment, column_moment),
+            strict=True,
+        )
+    )
+
+    changed = bytearray(prepared_output.read_bytes())
+    changed[prepared.prepared_dpc_moments.file_offset] ^= 1
+    corrupt_output = tmp_path / "exact-uint16-prepared-corrupt.h5"
+    corrupt_output.write_bytes(changed)
+    corrupt = CompactH5ReferenceDecoder(CompactH5Index.from_file(corrupt_output))
+    with pytest.raises(ValueError, match="Prepared DPC SHA-256"):
+        corrupt.prepared_dpc_moment_values()
+
+    missing_identity_output = tmp_path / "missing-working-identity.h5"
+    with pytest.raises(ValueError, match="require working_logical_sha256"):
+        prepare_compact_h5_metadata_copy(
+            output,
+            missing_identity_output,
+            masked_detector_raw_values=(65535,),
+            prepared_dpc_moments=(total, row_moment, column_moment),
+        )
+    assert not missing_identity_output.exists()
+
+    wrong_source_output = tmp_path / "wrong-source-identity.h5"
+    with pytest.raises(ValueError, match="Compact input SHA-256"):
+        prepare_compact_h5_metadata_copy(
+            output,
+            wrong_source_output,
+            expected_source_sha256="0" * 64,
+        )
+    assert not wrong_source_output.exists()
 
     with pytest.raises(FileExistsError, match="Refusing to replace"):
         namespace["build_compact_h5_uint16"](

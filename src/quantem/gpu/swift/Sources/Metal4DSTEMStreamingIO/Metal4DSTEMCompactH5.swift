@@ -20,7 +20,8 @@ public struct MetalCompactH5PreparedDPCMoments: Equatable, Sendable {
   public let fileOffset: UInt64
   public let fileBytes: UInt64
   public let sha256: String
-  public let workingUInt8SHA256: String
+  public let workingLogicalSHA256: String
+  public let workingDtype: String
   public let detectorMaskSHA256: String
   public let scanCount: Int
   public let selectedDetectorPixels: Int
@@ -30,6 +31,10 @@ public struct MetalCompactH5PreparedDPCMoments: Equatable, Sendable {
   public let columnMomentBound: UInt64
   public let narrowInteger: Bool
   public let narrowProducts: Bool
+
+  /// Backward-compatible name for QGIX-v3 uint8 moment receipts.
+  @available(*, deprecated, message: "Use workingLogicalSHA256.")
+  public var workingUInt8SHA256: String { workingLogicalSHA256 }
 }
 
 /// One exact source-bound canonical virtual-detector product.
@@ -2426,6 +2431,20 @@ public enum MetalCompactH5Loader {
       {
         rawAccessMode = "exact_retained_payload"
       }
+      let rawValues = intArray(manifest["masked_detector_raw_values"])
+      let indexSHA = manifest["masked_detector_pixels_sha256"] as? String
+      if rawValues != nil || indexSHA != nil {
+        guard let rawValues, let indexSHA,
+          rawValues.count == manifestMask.count,
+          rawValues.allSatisfy({ 0...Int(UInt16.max) ~= $0 }),
+          validSHA256(indexSHA),
+          indexSHA == sha256OrderedDetectorPixels(manifestMask)
+        else {
+          throw invalid("Compact QGIX v1 raw exclusion constants are malformed.")
+        }
+        maskedDetectorPixelsSHA256 = indexSHA
+        maskedDetectorRawValues = rawValues.map(UInt16.init)
+      }
     }
     guard manifestMask == excluded else {
       throw invalid("Compact JSON and binary detector exclusions differ.")
@@ -2448,6 +2467,13 @@ public enum MetalCompactH5Loader {
     let sourceRawSHA = manifest["source_raw_logical_sha256"] as? String
     guard sourceRawSHA == nil || validSHA256(sourceRawSHA) else {
       throw invalid("Compact source logical SHA-256 is malformed.")
+    }
+    let workingLogicalSHA: String? =
+      storageLayout == .lz4V1
+      ? manifest["working_logical_sha256"] as? String
+      : manifest["prepared_uint8_sha256"] as? String
+    guard workingLogicalSHA == nil || validSHA256(workingLogicalSHA) else {
+      throw invalid("Compact working logical SHA-256 is malformed.")
     }
     let parsedCalibration = try detectorCalibration(
       manifest["detector_calibration"],
@@ -2534,7 +2560,7 @@ public enum MetalCompactH5Loader {
       payloadChunkBytes: payloadChunkBytes,
       sourceIdentitySHA256: sourceIdentity,
       sourceRawLogicalSHA256: sourceRawSHA,
-      workingLogicalSHA256: manifest["prepared_uint8_sha256"] as? String,
+      workingLogicalSHA256: workingLogicalSHA,
       detectorMaskSHA256: manifest["detector_mask_sha256"] as? String,
       maskedDetectorPixelsSHA256: maskedDetectorPixelsSHA256,
       maskedDetectorRawValues: maskedDetectorRawValues,
@@ -2684,18 +2710,45 @@ public enum MetalCompactH5Loader {
     shards: [CompactH5ShardRecord]
   ) throws -> MetalCompactH5PreparedDPCMoments? {
     guard let value, !(value is NSNull) else { return nil }
-    guard case .directV3 = storageLayout else {
-      throw invalid("Prepared DPC moments require compact QGIX v3.")
-    }
     guard let prepared = value as? [String: Any] else {
       throw invalid("Compact prepared DPC moments are not an object.")
     }
-    guard let workingSHA = parentManifest["prepared_uint8_sha256"] as? String,
-      validSHA256(workingSHA),
-      let detectorMaskSHA = parentManifest["detector_mask_sha256"] as? String,
+    let schema: String
+    let workingDtype: String
+    let workingField: String
+    let maximumValue: UInt64
+    let workingSHA: String
+    switch storageLayout {
+    case .lz4V1:
+      guard parentManifest["working_dtype"] as? String == "uint16" else {
+        throw invalid("Compact prepared DPC moments require uint16 working data.")
+      }
+      schema = "quantem.gpu.prepared-dpc-moments/v2"
+      workingDtype = "uint16"
+      workingField = "working_logical_sha256"
+      maximumValue = UInt64(UInt16.max)
+      guard let digest = parentManifest[workingField] as? String,
+        validSHA256(digest)
+      else {
+        throw invalid("Compact prepared DPC parent working identity is invalid.")
+      }
+      workingSHA = digest
+    case .directV3:
+      schema = "quantem.gpu.prepared-dpc-moments/v1"
+      workingDtype = "uint8"
+      workingField = "working_uint8_sha256"
+      maximumValue = UInt64(UInt8.max)
+      guard let digest = parentManifest["prepared_uint8_sha256"] as? String,
+        validSHA256(digest)
+      else {
+        throw invalid("Compact prepared DPC parent working identity is invalid.")
+      }
+      workingSHA = digest
+    }
+    guard let detectorMaskSHA = parentManifest["detector_mask_sha256"] as? String,
       validSHA256(detectorMaskSHA)
     else {
-      throw invalid("Compact prepared DPC parent working or mask identity is invalid.")
+      throw invalid("Compact prepared DPC parent mask identity is invalid.")
     }
     let scanCount = try multiply(shape[0], shape[1], label: "prepared DPC scan count")
     let detectorPixels = try multiply(
@@ -2721,17 +2774,17 @@ public enum MetalCompactH5Loader {
     }
     let totalBound = try multiply(
       UInt64(selectedDetectorPixels),
-      255,
+      maximumValue,
       label: "prepared DPC total bound"
     )
     let rowMomentBound = try multiply(
       rowCoordinates,
-      255,
+      maximumValue,
       label: "prepared DPC row-moment bound"
     )
     let columnMomentBound = try multiply(
       columnCoordinates,
-      255,
+      maximumValue,
       label: "prepared DPC column-moment bound"
     )
     let narrowInteger = totalBound <= UInt64(UInt32.max)
@@ -2740,10 +2793,10 @@ public enum MetalCompactH5Loader {
       "total_lo", "total_hi", "row_lo", "row_hi",
       "column_lo", "column_hi", "padding_0", "padding_1",
     ]
-    let expectedStrings = [
-      "schema": "quantem.gpu.prepared-dpc-moments/v1",
+    var expectedStrings = [
+      "schema": schema,
       "source_identity_sha256": sourceIdentity,
-      "working_uint8_sha256": workingSHA,
+      workingField: workingSHA,
       "detector_mask_sha256": detectorMaskSHA,
       "detector_selection": "all-nonexcluded-v1",
       "dtype": "little-endian-u32",
@@ -2752,6 +2805,9 @@ public enum MetalCompactH5Loader {
       "row_moment_bound": String(rowMomentBound),
       "column_moment_bound": String(columnMomentBound),
     ]
+    if case .lz4V1 = storageLayout {
+      expectedStrings["working_dtype"] = workingDtype
+    }
     for (key, expected) in expectedStrings where prepared[key] as? String != expected {
       throw invalid("Compact prepared DPC field \(key) disagrees with the source.")
     }
@@ -2763,6 +2819,11 @@ public enum MetalCompactH5Loader {
       prepared["narrow_products"] as? Bool == narrowProducts
     else {
       throw invalid("Compact prepared DPC fields disagree with the exact source bounds.")
+    }
+    if case .lz4V1 = storageLayout {
+      guard exactUInt64(prepared["maximum_value"]) == maximumValue else {
+        throw invalid("Compact prepared DPC maximum value disagrees with uint16.")
+      }
     }
     guard prepared["layout"] as? [String] == expectedLayout else {
       throw invalid("Compact prepared DPC word layout is unsupported.")
@@ -2800,7 +2861,8 @@ public enum MetalCompactH5Loader {
       fileOffset: fileOffset,
       fileBytes: preparedBytes,
       sha256: digest,
-      workingUInt8SHA256: workingSHA,
+      workingLogicalSHA256: workingSHA,
+      workingDtype: workingDtype,
       detectorMaskSHA256: detectorMaskSHA,
       scanCount: scanCount,
       selectedDetectorPixels: selectedDetectorPixels,

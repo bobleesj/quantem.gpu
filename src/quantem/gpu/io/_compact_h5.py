@@ -50,6 +50,26 @@ class CompactH5Shard:
 
 
 @dataclass(frozen=True)
+class CompactH5PreparedDPCMoments:
+    """Authenticated exact detector moments appended to one compact source."""
+
+    file_offset: int
+    file_bytes: int
+    sha256: str
+    working_logical_sha256: str
+    working_dtype: str
+    detector_mask_sha256: str
+    scan_count: int
+    selected_detector_pixels: int
+    detector_columns: int
+    total_bound: int
+    row_moment_bound: int
+    column_moment_bound: int
+    narrow_integer: bool
+    narrow_products: bool
+
+
+@dataclass(frozen=True)
 class CompactH5Index:
     """Validated immutable metadata for one compact 4D-STEM HDF5 source.
 
@@ -82,6 +102,7 @@ class CompactH5Index:
     excluded_detector_pixels: tuple[int, ...]
     masked_detector_pixels_sha256: str | None
     masked_detector_raw_values: tuple[int, ...] | None
+    prepared_dpc_moments: CompactH5PreparedDPCMoments | None
     shards: tuple[CompactH5Shard, ...]
     manifest: dict[str, object]
 
@@ -284,6 +305,16 @@ class CompactH5Index:
             scan_tile,
             header_encoding,
         )
+        prepared_dpc_moments = _validate_prepared_dpc_moments(
+            path,
+            file_bytes,
+            manifest,
+            shape,
+            source_identity,
+            tuple(excluded),
+            schema_version,
+            tuple(shards),
+        )
         _validated_manifest_shards(path, manifest, tuple(shards))
         return cls(
             path=path,
@@ -298,6 +329,7 @@ class CompactH5Index:
             excluded_detector_pixels=tuple(excluded),
             masked_detector_pixels_sha256=masked_detector_pixels_sha256,
             masked_detector_raw_values=masked_detector_raw_values,
+            prepared_dpc_moments=prepared_dpc_moments,
             shards=tuple(shards),
             manifest=manifest,
         )
@@ -575,6 +607,60 @@ class CompactH5ReferenceDecoder:
                     scan_row, scan_column, detector_row, detector_column
                 )
         return result
+
+    def prepared_dpc_moment_values(
+        self,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
+        """Read authenticated exact total and detector-coordinate moments.
+
+        Returns
+        -------
+        tuple of numpy.ndarray or None
+            Total, detector-row moment, and detector-column moment arrays in
+            scan-row order, or ``None`` when the source has no prepared moment
+            extension.
+
+        Examples
+        --------
+        >>> moments = decoder.prepared_dpc_moment_values()
+        >>> moments is None or moments[0].dtype == np.dtype("uint64")
+        True
+        """
+        prepared = self.index.prepared_dpc_moments
+        if prepared is None:
+            return None
+        with self.index.path.open("rb") as stream:
+            stream.seek(prepared.file_offset)
+            payload = _read_exact(
+                stream,
+                prepared.file_bytes,
+                "prepared DPC moments",
+            )
+        observed_sha256 = hashlib.sha256(payload).hexdigest()
+        if observed_sha256 != prepared.sha256:
+            raise ValueError(
+                f"Prepared DPC SHA-256 is {observed_sha256}, expected "
+                f"{prepared.sha256}."
+            )
+        words = np.frombuffer(payload, dtype="<u4").reshape(prepared.scan_count, 8)
+        if np.any(words[:, 6:]):
+            raise ValueError("Prepared DPC padding words must be zero.")
+        total = words[:, 0].astype(np.uint64) | (
+            words[:, 1].astype(np.uint64) << np.uint64(32)
+        )
+        row = words[:, 2].astype(np.uint64) | (
+            words[:, 3].astype(np.uint64) << np.uint64(32)
+        )
+        column = words[:, 4].astype(np.uint64) | (
+            words[:, 5].astype(np.uint64) << np.uint64(32)
+        )
+        if (
+            np.any(total > prepared.total_bound)
+            or np.any(row > prepared.row_moment_bound)
+            or np.any(column > prepared.column_moment_bound)
+        ):
+            raise ValueError("Prepared DPC moments violate exact source bounds.")
+        return total, row, column
 
     def detector_sum(self, detector_mask: np.ndarray) -> np.ndarray:
         """Return an exact uint32 scan image for one binary detector mask.
@@ -896,6 +982,8 @@ def prepare_compact_h5_metadata_copy(
     add_encoded_envelope_hashes: bool = True,
     masked_detector_raw_values: tuple[int, ...] | None = None,
     expected_source_sha256: str | None = None,
+    working_logical_sha256: str | None = None,
+    prepared_dpc_moments: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None,
 ) -> CompactH5Index:
     """Create a prepared compact-H5 copy with source-bound reusable metadata.
 
@@ -921,9 +1009,16 @@ def prepare_compact_h5_metadata_copy(
         with the ordered binary-index exclusions. Required when v3 omits any
         detector stream.
     expected_source_sha256
-        For QGIX v3 only, required whole-file SHA-256 of the immutable input.
-        This protects the otherwise unauthenticated compact headers before the
-        additive metadata copy is created.
+        Expected whole-file SHA-256 of the immutable input. It is required for
+        QGIX v3 and optional for an already authenticated QGIX v1 source.
+    working_logical_sha256
+        For exact-uint16 QGIX v1 only, the independently verified SHA-256 of
+        mask-applied working values in scan-major order. Required when adding
+        prepared moments.
+    prepared_dpc_moments
+        For exact-uint16 QGIX v1 only, exact total, detector-row moment, and
+        detector-column moment arrays in scan-row order. The copy stores and
+        authenticates them inside the HDF5 artifact.
 
     Returns
     -------
@@ -941,7 +1036,7 @@ def prepare_compact_h5_metadata_copy(
     index = CompactH5Index.from_file(source_path)
     manifest = json.loads(json.dumps(index.manifest))
     records = _validated_manifest_shards(source_path, manifest, index.shards)
-    if index.schema_version == 3:
+    if expected_source_sha256 is not None:
         if (
             not isinstance(expected_source_sha256, str)
             or len(expected_source_sha256) != 64
@@ -951,14 +1046,19 @@ def prepare_compact_h5_metadata_copy(
             )
         ):
             raise ValueError(
-                "A QGIX v3 metadata copy requires the immutable input's "
-                "lowercase expected_source_sha256."
+                "A compact metadata copy requires a lowercase expected_source_sha256."
             )
         observed_source_sha256 = _sha256_path(source_path)
         if observed_source_sha256 != expected_source_sha256:
             raise ValueError(
-                f"QGIX v3 input SHA-256 is {observed_source_sha256}, expected "
+                f"Compact input SHA-256 is {observed_source_sha256}, expected "
                 f"{expected_source_sha256}."
+            )
+    if index.schema_version == 3:
+        if expected_source_sha256 is None:
+            raise ValueError(
+                "A QGIX v3 metadata copy requires the immutable input's "
+                "lowercase expected_source_sha256."
             )
         if masked_detector_raw_values is None:
             if index.excluded_detector_pixels:
@@ -985,9 +1085,55 @@ def prepare_compact_h5_metadata_copy(
             mask_bytes
         ).hexdigest()
         manifest["masked_detector_raw_values"] = list(masked_detector_raw_values)
-    elif masked_detector_raw_values is not None or expected_source_sha256 is not None:
+    else:
+        if working_logical_sha256 is not None:
+            manifest["working_logical_sha256"] = _require_sha256(
+                working_logical_sha256,
+                "working_logical_sha256",
+            )
+        if masked_detector_raw_values is not None:
+            if len(masked_detector_raw_values) != len(
+                index.excluded_detector_pixels
+            ) or any(
+                type(value) is not int or not 0 <= value <= 65535
+                for value in masked_detector_raw_values
+            ):
+                raise ValueError(
+                    "QGIX v1 masked_detector_raw_values must contain one exact "
+                    "uint16 value for each ordered detector exclusion."
+                )
+            mask_bytes = struct.pack(
+                f"<{len(index.excluded_detector_pixels)}I",
+                *index.excluded_detector_pixels,
+            )
+            manifest["masked_detector_pixels_sha256"] = hashlib.sha256(
+                mask_bytes
+            ).hexdigest()
+            manifest["masked_detector_raw_values"] = list(masked_detector_raw_values)
+        if prepared_dpc_moments is not None:
+            if index.manifest.get("working_dtype") != "uint16":
+                raise ValueError(
+                    "QGIX v1 prepared moments require uint16 working data."
+                )
+            if not index.raw_reconstruction_available:
+                raise ValueError(
+                    "QGIX v1 prepared moments require an exact retained raw payload."
+                )
+            if working_logical_sha256 is None:
+                raise ValueError(
+                    "QGIX v1 prepared moments require working_logical_sha256."
+                )
+            if index.excluded_detector_pixels and masked_detector_raw_values is None:
+                raise ValueError(
+                    "QGIX v1 prepared moments require recoverable masked-original "
+                    "metadata for every detector exclusion."
+                )
+    if index.schema_version == 3 and (
+        working_logical_sha256 is not None or prepared_dpc_moments is not None
+    ):
         raise ValueError(
-            "QGIX v3 portability arguments cannot be applied to a QGIX v1 file."
+            "QGIX v1 working identity and prepared moments cannot be applied "
+            "to a QGIX v3 file."
         )
     if detector_calibration is not None:
         calibration = dict(detector_calibration)
@@ -1013,50 +1159,6 @@ def prepare_compact_h5_metadata_copy(
                     range_end - range_start,
                 )
 
-    header = json.dumps(
-        manifest,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    with source_path.open("rb") as stream:
-        prelude = _read_exact(stream, _PRELUDE.size, "container prelude")
-        _, _, _, binary_offset, binary_bytes = _PRELUDE.unpack(prelude)
-        stream.seek(binary_offset)
-        binary = _read_exact(stream, binary_bytes, "binary index")
-        stream.seek(0)
-        prefix = stream.read(max(1 << 20, binary_offset + binary_bytes))
-    hdf5_offset = prefix.find(_HDF5_MAGIC)
-    user_block_bytes = (
-        hdf5_offset
-        if hdf5_offset >= 0
-        else min(
-            offset
-            for shard in index.shards
-            for offset, byte_count in (
-                (shard.payload_offset, shard.payload_bytes),
-                (shard.lengths_offset, shard.lengths_bytes),
-                (shard.widths_offset, shard.widths_bytes),
-            )
-            if byte_count
-        )
-    )
-    new_binary_offset = (_PRELUDE.size + len(header) + 7) & ~7
-    if new_binary_offset + len(binary) > user_block_bytes:
-        raise ValueError(
-            f"Prepared compact metadata needs {new_binary_offset + len(binary)} "
-            f"user-block bytes, but {source_path} reserves {user_block_bytes}."
-        )
-    user_block = bytearray(user_block_bytes)
-    user_block[: _PRELUDE.size] = _PRELUDE.pack(
-        _CONTAINER_MAGIC,
-        len(header),
-        zlib.crc32(header),
-        new_binary_offset,
-        len(binary),
-    )
-    user_block[_PRELUDE.size : _PRELUDE.size + len(header)] = header
-    user_block[new_binary_offset : new_binary_offset + len(binary)] = binary
-
     destination_path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{destination_path.name}.",
@@ -1072,6 +1174,166 @@ def prepare_compact_h5_metadata_copy(
             clonefile(source_path, temporary_path)
         else:
             shutil.copy2(source_path, temporary_path)
+        if prepared_dpc_moments is not None:
+            total, row_moment, column_moment = (
+                np.asarray(values) for values in prepared_dpc_moments
+            )
+            scan_count = index.shape[0] * index.shape[1]
+            arrays = (total, row_moment, column_moment)
+            if any(
+                values.ndim != 1
+                or values.shape[0] != scan_count
+                or values.dtype.kind not in "ui"
+                for values in arrays
+            ):
+                raise ValueError(
+                    "Prepared DPC moments must be one-dimensional integer arrays "
+                    f"with {scan_count} scan-row-order values."
+                )
+            if any(
+                values.dtype.kind == "i" and np.any(values < 0) for values in arrays
+            ):
+                raise ValueError("Prepared DPC moments cannot contain negative values.")
+            total = total.astype(np.uint64, copy=False)
+            row_moment = row_moment.astype(np.uint64, copy=False)
+            column_moment = column_moment.astype(np.uint64, copy=False)
+            detector_pixels = index.shape[2] * index.shape[3]
+            selected_detector_pixels = detector_pixels - len(
+                index.excluded_detector_pixels
+            )
+            excluded = set(index.excluded_detector_pixels)
+            maximum_value = int(np.iinfo(np.uint16).max)
+            total_bound = selected_detector_pixels * maximum_value
+            row_moment_bound = maximum_value * sum(
+                pixel // index.shape[3]
+                for pixel in range(detector_pixels)
+                if pixel not in excluded
+            )
+            column_moment_bound = maximum_value * sum(
+                pixel % index.shape[3]
+                for pixel in range(detector_pixels)
+                if pixel not in excluded
+            )
+            if (
+                np.any(total > total_bound)
+                or np.any(row_moment > row_moment_bound)
+                or np.any(column_moment > column_moment_bound)
+            ):
+                raise ValueError("Prepared DPC moments violate exact uint16 bounds.")
+            words = np.zeros((scan_count, 8), dtype="<u4")
+            words[:, 0] = (total & np.uint64(0xFFFF_FFFF)).astype(np.uint32)
+            words[:, 1] = (total >> np.uint64(32)).astype(np.uint32)
+            words[:, 2] = (row_moment & np.uint64(0xFFFF_FFFF)).astype(np.uint32)
+            words[:, 3] = (row_moment >> np.uint64(32)).astype(np.uint32)
+            words[:, 4] = (column_moment & np.uint64(0xFFFF_FFFF)).astype(np.uint32)
+            words[:, 5] = (column_moment >> np.uint64(32)).astype(np.uint32)
+            try:
+                import h5py
+            except ImportError as error:
+                raise RuntimeError(
+                    "Preparing an exact moment payload requires h5py."
+                ) from error
+            with h5py.File(temporary_path, "r+") as handle:
+                group = handle.require_group("quantem_gpu").require_group("prepared")
+                dataset_name = "dpc_moments_u32_v2"
+                if dataset_name in group:
+                    raise ValueError(
+                        f"{source_path} already contains {group.name}/{dataset_name}."
+                    )
+                dataset = group.create_dataset(
+                    dataset_name,
+                    data=words,
+                    dtype="<u4",
+                    chunks=None,
+                )
+                handle.flush()
+                file_offset = dataset.id.get_offset()
+                if file_offset is None or dataset.chunks is not None:
+                    raise RuntimeError(
+                        "Prepared DPC moments are not a contiguous HDF5 range."
+                    )
+            prepared_bytes = int(words.nbytes)
+            if file_offset % np.dtype("<u4").itemsize:
+                raise RuntimeError("Prepared DPC moments are not uint32 aligned.")
+            prepared_payload = words.tobytes(order="C")
+            manifest["prepared_dpc_moments"] = {
+                "schema": "quantem.gpu.prepared-dpc-moments/v2",
+                "source_identity_sha256": index.source_identity_sha256,
+                "working_logical_sha256": manifest["working_logical_sha256"],
+                "working_dtype": "uint16",
+                "detector_mask_sha256": manifest["detector_mask_sha256"],
+                "detector_selection": "all-nonexcluded-v1",
+                "scan_count": scan_count,
+                "selected_detector_pixels": selected_detector_pixels,
+                "detector_columns": index.shape[3],
+                "maximum_value": maximum_value,
+                "dtype": "little-endian-u32",
+                "word_order": "little-endian-u32-pairs",
+                "words_per_scan": 8,
+                "layout": [
+                    "total_lo",
+                    "total_hi",
+                    "row_lo",
+                    "row_hi",
+                    "column_lo",
+                    "column_hi",
+                    "padding_0",
+                    "padding_1",
+                ],
+                "file_offset": int(file_offset),
+                "file_bytes": prepared_bytes,
+                "sha256": hashlib.sha256(prepared_payload).hexdigest(),
+                "total_bound": str(total_bound),
+                "row_moment_bound": str(row_moment_bound),
+                "column_moment_bound": str(column_moment_bound),
+                "narrow_integer": total_bound <= np.iinfo(np.uint32).max,
+                "narrow_products": max(row_moment_bound, column_moment_bound)
+                <= np.iinfo(np.uint32).max,
+            }
+
+        header = json.dumps(
+            manifest,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        with source_path.open("rb") as stream:
+            prelude = _read_exact(stream, _PRELUDE.size, "container prelude")
+            _, _, _, binary_offset, binary_bytes = _PRELUDE.unpack(prelude)
+            stream.seek(binary_offset)
+            binary = _read_exact(stream, binary_bytes, "binary index")
+            stream.seek(0)
+            prefix = stream.read(max(1 << 20, binary_offset + binary_bytes))
+        hdf5_offset = prefix.find(_HDF5_MAGIC)
+        user_block_bytes = (
+            hdf5_offset
+            if hdf5_offset >= 0
+            else min(
+                offset
+                for shard in index.shards
+                for offset, byte_count in (
+                    (shard.payload_offset, shard.payload_bytes),
+                    (shard.lengths_offset, shard.lengths_bytes),
+                    (shard.widths_offset, shard.widths_bytes),
+                )
+                if byte_count
+            )
+        )
+        new_binary_offset = (_PRELUDE.size + len(header) + 7) & ~7
+        if new_binary_offset + len(binary) > user_block_bytes:
+            raise ValueError(
+                f"Prepared compact metadata needs {new_binary_offset + len(binary)} "
+                f"user-block bytes, but {source_path} reserves {user_block_bytes}."
+            )
+        user_block = bytearray(user_block_bytes)
+        user_block[: _PRELUDE.size] = _PRELUDE.pack(
+            _CONTAINER_MAGIC,
+            len(header),
+            zlib.crc32(header),
+            new_binary_offset,
+            len(binary),
+        )
+        user_block[_PRELUDE.size : _PRELUDE.size + len(header)] = header
+        user_block[new_binary_offset : new_binary_offset + len(binary)] = binary
         with temporary_path.open("r+b") as stream:
             stream.seek(0)
             stream.write(user_block)
@@ -1080,6 +1342,21 @@ def prepare_compact_h5_metadata_copy(
         prepared = CompactH5Index.from_file(temporary_path)
         if index.schema_version == 3:
             prepared.require_raw_reconstruction()
+        if prepared_dpc_moments is not None:
+            decoded_moments = CompactH5ReferenceDecoder(
+                prepared
+            ).prepared_dpc_moment_values()
+            if decoded_moments is None or any(
+                not np.array_equal(observed, expected)
+                for observed, expected in zip(
+                    decoded_moments,
+                    prepared_dpc_moments,
+                    strict=True,
+                )
+            ):
+                raise ValueError(
+                    "Prepared DPC moments changed before atomic publication."
+                )
         os.replace(temporary_path, destination_path)
     finally:
         temporary_path.unlink(missing_ok=True)
@@ -1292,6 +1569,169 @@ def _validate_nonoverlapping_ranges(path: Path, shards: list[CompactH5Shard]) ->
             )
 
 
+def _require_sha256(value: object, label: str) -> str:
+    """Return one validated lowercase SHA-256 digest."""
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise ValueError(f"{label} must be one lowercase SHA-256 digest")
+    return value
+
+
+def _validate_prepared_dpc_moments(
+    path: Path,
+    file_bytes: int,
+    manifest: dict[str, object],
+    shape: tuple[int, int, int, int],
+    source_identity: str,
+    excluded: tuple[int, ...],
+    schema_version: int,
+    shards: tuple[CompactH5Shard, ...],
+) -> CompactH5PreparedDPCMoments | None:
+    """Validate an optional source-bound exact moment payload."""
+    value = manifest.get("prepared_dpc_moments")
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError(  # noqa: TRY004 - malformed serialized input
+            f"{path} compact prepared DPC moments are not an object."
+        )
+    if schema_version == 1:
+        if manifest.get("working_dtype") != "uint16":
+            raise ValueError(
+                f"{path} compact prepared DPC moments require uint16 working data."
+            )
+        schema = "quantem.gpu.prepared-dpc-moments/v2"
+        working_dtype = "uint16"
+        maximum_value = int(np.iinfo(np.uint16).max)
+        working_sha = _require_sha256(
+            manifest.get("working_logical_sha256"),
+            f"{path} compact working logical identity",
+        )
+        working_field = "working_logical_sha256"
+    else:
+        schema = "quantem.gpu.prepared-dpc-moments/v1"
+        working_dtype = "uint8"
+        maximum_value = int(np.iinfo(np.uint8).max)
+        working_sha = _require_sha256(
+            manifest.get("prepared_uint8_sha256"),
+            f"{path} compact working uint8 identity",
+        )
+        working_field = "working_uint8_sha256"
+    detector_mask_sha = _require_sha256(
+        manifest.get("detector_mask_sha256"),
+        f"{path} compact detector mask identity",
+    )
+    scan_count = shape[0] * shape[1]
+    detector_pixels = shape[2] * shape[3]
+    selected = detector_pixels - len(excluded)
+    excluded_set = set(excluded)
+    total_bound = selected * maximum_value
+    row_moment_bound = maximum_value * sum(
+        pixel // shape[3]
+        for pixel in range(detector_pixels)
+        if pixel not in excluded_set
+    )
+    column_moment_bound = maximum_value * sum(
+        pixel % shape[3]
+        for pixel in range(detector_pixels)
+        if pixel not in excluded_set
+    )
+    expected = {
+        "schema": schema,
+        "source_identity_sha256": source_identity,
+        working_field: working_sha,
+        "working_dtype": working_dtype,
+        "detector_mask_sha256": detector_mask_sha,
+        "detector_selection": "all-nonexcluded-v1",
+        "scan_count": scan_count,
+        "selected_detector_pixels": selected,
+        "detector_columns": shape[3],
+        "maximum_value": maximum_value,
+        "dtype": "little-endian-u32",
+        "word_order": "little-endian-u32-pairs",
+        "words_per_scan": 8,
+        "layout": [
+            "total_lo",
+            "total_hi",
+            "row_lo",
+            "row_hi",
+            "column_lo",
+            "column_hi",
+            "padding_0",
+            "padding_1",
+        ],
+        "total_bound": str(total_bound),
+        "row_moment_bound": str(row_moment_bound),
+        "column_moment_bound": str(column_moment_bound),
+        "narrow_integer": total_bound <= np.iinfo(np.uint32).max,
+        "narrow_products": max(row_moment_bound, column_moment_bound)
+        <= np.iinfo(np.uint32).max,
+    }
+    if schema_version == 3:
+        expected.pop("working_dtype")
+        expected.pop("maximum_value")
+    mismatches = {
+        key: (value.get(key), expected_value)
+        for key, expected_value in expected.items()
+        if value.get(key) != expected_value
+    }
+    if mismatches:
+        raise ValueError(
+            f"{path} compact prepared DPC moments disagree with the source: "
+            f"{mismatches}."
+        )
+    file_offset = value.get("file_offset")
+    prepared_bytes = value.get("file_bytes")
+    expected_bytes = scan_count * 8 * np.dtype("<u4").itemsize
+    if (
+        type(file_offset) is not int
+        or type(prepared_bytes) is not int
+        or file_offset < 0
+        or file_offset % np.dtype("<u4").itemsize
+        or prepared_bytes != expected_bytes
+        or file_offset > file_bytes - prepared_bytes
+    ):
+        raise ValueError(f"{path} compact prepared DPC byte range is invalid.")
+    prepared_end = file_offset + prepared_bytes
+    for shard_index, shard in enumerate(shards):
+        for label, offset, byte_count in (
+            ("payload", shard.payload_offset, shard.payload_bytes),
+            ("lengths", shard.lengths_offset, shard.lengths_bytes),
+            ("headers", shard.widths_offset, shard.widths_bytes),
+        ):
+            if (
+                byte_count
+                and file_offset < offset + byte_count
+                and offset < prepared_end
+            ):
+                raise ValueError(
+                    f"{path} compact prepared DPC range overlaps shard "
+                    f"{shard_index} {label}."
+                )
+    return CompactH5PreparedDPCMoments(
+        file_offset=file_offset,
+        file_bytes=prepared_bytes,
+        sha256=_require_sha256(
+            value.get("sha256"), f"{path} compact prepared DPC identity"
+        ),
+        working_logical_sha256=working_sha,
+        working_dtype=working_dtype,
+        detector_mask_sha256=detector_mask_sha,
+        scan_count=scan_count,
+        selected_detector_pixels=selected,
+        detector_columns=shape[3],
+        total_bound=total_bound,
+        row_moment_bound=row_moment_bound,
+        column_moment_bound=column_moment_bound,
+        narrow_integer=total_bound <= np.iinfo(np.uint32).max,
+        narrow_products=max(row_moment_bound, column_moment_bound)
+        <= np.iinfo(np.uint32).max,
+    )
+
+
 def _validate_manifest(
     path: Path,
     manifest: dict[str, object],
@@ -1448,8 +1888,47 @@ def _validate_manifest(
                 )
             masked_detector_raw_values = tuple(raw_values)
     else:
-        masked_detector_pixels_sha256 = None
-        masked_detector_raw_values = None
+        working_logical_sha256 = manifest.get("working_logical_sha256")
+        if working_logical_sha256 is not None:
+            _require_sha256(
+                working_logical_sha256,
+                f"{path} compact working logical identity",
+            )
+        raw_values = manifest.get("masked_detector_raw_values")
+        pixel_sequence_sha256 = manifest.get("masked_detector_pixels_sha256")
+        if raw_values is None and pixel_sequence_sha256 is None:
+            masked_detector_pixels_sha256 = None
+            masked_detector_raw_values = None
+        elif raw_values is None or pixel_sequence_sha256 is None:
+            raise ValueError(
+                f"{path} compact v1 masked-original metadata is incomplete."
+            )
+        else:
+            masked_detector_pixels_sha256 = _require_sha256(
+                pixel_sequence_sha256,
+                f"{path} compact ordered masked detector pixels",
+            )
+            expected_pixel_sequence_sha256 = hashlib.sha256(
+                struct.pack(f"<{len(excluded)}I", *excluded)
+            ).hexdigest()
+            if masked_detector_pixels_sha256 != expected_pixel_sequence_sha256:
+                raise ValueError(
+                    f"{path} compact v1 masked_detector_pixels_sha256 does not "
+                    "match the ordered binary-index detector pixels."
+                )
+            if (
+                not isinstance(raw_values, list)
+                or len(raw_values) != len(excluded)
+                or any(
+                    type(value) is not int or not 0 <= value <= 65535
+                    for value in raw_values
+                )
+            ):
+                raise ValueError(
+                    f"{path} compact v1 masked_detector_raw_values must be exact "
+                    "uint16 values aligned one-to-one with the detector mask."
+                )
+            masked_detector_raw_values = tuple(raw_values)
     _validate_detector_calibration(path, manifest, shape, source_identity)
     return masked_detector_pixels_sha256, masked_detector_raw_values
 
