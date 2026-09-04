@@ -7,6 +7,106 @@ final class Metal4DSTEMConsumerContractTests: XCTestCase {
   private let sourceA = String(repeating: "a", count: 64)
   private let sourceB = String(repeating: "b", count: 64)
 
+  func testResidentReceiptSeparatesScientificWorkingAndPhysicalBytes() throws {
+    let receipt = Metal4DSTEMResidentReceipt(
+      schema: Metal4DSTEMResidentReceipt.currentSchema,
+      representation: Metal4DSTEMResidentRepresentation.compactQGIXV3UInt8.rawValue,
+      sourceIdentitySHA256: sourceA,
+      sourceShape: [512, 512, 192, 192],
+      workingShape: [512, 512, 192, 192],
+      sourceDtype: "uint16",
+      workingDtype: "uint8",
+      sourceLogicalTensorBytes: 19_327_352_832,
+      workingLogicalTensorBytes: 9_663_676_416,
+      physicalResidentBytes: 2_394_650_896,
+      containerBytes: 2_394_887_216,
+      storageEncoding: .losslessPacked,
+      storageSchema: "quantem.gpu.packed-detector-h5/v3",
+      losslessExact: true,
+      scanBin: 1,
+      detectorBin: 1,
+      crop: nil,
+      detectorMaskCount: 1,
+      detectorMaskSHA256: sourceB,
+      detectorMaskSchema: "quantem.gpu.detector-mask-identity/opaque-v1",
+      calibrationSchema: nil,
+      calibrationSHA256: nil,
+      provenanceSchema: "quantem.gpu.packed-detector-h5-manifest/v1",
+      provenanceSHA256: String(repeating: "c", count: 64),
+      sourceRawLogicalSHA256: String(repeating: "d", count: 64),
+      workingLogicalSHA256: String(repeating: "e", count: 64),
+      implementationRevision: nil
+    )
+
+    XCTAssertNoThrow(try receipt.validate())
+    XCTAssertNotEqual(receipt.sourceLogicalTensorBytes, receipt.workingLogicalTensorBytes)
+    XCTAssertNotEqual(receipt.workingLogicalTensorBytes, receipt.physicalResidentBytes)
+  }
+
+  func testResidentReceiptSupportsFull256AndExactDetectorBinTwo() throws {
+    let full256 = Metal4DSTEMResidentReceipt(
+      schema: Metal4DSTEMResidentReceipt.currentSchema,
+      representation: Metal4DSTEMResidentRepresentation.compactQGIXV1UInt16.rawValue,
+      sourceIdentitySHA256: sourceA,
+      sourceShape: [512, 512, 256, 256],
+      workingShape: [512, 512, 256, 256],
+      sourceDtype: "uint16",
+      workingDtype: "uint16",
+      sourceLogicalTensorBytes: 34_359_738_368,
+      workingLogicalTensorBytes: 34_359_738_368,
+      physicalResidentBytes: 4_000_000_000,
+      containerBytes: 4_000_065_536,
+      storageEncoding: .losslessPacked,
+      storageSchema: "quantem.gpu.packed-detector-h5/v1",
+      losslessExact: true,
+      scanBin: 1,
+      detectorBin: 1,
+      crop: nil,
+      detectorMaskCount: 0,
+      detectorMaskSHA256: nil,
+      detectorMaskSchema: nil,
+      calibrationSchema: nil,
+      calibrationSHA256: nil,
+      provenanceSchema: "quantem.gpu.packed-detector-h5-manifest/v1",
+      provenanceSHA256: String(repeating: "c", count: 64),
+      sourceRawLogicalSHA256: String(repeating: "d", count: 64),
+      workingLogicalSHA256: nil,
+      implementationRevision: nil
+    )
+    XCTAssertNoThrow(try full256.validate())
+
+    let detectorBinTwo = Metal4DSTEMResidentReceipt(
+      schema: Metal4DSTEMResidentReceipt.currentSchema,
+      representation: Metal4DSTEMResidentRepresentation.indexedResidentInteger.rawValue,
+      sourceIdentitySHA256: sourceA,
+      sourceShape: [512, 512, 192, 192],
+      workingShape: [512, 512, 96, 96],
+      sourceDtype: "uint16",
+      workingDtype: "uint16",
+      sourceLogicalTensorBytes: 19_327_352_832,
+      workingLogicalTensorBytes: 4_831_838_208,
+      physicalResidentBytes: 4_831_838_208,
+      containerBytes: nil,
+      storageEncoding: .dense,
+      storageSchema: "quantem.gpu.indexed-resident-integer/v1",
+      losslessExact: true,
+      scanBin: 1,
+      detectorBin: 2,
+      crop: nil,
+      detectorMaskCount: 0,
+      detectorMaskSHA256: nil,
+      detectorMaskSchema: nil,
+      calibrationSchema: nil,
+      calibrationSHA256: nil,
+      provenanceSchema: "quantem.gpu.metal-4dstem-exact-binning/v1",
+      provenanceSHA256: String(repeating: "e", count: 64),
+      sourceRawLogicalSHA256: nil,
+      workingLogicalSHA256: nil,
+      implementationRevision: nil
+    )
+    XCTAssertNoThrow(try detectorBinTwo.validate())
+  }
+
   func testExactProductsDeriveMeanDPAndCenteredDPC() throws {
     let products = Metal4DSTEMExactProducts(
       detectorSum: [6, 12],
@@ -58,6 +158,35 @@ final class Metal4DSTEMConsumerContractTests: XCTestCase {
         numerics: .exactInteger
       )
     }
+    let receipt = Metal4DSTEMResidentReceipt(
+      schema: Metal4DSTEMResidentReceipt.currentSchema,
+      representation: Metal4DSTEMResidentRepresentation.indexedResidentInteger.rawValue,
+      sourceIdentitySHA256: sourceA,
+      sourceShape: [2, 2, 3, 4],
+      workingShape: [2, 2, 3, 4],
+      sourceDtype: "uint16",
+      workingDtype: "uint16",
+      sourceLogicalTensorBytes: 96,
+      workingLogicalTensorBytes: 96,
+      physicalResidentBytes: 96,
+      containerBytes: nil,
+      storageEncoding: .dense,
+      storageSchema: "quantem.gpu.indexed-resident-integer/v1",
+      losslessExact: true,
+      scanBin: 1,
+      detectorBin: 1,
+      crop: nil,
+      detectorMaskCount: 0,
+      detectorMaskSHA256: nil,
+      detectorMaskSchema: nil,
+      calibrationSchema: nil,
+      calibrationSHA256: nil,
+      provenanceSchema: nil,
+      provenanceSHA256: nil,
+      sourceRawLogicalSHA256: nil,
+      workingLogicalSHA256: nil,
+      implementationRevision: nil
+    )
     let complete = Metal4DSTEMResidentCapabilities(
       schema: Metal4DSTEMResidentCapabilities.currentSchema,
       representation: .indexedResidentInteger,
@@ -74,6 +203,7 @@ final class Metal4DSTEMConsumerContractTests: XCTestCase {
       residentBytes: 96,
       residentStorageBytes: 96,
       lossless: true,
+      residentReceipt: receipt,
       products: products
     )
     XCTAssertTrue(complete.fullInteractiveResident)
@@ -94,6 +224,7 @@ final class Metal4DSTEMConsumerContractTests: XCTestCase {
       residentBytes: complete.residentBytes,
       residentStorageBytes: complete.residentStorageBytes,
       lossless: false,
+      residentReceipt: receipt,
       products: products
     )
     XCTAssertFalse(lossy.fullInteractiveResident)
@@ -114,6 +245,7 @@ final class Metal4DSTEMConsumerContractTests: XCTestCase {
       residentBytes: complete.residentBytes,
       residentStorageBytes: complete.residentStorageBytes,
       lossless: complete.lossless,
+      residentReceipt: receipt,
       products: Array(products.dropLast())
     )
     XCTAssertFalse(missing.fullInteractiveResident)

@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "quantem.gpu.4dstem-resident-receipt/v1",
+  "title": "QuantEM.GPU exact 4D-STEM resident-generation receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "representation",
+    "source_identity_sha256",
+    "source_shape",
+    "working_shape",
+    "source_dtype",
+    "working_dtype",
+    "source_logical_tensor_bytes",
+    "working_logical_tensor_bytes",
+    "physical_resident_bytes",
+    "container_bytes",
+    "storage_encoding",
+    "storage_schema",
+    "lossless_exact",
+    "scan_bin",
+    "detector_bin",
+    "crop",
+    "detector_mask_count",
+    "detector_mask_sha256",
+    "detector_mask_schema",
+    "calibration_schema",
+    "calibration_sha256",
+    "provenance_schema",
+    "provenance_sha256",
+    "source_raw_logical_sha256",
+    "working_logical_sha256",
+    "implementation_revision"
+  ],
+  "properties": {
+    "schema": {"const": "quantem.gpu.4dstem-resident-receipt/v1"},
+    "representation": {"type": "string", "minLength": 1},
+    "source_identity_sha256": {"$ref": "#/$defs/sha256"},
+    "source_shape": {"$ref": "#/$defs/shape"},
+    "working_shape": {"$ref": "#/$defs/shape"},
+    "source_dtype": {"enum": ["uint8", "uint16", "uint32", "uint64"]},
+    "working_dtype": {"enum": ["uint8", "uint16", "uint32", "uint64"]},
+    "source_logical_tensor_bytes": {"type": "integer", "minimum": 1},
+    "working_logical_tensor_bytes": {"type": "integer", "minimum": 1},
+    "physical_resident_bytes": {"type": "integer", "minimum": 1},
+    "container_bytes": {"$ref": "#/$defs/optionalPositiveInteger"},
+    "storage_encoding": {"enum": ["dense", "lossless-packed"]},
+    "storage_schema": {"type": "string", "minLength": 1},
+    "lossless_exact": {"const": true},
+    "scan_bin": {"type": "integer", "minimum": 1},
+    "detector_bin": {"type": "integer", "minimum": 1},
+    "crop": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "array",
+          "items": {"type": "integer", "minimum": 0},
+          "minItems": 4,
+          "maxItems": 4
+        }
+      ]
+    },
+    "detector_mask_count": {"type": "integer", "minimum": 0},
+    "detector_mask_sha256": {
+      "description": "Opaque source-bound mask identity unless detector_mask_schema names an explicit byte encoding.",
+      "$ref": "#/$defs/optionalSHA256"
+    },
+    "detector_mask_schema": {"$ref": "#/$defs/optionalString"},
+    "calibration_schema": {"$ref": "#/$defs/optionalString"},
+    "calibration_sha256": {"$ref": "#/$defs/optionalSHA256"},
+    "provenance_schema": {"$ref": "#/$defs/optionalString"},
+    "provenance_sha256": {"$ref": "#/$defs/optionalSHA256"},
+    "source_raw_logical_sha256": {"$ref": "#/$defs/optionalSHA256"},
+    "working_logical_sha256": {"$ref": "#/$defs/optionalSHA256"},
+    "implementation_revision": {"$ref": "#/$defs/optionalString"}
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "optionalSHA256": {
+      "oneOf": [{"type": "null"}, {"$ref": "#/$defs/sha256"}]
+    },
+    "optionalString": {
+      "oneOf": [{"type": "null"}, {"type": "string", "minLength": 1}]
+    },
+    "optionalPositiveInteger": {
+      "oneOf": [{"type": "null"}, {"type": "integer", "minimum": 1}]
+    },
+    "shape": {
+      "type": "array",
+      "items": {"type": "integer", "minimum": 1},
+      "minItems": 4,
+      "maxItems": 4
+    }
+  }
+}

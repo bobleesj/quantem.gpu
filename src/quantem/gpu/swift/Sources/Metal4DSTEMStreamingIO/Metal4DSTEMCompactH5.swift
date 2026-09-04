@@ -76,6 +76,8 @@ public struct MetalCompactH5Metadata: Equatable, Sendable {
   public let schema: String
   public let payloadCodec: String
   public let sourceDtype: String?
+  public let manifestSHA256: String
+  public let workingDtype: String
   public let embeddedScientificSemantics: Bool
   public let scanRows: Int
   public let scanColumns: Int
@@ -92,6 +94,8 @@ public struct MetalCompactH5Metadata: Equatable, Sendable {
   public let maskedDetectorRawValues: [UInt16]?
   public let rawAccessMode: String
   public let detectorCalibration: MetalCompactH5DetectorCalibration?
+  public let detectorCalibrationSchema: String?
+  public let detectorCalibrationSHA256: String?
   public let preparedDPCMoments: MetalCompactH5PreparedDPCMoments?
   public let preparedDetectorProducts: MetalCompactH5PreparedDetectorProducts?
   public let excludedDetectorPixels: [Int]
@@ -2415,6 +2419,13 @@ public enum MetalCompactH5Loader {
         $0.0 * detectorColumns + $0.1
       }
       embeddedScientificSemantics = true
+      if excluded.isEmpty {
+        rawAccessMode = "exact_no_exclusions"
+      } else if manifest["masked_detector_payload_policy"] as? String
+        == "retained_exactly_in_payload"
+      {
+        rawAccessMode = "exact_retained_payload"
+      }
     }
     guard manifestMask == excluded else {
       throw invalid("Compact JSON and binary detector exclusions differ.")
@@ -2444,6 +2455,26 @@ public enum MetalCompactH5Loader {
       detectorRows: detectorRows,
       detectorColumns: detectorColumns
     )
+    let manifestJSON = try canonicalJSON(manifest)
+    guard let manifestData = manifestJSON.data(using: .utf8) else {
+      throw invalid("Compact manifest could not be encoded as UTF-8.")
+    }
+    let manifestSHA256 = SHA256.hash(data: manifestData)
+      .map { String(format: "%02x", $0) }
+      .joined()
+    let detectorCalibrationSchema =
+      (manifest["detector_calibration"] as? [String: Any])?["schema"] as? String
+    let detectorCalibrationSHA256: String? = try {
+      guard let calibration = manifest["detector_calibration"], !(calibration is NSNull)
+      else { return nil }
+      let encoded = try canonicalJSON(calibration)
+      guard let data = encoded.data(using: .utf8) else {
+        throw invalid("Compact detector calibration could not be encoded as UTF-8.")
+      }
+      return SHA256.hash(data: data)
+        .map { String(format: "%02x", $0) }
+        .joined()
+    }()
     let preparedDPC = try preparedDPCMoments(
       manifest["prepared_dpc_moments"],
       parentManifest: manifest,
@@ -2491,6 +2522,8 @@ public enum MetalCompactH5Loader {
       schema: schema,
       payloadCodec: payloadCodec,
       sourceDtype: manifest["source_dtype"] as? String,
+      manifestSHA256: manifestSHA256,
+      workingDtype: workingDtype,
       embeddedScientificSemantics: embeddedScientificSemantics,
       scanRows: scanRows,
       scanColumns: scanColumns,
@@ -2507,6 +2540,8 @@ public enum MetalCompactH5Loader {
       maskedDetectorRawValues: maskedDetectorRawValues,
       rawAccessMode: rawAccessMode,
       detectorCalibration: parsedCalibration,
+      detectorCalibrationSchema: detectorCalibrationSchema,
+      detectorCalibrationSHA256: detectorCalibrationSHA256,
       preparedDPCMoments: preparedDPC,
       preparedDetectorProducts: preparedDetectorProducts,
       excludedDetectorPixels: excluded,

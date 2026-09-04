@@ -62,6 +62,24 @@ final class CompactH5LoaderTests: XCTestCase {
     XCTAssertEqual(try source.virtualDetectorValues(), translatedExpected)
   }
 
+  func testPortableV1SourcePublishesExactUInt16Receipt() throws {
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let fixture = try makeCompactFixture(portable: true)
+    defer { try? FileManager.default.removeItem(at: fixture.url) }
+
+    let source = try MetalCompactH5Loader.load(sourceURL: fixture.url, device: device)
+    let capabilities = try Metal4DSTEMResidentCapabilities.compact(source)
+
+    XCTAssertEqual(capabilities.representation, .compactQGIXV1UInt16)
+    XCTAssertEqual(capabilities.residentReceipt.sourceShape, [8, 16, 2, 3])
+    XCTAssertEqual(capabilities.residentReceipt.workingShape, [8, 16, 2, 3])
+    XCTAssertEqual(capabilities.residentReceipt.sourceDtype, "uint16")
+    XCTAssertEqual(capabilities.residentReceipt.workingDtype, "uint16")
+    XCTAssertEqual(capabilities.residentReceipt.sourceLogicalTensorBytes, 1_536)
+    XCTAssertEqual(capabilities.residentReceipt.workingLogicalTensorBytes, 1_536)
+    XCTAssertNoThrow(try capabilities.residentReceipt.validate())
+  }
+
   func testChangedDecodedPayloadFailsItsAuthenticatedHash() throws {
     let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
     let fixture = try makeCompactFixture()
@@ -120,15 +138,7 @@ final class CompactH5LoaderTests: XCTestCase {
     XCTAssertEqual(cachedMean.dispatchCount, 0)
     XCTAssertEqual(cachedMean.wallMilliseconds, 0)
     XCTAssertEqual(cachedMean.gpuMilliseconds, 0)
-    let capabilities = try Metal4DSTEMResidentCapabilities.compact(source)
-    XCTAssertFalse(capabilities.fullInteractiveResident)
-    XCTAssertEqual(capabilities.residentBytes, source.loadMetrics.totalResidentBytes)
-    XCTAssertEqual(
-      capabilities.products.first {
-        $0.product == .meanDiffractionPattern
-      }?.availability,
-      .residentOnDemand
-    )
+    XCTAssertThrowsError(try Metal4DSTEMResidentCapabilities.compact(source))
 
     let selectedScan = 77
     XCTAssertEqual(
@@ -268,7 +278,10 @@ final class CompactH5LoaderTests: XCTestCase {
 
   func testPreparedDPCMomentsPrimeExactCenteredDisplayMaps() throws {
     let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
-    let fixture = try makeDirectCompactFixture(preparedDPC: true)
+    let fixture = try makeDirectCompactFixture(
+      rawExclusions: true,
+      preparedDPC: true
+    )
     defer { try? FileManager.default.removeItem(at: fixture.url) }
 
     let source = try MetalCompactH5Loader.load(
@@ -499,7 +512,7 @@ private struct CompactFixture {
   let headerOffset: Int
 }
 
-private func makeCompactFixture() throws -> CompactFixture {
+private func makeCompactFixture(portable: Bool = false) throws -> CompactFixture {
   let widths: [UInt8] = [2, 3, 4, 16, 9, 2]
   var values = widths.enumerated().map { pixel, width in
     (0..<128).map { scan in
@@ -545,7 +558,7 @@ private func makeCompactFixture() throws -> CompactFixture {
   let sourceIdentity = sourceIdentityBytes.map {
     String(format: "%02x", $0)
   }.joined()
-  let manifest: [String: Any] = [
+  var manifest: [String: Any] = [
     "schema": "quantem.gpu.packed-detector-h5/v1",
     "status": "complete",
     "source_shape": [8, 16, 2, 3],
@@ -573,6 +586,13 @@ private func makeCompactFixture() throws -> CompactFixture {
       "method": "test-fixture",
     ],
   ]
+  if portable {
+    var pixel = UInt32(3).littleEndian
+    manifest["detector_mask_sha256"] = Swift.withUnsafeBytes(of: &pixel) {
+      SHA256.hash(data: Data($0)).map { String(format: "%02x", $0) }.joined()
+    }
+    manifest["masked_detector_payload_policy"] = "retained_exactly_in_payload"
+  }
   let header = try JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys])
   let binaryOffset: UInt32 = 4_096
   let binaryBytes: UInt32 = 8 + 7 * 4 + 4 + 4 + 32 + 96

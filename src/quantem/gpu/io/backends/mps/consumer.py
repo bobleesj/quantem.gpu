@@ -17,6 +17,12 @@ from typing import Any
 
 import numpy as np
 
+from ...resident_contract import (
+    ResidentGenerationReceipt,
+    ResidentStorageEncoding,
+    metadata_sha256,
+)
+
 __all__ = [
     "MPSProductAvailability",
     "MPSProductNumerics",
@@ -106,18 +112,35 @@ class MPSResidentCapabilities:
     resident_bytes: int
     lossless: bool
     products: tuple[MPSResidentProductCapability, ...]
+    resident_receipt: ResidentGenerationReceipt
 
-    SCHEMA = "quantem.gpu.apple-4dstem-resident-capabilities/v2"
+    SCHEMA = "quantem.gpu.apple-4dstem-resident-capabilities/v3"
 
     @property
     def full_interactive_resident(self) -> bool:
         """Whether every required role has an immediate or on-demand seam."""
+
+        try:
+            self.resident_receipt.validate()
+        except (TypeError, ValueError):
+            return False
 
         return (
             self.complete_source_resident
             and self.lossless
             and self.logical_tensor_bytes > 0
             and self.resident_bytes > 0
+            and self.resident_receipt.lossless_exact
+            and self.resident_receipt.source_identity_sha256
+            == self.source_identity_sha256
+            and self.resident_receipt.working_shape
+            == (*self.scan_shape, *self.detector_shape)
+            and self.resident_receipt.working_dtype == self.working_dtype
+            and self.resident_receipt.working_logical_tensor_bytes
+            == self.logical_tensor_bytes
+            and self.resident_receipt.physical_resident_bytes
+            == self.resident_bytes
+            and self.resident_receipt.storage_schema == self.storage_schema
             and {item.product for item in self.products} == set(MPSResidentProduct)
             and all(
                 item.availability is not MPSProductAvailability.UNAVAILABLE
@@ -144,6 +167,7 @@ class MPSResidentCapabilities:
             "residentBytes": self.resident_bytes,
             "residentStorageBytes": self.resident_bytes,
             "lossless": self.lossless,
+            "residentReceipt": self.resident_receipt.to_camel_case_dict(),
             "products": [item.to_dict() for item in self.products],
         }
 
@@ -168,6 +192,19 @@ def _source_identity(metadata: dict[str, Any]) -> str:
     return ""
 
 
+def _calibration_identity(
+    value: object,
+) -> tuple[str | None, str | None]:
+    if value is None:
+        return None, None
+    if not isinstance(value, dict):
+        raise TypeError("Detector calibration metadata must be an object or null.")
+    schema = value.get("schema")
+    if not isinstance(schema, str) or not schema.strip():
+        raise ValueError("Detector calibration metadata requires a versioned schema.")
+    return schema, metadata_sha256(value)
+
+
 def _chunked_capabilities(source: Any) -> MPSResidentCapabilities:
     dtype = np.dtype(source.dtype)
     if dtype.kind != "u" or dtype.itemsize not in (1, 2, 4):
@@ -186,6 +223,58 @@ def _chunked_capabilities(source: Any) -> MPSResidentCapabilities:
         raise ValueError(
             "An exact MPS resident capability receipt requires a source SHA-256 identity."
         )
+    raw_detector_shape = tuple(
+        int(value)
+        for value in metadata.get("raw_detector_shape", source.detector_shape)
+    )
+    source_dtype = np.dtype(metadata.get("source_dtype", dtype.name)).name
+    scan_bin = int(metadata.get("scan_bin", 1))
+    detector_bin = int(metadata.get("det_bin", 1))
+    source_shape = (
+        scan_shape[0] * scan_bin,
+        scan_shape[1] * scan_bin,
+        raw_detector_shape[0],
+        raw_detector_shape[1],
+    )
+    working_shape = (*scan_shape, *tuple(int(value) for value in source.detector_shape))
+    calibration_schema, calibration_sha256 = _calibration_identity(
+        metadata.get("detector_calibration")
+    )
+    detector_mask_count = int(metadata.get("detector_mask_count", 0))
+    detector_mask_sha256 = metadata.get("detector_mask_sha256")
+    receipt = ResidentGenerationReceipt(
+        representation=MPSResidentRepresentation.INDEXED_RESIDENT_INTEGER.value,
+        source_identity_sha256=source_identity,
+        source_shape=source_shape,
+        working_shape=working_shape,
+        source_dtype=source_dtype,
+        working_dtype=dtype.name,
+        source_logical_tensor_bytes=math.prod(source_shape)
+        * np.dtype(source_dtype).itemsize,
+        working_logical_tensor_bytes=int(source.nbytes),
+        physical_resident_bytes=int(source.nbytes),
+        storage_encoding=ResidentStorageEncoding.DENSE,
+        storage_schema="quantem.gpu.indexed-resident-integer/v1",
+        scan_bin=scan_bin,
+        detector_bin=detector_bin,
+        crop=None,
+        detector_mask_count=detector_mask_count,
+        detector_mask_sha256=(
+            str(detector_mask_sha256) if detector_mask_sha256 is not None else None
+        ),
+        detector_mask_schema=(
+            "quantem.gpu.detector-mask-identity/opaque-v1"
+            if detector_mask_sha256 is not None
+            else None
+        ),
+        calibration_schema=calibration_schema,
+        calibration_sha256=calibration_sha256,
+        provenance_schema="quantem.gpu.mps-chunked-metadata/v1",
+        provenance_sha256=metadata_sha256(metadata),
+        source_raw_logical_sha256=metadata.get("source_raw_logical_sha256"),
+        working_logical_sha256=metadata.get("working_logical_sha256"),
+    )
+    receipt.validate()
     products = (
         _capability(
             MPSResidentProduct.DIFFRACTION_PATTERN,
@@ -251,6 +340,7 @@ def _chunked_capabilities(source: Any) -> MPSResidentCapabilities:
         resident_bytes=int(source.nbytes),
         lossless=True,
         products=products,
+        resident_receipt=receipt,
     )
 
 
@@ -263,6 +353,13 @@ def _compact_capabilities(source: Any) -> MPSResidentCapabilities:
         raise ValueError(
             "Compact resident capabilities require exact QGIX v3 uint8 semantics."
         )
+    if getattr(index, "raw_access_mode", None) not in {
+        "exact_no_exclusions",
+        "exact_exclusion_constants",
+    }:
+        raise ValueError(
+            "Compact resident capabilities require lossless access to every source count."
+        )
     prepared_names = {
         product.name
         for product in (
@@ -272,6 +369,42 @@ def _compact_capabilities(source: Any) -> MPSResidentCapabilities:
         )
     }
     has_dpc = index.prepared_dpc_moments is not None
+    manifest = index.manifest
+    source_dtype = str(manifest.get("source_dtype", ""))
+    working_dtype = str(manifest.get("working_dtype", ""))
+    calibration_schema, calibration_sha256 = _calibration_identity(
+        manifest.get("detector_calibration")
+    )
+    source_shape = tuple(int(value) for value in index.shape)
+    receipt = ResidentGenerationReceipt(
+        representation=MPSResidentRepresentation.COMPACT_QGIX_V3_UINT8.value,
+        source_identity_sha256=index.source_identity_sha256,
+        source_shape=source_shape,
+        working_shape=source_shape,
+        source_dtype=source_dtype,
+        working_dtype=working_dtype,
+        source_logical_tensor_bytes=math.prod(source_shape)
+        * np.dtype(source_dtype).itemsize,
+        working_logical_tensor_bytes=math.prod(source_shape)
+        * np.dtype(working_dtype).itemsize,
+        physical_resident_bytes=int(source.load_metrics.total_resident_bytes),
+        container_bytes=int(index.file_bytes),
+        storage_encoding=ResidentStorageEncoding.LOSSLESS_PACKED,
+        storage_schema=str(manifest["schema"]),
+        scan_bin=int(manifest["scan_bin"]),
+        detector_bin=int(manifest["detector_bin"]),
+        crop=None,
+        detector_mask_count=len(index.excluded_detector_pixels),
+        detector_mask_sha256=manifest.get("detector_mask_sha256"),
+        detector_mask_schema="quantem.gpu.detector-mask-identity/opaque-v1",
+        calibration_schema=calibration_schema,
+        calibration_sha256=calibration_sha256,
+        provenance_schema="quantem.gpu.packed-detector-h5-manifest/v1",
+        provenance_sha256=metadata_sha256(manifest),
+        source_raw_logical_sha256=manifest.get("source_raw_logical_sha256"),
+        working_logical_sha256=manifest.get("prepared_uint8_sha256"),
+    )
+    receipt.validate()
     prepared = MPSProductAvailability.IMMEDIATE
     on_demand = MPSProductAvailability.RESIDENT_ON_DEMAND
     unavailable = MPSProductAvailability.UNAVAILABLE
@@ -333,13 +466,14 @@ def _compact_capabilities(source: Any) -> MPSResidentCapabilities:
         scan_shape=tuple(int(value) for value in index.shape[:2]),
         detector_shape=tuple(int(value) for value in index.shape[2:]),
         storage_schema="quantem.gpu.packed-detector-h5/v3",
-        working_dtype="uint8",
+        working_dtype=working_dtype,
         exact_integer_bits=8,
         logical_tensor_bytes=math.prod(int(value) for value in index.shape),
         complete_source_resident=not bool(source.is_released),
         resident_bytes=int(source.load_metrics.total_resident_bytes),
         lossless=True,
         products=products,
+        resident_receipt=receipt,
     )
 
 

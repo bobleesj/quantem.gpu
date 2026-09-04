@@ -53,8 +53,21 @@ def _compact_resident(*, released: bool = False):
     )
     index = SimpleNamespace(
         shape=(2, 2, 3, 4),
+        file_bytes=600,
         source_identity_sha256=SOURCE_B,
-        manifest={"schema": "quantem.gpu.packed-detector-h5/v3"},
+        excluded_detector_pixels=(1,),
+        raw_access_mode="exact_exclusion_constants",
+        manifest={
+            "schema": "quantem.gpu.packed-detector-h5/v3",
+            "source_dtype": "uint16",
+            "working_dtype": "uint8",
+            "scan_bin": 1,
+            "detector_bin": 1,
+            "crop": None,
+            "detector_mask_sha256": "c" * 64,
+            "source_raw_logical_sha256": "d" * 64,
+            "prepared_uint8_sha256": "e" * 64,
+        },
         prepared_detector_products=products,
         prepared_dpc_moments=object(),
     )
@@ -97,8 +110,21 @@ def test_compact_v3_receipt_does_not_invent_uint16() -> None:
     assert capabilities.storage_schema == "quantem.gpu.packed-detector-h5/v3"
     assert capabilities.logical_tensor_bytes == 48
     assert capabilities.to_dict()["residentStorageBytes"] == 1234
+    receipt = capabilities.resident_receipt
+    assert receipt.source_logical_tensor_bytes == 96
+    assert receipt.working_logical_tensor_bytes == 48
+    assert receipt.physical_resident_bytes == 1234
+    assert receipt.detector_mask_count == 1
+    assert capabilities.to_dict()["residentReceipt"]["sourceDtype"] == "uint16"
     assert capabilities.lossless
     assert capabilities.full_interactive_resident
+    assert not replace(
+        capabilities,
+        resident_receipt=replace(
+            receipt,
+            source_identity_sha256=SOURCE_A,
+        ),
+    ).full_interactive_resident
     assert (
         by_product[MPSResidentProduct.MEAN_DIFFRACTION_PATTERN].availability
         is MPSProductAvailability.RESIDENT_ON_DEMAND

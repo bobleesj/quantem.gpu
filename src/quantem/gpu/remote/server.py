@@ -28,6 +28,11 @@ from typing import Any
 
 import numpy as np
 
+from ..io.resident_contract import (
+    ResidentGenerationReceipt,
+    ResidentStorageEncoding,
+    metadata_sha256,
+)
 from .maped_api import MAPEDProtocolError, MAPEDProtocolService
 from .ssb_api import (
     SSBPayloadNotReady,
@@ -49,8 +54,8 @@ except ImportError as exc:  # pragma: no cover - exercised by clean-install smok
 
 PROTOCOL_NAME = "quantem-gpu-browse"
 PROTOCOL_VERSION = 1
-PACKAGED_SERVICE_SCHEMA = "quantem.gpu.packaged-browse-service/v1"
-RESIDENCY_SCHEMA = "quantem.gpu.browse-residency/v1"
+PACKAGED_SERVICE_SCHEMA = "quantem.gpu.packaged-browse-service/v2"
+RESIDENCY_SCHEMA = "quantem.gpu.browse-residency/v2"
 LOAD_TIMING_SCHEMA = "quantem.gpu.browse-load-timing/v1"
 PROVENANCE_SCHEMA = "quantem.gpu.browse-provenance/v1"
 WINDOWS_COMPATIBILITY_CHAIN = (
@@ -84,8 +89,10 @@ def _packaged_service_capability(implementation_revision: str) -> dict[str, Any]
             "required_when_compact_resident": [
                 "implementation_revision",
                 "resident_bytes",
-                "logical_tensor_bytes",
+                "source_logical_tensor_bytes",
+                "working_logical_tensor_bytes",
                 "physical_resident_bytes",
+                "resident_generation",
                 "storage_kind",
                 "storage_schema",
                 "lossless_exact",
@@ -100,6 +107,10 @@ def _packaged_service_capability(implementation_revision: str) -> dict[str, Any]
                 "provenance",
                 "plan",
             ],
+            "legacy_aliases": {
+                "logical_tensor_bytes": "source_logical_tensor_bytes",
+                "resident_bytes": "physical_resident_bytes",
+            },
         },
         "timing": {
             "schema": LOAD_TIMING_SCHEMA,
@@ -1188,6 +1199,78 @@ class BrowseService:
             )
             source_raw_logical_sha256 = manifest.get("source_raw_logical_sha256")
             compact_whole_file_sha256 = entry.get("compact_whole_file_sha256")
+            working_shape = [*entry["scan_shape"], *entry["detector_shape"]]
+            try:
+                working_logical_tensor_bytes = int(
+                    np.prod(working_shape, dtype=np.uint64)
+                ) * int(np.dtype(working_dtype).itemsize)
+            except TypeError:
+                working_logical_tensor_bytes = None
+            resident_generation = None
+            if (
+                metadata is not None
+                and scan_region is None
+                and bool(getattr(metadata, "raw_reconstruction_available", False))
+                and logical_tensor_bytes is not None
+                and working_logical_tensor_bytes is not None
+            ):
+                excluded = tuple(getattr(metadata, "excluded_detector_pixels", ()))
+                calibration = manifest.get("detector_calibration")
+                calibration_schema = (
+                    str(calibration.get("schema"))
+                    if isinstance(calibration, dict)
+                    else None
+                )
+                calibration_sha256 = (
+                    metadata_sha256(calibration)
+                    if isinstance(calibration, dict)
+                    else None
+                )
+                storage_schema = str(manifest.get("schema", ""))
+                representation = {
+                    ("quantem.gpu.packed-detector-h5/v1", "uint16"):
+                        "compact-qgix-v1-uint16",
+                    ("quantem.gpu.packed-detector-h5/v3", "uint8"):
+                        "compact-qgix-v3-uint8",
+                }.get((storage_schema, str(working_dtype)))
+                if representation is not None:
+                    receipt = ResidentGenerationReceipt(
+                        representation=representation,
+                        source_identity_sha256=str(source_identity),
+                        source_shape=tuple(int(value) for value in source_shape),
+                        working_shape=tuple(int(value) for value in working_shape),
+                        source_dtype=source_dtype,
+                        working_dtype=str(working_dtype),
+                        source_logical_tensor_bytes=logical_tensor_bytes,
+                        working_logical_tensor_bytes=working_logical_tensor_bytes,
+                        physical_resident_bytes=resident_bytes,
+                        container_bytes=(
+                            int(metadata.file_bytes)
+                            if getattr(metadata, "file_bytes", None) is not None
+                            else None
+                        ),
+                        storage_encoding=ResidentStorageEncoding.LOSSLESS_PACKED,
+                        storage_schema=storage_schema,
+                        scan_bin=scan_bin,
+                        detector_bin=det_bin,
+                        crop=None,
+                        detector_mask_count=len(excluded),
+                        detector_mask_sha256=manifest.get("detector_mask_sha256"),
+                        detector_mask_schema=(
+                            "quantem.gpu.detector-mask-identity/opaque-v1"
+                            if manifest.get("detector_mask_sha256") is not None
+                            else None
+                        ),
+                        calibration_schema=calibration_schema,
+                        calibration_sha256=calibration_sha256,
+                        provenance_schema="quantem.gpu.packed-detector-h5-manifest/v1",
+                        provenance_sha256=metadata_sha256(manifest),
+                        source_raw_logical_sha256=source_raw_logical_sha256,
+                        working_logical_sha256=manifest.get(
+                            "prepared_uint8_sha256"
+                        ),
+                    )
+                    resident_generation = receipt.to_snake_case_dict()
             timing = {
                 "schema": LOAD_TIMING_SCHEMA,
                 "time_to_resident_ready_ms": (
@@ -1211,7 +1294,10 @@ class BrowseService:
                 "gpu": int(entry.get("gpu", self.gpu)),
                 "resident_bytes": resident_bytes,
                 "logical_tensor_bytes": logical_tensor_bytes,
+                "source_logical_tensor_bytes": logical_tensor_bytes,
+                "working_logical_tensor_bytes": working_logical_tensor_bytes,
                 "physical_resident_bytes": resident_bytes,
+                "resident_generation": resident_generation,
                 "storage_kind": "lossless_packed" if metadata is not None else "dense",
                 "storage_schema": (
                     manifest.get("schema")
@@ -1220,6 +1306,7 @@ class BrowseService:
                 ),
                 "lossless_exact": True,
                 "source_shape": source_shape,
+                "working_shape": working_shape,
                 "source_dtype": source_dtype,
                 "scan_shape": list(entry["scan_shape"]),
                 "detector_shape": list(entry["detector_shape"]),
@@ -2260,6 +2347,9 @@ def create_app(
             scan_region=region,
         )
         result["implementation_revision"] = resolved_revision
+        resident_generation = result.get("resident_generation")
+        if isinstance(resident_generation, dict):
+            resident_generation["implementation_revision"] = resolved_revision
         provenance = result.setdefault(
             "provenance",
             {"schema": PROVENANCE_SCHEMA},

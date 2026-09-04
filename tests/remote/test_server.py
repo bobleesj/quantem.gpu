@@ -125,6 +125,7 @@ class _FakeCompactSource:
             },
             shape=tuple(data.shape),
             source_identity_sha256="b" * 64,
+            raw_reconstruction_available=True,
         )
         self.memory_pool_used_bytes = 1234
         self.result: np.ndarray | None = None
@@ -272,6 +273,17 @@ def test_existing_browse_routes_dispatch_to_bound_compact_source(tmp_path):
         data[1, 0],
     )
     assert service._entry_bytes(service._master_cache[key]) == 1234
+    resident_generation = residency.pop("resident_generation")
+    assert resident_generation["schema"] == "quantem.gpu.4dstem-resident-receipt/v1"
+    assert resident_generation["source_shape"] == [2, 2, 4, 4]
+    assert resident_generation["working_shape"] == [2, 2, 4, 4]
+    assert resident_generation["source_logical_tensor_bytes"] == 128
+    assert resident_generation["working_logical_tensor_bytes"] == 128
+    assert resident_generation["physical_resident_bytes"] == 1234
+    assert resident_generation["implementation_revision"] == revision
+    assert residency.pop("source_logical_tensor_bytes") == 128
+    assert residency.pop("working_logical_tensor_bytes") == 128
+    assert residency.pop("working_shape") == [2, 2, 4, 4]
     assert residency == {
         "schema": RESIDENCY_SCHEMA,
         "resident": True,

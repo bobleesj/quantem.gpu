@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "quantem.gpu.packaged-browse-service/v1",
+  "$id": "quantem.gpu.packaged-browse-service/v2",
   "title": "QuantEM.GPU packaged Browse service capability",
   "type": "object",
   "additionalProperties": false,
@@ -18,7 +18,7 @@
   ],
   "properties": {
     "schema": {
-      "const": "quantem.gpu.packaged-browse-service/v1"
+      "const": "quantem.gpu.packaged-browse-service/v2"
     },
     "implementation_revision": {
       "type": "string",
@@ -46,19 +46,30 @@
     "residency": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["endpoint", "schema", "required_when_compact_resident"],
+      "required": [
+        "endpoint",
+        "schema",
+        "required_when_compact_resident",
+        "legacy_aliases"
+      ],
       "properties": {
         "endpoint": {
           "const": "/api/browse/residency"
         },
         "schema": {
-          "const": "quantem.gpu.browse-residency/v1"
+          "const": "quantem.gpu.browse-residency/v2"
         },
         "required_when_compact_resident": {
           "type": "array",
           "items": {"type": "string"},
           "minItems": 1,
           "uniqueItems": true
+        },
+        "legacy_aliases": {
+          "const": {
+            "logical_tensor_bytes": "source_logical_tensor_bytes",
+            "resident_bytes": "physical_resident_bytes"
+          }
         }
       }
     },
