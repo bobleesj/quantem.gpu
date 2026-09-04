@@ -23,6 +23,21 @@ admission telemetry. Clients must validate this response before assuming an
 endpoint or field exists. New optional response fields are additive; changed
 scientific meaning requires a protocol version change.
 
+Packaged Live4DSTEM Windows uses one explicit ordered compatibility chain:
+
+```text
+quantem-live-browse/3 -> live4dstem-standalone/3 -> quantem-gpu-browse/1
+```
+
+The raw CUDA service remains `quantem-gpu-browse/1`. Its capabilities response
+includes `packaged_service` with schema
+`quantem.gpu.packaged-browse-service/v1`, the exact implementation revision,
+the ordered chain, and the field contracts consumed through the loopback
+adapter. The adapter must reject any other upstream protocol/version and the
+client must reject any other client protocol, adapter, or upstream declaration.
+The distributable JSON Schema is
+`src/quantem/gpu/remote/packaged_service.schema.json`.
+
 ## Endpoint groups
 
 | Prefix | Contract |
@@ -71,3 +86,14 @@ source kind, CUDA device, measured resident bytes, exact shapes and dtype,
 source identity, load-phase metrics, and whether the catalogued source changed
 after loading. It never triggers a load. A stale resident entry fails closed on
 the next scientific request.
+
+The response schema is `quantem.gpu.browse-residency/v1`. For a compact
+resident source it reports `logical_tensor_bytes` separately from
+`physical_resident_bytes`, the lossless packed storage schema, complete source
+and working dtype/shape, compact whole-file and logical-source hashes, the
+served implementation revision, and the exact plan. `time_to_resident_ready_ms`
+is server-owned and is the complete authenticated CUDA-residency interval.
+First resident-backed presentation, detector-ready presentation, and
+p50/p95/max/sample-count summaries are client-owned. The service reports those
+presentation fields as unavailable rather than substituting upload or kernel
+completion.

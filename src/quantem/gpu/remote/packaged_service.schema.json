@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "quantem.gpu.packaged-browse-service/v1",
+  "title": "QuantEM.GPU packaged Browse service capability",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "implementation_revision",
+    "revision_recorded",
+    "compatibility_chain",
+    "client_protocol",
+    "adapter",
+    "upstream_protocol",
+    "residency",
+    "timing",
+    "provenance"
+  ],
+  "properties": {
+    "schema": {
+      "const": "quantem.gpu.packaged-browse-service/v1"
+    },
+    "implementation_revision": {
+      "type": "string",
+      "minLength": 1
+    },
+    "revision_recorded": {
+      "type": "boolean"
+    },
+    "compatibility_chain": {
+      "const": [
+        "quantem-live-browse/3",
+        "live4dstem-standalone/3",
+        "quantem-gpu-browse/1"
+      ]
+    },
+    "client_protocol": {
+      "const": "quantem-live-browse/3"
+    },
+    "adapter": {
+      "const": "live4dstem-standalone/3"
+    },
+    "upstream_protocol": {
+      "const": "quantem-gpu-browse/1"
+    },
+    "residency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["endpoint", "schema", "required_when_compact_resident"],
+      "properties": {
+        "endpoint": {
+          "const": "/api/browse/residency"
+        },
+        "schema": {
+          "const": "quantem.gpu.browse-residency/v1"
+        },
+        "required_when_compact_resident": {
+          "type": "array",
+          "items": {"type": "string"},
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      }
+    },
+    "timing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "service_owned", "client_owned"],
+      "properties": {
+        "schema": {
+          "const": "quantem.gpu.browse-load-timing/v1"
+        },
+        "service_owned": {
+          "const": ["time_to_resident_ready_ms", "load_metrics"]
+        },
+        "client_owned": {
+          "const": [
+            "time_to_first_resident_present_ms",
+            "time_to_detector_ready_ms",
+            "p50_ms",
+            "p95_ms",
+            "max_ms",
+            "sample_count"
+          ]
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "fields"],
+      "properties": {
+        "schema": {
+          "const": "quantem.gpu.browse-provenance/v1"
+        },
+        "fields": {
+          "type": "array",
+          "items": {"type": "string"},
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      }
+    }
+  }
+}

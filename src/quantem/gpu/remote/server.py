@@ -49,6 +49,15 @@ except ImportError as exc:  # pragma: no cover - exercised by clean-install smok
 
 PROTOCOL_NAME = "quantem-gpu-browse"
 PROTOCOL_VERSION = 1
+PACKAGED_SERVICE_SCHEMA = "quantem.gpu.packaged-browse-service/v1"
+RESIDENCY_SCHEMA = "quantem.gpu.browse-residency/v1"
+LOAD_TIMING_SCHEMA = "quantem.gpu.browse-load-timing/v1"
+PROVENANCE_SCHEMA = "quantem.gpu.browse-provenance/v1"
+WINDOWS_COMPATIBILITY_CHAIN = (
+    "quantem-live-browse/3",
+    "live4dstem-standalone/3",
+    "quantem-gpu-browse/1",
+)
 _SCAN_BINS = {1, 2, 4, 8, 16}
 _CUDA_CACHE_FRACTION = 0.80
 _CUDA_LOAD_HEADROOM_BYTES = 1 << 30
@@ -57,6 +66,68 @@ _MAX_IMAGE_ENTRIES = 64
 _MASTER_RESCAN_INTERVAL_SECONDS = 10.0
 
 logger = logging.getLogger("quantem.gpu.remote")
+
+
+def _packaged_service_capability(implementation_revision: str) -> dict[str, Any]:
+    """Describe the exact raw-service seam consumed by packaged clients."""
+    return {
+        "schema": PACKAGED_SERVICE_SCHEMA,
+        "implementation_revision": implementation_revision,
+        "revision_recorded": implementation_revision != "unrecorded",
+        "compatibility_chain": list(WINDOWS_COMPATIBILITY_CHAIN),
+        "client_protocol": WINDOWS_COMPATIBILITY_CHAIN[0],
+        "adapter": WINDOWS_COMPATIBILITY_CHAIN[1],
+        "upstream_protocol": WINDOWS_COMPATIBILITY_CHAIN[2],
+        "residency": {
+            "endpoint": "/api/browse/residency",
+            "schema": RESIDENCY_SCHEMA,
+            "required_when_compact_resident": [
+                "implementation_revision",
+                "resident_bytes",
+                "logical_tensor_bytes",
+                "physical_resident_bytes",
+                "storage_kind",
+                "storage_schema",
+                "lossless_exact",
+                "source_shape",
+                "source_dtype",
+                "working_dtype",
+                "source_identity_sha256",
+                "source_raw_logical_sha256",
+                "compact_whole_file_sha256",
+                "load_metrics",
+                "timing",
+                "provenance",
+                "plan",
+            ],
+        },
+        "timing": {
+            "schema": LOAD_TIMING_SCHEMA,
+            "service_owned": ["time_to_resident_ready_ms", "load_metrics"],
+            "client_owned": [
+                "time_to_first_resident_present_ms",
+                "time_to_detector_ready_ms",
+                "p50_ms",
+                "p95_ms",
+                "max_ms",
+                "sample_count",
+            ],
+        },
+        "provenance": {
+            "schema": PROVENANCE_SCHEMA,
+            "fields": [
+                "implementation_revision",
+                "source_identity_sha256",
+                "source_raw_logical_sha256",
+                "compact_whole_file_sha256",
+                "source_shape",
+                "source_dtype",
+                "working_dtype",
+                "storage_schema",
+                "plan",
+            ],
+        },
+    }
 
 
 @dataclass(frozen=True)
@@ -1078,6 +1149,7 @@ class BrowseService:
             entry = self._master_cache.get(key)
             if entry is None:
                 return {
+                    "schema": RESIDENCY_SCHEMA,
                     "resident": False,
                     "stale": False,
                     "source_kind": None,
@@ -1092,25 +1164,77 @@ class BrowseService:
             metric_values = asdict(metrics) if is_dataclass(metrics) else metrics
             compact = entry.get("compact_source")
             metadata = getattr(compact, "metadata", None)
+            manifest = getattr(metadata, "manifest", {}) or {}
+            resident_bytes = self._entry_bytes(entry)
+            working_dtype = (
+                manifest.get("working_dtype")
+                if metadata is not None
+                else str(getattr(entry.get("data"), "dtype", "unknown"))
+            )
+            source_shape = (
+                list(metadata.shape)
+                if metadata is not None
+                else [*entry["scan_shape"], *entry["detector_shape"]]
+            )
+            source_dtype = str(manifest.get("source_dtype", working_dtype))
+            try:
+                logical_tensor_bytes = int(np.prod(source_shape, dtype=np.uint64)) * int(
+                    np.dtype(source_dtype).itemsize
+                )
+            except TypeError:
+                logical_tensor_bytes = None
+            source_identity = (
+                metadata.source_identity_sha256 if metadata is not None else None
+            )
+            source_raw_logical_sha256 = manifest.get("source_raw_logical_sha256")
+            compact_whole_file_sha256 = entry.get("compact_whole_file_sha256")
+            timing = {
+                "schema": LOAD_TIMING_SCHEMA,
+                "time_to_resident_ready_ms": (
+                    metric_values.get("total_ms")
+                    if isinstance(metric_values, dict)
+                    else None
+                ),
+                "resident_ready_definition": (
+                    "request start through complete authenticated CUDA residency"
+                ),
+                "time_to_first_resident_present_ms": None,
+                "first_resident_present_owner": "client",
+                "time_to_detector_ready_ms": None,
+                "detector_ready_owner": "client",
+            }
             return {
+                "schema": RESIDENCY_SCHEMA,
                 "resident": True,
                 "stale": stale,
                 "source_kind": entry.get("source_kind", "dense"),
                 "gpu": int(entry.get("gpu", self.gpu)),
-                "resident_bytes": self._entry_bytes(entry),
+                "resident_bytes": resident_bytes,
+                "logical_tensor_bytes": logical_tensor_bytes,
+                "physical_resident_bytes": resident_bytes,
+                "storage_kind": "lossless_packed" if metadata is not None else "dense",
+                "storage_schema": (
+                    manifest.get("schema")
+                    if metadata is not None
+                    else "quantem.gpu.dense-resident/v1"
+                ),
+                "lossless_exact": True,
+                "source_shape": source_shape,
+                "source_dtype": source_dtype,
                 "scan_shape": list(entry["scan_shape"]),
                 "detector_shape": list(entry["detector_shape"]),
-                "working_dtype": (
-                    metadata.manifest.get("working_dtype")
-                    if metadata is not None
-                    else str(getattr(entry.get("data"), "dtype", "unknown"))
-                ),
-                "source_identity_sha256": (
-                    metadata.source_identity_sha256
-                    if metadata is not None
-                    else None
-                ),
+                "working_dtype": working_dtype,
+                "source_identity_sha256": source_identity,
+                "source_raw_logical_sha256": source_raw_logical_sha256,
+                "compact_whole_file_sha256": compact_whole_file_sha256,
                 "load_metrics": metric_values,
+                "timing": timing,
+                "provenance": {
+                    "schema": PROVENANCE_SCHEMA,
+                    "source_identity_sha256": source_identity,
+                    "source_raw_logical_sha256": source_raw_logical_sha256,
+                    "compact_whole_file_sha256": compact_whole_file_sha256,
+                },
                 "plan": {
                     "detector_bin": det_bin,
                     "scan_bin": scan_bin,
@@ -1234,6 +1358,12 @@ class BrowseService:
                     409,
                     "Compact exact residency cannot crop or bin the source.",
                 )
+            if compact.expected_whole_file_sha256 is None:
+                raise HTTPException(
+                    409,
+                    "Compact exact residency requires an immutable whole-file "
+                    "SHA-256 seal in trusted server configuration.",
+                )
             from quantem.gpu.io.backends.cuda.compact_h5 import (
                 load_compact_h5_cuda,
             )
@@ -1267,6 +1397,9 @@ class BrowseService:
                 "com_row": None,
                 "com_column": None,
                 "load_metrics": source.load_metrics,
+                "compact_whole_file_sha256": (
+                    compact.expected_whole_file_sha256
+                ),
                 "source_signature": _file_signature(path),
             }
         from quantem.gpu import detector
@@ -1868,6 +2001,10 @@ def create_app(
         else:
             result["features"]["ssb"] = ssb.capability()
             result["features"]["maped"] = maped.advertised_capability()
+        result["implementation_revision"] = resolved_revision
+        result["packaged_service"] = _packaged_service_capability(
+            resolved_revision
+        )
         return result
 
     @app.post("/api/maped/inventory")
@@ -2114,7 +2251,7 @@ def create_app(
         column_stop: int | None = None,
     ) -> dict[str, Any]:
         region = _scan_region(row_start, row_stop, column_start, column_stop)
-        return await asyncio.to_thread(
+        result = await asyncio.to_thread(
             browse.residency_snapshot,
             session,
             file,
@@ -2122,6 +2259,13 @@ def create_app(
             scan_bin=scan_bin,
             scan_region=region,
         )
+        result["implementation_revision"] = resolved_revision
+        provenance = result.setdefault(
+            "provenance",
+            {"schema": PROVENANCE_SCHEMA},
+        )
+        provenance["implementation_revision"] = resolved_revision
+        return result
 
     @app.get("/api/browse/cbed")
     async def cbed(
@@ -2342,8 +2486,13 @@ def create_app(
 
 
 __all__ = [
+    "LOAD_TIMING_SCHEMA",
+    "PACKAGED_SERVICE_SCHEMA",
     "PROTOCOL_NAME",
     "PROTOCOL_VERSION",
+    "PROVENANCE_SCHEMA",
+    "RESIDENCY_SCHEMA",
+    "WINDOWS_COMPATIBILITY_CHAIN",
     "BrowseService",
     "CompactBrowseSource",
     "create_app",

@@ -37,11 +37,20 @@ Python executable, package freeze, CUDA runtime and driver, visible GPU list,
 and the configured data-root identity. A package version alone is not source
 provenance.
 
+Before binding a packaged Windows consumer, verify
+`GET /api/browse/capabilities` reports the intended exact
+`implementation_revision` and a `packaged_service` object matching
+`quantem.gpu.packaged-browse-service/v1`. Its compatibility chain must be
+`quantem-live-browse/3 -> live4dstem-standalone/3 -> quantem-gpu-browse/1`.
+Do not point the Windows client directly at the raw Browse v1 port; the
+loopback adapter is the versioned seam.
+
 ## Start the service
 
 ```bash
 conda run -n quantem-gpu-remote \
-  quantem-gpu serve /data/4dstem --gpus auto --port 8780
+  quantem-gpu serve /data/4dstem --gpus auto --port 8780 \
+  --implementation-revision <exact-git-sha>
 ```
 
 `--gpus auto` makes every visible CUDA device eligible. Use an explicit list

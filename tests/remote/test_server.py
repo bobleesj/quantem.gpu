@@ -16,8 +16,13 @@ from fastapi.testclient import TestClient
 from quantem.gpu import detector
 from quantem.gpu.cli import main
 from quantem.gpu.remote.server import (
+    LOAD_TIMING_SCHEMA,
+    PACKAGED_SERVICE_SCHEMA,
     PROTOCOL_NAME,
     PROTOCOL_VERSION,
+    PROVENANCE_SCHEMA,
+    RESIDENCY_SCHEMA,
+    WINDOWS_COMPATIBILITY_CHAIN,
     BrowseService,
     CompactBrowseSource,
     _scan_roi_indices,
@@ -112,7 +117,13 @@ class _FakeCompactSource:
     def __init__(self, data: np.ndarray) -> None:
         self.data = data
         self.metadata = SimpleNamespace(
-            manifest={"working_dtype": "uint16"},
+            manifest={
+                "schema": "quantem.gpu.packed-detector-h5/v1",
+                "source_dtype": "uint16",
+                "working_dtype": "uint16",
+                "source_raw_logical_sha256": "c" * 64,
+            },
+            shape=tuple(data.shape),
             source_identity_sha256="b" * 64,
         )
         self.memory_pool_used_bytes = 1234
@@ -138,7 +149,14 @@ class _FakeCompactSource:
 
 def test_capabilities_identify_quantem_gpu_protocol(tmp_path):
     service = _service(tmp_path)
-    client = TestClient(create_app(tmp_path, service=service))
+    revision = "d" * 40
+    client = TestClient(
+        create_app(
+            tmp_path,
+            service=service,
+            implementation_revision=revision,
+        )
+    )
 
     payload = client.get("/api/browse/capabilities").json()
 
@@ -152,6 +170,27 @@ def test_capabilities_identify_quantem_gpu_protocol(tmp_path):
     assert payload["features"]["exact_integer_images"] is True
     assert payload["features"]["multi_gpu_residency"] is False
     assert payload["features"]["compact_exact_residency"]["enabled"] is False
+    assert payload["implementation_revision"] == revision
+    packaged = payload["packaged_service"]
+    assert packaged["schema"] == PACKAGED_SERVICE_SCHEMA
+    assert packaged["revision_recorded"] is True
+    assert packaged["compatibility_chain"] == list(WINDOWS_COMPATIBILITY_CHAIN)
+    assert packaged["client_protocol"] == "quantem-live-browse/3"
+    assert packaged["adapter"] == "live4dstem-standalone/3"
+    assert packaged["upstream_protocol"] == "quantem-gpu-browse/1"
+    assert packaged["residency"]["schema"] == RESIDENCY_SCHEMA
+    assert packaged["timing"]["schema"] == LOAD_TIMING_SCHEMA
+    assert packaged["provenance"]["schema"] == PROVENANCE_SCHEMA
+
+    schema_path = (
+        Path(__file__).parents[2]
+        / "src/quantem/gpu/remote/packaged_service.schema.json"
+    )
+    schema = json.loads(schema_path.read_text())
+    assert schema["$id"] == PACKAGED_SERVICE_SCHEMA
+    assert schema["properties"]["compatibility_chain"]["const"] == list(
+        WINDOWS_COMPATIBILITY_CHAIN
+    )
 
 
 def test_existing_browse_routes_dispatch_to_bound_compact_source(tmp_path):
@@ -188,8 +227,16 @@ def test_existing_browse_routes_dispatch_to_bound_compact_source(tmp_path):
         "com_row": None,
         "com_column": None,
         "load_metrics": {"total_ms": 12.5, "source_read_ms": 4.0},
+        "compact_whole_file_sha256": "a" * 64,
     }
-    client = TestClient(create_app(tmp_path, service=service))
+    revision = "d" * 40
+    client = TestClient(
+        create_app(
+            tmp_path,
+            service=service,
+            implementation_revision=revision,
+        )
+    )
     common = {
         "session": "detector/20260101_session",
         "file": master.name,
@@ -226,17 +273,46 @@ def test_existing_browse_routes_dispatch_to_bound_compact_source(tmp_path):
     )
     assert service._entry_bytes(service._master_cache[key]) == 1234
     assert residency == {
+        "schema": RESIDENCY_SCHEMA,
         "resident": True,
         "stale": False,
         "source_kind": "compact_h5",
         "gpu": 2,
         "resident_bytes": 1234,
+        "logical_tensor_bytes": 128,
+        "physical_resident_bytes": 1234,
+        "storage_kind": "lossless_packed",
+        "storage_schema": "quantem.gpu.packed-detector-h5/v1",
+        "lossless_exact": True,
+        "source_shape": [2, 2, 4, 4],
+        "source_dtype": "uint16",
         "scan_shape": [2, 2],
         "detector_shape": [4, 4],
         "working_dtype": "uint16",
         "source_identity_sha256": "b" * 64,
+        "source_raw_logical_sha256": "c" * 64,
+        "compact_whole_file_sha256": "a" * 64,
         "load_metrics": {"total_ms": 12.5, "source_read_ms": 4.0},
+        "timing": {
+            "schema": LOAD_TIMING_SCHEMA,
+            "time_to_resident_ready_ms": 12.5,
+            "resident_ready_definition": (
+                "request start through complete authenticated CUDA residency"
+            ),
+            "time_to_first_resident_present_ms": None,
+            "first_resident_present_owner": "client",
+            "time_to_detector_ready_ms": None,
+            "detector_ready_owner": "client",
+        },
+        "provenance": {
+            "schema": PROVENANCE_SCHEMA,
+            "source_identity_sha256": "b" * 64,
+            "source_raw_logical_sha256": "c" * 64,
+            "compact_whole_file_sha256": "a" * 64,
+            "implementation_revision": revision,
+        },
         "plan": {"detector_bin": 1, "scan_bin": 1, "scan_region": None},
+        "implementation_revision": revision,
     }
 
     service._master_cache[key]["source_signature"] = (("stale", 0, 0),)
@@ -275,6 +351,23 @@ def test_bound_compact_source_rejects_transformed_plan(tmp_path):
             scan_bin=1,
             scan_region=None,
         )
+
+    assert error.value.status_code == 409
+
+
+def test_bound_compact_source_rejects_unsealed_load(tmp_path):
+    master = _master(tmp_path)
+    service = BrowseService(
+        tmp_path,
+        gpu=2,
+        compact_sources={master: CompactBrowseSource(tmp_path / "compact.h5")},
+        initialize_cuda=False,
+    )
+    service.backend = "cuda"
+    service.device = object()
+
+    with pytest.raises(HTTPException, match="whole-file SHA-256 seal") as error:
+        service._load_entry(master, 1, 1, None, 2)
 
     assert error.value.status_code == 409
 
