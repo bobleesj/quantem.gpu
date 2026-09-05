@@ -1014,12 +1014,20 @@ private func makeCompactFixture(
   scanOrigin: Int = 0
 ) throws -> CompactFixture {
   let widths: [UInt8] = [2, 3, 4, 16, 9, 2]
-  var values = widths.enumerated().map { pixel, width in
-    (0..<128).map { scan in
-      pixel == 3
+  var values: [[UInt32]] = []
+  values.reserveCapacity(widths.count)
+  for (pixel, width) in widths.enumerated() {
+    let valueLimit = 1 << Int(width)
+    var pixelValues: [UInt32] = []
+    pixelValues.reserveCapacity(128)
+    for scan in 0..<128 {
+      let value =
+        pixel == 3
         ? UInt32(0)
-        : UInt32(((scan + scanOrigin) * (pixel + 3) + pixel) % (1 << Int(width)))
+        : UInt32(((scan + scanOrigin) * (pixel + 3) + pixel) % valueLimit)
+      pixelValues.append(value)
     }
+    values.append(pixelValues)
   }
   values[3] = [UInt32](repeating: 0, count: 128)
   var decodedWords = [UInt32](
@@ -1059,7 +1067,7 @@ private func makeCompactFixture(
     String(format: "%02x", $0)
   }.joined()
   let binaryOffset: UInt32 = 4_096
-  let binaryBytes: UInt32 = 8 + 7 * 4 + 4 + 4 + 32 + 96
+  let binaryBytes = UInt32(172)
   let payloadOffset: UInt64 = 8_192
   let lengthsOffset = payloadOffset + UInt64(payload.count)
   let widthsOffset = lengthsOffset + UInt64(lengths.count)
@@ -1327,7 +1335,7 @@ private func makeDirectCompactFixture(
     manifest["masked_detector_pixels_sha256"] = pixelSHA
   }
   let binaryOffset: UInt32 = 4_096
-  let binaryBytes: UInt32 = 8 + 9 * 4 + 4 + 4 + 32 + 96
+  let binaryBytes = UInt32(180)
   let payloadOffset: UInt64 = 8_192
   let headersOffset = payloadOffset + UInt64(payload.count)
   var cursor = headersOffset + UInt64(headerData.count)
