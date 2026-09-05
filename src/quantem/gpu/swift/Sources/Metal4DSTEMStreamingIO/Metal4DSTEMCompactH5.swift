@@ -1260,11 +1260,14 @@ public enum MetalCompactH5Loader {
     let library = try Metal4DSTEMKernels.makeCompactH5Library(device: device)
     let metadataKernels = index.storageLayout == .lz4V1 && nativeCache == nil
       ? try CompactH5MetadataKernels(device: device, library: library) : nil
-    let decode = try pipeline(
-      library: library,
-      name: Metal4DSTEMKernels.compactH5DecodeFunction,
-      device: device
-    )
+    let decode = metadataKernels == nil ? nil : try pipeline(
+      library: library, name: "compact_h5_lz4_decode_simd32", device: device)
+    if let decode {
+      guard decode.threadExecutionWidth == 32, decode.maxTotalThreadsPerThreadgroup >= 256 else {
+        throw Metal4DSTEMStreamingIOError.metalUnavailable(
+          "Compact LZ4 decoding requires 32-lane SIMD groups and 256-thread groups.")
+      }
+    }
     let validateDescriptors = try pipeline(
       library: library,
       name: Metal4DSTEMKernels.compactH5ValidateDescriptorsFunction,
@@ -1368,8 +1371,8 @@ public enum MetalCompactH5Loader {
                 verifyChecksums: verifyChecksums
               )
             }
-            guard let metadataKernels else {
-              throw Metal4DSTEMStreamingIOError.metalUnavailable("Compact metadata kernels are missing.")
+            guard let metadataKernels, let decode else {
+              throw Metal4DSTEMStreamingIOError.metalUnavailable("Compact decode kernels are missing.")
             }
             return try loadCompressedShard(
               descriptor: descriptor, shardIndex: shardIndex, shard: shard, index: index,
@@ -2026,8 +2029,8 @@ public enum MetalCompactH5Loader {
       index: 4
     )
     decodeEncoder.dispatchThreadgroups(
-      MTLSize(width: Int(shard.chunkCount), height: 1, depth: 1),
-      threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1)
+      MTLSize(width: (Int(shard.chunkCount) + 7) / 8, height: 1, depth: 1),
+      threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
     )
     decodeEncoder.endEncoding()
     try metadataKernels.encodeDecodeStatus(

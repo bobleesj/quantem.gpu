@@ -425,6 +425,84 @@ kernel void compact_h5_lz4_decode(
     }
 }
 
+// One SIMD group owns a complete 128-byte block. Each lane retains one output
+// word; match references use lane shuffles instead of repeatedly reading and
+// barriering device memory. Eight independent blocks share one threadgroup.
+kernel void compact_h5_lz4_decode_simd32(
+    device const uint *compressed [[buffer(0)]],
+    device const CompactLZ4Chunk *chunks [[buffer(1)]],
+    device uint *decoded [[buffer(2)]],
+    device uint *status [[buffer(3)]],
+    constant CompactLZ4Parameters &parameters [[buffer(4)]],
+    uint group [[threadgroup_position_in_grid]],
+    uint simd [[simdgroup_index_in_threadgroup]],
+    uint lane [[thread_index_in_simdgroup]]
+) {
+    uint chunk = group * 8u + simd;
+    if (chunk >= parameters.chunkCount) return;
+    CompactLZ4Chunk record = chunks[chunk];
+    uint input = record.inputOffset;
+    uint end = input + record.inputBytes;
+    uint output = 0u;
+    uint word = 0u;
+    uint tokens = 0u;
+    uint error = 0u;
+    if (record.inputBytes == 0u || input > parameters.compressedBytes
+        || record.inputBytes > parameters.compressedBytes - input
+        || record.outputBytes == 0u || record.outputBytes > 128u
+        || (record.outputBytes & 3u) != 0u) error = 2u;
+    while (error == 0u && input < end && output < record.outputBytes) {
+        if (++tokens > record.outputBytes) { error = 3u; break; }
+        uint token = compactReadByte(compressed, input++);
+        uint literals = token >> 4u;
+        if (!compactExtendLength(compressed, input, end, literals)
+            || literals > end - input || literals > record.outputBytes - output) {
+            error = 4u; break;
+        }
+        for (uint byte = 0u; byte < 4u; ++byte) {
+            uint address = lane * 4u + byte;
+            if (address >= output && address - output < literals) {
+                uint value = compactReadByte(compressed, input + address - output);
+                word = (word & ~(0xffu << (byte * 8u))) | (value << (byte * 8u));
+            }
+        }
+        input += literals;
+        output += literals;
+        if (output == record.outputBytes || input == end) break;
+        if (end - input < 2u) { error = 5u; break; }
+        uint period = compactReadU16LE(compressed, input);
+        input += 2u;
+        if (period == 0u || period > output) { error = 6u; break; }
+        uint count = token & 15u;
+        if (!compactExtendLength(compressed, input, end, count) || count > 0xfffffffbu) {
+            error = 7u; break;
+        }
+        count += 4u;
+        if (count > record.outputBytes - output) { error = 8u; break; }
+        // All lanes execute every shuffle, including lanes not writing a byte.
+        // Its source always belongs to the already-decoded prefix. Keep that
+        // prefix immutable while constructing this overlapping LZ4 match.
+        uint prefixWord = word;
+        bool powerOfTwo = (period & (period - 1u)) == 0u;
+        for (uint byte = 0u; byte < 4u; ++byte) {
+            uint address = lane * 4u + byte;
+            bool active = address >= output && address - output < count;
+            uint relative = active ? address - output : 0u;
+            uint reference = output - period
+                + (powerOfTwo ? relative & (period - 1u) : relative % period);
+            uint source = simd_shuffle(prefixWord, reference >> 2u);
+            if (active) {
+                uint value = (source >> ((reference & 3u) * 8u)) & 0xffu;
+                word = (word & ~(0xffu << (byte * 8u))) | (value << (byte * 8u));
+            }
+        }
+        output += count;
+    }
+    if (error == 0u && (output != record.outputBytes || input != end)) error = 9u;
+    if (error == 0u && lane < record.outputBytes / 4u) decoded[record.outputWord + lane] = word;
+    if (lane == 0u) status[chunk] = error;
+}
+
 kernel void compact_h5_validate_descriptors(
     device const uint *descriptors [[buffer(0)]],
     device atomic_uint *status [[buffer(1)]],
