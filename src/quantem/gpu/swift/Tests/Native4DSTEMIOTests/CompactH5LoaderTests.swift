@@ -49,6 +49,7 @@ final class CompactH5LoaderTests: XCTestCase {
       XCTAssertFalse(source.loadMetrics.checksumsVerified)
       XCTAssertEqual(source.loadMetrics.decodedShardSHA256Checks, 0)
       XCTAssertEqual(source.loadMetrics.decodedIntegrityMilliseconds, 0)
+      XCTAssertGreaterThan(source.loadMetrics.gpuPreparationMilliseconds, 0)
       for scan in 0..<640 {
         XCTAssertEqual(
           try source.extractDiffraction(scanRow: scan / 16, scanColumn: scan % 16),

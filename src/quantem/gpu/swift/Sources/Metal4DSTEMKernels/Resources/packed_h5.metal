@@ -13,6 +13,125 @@ struct CompactLZ4Parameters {
     uint compressedBytes;
 };
 
+struct CompactScanParameters {
+    uint count;
+    // 0: bit widths to words; 1: encoded chunk lengths to bytes; 2: uint sums.
+    uint kind;
+};
+
+struct CompactTableParameters {
+    uint descriptorCount;
+    uint chunkCount;
+    uint decodedWords;
+    uint compressedBytes;
+    uint chunkBytes;
+};
+
+// Hierarchical exclusive scan. Every level stays on the GPU. Overflow is
+// reported, never silently used as a wrapped pointer into scientific evidence.
+kernel void compact_h5_scan_offsets(
+    device const uint *input [[buffer(0)]],
+    device uint *offsets [[buffer(1)]],
+    device uint *blockSums [[buffer(2)]],
+    device atomic_uint *status [[buffer(3)]],
+    constant CompactScanParameters &p [[buffer(4)]],
+    uint index [[thread_position_in_grid]],
+    uint block [[threadgroup_position_in_grid]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint simd [[simdgroup_index_in_threadgroup]]
+) {
+    threadgroup uint sums[8];
+    threadgroup uint carries[8];
+    uint value = 0u;
+    if (index < p.count) {
+        value = p.kind == 2u ? input[index]
+            : uint(reinterpret_cast<device const uchar *>(input)[index]);
+        if (p.kind == 0u) value *= 4u;
+        if (p.kind == 1u) value += 1u;
+    }
+    uint prefix = simd_prefix_exclusive_sum(value);
+    if (prefix + value < prefix) atomic_fetch_or_explicit(status, 1u, memory_order_relaxed);
+    uint sum = simd_sum(value);
+    if (lane == 0u) sums[simd] = sum;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (simd == 0u) {
+        uint groupValue = lane < 8u ? sums[lane] : 0u;
+        uint groupPrefix = simd_prefix_exclusive_sum(groupValue);
+        if (groupPrefix + groupValue < groupPrefix)
+            atomic_fetch_or_explicit(status, 1u, memory_order_relaxed);
+        if (lane < 8u) carries[lane] = groupPrefix;
+        if (lane == 7u) blockSums[block] = groupPrefix + groupValue;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    uint offset = prefix + carries[simd];
+    if (offset < prefix) atomic_fetch_or_explicit(status, 1u, memory_order_relaxed);
+    if (index < p.count) offsets[index] = offset;
+}
+
+kernel void compact_h5_add_offset_carries(
+    device uint *offsets [[buffer(0)]],
+    device const uint *blockOffsets [[buffer(1)]],
+    device atomic_uint *status [[buffer(2)]],
+    constant uint &count [[buffer(3)]],
+    uint index [[thread_position_in_grid]]
+) {
+    if (index >= count) return;
+    uint value = offsets[index];
+    uint sum = value + blockOffsets[index / 256u];
+    if (sum < value) atomic_fetch_or_explicit(status, 1u, memory_order_relaxed);
+    offsets[index] = sum;
+}
+
+kernel void compact_h5_prepare_descriptors(
+    device const uchar *widths [[buffer(0)]],
+    device const uint *offsets [[buffer(1)]],
+    device uint *descriptors [[buffer(2)]],
+    device atomic_uint *status [[buffer(3)]],
+    constant CompactTableParameters &p [[buffer(4)]],
+    uint index [[thread_position_in_grid]]
+) {
+    if (index >= p.descriptorCount) return;
+    uint width = widths[index];
+    uint offset = offsets[index];
+    if (width > 16u) atomic_fetch_or_explicit(status, 2u, memory_order_relaxed);
+    if (offset >= (1u << 27u)
+        || (index + 1u == p.descriptorCount && ulong(offset) + ulong(width) * 4ul != p.decodedWords))
+        atomic_fetch_or_explicit(status, 4u, memory_order_relaxed);
+    descriptors[index] = (offset << 5u) | width;
+}
+
+kernel void compact_h5_prepare_chunks(
+    device const uchar *lengths [[buffer(0)]],
+    device const uint *offsets [[buffer(1)]],
+    device CompactLZ4Chunk *chunks [[buffer(2)]],
+    device atomic_uint *status [[buffer(3)]],
+    constant CompactTableParameters &p [[buffer(4)]],
+    uint index [[thread_position_in_grid]]
+) {
+    if (index >= p.chunkCount) return;
+    uint inputBytes = uint(lengths[index]) + 1u;
+    uint outputWord = index * (p.chunkBytes / 4u);
+    if (outputWord >= p.decodedWords
+        || (index + 1u == p.chunkCount && ulong(offsets[index]) + inputBytes != p.compressedBytes))
+        atomic_fetch_or_explicit(status, 8u, memory_order_relaxed);
+    chunks[index] = CompactLZ4Chunk {
+        offsets[index], inputBytes, outputWord,
+        min(p.chunkBytes / 4u, p.decodedWords - min(outputWord, p.decodedWords)) * 4u
+    };
+}
+
+kernel void compact_h5_reduce_decode_status(
+    device const uint *chunkStatus [[buffer(0)]],
+    device atomic_uint *status [[buffer(1)]],
+    constant uint &count [[buffer(2)]],
+    uint index [[thread_position_in_grid]],
+    uint lane [[thread_index_in_simdgroup]]
+) {
+    uint error = simd_or(index < count ? chunkStatus[index] : 0u);
+    if (lane == 0u && error != 0u)
+        atomic_fetch_or_explicit(status, 16u, memory_order_relaxed);
+}
+
 struct CompactDescriptorParameters {
     uint descriptorCount;
     uint payloadWords;

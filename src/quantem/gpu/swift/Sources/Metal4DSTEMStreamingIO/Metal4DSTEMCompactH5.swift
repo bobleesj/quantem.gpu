@@ -130,6 +130,8 @@ public struct MetalCompactH5LoadMetrics: Equatable, Sendable {
   public let metadataMilliseconds: Double
   public let sourceReadMilliseconds: Double
   public let descriptorPreparationMilliseconds: Double
+  /// GPU timestamp duration for parallel descriptor/chunk offset construction.
+  public let gpuPreparationMilliseconds: Double
   public let gpuDecodeMilliseconds: Double
   public let decodedIntegrityMilliseconds: Double
   public let privateUploadMilliseconds: Double
@@ -335,6 +337,7 @@ private struct CompactShardLoadResult {
   let resident: CompactResidentShard
   let sourceReadMilliseconds: Double
   let descriptorPreparationMilliseconds: Double
+  let gpuPreparationMilliseconds: Double
   let gpuDecodeMilliseconds: Double
   let decodedIntegrityMilliseconds: Double
   let privateUploadMilliseconds: Double
@@ -1252,6 +1255,8 @@ public enum MetalCompactH5Loader {
       )
     }
     let library = try Metal4DSTEMKernels.makeCompactH5Library(device: device)
+    let metadataKernels = index.storageLayout == .lz4V1 && nativeCache == nil
+      ? try CompactH5MetadataKernels(device: device, library: library) : nil
     let decode = try pipeline(
       library: library,
       name: Metal4DSTEMKernels.compactH5DecodeFunction,
@@ -1307,6 +1312,7 @@ public enum MetalCompactH5Loader {
     )
     var sourceReadMilliseconds = 0.0
     var descriptorPreparationMilliseconds = 0.0
+    var gpuPreparationMilliseconds = 0.0
     var gpuDecodeMilliseconds = 0.0
     var decodedIntegrityMilliseconds = 0.0
     var privateUploadMilliseconds = 0.0
@@ -1359,9 +1365,13 @@ public enum MetalCompactH5Loader {
                 verifyChecksums: verifyChecksums
               )
             }
+            guard let metadataKernels else {
+              throw Metal4DSTEMStreamingIOError.metalUnavailable("Compact metadata kernels are missing.")
+            }
             return try loadCompressedShard(
               descriptor: descriptor, shardIndex: shardIndex, shard: shard, index: index,
-              excludedSet: excludedSet, device: device, queue: queue, decode: decode,
+              device: device, queue: queue, decode: decode,
+              metadataKernels: metadataKernels,
               validateDescriptors: validateDescriptors, maximumWidthBuffer: concurrentWidths.buffer,
               verifyChecksums: verifyChecksums
             )
@@ -1374,6 +1384,7 @@ public enum MetalCompactH5Loader {
       for loaded in try results.finish() {
         sourceReadMilliseconds += loaded.sourceReadMilliseconds
         descriptorPreparationMilliseconds += loaded.descriptorPreparationMilliseconds
+        gpuPreparationMilliseconds += loaded.gpuPreparationMilliseconds
         gpuDecodeMilliseconds += loaded.gpuDecodeMilliseconds
         decodedIntegrityMilliseconds += loaded.decodedIntegrityMilliseconds
         privateUploadMilliseconds += loaded.privateUploadMilliseconds
@@ -1502,6 +1513,7 @@ public enum MetalCompactH5Loader {
       metadataMilliseconds: metadataMilliseconds,
       sourceReadMilliseconds: sourceReadMilliseconds,
       descriptorPreparationMilliseconds: descriptorPreparationMilliseconds,
+      gpuPreparationMilliseconds: gpuPreparationMilliseconds,
       gpuDecodeMilliseconds: gpuDecodeMilliseconds,
       decodedIntegrityMilliseconds: decodedIntegrityMilliseconds,
       privateUploadMilliseconds: privateUploadMilliseconds,
@@ -1580,11 +1592,11 @@ public enum MetalCompactH5Loader {
       if index.storageLayout == .lz4V1 && nativeCache == nil {
         staging = try add(staging, shard.lengthsBytes, label: "chunk length staging")
         staging = try add(staging, shard.decodedBytes, label: "decoded staging")
-        // Arrays and their copied shared Metal buffers coexist until the shard
-        // autorelease pool drains: two descriptor and two chunk-table copies.
+        // Include GPU outputs and every hierarchical scan level. These bounds
+        // deliberately exceed the geometric-series scratch requirement.
         staging = try add(
           staging,
-          try multiply(UInt64(shard.descriptorCount), UInt64(8), label: "descriptor staging"),
+          try multiply(UInt64(shard.descriptorCount), UInt64(12), label: "descriptor staging"),
           label: "descriptor staging budget"
         )
         staging = try add(
@@ -1595,7 +1607,7 @@ public enum MetalCompactH5Loader {
         // Compressed Metal payload is rounded to four bytes by the loader.
         staging = try add(staging, (4 - shard.payloadBytes % 4) % 4, label: "payload alignment")
       }
-      staging = try add(staging, UInt64(4), label: "descriptor validation status")
+      staging = try add(staging, UInt64(8), label: "descriptor and metadata validation status")
       maximumStaging = max(maximumStaging, staging)
     }
     if let products = metadata.preparedDetectorProducts {
@@ -1880,10 +1892,10 @@ public enum MetalCompactH5Loader {
     shardIndex: Int,
     shard: CompactH5ShardRecord,
     index: CompactH5ParsedIndex,
-    excludedSet: Set<Int>,
     device: MTLDevice,
     queue: MTLCommandQueue,
     decode: MTLComputePipelineState,
+    metadataKernels: CompactH5MetadataKernels,
     validateDescriptors: MTLComputePipelineState,
     maximumWidthBuffer: MTLBuffer,
     verifyChecksums: Bool
@@ -1912,8 +1924,8 @@ public enum MetalCompactH5Loader {
       maximumTransientBytes,
       UInt64(
         payloadBytes + lengthsBytes + widthsBytes + decodedBytes
-          + descriptorBytes * 2 + chunkBytes * 2 + Int(shard.chunkCount) * 4
-          + (4 - payloadBytes % 4) % 4 + 4
+          + descriptorBytes * 3 + chunkBytes * 2 + Int(shard.chunkCount) * 4
+          + (4 - payloadBytes % 4) % 4 + 8
       )
     )
     guard decodedBytes <= device.maxBufferLength,
@@ -1949,125 +1961,43 @@ public enum MetalCompactH5Loader {
       byteCount: payloadBytes,
       label: "shard \(shardIndex) compressed payload"
     )
-    var lengths = [UInt8](repeating: 0, count: lengthsBytes)
-    try lengths.withUnsafeMutableBytes { raw in
-      try preadExact(
-        descriptor,
-        offset: shard.lengthsOffset,
-        into: raw.baseAddress!,
-        byteCount: raw.count,
-        label: "shard \(shardIndex) chunk lengths"
-      )
-    }
-    var widths = [UInt8](repeating: 0, count: widthsBytes)
-    try widths.withUnsafeMutableBytes { raw in
-      try preadExact(
-        descriptor,
-        offset: shard.widthsOffset,
-        into: raw.baseAddress!,
-        byteCount: raw.count,
-        label: "shard \(shardIndex) descriptor widths"
-      )
-    }
+    let lengths = try CompactH5MetadataKernels.buffer(device, bytes: lengthsBytes, shared: true)
+    try preadExact(
+      descriptor, offset: shard.lengthsOffset, into: lengths.contents(),
+      byteCount: lengthsBytes, label: "shard \(shardIndex) chunk lengths")
+    let widths = try CompactH5MetadataKernels.buffer(device, bytes: widthsBytes, shared: true)
+    try preadExact(
+      descriptor, offset: shard.widthsOffset, into: widths.contents(),
+      byteCount: widthsBytes, label: "shard \(shardIndex) descriptor widths")
     sourceReadMilliseconds += milliseconds(from: readStart)
 
     let preparationStart = ContinuousClock.now
-    let tileCount = (index.metadata.scansPerShard + 127) / 128
-    var descriptors = [UInt32]()
-    descriptors.reserveCapacity(widths.count)
-    var payloadWord: UInt32 = 0
-    for (descriptorIndex, widthByte) in widths.enumerated() {
-      let width = UInt32(widthByte)
-      guard width <= 16 else {
-        throw invalid(
-          "Compact shard \(shardIndex) descriptor \(descriptorIndex) requires "
-            + "\(width) bits, beyond exact uint16."
-        )
-      }
-      let pixel = descriptorIndex / tileCount
-      if index.manifestWorkingDtype == "uint8", width > 8,
-        !excludedSet.contains(pixel)
-      {
-        throw invalid(
-          "Compact shard \(shardIndex) uses \(width) bits for nonexcluded "
-            + "detector pixel \(pixel), contradicting its legacy uint8 manifest."
-        )
-      }
-      guard payloadWord < (1 << 27) else {
-        throw invalid(
-          "Compact shard \(shardIndex) exceeds the 27-bit descriptor offset."
-        )
-      }
-      descriptors.append((payloadWord << 5) | width)
-      payloadWord = try add(
-        payloadWord,
-        width * 4,
-        label: "compact payload word offset"
-      )
+    let chunkBuffer = try CompactH5MetadataKernels.buffer(device, bytes: chunkBytes)
+    let descriptorStage = try CompactH5MetadataKernels.buffer(device, bytes: descriptorBytes)
+    let decodeStatus = try CompactH5MetadataKernels.buffer(device, bytes: Int(shard.chunkCount) * 4)
+    let metadataStatus = try CompactH5MetadataKernels.buffer(device, bytes: 4, shared: true)
+    metadataStatus.contents().storeBytes(of: UInt32(0), as: UInt32.self)
+    guard let preparationCommand = queue.makeCommandBuffer() else {
+      throw Metal4DSTEMStreamingIOError.metalUnavailable("Could not create GPU table command.")
     }
-    guard UInt64(payloadWord) * 4 == shard.decodedBytes else {
+    try metadataKernels.encodeTables(
+      widths: widths, lengths: lengths, descriptorCount: Int(shard.descriptorCount),
+      chunkCount: Int(shard.chunkCount), decodedWords: UInt32(shard.decodedBytes / 4),
+      compressedBytes: UInt32(payloadBytes), chunkBytes: UInt32(index.metadata.payloadChunkBytes),
+      descriptorOutput: descriptorStage, chunkOutput: chunkBuffer, status: metadataStatus,
+      device: device, command: preparationCommand)
+    try MetalCompactH5ResidentSource.complete(
+      preparationCommand, operation: "shard \(shardIndex) GPU tables")
+    let tableError = metadataStatus.contents().load(as: UInt32.self)
+    guard tableError == 0 else {
       throw invalid(
-        "Compact shard \(shardIndex) widths cover \(UInt64(payloadWord) * 4) "
-          + "decoded bytes, expected \(shard.decodedBytes)."
-      )
+        "Compact shard \(shardIndex) GPU metadata validation failed (status \(tableError)): "
+          + "check width bits, offset overflow, and payload/chunk coverage.")
     }
-    var chunks: [CompactLZ4Chunk] = []
-    chunks.reserveCapacity(lengths.count)
-    var inputOffset: UInt32 = 0
-    for (chunkIndex, encodedLength) in lengths.enumerated() {
-      let inputBytes = UInt32(encodedLength) + 1
-      let outputOffset = chunkIndex * index.metadata.payloadChunkBytes
-      chunks.append(
-        CompactLZ4Chunk(
-          inputOffset: inputOffset,
-          inputBytes: inputBytes,
-          outputWord: UInt32(outputOffset / 4),
-          outputBytes: UInt32(
-            min(index.metadata.payloadChunkBytes, decodedBytes - outputOffset)
-          )
-        )
-      )
-      inputOffset = try add(
-        inputOffset,
-        inputBytes,
-        label: "compressed chunk offset"
-      )
-    }
-    guard UInt64(inputOffset) == shard.payloadBytes else {
-      throw invalid(
-        "Compact shard \(shardIndex) chunk lengths cover \(inputOffset) bytes, "
-          + "expected \(shard.payloadBytes)."
-      )
-    }
-    guard
-      let chunkBuffer = chunks.withUnsafeBytes({ raw in
-        device.makeBuffer(
-          bytes: raw.baseAddress!,
-          length: raw.count,
-          options: .storageModeShared
-        )
-      }),
-      let descriptorStage = descriptors.withUnsafeBytes({ raw in
-        device.makeBuffer(
-          bytes: raw.baseAddress!,
-          length: raw.count,
-          options: .storageModeShared
-        )
-      }),
-      let decodeStatus = device.makeBuffer(
-        length: Int(shard.chunkCount) * MemoryLayout<UInt32>.stride,
-        options: .storageModeShared
-      )
-    else {
-      throw Metal4DSTEMStreamingIOError.allocationFailed(
-        label: "compact metadata staging for shard \(shardIndex)",
-        bytes: UInt64(chunkBytes + descriptorBytes + Int(shard.chunkCount) * 4)
-      )
-    }
-    // The Metal decoder initializes its own output words; do not touch the
-    // multi-gigabyte decoded staging volume on the CPU before GPU decode.
-    memset(decodeStatus.contents(), 0xff, decodeStatus.length)
+    let gpuPreparationMilliseconds = max(
+      0, preparationCommand.gpuEndTime - preparationCommand.gpuStartTime) * 1_000
     descriptorPreparationMilliseconds += milliseconds(from: preparationStart)
+    let payloadWord = UInt32(shard.decodedBytes / 4)
 
     var decodeParameters = CompactLZ4Parameters(
       chunkCount: shard.chunkCount,
@@ -2095,6 +2025,8 @@ public enum MetalCompactH5Loader {
       threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1)
     )
     decodeEncoder.endEncoding()
+    try metadataKernels.encodeDecodeStatus(
+      input: decodeStatus, count: Int(shard.chunkCount), status: metadataStatus, command: decodeCommand)
     try MetalCompactH5ResidentSource.complete(
       decodeCommand,
       operation: "shard \(shardIndex) raw LZ4 decode"
@@ -2104,14 +2036,9 @@ public enum MetalCompactH5Loader {
         0,
         decodeCommand.gpuEndTime - decodeCommand.gpuStartTime
       ) * 1_000
-    let statuses = decodeStatus.contents().bindMemory(
-      to: UInt32.self,
-      capacity: Int(shard.chunkCount)
-    )
-    for chunkIndex in 0..<Int(shard.chunkCount) where statuses[chunkIndex] != 0 {
+    if metadataStatus.contents().load(as: UInt32.self) != 0 {
       throw invalid(
-        "Compact shard \(shardIndex) raw LZ4 chunk \(chunkIndex) failed "
-          + "with decoder status \(statuses[chunkIndex])."
+        "Compact shard \(shardIndex) raw LZ4 decoder reported an invalid chunk."
       )
     }
 
@@ -2222,6 +2149,7 @@ public enum MetalCompactH5Loader {
       resident: CompactResidentShard(payload: privatePayload, descriptors: privateDescriptors),
       sourceReadMilliseconds: sourceReadMilliseconds,
       descriptorPreparationMilliseconds: descriptorPreparationMilliseconds,
+      gpuPreparationMilliseconds: gpuPreparationMilliseconds,
       gpuDecodeMilliseconds: gpuDecodeMilliseconds,
       decodedIntegrityMilliseconds: decodedIntegrityMilliseconds,
       privateUploadMilliseconds: privateUploadMilliseconds,
@@ -2503,6 +2431,7 @@ public enum MetalCompactH5Loader {
       ),
       sourceReadMilliseconds: sourceReadMilliseconds,
       descriptorPreparationMilliseconds: descriptorPreparationMilliseconds,
+      gpuPreparationMilliseconds: 0,
       gpuDecodeMilliseconds: 0,
       decodedIntegrityMilliseconds: decodedIntegrityMilliseconds,
       privateUploadMilliseconds: milliseconds(from: uploadStart),
