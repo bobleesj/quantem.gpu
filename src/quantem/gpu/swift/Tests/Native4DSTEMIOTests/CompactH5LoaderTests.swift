@@ -5,6 +5,111 @@ import XCTest
 @testable import Metal4DSTEMStreamingIO
 
 final class CompactH5LoaderTests: XCTestCase {
+  func testTrustedDirectPreparedProductsMatchVerifiedProducts() throws {
+    let fixture = try makeDirectCompactFixture(preparedDPC: true, preparedDetectorProducts: true)
+    defer { try? FileManager.default.removeItem(at: fixture.url) }
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let verified = try MetalCompactH5Loader.load(sourceURL: fixture.url, device: device)
+    var expected: [[UInt32]] = []
+    let names: [MetalCompactH5PreparedDetectorProductName] = [.bf, .abf, .adf]
+    for name in names {
+      try verified.activatePreparedDetectorProduct(name)
+      expected.append(try verified.virtualDetectorValues())
+    }
+    verified.releaseResidentStorage()
+    let trusted = try MetalCompactH5Loader.load(
+      sourceURL: fixture.url, device: device, authenticationPolicy: .parallelMapped,
+      verifyChecksums: false
+    )
+    XCTAssertFalse(trusted.loadMetrics.checksumsVerified)
+    XCTAssertEqual(trusted.loadMetrics.decodedIntegrityMilliseconds, 0)
+    XCTAssertEqual(trusted.loadMetrics.preparedDetectorProductAuthenticationMilliseconds, 0)
+    for (offset, name) in names.enumerated() {
+      try trusted.activatePreparedDetectorProduct(name)
+      XCTAssertEqual(try trusted.virtualDetectorValues(), expected[offset])
+    }
+    for scan in 0..<128 {
+      XCTAssertEqual(
+        try trusted.extractDiffraction(scanRow: scan / 16, scanColumn: scan % 16),
+        fixture.values.map { $0[scan] }
+      )
+    }
+    trusted.releaseResidentStorage()
+  }
+
+  func testTrustedLoadPreservesEveryScanAndReportsSkippedChecks() throws {
+    let fixture = try makeMultishardCompactFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.url) }
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    for policy in [MetalCompactH5AuthenticationPolicy.boundedSequential, .boundedConcurrent] {
+      let source = try MetalCompactH5Loader.load(
+        sourceURL: fixture.url, device: device, authenticationPolicy: policy,
+        verifyChecksums: false
+      )
+      XCTAssertFalse(source.loadMetrics.checksumsVerified)
+      XCTAssertEqual(source.loadMetrics.decodedShardSHA256Checks, 0)
+      XCTAssertEqual(source.loadMetrics.decodedIntegrityMilliseconds, 0)
+      for scan in 0..<640 {
+        XCTAssertEqual(
+          try source.extractDiffraction(scanRow: scan / 16, scanColumn: scan % 16),
+          fixture.values.map { $0[scan] }
+        )
+      }
+      source.releaseResidentStorage()
+    }
+  }
+
+  func testTrustedLoadSkipsDigestButStillRejectsInvalidWidths() throws {
+    let fixture = try makeCompactFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.url) }
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    var bytes = try Data(contentsOf: fixture.url)
+    // Change only the expected decoded digest, not the scientific payload.
+    bytes[4096 + 76 + 64] ^= 1
+    try bytes.write(to: fixture.url)
+    XCTAssertThrowsError(try MetalCompactH5Loader.load(sourceURL: fixture.url, device: device))
+    let trusted = try MetalCompactH5Loader.load(
+      sourceURL: fixture.url, device: device, verifyChecksums: false
+    )
+    XCTAssertEqual(
+      try trusted.extractDiffraction(scanRow: 3, scanColumn: 7),
+      fixture.values.map { $0[55] }
+    )
+    trusted.releaseResidentStorage()
+    bytes[fixture.headerOffset] = 255
+    try bytes.write(to: fixture.url)
+    XCTAssertThrowsError(
+      try MetalCompactH5Loader.load(sourceURL: fixture.url, device: device, verifyChecksums: false)
+    )
+  }
+
+  func testTrustedPreparedAndNativeCacheParity() throws {
+    let fixture = try makeCompactFixture(portable: true, preparedDPC: true)
+    let cache = fixture.url.appendingPathExtension("qgmc")
+    defer {
+      try? FileManager.default.removeItem(at: fixture.url)
+      try? FileManager.default.removeItem(at: cache)
+    }
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let verified = try MetalCompactH5Loader.load(sourceURL: fixture.url, device: device)
+    XCTAssertTrue(verified.loadMetrics.checksumsVerified)
+    let expected = try verified.preparedDPCMomentValues()
+    try verified.saveNativeCache(to: cache)
+    verified.releaseResidentStorage()
+    for cacheURL in [nil, cache] as [URL?] {
+      let source = try MetalCompactH5Loader.load(
+        sourceURL: fixture.url, device: device, authenticationPolicy: .parallelMapped,
+        nativeCacheURL: cacheURL, verifyChecksums: false
+      )
+      XCTAssertEqual(try source.preparedDPCMomentValues(), expected)
+      XCTAssertEqual(source.loadMetrics.preparedDPCAuthenticationMilliseconds, 0)
+      XCTAssertEqual(source.loadMetrics.nativeCacheDescriptorSHA256Checks, 0)
+      XCTAssertEqual(source.loadMetrics.mappedAuthenticationBytes, 0)
+      XCTAssertEqual(source.loadMetrics.decodedShardSHA256Checks, 0)
+      source.releaseResidentStorage()
+    }
+  }
+
   func testBoundedConcurrentPreservesEveryScanAcrossPartialWindow() throws {
     let fixture = try makeMultishardCompactFixture()
     defer { try? FileManager.default.removeItem(at: fixture.url) }

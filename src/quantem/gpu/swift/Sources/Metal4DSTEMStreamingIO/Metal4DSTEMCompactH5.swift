@@ -144,6 +144,8 @@ public struct MetalCompactH5LoadMetrics: Equatable, Sendable {
   public let deviceAllocatedBytesBefore: UInt64
   public let deviceAllocatedBytesAfter: UInt64
   public let decodedShardSHA256Checks: Int
+  /// False for explicitly trusted local loads; structural validation still runs.
+  public let checksumsVerified: Bool
   public let mappedAuthenticationBytes: UInt64
   public let preparedDPCBytes: UInt64
   public let preparedDetectorProductBytes: UInt64
@@ -157,7 +159,8 @@ public enum MetalCompactH5AuthenticationPolicy: Sendable, Equatable {
   case boundedSequential
   /// Overlap at most three independent shard reads, Metal decodes, SHA checks
   /// and private uploads. No file mapping or native cache is required.
-  /// Each shard is authenticated before publication; the load waits for all.
+  /// With checksum verification enabled, each shard is authenticated before
+  /// publication. The load always waits for all shards and structural checks.
   case boundedConcurrent
   /// Hash independent file-backed shard ranges concurrently before bounded upload.
   /// This maps the complete file and is intended only for machines whose measured
@@ -873,7 +876,8 @@ public final class MetalCompactH5ResidentSource {
     )
   }
 
-  /// Copy one authenticated canonical prepared map into the active detector output.
+  /// Copy one canonical prepared map into the active detector output.
+  /// Its checksum verification status is recorded in `loadMetrics`.
   @discardableResult
   public func activatePreparedDetectorProduct(
     _ name: MetalCompactH5PreparedDetectorProductName
@@ -915,7 +919,8 @@ public final class MetalCompactH5ResidentSource {
     )
   }
 
-  /// Return authenticated exact total and row/column detector moments.
+  /// Return prepared exact total and row/column detector moments.
+  /// Their checksum verification status is recorded in `loadMetrics`.
   public func preparedDPCMomentValues() throws -> MetalCompactH5ExactDPCMoments? {
     guard !isReleased else {
       throw Metal4DSTEMStreamingIOError.invalidRequest(
@@ -1143,7 +1148,7 @@ public enum MetalCompactH5Loader {
     0x51, 0x47, 0x49, 0x58, 0x00, 0x00, 0x00, 0x03,
   ]
 
-  /// Decode, authenticate, and publish one compact source in private Metal buffers.
+  /// Decode, validate, and publish one compact source in private Metal buffers.
   ///
   /// `nativeCacheURL` optionally reuses a cache previously saved from this exact
   /// source. Missing/stale caches use the original decode path; corrupt caches
@@ -1157,6 +1162,10 @@ public enum MetalCompactH5Loader {
   /// Phase times sum shard work; boundedConcurrent overlaps these durations.
   /// sourceReadPolicy applies to source metadata and payload descriptors. A
   /// nondefault policy cannot be combined with native cache or mapped loading.
+  /// `verifyChecksums: false` explicitly trusts local payload bytes. It skips
+  /// payload, cached-descriptor, and prepared-product SHA checks, not structural
+  /// bounds, decoder-status, dtype, or metadata validation. Such a load is not
+  /// checksum-verified. The default remains verified for existing callers.
   public static func load(
     sourceURL: URL,
     device: MTLDevice,
@@ -1164,6 +1173,7 @@ public enum MetalCompactH5Loader {
     nativeCacheURL: URL? = nil,
     maximumAdditionalBytes: UInt64? = nil,
     sourceReadPolicy: MetalCompactH5SourceReadPolicy = .systemDefault,
+    verifyChecksums: Bool = true,
     shouldCancel: () -> Bool = { false }
   ) throws -> MetalCompactH5ResidentSource {
     let totalStart = ContinuousClock.now
@@ -1304,7 +1314,7 @@ public enum MetalCompactH5Loader {
     var mappedAuthenticationBytes: UInt64 = 0
     let payloadsPreauthenticated: Bool
     if index.storageLayout == .directV3 || nativeCache != nil,
-      authenticationPolicy == .parallelMapped
+      authenticationPolicy == .parallelMapped, verifyChecksums
     {
       let authenticationStart = ContinuousClock.now
       try authenticateDirectPayloads(
@@ -1345,13 +1355,15 @@ public enum MetalCompactH5Loader {
                 index: index, device: device, queue: queue,
                 validationPipeline: validateDescriptors,
                 maximumWidthBuffer: concurrentWidths.buffer,
-                payloadPreauthenticated: payloadsPreauthenticated
+                payloadPreauthenticated: payloadsPreauthenticated,
+                verifyChecksums: verifyChecksums
               )
             }
             return try loadCompressedShard(
               descriptor: descriptor, shardIndex: shardIndex, shard: shard, index: index,
               excludedSet: excludedSet, device: device, queue: queue, decode: decode,
-              validateDescriptors: validateDescriptors, maximumWidthBuffer: concurrentWidths.buffer
+              validateDescriptors: validateDescriptors, maximumWidthBuffer: concurrentWidths.buffer,
+              verifyChecksums: verifyChecksums
             )
           }
         }
@@ -1403,7 +1415,8 @@ public enum MetalCompactH5Loader {
     let preparedDPC = try loadPreparedDPC(
       fileDescriptor: descriptor,
       index: index,
-      device: device
+      device: device,
+      verifyChecksums: verifyChecksums
     )
     maximumTransientBytes = max(
       maximumTransientBytes,
@@ -1412,7 +1425,8 @@ public enum MetalCompactH5Loader {
     let preparedDetectorProducts = try loadPreparedDetectorProducts(
       fileDescriptor: descriptor,
       index: index,
-      device: device
+      device: device,
+      verifyChecksums: verifyChecksums
     )
     maximumTransientBytes = max(
       maximumTransientBytes,
@@ -1480,7 +1494,7 @@ public enum MetalCompactH5Loader {
     let metrics = MetalCompactH5LoadMetrics(
       nativeCacheStatus: cacheStatus,
       nativeCacheBytes: nativeCache?.fileBytes ?? 0,
-      nativeCacheDescriptorSHA256Checks: nativeCache?.shards.count ?? 0,
+      nativeCacheDescriptorSHA256Checks: verifyChecksums ? (nativeCache?.shards.count ?? 0) : 0,
       plannedAdditionalBytes: plannedAdditionalBytes,
       sourceReadPolicy: sourceReadPolicy.rawValue,
       maximumInFlightShards: maximumInFlightShards,
@@ -1504,7 +1518,8 @@ public enum MetalCompactH5Loader {
       maximumTransientBytes: maximumTransientBytes,
       deviceAllocatedBytesBefore: allocatedBefore,
       deviceAllocatedBytesAfter: UInt64(device.currentAllocatedSize),
-      decodedShardSHA256Checks: index.shards.count,
+      decodedShardSHA256Checks: verifyChecksums ? index.shards.count : 0,
+      checksumsVerified: verifyChecksums,
       mappedAuthenticationBytes: mappedAuthenticationBytes,
       preparedDPCBytes: index.metadata.preparedDPCMoments?.fileBytes ?? 0,
       preparedDetectorProductBytes: preparedDetectorProducts.bytes,
@@ -1610,7 +1625,8 @@ public enum MetalCompactH5Loader {
   private static func loadPreparedDPC(
     fileDescriptor: Int32,
     index: CompactH5ParsedIndex,
-    device: MTLDevice
+    device: MTLDevice,
+    verifyChecksums: Bool
   ) throws -> CompactPreparedDPCLoadResult? {
     guard let prepared = index.metadata.preparedDPCMoments else { return nil }
     let byteCount = try exactInt(prepared.fileBytes, label: "prepared DPC bytes")
@@ -1634,20 +1650,23 @@ public enum MetalCompactH5Loader {
       label: "prepared DPC moments"
     )
     let readMilliseconds = milliseconds(from: readStart)
-    let authenticationStart = ContinuousClock.now
-    let momentData = Data(
-      bytesNoCopy: moments.contents(),
-      count: byteCount,
-      deallocator: .none
-    )
-    let observed = SHA256.hash(data: momentData)
-      .map { String(format: "%02x", $0) }
-      .joined()
-    let authenticationMilliseconds = milliseconds(from: authenticationStart)
-    guard observed == prepared.sha256 else {
-      throw invalid(
-        "Compact prepared DPC SHA-256 is \(observed), expected \(prepared.sha256)."
+    var authenticationMilliseconds = 0.0
+    if verifyChecksums {
+      let authenticationStart = ContinuousClock.now
+      let momentData = Data(
+        bytesNoCopy: moments.contents(),
+        count: byteCount,
+        deallocator: .none
       )
+      let observed = SHA256.hash(data: momentData)
+        .map { String(format: "%02x", $0) }
+        .joined()
+      authenticationMilliseconds = milliseconds(from: authenticationStart)
+      guard observed == prepared.sha256 else {
+        throw invalid(
+          "Compact prepared DPC SHA-256 is \(observed), expected \(prepared.sha256)."
+        )
+      }
     }
 
     let primeStart = ContinuousClock.now
@@ -1736,7 +1755,8 @@ public enum MetalCompactH5Loader {
   private static func loadPreparedDetectorProducts(
     fileDescriptor: Int32,
     index: CompactH5ParsedIndex,
-    device: MTLDevice
+    device: MTLDevice,
+    verifyChecksums: Bool
   ) throws -> CompactPreparedDetectorLoadResult {
     guard let prepared = index.metadata.preparedDetectorProducts else {
       return CompactPreparedDetectorLoadResult(
@@ -1787,30 +1807,32 @@ public enum MetalCompactH5Loader {
       )
       readMilliseconds += milliseconds(from: readStart)
 
-      let authenticationStart = ContinuousClock.now
-      let maskObserved = SHA256.hash(data: maskData)
-        .map { String(format: "%02x", $0) }
-        .joined()
-      let valuesData = Data(
-        bytesNoCopy: values.contents(),
-        count: valuesByteCount,
-        deallocator: .none
-      )
-      let valuesObserved = SHA256.hash(data: valuesData)
-        .map { String(format: "%02x", $0) }
-        .joined()
-      authenticationMilliseconds += milliseconds(from: authenticationStart)
-      guard maskObserved == product.maskSHA256 else {
-        throw invalid(
-          "Compact prepared \(product.name.uppercased()) mask SHA-256 is "
-            + "\(maskObserved), expected \(product.maskSHA256)."
+      if verifyChecksums {
+        let authenticationStart = ContinuousClock.now
+        let maskObserved = SHA256.hash(data: maskData)
+          .map { String(format: "%02x", $0) }
+          .joined()
+        let valuesData = Data(
+          bytesNoCopy: values.contents(),
+          count: valuesByteCount,
+          deallocator: .none
         )
-      }
-      guard valuesObserved == product.valuesSHA256 else {
-        throw invalid(
-          "Compact prepared \(product.name.uppercased()) values SHA-256 is "
-            + "\(valuesObserved), expected \(product.valuesSHA256)."
-        )
+        let valuesObserved = SHA256.hash(data: valuesData)
+          .map { String(format: "%02x", $0) }
+          .joined()
+        authenticationMilliseconds += milliseconds(from: authenticationStart)
+        guard maskObserved == product.maskSHA256 else {
+          throw invalid(
+            "Compact prepared \(product.name.uppercased()) mask SHA-256 is "
+              + "\(maskObserved), expected \(product.maskSHA256)."
+          )
+        }
+        guard valuesObserved == product.valuesSHA256 else {
+          throw invalid(
+            "Compact prepared \(product.name.uppercased()) values SHA-256 is "
+              + "\(valuesObserved), expected \(product.valuesSHA256)."
+          )
+        }
       }
       let mask = [UInt8](maskData)
       guard mask.allSatisfy({ $0 == 0 || $0 == 1 }) else {
@@ -1863,7 +1885,8 @@ public enum MetalCompactH5Loader {
     queue: MTLCommandQueue,
     decode: MTLComputePipelineState,
     validateDescriptors: MTLComputePipelineState,
-    maximumWidthBuffer: MTLBuffer
+    maximumWidthBuffer: MTLBuffer,
+    verifyChecksums: Bool
   ) throws -> CompactShardLoadResult {
     var sourceReadMilliseconds = 0.0
     var descriptorPreparationMilliseconds = 0.0
@@ -2041,7 +2064,8 @@ public enum MetalCompactH5Loader {
         bytes: UInt64(chunkBytes + descriptorBytes + Int(shard.chunkCount) * 4)
       )
     }
-    memset(decodedStage.contents(), 0, decodedStage.length)
+    // The Metal decoder initializes its own output words; do not touch the
+    // multi-gigabyte decoded staging volume on the CPU before GPU decode.
     memset(decodeStatus.contents(), 0xff, decodeStatus.length)
     descriptorPreparationMilliseconds += milliseconds(from: preparationStart)
 
@@ -2091,22 +2115,24 @@ public enum MetalCompactH5Loader {
       )
     }
 
-    let integrityStart = ContinuousClock.now
-    let decodedData = Data(
-      bytesNoCopy: decodedStage.contents(),
-      count: decodedBytes,
-      deallocator: .none
-    )
-    let decodedSHA256 = SHA256.hash(data: decodedData)
-      .map { String(format: "%02x", $0) }
-      .joined()
-    guard decodedSHA256 == shard.decodedSHA256 else {
-      throw invalid(
-        "Compact shard \(shardIndex) decoded SHA-256 is \(decodedSHA256), "
-          + "expected \(shard.decodedSHA256)."
+    if verifyChecksums {
+      let integrityStart = ContinuousClock.now
+      let decodedData = Data(
+        bytesNoCopy: decodedStage.contents(),
+        count: decodedBytes,
+        deallocator: .none
       )
+      let decodedSHA256 = SHA256.hash(data: decodedData)
+        .map { String(format: "%02x", $0) }
+        .joined()
+      guard decodedSHA256 == shard.decodedSHA256 else {
+        throw invalid(
+          "Compact shard \(shardIndex) decoded SHA-256 is \(decodedSHA256), "
+            + "expected \(shard.decodedSHA256)."
+        )
+      }
+      decodedIntegrityMilliseconds += milliseconds(from: integrityStart)
     }
-    decodedIntegrityMilliseconds += milliseconds(from: integrityStart)
 
     guard
       let privatePayload = device.makeBuffer(
@@ -2286,7 +2312,8 @@ public enum MetalCompactH5Loader {
     queue: MTLCommandQueue,
     validationPipeline: MTLComputePipelineState,
     maximumWidthBuffer: MTLBuffer,
-    payloadPreauthenticated: Bool
+    payloadPreauthenticated: Bool,
+    verifyChecksums: Bool
   ) throws -> CompactShardLoadResult {
     let payloadBytes = try exactInt(shard.payloadBytes, label: "direct payload bytes")
     let headerBytes = try exactInt(shard.widthsBytes, label: "compact header bytes")
@@ -2340,7 +2367,7 @@ public enum MetalCompactH5Loader {
     let sourceReadMilliseconds = milliseconds(from: readStart)
 
     var decodedIntegrityMilliseconds = 0.0
-    if !payloadPreauthenticated {
+    if verifyChecksums && !payloadPreauthenticated {
       let integrityStart = ContinuousClock.now
       let payloadData = Data(
         bytesNoCopy: payloadStage.contents(),

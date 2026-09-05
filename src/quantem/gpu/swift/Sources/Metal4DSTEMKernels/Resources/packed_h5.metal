@@ -213,6 +213,14 @@ kernel void compact_h5_lz4_decode(
     ) {
         error = 2u;
     }
+    // Partial-word literal/match writes preserve neighboring bytes. Initialize
+    // each disjoint chunk here instead of clearing the full volume on the CPU.
+    if (error == 0u) {
+        for (uint word = lane; word < record.outputBytes / 4u; word += 64u) {
+            decoded[record.outputWord + word] = 0u;
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_device);
     while (
         error == 0u
         && inputPosition < inputEnd
