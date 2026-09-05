@@ -5,6 +5,21 @@ import XCTest
 @testable import Metal4DSTEMStreamingIO
 
 final class CompactH5LoaderTests: XCTestCase {
+  func testLoadBudgetRejectsBeforeAnyMetalAllocation() throws {
+    let fixture = try makeCompactFixture(portable: true, preparedDPC: true)
+    defer { try? FileManager.default.removeItem(at: fixture.url) }
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let allocated = device.currentAllocatedSize
+    XCTAssertThrowsError(
+      try MetalCompactH5Loader.load(
+        sourceURL: fixture.url, device: device, maximumAdditionalBytes: 0
+      )
+    ) { error in
+      XCTAssertTrue(error.localizedDescription.contains("No Metal storage was allocated"))
+    }
+    XCTAssertEqual(device.currentAllocatedSize, allocated)
+  }
+
   func testNativeCacheRestoresEveryUInt16ValueAndMoments() throws {
     let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
     let fixture = try makeCompactFixture(portable: true, preparedDPC: true)
@@ -18,6 +33,7 @@ final class CompactH5LoaderTests: XCTestCase {
     let originalMoments = try XCTUnwrap(source.preparedDPCMomentValues())
     try source.saveNativeCache(to: cache)
     source.releaseResidentStorage()
+    var boundedPlan: UInt64?
     for policy in [MetalCompactH5AuthenticationPolicy.boundedSequential, .parallelMapped] {
       let restored = try MetalCompactH5Loader.load(
         sourceURL: fixture.url, device: device, authenticationPolicy: policy,
@@ -29,6 +45,16 @@ final class CompactH5LoaderTests: XCTestCase {
       XCTAssertEqual(restored.loadMetrics.decodedShardSHA256Checks, 1)
       XCTAssertEqual(restored.loadMetrics.gpuDecodeMilliseconds, 0)
       XCTAssertGreaterThan(restored.loadMetrics.nativeCacheBytes, 65_536)
+      XCTAssertGreaterThan(
+        restored.loadMetrics.plannedAdditionalBytes,
+        restored.loadMetrics.totalResidentBytes + restored.loadMetrics.mappedAuthenticationBytes
+      )
+      let required = restored.loadMetrics.plannedAdditionalBytes
+      if policy == .boundedSequential {
+        boundedPlan = required
+      } else {
+        XCTAssertEqual(required, try XCTUnwrap(boundedPlan) + restored.loadMetrics.nativeCacheBytes)
+      }
       for scan in 0..<128 {
         XCTAssertEqual(
           try restored.extractDiffraction(scanRow: scan / 16, scanColumn: scan % 16),
@@ -46,6 +72,22 @@ final class CompactH5LoaderTests: XCTestCase {
       XCTAssertNoThrow(
         try Metal4DSTEMResidentCapabilities.compact(restored).residentReceipt.validate())
       restored.releaseResidentStorage()
+      let allocationsBeforeRejection = device.currentAllocatedSize
+      XCTAssertThrowsError(
+        try MetalCompactH5Loader.load(
+          sourceURL: fixture.url, device: device, authenticationPolicy: policy,
+          nativeCacheURL: cache, maximumAdditionalBytes: required - 1
+        )
+      ) { error in
+        XCTAssertTrue(error.localizedDescription.contains("No Metal storage was allocated"))
+      }
+      XCTAssertEqual(device.currentAllocatedSize, allocationsBeforeRejection)
+      let admitted = try MetalCompactH5Loader.load(
+        sourceURL: fixture.url, device: device, authenticationPolicy: policy,
+        nativeCacheURL: cache, maximumAdditionalBytes: required
+      )
+      XCTAssertEqual(admitted.loadMetrics.plannedAdditionalBytes, required)
+      admitted.releaseResidentStorage()
     }
     XCTAssertEqual(try Data(contentsOf: fixture.url), originalBytes)
   }

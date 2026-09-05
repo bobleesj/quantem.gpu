@@ -117,6 +117,9 @@ public struct MetalCompactH5LoadMetrics: Equatable, Sendable {
   public let nativeCacheStatus: String
   public let nativeCacheBytes: UInt64
   public let nativeCacheDescriptorSHA256Checks: Int
+  /// Conservative overlapping requested buffers plus mapped authentication bytes.
+  /// Excludes driver allocations, OS page cache, and caller-owned display products.
+  public let plannedAdditionalBytes: UInt64
   public let metadataMilliseconds: Double
   public let sourceReadMilliseconds: Double
   public let descriptorPreparationMilliseconds: Double
@@ -1099,11 +1102,16 @@ public enum MetalCompactH5Loader {
   /// throw and should be removed/rebuilt by the caller. This call never creates
   /// a cache. The default authentication remains bounded and sequential;
   /// `parallelMapped` requires budget for additional file-backed residency.
+  /// `maximumAdditionalBytes`, when supplied, rejects an oversized load before
+  /// any Metal queue or buffer allocation. It covers requested resident buffers,
+  /// worst-shard staging, and mapped authentication bytes. The caller must reserve
+  /// additional headroom for driver allocations, OS caches, and app products.
   public static func load(
     sourceURL: URL,
     device: MTLDevice,
     authenticationPolicy: MetalCompactH5AuthenticationPolicy = .boundedSequential,
     nativeCacheURL: URL? = nil,
+    maximumAdditionalBytes: UInt64? = nil,
     shouldCancel: () -> Bool = { false }
   ) throws -> MetalCompactH5ResidentSource {
     let totalStart = ContinuousClock.now
@@ -1152,6 +1160,19 @@ public enum MetalCompactH5Loader {
       }
     }
     defer { try? cacheFile?.close() }
+    let plannedAdditionalBytes = try plannedAdditionalBytes(
+      index: index, loadingShards: loadingShards, nativeCache: nativeCache,
+      authenticationPolicy: authenticationPolicy
+    )
+    if let maximumAdditionalBytes, plannedAdditionalBytes > maximumAdditionalBytes {
+      throw invalid(
+        "Compact loading requires \(plannedAdditionalBytes) additional bytes for "
+          + "resident buffers, bounded staging, and authentication mapping; the "
+          + "available loader budget is \(maximumAdditionalBytes) bytes. Release "
+          + "other residents or use boundedSequential authentication before retrying. "
+          + "No Metal storage was allocated. Reserve app and driver headroom separately."
+      )
+    }
     let metadataMilliseconds = milliseconds(from: metadataStart)
     guard !shouldCancel() else { throw Metal4DSTEMStreamingIOError.cancelled }
     guard let queue = device.makeCommandQueue() else {
@@ -1706,6 +1727,7 @@ public enum MetalCompactH5Loader {
       nativeCacheStatus: cacheStatus,
       nativeCacheBytes: nativeCache?.fileBytes ?? 0,
       nativeCacheDescriptorSHA256Checks: nativeCache?.shards.count ?? 0,
+      plannedAdditionalBytes: plannedAdditionalBytes,
       metadataMilliseconds: metadataMilliseconds,
       sourceReadMilliseconds: sourceReadMilliseconds,
       descriptorPreparationMilliseconds: descriptorPreparationMilliseconds,
@@ -1754,6 +1776,74 @@ public enum MetalCompactH5Loader {
       preparedDPCOutputs: preparedDPC.map { [$0.row, $0.column] } ?? [],
       preparedDetectorProducts: preparedDetectorProducts.products
     )
+  }
+
+  /// Conservative sum rather than assuming nonoverlap of upload/authentication.
+  /// Keep accounting in the loader so a stale caller-side plan cannot bypass it.
+  private static func plannedAdditionalBytes(
+    index: CompactH5ParsedIndex,
+    loadingShards: [CompactH5ShardRecord],
+    nativeCache: CompactNativeCache?,
+    authenticationPolicy: MetalCompactH5AuthenticationPolicy
+  ) throws -> UInt64 {
+    let metadata = index.metadata
+    let pixelBytes = try multiply(
+      UInt64(metadata.detectorPixelCount), UInt64(24), label: "interaction pixel buffers"
+    )
+    let scanBytes = try multiply(
+      UInt64(metadata.scanCount), metadata.preparedDPCMoments == nil ? UInt64(8) : UInt64(16),
+      label: "interaction scan buffers"
+    )
+    var total = try add(metadata.residentBytes, pixelBytes, label: "resident budget")
+    total = try add(total, scanBytes, label: "resident interaction budget")
+    // Width validation buffer remains alive through publication.
+    total = try add(
+      total,
+      try multiply(UInt64(metadata.detectorPixelCount), UInt64(4), label: "validation bytes"),
+      label: "resident validation budget"
+    )
+    var maximumStaging = metadata.preparedDPCMoments?.fileBytes ?? 0
+    for shard in loadingShards {
+      var staging = try add(shard.payloadBytes, shard.widthsBytes, label: "shard staging")
+      if index.storageLayout == .lz4V1 && nativeCache == nil {
+        staging = try add(staging, shard.lengthsBytes, label: "chunk length staging")
+        staging = try add(staging, shard.decodedBytes, label: "decoded staging")
+        // Arrays and their copied shared Metal buffers coexist until the shard
+        // autorelease pool drains: two descriptor and two chunk-table copies.
+        staging = try add(
+          staging,
+          try multiply(UInt64(shard.descriptorCount), UInt64(8), label: "descriptor staging"),
+          label: "descriptor staging budget"
+        )
+        staging = try add(
+          staging,
+          try multiply(UInt64(shard.chunkCount), UInt64(36), label: "chunk metadata and status"),
+          label: "chunk staging budget"
+        )
+        // Compressed Metal payload is rounded to four bytes by the loader.
+        staging = try add(staging, (4 - shard.payloadBytes % 4) % 4, label: "payload alignment")
+      }
+      staging = try add(staging, UInt64(4), label: "descriptor validation status")
+      maximumStaging = max(maximumStaging, staging)
+    }
+    if let products = metadata.preparedDetectorProducts {
+      var productBytes: UInt64 = 0
+      for product in products.products {
+        productBytes = try add(productBytes, product.maskFileBytes, label: "prepared mask staging")
+        productBytes = try add(
+          productBytes, product.valuesFileBytes, label: "prepared value staging")
+      }
+      maximumStaging = max(maximumStaging, productBytes)
+    }
+    total = try add(total, maximumStaging, label: "resident and staging budget")
+    if authenticationPolicy == .parallelMapped,
+      index.storageLayout == .directV3 || nativeCache != nil
+    {
+      total = try add(
+        total, nativeCache?.fileBytes ?? metadata.sourceBytes, label: "mapped authentication budget"
+      )
+    }
+    return total
   }
 
   private static func loadPreparedDPC(
