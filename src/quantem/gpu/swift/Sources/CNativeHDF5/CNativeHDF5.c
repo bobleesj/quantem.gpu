@@ -11,6 +11,14 @@
 
 #define QH5_METADATA_LIMIT 100
 
+struct qh5_lossless_pack_v1_writer {
+  hid_t file;
+  hid_t shards;
+  char *path;
+  uint32_t next_ordinal;
+  int owns_path;
+};
+
 static pthread_mutex_t qh5_hdf5_lock = PTHREAD_MUTEX_INITIALIZER;
 
 typedef struct {
@@ -397,6 +405,19 @@ static int qh5_read_bad_pixels(
     return -1;
   }
   H5Dclose(dataset);
+  info->detector_mask_values = malloc(count * sizeof(*info->detector_mask_values));
+  if (info->detector_mask_values == NULL) {
+    free(values);
+    return -1;
+  }
+  for (size_t index = 0; index < count; index++) {
+    if (values[index] > UINT32_MAX) {
+      free(values);
+      return -1;
+    }
+    info->detector_mask_values[index] = (uint32_t)values[index];
+  }
+  info->detector_mask_count = count;
   size_t bad_count = 0;
   for (size_t index = 0; index < count; index++) bad_count += values[index] != 0;
   if (bad_count != 0) {
@@ -1049,6 +1070,223 @@ int qh5_prepare_velox_image(
   return status;
 }
 
+static int qh5_write_u32_dataset(
+  hid_t group,
+  const char *name,
+  const uint32_t *values,
+  uint64_t word_count,
+  uint64_t *file_offset,
+  uint64_t *file_bytes,
+  char **error_message
+) {
+  if (word_count == 0 || values == NULL || word_count > (uint64_t)((hsize_t)-1)) {
+    return qh5_fail(error_message, "Lossless Pack Format v1 %s has an invalid word count", name);
+  }
+  hsize_t dimensions[] = {(hsize_t)word_count};
+  hid_t space = H5Screate_simple(1, dimensions, NULL);
+  hid_t properties = H5Pcreate(H5P_DATASET_CREATE);
+  hid_t dataset = -1;
+  int status = 0;
+  if (space < 0 || properties < 0 || H5Pset_layout(properties, H5D_CONTIGUOUS) < 0) {
+    status = qh5_fail(error_message, "Could not configure contiguous Lossless Pack Format v1 %s storage", name);
+  }
+  if (status == 0) {
+    dataset = H5Dcreate2(
+      group,
+      name,
+      H5T_STD_U32LE,
+      space,
+      H5P_DEFAULT,
+      properties,
+      H5P_DEFAULT
+    );
+    if (dataset < 0 || H5Dwrite(
+      dataset,
+      H5T_NATIVE_UINT32,
+      H5S_ALL,
+      H5S_ALL,
+      H5P_DEFAULT,
+      values
+    ) < 0) {
+      status = qh5_fail(error_message, "Could not write contiguous Lossless Pack Format v1 %s storage", name);
+    }
+  }
+  if (status == 0 && H5Fflush(group, H5F_SCOPE_GLOBAL) < 0) {
+    status = qh5_fail(error_message, "Could not flush Lossless Pack Format v1 %s storage", name);
+  }
+  if (status == 0) {
+    haddr_t offset = H5Dget_offset(dataset);
+    if (offset == HADDR_UNDEF || word_count > UINT64_MAX / sizeof(uint32_t)) {
+      status = qh5_fail(error_message, "Lossless Pack Format v1 %s storage is not directly addressable", name);
+    } else {
+      *file_offset = (uint64_t)offset;
+      *file_bytes = word_count * sizeof(uint32_t);
+    }
+  }
+  if (dataset >= 0) H5Dclose(dataset);
+  if (properties >= 0) H5Pclose(properties);
+  if (space >= 0) H5Sclose(space);
+  return status;
+}
+
+int qh5_lossless_pack_v1_writer_open(
+  const char *path,
+  uint64_t user_block_bytes,
+  qh5_lossless_pack_v1_writer **writer,
+  char **error_message
+) {
+  if (error_message != NULL) *error_message = NULL;
+  if (path == NULL || writer == NULL || user_block_bytes < 512) {
+    return qh5_fail(error_message, "Invalid Lossless Pack Format v1 writer request");
+  }
+  *writer = NULL;
+  qh5_lossless_pack_v1_writer *created = calloc(1, sizeof(*created));
+  if (created == NULL) return qh5_fail(error_message, "Could not allocate the Lossless Pack Format v1 writer");
+  created->file = -1;
+  created->shards = -1;
+  created->path = qh5_copy_string(path);
+  if (created->path == NULL) {
+    free(created);
+    return qh5_fail(error_message, "Could not retain the Lossless Pack Format v1 temporary path");
+  }
+
+  pthread_mutex_lock(&qh5_hdf5_lock);
+  hid_t properties = H5Pcreate(H5P_FILE_CREATE);
+  int status = 0;
+  if (properties < 0 || H5Pset_userblock(properties, (hsize_t)user_block_bytes) < 0) {
+    status = qh5_fail(error_message, "Could not configure the Lossless Pack Format v1 user block");
+  }
+  if (status == 0) {
+    created->file = H5Fcreate(path, H5F_ACC_EXCL, properties, H5P_DEFAULT);
+    if (created->file < 0) {
+      status = qh5_fail(error_message, "Could not create Lossless Pack Format v1 temporary output %s", path);
+    } else {
+      created->owns_path = 1;
+    }
+  }
+  hid_t root = -1;
+  if (status == 0) {
+    root = H5Gcreate2(
+      created->file,
+      "/quantem_gpu",
+      H5P_DEFAULT,
+      H5P_DEFAULT,
+      H5P_DEFAULT
+    );
+    created->shards = root >= 0
+      ? H5Gcreate2(root, "shards", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT)
+      : -1;
+    if (root < 0 || created->shards < 0) {
+      status = qh5_fail(error_message, "Could not create the Lossless Pack Format v1 HDF5 groups");
+    }
+  }
+  if (root >= 0) H5Gclose(root);
+  if (properties >= 0) H5Pclose(properties);
+  pthread_mutex_unlock(&qh5_hdf5_lock);
+
+  if (status != 0) {
+    qh5_lossless_pack_v1_writer_abort(created);
+    return status;
+  }
+  *writer = created;
+  return 0;
+}
+
+int qh5_lossless_pack_v1_writer_append_shard(
+  qh5_lossless_pack_v1_writer *writer,
+  uint32_t ordinal,
+  const uint32_t *payload,
+  uint64_t payload_words,
+  const uint32_t *headers,
+  uint64_t header_words,
+  qh5_lossless_pack_v1_shard_layout *layout,
+  char **error_message
+) {
+  if (error_message != NULL) *error_message = NULL;
+  if (writer == NULL || writer->file < 0 || writer->shards < 0 || layout == NULL
+      || ordinal != writer->next_ordinal) {
+    return qh5_fail(error_message, "Lossless Pack Format v1 shards must be appended once in ordinal order");
+  }
+  memset(layout, 0, sizeof(*layout));
+  char name[16];
+  snprintf(name, sizeof(name), "%03u", ordinal);
+  pthread_mutex_lock(&qh5_hdf5_lock);
+  hid_t group = H5Gcreate2(
+    writer->shards,
+    name,
+    H5P_DEFAULT,
+    H5P_DEFAULT,
+    H5P_DEFAULT
+  );
+  int status = 0;
+  if (group < 0) {
+    status = qh5_fail(error_message, "Could not create Lossless Pack Format v1 shard %u", ordinal);
+  }
+  if (status == 0) {
+    status = qh5_write_u32_dataset(
+      group,
+      "payload_u32",
+      payload,
+      payload_words,
+      &layout->payload_offset,
+      &layout->payload_bytes,
+      error_message
+    );
+  }
+  if (status == 0) {
+    status = qh5_write_u32_dataset(
+      group,
+      "compact_headers_u32",
+      headers,
+      header_words,
+      &layout->headers_offset,
+      &layout->headers_bytes,
+      error_message
+    );
+  }
+  if (group >= 0) H5Gclose(group);
+  pthread_mutex_unlock(&qh5_hdf5_lock);
+  if (status == 0) writer->next_ordinal += 1;
+  return status;
+}
+
+int qh5_lossless_pack_v1_writer_close(
+  qh5_lossless_pack_v1_writer *writer,
+  char **error_message
+) {
+  if (error_message != NULL) *error_message = NULL;
+  if (writer == NULL) return qh5_fail(error_message, "Invalid Lossless Pack Format v1 writer close request");
+  pthread_mutex_lock(&qh5_hdf5_lock);
+  int status = 0;
+  if (writer->file >= 0 && H5Fflush(writer->file, H5F_SCOPE_GLOBAL) < 0) {
+    status = qh5_fail(error_message, "Could not flush the Lossless Pack Format v1 container");
+  }
+  if (writer->shards >= 0 && H5Gclose(writer->shards) < 0 && status == 0) {
+    status = qh5_fail(error_message, "Could not close the Lossless Pack Format v1 shard group");
+  }
+  writer->shards = -1;
+  if (writer->file >= 0 && H5Fclose(writer->file) < 0 && status == 0) {
+    status = qh5_fail(error_message, "Could not close the Lossless Pack Format v1 container");
+  }
+  writer->file = -1;
+  pthread_mutex_unlock(&qh5_hdf5_lock);
+  if (status != 0 && writer->owns_path && writer->path != NULL) remove(writer->path);
+  free(writer->path);
+  free(writer);
+  return status;
+}
+
+void qh5_lossless_pack_v1_writer_abort(qh5_lossless_pack_v1_writer *writer) {
+  if (writer == NULL) return;
+  pthread_mutex_lock(&qh5_hdf5_lock);
+  if (writer->shards >= 0) H5Gclose(writer->shards);
+  if (writer->file >= 0) H5Fclose(writer->file);
+  pthread_mutex_unlock(&qh5_hdf5_lock);
+  if (writer->owns_path && writer->path != NULL) remove(writer->path);
+  free(writer->path);
+  free(writer);
+}
+
 void qh5_free_chunks(qh5_chunk_info *chunks) {
   free(chunks);
 }
@@ -1056,6 +1294,7 @@ void qh5_free_chunks(qh5_chunk_info *chunks) {
 void qh5_free_master_info(qh5_master_info *info) {
   if (info == NULL) return;
   free(info->bad_pixel_indices);
+  free(info->detector_mask_values);
   free(info->acquisition_date);
   for (size_t index = 0; index < info->metadata_count; index++) {
     free(info->metadata[index].key);

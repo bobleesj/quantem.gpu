@@ -1,8 +1,10 @@
 """
 GPU-accelerated HDF5 loading for 4D-STEM diffraction data.
 
-This module provides high-performance bitshuffle+LZ4 decompression
-using CUDA kernels, achieving 4-8x speedup over CPU.
+The public load verb coordinates scientific selection and backend dispatch.
+Result models, metadata, packed dispatch, and host-staging ownership have
+separate private modules. Performance depends on the source and device;
+qualified measurements live in the benchmark registry.
 
 Examples
 --------
@@ -18,31 +20,78 @@ import pickle
 import re
 import tempfile
 import threading
+import warnings
 from collections.abc import Sequence
-from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path
-from typing import Any, Literal, NamedTuple, Self
+from typing import Any, Literal, Self
 
-# cupy is the CUDA toolkit, absent on a Mac / plain laptop. Guard it so this
-# module imports anywhere and the view/screen path (backend='cpu'/'mps') works
-# without CUDA. Every `cp.<x>` use below sits inside a function that only runs
-# on the cuda backend, so on an NVIDIA box `cp` is the real module (zero
-# overhead) and on a non-CUDA box those functions are never reached. The
-# `from __future__ import annotations` line keeps `cp.ndarray` annotations as
-# strings so they never evaluate at import.
-try:
-    import cupy as cp
-except ImportError:  # pragma: no cover - exercised only on non-CUDA hosts
-    cp = None
+from quantem.gpu.device._cupy import cp
 import h5py
 import hdf5plugin  # noqa: F401 - registers bitshuffle filter
 import numpy as np
 from numba import njit, prange
 
+from quantem.gpu.io.representation import DataRepresentation
 from quantem.gpu.io.uint4 import is_packed_uint4, pack_uint4_cupy
 
 from .constants import BLOCK_SIZE
+from .integrity import SourceIntegrity
+
+# Compatibility exports; private mutable state lives in its owning module.
+from .models import (
+    MasterReadiness as MasterReadiness,
+    _release_owned_storage as _release_owned_storage,
+    FourDSTEMData as FourDSTEMData,
+    LoadResult as LoadResult,
+)
+
+from ._selection import (
+    _apply_scan_shape as _apply_scan_shape,
+    _normalize_scan_order as _normalize_scan_order,
+    _apply_scan_order as _apply_scan_order,
+    _normalize_scan_region as _normalize_scan_region,
+    _looks_like_single_scan_region as _looks_like_single_scan_region,
+    _scan_regions_by_file as _scan_regions_by_file,
+    _scan_shifts_by_file as _scan_shifts_by_file,
+    _scan_region_dict as _scan_region_dict,
+    _normalize_detector_region as _normalize_detector_region,
+    _detector_region_dict as _detector_region_dict,
+    _scan_region_frame_indices as _scan_region_frame_indices,
+    _scan_positions_to_frame_indices as _scan_positions_to_frame_indices,
+    _frame_indices_to_scan_positions as _frame_indices_to_scan_positions,
+    _normalize_scan_indices as _normalize_scan_indices,
+    _normalize_scan_indices_by_file as _normalize_scan_indices_by_file,
+    _normalize_random_position_count as _normalize_random_position_count,
+    random_scan_indices as random_scan_indices,
+    _drift_scan_positions as _drift_scan_positions,
+)
+
+from ._metadata import (
+    read_pixel_mask as read_pixel_mask,
+    get_metadata as get_metadata,
+    _derive_fields as _derive_fields,
+    read_emd_metadata as read_emd_metadata,
+    find_emd_sibling as find_emd_sibling,
+)
+
+from ._packed import (
+    _source_paths as _source_paths,
+    _selected_representation as _selected_representation,
+    _lossless_packed_metadata as _lossless_packed_metadata,
+    _load_lossless_packed as _load_lossless_packed,
+    _record_dense_representation as _record_dense_representation,
+)
+
+from ._memory import (
+    _get_libc as _get_libc,
+    _pinned_registration_size as _pinned_registration_size,
+    _alloc_pinned_fast as _alloc_pinned_fast,
+    _release_pinned as _release_pinned,
+    _prune_pinned_free as _prune_pinned_free,
+    _prune_pinned_free_locked as _prune_pinned_free_locked,
+    _unregister_pinned_entry as _unregister_pinned_entry,
+)
 
 ScanOrder = Literal["row-major", "serpentine"]
 _MASTER_FRAME_SOURCE_CACHE: dict[tuple[str, tuple[str, ...], bool], tuple[list[dict[str, Any]], Any]] = {}
@@ -76,92 +125,10 @@ _bitshuffle_tail_kernel_u16 = _lazy_kernel("bitshuffle_tail_kernel_u16")
 _bitshuffle_tail_kernel_u32 = _lazy_kernel("bitshuffle_tail_kernel_u32")
 _clip_u16_to_u8_kernel = _lazy_kernel("clip_u16_to_u8_kernel")
 _clip_u32_to_u8_kernel = _lazy_kernel("clip_u32_to_u8_kernel")
-_clip_u16_to_u8_count_kernel = _lazy_kernel("clip_u16_to_u8_count_kernel")
-_clip_u32_to_u8_count_kernel = _lazy_kernel("clip_u32_to_u8_count_kernel")
 _RESAMPLE_SCAN_CROP_KERNELS: dict[str, Any] = {}
 
 __version__ = "0.0.3"
-__all__ = ["load"]
-
-
-@dataclass(frozen=True)
-class MasterReadiness:
-    """Header-only readiness report for one 4D-STEM master.
-
-    Parameters
-    ----------
-    ready
-        Whether every selected detector source is readable, internally
-        consistent, and contains the expected number of stored frames.
-    reason
-        Concise description of the observed state.
-    action
-        Corrective next step when ``ready`` is ``False``.
-    source_kind
-        ``"inline"`` or ``"external"`` according to the selected
-        ``entry/data`` source layout, or ``"unavailable"`` when inspection
-        could not identify a data source.
-    actual_frames
-        Total stored frame count across the selected datasets, when known.
-    expected_frames
-        Frame count derived from an explicit ``scan_shape`` or discoverable
-        master metadata, when available.
-    detector_shape
-        Common detector shape ``(row, col)``, when known.
-    dtype
-        Common NumPy dtype string, when known.
-    source_signature
-        JSON-serializable file-stat and dataset-header fingerprint. Callers can
-        compare this dictionary across polls without reading detector pixels.
-    """
-
-    ready: bool
-    reason: str
-    action: str
-    source_kind: str
-    actual_frames: int | None
-    expected_frames: int | None
-    detector_shape: tuple[int, int] | None
-    dtype: str | None
-    source_signature: dict[str, Any]
-
-
-def _clip_to_uint8_count(src, dst):
-    """Clip unsigned CuPy array ``src`` to uint8 ``dst`` and count saturations.
-
-    This keeps exact saturation accounting available without the old generic
-    CuPy ``minimum(...).astype(uint8)`` plus ``>255`` two-pass cost.
-    """
-    n = int(src.size)
-    if n == 0:
-        return cp.zeros((), dtype=cp.uint64)
-
-    src_dtype = np.dtype(src.dtype)
-    if src_dtype not in (np.dtype(np.uint16), np.dtype(np.uint32)):
-        return None
-
-    threads = 256
-    # Keep the count reduction tiny while still exposing enough parallelism for
-    # the 100+ million-pixel batches used by no-bin Arina masters.
-    blocks = max(1, min(4096, (n + threads - 1) // threads))
-    block_counts = cp.empty(blocks, dtype=cp.uint64)
-    kernel = (
-        _clip_u16_to_u8_count_kernel
-        if src_dtype == np.dtype(np.uint16)
-        else _clip_u32_to_u8_count_kernel
-    )
-    kernel(
-        (blocks,),
-        (threads,),
-        (
-            src.reshape(-1),
-            dst.reshape(-1),
-            np.uint64(n),
-            block_counts,
-        ),
-        shared_mem=threads * np.dtype(np.uint64).itemsize,
-    )
-    return block_counts.sum(dtype=cp.uint64)
+__all__ = ["FourDSTEMData", "LoadResult", "load"]
 
 
 def _clip_to_uint8(src, dst) -> bool:
@@ -191,97 +158,6 @@ def _clip_to_uint8(src, dst) -> bool:
         ),
     )
     return True
-
-
-def read_pixel_mask(filepath):
-    """Return the Arina pixel_mask array from a master HDF5.
-
-    The Arina detector writes a 2-D `pixel_mask` dataset under
-    `entry/instrument/detector/detectorSpecific/` enumerating hardware
-    dead pixels (>0 = bad). This is the ONLY sanctioned reader - other
-    modules must go through here instead of opening h5py directly, so
-    the Arina schema stays in one place.
-
-    Parameters
-    ----------
-    filepath : str or Path
-        Path to an Arina master HDF5 file.
-
-    Returns
-    -------
-    np.ndarray or None
-        Raw (H, W) mask array as stored in the HDF5, or None if the
-        file is missing/unreadable or has no `pixel_mask` dataset.
-    """
-    from pathlib import Path
-    try:
-        with h5py.File(str(Path(filepath)), "r") as f:
-            key = "entry/instrument/detector/detectorSpecific/pixel_mask"
-            if key not in f:
-                return None
-            return f[key][:]
-    except (OSError, KeyError):
-        return None
-
-
-# =========================================================================
-#  CPU helper (Numba JIT)
-# =========================================================================
-
-class LoadResult(NamedTuple):
-    """Loaded detector data and acquisition metadata.
-
-    Attributes
-    ----------
-    data
-        Backend-native detector data by default. CUDA returns a CuPy array;
-        MPS may return a chunk-backed Metal frame source. With
-        ``output="torch"``, this is a Torch tensor. Shape is normally
-        ``(scan_row, scan_col, detector_row, detector_col)`` when the scan
-        shape is known, otherwise ``(frame, detector_row, detector_col)``.
-    metadata
-        Acquisition and detector metadata from the HDF5 source. The mapping
-        includes these normalized fields:
-
-        **Derived, named fields** (always present; value is ``None`` when
-        the source field is missing):
-
-        - ``scan_shape`` : ``(H, W)`` or ``None``
-            Auto-derived from ``ntrigger`` assuming a square scan.
-        - ``n_frames`` : ``int`` or ``None``
-            Total frame count.
-        - ``dwell_time_us`` : ``float`` or ``None``
-            Per-frame dwell in microseconds.
-        - ``detector_shape`` : ``(H, W)`` or ``None``
-            Detector pixel count.
-        - ``detector_name`` : ``str`` or ``None``
-            Human-readable detector description.
-        - ``saturation`` : ``int`` or ``None``
-            ADU ceiling before the detector saturates.
-
-        **Raw HDF5 scalars**: every scalar dataset in the file keyed by its
-        full HDF5 path (e.g. ``metadata["entry/instrument/detector/count_time"]``),
-        as an escape hatch for fields not in the derived layer.
-
-        .. note::
-
-            Scope-side parameters (``voltage_kV``, ``semiangle``,
-            ``scan_sampling``, ``camera_length``, ``rotation``) are NOT in
-            the h5 master - pass them to ``ssb()`` explicitly.
-
-    Examples
-    --------
-    ```python
-    data, meta = load("scan_master.h5")
-    data.shape             # (512, 512, 192, 192)
-    meta["scan_shape"]     # (512, 512)
-    meta["dwell_time_us"]  # 99.6
-    meta["detector_name"]  # detector model string
-    ```
-    """
-
-    data: cp.ndarray
-    metadata: dict
 
 
 def _to_torch_data(data):
@@ -320,204 +196,6 @@ def _convert_load_output(result, output: str):
     return LoadResult(_to_torch_data(result.data), result.metadata)
 
 
-def _apply_scan_shape(
-    data: cp.ndarray,
-    explicit: tuple[int, int] | None,
-    meta: dict,
-    scan_order: str = "row-major",
-) -> cp.ndarray:
-    """Reshape 3D ``(N, det_r, det_c)`` → 4D ``(scan_r, scan_c, det_r, det_c)``.
-
-    Uses ``explicit`` when the caller passed ``scan_shape=``, else
-    ``meta["scan_shape"]`` (auto-derived from ``ntrigger``). No-op when
-    no shape is available. ``scan_order="serpentine"`` reverses odd scan rows
-    after unflattening so downstream code sees normal ``(row, col)`` order.
-    """
-    order = _normalize_scan_order(scan_order)
-    shape = explicit if explicit is not None else meta.get("scan_shape")
-    if shape is None:
-        return data
-    scan_r, scan_c = shape
-    if data.ndim == 3:
-        if scan_r * scan_c != data.shape[0]:
-            raise ValueError(
-                f"scan_shape {shape} incompatible with frame count {data.shape[0]}"
-            )
-        dr, dc = data.shape[-2:]
-        data = data.reshape(scan_r, scan_c, dr, dc)
-    elif data.ndim == 4:
-        if tuple(int(v) for v in data.shape[:2]) != (int(scan_r), int(scan_c)):
-            return data
-    else:
-        return data
-    return _apply_scan_order(data, order)
-
-
-def _normalize_scan_order(scan_order: str | None) -> ScanOrder:
-    """Normalize accepted flattened scan order names."""
-    key = "row-major" if scan_order is None else str(scan_order).lower()
-    key = key.replace("_", "-").replace(" ", "-")
-    aliases: dict[str, ScanOrder] = {
-        "row-major": "row-major",
-        "raster": "row-major",
-        "serpentine": "serpentine",
-        "snake": "serpentine",
-        "boustrophedon": "serpentine",
-    }
-    if key not in aliases:
-        raise ValueError(
-            "scan_order must be 'row-major' or 'serpentine' "
-            f"(got {scan_order!r})"
-        )
-    return aliases[key]
-
-
-def _apply_scan_order(data: cp.ndarray, scan_order: ScanOrder) -> cp.ndarray:
-    """Apply scan-order correction in-place on an already 4D scan array."""
-    if scan_order == "row-major" or data.ndim != 4:
-        return data
-    # Reverse one scan row at a time to avoid materializing a full second
-    # 4D array for no-bin 512/1024 acquisitions.
-    for row in range(1, int(data.shape[0]), 2):
-        data[row] = data[row, ::-1].copy()
-    return data
-
-
-def _normalize_scan_region(
-    scan_region,
-    scan_shape: tuple[int, int],
-) -> tuple[int, int, int, int]:
-    """Validate a scan-space region as ``(row_start, row_stop, col_start, col_stop)``.
-
-    The public form is intentionally simple:
-    ``(row_start, row_stop, col_start, col_stop)``.
-    """
-    if not isinstance(scan_region, (tuple, list)) or len(scan_region) != 4:
-        raise TypeError(
-            "scan_region must be (row_start, row_stop, col_start, col_stop)"
-        )
-    try:
-        row_start, row_stop, col_start, col_stop = (int(v) for v in scan_region)
-    except (TypeError, ValueError) as exc:
-        raise TypeError(
-            "scan_region must be (row_start, row_stop, col_start, col_stop)"
-        ) from exc
-
-    scan_r, scan_c = (int(v) for v in scan_shape)
-    if not (0 <= row_start < row_stop <= scan_r):
-        raise ValueError(
-            f"scan row region [{row_start}, {row_stop}) is outside scan height {scan_r}"
-        )
-    if not (0 <= col_start < col_stop <= scan_c):
-        raise ValueError(
-            f"scan column region [{col_start}, {col_stop}) is outside scan width {scan_c}"
-        )
-    return row_start, row_stop, col_start, col_stop
-
-
-def _looks_like_single_scan_region(scan_region) -> bool:
-    """Return True when scan_region is one ``(row0, row1, col0, col1)`` tuple."""
-    if not isinstance(scan_region, (tuple, list)) or len(scan_region) != 4:
-        return False
-    return not any(isinstance(item, (tuple, list, np.ndarray)) for item in scan_region)
-
-
-def _scan_regions_by_file(scan_region, n_files: int) -> tuple[list, str]:
-    """Normalize a shared or per-file scan-region argument for a master series."""
-    if _looks_like_single_scan_region(scan_region):
-        return [scan_region] * int(n_files), "shared"
-    if not isinstance(scan_region, (tuple, list)) or len(scan_region) != int(n_files):
-        raise TypeError(
-            "For load([masters], scan_region=...), pass either one "
-            "(row_start, row_stop, col_start, col_stop) region or one such "
-            "region per master."
-        )
-    regions = list(scan_region)
-    for index, region in enumerate(regions):
-        if not _looks_like_single_scan_region(region):
-            raise TypeError(
-                "Each per-master scan_region entry must be "
-                "(row_start, row_stop, col_start, col_stop); "
-                f"entry {index} is invalid."
-            )
-    return regions, "per_file"
-
-
-def _scan_shifts_by_file(scan_shift_row_col, n_files: int) -> np.ndarray:
-    """Normalize one or per-file scan shifts as ``(row_shift, col_shift)``."""
-    shifts = np.asarray(scan_shift_row_col, dtype=np.float32)
-    if shifts.shape == (2,):
-        return np.tile(shifts.reshape(1, 2), (int(n_files), 1))
-    if shifts.shape == (int(n_files), 2):
-        return shifts.astype(np.float32, copy=False)
-    raise TypeError(
-        "scan_shift_row_col must be one (row_shift, col_shift) pair or an "
-        f"(n_files, 2) array; got shape {shifts.shape} for {n_files} files."
-    )
-
-
-def _scan_region_dict(
-    region: tuple[int, int, int, int],
-) -> dict[str, int | list[int]]:
-    """Return JSON-friendly scan-region metadata."""
-    row_start, row_stop, col_start, col_stop = (int(value) for value in region)
-    return {
-        "row_start": row_start,
-        "row_stop": row_stop,
-        "col_start": col_start,
-        "col_stop": col_stop,
-        "shape": [row_stop - row_start, col_stop - col_start],
-    }
-
-
-def _normalize_detector_region(
-    detector_region,
-    detector_shape: tuple[int, int],
-) -> tuple[int, int, int, int]:
-    """Validate a detector-space region as ``(row_start, row_stop, col_start, col_stop)``."""
-    if not isinstance(detector_region, (tuple, list)) or len(detector_region) != 4:
-        raise TypeError(
-            "detector_region must be "
-            "(row_start, row_stop, col_start, col_stop)"
-        )
-    try:
-        row_start, row_stop, col_start, col_stop = (
-            int(value) for value in detector_region
-        )
-    except (TypeError, ValueError) as exc:
-        raise TypeError(
-            "detector_region must be "
-            "(row_start, row_stop, col_start, col_stop)"
-        ) from exc
-
-    detector_rows, detector_cols = (int(value) for value in detector_shape)
-    if not (0 <= row_start < row_stop <= detector_rows):
-        raise ValueError(
-            "detector row region "
-            f"[{row_start}, {row_stop}) is outside detector height {detector_rows}"
-        )
-    if not (0 <= col_start < col_stop <= detector_cols):
-        raise ValueError(
-            "detector column region "
-            f"[{col_start}, {col_stop}) is outside detector width {detector_cols}"
-        )
-    return row_start, row_stop, col_start, col_stop
-
-
-def _detector_region_dict(
-    region: tuple[int, int, int, int],
-) -> dict[str, int | list[int]]:
-    """Return JSON-friendly detector-region metadata."""
-    row_start, row_stop, col_start, col_stop = (int(value) for value in region)
-    return {
-        "row_start": row_start,
-        "row_stop": row_stop,
-        "col_start": col_start,
-        "col_stop": col_stop,
-        "shape": [row_stop - row_start, col_stop - col_start],
-    }
-
-
 def _slice_detector_region(data, region: tuple[int, int, int, int], *, compact: bool):
     """Slice detector rows/columns, optionally returning compact storage."""
     row_start, row_stop, col_start, col_stop = (int(value) for value in region)
@@ -527,29 +205,6 @@ def _slice_detector_region(data, region: tuple[int, int, int, int], *, compact: 
     if cp is not None and isinstance(sliced, cp.ndarray):
         return cp.ascontiguousarray(sliced)
     return np.ascontiguousarray(sliced)
-
-
-def _scan_region_frame_indices(
-    scan_region: tuple[int, int, int, int],
-    scan_shape: tuple[int, int],
-    scan_order: str = "row-major",
-) -> np.ndarray:
-    """Map a rectangular scan-space ROI to flattened detector frame indices."""
-    row_start, row_stop, col_start, col_stop = _normalize_scan_region(
-        scan_region, scan_shape
-    )
-    order = _normalize_scan_order(scan_order)
-    scan_c = int(scan_shape[1])
-    rows = np.arange(row_start, row_stop, dtype=np.int64)
-    cols = np.arange(col_start, col_stop, dtype=np.int64)
-    if order == "row-major":
-        return (rows[:, None] * scan_c + cols[None, :]).reshape(-1)
-
-    frame_indices = np.empty((len(rows), len(cols)), dtype=np.int64)
-    for out_row, row in enumerate(rows):
-        physical_cols = cols if int(row) % 2 == 0 else (scan_c - 1 - cols)
-        frame_indices[out_row] = int(row) * scan_c + physical_cols
-    return frame_indices.reshape(-1)
 
 
 def _resample_scan_crop_kernel(dtype: np.dtype):
@@ -774,493 +429,6 @@ def resample_scan_crop(
     )
 
 
-def _scan_positions_to_frame_indices(
-    rows: np.ndarray,
-    cols: np.ndarray,
-    scan_shape: tuple[int, int],
-    scan_order: str = "row-major",
-) -> np.ndarray:
-    """Map logical scan ``(row, col)`` positions to flattened HDF5 frames."""
-    order = _normalize_scan_order(scan_order)
-    scan_r, scan_c = (int(v) for v in scan_shape)
-    rows = np.asarray(rows, dtype=np.int64).reshape(-1)
-    cols = np.asarray(cols, dtype=np.int64).reshape(-1)
-    if rows.shape != cols.shape:
-        raise ValueError("scan position rows and columns must have matching shape")
-    if rows.size == 0:
-        raise ValueError("scan_indices must contain at least one scan position")
-    if np.any(rows < 0) or np.any(rows >= scan_r):
-        bad = rows[(rows < 0) | (rows >= scan_r)][0]
-        raise ValueError(f"scan row {int(bad)} is outside scan height {scan_r}")
-    if np.any(cols < 0) or np.any(cols >= scan_c):
-        bad = cols[(cols < 0) | (cols >= scan_c)][0]
-        raise ValueError(f"scan column {int(bad)} is outside scan width {scan_c}")
-
-    physical_cols = cols.copy()
-    if order == "serpentine":
-        odd = rows % 2 == 1
-        physical_cols[odd] = scan_c - 1 - physical_cols[odd]
-    return rows * scan_c + physical_cols
-
-
-def _frame_indices_to_scan_positions(
-    frame_indices: np.ndarray,
-    scan_shape: tuple[int, int],
-    scan_order: str = "row-major",
-) -> np.ndarray:
-    """Map flattened HDF5 frame indices back to logical scan ``(row, col)``."""
-    order = _normalize_scan_order(scan_order)
-    scan_r, scan_c = (int(v) for v in scan_shape)
-    total = scan_r * scan_c
-    frame_indices = np.asarray(frame_indices, dtype=np.int64).reshape(-1)
-    if frame_indices.size == 0:
-        raise ValueError("scan_indices must contain at least one scan position")
-    if np.any(frame_indices < 0) or np.any(frame_indices >= total):
-        bad = frame_indices[(frame_indices < 0) | (frame_indices >= total)][0]
-        raise ValueError(
-            f"scan frame index {int(bad)} is outside flattened scan size {total}"
-        )
-
-    rows = frame_indices // scan_c
-    physical_cols = frame_indices % scan_c
-    cols = physical_cols.copy()
-    if order == "serpentine":
-        odd = rows % 2 == 1
-        cols[odd] = scan_c - 1 - cols[odd]
-    return np.stack([rows, cols], axis=1).astype(np.int64, copy=False)
-
-
-def _normalize_scan_indices(
-    scan_indices,
-    scan_shape: tuple[int, int],
-    scan_order: str = "row-major",
-    index_mode: str = "scan",
-) -> tuple[np.ndarray, np.ndarray]:
-    """Validate stochastic scan positions and return HDF5 frames + row/col.
-
-    ``scan_indices`` accepts either a flat vector of logical row-major scan
-    indices or an ``(N, 2)`` array of logical ``(row, col)`` positions. Flat
-    indices default to logical scan coordinates, matching PyTorch-style
-    samplers; pass ``index_mode="hdf5"`` only when the caller already has
-    physical flattened detector-frame indices from the file.
-    """
-    mode = str(index_mode).lower().replace("_", "-")
-    if mode not in {"scan", "hdf5"}:
-        raise ValueError("index_mode must be 'scan' or 'hdf5'")
-
-    arr = np.asarray(scan_indices)
-    if arr.ndim == 1:
-        flat = arr.astype(np.int64, copy=False).reshape(-1)
-        if mode == "hdf5":
-            positions = _frame_indices_to_scan_positions(
-                flat,
-                scan_shape,
-                scan_order,
-            )
-            return flat.copy(), positions
-
-        scan_r, scan_c = (int(v) for v in scan_shape)
-        total = scan_r * scan_c
-        if flat.size == 0:
-            raise ValueError("scan_indices must contain at least one scan position")
-        if np.any(flat < 0) or np.any(flat >= total):
-            bad = flat[(flat < 0) | (flat >= total)][0]
-            raise ValueError(
-                f"scan index {int(bad)} is outside flattened scan size {total}"
-            )
-        rows = flat // scan_c
-        cols = flat % scan_c
-        frame_indices = _scan_positions_to_frame_indices(
-            rows,
-            cols,
-            scan_shape,
-            scan_order,
-        )
-        positions = np.stack([rows, cols], axis=1).astype(np.int64, copy=False)
-        return frame_indices, positions
-
-    if arr.ndim == 2 and arr.shape[1] == 2:
-        if mode == "hdf5":
-            raise ValueError(
-                "index_mode='hdf5' expects a flat vector of HDF5 frame indices, "
-                "not an (N, 2) row/column array"
-            )
-        rows = arr[:, 0].astype(np.int64, copy=False)
-        cols = arr[:, 1].astype(np.int64, copy=False)
-        frame_indices = _scan_positions_to_frame_indices(
-            rows,
-            cols,
-            scan_shape,
-            scan_order,
-        )
-        positions = np.stack([rows, cols], axis=1).astype(np.int64, copy=False)
-        return frame_indices, positions
-
-    raise TypeError(
-        "scan_indices must be a flat vector of scan indices or an "
-        "(N, 2) array of (row, col) scan positions"
-    )
-
-
-def _normalize_scan_indices_by_file(
-    scan_indices,
-    n_files: int,
-    scan_shape: tuple[int, int],
-    scan_order: str = "row-major",
-    index_mode: str = "scan",
-) -> tuple[list[np.ndarray], list[np.ndarray]]:
-    """Normalize common or per-file stochastic scan indices for file lists."""
-    n_files = int(n_files)
-    arr = np.asarray(scan_indices)
-
-    # Common positions for every file: flat (N,) or row/col (N, 2).
-    if arr.ndim == 1 or (arr.ndim == 2 and arr.shape[-1] == 2):
-        frames, positions = _normalize_scan_indices(
-            arr,
-            scan_shape,
-            scan_order,
-            index_mode,
-        )
-        return [frames.copy() for _ in range(n_files)], [
-            positions.copy() for _ in range(n_files)
-        ]
-
-    # Per-file flat logical scan indices: (n_files, n_positions).
-    if arr.ndim == 2 and arr.shape[0] == n_files:
-        frame_lists: list[np.ndarray] = []
-        position_lists: list[np.ndarray] = []
-        for i in range(n_files):
-            frames, positions = _normalize_scan_indices(
-                arr[i],
-                scan_shape,
-                scan_order,
-                index_mode,
-            )
-            frame_lists.append(frames)
-            position_lists.append(positions)
-        return frame_lists, position_lists
-
-    # Per-file row/column scan positions: (n_files, n_positions, 2).
-    if arr.ndim == 3 and arr.shape[0] == n_files and arr.shape[-1] == 2:
-        frame_lists = []
-        position_lists = []
-        for i in range(n_files):
-            frames, positions = _normalize_scan_indices(
-                arr[i],
-                scan_shape,
-                scan_order,
-                index_mode,
-            )
-            frame_lists.append(frames)
-            position_lists.append(positions)
-        return frame_lists, position_lists
-
-    raise TypeError(
-        "For multiple files, scan_indices must be common positions shaped "
-        "(N,), (N, 2), or per-file positions shaped (n_files, N) / "
-        "(n_files, N, 2)"
-    )
-
-
-def _normalize_random_position_count(n: int) -> int:
-    """Validate a requested stochastic scan-position count."""
-    if isinstance(n, (bool, np.bool_)):
-        raise TypeError("random_positions must be a positive integer count")
-    try:
-        count = int(n)
-    except (TypeError, ValueError) as exc:
-        raise TypeError("random_positions must be a positive integer count") from exc
-    if count <= 0:
-        raise ValueError("random_positions must be a positive integer count")
-    return count
-
-
-def random_scan_indices(
-    n: int,
-    scan_shape: tuple[int, int],
-    *,
-    n_files: int | None = None,
-    seed: int | np.random.Generator | None = None,
-    replace: bool = False,
-    same_for_all_files: bool = False,
-    return_positions: bool = False,
-) -> np.ndarray:
-    """Sample logical row-major scan indices for stochastic HDF5 minibatches.
-
-    Parameters
-    ----------
-    n
-        Number of scan positions to sample per file.
-    scan_shape
-        Full scan shape as ``(rows, cols)``.
-    n_files
-        When provided, return independent per-file samples shaped
-        ``(n_files, n)``. If ``same_for_all_files=True``, return one common
-        ``(n,)`` sample that can be reused for every file.
-    seed
-        Optional reproducibility seed, or an existing NumPy ``Generator``.
-    replace
-        Sample with replacement. Defaults to ``False`` for ptychography-style
-        minibatches that should not duplicate positions in one file unless
-        explicitly requested.
-    same_for_all_files
-        Use one common random sample for every file instead of independent
-        per-file positions.
-    return_positions
-        Return logical ``(row, col)`` positions instead of flat scan indices.
-
-    Returns
-    -------
-    np.ndarray
-        ``(n,)`` / ``(n, 2)`` for a single/common sample, or
-        ``(n_files, n)`` / ``(n_files, n, 2)`` for independent per-file samples.
-    """
-    count = _normalize_random_position_count(n)
-    scan_r, scan_c = (int(v) for v in scan_shape)
-    if scan_r <= 0 or scan_c <= 0:
-        raise ValueError("scan_shape must contain positive row/column sizes")
-    total = scan_r * scan_c
-    if not replace and count > total:
-        raise ValueError(
-            f"Cannot sample {count} random positions without replacement from "
-            f"scan_shape={tuple(scan_shape)} ({total} positions)."
-        )
-    if n_files is not None:
-        n_files = int(n_files)
-        if n_files <= 0:
-            raise ValueError("n_files must be positive when provided")
-
-    rng = seed if isinstance(seed, np.random.Generator) else np.random.default_rng(seed)
-
-    def _one() -> np.ndarray:
-        return rng.choice(total, size=count, replace=replace).astype(np.int64, copy=False)
-
-    if n_files is None or same_for_all_files:
-        indices = _one()
-    else:
-        indices = np.vstack([_one() for _ in range(n_files)])
-
-    if not return_positions:
-        return indices
-
-    rows = indices // scan_c
-    cols = indices % scan_c
-    return np.stack([rows, cols], axis=-1).astype(np.int64, copy=False)
-
-
-def _drift_scan_positions(
-    scan_positions,
-    drift,
-    *,
-    scan_shape: tuple[int, int] | None = None,
-) -> np.ndarray:
-    """Apply one dense drift field to each frame's shared scan positions.
-
-    The field is sampled exactly at each selected integer scan position. Raw
-    diffraction patterns are not resampled, so fractional offsets remain
-    available to the ptychography forward model.
-    """
-    positions = np.asarray(scan_positions, dtype=np.float32)
-    raw_drift = drift
-    if hasattr(raw_drift, "detach"):
-        raw_drift = raw_drift.detach().cpu().numpy()
-    fields = np.asarray(raw_drift, dtype=np.float32)
-    shared_positions = positions.ndim == 2 and positions.shape[-1] == 2
-    if shared_positions:
-        positions = positions[None, ...]
-    elif positions.ndim != 3 or positions.shape[-1] != 2:
-        raise ValueError("scan_positions must have shape (N, 2) or (n_files, N, 2)")
-    if fields.ndim == 3 and fields.shape[-1] == 2:
-        fields = fields[None, ...]
-    elif fields.ndim == 4 and fields.shape[-1] == 2:
-        pass
-    elif fields.ndim == 4 and fields.shape[1] == 2:
-        fields = np.moveaxis(fields, 1, -1)
-    else:
-        raise ValueError(
-            "drift must have shape (frames, rows, cols, 2) or "
-            "(frames, 2, rows, cols)"
-        )
-    if shared_positions and fields.shape[0] > 1:
-        positions = np.broadcast_to(positions, (fields.shape[0], *positions.shape[1:]))
-    if fields.shape[0] != positions.shape[0]:
-        raise ValueError("drift must contain one field per source frame")
-    field_shape = tuple(int(v) for v in fields.shape[1:3])
-    if scan_shape is not None and tuple(int(v) for v in scan_shape) != field_shape:
-        raise ValueError(
-            f"drift scan shape {field_shape} does not match "
-            f"scan_shape={tuple(scan_shape)}"
-        )
-    positions_int = np.rint(positions).astype(np.int64)
-    if not np.array_equal(positions, positions_int):
-        raise ValueError("scan_positions must be integer logical scan positions")
-    if np.any(positions_int[..., 0] < 0) or np.any(positions_int[..., 0] >= field_shape[0]):
-        raise ValueError("scan_positions row is outside the drift field")
-    if np.any(positions_int[..., 1] < 0) or np.any(positions_int[..., 1] >= field_shape[1]):
-        raise ValueError("scan_positions column is outside the drift field")
-    if not np.isfinite(positions).all() or not np.isfinite(fields).all():
-        raise ValueError("scan_positions and drift must contain finite values")
-    frame_ids = np.arange(positions.shape[0])[:, None]
-    offsets = fields[frame_ids, positions_int[..., 0], positions_int[..., 1]]
-    return np.ascontiguousarray(positions + offsets, dtype=np.float32)
-
-
-def get_metadata(filepath: str) -> dict:
-    """Read all scalar metadata from an HDF5 master file.
-
-    Returns a flat dict that mixes two layers:
-
-    **Derived, named fields** (always present as keys; value is ``None`` when
-    the source field is missing from the file):
-
-    - ``scan_shape`` : tuple[int, int] or None
-        Scan grid as ``(height, width)``. Derived from ``ntrigger`` assuming
-        a square scan. If ``ntrigger`` is not a perfect square, this is
-        ``None`` and the caller must pass ``scan_shape=`` to ``load()``
-        explicitly.
-    - ``n_frames`` : int or None
-        Total frame count (``ntrigger``).
-    - ``dwell_time_us`` : float or None
-        Per-frame dwell in microseconds (``frame_time * 1e6``).
-    - ``detector_shape`` : tuple[int, int] or None
-        Detector pixel count as ``(height, width)``.
-    - ``detector_name`` : str or None
-        Human-readable detector description, e.g. ``"Dectris ARINA Si"``.
-    - ``saturation`` : int or None
-        ADU ceiling before the detector saturates.
-
-    **Raw HDF5 scalars** (schema-agnostic): every scalar dataset in the file
-    keyed by its full HDF5 path, e.g.
-    ``metadata["entry/instrument/detector/frame_time"]``. Arrays of more
-    than 100 elements are skipped. This is the escape hatch when you need a
-    field the derived layer does not cover.
-
-    .. note::
-
-        Scope-side parameters (``voltage_kV``, ``semiangle``,
-        ``scan_sampling``, ``camera_length``, ``rotation``) are NOT in the
-        h5 master - they must be passed to ``ssb()`` explicitly or loaded
-        from a site config. If a field is in this dict, it came from the
-        file.
-
-    Parameters
-    ----------
-    filepath : str
-        Path to the HDF5 master file.
-
-    Returns
-    -------
-    dict
-        Mixed dict of derived named fields and raw h5-path scalars.
-
-    Examples
-    --------
-    ```python
-    m = get_metadata("scan_master.h5")
-    m["scan_shape"]       # (512, 512)
-    m["dwell_time_us"]    # 49.8
-    m["detector_name"]    # detector model string
-    # any raw HDF5 scalar is also available by its full path:
-    m["entry/instrument/detector/count_time"]   # 9.95e-05
-    ```
-    """
-    metadata: dict = {}
-    with h5py.File(filepath, "r") as f:
-        def _visit(name, obj):
-            if not isinstance(obj, h5py.Dataset):
-                return
-            if obj.size > 100:
-                return  # skip large arrays (flatfield, pixel_mask, etc.)
-            if "data_" in name:
-                return  # skip data chunk links
-            try:
-                val = obj[()]
-                if isinstance(val, bytes):
-                    val = val.decode()
-                elif isinstance(val, np.ndarray) and val.ndim == 0:
-                    val = val.item()
-                metadata[name] = val
-            except (TypeError, ValueError, OSError, UnicodeDecodeError):
-                return  # Skip non-scalar/non-readable datasets
-        f.visititems(_visit)
-
-        def _copy_attrs(attrs):
-            for key, val in attrs.items():
-                if isinstance(val, bytes):
-                    val = val.decode()
-                elif isinstance(val, np.ndarray) and val.ndim == 0:
-                    val = val.item()
-                metadata.setdefault(key, val)
-
-        _copy_attrs(f.attrs)
-        data_group = f.get("entry/data")
-        if data_group is not None:
-            _copy_attrs(data_group.attrs)
-
-        data_ds = f.get("entry/data/data")
-        if data_ds is None and data_group is not None:
-            for key in sorted(data_group.keys()):
-                if key.startswith("data_"):
-                    try:
-                        data_ds = data_group[key]
-                    except (OSError, KeyError):
-                        data_ds = None
-                    break
-        if data_ds is not None:
-            if "scan_shape" in data_ds.attrs:
-                metadata.setdefault("scan_shape", tuple(int(x) for x in data_ds.attrs["scan_shape"]))
-            if "det_shape" in data_ds.attrs:
-                metadata.setdefault("detector_shape", tuple(int(x) for x in data_ds.attrs["det_shape"]))
-            metadata.setdefault("source_dtype", str(data_ds.dtype))
-            if data_ds.ndim >= 3:
-                metadata.setdefault("n_frames", int(np.prod(data_ds.shape[:-2])))
-    _derive_fields(metadata)
-    return metadata
-
-
-def _derive_fields(metadata: dict) -> None:
-    """Promote raw h5-path scalars into named fields on the metadata dict.
-
-    Every derived field is set unconditionally - missing sources land as
-    ``None`` so the key is always present and code can do ``meta["scan_shape"]``
-    without defensive ``.get()`` calls.
-    """
-    import math
-
-    ntrigger = metadata.get("entry/instrument/detector/detectorSpecific/ntrigger")
-    n_frames = int(ntrigger) if ntrigger is not None else metadata.get("n_frames")
-    n_frames = int(n_frames) if n_frames is not None else None
-
-    scan_shape = metadata.get("scan_shape")
-    if scan_shape is not None:
-        scan_shape = tuple(int(x) for x in scan_shape)
-    elif n_frames is not None:
-        side = math.isqrt(n_frames)
-        scan_shape = (side, side) if side * side == n_frames else None
-
-    frame_time = metadata.get("entry/instrument/detector/frame_time")
-    dwell_time_us = float(frame_time) * 1e6 if frame_time is not None else None
-
-    y_pix = metadata.get("entry/instrument/detector/detectorSpecific/y_pixels_in_detector")
-    x_pix = metadata.get("entry/instrument/detector/detectorSpecific/x_pixels_in_detector")
-    detector_shape = metadata.get("detector_shape")
-    if detector_shape is not None:
-        detector_shape = tuple(int(x) for x in detector_shape)
-    elif y_pix is not None and x_pix is not None:
-        detector_shape = (int(y_pix), int(x_pix))
-
-    detector_name = metadata.get("entry/instrument/detector/description")
-    saturation_raw = metadata.get("entry/instrument/detector/saturation_value")
-    saturation = int(saturation_raw) if saturation_raw is not None else None
-
-    metadata["scan_shape"] = scan_shape
-    metadata["n_frames"] = n_frames
-    metadata["dwell_time_us"] = dwell_time_us
-    metadata["detector_shape"] = detector_shape
-    metadata["detector_name"] = detector_name
-    metadata["saturation"] = saturation
-
-
 # =============================================================================
 # Velox EMD metadata (#178)
 # =============================================================================
@@ -1273,110 +441,6 @@ def _derive_fields(metadata: dict) -> None:
 # surface those fields in config.json so the screener can auto-derive
 # scan_step_A and show magnification in the list view without anyone
 # hand-typing them.
-
-def read_emd_metadata(emd_path) -> dict:
-    """Extract scope-side fields from a Velox EMD file.
-
-    Reads the first image's ``Data/Image/<hash>/Metadata`` JSON (Velox
-    stores metadata as a uint8 byte vector per frame). Returns a dict
-    with whichever of the following keys were found; missing keys are
-    omitted so callers can merge via ``dict.update`` without clobbering:
-
-    - ``stem_magnification``    : float, e.g. 5_100_000 for 5.1 Mx
-    - ``field_of_view_nm``      : float, FullScanFieldOfView.x in nm
-    - ``voltage_kV``            : float, AccelerationVoltage / 1000
-    - ``semi_angle_mrad``       : float, probe semiangle when exposed
-
-    Returns ``{}`` on any parse failure so callers can always `.update()`
-    the result into an existing config dict without guarding. The EMD
-    format version varies across microscope builds, so missing-field
-    handling is the common path, not the edge case.
-    """
-    import json as _json
-    from pathlib import Path as _Path
-    path = _Path(emd_path)
-    if not path.is_file():
-        return {}
-    try:
-        with h5py.File(path, "r") as f:
-            if "Data/Image" not in f:
-                return {}
-            image_group = f["Data/Image"]
-            first_hash = next(iter(image_group.keys()), None)
-            if first_hash is None:
-                return {}
-            meta_ds = image_group[first_hash].get("Metadata")
-            if meta_ds is None:
-                return {}
-            # Velox stores metadata as a (nbytes, nframes) uint8 JSON buffer.
-            # Frame 0 is sufficient; per-frame blobs are near-identical.
-            raw = meta_ds[:, 0] if meta_ds.ndim == 2 else meta_ds[()]
-            raw_bytes = bytes(np.asarray(raw).tolist()).rstrip(b"\x00")
-            doc = _json.loads(raw_bytes)
-    except (OSError, ValueError, KeyError, _json.JSONDecodeError):
-        return {}
-
-    out: dict = {}
-    optics = doc.get("Optics") or {}
-    custom = doc.get("CustomProperties") or {}
-
-    # Velox wraps most scalars as {"type": "double", "value": "5100000"};
-    # AccelerationVoltage is historically a bare string. Accept both.
-    def _as_float(v):
-        if isinstance(v, dict):
-            v = v.get("value")
-        if v is None:
-            return None
-        try:
-            return float(v)
-        except (TypeError, ValueError):
-            return None
-
-    mag = _as_float(custom.get("StemMagnification"))
-    if mag is not None:
-        out["stem_magnification"] = mag
-
-    fov = optics.get("FullScanFieldOfView")
-    if isinstance(fov, dict):
-        fov_x = _as_float(fov.get("x"))
-        if fov_x is not None:
-            # Velox reports FOV in metres; screener works in nm.
-            out["field_of_view_nm"] = fov_x * 1e9
-
-    voltage = _as_float(optics.get("AccelerationVoltage"))
-    if voltage is not None:
-        out["voltage_kV"] = voltage / 1000.0
-
-    semi = _as_float(optics.get("ConvergenceSemiAngle") or optics.get("SemiConvergenceAngle"))
-    if semi is not None:
-        # Velox stores the convergence angle in radians.
-        out["semi_angle_mrad"] = semi * 1000.0
-    return out
-
-
-def find_emd_sibling(master_path) -> Path | None:
-    """Locate a Velox EMD next to an Arina master file.
-
-    Arina writes ``<stem>_master.h5`` alongside data chunk files; when
-    the operator also exports the scan to Velox, the EMD usually lands
-    in the same folder. Strategy:
-
-    1. Prefer a file named ``<stem>.emd`` (strict match).
-    2. Fall back to any ``*.emd`` in the same directory - Dectris
-       operators often batch-rename after the fact.
-
-    Returns ``None`` when no EMD sibling is found.
-    """
-    from pathlib import Path as _Path
-    master = _Path(master_path)
-    folder = master.parent
-    stem = master.stem
-    stem = stem.removesuffix("_master")
-    candidates = list(folder.glob(f"{stem}.emd")) + list(folder.glob(f"{stem}*.emd"))
-    if candidates:
-        return candidates[0]
-    others = list(folder.glob("*.emd"))
-    return others[0] if len(others) == 1 else None
 
 
 # =============================================================================
@@ -1684,45 +748,9 @@ _parse_headers_bulk = _parse_headers  # Same function, works with uint64 offsets
 _default_decompressor = None
 
 
-_LIBC = None
 _POSIX_FADV_SEQUENTIAL = 2
 _POSIX_FADV_WILLNEED = 3
 
-
-def _get_libc():
-    """Lazy-load libc for posix_fadvise. None on non-Linux platforms."""
-    global _LIBC
-    if _LIBC is None:
-        import ctypes
-        import ctypes.util
-        lib_name = ctypes.util.find_library("c")
-        if lib_name is None:
-            _LIBC = False
-        else:
-            try:
-                libc = ctypes.CDLL(lib_name, use_errno=True)
-            except OSError:
-                _LIBC = False
-            else:
-                if not hasattr(libc, "posix_fadvise"):
-                    _LIBC = False
-                else:
-                    _LIBC = libc
-    return _LIBC if _LIBC is not False else None
-
-
-# Persistent pinned (page-locked) host memory pool. The compressed read_buffer
-# is allocated from it so the subsequent H2D upload can run asynchronously and
-# the page-lock cost is amortized. Freed blocks are reused across loads, unlike
-# a fresh cp.cuda.alloc_pinned_memory per call (which page-locks from scratch).
-# Guarded: the pinned-memory pool is a CUDA resource. On a non-CUDA box `cp` is
-# None and there is no pinned pool to set up; the cuda decompress path (the only
-# user) never runs there.
-if cp is not None:
-    _PINNED_POOL = cp.cuda.PinnedMemoryPool()
-    cp.cuda.set_pinned_memory_allocator(_PINNED_POOL.malloc)
-else:
-    _PINNED_POOL = None
 
 # Fast pinned host buffers for the compressed read_buffer. An anonymous mmap
 # provides a page-aligned, lazily faulted region that cudaHostRegister can pin
@@ -1731,140 +759,6 @@ else:
 # and loads reuse the page lock.
 # Redundant nearby sizes are unregistered on release so ascending file sizes do
 # not leave one multi-gigabyte mapping behind for every master.
-_PINNED_BUFS: list[dict] = []
-_PINNED_BUFS_LOCK = threading.Lock()
-_PINNED_LARGE_BUFFER_THRESHOLD = 64 * 1024 * 1024
-_PINNED_LARGE_BUFFER_GRANULARITY = 4 * 1024 * 1024
-
-
-def _pinned_registration_size(nbytes: int) -> int:
-    """Return a bounded-capacity registration size for a requested buffer.
-
-    Large sequential HDF5 batches from one source can differ by a fraction of
-    a percent in compressed size. Registering their exact byte counts can make
-    a later, slightly larger batch pay for a third page-locked buffer even
-    though the pipeline has only two staging slots. Round large registrations
-    to 4 MiB so nearby batches reuse those two slots. The extra pinned memory is
-    bounded below 4 MiB per slot; small sparse selections keep exact sizing.
-    """
-
-    nbytes = int(nbytes)
-    if nbytes <= 0:
-        raise ValueError("Pinned buffer size must be positive")
-    if nbytes < _PINNED_LARGE_BUFFER_THRESHOLD:
-        return nbytes
-    granularity = _PINNED_LARGE_BUFFER_GRANULARITY
-    return ((nbytes + granularity - 1) // granularity) * granularity
-
-
-def _alloc_pinned_fast(nbytes: int) -> np.ndarray:
-    """Return a page-locked uint8 host buffer of length >= nbytes, view[:nbytes].
-
-    Reuses a registered buffer from the free list when one fits (size within
-    1.5x, so a 1024-scan buffer is not wasted on a 512-scan load); otherwise
-    mmaps a page-aligned anonymous region and cudaHostRegisters it once. The
-    page lock permits asynchronous downstream H2D transfer. Reusing a
-    compatible registered region amortizes that one-time registration cost.
-    """
-    with _PINNED_BUFS_LOCK:
-        for entry in _PINNED_BUFS:
-            if entry["free"] and nbytes <= entry["size"] <= int(nbytes * 1.5):
-                entry["free"] = False
-                return entry["arr"][:nbytes]
-    import ctypes
-    import mmap
-    try:
-        from cuda.bindings import runtime as cudart
-    except ModuleNotFoundError:
-        return np.empty(nbytes, dtype=np.uint8)
-    registration_size = _pinned_registration_size(nbytes)
-    region = mmap.mmap(-1, registration_size)  # anonymous → page-aligned base
-    addr = ctypes.addressof(ctypes.c_char.from_buffer(region))
-    err = cudart.cudaHostRegister(addr, registration_size, 0)
-    if int(err[0]) != 0:
-        raise RuntimeError(f"cudaHostRegister failed: {int(err[0])}")
-    arr = np.frombuffer(region, dtype=np.uint8)
-    with _PINNED_BUFS_LOCK:
-        _PINNED_BUFS.append(
-            {
-                "region": region,
-                "addr": addr,
-                "arr": arr,
-                "size": registration_size,
-                "free": False,
-            }
-        )
-    return arr[:nbytes]
-
-
-def _release_pinned(view: np.ndarray, *, prune: bool = True) -> None:
-    """Mark a buffer from :func:`_alloc_pinned_fast` reusable.
-
-    Keeps one reusable buffer per non-overlapping size class. A larger free
-    buffer supersedes a smaller one when it is no more than 1.5x larger, which
-    is the same fit rule used by :func:`_alloc_pinned_fast`. ``view`` is the
-    sliced array; its ``.base`` is the full registered array we cached.
-
-    Group-pipelined loads pass ``prune=False`` while disk preparation and GPU
-    decode overlap. They prune once after the pipeline drains, so the next
-    group can reuse every in-flight staging slot instead of repeatedly
-    unregistering and registering a nearby-sized buffer.
-    """
-    base = view.base if view.base is not None else view
-    with _PINNED_BUFS_LOCK:
-        released = None
-        for entry in _PINNED_BUFS:
-            if entry["arr"] is base:
-                entry["free"] = True
-                released = entry
-                break
-        if released is None:
-            return
-
-        if not prune:
-            return
-
-        _prune_pinned_free_locked()
-
-
-def _prune_pinned_free(*, retain_per_size_class: int = 1) -> None:
-    """Discard redundant idle staging buffers after a pipeline drains."""
-    with _PINNED_BUFS_LOCK:
-        _prune_pinned_free_locked(retain_per_size_class=retain_per_size_class)
-
-
-def _prune_pinned_free_locked(*, retain_per_size_class: int = 1) -> None:
-    """Prune redundant free buffers while ``_PINNED_BUFS_LOCK`` is held."""
-    retain_per_size_class = max(1, int(retain_per_size_class))
-    retained: list[dict] = []
-    redundant: list[dict] = []
-    for entry in sorted(
-        (item for item in _PINNED_BUFS if item["free"]),
-        key=lambda item: item["size"],
-        reverse=True,
-    ):
-        covering = sum(
-            keeper["size"] <= int(entry["size"] * 1.5)
-            for keeper in retained
-        )
-        if covering >= retain_per_size_class:
-            redundant.append(entry)
-        else:
-            retained.append(entry)
-    for entry in redundant:
-        if _unregister_pinned_entry(entry):
-            _PINNED_BUFS.remove(entry)
-            entry.clear()
-
-
-def _unregister_pinned_entry(entry: dict) -> bool:
-    """Unregister one idle mmap-backed staging buffer."""
-    try:
-        from cuda.bindings import runtime as cudart
-    except ModuleNotFoundError:
-        return False
-    error = cudart.cudaHostUnregister(entry["addr"])
-    return int(error[0]) == 0
 
 
 def _prepare_master(
@@ -4426,9 +3320,9 @@ def _load_view(
     import time
 
     if backend == "cpu":
-        from .backends.cpu import reference as _be
+        from .backends.cpu import dense as _be
     elif backend == "mps":
-        from .backends.mps import decoder as _be
+        from .backends.mps import dense as _be
     else:  # pragma: no cover - guarded upstream
         raise ValueError(f"_load_view does not handle backend={backend!r}")
 
@@ -4770,7 +3664,7 @@ def _load_scan_crop_impl(
             output_dtype=output_dtype,
         )
     else:
-        from quantem.gpu.io.backends.mps.decoder import load_prepared_frames
+        from quantem.gpu.io.backends.mps.dense import load_prepared_frames
 
         data = load_prepared_frames(
             prepared,
@@ -5021,7 +3915,7 @@ def _decode_scan_crop_prepared(
             output_dtype=output_dtype,
         )
     else:
-        from quantem.gpu.io.backends.mps.decoder import load_prepared_frames
+        from quantem.gpu.io.backends.mps.dense import load_prepared_frames
 
         data = load_prepared_frames(
             prepared,
@@ -5461,7 +4355,7 @@ def _decode_scan_indices_prepared(
             output_dtype=output_dtype,
         )
     else:
-        from quantem.gpu.io.backends.mps.decoder import load_prepared_frames
+        from quantem.gpu.io.backends.mps.dense import load_prepared_frames
 
         data = load_prepared_frames(
             prepared,
@@ -5510,40 +4404,6 @@ def _decode_scan_indices_prepared(
             f"in {time.perf_counter() - t0:.2f}s"
         )
     return LoadResult(data, meta)
-
-
-def _load_scan_indices_one(
-    filepath: str,
-    frame_indices: np.ndarray,
-    scan_positions: np.ndarray,
-    *,
-    backend: str,
-    full_scan_shape: tuple[int, int],
-    scan_order: ScanOrder,
-    det_bin: int,
-    apply_mask: bool,
-    verbose: bool,
-    auto_narrow: bool,
-    output_dtype: type | np.dtype | None,
-) -> LoadResult:
-    """Load one stochastic scan-index batch using sorted unique HDF5 chunks."""
-    prepared_item = _prepare_scan_indices_one(
-        filepath,
-        frame_indices,
-        scan_positions,
-        apply_mask=apply_mask,
-    )
-    return _decode_scan_indices_prepared(
-        prepared_item,
-        backend=backend,
-        full_scan_shape=full_scan_shape,
-        scan_order=scan_order,
-        det_bin=det_bin,
-        apply_mask=apply_mask,
-        verbose=verbose,
-        auto_narrow=auto_narrow,
-        output_dtype=output_dtype,
-    )
 
 
 def load_scan_indices(
@@ -6087,6 +4947,9 @@ def load(
     *,
     dtype: str | type | np.dtype | None = None,
     backend: str = "auto",
+    representation: DataRepresentation | str | None = None,
+    expected_source_sha256: str | None = None,
+    source_integrity: SourceIntegrity | None = None,
     dataset_path: str | None = None,
     scan_shape: tuple[int, int] | None = None,
     scan_order: ScanOrder = "row-major",
@@ -6111,7 +4974,8 @@ def load(
     replace: bool = False,
     same_random_positions: bool = False,
     drift: Sequence | np.ndarray | None = None,
-    det_bin: int = 1,
+    detector_bin: int = 1,
+    det_bin: int | None = None,
     apply_mask: bool = True,
     auto_narrow: bool = True,
     output: str = "native",
@@ -6119,11 +4983,17 @@ def load(
     device: int | str | None = None,
     devices: list[int] | str | None = None,
     verbose: bool = True,
-) -> LoadResult | list[LoadResult]:
+) -> FourDSTEMData | list[FourDSTEMData]:
     """Load one or more 4D-STEM sources through an accelerated backend.
 
-    All spatial arguments use ``(row, col)`` order. ``dtype`` is the only
-    output-precision control. ``"u8"`` requests a saturating browse output;
+    All spatial arguments use ``(row, col)`` order. ``representation`` selects
+    how the complete logical data is retained. Existing Lossless Pack Format
+    sources select ``"lossless_packed"`` automatically; ordinary HDF5 remains
+    dense during the compatibility period. Pass ``representation="dense"``
+    explicitly when an unpacked array is required.
+
+    ``dtype`` is the output-precision control for the legacy dense path.
+    ``"u8"`` requests a saturating browse output;
     it is lossless only when a complete source audit proves every corrected
     count is at most 255. Use ``"u16"`` or the native dtype for exact
     raw-count workflows, widening detector sums when required.
@@ -6140,6 +5010,19 @@ def load(
         ``"f32"``, ``"u4"``, ``"native"``, or ``"auto"``. Explicit
         ``"u8"`` saturates values above 255; ``"auto"`` is an advisory
         compact-dtype choice and is not a complete-source losslessness audit.
+    representation
+        ``"lossless_packed"`` or ``"dense"``. When omitted, the loader detects
+        an existing lossless-packed container and otherwise retains the current
+        dense compatibility path. Representation never changes scan coverage,
+        detector coverage, binning, calibration, or scientific dtype.
+    expected_source_sha256
+        Optional externally retained whole-file identity for a lossless-packed
+        source. Some encoding profiles require this identity before publication.
+    source_integrity
+        Optional ``io.SourceIntegrity`` read from an explicitly sealed manifest.
+        Enables complete byte-range verification where supported. Its whole-file
+        identity must agree with ``expected_source_sha256`` when both are given.
+        Neither the manifest nor preparation is discovered implicitly.
     backend
         ``"auto"``, ``"cuda"``, ``"mps"``, or explicit reference ``"cpu"``.
     output
@@ -6150,6 +5033,11 @@ def load(
         Optional full scan shape as ``(row, col)``.
     scan_region, detector_region
         Optional bounds as ``(row_start, row_stop, col_start, col_stop)``.
+    detector_bin
+        Exact detector-space sum-bin factor. ``1`` preserves native detector
+        sampling. The result metadata records source and working geometry.
+    det_bin
+        Deprecated compatibility spelling for ``detector_bin``.
     target_scan_region, scan_shift_row_col
         Shared target crop and per-source row/column shifts for drift-aware
         multi-file loading.
@@ -6168,13 +5056,99 @@ def load(
 
     Returns
     -------
-    LoadResult or list[LoadResult]
+    FourDSTEMData or list[FourDSTEMData]
         Data stays backend-resident. MPS list/folder loads return a common
-        multi-frame detector object in ``LoadResult.data`` while background
+        multi-frame detector object in ``FourDSTEMData.data`` while background
         decoding fills its dataset slots.
     """
     if output not in {"native", "torch"}:
         raise ValueError("output must be 'native' or 'torch'")
+    if det_bin is not None:
+        if detector_bin != 1 and detector_bin != det_bin:
+            raise ValueError(
+                "detector_bin and deprecated det_bin cannot request different "
+                "bin factors. Use detector_bin only."
+            )
+        warnings.warn(
+            "det_bin is deprecated; use detector_bin.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        detector_bin = det_bin
+
+    if source_integrity is not None:
+        if not isinstance(source_integrity, SourceIntegrity):
+            raise TypeError(
+                "source_integrity must be a SourceIntegrity value; construct it "
+                "with SourceIntegrity.from_file and an independently recorded seal."
+            )
+        if expected_source_sha256 not in {None, source_integrity.whole_file_sha256}:
+            raise ValueError("expected_source_sha256 conflicts with source_integrity.")
+        expected_source_sha256 = source_integrity.whole_file_sha256
+    selected_representation = _selected_representation(source, representation)
+    if (
+        representation is not None
+        and selected_representation is DataRepresentation.DENSE
+        and isinstance(dtype, str)
+        and dtype.lower() in {"u4", "uint4"}
+    ):
+        raise ValueError(
+            "representation='dense' cannot request packed dtype='u4'. "
+            "Use dtype='u8' or a wider scientific dtype for dense storage."
+        )
+    if selected_representation is DataRepresentation.LOSSLESS_PACKED:
+        conflicts = {
+            "dataset_path": dataset_path,
+            "scan_shape": scan_shape,
+            "scan_region": scan_region,
+            "detector_region": detector_region,
+            "target_scan_region": target_scan_region,
+            "scan_shift_row_col": scan_shift_row_col,
+            "scan_indices": scan_indices,
+            "random_positions": random_positions,
+            "drift": drift,
+            "devices": devices,
+        }
+        named_conflicts = [
+            name for name, value in conflicts.items() if value is not None
+        ]
+        if named_conflicts:
+            joined = ", ".join(named_conflicts)
+            raise ValueError(
+                "The current lossless-packed loader accepts one complete source; "
+                f"remove these incompatible controls: {joined}."
+            )
+        if _normalize_scan_order(scan_order) != "row-major":
+            raise ValueError(
+                "Lossless-packed sources already declare row-major scan order. "
+                "Remove scan_order='serpentine'; scan reordering is not a load side effect."
+            )
+        if dtype not in {None, "native"}:
+            raise ValueError(
+                "Lossless-packed representation preserves its declared scientific "
+                "dtype. Remove dtype= or request representation='dense' for an "
+                "explicit output conversion."
+            )
+        if detector_bin != 1 or not apply_mask or output != "native" or not stack:
+            raise ValueError(
+                "The current lossless-packed load requires detector_bin=1, "
+                "apply_mask=True, output='native', and stack=True. Scientific "
+                "transformations belong in downstream kernels."
+            )
+        return _load_lossless_packed(
+            source,
+            backend=backend,
+            expected_source_sha256=expected_source_sha256,
+            device=device,
+            **({"source_integrity": source_integrity} if source_integrity is not None else {}),
+        )
+
+    if expected_source_sha256 is not None:
+        raise ValueError(
+            "expected_source_sha256 authenticates one prepared Lossless Pack Format "
+            "container, not an ordinary HDF5 master and its external shards. "
+            "Remove it for dense loading and validate the complete source separately."
+        )
 
     token = dtype.lower() if isinstance(dtype, str) else None
     output_dtype = None
@@ -6310,7 +5284,7 @@ def load(
         "backend": backend,
         "scan_shape": scan_shape,
         "scan_order": scan_order,
-        "det_bin": det_bin,
+        "det_bin": detector_bin,
         "apply_mask": apply_mask,
         "auto_narrow": auto_narrow,
         "verbose": verbose,
@@ -6354,7 +5328,7 @@ def load(
         result.metadata["drift_batch"] = drift_batch
         if generated_sample is not None:
             result.metadata["sample"] = generated_sample
-    return _convert_load_output(result, output)
+    return _record_dense_representation(_convert_load_output(result, output))
 
 
 def disk_of(path) -> str:
@@ -7418,7 +6392,6 @@ def _load_gpu_decompressed(
     return result
 
 
-
 def bin(
     data,
     factor: int = 2,
@@ -7655,7 +6628,6 @@ def bin(
         f"Expected 2D, 3D, or 4D array, got {data.ndim}D. "
         "For multi-file data, use load(..., det_bin=2) instead."
     )
-
 
 
 def _read_frame_count(filepath: str) -> int | None:

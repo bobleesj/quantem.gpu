@@ -28,9 +28,10 @@ from typing import Any
 
 import numpy as np
 
+from ..io.integrity import SourceIntegrity
+from ..io.representation import DataRepresentation
 from ..io.resident_contract import (
     ResidentGenerationReceipt,
-    ResidentStorageEncoding,
     metadata_sha256,
 )
 from .maped_api import MAPEDProtocolError, MAPEDProtocolService
@@ -93,7 +94,7 @@ def _packaged_service_capability(implementation_revision: str) -> dict[str, Any]
                 "working_logical_tensor_bytes",
                 "physical_resident_bytes",
                 "resident_generation",
-                "storage_kind",
+                "representation",
                 "storage_schema",
                 "lossless_exact",
                 "source_shape",
@@ -110,6 +111,7 @@ def _packaged_service_capability(implementation_revision: str) -> dict[str, Any]
             "legacy_aliases": {
                 "logical_tensor_bytes": "source_logical_tensor_bytes",
                 "resident_bytes": "physical_resident_bytes",
+                "storage_kind": "representation",
             },
         },
         "timing": {
@@ -151,6 +153,7 @@ class CompactBrowseSource:
 
     path: str | os.PathLike[str]
     expected_whole_file_sha256: str | None = None
+    source_integrity: SourceIntegrity | None = None
 
 
 def load_compact_browse_sources(
@@ -159,7 +162,7 @@ def load_compact_browse_sources(
 ) -> dict[Path, CompactBrowseSource]:
     """Load one trusted server-side master-to-compact binding registry."""
     registry_path = Path(registry_path).expanduser().absolute()
-    data_folder = Path(data_folder).expanduser().absolute()
+    data_folder = Path(data_folder).expanduser().resolve()
     value = json.loads(registry_path.read_text())
     if not isinstance(value, dict):
         raise TypeError("compact source registry must contain one JSON object")
@@ -186,7 +189,7 @@ def load_compact_browse_sources(
         master = Path(master_value).expanduser()
         if not master.is_absolute():
             master = data_folder / master
-        master = master.absolute()
+        master = master.resolve()
         try:
             master.relative_to(data_folder)
         except ValueError as error:
@@ -196,16 +199,35 @@ def load_compact_browse_sources(
         compact = Path(compact_value).expanduser()
         if not compact.is_absolute():
             compact = registry_path.parent / compact
-        compact = compact.absolute()
+        compact = compact.resolve()
         if not master.is_file():
             raise FileNotFoundError(f"catalogued master does not exist: {master}")
         if not compact.is_file():
             raise FileNotFoundError(f"compact artifact does not exist: {compact}")
+        manifest_path = row.get("chunk_integrity_manifest")
+        manifest_sha256 = row.get("expected_chunk_integrity_manifest_sha256")
+        if (manifest_path is None) != (manifest_sha256 is None):
+            raise ValueError(
+                f"Registry row {ordinal} must supply both the integrity manifest "
+                "and its independently recorded SHA-256 seal."
+            )
+        integrity = None
+        if manifest_path is not None:
+            integrity_path = Path(manifest_path).expanduser()
+            if not integrity_path.is_absolute():
+                integrity_path = registry_path.parent / integrity_path
+            integrity = SourceIntegrity.from_file(
+                integrity_path, expected_sha256=manifest_sha256
+            )
+            if integrity.whole_file_sha256 != expected_sha256:
+                raise ValueError("Registry and integrity manifest name different source seals.")
+            integrity.validate_source(compact)
         if master in result:
             raise ValueError(f"duplicate compact binding for {master}")
         result[master] = CompactBrowseSource(
             compact,
             expected_sha256,
+            integrity,
         )
     return result
 
@@ -394,7 +416,7 @@ class BrowseService:
         | None = None,
         initialize_cuda: bool = True,
     ) -> None:
-        self.data_folder = Path(data_folder).expanduser().absolute()
+        self.data_folder = Path(data_folder).expanduser().resolve()
         self._compact_sources = self._normalize_compact_sources(compact_sources)
         if isinstance(gpus, str):
             if gpus != "auto":
@@ -422,7 +444,10 @@ class BrowseService:
         self._catalog_refresh_lock = threading.Lock()
         self._catalog_generation = 0
         self._catalog: dict[str, Any] | None = None
-        self._session_paths: dict[str, Path] = {}
+        self._session_paths: dict[str, Path] = {
+            _session_path(self.data_folder, master.parent): master.parent
+            for master in self._compact_sources
+        }
         self._inspection_lock = threading.Lock()
         self._inspection_cache: dict[str, tuple[tuple, Any]] = {}
         self._master_discovery_lock = threading.Lock()
@@ -463,11 +488,11 @@ class BrowseService:
             master = Path(master_value).expanduser()
             if not master.is_absolute():
                 master = self.data_folder / master
-            master = master.absolute()
+            master = master.resolve()
             compact = Path(source.path).expanduser()
             if not compact.is_absolute():
                 compact = self.data_folder / compact
-            compact = compact.absolute()
+            compact = compact.resolve()
             expected = source.expected_whole_file_sha256
             if expected is not None and (
                 len(expected) != 64
@@ -476,7 +501,13 @@ class BrowseService:
                 raise ValueError(
                     "expected_whole_file_sha256 must be one lowercase SHA-256 digest"
                 )
-            normalized[master] = CompactBrowseSource(compact, expected)
+            integrity = source.source_integrity
+            if integrity is not None:
+                if expected is not None and expected != integrity.whole_file_sha256:
+                    raise ValueError("Compact source and integrity manifest seals disagree.")
+                expected = integrity.whole_file_sha256
+                integrity.validate_source(compact)
+            normalized[master] = CompactBrowseSource(compact, expected, integrity)
         return normalized
 
     def _initialize_cuda(self) -> None:
@@ -500,6 +531,12 @@ class BrowseService:
                             _, total = cp.cuda.runtime.memGetInfo()
                         cp.zeros((1,), dtype=cp.uint8).sum()
                         cp.get_default_memory_pool().free_all_blocks()
+                        if self._compact_sources:
+                            from quantem.gpu.io.backends.cuda import (
+                                warm_compact_h5_cuda_kernels,
+                            )
+
+                            warm_compact_h5_cuda_kernels()
                     self._devices[gpu] = device
                     self._device_names[gpu] = str(name) if name else f"CUDA GPU {gpu}"
                     self._total_memory_bytes[gpu] = total
@@ -965,7 +1002,11 @@ class BrowseService:
                 )
                 for shard in index.shards
             )
-            return resident_bytes, resident_bytes + maximum_shard_transient
+            source_staging_bytes = index.file_bytes if index.schema_version == 1 else 0
+            return (
+                resident_bytes,
+                resident_bytes + source_staging_bytes + maximum_shard_transient,
+            )
         inspection = self._inspect(path)
         if inspection.scan_shape is None or inspection.detector_shape is None:
             raise HTTPException(422, "The master does not report a usable 4D shape.")
@@ -1227,15 +1268,15 @@ class BrowseService:
                     else None
                 )
                 storage_schema = str(manifest.get("schema", ""))
-                representation = {
+                supported_representation = {
                     ("quantem.gpu.packed-detector-h5/v1", "uint16"):
-                        "compact-qgix-v1-uint16",
+                        DataRepresentation.LOSSLESS_PACKED,
                     ("quantem.gpu.packed-detector-h5/v3", "uint8"):
-                        "compact-qgix-v3-uint8",
+                        DataRepresentation.LOSSLESS_PACKED,
                 }.get((storage_schema, str(working_dtype)))
-                if representation is not None:
+                if supported_representation is not None:
                     receipt = ResidentGenerationReceipt(
-                        representation=representation,
+                        representation=supported_representation,
                         source_identity_sha256=str(source_identity),
                         source_shape=tuple(int(value) for value in source_shape),
                         working_shape=tuple(int(value) for value in working_shape),
@@ -1249,7 +1290,6 @@ class BrowseService:
                             if getattr(metadata, "file_bytes", None) is not None
                             else None
                         ),
-                        storage_encoding=ResidentStorageEncoding.LOSSLESS_PACKED,
                         storage_schema=storage_schema,
                         scan_bin=scan_bin,
                         detector_bin=det_bin,
@@ -1298,6 +1338,11 @@ class BrowseService:
                 "working_logical_tensor_bytes": working_logical_tensor_bytes,
                 "physical_resident_bytes": resident_bytes,
                 "resident_generation": resident_generation,
+                "representation": (
+                    DataRepresentation.LOSSLESS_PACKED.value
+                    if metadata is not None
+                    else DataRepresentation.DENSE.value
+                ),
                 "storage_kind": "lossless_packed" if metadata is not None else "dense",
                 "storage_schema": (
                     manifest.get("schema")
@@ -1451,17 +1496,19 @@ class BrowseService:
                     "Compact exact residency requires an immutable whole-file "
                     "SHA-256 seal in trusted server configuration.",
                 )
-            from quantem.gpu.io.backends.cuda.compact_h5 import (
-                load_compact_h5_cuda,
-            )
+            from quantem.gpu.io import load
 
             with self._cuda_context(gpu):
-                source = load_compact_h5_cuda(
+                loaded = load(
                     compact.path,
-                    expected_whole_file_sha256=(
+                    backend="cuda",
+                    expected_source_sha256=(
                         compact.expected_whole_file_sha256
                     ),
+                    source_integrity=compact.source_integrity,
+                    verbose=False,
                 )
+                source = loaded.data
             calibration = source.metadata.detector_calibration
             geometry = None
             if calibration is not None:
@@ -1786,18 +1833,23 @@ class BrowseService:
                     distance_squared <= outer_pixels**2
                 )
             elif mode in {"CoMx", "CoMy", "CoMmag", "DPC", "iCoM"}:
-                if resident.get("compact_source") is not None:
-                    raise HTTPException(
-                        501,
-                        "Compact exact residency does not yet expose a "
-                        "center-of-mass reducer.",
-                    )
                 with self._cuda_context(int(resident.get("gpu", self.gpu))):
                     if (
                         resident.get("com_row") is None
                         or resident.get("com_column") is None
                     ):
-                        com_row, com_column = resident["compute"].center_of_mass()
+                        compact = resident.get("compact_source")
+                        if compact is not None:
+                            try:
+                                com_row, com_column = compact.prepared_center_of_mass()
+                            except (RuntimeError, ValueError) as error:
+                                raise HTTPException(
+                                    501,
+                                    "Compact exact CoM requires authenticated prepared "
+                                    "DPC moments bound to this source.",
+                                ) from error
+                        else:
+                            com_row, com_column = resident["compute"].center_of_mass()
                         resident["com_row"] = np.asarray(com_row, dtype=np.float32)
                         resident["com_column"] = np.asarray(com_column, dtype=np.float32)
                 com_row = resident["com_row"].reshape(resident["scan_shape"])

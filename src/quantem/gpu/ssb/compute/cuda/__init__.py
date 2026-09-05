@@ -1,5 +1,6 @@
-"""CUDA implementation of the private SSB compute protocol."""
+"""Compatibility imports; canonical implementation: ``quantem.gpu.ssb.backends.cuda``."""
 
-from .backend import CudaSSBBackend
-
-__all__ = ["CudaSSBBackend"]
+from quantem.gpu.ssb.backends.cuda import (
+    CudaSSBBackend as CudaSSBBackend,
+    __all__ as __all__,
+)

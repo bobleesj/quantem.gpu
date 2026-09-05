@@ -14,19 +14,37 @@ scientific contract
 This structure prevents four optimized implementations from drifting into four
 different definitions of the science.
 
+For loaded 4D-STEM data, every runtime also shares two representation names:
+`lossless_packed` and `dense`. Dtype, device/host residency, file schema, and
+codec profile are separate fields. A backend may add a new internal codec
+without forcing every scientist or consumer application to learn another load
+mode.
+
 ## Find the code by operation
 
 | Operation | Python contract | Accelerator implementations | Native implementation |
 |---|---|---|---|
 | Load, decode, crop, and bin | `src/quantem/gpu/io` | `io/backends/{cuda,mps,webgpu}` | `Native4DSTEMIO`, `Metal4DSTEMKernels` |
-| BF/DF/ADF and mean diffraction | `src/quantem/gpu/detector` | `detector/compute/{cuda,mps,webgpu}` | `Metal4DSTEMKernels` |
-| CoM, DPC, and iDPC | `src/quantem/gpu/dpc` | `dpc/compute/{cuda,mps,webgpu}` | `Metal4DSTEMKernels`, `MetalImageFFT` |
-| Display statistics and transforms | `src/quantem/gpu/display` | `display/webgpu` and backend modules | `MetalDisplayKernels`, `MetalImageRuntime` |
-| Single-sideband ptychography | `src/quantem/gpu/ssb` | `ssb/compute/{cuda,mps,webgpu}` | `MetalSSBKernels` |
+| BF/DF/ADF and mean diffraction | `src/quantem/gpu/detector` | `detector/backends/{cuda,mps,webgpu}` | `Metal4DSTEMKernels` |
+| CoM, DPC, and iDPC | `src/quantem/gpu/dpc` | `dpc/backends/{cuda,mps,webgpu}` | `Metal4DSTEMKernels`, `MetalImageFFT` |
+| Display statistics and transforms | `src/quantem/gpu/display` | `display/backends/{cpu,cuda,webgpu,direct3d}` | `MetalDisplayKernels`, `MetalImageRuntime` |
+| Single-sideband ptychography | `src/quantem/gpu/ssb` | `ssb/backends/{cuda,mps,webgpu}` | `MetalSSBKernels` |
 
-The current `compute` folder name is an internal compatibility boundary. New
+The old `compute` folder contains compatibility imports only. New
 public APIs belong to the scientific domain; consumers must not import a
 backend module directly.
+
+Browser consumers can import `src/quantem/gpu/webgpu/index.ts`: it re-exports
+the existing dense and lossless-packed IO, detector, and display implementations
+without copying kernels. Build tools use `quantem.gpu.webgpu.export_sources`
+to export the complete dependency graph, including compatibility paths.
+Native Vulkan sources, headers, shaders, and tests live in
+`src/quantem/gpu/vulkan`; the older `android` CMake entry forwards there.
+Swift consumers continue to use the repository-root `Package.swift`.
+
+See the [layout migration map](../maintainer/backend-layout-and-parity.md) for
+the exact current paths and remaining migration gates. A new import path does
+not expand a backend's supported formats, operations, or hardware claims.
 
 ## Read the docs in two directions
 

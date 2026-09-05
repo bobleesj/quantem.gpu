@@ -52,7 +52,7 @@ product and must not be labeled native detector resolution.
 ```python
 from quantem.gpu import detector, dpc, io
 
-loaded = io.load("scan_master.h5", backend="auto", det_bin=1)
+loaded = io.load("scan_master.h5", backend="auto", detector_bin=1)
 
 bright_field = detector.bf(loaded.data)
 annular_dark_field = detector.adf(

@@ -536,7 +536,7 @@ def load_audited_bin4(
     """
     import Metal
 
-    from . import decoder
+    from . import dense as decoder
 
     started = time.perf_counter()
     if prepared.source_dtype != "uint16":

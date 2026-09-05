@@ -1,4 +1,5 @@
 import CNativeHDF5
+import CryptoKit
 import Foundation
 
 struct NativeHDF5Stack {
@@ -21,6 +22,7 @@ struct NativeHDF5Master {
   let expectedFrames: Int?
   let scanShape: (rows: Int, columns: Int)?
   let badPixelIndices: [Int]
+  let detectorMaskSHA256: String?
   let scanPixelSizeNanometer: (row: Double, column: Double)?
   let reciprocalSampling: (row: Double, column: Double)?
   let acquisitionDate: String?
@@ -126,6 +128,14 @@ enum NativeHDF5Bridge {
       raw.bad_pixel_indices.map {
         UnsafeBufferPointer(start: $0, count: raw.bad_pixel_count).map(Int.init)
       } ?? []
+    let detectorMaskSHA256 = raw.detector_mask_values.map { values in
+      var digest = SHA256()
+      for value in UnsafeBufferPointer(start: values, count: raw.detector_mask_count) {
+        var littleEndian = value.littleEndian
+        withUnsafeBytes(of: &littleEndian) { digest.update(bufferPointer: $0) }
+      }
+      return digest.finalize().map { String(format: "%02x", $0) }.joined()
+    }
     var metadata: [String: String] = [:]
     if let items = raw.metadata {
       for item in UnsafeBufferPointer(start: items, count: raw.metadata_count) {
@@ -157,6 +167,7 @@ enum NativeHDF5Bridge {
       expectedFrames: expectedFrames,
       scanShape: scanShape,
       badPixelIndices: badPixelIndices,
+      detectorMaskSHA256: detectorMaskSHA256,
       scanPixelSizeNanometer: scanPixelSizeNanometer,
       reciprocalSampling: reciprocalSampling,
       acquisitionDate: raw.acquisition_date.map { String(cString: $0) },

@@ -10,7 +10,7 @@ final class Metal4DSTEMConsumerContractTests: XCTestCase {
   func testResidentReceiptSeparatesScientificWorkingAndPhysicalBytes() throws {
     let receipt = Metal4DSTEMResidentReceipt(
       schema: Metal4DSTEMResidentReceipt.currentSchema,
-      representation: Metal4DSTEMResidentRepresentation.compactQGIXV3UInt8.rawValue,
+      representation: .losslessPacked,
       sourceIdentitySHA256: sourceA,
       sourceShape: [512, 512, 192, 192],
       workingShape: [512, 512, 192, 192],
@@ -20,7 +20,6 @@ final class Metal4DSTEMConsumerContractTests: XCTestCase {
       workingLogicalTensorBytes: 9_663_676_416,
       physicalResidentBytes: 2_394_650_896,
       containerBytes: 2_394_887_216,
-      storageEncoding: .losslessPacked,
       storageSchema: "quantem.gpu.packed-detector-h5/v3",
       losslessExact: true,
       scanBin: 1,
@@ -46,7 +45,7 @@ final class Metal4DSTEMConsumerContractTests: XCTestCase {
   func testResidentReceiptSupportsFull256AndExactDetectorBinTwo() throws {
     let full256 = Metal4DSTEMResidentReceipt(
       schema: Metal4DSTEMResidentReceipt.currentSchema,
-      representation: Metal4DSTEMResidentRepresentation.compactQGIXV1UInt16.rawValue,
+      representation: .losslessPacked,
       sourceIdentitySHA256: sourceA,
       sourceShape: [512, 512, 256, 256],
       workingShape: [512, 512, 256, 256],
@@ -56,7 +55,6 @@ final class Metal4DSTEMConsumerContractTests: XCTestCase {
       workingLogicalTensorBytes: 34_359_738_368,
       physicalResidentBytes: 4_000_000_000,
       containerBytes: 4_000_065_536,
-      storageEncoding: .losslessPacked,
       storageSchema: "quantem.gpu.packed-detector-h5/v1",
       losslessExact: true,
       scanBin: 1,
@@ -77,7 +75,7 @@ final class Metal4DSTEMConsumerContractTests: XCTestCase {
 
     let detectorBinTwo = Metal4DSTEMResidentReceipt(
       schema: Metal4DSTEMResidentReceipt.currentSchema,
-      representation: Metal4DSTEMResidentRepresentation.indexedResidentInteger.rawValue,
+      representation: .dense,
       sourceIdentitySHA256: sourceA,
       sourceShape: [512, 512, 192, 192],
       workingShape: [512, 512, 96, 96],
@@ -87,7 +85,6 @@ final class Metal4DSTEMConsumerContractTests: XCTestCase {
       workingLogicalTensorBytes: 4_831_838_208,
       physicalResidentBytes: 4_831_838_208,
       containerBytes: nil,
-      storageEncoding: .dense,
       storageSchema: "quantem.gpu.indexed-resident-integer/v1",
       losslessExact: true,
       scanBin: 1,
@@ -160,7 +157,7 @@ final class Metal4DSTEMConsumerContractTests: XCTestCase {
     }
     let receipt = Metal4DSTEMResidentReceipt(
       schema: Metal4DSTEMResidentReceipt.currentSchema,
-      representation: Metal4DSTEMResidentRepresentation.indexedResidentInteger.rawValue,
+      representation: .dense,
       sourceIdentitySHA256: sourceA,
       sourceShape: [2, 2, 3, 4],
       workingShape: [2, 2, 3, 4],
@@ -170,7 +167,6 @@ final class Metal4DSTEMConsumerContractTests: XCTestCase {
       workingLogicalTensorBytes: 96,
       physicalResidentBytes: 96,
       containerBytes: nil,
-      storageEncoding: .dense,
       storageSchema: "quantem.gpu.indexed-resident-integer/v1",
       losslessExact: true,
       scanBin: 1,
@@ -189,7 +185,7 @@ final class Metal4DSTEMConsumerContractTests: XCTestCase {
     )
     let complete = Metal4DSTEMResidentCapabilities(
       schema: Metal4DSTEMResidentCapabilities.currentSchema,
-      representation: .indexedResidentInteger,
+      representation: .dense,
       sourceIdentitySHA256: sourceA,
       scanRows: 2,
       scanColumns: 2,
@@ -257,7 +253,7 @@ final class Metal4DSTEMConsumerContractTests: XCTestCase {
       try recorder.begin(
         generation: 1,
         sourceIdentitySHA256: sourceA,
-        representation: .indexedResidentInteger,
+        representation: .dense,
         counters: .init(
           sourceBytes: 10,
           residentBytes: 20,
@@ -272,7 +268,7 @@ final class Metal4DSTEMConsumerContractTests: XCTestCase {
       try recorder.begin(
         generation: 2,
         sourceIdentitySHA256: sourceB,
-        representation: .compactQGIXV3UInt8
+        representation: .losslessPacked
       )
     )
     XCTAssertFalse(
@@ -282,7 +278,7 @@ final class Metal4DSTEMConsumerContractTests: XCTestCase {
       try recorder.begin(
         generation: 3,
         sourceIdentitySHA256: sourceA,
-        representation: .indexedResidentInteger
+        representation: .dense
       )
     )
     XCTAssertTrue(try recorder.record(generation: 3, milestone: .residentReady))
@@ -315,7 +311,7 @@ final class Metal4DSTEMConsumerContractTests: XCTestCase {
       try recorder.begin(
         generation: 7,
         sourceIdentitySHA256: sourceA,
-        representation: .indexedResidentInteger
+        representation: .dense
       )
     )
     XCTAssertThrowsError(

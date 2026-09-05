@@ -1,6 +1,7 @@
 """Private-loopback remote viewing for native 4D-STEM clients."""
 
 from .maped_api import MAPEDProtocolError, MAPEDProtocolService
+from .prepare import prepare_browse_source
 
 __all__ = [
     "BrowseService",
@@ -9,6 +10,7 @@ __all__ = [
     "MAPEDProtocolService",
     "create_app",
     "load_compact_browse_sources",
+    "prepare_browse_source",
 ]
 
 

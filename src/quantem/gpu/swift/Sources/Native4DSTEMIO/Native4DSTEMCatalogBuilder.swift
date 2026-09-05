@@ -95,6 +95,7 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
       }
       if cached.sourceIdentitySHA256 != nil,
         cached.indexFiles.count == dataFiles.count,
+        cached.badPixelIndices.isEmpty || cached.detectorMaskSHA256 != nil,
         indexesCurrent
       {
         return cached
@@ -218,7 +219,8 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
       masterSHA256: hashes?.master,
       orderedMemberSHA256: hashes?.members,
       sourceScanCalibration: nil,
-      scalarImageRawPath: nil
+      scalarImageRawPath: nil,
+      detectorMaskSHA256: master.detectorMaskSHA256
     )
     try cacheDataset(dataset, at: datasetCache)
     return dataset

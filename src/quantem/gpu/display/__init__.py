@@ -3,7 +3,7 @@
 The bundled colormap control points are the single source used by Python,
 CUDA, Metal/Swift, and WebGPU. Native Swift clients consume the Metal source
 through the repository's ``MetalDisplayKernels`` package; browser clients
-bundle the TypeScript/WGSL sources from :mod:`quantem.gpu.display.webgpu`.
+export the TypeScript/WGSL dependency graph through :mod:`quantem.gpu.webgpu`.
 """
 
 import json

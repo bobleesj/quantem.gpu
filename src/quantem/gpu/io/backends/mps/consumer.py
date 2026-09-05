@@ -19,9 +19,9 @@ import numpy as np
 
 from ...resident_contract import (
     ResidentGenerationReceipt,
-    ResidentStorageEncoding,
     metadata_sha256,
 )
+from ...representation import DataRepresentation
 
 __all__ = [
     "MPSProductAvailability",
@@ -33,18 +33,15 @@ __all__ = [
     "MPSResidentCapabilities",
     "MPSResidentProduct",
     "MPSResidentProductCapability",
-    "MPSResidentRepresentation",
     "MPSTimingBoundary",
     "MPSTimingSummary",
     "describe_resident",
 ]
 
 
-class MPSResidentRepresentation(str, Enum):
-    """Exact Apple representation that owns a complete resident generation."""
-
-    COMPACT_QGIX_V3_UINT8 = "compact-qgix-v3-uint8"
-    INDEXED_RESIDENT_INTEGER = "indexed-resident-integer"
+# Compatibility name retained for existing Apple consumers. The public values
+# now describe the representation rather than one backend implementation.
+MPSResidentRepresentation = DataRepresentation
 
 
 class MPSResidentProduct(str, Enum):
@@ -100,7 +97,7 @@ class MPSResidentProductCapability:
 class MPSResidentCapabilities:
     """Capability receipt for one fully published resident generation."""
 
-    representation: MPSResidentRepresentation
+    representation: DataRepresentation
     source_identity_sha256: str
     scan_shape: tuple[int, int]
     detector_shape: tuple[int, int]
@@ -243,7 +240,7 @@ def _chunked_capabilities(source: Any) -> MPSResidentCapabilities:
     detector_mask_count = int(metadata.get("detector_mask_count", 0))
     detector_mask_sha256 = metadata.get("detector_mask_sha256")
     receipt = ResidentGenerationReceipt(
-        representation=MPSResidentRepresentation.INDEXED_RESIDENT_INTEGER.value,
+        representation=DataRepresentation.DENSE,
         source_identity_sha256=source_identity,
         source_shape=source_shape,
         working_shape=working_shape,
@@ -253,7 +250,6 @@ def _chunked_capabilities(source: Any) -> MPSResidentCapabilities:
         * np.dtype(source_dtype).itemsize,
         working_logical_tensor_bytes=int(source.nbytes),
         physical_resident_bytes=int(source.nbytes),
-        storage_encoding=ResidentStorageEncoding.DENSE,
         storage_schema="quantem.gpu.indexed-resident-integer/v1",
         scan_bin=scan_bin,
         detector_bin=detector_bin,
@@ -328,7 +324,7 @@ def _chunked_capabilities(source: Any) -> MPSResidentCapabilities:
         ),
     )
     return MPSResidentCapabilities(
-        representation=MPSResidentRepresentation.INDEXED_RESIDENT_INTEGER,
+        representation=DataRepresentation.DENSE,
         source_identity_sha256=source_identity,
         scan_shape=scan_shape,
         detector_shape=tuple(int(value) for value in source.detector_shape),
@@ -377,7 +373,7 @@ def _compact_capabilities(source: Any) -> MPSResidentCapabilities:
     )
     source_shape = tuple(int(value) for value in index.shape)
     receipt = ResidentGenerationReceipt(
-        representation=MPSResidentRepresentation.COMPACT_QGIX_V3_UINT8.value,
+        representation=DataRepresentation.LOSSLESS_PACKED,
         source_identity_sha256=index.source_identity_sha256,
         source_shape=source_shape,
         working_shape=source_shape,
@@ -389,7 +385,6 @@ def _compact_capabilities(source: Any) -> MPSResidentCapabilities:
         * np.dtype(working_dtype).itemsize,
         physical_resident_bytes=int(source.load_metrics.total_resident_bytes),
         container_bytes=int(index.file_bytes),
-        storage_encoding=ResidentStorageEncoding.LOSSLESS_PACKED,
         storage_schema=str(manifest["schema"]),
         scan_bin=int(manifest["scan_bin"]),
         detector_bin=int(manifest["detector_bin"]),
@@ -461,7 +456,7 @@ def _compact_capabilities(source: Any) -> MPSResidentCapabilities:
         ),
     )
     return MPSResidentCapabilities(
-        representation=MPSResidentRepresentation.COMPACT_QGIX_V3_UINT8,
+        representation=DataRepresentation.LOSSLESS_PACKED,
         source_identity_sha256=index.source_identity_sha256,
         scan_shape=tuple(int(value) for value in index.shape[:2]),
         detector_shape=tuple(int(value) for value in index.shape[2:]),
@@ -571,7 +566,7 @@ class MPSPublicationEvent:
 
     generation: int
     source_identity_sha256: str
-    representation: MPSResidentRepresentation
+    representation: DataRepresentation
     milestone: MPSPublicationMilestone
     monotonic_nanoseconds: int
     counters: MPSPublicationCounters
@@ -602,18 +597,18 @@ class MPSPublicationRecorder:
         self._lock = threading.Lock()
         self._latest_generation: int | None = None
         self._source_identity_sha256 = ""
-        self._representation = MPSResidentRepresentation.INDEXED_RESIDENT_INTEGER
+        self._representation = DataRepresentation.DENSE
         self._state = "empty"
         self._events: list[MPSPublicationEvent] = []
         self._source_by_generation: dict[
-            int, tuple[str, MPSResidentRepresentation]
+            int, tuple[str, DataRepresentation]
         ] = {}
 
     def begin(
         self,
         generation: int,
         source_identity_sha256: str,
-        representation: MPSResidentRepresentation,
+        representation: DataRepresentation,
         counters: MPSPublicationCounters | None = None,
     ) -> bool:
         """Begin a strictly newer A-B-A-safe generation."""
@@ -743,7 +738,7 @@ class MPSPublicationRecorder:
         self,
         generation: int,
         source_identity_sha256: str,
-        representation: MPSResidentRepresentation,
+        representation: DataRepresentation,
         milestone: MPSPublicationMilestone,
         counters: MPSPublicationCounters,
         detail: str | None,

@@ -4,7 +4,8 @@ The Metal decoder stays lazy so platform-independent modules such as
 ``mps.series`` remain importable on Linux and Windows.
 
 The accepted schema-specific QGIX v3 backend remains a real explicit submodule
-at ``mps.compact_v3``. It is not re-exported here because scientist-facing
+at ``mps.packed`` (with ``mps.compact_v3`` retained for compatibility).
+It is not re-exported here because scientist-facing
 source selection belongs to the canonical QuantEM I/O loader rather than a
 second backend-specific load verb.
 """
@@ -53,7 +54,7 @@ def __getattr__(name: str) -> Any:
     elif name in _DPC_NAMES:
         module = ".resident_dpc"
     else:
-        module = ".decoder"
+        module = ".dense"
     value = getattr(import_module(module, __name__), name)
     globals()[name] = value
     return value

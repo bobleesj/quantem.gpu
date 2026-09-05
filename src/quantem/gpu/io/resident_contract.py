@@ -13,23 +13,20 @@ import json
 import math
 import struct
 from dataclasses import dataclass
-from enum import Enum
 from typing import Any
 
 import numpy as np
 
+from .representation import DataRepresentation
+
 __all__ = [
     "ResidentGenerationReceipt",
-    "ResidentStorageEncoding",
     "metadata_sha256",
 ]
 
-
-class ResidentStorageEncoding(str, Enum):
-    """Physical encoding used for a complete exact resident generation."""
-
-    DENSE = "dense"
-    LOSSLESS_PACKED = "lossless-packed"
+# Compatibility import for the unreleased receipt prototype. New code uses
+# DataRepresentation so one public term describes dense and lossless-packed data.
+ResidentStorageEncoding = DataRepresentation
 
 
 def _is_sha256(value: object) -> bool:
@@ -103,7 +100,7 @@ class ResidentGenerationReceipt:
     byte encoding.
     """
 
-    representation: str
+    representation: DataRepresentation
     source_identity_sha256: str
     source_shape: tuple[int, int, int, int]
     working_shape: tuple[int, int, int, int]
@@ -112,7 +109,6 @@ class ResidentGenerationReceipt:
     source_logical_tensor_bytes: int
     working_logical_tensor_bytes: int
     physical_resident_bytes: int
-    storage_encoding: ResidentStorageEncoding
     storage_schema: str
     scan_bin: int
     detector_bin: int
@@ -130,13 +126,13 @@ class ResidentGenerationReceipt:
     implementation_revision: str | None = None
     lossless_exact: bool = True
 
-    SCHEMA = "quantem.gpu.4dstem-resident-receipt/v1"
+    SCHEMA = "quantem.gpu.4dstem-resident-receipt/v2"
 
     def validate(self) -> None:
         """Fail closed if the receipt can misstate scientific or memory state."""
 
-        if not isinstance(self.representation, str) or not self.representation.strip():
-            raise ValueError("Resident representation must be named.")
+        if not isinstance(self.representation, DataRepresentation):
+            raise TypeError("Resident representation is unsupported.")
         if not _is_sha256(self.source_identity_sha256):
             raise ValueError("Source identity must be a lowercase SHA-256 digest.")
         source_shape = _shape(self.source_shape, "Source shape")
@@ -172,8 +168,6 @@ class ResidentGenerationReceipt:
             type(self.container_bytes) is not int or self.container_bytes <= 0
         ):
             raise ValueError("Container byte count must be positive or null.")
-        if not isinstance(self.storage_encoding, ResidentStorageEncoding):
-            raise TypeError("Resident storage encoding is unsupported.")
         if type(self.scan_bin) is not int or self.scan_bin <= 0:
             raise ValueError("Scan bin must be a positive integer.")
         if type(self.detector_bin) is not int or self.detector_bin <= 0:
@@ -248,7 +242,7 @@ class ResidentGenerationReceipt:
                 "Resident generation receipts require lossless exact storage."
             )
         if (
-            self.storage_encoding is ResidentStorageEncoding.DENSE
+            self.representation is DataRepresentation.DENSE
             and self.physical_resident_bytes != self.working_logical_tensor_bytes
         ):
             raise ValueError(
@@ -261,7 +255,7 @@ class ResidentGenerationReceipt:
         self.validate()
         return {
             "schema": self.SCHEMA,
-            "representation": self.representation,
+            "representation": self.representation.value,
             "source_identity_sha256": self.source_identity_sha256,
             "source_shape": list(self.source_shape),
             "working_shape": list(self.working_shape),
@@ -271,7 +265,6 @@ class ResidentGenerationReceipt:
             "working_logical_tensor_bytes": self.working_logical_tensor_bytes,
             "physical_resident_bytes": self.physical_resident_bytes,
             "container_bytes": self.container_bytes,
-            "storage_encoding": self.storage_encoding.value,
             "storage_schema": self.storage_schema,
             "lossless_exact": self.lossless_exact,
             "scan_bin": self.scan_bin,
@@ -303,7 +296,6 @@ class ResidentGenerationReceipt:
             "working_logical_tensor_bytes": "workingLogicalTensorBytes",
             "physical_resident_bytes": "physicalResidentBytes",
             "container_bytes": "containerBytes",
-            "storage_encoding": "storageEncoding",
             "storage_schema": "storageSchema",
             "lossless_exact": "losslessExact",
             "scan_bin": "scanBin",

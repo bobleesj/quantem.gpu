@@ -801,7 +801,7 @@ private func runResidentABA(
       try recorder.begin(
         generation: generation,
         sourceIdentitySHA256: source.metadata.sourceIdentitySHA256,
-        representation: .compactQGIXV3UInt8
+        representation: .losslessPacked
       )
     else {
       throw benchmarkError("A new resident A-B-A generation was rejected.")

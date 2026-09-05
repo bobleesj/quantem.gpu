@@ -40,6 +40,8 @@ parts:
       - file: platforms/swift-metal
         title: Native Swift and Metal
       - file: platforms/webgpu
+      - file: platforms/android-vulkan
+        title: Android Vulkan
       - file: platforms/cpu-reference
         title: CPU reference
 
@@ -63,11 +65,17 @@ parts:
         title: API reference
         sections:
           - file: api/io
+          - file: api/representations
+            title: Dense and lossless-packed data
           - file: api/images_dpc
           - file: api/ssb
           - file: api/movie
           - file: api/metal_image
           - file: api/native_4dstem_io
+          - file: api/native_lossless_pack_v1_producer
+            title: Native Lossless Pack Format v1 producer
+          - file: api/compact_4dstem_h5
+            title: Lossless Pack Format v1
           - file: api/core
             title: Device, optics, screening, and parallax
 

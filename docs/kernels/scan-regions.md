@@ -41,7 +41,7 @@ $(r_1-r_0,c_1-c_0)$ and detector axes, detector sampling, and requested dtype
 remain unchanged unless a separate explicit detector operation says otherwise.
 Scan coordinates are indices until scan calibration is supplied.
 
-`LoadResult.metadata` records `full_scan_shape`, the half-open `scan_region`,
+`FourDSTEMData.metadata` records `full_scan_shape`, the half-open `scan_region`,
 the selected scan shape, detector shape, detector/scan bins, source and output
 dtypes, source identity, backend/device, and package revision. An application
 must display the region as a subset and may not relabel it as full scan

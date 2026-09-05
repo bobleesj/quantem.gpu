@@ -49,10 +49,72 @@ layout, and a source signature suitable for acquisition-readiness polling.
 ## `load`
 
 Use the same entry point for complete fields, scan crops, detector crops, and
-stochastic scan batches:
+stochastic scan batches. It returns `FourDSTEMData`, which keeps backend-native
+data and its scientific/storage metadata together:
 
 ```python
-full = io.load("scan_master.h5", backend="auto", dtype="u16")
+loaded = io.load("scan-lossless.h5", backend="auto")
+
+print(loaded.shape)
+print(loaded.dtype)
+print(loaded.representation)
+print(loaded.residency)
+print(loaded.logical_bytes, loaded.resident_bytes)
+```
+
+### Representation
+
+See [Dense and lossless-packed data](representations.md) for per-backend
+operation support, exactness, and ownership. Both representations are retained;
+packed storage is not a replacement for algorithms that require dense arrays.
+
+`representation` describes how the complete logical array is retained. It has
+exactly two public values:
+
+| Representation | Meaning |
+|---|---|
+| `"lossless_packed"` | Exact counts remain in the Lossless Pack Format and kernels address that representation directly |
+| `"dense"` | Every logical value occupies its ordinary dense array element |
+
+Representation is independent of dtype and residency. A lossless-packed
+`uint8` source and a lossless-packed `uint16` source have the same
+representation but different scientific dtypes. CUDA device memory, Apple
+unified memory, and host memory are residency locations, not representations.
+
+The shortest call is source-native:
+
+```python
+loaded = io.load("scan-lossless.h5", backend="auto")
+```
+
+An existing Lossless Pack Format source stays packed. Ordinary HDF5 follows the
+current dense compatibility path. Loading never silently creates or evicts a
+cache because those are consumer-policy decisions. Ask for dense explicitly
+when an algorithm truly requires it:
+
+```python
+loaded = io.load(
+    "scan_master.h5",
+    backend="cuda",
+    representation="dense",
+    dtype="u16",
+)
+```
+
+Requesting `representation="lossless_packed"` for an ordinary HDF5 source
+fails with the preparation step instead of claiming that the source is packed.
+
+### Selection and exact detector binning
+
+The dense compatibility path also supports regions and stochastic batches:
+
+```python
+full = io.load(
+    "scan_master.h5",
+    backend="auto",
+    representation="dense",
+    dtype="u16",
+)
 
 crop = io.load(
     "scan_master.h5",
@@ -72,6 +134,9 @@ batch = io.load(
 
 `scan_region` and `detector_region` are always
 `(row_start, row_stop, col_start, col_stop)`.
+Use `detector_bin=1` to retain native detector sampling or a larger explicit
+factor for exact detector-space sum binning. The former `det_bin` spelling is a
+deprecated compatibility alias.
 
 ### Dtype selection
 

@@ -1,7 +1,2 @@
-import type { WebGPUFFTConfig } from "./common";
-
-export const FFT256: WebGPUFFTConfig = {
-  size: 256,
-  workgroupSize: 256,
-  specialized: true,
-};
+/** Compatibility export; kernels have one canonical owner. */
+export * from "../../../backends/webgpu/kernels/fft256";

@@ -1930,7 +1930,7 @@
       "owner": "Portable CI runner",
       "tier": "PR smoke",
       "evidence_level": "parity preflight",
-      "command": "PYTHONPATH=src python -m pytest -q tests/test_profile_registry.py tests/test_benchmark_registry.py",
+      "command": "PYTHONPATH=src python -m pytest -q tests/infrastructure/test_profile_registry.py tests/infrastructure/test_benchmark_registry.py",
       "preflight": [
         "Use a clean or explicitly fingerprinted source revision.",
         "Do not interpret portable skips as backend timing evidence."
@@ -2131,7 +2131,7 @@
       "owner": "Portable CI runner plus specified backend computer",
       "tier": "PR smoke",
       "evidence_level": "parity preflight",
-      "command": "PYTHONPATH=src python -m pytest -q tests/test_integer_detector_products.py tests/test_products_parity.py tests/test_cuda_virtual_image.py",
+      "command": "PYTHONPATH=src python -m pytest -q tests/parity/test_integer_detector_products.py tests/parity/test_products_parity.py tests/hardware/cuda/test_cuda_virtual_image.py",
       "preflight": [
         "Do not change masks, scan coverage, detector bin, dtype, or accumulation range.",
         "Backend skips remain open hardware gates."
@@ -2192,7 +2192,7 @@
       "owner": "Portable CI runner plus specified backend computer",
       "tier": "PR smoke",
       "evidence_level": "parity preflight",
-      "command": "PYTHONPATH=src python -m pytest -q tests/test_dpc_rotation_agreement.py tests/test_products_parity.py tests/test_display_fft_parity.py",
+      "command": "PYTHONPATH=src python -m pytest -q tests/parity/test_dpc_rotation_agreement.py tests/parity/test_products_parity.py tests/parity/test_display_fft_parity.py",
       "preflight": [
         "Preserve explicit row/column order and frozen Fourier conventions.",
         "Record full-precision max, p99, normalized error, and signal range on hardware."
@@ -2209,7 +2209,7 @@
       "owner": "Portable CI runner plus specified backend computer",
       "tier": "PR smoke",
       "evidence_level": "parity preflight",
-      "command": "PYTHONPATH=src python -m pytest -q tests/test_display_parity.py tests/test_display_fft_parity.py tests/test_display_shared_goldens.py",
+      "command": "PYTHONPATH=src python -m pytest -q tests/parity/test_display_parity.py tests/parity/test_display_fft_parity.py tests/parity/test_display_shared_goldens.py",
       "preflight": [
         "Keep source dtype, transform, normalization, color limits, and FFT convention fixed.",
         "Measure physical first execution and warm publication separately."
@@ -2276,7 +2276,7 @@
       "owner": "Linux CUDA workstation (dual 96 GB Blackwell GPUs)",
       "tier": "PR smoke",
       "evidence_level": "parity preflight",
-      "command": "PYTHONPATH=src python -m pytest -q tests/test_ssb_cuda_128.py tests/test_ssb_backend_contract.py tests/test_ssb_persistence.py",
+      "command": "PYTHONPATH=src python -m pytest -q tests/hardware/cuda/test_ssb_cuda_128.py tests/contracts/test_ssb_backend_contract.py tests/contracts/test_ssb_persistence.py",
       "preflight": [
         "Confirm the intended GPU is unoccupied before any later physical profile.",
         "Use the frozen full-precision reference and deterministic seed."
@@ -2293,7 +2293,7 @@
       "owner": "MacBook Pro (M5 Max, 128 GB)",
       "tier": "manual hardware diagnostic",
       "evidence_level": "parity preflight",
-      "command": "PYTHONPATH=src python -m pytest -q tests/test_ssb_backend_contract.py tests/test_webgpu_sources.py tests/test_webgpu_widget_sync.py",
+      "command": "PYTHONPATH=src python -m pytest -q tests/contracts/test_ssb_backend_contract.py tests/infrastructure/test_webgpu_sources.py tests/e2e/test_webgpu_widget_sync.py",
       "preflight": [
         "Treat software WebGPU as smoke only.",
         "Do not promote a phase result that misses the frozen wrapped-error tolerance."
@@ -2559,7 +2559,7 @@
     {"id": "select.rectangle.webgpu.apple-m2-air-8gb.64", "module": "Selective loading", "operation": "64 by 64 prepared-shard rectangle", "platform": "WebGPU", "computer": "MacBook Air (M2, 8 GB)", "configuration": "selective-64-native-bin1-u16", "state": "pending", "runbook": "webgpu-selective-load", "priority": 2, "next_gate": "Run the physical browser selector with full selected-tensor parity, source bytes, pressure, swap, browser/device memory, and timing; retain the intra-shard range-read gap explicitly.", "cache_state": "prepared block indexes and frame-span manifest", "timing_boundary": "exact selected resident output; harness setup excluded"},
 
     {"id": "dtype.cuda.native-u8-exact", "coverage_group": "dtype-residency", "module": "I/O and load", "operation": "native uint8 exact residency", "platform": "CUDA", "computer": "Linux CUDA workstation (dual 96 GB Blackwell GPUs)", "configuration": "dtype-full-native-bin1-u8-exact", "state": "unsupported", "runbook": "registry-smoke", "priority": 4, "next_gate": "", "support_basis": "The compressed CUDA bitshuffle path in src/quantem/gpu/io/load.py implements two-byte uint16 and four-byte uint32 source branches, not one-byte source decode.", "reason": "Native uint8 compressed-source CUDA decode is not implemented; CPU fallback is a different platform contract."},
-    {"id": "dtype.mps.native-u8-exact", "coverage_group": "dtype-residency", "module": "I/O and load", "operation": "native uint8 exact residency", "platform": "Python MPS", "computer": "MacBook Pro (M5 Max, 128 GB)", "configuration": "dtype-full-native-bin1-u8-exact", "state": "unsupported", "runbook": "registry-smoke", "priority": 4, "next_gate": "", "support_basis": "src/quantem/gpu/io/backends/mps/decoder.py and tests/io/test_mps_buffer_release.py reject source element widths other than uint16 and uint32.", "reason": "Native uint8 bitshuffle/LZ4 source decode is explicitly rejected by the MPS backend."},
+    {"id": "dtype.mps.native-u8-exact", "coverage_group": "dtype-residency", "module": "I/O and load", "operation": "native uint8 exact residency", "platform": "Python MPS", "computer": "MacBook Pro (M5 Max, 128 GB)", "configuration": "dtype-full-native-bin1-u8-exact", "state": "unsupported", "runbook": "registry-smoke", "priority": 4, "next_gate": "", "support_basis": "src/quantem/gpu/io/backends/mps/decoder.py and tests/hardware/mps/test_mps_buffer_release.py reject source element widths other than uint16 and uint32.", "reason": "Native uint8 bitshuffle/LZ4 source decode is explicitly rejected by the MPS backend."},
     {"id": "dtype.swift.native-u8-exact", "coverage_group": "dtype-residency", "module": "I/O and load", "operation": "native uint8 exact residency", "platform": "Native Swift/Metal", "computer": "MacBook Pro (M5 Max, 128 GB)", "configuration": "dtype-full-native-bin1-u8-exact", "state": "unsupported", "runbook": "registry-smoke", "priority": 4, "next_gate": "", "support_basis": "Native4DSTEMIO can describe one-byte indexed sources, but Metal4DSTEMIndexedLoader.swift requires a uint16 source and uint16 staging at the public integrated boundary.", "reason": "The integrated indexed Swift/Metal loader does not admit a native uint8 source."},
     {"id": "dtype.webgpu.native-u8-exact", "coverage_group": "dtype-residency", "module": "I/O and load", "operation": "native uint8 exact residency", "platform": "WebGPU", "computer": "MacBook Pro (M5 Max, 128 GB)", "configuration": "dtype-full-native-bin1-u8-exact", "state": "pending", "runbook": "webgpu-load", "priority": 3, "next_gate": "Run an exact physical hardware-browser full-volume uint8 source through local HDF5 decode and retain output hash, allocation, and source/decode/resident provenance.", "support_basis": "h5reader.ts, bslz4.ts, and local-h5.ts recognize matching native uint8 source, decode, and resident modes; no retained full-volume physical uint8 fixture proves the complete path."},
     {"id": "dtype.cpu-reference.native-u8-exact", "coverage_group": "dtype-residency", "module": "I/O and load", "operation": "native uint8 exact residency", "platform": "CPU reference", "computer": "Portable CI runner", "configuration": "dtype-full-native-bin1-u8-exact", "state": "partial", "runbook": "registry-smoke", "priority": 4, "next_gate": "Add a repository fixture that proves public io.load preserves every native uint8 count, shape, order, and provenance field at detector bin 1.", "support_basis": "src/quantem/gpu/io/backends/cpu/reference.py returns the HDF5 native dtype unchanged at detector bin 1; a complete public-API uint8 fixture artifact is not retained."},

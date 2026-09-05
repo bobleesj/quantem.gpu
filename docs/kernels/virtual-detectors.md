@@ -32,7 +32,7 @@ The result keeps the full scan shape. Array order remains
 ```python
 from quantem.gpu import detector, io
 
-loaded = io.load("scan_master.h5", backend="auto", det_bin=1)
+loaded = io.load("scan_master.h5", backend="auto", detector_bin=1)
 
 bright = detector.bf(loaded.data)
 annular = detector.adf(loaded.data, inner=40, outer=90, unit="px")

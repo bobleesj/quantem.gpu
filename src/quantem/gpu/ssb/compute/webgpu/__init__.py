@@ -1,1 +1,1 @@
-"""Canonical browser WebGPU implementation of the SSB compute contract."""
+"""Compatibility imports; canonical implementation: ``quantem.gpu.ssb.backends.webgpu``."""

@@ -1,14 +1,6 @@
-"""MPS/Metal SSB FFT configuration for specialized 512x512 kernels."""
+"""Compatibility imports; canonical implementation: ``quantem.gpu.ssb.backends.mps.kernels.fft512``."""
 
-from .common import MPSFFTConfig
-
-CONFIG = MPSFFTConfig(
-    size=512,
-    digit_reverse_define="",
-    digit_reverse_undef="",
-    radix4_max=0,
-    has_final_radix2=False,
-    specialized=True,
+from quantem.gpu.ssb.backends.mps.kernels.fft512 import (
+    CONFIG as CONFIG,
+    __all__ as __all__,
 )
-
-__all__ = ["CONFIG"]

@@ -11,11 +11,14 @@ import re
 import time
 from contextlib import AbstractContextManager
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Self
 
 import numpy as np
 
 from quantem.gpu.device import resolve
+from quantem.gpu.io.integrity import SourceIntegrity
+from quantem.gpu.io.models import _release_owned_storage
+from quantem.gpu.io.representation import DataRepresentation
 
 from ._persistence import (
     SCHEMA,
@@ -26,7 +29,7 @@ from ._persistence import (
     save_result,
     software_signature,
 )
-from .compute.protocol import SSBProtocol
+from .backends.protocol import SSBProtocol
 from .results import SSBResult, SSBSeriesResult
 
 RefineMethod = Literal["nelder-mead"] | None
@@ -308,8 +311,8 @@ def _series_settings(
         "scan_sampling_A": scan_sampling_A,
         "rotation_angle_deg": rotation_angle_deg,
     }
-    for name in values:
-        if values[name] is None:
+    for name, value in values.items():
+        if value is None:
             values[name] = saved.get(name, session.get(name))
     missing = [name for name, value in values.items() if value is None]
     if missing:
@@ -396,6 +399,14 @@ class SSB:
         source_path: str | None = None,
     ) -> None:
         self.backend = _resolve_backend(backend)
+        if self.backend == "mps":
+            from quantem.gpu.io.backends.mps.packed import MPSCompactV3Resident
+
+            if isinstance(data, MPSCompactV3Resident):
+                raise NotImplementedError(
+                    "Packed MPS detector sources are not supported by SSB. "
+                    "Use a dense detector array or an exact BF-column source."
+                )
         if self.backend == "webgpu":
             raise RuntimeError(
                 "WebGPU SSB executes in the browser. Use `quantem showptycho "
@@ -419,7 +430,7 @@ class SSB:
         self.calibration_path: str | None = None
         self.source_manifest_path: str | None = None
         self.source_storage_path = source_path
-        self.source_kind: Literal["array", "detector", "bf_columns"] = "array"
+        self.source_kind: Literal["array", "detector", "bf_columns", "packed_detector"] = "array"
         self.source_dtype = str(data.dtype)
         self.source_bytes = int(data.nbytes)
         self.source_detector_bin = int(getattr(data, "det_bin", 1) or 1)
@@ -728,8 +739,10 @@ class SSB:
         bf_intensity_threshold: float = 0.0,
         bf_radius: int | None = None,
         calibration: str | None = None,
+        expected_source_sha256: str | None = None,
+        source_integrity: SourceIntegrity | None = None,
         verbose: bool = False,
-    ) -> "SSB":
+    ) -> SSB:
         """Open one lossless 4D-STEM source and prepare an SSB session.
 
         Exact BF-column storage is chosen automatically when it is available;
@@ -737,21 +750,37 @@ class SSB:
         storage dtype. Leave ``dtype=None`` for native detector precision.
         This storage choice never changes the float32/complex64 optimization
         precision or scientific objective.
+
+        ``expected_source_sha256`` and ``source_integrity`` have the same
+        meanings as in ``io.load``. An authenticated packed source is opened
+        through that canonical loader without an alternate SSB decoder.
+        Packed MPS detector containers are unsupported and rejected before
+        allocation; MPS requires dense detector data or exact BF-column input.
         """
 
         selected = _resolve_backend(backend)
+        if (
+            selected == "mps"
+            and DataRepresentation.detect_source(source)
+            is DataRepresentation.LOSSLESS_PACKED
+        ):
+            raise NotImplementedError(
+                "Packed MPS detector sources are not supported by SSB.open. "
+                "Use backend='cuda' for a qualified packed source, or open "
+                "the original dense acquisition or an exact BF-column export."
+            )
         if selected == "webgpu":
             raise RuntimeError(
                 "Browser WebGPU sources are opened by the exported SSB runtime."
             )
         data = None
-        source_kind: Literal["detector", "bf_columns"]
+        source_kind: Literal["detector", "bf_columns", "packed_detector"]
         source_dtype: str
         source_bytes: int
         source_load_seconds: float
         source_storage_path: str
-        if selected == "mps":
-            from .compute.mps.engine import (
+        if selected == "mps" and expected_source_sha256 is None and source_integrity is None:
+            from .backends.mps.engine import (
                 _BfColumnCompanionNotDeclared,
                 load_bf_columns_mps,
             )
@@ -776,9 +805,11 @@ class SSB:
             loaded = load(
                 source,
                 backend=selected,
-                det_bin=1,
+                detector_bin=1,
                 dtype=dtype,
                 verbose=verbose,
+                expected_source_sha256=expected_source_sha256,
+                source_integrity=source_integrity,
             )
             if not isinstance(loaded, LoadResult):
                 raise TypeError(
@@ -786,25 +817,34 @@ class SSB:
                     f"got {type(loaded).__name__}."
                 )
             data = loaded.data
-            source_kind = "detector"
+            source_kind = (
+                "packed_detector"
+                if loaded.representation is DataRepresentation.LOSSLESS_PACKED
+                else "detector"
+            )
             source_storage_path = str(source)
-            source_dtype = str(data.dtype)
-            source_bytes = int(data.nbytes)
+            source_dtype = str(loaded.dtype)
+            source_bytes = loaded.logical_bytes
             source_load_seconds = time.perf_counter() - load_started
-        session = cls(
-            data,
-            backend=selected,
-            voltage_kV=voltage_kV,
-            semiangle_mrad=semiangle_mrad,
-            scan_sampling_A=scan_sampling_A,
-            scan_shape=scan_shape,
-            det_sampling=det_sampling,
-            aberrations=aberrations,
-            rotation_angle_deg=rotation_angle_deg,
-            bf_intensity_threshold=bf_intensity_threshold,
-            bf_radius=bf_radius,
-            source_path=str(source),
-        )
+        try:
+            session = cls(
+                data,
+                backend=selected,
+                voltage_kV=voltage_kV,
+                semiangle_mrad=semiangle_mrad,
+                scan_sampling_A=scan_sampling_A,
+                scan_shape=scan_shape,
+                det_sampling=det_sampling,
+                aberrations=aberrations,
+                rotation_angle_deg=rotation_angle_deg,
+                bf_intensity_threshold=bf_intensity_threshold,
+                bf_radius=bf_radius,
+                source_path=str(source),
+            )
+        except BaseException as error:
+            if source_kind == "packed_detector":
+                _release_owned_storage(data, failure=error)
+            raise
         session.source_kind = source_kind
         auto_calibration = (
             session.source_provenance.get("calibration_path")
@@ -844,7 +884,7 @@ class SSB:
         bf_intensity_threshold: float = 0.0,
         bf_radius: int | None = None,
         source_path: str | None = None,
-    ) -> "SSB":
+    ) -> SSB:
         """Create an SSB session from an existing lossless detector array."""
 
         return cls(
@@ -866,7 +906,7 @@ class SSB:
         """Construct the private CUDA implementation once."""
 
         if self._cuda_session is None:
-            from .compute.cuda.backend import CudaSSBBackend
+            from .backends.cuda.backend import CudaSSBBackend
 
             self._cuda_session = CudaSSBBackend(
                 data=self._data,
@@ -1017,7 +1057,7 @@ class SSB:
             backend = self._prepare_cuda()
         else:
             if self._mps_backend is None:
-                from .compute.mps.backend import MpsSSBBackend
+                from .backends.mps.backend import MpsSSBBackend
 
                 self._mps_backend = MpsSSBBackend(
                     self._data,
@@ -1276,11 +1316,9 @@ class SSB:
             # workflow releases its own reference to the shared source.
             backend.close()
         if not backend_owned_data:
-            release = getattr(data, "free", None)
-            if callable(release):
-                release()
+            _release_owned_storage(data)
 
-    def __enter__(self) -> "SSB":
+    def __enter__(self) -> Self:
         """Return this prepared SSB session."""
 
         return self

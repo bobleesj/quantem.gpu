@@ -25,7 +25,7 @@ io.load(..., backend="cuda")
   → io.backends.protocol.resolve_backend
   → io.load source/index/read planning
   → io.backends.cuda.decoder
-  → CuPy-resident LoadResult + provenance
+  → CuPy-resident FourDSTEMData + provenance
 ```
 
 Detector and reconstruction calls dispatch from their public workflow to the
@@ -35,8 +35,22 @@ classes and RawKernel launch shapes do not appear in the public API.
 ```python
 from quantem.gpu import detector, io
 
-loaded = io.load("scan_master.h5", backend="cuda", dtype="u16", det_bin=1)
+loaded = io.load(
+    "scan_master.h5",
+    backend="cuda",
+    representation="dense",
+    dtype="u16",
+    detector_bin=1,
+)
 bright_field = detector.bf(loaded.data)
+```
+
+An existing Lossless Pack Format source uses the same public loader and remains
+packed. Its dtype and encoding profile stay separate metadata:
+
+```python
+packed = io.load("scan-lossless.h5", backend="cuda")
+assert packed.representation is io.DataRepresentation.LOSSLESS_PACKED
 ```
 
 ## Execution and memory model
@@ -62,9 +76,9 @@ for an intermediate full detector volume.
 ```bash
 python -m pip install -e ".[cuda,dev]"
 PYTHONPATH=src python -m pytest -q \
-  tests/test_device.py \
-  tests/test_cuda_virtual_image.py \
-  tests/test_products_parity.py
+  tests/contracts/test_device.py \
+  tests/hardware/cuda/test_cuda_virtual_image.py \
+  tests/parity/test_products_parity.py
 ```
 
 Real-data and SSB gates are environment-qualified and run only with their

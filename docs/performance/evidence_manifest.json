@@ -2,6 +2,7 @@
   "schema_version": 1,
   "source_revision": "68dbe3aa5f816e2d1c1ae976e1874790cffb4319",
   "source_revision_scope": "Latest clean canonical source/working metadata and cross-backend logical-pixel parity revision used by the current Python MPS and CPU rows. Native Swift/Metal rows remain bound to clean revision 5106ca4, and the current exact full-volume WebGPU distribution is bound to clean revision d8e6f56; every retained physical measurement keeps its own revision, fixture identity, cache state, and timing boundary.",
+  "documentation_update": "2026-09-04: refreshed representation/result/API vocabulary only; no benchmark value, acceptance state, fixture, device, cache state, or measurement revision changed. 2026-09-05: normalized executable test paths using tests/path_migrations.json; affected current pages and registry were verified as exact path-only substitutions. Historical transcripts and all numerical evidence remain unchanged.",
   "purpose": "Fingerprints for the current benchmark dashboard, its authoritative registry and rendering inputs, provenance ledger, parity and methodology contracts, and canonical historical evidence. Landing, API, and backend capability pages intentionally do not duplicate measurements.",
   "pages": [
     {
@@ -16,17 +17,17 @@
     },
     {
       "path": "docs/platforms/cuda.md",
-      "sha256": "a748b94c3fdb9328dca9a1787ba3b0c70e84b49abf7d898da5e131e9b2841de1",
+      "sha256": "c739b3f885eafeae11940a065ad963e32c358e888b407b6a3ba49b67716e64ad",
       "role": "CUDA 6 GiB minimum-device acceptance contract"
     },
     {
       "path": "docs/platforms/mps.md",
-      "sha256": "ee46b1a08da8741b2f30dbc694eb0aac5f328b51853436a57848bcbaf82cd19e",
+      "sha256": "8593924021bc0e1bdf4f97826863a1b92bdac29f72e6b696e8e135ef14bcbf61",
       "role": "Python MPS direct-Metal lifetime and resident-versus-peak memory contract"
     },
     {
       "path": "docs/platforms/webgpu.md",
-      "sha256": "9e52111495a3a885967b058ae63029a67ce282ad3922644201214c6eccac5054",
+      "sha256": "4cc1bc311cfd0a85a52e4664fac1cf8dddc6d9c8b07eea681e1abbfa4cbd215b",
       "role": "WebGPU 8 GB laptop acceptance contract"
     },
     {
@@ -61,12 +62,12 @@
     },
     {
       "path": "docs/performance/continuous-profiling.md",
-      "sha256": "dcc01da1cd9f00b2b6182c2d3d0a90a44921dcbe407be6718795f2dc68d47bb0",
+      "sha256": "b80c86899cd59c8019d20a8ce065197e5aa08b8b5b26fee68c1fe3f2b7488221",
       "role": "Cross-platform cadence, comparison-key, run-registry, and promotion contract"
     },
     {
       "path": "docs/performance/parity.md",
-      "sha256": "ab3efdd27866605bacff0561ed5c178a78a426196976299745f744a3c0bc1498",
+      "sha256": "d901e1cf9021878f7585d4730bb64abd1b11f8f0caa7be6929a2d987ca8422a2",
       "role": "Current cross-platform numerical acceptance gates"
     },
     {
@@ -108,12 +109,12 @@
   "authoritative_inputs": [
     {
       "path": "benchmarks/benchmark_registry.json",
-      "sha256": "c5d82bf616d8b061dd1042301daa448ff9fa498b569c7f07c0f4995392146981",
+      "sha256": "13b50ba1fc4409ca884da5fa4b04e2ab5dfd95520672457d124409f7b843d1e6",
       "role": "Atomic Platform, Computer, module, detector-bin, dtype/residency configuration, state, measurement, and runbook registry"
     },
     {
       "path": "docs/_generated/benchmark_coverage.md",
-      "sha256": "e87e0bd93ffa8ccfb90cf4faa298109b08f99738275c96c3b50252acfb4ab419",
+      "sha256": "d564c1d4901c409e1bc9501ca1e6ed6606c0e22f1a5533a82afdf13345991f2f",
       "role": "Generated filterable detector-product, dtype/residency, coverage, retained-measurement, and runbook tables"
     },
     {

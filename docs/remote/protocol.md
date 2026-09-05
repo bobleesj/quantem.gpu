@@ -31,7 +31,7 @@ quantem-live-browse/3 -> live4dstem-standalone/3 -> quantem-gpu-browse/1
 
 The raw CUDA service remains `quantem-gpu-browse/1`. Its capabilities response
 includes `packaged_service` with schema
-`quantem.gpu.packaged-browse-service/v1`, the exact implementation revision,
+`quantem.gpu.packaged-browse-service/v2`, the exact implementation revision,
 the ordered chain, and the field contracts consumed through the loopback
 adapter. The adapter must reject any other upstream protocol/version and the
 client must reject any other client protocol, adapter, or upstream declaration.
@@ -62,10 +62,10 @@ The service may add scheduling, cache reuse, or a faster kernel without
 changing this contract. It may not silently alter coverage, detector geometry,
 precision, masks, calibration, or reconstruction parameters.
 
-## Compact exact residency
+## Lossless-packed exact residency
 
 The server can bind a catalogued `*_master.h5` acquisition to one immutable
-QGIX compact artifact with `CompactBrowseSource`. Clients continue to send the
+Lossless Pack Format v1 artifact. Clients continue to send the
 same session and master filename to the existing browse routes. The compact
 path is trusted server configuration and is never accepted from a client.
 The normal CLI loads these bindings from `--compact-sources`; each registry
@@ -73,13 +73,27 @@ entry names the catalogued master, compact artifact, and required whole-file
 SHA-256. Relative master paths are rooted at the served data folder, while
 relative compact paths are rooted at the registry directory.
 
+Both ordinary and packed sources enter through `quantem.gpu.io.load`.
+The server's trusted `CompactBrowseSource` may carry a `SourceIntegrity` value
+from an externally sealed byte-range manifest. Registry preparation is exposed
+through `prepare_browse_source` and the matching `prepare-browse` CLI command;
+see [deployment](deployment.md).
+
 Compact bindings are full-coverage plans with scan bin 1, detector bin 1, no
 crop, and exact integer output. A request for a transformed plan fails rather
 than silently loading a different representation. Preset BF, ABF, ADF, HAADF,
 and DF require source-bound detector calibration. Custom detector masks and
-selected diffraction use the resident packed source. Scan-ROI diffraction and
-center-of-mass products remain explicitly unsupported until exact compact
-reducers are implemented.
+selected diffraction use the resident packed source. CoM-row, CoM-column,
+CoM magnitude/DPC, and integrated CoM are available when the source contains
+authenticated exact total and detector-coordinate moments. A source without
+that extension receives a corrective unsupported response; there is no silent
+dense expansion or invented calibration. Scan-ROI diffraction remains
+unsupported on this compact browse route.
+
+The service owns and releases each packed allocation on eviction and shutdown.
+In-process callers own the returned `FourDSTEMData` and must close it after
+their scientific operations. Device result views may borrow source-owned
+storage; copy a result that must outlive its next update or source closure.
 
 `GET /api/browse/residency` reports whether the requested plan is resident, its
 source kind, CUDA device, measured resident bytes, exact shapes and dtype,
@@ -87,9 +101,11 @@ source identity, load-phase metrics, and whether the catalogued source changed
 after loading. It never triggers a load. A stale resident entry fails closed on
 the next scientific request.
 
-The response schema is `quantem.gpu.browse-residency/v1`. For a compact
-resident source it reports `logical_tensor_bytes` separately from
-`physical_resident_bytes`, the lossless packed storage schema, complete source
+The response schema is `quantem.gpu.browse-residency/v2`. Its canonical
+`representation` is `lossless_packed` or `dense`; `storage_kind` remains a
+legacy alias during client migration. For a lossless-packed resident source it
+reports `logical_tensor_bytes` separately from `physical_resident_bytes`, the
+storage schema, complete source
 and working dtype/shape, compact whole-file and logical-source hashes, the
 served implementation revision, and the exact plan. `time_to_resident_ready_ms`
 is server-owned and is the complete authenticated CUDA-residency interval.

@@ -40,7 +40,7 @@ provenance.
 Before binding a packaged Windows consumer, verify
 `GET /api/browse/capabilities` reports the intended exact
 `implementation_revision` and a `packaged_service` object matching
-`quantem.gpu.packaged-browse-service/v1`. Its compatibility chain must be
+`quantem.gpu.packaged-browse-service/v2`. Its compatibility chain must be
 `quantem-live-browse/3 -> live4dstem-standalone/3 -> quantem-gpu-browse/1`.
 Do not point the Windows client directly at the raw Browse v1 port; the
 loopback adapter is the versioned seam.
@@ -57,8 +57,46 @@ conda run -n quantem-gpu-remote \
 when the host is shared and QuantEM.GPU owns only selected devices. Dataset
 placement and fit are explained in [GPU admission and residency](admission.md).
 
-To keep existing clients on the same catalogued master identity while using an
-immutable compact resident artifact, create a trusted server-side registry:
+## Prepare a lossless-packed deployment
+
+Keep the acquisition master as the client-visible identity. For an already
+qualified packed file, one call verifies every stored byte against its recorded
+SHA-256 and creates a new deployment directory containing the integrity
+manifest and trusted server registry:
+
+```python
+from quantem.gpu.remote import prepare_browse_source
+
+registry = prepare_browse_source(
+    "/data/4dstem/session/sample_master.h5",
+    "/data/prepared/sample.h5",
+    "/data/deployments/sample-v1",
+    expected_source_sha256=qualified_source_sha256,
+)
+```
+
+The equivalent installed command is:
+
+```bash
+quantem-gpu prepare-browse /data/4dstem/session/sample_master.h5 \
+  /data/prepared/sample.h5 /data/deployments/sample-v1 \
+  --expected-source-sha256 <qualified-source-sha256>
+```
+
+Neither source is modified, copied, cropped, binned, or repacked. Existing
+output directories are refused. Preparation checks raw reconstruction support
+and master/source shape agreement; the independently qualified seal remains
+the authority for the scientific source. Source-bound calibration and prepared
+moments must already be present if the application requires them. Creating a
+packed file from raw acquisition data is a separate, explicit
+[producer workflow](../api/native_lossless_pack_v1_producer.md).
+
+Preparation reads the complete packed source once. Do not count it as loading
+or include it in a prepared-load benchmark. The resulting `sources.json` is
+accepted by `--compact-sources`; no hand-written registry is required.
+
+For administrators combining several qualified datasets, the registry is an
+explicit JSON list. Older whole-file-only bindings remain supported:
 
 ```json
 {
@@ -66,7 +104,7 @@ immutable compact resident artifact, create a trusted server-side registry:
   "sources": [
     {
       "master": "detector/session/sample_master.h5",
-      "compact": "prepared/sample-exact-qgix-v1.h5",
+      "compact": "prepared/sample-lossless-pack-v1.h5",
       "expected_whole_file_sha256": "<lowercase SHA-256>"
     }
   ]
@@ -78,6 +116,32 @@ Then add `--compact-sources /path/to/compact-sources.json` to the same
 client path. The service rejects missing files, duplicate master bindings,
 masters outside the served data folder, missing whole-file seals, shape drift,
 and compact requests that ask for crop or bin transformations.
+
+Generated bindings additionally record `chunk_integrity_manifest` and
+`expected_chunk_integrity_manifest_sha256`. The service authenticates that
+manifest before trusting its complete list of byte-range hashes. It never
+automatically trusts an adjacent sidecar. CUDA's LZ4 profile verifies these
+ranges concurrently; the direct-bitpacked profile retains its whole-file and
+payload verification path.
+
+For an in-process workflow, the same explicit seal can be passed through the
+canonical loader:
+
+```python
+from quantem.gpu import io
+
+integrity = io.SourceIntegrity.from_file(
+    "/data/deployments/sample-v1/source.integrity.json",
+    expected_sha256=qualified_manifest_sha256,
+)
+with io.load("/data/prepared/sample.h5", source_integrity=integrity) as loaded:
+    diffraction = loaded.data.extract_diffraction(0, 0)
+```
+
+The manifest digest is recorded in the trusted registry. When both
+`source_integrity` and `expected_source_sha256` are supplied, their whole-file
+identities must agree. Loading does not expose chunk scheduling or kernel
+controls. A load with only `expected_source_sha256` remains supported.
 
 The default loopback binding is intentional. Do not expose the HTTP listener
 directly on a public interface; use the connection patterns on the next page.

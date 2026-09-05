@@ -365,33 +365,6 @@ def _clear_cuda_pools() -> None:
     gc.collect()
 
 
-def _memory_plan(
-    master: str | Path,
-    *,
-    scan_shape: tuple[int, int] | None = None,
-    memory_budget_gb: float | None = None,
-    output_dtype=np.uint16,
-) -> MemoryPlan:
-    """Return the streaming memory plan without reading detector frames."""
-    from quantem.gpu.io import inspect as inspect_source
-
-    master_path = Path(master).expanduser()
-    metadata = inspect_source(str(master_path)).metadata
-    if scan_shape is None:
-        scan_shape = tuple(int(v) for v in metadata.get("scan_shape") or ())
-    if len(scan_shape) != 2:
-        raise ValueError("scan_shape=(rows, cols) is required for screening products")
-    detector_shape = tuple(int(v) for v in metadata.get("detector_shape") or ())
-    if len(detector_shape) != 2:
-        raise ValueError("Could not determine detector_shape from HDF5 metadata")
-    return _memory_plan_for_shapes(
-        scan_shape,
-        detector_shape,
-        _screening_output_dtype(output_dtype).itemsize,
-        memory_budget_gb,
-    )
-
-
 def _build_cuda_products(
     master: Path,
     *,
@@ -426,7 +399,7 @@ def _build_cuda_products(
     import cupy as cp
 
     from quantem.gpu.detector import auto_probe, detector_mask, mean_dp
-    from quantem.gpu.detector.compute.cuda.kernels import (
+    from quantem.gpu.detector.backends.cuda.kernels import (
         cuda_center_of_mass,
         cuda_masked_sum,
     )

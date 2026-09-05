@@ -24,7 +24,7 @@ io.load(..., backend="mps")
   → backend validation
   → source and chunk planning
   → MPS decoder + bslz4.msl
-  → chunk-backed/resident LoadResult + provenance
+  → chunk-backed/resident FourDSTEMData + provenance
 ```
 
 Python owns validation and typed results. Metal owns full-volume decode and
@@ -34,7 +34,13 @@ implementation layers of one MPS runtime, not separate public workflows.
 ```python
 from quantem.gpu import io
 
-loaded = io.load("scan_master.h5", backend="mps", dtype="u16", det_bin=1)
+loaded = io.load(
+    "scan_master.h5",
+    backend="mps",
+    representation="dense",
+    dtype="u16",
+    detector_bin=1,
+)
 
 try:
     # Use loaded.data while its zero-copy Metal-backed chunks are live.
@@ -43,6 +49,17 @@ finally:
     # Release caller-owned direct Metal buffers after the final consumer.
     loaded.data.free()
 ```
+
+An existing supported Lossless Pack Format source remains packed:
+
+```python
+packed = io.load("scan-lossless.h5", backend="mps")
+assert packed.representation is io.DataRepresentation.LOSSLESS_PACKED
+```
+
+Python MPS currently accepts the direct-bitpacked profile through this generic
+surface. Native Swift/Metal accepts both current encoding profiles. Unsupported
+profiles fail explicitly rather than expanding to a dense tensor.
 
 ## Execution and memory model
 
@@ -102,10 +119,10 @@ or fail closed unless a complete range audit proves the requested result fits.
 ```bash
 python -m pip install -e ".[mps,dev]"
 PYTHONPATH=src python -m pytest -q \
-  tests/test_device.py \
-  tests/test_mps_chunk_dispatch.py \
-  tests/test_products_parity.py \
-  tests/test_ssb_mps_close.py
+  tests/contracts/test_device.py \
+  tests/contracts/test_mps_chunk_dispatch.py \
+  tests/parity/test_products_parity.py \
+  tests/contracts/test_ssb_mps_close.py
 ```
 
 Metal-dependent skips on a non-Mac host are structure checks only. Physical

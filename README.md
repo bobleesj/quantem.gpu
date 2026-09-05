@@ -29,7 +29,9 @@ Choose your entry point:
 - [Kernel architecture](docs/concepts/kernel-architecture.md): how the
   domain-first source tree and cross-language contracts fit together.
 - [Kernel implementations](docs/platforms/index.md): CUDA, Python MPS, native
-  Swift/Metal, WebGPU, and CPU reference internals.
+  Swift/Metal, WebGPU, Vulkan, and CPU reference internals.
+- [Dense and lossless-packed data](docs/api/representations.md): representation,
+  dtype, ownership, and current operation support for each runtime.
 - [QuantEM.GPU Remote](docs/remote/index.md): deploy the CUDA engine as a
   loopback service and connect locally or through SSH.
 - [Verified performance](docs/performance/results.md): dated, revision-pinned
@@ -38,6 +40,8 @@ Choose your entry point:
   measured, partial, pending, refuted, and unsupported configurations with
   stable commands for closing each open gate.
 - [Developer guide](docs/developer/index.md): adding and reviewing kernels.
+- [Migration status](docs/maintainer/migration.md): implemented dense/packed
+  paths, experimental backends, breaking receipt changes, and remaining work.
 
 The README is deliberately a doorway. Detailed implementation notes and
 historical measurements remain in the documentation site, where they can keep
@@ -91,8 +95,7 @@ from quantem.gpu import detector, dpc, io
 loaded = io.load(
     "scan_master.h5",
     backend="auto",
-    dtype="u16",
-    det_bin=1,
+    detector_bin=1,
 )
 
 bright_field = detector.bf(loaded.data)
@@ -104,11 +107,30 @@ annular_dark_field = detector.adf(
 )
 dpc_result = dpc.run(loaded.data)
 
-print(loaded.data.shape, loaded.data.dtype)
-print(loaded.metadata)
+print(loaded.shape, loaded.dtype)
+print(loaded.representation)
+print(loaded.logical_bytes, loaded.resident_bytes)
 ```
 
-`det_bin=1` keeps native detector sampling. See
+`io.load` preserves an existing Lossless Pack Format source without expanding
+it. Ordinary HDF5 currently follows the compatible dense path; request
+`representation="dense"` explicitly when downstream code requires one dense
+array. Representation, scientific dtype, and device residency are independent:
+
+```python
+packed = io.load("scan-lossless.h5", backend="cuda")
+dense = io.load(
+    "scan_master.h5",
+    backend="cuda",
+    representation="dense",
+    dtype="u16",
+)
+```
+
+Both calls return `io.FourDSTEMData`. Its `representation` is either
+`lossless_packed` or `dense`; `residency` reports where the payload is retained,
+and `logical_bytes` and `resident_bytes` keep dense-equivalent size separate
+from physical storage. `detector_bin=1` keeps native detector sampling. See
 [Load, decode, and bin](docs/kernels/load-decode-bin.md),
 [BF/DF/ADF](docs/kernels/virtual-detectors.md), and
 [CoM/DPC/iDPC](docs/kernels/com-dpc-idpc.md).
@@ -121,18 +143,33 @@ The repository is organized by **scientific domain first** and runtime second:
 src/quantem/gpu/
 ├── device/                         # explicit backend selection
 ├── io/backends/{cpu,cuda,mps,webgpu}/
-├── detector/compute/{cuda,mps,webgpu}/
-├── dpc/compute/{cuda,mps,webgpu}/
-├── display/                        # shared display math and GPU sources
-├── ssb/compute/{cuda,mps,webgpu}/
+│   └── .../dense.py, packed.py      # representation-specific IO where split
+├── detector/backends/{cuda,mps,webgpu}/
+├── dpc/backends/{cuda,mps,webgpu}/
+├── display/backends/{cpu,cuda,webgpu,direct3d}/
+├── ssb/backends/{cuda,mps,webgpu}/
 ├── remote/                         # exact scientific-array transport
-└── swift/{Sources,Tests,Benchmarks}/
+├── webgpu/index.ts                 # browser consumer exports, no kernels
+├── swift/{Sources,Tests,Benchmarks}/
+├── vulkan/{include,src,shaders,tests,benchmarks}/
+└── android/                        # compatibility CMake entry and headers only
 ```
 
 Swift has a separate build tree because Swift Package Manager needs
 target-oriented sources, tests, Metal resources, and native libraries. It does
 not have separate scientific ownership. Every implementation shares the same
 shape, dtype, coordinate, crop/bin, accumulation, and provenance rules.
+
+IO separates result models, selection rules, metadata readers, packed dispatch,
+and staging-memory ownership from load orchestration. Older `compute` imports
+remain as import-only compatibility files, not duplicate kernels. Browser
+builds export the complete source graph with `quantem.gpu.webgpu.export_sources`.
+See the [source map and reproducible checks](docs/maintainer/backend-layout-and-parity.md)
+for canonical entry points and consumer migration details.
+
+Tests are grouped into `contracts`, `parity`, `hardware`, `e2e`, and
+`infrastructure`. Run `python scripts/run_tests.py --list` to find the suites;
+the runner also translates old test-file paths without changing their gates.
 
 ## Native Swift and Metal
 

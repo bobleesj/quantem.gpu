@@ -316,7 +316,7 @@ def _build_exact_cuda_products(
     import cupy as cp
 
     from quantem.gpu.detector import auto_probe
-    from quantem.gpu.detector.compute.cuda.kernels import (
+    from quantem.gpu.detector.backends.cuda.kernels import (
         _cuda_screening_sums_exact,
     )
     from quantem.gpu.dpc.workflow import find_optimal_rotation

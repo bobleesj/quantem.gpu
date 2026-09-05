@@ -1,7 +1,8 @@
-# Compact 4D-STEM HDF5 contract
+# Lossless Pack Format v1
 
-QuantEM compact HDF5 stores an exact mask-applied integer 4D-STEM working array
-without constructing its dense logical tensor. The stable logical order is
+QuantEM.GPU Lossless Pack Format v1 stores an exact mask-applied integer 4D-STEM
+working array without constructing its dense logical tensor. The stable logical
+order is
 
 ```text
 (scan_row, scan_column, detector_row, detector_column)
@@ -13,21 +14,25 @@ backend must reject conflicting metadata, unsupported widths, truncated
 ranges, bad integrity hashes, or an output type that cannot represent the
 requested exact reduction.
 
-Two binary index versions exist and must never be conflated:
+The public format has two exact encoding profiles. Their legacy binary revision
+numbers select the decoder and remain in existing files for compatibility; they
+are not separate public format generations.
 
-| Index | Resident codec | Scan tile | Header representation |
-|---|---|---:|---|
-| QGIX v1 | independently raw-LZ4-compressed bitpacked u32 | 128 | one u8 width per pixel/tile |
-| QGIX v3 | direct bitpacked u32 | 32 | per-pixel base, 32-tile checkpoints, and packed width nibbles |
+| Public format | Encoding profile | Legacy binary revision | Scan tile | Header representation |
+|---|---|---:|---:|---|
+| Lossless Pack Format v1 | exact `uint16`/LZ4 | 1 | 128 | one u8 width per pixel/tile |
+| Lossless Pack Format v1 | exact `uint8`/bitpacked | 3 | 32 | per-pixel base, 32-tile checkpoints, and packed width nibbles |
 
-The index magic selects the decoder. A reader must not use the v1 raw-LZ4
-interpretation for a v3 file or transfer performance evidence between the two.
+The legacy index magic selects the encoding profile. A reader must not use the
+raw-LZ4 interpretation for a direct-bitpacked file or transfer performance
+evidence between the two profiles.
 
 Authenticated detector exclusions always read as zero through the scientific
-working-array API. An exact-uint16 QGIX v1 source can retain those raw streams in
+working-array API. The exact-`uint16`/LZ4 profile can retain those raw streams in
 its payload and declare `masked_detector_payload_policy` as
-`retained_exactly_in_payload`. Portable QGIX v3 can instead reconstruct excluded
-raw streams when its manifest carries producer-proven constant uint16 values in
+`retained_exactly_in_payload`. The exact-`uint8`/bitpacked profile can instead
+reconstruct excluded raw streams when its manifest carries producer-proven
+constant uint16 values in
 `masked_detector_raw_values` and authenticates the exact excluded-index sequence
 with `masked_detector_pixels_sha256`. A result must say whether it was compared
 with the raw source or with the mask-applied working array; raw sentinels never
@@ -49,13 +54,13 @@ offsets, not HDF5 object offsets.
 The JSON region ends no later than the binary offset. Both ranges must be
 inside the file. A reader validates the CRC before interpreting the manifest.
 
-The QGIX v1 binary index begins with:
+The exact-`uint16`/LZ4 binary index begins with:
 
 | Field | Type | Required value or meaning |
 |---|---:|---|
-| magic | 8 bytes | `QGIX\0\0\0\x01` |
+| legacy magic | 8 bytes | `QGIX\0\0\0\x01` |
 | shard count | u32 | positive |
-| payload chunk bytes | u32 | exactly 128 in v1 |
+| payload chunk bytes | u32 | exactly 128 for the raw-LZ4 profile |
 | scan rows, scan columns | 2 x u32 | positive logical scan shape |
 | detector rows, detector columns | 2 x u32 | positive logical detector shape |
 | scans per shard | u32 | positive; the final 128-scan tile may be partial |
@@ -88,19 +93,21 @@ decoded_sha256
 `decoded_sha256` authenticates the exact bit-packed decoded payload before a
 backend publishes the shard as resident.
 
-### QGIX v3 binary index
+### Exact `uint8`/bitpacked binary index
 
-QGIX v3 uses magic `QGIX\0\0\0\x03` and replaces the v1 header's payload
+The direct-bitpacked profile uses legacy magic `QGIX\0\0\0\x03` and replaces the
+raw-LZ4 header's payload
 chunk size with three u32 values: reserved zero, `scan_tile=32`, and
 `header_encoding=1`. Every shard must contain complete 32-scan tiles.
 
-The 96-byte shard record is reused with strict v3 meanings:
+The 96-byte shard record is reused with strict direct-bitpacked meanings:
 
 - `payload_offset`, `payload_bytes`: directly addressable little-endian u32
   payload; `decoded_bytes` must equal `payload_bytes`;
 - `lengths_offset`, `lengths_bytes`, `chunk_count`: all zero because there is no
   raw-LZ4 envelope;
-- `widths_offset`, `widths_bytes`: compact u32 headers rather than v1 u8 widths;
+- `widths_offset`, `widths_bytes`: compact u32 headers rather than raw-LZ4 u8
+  widths;
 - `descriptor_count`: compact header word count; and
 - `decoded_sha256`: SHA-256 of the exact direct payload bytes.
 
@@ -112,14 +119,15 @@ so on. Widths are 0 through 8; unused tail nibbles are zero. The final pixel's
 base plus cumulative width must end exactly at `payload_bytes / 4`. Every
 excluded detector pixel has all-zero widths and consumes no payload.
 
-The binary index authenticates each v3 payload but does not hash the compact
-headers. A v3 qualification therefore also requires an externally frozen
+The binary index authenticates each direct-bitpacked payload but does not hash
+the compact headers. Qualification therefore also requires an externally frozen
 whole-file SHA-256, or a future schema revision that embeds header digests. A
 filesystem path or adjacent sidecar by itself is not an integrity identity.
 
-## Required QGIX v1 JSON agreement
+## Required exact-`uint16`/LZ4 JSON agreement
 
-The manifest schema is `quantem.gpu.packed-detector-h5/v1`. These fields must
+The exact-`uint16`/LZ4 profile retains the legacy manifest schema
+`quantem.gpu.packed-detector-h5/v1`. These fields must
 agree exactly with the binary index:
 
 - `source_shape`
@@ -130,11 +138,12 @@ agree exactly with the binary index:
 - `masked_detector_pixels`
 
 The source dtype is `uint16`, `scan_bin` and `detector_bin` are 1, `crop` is
-null, and `status` is `complete`. A v1 reader accepts `working_dtype` equal to
+null, and `status` is `complete`. An exact-`uint16`/LZ4 reader accepts
+`working_dtype` equal to
 `uint8` or `uint16`, but it derives values from descriptor widths rather than
 casting to that label.
 
-Early v1 files can declare `working_dtype: uint8` while retaining 16-bit width
+Early raw-LZ4 files can declare `working_dtype: uint8` while retaining 16-bit width
 metadata for excluded raw-sentinel columns. Those columns have authenticated
 zero payloads. Compatibility is limited to widths above eight whose detector
 pixel is in the authenticated exclusion list. A width above eight for any
@@ -146,7 +155,8 @@ packed payload. It declares
 `masked_detector_payload_policy: retained_exactly_in_payload`, which permits
 the raw reconstruction API to read those retained samples. The mask-applied API
 still returns zero for excluded detector pixels, so detector products never
-consume excluded values. A v1 source with exclusions but without this explicit
+consume excluded values. An exact-`uint16`/LZ4 source with exclusions but
+without this explicit
 policy is not admissible as a portable raw reconstruction source.
 
 ### Optional source-bound detector calibration
@@ -172,7 +182,8 @@ Detector coordinates are always `[row, column]`. Center coordinates and the
 bright-field radius must be finite and in range. The DPC rotation and component
 order are optional, but must either both be present or both be absent. Binding
 the calibration to `source_identity_sha256` prevents a calibration copied from
-another file from being silently accepted. Existing v1 sources without this
+another file from being silently accepted. Existing exact-`uint16`/LZ4 sources
+without this
 optional object remain valid and can be calibrated once after residency.
 
 ### Optional prepared reopen integrity
@@ -217,9 +228,10 @@ the optional hash, and callers may force decoded verification for an audit.
 Benchmarks must label these modes separately as `decoded-sha256` and
 `authenticated-encoded-envelope`; their timings are not interchangeable.
 
-## Required QGIX v3 JSON agreement
+## Required exact-`uint8`/bitpacked JSON agreement
 
-The manifest schema is `quantem.gpu.packed-detector-h5/v3`. It must bind the
+The exact-`uint8`/bitpacked profile retains the legacy manifest schema
+`quantem.gpu.packed-detector-h5/v3`. It must bind the
 binary index to the complete source and working representation with:
 
 - `source_identity_sha256`, `source_raw_logical_sha256`, `source_shape`, and
@@ -237,8 +249,9 @@ binary index to the complete source and working representation with:
   `shard_count`; and
 - `payload_codec: direct-bitpacked-u32` with `status: complete`.
 
-Legacy files that omit these provenance fields are not portable v3 acceptance
-fixtures even when an adjacent audit can fill the gaps. Produce a new immutable
+Legacy files that omit these provenance fields are not portable
+exact-`uint8`/bitpacked acceptance fixtures even when an adjacent audit can fill
+the gaps. Produce a new immutable
 enriched and sealed copy or rebuild the artifact; do not weaken readers based
 on local path conventions.
 
@@ -249,7 +262,8 @@ sparse index list. `masked_detector_pixels_sha256` binds that sparse list to the
 binary index and equals
 `sha256(pack_little_endian_u32(masked_detector_pixels))`.
 
-The v3 working representation intentionally returns zero at excluded pixels.
+The exact-`uint8`/bitpacked working representation intentionally returns zero
+at excluded pixels.
 `masked_detector_raw_values` is ordered by the same strictly increasing
 row-major pixel indices as `masked_detector_pixels`; each item is an integer in
 the exact uint16 range 0 through 65535. Before publishing the file, the producer
@@ -257,12 +271,19 @@ must independently prove that every omitted sample across every scan and shard
 equals its recorded value. The field records the result of that proof; it is not
 a license for a reader to infer a sentinel from width or mask metadata.
 
+The native [Lossless Pack Format v1 producer](native_lossless_pack_v1_producer.md) implements the
+source-authenticated inspect-plan-produce lifecycle, bounded shard construction,
+atomic publication, and versioned receipt for this contract. Its current CPU
+reference backend is explicit in provenance and is not presented as GPU
+compression.
+
 The Python reference exposes `value()` and `selected_diffraction()` as
 mask-applied working reads. `raw_value()` and `raw_diffraction()` restore the
 producer-proven constants only after `raw_reconstruction_available` is true.
 Scientific detector sums continue to exclude those pixels.
 
-Pre-release v3 files with nonempty `masked_detector_pixels` but missing either
+Pre-release direct-bitpacked files with nonempty `masked_detector_pixels` but
+missing either
 `masked_detector_pixels_sha256` or `masked_detector_raw_values` remain readable
 only as explicitly nonportable mask-applied candidates.
 `require_raw_reconstruction()` and every raw read fail closed for them. They
@@ -278,7 +299,7 @@ writes through a temporary path, closes it, reparses it, requires raw
 reconstruction, and only then atomically publishes the destination. The new
 destination needs its own whole-file SHA-256 before qualification.
 
-## QGIX v1 descriptor and payload layout
+## Exact-`uint16`/LZ4 descriptor and payload layout
 
 One descriptor covers 128 consecutive scans for one detector pixel. Descriptor
 order is detector-pixel major, then scan-tile major:
@@ -335,7 +356,7 @@ movement and still label that measurement FFT-off.
 
 ## Bounded resident lifecycle
 
-A conforming v1 loader processes one shard at a time:
+A conforming exact-`uint16`/LZ4 loader processes one shard at a time:
 
 1. validate both metadata copies and all file ranges;
 2. read one compressed payload plus its length and width metadata;
@@ -351,7 +372,7 @@ For a failed or cancelled load, no partially resident source is returned. The
 19.3 GB logical uint16 cube for a `512 x 512 x 192 x 192` source is never a
 temporary or resident allocation in this path.
 
-A v3 loader instead validates the compact headers, reads/authenticates the
+A direct-bitpacked loader instead validates the compact headers, reads/authenticates the
 direct payload and its headers, and copies those compact buffers to
 backend-private storage. It does not run LZ4 or expand descriptors for all
 pixel/tile pairs. Publication still occurs only after every shard and the
@@ -366,13 +387,14 @@ and recorded.
 
 ## Exact uint16 preparation pipeline
 
-The general real-source path deliberately reuses QGIX v1. It does not widen or
-reinterpret QGIX v3. The source audit and frozen inventory first produce a
+The general real-source path uses the Lossless Pack Format v1 exact-`uint16`/LZ4
+profile. It does not widen or reinterpret the exact-`uint8`/bitpacked profile.
+The source audit and frozen inventory first produce a
 source-bound uint16 contract and independent product oracles. Metadata-only
 QH5 indexes then let the preserved native packer read every source frame,
 round-trip every uint16 value, and emit detector-major shards. Finally,
 `build_compact_h5_uint16.py` validates complete descriptor coverage and writes
-the raw-LZ4 QGIX v1 container through a temporary file.
+the raw-LZ4 lossless-pack container through a temporary file.
 
 Acceptance requires the frozen source identity, complete raw logical SHA-256,
 mask-applied working uint16 SHA-256, detector-mask SHA-256, source-bound
@@ -385,10 +407,10 @@ and presentation claims require a separate uncontended physical CUDA run.
 
 | Adapter | Contract code | Current qualification gate |
 |---|---|---|
-| Python reference | `quantem.gpu.io._compact_h5` | strict v1/v3 dispatch, fail-closed metadata, v3 payload/header checks, and bounded independent raw-HDF5 comparisons |
+| Python reference | `quantem.gpu.io._compact_h5` | strict profile dispatch, fail-closed metadata, direct-bitpacked payload/header checks, and bounded independent raw-HDF5 comparisons |
 | Swift and Metal | `MetalCompactH5Loader` and `packed_h5.metal` | physical Metal load, all decoded shard hashes, selected diffraction, complete detector-map oracles, bounded allocation, FFT-off interaction |
 | WebGPU and WGSL | `compact-h5.ts` | same synthetic golden, physical browser adapter, complete real-file products, browser memory receipt |
-| CUDA and NVRTC | `compact_h5.py` and runtime-compiled kernels | v1 retained; v3 direct payload/header implementation and device-hidden NVRTC compile pass, while physical CUDA adapter, complete real-file products, and device allocation receipt remain required |
+| CUDA and NVRTC | `compact_h5.py` and runtime-compiled kernels | exact-uint16/LZ4 retained; direct-bitpacked payload/header implementation and device-hidden NVRTC compile pass, while physical CUDA adapter, complete real-file products, and device allocation receipt remain required |
 
 WebGPU and CUDA must consume this binary contract. They must not reinterpret an
 Android implementation detail, accept unauthenticated low-byte narrowing, or

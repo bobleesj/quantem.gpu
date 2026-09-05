@@ -1,9 +1,5 @@
-"""Metal center-of-mass dispatch."""
+"""Compatibility imports; canonical implementation: ``quantem.gpu.dpc.backends.mps.backend``."""
 
-from quantem.gpu.detector.compute.mps.kernels import ChunkedFrames
-
-
-def prepare_frames(data) -> ChunkedFrames:
-    """Return a Metal chunk session without copying detector data."""
-
-    return ChunkedFrames(data)
+from quantem.gpu.dpc.backends.mps.backend import (
+    prepare_frames as prepare_frames,
+)

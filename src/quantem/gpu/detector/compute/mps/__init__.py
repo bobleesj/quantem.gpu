@@ -1,1 +1,1 @@
-"""Metal detector kernels."""
+"""Compatibility imports; canonical implementation: ``quantem.gpu.detector.backends.mps``."""

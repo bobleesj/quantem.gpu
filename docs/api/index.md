@@ -31,6 +31,9 @@ Native Swift/Metal products for macOS and iOS clients:
 - `MetalImageRuntime` for histogram, range, and display contracts.
 - `Native4DSTEMIO` for Python-free HDF5/EMD discovery, prepared QH5 indexes,
   and bounded native frame windows.
+- `NativeLosslessPackV1Producer` for an authenticated, resource-planned,
+  cancellable original-HDF5-to-lossless-pack lifecycle. See the
+  [native Lossless Pack Format v1 producer contract](native_lossless_pack_v1_producer.md).
 - `Metal4DSTEMStreamingIO` for bounded native QH5 decode, exact `uint64`
   products, source audits, and on-demand full-resolution diffraction frames.
 - `Metal4DSTEMLoadPlan`, `Metal4DSTEMStreamingPlan`,
@@ -46,6 +49,12 @@ backend.
 
 The API is still release-candidate level. Prefer public functions documented
 here over internal backend modules.
+
+`quantem.gpu.io.load` returns `FourDSTEMData`. Its
+`DataRepresentation` is `lossless_packed` or `dense`; scientific dtype,
+physical residency, and storage schema remain independent metadata.
+Both paths remain supported; see [Dense and lossless-packed data](representations.md)
+for the operation matrix, ownership rules, and remaining backend gates.
 
 ## Complete public namespace map
 

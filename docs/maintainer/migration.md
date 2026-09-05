@@ -23,6 +23,87 @@
 `quantem.live` calls `quantem.gpu` for product and SSB compute instead of
 keeping second copies.
 
+## Dense, packed, and experimental status
+
+Dense loading remains supported, including host arrays and accelerator-resident
+arrays where the backend supports them. Representation (`dense` or
+`lossless_packed`), location (host or device), and scientific dtype are separate
+choices. Original compressed HDF5 does not silently become a prepared packed
+file, and packed input does not silently expand into a dense volume.
+
+The following summarizes the [representation contract](../api/representations.md),
+not a new qualification registry. Exact gates remain in
+`tests/parity/backend_matrix.json`; measured and pending performance remain in
+`benchmarks/profile_matrix.json`.
+
+| Runtime | Implemented entry points | Remaining or experimental scope |
+|---|---|---|
+| Python CUDA | Dense and lossless-packed `io.load`; detector reductions; prepared CoM and packed SSB within their recorded contracts | Packed mean-DP, masked CoM, and arbitrary packed scan reductions are not general public operations. |
+| Python MPS | Dense loading and direct-bitpacked loading; detector reductions and prepared products | The packed uint16/LZ4 profile is native-Metal-only on Apple. |
+| Native Swift/Metal | Indexed dense and both packed profiles; source inspection, admission, authenticated loads, detector and prepared products | App adoption and physical end-to-end qualification must use an exact package revision. |
+| WebGPU | Dense and packed readers, batched detector updates, resident display and lifetime handling | Experimental consumer integration. The held uint16 DPC/iDPC numerical candidate is not promoted; device-specific parity and presentation gates remain open. |
+| Android/Vulkan | Native packed detector session, BF/DF/ADF, selected diffraction, bounded dense decode/staging | Experimental. Compact headers support widths 0–8, expanded descriptors 0–16. No full dense-volume residency, shared SSB, or general 1024 FFT claim. |
+| Native Direct3D | Caller-owned D3D11 FFT implementation and tests | Experimental, not release-qualified or a general packed/IO backend. |
+| CPU reference | Explicit dense reference workflows and test decoders | Not an automatic fallback or a public accelerated packed loader. |
+
+These source changes do **not** establish full-file cold loading in 1–2 seconds
+or 120 presented scientific updates per second. Preparation, authentication,
+source reads, device residency, reconstruction, and actual presentation must be
+measured separately on the target device. Physical phone acceptance remains a
+consumer task after repinning; a host test or a resident kernel benchmark is not
+its substitute.
+
+## What the refactor changes
+
+The [repository architecture](backend-layout-and-parity.md) defines one owner
+per implementation. IO models, metadata, selection, pinned staging, and packed
+dispatch have separate modules. Scientific backend code now lives under each
+domain's `backends/`; native Android code is owned by `vulkan/`.
+
+- Retain the import-only `compute/` and earlier IO compatibility files while
+  consumers migrate. They are live compatibility boundaries, not dead kernels.
+- Retain the Android CMake/header forwarding entry and native library names.
+- Remove unused private helpers only after checking callers. The reviewed
+  cleanup removes obsolete loading, detector, and screening helpers.
+- Common imports no longer import CuPy or replace the caller's pinned-memory
+  allocator. CUDA allocation still uses CuPy's configured allocator; the
+  existing bounded host-registration pool remains in `io/_memory.py`.
+- Dense streaming orchestration still occupies `io/load.py`. Further splitting
+  remains work, with source ordering, cancellation, and failure cleanup frozen.
+
+## Resident receipt v2 migration
+
+The resident receipt is now `quantem.gpu.4dstem-resident-receipt/v2`.
+`representation` is `dense` or `lossless_packed`; the separate `storage_encoding`
+field is removed. `storage_schema`, source/working dtype, geometry, hashes, and
+byte counts retain the detailed scientific meaning. This is an explicit schema
+change, not wire compatibility with v1.
+
+Consumers of the earlier Python MPS representation enum must use
+`DataRepresentation.DENSE` or `DataRepresentation.LOSSLESS_PACKED`. Swift clients
+must use `.dense` or `.losslessPacked` in place of the earlier format-specific
+cases. An old type-name alias does not preserve old enum members or serialized
+values. Update v1 receipt parsers deliberately; do not accept unknown versions
+as though they were v2. The remote `storage_kind` field remains a legacy alias
+for the new `representation` field.
+
+## Next migration steps
+
+1. Pin each consumer to a reviewed package revision. Export the complete
+   WebGPU source graph with `webgpu.export_sources(...)`; build native clients
+   from SwiftPM or the Vulkan CMake entry, without copying kernels.
+2. Adapt receipt parsers and capability controls to v2. Keep unsupported
+   operations unavailable rather than expanding or downcasting implicitly.
+3. Verify original compressed HDF5 and prepared packed inputs separately,
+   including 512 and 1024 scans where admitted, file A–B–A switching,
+   cancellation, replacement release, and relaunch.
+4. Run real detector translation and resizing, DF/ADF rings, DPC, colormaps,
+   contrast, and FFT-off behavior in the actual app. Record scientific update
+   cadence and presentation independently, with no hidden binning.
+5. Close the held WebGPU numerical gates and missing backend operations before
+   enabling them. Remove compatibility files only after every consumer has
+   migrated and been tested.
+
 Native macOS Live4DSTEM calls the Swift package products instead of a local
 Python backend:
 

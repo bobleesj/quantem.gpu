@@ -12,6 +12,7 @@ from .load import (
     inspect_master_readiness,
     read_pixel_mask,
 )
+from .representation import DataRepresentation
 
 
 @dataclass(frozen=True)
@@ -52,12 +53,18 @@ def inspect(
         Readiness, metadata, and the small detector pixel mask. Detector frames
         are not loaded.
     """
+    if (
+        DataRepresentation.detect_source(filepath)
+        is DataRepresentation.LOSSLESS_PACKED
+    ):
+        return _inspect_lossless_packed(filepath, scan_shape)
     readiness = inspect_master_readiness(filepath, scan_shape=scan_shape)
     try:
         metadata = get_metadata(str(filepath))
     except (OSError, KeyError, TypeError, ValueError):
         metadata = {}
     metadata.setdefault("scan_shape", scan_shape)
+    metadata["representation"] = DataRepresentation.DENSE.value
     metadata["detector_shape"] = readiness.detector_shape
     metadata["dtype"] = (
         np.dtype(readiness.dtype).name
@@ -94,4 +101,73 @@ def inspect(
             else None
         ),
         source_signature=readiness.source_signature,
+    )
+
+
+def _inspect_lossless_packed(
+    filepath: str | PathLike[str], scan_shape: tuple[int, int] | None
+) -> Inspection:
+    """Inspect a packed source without authenticating or decoding its payload."""
+    from ._compact_h5 import CompactH5Index
+
+    try:
+        index = CompactH5Index.from_file(filepath)
+    except (OSError, ValueError) as error:
+        return Inspection(
+            ready=False,
+            reason=f"invalid_lossless_pack_index: {error}",
+            action="Use a complete, authenticated Lossless Pack Format container.",
+            metadata={"representation": DataRepresentation.LOSSLESS_PACKED.value},
+            pixel_mask=None,
+            source_kind="lossless_packed",
+            actual_frames=None,
+            expected_frames=int(np.prod(scan_shape)) if scan_shape else None,
+            scan_shape=scan_shape,
+            detector_shape=None,
+            dtype=None,
+            source_signature={},
+        )
+    shape = index.shape
+    matches = scan_shape is None or tuple(scan_shape) == shape[:2]
+    raw_lossless = index.raw_reconstruction_available
+    reason = (
+        "scan_shape_mismatch" if not matches
+        else "index_complete_payload_unverified" if raw_lossless
+        else "raw_reconstruction_unavailable"
+    )
+    metadata = dict(index.manifest)
+    metadata.update(
+        representation=DataRepresentation.LOSSLESS_PACKED.value,
+        working_shape=shape,
+        scan_shape=shape[:2],
+        detector_shape=shape[2:],
+        dtype=index.manifest["working_dtype"],
+        n_frames=shape[0] * shape[1],
+        raw_reconstruction_available=raw_lossless,
+    )
+    mask = np.zeros(shape[2] * shape[3], dtype=np.uint32)
+    mask[list(index.excluded_detector_pixels)] = 1
+    return Inspection(
+        ready=matches and raw_lossless,
+        reason=reason,
+        action=(
+            f"Use scan_shape={shape[:2]}." if not matches
+            else "Load to authenticate the payload." if raw_lossless
+            else "Prepare a raw-lossless container retaining excluded detector values."
+        ),
+        metadata=metadata,
+        pixel_mask=mask.reshape(shape[2:]),
+        source_kind="lossless_packed",
+        actual_frames=shape[0] * shape[1],
+        expected_frames=(
+            int(np.prod(scan_shape)) if scan_shape is not None else shape[0] * shape[1]
+        ),
+        scan_shape=shape[:2],
+        detector_shape=shape[2:],
+        dtype=str(index.manifest["working_dtype"]),
+        source_signature={
+            "source_identity_sha256": index.source_identity_sha256,
+            "container_bytes": index.file_bytes,
+            "storage_schema": index.manifest["schema"],
+        },
     )

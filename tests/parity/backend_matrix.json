@@ -5,7 +5,9 @@
     "cuda",
     "mps",
     "swift-metal",
-    "webgpu"
+    "webgpu",
+    "direct3d",
+    "vulkan"
   ],
   "contract": {
     "coordinate_order": "row-column",
@@ -40,17 +42,31 @@
       "id": "geometry.scan-quarter-turn",
       "parity": "Byte-exact scan-row/column quarter turns with unchanged detector patterns, dtype, and coordinate convention.",
       "coverage": {
+        "vulkan": {
+          "level": "not-implemented",
+          "qualification": "No Vulkan scan-quarter-turn primitive is exported.",
+          "gates": [
+            "src/quantem/gpu/vulkan/README.md"
+          ]
+        },
+        "direct3d": {
+          "level": "not-implemented",
+          "qualification": "Outside initial FFT-only extraction",
+          "gates": [
+            "src/quantem/gpu/display/backends/direct3d/README.md"
+          ]
+        },
         "cpu-reference": {
           "level": "reference-fixture",
-          "gates": ["tests/test_geometry.py", "src/quantem/gpu/parity/scan_rotation_v1.json"]
+          "gates": ["tests/parity/test_geometry.py", "src/quantem/gpu/parity/scan_rotation_v1.json"]
         },
         "cuda": {
           "level": "required",
-          "gates": ["tests/test_geometry.py"]
+          "gates": ["tests/parity/test_geometry.py"]
         },
         "mps": {
           "level": "required",
-          "gates": ["tests/test_geometry.py"]
+          "gates": ["tests/parity/test_geometry.py"]
         },
         "swift-metal": {
           "level": "required",
@@ -58,7 +74,7 @@
         },
         "webgpu": {
           "level": "required-hardware",
-          "gates": ["src/quantem/gpu/geometry/compute/webgpu/quarter-turn.ts", "tests/test_webgpu_sources.py"]
+          "gates": ["src/quantem/gpu/geometry/compute/webgpu/quarter-turn.ts", "tests/infrastructure/test_webgpu_sources.py"]
         }
       }
     },
@@ -66,17 +82,33 @@
       "id": "io.decode-bin-provenance",
       "parity": "Exact corrected integer values, shape, dtype, crop/bin geometry, and provenance.",
       "coverage": {
+        "vulkan": {
+          "level": "partial-hardware",
+          "qualification": "Indexed uint16 decode and dense staging; exact packed residency. Scan bin1, detector bin1, crop none only. Fresh shared-pin device qualification remains pending.",
+          "gates": [
+            "src/quantem/gpu/vulkan/tests/contract_tests.cpp",
+            "src/quantem/gpu/vulkan/tests/qh5_indexed_source_tests.cpp",
+            "src/quantem/gpu/vulkan/tests/packed_detector_session_tests.cpp"
+          ]
+        },
+        "direct3d": {
+          "level": "not-implemented",
+          "qualification": "Outside initial FFT-only extraction",
+          "gates": [
+            "src/quantem/gpu/display/backends/direct3d/README.md"
+          ]
+        },
         "cpu-reference": {
           "level": "reference",
-          "gates": ["tests/io/test_load.py", "tests/io/test_public_api.py"]
+          "gates": ["tests/contracts/io/test_load.py", "tests/contracts/io/test_public_api.py"]
         },
         "cuda": {
           "level": "required",
-          "gates": ["tests/test_hdf5_real_agreement.py", "tests/test_hdf5_real_parity.py"]
+          "gates": ["tests/e2e/test_hdf5_real_agreement.py", "tests/e2e/test_hdf5_real_parity.py"]
         },
         "mps": {
           "level": "required",
-          "gates": ["tests/test_hdf5_real_agreement.py", "tests/test_hdf5_real_parity.py", "tests/io/test_mps_buffer_release.py"]
+          "gates": ["tests/e2e/test_hdf5_real_agreement.py", "tests/e2e/test_hdf5_real_parity.py", "tests/hardware/mps/test_mps_buffer_release.py"]
         },
         "swift-metal": {
           "level": "required",
@@ -84,7 +116,7 @@
         },
         "webgpu": {
           "level": "required-hardware",
-          "gates": ["tests/test_webgpu_sources.py", "tests/test_webgpu_widget_sync.py", "docs/maintainer/backend-4dstem-load-checklist.md"]
+          "gates": ["tests/infrastructure/test_webgpu_sources.py", "tests/e2e/test_webgpu_widget_sync.py", "docs/maintainer/backend-4dstem-load-checklist.md"]
         }
       }
     },
@@ -175,6 +207,25 @@
         "unsupported_backend": "error-without-fallback"
       },
       "coverage": {
+        "vulkan": {
+          "level": "not-implemented",
+          "qualification": "Single-position diffraction is available, but the canonical ordered scan-selection loading contract is not implemented.",
+          "gates": [
+            "src/quantem/gpu/vulkan/tests/selected_diffraction_c_api_tests.cpp",
+            "src/quantem/gpu/vulkan/README.md"
+          ],
+          "implemented_selectors": [],
+          "implemented_subset": [
+            "single-position-indexed-accessor"
+          ]
+        },
+        "direct3d": {
+          "level": "not-implemented",
+          "qualification": "Outside initial FFT-only extraction",
+          "gates": [
+            "src/quantem/gpu/display/backends/direct3d/README.md"
+          ]
+        },
         "cpu-reference": {
           "level": "not-implemented",
           "implemented_selectors": [],
@@ -184,7 +235,7 @@
           ],
           "gates": [
             "src/quantem/gpu/io/backends/cpu/reference.py",
-            "tests/io/test_load.py"
+            "tests/contracts/io/test_load.py"
           ]
         },
         "cuda": {
@@ -196,8 +247,8 @@
           ],
           "qualification": "source-and-portable-parity-implemented; physical-performance-and-complete-durable-provenance-pending",
           "gates": [
-            "tests/io/test_load.py",
-            "tests/test_hdf5_real_agreement.py"
+            "tests/contracts/io/test_load.py",
+            "tests/e2e/test_hdf5_real_agreement.py"
           ]
         },
         "mps": {
@@ -209,9 +260,9 @@
           ],
           "qualification": "source-and-portable-parity-implemented; detector-bin-range-proof-physical-performance-and-complete-durable-provenance-pending",
           "gates": [
-            "tests/io/test_load.py",
-            "tests/io/test_mps_buffer_release.py",
-            "tests/test_hdf5_real_agreement.py"
+            "tests/contracts/io/test_load.py",
+            "tests/hardware/mps/test_mps_buffer_release.py",
+            "tests/e2e/test_hdf5_real_agreement.py"
           ]
         },
         "swift-metal": {
@@ -247,7 +298,7 @@
           ],
           "gates": [
             "src/quantem/gpu/io/backends/webgpu/local-h5.ts",
-            "tests/test_webgpu_sources.py"
+            "tests/infrastructure/test_webgpu_sources.py"
           ]
         }
       }
@@ -256,17 +307,32 @@
       "id": "detector.integer-products",
       "parity": "Exact mean-DP integer accumulation and BF/ABF/ADF/DF sums using one mask definition.",
       "coverage": {
+        "vulkan": {
+          "level": "partial-hardware",
+          "qualification": "Bounded native integer products and packed BF/DF/ADF/selected diffraction exist; shared-pin physical full-source parity remains pending.",
+          "gates": [
+            "src/quantem/gpu/vulkan/tests/packed_detector_tests.cpp",
+            "src/quantem/gpu/vulkan/tests/packed_selected_diffraction_tests.cpp"
+          ]
+        },
+        "direct3d": {
+          "level": "not-implemented",
+          "qualification": "Outside initial FFT-only extraction",
+          "gates": [
+            "src/quantem/gpu/display/backends/direct3d/README.md"
+          ]
+        },
         "cpu-reference": {
           "level": "reference",
-          "gates": ["tests/test_products_parity.py", "tests/test_integer_detector_products.py"]
+          "gates": ["tests/parity/test_products_parity.py", "tests/parity/test_integer_detector_products.py"]
         },
         "cuda": {
           "level": "required",
-          "gates": ["tests/test_cuda_virtual_image.py", "tests/test_realdata_parity.py"]
+          "gates": ["tests/hardware/cuda/test_cuda_virtual_image.py", "tests/e2e/test_realdata_parity.py"]
         },
         "mps": {
           "level": "required",
-          "gates": ["tests/test_products_parity.py", "tests/test_mps_chunk_dispatch.py"]
+          "gates": ["tests/parity/test_products_parity.py", "tests/contracts/test_mps_chunk_dispatch.py"]
         },
         "swift-metal": {
           "level": "required",
@@ -274,7 +340,7 @@
         },
         "webgpu": {
           "level": "required-hardware",
-          "gates": ["tests/test_webgpu_sources.py", "docs/maintainer/backend-4dstem-load-checklist.md"]
+          "gates": ["tests/infrastructure/test_webgpu_sources.py", "docs/maintainer/backend-4dstem-load-checklist.md"]
         }
       }
     },
@@ -282,17 +348,32 @@
       "id": "screening.prepared-products",
       "parity": "Same source identity, load plan, mean DP, BF/DF, CoM row/column, rotation, iDPC, cache signature, and provenance; ADF is not yet part of ScreeningResult.",
       "coverage": {
+        "vulkan": {
+          "level": "partial-hardware",
+          "qualification": "Source-bound prepared detector maps and moments exist; the complete screening preparation/cache contract is not implemented.",
+          "gates": [
+            "src/quantem/gpu/vulkan/tests/packed_detector_session_tests.cpp",
+            "src/quantem/gpu/vulkan/README.md"
+          ]
+        },
+        "direct3d": {
+          "level": "not-implemented",
+          "qualification": "Outside initial FFT-only extraction",
+          "gates": [
+            "src/quantem/gpu/display/backends/direct3d/README.md"
+          ]
+        },
         "cpu-reference": {
           "level": "reference",
-          "gates": ["tests/test_screening.py", "docs/api/core.md"]
+          "gates": ["tests/contracts/test_screening.py", "docs/api/core.md"]
         },
         "cuda": {
           "level": "required",
-          "gates": ["tests/test_screening.py", "docs/maintainer/backend-4dstem-load-checklist.md"]
+          "gates": ["tests/contracts/test_screening.py", "docs/maintainer/backend-4dstem-load-checklist.md"]
         },
         "mps": {
           "level": "required",
-          "gates": ["tests/test_screening.py", "docs/maintainer/backend-4dstem-load-checklist.md"]
+          "gates": ["tests/contracts/test_screening.py", "docs/maintainer/backend-4dstem-load-checklist.md"]
         },
         "swift-metal": {
           "level": "not-implemented",
@@ -308,17 +389,33 @@
       "id": "dpc.com-rotation-idpc",
       "parity": "Same row/column CoM convention, rotation, centering, FFT normalization, and frozen float metric.",
       "coverage": {
+        "vulkan": {
+          "level": "partial-hardware",
+          "qualification": "Prepared exact moments and centered CoM exist; a complete shared rotation/iDPC workflow is not qualified.",
+          "gates": [
+            "src/quantem/gpu/vulkan/shaders/prepared_dpc_com.comp",
+            "src/quantem/gpu/vulkan/shaders/prepared_dpc_center.comp",
+            "src/quantem/gpu/vulkan/tests/packed_detector_session_tests.cpp"
+          ]
+        },
+        "direct3d": {
+          "level": "not-implemented",
+          "qualification": "Outside initial FFT-only extraction",
+          "gates": [
+            "src/quantem/gpu/display/backends/direct3d/README.md"
+          ]
+        },
         "cpu-reference": {
           "level": "reference",
-          "gates": ["tests/test_dpc_rotation_agreement.py", "tests/test_products_parity.py"]
+          "gates": ["tests/parity/test_dpc_rotation_agreement.py", "tests/parity/test_products_parity.py"]
         },
         "cuda": {
           "level": "required",
-          "gates": ["tests/test_products_parity.py", "tests/test_real_product_env_match.py"]
+          "gates": ["tests/parity/test_products_parity.py", "tests/e2e/test_real_product_env_match.py"]
         },
         "mps": {
           "level": "required",
-          "gates": ["tests/test_products_parity.py", "tests/test_real_product_env_match.py"]
+          "gates": ["tests/parity/test_products_parity.py", "tests/e2e/test_real_product_env_match.py"]
         },
         "swift-metal": {
           "level": "required",
@@ -326,7 +423,7 @@
         },
         "webgpu": {
           "level": "required-hardware",
-          "gates": ["tests/test_webgpu_sources.py", "docs/maintainer/backend-4dstem-load-checklist.md"]
+          "gates": ["tests/infrastructure/test_webgpu_sources.py", "docs/maintainer/backend-4dstem-load-checklist.md"]
         }
       }
     },
@@ -334,17 +431,33 @@
       "id": "display.transform-histogram-color-fft",
       "parity": "Exact histogram/RGBA integer outputs and frozen float32 transform/FFT metrics.",
       "coverage": {
+        "vulkan": {
+          "level": "partial-hardware",
+          "qualification": "Native radial FFT is limited to 512-square scans; other display operations and physical shared-pin qualification remain pending.",
+          "gates": [
+            "src/quantem/gpu/vulkan/tests/radial_fft_tests.cpp",
+            "src/quantem/gpu/vulkan/README.md"
+          ]
+        },
+        "direct3d": {
+          "level": "partial-hardware",
+          "qualification": "FFT source and portable build only; Windows GPU and real-data consumer qualification pending",
+          "gates": [
+            "tests/direct3d/Program.cs",
+            "src/quantem/gpu/display/backends/direct3d/README.md"
+          ]
+        },
         "cpu-reference": {
           "level": "reference",
-          "gates": ["tests/test_display_parity.py", "tests/test_display_fft_parity.py"]
+          "gates": ["tests/parity/test_display_parity.py", "tests/parity/test_display_fft_parity.py"]
         },
         "cuda": {
           "level": "required",
-          "gates": ["tests/test_display_parity.py", "tests/test_display_shared_goldens.py"]
+          "gates": ["tests/parity/test_display_parity.py", "tests/parity/test_display_shared_goldens.py"]
         },
         "mps": {
           "level": "required",
-          "gates": ["tests/test_display_shared_goldens.py"]
+          "gates": ["tests/parity/test_display_shared_goldens.py"]
         },
         "swift-metal": {
           "level": "required",
@@ -352,7 +465,7 @@
         },
         "webgpu": {
           "level": "required-hardware",
-          "gates": ["tests/test_display_fft_parity.py", "tests/test_display_shared_goldens.py", "tests/test_webgpu_widget_sync.py"]
+          "gates": ["tests/parity/test_display_fft_parity.py", "tests/parity/test_display_shared_goldens.py", "tests/e2e/test_webgpu_widget_sync.py"]
         }
       }
     },
@@ -360,17 +473,31 @@
       "id": "ssb.object-phase-loss",
       "parity": "Same BF selection, aberrations, precision, objective, optimizer settings, and frozen phase/loss metric.",
       "coverage": {
+        "vulkan": {
+          "level": "not-implemented",
+          "qualification": "No shared Vulkan SSB implementation.",
+          "gates": [
+            "src/quantem/gpu/vulkan/README.md"
+          ]
+        },
+        "direct3d": {
+          "level": "not-implemented",
+          "qualification": "Outside initial FFT-only extraction",
+          "gates": [
+            "src/quantem/gpu/display/backends/direct3d/README.md"
+          ]
+        },
         "cpu-reference": {
           "level": "reference-fixture",
-          "gates": ["tests/fixtures/ssb_reference_512_mps.json", "tests/test_ssb_backend_contract.py"]
+          "gates": ["tests/parity/fixtures/ssb_reference_512_mps.json", "tests/contracts/test_ssb_backend_contract.py"]
         },
         "cuda": {
           "level": "required",
-          "gates": ["tests/test_ssb_cuda_128.py", "tests/test_ssb_mps_cuda_reference.py"]
+          "gates": ["tests/hardware/cuda/test_ssb_cuda_128.py", "tests/hardware/mps/test_ssb_mps_cuda_reference.py"]
         },
         "mps": {
           "level": "required",
-          "gates": ["tests/test_ssb_mps_cuda_reference.py", "tests/test_ssb_mps_close.py"]
+          "gates": ["tests/hardware/mps/test_ssb_mps_cuda_reference.py", "tests/contracts/test_ssb_mps_close.py"]
         },
         "swift-metal": {
           "level": "required",
@@ -378,7 +505,7 @@
         },
         "webgpu": {
           "level": "partial-hardware",
-          "gates": ["tests/test_webgpu_sources.py", "tests/test_ssb_backend_contract.py", "docs/maintainer/ssb-performance.md"]
+          "gates": ["tests/infrastructure/test_webgpu_sources.py", "tests/contracts/test_ssb_backend_contract.py", "docs/maintainer/ssb-performance.md"]
         }
       }
     },
@@ -386,17 +513,31 @@
       "id": "ssb.calibration-200-nelder-mead",
       "parity": "Same full active BF selection, seed, 200 exact TPE candidates, candidate history, Nelder-Mead refinement, fitted aberrations, loss, precision, and final independent reconstruction.",
       "coverage": {
+        "vulkan": {
+          "level": "not-implemented",
+          "qualification": "No shared Vulkan SSB optimizer implementation.",
+          "gates": [
+            "src/quantem/gpu/vulkan/README.md"
+          ]
+        },
+        "direct3d": {
+          "level": "not-implemented",
+          "qualification": "Outside initial FFT-only extraction",
+          "gates": [
+            "src/quantem/gpu/display/backends/direct3d/README.md"
+          ]
+        },
         "cpu-reference": {
           "level": "reference-fixture",
-          "gates": ["tests/fixtures/ssb_reference_512_mps.json", "tests/test_ssb_structure.py"]
+          "gates": ["tests/parity/fixtures/ssb_reference_512_mps.json", "tests/infrastructure/test_ssb_structure.py"]
         },
         "cuda": {
           "level": "required",
-          "gates": ["tests/test_ssb_batch_optuna.py", "tests/test_ssb_cuda_128.py", "tests/test_ssb_structure.py"]
+          "gates": ["tests/contracts/test_ssb_batch_optuna.py", "tests/hardware/cuda/test_ssb_cuda_128.py", "tests/infrastructure/test_ssb_structure.py"]
         },
         "mps": {
           "level": "required",
-          "gates": ["tests/test_ssb_mps_cuda_reference.py", "tests/test_ssb_structure.py"]
+          "gates": ["tests/hardware/mps/test_ssb_mps_cuda_reference.py", "tests/infrastructure/test_ssb_structure.py"]
         },
         "swift-metal": {
           "level": "required",
@@ -404,7 +545,7 @@
         },
         "webgpu": {
           "level": "not-implemented",
-          "gates": ["tests/test_webgpu_sources.py", "docs/api/ssb.md"]
+          "gates": ["tests/infrastructure/test_webgpu_sources.py", "docs/api/ssb.md"]
         }
       }
     }

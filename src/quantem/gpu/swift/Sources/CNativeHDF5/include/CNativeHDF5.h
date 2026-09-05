@@ -36,6 +36,8 @@ typedef struct {
   int has_scan_shape;
   uint64_t *bad_pixel_indices;
   size_t bad_pixel_count;
+  uint32_t *detector_mask_values;
+  size_t detector_mask_count;
   double scan_pixel_row_nm;
   double scan_pixel_column_nm;
   int has_scan_pixel_size;
@@ -56,6 +58,15 @@ typedef struct {
   char *metadata_json;
   char *metadata_path;
 } qh5_velox_image_info;
+
+typedef struct qh5_lossless_pack_v1_writer qh5_lossless_pack_v1_writer;
+
+typedef struct {
+  uint64_t payload_offset;
+  uint64_t payload_bytes;
+  uint64_t headers_offset;
+  uint64_t headers_bytes;
+} qh5_lossless_pack_v1_shard_layout;
 
 int qh5_inspect_stack(
   const char *path,
@@ -80,6 +91,35 @@ int qh5_prepare_velox_image(
   qh5_velox_image_info *info,
   char **error_message
 );
+
+/* Create a new exclusive temporary HDF5 path and return its owned writer. */
+int qh5_lossless_pack_v1_writer_open(
+  const char *path,
+  uint64_t user_block_bytes,
+  qh5_lossless_pack_v1_writer **writer,
+  char **error_message
+);
+
+/* Append one non-empty payload/header pair in consecutive ordinal order. */
+int qh5_lossless_pack_v1_writer_append_shard(
+  qh5_lossless_pack_v1_writer *writer,
+  uint32_t ordinal,
+  const uint32_t *payload,
+  uint64_t payload_words,
+  const uint32_t *headers,
+  uint64_t header_words,
+  qh5_lossless_pack_v1_shard_layout *layout,
+  char **error_message
+);
+
+/* Flush and close a complete temporary file. The writer is consumed. */
+int qh5_lossless_pack_v1_writer_close(
+  qh5_lossless_pack_v1_writer *writer,
+  char **error_message
+);
+
+/* Close an open writer and remove only the path created by writer_open. */
+void qh5_lossless_pack_v1_writer_abort(qh5_lossless_pack_v1_writer *writer);
 
 void qh5_free_chunks(qh5_chunk_info *chunks);
 void qh5_free_master_info(qh5_master_info *info);

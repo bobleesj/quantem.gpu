@@ -1,1 +1,1 @@
-"""Private DPC backend implementations."""
+"""Compatibility imports; canonical implementation: ``quantem.gpu.dpc.backends``."""

@@ -17,6 +17,31 @@ Native clients compose three products for local 4D-STEM loading:
 
 None of these products imports SwiftUI, AppKit, UIKit, or Python.
 
+## Shared representation contract
+
+Native Swift uses the same public representation values as Python and WebGPU:
+
+```swift
+public enum Metal4DSTEMResidentRepresentation: String, Codable, Sendable {
+  case dense
+  case losslessPacked = "lossless_packed"
+}
+```
+
+`Metal4DSTEMResidentReceipt` schema v2 records that representation together
+with source and working shapes, dtypes, logical bytes, physical resident bytes,
+bin/crop, calibration, and provenance. Encoding profiles such as exact
+`uint16`/LZ4 or exact `uint8`/bitpacked remain in `storageSchema`; they are not
+additional representation choices. This keeps application code stable as the
+format evolves.
+
+For source-preserving cache creation, see the
+[native Lossless Pack Format v1 producer](native_lossless_pack_v1_producer.md).
+It exposes an explicit
+inspect-plan-produce lifecycle and records the execution backend. The current
+producer implementation is the bounded CPU reference; requesting an
+unimplemented GPU producer fails rather than falling back silently.
+
 The native HDF5 bridge accepts unsigned 8-bit and unsigned 16-bit detector
 sources. `Metal4DSTEMLoadPlan.sourceBytesPerValue` is therefore exactly 1 or 2.
 The persistent resident cache currently stores `uint16` or `uint32`; audited

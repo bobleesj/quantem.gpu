@@ -8,10 +8,7 @@ from typing import Literal
 
 import numpy as np
 
-try:
-    import cupy as cp
-except ModuleNotFoundError:  # MPS/WebGPU clients do not install CuPy.
-    cp = None
+from quantem.gpu.device._cupy import cp
 
 
 def _is_cupy_array(value: object) -> bool:

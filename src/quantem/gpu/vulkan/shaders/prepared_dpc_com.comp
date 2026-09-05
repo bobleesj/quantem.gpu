@@ -1,0 +1,72 @@
+#version 450
+
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0, std430) readonly buffer MomentWords { uint words[]; };
+layout(set = 0, binding = 1, std430) writeonly buffer RowCom { float row_com[]; };
+layout(set = 0, binding = 2, std430) writeonly buffer ColumnCom { float column_com[]; };
+layout(push_constant) uniform Parameters { uint scan_count; } parameters;
+
+uint double_step(inout uint remainder, uint denominator) {
+  const bool overflow = (remainder & 0x80000000u) != 0u;
+  const uint doubled = remainder << 1u;
+  if (overflow || doubled >= denominator) {
+    remainder = doubled - denominator;
+    return 1u;
+  }
+  remainder = doubled;
+  return 0u;
+}
+
+int compare_twice(uint remainder, uint denominator) {
+  if ((remainder & 0x80000000u) != 0u) return 1;
+  const uint doubled = remainder << 1u;
+  return doubled < denominator ? -1 : doubled > denominator ? 1 : 0;
+}
+
+// Correctly rounded binary32 ratio for the source-proven narrow u32 contract.
+float exact_ratio(uint numerator, uint denominator) {
+  if (numerator == 0u || denominator == 0u) return 0.0;
+  int exponent = 0;
+  uint remainder;
+  uint normalized_denominator;
+  if (numerator >= denominator) {
+    uint scaled = denominator;
+    while ((scaled & 0x80000000u) == 0u) {
+      const uint next = scaled << 1u;
+      if (next > numerator) break;
+      scaled = next;
+      ++exponent;
+    }
+    remainder = numerator - scaled;
+    normalized_denominator = scaled;
+  } else {
+    remainder = numerator;
+    do {
+      const uint bit = double_step(remainder, denominator);
+      --exponent;
+      if (bit != 0u) break;
+    } while (true);
+    normalized_denominator = denominator;
+  }
+  uint significand = 1u << 23u;
+  for (uint bit = 23u; bit > 0u; --bit)
+    significand |= double_step(remainder, normalized_denominator) << (bit - 1u);
+  const int comparison = compare_twice(remainder, normalized_denominator);
+  if (comparison > 0 || (comparison == 0 && (significand & 1u) != 0u))
+    ++significand;
+  if (significand == (1u << 24u)) {
+    significand >>= 1u;
+    ++exponent;
+  }
+  return uintBitsToFloat((uint(exponent + 127) << 23u) |
+                         (significand & 0x7fffffu));
+}
+
+void main() {
+  const uint scan = gl_GlobalInvocationID.x;
+  if (scan >= parameters.scan_count) return;
+  const uint base = scan * 8u;
+  // Contract admission proves all high words are zero for 192 x 192 uint8.
+  row_com[scan] = exact_ratio(words[base + 2u], words[base]);
+  column_com[scan] = exact_ratio(words[base + 4u], words[base]);
+}

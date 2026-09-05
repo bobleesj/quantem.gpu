@@ -3,25 +3,18 @@ import Foundation
 import Metal4DSTEMKernels
 import os
 
-/// Exact Apple representation that owns a complete resident 4D-STEM generation.
+/// Backend-neutral representation of a complete 4D-STEM generation.
 public enum Metal4DSTEMResidentRepresentation: String, Codable, Sendable {
-  case compactQGIXV1UInt16 = "compact-qgix-v1-uint16"
-  case compactQGIXV3UInt8 = "compact-qgix-v3-uint8"
-  case indexedResidentInteger = "indexed-resident-integer"
-}
-
-/// Physical encoding used for one complete exact resident generation.
-public enum Metal4DSTEMResidentStorageEncoding: String, Codable, Sendable {
   case dense
-  case losslessPacked = "lossless-packed"
+  case losslessPacked = "lossless_packed"
 }
 
 /// Backend-neutral scientific and memory receipt for one resident generation.
 public struct Metal4DSTEMResidentReceipt: Codable, Equatable, Sendable {
-  public static let currentSchema = "quantem.gpu.4dstem-resident-receipt/v1"
+  public static let currentSchema = "quantem.gpu.4dstem-resident-receipt/v2"
 
   public let schema: String
-  public let representation: String
+  public let representation: Metal4DSTEMResidentRepresentation
   public let sourceIdentitySHA256: String
   public let sourceShape: [Int]
   public let workingShape: [Int]
@@ -31,7 +24,6 @@ public struct Metal4DSTEMResidentReceipt: Codable, Equatable, Sendable {
   public let workingLogicalTensorBytes: UInt64
   public let physicalResidentBytes: UInt64
   public let containerBytes: UInt64?
-  public let storageEncoding: Metal4DSTEMResidentStorageEncoding
   public let storageSchema: String
   public let losslessExact: Bool
   public let scanBin: Int
@@ -50,7 +42,7 @@ public struct Metal4DSTEMResidentReceipt: Codable, Equatable, Sendable {
   public let implementationRevision: String?
 
   public func validate() throws {
-    guard schema == Self.currentSchema, !representation.isEmpty,
+    guard schema == Self.currentSchema,
       Self.validSHA256(sourceIdentitySHA256),
       sourceShape.count == 4, workingShape.count == 4,
       sourceShape.allSatisfy({ $0 > 0 }), workingShape.allSatisfy({ $0 > 0 }),
@@ -108,7 +100,7 @@ public struct Metal4DSTEMResidentReceipt: Codable, Equatable, Sendable {
       provenanceSHA256 == nil || Self.validSHA256(provenanceSHA256),
       sourceRawLogicalSHA256 == nil || Self.validSHA256(sourceRawLogicalSHA256),
       workingLogicalSHA256 == nil || Self.validSHA256(workingLogicalSHA256),
-      storageEncoding != .dense || physicalResidentBytes == workingLogicalTensorBytes
+      representation != .dense || physicalResidentBytes == workingLogicalTensorBytes
     else {
       throw Metal4DSTEMStreamingIOError.invalidRequest(
         "Resident receipt geometry, byte counts, or identities are inconsistent."
@@ -245,7 +237,7 @@ public struct Metal4DSTEMResidentCapabilities: Codable, Equatable, Sendable {
       && logicalTensorBytes > 0
       && residentStorageBytes > 0
       && residentReceipt.losslessExact
-      && residentReceipt.representation == representation.rawValue
+      && residentReceipt.representation == representation
       && residentReceipt.sourceIdentitySHA256 == sourceIdentitySHA256
       && residentReceipt.workingShape == [
         scanRows, scanColumns, detectorRows, detectorColumns,
@@ -294,9 +286,12 @@ public struct Metal4DSTEMResidentCapabilities: Codable, Equatable, Sendable {
     let samplingSHA256 = Metal4DSTEMResidentReceipt.metadataSHA256(
       result.samplingPropagation
     )
+    let representation: Metal4DSTEMResidentRepresentation =
+      result.metrics.workingPayloadBytes == workingLogicalTensorBytes
+      ? .dense : .losslessPacked
     let receipt = Metal4DSTEMResidentReceipt(
       schema: Metal4DSTEMResidentReceipt.currentSchema,
-      representation: Metal4DSTEMResidentRepresentation.indexedResidentInteger.rawValue,
+      representation: representation,
       sourceIdentitySHA256: provenance.sourceIdentitySHA256,
       sourceShape: sourceShape,
       workingShape: workingShape,
@@ -306,8 +301,6 @@ public struct Metal4DSTEMResidentCapabilities: Codable, Equatable, Sendable {
       workingLogicalTensorBytes: workingLogicalTensorBytes,
       physicalResidentBytes: result.metrics.workingPayloadBytes,
       containerBytes: nil,
-      storageEncoding: result.metrics.workingPayloadBytes == workingLogicalTensorBytes
-        ? .dense : .losslessPacked,
       storageSchema: "quantem.gpu.indexed-resident-integer/v1",
       losslessExact: true,
       scanBin: provenance.scanBin,
@@ -341,7 +334,7 @@ public struct Metal4DSTEMResidentCapabilities: Codable, Equatable, Sendable {
     ]
     return Self(
       schema: currentSchema,
-      representation: .indexedResidentInteger,
+      representation: representation,
       sourceIdentitySHA256: result.nativeProductProvenance.sourceIdentitySHA256,
       scanRows: provenance.outputScanRows,
       scanColumns: provenance.outputScanColumns,
@@ -364,24 +357,19 @@ public struct Metal4DSTEMResidentCapabilities: Codable, Equatable, Sendable {
     )
   }
 
-  /// Describe a complete QGIX v3 uint8 source without widening its format.
+  /// Describe a complete lossless-packed source without widening its format.
   public static func compact(
     _ source: MetalCompactH5ResidentSource
   ) throws -> Self {
     let metadata = source.metadata
-    let representation: Metal4DSTEMResidentRepresentation
-    if metadata.schema == "quantem.gpu.packed-detector-h5/v1",
-      metadata.sourceDtype == "uint16", metadata.workingDtype == "uint16"
-    {
-      representation = .compactQGIXV1UInt16
-    } else if metadata.schema == "quantem.gpu.packed-detector-h5/v3",
-      metadata.sourceDtype == "uint16", metadata.workingDtype == "uint8"
-    {
-      representation = .compactQGIXV3UInt8
-    } else {
+    let supportedFormat =
+      (metadata.schema == "quantem.gpu.packed-detector-h5/v1"
+        && metadata.sourceDtype == "uint16" && metadata.workingDtype == "uint16")
+      || (metadata.schema == "quantem.gpu.packed-detector-h5/v3"
+        && metadata.sourceDtype == "uint16" && metadata.workingDtype == "uint8")
+    guard supportedFormat else {
       throw Metal4DSTEMStreamingIOError.invalidRequest(
-        "Compact resident capabilities require exact QGIX v1 uint16 or QGIX v3 "
-          + "uint8 source semantics."
+        "Lossless-packed capabilities require a supported exact uint16 or uint8 storage schema."
       )
     }
     guard
@@ -406,7 +394,7 @@ public struct Metal4DSTEMResidentCapabilities: Codable, Equatable, Sendable {
     )
     let receipt = Metal4DSTEMResidentReceipt(
       schema: Metal4DSTEMResidentReceipt.currentSchema,
-      representation: representation.rawValue,
+      representation: .losslessPacked,
       sourceIdentitySHA256: metadata.sourceIdentitySHA256,
       sourceShape: shape,
       workingShape: shape,
@@ -416,7 +404,6 @@ public struct Metal4DSTEMResidentCapabilities: Codable, Equatable, Sendable {
       workingLogicalTensorBytes: workingLogicalTensorBytes,
       physicalResidentBytes: source.loadMetrics.totalResidentBytes,
       containerBytes: metadata.sourceBytes,
-      storageEncoding: .losslessPacked,
       storageSchema: metadata.schema,
       losslessExact: true,
       scanBin: 1,
@@ -489,7 +476,7 @@ public struct Metal4DSTEMResidentCapabilities: Codable, Equatable, Sendable {
     ]
     return Self(
       schema: currentSchema,
-      representation: representation,
+      representation: .losslessPacked,
       sourceIdentitySHA256: metadata.sourceIdentitySHA256,
       scanRows: metadata.scanRows,
       scanColumns: metadata.scanColumns,

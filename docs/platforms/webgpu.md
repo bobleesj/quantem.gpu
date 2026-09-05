@@ -33,6 +33,18 @@ than in a browser UI.
 These files are package resources. A browser client bundles the canonical
 sources rather than maintaining a second scientific implementation.
 
+`LocalH5LoadResult` uses the same public representation vocabulary as Python
+and Swift. It reports `representation` as `"dense"` or `"lossless_packed"`,
+`residency` as `"device"`, dense-equivalent `logicalBytes`, and allocated
+`residentBytes`. The current local native-HDF5 path reports `"dense"`.
+`loadCompactH5WebGPU` in `compact-h5.ts` loads a prepared Lossless Pack Format
+source and returns `WebGPUCompactH5ResidentSource` with the same fields and
+`representation="lossless_packed"`. Its exact resident receipt uses the shared
+v2 representation contract. The two existing source/lifetime interfaces remain
+distinct; this is not yet a single automatic HDF5-to-packed browser load call.
+See [Dense and lossless-packed data](../api/representations.md) for limits and
+ownership.
+
 WebGPU implements local-file load/decode, detector products, CoM/DPC/iDPC,
 SSB reconstruction, phase, loss, and display operations. It does not currently
 implement the Python `screening.prepare` cache or SSB aberration fitting. The
@@ -57,8 +69,8 @@ $I[R_r,R_c,k_r,k_c]$ or `(row, column) ≡ (r, c)`.
 
 ```bash
 PYTHONPATH=src python -m pytest -q \
-  tests/test_webgpu_sources.py \
-  tests/test_webgpu_widget_sync.py
+  tests/infrastructure/test_webgpu_sources.py \
+  tests/e2e/test_webgpu_widget_sync.py
 ```
 
 The source test verifies packaged resources and required kernel contracts. A
@@ -84,10 +96,15 @@ system RAM**. This is a whole-machine limit shared by the operating system,
 browser, JavaScript heap, staging buffers, GPU buffers, and presentation—not an
 8 GB WebGPU allocation budget.
 
-For the full `512x512` scan and `192x192` source detector, the current bin-1
+For the full `512x512` scan and `192x192` source detector, the dense bin-1
 `uint8` representation and bin-2 exact-sum `float32` representation each need
 9.00 GiB of resident payload, so both are **No** before browser overhead. Bins 4
 and 8 require 2.25 GiB and 0.5625 GiB and are candidates, but remain **Pending**
 until a headed run on a physical 8 GB laptop retains browser/system peak,
 memory pressure, swap, adapter limits, first usable product, and scientific
 parity. A real-adapter run on a higher-memory machine cannot receive this ✓.
+
+Those dense byte counts do not describe lossless-packed residency. A packed
+source has data-dependent payload and header bytes; it needs a separate
+measured admission test including staging and all retained products. No packed
+8 GB capability check mark follows from the representation name alone.

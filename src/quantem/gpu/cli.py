@@ -14,6 +14,14 @@ def _parser() -> argparse.ArgumentParser:
         description="Accelerated 4D-STEM compute services.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
+    prepare = commands.add_parser(
+        "prepare-browse",
+        help="verify a qualified packed source and create a new sealed registry",
+    )
+    prepare.add_argument("master", type=Path)
+    prepare.add_argument("source", type=Path)
+    prepare.add_argument("destination", type=Path)
+    prepare.add_argument("--expected-source-sha256", required=True)
     serve = commands.add_parser(
         "serve",
         help="serve native 4D-STEM browsing over loopback",
@@ -69,6 +77,17 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the requested QuantEM GPU command."""
     args = _parser().parse_args(argv)
+    if args.command == "prepare-browse":
+        from quantem.gpu.remote import prepare_browse_source
+
+        registry = prepare_browse_source(
+            args.master,
+            args.source,
+            args.destination,
+            expected_source_sha256=args.expected_source_sha256,
+        )
+        print(registry)
+        return 0
     if not 1 <= args.port <= 65_535:
         raise SystemExit("--port must be between 1 and 65535")
     if args.command == "serve-ssb-mps":

@@ -9,6 +9,7 @@
 // engine eats here are the same bytes CUDA eats. Parity is by composition: jsfive chunk
 // == h5py chunk, and engine decode == CUDA decode.
 
+/// <reference path="./jsfive.d.ts" />
 import * as jsfive from "jsfive";
 import type { Bslz4MaskedSumSpec, Bslz4Spec } from "./bslz4";
 

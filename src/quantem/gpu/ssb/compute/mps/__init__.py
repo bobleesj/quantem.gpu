@@ -1,5 +1,6 @@
-"""MPS/Metal implementation of the private SSB compute protocol."""
+"""Compatibility imports; canonical implementation: ``quantem.gpu.ssb.backends.mps``."""
 
-from .backend import MpsSSBBackend
-
-__all__ = ["MpsSSBBackend"]
+from quantem.gpu.ssb.backends.mps import (
+    MpsSSBBackend as MpsSSBBackend,
+    __all__ as __all__,
+)

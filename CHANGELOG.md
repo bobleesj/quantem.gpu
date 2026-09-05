@@ -6,6 +6,19 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- Route sealed CUDA packed loading and SSB through `io.load`, add source-preserving
+  browse-registry preparation, and expose authenticated prepared CoM without
+  dense detector expansion or new end-to-end timing claims.
+- Retain dense loading alongside direct packed readers, consolidate native
+  Metal/Vulkan and WebGPU implementations, and document per-representation
+  operation limits. Add packed inspection, raw-reconstruction admission,
+  exactness reporting, and cross-language buffer-lifetime regressions without
+  changing benchmark claims or silently transcoding between representations.
+- Add one backend-neutral 4D-STEM representation API across Python,
+  Swift/Metal, WebGPU, and remote receipts. `io.load()` now returns
+  `FourDSTEMData`, reports `lossless_packed` or `dense` separately from dtype
+  and residency, auto-detects prepared Lossless Pack Format sources, and uses
+  the descriptive `detector_bin` spelling while retaining compatibility aliases.
 - Add a loopback-only CUDA browse service for native applications, with exact
   virtual-detector and selected-diffraction transport, acquisition monitoring,
   crop/bin admission, automatic whole-dataset placement across multiple GPUs,

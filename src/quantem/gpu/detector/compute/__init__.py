@@ -1,1 +1,1 @@
-"""Private detector backend implementations."""
+"""Compatibility imports; canonical implementation: ``quantem.gpu.detector.backends``."""

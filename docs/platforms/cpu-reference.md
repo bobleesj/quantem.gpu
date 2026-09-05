@@ -6,7 +6,12 @@ fixtures and portable IO checks. It is not a silent production fallback.
 ```python
 from quantem.gpu import io
 
-reference = io.load("small_master.h5", backend="cpu", dtype="u16")
+reference = io.load(
+    "small_master.h5",
+    backend="cpu",
+    representation="dense",
+    dtype="u16",
+)
 ```
 
 ## Dispatch and implementation layers
@@ -25,7 +30,7 @@ The reference call path is:
 io.load(..., backend="cpu")
   → explicit protocol resolution
   → h5py + hdf5plugin decompression
-  → NumPy array + shared LoadResult metadata
+  → NumPy array + shared FourDSTEMData metadata
   → NumPy detector/DPC reference operations
 ```
 
@@ -63,10 +68,10 @@ incomplete-edge golden.
 
 ```bash
 PYTHONPATH=src python -m pytest -q \
-  tests/test_import_without_cupy.py \
-  tests/io/test_load.py \
-  tests/test_products_parity.py \
-  tests/test_dpc_rotation_agreement.py
+  tests/contracts/test_import_without_cupy.py \
+  tests/contracts/io/test_load.py \
+  tests/parity/test_products_parity.py \
+  tests/parity/test_dpc_rotation_agreement.py
 ```
 
 For each frozen fixture, record the generator revision, input checksum,

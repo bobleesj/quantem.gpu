@@ -1,7 +1,2 @@
-/// <reference types="@webgpu/types" />
-
-export interface WebGPUFFTConfig {
-  readonly size: 128 | 256 | 512 | 1024;
-  readonly workgroupSize: number;
-  readonly specialized: boolean;
-}
+/** Compatibility export; kernels have one canonical owner. */
+export * from "../../../backends/webgpu/kernels/common";

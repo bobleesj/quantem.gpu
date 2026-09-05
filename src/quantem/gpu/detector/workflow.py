@@ -328,7 +328,7 @@ class _ArrayComputeBackend:
     def reduce_frames_exact(self, scan_indices) -> np.ndarray:
         indices = np.asarray(scan_indices, dtype=np.intp).reshape(-1)
         if _is_cupy_array(self.flat):
-            from quantem.gpu.detector.compute.cuda.kernels import (
+            from quantem.gpu.detector.backends.cuda.kernels import (
                 cuda_selected_frame_sum_uint64,
             )
 
@@ -356,7 +356,7 @@ class _ArrayComputeBackend:
     def reduce_frames_max(self, scan_indices) -> np.ndarray:
         indices = np.asarray(scan_indices, dtype=np.intp).reshape(-1)
         if _is_cupy_array(self.flat):
-            from quantem.gpu.detector.compute.cuda.kernels import (
+            from quantem.gpu.detector.backends.cuda.kernels import (
                 cuda_selected_frame_max_uint32,
             )
 
@@ -389,7 +389,7 @@ class _ArrayComputeBackend:
         if _is_cupy_array(self.flat):
             import cupy as cp
 
-            from quantem.gpu.detector.compute.cuda.kernels import cuda_masked_sum
+            from quantem.gpu.detector.backends.cuda.kernels import cuda_masked_sum
 
             out = cuda_masked_sum(self.data, mask_np)
             if out is not None:
@@ -427,7 +427,7 @@ class _ArrayComputeBackend:
         if _is_cupy_array(self.flat):
             import cupy as cp
 
-            from quantem.gpu.detector.compute.cuda.kernels import (
+            from quantem.gpu.detector.backends.cuda.kernels import (
                 cuda_selected_sum_uint64,
             )
 
@@ -475,20 +475,24 @@ class _ArrayComputeBackend:
 
 def _resolve_backend(data):
     """Return the array compute backend for this data."""
+    from .backends.packed import PackedDetectorCompute, is_lossless_packed_source
+
     data = _unwrap_core_4dstem(data)
     if hasattr(data, "_fields") and "data" in getattr(data, "_fields", ()):
         data = data.data
+    if is_lossless_packed_source(data):
+        return PackedDetectorCompute(data)
     if is_packed_uint4(data):
-        from quantem.gpu.detector.compute.backends import compute_backend
+        from quantem.gpu.detector.backends.dispatch import compute_backend
 
         return compute_backend(data)
     if _is_cupy_array(data) or _is_torch_tensor(data):
-        from quantem.gpu.detector.compute.backends import compute_backend
+        from quantem.gpu.detector.backends.dispatch import compute_backend
 
         return compute_backend(data)
     if hasattr(data, "chunks"):
-        from quantem.gpu.detector.compute.backends import compute_backend
-        from quantem.gpu.detector.compute.mps.kernels import ChunkedFrames
+        from quantem.gpu.detector.backends.dispatch import compute_backend
+        from quantem.gpu.detector.backends.mps.kernels import ChunkedFrames
 
         # MetalRawBackend needs the ChunkedFrames contract (``.vi``); raw
         # loader results (MPSChunked4DSTEM) carry ``_is_gpu_frames`` but not
@@ -628,8 +632,9 @@ def _detector_image(data, center, lo_px: float, hi_px: float) -> np.ndarray:
     """Masked-sum image over the annulus ``lo_px .. hi_px`` detector pixels.
     Stateless - builds the mask via :func:`detector_mask` and runs the
     shared-backend masked-sum each call."""
-    mask = detector_mask(center, lo_px, hi_px, mean_dp(data).shape)
-    return masked_sum(data, mask)
+    backend = _resolve_backend(data)
+    mask = detector_mask(center, lo_px, hi_px, backend.det_shape)
+    return _reduced_to_numpy(backend.masked_sum(mask)).reshape(backend.scan_shape)
 
 
 def bf(data, center=None, radius=None) -> np.ndarray:

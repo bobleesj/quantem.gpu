@@ -1,1 +1,1 @@
-"""WebGPU detector source package."""
+"""Compatibility imports; canonical implementation: ``quantem.gpu.detector.backends.webgpu``."""

@@ -92,6 +92,7 @@ public struct Native4DSTEMDataset: Codable, Identifiable, Sendable {
   public let sourceDtype: String
   public let sourceBytes: Int
   public let badPixelIndices: [Int]
+  public let detectorMaskSHA256: String?
   public let scanPixelSizeRowNanometer: Double?
   public let scanPixelSizeColNanometer: Double?
   public let kPixelSizeRow: Double?
@@ -131,7 +132,8 @@ public struct Native4DSTEMDataset: Codable, Identifiable, Sendable {
     masterSHA256: String? = nil,
     orderedMemberSHA256: [String]? = nil,
     sourceScanCalibration: Native4DSTEMScanCalibration? = nil,
-    scalarImageRawPath: String? = nil
+    scalarImageRawPath: String? = nil,
+    detectorMaskSHA256: String? = nil
   ) {
     self.id = id
     self.label = label
@@ -145,6 +147,7 @@ public struct Native4DSTEMDataset: Codable, Identifiable, Sendable {
     self.sourceDtype = sourceDtype
     self.sourceBytes = sourceBytes
     self.badPixelIndices = badPixelIndices
+    self.detectorMaskSHA256 = detectorMaskSHA256
     self.scanPixelSizeRowNanometer = scanPixelSizeRowNanometer
     self.scanPixelSizeColNanometer = scanPixelSizeColNanometer
     self.kPixelSizeRow = kPixelSizeRow

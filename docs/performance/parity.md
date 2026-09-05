@@ -88,11 +88,11 @@ Run the portable contract layer with:
 
 ```bash
 PYTHONPATH=src python -m pytest -q \
-  tests/test_backend_parity_manifest.py \
-  tests/test_products_parity.py \
-  tests/test_dpc_rotation_agreement.py \
-  tests/test_display_parity.py \
-  tests/test_ssb_backend_contract.py
+  tests/infrastructure/test_backend_parity_manifest.py \
+  tests/parity/test_products_parity.py \
+  tests/parity/test_dpc_rotation_agreement.py \
+  tests/parity/test_display_parity.py \
+  tests/contracts/test_ssb_backend_contract.py
 ```
 
 Native Apple parity additionally runs:

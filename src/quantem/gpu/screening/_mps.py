@@ -47,7 +47,7 @@ def _mps_chunked_frames_for(data):
             "MPS screening products require Metal-backed load output; got "
             f"{type(data).__name__}. Use backend='cuda' or backend='mps'."
         )
-    from quantem.gpu.detector.compute.mps.kernels import ChunkedFrames
+    from quantem.gpu.detector.backends.mps.kernels import ChunkedFrames
     from quantem.gpu.io.backends import mps
 
     array = data

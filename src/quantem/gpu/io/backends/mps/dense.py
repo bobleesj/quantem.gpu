@@ -1,0 +1,3616 @@
+"""MPS (Apple Metal GPU) bitshuffle+LZ4 decompression for Arina 4D-STEM.
+
+This is the Apple-GPU IO/decompression backend owned by ``quantem.gpu``. Metal
+compute shaders decompress directly into unified-memory NumPy arrays so
+``quantem.widget`` and ``quantem.live`` can display or compute from the chunks
+without owning a second permanent IO implementation.
+
+This module is the canonical Apple-GPU I/O backend.
+Detector binning keeps the native unsigned integer dtype and uses integer-sum
+bins, matching the CUDA raw-frame contract.
+
+This module imports ``Metal`` and ``numba`` at top level. It is imported lazily
+by ``load()`` only after the backend resolves to ``"mps"``, so importing
+``quantem.gpu.io`` on Linux never touches Mac-only dependencies.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+import os
+import pathlib
+import time
+import warnings
+from typing import ClassVar
+import Metal
+import h5py
+import hdf5plugin  # noqa: F401 - registers bitshuffle filter
+import numpy as np
+from numba import njit, prange
+from tqdm.auto import tqdm
+
+__all__ = [
+    "MPSChunked4DSTEM",
+    "MPSMasterPlan",
+    "clear_mps_cache",
+    "load_master",
+    "load_master_chunked",
+    "load_mps_4dstem",
+    "load_prepared_frames",
+    "plan_master",
+]
+
+
+@dataclass(frozen=True)
+class MPSMasterPlan:
+    """Resolved Arina master layout for the Metal chunked loader."""
+
+    master_path: str
+    detector_shape: tuple[int, int]
+    dtype: np.dtype
+    ntrigger: int
+    chunk_files: tuple[str, ...]
+    chunk_n_frames: tuple[int, ...]
+
+    @property
+    def frame_bytes(self) -> int:
+        return int(np.prod(self.detector_shape) * self.dtype.itemsize)
+
+    @property
+    def elem_size(self) -> int:
+        return int(self.dtype.itemsize)
+
+    @property
+    def n_blocks_per_frame(self) -> int:
+        return (self.frame_bytes + 8191) // 8192
+
+    @property
+    def total_frames(self) -> int:
+        return int(sum(self.chunk_n_frames))
+
+    @property
+    def total_bytes(self) -> int:
+        return self.total_frames * self.frame_bytes
+
+
+@dataclass
+class MPSChunked4DSTEM:
+    """Zero-copy MPS IO result for full no-bin 4D-STEM viewing.
+
+    ``chunks`` are numpy views over unified-memory Metal buffers. Widget code
+    consumes them directly; callers should not concatenate them unless they
+    intentionally want a host-side copy.
+    """
+
+    chunks: list
+    metadata: dict
+    master_path: str
+    scan_shape: tuple[int, int] | None = None
+    row_prefix: bool = False
+    det_bin: int = 1
+    fast_chunks: list | None = None
+    fast_det_bin: int | None = None
+    detector_sum: np.ndarray | None = None
+
+    _is_gpu_frames: ClassVar[bool] = True
+    device: ClassVar[str] = "mps"
+
+    @property
+    def detector_shape(self) -> tuple[int, int]:
+        return tuple(int(x) for x in self.chunks[0].shape[1:])
+
+    @property
+    def dtype(self) -> np.dtype:
+        return np.dtype(self.chunks[0].dtype)
+
+    @property
+    def n_frames(self) -> int:
+        return int(sum(int(c.shape[0]) for c in self.chunks))
+
+    @property
+    def shape(self) -> tuple[int, int, int]:
+        return (self.n_frames, *self.detector_shape)
+
+    @property
+    def nbytes(self) -> int:
+        return int(sum(int(c.nbytes) for c in self.chunks))
+
+    def free_chunk(self, index: int) -> None:
+        """Release one chunk's Metal buffer, for readers copying chunk by chunk.
+
+        A caller assembling a single contiguous tensor otherwise holds the whole
+        decoded tilt twice at once (~19 GB each at no-bin). Freeing each chunk as
+        soon as it has been copied keeps only one chunk live beside the output.
+        The chunk must not be read again afterwards.
+        """
+        chunk = self.chunks[index]
+        _release_metal_buffer(getattr(chunk, "_mtl", None))
+        self.chunks[index] = None
+
+    def free(self) -> None:
+        """Release the Metal buffers backing this load.
+
+        PyObjC never frees a ``newBufferWithLength_options_`` buffer on its own,
+        so a caller that copies the chunks elsewhere and drops this object would
+        otherwise strand ~19 GB per no-bin tilt for the life of the process.
+
+        This is explicit rather than a ``__del__`` because the chunks are handed
+        out zero-copy: a viewer keeps reading them for as long as it is on screen,
+        and releasing on garbage collection would pull the memory out from under
+        it. Call this only once nothing reads the arrays any more.
+        """
+        for chunk in list(self.chunks) + list(self.fast_chunks or []):
+            if chunk is not None:
+                _release_metal_buffer(getattr(chunk, "_mtl", None))
+        self.chunks = []
+        self.fast_chunks = None
+
+    def recycle(self) -> None:
+        """Return exact compact output buffers for the next compatible load.
+
+        This is an explicit resident-lifecycle operation. It differs from
+        :meth:`free`, which immediately returns the output memory to the
+        system. Recycling keeps one exact output generation resident so a
+        later compatible load can overwrite it without allocating and wiring
+        another full resident destination. Callers must stop using this result
+        and all of its views before calling ``recycle()``.
+
+        The decoder attaches this capability only to native-dtype compact
+        detector-bin-1 results and native-dtype detector-bin-2/4/8 results,
+        all without a sidecar. Other layouts fail closed.
+        """
+        if not self.chunks:
+            return
+        if self.det_bin not in (1, 2, 4, 8) or self.fast_chunks:
+            raise RuntimeError(
+                "Only native MPS detector-bin-1/2/4/8 output without a "
+                "sidecar can be recycled."
+            )
+        decoders = {
+            id(decoder): decoder
+            for chunk in self.chunks
+            if (decoder := getattr(chunk, "_recycle_decoder", None)) is not None
+        }
+        if len(decoders) != 1 or any(
+            getattr(chunk, "_recycle_decoder", None) is None
+            for chunk in self.chunks
+        ):
+            raise RuntimeError(
+                "This MPS result does not own a compatible recyclable destination."
+            )
+        buffers = [getattr(chunk, "_mtl", None) for chunk in self.chunks]
+        if any(buffer is None for buffer in buffers):
+            raise RuntimeError(
+                "This MPS result has already released an output buffer."
+            )
+        keys = [_buffer_key(buffer) for buffer in buffers]
+        if len(set(keys)) != len(keys):
+            raise RuntimeError(
+                "A recyclable MPS result contains aliased output buffers."
+            )
+
+        decoder = next(iter(decoders.values()))
+        decoder._recycle_output_buffers(buffers)
+        for chunk in self.chunks:
+            chunk._mtl = None
+            chunk._recycle_decoder = None
+        self.chunks = []
+        self.fast_chunks = None
+
+
+@dataclass(frozen=True)
+class _ChunkReadPlan:
+    n_frames: int
+    frame_shape: tuple[int, int]
+    dtype: np.dtype
+    file_offsets: np.ndarray
+    sizes: np.ndarray
+    out_offsets: np.ndarray
+    run_start: np.ndarray
+    run_end: np.ndarray
+    total_bytes: int
+
+
+_master_plan_cache: dict[tuple[str, int, int], MPSMasterPlan] = {}
+_chunk_read_plan_cache: dict[tuple[str, int, int], _ChunkReadPlan] = {}
+_cached_dec = None
+_cached_dec_key = None
+_MPS_SAFE_WORKING_SET_FRACTION = 0.70
+_MPS_WARN_WORKING_SET_FRACTION = 0.50
+_MPS_SKIP_MEMORY_CHECK_ENV = "QUANTEM_GPU_MPS_SKIP_MEMORY_CHECK"
+_LEGACY_MPS_SKIP_MEMORY_CHECK_ENV = "QUANTEM_WIDGET_MPS_SKIP_MEMORY_CHECK"
+
+
+def _file_cache_key(path: str) -> tuple[str, int, int]:
+    path = os.path.abspath(os.fspath(path))
+    st = os.stat(path)
+    return path, int(st.st_mtime_ns), int(st.st_size)
+
+
+def _read_pixel_mask(master_path: str) -> np.ndarray | None:
+    """Read the Arina dead-pixel mask without importing the full HDF5 loader."""
+    key = "entry/instrument/detector/detectorSpecific/pixel_mask"
+    try:
+        with h5py.File(master_path, "r") as f:
+            if key not in f:
+                return None
+            return f[key][:]
+    except (OSError, KeyError):
+        return None
+
+
+def clear_mps_cache() -> None:
+    """Drop reusable MPS decoder buffers while keeping cheap chunk-layout plans."""
+    global _cached_dec, _cached_dec_key
+    if _cached_dec is not None:
+        # Unlinking alone would only drop the Python wrapper; the Metal buffers
+        # need the explicit release or the scratch stays allocated for good.
+        _cached_dec.free()
+    _cached_dec = None
+    _cached_dec_key = None
+    for dec in list(_decompressor_cache.values()):
+        dec.free()
+    _decompressor_cache.clear()
+
+
+def _fused_full_u16_enabled() -> bool:
+    """Return whether the exact scratch-free uint16 decoder is enabled."""
+    return os.environ.get("QT_MPS_FUSED_FULL_U16", "1") != "0"
+
+
+def _fused_bin_enabled() -> bool:
+    """Return whether exact fused uint16 detector binning is enabled."""
+    return os.environ.get("QT_MPS_FUSED_BIN", "1") != "0"
+
+
+def _format_gib(nbytes: int | float | None) -> str:
+    if nbytes is None:
+        return "unknown"
+    return f"{float(nbytes) / (1 << 30):.1f} GiB"
+
+
+def _mps_recommended_working_set_bytes() -> int | None:
+    fn = getattr(_device, "recommendedMaxWorkingSetSize", None)
+    if not callable(fn):
+        return None
+    try:
+        value = int(fn())
+    except Exception:
+        return None
+    return value if value > 0 else None
+
+
+def _mps_max_buffer_bytes() -> int | None:
+    fn = getattr(_device, "maxBufferLength", None)
+    if not callable(fn):
+        return None
+    try:
+        value = int(fn())
+    except Exception:
+        return None
+    return value if value > 0 else None
+
+
+def _mps_output_bytes(
+    plan: MPSMasterPlan,
+    det_bin: int,
+    *,
+    output_dtype: type | np.dtype | str | None = None,
+) -> int:
+    det_bin = int(det_bin)
+    if det_bin < 1:
+        raise ValueError("det_bin must be >= 1.")
+    det_row, det_col = (int(x) for x in plan.detector_shape)
+    if det_row % det_bin or det_col % det_bin:
+        raise ValueError(
+            f"Detector dims {(det_row, det_col)} are not divisible by det_bin={det_bin}."
+        )
+    dtype = _normalize_output_dtype(output_dtype) or plan.dtype
+    return (
+        int(plan.total_frames)
+        * (det_row // det_bin)
+        * (det_col // det_bin)
+        * int(dtype.itemsize)
+    )
+
+
+def _mps_recommended_det_bin(
+    plan: MPSMasterPlan,
+    limit_bytes: int,
+    *,
+    output_dtype: type | np.dtype | str | None = None,
+) -> tuple[int, int] | None:
+    for factor in (2, 4, 8, 16):
+        det_row, det_col = (int(x) for x in plan.detector_shape)
+        if det_row % factor or det_col % factor:
+            continue
+        output_bytes = _mps_output_bytes(plan, factor, output_dtype=output_dtype)
+        if output_bytes <= int(limit_bytes):
+            return factor, output_bytes
+    return None
+
+
+def _mps_skip_memory_check_requested(skip_memory_check: bool | None) -> bool:
+    if skip_memory_check is not None:
+        return bool(skip_memory_check)
+    for env_name in (_MPS_SKIP_MEMORY_CHECK_ENV, _LEGACY_MPS_SKIP_MEMORY_CHECK_ENV):
+        value = os.environ.get(env_name, "")
+        if value.strip().lower() in {"1", "true", "yes", "on"}:
+            return True
+    return False
+
+
+def _check_mps_memory_guard(
+    plan: MPSMasterPlan,
+    *,
+    det_bin: int,
+    output_dtype: type | np.dtype | str | None = None,
+    skip_memory_check: bool | None = None,
+) -> None:
+    """Fail early before an MPS load can pressure unified memory.
+
+    The guard is intentionally metadata-only: it runs before Metal output
+    buffers are allocated. It never silently changes ``det_bin`` because binning
+    changes the data; instead it recommends the smallest safer bin factor.
+    """
+    det_bin = int(det_bin)
+    recommended = _mps_recommended_working_set_bytes()
+    if recommended is None:
+        return
+    output_bytes = _mps_output_bytes(plan, det_bin, output_dtype=output_dtype)
+    safe_limit = int(recommended * _MPS_SAFE_WORKING_SET_FRACTION)
+    warn_limit = int(recommended * _MPS_WARN_WORKING_SET_FRACTION)
+    max_buffer = _mps_max_buffer_bytes()
+    hard_limit = safe_limit
+    if det_bin > 1 and max_buffer is not None:
+        # The binned MPS path uses one output Metal buffer, so maxBufferLength is
+        # a hard per-allocation cap in addition to total unified-memory pressure.
+        hard_limit = min(hard_limit, int(max_buffer * 0.95))
+
+    if output_bytes <= warn_limit:
+        return
+
+    recommendation = _mps_recommended_det_bin(
+        plan,
+        hard_limit,
+        output_dtype=output_dtype,
+    )
+    if recommendation is None:
+        rec_text = "Use a larger det_bin or load a smaller scan region."
+    else:
+        rec_bin, rec_bytes = recommendation
+        rec_text = (
+            f"Use det_bin={rec_bin} "
+            f"(estimated output {_format_gib(rec_bytes)}) for browsing."
+        )
+    message = (
+        "MPS load memory check: "
+        f"det_bin={det_bin} would materialize {_format_gib(output_bytes)} "
+        f"for {os.path.basename(plan.master_path)}. This Mac reports a Metal "
+        f"recommended working set of {_format_gib(recommended)}; quantem.gpu "
+        f"uses a conservative {_MPS_SAFE_WORKING_SET_FRACTION:.0%} limit "
+        f"({_format_gib(safe_limit)}) to avoid freezing the laptop. {rec_text} "
+        "MPS is still selected automatically; only the large allocation is blocked."
+    )
+    if output_bytes <= hard_limit:
+        warnings.warn(message, RuntimeWarning, stacklevel=3)
+        return
+
+    if _mps_skip_memory_check_requested(skip_memory_check):
+        warnings.warn(
+            message
+            + f" Proceeding because skip_mps_memory_check=True or {_MPS_SKIP_MEMORY_CHECK_ENV}=1.",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+        return
+    raise MemoryError(
+        message
+        + " To bypass this memory check and force the no-bin/large MPS load, pass "
+        f"skip_mps_memory_check=True or set {_MPS_SKIP_MEMORY_CHECK_ENV}=1."
+    )
+
+
+def _get_cached_decompressor(
+    frame_bytes: int,
+    max_frames: int,
+    *,
+    n_blocks_per_frame: int | None = None,
+    max_compressed_bytes: int | None = None,
+) -> "MPSDecompressor":
+    """Reuse one decompressor so repeated notebook loads do not leak buffers."""
+    global _cached_dec, _cached_dec_key
+    n_blocks = (
+        int(n_blocks_per_frame)
+        if n_blocks_per_frame is not None
+        else (int(frame_bytes) + 8191) // 8192
+    )
+    max_comp = int(max_compressed_bytes or 150 * 1024 * 1024)
+    key = (int(frame_bytes), int(max_frames), int(n_blocks), int(max_comp))
+    if _cached_dec is None or _cached_dec_key != key:
+        _cached_dec = MPSDecompressor(
+            max_compressed_bytes=max_comp,
+            frame_bytes=frame_bytes,
+            max_frames=max_frames,
+            n_blocks_per_frame=n_blocks,
+            gpu_batch=max_frames,
+        )
+        _cached_dec_key = key
+    return _cached_dec
+
+
+def _get_chunk_read_plan(filepath: str) -> _ChunkReadPlan:
+    """Return cached HDF5 chunk byte layout for one Arina data file."""
+    key = _file_cache_key(filepath)
+    cached = _chunk_read_plan_cache.get(key)
+    if cached is not None:
+        return cached
+
+    with h5py.File(filepath, "r") as f:
+        ds = f["entry/data/data"]
+        n_frames = int(ds.shape[0])
+        frame_shape = tuple(int(x) for x in ds.shape[1:])
+        dtype = np.dtype(ds.dtype)
+        file_offsets = np.empty(n_frames, dtype=np.int64)
+        sizes = np.empty(n_frames, dtype=np.int64)
+
+        def _collect(info):
+            frame_idx = int(info.chunk_offset[0])
+            file_offsets[frame_idx] = int(info.byte_offset)
+            sizes[frame_idx] = int(info.size)
+
+        ds.id.chunk_iter(_collect)
+
+    out_offsets = np.empty(n_frames, dtype=np.int64)
+    out_offsets[0] = 0
+    np.cumsum(sizes[:-1], out=out_offsets[1:])
+    total = int(out_offsets[-1] + sizes[-1])
+    run_break = np.flatnonzero(
+        file_offsets[1:] != file_offsets[:-1] + sizes[:-1]
+    ) + 1
+    run_start = np.concatenate(([0], run_break)).astype(np.int64, copy=False)
+    run_end = np.concatenate((run_break, [n_frames])).astype(np.int64, copy=False)
+    plan = _ChunkReadPlan(
+        n_frames=n_frames,
+        frame_shape=frame_shape,
+        dtype=dtype,
+        file_offsets=file_offsets,
+        sizes=sizes,
+        out_offsets=out_offsets,
+        run_start=run_start,
+        run_end=run_end,
+        total_bytes=total,
+    )
+    _chunk_read_plan_cache[key] = plan
+    return plan
+
+
+def _max_compressed_bytes_for_plan(plan: MPSMasterPlan) -> int:
+    """Return a cheap safe upper bound for one compressed input file.
+
+    The compressed HDF5 chunk span and the sum of its chunk payloads cannot
+    exceed the containing file size. Using that metadata-only bound avoids a
+    first-load ``chunk_iter`` scan over every source file solely to size a
+    reusable Metal input buffer; the decoder builds and caches those detailed
+    plans later while reading the files.
+    """
+    max_file_bytes = max(os.path.getsize(path) for path in plan.chunk_files)
+    return max(int(max_file_bytes) + 1024 * 1024, 150 * 1024 * 1024)
+
+
+def load_master(
+    filepath: str,
+    *,
+    det_bin: int = 1,
+    pixel_mask: "np.ndarray | None" = None,
+    verbose: bool = True,
+    output_dtype: type | np.dtype | str | None = None,
+) -> np.ndarray:
+    """Decompress an arina master to numpy ``(n_frames, det_row, det_col)`` on
+    the Apple GPU. It preserves the CPU backend's native-count contract:
+    dead-pixel masking occurs BEFORE integer-sum detector binning. Native output
+    fails closed when an exact sum cannot fit its declared dtype; explicit
+    ``uint8`` output is declared clipping.
+
+    No-bin uses the eager full-stack decompressor (needs the stack in RAM).
+    det_bin > 1 uses a fused GPU LZ4+bitshuffle+integer-sum-bin (mask-aware,
+    uint16, double-buffered) that keeps only the binned result in memory.
+    Representable sums match the CUDA integer-sum bin bit-for-bit.
+    """
+    plan = plan_master(filepath)
+    det_shape = plan.detector_shape
+    dtype = plan.dtype
+    final_dtype = _normalize_output_dtype(output_dtype) or dtype
+    chunk_n_frames = plan.chunk_n_frames
+    frame_bytes = int(np.prod(det_shape) * np.dtype(dtype).itemsize)
+    _bitshuffle_tail_elements(frame_bytes, np.dtype(dtype).itemsize)
+
+    if final_dtype not in (dtype, np.dtype(np.uint8)):
+        raise ValueError(
+            "MPS load_master detector binning supports native dtype or "
+            "output_dtype='u8' browse clipping. Widened detector-bin output "
+            "is not implemented."
+        )
+
+    if det_bin <= 1:
+        # No-bin: the eager full-stack decompressor. Native uint16,
+        # bit-identical to cuda. Needs the whole stack in RAM (e.g. 19.3 GB),
+        # so on a memory-constrained Mac this is for small stacks; use det_bin
+        # > 1 for big ones (the streaming path below).
+        dec = _get_decompressor(frame_bytes, max_frames=max(chunk_n_frames))
+        out = dec.load_master(filepath)
+        if pixel_mask is not None:
+            bad = np.asarray(pixel_mask) != 0
+            if bad.shape == out.shape[1:]:
+                out[:, bad] = 0  # zero dead pixels (raw frames, matches cuda)
+        if final_dtype == np.dtype(np.uint8):
+            return np.minimum(out, 255).astype(np.uint8)
+        return out
+
+    # det_bin > 1: fused GPU LZ4+bitshuffle+integer-sum-bin, dead-pixel masked,
+    # native uint16, double-buffered. Keeps only the binned result in memory and
+    # runs at the GPU decompress floor. Representable sums match CUDA exactly;
+    # unrepresentable native output fails closed instead of saturating silently.
+    max_frames = max(chunk_n_frames)
+    fused_whole_shard = (
+        dtype == np.dtype(np.uint16)
+        and det_bin in (2, 4, 8)
+        and det_shape[1] % 32 == 0
+        and int(np.prod(det_shape)) % 4096 == 0
+        and _fused_bin_enabled()
+    )
+    dec = _get_decompressor(
+        frame_bytes,
+        max_frames=max_frames,
+        whole_shard=fused_whole_shard,
+    )
+    out = dec.load_binned_masked(
+        filepath,
+        det_bin,
+        mask=pixel_mask,
+        verbose=verbose,
+        allow_integer_saturation_for_u8=final_dtype == np.dtype(np.uint8),
+    )
+    if final_dtype == np.dtype(np.uint8):
+        clipped = _cast_mtl_integer_to_u8(out)
+        source_mtl = out._mtl
+        out._mtl = None
+        _release_metal_buffer(source_mtl)
+        return clipped
+    out._recycle_decoder = dec
+    return out
+
+# ---------------------------------------------------------------------------
+# Metal Shading Language kernels
+# ---------------------------------------------------------------------------
+_METAL_SOURCE = (pathlib.Path(__file__).parent / "kernels" / "bslz4.msl").read_text()
+
+# ---------------------------------------------------------------------------
+# Compile Metal kernels at import time
+# ---------------------------------------------------------------------------
+# LZ4 occupancy knob: compressed 8 KB bitshuffle blocks packed per threadgroup
+# (more SIMD groups → better latency hiding on the M5). 8 is the most stable
+# no-bin setting; larger groups can be tested with QT_MPS_LZ4_Y. The
+# threadgroup input cache is sized to exactly _LZ4_Y via compile-time token
+# substitution — an oversized fixed buffer hurts occupancy and erases the win.
+_LZ4_Y = int(os.environ.get("QT_MPS_LZ4_Y", "8"))
+_device = Metal.MTLCreateSystemDefaultDevice()
+_options = Metal.MTLCompileOptions.alloc().init()
+_library, _compile_error = _device.newLibraryWithSource_options_error_(
+    _METAL_SOURCE.replace("LZ4_BLOCKS_PER_TG", str(_LZ4_Y)), _options, None
+)
+if _compile_error:
+    raise RuntimeError(f"Metal shader compile error: {_compile_error}")
+_h5lz4dc_fn = _library.newFunctionWithName_("h5lz4dc_batched")
+_shuf32_fn = _library.newFunctionWithName_("shuf_8192_32_batched")
+_shuf16_fn = _library.newFunctionWithName_("shuf_8192_16_batched")
+_shuf16_u8_fn = _library.newFunctionWithName_("shuf_8192_16_to_u8_batched")
+_shuf16_u8_masked_fn = _library.newFunctionWithName_(
+    "shuf_8192_16_to_u8_masked_batched"
+)
+_shuf_tail16_fn = _library.newFunctionWithName_("shuf_tail_16_batched")
+_shuf_tail32_fn = _library.newFunctionWithName_("shuf_tail_32_batched")
+_shuf_tail16_u8_fn = _library.newFunctionWithName_(
+    "shuf_tail_16_to_u8_batched"
+)
+_shuf_tail16_u8_masked_fn = _library.newFunctionWithName_(
+    "shuf_tail_16_to_u8_masked_batched"
+)
+_shuf_bin16_fn = _library.newFunctionWithName_(
+    "shuf_bin_sum_8192_16_batched"
+)
+_shuf_bin2_16_fn = _library.newFunctionWithName_(
+    "shuf_bin2_sum_8192_16_batched"
+)
+_shuf_bin4_16_fn = _library.newFunctionWithName_(
+    "shuf_bin4_sum_8192_16_batched"
+)
+_shuf_bin8_16_fn = _library.newFunctionWithName_(
+    "shuf_bin8_sum_8192_16_batched"
+)
+_detsum_u8_decode_partial_fn = _library.newFunctionWithName_(
+    "detector_sum_u8_decode_partial"
+)
+_detsum_u8_decode_merge_fn = _library.newFunctionWithName_(
+    "detector_sum_u8_decode_merge"
+)
+_detsum_u8_decode_final_fn = _library.newFunctionWithName_(
+    "detector_sum_u8_decode_final"
+)
+_bin_u16_fn = _library.newFunctionWithName_("bin_sum_u16")
+_bin_u32_fn = _library.newFunctionWithName_("bin_sum_u32")
+_bin_tiled_u16_fn = _library.newFunctionWithName_("bin_sum_tiled_u16")
+_zero_bad_u16_fn = _library.newFunctionWithName_("zero_bad_pixels_u16")
+_zero_bad_u32_fn = _library.newFunctionWithName_("zero_bad_pixels_u32")
+_clip_u16_to_u8_fn = _library.newFunctionWithName_("clip_u16_to_u8")
+_clip_u32_to_u8_fn = _library.newFunctionWithName_("clip_u32_to_u8")
+_narrow_u32_to_u16_masked_fn = _library.newFunctionWithName_("narrow_u32_to_u16_masked")
+_row_prefix_masked_u16_fn = _library.newFunctionWithName_("row_prefix_masked_u16")
+_row_prefix_u16_fn = _library.newFunctionWithName_("row_prefix_u16")
+def _make_pipeline(fn, name: str):
+    if fn is None:
+        available = ", ".join(str(item) for item in _library.functionNames())
+        raise RuntimeError(
+            f"Metal shader function {name!r} is missing from the compiled "
+            f"MPS IO library. Available functions: {available}"
+        )
+    pipeline, error = _device.newComputePipelineStateWithFunction_error_(fn, None)
+    if pipeline is None or error:
+        raise RuntimeError(f"Metal compute pipeline {name!r} compile error: {error}")
+    return pipeline
+
+
+_h5lz4dc_pipeline = _make_pipeline(_h5lz4dc_fn, "h5lz4dc_batched")
+_shuf32_pipeline = _make_pipeline(_shuf32_fn, "shuf_8192_32_batched")
+_shuf16_pipeline = _make_pipeline(_shuf16_fn, "shuf_8192_16_batched")
+_shuf16_u8_pipeline = _make_pipeline(
+    _shuf16_u8_fn,
+    "shuf_8192_16_to_u8_batched",
+)
+_shuf16_u8_masked_pipeline = _make_pipeline(
+    _shuf16_u8_masked_fn,
+    "shuf_8192_16_to_u8_masked_batched",
+)
+_shuf_tail16_pipeline = _make_pipeline(
+    _shuf_tail16_fn,
+    "shuf_tail_16_batched",
+)
+_shuf_tail32_pipeline = _make_pipeline(
+    _shuf_tail32_fn,
+    "shuf_tail_32_batched",
+)
+_shuf_tail16_u8_pipeline = _make_pipeline(
+    _shuf_tail16_u8_fn,
+    "shuf_tail_16_to_u8_batched",
+)
+_shuf_tail16_u8_masked_pipeline = _make_pipeline(
+    _shuf_tail16_u8_masked_fn,
+    "shuf_tail_16_to_u8_masked_batched",
+)
+_shuf_bin16_pipeline = _make_pipeline(
+    _shuf_bin16_fn,
+    "shuf_bin_sum_8192_16_batched",
+)
+_shuf_bin2_16_pipeline = _make_pipeline(
+    _shuf_bin2_16_fn,
+    "shuf_bin2_sum_8192_16_batched",
+)
+_shuf_bin4_16_pipeline = _make_pipeline(
+    _shuf_bin4_16_fn,
+    "shuf_bin4_sum_8192_16_batched",
+)
+_shuf_bin8_16_pipeline = _make_pipeline(
+    _shuf_bin8_16_fn,
+    "shuf_bin8_sum_8192_16_batched",
+)
+
+
+def _bitshuffle_tail_elements(frame_bytes: int, elem_size: int) -> int:
+    """Return an admissible final partial-block element count."""
+    if int(elem_size) not in (2, 4):
+        raise ValueError(
+            "MPS bitshuffle/LZ4 GPU decode supports only 2-byte uint16 and "
+            "4-byte uint32 source elements. Use the CPU backend or repack "
+            "this source into a supported integer dtype."
+        )
+    tail_bytes = int(frame_bytes) % 8192
+    if tail_bytes == 0:
+        return 0
+    if tail_bytes % int(elem_size):
+        raise ValueError(
+            "MPS bitshuffle/LZ4 load cannot exactly decode a partial final "
+            f"block of {tail_bytes} bytes for {elem_size}-byte elements. Use "
+            "the CPU backend or repack this source."
+        )
+    tail_elements = tail_bytes // int(elem_size)
+    if tail_elements % 8:
+        raise ValueError(
+            "MPS bitshuffle/LZ4 load supports a partial final block only "
+            "when it contains a multiple of 8 elements; got "
+            f"{tail_elements}. Use the CPU backend or repack this source."
+        )
+    return tail_elements
+
+
+def _encode_bitshuffle_tail(
+    encoder,
+    *,
+    in_mtl,
+    out_mtl,
+    out_byte_offset: int,
+    n_frames: int,
+    frame_bytes: int,
+    elem_size: int,
+    output_u8: bool = False,
+    mask_mtl=None,
+) -> int:
+    """Encode the canonical CUDA-equivalent final-block unshuffle."""
+    tail_elements = _bitshuffle_tail_elements(frame_bytes, elem_size)
+    if tail_elements == 0:
+        return 0
+    if output_u8:
+        if elem_size != 2:
+            raise ValueError("Direct uint8 tail output requires uint16 source data.")
+        pipeline = (
+            _shuf_tail16_u8_masked_pipeline
+            if mask_mtl is not None
+            else _shuf_tail16_u8_pipeline
+        )
+    else:
+        pipeline = (
+            _shuf_tail16_pipeline if elem_size == 2 else _shuf_tail32_pipeline
+        )
+    encoder.setComputePipelineState_(pipeline)
+    encoder.setBuffer_offset_atIndex_(in_mtl, 0, 0)
+    encoder.setBuffer_offset_atIndex_(out_mtl, int(out_byte_offset), 1)
+    encoder.setBytes_length_atIndex_(
+        np.array([frame_bytes], dtype=np.uint32).tobytes(), 4, 2
+    )
+    if mask_mtl is not None:
+        encoder.setBuffer_offset_atIndex_(mask_mtl, 0, 3)
+    encoder.dispatchThreadgroups_threadsPerThreadgroup_(
+        Metal.MTLSizeMake(n_frames, 1, (tail_elements + 255) // 256),
+        Metal.MTLSizeMake(256, 1, 1),
+    )
+    return tail_elements
+
+
+def _fused_bin_pipeline_for(bin_factor: int):
+    """Return the exact fused uint16 pipeline for a supported detector bin."""
+    return {
+        2: _shuf_bin2_16_pipeline,
+        4: _shuf_bin4_16_pipeline,
+        8: _shuf_bin8_16_pipeline,
+    }[bin_factor]
+
+
+def _fused_bin_output_tile_shape(bin_factor: int) -> tuple[int, int]:
+    """Return the fixed output-tile row and column counts of a fused kernel."""
+    return {
+        2: (16, 32),
+        4: (8, 16),
+        8: (8, 8),
+    }[bin_factor]
+
+
+def _raise_if_binned_integer_overflow(
+    overflow: np.ndarray,
+    bin_factor: int,
+    output_dtype: np.dtype,
+) -> None:
+    """Fail closed instead of returning a saturated detector sum."""
+    if int(overflow[0]) != 0:
+        dtype_name = np.dtype(output_dtype).name
+        raise OverflowError(
+            f"Exact detector bin {bin_factor} exceeds {dtype_name} range. "
+            "Use native detector resolution, a smaller explicit detector bin, "
+            "or exact wider-integer binning on a backend that supports it. "
+            "MPS widened detector-bin output is not implemented; no saturated "
+            f"{dtype_name} result was returned."
+        )
+
+
+def _release_and_raise_if_binned_integer_overflow(
+    overflow: np.ndarray,
+    bin_factor: int,
+    output_dtype: np.dtype,
+    *out_mtls,
+) -> None:
+    """Release a rejected result before reporting exact-sum overflow."""
+    if int(overflow[0]) == 0:
+        return
+    released = set()
+    for out_mtl in out_mtls:
+        if out_mtl is None:
+            continue
+        key = _buffer_key(out_mtl)
+        if key in released:
+            continue
+        released.add(key)
+        _release_metal_buffer(out_mtl)
+    _raise_if_binned_integer_overflow(overflow, bin_factor, output_dtype)
+
+
+def _release_unique_metal_buffers(*buffers) -> None:
+    """Release each non-null Metal allocation at most once."""
+    released = set()
+    for buffer in buffers:
+        if buffer is None:
+            continue
+        key = _buffer_key(buffer)
+        if key in released:
+            continue
+        released.add(key)
+        _release_metal_buffer(buffer)
+
+
+_detsum_u8_decode_partial_pipeline = _make_pipeline(
+    _detsum_u8_decode_partial_fn,
+    "detector_sum_u8_decode_partial",
+)
+_detsum_u8_decode_merge_pipeline = _make_pipeline(
+    _detsum_u8_decode_merge_fn,
+    "detector_sum_u8_decode_merge",
+)
+_detsum_u8_decode_final_pipeline = _make_pipeline(
+    _detsum_u8_decode_final_fn,
+    "detector_sum_u8_decode_final",
+)
+_bin_u16_pipeline = _make_pipeline(_bin_u16_fn, "bin_sum_u16")
+_bin_u32_pipeline = _make_pipeline(_bin_u32_fn, "bin_sum_u32")
+_bin_tiled_u16_pipeline = _make_pipeline(_bin_tiled_u16_fn, "bin_sum_tiled_u16")
+_zero_bad_u16_pipeline = _make_pipeline(_zero_bad_u16_fn, "zero_bad_pixels_u16")
+_zero_bad_u32_pipeline = _make_pipeline(_zero_bad_u32_fn, "zero_bad_pixels_u32")
+_clip_u16_to_u8_pipeline = _make_pipeline(_clip_u16_to_u8_fn, "clip_u16_to_u8")
+_clip_u32_to_u8_pipeline = _make_pipeline(_clip_u32_to_u8_fn, "clip_u32_to_u8")
+_narrow_u32_to_u16_masked_pipeline = _make_pipeline(
+    _narrow_u32_to_u16_masked_fn,
+    "narrow_u32_to_u16_masked",
+)
+_row_prefix_masked_u16_pipeline = _make_pipeline(
+    _row_prefix_masked_u16_fn,
+    "row_prefix_masked_u16",
+)
+_row_prefix_u16_pipeline = _make_pipeline(_row_prefix_u16_fn, "row_prefix_u16")
+_queue = _device.newCommandQueue()
+
+
+# ---------------------------------------------------------------------------
+# Header parser (numba, runs on CPU in parallel)
+# ---------------------------------------------------------------------------
+@njit(cache=True, parallel=True)
+def _parse_headers(
+    buffer, chunk_sizes, chunk_offsets,
+    block_starts_out, block_counts_out,
+    n_frames, n_blocks_per_frame,
+):
+    """Parse bitshuffle+LZ4 chunk headers in parallel."""
+    for i in prange(n_frames):
+        offset = chunk_offsets[i]
+        chunk = buffer[offset : offset + chunk_sizes[i]]
+        uncomp_size = (
+            int(chunk[0]) << 56 | int(chunk[1]) << 48
+            | int(chunk[2]) << 40 | int(chunk[3]) << 32
+            | int(chunk[4]) << 24 | int(chunk[5]) << 16
+            | int(chunk[6]) << 8  | int(chunk[7])
+        )
+        block_size = (
+            int(chunk[8]) << 24 | int(chunk[9]) << 16
+            | int(chunk[10]) << 8 | int(chunk[11])
+        )
+        n_blocks = (uncomp_size + block_size - 1) // block_size
+        block_counts_out[i] = n_blocks
+        pos = 12
+        base_idx = i * n_blocks_per_frame
+        for b in range(n_blocks):
+            block_starts_out[base_idx + b] = pos
+            comp_size = (
+                int(chunk[pos]) << 24 | int(chunk[pos + 1]) << 16
+                | int(chunk[pos + 2]) << 8 | int(chunk[pos + 3])
+            )
+            pos += 4 + comp_size
+
+
+def _metal_buffer_alloc(nbytes):
+    """Allocate an MTLBuffer of given size (shared memory)."""
+    buf = _device.newBufferWithLength_options_(
+        nbytes, Metal.MTLResourceStorageModeShared
+    )
+    if buf is None:
+        gb = nbytes / 1e9
+        raise MemoryError(
+            f"Metal buffer allocation failed ({gb:.1f} GB). "
+            f"Try a larger det_bin to reduce output size."
+        )
+    return buf
+
+
+def _buffer_key(buf) -> int:
+    """Identity of an MTLBuffer, stable across separate PyObjC wrappers.
+
+    Two wrappers for the same buffer are different Python objects, so ``id()``
+    would let a handed-out buffer be released as if it were spare scratch.
+    """
+    return int(buf.__c_void_p__().value)
+
+
+def _release_metal_buffer(buf) -> None:
+    """Hand an MTLBuffer's memory back to the system.
+
+    PyObjC does not release buffers created by ``newBufferWithLength_options_``
+    when the Python wrapper is collected: ``del``, ``gc.collect()``, an
+    autorelease pool and ``setPurgeableState_`` all leave the allocation in
+    place, so an explicit ``release()`` is the only thing that frees it. Without
+    this a single no-bin tilt load retains ~45 GB forever, and a handful of
+    tilts exhausts even a 128 GB Mac.
+
+    Each +1-retained buffer must reach this function exactly once. Callers that
+    transfer or reject outputs must detach old references and deduplicate by
+    ``_buffer_key`` first; a second raw Objective-C ``release`` can crash.
+    """
+    if buf is None:
+        return
+    try:
+        buf.release()
+    except (AttributeError, ValueError):
+        pass
+
+
+class _MtlOwner:
+    """Sole owner of one MTLBuffer, releasing it when the last user goes away.
+
+    Metal buffers cannot carry a weakref, so the lifetime has to hang off a
+    plain Python object. Every array reading the buffer references the same
+    owner, so the release happens exactly once, after the final view is gone.
+    """
+
+    __slots__ = ("buf",)
+
+    def __init__(self, buf):
+        self.buf = buf
+
+    def release(self) -> None:
+        buf, self.buf = self.buf, None
+        _release_metal_buffer(buf)
+
+    def __del__(self):
+        self.release()
+
+
+def _numpy_view(mtl_buf, dtype, count):
+    """Get a writable numpy view of a Metal buffer (zero-copy, unified memory)."""
+    mv = mtl_buf.contents().as_buffer(mtl_buf.length())
+    return np.frombuffer(mv, dtype=dtype, count=count)
+
+
+class _MtlArray(np.ndarray):
+    """ndarray that keeps a reference to its backing Metal buffer via ``_mtl``.
+
+    The binned load returns a zero-copy view into a Metal unified-memory
+    buffer (no host memcpy). Current arrays store the raw ``MTLBuffer`` wrapper;
+    explicit owner APIs release it exactly once when the scientific consumer is
+    finished. The buffer is allocated fresh per load so the view cannot be
+    aliased by a later decompress.
+
+    ``__array_finalize__`` carries that reference onto every slice and reshape.
+    Without it a view kept the memory readable but lost the release/lifetime
+    handle, so the buffer could be released out from under a live view.
+    """
+    _mtl = None
+    _row_prefix = False
+    _recycle_decoder = None
+
+    def __array_finalize__(self, obj):
+        if obj is None:
+            return
+        self._mtl = getattr(obj, "_mtl", None)
+        self._row_prefix = getattr(obj, "_row_prefix", False)
+        self._recycle_decoder = getattr(obj, "_recycle_decoder", None)
+
+
+def _normalize_output_dtype(output_dtype: type | np.dtype | str | None) -> np.dtype | None:
+    """Return supported decode-output dtype for MPS chunked browse loads."""
+    if output_dtype is None:
+        return None
+    if isinstance(output_dtype, str):
+        token = output_dtype.lower()
+        if token in {"u8", "uint8"}:
+            output_dtype = np.uint8
+        elif token in {"u16", "uint16"}:
+            output_dtype = np.uint16
+        elif token in {"u32", "uint32"}:
+            output_dtype = np.uint32
+        elif token in {"u4", "uint4"}:
+            raise NotImplementedError(
+                "MPS output_dtype='u4' means packed 4-bit detector counts "
+                "(0..15), not NumPy's four-byte '<u4' dtype. Packed uint4 "
+                "MPS load is not implemented yet; use output_dtype='uint8' "
+                "or output_dtype='uint16'."
+            )
+    dtype = np.dtype(output_dtype)
+    if dtype not in (np.dtype(np.uint8), np.dtype(np.uint16), np.dtype(np.uint32)):
+        raise ValueError(
+            "MPS chunk-backed load currently supports output_dtype=None or "
+            "output_dtype=np.uint8/np.uint16/np.uint32. Use CUDA or a small "
+            "crop for other casts."
+        )
+    return dtype
+
+
+def _mtl_array_from_buffer(
+    mtl_buf,
+    dtype: np.dtype,
+    shape: tuple[int, ...],
+) -> _MtlArray:
+    """Create an ``_MtlArray`` view that owns ``mtl_buf``."""
+    dtype = np.dtype(dtype)
+    count = int(np.prod(shape, dtype=np.uint64))
+    view = _numpy_view(mtl_buf, dtype, count)
+    arr = view.reshape(shape).view(_MtlArray)
+    arr._mtl = mtl_buf
+    return arr
+
+
+def _cast_mtl_integer_to_u8(src: np.ndarray) -> _MtlArray:
+    """Clip a Metal-backed uint16/uint32 array into a Metal-backed uint8 array."""
+    src_dtype = np.dtype(src.dtype)
+    if src_dtype == np.dtype(np.uint8):
+        out = src.view(_MtlArray)
+        out._mtl = src._mtl
+        return out
+    if src_dtype not in (np.dtype(np.uint16), np.dtype(np.uint32)) or getattr(src, "_mtl", None) is None:
+        raise TypeError(
+            "MPS uint8 output requires a Metal-backed uint16 or uint32 source array."
+        )
+    n = int(src.size)
+    out_mtl = _metal_buffer_alloc(n)
+    cmd = _queue.commandBuffer()
+    enc = cmd.computeCommandEncoder()
+    enc.setComputePipelineState_(
+        _clip_u16_to_u8_pipeline
+        if src_dtype == np.dtype(np.uint16)
+        else _clip_u32_to_u8_pipeline
+    )
+    enc.setBuffer_offset_atIndex_(src._mtl, 0, 0)
+    enc.setBuffer_offset_atIndex_(out_mtl, 0, 1)
+    enc.setBytes_length_atIndex_(np.array([n], dtype=np.uint32).tobytes(), 4, 2)
+    enc.dispatchThreadgroups_threadsPerThreadgroup_(
+        Metal.MTLSizeMake((n + 255) // 256, 1, 1),
+        Metal.MTLSizeMake(256, 1, 1),
+    )
+    enc.endEncoding()
+    cmd.commit()
+    cmd.waitUntilCompleted()
+    return _mtl_array_from_buffer(out_mtl, np.dtype(np.uint8), tuple(src.shape))
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+class MPSDecompressor:
+    """MPS-accelerated decompressor for bitshuffle+LZ4 HDF5 datasets.
+
+    Uses Metal compute shaders on Apple Silicon. Hot-path buffers are allocated
+    up front and reused across calls; large path-specific scratch is allocated
+    lazily so chunked fused loads do not reserve memory they never touch.
+
+    Parameters
+    ----------
+    max_compressed_bytes : int, optional
+        Maximum total compressed data per load call, by default 150 MB.
+    max_frames : int, optional
+        Maximum number of frames per load call, by default 11000.
+    frame_bytes : int, optional
+        Decompressed bytes per frame, by default 192*192*2 (uint16).
+    n_blocks_per_frame : int, optional
+        LZ4 blocks per frame, by default 9 for 192x192 uint16.
+    """
+
+    def __init__(
+        self,
+        max_compressed_bytes: int = 150 * 1024 * 1024,
+        max_frames: int = 11_000,
+        frame_bytes: int = 192 * 192 * 2,
+        n_blocks_per_frame: int = 9,
+        gpu_batch: int | None = None,
+    ):
+        self.max_frames = max_frames
+        self.frame_bytes = frame_bytes
+        self.n_blocks_per_frame = n_blocks_per_frame
+        # gpu_batch controls _lz4/_shuf sizing (smaller = less GPU memory)
+        self.gpu_batch = gpu_batch or max_frames
+        # Pre-allocate Metal buffers with numpy views (unified memory)
+        self._comp_mtl = _metal_buffer_alloc(max_compressed_bytes)
+        self._comp_np = _numpy_view(self._comp_mtl, np.uint8, max_compressed_bytes)
+        gpu_output = self.gpu_batch * frame_bytes
+        # The direct fused uint16 decoder writes into the final output and does
+        # not need a full-size LZ4 intermediate.  Keep all LZ4 scratch lazy so
+        # that path does not reserve memory it can never touch.
+        self._lz4_mtl = None
+        self._lz4_nbytes = gpu_output
+        # Second LZ4 scratch for the D=2 chunked pipeline (two command buffers
+        # in flight need separate scratch). Allocated lazily on first chunked use.
+        self._lz4_mtl_b = None
+        self._lz4_mtl_extra: list = []
+        # The chunked decoder writes unshuffled values directly to its output
+        # buffers (and the fused uint8 path writes bytes directly). Keep the
+        # eager-load/binned scratch lazy to avoid reserving one full GPU batch
+        # when only the direct chunked pipeline is used.
+        self._shuf_mtl = None
+        self._result_np = None
+        self._shuf_nbytes = gpu_output
+        # Pre-allocate metadata Metal buffers with numpy views
+        self._co_mtl = _metal_buffer_alloc(max_frames * 4)
+        self._co_np = _numpy_view(self._co_mtl, np.uint32, max_frames)
+        max_blocks = max_frames * n_blocks_per_frame
+        self._bs_mtl = _metal_buffer_alloc(max_blocks * 4)
+        self._bs_np = _numpy_view(self._bs_mtl, np.uint32, max_blocks)
+        self._bc_mtl = _metal_buffer_alloc(max_frames * 4)
+        self._bc_np = _numpy_view(self._bc_mtl, np.uint32, max_frames)
+        self._bo_mtl = _metal_buffer_alloc((max_frames + 1) * 4)
+        self._bo_np = _numpy_view(self._bo_mtl, np.uint32, max_frames + 1)
+        # CPU-side arrays for chunk reading
+        self._chunk_sizes = np.zeros(max_frames, dtype=np.uint32)
+        # Buffer B (for double-buffering in load_master)
+        self._comp_mtl_b = _metal_buffer_alloc(max_compressed_bytes)
+        self._comp_np_b = _numpy_view(self._comp_mtl_b, np.uint8, max_compressed_bytes)
+        self._co_mtl_b = _metal_buffer_alloc(max_frames * 4)
+        self._co_np_b = _numpy_view(self._co_mtl_b, np.uint32, max_frames)
+        self._bs_mtl_b = _metal_buffer_alloc(max_blocks * 4)
+        self._bs_np_b = _numpy_view(self._bs_mtl_b, np.uint32, max_blocks)
+        self._bc_mtl_b = _metal_buffer_alloc(max_frames * 4)
+        self._bc_np_b = _numpy_view(self._bc_mtl_b, np.uint32, max_frames)
+        self._bo_mtl_b = _metal_buffer_alloc((max_frames + 1) * 4)
+        self._bo_np_b = _numpy_view(self._bo_mtl_b, np.uint32, max_frames + 1)
+        self._chunk_sizes_b = np.zeros(max_frames, dtype=np.uint32)
+        # Optional third compressed-input slot for chunked no-bin loads. This is
+        # much smaller than a third LZ4 scratch buffer, but lets the CPU read and
+        # parse chunk N+2 before GPU scratch slot N is free.
+        self._comp_mtl_c = None
+        self._comp_np_c = None
+        self._co_mtl_c = None
+        self._co_np_c = None
+        self._bs_mtl_c = None
+        self._bs_np_c = None
+        self._bc_mtl_c = None
+        self._bc_np_c = None
+        self._bo_mtl_c = None
+        self._bo_np_c = None
+        self._chunk_sizes_c = None
+        # Large output buffer for load_master() — allocated on first use
+        self._out_mtl = None
+        self._out_np = None
+        self._out_nbytes = 0
+        # Reusable per-chunk output buffer pool for load_master_chunked()
+        self._chunk_out_pool: list = []
+        self._chunk_u8_pool: list = []
+        self._chunk_u16_pool: list = []
+        self._chunk_narrow_scratch_pool: list = []
+        self._chunk_fast_pool: list = []
+        # One explicitly recycled native output generation. Unlike scratch
+        # pools, this remains fully resident between compatible loads.
+        self._resident_output_recycle_pool: list = []
+        self._bad_idx_mtl = None
+        self._bad_idx_np = None
+        self._bad_idx_capacity = 0
+        self._bad_idx_count = 0
+        self._prefix_overflow_mtl = _metal_buffer_alloc(4)
+        self._prefix_overflow_np = _numpy_view(
+            self._prefix_overflow_mtl, np.uint32, 1
+        )
+        self._cast_overflow_mtl = _metal_buffer_alloc(4)
+        self._cast_overflow_np = _numpy_view(
+            self._cast_overflow_mtl, np.uint32, 1
+        )
+
+    def drop_output_pool_refs(self) -> None:
+        """Hand output buffers to the returned arrays, keeping reusable scratch.
+
+        This is an ownership transfer, not a free: the buffers listed here are
+        already referenced by the ``_MtlArray`` chunks being returned, so the
+        decompressor must forget them or it would release memory the caller is
+        still reading.
+        """
+        self._chunk_out_pool = []
+        self._chunk_u8_pool = []
+        self._chunk_u16_pool = []
+        self._chunk_fast_pool = []
+        self._out_mtl = None
+        self._out_np = None
+        self._out_nbytes = 0
+
+    def _take_recycled_output_buffers(
+        self,
+        sizes: list[int],
+    ) -> list | None:
+        """Transfer one exact compatible resident destination generation."""
+        pool = self._resident_output_recycle_pool
+        if not pool:
+            return None
+        if len(pool) != len(sizes) or any(
+            int(buffer.length()) != int(size)
+            for buffer, size in zip(pool, sizes, strict=True)
+        ):
+            for buffer in pool:
+                _release_metal_buffer(buffer)
+            self._resident_output_recycle_pool = []
+            return None
+        self._resident_output_recycle_pool = []
+        return pool
+
+    def _recycle_output_buffers(self, buffers: list) -> None:
+        """Keep only the newest caller-released native output generation."""
+        for buffer in self._resident_output_recycle_pool:
+            _release_metal_buffer(buffer)
+        self._resident_output_recycle_pool = list(buffers)
+
+    def free(self) -> None:
+        """Release every Metal buffer this decompressor still owns.
+
+        The scratch buffers are the other half of the per-load leak: they are
+        several times the size of one decoded tilt and PyObjC never frees them,
+        so a decompressor that falls out of the cache would otherwise keep its
+        allocation for the life of the process.
+        """
+        release = _release_metal_buffer
+        for name, value in list(vars(self).items()):
+            # Match any "_mtl" attribute, not only those ending in it: the
+            # double-buffered and read-ahead slots are _lz4_mtl_b, _comp_mtl_c
+            # and friends, and they hold most of the scratch (_lz4_mtl_b alone
+            # is 7.4 GB at no-bin). Missing them leaked ~10 GB per tilt.
+            if "_mtl" not in name and not name.endswith("_pool"):
+                continue
+            if isinstance(value, list):
+                for buf in value:
+                    release(buf)
+                setattr(self, name, [])
+            else:
+                release(value)
+                setattr(self, name, None)
+        # The numpy views point at freed memory now, so drop them together.
+        for name in [n for n in vars(self) if n.endswith("_np")]:
+            setattr(self, name, None)
+
+    def __del__(self):
+        # At interpreter shutdown module globals are already torn down, so the
+        # helpers this needs may be gone. Nothing is worth reporting then: the
+        # process is exiting and the OS reclaims the buffers anyway.
+        try:
+            self.free()
+        except (TypeError, AttributeError, NameError):
+            pass
+
+    def _read_ahead_buffer(self):
+        """Return a third compressed-input metadata slot for load pipelining."""
+        if self._comp_mtl_c is None:
+            max_compressed_bytes = int(self._comp_mtl.length())
+            max_blocks = int(self._bs_np.shape[0])
+            self._comp_mtl_c = _metal_buffer_alloc(max_compressed_bytes)
+            self._comp_np_c = _numpy_view(
+                self._comp_mtl_c, np.uint8, max_compressed_bytes
+            )
+            self._co_mtl_c = _metal_buffer_alloc(self.max_frames * 4)
+            self._co_np_c = _numpy_view(self._co_mtl_c, np.uint32, self.max_frames)
+            self._bs_mtl_c = _metal_buffer_alloc(max_blocks * 4)
+            self._bs_np_c = _numpy_view(self._bs_mtl_c, np.uint32, max_blocks)
+            self._bc_mtl_c = _metal_buffer_alloc(self.max_frames * 4)
+            self._bc_np_c = _numpy_view(self._bc_mtl_c, np.uint32, self.max_frames)
+            self._bo_mtl_c = _metal_buffer_alloc((self.max_frames + 1) * 4)
+            self._bo_np_c = _numpy_view(
+                self._bo_mtl_c, np.uint32, self.max_frames + 1
+            )
+            self._chunk_sizes_c = np.zeros(self.max_frames, dtype=np.uint32)
+        return (
+            self._comp_np_c, self._co_np_c, self._bs_np_c, self._bc_np_c,
+            self._bo_np_c, self._chunk_sizes_c,
+            self._comp_mtl_c, self._co_mtl_c, self._bs_mtl_c, self._bc_mtl_c,
+            self._bo_mtl_c,
+        )
+
+    def _ensure_output_buffer(self, nbytes):
+        """Allocate (or reuse) a large Metal output buffer for all frames."""
+        if nbytes <= self._out_nbytes:
+            return
+        self._out_mtl = _metal_buffer_alloc(nbytes)
+        self._out_np = _numpy_view(self._out_mtl, np.uint8, nbytes)
+        self._out_nbytes = nbytes
+
+    def _ensure_shuf_buffer(self) -> None:
+        """Allocate the active eager-load/binned unshuffle scratch lazily."""
+        if self._shuf_mtl is None:
+            self._shuf_mtl = _metal_buffer_alloc(self._shuf_nbytes)
+            self._result_np = _numpy_view(
+                self._shuf_mtl, np.uint8, self._shuf_nbytes
+            )
+
+    def _ensure_lz4_buffer(self):
+        """Return the primary LZ4 scratch, allocating it only when required."""
+        if self._lz4_mtl is None:
+            self._lz4_mtl = _metal_buffer_alloc(self._lz4_nbytes)
+        return self._lz4_mtl
+
+    def _read_chunk(self, filepath, comp_np, co_np, chunk_sizes):
+        """Read raw compressed HDF5 chunks into pre-allocated buffers.
+
+        Each Arina frame is one HDF5 chunk, so the naive per-frame
+        ``read_direct_chunk`` loop costs 10000 calls/file (262144 total). The
+        data chunks in an Arina file are nearly contiguous, with small HDF5
+        metadata gaps every few dozen frames. Reading the whole byte span once
+        cuts the a 512² file from 176 syscalls/data-file to 1 while still
+        avoiding a Python copy: chunk offsets point into the span, and the Metal
+        LZ4 kernel ignores the tiny gaps.
+        """
+        plan = _get_chunk_read_plan(filepath)
+        n_frames = plan.n_frames
+        chunk_sizes[:n_frames] = plan.sizes
+        first = int(plan.file_offsets.min())
+        last = int((plan.file_offsets + plan.sizes).max())
+        span_bytes = last - first
+        fd = os.open(filepath, os.O_RDONLY)
+        try:
+            if (
+                os.environ.get("QT_MPS_SPAN_READ", "1") != "0"
+                and span_bytes <= int(comp_np.size)
+                and span_bytes <= int(plan.total_bytes * 1.25) + 8 * 1024 * 1024
+            ):
+                co_np[:n_frames] = plan.file_offsets - first
+                dest = memoryview(comp_np[:span_bytes])
+                os.preadv(fd, [dest], first)
+            else:
+                co_np[:n_frames] = plan.out_offsets
+                dest = memoryview(comp_np[:plan.total_bytes])
+                for start, end in zip(plan.run_start.tolist(), plan.run_end.tolist()):
+                    run_bytes = int(
+                        plan.out_offsets[end - 1]
+                        + plan.sizes[end - 1]
+                        - plan.out_offsets[start]
+                    )
+                    dest_pos = int(plan.out_offsets[start])
+                    os.preadv(
+                        fd,
+                        [dest[dest_pos : dest_pos + run_bytes]],
+                        int(plan.file_offsets[start]),
+                    )
+        finally:
+            os.close(fd)
+        return n_frames, plan.frame_shape, plan.dtype
+
+    def _submit_gpu(self, n_frames, frame_bytes, elem_size, out_byte_offset,
+                    comp_mtl, co_mtl, bs_mtl, bc_mtl, bo_mtl, max_blocks,
+                    out_mtl=None, lz4_mtl=None, zero_bad: bool = False,
+                    row_prefix: bool = False,
+                    det_shape: tuple[int, int] | None = None,
+                    fast_out_mtl=None,
+                    fast_out_byte_offset: int = 0,
+                    fast_det_bin: int | None = None,
+                    cast_u8_out_mtl=None,
+                    cast_u8_out_byte_offset: int = 0,
+                    cast_u8_nelem: int | None = None,
+                    cast_u16_out_mtl=None,
+                    cast_u16_out_byte_offset: int = 0,
+                    cast_u16_nelem: int | None = None,
+                    cast_u16_ndet: int | None = None,
+                    cast_u16_overflow_mtl=None,
+                    detector_sum_partial_mtl=None,
+                    detector_sum_out_mtl=None,
+                    detector_sum_out_byte_offset: int = 0):
+        """Submit LZ4 + bitshuffle GPU work, return uncommitted command buffer.
+
+        out_mtl: destination buffer for the bitshuffle output. Defaults to the
+        single big self._out_mtl (load_master). Pass a per-chunk buffer (with
+        out_byte_offset=0) for the chunked no-bin path that dodges the 14.3 GB
+        maxBufferLength cap.
+        lz4_mtl: the LZ4 intermediate scratch. Defaults to self._lz4_mtl. Pass a
+        distinct buffer per in-flight chunk so a 2-deep pipeline (D=2) can run
+        two command buffers concurrently without the second clobbering the
+        first's scratch — recovers the ~0.6s per-chunk CPU<->GPU drain gap.
+        """
+        tail_elements = _bitshuffle_tail_elements(frame_bytes, elem_size)
+        if out_mtl is None:
+            out_mtl = self._out_mtl
+        cmd = _queue.commandBuffer()
+        enc = cmd.computeCommandEncoder()
+        fused_full_u16 = (
+            elem_size == 2
+            and not row_prefix
+            and fast_out_mtl is None
+            and cast_u8_out_mtl is None
+            and cast_u16_out_mtl is None
+            and detector_sum_out_mtl is None
+            and tail_elements == 0
+            and _fused_full_u16_enabled()
+        )
+        if fused_full_u16:
+            from .qh5 import _packed_u16_pipeline
+
+            frame_elems = frame_bytes // 2
+            enc.setComputePipelineState_(_packed_u16_pipeline(_device))
+            enc.setBuffer_offset_atIndex_(comp_mtl, 0, 0)
+            enc.setBuffer_offset_atIndex_(co_mtl, 0, 1)
+            enc.setBuffer_offset_atIndex_(bs_mtl, 0, 2)
+            enc.setBuffer_offset_atIndex_(bc_mtl, 0, 3)
+            enc.setBuffer_offset_atIndex_(bo_mtl, 0, 4)
+            enc.setBytes_length_atIndex_(
+                np.array([frame_elems], dtype=np.uint32).tobytes(), 4, 5
+            )
+            enc.setBuffer_offset_atIndex_(out_mtl, out_byte_offset, 6)
+            # The shader's unshuffle loop advances by four SIMD groups.  It
+            # therefore requires exactly 4 x 32 = 128 threads: 64 leaves half
+            # the bit-plane groups unwritten, while 256 overlaps group writes.
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                Metal.MTLSizeMake(n_frames, 1, max_blocks),
+                Metal.MTLSizeMake(128, 1, 1),
+            )
+            if zero_bad and self._bad_idx_count:
+                enc.memoryBarrierWithScope_(Metal.MTLBarrierScopeBuffers)
+                nbad = int(self._bad_idx_count)
+                enc.setComputePipelineState_(_zero_bad_u16_pipeline)
+                enc.setBuffer_offset_atIndex_(out_mtl, out_byte_offset, 0)
+                enc.setBuffer_offset_atIndex_(self._bad_idx_mtl, 0, 1)
+                enc.setBytes_length_atIndex_(
+                    np.array([frame_elems], dtype=np.uint32).tobytes(), 4, 2
+                )
+                enc.setBytes_length_atIndex_(
+                    np.array([nbad], dtype=np.uint32).tobytes(), 4, 3
+                )
+                enc.setBytes_length_atIndex_(
+                    np.array([n_frames], dtype=np.uint32).tobytes(), 4, 4
+                )
+                total = n_frames * nbad
+                enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                    Metal.MTLSizeMake((total + 255) // 256, 1, 1),
+                    Metal.MTLSizeMake(256, 1, 1),
+                )
+            enc.endEncoding()
+            cmd.commit()
+            return cmd
+        if lz4_mtl is None:
+            lz4_mtl = self._ensure_lz4_buffer()
+        # LZ4 — n_frames in X (unlimited), per-frame blocks in Z (small)
+        enc.setComputePipelineState_(_h5lz4dc_pipeline)
+        enc.setBuffer_offset_atIndex_(comp_mtl, 0, 0)
+        enc.setBuffer_offset_atIndex_(co_mtl, 0, 1)
+        enc.setBuffer_offset_atIndex_(bs_mtl, 0, 2)
+        enc.setBuffer_offset_atIndex_(bc_mtl, 0, 3)
+        enc.setBuffer_offset_atIndex_(bo_mtl, 0, 4)
+        enc.setBytes_length_atIndex_(
+            np.array([8192], dtype=np.uint32).tobytes(), 4, 5
+        )
+        enc.setBytes_length_atIndex_(
+            np.array([frame_bytes], dtype=np.uint32).tobytes(), 4, 6
+        )
+        enc.setBuffer_offset_atIndex_(lz4_mtl, 0, 7)
+        enc.dispatchThreadgroups_threadsPerThreadgroup_(
+            Metal.MTLSizeMake(n_frames, 1, (max_blocks + _LZ4_Y - 1) // _LZ4_Y),
+            Metal.MTLSizeMake(32, _LZ4_Y, 1),
+        )
+        enc.memoryBarrierWithScope_(Metal.MTLBarrierScopeBuffers)
+        # Bitshuffle — n_frames in X, tg_count in Z
+        n_8kb = frame_bytes // 8192
+        fused_shuf_u8 = (
+            elem_size == 2
+            and cast_u8_out_mtl is not None
+            and not row_prefix
+            and fast_out_mtl is None
+            and os.environ.get("QT_MPS_FUSED_SHUF_U8", "1") != "0"
+        )
+        if elem_size == 2:
+            groups_per_block = 8192 // (elem_size * 32)
+            groups_per_frame = n_8kb * groups_per_block
+            frame_elems = frame_bytes // 2
+            enc.setComputePipelineState_(
+                (
+                    _shuf16_u8_masked_pipeline
+                    if fused_shuf_u8 and zero_bad
+                    else _shuf16_u8_pipeline
+                    if fused_shuf_u8
+                    else _shuf16_pipeline
+                )
+            )
+            enc.setBuffer_offset_atIndex_(lz4_mtl, 0, 0)
+            enc.setBuffer_offset_atIndex_(
+                cast_u8_out_mtl if fused_shuf_u8 else out_mtl,
+                cast_u8_out_byte_offset if fused_shuf_u8 else out_byte_offset,
+                1,
+            )
+            enc.setBytes_length_atIndex_(
+                np.array([frame_elems], dtype=np.uint32).tobytes(), 4, 2
+            )
+            enc.setBytes_length_atIndex_(
+                np.array([groups_per_block], dtype=np.uint32).tobytes(), 4, 3
+            )
+            enc.setBytes_length_atIndex_(
+                np.array([groups_per_frame], dtype=np.uint32).tobytes(), 4, 4
+            )
+            if fused_shuf_u8 and zero_bad:
+                enc.setBuffer_offset_atIndex_(self._mask_mtl, 0, 5)
+            if groups_per_frame:
+                tg_count = (groups_per_frame + 31) // 32
+                enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                    Metal.MTLSizeMake(n_frames, 1, tg_count),
+                    Metal.MTLSizeMake(32, 32, 1),
+                )
+        else:
+            groups_per_block = 2048 // 32
+            groups_per_frame = n_8kb * groups_per_block
+            frame_elems = frame_bytes // 4
+            enc.setComputePipelineState_(_shuf32_pipeline)
+            enc.setBuffer_offset_atIndex_(lz4_mtl, 0, 0)
+            enc.setBuffer_offset_atIndex_(out_mtl, out_byte_offset, 1)
+            enc.setBytes_length_atIndex_(
+                np.array([frame_elems], dtype=np.uint32).tobytes(), 4, 2
+            )
+            enc.setBytes_length_atIndex_(
+                np.array([groups_per_block], dtype=np.uint32).tobytes(), 4, 3
+            )
+            enc.setBytes_length_atIndex_(
+                np.array([groups_per_frame], dtype=np.uint32).tobytes(), 4, 4
+            )
+            if groups_per_frame:
+                tg_count = (groups_per_frame + 31) // 32
+                enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                    Metal.MTLSizeMake(n_frames, 1, tg_count),
+                    Metal.MTLSizeMake(32, 32, 1),
+                )
+        if tail_elements:
+            tail_output_mtl = cast_u8_out_mtl if fused_shuf_u8 else out_mtl
+            tail_output_offset = (
+                cast_u8_out_byte_offset if fused_shuf_u8 else out_byte_offset
+            )
+            _encode_bitshuffle_tail(
+                enc,
+                in_mtl=lz4_mtl,
+                out_mtl=tail_output_mtl,
+                out_byte_offset=tail_output_offset,
+                n_frames=n_frames,
+                frame_bytes=frame_bytes,
+                elem_size=elem_size,
+                output_u8=fused_shuf_u8,
+                mask_mtl=self._mask_mtl if fused_shuf_u8 and zero_bad else None,
+            )
+        if detector_sum_out_mtl is not None:
+            if not fused_shuf_u8 or detector_sum_partial_mtl is None:
+                raise ValueError(
+                    "Decode-side detector sum requires fused uint8 output."
+                )
+            ndet = int(frame_elems)
+            nsum_blocks = (int(n_frames) + 1023) // 1024
+            enc.memoryBarrierWithScope_(Metal.MTLBarrierScopeBuffers)
+            enc.setComputePipelineState_(_detsum_u8_decode_partial_pipeline)
+            enc.setBuffer_offset_atIndex_(
+                cast_u8_out_mtl, cast_u8_out_byte_offset, 0
+            )
+            enc.setBuffer_offset_atIndex_(detector_sum_partial_mtl, 0, 1)
+            enc.setBytes_length_atIndex_(
+                np.array([ndet], dtype=np.uint32).tobytes(), 4, 2
+            )
+            enc.setBytes_length_atIndex_(
+                np.array([n_frames], dtype=np.uint32).tobytes(), 4, 3
+            )
+            total = ndet * nsum_blocks
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                Metal.MTLSizeMake((total + 255) // 256, 1, 1),
+                Metal.MTLSizeMake(256, 1, 1),
+            )
+            enc.memoryBarrierWithScope_(Metal.MTLBarrierScopeBuffers)
+            enc.setComputePipelineState_(_detsum_u8_decode_merge_pipeline)
+            enc.setBuffer_offset_atIndex_(detector_sum_partial_mtl, 0, 0)
+            enc.setBuffer_offset_atIndex_(
+                detector_sum_out_mtl, detector_sum_out_byte_offset, 1
+            )
+            enc.setBytes_length_atIndex_(
+                np.array([ndet], dtype=np.uint32).tobytes(), 4, 2
+            )
+            enc.setBytes_length_atIndex_(
+                np.array([nsum_blocks], dtype=np.uint32).tobytes(), 4, 3
+            )
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                Metal.MTLSizeMake((ndet + 255) // 256, 1, 1),
+                Metal.MTLSizeMake(256, 1, 1),
+            )
+        if row_prefix:
+            if elem_size != 2:
+                raise ValueError("row_prefix=True requires uint16 data.")
+            if det_shape is None:
+                raise ValueError("row_prefix=True requires det_shape.")
+            detrows, detcols = (int(det_shape[0]), int(det_shape[1]))
+            enc.memoryBarrierWithScope_(Metal.MTLBarrierScopeBuffers)
+            if zero_bad and self._bad_idx_count:
+                nbad = int(self._bad_idx_count)
+                ndet = int(frame_bytes // elem_size)
+                enc.setComputePipelineState_(_zero_bad_u16_pipeline)
+                enc.setBuffer_offset_atIndex_(out_mtl, out_byte_offset, 0)
+                enc.setBuffer_offset_atIndex_(self._bad_idx_mtl, 0, 1)
+                enc.setBytes_length_atIndex_(
+                    np.array([ndet], dtype=np.uint32).tobytes(), 4, 2
+                )
+                enc.setBytes_length_atIndex_(
+                    np.array([nbad], dtype=np.uint32).tobytes(), 4, 3
+                )
+                enc.setBytes_length_atIndex_(
+                    np.array([n_frames], dtype=np.uint32).tobytes(), 4, 4
+                )
+                total = n_frames * nbad
+                enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                    Metal.MTLSizeMake((total + 255) // 256, 1, 1),
+                    Metal.MTLSizeMake(256, 1, 1),
+                )
+                enc.memoryBarrierWithScope_(Metal.MTLBarrierScopeBuffers)
+            enc.setComputePipelineState_(_row_prefix_u16_pipeline)
+            enc.setBuffer_offset_atIndex_(out_mtl, out_byte_offset, 0)
+            enc.setBuffer_offset_atIndex_(self._prefix_overflow_mtl, 0, 1)
+            enc.setBytes_length_atIndex_(
+                np.array([detcols], dtype=np.uint32).tobytes(), 4, 2
+            )
+            enc.setBytes_length_atIndex_(
+                np.array([detrows], dtype=np.uint32).tobytes(), 4, 3
+            )
+            enc.setBytes_length_atIndex_(
+                np.array([n_frames], dtype=np.uint32).tobytes(), 4, 4
+            )
+            total_rows = n_frames * detrows
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                Metal.MTLSizeMake((total_rows + 255) // 256, 1, 1),
+                Metal.MTLSizeMake(256, 1, 1),
+            )
+        elif zero_bad and self._bad_idx_count and not fused_shuf_u8:
+            enc.memoryBarrierWithScope_(Metal.MTLBarrierScopeBuffers)
+            nbad = int(self._bad_idx_count)
+            ndet = int(frame_bytes // elem_size)
+            zero_pipeline = (
+                _zero_bad_u16_pipeline
+                if elem_size == 2
+                else _zero_bad_u32_pipeline
+            )
+            enc.setComputePipelineState_(zero_pipeline)
+            enc.setBuffer_offset_atIndex_(out_mtl, out_byte_offset, 0)
+            enc.setBuffer_offset_atIndex_(self._bad_idx_mtl, 0, 1)
+            enc.setBytes_length_atIndex_(
+                np.array([ndet], dtype=np.uint32).tobytes(), 4, 2
+            )
+            enc.setBytes_length_atIndex_(
+                np.array([nbad], dtype=np.uint32).tobytes(), 4, 3
+            )
+            enc.setBytes_length_atIndex_(
+                np.array([n_frames], dtype=np.uint32).tobytes(), 4, 4
+            )
+            total = n_frames * nbad
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                Metal.MTLSizeMake((total + 255) // 256, 1, 1),
+                Metal.MTLSizeMake(256, 1, 1),
+            )
+        if fast_out_mtl is not None and fast_det_bin is not None:
+            if row_prefix:
+                raise ValueError("fast_det_bin cannot be fused with row_prefix=True.")
+            if det_shape is None:
+                raise ValueError("fast_det_bin requires det_shape.")
+            det_row, det_col = (int(det_shape[0]), int(det_shape[1]))
+            bin_factor = int(fast_det_bin)
+            if det_row % bin_factor or det_col % bin_factor:
+                raise ValueError(
+                    f"Detector shape {(det_row, det_col)} is not divisible by "
+                    f"fast_det_bin={bin_factor}."
+                )
+            enc.memoryBarrierWithScope_(Metal.MTLBarrierScopeBuffers)
+            self._encode_detector_bin_sum(
+                enc,
+                in_mtl=out_mtl,
+                in_byte_offset=out_byte_offset,
+                out_mtl=fast_out_mtl,
+                out_byte_offset=fast_out_byte_offset,
+                n_frames=n_frames,
+                elem_size=elem_size,
+                det_row=det_row,
+                det_col=det_col,
+                bin_factor=bin_factor,
+            )
+        if cast_u16_out_mtl is not None:
+            if elem_size != 4:
+                raise ValueError("output_dtype=np.uint16 narrow requires uint32 source data.")
+            nelem = int(
+                cast_u16_nelem
+                if cast_u16_nelem is not None
+                else n_frames * (frame_bytes // 4)
+            )
+            ndet = int(cast_u16_ndet or (frame_bytes // 4))
+            overflow_mtl = cast_u16_overflow_mtl or self._cast_overflow_mtl
+            enc.memoryBarrierWithScope_(Metal.MTLBarrierScopeBuffers)
+            enc.setComputePipelineState_(_narrow_u32_to_u16_masked_pipeline)
+            enc.setBuffer_offset_atIndex_(out_mtl, out_byte_offset, 0)
+            enc.setBuffer_offset_atIndex_(cast_u16_out_mtl, cast_u16_out_byte_offset, 1)
+            enc.setBuffer_offset_atIndex_(self._mask_mtl, 0, 2)
+            enc.setBuffer_offset_atIndex_(overflow_mtl, 0, 3)
+            enc.setBytes_length_atIndex_(
+                np.array([nelem], dtype=np.uint32).tobytes(), 4, 4
+            )
+            enc.setBytes_length_atIndex_(
+                np.array([ndet], dtype=np.uint32).tobytes(), 4, 5
+            )
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                Metal.MTLSizeMake((nelem + 255) // 256, 1, 1),
+                Metal.MTLSizeMake(256, 1, 1),
+            )
+        if cast_u8_out_mtl is not None and not fused_shuf_u8:
+            if elem_size not in (2, 4):
+                raise ValueError(
+                    "output_dtype=np.uint8 requires uint16 or uint32 source data."
+                )
+            nelem = int(
+                cast_u8_nelem
+                if cast_u8_nelem is not None
+                else n_frames * (frame_bytes // elem_size)
+            )
+            enc.memoryBarrierWithScope_(Metal.MTLBarrierScopeBuffers)
+            clip_pipeline = (
+                _clip_u16_to_u8_pipeline
+                if elem_size == 2
+                else _clip_u32_to_u8_pipeline
+            )
+            enc.setComputePipelineState_(clip_pipeline)
+            enc.setBuffer_offset_atIndex_(out_mtl, out_byte_offset, 0)
+            enc.setBuffer_offset_atIndex_(cast_u8_out_mtl, cast_u8_out_byte_offset, 1)
+            enc.setBytes_length_atIndex_(
+                np.array([nelem], dtype=np.uint32).tobytes(), 4, 2
+            )
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                Metal.MTLSizeMake((nelem + 255) // 256, 1, 1),
+                Metal.MTLSizeMake(256, 1, 1),
+            )
+        enc.endEncoding()
+        cmd.commit()
+        return cmd
+
+    def _encode_detector_bin_sum(
+        self,
+        enc,
+        *,
+        in_mtl,
+        in_byte_offset,
+        out_mtl,
+        out_byte_offset,
+        n_frames,
+        elem_size,
+        det_row,
+        det_col,
+        bin_factor,
+    ) -> None:
+        """Encode the shared exact detector-sum fallback with all bindings."""
+        out_det_row = det_row // bin_factor
+        out_det_col = det_col // bin_factor
+        out_frame_elems = out_det_row * out_det_col
+        in_frame_elems = det_row * det_col
+        enc.setComputePipelineState_(
+            _bin_u16_pipeline if elem_size == 2 else _bin_u32_pipeline
+        )
+        enc.setBuffer_offset_atIndex_(in_mtl, in_byte_offset, 0)
+        enc.setBuffer_offset_atIndex_(out_mtl, out_byte_offset, 1)
+        for index, value in (
+            (2, det_col),
+            (3, in_frame_elems),
+            (4, out_det_col),
+            (5, out_frame_elems),
+            (6, bin_factor),
+        ):
+            enc.setBytes_length_atIndex_(
+                np.array([value], dtype=np.uint32).tobytes(),
+                4,
+                index,
+            )
+        enc.setBuffer_offset_atIndex_(self._mask_mtl, 0, 7)
+        enc.setBytes_length_atIndex_(
+            np.array([out_det_row], dtype=np.uint32).tobytes(),
+            4,
+            8,
+        )
+        enc.setBuffer_offset_atIndex_(self._cast_overflow_mtl, 0, 9)
+        grid_x = (out_det_col + 15) // 16
+        grid_y = (out_det_row + 15) // 16
+        enc.dispatchThreadgroups_threadsPerThreadgroup_(
+            Metal.MTLSizeMake(n_frames, grid_y, grid_x),
+            Metal.MTLSizeMake(1, 16, 16),
+        )
+
+    def _submit_gpu_binned(self, n_frames, frame_bytes, elem_size,
+                           out_byte_offset, det_row, det_col, bin_factor,
+                           comp_mtl, co_mtl, bs_mtl, bc_mtl, bo_mtl,
+                           max_blocks, meta_frame_offset=0, out_mtl=None):
+        """Submit LZ4 + bitshuffle + bin GPU work. Returns command buffer.
+
+        meta_frame_offset: offset into metadata buffers (co, bc, bo) for
+        sub-batch processing. bs (block_starts) uses absolute indexing.
+        """
+        if out_mtl is None:
+            out_mtl = self._out_mtl
+        lz4_mtl = self._ensure_lz4_buffer()
+        frame_elems = frame_bytes // elem_size
+        tail_elements = _bitshuffle_tail_elements(frame_bytes, elem_size)
+        fused_bin = (
+            elem_size == 2
+            and bin_factor in (2, 4, 8)
+            and det_col % 32 == 0
+            and frame_elems % 4096 == 0
+            and _fused_bin_enabled()
+        )
+        if not fused_bin:
+            self._ensure_shuf_buffer()
+        meta_off = meta_frame_offset * 4  # bytes (uint32 arrays)
+        cmd = _queue.commandBuffer()
+        enc = cmd.computeCommandEncoder()
+        # LZ4 — n_frames in X
+        enc.setComputePipelineState_(_h5lz4dc_pipeline)
+        enc.setBuffer_offset_atIndex_(comp_mtl, 0, 0)
+        enc.setBuffer_offset_atIndex_(co_mtl, meta_off, 1)
+        enc.setBuffer_offset_atIndex_(bs_mtl, 0, 2)
+        enc.setBuffer_offset_atIndex_(bc_mtl, meta_off, 3)
+        enc.setBuffer_offset_atIndex_(bo_mtl, meta_off, 4)
+        enc.setBytes_length_atIndex_(
+            np.array([8192], dtype=np.uint32).tobytes(), 4, 5
+        )
+        enc.setBytes_length_atIndex_(
+            np.array([frame_bytes], dtype=np.uint32).tobytes(), 4, 6
+        )
+        enc.setBuffer_offset_atIndex_(lz4_mtl, 0, 7)
+        enc.dispatchThreadgroups_threadsPerThreadgroup_(
+            Metal.MTLSizeMake(n_frames, 1, (max_blocks + _LZ4_Y - 1) // _LZ4_Y),
+            Metal.MTLSizeMake(32, _LZ4_Y, 1),
+        )
+        enc.memoryBarrierWithScope_(Metal.MTLBarrierScopeBuffers)
+        if fused_bin:
+            out_det_row = det_row // bin_factor
+            out_det_col = det_col // bin_factor
+            enc.setComputePipelineState_(_fused_bin_pipeline_for(bin_factor))
+            enc.setBuffer_offset_atIndex_(lz4_mtl, 0, 0)
+            enc.setBuffer_offset_atIndex_(out_mtl, out_byte_offset, 1)
+            enc.setBuffer_offset_atIndex_(self._mask_mtl, 0, 2)
+            enc.setBytes_length_atIndex_(
+                np.array([det_row], dtype=np.uint32).tobytes(), 4, 3
+            )
+            enc.setBytes_length_atIndex_(
+                np.array([det_col], dtype=np.uint32).tobytes(), 4, 4
+            )
+            enc.setBytes_length_atIndex_(
+                np.array([frame_elems], dtype=np.uint32).tobytes(), 4, 5
+            )
+            enc.setBytes_length_atIndex_(
+                np.array([out_det_row], dtype=np.uint32).tobytes(), 4, 6
+            )
+            enc.setBytes_length_atIndex_(
+                np.array([out_det_col], dtype=np.uint32).tobytes(), 4, 7
+            )
+            enc.setBytes_length_atIndex_(
+                np.array([bin_factor], dtype=np.uint32).tobytes(), 4, 8
+            )
+            enc.setBuffer_offset_atIndex_(self._cast_overflow_mtl, 0, 9)
+            output_tile_rows, output_tile_cols = _fused_bin_output_tile_shape(
+                bin_factor
+            )
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                Metal.MTLSizeMake(
+                    n_frames,
+                    (out_det_row + output_tile_rows - 1) // output_tile_rows,
+                    (out_det_col + output_tile_cols - 1) // output_tile_cols,
+                ),
+                Metal.MTLSizeMake(256, 1, 1),
+            )
+            enc.endEncoding()
+            cmd.commit()
+            return cmd
+        # Bitshuffle → _shuf_mtl (temporary) — n_frames in X
+        n_8kb = frame_bytes // 8192
+        if elem_size == 2:
+            groups_per_block = 8192 // (elem_size * 32)
+            groups_per_frame = n_8kb * groups_per_block
+            frame_elems = frame_bytes // 2
+            enc.setComputePipelineState_(_shuf16_pipeline)
+            enc.setBuffer_offset_atIndex_(lz4_mtl, 0, 0)
+            enc.setBuffer_offset_atIndex_(self._shuf_mtl, 0, 1)
+            enc.setBytes_length_atIndex_(
+                np.array([frame_elems], dtype=np.uint32).tobytes(), 4, 2
+            )
+            enc.setBytes_length_atIndex_(
+                np.array([groups_per_block], dtype=np.uint32).tobytes(), 4, 3
+            )
+            enc.setBytes_length_atIndex_(
+                np.array([groups_per_frame], dtype=np.uint32).tobytes(), 4, 4
+            )
+            if groups_per_frame:
+                tg_count = (groups_per_frame + 31) // 32
+                enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                    Metal.MTLSizeMake(n_frames, 1, tg_count),
+                    Metal.MTLSizeMake(32, 32, 1),
+                )
+        else:
+            groups_per_block = 2048 // 32
+            groups_per_frame = n_8kb * groups_per_block
+            frame_elems = frame_bytes // 4
+            enc.setComputePipelineState_(_shuf32_pipeline)
+            enc.setBuffer_offset_atIndex_(lz4_mtl, 0, 0)
+            enc.setBuffer_offset_atIndex_(self._shuf_mtl, 0, 1)
+            enc.setBytes_length_atIndex_(
+                np.array([frame_elems], dtype=np.uint32).tobytes(), 4, 2
+            )
+            enc.setBytes_length_atIndex_(
+                np.array([groups_per_block], dtype=np.uint32).tobytes(), 4, 3
+            )
+            enc.setBytes_length_atIndex_(
+                np.array([groups_per_frame], dtype=np.uint32).tobytes(), 4, 4
+            )
+            if groups_per_frame:
+                tg_count = (groups_per_frame + 31) // 32
+                enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                    Metal.MTLSizeMake(n_frames, 1, tg_count),
+                    Metal.MTLSizeMake(32, 32, 1),
+                )
+        if tail_elements:
+            _encode_bitshuffle_tail(
+                enc,
+                in_mtl=lz4_mtl,
+                out_mtl=self._shuf_mtl,
+                out_byte_offset=0,
+                n_frames=n_frames,
+                frame_bytes=frame_bytes,
+                elem_size=elem_size,
+            )
+        enc.memoryBarrierWithScope_(Metal.MTLBarrierScopeBuffers)
+        self._encode_detector_bin_sum(
+            enc,
+            in_mtl=self._shuf_mtl,
+            in_byte_offset=0,
+            out_mtl=out_mtl,
+            out_byte_offset=out_byte_offset,
+            n_frames=n_frames,
+            elem_size=elem_size,
+            det_row=det_row,
+            det_col=det_col,
+            bin_factor=bin_factor,
+        )
+        enc.endEncoding()
+        cmd.commit()
+        return cmd
+
+    def _set_mask(self, mask, det_row, det_col):
+        """Upload the dead-pixel mask (nonzero = dead) to a Metal buffer for the
+        bin kernel. A None mask becomes all-zero (nothing dead)."""
+        n = det_row * det_col
+        if getattr(self, "_mask_mtl", None) is None or self._mask_np.size != n:
+            self._mask_mtl = _metal_buffer_alloc(n)
+            self._mask_np = _numpy_view(self._mask_mtl, np.uint8, n)
+        if mask is None:
+            self._mask_np[:] = 0
+        else:
+            bad = (np.asarray(mask) != 0).astype(np.uint8).ravel()
+            self._mask_np[:] = bad if bad.size == n else 0
+
+    def _set_bad_pixels(self, pixel_mask, frame_shape) -> None:
+        if pixel_mask is None:
+            self._bad_idx_count = 0
+            return
+        mask = np.asarray(pixel_mask) != 0
+        if mask.shape != tuple(frame_shape):
+            self._bad_idx_count = 0
+            return
+        bad = np.flatnonzero(mask.reshape(-1)).astype(np.uint32, copy=False)
+        nbad = int(bad.size)
+        self._bad_idx_count = nbad
+        if nbad == 0:
+            return
+        if nbad > self._bad_idx_capacity:
+            self._bad_idx_capacity = max(16, nbad)
+            self._bad_idx_mtl = _metal_buffer_alloc(self._bad_idx_capacity * 4)
+            self._bad_idx_np = _numpy_view(
+                self._bad_idx_mtl, np.uint32, self._bad_idx_capacity
+            )
+        self._bad_idx_np[:nbad] = bad
+
+    def load_binned_masked(
+        self,
+        master_path,
+        det_bin,
+        mask=None,
+        verbose=False,
+        *,
+        allow_integer_saturation_for_u8=False,
+    ):
+        """Fast det_bin>1 path: GPU LZ4+bitshuffle+integer-sum-bin, dead-pixel
+        masked, native unsigned-integer dtype, double-buffered (read next chunk
+        while the GPU bins the current one). Writes the native binned dtype into one full
+        output buffer at each frame offset — no per-batch host copy — so it
+        runs at the GPU decompress floor instead of paying a float32 memcpy
+        tax. Representable sums are bit-identical to the CUDA integer-sum bin;
+        native output fails closed instead of exposing a saturated count.
+        """
+        # This invocation owns only a destination assigned below. A stale
+        # reference can belong to a still-live caller or alias the recycle pool;
+        # detach it without releasing before establishing the new boundary.
+        self._out_mtl = None
+        self._out_np = None
+        self._out_nbytes = 0
+        try:
+            return self._load_binned_masked(
+                master_path,
+                det_bin,
+                mask=mask,
+                verbose=verbose,
+                allow_integer_saturation_for_u8=allow_integer_saturation_for_u8,
+            )
+        except BaseException:
+            self._release_pending_binned_output()
+            raise
+
+    def _release_pending_binned_output(self) -> None:
+        """Release an eager binned destination that was not handed to a caller."""
+        output_mtl = self._out_mtl
+        self._out_mtl = None
+        self._out_np = None
+        self._out_nbytes = 0
+        _release_metal_buffer(output_mtl)
+
+    def _load_binned_masked(
+        self,
+        master_path,
+        det_bin,
+        mask=None,
+        verbose=False,
+        *,
+        allow_integer_saturation_for_u8=False,
+    ):
+        plan = plan_master(master_path)
+        det_shape = plan.detector_shape
+        dtype = plan.dtype
+        chunk_files = plan.chunk_files
+        chunk_n_frames = plan.chunk_n_frames
+        det_row, det_col = det_shape
+        frame_bytes = int(np.prod(det_shape) * np.dtype(dtype).itemsize)
+        elem_size = np.dtype(dtype).itemsize
+        _bitshuffle_tail_elements(frame_bytes, elem_size)
+        n_blocks_per_frame = (frame_bytes + 8191) // 8192
+        out_row, out_col = det_row // det_bin, det_col // det_bin
+        out_frame_bytes = out_row * out_col * elem_size
+        total_frames = sum(chunk_n_frames)
+        self._set_mask(mask, det_row, det_col)
+        if elem_size in (2, 4):
+            self._cast_overflow_np[0] = 0
+        # A normal call allocates a fresh output so its zero-copy view cannot be
+        # aliased by a later load. An explicit caller recycle transfers one
+        # retired, size-compatible native destination back for overwrite.
+        out_total_bytes = total_frames * out_frame_bytes
+        recycled_outputs = self._take_recycled_output_buffers([out_total_bytes])
+        self._out_mtl = (
+            recycled_outputs[0]
+            if recycled_outputs is not None
+            else _metal_buffer_alloc(out_total_bytes)
+        )
+        self._out_np = _numpy_view(self._out_mtl, np.uint8, out_total_bytes)
+        self._out_nbytes = out_total_bytes
+        bufs = [
+            (self._comp_np, self._co_np, self._bs_np, self._bc_np, self._bo_np,
+             self._chunk_sizes, self._comp_mtl, self._co_mtl, self._bs_mtl,
+             self._bc_mtl, self._bo_mtl),
+            (self._comp_np_b, self._co_np_b, self._bs_np_b, self._bc_np_b,
+             self._bo_np_b, self._chunk_sizes_b, self._comp_mtl_b, self._co_mtl_b,
+             self._bs_mtl_b, self._bc_mtl_b, self._bo_mtl_b),
+        ]
+
+        def _read_parse(buf_idx, ci):
+            comp_np, co_np, bs_np, bc_np, bo_np, csizes, *_ = bufs[buf_idx]
+            self._read_chunk(chunk_files[ci], comp_np, co_np, csizes)
+            nf = chunk_n_frames[ci]
+            _parse_headers(comp_np, csizes, co_np, bs_np, bc_np, nf, n_blocks_per_frame)
+            bo_np[0] = 0
+            bo_np[1 : nf + 1] = np.cumsum(bc_np[:nf])
+
+        import time as _t
+        _tr = _t.perf_counter()
+        _read_parse(0, 0)
+        t_read = _t.perf_counter() - _tr
+        t_gpu = 0.0
+        frame_offset = 0
+        n_chunks = len(chunk_files)
+        gpu_batch = self.gpu_batch
+        iterable = range(n_chunks)
+        if verbose:
+            iterable = tqdm(iterable, desc="mps", leave=False)
+        for ci in iterable:
+            _, _, _, bc_np, _, _, comp_mtl, co_mtl, bs_mtl, bc_mtl, bo_mtl = (
+                bufs[ci % 2]
+            )
+            nf = chunk_n_frames[ci]
+            read_next_done = False
+            for s in range(0, nf, gpu_batch):
+                e = min(s + gpu_batch, nf)
+                nb = e - s
+                max_blk = int(bc_np[s:e].max())
+                _tg = _t.perf_counter()
+                cmd = self._submit_gpu_binned(
+                    nb, frame_bytes, elem_size,
+                    (frame_offset + s) * out_frame_bytes,
+                    det_row, det_col, det_bin,
+                    comp_mtl, co_mtl, bs_mtl, bc_mtl, bo_mtl,
+                    max_blk, meta_frame_offset=s,
+                )
+                try:
+                    # Overlap: read+parse next chunk while the last sub-batch runs.
+                    if not read_next_done and e >= nf and ci + 1 < n_chunks:
+                        _tr = _t.perf_counter()
+                        _read_parse((ci + 1) % 2, ci + 1)
+                        t_read += _t.perf_counter() - _tr
+                finally:
+                    # A read failure must not release the destination while the
+                    # committed command is still writing into it.
+                    cmd.waitUntilCompleted()
+                t_gpu += _t.perf_counter() - _tg
+                if not read_next_done and e >= nf:
+                    read_next_done = True
+            frame_offset += nf
+        if (
+            elem_size in (2, 4)
+            and int(self._cast_overflow_np[0]) != 0
+            and not allow_integer_saturation_for_u8
+        ):
+            rejected_mtl = self._out_mtl
+            self._out_mtl = None
+            self._out_np = None
+            self._out_nbytes = 0
+            _release_and_raise_if_binned_integer_overflow(
+                self._cast_overflow_np,
+                det_bin,
+                dtype,
+                rejected_mtl,
+            )
+        # Zero-copy: return a view straight into the Metal unified-memory output
+        # buffer (no 4.8 GB host memcpy). _MtlArray holds a reference to the
+        # Metal buffer so it stays alive as long as the array does; we allocated
+        # a fresh buffer above, so nothing else can overwrite it.
+        view = self._out_np[:out_total_bytes].view(dtype).reshape(
+            total_frames, out_row, out_col
+        )
+        out = view.view(_MtlArray)
+        out._mtl = self._out_mtl
+        # Drop our refs so the buffer's lifetime is owned by the returned array.
+        self._out_mtl = None
+        self._out_np = None
+        self._out_nbytes = 0
+        if verbose:
+            print(f"[mps] read(non-overlapped) {t_read:.2f}s  gpu+wait {t_gpu:.2f}s  "
+                  f"(zero-copy out)")
+        return out
+
+    def load_master(self, master_path: str) -> np.ndarray:
+        """Load all chunks from an arina master file via MPS.
+
+        Uses double-buffering: reads chunk N+1 while GPU processes chunk N.
+        Writes each chunk's result directly at the correct offset in a single
+        output buffer — no intermediate copies.
+
+        Parameters
+        ----------
+        master_path : str
+            Path to the arina master HDF5 file.
+
+        Returns
+        -------
+        np.ndarray
+            Numpy array with shape (total_frames, det_rows, det_cols).
+        """
+        t0 = time.perf_counter()
+        plan = plan_master(master_path)
+        frame_shape = plan.detector_shape
+        dtype = plan.dtype
+        frame_bytes = plan.frame_bytes
+        elem_size = plan.elem_size
+        _bitshuffle_tail_elements(frame_bytes, elem_size)
+        chunk_files = list(plan.chunk_files)
+        chunk_n_frames = list(plan.chunk_n_frames)
+        total_frames = sum(chunk_n_frames)
+        total_bytes = total_frames * frame_bytes
+        self._ensure_output_buffer(total_bytes)
+        n_blocks_per_frame = plan.n_blocks_per_frame
+        # Double-buffer sets: A (primary) and B
+        bufs = [
+            (self._comp_np, self._co_np, self._bs_np, self._bc_np,
+             self._bo_np, self._chunk_sizes,
+             self._comp_mtl, self._co_mtl, self._bs_mtl, self._bc_mtl,
+             self._bo_mtl),
+            (self._comp_np_b, self._co_np_b, self._bs_np_b, self._bc_np_b,
+             self._bo_np_b, self._chunk_sizes_b,
+             self._comp_mtl_b, self._co_mtl_b, self._bs_mtl_b, self._bc_mtl_b,
+             self._bo_mtl_b),
+        ]
+        # Read first chunk into buffer A
+        comp_np, co_np, bs_np, bc_np, bo_np, csizes, \
+            comp_mtl, co_mtl, bs_mtl, bc_mtl, bo_mtl = bufs[0]
+        self._read_chunk(chunk_files[0], comp_np, co_np, csizes)
+        _parse_headers(comp_np, csizes, co_np, bs_np, bc_np,
+                       chunk_n_frames[0], n_blocks_per_frame)
+        bo_np[0] = 0
+        bo_np[1 : chunk_n_frames[0] + 1] = np.cumsum(bc_np[:chunk_n_frames[0]])
+        max_blk = int(bc_np[:chunk_n_frames[0]].max())
+        frame_offset = 0
+        n_chunks = len(chunk_files)
+        chunk_range = range(n_chunks)
+        if n_chunks > 1:
+            chunk_range = tqdm(chunk_range, desc="GPU chunks", leave=False)
+        for ci in chunk_range:
+            cur = bufs[ci % 2]
+            comp_np, co_np, bs_np, bc_np, bo_np, csizes, \
+                comp_mtl, co_mtl, bs_mtl, bc_mtl, bo_mtl = cur
+            n_frames = chunk_n_frames[ci]
+            out_byte_offset = frame_offset * frame_bytes
+            # Submit GPU (async — returns immediately)
+            cmd = self._submit_gpu(
+                n_frames, frame_bytes, elem_size, out_byte_offset,
+                comp_mtl, co_mtl, bs_mtl, bc_mtl, bo_mtl, max_blk,
+            )
+            # While GPU runs, read + parse next chunk into the other buffer
+            if ci + 1 < n_chunks:
+                nxt = bufs[(ci + 1) % 2]
+                comp_np_n, co_np_n, bs_np_n, bc_np_n, bo_np_n, csizes_n, \
+                    *_ = nxt
+                self._read_chunk(chunk_files[ci + 1], comp_np_n, co_np_n,
+                                 csizes_n)
+                nf_next = chunk_n_frames[ci + 1]
+                _parse_headers(comp_np_n, csizes_n, co_np_n, bs_np_n,
+                               bc_np_n, nf_next, n_blocks_per_frame)
+                bo_np_n[0] = 0
+                bo_np_n[1 : nf_next + 1] = np.cumsum(bc_np_n[:nf_next])
+                max_blk = int(bc_np_n[:nf_next].max())
+            # Wait for current GPU to finish
+            cmd.waitUntilCompleted()
+            frame_offset += n_frames
+        t_total = time.perf_counter()
+        result = self._out_np[:total_bytes].view(dtype).reshape(
+            (total_frames,) + frame_shape
+        )
+        print(
+            f"MPSDecompressor.load_master: {total_frames} frames, "
+            f"{total_bytes / 1e9:.2f} GB, "
+            f"{t_total - t0:.3f}s"
+        )
+        return result
+
+    def load_master_chunked(
+        self,
+        master_path: str,
+        pixel_mask: "np.ndarray | None" = None,
+        verbose: bool = True,
+        target_bytes: int | None = None,
+        row_prefix: bool = False,
+        fast_det_bin: int | None = None,
+        output_dtype: type | np.dtype | str | None = None,
+        precompute_detector_sum: bool = False,
+    ) -> list:
+        """Zero-copy no-bin decompress returning Metal-backed output arrays.
+
+        Same zero-copy unified-memory path as load_master (disk reads straight
+        into a shared Metal buffer, the GPU decodes in place — NO host->device
+        copy), but the bitshuffle output goes to a fresh per-chunk Metal buffer
+        (~0.7 GB each) instead of one 19.3 GB buffer. This dodges the M5
+        14.3 GB maxBufferLength cap so full no-bin 19.3 GB loads on a 24 GB Mac,
+        and avoids the ~2s H2D tensor-copy tax the torch path pays. Each entry
+        is a zero-copy _MtlArray view (its Metal buffer kept alive on ._mtl).
+
+        pixel_mask : (det_row, det_col) array, optional
+            Dead-pixel mask (nonzero = dead). Each chunk's frames are zeroed at
+            the masked pixels right after decode, matching the cuda raw-frame
+            contract (dead pixels contribute nothing downstream). Applied as an
+            in-place write into the chunk's unified output buffer; it overlaps
+            the next chunk's read so it costs ~nothing.
+        row_prefix : bool, optional
+            Store each detector row as an in-place uint16 prefix sum during
+            load. This is the exact no-bin virtual-image interaction layout; it
+            avoids a second full-stack conversion when the viewer opens.
+        fast_det_bin : int, optional
+            Also write a detector-binned sidecar from the decoded raw frames in
+            the same Metal command buffer. This avoids the later second
+            compressed read/decompress pass used by fast interaction mode.
+        precompute_detector_sum : bool, optional
+            Accumulate the exact uint8 detector sum during decode and merge
+            source-chunk sums on Metal. This avoids a later full-stack mean-DP
+            pass and is available only for fused lossless uint8 output.
+        """
+        t0 = time.perf_counter()
+        plan = plan_master(master_path)
+        frame_shape = plan.detector_shape
+        dtype = plan.dtype
+        frame_bytes = plan.frame_bytes
+        elem_size = plan.elem_size
+        _bitshuffle_tail_elements(frame_bytes, elem_size)
+        final_dtype = _normalize_output_dtype(output_dtype) or dtype
+        final_elem_size = int(final_dtype.itemsize)
+        frame_elems = int(np.prod(frame_shape, dtype=np.uint64))
+        final_frame_bytes = frame_elems * final_elem_size
+        output_u8 = final_dtype == np.dtype(np.uint8)
+        output_u16_narrow = (
+            final_dtype == np.dtype(np.uint16)
+            and dtype == np.dtype(np.uint32)
+        )
+        if output_u8:
+            if dtype not in (np.dtype(np.uint16), np.dtype(np.uint32)):
+                raise ValueError(
+                    "output_dtype=np.uint8 requires uint16 or uint32 detector data."
+                )
+            if row_prefix:
+                raise ValueError(
+                    "output_dtype=np.uint8 cannot be combined with row_prefix=True."
+                )
+        fast_det_bin = int(fast_det_bin or 0)
+        if output_u16_narrow:
+            if row_prefix:
+                raise ValueError(
+                    "output_dtype=np.uint16 cannot be combined with row_prefix=True "
+                    "for uint32 source data."
+                )
+            if target_bytes is not None:
+                raise ValueError(
+                    "output_dtype=np.uint16 is not supported with compact=True."
+                )
+            if fast_det_bin:
+                raise ValueError(
+                    "output_dtype=np.uint16 is not supported with fast_det_bin."
+                )
+        if fast_det_bin:
+            if row_prefix:
+                raise ValueError("fast_det_bin cannot be combined with row_prefix=True.")
+            if target_bytes is not None:
+                raise ValueError("fast_det_bin is only supported for non-compact loads.")
+            if frame_shape[0] % fast_det_bin or frame_shape[1] % fast_det_bin:
+                raise ValueError(
+                    f"Detector shape {frame_shape} is not divisible by "
+                    f"fast_det_bin={fast_det_bin}."
+                )
+        if row_prefix and elem_size != 2:
+            raise ValueError("row_prefix=True requires uint16 detector data.")
+        chunk_files = list(plan.chunk_files)
+        chunk_n_frames = list(plan.chunk_n_frames)
+        n_blocks_per_frame = plan.n_blocks_per_frame
+        if row_prefix:
+            self._set_bad_pixels(pixel_mask, frame_shape)
+            self._prefix_overflow_np[0] = 0
+            zero_bad = bool(self._bad_idx_count and elem_size in (2, 4))
+        else:
+            self._set_bad_pixels(pixel_mask, frame_shape)
+            zero_bad = bool(self._bad_idx_count and elem_size in (2, 4))
+        fused_u8_load = (
+            output_u8
+            and elem_size == 2
+            and not row_prefix
+            and not fast_det_bin
+            and os.environ.get("QT_MPS_FUSED_SHUF_U8", "1") != "0"
+        )
+        if precompute_detector_sum and not fused_u8_load:
+            raise ValueError(
+                "precompute_detector_sum=True requires fused lossless uint8 "
+                "output (output_dtype=np.uint8, no row prefix or fast bin)."
+            )
+        if (
+            precompute_detector_sum
+            and plan.total_frames > np.iinfo(np.uint32).max // 255
+        ):
+            raise ValueError(
+                "Detector sum would overflow uint32; disable "
+                "precompute_detector_sum for this acquisition."
+            )
+        if fused_u8_load and zero_bad:
+            self._set_mask(pixel_mask, int(frame_shape[0]), int(frame_shape[1]))
+        if output_u16_narrow:
+            self._set_mask(pixel_mask, int(frame_shape[0]), int(frame_shape[1]))
+            self._cast_overflow_np[0] = 0
+        if fast_det_bin:
+            self._set_mask(pixel_mask, int(frame_shape[0]), int(frame_shape[1]))
+            if elem_size in (2, 4):
+                self._cast_overflow_np[0] = 0
+        fused_full_u16 = (
+            elem_size == 2
+            and not row_prefix
+            and not output_u8
+            and not output_u16_narrow
+            and not fast_det_bin
+            and not precompute_detector_sum
+            and frame_bytes % 8192 == 0
+            and _fused_full_u16_enabled()
+        )
+        bufs = [
+            (self._comp_np, self._co_np, self._bs_np, self._bc_np,
+             self._bo_np, self._chunk_sizes,
+             self._comp_mtl, self._co_mtl, self._bs_mtl, self._bc_mtl, self._bo_mtl),
+            (
+                self._comp_np_b, self._co_np_b, self._bs_np_b, self._bc_np_b,
+                self._bo_np_b, self._chunk_sizes_b,
+                self._comp_mtl_b, self._co_mtl_b, self._bs_mtl_b,
+                self._bc_mtl_b, self._bo_mtl_b,
+            ),
+        ]
+        n_chunks = len(chunk_files)
+        if n_chunks >= 3 and os.environ.get("QT_MPS_READAHEAD", "1") != "0":
+            bufs.append(self._read_ahead_buffer())
+        comp_depth = len(bufs)
+        # The fused native-uint16 path has no full-size LZ4 intermediate, so its
+        # in-flight depth is bounded only by the compressed-input slots.  Other
+        # native-uint16 paths stay at depth two to avoid another large scratch.
+        default_gpu_depth = 3 if (output_u8 or fused_full_u16) else 2
+        gpu_depth = int(
+            os.environ.get("QT_MPS_GPU_DEPTH", str(default_gpu_depth))
+        )
+        D = min(max(1, gpu_depth), n_chunks, comp_depth)
+        if fused_full_u16:
+            lz4s = [None] * D
+        else:
+            lz4s = [self._ensure_lz4_buffer()]
+            if D >= 2 and self._lz4_mtl_b is None:
+                self._lz4_mtl_b = _metal_buffer_alloc(
+                    self.gpu_batch * frame_bytes
+                )
+            while len(self._lz4_mtl_extra) < max(0, D - 2):
+                self._lz4_mtl_extra.append(
+                    _metal_buffer_alloc(self.gpu_batch * frame_bytes)
+                )
+            if D >= 2:
+                lz4s.append(self._lz4_mtl_b)
+            if D > 2:
+                lz4s.extend(self._lz4_mtl_extra[: D - 2])
+        # Persistent per-chunk output buffer pool: allocate once, reuse every
+        # load. Avoids the ~19.3 GB alloc/free churn (page re-zeroing) that made
+        # repeated loads 4s instead of 2.6s. Trade-off: a prior load's arrays
+        # alias the pool, so the caller must finish with one dataset before
+        # loading the next — the GUI shows one dataset at a time, so this is fine.
+        narrow_scratch_pool = self._chunk_narrow_scratch_pool
+        grouping_frame_bytes = final_frame_bytes if output_u8 else frame_bytes
+        compact = (
+            target_bytes is not None
+            and int(target_bytes) > grouping_frame_bytes
+        )
+        if compact:
+            self._chunk_out_pool = []
+            max_frames_per_out = max(
+                1,
+                int(target_bytes) // grouping_frame_bytes,
+            )
+            output_group_for_chunk: list[int] = []
+            output_frame_offset: list[int] = []
+            output_n_frames: list[int] = []
+            current_frames = 0
+            current_group = -1
+            for nf in chunk_n_frames:
+                if current_group < 0 or current_frames + nf > max_frames_per_out:
+                    current_group += 1
+                    output_n_frames.append(0)
+                    current_frames = 0
+                output_group_for_chunk.append(current_group)
+                output_frame_offset.append(current_frames)
+                current_frames += nf
+                output_n_frames[current_group] = current_frames
+            out_views: list = [None] * len(output_n_frames)
+            output_sizes = [nf * frame_bytes for nf in output_n_frames]
+            recycled_outputs = (
+                self._take_recycled_output_buffers(output_sizes)
+                if not output_u8 and not output_u16_narrow
+                else None
+            )
+            out_mtls: list = (
+                [None] * len(output_n_frames)
+                if output_u8
+                else recycled_outputs
+                if recycled_outputs is not None
+                else [_metal_buffer_alloc(size) for size in output_sizes]
+            )
+            u8_out_mtls: list = (
+                [
+                    _metal_buffer_alloc(nf * final_frame_bytes)
+                    for nf in output_n_frames
+                ]
+                if output_u8
+                else []
+            )
+        else:
+            pool = self._chunk_out_pool
+            u8_pool = self._chunk_u8_pool
+            u16_pool = self._chunk_u16_pool
+            fast_pool = self._chunk_fast_pool
+            output_group_for_chunk = list(range(n_chunks))
+            output_frame_offset = [0] * n_chunks
+            output_n_frames = chunk_n_frames
+            out_views: list = [None] * n_chunks
+            out_mtls: list = [None] * n_chunks
+            u8_out_mtls: list = [None] * n_chunks if output_u8 else []
+            u16_out_mtls: list = [None] * n_chunks if output_u16_narrow else []
+            fast_frame_shape = (
+                int(frame_shape[0]) // fast_det_bin,
+                int(frame_shape[1]) // fast_det_bin,
+            ) if fast_det_bin else None
+            fast_frame_bytes = (
+                fast_frame_shape[0] * fast_frame_shape[1] * elem_size
+            ) if fast_frame_shape else 0
+            fast_out_views: list = [None] * n_chunks if fast_det_bin else []
+            fast_out_mtls: list = [None] * n_chunks if fast_det_bin else []
+        cmds: list = [None] * n_chunks
+        mblk: list = [0] * n_chunks
+        detector_sum_partials: list = []
+        detector_sum_chunks_mtl = None
+        detector_sum_final_mtl = None
+        self.last_detector_sum = None
+        if precompute_detector_sum:
+            max_sum_blocks = (max(chunk_n_frames) + 1023) // 1024
+            partial_bytes = max_sum_blocks * frame_elems * 4
+            detector_sum_partials = [
+                _metal_buffer_alloc(partial_bytes) for _ in range(D)
+            ]
+            detector_sum_chunks_mtl = _metal_buffer_alloc(
+                n_chunks * frame_elems * 4
+            )
+            detector_sum_final_mtl = _metal_buffer_alloc(frame_elems * 4)
+
+        def _read_parse(ci):
+            comp_np, co_np, bs_np, bc_np, bo_np, csizes, *_ = bufs[ci % comp_depth]
+            nf = chunk_n_frames[ci]
+            self._read_chunk(chunk_files[ci], comp_np, co_np, csizes)
+            _parse_headers(comp_np, csizes, co_np, bs_np, bc_np, nf,
+                           n_blocks_per_frame)
+            bo_np[0] = 0
+            bo_np[1 : nf + 1] = np.cumsum(bc_np[:nf])
+            mblk[ci] = int(bc_np[:nf].max())
+
+        def _finalize_output(oi):
+            nf = output_n_frames[oi]
+            if output_u8:
+                mtl = u8_out_mtls[oi]
+            elif output_u16_narrow:
+                mtl = u16_out_mtls[oi]
+            else:
+                mtl = out_mtls[oi]
+            view = _numpy_view(mtl, final_dtype, nf * frame_elems)
+            arr = view.reshape((nf,) + frame_shape).view(_MtlArray)
+            arr._mtl = mtl  # buffer lives as long as the array does
+            arr._row_prefix = bool(row_prefix)
+            out_views[oi] = arr
+
+        def _finalize_fast_output(oi):
+            nf = output_n_frames[oi]
+            count = nf * (fast_frame_bytes // elem_size)
+            view = _numpy_view(fast_out_mtls[oi], dtype, count)
+            arr = view.reshape((nf,) + fast_frame_shape).view(_MtlArray)
+            arr._mtl = fast_out_mtls[oi]
+            arr._row_prefix = False
+            fast_out_views[oi] = arr
+
+        for ci in range(n_chunks):
+            if ci >= comp_depth:  # free compressed-input slot before reuse
+                cmds[ci - comp_depth].waitUntilCompleted()
+            _read_parse(ci)
+            nf = chunk_n_frames[ci]
+            need = nf * frame_bytes
+            if compact:
+                oi = output_group_for_chunk[ci]
+                if output_u8 and not fused_u8_load:
+                    scratch_idx = ci % D
+                    if (
+                        scratch_idx < len(narrow_scratch_pool)
+                        and narrow_scratch_pool[scratch_idx].length() >= need
+                    ):
+                        out_mtl = narrow_scratch_pool[scratch_idx]
+                    else:
+                        out_mtl = _metal_buffer_alloc(need)
+                        if scratch_idx < len(narrow_scratch_pool):
+                            narrow_scratch_pool[scratch_idx] = out_mtl
+                        else:
+                            narrow_scratch_pool.append(out_mtl)
+                    out_byte_offset = 0
+                    cast_u8_out_mtl = u8_out_mtls[oi]
+                    cast_u8_out_byte_offset = (
+                        output_frame_offset[ci] * final_frame_bytes
+                    )
+                elif output_u8:
+                    out_mtl = self._out_mtl
+                    out_byte_offset = 0
+                    cast_u8_out_mtl = u8_out_mtls[oi]
+                    cast_u8_out_byte_offset = (
+                        output_frame_offset[ci] * final_frame_bytes
+                    )
+                else:
+                    out_mtl = out_mtls[oi]
+                    out_byte_offset = output_frame_offset[ci] * frame_bytes
+                    cast_u8_out_mtl = None
+                    cast_u8_out_byte_offset = 0
+                cast_u16_out_mtl = None
+                cast_u16_out_byte_offset = 0
+            else:
+                if (output_u8 and not fused_u8_load) or output_u16_narrow:
+                    scratch_idx = ci % D
+                    if (
+                        scratch_idx < len(narrow_scratch_pool)
+                        and narrow_scratch_pool[scratch_idx].length() >= need
+                    ):
+                        out_mtl = narrow_scratch_pool[scratch_idx]
+                    else:
+                        out_mtl = _metal_buffer_alloc(need)
+                        if scratch_idx < len(narrow_scratch_pool):
+                            narrow_scratch_pool[scratch_idx] = out_mtl
+                        else:
+                            narrow_scratch_pool.append(out_mtl)
+                elif output_u8:
+                    out_mtl = self._out_mtl
+                elif ci < len(pool) and pool[ci].length() >= need:
+                    out_mtl = pool[ci]
+                else:
+                    out_mtl = _metal_buffer_alloc(need)
+                    if ci < len(pool):
+                        pool[ci] = out_mtl
+                    else:
+                        pool.append(out_mtl)
+                out_mtls[ci] = out_mtl
+                out_byte_offset = 0
+                cast_u8_out_mtl = None
+                cast_u8_out_byte_offset = 0
+                cast_u16_out_mtl = None
+                cast_u16_out_byte_offset = 0
+                if output_u8:
+                    u8_need = nf * final_frame_bytes
+                    if ci < len(u8_pool) and u8_pool[ci].length() >= u8_need:
+                        cast_u8_out_mtl = u8_pool[ci]
+                    else:
+                        cast_u8_out_mtl = _metal_buffer_alloc(u8_need)
+                        if ci < len(u8_pool):
+                            u8_pool[ci] = cast_u8_out_mtl
+                        else:
+                            u8_pool.append(cast_u8_out_mtl)
+                    u8_out_mtls[ci] = cast_u8_out_mtl
+                if output_u16_narrow:
+                    u16_need = nf * final_frame_bytes
+                    if ci < len(u16_pool) and u16_pool[ci].length() >= u16_need:
+                        cast_u16_out_mtl = u16_pool[ci]
+                    else:
+                        cast_u16_out_mtl = _metal_buffer_alloc(u16_need)
+                        if ci < len(u16_pool):
+                            u16_pool[ci] = cast_u16_out_mtl
+                        else:
+                            u16_pool.append(cast_u16_out_mtl)
+                    u16_out_mtls[ci] = cast_u16_out_mtl
+            fast_out_mtl = None
+            fast_out_byte_offset = 0
+            if fast_det_bin:
+                fast_need = nf * fast_frame_bytes
+                if ci < len(fast_pool) and fast_pool[ci].length() >= fast_need:
+                    fast_out_mtl = fast_pool[ci]
+                else:
+                    fast_out_mtl = _metal_buffer_alloc(fast_need)
+                    if ci < len(fast_pool):
+                        fast_pool[ci] = fast_out_mtl
+                    else:
+                        fast_pool.append(fast_out_mtl)
+                fast_out_mtls[ci] = fast_out_mtl
+            if ci >= D and D < comp_depth:  # free LZ4 scratch slot before reuse
+                cmds[ci - D].waitUntilCompleted()
+            comp_mtl, co_mtl, bs_mtl, bc_mtl, bo_mtl = bufs[ci % comp_depth][6:11]
+            cmds[ci] = self._submit_gpu(
+                nf, frame_bytes, elem_size, out_byte_offset,
+                comp_mtl, co_mtl, bs_mtl, bc_mtl, bo_mtl, mblk[ci],
+                out_mtl=out_mtl, lz4_mtl=lz4s[ci % D], zero_bad=zero_bad,
+                row_prefix=row_prefix, det_shape=frame_shape,
+                fast_out_mtl=fast_out_mtl,
+                fast_out_byte_offset=fast_out_byte_offset,
+                fast_det_bin=fast_det_bin if fast_det_bin else None,
+                cast_u8_out_mtl=cast_u8_out_mtl,
+                cast_u8_out_byte_offset=cast_u8_out_byte_offset,
+                cast_u8_nelem=nf * frame_elems if output_u8 else None,
+                cast_u16_out_mtl=cast_u16_out_mtl,
+                cast_u16_out_byte_offset=cast_u16_out_byte_offset,
+                cast_u16_nelem=nf * frame_elems if output_u16_narrow else None,
+                cast_u16_ndet=frame_elems if output_u16_narrow else None,
+                cast_u16_overflow_mtl=(
+                    self._cast_overflow_mtl if output_u16_narrow else None
+                ),
+                detector_sum_partial_mtl=(
+                    detector_sum_partials[ci % D]
+                    if precompute_detector_sum else None
+                ),
+                detector_sum_out_mtl=(
+                    detector_sum_chunks_mtl if precompute_detector_sum else None
+                ),
+                detector_sum_out_byte_offset=(
+                    ci * frame_elems * 4 if precompute_detector_sum else 0
+                ),
+            )
+        for ci in range(max(0, n_chunks - D), n_chunks):  # drain the in-flight tail
+            cmds[ci].waitUntilCompleted()
+        if precompute_detector_sum:
+            cmd = _queue.commandBuffer()
+            enc = cmd.computeCommandEncoder()
+            enc.setComputePipelineState_(_detsum_u8_decode_final_pipeline)
+            enc.setBuffer_offset_atIndex_(detector_sum_chunks_mtl, 0, 0)
+            enc.setBuffer_offset_atIndex_(detector_sum_final_mtl, 0, 1)
+            enc.setBytes_length_atIndex_(
+                np.array([frame_elems], dtype=np.uint32).tobytes(), 4, 2
+            )
+            enc.setBytes_length_atIndex_(
+                np.array([n_chunks], dtype=np.uint32).tobytes(), 4, 3
+            )
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                Metal.MTLSizeMake((frame_elems + 255) // 256, 1, 1),
+                Metal.MTLSizeMake(256, 1, 1),
+            )
+            enc.endEncoding()
+            cmd.commit()
+            cmd.waitUntilCompleted()
+            self.last_detector_sum = np.array(
+                _numpy_view(detector_sum_final_mtl, np.uint32, frame_elems),
+                copy=True,
+            ).reshape(frame_shape)
+            for buffer in detector_sum_partials:
+                _release_metal_buffer(buffer)
+            _release_metal_buffer(detector_sum_chunks_mtl)
+            _release_metal_buffer(detector_sum_final_mtl)
+        if (
+            fast_det_bin
+            and elem_size in (2, 4)
+            and int(self._cast_overflow_np[0]) != 0
+        ):
+            rejected_fast_outputs = tuple(fast_out_mtls)
+            self._chunk_fast_pool = []
+            _release_and_raise_if_binned_integer_overflow(
+                self._cast_overflow_np,
+                fast_det_bin,
+                dtype,
+                *rejected_fast_outputs,
+            )
+        if output_u16_narrow and int(self._cast_overflow_np[0]) != 0:
+            raise RuntimeError(
+                "output_dtype=np.uint16 cannot losslessly represent this "
+                "uint32 detector data after dead-pixel masking. Use the native "
+                "uint32 path or a smaller scan region."
+            )
+        if row_prefix and int(self._prefix_overflow_np[0]) != 0:
+            raise RuntimeError(
+                "row_prefix=True overflowed uint16 row-prefix storage. "
+                "Use the raw full-resolution path for this dataset."
+            )
+        for oi in range(len(out_views)):  # finalize after ALL GPU done (batch coherency)
+            _finalize_output(oi)
+            if fast_det_bin:
+                _finalize_fast_output(oi)
+        if verbose:
+            total = sum(chunk_n_frames)
+            elapsed = time.perf_counter() - t0
+            loaded_bytes = total * final_frame_bytes
+            gbps = loaded_bytes / elapsed / 1e9 if elapsed > 0 else float("inf")
+            label = (
+                f"fused bin{fast_det_bin} " if fast_det_bin else
+                "row-prefix " if row_prefix else ""
+            )
+            if output_u8:
+                label = "uint8 " + label
+            elif output_u16_narrow:
+                label = "uint16 " + label
+            print(
+                f"Loaded {label}chunked MPS data in {elapsed:.2f}s "
+                f"({total} frames, {loaded_bytes / 1e9:.2f} GB, "
+                f"{len(out_views)} arrays, {gbps:.1f} GB/s)"
+            )
+        if fast_det_bin:
+            return out_views, fast_out_views
+        return out_views
+
+    def load(
+        self,
+        filepath: str,
+        dataset_path: str = "entry/data/data",
+        n_frames: int | None = None,
+        verbose: bool = True,
+    ) -> np.ndarray:
+        """Load and decompress a bitshuffle+LZ4 HDF5 dataset via MPS.
+
+        Returns a zero-copy view into the pre-allocated unified memory buffer.
+        The view is overwritten on the next load() call.
+
+        Parameters
+        ----------
+        filepath : str
+            Path to the HDF5 file.
+        dataset_path : str, optional
+            Path to the dataset within the HDF5 file.
+        n_frames : int, optional
+            Number of frames to load. If None, loads all frames.
+
+        Returns
+        -------
+        np.ndarray
+            Numpy array with shape (n_frames, height, width).
+        """
+        t0 = time.perf_counter()
+
+        # ---- Read raw chunks directly into pre-allocated Metal buffer ----
+        with h5py.File(filepath, "r") as f:
+            ds = f[dataset_path]
+            total_in_file = ds.shape[0]
+            n_frames = min(n_frames, total_in_file) if n_frames else total_in_file
+            frame_shape = ds.shape[1:]
+            dtype = ds.dtype
+            frame_bytes = int(np.prod(frame_shape) * np.dtype(dtype).itemsize)
+            elem_size = np.dtype(dtype).itemsize
+            tail_elements = _bitshuffle_tail_elements(frame_bytes, elem_size)
+            self._ensure_shuf_buffer()
+            offset = 0
+            for i in range(n_frames):
+                _, raw = ds.id.read_direct_chunk((i, 0, 0))
+                chunk_len = len(raw)
+                self._co_np[i] = offset
+                self._chunk_sizes[i] = chunk_len
+                self._comp_np[offset : offset + chunk_len] = np.frombuffer(
+                    raw, dtype=np.uint8
+                )
+                offset += chunk_len
+            total_compressed = offset
+        t_read = time.perf_counter()
+
+        # ---- Parse headers directly into pre-allocated Metal buffers ----
+        # n_blocks_per_frame matches actual block count, so block_starts
+        # layout matches block_offsets indexing — no repack needed
+        n_blocks_per_frame = (frame_bytes + 8191) // 8192
+        _parse_headers(
+            self._comp_np, self._chunk_sizes, self._co_np,
+            self._bs_np, self._bc_np, n_frames, n_blocks_per_frame,
+        )
+        self._bo_np[0] = 0
+        self._bo_np[1 : n_frames + 1] = np.cumsum(self._bc_np[:n_frames])
+        max_blocks_per_frame = int(self._bc_np[:n_frames].max())
+        t_parse = time.perf_counter()
+
+        # ---- Single command buffer: LZ4 + barrier + bitshuffle ----
+        lz4_mtl = self._ensure_lz4_buffer()
+        cmd = _queue.commandBuffer()
+        enc = cmd.computeCommandEncoder()
+
+        # LZ4 decompression
+        enc.setComputePipelineState_(_h5lz4dc_pipeline)
+        enc.setBuffer_offset_atIndex_(self._comp_mtl, 0, 0)
+        enc.setBuffer_offset_atIndex_(self._co_mtl, 0, 1)
+        enc.setBuffer_offset_atIndex_(self._bs_mtl, 0, 2)
+        enc.setBuffer_offset_atIndex_(self._bc_mtl, 0, 3)
+        enc.setBuffer_offset_atIndex_(self._bo_mtl, 0, 4)
+        enc.setBytes_length_atIndex_(
+            np.array([8192], dtype=np.uint32).tobytes(), 4, 5
+        )
+        enc.setBytes_length_atIndex_(
+            np.array([frame_bytes], dtype=np.uint32).tobytes(), 4, 6
+        )
+        enc.setBuffer_offset_atIndex_(lz4_mtl, 0, 7)
+        enc.dispatchThreadgroups_threadsPerThreadgroup_(
+            Metal.MTLSizeMake(n_frames, 1, (max_blocks_per_frame + 1) // 2),
+            Metal.MTLSizeMake(32, 2, 1),
+        )
+
+        # Memory barrier between LZ4 output and bitshuffle input
+        enc.memoryBarrierWithScope_(Metal.MTLBarrierScopeBuffers)
+
+        # Bitshuffle unshuffle — n_frames in X
+        n_8kb = frame_bytes // 8192
+        if elem_size == 2:
+            groups_per_block = 8192 // (elem_size * 32)  # 128
+            groups_per_frame = n_8kb * groups_per_block   # 1152
+            frame_u16s = frame_bytes // 2
+            enc.setComputePipelineState_(_shuf16_pipeline)
+            enc.setBuffer_offset_atIndex_(lz4_mtl, 0, 0)
+            enc.setBuffer_offset_atIndex_(self._shuf_mtl, 0, 1)
+            enc.setBytes_length_atIndex_(
+                np.array([frame_u16s], dtype=np.uint32).tobytes(), 4, 2
+            )
+            enc.setBytes_length_atIndex_(
+                np.array([groups_per_block], dtype=np.uint32).tobytes(), 4, 3
+            )
+            enc.setBytes_length_atIndex_(
+                np.array([groups_per_frame], dtype=np.uint32).tobytes(), 4, 4
+            )
+            # 32 SIMD groups per threadgroup → 32x fewer launches
+            if groups_per_frame:
+                tg_count = (groups_per_frame + 31) // 32
+                enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                    Metal.MTLSizeMake(n_frames, 1, tg_count),
+                    Metal.MTLSizeMake(32, 32, 1),
+                )
+        else:
+            groups_per_block = 2048 // 32  # 64
+            groups_per_frame = n_8kb * groups_per_block
+            frame_u32s = frame_bytes // 4
+            enc.setComputePipelineState_(_shuf32_pipeline)
+            enc.setBuffer_offset_atIndex_(lz4_mtl, 0, 0)
+            enc.setBuffer_offset_atIndex_(self._shuf_mtl, 0, 1)
+            enc.setBytes_length_atIndex_(
+                np.array([frame_u32s], dtype=np.uint32).tobytes(), 4, 2
+            )
+            enc.setBytes_length_atIndex_(
+                np.array([groups_per_block], dtype=np.uint32).tobytes(), 4, 3
+            )
+            enc.setBytes_length_atIndex_(
+                np.array([groups_per_frame], dtype=np.uint32).tobytes(), 4, 4
+            )
+            if groups_per_frame:
+                tg_count = (groups_per_frame + 31) // 32
+                enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                    Metal.MTLSizeMake(n_frames, 1, tg_count),
+                    Metal.MTLSizeMake(32, 32, 1),
+                )
+        if tail_elements:
+            _encode_bitshuffle_tail(
+                enc,
+                in_mtl=lz4_mtl,
+                out_mtl=self._shuf_mtl,
+                out_byte_offset=0,
+                n_frames=n_frames,
+                frame_bytes=frame_bytes,
+                elem_size=elem_size,
+            )
+
+        enc.endEncoding()
+        cmd.commit()
+        cmd.waitUntilCompleted()
+        t_gpu = time.perf_counter()
+
+        # ---- Zero-copy result via unified memory ----
+        total_bytes = n_frames * frame_bytes
+        result = self._result_np[:total_bytes].view(dtype).reshape(
+            (n_frames,) + frame_shape
+        )
+        t_total = time.perf_counter()
+
+        if verbose:
+            print(
+                f"MPSDecompressor.load: {n_frames} frames, "
+                f"{total_compressed / 1e6:.0f} MB compressed → "
+                f"{total_bytes / 1e6:.0f} MB decompressed"
+            )
+            print(
+                f"  read: {t_read - t0:.3f}s | "
+                f"parse: {t_parse - t_read:.3f}s | "
+                f"gpu: {t_gpu - t_parse:.3f}s | "
+                f"total: {t_total - t0:.3f}s"
+            )
+        return result
+
+    def load_prepared_frames(
+        self,
+        prepared: dict,
+        *,
+        det_bin: int = 1,
+        pixel_mask: np.ndarray | None = None,
+        verbose: bool = False,
+        output_dtype: type | np.dtype | str | None = None,
+    ) -> np.ndarray:
+        """Decompress selected prepared HDF5 chunks into an MPS-backed array.
+
+        ``prepared`` is the sparse frame plan returned by
+        :func:`quantem.gpu.io.load._prepare_master_frames`. The compressed bytes
+        are copied into unified-memory Metal buffers and decoded with the same
+        LZ4/bitshuffle kernels as full-Master MPS loads.
+        """
+        t0 = time.perf_counter()
+        det_bin = int(det_bin)
+        if det_bin < 1:
+            raise ValueError("det_bin must be >= 1.")
+        read_buffer = prepared["read_buffer"]
+        total_frames = int(prepared["total_frames"])
+        frame_shape = tuple(int(v) for v in prepared["frame_shape"])
+        dtype = np.dtype(prepared["dtype"])
+        final_dtype = _normalize_output_dtype(output_dtype) or dtype
+        frame_bytes = int(prepared["frame_bytes"])
+        elem_size = int(dtype.itemsize)
+        _bitshuffle_tail_elements(frame_bytes, elem_size)
+        output_u8 = final_dtype == np.dtype(np.uint8)
+        output_u16_narrow = (
+            final_dtype == np.dtype(np.uint16)
+            and dtype == np.dtype(np.uint32)
+        )
+        if final_dtype != dtype and not output_u8 and not output_u16_narrow:
+            raise ValueError(
+                f"MPS sparse IO cannot cast {dtype} to {final_dtype} during "
+                "decode. Use native dtype or request uint8 browse clipping."
+            )
+        if total_frames > self.max_frames:
+            raise ValueError(
+                f"Prepared crop has {total_frames} frames but this MPS decoder "
+                f"was allocated for {self.max_frames}."
+            )
+        if len(read_buffer) > self._comp_np.size:
+            raise ValueError(
+                f"Prepared compressed crop is {len(read_buffer)} bytes but this "
+                f"MPS decoder was allocated for {self._comp_np.size} bytes."
+            )
+        chunk_offsets = np.asarray(prepared["chunk_offsets"], dtype=np.uint64)
+        if int(chunk_offsets.max(initial=0)) > np.iinfo(np.uint32).max:
+            raise ValueError(
+                "MPS sparse crop compressed buffer exceeds 32-bit chunk offsets; "
+                "load a smaller scan_region."
+            )
+        block_starts = np.asarray(prepared["block_starts"], dtype=np.uint32)
+        block_counts = np.asarray(prepared["block_counts"], dtype=np.uint32)
+        block_offsets = np.asarray(prepared["block_offsets"], dtype=np.uint32)
+        n_blocks = int(block_starts.size)
+        if n_blocks > self._bs_np.size:
+            raise ValueError(
+                f"Prepared crop has {n_blocks} LZ4 blocks but this MPS decoder "
+                f"was allocated for {self._bs_np.size}."
+            )
+
+        self._comp_np[: len(read_buffer)] = read_buffer
+        self._co_np[:total_frames] = chunk_offsets.astype(np.uint32, copy=False)
+        self._bs_np[:n_blocks] = block_starts
+        self._bc_np[:total_frames] = block_counts[:total_frames]
+        self._bo_np[: total_frames + 1] = block_offsets[: total_frames + 1]
+        max_blocks = int(block_counts[:total_frames].max(initial=1))
+
+        if pixel_mask is None:
+            pixel_mask = prepared.get("pixel_mask")
+        if det_bin > 1:
+            if output_u16_narrow:
+                raise ValueError(
+                    "MPS sparse detector-bin IO cannot narrow uint32 to uint16 "
+                    "during binning. Use native uint32 or dtype='u8' for "
+                    "explicit clipped browsing."
+                )
+            det_row, det_col = frame_shape
+            if det_row % det_bin or det_col % det_bin:
+                raise ValueError(
+                    f"Detector shape {frame_shape} is not divisible by det_bin={det_bin}."
+                )
+            self._set_mask(pixel_mask, det_row, det_col)
+            if elem_size in (2, 4):
+                self._cast_overflow_np[0] = 0
+            out_shape = (det_row // det_bin, det_col // det_bin)
+            out_frame_bytes = out_shape[0] * out_shape[1] * elem_size
+            out_total_bytes = total_frames * out_frame_bytes
+            out_mtl = None
+            try:
+                out_mtl = _metal_buffer_alloc(out_total_bytes)
+                out_np = _numpy_view(out_mtl, np.uint8, out_total_bytes)
+                cmd = self._submit_gpu_binned(
+                    total_frames,
+                    frame_bytes,
+                    elem_size,
+                    0,
+                    det_row,
+                    det_col,
+                    det_bin,
+                    self._comp_mtl,
+                    self._co_mtl,
+                    self._bs_mtl,
+                    self._bc_mtl,
+                    self._bo_mtl,
+                    max_blocks,
+                    out_mtl=out_mtl,
+                )
+                cmd.waitUntilCompleted()
+                if (
+                    elem_size in (2, 4)
+                    and int(self._cast_overflow_np[0]) != 0
+                    and not output_u8
+                ):
+                    _raise_if_binned_integer_overflow(
+                        self._cast_overflow_np,
+                        det_bin,
+                        dtype,
+                    )
+                out = (
+                    out_np.view(dtype)
+                    .reshape((total_frames,) + out_shape)
+                    .view(_MtlArray)
+                )
+                out._mtl = out_mtl
+                if output_u8:
+                    clipped = _cast_mtl_integer_to_u8(out)
+                    out._mtl = None
+                    _release_metal_buffer(out_mtl)
+                    out_mtl = None
+                    out = clipped
+                else:
+                    out_mtl = None
+            except Exception:
+                _release_unique_metal_buffers(out_mtl)
+                raise
+        else:
+            if output_u8 or output_u16_narrow:
+                self._set_mask(
+                    pixel_mask,
+                    int(frame_shape[0]),
+                    int(frame_shape[1]),
+                )
+            self._set_bad_pixels(pixel_mask, frame_shape)
+            zero_bad = bool(self._bad_idx_count and elem_size in (2, 4))
+            frame_elems = int(np.prod(frame_shape, dtype=np.uint64))
+            final_frame_bytes = frame_elems * int(final_dtype.itemsize)
+            out_total_bytes = total_frames * frame_bytes
+            out_mtl = None
+            cast_u8_out_mtl = None
+            cast_u16_out_mtl = None
+            try:
+                out_mtl = _metal_buffer_alloc(out_total_bytes)
+                if output_u8:
+                    cast_u8_out_mtl = _metal_buffer_alloc(
+                        total_frames * final_frame_bytes
+                    )
+                elif output_u16_narrow:
+                    cast_u16_out_mtl = _metal_buffer_alloc(
+                        total_frames * final_frame_bytes
+                    )
+                    self._cast_overflow_np[0] = 0
+                cmd = self._submit_gpu(
+                    total_frames,
+                    frame_bytes,
+                    elem_size,
+                    0,
+                    self._comp_mtl,
+                    self._co_mtl,
+                    self._bs_mtl,
+                    self._bc_mtl,
+                    self._bo_mtl,
+                    max_blocks,
+                    out_mtl=out_mtl,
+                    zero_bad=zero_bad,
+                    det_shape=frame_shape,
+                    cast_u8_out_mtl=cast_u8_out_mtl,
+                    cast_u8_nelem=(
+                        total_frames * frame_elems if output_u8 else None
+                    ),
+                    cast_u16_out_mtl=cast_u16_out_mtl,
+                    cast_u16_nelem=(
+                        total_frames * frame_elems if output_u16_narrow else None
+                    ),
+                    cast_u16_ndet=(
+                        frame_elems if output_u16_narrow else None
+                    ),
+                    cast_u16_overflow_mtl=(
+                        self._cast_overflow_mtl
+                        if output_u16_narrow
+                        else None
+                    ),
+                )
+                cmd.waitUntilCompleted()
+                if output_u16_narrow and int(self._cast_overflow_np[0]) != 0:
+                    raise RuntimeError(
+                        "output_dtype=np.uint16 cannot losslessly represent "
+                        "this uint32 detector data after dead-pixel masking. "
+                        "Use the native uint32 path."
+                    )
+                if output_u8:
+                    final_mtl = cast_u8_out_mtl
+                    _release_metal_buffer(out_mtl)
+                    out_mtl = None
+                elif output_u16_narrow:
+                    final_mtl = cast_u16_out_mtl
+                    _release_metal_buffer(out_mtl)
+                    out_mtl = None
+                else:
+                    final_mtl = out_mtl
+                out = _numpy_view(
+                    final_mtl,
+                    final_dtype,
+                    total_frames * frame_elems,
+                ).reshape((total_frames,) + frame_shape).view(_MtlArray)
+                out._mtl = final_mtl
+                if output_u8:
+                    cast_u8_out_mtl = None
+                elif output_u16_narrow:
+                    cast_u16_out_mtl = None
+                else:
+                    out_mtl = None
+            except Exception:
+                _release_unique_metal_buffers(
+                    out_mtl,
+                    cast_u8_out_mtl,
+                    cast_u16_out_mtl,
+                )
+                raise
+        if verbose:
+            print(
+                f"MPS sparse crop: {total_frames} frames, "
+                f"{len(read_buffer) / 1e6:.0f} MB compressed -> "
+                f"{out.nbytes / 1e6:.0f} MB in {time.perf_counter() - t0:.3f}s"
+            )
+        return out
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+def load_master_chunked(
+    master_path: str,
+    *,
+    pixel_mask: np.ndarray | None = None,
+    apply_mask: bool = True,
+    verbose: bool = True,
+    target_bytes: int | None = None,
+    row_prefix: bool = False,
+    fast_det_bin: int | None = None,
+    output_dtype: type | np.dtype | str | None = None,
+    precompute_detector_sum: bool = False,
+) -> list:
+    """Explicit zero-copy MPS no-bin IO step returning Metal-backed chunks."""
+    plan = plan_master(master_path)
+    _bitshuffle_tail_elements(plan.frame_bytes, plan.elem_size)
+    if pixel_mask is None and apply_mask:
+        pixel_mask = _read_pixel_mask(plan.master_path)
+    dec = _get_cached_decompressor(
+        plan.frame_bytes,
+        max(plan.chunk_n_frames),
+        n_blocks_per_frame=plan.n_blocks_per_frame,
+        max_compressed_bytes=_max_compressed_bytes_for_plan(plan),
+    )
+    result = dec.load_master_chunked(
+        plan.master_path,
+        pixel_mask=pixel_mask,
+        verbose=verbose,
+        target_bytes=target_bytes,
+        row_prefix=row_prefix,
+        fast_det_bin=fast_det_bin,
+        output_dtype=output_dtype,
+        precompute_detector_sum=precompute_detector_sum,
+    )
+    detector_sum = dec.last_detector_sum
+    recyclable = (
+        target_bytes is not None
+        and not row_prefix
+        and fast_det_bin is None
+        and output_dtype is None
+        and not precompute_detector_sum
+        and not isinstance(result, tuple)
+    )
+    if recyclable:
+        for chunk in result:
+            chunk._recycle_decoder = dec
+    # The returned arrays own their buffers (released by MPSChunked4DSTEM.free).
+    # Anything still sitting in a pool is scratch this load allocated and never
+    # handed out; dropping the pool alone strands it forever, because PyObjC does
+    # not release a Metal buffer when its Python wrapper is collected. That was
+    # ~10 GB per no-bin tilt, which is what stopped a seven-tilt merge fitting.
+    handed_out = set()
+    for group in (result if isinstance(result, tuple) else (result,)):
+        for chunk in group or ():
+            buf = getattr(chunk, "_mtl", None)
+            if buf is not None:
+                handed_out.add(_buffer_key(buf))
+    for pool_name in (
+        "_chunk_out_pool", "_chunk_u8_pool", "_chunk_u16_pool",
+        "_chunk_fast_pool", "_chunk_narrow_scratch_pool",
+    ):
+        for buf in getattr(dec, pool_name, ()) or ():
+            if _buffer_key(buf) not in handed_out:
+                _release_metal_buffer(buf)
+        setattr(dec, pool_name, [])
+    dec.drop_output_pool_refs()
+    if precompute_detector_sum:
+        return result, detector_sum
+    return result
+
+
+def load_mps_4dstem(
+    master_path: str,
+    *,
+    scan_shape: tuple[int, int] | None = None,
+    apply_mask: bool = True,
+    pixel_mask: np.ndarray | None = None,
+    verbose: bool = True,
+    compact: bool = True,
+    compact_target_gb: float = 1.5,
+    row_prefix: bool = False,
+    det_bin: int = 1,
+    fast_det_bin: int | None = None,
+    output_dtype: type | np.dtype | str | None = None,
+    precompute_detector_sum: bool = False,
+    skip_mps_memory_check: bool | None = None,
+) -> MPSChunked4DSTEM:
+    """Load full no-bin Arina data as zero-copy MPS chunks for viewing.
+
+    This is the explicit IO half of the Apple-Silicon viewer path. It performs
+    disk IO + Metal decompression only, returning chunk arrays that remain in
+    unified-memory Metal buffers. Pass the result to
+    ``quantem.widget.show4dstem_mps.show_4dstem_mps`` to display it
+    without copying.
+
+    ``fast_det_bin`` defaults to ``None`` so a plain no-bin load sits at the
+    theoretical floor — exactly the data (19.3 GB for 512x512x192x192), with no
+    bin2 viewer sidecar. The viewer builds that sidecar itself on first scrub
+    (``ChunkedFrames.ensure_fast_interaction``), so compute paths (dpc/virtual)
+    never pay for it and a 24 GB Mac no longer goes into swap on load. Pass
+    ``fast_det_bin=2`` to eagerly fuse the sidecar in the same decode pass when
+    you know a viewer is about to open and want zero first-scrub latency.
+
+    ``compact=True`` groups source chunks into approximately 1.5 GB output
+    buffers. This remains zero-copy, reduces Metal allocation/dispatch pressure
+    on 24 GB Macs, and is faster than either one output per source file or the
+    previous 3.6 GB grouping. Set ``compact=False`` only when source-file chunk
+    boundaries are required by a specialized caller.
+    """
+    t0 = time.perf_counter()
+    plan = plan_master(master_path)
+    _bitshuffle_tail_elements(plan.frame_bytes, plan.elem_size)
+    final_dtype = _normalize_output_dtype(output_dtype) or plan.dtype
+    det_bin = int(det_bin)
+    if det_bin < 1:
+        raise ValueError("det_bin must be >= 1.")
+    if det_bin > 1 and row_prefix:
+        raise ValueError("row_prefix=True is only valid for det_bin=1.")
+    if precompute_detector_sum and (
+        det_bin != 1 or final_dtype != np.dtype(np.uint8)
+    ):
+        raise ValueError(
+            "precompute_detector_sum=True requires det_bin=1 and lossless "
+            "output_dtype=np.uint8."
+        )
+    if det_bin > 1 or row_prefix:
+        fast_det_bin = None
+    elif fast_det_bin is not None:
+        fast_det_bin = int(fast_det_bin)
+        if fast_det_bin <= 1:
+            fast_det_bin = None
+    if (
+        det_bin > 1
+        and final_dtype != plan.dtype
+        and final_dtype != np.dtype(np.uint8)
+    ):
+        raise ValueError(
+            "MPS detector-bin loads support native dtype or dtype='u8' browse "
+            "clipping. Use det_bin=1 for guarded uint32 -> uint16 narrowing."
+        )
+    _check_mps_memory_guard(
+        plan,
+        det_bin=det_bin,
+        output_dtype=final_dtype if final_dtype != plan.dtype else None,
+        skip_memory_check=skip_mps_memory_check,
+    )
+    # The eager fast-detector sidecar has matching per-source output arrays;
+    # keep its established layout instead of silently grouping only one half.
+    target_bytes = (
+        int(float(compact_target_gb) * 1e9)
+        if (
+            compact
+            and fast_det_bin is None
+            and not (
+                final_dtype == np.dtype(np.uint16)
+                and plan.dtype == np.dtype(np.uint32)
+            )
+        )
+        else None
+    )
+    if verbose:
+        layout = (
+            f"detector-bin{det_bin} "
+            if det_bin > 1 else
+            f"full+bin{fast_det_bin} "
+            if fast_det_bin else
+            "row-prefix " if row_prefix else ""
+        )
+        if final_dtype == np.dtype(np.uint8):
+            layout = "uint8 " + layout
+        print(f"Loading {layout}MPS chunks from {os.path.basename(plan.master_path)}")
+    fast_chunks = None
+    detector_sum = None
+    if det_bin > 1:
+        if pixel_mask is None and apply_mask:
+            pixel_mask = _read_pixel_mask(plan.master_path)
+        arr = load_master(
+            plan.master_path,
+            det_bin=det_bin,
+            pixel_mask=pixel_mask,
+            verbose=False,
+            output_dtype=final_dtype if final_dtype != plan.dtype else None,
+        )
+        chunks = [arr]
+    else:
+        result = load_master_chunked(
+            plan.master_path,
+            pixel_mask=pixel_mask,
+            apply_mask=apply_mask,
+            verbose=False,
+            target_bytes=target_bytes,
+            row_prefix=row_prefix,
+            fast_det_bin=fast_det_bin,
+            output_dtype=final_dtype if final_dtype != plan.dtype else None,
+            precompute_detector_sum=precompute_detector_sum,
+        )
+        if precompute_detector_sum:
+            chunks, detector_sum = result
+            fast_chunks = None
+        elif fast_det_bin:
+            chunks, fast_chunks = result
+        else:
+            chunks = result
+            fast_chunks = None
+    inferred_scan = scan_shape
+    if inferred_scan is None:
+        root = int(round(plan.ntrigger ** 0.5))
+        if root * root == plan.ntrigger:
+            inferred_scan = (root, root)
+    metadata = {
+        "backend": "mps",
+        "master_path": plan.master_path,
+        "scan_shape": inferred_scan,
+        "detector_shape": tuple(int(x) // det_bin for x in plan.detector_shape),
+        "raw_detector_shape": plan.detector_shape,
+        "det_bin": det_bin,
+        "source_dtype": str(plan.dtype),
+        "dtype": str(final_dtype),
+        "n_frames": plan.total_frames,
+        "chunk_n_frames": list(plan.chunk_n_frames),
+        "n_chunks": len(chunks),
+        "nbytes": int(sum(int(c.nbytes) for c in chunks)),
+        "fast_det_bin": int(fast_det_bin) if fast_det_bin else None,
+        "fast_detector_shape": (
+            tuple(int(x) // int(fast_det_bin) for x in plan.detector_shape)
+            if fast_det_bin else None
+        ),
+        "fast_nbytes": (
+            int(sum(int(c.nbytes) for c in fast_chunks))
+            if fast_det_bin and fast_chunks is not None else 0
+        ),
+        "zero_copy": True,
+        "row_prefix": bool(row_prefix),
+    }
+    data = MPSChunked4DSTEM(
+        chunks=chunks,
+        metadata=metadata,
+        master_path=plan.master_path,
+        scan_shape=inferred_scan,
+        row_prefix=bool(row_prefix),
+        det_bin=det_bin,
+        fast_chunks=fast_chunks if det_bin == 1 else None,
+        fast_det_bin=int(fast_det_bin) if fast_det_bin else None,
+        detector_sum=detector_sum,
+    )
+    if verbose:
+        elapsed = time.perf_counter() - t0
+        gbps = data.nbytes / elapsed / 1e9 if elapsed > 0 else float("inf")
+        layout = (
+            f" detector-bin{det_bin}"
+            if det_bin > 1 else
+            f" full+bin{fast_det_bin}"
+            if fast_det_bin else
+            " row-prefix" if row_prefix else ""
+        )
+        total_bytes = data.nbytes + int(metadata.get("fast_nbytes") or 0)
+        print(
+            f"Loaded MPS{layout} chunks in {elapsed:.2f}s "
+            f"({data.n_frames} frames, {total_bytes / 1e9:.2f} GB, "
+            f"{gbps:.1f} GB/s raw)"
+        )
+    return data
+
+
+def load_prepared_frames(
+    prepared: dict,
+    *,
+    det_bin: int = 1,
+    pixel_mask: np.ndarray | None = None,
+    verbose: bool = False,
+    output_dtype: type | np.dtype | str | None = None,
+) -> np.ndarray:
+    """Decode sparse prepared HDF5 frames with the MPS backend.
+
+    This is the MPS counterpart to the CUDA ``_decompress_prepared`` path used
+    by crop-first IO. It expects the caller to have already selected the scan
+    frames and packed their compressed HDF5 chunks.
+    """
+    frame_bytes = int(prepared["frame_bytes"])
+    _bitshuffle_tail_elements(frame_bytes, np.dtype(prepared["dtype"]).itemsize)
+    total_frames = int(prepared["total_frames"])
+    read_buffer = prepared["read_buffer"]
+    n_blocks_per_frame = (frame_bytes + 8191) // 8192
+    max_comp = max(1, int(len(read_buffer)))
+    dec = MPSDecompressor(
+        max_compressed_bytes=max_comp,
+        max_frames=total_frames,
+        frame_bytes=frame_bytes,
+        n_blocks_per_frame=n_blocks_per_frame,
+        gpu_batch=total_frames,
+    )
+    return dec.load_prepared_frames(
+        prepared,
+        det_bin=det_bin,
+        pixel_mask=pixel_mask,
+        verbose=verbose,
+        output_dtype=output_dtype,
+    )
+
+
+_decompressor_cache: dict[tuple[int, int, int], MPSDecompressor] = {}
+
+# GPU sub-batch sizing.
+#
+# Each chunk may contain 100K+ frames (e.g. a 100K-frame dataset: 100,352 frames
+# × 73,728 bytes/frame = 7.4 GB per chunk). Allocating full-chunk _lz4 +
+# _shuf intermediate buffers (2 × 7.4 GB = 14.8 GB) plus the output buffer
+# exceeds 24 GB, causing Metal to swap to SSD and GPU time to spike from
+# ~3s to 30s+.
+#
+# Large source shards retain ~7K-frame sub-batches (0.5 GB per intermediate).
+# Normal ~10K-frame detector shards use one source-shard-aligned batch only
+# when the fused exact-bin kernel removes the full-resolution unshuffle scratch.
+# The established large-shard policy was benchmarked on M5 24 GB:
+#   batch=5000  → 4.9s total  (optimal — fits L2/SLC well)
+#   batch=10000 → 5.5s        (slight pressure)
+#   batch=20000 → 6.5s
+#   batch=40000 → 9.3s        (memory pressure begins)
+#   batch=100K  → 13.1s       (significant GPU stalls)
+#
+# After loading, _out_mtl is freed but the decompressor is cached (keeps
+# _lz4/_shuf + metadata buffers ≈ 1.5 GB). Warm loads skip shader
+# compilation and buffer allocation: ~0.7s for 65K frames on local NVMe.
+_GPU_BATCH_TARGET_GB = 0.5
+
+
+def _get_decompressor(
+    frame_bytes: int,
+    max_frames: int = 11_000,
+    *,
+    whole_shard: bool = False,
+) -> MPSDecompressor:
+    """Get a decompressor with bounded or source-shard-aligned scratch."""
+    bounded_batch = min(
+        max_frames,
+        int(_GPU_BATCH_TARGET_GB * 1e9 / frame_bytes),
+    )
+    whole_shard_bytes = max_frames * frame_bytes
+    gpu_batch = (
+        max_frames
+        if whole_shard and whole_shard_bytes <= 1_000_000_000
+        else bounded_batch
+    )
+    cache_key = (frame_bytes, max_frames, gpu_batch)
+    if cache_key not in _decompressor_cache:
+        n_blocks = (frame_bytes + 8191) // 8192
+        # Scale compressed buffer: worst observed bitshuffle+LZ4 ratio ~7:1,
+        # use //4 for headroom (386 MB for uint32, 256 MB for uint16)
+        max_comp = max(256 * 1024 * 1024, max_frames * frame_bytes // 4)
+        _decompressor_cache[cache_key] = MPSDecompressor(
+            max_compressed_bytes=max_comp,
+            max_frames=max_frames,
+            frame_bytes=frame_bytes,
+            n_blocks_per_frame=n_blocks,
+            gpu_batch=gpu_batch,
+        )
+    return _decompressor_cache[cache_key]
+
+
+def _parse_master_uncached(master_path: str) -> MPSMasterPlan:
+    """Read metadata and chunk file list from an Arina master file."""
+    master_path = os.path.abspath(os.fspath(master_path))
+    master_dir = os.path.dirname(master_path)
+    prefix = os.path.basename(master_path).replace("_master.h5", "")
+    with h5py.File(master_path, "r") as f:
+        chunk_keys = sorted(f["entry/data"].keys())
+        ds0 = f[f"entry/data/{chunk_keys[0]}"]
+        det_shape = tuple(int(x) for x in ds0.shape[1:])
+        dtype = np.dtype(ds0.dtype)
+        spec = f["entry/instrument/detector/detectorSpecific"]
+        ntrigger = int(spec["ntrigger"][()])
+    chunk_files = []
+    chunk_n_frames = []
+    missing = []
+    for k in chunk_keys:
+        suffix = k.split("_")[-1]
+        cf = os.path.join(master_dir, f"{prefix}_data_{suffix}.h5")
+        if not os.path.exists(cf):
+            missing.append(os.path.basename(cf))
+            continue
+        chunk_files.append(cf)
+        with h5py.File(cf, "r") as f:
+            chunk_n_frames.append(f["entry/data/data"].shape[0])
+    if missing:
+        raise FileNotFoundError(
+            f"Missing {len(missing)}/{len(chunk_keys)} chunk files for "
+            f"{os.path.basename(master_path)}: {missing}"
+        )
+    return MPSMasterPlan(
+        master_path=master_path,
+        detector_shape=det_shape,
+        dtype=dtype,
+        ntrigger=ntrigger,
+        chunk_files=tuple(chunk_files),
+        chunk_n_frames=tuple(int(n) for n in chunk_n_frames),
+    )
+
+
+def plan_master(master_path: str) -> MPSMasterPlan:
+    """Return the cached MPS load plan for an Arina master."""
+    key = _file_cache_key(master_path)
+    cached = _master_plan_cache.get(key)
+    if cached is not None:
+        return cached
+    plan = _parse_master_uncached(master_path)
+    _master_plan_cache[key] = plan
+    return plan

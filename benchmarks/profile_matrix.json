@@ -45,6 +45,16 @@
       "authority": "macbook-pro-m5-max-128gb",
       "runner": "physical-hardware-browser",
       "minimum_memory_gate": "8 GB total laptop RAM"
+    },
+    "vulkan": {
+      "authority": "android-physical-device-unqualified",
+      "runner": "physical-android-vulkan",
+      "minimum_memory_gate": null
+    },
+    "direct3d": {
+      "authority": "windows-physical-device-unqualified",
+      "runner": "physical-windows-direct3d",
+      "minimum_memory_gate": null
     }
   },
   "capabilities": {
@@ -231,6 +241,25 @@
     {"id": "ssb.calibration-200-nelder-mead::cuda", "capability": "ssb.calibration-200-nelder-mead", "backend": "cuda", "support_level": "required", "pr_gate": "deterministic-short-history", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-cuda", "state": "ready"},
     {"id": "ssb.calibration-200-nelder-mead::mps", "capability": "ssb.calibration-200-nelder-mead", "backend": "mps", "support_level": "required", "pr_gate": "deterministic-short-history", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-python-mps", "state": "evidence-gap"},
     {"id": "ssb.calibration-200-nelder-mead::swift-metal", "capability": "ssb.calibration-200-nelder-mead", "backend": "swift-metal", "support_level": "required", "pr_gate": "deterministic-short-history", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-native-swift-metal", "state": "ready"},
-    {"id": "ssb.calibration-200-nelder-mead::webgpu", "capability": "ssb.calibration-200-nelder-mead", "backend": "webgpu", "support_level": "not-implemented", "pr_gate": "unsupported-contract", "scheduled_profile": "none", "release_signoff": false, "runner": "portable-ci", "state": "unsupported"}
+    {"id": "ssb.calibration-200-nelder-mead::webgpu", "capability": "ssb.calibration-200-nelder-mead", "backend": "webgpu", "support_level": "not-implemented", "pr_gate": "unsupported-contract", "scheduled_profile": "none", "release_signoff": false, "runner": "portable-ci", "state": "unsupported"},
+
+    {"id":"geometry.scan-quarter-turn::vulkan","capability":"geometry.scan-quarter-turn","backend":"vulkan","support_level":"not-implemented","pr_gate":"unsupported-contract","scheduled_profile":"none","release_signoff":false,"runner":"portable-ci","state":"unsupported"},
+    {"id":"geometry.scan-quarter-turn::direct3d","capability":"geometry.scan-quarter-turn","backend":"direct3d","support_level":"not-implemented","pr_gate":"unsupported-contract","scheduled_profile":"none","release_signoff":false,"runner":"portable-ci","state":"unsupported"},
+    {"id":"io.decode-bin-provenance::vulkan","capability":"io.decode-bin-provenance","backend":"vulkan","support_level":"partial-hardware","pr_gate":"native-contract-and-android-build","scheduled_profile":"none","release_signoff":false,"runner":"physical-android-vulkan","state":"evidence-gap"},
+    {"id":"io.decode-bin-provenance::direct3d","capability":"io.decode-bin-provenance","backend":"direct3d","support_level":"not-implemented","pr_gate":"unsupported-contract","scheduled_profile":"none","release_signoff":false,"runner":"portable-ci","state":"unsupported"},
+    {"id":"io.selective-scan-loading::vulkan","capability":"io.selective-scan-loading","backend":"vulkan","support_level":"not-implemented","pr_gate":"unsupported-contract","scheduled_profile":"none","release_signoff":false,"runner":"portable-ci","state":"unsupported"},
+    {"id":"io.selective-scan-loading::direct3d","capability":"io.selective-scan-loading","backend":"direct3d","support_level":"not-implemented","pr_gate":"unsupported-contract","scheduled_profile":"none","release_signoff":false,"runner":"portable-ci","state":"unsupported"},
+    {"id":"detector.integer-products::vulkan","capability":"detector.integer-products","backend":"vulkan","support_level":"partial-hardware","pr_gate":"native-contract-and-android-build","scheduled_profile":"none","release_signoff":false,"runner":"physical-android-vulkan","state":"evidence-gap"},
+    {"id":"detector.integer-products::direct3d","capability":"detector.integer-products","backend":"direct3d","support_level":"not-implemented","pr_gate":"unsupported-contract","scheduled_profile":"none","release_signoff":false,"runner":"portable-ci","state":"unsupported"},
+    {"id":"screening.prepared-products::vulkan","capability":"screening.prepared-products","backend":"vulkan","support_level":"partial-hardware","pr_gate":"native-contract-and-android-build","scheduled_profile":"none","release_signoff":false,"runner":"physical-android-vulkan","state":"evidence-gap"},
+    {"id":"screening.prepared-products::direct3d","capability":"screening.prepared-products","backend":"direct3d","support_level":"not-implemented","pr_gate":"unsupported-contract","scheduled_profile":"none","release_signoff":false,"runner":"portable-ci","state":"unsupported"},
+    {"id":"dpc.com-rotation-idpc::vulkan","capability":"dpc.com-rotation-idpc","backend":"vulkan","support_level":"partial-hardware","pr_gate":"native-contract-and-android-build","scheduled_profile":"none","release_signoff":false,"runner":"physical-android-vulkan","state":"evidence-gap"},
+    {"id":"dpc.com-rotation-idpc::direct3d","capability":"dpc.com-rotation-idpc","backend":"direct3d","support_level":"not-implemented","pr_gate":"unsupported-contract","scheduled_profile":"none","release_signoff":false,"runner":"portable-ci","state":"unsupported"},
+    {"id":"display.transform-histogram-color-fft::vulkan","capability":"display.transform-histogram-color-fft","backend":"vulkan","support_level":"partial-hardware","pr_gate":"native-contract-and-android-build","scheduled_profile":"none","release_signoff":false,"runner":"physical-android-vulkan","state":"evidence-gap"},
+    {"id":"display.transform-histogram-color-fft::direct3d","capability":"display.transform-histogram-color-fft","backend":"direct3d","support_level":"partial-hardware","pr_gate":"frozen-shader-and-windows-parity","scheduled_profile":"none","release_signoff":false,"runner":"physical-windows-direct3d","state":"evidence-gap"},
+    {"id":"ssb.object-phase-loss::vulkan","capability":"ssb.object-phase-loss","backend":"vulkan","support_level":"not-implemented","pr_gate":"unsupported-contract","scheduled_profile":"none","release_signoff":false,"runner":"portable-ci","state":"unsupported"},
+    {"id":"ssb.object-phase-loss::direct3d","capability":"ssb.object-phase-loss","backend":"direct3d","support_level":"not-implemented","pr_gate":"unsupported-contract","scheduled_profile":"none","release_signoff":false,"runner":"portable-ci","state":"unsupported"},
+    {"id":"ssb.calibration-200-nelder-mead::vulkan","capability":"ssb.calibration-200-nelder-mead","backend":"vulkan","support_level":"not-implemented","pr_gate":"unsupported-contract","scheduled_profile":"none","release_signoff":false,"runner":"portable-ci","state":"unsupported"},
+    {"id":"ssb.calibration-200-nelder-mead::direct3d","capability":"ssb.calibration-200-nelder-mead","backend":"direct3d","support_level":"not-implemented","pr_gate":"unsupported-contract","scheduled_profile":"none","release_signoff":false,"runner":"portable-ci","state":"unsupported"}
   ]
 }

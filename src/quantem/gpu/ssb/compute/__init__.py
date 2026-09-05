@@ -1,8 +1,7 @@
-"""Private compute backends for the public :class:`quantem.gpu.SSB` API."""
+"""Compatibility imports; canonical implementation: ``quantem.gpu.ssb.backends``."""
 
-from .protocol import SSBPrecision, SSBProtocol
-
-__all__ = [
-    "SSBPrecision",
-    "SSBProtocol",
-]
+from quantem.gpu.ssb.backends import (
+    SSBPrecision as SSBPrecision,
+    SSBProtocol as SSBProtocol,
+    __all__ as __all__,
+)

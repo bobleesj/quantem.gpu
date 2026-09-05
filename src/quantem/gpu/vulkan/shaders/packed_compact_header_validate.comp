@@ -1,0 +1,80 @@
+#version 450
+
+// Validate the exact compact detector addressing and accumulate per-column
+// byte costs without walking the complete header stream on the CPU.
+layout(local_size_x = 256) in;
+
+layout(set = 0, binding = 0, std430) readonly buffer Headers {
+  uint values[];
+} headers;
+layout(set = 0, binding = 1, std430) buffer ColumnCosts {
+  uint values[];
+} column_costs;
+layout(set = 0, binding = 2, std430) buffer ValidationStatus {
+  uint value;
+} validation_status;
+
+layout(push_constant) uniform Parameters {
+  uint pixel_count;
+  uint tile_count;
+  uint header_words_per_pixel;
+  uint payload_words;
+} parameters;
+
+void main() {
+  uint pixel = gl_GlobalInvocationID.x;
+  if (pixel >= parameters.pixel_count)
+    return;
+
+  uint checkpoint_words = (parameters.tile_count + 31u) / 32u;
+  uint width_words = (parameters.tile_count + 7u) / 8u;
+  uint expected_words = checkpoint_words + width_words;
+  if (parameters.header_words_per_pixel != expected_words) {
+    atomicOr(validation_status.value, 1u);
+    return;
+  }
+
+  uint base = pixel * expected_words;
+  uint pixel_base = headers.values[base];
+  uint relative_word = 0u;
+  uint errors = 0u;
+  for (uint checkpoint = 0u; checkpoint < checkpoint_words; ++checkpoint) {
+    if (checkpoint != 0u &&
+        headers.values[base + checkpoint] != relative_word)
+      errors |= 2u;
+    uint first_width_word = checkpoint * 4u;
+    uint words_in_checkpoint = min(4u, width_words - first_width_word);
+    for (uint word = 0u; word < words_in_checkpoint; ++word) {
+      uint packed = headers.values[
+          base + checkpoint_words + first_width_word + word];
+      uint remaining_tiles = parameters.tile_count -
+          (first_width_word + word) * 8u;
+      uint width_count = min(8u, remaining_tiles);
+      for (uint nibble = 0u; nibble < width_count; ++nibble) {
+        uint width = (packed >> (nibble * 4u)) & 15u;
+        if (width > 8u)
+          errors |= 4u;
+        relative_word += width;
+      }
+    }
+  }
+
+  bool coverage_invalid = pixel_base > parameters.payload_words ||
+      relative_word > parameters.payload_words -
+          min(pixel_base, parameters.payload_words);
+  if (!coverage_invalid) {
+    uint expected_next = pixel_base + relative_word;
+    if (pixel + 1u < parameters.pixel_count) {
+      uint next_base = headers.values[(pixel + 1u) * expected_words];
+      coverage_invalid = next_base != expected_next;
+    } else {
+      coverage_invalid = expected_next != parameters.payload_words;
+    }
+  }
+  if (coverage_invalid)
+    errors |= 8u;
+  if (errors != 0u)
+    atomicOr(validation_status.value, errors);
+  atomicAdd(column_costs.values[pixel],
+            (expected_words + relative_word) * 4u);
+}

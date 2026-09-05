@@ -9,6 +9,7 @@ explains how to implement it efficiently on a particular device.
 | Apple GPU from Python | [Python MPS](mps.md) | Python adapters over MLX/PyObjC/Metal and unified memory |
 | Native Apple client/library | [Native Swift and Metal](swift-metal.md) | SwiftPM products, Metal resources, and unified memory |
 | Browser GPU | [WebGPU](webgpu.md) | TypeScript/WGSL, browser security, and explicit GPU buffers |
+| Native Android client/library | [Android Vulkan](android-vulkan.md) | NDK C++/C ABI, Vulkan shaders, and admitted packed residency |
 | Independent adjudication | [CPU reference](cpu-reference.md) | deterministic small NumPy/reference implementations |
 
 ## Shared implementation shape
@@ -32,6 +33,23 @@ The dispatcher selects only an explicitly available implementation. The
 runtime adapter owns allocation, layout, compilation, queueing, and
 synchronization. Kernels may optimize those private details but must return the
 same scientific result.
+
+Loaded data uses one vocabulary across runtimes:
+
+| Field | Values | Meaning |
+|---|---|---|
+| `representation` | `lossless_packed`, `dense` | how every logical count is encoded |
+| `dtype` | scientific value type | the value range and arithmetic contract |
+| `residency` | host or runtime device location | where the physical payload remains |
+| `storage_schema` | versioned internal format | which decoder/profile produced it |
+
+CUDA and Python MPS expose this through `io.FourDSTEMData`, native Swift/Metal
+through `Metal4DSTEMResidentReceipt`, and WebGPU through
+`LocalH5LoadResult` and `WebGPUCompactH5ResidentSource`. Vulkan load plans and
+packed-session admission use the same two representation names. Runtime-specific
+codec names do not become public load modes. See the
+[representation support matrix](../api/representations.md) before assuming an
+operation accepts both representations on a given runtime.
 
 ## Repository map by layer
 

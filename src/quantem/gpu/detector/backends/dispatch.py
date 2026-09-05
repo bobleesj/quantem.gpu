@@ -1,0 +1,1168 @@
+"""4D-STEM compute backends — an Apple Silicon MacBook (raw Metal) + universal torch.
+
+ONE compute layer consumed by BOTH the Jupyter widget (``show4dstem``) AND the
+web Browse (``server/routers/browse.py``). The same masked-sum math is
+implemented three ways across the repo (torch tensordot, raw Metal, CuPy
+RawKernel); this module is the single interface they collapse into.
+
+Backends conform to the ``ComputeBackend`` protocol (see ``backend.py``):
+
+    TorchBackend       — torch tensor on CUDA / MPS / CPU — universal default
+    MetalRawBackend    — ChunkedFrames + MetalVirtualImage — a 19.3 GB
+                         large-no-bin-class no-bin path where torch.MPS overflows.
+                         Owns fast_vi sidecar, radial cache, multi-dataset
+                         proxy lifecycle (see capabilities tuple).
+    CudaKernelCompute  — resident CUDA virtual-image drag path.
+
+``compute_backend(data)`` duck-types the data source and returns the right
+backend so callers (widget + web Browse) never branch on hardware themselves.
+
+Backend dispatch — which one runs on your box?
+
+    24 GB RTX            → CudaKernelCompute for CuPy resident uint8/uint16
+    96 GB Blackwell      → CudaKernelCompute for CuPy resident uint8/uint16
+    torch tensor already on CUDA → TorchBackend
+    NumPy on CPU         → TorchBackend  (torch.as_tensor)
+    torch.mps binned     → TorchBackend  (device='mps')
+    Mac raw-Metal (ChunkedFrames, no-bin) → MetalRawBackend
+        (torch.mps can't hold >2^31 elements — 512²×192² is 2.5e9)
+
+MEMORY DISCIPLINE — the chunk-size trap (READ BEFORE TOUCHING CHUNK MATH)
+
+Every chunked reduction in TorchBackend (mean_dp, masked_sum, center_of_mass)
+picks a chunk size from ``_CHUNK_BYTE_BUDGET / (per-row bytes)``. When the sum
+uses a WIDER accumulator dtype than the input dtype, the chunk MUST budget for
+the accumulator's bytes, not the input's — else the internal cast during
+``.sum(dtype=T)`` materializes a chunk-sized transient in dtype T that
+oversubscribes VRAM.
+
+Concrete regression the guard rule prevents (fixed 2026-07-02):
+
+    # BAD: budget assumes input dtype (2 bytes/pixel for uint16)
+    step = (1 << 30) // (det_h * det_w)
+
+    for i in range(0, n_frames, step):
+        # sum(dtype=int64) materializes an int64-cast copy of the chunk
+        # internally = 4x memory expansion vs uint16 input
+        acc += self._flat[i:i+step].sum(dim=0, dtype=torch.int64)
+
+At 192² detector this budgeted for ~29K frames/chunk. Each chunk in uint16 was
+2.15 GB. The internal int64 cast blew it up to **8.6 GB transient per chunk**.
+CuPy pool cached the freed block. 512²×192² u16 no-bin Show4DSTEM peak VRAM
+went from ~21 GB (data + widget) to 29 GB — invisible on 96 GB Blackwell, but
+OOM on 24 GB RTX.
+
+The guard: chunk-size math MUST include the accumulator's element size:
+
+    # GOOD: budget in accumulator dtype (int64 = 8 bytes/pixel)
+    step = (1 << 27) // (det_h * det_w * 8)  # 128 MB int64 transient
+
+If you add a new reduction, or if you change ``dtype=`` on an existing
+``.sum()``, walk the chunk-size formula and pick element bytes for whichever
+dtype is WIDER: input or accumulator. Float32 sum of uint16 → budget for
+float32 (4 bytes). Int64 sum of uint16 → budget for int64 (8 bytes).
+
+Why unit tests don't catch this: outputs are bit-identical regardless of chunk
+size. Only VRAM peak changes. This is a **memory-only regression**, invisible
+to value-parity tests. See ``feedback_verify_memory_fit_with_capped_run.md``
+for the cap-a-dummy-tensor pattern that reproduces it.
+"""
+from __future__ import annotations
+
+import threading
+from collections import OrderedDict
+
+import numpy as np
+
+from quantem.gpu.detector.backends.protocol import ComputeBackend  # noqa: F401
+from quantem.gpu.io.uint4 import is_packed_uint4
+
+# Cap transient float32 memory per reduction chunk (matches the widget budget).
+_CHUNK_BYTE_BUDGET = 600 * 1024 * 1024
+_SPARSE_MASK_CHUNK_BYTE_BUDGET = 64 * 1024 * 1024
+_CUDA_MASK_INDEX_CACHE_SIZE = 32
+
+
+def compute_backend(data):
+    """Return the compute backend for ``data``, duck-typed on its type.
+
+    torch tensor / numpy / Dataset wrapping a tensor -> TorchBackend (any
+        torch device: CUDA / MPS-binned / CPU). This is the GENERAL path.
+    ChunkedFrames / anything with ``_is_gpu_frames`` -> MetalRawBackend
+        (raw Metal). The device-specific path, used ONLY for MPS no-bin
+        (where torch can't hold the >2^31-element stack).
+    cupy ndarray -> CudaKernelCompute. Virtual image dragging stays on resident
+        uint8/uint16 CUDA memory and avoids CuPy gather temporaries.
+
+    One selection point here means callers (widget + web Browse) never branch
+    on hardware themselves.
+    """
+    from .packed import PackedDetectorCompute, is_lossless_packed_source
+
+    if is_lossless_packed_source(data):
+        return PackedDetectorCompute(data)
+    if is_packed_uint4(data):
+        if data.backend == "cuda":
+            return CudaPackedUInt4Compute(data)
+        raise NotImplementedError(
+            "Packed uint4 compute currently has optimized CUDA kernels only. "
+            f"Got backend={data.backend!r}; use dtype='uint8' on this backend "
+            "until a packed uint4 kernel is available."
+        )
+    if getattr(data, "_is_gpu_frames", False):
+        return MetalRawBackend(data)
+    cls_name = type(data).__module__.split(".")[0]
+    if cls_name == "cupy":
+        return CudaKernelCompute(data)
+    try:
+        import torch
+        if isinstance(data, torch.Tensor):
+            return TorchBackend(data)
+    except ImportError:
+        pass
+    # Dataset-like: unwrap a torch tensor if present, else hand to TorchBackend to
+    # numpy-ify (it owns the conversion so the widget doesn't have to).
+    return TorchBackend(data)
+
+
+# ---
+
+
+class TorchBackend:
+    """Torch backend - one chunked path on CUDA / MPS / CPU.
+
+    Ports the widget's `_fast_masked_sum` / `auto_detect_center` / `_compute_vi_roi_dp`
+    math verbatim (chunked tensordot, int64 mean-DP, einsum/amax reduce) so the
+    universal-device path is identical to today. uint16 stays integer until the
+    small reduced output; the per-chunk float32 cast is bounded by the byte budget.
+
+    Conforms to ``ComputeBackend`` protocol. No optional capabilities — torch
+    runs the universal path.
+    """
+
+    capabilities: tuple[str, ...] = ()
+
+    def __init__(self, data, *, scan_shape=None, det_shape=None, device=None):
+        import torch
+        self.torch = torch
+        tensor = data if isinstance(data, torch.Tensor) else torch.as_tensor(np.asarray(data))
+        if device is not None:
+            tensor = tensor.to(device)
+        self._t = tensor
+        if tensor.ndim == 4:
+            sr, sc, dr, dc = tensor.shape
+        elif tensor.ndim == 3:
+            n, dr, dc = tensor.shape
+            if scan_shape is None:
+                sr = round(n ** 0.5)
+                sc = n // sr
+            else:
+                sr, sc = scan_shape
+        else:
+            raise ValueError(f"expected 3D/4D tensor, got {tuple(tensor.shape)}")
+        self.scan_shape = (int(sr), int(sc))
+        self.det_shape = (int(dr), int(dc))
+        self.n_frames = int(sr) * int(sc)
+        self.device = tensor.device
+        self._4d = tensor.reshape(self.scan_shape[0], self.scan_shape[1], dr, dc)
+        self._flat = tensor.reshape(-1, dr, dc)
+        self._row = torch.arange(dr, device=self.device, dtype=torch.float32)[:, None]
+        self._col = torch.arange(dc, device=self.device, dtype=torch.float32)[None, :]
+
+    def _chunk_rows(self) -> int:
+        bytes_per_row = self.scan_shape[1] * self.det_shape[0] * self.det_shape[1] * 4
+        return max(1, _CHUNK_BYTE_BUDGET // max(1, bytes_per_row))
+
+    def frame(self, idx: int) -> np.ndarray:
+        return self._flat[int(idx)].cpu().numpy()
+
+    def _sparse_masked_sum(self, det_mask: np.ndarray) -> np.ndarray | None:
+        """Virtual image for sparse detector masks by summing selected pixels."""
+        torch = self.torch
+        det_pixels = int(self.det_shape[0] * self.det_shape[1])
+        mask = torch.as_tensor(
+            np.ascontiguousarray(det_mask),
+            device=self.device,
+            dtype=torch.bool,
+        ).reshape(-1)
+        selected = int(mask.sum().item())
+        if selected <= 0:
+            return np.zeros(self.scan_shape, dtype=np.float32)
+        # Dense tensordot is better once the ROI covers a large detector fraction.
+        if selected > det_pixels // 4:
+            return None
+
+        cols = torch.nonzero(mask, as_tuple=False).reshape(-1)
+        flat = self._flat.reshape(self.n_frames, det_pixels)
+        out = torch.empty(self.n_frames, dtype=torch.float32, device=self.device)
+        step = max(
+            1,
+            _SPARSE_MASK_CHUNK_BYTE_BUDGET // max(1, selected * 4),
+        )
+        for i in range(0, self.n_frames, step):
+            j = min(self.n_frames, i + step)
+            chunk = flat[i:j].index_select(1, cols)
+            if not torch.is_floating_point(chunk):
+                chunk = chunk.float()
+            out[i:j] = chunk.sum(dim=1)
+        return out.reshape(self.scan_shape).cpu().numpy()
+
+    def masked_sum(self, det_mask: np.ndarray) -> np.ndarray:
+        """Virtual image: sum masked detector pixels per scan position (chunked)."""
+        torch = self.torch
+        if not torch.is_floating_point(self._flat):
+            mask = torch.as_tensor(
+                np.ascontiguousarray(det_mask),
+                device=self.device,
+                dtype=torch.bool,
+            ).reshape(-1)
+            selected = torch.nonzero(mask, as_tuple=False).reshape(-1)
+            if selected.numel() == 0:
+                return np.zeros(self.scan_shape, dtype=np.float32)
+
+            # Detector counts remain integers through the reduction. Converting
+            # only the 2-D result to float32 matches the NumPy and CUDA paths.
+            flat = self._flat.reshape(self.n_frames, -1)
+            out = torch.empty(self.n_frames, dtype=torch.float32, device=self.device)
+            step = max(
+                1,
+                _SPARSE_MASK_CHUNK_BYTE_BUDGET // max(1, selected.numel() * 8),
+            )
+            for i in range(0, self.n_frames, step):
+                j = min(self.n_frames, i + step)
+                out[i:j] = (
+                    flat[i:j]
+                    .index_select(1, selected)
+                    .to(torch.int64)
+                    .sum(dim=1)
+                    .to(torch.float32)
+                )
+            return out.reshape(self.scan_shape).cpu().numpy()
+
+        sparse = self._sparse_masked_sum(det_mask)
+        if sparse is not None:
+            return sparse
+        mask = torch.as_tensor(np.ascontiguousarray(det_mask), device=self.device).float()
+        out = torch.zeros(self.scan_shape, dtype=torch.float32, device=self.device)
+        step = self._chunk_rows()
+        for i in range(0, self.scan_shape[0], step):
+            chunk = self._4d[i:i + step]
+            if chunk.dtype != torch.float32:
+                chunk = chunk.float()   # int OR float64 -> float32; never compute in 64-bit (mask is float32)
+            out[i:i + step] = torch.tensordot(chunk, mask, dims=([2, 3], [0, 1]))
+        return out.cpu().numpy()
+
+    def masked_sum_exact(self, det_mask: np.ndarray) -> np.ndarray:
+        """Virtual image with integer counts preserved through host transfer."""
+        torch = self.torch
+        if torch.is_floating_point(self._flat):
+            raise TypeError("Exact detector sums require integer detector data.")
+        mask = torch.as_tensor(
+            np.ascontiguousarray(det_mask), device=self.device, dtype=torch.bool
+        ).reshape(-1)
+        selected = torch.nonzero(mask, as_tuple=False).reshape(-1)
+        if selected.numel() == 0:
+            return np.zeros(self.scan_shape, dtype=np.uint64)
+        flat = self._flat.reshape(self.n_frames, -1)
+        out = torch.empty(self.n_frames, dtype=torch.int64, device=self.device)
+        step = max(
+            1,
+            _SPARSE_MASK_CHUNK_BYTE_BUDGET // max(1, selected.numel() * 8),
+        )
+        for i in range(0, self.n_frames, step):
+            j = min(self.n_frames, i + step)
+            out[i:j] = flat[i:j].index_select(1, selected).to(torch.int64).sum(dim=1)
+        return out.reshape(self.scan_shape).cpu().numpy().astype(np.uint64, copy=False)
+
+    def mean_dp(self) -> np.ndarray:
+        """Mean DP over all scan positions - int64 accumulate, float only at output.
+
+        The chunk size accounts for the int64 dtype cast that ``.sum(dtype=int64)``
+        materializes internally. Otherwise a uint16 chunk expands 4× (to int64)
+        during the sum, holding an 8+ GB transient on 192² detectors that
+        oversubscribes 24 GB cards.
+        """
+        torch = self.torch
+        acc = torch.zeros(self.det_shape, dtype=torch.int64, device=self.device)
+        # Budget 128 MB of int64 transient per chunk (was 1 GB base, but the
+        # int64 cast during sum() multiplies by 8/element vs uint16's 2).
+        det_pixels = max(1, self.det_shape[0] * self.det_shape[1])
+        step = max(1, (1 << 27) // (det_pixels * 8))
+        for i in range(0, self.n_frames, step):
+            acc += self._flat[i:i + step].sum(dim=0, dtype=torch.int64)
+        return (acc.float() / self.n_frames).cpu().numpy()
+
+    def reduce_frames(self, scan_indices: np.ndarray, reduce: str = "mean") -> np.ndarray:
+        """Summed / mean / max DP over a set of scan positions (flat indices)."""
+        torch = self.torch
+        idx = torch.as_tensor(np.asarray(scan_indices, dtype=np.int64), device=self.device)
+        frames = self._flat.index_select(0, idx).float()
+        if reduce == "sum":
+            dp = frames.sum(dim=0)
+        elif reduce == "max":
+            dp = frames.amax(dim=0)
+        else:
+            dp = frames.mean(dim=0)
+        return dp.cpu().numpy()
+
+    def reduce_frames_exact(self, scan_indices: np.ndarray) -> np.ndarray:
+        """Return an exact uint64 scan-frame sum with bounded int64 scratch."""
+        torch = self.torch
+        if torch.is_floating_point(self._flat):
+            raise TypeError("Exact scan ROI sums require integer detector data.")
+        indices = np.asarray(scan_indices, dtype=np.int64).reshape(-1)
+        if indices.size == 0:
+            return np.zeros(self.det_shape, dtype=np.uint64)
+        detector_pixels = max(1, self.det_shape[0] * self.det_shape[1])
+        step = max(1, (1 << 27) // (detector_pixels * 8))
+        accumulator = torch.zeros(self.det_shape, dtype=torch.int64, device=self.device)
+        for start in range(0, indices.size, step):
+            selected = torch.as_tensor(
+                indices[start : start + step],
+                dtype=torch.int64,
+                device=self.device,
+            )
+            accumulator += self._flat.index_select(0, selected).sum(
+                dim=0,
+                dtype=torch.int64,
+            )
+        return accumulator.cpu().numpy().astype(np.uint64, copy=False)
+
+    def reduce_frames_max(self, scan_indices: np.ndarray) -> np.ndarray:
+        """Return an exact scan-frame maximum with bounded scratch."""
+        torch = self.torch
+        if torch.is_floating_point(self._flat):
+            raise TypeError("Exact scan ROI maxima require integer detector data.")
+        indices = np.asarray(scan_indices, dtype=np.int64).reshape(-1)
+        if indices.size == 0:
+            return np.zeros(self.det_shape, dtype=np.uint32)
+        detector_pixels = max(1, self.det_shape[0] * self.det_shape[1])
+        step = max(1, (1 << 27) // (detector_pixels * 8))
+        maximum = torch.zeros(self.det_shape, dtype=torch.int64, device=self.device)
+        for start in range(0, indices.size, step):
+            selected = torch.as_tensor(
+                indices[start : start + step],
+                dtype=torch.int64,
+                device=self.device,
+            )
+            chunk = self._flat.index_select(0, selected).to(torch.int64)
+            maximum = torch.maximum(maximum, chunk.max(dim=0).values)
+        return maximum.cpu().numpy().astype(np.uint32, copy=False)
+
+    def center_of_mass(self, det_mask: np.ndarray | None = None):
+        """Per-scan-position CoM over the (masked) detector - the DPC vector field.
+
+        Returns ``(com_col, com_row)`` each ``(N,)`` float32 in absolute detector
+        coordinates (col = Sum col*I / Sum I, row = Sum row*I / Sum I), matching
+        ``MetalVirtualImage.center_of_mass`` so DPC is single-source across
+        CUDA / MPS / CPU. ``det_mask`` None means the full detector. Chunked by the
+        same byte budget as ``masked_sum``; integer frames stay int until the small
+        per-chunk float reduce.
+        """
+        torch = self.torch
+        mask = None
+        if det_mask is not None:
+            mask = torch.as_tensor(np.ascontiguousarray(det_mask), device=self.device).float()
+        com_col = torch.zeros(self.n_frames, dtype=torch.float32, device=self.device)
+        com_row = torch.zeros(self.n_frames, dtype=torch.float32, device=self.device)
+        sc = self.scan_shape[1]
+        step = self._chunk_rows()
+        for i in range(0, self.scan_shape[0], step):
+            chunk = self._4d[i:i + step]
+            if chunk.dtype != torch.float32:
+                chunk = chunk.float()   # int OR float64 -> float32; never compute in 64-bit (mask is float32)
+            if mask is not None:
+                chunk = chunk * mask
+            denom = chunk.sum(dim=(2, 3))
+            sum_row = (chunk * self._row).sum(dim=(2, 3))
+            sum_col = (chunk * self._col).sum(dim=(2, 3))
+            safe = denom.clamp(min=1e-12)  # empty / masked-out frames -> CoM 0, no div0
+            lo = i * sc
+            com_row[lo:lo + sum_row.numel()] = (sum_row / safe).reshape(-1)
+            com_col[lo:lo + sum_col.numel()] = (sum_col / safe).reshape(-1)
+        return com_col.cpu().numpy(), com_row.cpu().numpy()
+
+
+# ---
+
+
+class MetalRawBackend:
+    """Raw-Metal backend - wraps ``MetalVirtualImage`` over ``ChunkedFrames``.
+
+    Owns the MPS lifecycle hooks that the Show4DSTEMMPS widget subclass used to
+    drive directly. Capabilities: fast_sidecar (bin2 fast_vi), radial_cache
+    (exact no-bin row-prefix BF/ADF), multi_dataset (lazy multi-file proxy).
+    See ``backend.py`` for the protocol; ``Show4DSTEMMPS`` reads
+    ``backend.capabilities`` and calls the corresponding methods only when the
+    feature is supported.
+
+    VIRTUAL-IMAGE BINNING CONTRACT (MPS) — the design, stated plainly:
+      - det_bin == 1 (NO-BIN): detector stays full-res (e.g. 192x192) so a single
+        diffraction frame (CBED) keeps full angular resolution. The VIRTUAL IMAGE
+        is a masked_sum over ALL frames; at full-res that is bandwidth-bound
+        (~40 GB/s scattered uint16 -> ~8-10 fps). So we AUTO-build a bin2 (96x96)
+        copy of the frames in the background -- `fast_vi`, a.k.a. the "sidecar" --
+        and compute the virtual image on it: 4x fewer pixels to read => real-time.
+        Full-res `vi` is still used for the single-frame CBED. The bin2 buffer is
+        NOT optional for speed: binning the mask alone still reads all 192x192; the
+        speedup comes only from reading the 4x-smaller bin2 buffer.
+      - det_bin >= 2: loaded data is ALREADY binned (e.g. 96x96), so the VI
+        masked_sum is fast directly and NO sidecar is built (`_auto_fast` is gated
+        on det_bin == 1). Simpler path: bin at load = fast VI + no extra buffer, at
+        the cost of CBED angular detail.
+    Net: no-bin auto-bins by 2 for the VIRTUAL IMAGE only; det_bin=2 needs none.
+    (Also preserves row-prefix exact reductions + the lazy multi-dataset container.)
+    """
+
+    @property
+    def capabilities(self) -> tuple[str, ...]:
+        """Capabilities advertised by this MetalRaw backend.
+
+        - ``fast_sidecar`` always (bin2 sidecar available when det_bin==1, or
+          immediately ready for already-binned data).
+        - ``radial_cache`` only when the underlying ChunkedFrames had row_prefix
+          enabled at load time (``data.vi.row_prefix_enabled``).
+        - ``multi_dataset`` only when the data source is a ``MultiChunkedFrames``
+          proxy (has ``set_active`` + ``on_ready``).
+        """
+        caps = ["fast_sidecar"]
+        if getattr(self._cf, "vi", None) is not None and getattr(
+            self._cf.vi, "row_prefix_enabled", False
+        ):
+            caps.append("radial_cache")
+            caps.append("row_prefix_exact")
+        if hasattr(self._cf, "set_active") and hasattr(self._cf, "on_ready"):
+            caps.append("multi_dataset")
+        return tuple(caps)
+
+    def __init__(self, frames):
+        self._cf = frames  # ChunkedFrames (or MultiChunkedFrames, duck-types the same)
+        det = tuple(int(x) for x in self._cf.vi.det)
+        n = int(self._cf._n)
+        sr = round(n ** 0.5)
+        self.scan_shape = (sr, n // sr)
+        self.det_shape = det
+        self.n_frames = n
+        self.device = "mps"
+        self.det_bin = int(getattr(self._cf, "det_bin", 1))
+        # Auto fast-mode: on a big NO-BIN detector, full-res masked_sum is ~8-10 fps
+        # (40 GB/s scattered uint16). Build a bin2 sidecar (96x96) in the background
+        # so interaction jumps to real-time once ready; serve full-res until then.
+        # Already-binned data (det_bin>1) is small enough - no sidecar.
+        self._com_cache = None  # full-detector CoM (com_col, com_row), eager-built below
+        self._total_cache = None
+        self._fast_total_cache = None
+        cf_dtype = np.dtype(getattr(self._cf, "_np_dtype", np.uint16))
+        self._auto_fast = (
+            self.det_bin == 1
+            and det[0] >= 96
+            and cf_dtype != np.dtype(np.uint32)
+            and hasattr(self._cf, "ensure_fast_interaction")
+        )
+        # Background radial-cache lifecycle. Only matters when row_prefix is on.
+        self._radial_thread: threading.Thread | None = None
+        self._radial_pending: tuple[float, float] | None = None
+        self._radial_request = 0
+        self._radial_building = False
+        self._radial_error: str | None = None
+        if self._auto_fast and getattr(self._cf, "fast_vi", None) is None:
+            threading.Thread(target=self._build_fast, daemon=True).start()
+
+    def _build_fast(self):
+        try:
+            self._cf.ensure_fast_interaction(verbose=False)
+            # Eager-cache the full-detector CoM on the bin2 sidecar so the FIRST DPC
+            # click is instant (cached), the same way BF rides the prebuilt sidecar.
+            self._com_cache = self.center_of_mass()
+        except Exception:  # noqa: BLE001,S110 - optional fast path falls back safely
+            pass  # fall back to full-res; interaction just stays at the no-bin rate
+
+    @property
+    def has_fast(self) -> bool:
+        return getattr(self._cf, "fast_vi", None) is not None
+
+    def frame(self, idx: int) -> np.ndarray:
+        return self._cf.frame(int(idx))
+
+    def _masked_sum_with_total_cache(
+        self,
+        vi,
+        det_mask: np.ndarray,
+        *,
+        cache_attr: str,
+    ) -> np.ndarray:
+        """Use total-minus-complement for dense DF masks on one Metal VI."""
+        mask = np.ascontiguousarray(det_mask, dtype=bool)
+        selected = int(mask.sum())
+        ndet = int(mask.size)
+        if selected == 0:
+            return np.zeros(self.n_frames, dtype=np.int32)
+        if selected == ndet:
+            total = getattr(self, cache_attr, None)
+            if total is None:
+                total = np.asarray(vi.masked_sum(mask)).copy()
+                setattr(self, cache_attr, total)
+            return total
+        complement = ndet - selected
+        if selected > ndet // 2 and complement < selected:
+            total = getattr(self, cache_attr, None)
+            if total is None:
+                total = np.asarray(
+                    vi.masked_sum(np.ones(mask.shape, dtype=bool))
+                ).copy()
+                setattr(self, cache_attr, total)
+            return total - np.asarray(vi.masked_sum(~mask))
+        return np.asarray(vi.masked_sum(mask))
+
+    def masked_sum(self, det_mask: np.ndarray) -> np.ndarray:
+        cf = self._cf
+        fv = getattr(cf, "fast_vi", None)
+        if self._auto_fast and fv is not None:
+            # Sidecar ready: downsample the detector mask to the actual sidecar
+            # bin factor (bin2 on large-memory Macs, bin4 on small ones), then
+            # reduce on the smaller resident Metal buffer.
+            from quantem.gpu.detector.backends.mps.kernels import _bin_mask
+
+            mask = _bin_mask(
+                np.ascontiguousarray(det_mask),
+                getattr(cf, "fast_bin", 2),
+            )
+            vi = self._masked_sum_with_total_cache(
+                fv,
+                mask,
+                cache_attr="_fast_total_cache",
+            )
+        else:
+            vi = self._masked_sum_with_total_cache(
+                cf.vi,
+                np.ascontiguousarray(det_mask),
+                cache_attr="_total_cache",
+            )
+        return vi.reshape(self.scan_shape).astype(np.float32, copy=False)
+
+    def masked_sum_exact(self, det_mask: np.ndarray) -> np.ndarray:
+        """Exact full-resolution integer reduction, bypassing display sidecars."""
+        values = self._masked_sum_with_total_cache(
+            self._cf.vi,
+            np.ascontiguousarray(det_mask),
+            cache_attr="_total_cache",
+        )
+        array = np.asarray(values)
+        if not np.issubdtype(array.dtype, np.integer):
+            raise TypeError("Exact detector sums require integer detector data.")
+        return array.reshape(self.scan_shape).astype(np.uint64, copy=False)
+
+    def mean_dp(self) -> np.ndarray:
+        detector_sum = getattr(self._cf, "detector_sum", None)
+        if detector_sum is not None:
+            return np.asarray(detector_sum, dtype=np.float32) / self.n_frames
+        return np.asarray(self._cf.vi.detector_sum(), dtype=np.float32) / self.n_frames
+
+    def reduce_frames(self, scan_indices: np.ndarray, reduce: str = "mean") -> np.ndarray:
+        idx = np.asarray(scan_indices, dtype=np.uint32)
+        if reduce == "mean":
+            return np.asarray(self._cf.vi.mean_frames(idx), dtype=np.float32)
+        # sum: mean_frames gives the GPU-computed average, then scales the small
+        # returned diffraction pattern. Max requires a dedicated Metal kernel.
+        if reduce == "sum":
+            return np.asarray(self._cf.vi.mean_frames(idx), dtype=np.float32) * len(idx)
+        raise NotImplementedError(
+            "MPS reduce_frames(reduce='max') has no Metal kernel. CPU fallback "
+            "is disabled; use reduce='mean' or reduce='sum', or implement the "
+            "native Metal max reducer."
+        )
+
+    def center_of_mass(self, det_mask: np.ndarray | None = None):
+        """Per-scan-position CoM (DPC vector field) on the raw Metal kernel.
+
+        Uses the bin2 sidecar (``fast_vi``) when ready - same fast path as
+        ``masked_sum`` - so no-bin DPC is real-time instead of an ~8 s full-res 192^2
+        pass; result is eager-cached in ``_build_fast`` so the first DPC click is
+        instant. The bin2 detector halves the CoM coordinate scale, so multiply by 2
+        to return absolute full-res detector px; the constant half-pixel bin offset
+        cancels under the DPC zero-mean. Falls back to full-res ``vi`` until the
+        sidecar builds. Returns ``(com_col, com_row)`` flat ``(N,)`` float32 - the
+        same contract as ``TorchBackend`` so DPC is single-source across backends.
+        """
+        if det_mask is None and self._com_cache is not None:
+            return self._com_cache  # eager-built in _build_fast -> instant DPC
+        cf = self._cf
+        fv = getattr(cf, "fast_vi", None)
+        if self._auto_fast and fv is not None:
+            from quantem.gpu.detector.backends.mps.kernels import _bin_mask
+
+            binf = self.fast_bin
+            m = (
+                None
+                if det_mask is None
+                else _bin_mask(np.ascontiguousarray(det_mask), binf)
+            )
+            cc, cr = fv.center_of_mass(m)
+            return cc * binf, cr * binf  # sidecar px -> full-res detector px
+        mask = None if det_mask is None else np.ascontiguousarray(det_mask)
+        return cf.vi.center_of_mass(mask)
+
+    # ---------------------------------------------------------------- fast_sidecar
+    # bin2 sidecar (``fast_vi``) — accelerates BF/DF/ADF masked_sum 4x by
+    # downsampling the detector once at sidecar-build time, then reading the
+    # 4x-smaller buffer on every reduction. Auto-built for no-bin data; already
+    # ready for det_bin>=2 data. Show4DSTEMMPS used to drive this; now the
+    # backend owns it.
+
+    @property
+    def fast_bin(self) -> int:
+        return int(getattr(self._cf, "fast_bin", 2))
+
+    def ensure_fast_sidecar(self, verbose: bool = False) -> bool:
+        """Block until the bin2 fast_vi sidecar is ready. Returns True if
+        ready or no sidecar is needed (already-binned data)."""
+        cf = self._cf
+        if int(getattr(cf, "det_bin", 1)) > 1:
+            return True  # already binned at load — no sidecar needed
+        if not hasattr(cf, "ensure_fast_interaction"):
+            return False
+        cf.ensure_fast_interaction(verbose=verbose)
+        return getattr(cf, "fast_vi", None) is not None
+
+    def cache_fast_presets(self, masks: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+        """Pre-compute virtual images on the fast sidecar for a dict of named
+        detector masks (typ. {"bf": mask, "abf": mask, ...}). Returns a dict
+        of `(scan_r, scan_c) float32` arrays. Caller stores bytes."""
+        cf = self._cf
+        fv = getattr(cf, "fast_vi", None)
+        if fv is None:
+            return {}
+        from quantem.gpu.detector.backends.mps.kernels import _bin_mask
+        out: dict[str, np.ndarray] = {}
+        for name, mask in masks.items():
+            vi = fv.masked_sum(_bin_mask(np.ascontiguousarray(mask), self.fast_bin))
+            out[name] = np.asarray(vi).reshape(self.scan_shape).astype(np.float32, copy=False)
+        return out
+
+    # ---------------------------------------------------------------- radial_cache
+    # Exact no-bin BF/ADF on circular/annular detector masks via row-prefix
+    # cumulative sums. Only available when ChunkedFrames was loaded with
+    # ``row_prefix=True``. Cache is per-(center_row, center_col); building
+    # touches the whole 19 GB stack, so we serialize requests + cancel stale
+    # ones (operator drags the center, we only build for the last position).
+
+    def radial_cache_ready(self, center_row: float, center_col: float) -> bool:
+        vi = getattr(self._cf, "vi", None)
+        if vi is None or not getattr(vi, "row_prefix_enabled", False):
+            return False
+        return vi.radial_cache_ready(float(center_row), float(center_col))
+
+    def radial_masked_sum(
+        self,
+        *,
+        center_row: float,
+        center_col: float,
+        outer_radius: float,
+        inner_radius: float = 0.0,
+        build: bool = False,
+    ) -> np.ndarray | None:
+        """Returns a (scan_r, scan_c) virtual image or None if the cache isn't
+        ready (and ``build`` is False)."""
+        vi = getattr(self._cf, "vi", None)
+        if vi is None or not getattr(vi, "row_prefix_enabled", False):
+            return None
+        return vi.radial_masked_sum(
+            center_row=float(center_row),
+            center_col=float(center_col),
+            outer_radius=float(outer_radius),
+            inner_radius=float(inner_radius),
+            build=bool(build),
+        )
+
+    def ensure_radial_cache(self, center_row: float, center_col: float,
+                            *, idle_delay_s: float = 0.75) -> None:
+        """Schedule a background build of the radial cache at (row, col).
+
+        Cancels any prior pending build for a different center. Cheap if the
+        cache is already ready at this center.
+        """
+        vi = getattr(self._cf, "vi", None)
+        if vi is None or not getattr(vi, "row_prefix_enabled", False):
+            return
+        if vi.radial_cache_ready(float(center_row), float(center_col)):
+            self._radial_pending = None
+            return
+        self._radial_request += 1
+        self._radial_pending = (float(center_row), float(center_col))
+        if self._radial_building:
+            return  # an existing thread will pick up the new pending center
+        self._radial_building = True
+        self._radial_error = None
+        import time as _time
+
+        def _build():
+            try:
+                while True:
+                    request = self._radial_request
+                    center = self._radial_pending
+                    if center is None:
+                        return
+                    _time.sleep(idle_delay_s)
+                    # If the request changed during the idle wait, restart on the new center.
+                    if request != self._radial_request or center != self._radial_pending:
+                        continue
+                    vi._ensure_radial_cache(center[0], center[1])
+                    if request == self._radial_request and center == self._radial_pending:
+                        self._radial_pending = None
+                        return
+            except Exception as exc:  # noqa: BLE001  # pragma: no cover
+                self._radial_error = repr(exc)
+            finally:
+                self._radial_building = False
+
+        self._radial_thread = threading.Thread(
+            target=_build, name="MetalRawBackend-radial", daemon=True,
+        )
+        self._radial_thread.start()
+
+    @property
+    def radial_building(self) -> bool:
+        return self._radial_building
+
+    @property
+    def radial_error(self) -> str | None:
+        return self._radial_error
+
+    # ---------------------------------------------------------------- multi_dataset
+    # Lazy multi-file proxy (MultiChunkedFrames) — set_active(idx) points the
+    # backend at one of N decoded datasets; on_ready(idx) fires when the
+    # background decoder finishes a dataset. Show4DSTEMMPS uses these to drive
+    # the n_frames slider for time/tilt series.
+
+    def set_active_dataset(self, idx: int) -> None:
+        if hasattr(self._cf, "set_active"):
+            self._cf.set_active(int(idx))
+            self._com_cache = None
+            self._total_cache = None
+            self._fast_total_cache = None
+
+    @property
+    def multi_n_ready(self) -> int:
+        return int(getattr(self._cf, "n_ready", 1))
+
+    @property
+    def multi_names(self) -> list[str]:
+        return list(getattr(self._cf, "names", []) or [])
+
+    @property
+    def multi_active_idx(self) -> int:
+        return int(getattr(self._cf, "active_idx", 0))
+
+    def multi_total(self) -> int:
+        datasets = getattr(self._cf, "datasets", None)
+        return len(datasets) if datasets is not None else 1
+
+    def set_multi_ready_callback(self, cb) -> None:
+        if hasattr(self._cf, "on_ready"):
+            self._cf.on_ready = cb
+
+
+# ---
+
+
+class CudaKernelCompute:
+    """CuPy CUDA backend for resident virtual-image interaction.
+
+    The hot path is ``masked_sum`` over an already-loaded 4D-STEM tensor. It
+    uses a RawKernel selected-pixel reducer for uint8/uint16 data and falls back
+    to ``TorchBackend`` for unsupported dtypes. Dense masks are computed as
+    ``total - complement`` with a cached total-count image.
+    """
+
+    capabilities: tuple[str, ...] = ()
+
+    def __init__(self, data):
+        self._data = data
+        self._flat, self.scan_shape, self.det_shape = self._flatten_scan(data)
+        self.n_frames = int(self._flat.shape[0])
+        self.device = "cuda"
+        self._total_cache_uint64 = None
+        self._com_cache = None
+        self._mask_index_cache = OrderedDict()
+        self._fallback = None
+
+    @staticmethod
+    def _flatten_scan(data):
+        if data.ndim == 4:
+            sr, sc, dr, dc = data.shape
+            return data.reshape(-1, dr, dc), (int(sr), int(sc)), (int(dr), int(dc))
+        if data.ndim == 3:
+            n, dr, dc = data.shape
+            sr = round(int(n) ** 0.5)
+            scan_shape = (sr, int(n) // sr) if sr * sr == int(n) else (int(n),)
+            return data.reshape(-1, dr, dc), scan_shape, (int(dr), int(dc))
+        raise ValueError(f"expected 3D/4D cupy array, got {tuple(data.shape)}")
+
+    def _fallback_backend(self):
+        if self._fallback is None:
+            import torch
+
+            self._fallback = TorchBackend(torch.from_dlpack(self._data))
+        return self._fallback
+
+    def frame(self, idx: int) -> np.ndarray:
+        return self._flat[int(idx)].get()
+
+    def _total_counts_uint64(self):
+        if self._total_cache_uint64 is None:
+            from quantem.gpu.detector.backends.cuda.kernels import cuda_sum_all_uint64
+
+            self._total_cache_uint64 = cuda_sum_all_uint64(self._data)
+        return self._total_cache_uint64
+
+    def _device_indices_for(self, mask_np: np.ndarray):
+        import cupy as cp
+
+        contiguous = np.ascontiguousarray(mask_np.reshape(-1), dtype=bool)
+        key = contiguous.tobytes()
+        indices = self._mask_index_cache.get(key)
+        if indices is not None:
+            self._mask_index_cache.move_to_end(key)
+            return indices
+        indices = cp.asarray(np.flatnonzero(contiguous).astype(np.int32, copy=False))
+        self._mask_index_cache[key] = indices
+        if len(self._mask_index_cache) > _CUDA_MASK_INDEX_CACHE_SIZE:
+            self._mask_index_cache.popitem(last=False)
+        return indices
+
+    def masked_sum(self, det_mask: np.ndarray) -> np.ndarray:
+        import cupy as cp
+
+        from quantem.gpu.detector.backends.cuda.kernels import (
+            cuda_selected_sum,
+            cuda_selected_sum_from_total,
+        )
+
+        mask_np = np.asarray(det_mask, dtype=bool)
+        if mask_np.shape != self.det_shape:
+            raise ValueError(
+                f"det_mask shape {mask_np.shape} does not match detector shape "
+                f"{self.det_shape}."
+            )
+        selected = int(mask_np.sum())
+        if selected == 0:
+            return np.zeros(self.scan_shape, dtype=np.float32)
+        if selected == mask_np.size:
+            total = self._total_counts_uint64()
+            out = None if total is None else total.astype(cp.float32)
+        elif selected > int(mask_np.size * 0.5):
+            complement = self._device_indices_for(~mask_np)
+            total = self._total_counts_uint64()
+            out = (
+                None
+                if total is None
+                else cuda_selected_sum_from_total(self._data, complement, total)
+            )
+        else:
+            indices = self._device_indices_for(mask_np)
+            out = cuda_selected_sum(self._data, indices)
+        if out is None:
+            return self._fallback_backend().masked_sum(mask_np)
+        return out.get().astype(np.float32, copy=False)
+
+    def masked_sum_exact(self, det_mask: np.ndarray) -> np.ndarray:
+        """Return exact uint64 counts using the resident CUDA tensor."""
+        import cupy as cp
+
+        from quantem.gpu.detector.backends.cuda.kernels import cuda_selected_sum_uint64
+
+        mask_np = np.asarray(det_mask, dtype=bool)
+        if mask_np.shape != self.det_shape:
+            raise ValueError(
+                f"det_mask shape {mask_np.shape} does not match detector shape "
+                f"{self.det_shape}."
+            )
+        selected = int(mask_np.sum())
+        if selected == 0:
+            return np.zeros(self.scan_shape, dtype=np.uint64)
+        if selected == mask_np.size:
+            out = self._total_counts_uint64()
+        elif selected > int(mask_np.size * 0.5):
+            complement = self._device_indices_for(~mask_np)
+            complement_sum = cuda_selected_sum_uint64(self._data, complement)
+            total = self._total_counts_uint64()
+            out = None if total is None or complement_sum is None else total - complement_sum
+        else:
+            out = cuda_selected_sum_uint64(
+                self._data, self._device_indices_for(mask_np)
+            )
+        if out is None:
+            flat = self._data.reshape(self.n_frames, -1)
+            indices = self._device_indices_for(mask_np)
+            out = flat[:, indices].sum(axis=1, dtype=cp.uint64).reshape(self.scan_shape)
+        return out.get().astype(np.uint64, copy=False)
+
+    def mean_dp(self) -> np.ndarray:
+        import cupy as cp
+
+        acc = self._flat.sum(axis=0, dtype=cp.uint64)
+        return (acc.astype(cp.float32) / self.n_frames).get()
+
+    def reduce_frames(self, scan_indices: np.ndarray, reduce: str = "mean") -> np.ndarray:
+        import cupy as cp
+
+        idx = cp.asarray(np.asarray(scan_indices, dtype=np.int64))
+        frames = self._flat.reshape(self.n_frames, -1).take(idx, axis=0)
+        if reduce == "sum":
+            out = frames.sum(axis=0, dtype=cp.uint64).astype(cp.float32)
+        elif reduce == "max":
+            out = frames.max(axis=0).astype(cp.float32)
+        else:
+            out = frames.sum(axis=0, dtype=cp.uint64).astype(cp.float32) / int(idx.size)
+        return out.reshape(self.det_shape).get()
+
+    def reduce_frames_exact(self, scan_indices: np.ndarray) -> np.ndarray:
+        """Return an exact uint64 sum without a gathered frame tensor."""
+        import cupy as cp
+
+        from quantem.gpu.detector.backends.cuda.kernels import (
+            cuda_selected_frame_sum_uint64,
+        )
+
+        indices = np.asarray(scan_indices, dtype=np.int32).reshape(-1)
+        out = cuda_selected_frame_sum_uint64(self._data, indices)
+        if out is None:
+            selected = cp.asarray(indices)
+            out = self._flat.reshape(self.n_frames, -1).take(selected, axis=0).sum(
+                axis=0,
+                dtype=cp.uint64,
+            ).reshape(self.det_shape)
+        return out.get().astype(np.uint64, copy=False)
+
+    def reduce_frames_max(self, scan_indices: np.ndarray) -> np.ndarray:
+        """Return an exact maximum without a gathered frame tensor."""
+        import cupy as cp
+
+        from quantem.gpu.detector.backends.cuda.kernels import (
+            cuda_selected_frame_max_uint32,
+        )
+
+        indices = np.asarray(scan_indices, dtype=np.int32).reshape(-1)
+        out = cuda_selected_frame_max_uint32(self._data, indices)
+        if out is None:
+            selected = cp.asarray(indices)
+            out = self._flat.reshape(self.n_frames, -1).take(selected, axis=0).max(
+                axis=0
+            ).reshape(self.det_shape)
+        return out.get().astype(np.uint32, copy=False)
+
+    def center_of_mass(self, det_mask: np.ndarray | None = None):
+        from quantem.gpu.detector.backends.cuda.kernels import cuda_center_of_mass
+
+        if det_mask is None and self._com_cache is not None:
+            return self._com_cache
+        got = cuda_center_of_mass(self._data, det_mask)
+        if got is None:
+            return self._fallback_backend().center_of_mass(det_mask)
+        com_row = got[0].get().astype(np.float32, copy=False)
+        com_col = got[1].get().astype(np.float32, copy=False)
+        out = com_col.reshape(-1), com_row.reshape(-1)
+        if det_mask is None:
+            self._com_cache = out
+        return out
+
+
+class CudaPackedUInt4Compute:
+    """CUDA backend for packed ``uint4`` detector-count arrays.
+
+    ``uint4`` is two 0..15 count values per byte. The hot virtual-image and CoM
+    paths read the packed buffer directly through RawKernels instead of unpacking
+    the full 4D stack to uint8.
+    """
+
+    capabilities: tuple[str, ...] = ()
+
+    def __init__(self, data):
+        self._data = data
+        shape = tuple(int(v) for v in data.shape)
+        if len(shape) == 4:
+            self.scan_shape = (shape[0], shape[1])
+            self.det_shape = (shape[2], shape[3])
+        elif len(shape) == 3:
+            n, dr, dc = shape
+            sr = round(int(n) ** 0.5)
+            self.scan_shape = (sr, int(n) // sr) if sr * sr == int(n) else (int(n),)
+            self.det_shape = (int(dr), int(dc))
+        else:
+            raise ValueError(f"expected 3D/4D packed uint4 array, got {shape}")
+        self.n_frames = int(np.prod(self.scan_shape))
+        self.device = "cuda"
+        self._total_cache_uint64 = None
+        self._com_cache = None
+        self._mask_index_cache = OrderedDict()
+
+    def frame(self, idx: int) -> np.ndarray:
+        from quantem.gpu.detector.backends.cuda.kernels import cuda_frame_uint4_to_u8
+
+        frame = cuda_frame_uint4_to_u8(self._data, int(idx))
+        if frame is None:
+            raise RuntimeError("Packed uint4 CUDA frame unpack is unavailable.")
+        return frame.get()
+
+    def _total_counts_uint64(self):
+        if self._total_cache_uint64 is None:
+            from quantem.gpu.detector.backends.cuda.kernels import (
+                cuda_sum_all_uint64_uint4,
+            )
+
+            self._total_cache_uint64 = cuda_sum_all_uint64_uint4(self._data)
+        return self._total_cache_uint64
+
+    def _device_indices_for(self, mask_np: np.ndarray):
+        import cupy as cp
+
+        contiguous = np.ascontiguousarray(mask_np.reshape(-1), dtype=bool)
+        key = contiguous.tobytes()
+        indices = self._mask_index_cache.get(key)
+        if indices is not None:
+            self._mask_index_cache.move_to_end(key)
+            return indices
+        indices = cp.asarray(np.flatnonzero(contiguous).astype(np.int32, copy=False))
+        self._mask_index_cache[key] = indices
+        if len(self._mask_index_cache) > _CUDA_MASK_INDEX_CACHE_SIZE:
+            self._mask_index_cache.popitem(last=False)
+        return indices
+
+    def masked_sum(self, det_mask: np.ndarray) -> np.ndarray:
+        import cupy as cp
+
+        from quantem.gpu.detector.backends.cuda.kernels import (
+            cuda_selected_sum_from_total_uint4,
+            cuda_selected_sum_uint4,
+        )
+
+        mask_np = np.asarray(det_mask, dtype=bool)
+        if mask_np.shape != self.det_shape:
+            raise ValueError(
+                f"det_mask shape {mask_np.shape} does not match detector shape "
+                f"{self.det_shape}."
+            )
+        selected = int(mask_np.sum())
+        if selected == 0:
+            return np.zeros(self.scan_shape, dtype=np.float32)
+        if selected == mask_np.size:
+            total = self._total_counts_uint64()
+            out = None if total is None else total.astype(cp.float32)
+        elif selected > int(mask_np.size * 0.5):
+            complement = self._device_indices_for(~mask_np)
+            total = self._total_counts_uint64()
+            out = (
+                None
+                if total is None
+                else cuda_selected_sum_from_total_uint4(self._data, complement, total)
+            )
+        else:
+            indices = self._device_indices_for(mask_np)
+            out = cuda_selected_sum_uint4(self._data, indices)
+        if out is None:
+            raise RuntimeError("Packed uint4 CUDA masked-sum kernel is unavailable.")
+        return out.get().astype(np.float32, copy=False)
+
+    def masked_sum_exact(self, det_mask: np.ndarray) -> np.ndarray:
+        """Return exact uint64 counts from packed uint4 data."""
+        import cupy as cp
+
+        from quantem.gpu.detector.backends.cuda.kernels import cuda_selected_sum_uint4
+
+        mask_np = np.asarray(det_mask, dtype=bool)
+        if mask_np.shape != self.det_shape:
+            raise ValueError(
+                f"det_mask shape {mask_np.shape} does not match detector shape "
+                f"{self.det_shape}."
+            )
+        selected = int(mask_np.sum())
+        if selected == 0:
+            return np.zeros(self.scan_shape, dtype=np.uint64)
+        if selected == mask_np.size:
+            out = self._total_counts_uint64()
+        elif selected > int(mask_np.size * 0.5):
+            complement = cuda_selected_sum_uint4(
+                self._data, self._device_indices_for(~mask_np)
+            )
+            total = self._total_counts_uint64()
+            out = None if total is None or complement is None else total - complement.astype(cp.uint64)
+        else:
+            out = cuda_selected_sum_uint4(
+                self._data, self._device_indices_for(mask_np)
+            )
+            if out is not None:
+                out = out.astype(cp.uint64)
+        if out is None:
+            raise RuntimeError("Packed uint4 CUDA exact masked-sum kernel is unavailable.")
+        return out.get().astype(np.uint64, copy=False)
+
+    def mean_dp(self) -> np.ndarray:
+        from quantem.gpu.detector.backends.cuda.kernels import cuda_mean_dp_uint4
+
+        out = cuda_mean_dp_uint4(self._data)
+        if out is None:
+            raise RuntimeError("Packed uint4 CUDA mean-DP kernel is unavailable.")
+        return out.get().astype(np.float32, copy=False)
+
+    def reduce_frames(self, scan_indices: np.ndarray, reduce: str = "mean") -> np.ndarray:
+        import cupy as cp
+
+        from quantem.gpu.detector.backends.cuda.kernels import cuda_frame_uint4_to_u8
+
+        idx = np.asarray(scan_indices, dtype=np.int64).reshape(-1)
+        n_det = int(self.det_shape[0] * self.det_shape[1])
+        if idx.size == 0:
+            return np.zeros(self.det_shape, dtype=np.float32)
+        if reduce == "max":
+            out = cp.zeros(n_det, dtype=cp.uint8)
+            for frame_idx in idx:
+                frame = cuda_frame_uint4_to_u8(self._data, int(frame_idx)).reshape(-1)
+                out = cp.maximum(out, frame)
+            return out.astype(cp.float32).reshape(self.det_shape).get()
+        acc = cp.zeros(n_det, dtype=cp.uint64)
+        for frame_idx in idx:
+            frame = cuda_frame_uint4_to_u8(self._data, int(frame_idx)).reshape(-1)
+            acc += frame.astype(cp.uint64)
+        out = acc.astype(cp.float32)
+        if reduce != "sum":
+            out /= int(idx.size)
+        return out.reshape(self.det_shape).get()
+
+    def reduce_frames_exact(self, scan_indices: np.ndarray) -> np.ndarray:
+        """Return an exact uint64 sum directly from packed uint4 storage."""
+        from quantem.gpu.detector.backends.cuda.kernels import (
+            cuda_selected_frame_sum_uint64_uint4,
+        )
+
+        indices = np.asarray(scan_indices, dtype=np.int32).reshape(-1)
+        out = cuda_selected_frame_sum_uint64_uint4(self._data, indices)
+        if out is None:
+            raise RuntimeError("Packed uint4 CUDA scan-ROI kernel is unavailable.")
+        return out.get().astype(np.uint64, copy=False)
+
+    def reduce_frames_max(self, scan_indices: np.ndarray) -> np.ndarray:
+        """Return an exact maximum directly from packed uint4 storage."""
+        from quantem.gpu.detector.backends.cuda.kernels import (
+            cuda_selected_frame_max_uint32_uint4,
+        )
+
+        indices = np.asarray(scan_indices, dtype=np.int32).reshape(-1)
+        out = cuda_selected_frame_max_uint32_uint4(self._data, indices)
+        if out is None:
+            raise RuntimeError("Packed uint4 CUDA scan-ROI max kernel is unavailable.")
+        return out.get().astype(np.uint32, copy=False)
+
+    def center_of_mass(self, det_mask: np.ndarray | None = None):
+        from quantem.gpu.detector.backends.cuda.kernels import cuda_center_of_mass_uint4
+
+        if det_mask is None and self._com_cache is not None:
+            return self._com_cache
+        got = cuda_center_of_mass_uint4(self._data, det_mask)
+        if got is None:
+            raise RuntimeError("Packed uint4 CUDA CoM kernel is unavailable.")
+        com_row = got[0].get().astype(np.float32, copy=False)
+        com_col = got[1].get().astype(np.float32, copy=False)
+        out = com_col.reshape(-1), com_row.reshape(-1)
+        if det_mask is None:
+            self._com_cache = out
+        return out

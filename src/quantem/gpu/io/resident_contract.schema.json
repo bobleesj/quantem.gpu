@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "quantem.gpu.4dstem-resident-receipt/v1",
+  "$id": "quantem.gpu.4dstem-resident-receipt/v2",
   "title": "QuantEM.GPU exact 4D-STEM resident-generation receipt",
   "type": "object",
   "additionalProperties": false,
@@ -16,7 +16,6 @@
     "working_logical_tensor_bytes",
     "physical_resident_bytes",
     "container_bytes",
-    "storage_encoding",
     "storage_schema",
     "lossless_exact",
     "scan_bin",
@@ -34,8 +33,8 @@
     "implementation_revision"
   ],
   "properties": {
-    "schema": {"const": "quantem.gpu.4dstem-resident-receipt/v1"},
-    "representation": {"type": "string", "minLength": 1},
+    "schema": {"const": "quantem.gpu.4dstem-resident-receipt/v2"},
+    "representation": {"enum": ["dense", "lossless_packed"]},
     "source_identity_sha256": {"$ref": "#/$defs/sha256"},
     "source_shape": {"$ref": "#/$defs/shape"},
     "working_shape": {"$ref": "#/$defs/shape"},
@@ -45,7 +44,6 @@
     "working_logical_tensor_bytes": {"type": "integer", "minimum": 1},
     "physical_resident_bytes": {"type": "integer", "minimum": 1},
     "container_bytes": {"$ref": "#/$defs/optionalPositiveInteger"},
-    "storage_encoding": {"enum": ["dense", "lossless-packed"]},
     "storage_schema": {"type": "string", "minLength": 1},
     "lossless_exact": {"const": true},
     "scan_bin": {"type": "integer", "minimum": 1},

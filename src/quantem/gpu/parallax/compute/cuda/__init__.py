@@ -1,1 +1,1 @@
-"""CUDA parallax implementation."""
+"""Compatibility imports; canonical implementation: ``quantem.gpu.parallax.backends.cuda``."""

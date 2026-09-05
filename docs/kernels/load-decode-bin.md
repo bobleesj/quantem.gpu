@@ -10,15 +10,17 @@ from quantem.gpu import io
 result = io.load(
     "scan_master.h5",
     backend="auto",
+    representation="dense",
     dtype="u16",
-    det_bin=1,
+    detector_bin=1,
 )
 
-print(result.data.shape, result.data.dtype)
-print(result.metadata)
+print(result.shape, result.dtype)
+print(result.representation, result.residency)
+print(result.logical_bytes, result.resident_bytes)
 ```
 
-`det_bin=1` preserves native detector sampling. Detector binning is explicit,
+`detector_bin=1` preserves native detector sampling. Detector binning is explicit,
 count-preserving, and recorded. Scan cropping is never introduced as an
 automatic resource policy.
 
@@ -34,9 +36,24 @@ $$
 In plain terms, `(row, column)` is `(r, c)` for both scan and detector axes.
 
 Storage shards may flatten $(R_r,R_c)$ into a frame index, and a device layout
-may be detector-major or packed. `LoadResult` metadata must still report the
+may be detector-major or packed. `FourDSTEMData` metadata must still report the
 logical scan and detector shapes, source/output dtype, crop/bin plan, and
 source identity.
+
+## Representation, dtype, and residency
+
+Keep these three axes separate:
+
+| Axis | Public values | Question answered |
+|---|---|---|
+| Representation | `lossless_packed`, `dense` | How are all logical counts encoded? |
+| Dtype | `uint8`, `uint16`, `uint32`, and supported floating types | What scientific value type is exposed? |
+| Residency | host, CUDA device, Apple unified/device memory, or WebGPU device | Where is the physical payload retained? |
+
+`lossless_packed` does not mean `uint8`, and `dense` does not imply host memory.
+The format profile and schema remain provenance fields rather than additional
+public representation names. This lets new codecs evolve without changing
+scientist-facing algorithms.
 
 ## Dtype and memory contract
 
@@ -47,8 +64,8 @@ The load path keeps four precision decisions separate:
    lossless `uint8` low-byte path;
 3. **accumulation dtype** — widened integer precision used for detector or scan
    sums; and
-4. **resident dtype** — the array representation delivered to downstream
-   kernels and recorded in provenance.
+4. **output dtype** — the value type delivered to downstream kernels and
+   recorded in provenance.
 
 `uint16` is exact for native `uint16` counts only while every correction and
 sum fits 0 through 65,535. Detector binning therefore widens accumulation and,

@@ -38,6 +38,7 @@ import {
 type SourceDtype = "uint8" | "uint16" | "uint32" | "float32";
 type DecodeDtype = "uint8" | "uint16" | "uint32" | "float32";
 type DecodeDtypeRequest = DecodeDtype | "u1" | "u2" | "u4" | "u32" | "uint4" | "native" | "auto";
+export type DataRepresentation = "dense" | "lossless_packed";
 
 export interface LocalH5GpuChunk {
   buffer: GPUBuffer;
@@ -101,6 +102,10 @@ export interface LocalH5LoadProfile extends LogicalPixelHashProfile {
 export interface LocalH5LoadResult {
   device: GPUDevice;
   chunks: LocalH5GpuChunk[];
+  representation: DataRepresentation;
+  residency: "device";
+  logicalBytes: number;
+  residentBytes: number;
   scanCount: number;
   detSize: number;
   detRows: number;
@@ -1390,6 +1395,10 @@ export async function loadShow4DSTEMLocalH5Master(
   return {
     device: profileDevice,
     chunks: gpuChunks,
+    representation: "dense",
+    residency: "device",
+    logicalBytes: scanCount * detSize * (mode === 1 ? 1 : mode === 0 ? 2 : 4),
+    residentBytes: gpuChunks.reduce((total, chunk) => total + chunk.buffer.size, 0),
     scanCount,
     detSize,
     detRows: outputDetRows,
@@ -1402,6 +1411,9 @@ export async function loadShow4DSTEMLocalH5Master(
     profile,
   };
 }
+
+/** Canonical UI-neutral name; the original export remains compatible. */
+export const loadLocalH5Master = loadShow4DSTEMLocalH5Master;
 
 export async function loadShow4DSTEMLocalH5MaskedSum(
   masterUrl: string,

@@ -1,0 +1,386 @@
+#version 450
+#ifndef QUANTEM_GPU_WORKGROUP_SYNC
+#extension GL_KHR_shader_subgroup_basic : require
+#ifdef QUANTEM_GPU_LEADER_PARSE
+#extension GL_KHR_shader_subgroup_ballot : require
+#endif
+#endif
+
+// Independent raw-LZ4 chunks decode directly into their final resident packed
+// detector buffer. Every lane parses the same stream while owning disjoint
+// absolute output words; no scan-major source or transpose is materialized.
+layout(local_size_x = 64) in;
+
+layout(set = 0, binding = 0, std430) readonly buffer Compressed {
+  uint words[];
+} compressed_source;
+layout(set = 0, binding = 1, std430) readonly buffer ChunkMetadata {
+  uvec4 chunks[];
+} metadata;
+layout(set = 0, binding = 2, std430) buffer Decoded {
+  uint words[];
+} decoded;
+layout(set = 0, binding = 3, std430) buffer DecodeStatus {
+  uint values[];
+} status;
+
+layout(push_constant) uniform Parameters {
+  uint chunk_count;
+  uint compressed_byte_count;
+  uint dispatch_width;
+} parameters;
+
+uint read_byte(uint address) {
+  return (compressed_source.words[address >> 2u] >>
+          ((address & 3u) * 8u)) & 0xffu;
+}
+
+uint read_u16_le(uint address) {
+  uint word = compressed_source.words[address >> 2u];
+  uint shift = (address & 3u) * 8u;
+  uint value = word >> shift;
+  if (shift == 24u)
+    value |= compressed_source.words[(address >> 2u) + 1u] << 8u;
+  return value & 0xffffu;
+}
+
+uint read_decoded_byte(uint base_word, uint address) {
+  return (decoded.words[base_word + (address >> 2u)] >>
+          ((address & 3u) * 8u)) & 0xffu;
+}
+
+bool extend_length(inout uint position, uint end, inout uint length) {
+  if (length != 15u)
+    return true;
+  uint next = 255u;
+  while (next == 255u) {
+    if (position >= end)
+      return false;
+    next = read_byte(position++);
+    if (length > 0xffffffffu - next)
+      return false;
+    length += next;
+  }
+  return true;
+}
+
+uint first_owned_word(uint first_word, uint lane) {
+  uint width = gl_WorkGroupSize.x;
+  uint mask = width - 1u;
+  return first_word + ((lane + width - (first_word & mask)) & mask);
+}
+
+void copy_literals(uint output_base_word, uint destination, uint source,
+                   uint count, uint lane) {
+  if (count == 0u)
+    return;
+  uint first_word = destination >> 2u;
+  uint last_word = (destination + count - 1u) >> 2u;
+  for (uint word_index = first_owned_word(first_word, lane);
+       word_index <= last_word; word_index += gl_WorkGroupSize.x) {
+    uint value = decoded.words[output_base_word + word_index];
+    uint word_byte = word_index * 4u;
+    for (uint byte_index = 0u; byte_index < 4u; ++byte_index) {
+      uint address = word_byte + byte_index;
+      if (address >= destination && address - destination < count) {
+        uint shift = byte_index * 8u;
+        uint byte_value = read_byte(source + address - destination);
+        value = (value & ~(0xffu << shift)) | (byte_value << shift);
+      }
+    }
+    decoded.words[output_base_word + word_index] = value;
+  }
+}
+
+void copy_match(uint output_base_word, uint destination, uint source,
+                uint period, uint count, uint lane) {
+  if (count == 0u)
+    return;
+  uint first_word = destination >> 2u;
+  uint last_word = (destination + count - 1u) >> 2u;
+  uint period_mask = period - 1u;
+  bool direct_copy = period >= count;
+  bool power_of_two = period != 0u && (period & period_mask) == 0u;
+  for (uint word_index = first_owned_word(first_word, lane);
+       word_index <= last_word; word_index += gl_WorkGroupSize.x) {
+    uint value = decoded.words[output_base_word + word_index];
+    uint word_byte = word_index * 4u;
+    for (uint byte_index = 0u; byte_index < 4u; ++byte_index) {
+      uint address = word_byte + byte_index;
+      if (address >= destination && address - destination < count) {
+        uint relative = address - destination;
+        uint repeated = direct_copy ? relative
+            : (power_of_two ? (relative & period_mask) : (relative % period));
+        uint shift = byte_index * 8u;
+        uint byte_value = read_decoded_byte(output_base_word,
+                                            source + repeated);
+        value = (value & ~(0xffu << shift)) | (byte_value << shift);
+      }
+    }
+    decoded.words[output_base_word + word_index] = value;
+  }
+}
+
+void sync_subgroup() {
+#ifdef QUANTEM_GPU_WORKGROUP_SYNC
+  memoryBarrierBuffer();
+  barrier();
+#else
+  subgroupMemoryBarrierBuffer();
+  subgroupBarrier();
+#endif
+}
+
+#ifdef QUANTEM_GPU_SCALAR_CHUNKS
+void copy_literals_scalar(uint output_base_word, uint destination,
+                          uint source, uint count) {
+  if (count == 0u)
+    return;
+  uint first_word = destination >> 2u;
+  uint last_word = (destination + count - 1u) >> 2u;
+  for (uint word_index = first_word; word_index <= last_word; ++word_index) {
+    uint value = decoded.words[output_base_word + word_index];
+    uint word_byte = word_index * 4u;
+    for (uint byte_index = 0u; byte_index < 4u; ++byte_index) {
+      uint address = word_byte + byte_index;
+      if (address >= destination && address - destination < count) {
+        uint shift = byte_index * 8u;
+        value = (value & ~(0xffu << shift)) |
+            (read_byte(source + address - destination) << shift);
+      }
+    }
+    decoded.words[output_base_word + word_index] = value;
+  }
+}
+
+void copy_match_scalar(uint output_base_word, uint destination, uint source,
+                       uint period, uint count) {
+  if (count == 0u)
+    return;
+  uint first_word = destination >> 2u;
+  uint last_word = (destination + count - 1u) >> 2u;
+  bool direct_copy = period >= count;
+  for (uint word_index = first_word; word_index <= last_word; ++word_index) {
+    uint value = decoded.words[output_base_word + word_index];
+    uint word_byte = word_index * 4u;
+    for (uint byte_index = 0u; byte_index < 4u; ++byte_index) {
+      uint address = word_byte + byte_index;
+      if (address >= destination && address - destination < count) {
+        uint shift = byte_index * 8u;
+        uint relative = address - destination;
+        uint repeated = direct_copy ? relative : (relative % period);
+        value = (value & ~(0xffu << shift)) |
+            (read_decoded_byte(output_base_word, source + repeated) << shift);
+      }
+    }
+    decoded.words[output_base_word + word_index] = value;
+  }
+}
+#endif
+
+void main() {
+#ifdef QUANTEM_GPU_SCALAR_CHUNKS
+  uint chunk = gl_GlobalInvocationID.x;
+#else
+  uint chunk = gl_WorkGroupID.x + gl_WorkGroupID.y * parameters.dispatch_width;
+#endif
+  uint lane = gl_LocalInvocationID.x;
+  if (chunk >= parameters.chunk_count)
+    return;
+  uvec4 record = metadata.chunks[chunk];
+  uint input_position = record.x;
+  uint input_end = record.x + record.y;
+  uint output_position = 0u;
+  uint token_count = 0u;
+  uint error = 0u;
+  if (record.y == 0u || record.x > parameters.compressed_byte_count ||
+      record.y > parameters.compressed_byte_count - record.x ||
+      record.w == 0u || (record.w & 3u) != 0u)
+    error = 2u;
+
+#ifdef QUANTEM_GPU_SCALAR_CHUNKS
+  while (error == 0u && input_position < input_end &&
+         output_position < record.w) {
+    if (++token_count > record.w) {
+      error = 3u;
+      break;
+    }
+    uint token = read_byte(input_position++);
+    uint literal_count = token >> 4u;
+    if (!extend_length(input_position, input_end, literal_count) ||
+        literal_count > input_end - input_position ||
+        literal_count > record.w - output_position) {
+      error = 4u;
+      break;
+    }
+    copy_literals_scalar(record.z, output_position, input_position,
+                         literal_count);
+    input_position += literal_count;
+    output_position += literal_count;
+    if (output_position == record.w || input_position == input_end)
+      break;
+    if (input_end - input_position < 2u) {
+      error = 5u;
+      break;
+    }
+    uint match_offset = read_u16_le(input_position);
+    input_position += 2u;
+    if (match_offset == 0u || match_offset > output_position) {
+      error = 6u;
+      break;
+    }
+    uint match_count = token & 0x0fu;
+    if (!extend_length(input_position, input_end, match_count) ||
+        match_count > 0xfffffffbu) {
+      error = 7u;
+      break;
+    }
+    match_count += 4u;
+    if (match_count > record.w - output_position) {
+      error = 8u;
+      break;
+    }
+    copy_match_scalar(record.z, output_position,
+                      output_position - match_offset, match_offset,
+                      match_count);
+    output_position += match_count;
+  }
+#elif defined(QUANTEM_GPU_LEADER_PARSE)
+  // LZ4 token parsing is serial by definition. Parse it once per native
+  // subgroup, broadcast the validated copy ranges, and retain the existing
+  // lane-striped literal/match copies. The prior path parsed every token 64
+  // times and remains compiled below as the exact fallback.
+  while (true) {
+    uint literal_destination = 0u;
+    uint literal_source = 0u;
+    uint literal_count = 0u;
+    uint match_offset = 0u;
+    uint match_count = 0u;
+    uint has_match = 0u;
+    if (subgroupElect()) {
+      if (error == 0u && input_position < input_end &&
+          output_position < record.w) {
+        if (++token_count > record.w) {
+          error = 3u;
+        } else {
+          uint token = read_byte(input_position++);
+          literal_count = token >> 4u;
+          if (!extend_length(input_position, input_end, literal_count) ||
+              literal_count > input_end - input_position ||
+              literal_count > record.w - output_position) {
+            error = 4u;
+          } else {
+            literal_destination = output_position;
+            literal_source = input_position;
+            input_position += literal_count;
+            output_position += literal_count;
+            if (output_position != record.w && input_position != input_end) {
+              if (input_end - input_position < 2u) {
+                error = 5u;
+              } else {
+                match_offset = read_u16_le(input_position);
+                input_position += 2u;
+                if (match_offset == 0u || match_offset > output_position) {
+                  error = 6u;
+                } else {
+                  match_count = token & 0x0fu;
+                  if (!extend_length(input_position, input_end, match_count) ||
+                      match_count > 0xfffffffbu) {
+                    error = 7u;
+                  } else {
+                    match_count += 4u;
+                    if (match_count > record.w - output_position)
+                      error = 8u;
+                    else
+                      has_match = 1u;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    error = subgroupBroadcastFirst(error);
+    token_count = subgroupBroadcastFirst(token_count);
+    input_position = subgroupBroadcastFirst(input_position);
+    output_position = subgroupBroadcastFirst(output_position);
+    literal_destination = subgroupBroadcastFirst(literal_destination);
+    literal_source = subgroupBroadcastFirst(literal_source);
+    literal_count = subgroupBroadcastFirst(literal_count);
+    match_offset = subgroupBroadcastFirst(match_offset);
+    match_count = subgroupBroadcastFirst(match_count);
+    has_match = subgroupBroadcastFirst(has_match);
+    if (error != 0u)
+      break;
+    copy_literals(record.z, literal_destination, literal_source,
+                  literal_count, lane);
+    if (has_match == 0u)
+      break;
+    sync_subgroup();
+    copy_match(record.z, output_position, output_position - match_offset,
+               match_offset, match_count, lane);
+    output_position += match_count;
+  }
+#else
+  while (error == 0u && input_position < input_end &&
+         output_position < record.w) {
+    if (++token_count > record.w) {
+      error = 3u;
+      break;
+    }
+    uint token = read_byte(input_position++);
+    uint literal_count = token >> 4u;
+    if (!extend_length(input_position, input_end, literal_count) ||
+        literal_count > input_end - input_position ||
+        literal_count > record.w - output_position) {
+      error = 4u;
+      break;
+    }
+    copy_literals(record.z, output_position, input_position, literal_count,
+                  lane);
+    input_position += literal_count;
+    output_position += literal_count;
+    if (output_position == record.w || input_position == input_end)
+      break;
+    if (input_end - input_position < 2u) {
+      error = 5u;
+      break;
+    }
+    uint match_offset = read_u16_le(input_position);
+    input_position += 2u;
+    if (match_offset == 0u || match_offset > output_position) {
+      error = 6u;
+      break;
+    }
+    uint match_count = token & 0x0fu;
+    if (!extend_length(input_position, input_end, match_count) ||
+        match_count > 0xfffffffbu) {
+      error = 7u;
+      break;
+    }
+    match_count += 4u;
+    if (match_count > record.w - output_position) {
+      error = 8u;
+      break;
+    }
+    sync_subgroup();
+    copy_match(record.z, output_position, output_position - match_offset,
+               match_offset, match_count, lane);
+    output_position += match_count;
+  }
+#endif
+#ifndef QUANTEM_GPU_SCALAR_CHUNKS
+  sync_subgroup();
+#endif
+#ifdef QUANTEM_GPU_SCALAR_CHUNKS
+  status.values[chunk] = error != 0u
+      ? error
+      : (output_position == record.w ? 0u : 9u);
+#else
+  if (lane == 0u)
+    status.values[chunk] = error != 0u
+        ? error
+        : (output_position == record.w ? 0u : 9u);
+#endif
+}

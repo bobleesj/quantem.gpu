@@ -120,8 +120,8 @@ Validate the plan and registry locally with:
 python scripts/check_profile_registry.py
 python scripts/benchmark_registry.py validate
 PYTHONPATH=src python -m pytest -q \
-  tests/test_profile_registry.py \
-  tests/test_benchmark_registry.py
+  tests/infrastructure/test_profile_registry.py \
+  tests/infrastructure/test_benchmark_registry.py
 ```
 
 ## Regression decisions

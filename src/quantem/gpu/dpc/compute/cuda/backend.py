@@ -1,9 +1,5 @@
-"""CUDA center-of-mass dispatch."""
+"""Compatibility imports; canonical implementation: ``quantem.gpu.dpc.backends.cuda.backend``."""
 
-from quantem.gpu.detector.compute.cuda.kernels import cuda_center_of_mass
-
-
-def center_of_mass(data, mask=None):
-    """Run the exact CUDA center-of-mass kernel."""
-
-    return cuda_center_of_mass(data, mask)
+from quantem.gpu.dpc.backends.cuda.backend import (
+    center_of_mass as center_of_mass,
+)

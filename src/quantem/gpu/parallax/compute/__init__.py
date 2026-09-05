@@ -1,1 +1,1 @@
-"""Private parallax backend implementations."""
+"""Compatibility imports; canonical implementation: ``quantem.gpu.parallax.backends``."""

@@ -1,0 +1,286 @@
+#version 450
+
+// Tiny deltas keep one invocation per scan. Physical integrated GPUs process
+// rebases and wider deltas by packed scan tile so lanes share detector-column
+// payload; the barrier-free emulator fallback splits each scan across four lanes.
+// Host admission validates all descriptors/entries and uint32
+// product bounds before dispatch. Use one fixed descriptor set per bounded
+// shard; this does not require a multi-gigabyte SSBO or buffer device addresses.
+layout(local_size_x = 128) in;
+layout(set=0, binding=0, std430) readonly buffer Payload { uint words[]; };
+layout(set=0, binding=1, std430) readonly buffer Headers { uint descriptors[]; };
+layout(set=0, binding=2, std430) readonly buffer Entries { ivec2 entries[]; };
+layout(set=0, binding=3, std430) readonly buffer Previous { uint previous_image[]; };
+layout(set=0, binding=4, std430) buffer Next { uint next_image[]; };
+layout(set=0, binding=5, std430) readonly buffer RequestParameters {
+    uint entry_count;
+    uint mode;
+} request_parameters;
+layout(push_constant) uniform Parameters {
+    uint scan_count;
+    uint tile_count;
+    uint unused_entry_count;
+    uint output_offset;
+    uint unused_mode;
+    uint scan_tile;
+    uint header_encoding;
+    uint header_words_per_pixel;
+} parameters;
+
+uint compact_width(uint header_base, uint checkpoint_words, uint tile) {
+    uint packed = descriptors[header_base + checkpoint_words + tile / 8u];
+    return (packed >> ((tile % 8u) * 4u)) & 15u;
+}
+
+// Sum up to eight packed four-bit widths without a per-tile descriptor walk.
+// Compact admission fixes scan_tile at32, so each width is also the number of
+// payload words occupied by that tile. Two nibble sums fit independently in
+// each byte, including the maximum admitted width8+8.
+uint sum_width_nibbles(uint packed, uint count) {
+    uint mask = count >= 8u ? 0xffffffffu :
+        (count == 0u ? 0u : (1u << (count * 4u)) - 1u);
+    packed &= mask;
+    uint bytes = (packed & 0x0f0f0f0fu) + ((packed >> 4u) & 0x0f0f0f0fu);
+    return (bytes & 0xffu) + ((bytes >> 8u) & 0xffu) +
+        ((bytes >> 16u) & 0xffu) + ((bytes >> 24u) & 0xffu);
+}
+
+uint descriptor_for(uint pixel, uint tile) {
+    if (parameters.header_encoding == 0u)
+        return descriptors[pixel * parameters.tile_count + tile];
+    uint checkpoint_words = (parameters.tile_count + 31u) / 32u;
+    uint header_base = pixel * parameters.header_words_per_pixel;
+    uint checkpoint = tile / 32u;
+    uint offset = descriptors[header_base];
+    if (checkpoint != 0u) offset += descriptors[header_base + checkpoint];
+    uint first_width_word = checkpoint * 4u;
+    uint tile_width_word = tile / 8u;
+    for (uint word = first_width_word; word < tile_width_word; ++word) {
+        offset += sum_width_nibbles(
+            descriptors[header_base + checkpoint_words + word], 8u);
+    }
+    uint packed = descriptors[header_base + checkpoint_words + tile_width_word];
+    offset += sum_width_nibbles(packed, tile % 8u);
+    uint width = (packed >> ((tile % 8u) * 4u)) & 15u;
+    return (offset << 5u) | width;
+}
+
+uint sample_value(uint pixel, uint scan) {
+    uint descriptor = descriptor_for(pixel, scan / parameters.scan_tile);
+    uint width = descriptor & 31u;
+    if (width == 0u) return 0u;
+    uint bit = (scan % parameters.scan_tile) * width;
+    uint index = (descriptor >> 5u) + bit / 32u;
+    uint shift = bit % 32u;
+    uint value = words[index] >> shift;
+    if (shift + width > 32u) value |= words[index + 1u] << (32u - shift);
+    return value & ((1u << width) - 1u);
+}
+
+#ifndef QUANTEM_GPU_SCALAR_ONLY
+#if !defined(QUANTEM_GPU_TILE_ONLY)
+shared uint parallel_partials[128];
+#endif
+#if !defined(QUANTEM_GPU_ATOMIC_PARALLEL)
+// Wide deltas are detector-column gathers over the same packed scan tile.
+// Four 32-scan compact tiles, or one 128-scan expanded tile, share each
+// descriptor and its bounded payload words instead of re-reading them once per
+// scan. One invocation still owns one output scan, so exact modular sums need
+// neither output atomics nor a second reduction pass.
+#ifdef QUANTEM_GPU_TILE_ONLY
+shared uint tile_descriptors[56];
+shared uint tile_payload_words[896];
+shared ivec2 tile_entries[14];
+#else
+shared uint tile_descriptors[48];
+shared uint tile_payload_words[768];
+shared ivec2 tile_entries[12];
+#endif
+#endif
+#endif
+
+void main() {
+#ifdef QUANTEM_GPU_SCALAR_ONLY
+    uint scan = gl_GlobalInvocationID.x;
+    if (scan >= parameters.scan_count) return;
+    uint output_index = parameters.output_offset + scan;
+    uint sum = previous_image[output_index];
+    for (uint index = 0u; index < request_parameters.entry_count; ++index) {
+        ivec2 entry = entries[index];
+        uint value = sample_value(uint(entry.x), scan);
+        if (entry.y == 1) sum += value;
+        else sum -= value;
+    }
+    next_image[output_index] = sum;
+    return;
+#else
+#ifndef QUANTEM_GPU_ATOMIC_PARALLEL
+    if (request_parameters.mode == 1u || request_parameters.mode == 2u) {
+        uint lane = gl_LocalInvocationID.x;
+        uint tiles_per_group = 128u / parameters.scan_tile;
+        uint tile_lane = lane / parameters.scan_tile;
+        uint scan_in_tile = lane % parameters.scan_tile;
+        uint tile = gl_WorkGroupID.x * tiles_per_group + tile_lane;
+        bool active_tile = tile < parameters.tile_count;
+        uint scan = tile * parameters.scan_tile + scan_in_tile;
+        bool active_scan = active_tile && scan < parameters.scan_count;
+        uint output_index = parameters.output_offset + scan;
+        uint sum = active_scan && request_parameters.mode == 2u
+            ? previous_image[output_index] : 0u;
+
+        // Batch detector columns while staying below the physical 4 KiB
+        // shared-memory limit.
+#ifdef QUANTEM_GPU_TILE_ONLY
+        const uint batch_capacity = 14u;
+#else
+        const uint batch_capacity = 12u;
+#endif
+        const uint batch_payload_words = 64u;
+        const uint words_per_tile = parameters.scan_tile / 2u;
+        for (uint batch_start = 0u; batch_start < request_parameters.entry_count;
+             batch_start += batch_capacity) {
+            uint batch_count = min(batch_capacity,
+                request_parameters.entry_count - batch_start);
+            if (lane < batch_count)
+                tile_entries[lane] = entries[batch_start + lane];
+            uint descriptor_count = batch_count * tiles_per_group;
+            if (parameters.scan_tile == 32u) {
+                // Compact 1024 scans have four tiles per group and at most
+                // eight payload words per descriptor. One lane can publish a
+                // descriptor and its short contiguous payload before the same
+                // barrier, removing one workgroup-wide synchronization per
+                // eight changed detector columns.
+                if (lane < descriptor_count) {
+                    uint batch_lane = lane / tiles_per_group;
+                    uint descriptor_tile_lane = lane % tiles_per_group;
+                    uint descriptor_tile = gl_WorkGroupID.x * tiles_per_group +
+                        descriptor_tile_lane;
+                    ivec2 entry = entries[batch_start + batch_lane];
+                    uint descriptor = descriptor_tile < parameters.tile_count
+                        ? descriptor_for(uint(entry.x), descriptor_tile) : 0u;
+                    tile_descriptors[batch_lane * 4u + descriptor_tile_lane] = descriptor;
+                    uint width = descriptor & 31u;
+                    uint word_count = width;
+                    uint shared_base = batch_lane * batch_payload_words +
+                        descriptor_tile_lane * words_per_tile;
+                    for (uint word = 0u; word < word_count; ++word) {
+                        tile_payload_words[shared_base + word] =
+                            words[(descriptor >> 5u) + word];
+                    }
+                }
+                barrier();
+            } else {
+                if (lane < descriptor_count) {
+                    uint batch_lane = lane / tiles_per_group;
+                    uint descriptor_tile_lane = lane % tiles_per_group;
+                    uint descriptor_tile = gl_WorkGroupID.x * tiles_per_group +
+                        descriptor_tile_lane;
+                    ivec2 entry = entries[batch_start + batch_lane];
+                    tile_descriptors[batch_lane * 4u + descriptor_tile_lane] =
+                        descriptor_tile < parameters.tile_count
+                            ? descriptor_for(uint(entry.x), descriptor_tile) : 0u;
+                }
+                barrier();
+
+                for (uint batch_lane = 0u; batch_lane < batch_count; ++batch_lane) {
+                    uint descriptor = tile_descriptors[batch_lane * 4u + tile_lane];
+                    uint width = descriptor & 31u;
+                    uint word_count = (parameters.scan_tile * width + 31u) / 32u;
+                    uint shared_base = batch_lane * batch_payload_words +
+                        tile_lane * words_per_tile;
+                    for (uint word = scan_in_tile; word < word_count;
+                         word += parameters.scan_tile) {
+                        tile_payload_words[shared_base + word] =
+                            words[(descriptor >> 5u) + word];
+                    }
+                }
+                barrier();
+            }
+
+            if (active_scan) {
+                for (uint batch_lane = 0u; batch_lane < batch_count; ++batch_lane) {
+                    uint descriptor = tile_descriptors[batch_lane * 4u + tile_lane];
+                    uint width = descriptor & 31u;
+                    if (width == 0u) continue;
+                    uint shared_base = batch_lane * batch_payload_words +
+                        tile_lane * words_per_tile;
+                    uint bit = scan_in_tile * width;
+                    uint word = bit / 32u;
+                    uint shift = bit % 32u;
+                    uint value = tile_payload_words[shared_base + word] >> shift;
+                    if (shift + width > 32u) {
+                        value |= tile_payload_words[shared_base + word + 1u]
+                            << (32u - shift);
+                    }
+                    value &= (1u << width) - 1u;
+                    if (tile_entries[batch_lane].y == 1) sum += value;
+                    else sum -= value;
+                }
+            }
+            // Keep this batch stable until every scan has consumed it.
+            barrier();
+        }
+        if (active_scan) next_image[output_index] = sum;
+        return;
+    }
+#endif
+
+#ifndef QUANTEM_GPU_TILE_ONLY
+    if (request_parameters.mode != 0u) {
+        uint lane = gl_LocalInvocationID.x;
+        // Four lanes per scan is the measured Adreno occupancy sweet spot for
+        // both rebases and wider deltas on the physical Fold8.
+        uint lanes_per_scan = 4u;
+        uint scans_per_group = 128u / lanes_per_scan;
+        uint scan_lane = lane % scans_per_group;
+        uint scan = gl_WorkGroupID.x * scans_per_group + scan_lane;
+        uint entry_lane = lane / scans_per_group;
+        uint sum = 0u;
+        if (scan < parameters.scan_count) {
+            for (uint index = entry_lane; index < request_parameters.entry_count; index += lanes_per_scan) {
+                ivec2 entry = entries[index];
+                uint value = sample_value(uint(entry.x), scan);
+                if (entry.y == 1) sum += value;
+                else sum -= value;
+            }
+        }
+#ifdef QUANTEM_GPU_ATOMIC_PARALLEL
+        // The Android emulator's host-MoltenVK compiler currently lowers a
+        // workgroup barrier to the removed Metal thread_scope_subgroup name.
+        // Its virtual GPU therefore uses four exact modular atomics instead.
+        // A rebase destination is cleared by the command buffer before dispatch;
+        // a delta destination already contains the committed image.
+        if (scan < parameters.scan_count)
+            atomicAdd(next_image[parameters.output_offset + scan], sum);
+#else
+        // Inactive scan-tail lanes still publish zero and reach this barrier.
+        // The parallel branch is uniform because it comes from push constants.
+        parallel_partials[lane] = sum;
+        barrier();
+        if (entry_lane == 0u && scan < parameters.scan_count) {
+            uint total = request_parameters.mode == 1u ? 0u :
+                previous_image[parameters.output_offset + scan];
+            for (uint part = 0u; part < lanes_per_scan; ++part)
+                total += parallel_partials[scan_lane + part * scans_per_group];
+            next_image[parameters.output_offset + scan] = total;
+        }
+#endif
+        return;
+    }
+
+    uint scan = gl_GlobalInvocationID.x;
+    if (scan >= parameters.scan_count) return;
+    uint output_index = parameters.output_offset + scan;
+    uint sum = previous_image[output_index];
+    for (uint index = 0u; index < request_parameters.entry_count; ++index) {
+        ivec2 entry = entries[index];
+        uint value = sample_value(uint(entry.x), scan);
+        // Unsigned modular arithmetic avoids signed overflow. Admission and the
+        // exact committed base guarantee the final sum is a representable uint32.
+        if (entry.y == 1) sum += value;
+        else sum -= value;
+    }
+    next_image[output_index] = sum;
+#endif
+#endif
+}

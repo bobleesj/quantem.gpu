@@ -1,5 +1,6 @@
-"""CUDA DPC kernels."""
+"""Compatibility imports; canonical implementation: ``quantem.gpu.dpc.backends.cuda``."""
 
-from .backend import center_of_mass
-
-__all__ = ["center_of_mass"]
+from quantem.gpu.dpc.backends.cuda import (
+    __all__ as __all__,
+    center_of_mass as center_of_mass,
+)

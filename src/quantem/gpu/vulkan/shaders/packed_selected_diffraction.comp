@@ -1,0 +1,60 @@
+#version 450
+
+// One invocation per detector pixel, one selected scan from one resident shard.
+// Admission validates all widths/offsets once. The source and immutable exclusion
+// mask remain read-only; neither committed detector image nor FFT is bound here.
+layout(local_size_x = 128) in;
+layout(set=0, binding=0, std430) readonly buffer Payload { uint words[]; };
+layout(set=0, binding=1, std430) readonly buffer Headers { uint descriptors[]; };
+layout(set=0, binding=2, std430) readonly buffer Exclusions { uint excluded[]; };
+layout(set=0, binding=3, std430) writeonly buffer Diffraction { uint diffraction[]; };
+layout(push_constant) uniform Parameters {
+    uint scan;
+    uint tile_count;
+    uint pixel_count;
+    uint scan_tile;
+    uint header_encoding;
+    uint header_words_per_pixel;
+} parameters;
+
+uint compact_width(uint header_base, uint checkpoint_words, uint tile) {
+    uint packed = descriptors[header_base + checkpoint_words + tile / 8u];
+    return (packed >> ((tile % 8u) * 4u)) & 15u;
+}
+
+uint descriptor_for(uint pixel, uint tile) {
+    if (parameters.header_encoding == 0u)
+        return descriptors[pixel * parameters.tile_count + tile];
+    uint checkpoint_words = (parameters.tile_count + 31u) / 32u;
+    uint header_base = pixel * parameters.header_words_per_pixel;
+    uint checkpoint = tile / 32u;
+    uint offset = descriptors[header_base];
+    if (checkpoint != 0u) offset += descriptors[header_base + checkpoint];
+    for (uint prior = checkpoint * 32u; prior < tile; ++prior) {
+        uint width = compact_width(header_base, checkpoint_words, prior);
+        offset += (parameters.scan_tile * width + 31u) / 32u;
+    }
+    uint width = compact_width(header_base, checkpoint_words, tile);
+    return (offset << 5u) | width;
+}
+
+void main() {
+    uint pixel = gl_GlobalInvocationID.x;
+    if (pixel >= parameters.pixel_count) return;
+    if (excluded[pixel] != 0u) {
+        diffraction[pixel] = 0u;
+        return;
+    }
+    uint descriptor = descriptor_for(pixel, parameters.scan / parameters.scan_tile);
+    uint width = descriptor & 31u;
+    if (width == 0u) {
+        diffraction[pixel] = 0u;
+        return;
+    }
+    uint bit = (parameters.scan % parameters.scan_tile) * width;
+    uint index = (descriptor >> 5u) + bit / 32u;
+    uint shift = bit % 32u;
+    uint value = words[index] >> shift;
+    if (shift + width > 32u) value |= words[index + 1u] << (32u - shift);
+    diffraction[pixel] = value & ((1u << width) - 1u);
+}

@@ -8,13 +8,7 @@ from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
 
-# cupy guarded so `import quantem.gpu.io` (which pulls this module) works on a
-# non-CUDA box. Writing compressed HDF5 is a cuda-only operation; on a Mac this
-# module imports fine and only errors if save() is actually called.
-try:
-    import cupy as cp
-except ImportError:  # pragma: no cover - exercised only on non-CUDA hosts
-    cp = None
+from quantem.gpu.device._cupy import cp
 import h5py
 import hdf5plugin  # noqa: F401 - registers bitshuffle filter
 import numpy as np
@@ -724,7 +718,7 @@ def _mps_lz4_rle_compress_kernel():
 @lru_cache(maxsize=1)
 def _native_mps_u16_save_pipelines():
     import Metal
-    from .backends.mps import decoder as mps_backend
+    from .backends.mps import dense as mps_backend
 
     source = r"""
         #include <metal_stdlib>

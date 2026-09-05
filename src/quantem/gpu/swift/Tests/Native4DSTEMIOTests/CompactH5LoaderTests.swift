@@ -197,7 +197,7 @@ final class CompactH5LoaderTests: XCTestCase {
       )
       source.releaseResidentStorage()
     }
-    let baselineAllocation = device.currentAllocatedSize
+    var baselineAllocation = device.currentAllocatedSize
     for corruptWidth in [false, true] {
       let fixture = try makeMultishardCompactFixture()
       defer { try? FileManager.default.removeItem(at: fixture.url) }
@@ -218,7 +218,10 @@ final class CompactH5LoaderTests: XCTestCase {
           XCTAssertTrue(error.localizedDescription.contains(corruptWidth ? "bits" : "SHA-256"))
         }
       }
-      XCTAssertEqual(device.currentAllocatedSize, baselineAllocation)
+      // Earlier command buffers can release storage while this failure drains.
+      // Require no growth, then use the lower value for the next failure.
+      XCTAssertLessThanOrEqual(device.currentAllocatedSize, baselineAllocation)
+      baselineAllocation = device.currentAllocatedSize
     }
     let fixture = try makeMultishardCompactFixture()
     defer { try? FileManager.default.removeItem(at: fixture.url) }
@@ -241,7 +244,8 @@ final class CompactH5LoaderTests: XCTestCase {
           }
         }
       }
-      XCTAssertEqual(device.currentAllocatedSize, baselineAllocation)
+      XCTAssertLessThanOrEqual(device.currentAllocatedSize, baselineAllocation)
+      baselineAllocation = device.currentAllocatedSize
     }
   }
 
@@ -516,7 +520,7 @@ final class CompactH5LoaderTests: XCTestCase {
     let source = try MetalCompactH5Loader.load(sourceURL: fixture.url, device: device)
     let capabilities = try Metal4DSTEMResidentCapabilities.compact(source)
 
-    XCTAssertEqual(capabilities.representation, .compactQGIXV1UInt16)
+    XCTAssertEqual(capabilities.representation, .losslessPacked)
     XCTAssertEqual(capabilities.residentReceipt.sourceShape, [8, 16, 2, 3])
     XCTAssertEqual(capabilities.residentReceipt.workingShape, [8, 16, 2, 3])
     XCTAssertEqual(capabilities.residentReceipt.sourceDtype, "uint16")

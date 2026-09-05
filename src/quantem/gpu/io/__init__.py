@@ -8,7 +8,11 @@ I/O domain.
 
 from .discover import discover
 from .inspect import inspect
+from .integrity import SourceIntegrity as SourceIntegrity
+from .load import FourDSTEMData as FourDSTEMData
+from .load import LoadResult as LoadResult
 from .load import load
+from .representation import DataRepresentation as DataRepresentation
 from .save import save
 
 __all__ = ["discover", "inspect", "load", "save"]

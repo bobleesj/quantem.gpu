@@ -32,7 +32,7 @@ def run(
             "Parallax currently requires CUDA; "
             f"backend={selected!r} was selected."
         )
-    from .compute.cuda.backend import run_cuda
+    from .backends.cuda.backend import run_cuda
 
     return run_cuda(
         data,

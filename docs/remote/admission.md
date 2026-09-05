@@ -44,13 +44,28 @@ budget, active resident bytes, evictable bytes, physical free bytes, requested
 shape/dtype, crop/bin plan, and response status. These values are admission
 evidence, not a substitute for measured peak VRAM.
 
+The LZ4 packed loader stages the complete encoded file on the selected GPU
+during construction. Its admission estimate includes those file bytes plus
+resident storage, conservative per-shard scratch, and headroom. The direct
+bitpacked profile does not use that full-file staging allocation. A reported
+five-gigabyte resident source is therefore not a five-gigabyte peak-load or
+total-process memory claim.
+
 For a compact entry, `/api/browse/residency` also exposes separately measured
 metadata, whole-file integrity, source read, host validation, GPU upload,
 NVRTC compile, GPU validation/decode, decoded-integrity, total-load, and private
 CUDA-pool byte fields. A zero phase means that phase was not part of the
-selected QGIX version; it is not an unmeasured timing. Client decode, transport,
+selected Lossless Pack Format v1 encoding profile; it is not an unmeasured
+timing. Client decode, transport,
 display upload, first presentation, and A-B-A switch latency remain client-side
 measurements and must not be inferred from server load time.
+
+Integrity verification, transfer, and prepared-moment construction can overlap.
+Do not sum their phase durations to estimate wall time. Kernel warmup happens
+at service initialization for configured packed sources and is outside an
+already-running service's load request. Application launch, SSH setup, source
+preparation, server residency, first presentation, and interactive switching
+must each retain their own measurement boundary.
 
 Physical acceptance also samples process allocation/reserve and total-card
 occupancy while loading and computing. A memory-only regression can preserve
