@@ -1258,7 +1258,7 @@ private func parseOptions() throws -> Options {
         + "[--load-repeats N] [--logical-hash] "
         + "[--dpc-oracle-manifest PATH] "
         + "[--resident-switch-source PATH] "
-        + "[--parallel-mapped-authentication] [--trajectory-runs N] "
+        + "[--parallel-mapped-authentication | --bounded-concurrent-authentication] [--trajectory-runs N] "
         + "[--trajectory-states-per-run N]"
     )
   }
@@ -1281,8 +1281,13 @@ private func parseOptions() throws -> Options {
       logicalHash = true
       continue
     }
-    if flag == "--parallel-mapped-authentication" {
-      authenticationPolicy = .parallelMapped
+    if flag == "--parallel-mapped-authentication" || flag == "--bounded-concurrent-authentication" {
+      guard authenticationPolicy == .boundedSequential else {
+        throw benchmarkError("Choose only one authentication policy.")
+      }
+      authenticationPolicy =
+        flag == "--parallel-mapped-authentication"
+        ? .parallelMapped : .boundedConcurrent
       continue
     }
     guard !arguments.isEmpty else { throw benchmarkError("Missing value for \(flag).") }
@@ -1344,6 +1349,13 @@ private func loadSample(
   [
     "sample_index": sampleIndex,
     "resident_ready_ms": load.totalMilliseconds,
+    "source_read_policy": load.sourceReadPolicy,
+    "source_page_state": "source_pages_unspecified",
+    "native_cache_status": load.nativeCacheStatus,
+    "maximum_in_flight_shards": load.maximumInFlightShards,
+    "shard_pipeline_wall_ms": load.shardPipelineMilliseconds,
+    "descriptor_preparation_work_ms": load.descriptorPreparationMilliseconds,
+    "gpu_decode_work_ms": load.gpuDecodeMilliseconds,
     "source_read_ms": load.sourceReadMilliseconds,
     "authentication_ms": load.decodedIntegrityMilliseconds,
     "private_upload_ms": load.privateUploadMilliseconds,
@@ -1352,6 +1364,7 @@ private func loadSample(
       + firstResidentProductMilliseconds,
     "resident_bytes": load.residentBytes,
     "maximum_transient_bytes": load.maximumTransientBytes,
+    "planned_additional_bytes": load.plannedAdditionalBytes,
     "mapped_authentication_bytes": load.mappedAuthenticationBytes,
     "device_allocated_bytes_before": load.deviceAllocatedBytesBefore,
     "device_allocated_bytes_after": load.deviceAllocatedBytesAfter,
@@ -1371,6 +1384,7 @@ private func authenticationPolicyName(
 ) -> String {
   switch policy {
   case .boundedSequential: "bounded_sequential"
+  case .boundedConcurrent: "bounded_concurrent_three_shards"
   case .parallelMapped: "parallel_mapped_full_file"
   }
 }

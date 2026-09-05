@@ -120,6 +120,13 @@ public struct MetalCompactH5LoadMetrics: Equatable, Sendable {
   /// Conservative overlapping requested buffers plus mapped authentication bytes.
   /// Excludes driver allocations, OS page cache, and caller-owned display products.
   public let plannedAdditionalBytes: UInt64
+  /// Requested descriptor-scoped IO policy; this does not certify cold pages.
+  public let sourceReadPolicy: String
+  /// Maximum bounded shard staging windows used by this load.
+  public let maximumInFlightShards: Int
+  /// Elapsed pipeline wall time. Individual shard phase metrics are summed
+  /// work durations and overlap when maximumInFlightShards is greater than one.
+  public let shardPipelineMilliseconds: Double
   public let metadataMilliseconds: Double
   public let sourceReadMilliseconds: Double
   public let descriptorPreparationMilliseconds: Double
@@ -144,14 +151,28 @@ public struct MetalCompactH5LoadMetrics: Equatable, Sendable {
   public let totalResidentBytes: UInt64
 }
 
-/// Authentication strategy for direct QGIX or prepared native-cache payloads.
+/// Authentication and scheduling strategy for exact compact shard payloads.
 public enum MetalCompactH5AuthenticationPolicy: Sendable, Equatable {
   /// Authenticate each bounded staging buffer before it is privately uploaded.
   case boundedSequential
+  /// Overlap at most three independent shard reads, Metal decodes, SHA checks
+  /// and private uploads. No file mapping or native cache is required.
+  /// Each shard is authenticated before publication; the load waits for all.
+  case boundedConcurrent
   /// Hash independent file-backed shard ranges concurrently before bounded upload.
   /// This maps the complete file and is intended only for machines whose measured
   /// memory budget safely admits the additional file-backed residency.
   case parallelMapped
+}
+
+/// Source-descriptor caching policy, independent of the optional native cache.
+public enum MetalCompactH5SourceReadPolicy: String, Sendable, Equatable {
+  case systemDefault
+  /// Require F_NOCACHE on each source descriptor before reading metadata or
+  /// payload. This avoids adding read data to the filesystem cache, but it does
+  /// not evict existing pages and does not by itself prove a controlled-cold run.
+  /// No global cache setting, purge, or read-ahead setting is changed.
+  case avoidCaching
 }
 
 /// One exact compact detector-mask update over the resident private buffers.
@@ -300,13 +321,40 @@ private struct CompactResidentShard {
   let descriptors: MTLBuffer
 }
 
-private struct CompactDirectShardLoadResult {
+/// Workers never access this buffer on the CPU. Metal command buffers use
+/// tracked resources and the validation shader writes only atomic maxima.
+/// The caller reads it only after every bounded window has joined.
+private struct CompactConcurrentWidthValidation: @unchecked Sendable {
+  let buffer: MTLBuffer
+}
+
+private struct CompactShardLoadResult {
   let resident: CompactResidentShard
   let sourceReadMilliseconds: Double
   let descriptorPreparationMilliseconds: Double
+  let gpuDecodeMilliseconds: Double
   let decodedIntegrityMilliseconds: Double
   let privateUploadMilliseconds: Double
   let maximumTransientBytes: UInt64
+}
+
+/// Each worker owns its buffers until completion; only completed immutable
+/// results cross this lock. Ordered collection preserves scan-shard ordering.
+private final class CompactShardLoadCollector: @unchecked Sendable {
+  private let lock = NSLock()
+  private var values: [Result<CompactShardLoadResult, Error>]
+
+  init(count: Int) {
+    values = Array(repeating: .failure(Metal4DSTEMStreamingIOError.cancelled), count: count)
+  }
+
+  func set(_ result: Result<CompactShardLoadResult, Error>, at index: Int) {
+    lock.withLock { values[index] = result }
+  }
+
+  func finish() throws -> [CompactShardLoadResult] {
+    try lock.withLock { try values.map { try $0.get() } }
+  }
 }
 
 private struct CompactPreparedDPCLoadResult {
@@ -1106,18 +1154,31 @@ public enum MetalCompactH5Loader {
   /// any Metal queue or buffer allocation. It covers requested resident buffers,
   /// worst-shard staging, and mapped authentication bytes. The caller must reserve
   /// additional headroom for driver allocations, OS caches, and app products.
+  /// Phase times sum shard work; boundedConcurrent overlaps these durations.
+  /// sourceReadPolicy applies to source metadata and payload descriptors. A
+  /// nondefault policy cannot be combined with native cache or mapped loading.
   public static func load(
     sourceURL: URL,
     device: MTLDevice,
     authenticationPolicy: MetalCompactH5AuthenticationPolicy = .boundedSequential,
     nativeCacheURL: URL? = nil,
     maximumAdditionalBytes: UInt64? = nil,
+    sourceReadPolicy: MetalCompactH5SourceReadPolicy = .systemDefault,
     shouldCancel: () -> Bool = { false }
   ) throws -> MetalCompactH5ResidentSource {
     let totalStart = ContinuousClock.now
     let allocatedBefore = UInt64(device.currentAllocatedSize)
     let metadataStart = ContinuousClock.now
-    let index = try parse(sourceURL: sourceURL)
+    guard
+      sourceReadPolicy == .systemDefault
+        || (nativeCacheURL == nil && authenticationPolicy != .parallelMapped)
+    else {
+      throw invalid(
+        "Source avoidCaching reads require nativeCacheURL nil and bounded authentication. "
+          + "This policy cannot control native-cache or memory-mapped reads."
+      )
+    }
+    let index = try parse(sourceURL: sourceURL, readPolicy: sourceReadPolicy)
     var cacheStatus = nativeCacheURL == nil ? "notRequested" : "miss"
     var cacheFile: FileHandle?
     var cacheStamp: String?
@@ -1212,12 +1273,7 @@ public enum MetalCompactH5Loader {
       device: device
     )
 
-    let descriptor = sourceURL.path.withCString { Darwin.open($0, O_RDONLY) }
-    guard descriptor >= 0 else {
-      throw invalid(
-        "Could not open compact source \(sourceURL.path): \(lastPOSIXError())."
-      )
-    }
+    let descriptor = try openSource(sourceURL, readPolicy: sourceReadPolicy)
     defer { Darwin.close(descriptor) }
 
     let excludedSet = Set(index.metadata.excludedDetectorPixels)
@@ -1264,361 +1320,59 @@ public enum MetalCompactH5Loader {
     }
     guard !shouldCancel() else { throw Metal4DSTEMStreamingIOError.cancelled }
 
-    for (shardIndex, shard) in loadingShards.enumerated() {
-      try autoreleasepool {
-        guard !shouldCancel() else { throw Metal4DSTEMStreamingIOError.cancelled }
-        if index.storageLayout == .directV3 || nativeCache != nil {
-          let loaded = try loadDirectShard(
-            fileDescriptor: cacheFile?.fileDescriptor ?? descriptor,
-            shardIndex: shardIndex,
-            shard: shard,
-            index: index,
-            device: device,
-            queue: queue,
-            validationPipeline: validateDescriptors,
-            maximumWidthBuffer: maximumWidthBuffer,
-            payloadPreauthenticated: payloadsPreauthenticated
-          )
-          sourceReadMilliseconds += loaded.sourceReadMilliseconds
-          descriptorPreparationMilliseconds += loaded.descriptorPreparationMilliseconds
-          decodedIntegrityMilliseconds += loaded.decodedIntegrityMilliseconds
-          privateUploadMilliseconds += loaded.privateUploadMilliseconds
-          maximumTransientBytes = max(
-            maximumTransientBytes,
-            loaded.maximumTransientBytes
-          )
-          residentShards.append(loaded.resident)
-          return
-        }
-        let payloadBytes = try exactInt(shard.payloadBytes, label: "payload bytes")
-        let lengthsBytes = try exactInt(shard.lengthsBytes, label: "length bytes")
-        let widthsBytes = try exactInt(shard.widthsBytes, label: "width bytes")
-        let decodedBytes = try exactInt(shard.decodedBytes, label: "decoded bytes")
-        let descriptorBytes = try multiply(
-          Int(shard.descriptorCount),
-          MemoryLayout<UInt32>.stride,
-          label: "descriptor bytes"
-        )
-        let chunkBytes = try multiply(
-          Int(shard.chunkCount),
-          MemoryLayout<CompactLZ4Chunk>.stride,
-          label: "chunk metadata bytes"
-        )
-        maximumTransientBytes = max(
-          maximumTransientBytes,
-          UInt64(
-            payloadBytes + lengthsBytes + widthsBytes + decodedBytes
-              + descriptorBytes + chunkBytes + Int(shard.chunkCount) * 4
-          )
-        )
-        guard decodedBytes <= device.maxBufferLength,
-          descriptorBytes <= device.maxBufferLength
-        else {
-          throw Metal4DSTEMStreamingIOError.allocationFailed(
-            label: "compact private shard \(shardIndex)",
-            bytes: max(shard.decodedBytes, UInt64(descriptorBytes))
-          )
-        }
-
-        let readStart = ContinuousClock.now
-        let payloadAllocationBytes = (payloadBytes + 3) & ~3
-        guard
-          let compressed = device.makeBuffer(
-            length: payloadAllocationBytes,
-            options: .storageModeShared
-          ),
-          let decodedStage = device.makeBuffer(
-            length: decodedBytes,
-            options: .storageModeShared
-          )
-        else {
-          throw Metal4DSTEMStreamingIOError.allocationFailed(
-            label: "compact decode staging for shard \(shardIndex)",
-            bytes: UInt64(payloadAllocationBytes + decodedBytes)
-          )
-        }
-        try preadExact(
-          descriptor,
-          offset: shard.payloadOffset,
-          into: compressed.contents(),
-          byteCount: payloadBytes,
-          label: "shard \(shardIndex) compressed payload"
-        )
-        var lengths = [UInt8](repeating: 0, count: lengthsBytes)
-        try lengths.withUnsafeMutableBytes { raw in
-          try preadExact(
-            descriptor,
-            offset: shard.lengthsOffset,
-            into: raw.baseAddress!,
-            byteCount: raw.count,
-            label: "shard \(shardIndex) chunk lengths"
-          )
-        }
-        var widths = [UInt8](repeating: 0, count: widthsBytes)
-        try widths.withUnsafeMutableBytes { raw in
-          try preadExact(
-            descriptor,
-            offset: shard.widthsOffset,
-            into: raw.baseAddress!,
-            byteCount: raw.count,
-            label: "shard \(shardIndex) descriptor widths"
-          )
-        }
-        sourceReadMilliseconds += milliseconds(from: readStart)
-
-        let preparationStart = ContinuousClock.now
-        let tileCount = (index.metadata.scansPerShard + 127) / 128
-        var descriptors = [UInt32]()
-        descriptors.reserveCapacity(widths.count)
-        var payloadWord: UInt32 = 0
-        for (descriptorIndex, widthByte) in widths.enumerated() {
-          let width = UInt32(widthByte)
-          guard width <= 16 else {
-            throw invalid(
-              "Compact shard \(shardIndex) descriptor \(descriptorIndex) requires "
-                + "\(width) bits, beyond exact uint16."
-            )
-          }
-          let pixel = descriptorIndex / tileCount
-          if index.manifestWorkingDtype == "uint8", width > 8,
-            !excludedSet.contains(pixel)
-          {
-            throw invalid(
-              "Compact shard \(shardIndex) uses \(width) bits for nonexcluded "
-                + "detector pixel \(pixel), contradicting its legacy uint8 manifest."
-            )
-          }
-          guard payloadWord < (1 << 27) else {
-            throw invalid(
-              "Compact shard \(shardIndex) exceeds the 27-bit descriptor offset."
-            )
-          }
-          descriptors.append((payloadWord << 5) | width)
-          payloadWord = try add(
-            payloadWord,
-            width * 4,
-            label: "compact payload word offset"
-          )
-          maximumWidths[pixel] = max(maximumWidths[pixel], widthByte)
-        }
-        guard UInt64(payloadWord) * 4 == shard.decodedBytes else {
-          throw invalid(
-            "Compact shard \(shardIndex) widths cover \(UInt64(payloadWord) * 4) "
-              + "decoded bytes, expected \(shard.decodedBytes)."
-          )
-        }
-        var chunks: [CompactLZ4Chunk] = []
-        chunks.reserveCapacity(lengths.count)
-        var inputOffset: UInt32 = 0
-        for (chunkIndex, encodedLength) in lengths.enumerated() {
-          let inputBytes = UInt32(encodedLength) + 1
-          let outputOffset = chunkIndex * index.metadata.payloadChunkBytes
-          chunks.append(
-            CompactLZ4Chunk(
-              inputOffset: inputOffset,
-              inputBytes: inputBytes,
-              outputWord: UInt32(outputOffset / 4),
-              outputBytes: UInt32(
-                min(index.metadata.payloadChunkBytes, decodedBytes - outputOffset)
+    let maximumInFlightShards =
+      authenticationPolicy == .boundedConcurrent
+      ? min(3, loadingShards.count) : 1
+    let shardPipelineStart = ContinuousClock.now
+    let payloadDescriptor = cacheFile?.fileDescriptor ?? descriptor
+    let isDirect = index.storageLayout == .directV3 || nativeCache != nil
+    let shardRecords = loadingShards
+    let concurrentWidths = CompactConcurrentWidthValidation(buffer: maximumWidthBuffer)
+    for first in stride(from: 0, to: loadingShards.count, by: maximumInFlightShards) {
+      // Caller cancellation is polled only on the calling thread, between
+      // bounded windows. All workers finish before any error/cancellation escapes.
+      guard !shouldCancel() else { throw Metal4DSTEMStreamingIOError.cancelled }
+      let count = min(maximumInFlightShards, loadingShards.count - first)
+      let results = CompactShardLoadCollector(count: count)
+      DispatchQueue.concurrentPerform(iterations: count) { slot in
+        let result: Result<CompactShardLoadResult, Error> = Result {
+          try autoreleasepool {
+            let shardIndex = first + slot
+            let shard = shardRecords[shardIndex]
+            if isDirect {
+              return try loadDirectShard(
+                fileDescriptor: payloadDescriptor, shardIndex: shardIndex, shard: shard,
+                index: index, device: device, queue: queue,
+                validationPipeline: validateDescriptors,
+                maximumWidthBuffer: concurrentWidths.buffer,
+                payloadPreauthenticated: payloadsPreauthenticated
               )
+            }
+            return try loadCompressedShard(
+              descriptor: descriptor, shardIndex: shardIndex, shard: shard, index: index,
+              excludedSet: excludedSet, device: device, queue: queue, decode: decode,
+              validateDescriptors: validateDescriptors, maximumWidthBuffer: concurrentWidths.buffer
             )
-          )
-          inputOffset = try add(
-            inputOffset,
-            inputBytes,
-            label: "compressed chunk offset"
-          )
+          }
         }
-        guard UInt64(inputOffset) == shard.payloadBytes else {
-          throw invalid(
-            "Compact shard \(shardIndex) chunk lengths cover \(inputOffset) bytes, "
-              + "expected \(shard.payloadBytes)."
-          )
-        }
-        guard
-          let chunkBuffer = chunks.withUnsafeBytes({ raw in
-            device.makeBuffer(
-              bytes: raw.baseAddress!,
-              length: raw.count,
-              options: .storageModeShared
-            )
-          }),
-          let descriptorStage = descriptors.withUnsafeBytes({ raw in
-            device.makeBuffer(
-              bytes: raw.baseAddress!,
-              length: raw.count,
-              options: .storageModeShared
-            )
-          }),
-          let decodeStatus = device.makeBuffer(
-            length: Int(shard.chunkCount) * MemoryLayout<UInt32>.stride,
-            options: .storageModeShared
-          )
-        else {
-          throw Metal4DSTEMStreamingIOError.allocationFailed(
-            label: "compact metadata staging for shard \(shardIndex)",
-            bytes: UInt64(chunkBytes + descriptorBytes + Int(shard.chunkCount) * 4)
-          )
-        }
-        memset(decodedStage.contents(), 0, decodedStage.length)
-        memset(decodeStatus.contents(), 0xff, decodeStatus.length)
-        descriptorPreparationMilliseconds += milliseconds(from: preparationStart)
-
-        var decodeParameters = CompactLZ4Parameters(
-          chunkCount: shard.chunkCount,
-          compressedBytes: UInt32(shard.payloadBytes)
-        )
-        guard let decodeCommand = queue.makeCommandBuffer(),
-          let decodeEncoder = decodeCommand.makeComputeCommandEncoder()
-        else {
-          throw Metal4DSTEMStreamingIOError.metalUnavailable(
-            "Metal could not encode compact shard \(shardIndex) decode."
-          )
-        }
-        decodeEncoder.setComputePipelineState(decode)
-        decodeEncoder.setBuffer(compressed, offset: 0, index: 0)
-        decodeEncoder.setBuffer(chunkBuffer, offset: 0, index: 1)
-        decodeEncoder.setBuffer(decodedStage, offset: 0, index: 2)
-        decodeEncoder.setBuffer(decodeStatus, offset: 0, index: 3)
-        decodeEncoder.setBytes(
-          &decodeParameters,
-          length: MemoryLayout.stride(ofValue: decodeParameters),
-          index: 4
-        )
-        decodeEncoder.dispatchThreadgroups(
-          MTLSize(width: Int(shard.chunkCount), height: 1, depth: 1),
-          threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1)
-        )
-        decodeEncoder.endEncoding()
-        try MetalCompactH5ResidentSource.complete(
-          decodeCommand,
-          operation: "shard \(shardIndex) raw LZ4 decode"
-        )
-        gpuDecodeMilliseconds +=
-          max(
-            0,
-            decodeCommand.gpuEndTime - decodeCommand.gpuStartTime
-          ) * 1_000
-        let statuses = decodeStatus.contents().bindMemory(
-          to: UInt32.self,
-          capacity: Int(shard.chunkCount)
-        )
-        for chunkIndex in 0..<Int(shard.chunkCount) where statuses[chunkIndex] != 0 {
-          throw invalid(
-            "Compact shard \(shardIndex) raw LZ4 chunk \(chunkIndex) failed "
-              + "with decoder status \(statuses[chunkIndex])."
-          )
-        }
-
-        let integrityStart = ContinuousClock.now
-        let decodedData = Data(
-          bytesNoCopy: decodedStage.contents(),
-          count: decodedBytes,
-          deallocator: .none
-        )
-        let decodedSHA256 = SHA256.hash(data: decodedData)
-          .map { String(format: "%02x", $0) }
-          .joined()
-        guard decodedSHA256 == shard.decodedSHA256 else {
-          throw invalid(
-            "Compact shard \(shardIndex) decoded SHA-256 is \(decodedSHA256), "
-              + "expected \(shard.decodedSHA256)."
-          )
-        }
-        decodedIntegrityMilliseconds += milliseconds(from: integrityStart)
-
-        guard
-          let privatePayload = device.makeBuffer(
-            length: decodedBytes,
-            options: .storageModePrivate
-          ),
-          let privateDescriptors = device.makeBuffer(
-            length: descriptorBytes,
-            options: .storageModePrivate
-          ),
-          let descriptorStatus = device.makeBuffer(
-            length: MemoryLayout<UInt32>.stride,
-            options: .storageModeShared
-          )
-        else {
-          throw Metal4DSTEMStreamingIOError.allocationFailed(
-            label: "compact private buffers for shard \(shardIndex)",
-            bytes: shard.decodedBytes + UInt64(descriptorBytes)
-          )
-        }
-        memset(descriptorStatus.contents(), 0, descriptorStatus.length)
-        var descriptorParameters = CompactDescriptorParameters(
-          descriptorCount: shard.descriptorCount,
-          payloadWords: payloadWord,
-          tileCount: UInt32(
-            (index.metadata.scansPerShard + index.metadata.scanTile - 1)
-              / index.metadata.scanTile
-          ),
-          headerWordsPerPixel: UInt32(index.headerWordsPerPixel),
-          scanTile: UInt32(index.metadata.scanTile),
-          headerEncoding: index.headerEncoding
-        )
-        let uploadStart = ContinuousClock.now
-        guard let uploadCommand = queue.makeCommandBuffer(),
-          let blit = uploadCommand.makeBlitCommandEncoder()
-        else {
-          throw Metal4DSTEMStreamingIOError.metalUnavailable(
-            "Metal could not encode compact shard \(shardIndex) private upload."
-          )
-        }
-        blit.copy(
-          from: decodedStage,
-          sourceOffset: 0,
-          to: privatePayload,
-          destinationOffset: 0,
-          size: decodedBytes
-        )
-        blit.copy(
-          from: descriptorStage,
-          sourceOffset: 0,
-          to: privateDescriptors,
-          destinationOffset: 0,
-          size: descriptorBytes
-        )
-        blit.endEncoding()
-        guard let validationEncoder = uploadCommand.makeComputeCommandEncoder() else {
-          throw Metal4DSTEMStreamingIOError.metalUnavailable(
-            "Metal could not encode compact shard \(shardIndex) descriptor validation."
-          )
-        }
-        validationEncoder.setComputePipelineState(validateDescriptors)
-        validationEncoder.setBuffer(privateDescriptors, offset: 0, index: 0)
-        validationEncoder.setBuffer(descriptorStatus, offset: 0, index: 1)
-        validationEncoder.setBytes(
-          &descriptorParameters,
-          length: MemoryLayout.stride(ofValue: descriptorParameters),
-          index: 2
-        )
-        validationEncoder.setBuffer(maximumWidthBuffer, offset: 0, index: 3)
-        validationEncoder.dispatchThreads(
-          MTLSize(width: Int(shard.descriptorCount), height: 1, depth: 1),
-          threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
-        )
-        validationEncoder.endEncoding()
-        try MetalCompactH5ResidentSource.complete(
-          uploadCommand,
-          operation: "shard \(shardIndex) private upload"
-        )
-        guard descriptorStatus.contents().load(as: UInt32.self) == 0 else {
-          throw invalid(
-            "Compact shard \(shardIndex) failed GPU descriptor coverage validation "
-              + "with status \(descriptorStatus.contents().load(as: UInt32.self))."
-          )
-        }
-        privateUploadMilliseconds += milliseconds(from: uploadStart)
-        residentShards.append(
-          CompactResidentShard(
-            payload: privatePayload,
-            descriptors: privateDescriptors
-          )
-        )
+        results.set(result, at: slot)
       }
+      guard !shouldCancel() else { throw Metal4DSTEMStreamingIOError.cancelled }
+      var windowTransientBytes: UInt64 = 0
+      for loaded in try results.finish() {
+        sourceReadMilliseconds += loaded.sourceReadMilliseconds
+        descriptorPreparationMilliseconds += loaded.descriptorPreparationMilliseconds
+        gpuDecodeMilliseconds += loaded.gpuDecodeMilliseconds
+        decodedIntegrityMilliseconds += loaded.decodedIntegrityMilliseconds
+        privateUploadMilliseconds += loaded.privateUploadMilliseconds
+        windowTransientBytes = try add(
+          windowTransientBytes, loaded.maximumTransientBytes, label: "in-flight staging"
+        )
+        residentShards.append(loaded.resident)
+      }
+      maximumTransientBytes = max(maximumTransientBytes, windowTransientBytes)
     }
+    let shardPipelineMilliseconds = milliseconds(from: shardPipelineStart)
 
     if let cacheFile, let nativeCache {
       guard try CompactNativeCache.stamp(cacheFile) == cacheStamp,
@@ -1728,6 +1482,9 @@ public enum MetalCompactH5Loader {
       nativeCacheBytes: nativeCache?.fileBytes ?? 0,
       nativeCacheDescriptorSHA256Checks: nativeCache?.shards.count ?? 0,
       plannedAdditionalBytes: plannedAdditionalBytes,
+      sourceReadPolicy: sourceReadPolicy.rawValue,
+      maximumInFlightShards: maximumInFlightShards,
+      shardPipelineMilliseconds: shardPipelineMilliseconds,
       metadataMilliseconds: metadataMilliseconds,
       sourceReadMilliseconds: sourceReadMilliseconds,
       descriptorPreparationMilliseconds: descriptorPreparationMilliseconds,
@@ -1835,7 +1592,11 @@ public enum MetalCompactH5Loader {
       }
       maximumStaging = max(maximumStaging, productBytes)
     }
-    total = try add(total, maximumStaging, label: "resident and staging budget")
+    let inFlight = authenticationPolicy == .boundedConcurrent ? min(3, loadingShards.count) : 1
+    total = try add(
+      total, try multiply(maximumStaging, UInt64(inFlight), label: "in-flight staging budget"),
+      label: "resident and staging budget"
+    )
     if authenticationPolicy == .parallelMapped,
       index.storageLayout == .directV3 || nativeCache != nil
     {
@@ -2092,6 +1853,357 @@ public enum MetalCompactH5Loader {
     )
   }
 
+  private static func loadCompressedShard(
+    descriptor: Int32,
+    shardIndex: Int,
+    shard: CompactH5ShardRecord,
+    index: CompactH5ParsedIndex,
+    excludedSet: Set<Int>,
+    device: MTLDevice,
+    queue: MTLCommandQueue,
+    decode: MTLComputePipelineState,
+    validateDescriptors: MTLComputePipelineState,
+    maximumWidthBuffer: MTLBuffer
+  ) throws -> CompactShardLoadResult {
+    var sourceReadMilliseconds = 0.0
+    var descriptorPreparationMilliseconds = 0.0
+    var gpuDecodeMilliseconds = 0.0
+    var decodedIntegrityMilliseconds = 0.0
+    var privateUploadMilliseconds = 0.0
+    var maximumTransientBytes: UInt64 = 0
+    let payloadBytes = try exactInt(shard.payloadBytes, label: "payload bytes")
+    let lengthsBytes = try exactInt(shard.lengthsBytes, label: "length bytes")
+    let widthsBytes = try exactInt(shard.widthsBytes, label: "width bytes")
+    let decodedBytes = try exactInt(shard.decodedBytes, label: "decoded bytes")
+    let descriptorBytes = try multiply(
+      Int(shard.descriptorCount),
+      MemoryLayout<UInt32>.stride,
+      label: "descriptor bytes"
+    )
+    let chunkBytes = try multiply(
+      Int(shard.chunkCount),
+      MemoryLayout<CompactLZ4Chunk>.stride,
+      label: "chunk metadata bytes"
+    )
+    maximumTransientBytes = max(
+      maximumTransientBytes,
+      UInt64(
+        payloadBytes + lengthsBytes + widthsBytes + decodedBytes
+          + descriptorBytes * 2 + chunkBytes * 2 + Int(shard.chunkCount) * 4
+          + (4 - payloadBytes % 4) % 4 + 4
+      )
+    )
+    guard decodedBytes <= device.maxBufferLength,
+      descriptorBytes <= device.maxBufferLength
+    else {
+      throw Metal4DSTEMStreamingIOError.allocationFailed(
+        label: "compact private shard \(shardIndex)",
+        bytes: max(shard.decodedBytes, UInt64(descriptorBytes))
+      )
+    }
+
+    let readStart = ContinuousClock.now
+    let payloadAllocationBytes = (payloadBytes + 3) & ~3
+    guard
+      let compressed = device.makeBuffer(
+        length: payloadAllocationBytes,
+        options: .storageModeShared
+      ),
+      let decodedStage = device.makeBuffer(
+        length: decodedBytes,
+        options: .storageModeShared
+      )
+    else {
+      throw Metal4DSTEMStreamingIOError.allocationFailed(
+        label: "compact decode staging for shard \(shardIndex)",
+        bytes: UInt64(payloadAllocationBytes + decodedBytes)
+      )
+    }
+    try preadExact(
+      descriptor,
+      offset: shard.payloadOffset,
+      into: compressed.contents(),
+      byteCount: payloadBytes,
+      label: "shard \(shardIndex) compressed payload"
+    )
+    var lengths = [UInt8](repeating: 0, count: lengthsBytes)
+    try lengths.withUnsafeMutableBytes { raw in
+      try preadExact(
+        descriptor,
+        offset: shard.lengthsOffset,
+        into: raw.baseAddress!,
+        byteCount: raw.count,
+        label: "shard \(shardIndex) chunk lengths"
+      )
+    }
+    var widths = [UInt8](repeating: 0, count: widthsBytes)
+    try widths.withUnsafeMutableBytes { raw in
+      try preadExact(
+        descriptor,
+        offset: shard.widthsOffset,
+        into: raw.baseAddress!,
+        byteCount: raw.count,
+        label: "shard \(shardIndex) descriptor widths"
+      )
+    }
+    sourceReadMilliseconds += milliseconds(from: readStart)
+
+    let preparationStart = ContinuousClock.now
+    let tileCount = (index.metadata.scansPerShard + 127) / 128
+    var descriptors = [UInt32]()
+    descriptors.reserveCapacity(widths.count)
+    var payloadWord: UInt32 = 0
+    for (descriptorIndex, widthByte) in widths.enumerated() {
+      let width = UInt32(widthByte)
+      guard width <= 16 else {
+        throw invalid(
+          "Compact shard \(shardIndex) descriptor \(descriptorIndex) requires "
+            + "\(width) bits, beyond exact uint16."
+        )
+      }
+      let pixel = descriptorIndex / tileCount
+      if index.manifestWorkingDtype == "uint8", width > 8,
+        !excludedSet.contains(pixel)
+      {
+        throw invalid(
+          "Compact shard \(shardIndex) uses \(width) bits for nonexcluded "
+            + "detector pixel \(pixel), contradicting its legacy uint8 manifest."
+        )
+      }
+      guard payloadWord < (1 << 27) else {
+        throw invalid(
+          "Compact shard \(shardIndex) exceeds the 27-bit descriptor offset."
+        )
+      }
+      descriptors.append((payloadWord << 5) | width)
+      payloadWord = try add(
+        payloadWord,
+        width * 4,
+        label: "compact payload word offset"
+      )
+    }
+    guard UInt64(payloadWord) * 4 == shard.decodedBytes else {
+      throw invalid(
+        "Compact shard \(shardIndex) widths cover \(UInt64(payloadWord) * 4) "
+          + "decoded bytes, expected \(shard.decodedBytes)."
+      )
+    }
+    var chunks: [CompactLZ4Chunk] = []
+    chunks.reserveCapacity(lengths.count)
+    var inputOffset: UInt32 = 0
+    for (chunkIndex, encodedLength) in lengths.enumerated() {
+      let inputBytes = UInt32(encodedLength) + 1
+      let outputOffset = chunkIndex * index.metadata.payloadChunkBytes
+      chunks.append(
+        CompactLZ4Chunk(
+          inputOffset: inputOffset,
+          inputBytes: inputBytes,
+          outputWord: UInt32(outputOffset / 4),
+          outputBytes: UInt32(
+            min(index.metadata.payloadChunkBytes, decodedBytes - outputOffset)
+          )
+        )
+      )
+      inputOffset = try add(
+        inputOffset,
+        inputBytes,
+        label: "compressed chunk offset"
+      )
+    }
+    guard UInt64(inputOffset) == shard.payloadBytes else {
+      throw invalid(
+        "Compact shard \(shardIndex) chunk lengths cover \(inputOffset) bytes, "
+          + "expected \(shard.payloadBytes)."
+      )
+    }
+    guard
+      let chunkBuffer = chunks.withUnsafeBytes({ raw in
+        device.makeBuffer(
+          bytes: raw.baseAddress!,
+          length: raw.count,
+          options: .storageModeShared
+        )
+      }),
+      let descriptorStage = descriptors.withUnsafeBytes({ raw in
+        device.makeBuffer(
+          bytes: raw.baseAddress!,
+          length: raw.count,
+          options: .storageModeShared
+        )
+      }),
+      let decodeStatus = device.makeBuffer(
+        length: Int(shard.chunkCount) * MemoryLayout<UInt32>.stride,
+        options: .storageModeShared
+      )
+    else {
+      throw Metal4DSTEMStreamingIOError.allocationFailed(
+        label: "compact metadata staging for shard \(shardIndex)",
+        bytes: UInt64(chunkBytes + descriptorBytes + Int(shard.chunkCount) * 4)
+      )
+    }
+    memset(decodedStage.contents(), 0, decodedStage.length)
+    memset(decodeStatus.contents(), 0xff, decodeStatus.length)
+    descriptorPreparationMilliseconds += milliseconds(from: preparationStart)
+
+    var decodeParameters = CompactLZ4Parameters(
+      chunkCount: shard.chunkCount,
+      compressedBytes: UInt32(shard.payloadBytes)
+    )
+    guard let decodeCommand = queue.makeCommandBuffer(),
+      let decodeEncoder = decodeCommand.makeComputeCommandEncoder()
+    else {
+      throw Metal4DSTEMStreamingIOError.metalUnavailable(
+        "Metal could not encode compact shard \(shardIndex) decode."
+      )
+    }
+    decodeEncoder.setComputePipelineState(decode)
+    decodeEncoder.setBuffer(compressed, offset: 0, index: 0)
+    decodeEncoder.setBuffer(chunkBuffer, offset: 0, index: 1)
+    decodeEncoder.setBuffer(decodedStage, offset: 0, index: 2)
+    decodeEncoder.setBuffer(decodeStatus, offset: 0, index: 3)
+    decodeEncoder.setBytes(
+      &decodeParameters,
+      length: MemoryLayout.stride(ofValue: decodeParameters),
+      index: 4
+    )
+    decodeEncoder.dispatchThreadgroups(
+      MTLSize(width: Int(shard.chunkCount), height: 1, depth: 1),
+      threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1)
+    )
+    decodeEncoder.endEncoding()
+    try MetalCompactH5ResidentSource.complete(
+      decodeCommand,
+      operation: "shard \(shardIndex) raw LZ4 decode"
+    )
+    gpuDecodeMilliseconds +=
+      max(
+        0,
+        decodeCommand.gpuEndTime - decodeCommand.gpuStartTime
+      ) * 1_000
+    let statuses = decodeStatus.contents().bindMemory(
+      to: UInt32.self,
+      capacity: Int(shard.chunkCount)
+    )
+    for chunkIndex in 0..<Int(shard.chunkCount) where statuses[chunkIndex] != 0 {
+      throw invalid(
+        "Compact shard \(shardIndex) raw LZ4 chunk \(chunkIndex) failed "
+          + "with decoder status \(statuses[chunkIndex])."
+      )
+    }
+
+    let integrityStart = ContinuousClock.now
+    let decodedData = Data(
+      bytesNoCopy: decodedStage.contents(),
+      count: decodedBytes,
+      deallocator: .none
+    )
+    let decodedSHA256 = SHA256.hash(data: decodedData)
+      .map { String(format: "%02x", $0) }
+      .joined()
+    guard decodedSHA256 == shard.decodedSHA256 else {
+      throw invalid(
+        "Compact shard \(shardIndex) decoded SHA-256 is \(decodedSHA256), "
+          + "expected \(shard.decodedSHA256)."
+      )
+    }
+    decodedIntegrityMilliseconds += milliseconds(from: integrityStart)
+
+    guard
+      let privatePayload = device.makeBuffer(
+        length: decodedBytes,
+        options: .storageModePrivate
+      ),
+      let privateDescriptors = device.makeBuffer(
+        length: descriptorBytes,
+        options: .storageModePrivate
+      ),
+      let descriptorStatus = device.makeBuffer(
+        length: MemoryLayout<UInt32>.stride,
+        options: .storageModeShared
+      )
+    else {
+      throw Metal4DSTEMStreamingIOError.allocationFailed(
+        label: "compact private buffers for shard \(shardIndex)",
+        bytes: shard.decodedBytes + UInt64(descriptorBytes)
+      )
+    }
+    memset(descriptorStatus.contents(), 0, descriptorStatus.length)
+    var descriptorParameters = CompactDescriptorParameters(
+      descriptorCount: shard.descriptorCount,
+      payloadWords: payloadWord,
+      tileCount: UInt32(
+        (index.metadata.scansPerShard + index.metadata.scanTile - 1)
+          / index.metadata.scanTile
+      ),
+      headerWordsPerPixel: UInt32(index.headerWordsPerPixel),
+      scanTile: UInt32(index.metadata.scanTile),
+      headerEncoding: index.headerEncoding
+    )
+    let uploadStart = ContinuousClock.now
+    guard let uploadCommand = queue.makeCommandBuffer(),
+      let blit = uploadCommand.makeBlitCommandEncoder()
+    else {
+      throw Metal4DSTEMStreamingIOError.metalUnavailable(
+        "Metal could not encode compact shard \(shardIndex) private upload."
+      )
+    }
+    blit.copy(
+      from: decodedStage,
+      sourceOffset: 0,
+      to: privatePayload,
+      destinationOffset: 0,
+      size: decodedBytes
+    )
+    blit.copy(
+      from: descriptorStage,
+      sourceOffset: 0,
+      to: privateDescriptors,
+      destinationOffset: 0,
+      size: descriptorBytes
+    )
+    blit.endEncoding()
+    guard let validationEncoder = uploadCommand.makeComputeCommandEncoder() else {
+      throw Metal4DSTEMStreamingIOError.metalUnavailable(
+        "Metal could not encode compact shard \(shardIndex) descriptor validation."
+      )
+    }
+    validationEncoder.setComputePipelineState(validateDescriptors)
+    validationEncoder.setBuffer(privateDescriptors, offset: 0, index: 0)
+    validationEncoder.setBuffer(descriptorStatus, offset: 0, index: 1)
+    validationEncoder.setBytes(
+      &descriptorParameters,
+      length: MemoryLayout.stride(ofValue: descriptorParameters),
+      index: 2
+    )
+    validationEncoder.setBuffer(maximumWidthBuffer, offset: 0, index: 3)
+    validationEncoder.dispatchThreads(
+      MTLSize(width: Int(shard.descriptorCount), height: 1, depth: 1),
+      threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
+    )
+    validationEncoder.endEncoding()
+    try MetalCompactH5ResidentSource.complete(
+      uploadCommand,
+      operation: "shard \(shardIndex) private upload"
+    )
+    guard descriptorStatus.contents().load(as: UInt32.self) == 0 else {
+      throw invalid(
+        "Compact shard \(shardIndex) failed GPU descriptor coverage validation "
+          + "with status \(descriptorStatus.contents().load(as: UInt32.self))."
+      )
+    }
+    privateUploadMilliseconds += milliseconds(from: uploadStart)
+    return CompactShardLoadResult(
+      resident: CompactResidentShard(payload: privatePayload, descriptors: privateDescriptors),
+      sourceReadMilliseconds: sourceReadMilliseconds,
+      descriptorPreparationMilliseconds: descriptorPreparationMilliseconds,
+      gpuDecodeMilliseconds: gpuDecodeMilliseconds,
+      decodedIntegrityMilliseconds: decodedIntegrityMilliseconds,
+      privateUploadMilliseconds: privateUploadMilliseconds,
+      maximumTransientBytes: maximumTransientBytes
+    )
+
+  }
+
   private static func authenticateDirectPayloads(
     fileDescriptor: Int32,
     fileBytes sourceBytes: UInt64,
@@ -2175,7 +2287,7 @@ public enum MetalCompactH5Loader {
     validationPipeline: MTLComputePipelineState,
     maximumWidthBuffer: MTLBuffer,
     payloadPreauthenticated: Bool
-  ) throws -> CompactDirectShardLoadResult {
+  ) throws -> CompactShardLoadResult {
     let payloadBytes = try exactInt(shard.payloadBytes, label: "direct payload bytes")
     let headerBytes = try exactInt(shard.widthsBytes, label: "compact header bytes")
     let headerWords = try exactInt(
@@ -2357,31 +2469,47 @@ public enum MetalCompactH5Loader {
           + "with status \(status)."
       )
     }
-    return CompactDirectShardLoadResult(
+    return CompactShardLoadResult(
       resident: CompactResidentShard(
         payload: privatePayload,
         descriptors: privateHeaders
       ),
       sourceReadMilliseconds: sourceReadMilliseconds,
       descriptorPreparationMilliseconds: descriptorPreparationMilliseconds,
+      gpuDecodeMilliseconds: 0,
       decodedIntegrityMilliseconds: decodedIntegrityMilliseconds,
       privateUploadMilliseconds: milliseconds(from: uploadStart),
-      maximumTransientBytes: UInt64(payloadBytes + headerBytes)
+      maximumTransientBytes: UInt64(payloadBytes + headerBytes + 4)
     )
   }
 
-  fileprivate static func parse(sourceURL: URL) throws -> CompactH5ParsedIndex {
+  private static func openSource(
+    _ sourceURL: URL, readPolicy: MetalCompactH5SourceReadPolicy
+  ) throws -> Int32 {
+    let descriptor = sourceURL.path.withCString { Darwin.open($0, O_RDONLY) }
+    guard descriptor >= 0 else {
+      throw invalid("Could not open compact source \(sourceURL.path): \(lastPOSIXError()).")
+    }
+    if readPolicy == .avoidCaching, Darwin.fcntl(descriptor, F_NOCACHE, 1) != 0 {
+      let detail = lastPOSIXError()
+      Darwin.close(descriptor)
+      throw invalid(
+        "Could not apply source descriptor F_NOCACHE: \(detail). "
+          + "Use systemDefault reads or correct filesystem support; no cold-read claim is valid."
+      )
+    }
+    return descriptor
+  }
+
+  fileprivate static func parse(
+    sourceURL: URL, readPolicy: MetalCompactH5SourceReadPolicy = .systemDefault
+  ) throws -> CompactH5ParsedIndex {
     let attributes = try FileManager.default.attributesOfItem(atPath: sourceURL.path)
     guard let fileNumber = attributes[.size] as? NSNumber else {
       throw invalid("Could not determine compact source size for \(sourceURL.path).")
     }
     let fileBytes = fileNumber.uint64Value
-    let descriptor = sourceURL.path.withCString { Darwin.open($0, O_RDONLY) }
-    guard descriptor >= 0 else {
-      throw invalid(
-        "Could not open compact source \(sourceURL.path): \(lastPOSIXError())."
-      )
-    }
+    let descriptor = try openSource(sourceURL, readPolicy: readPolicy)
     defer { Darwin.close(descriptor) }
     let prelude = try readData(
       descriptor,

@@ -5,6 +5,142 @@ import XCTest
 @testable import Metal4DSTEMStreamingIO
 
 final class CompactH5LoaderTests: XCTestCase {
+  func testBoundedConcurrentPreservesEveryScanAcrossPartialWindow() throws {
+    let fixture = try makeMultishardCompactFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.url) }
+    let original = try Data(contentsOf: fixture.url)
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let sequential = try MetalCompactH5Loader.load(sourceURL: fixture.url, device: device)
+    let sequentialBudget = sequential.loadMetrics.plannedAdditionalBytes
+    let sequentialStaging = sequential.loadMetrics.maximumTransientBytes
+    try sequential.updateVirtualDetector(mask: [1, 0, 1, 1, 0, 1])
+    let expectedMask = try sequential.virtualDetectorValues()
+    sequential.releaseResidentStorage()
+    let parallel = try MetalCompactH5Loader.load(
+      sourceURL: fixture.url, device: device, authenticationPolicy: .boundedConcurrent
+    )
+    XCTAssertEqual(parallel.metadata.shardCount, 5)
+    XCTAssertEqual(parallel.loadMetrics.maximumInFlightShards, 3)
+    XCTAssertEqual(parallel.loadMetrics.nativeCacheStatus, "notRequested")
+    XCTAssertEqual(parallel.loadMetrics.mappedAuthenticationBytes, 0)
+    XCTAssertEqual(parallel.loadMetrics.decodedShardSHA256Checks, 5)
+    XCTAssertEqual(parallel.loadMetrics.sourceReadPolicy, "systemDefault")
+    XCTAssertEqual(
+      parallel.loadMetrics.plannedAdditionalBytes, sequentialBudget + 2 * sequentialStaging)
+    XCTAssertEqual(parallel.loadMetrics.maximumTransientBytes, 3 * sequentialStaging)
+    for scan in 0..<640 {
+      XCTAssertEqual(
+        try parallel.extractDiffraction(scanRow: scan / 16, scanColumn: scan % 16),
+        fixture.values.map { $0[scan] }
+      )
+    }
+    try parallel.updateVirtualDetector(mask: [1, 0, 1, 1, 0, 1])
+    XCTAssertEqual(try parallel.virtualDetectorValues(), expectedMask)
+    let required = parallel.loadMetrics.plannedAdditionalBytes
+    parallel.releaseResidentStorage()
+    let allocated = device.currentAllocatedSize
+    XCTAssertThrowsError(
+      try MetalCompactH5Loader.load(
+        sourceURL: fixture.url, device: device, authenticationPolicy: .boundedConcurrent,
+        maximumAdditionalBytes: required - 1
+      ))
+    XCTAssertEqual(device.currentAllocatedSize, allocated)
+    let admitted = try MetalCompactH5Loader.load(
+      sourceURL: fixture.url, device: device, authenticationPolicy: .boundedConcurrent,
+      maximumAdditionalBytes: required
+    )
+    admitted.releaseResidentStorage()
+    XCTAssertEqual(try Data(contentsOf: fixture.url), original)
+  }
+
+  func testConcurrentCorruptionAndCancellationNeverPublish() throws {
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    try autoreleasepool {
+      let warmup = try makeMultishardCompactFixture()
+      defer { try? FileManager.default.removeItem(at: warmup.url) }
+      let source = try MetalCompactH5Loader.load(
+        sourceURL: warmup.url, device: device, authenticationPolicy: .boundedConcurrent
+      )
+      source.releaseResidentStorage()
+    }
+    let baselineAllocation = device.currentAllocatedSize
+    for corruptWidth in [false, true] {
+      let fixture = try makeMultishardCompactFixture()
+      defer { try? FileManager.default.removeItem(at: fixture.url) }
+      var data = try Data(contentsOf: fixture.url)
+      // Corrupt the last shard, after a complete earlier window succeeded.
+      let field = 4096 + 76 + 4 * 96 + (corruptWidth ? 32 : 0)
+      let offset = data.withUnsafeBytes {
+        Int($0.loadUnaligned(fromByteOffset: field, as: UInt64.self).littleEndian)
+      }
+      data[offset + (corruptWidth ? 0 : 2)] ^= corruptWidth ? 0xff : 1
+      try data.write(to: fixture.url)
+      try autoreleasepool {
+        XCTAssertThrowsError(
+          try MetalCompactH5Loader.load(
+            sourceURL: fixture.url, device: device, authenticationPolicy: .boundedConcurrent
+          )
+        ) { error in
+          XCTAssertTrue(error.localizedDescription.contains(corruptWidth ? "bits" : "SHA-256"))
+        }
+      }
+      XCTAssertEqual(device.currentAllocatedSize, baselineAllocation)
+    }
+    let fixture = try makeMultishardCompactFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.url) }
+    let callingThread = Thread.current
+    for cancelAt in [1, 4, 5] {
+      var calls = 0
+      try autoreleasepool {
+        XCTAssertThrowsError(
+          try MetalCompactH5Loader.load(
+            sourceURL: fixture.url, device: device, authenticationPolicy: .boundedConcurrent,
+            shouldCancel: {
+              XCTAssertEqual(Thread.current, callingThread)
+              calls += 1
+              return calls == cancelAt
+            }
+          )
+        ) { error in
+          guard case Metal4DSTEMStreamingIOError.cancelled = error else {
+            return XCTFail("Expected cancellation, got \(error)")
+          }
+        }
+      }
+      XCTAssertEqual(device.currentAllocatedSize, baselineAllocation)
+    }
+  }
+
+  func testSourceAvoidCachingPreservesParityAndRejectsIncompatibleModes() throws {
+    let fixture = try makeCompactFixture(portable: true, preparedDPC: true)
+    defer { try? FileManager.default.removeItem(at: fixture.url) }
+    let original = try Data(contentsOf: fixture.url)
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let resident = try MetalCompactH5Loader.load(
+      sourceURL: fixture.url, device: device, authenticationPolicy: .boundedConcurrent,
+      sourceReadPolicy: .avoidCaching
+    )
+    XCTAssertEqual(resident.loadMetrics.sourceReadPolicy, "avoidCaching")
+    XCTAssertEqual(resident.loadMetrics.maximumInFlightShards, 1)
+    XCTAssertNotNil(try resident.preparedDPCMomentValues())
+    XCTAssertEqual(
+      try resident.extractDiffraction(scanRow: 3, scanColumn: 7),
+      fixture.values.map { $0[3 * 16 + 7] }
+    )
+    resident.releaseResidentStorage()
+    let allocated = device.currentAllocatedSize
+    for policy in [MetalCompactH5AuthenticationPolicy.boundedConcurrent, .parallelMapped] {
+      XCTAssertThrowsError(
+        try MetalCompactH5Loader.load(
+          sourceURL: fixture.url, device: device, authenticationPolicy: policy,
+          nativeCacheURL: policy == .boundedConcurrent ? fixture.url : nil,
+          sourceReadPolicy: .avoidCaching
+        ))
+    }
+    XCTAssertEqual(device.currentAllocatedSize, allocated)
+    XCTAssertEqual(try Data(contentsOf: fixture.url), original)
+  }
+
   func testLoadBudgetRejectsBeforeAnyMetalAllocation() throws {
     let fixture = try makeCompactFixture(portable: true, preparedDPC: true)
     defer { try? FileManager.default.removeItem(at: fixture.url) }
@@ -740,14 +876,15 @@ private struct CompactFixture {
 private func makeCompactFixture(
   portable: Bool = false,
   preparedDPC: Bool = false,
-  preparedDPCOverrides: [String: Any] = [:]
+  preparedDPCOverrides: [String: Any] = [:],
+  scanOrigin: Int = 0
 ) throws -> CompactFixture {
   let widths: [UInt8] = [2, 3, 4, 16, 9, 2]
   var values = widths.enumerated().map { pixel, width in
     (0..<128).map { scan in
       pixel == 3
         ? UInt32(0)
-        : UInt32((scan * (pixel + 3) + pixel) % (1 << Int(width)))
+        : UInt32(((scan + scanOrigin) * (pixel + 3) + pixel) % (1 << Int(width)))
     }
   }
   values[3] = [UInt32](repeating: 0, count: 128)
@@ -1258,6 +1395,66 @@ private func makeDirectCompactFixture(
     url: url,
     values: values,
     headerOffset: Int(headersOffset)
+  )
+}
+
+/// Five distinct shards exercise ordering and a final two-shard partial window.
+private func makeMultishardCompactFixture() throws -> CompactFixture {
+  var fixtures: [CompactFixture] = []
+  defer {
+    for fixture in fixtures { try? FileManager.default.removeItem(at: fixture.url) }
+  }
+  for shard in 0..<5 {
+    fixtures.append(try makeCompactFixture(portable: true, scanOrigin: shard * 7))
+  }
+  let sources = try fixtures.map { try Data(contentsOf: $0.url) }
+  let first = sources[0]
+  let headerBytes = first.withUnsafeBytes {
+    Int($0.loadUnaligned(fromByteOffset: 8, as: UInt32.self).littleEndian)
+  }
+  var manifest = try XCTUnwrap(
+    JSONSerialization.jsonObject(with: first[24..<(24 + headerBytes)]) as? [String: Any]
+  )
+  manifest["source_shape"] = [40, 16, 2, 3]
+  manifest["shard_count"] = 5
+  let header = try JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys])
+  var binary = Data(first[4096..<(4096 + 76)])
+  var count = Data()
+  count.appendLE(UInt32(5))
+  binary.replaceSubrange(8..<12, with: count)
+  var rows = Data()
+  rows.appendLE(UInt32(40))
+  binary.replaceSubrange(16..<20, with: rows)
+  var file = Data(count: 8192)
+  for source in sources {
+    var record = Data(source[(4096 + 76)..<(4096 + 76 + 96)])
+    let relocation = UInt64(file.count - 8192)
+    for field in [0, 16, 32] {
+      let old = record.withUnsafeBytes {
+        $0.loadUnaligned(fromByteOffset: field, as: UInt64.self).littleEndian
+      }
+      var value = Data()
+      value.appendLE(old + relocation)
+      record.replaceSubrange(field..<(field + 8), with: value)
+    }
+    binary.append(record)
+    file.append(source[8192...])
+  }
+  var prelude = Data(first[0..<8])
+  prelude.appendLE(UInt32(header.count))
+  prelude.appendLE(crc32ForFixture(header))
+  prelude.appendLE(UInt32(4096))
+  prelude.appendLE(UInt32(binary.count))
+  file.replaceSubrange(0..<prelude.count, with: prelude)
+  file.replaceSubrange(24..<(24 + header.count), with: header)
+  file.replaceSubrange(4096..<(4096 + binary.count), with: binary)
+  let url = FileManager.default.temporaryDirectory
+    .appendingPathComponent("quantem-compact-multishard-\(UUID().uuidString).h5")
+  try file.write(to: url)
+  return CompactFixture(
+    url: url,
+    values: (0..<6).map { pixel in fixtures.flatMap { $0.values[pixel] } },
+    headerOffset: fixtures[0].headerOffset
   )
 }
 
