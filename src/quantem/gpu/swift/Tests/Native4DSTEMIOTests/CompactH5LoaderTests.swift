@@ -50,6 +50,7 @@ final class CompactH5LoaderTests: XCTestCase {
       XCTAssertEqual(source.loadMetrics.decodedShardSHA256Checks, 0)
       XCTAssertEqual(source.loadMetrics.decodedIntegrityMilliseconds, 0)
       XCTAssertGreaterThan(source.loadMetrics.gpuPreparationMilliseconds, 0)
+      XCTAssertEqual(source.loadMetrics.decodedPayloadCopyBytes, 0)
       for scan in 0..<640 {
         XCTAssertEqual(
           try source.extractDiffraction(scanRow: scan / 16, scanColumn: scan % 16),
@@ -118,6 +119,7 @@ final class CompactH5LoaderTests: XCTestCase {
     let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
     let sequential = try MetalCompactH5Loader.load(sourceURL: fixture.url, device: device)
     let sequentialBudget = sequential.loadMetrics.plannedAdditionalBytes
+    XCTAssertGreaterThan(sequential.loadMetrics.decodedPayloadCopyBytes, 0)
     let sequentialStaging = sequential.loadMetrics.maximumTransientBytes
     try sequential.updateVirtualDetector(mask: [1, 0, 1, 1, 0, 1])
     let expectedMask = try sequential.virtualDetectorValues()

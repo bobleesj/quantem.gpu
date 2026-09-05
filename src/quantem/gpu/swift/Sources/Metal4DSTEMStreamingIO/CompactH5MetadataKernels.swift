@@ -28,9 +28,11 @@ struct CompactH5MetadataKernels: @unchecked Sendable {
   }
 
   static func buffer(_ device: MTLDevice, bytes: Int, shared: Bool = false) throws -> MTLBuffer {
-    guard let buffer = device.makeBuffer(
-      length: max(4, bytes), options: shared ? .storageModeShared : .storageModePrivate
-    ) else {
+    guard
+      let buffer = device.makeBuffer(
+        length: max(4, bytes), options: shared ? .storageModeShared : .storageModePrivate
+      )
+    else {
       throw Metal4DSTEMStreamingIOError.allocationFailed(
         label: "compact GPU metadata", bytes: UInt64(max(4, bytes)))
     }
@@ -84,7 +86,9 @@ struct CompactH5MetadataKernels: @unchecked Sendable {
     descriptorOutput: MTLBuffer, chunkOutput: MTLBuffer, status: MTLBuffer,
     device: MTLDevice, command: MTLCommandBuffer
   ) throws {
-    let parameters = [UInt32(descriptorCount), UInt32(chunkCount), decodedWords, compressedBytes, chunkBytes]
+    let parameters = [
+      UInt32(descriptorCount), UInt32(chunkCount), decodedWords, compressedBytes, chunkBytes,
+    ]
     // Two fixed metadata streams, not a loop over scientific elements.
     for (input, count, kind, output, pipeline) in [
       (widths, descriptorCount, UInt32(0), descriptorOutput, descriptors),

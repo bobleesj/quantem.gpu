@@ -148,6 +148,9 @@ public struct MetalCompactH5LoadMetrics: Equatable, Sendable {
   public let decodedShardSHA256Checks: Int
   /// False for explicitly trusted local loads; structural validation still runs.
   public let checksumsVerified: Bool
+  /// Bytes copied after LZ4 decode solely to enter private residency.
+  /// Trusted compressed loads decode directly into their final private buffer.
+  public let decodedPayloadCopyBytes: UInt64
   public let mappedAuthenticationBytes: UInt64
   public let preparedDPCBytes: UInt64
   public let preparedDetectorProductBytes: UInt64
@@ -1532,6 +1535,8 @@ public enum MetalCompactH5Loader {
       deviceAllocatedBytesAfter: UInt64(device.currentAllocatedSize),
       decodedShardSHA256Checks: verifyChecksums ? index.shards.count : 0,
       checksumsVerified: verifyChecksums,
+      decodedPayloadCopyBytes: verifyChecksums && index.storageLayout == .lz4V1 && nativeCache == nil
+        ? loadingShards.reduce(UInt64(0)) { $0 + $1.decodedBytes } : 0,
       mappedAuthenticationBytes: mappedAuthenticationBytes,
       preparedDPCBytes: index.metadata.preparedDPCMoments?.fileBytes ?? 0,
       preparedDetectorProductBytes: preparedDetectorProducts.bytes,
@@ -1946,7 +1951,7 @@ public enum MetalCompactH5Loader {
       ),
       let decodedStage = device.makeBuffer(
         length: decodedBytes,
-        options: .storageModeShared
+        options: verifyChecksums ? .storageModeShared : .storageModePrivate
       )
     else {
       throw Metal4DSTEMStreamingIOError.allocationFailed(
@@ -2061,15 +2066,17 @@ public enum MetalCompactH5Loader {
       decodedIntegrityMilliseconds += milliseconds(from: integrityStart)
     }
 
+    // Authentication needs CPU-visible decoded bytes. Trusted loads instead
+    // decode directly into their final private payload, with no whole-payload
+    // staging copy. Descriptors are already GPU-built private buffers.
+    let privatePayload: MTLBuffer
+    if verifyChecksums {
+      privatePayload = try CompactH5MetadataKernels.buffer(device, bytes: decodedBytes)
+    } else {
+      privatePayload = decodedStage
+    }
+    let privateDescriptors = descriptorStage
     guard
-      let privatePayload = device.makeBuffer(
-        length: decodedBytes,
-        options: .storageModePrivate
-      ),
-      let privateDescriptors = device.makeBuffer(
-        length: descriptorBytes,
-        options: .storageModePrivate
-      ),
       let descriptorStatus = device.makeBuffer(
         length: MemoryLayout<UInt32>.stride,
         options: .storageModeShared
@@ -2093,28 +2100,20 @@ public enum MetalCompactH5Loader {
       headerEncoding: index.headerEncoding
     )
     let uploadStart = ContinuousClock.now
-    guard let uploadCommand = queue.makeCommandBuffer(),
-      let blit = uploadCommand.makeBlitCommandEncoder()
-    else {
+    guard let uploadCommand = queue.makeCommandBuffer() else {
       throw Metal4DSTEMStreamingIOError.metalUnavailable(
         "Metal could not encode compact shard \(shardIndex) private upload."
       )
     }
-    blit.copy(
-      from: decodedStage,
-      sourceOffset: 0,
-      to: privatePayload,
-      destinationOffset: 0,
-      size: decodedBytes
-    )
-    blit.copy(
-      from: descriptorStage,
-      sourceOffset: 0,
-      to: privateDescriptors,
-      destinationOffset: 0,
-      size: descriptorBytes
-    )
-    blit.endEncoding()
+    if verifyChecksums {
+      guard let blit = uploadCommand.makeBlitCommandEncoder() else {
+        throw Metal4DSTEMStreamingIOError.metalUnavailable("Could not encode verified payload copy.")
+      }
+      blit.copy(
+        from: decodedStage, sourceOffset: 0, to: privatePayload,
+        destinationOffset: 0, size: decodedBytes)
+      blit.endEncoding()
+    }
     guard let validationEncoder = uploadCommand.makeComputeCommandEncoder() else {
       throw Metal4DSTEMStreamingIOError.metalUnavailable(
         "Metal could not encode compact shard \(shardIndex) descriptor validation."

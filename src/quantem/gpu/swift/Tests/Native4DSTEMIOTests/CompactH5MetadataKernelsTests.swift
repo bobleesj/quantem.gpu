@@ -14,7 +14,9 @@ final class CompactH5MetadataKernelsTests: XCTestCase {
       for kind in [UInt32(0), 1] {
         let input = (0..<count).map { UInt8(($0 * 13 + 7) % (kind == 0 ? 17 : 256)) }
         let buffer = try CompactH5MetadataKernels.buffer(device, bytes: count, shared: true)
-        input.withUnsafeBytes { buffer.contents().copyMemory(from: $0.baseAddress!, byteCount: count) }
+        input.withUnsafeBytes {
+          buffer.contents().copyMemory(from: $0.baseAddress!, byteCount: count)
+        }
         let status = try CompactH5MetadataKernels.buffer(device, bytes: 4, shared: true)
         status.contents().storeBytes(of: UInt32(0), as: UInt32.self)
         let command = try XCTUnwrap(queue.makeCommandBuffer())
@@ -65,7 +67,8 @@ final class CompactH5MetadataKernelsTests: XCTestCase {
       let status = try CompactH5MetadataKernels.buffer(device, bytes: 4, shared: true)
       status.contents().storeBytes(of: UInt32(0), as: UInt32.self)
       let command = try XCTUnwrap(queue.makeCommandBuffer())
-      try kernels.encodeDecodeStatus(input: input, count: values.count, status: status, command: command)
+      try kernels.encodeDecodeStatus(
+        input: input, count: values.count, status: status, command: command)
       try complete(command)
       XCTAssertEqual(status.contents().load(as: UInt32.self), code == 0 ? 0 : 16)
     }
