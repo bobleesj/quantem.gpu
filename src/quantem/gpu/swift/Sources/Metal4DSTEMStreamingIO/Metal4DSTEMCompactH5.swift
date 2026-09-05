@@ -336,6 +336,13 @@ private struct CompactConcurrentWidthValidation: @unchecked Sendable {
   let buffer: MTLBuffer
 }
 
+/// Metal devices, command queues, and immutable pipeline states support
+/// concurrent command encoding, but the macOS 15 SDK does not declare their
+/// Objective-C protocols as `Sendable`.
+private struct CompactConcurrentMetalHandle<Value>: @unchecked Sendable {
+  let value: Value
+}
+
 private struct CompactShardLoadResult {
   let resident: CompactResidentShard
   let sourceReadMilliseconds: Double
@@ -1266,10 +1273,14 @@ public enum MetalCompactH5Loader {
       )
     }
     let library = try Metal4DSTEMKernels.makeCompactH5Library(device: device)
-    let metadataKernels = index.storageLayout == .lz4V1 && nativeCache == nil
+    let metadataKernels =
+      index.storageLayout == .lz4V1 && nativeCache == nil
       ? try CompactH5MetadataKernels(device: device, library: library) : nil
-    let decode = metadataKernels == nil ? nil : try pipeline(
-      library: library, name: "compact_h5_lz4_decode_simd32", device: device)
+    let decode =
+      metadataKernels == nil
+      ? nil
+      : try pipeline(
+        library: library, name: "compact_h5_lz4_decode_simd32", device: device)
     if let decode {
       guard decode.threadExecutionWidth == 32, decode.maxTotalThreadsPerThreadgroup >= 256 else {
         throw Metal4DSTEMStreamingIOError.metalUnavailable(
@@ -1358,6 +1369,10 @@ public enum MetalCompactH5Loader {
     let isDirect = index.storageLayout == .directV3 || nativeCache != nil
     let shardRecords = loadingShards
     let concurrentWidths = CompactConcurrentWidthValidation(buffer: maximumWidthBuffer)
+    let concurrentDevice = CompactConcurrentMetalHandle(value: device)
+    let concurrentQueue = CompactConcurrentMetalHandle(value: queue)
+    let concurrentValidationPipeline = CompactConcurrentMetalHandle(value: validateDescriptors)
+    let concurrentDecode = CompactConcurrentMetalHandle(value: decode)
     for first in stride(from: 0, to: loadingShards.count, by: maximumInFlightShards) {
       // Caller cancellation is polled only on the calling thread, between
       // bounded windows. All workers finish before any error/cancellation escapes.
@@ -1372,21 +1387,23 @@ public enum MetalCompactH5Loader {
             if isDirect {
               return try loadDirectShard(
                 fileDescriptor: payloadDescriptor, shardIndex: shardIndex, shard: shard,
-                index: index, device: device, queue: queue,
-                validationPipeline: validateDescriptors,
+                index: index, device: concurrentDevice.value, queue: concurrentQueue.value,
+                validationPipeline: concurrentValidationPipeline.value,
                 maximumWidthBuffer: concurrentWidths.buffer,
                 payloadPreauthenticated: payloadsPreauthenticated,
                 verifyChecksums: verifyChecksums
               )
             }
-            guard let metadataKernels, let decode else {
-              throw Metal4DSTEMStreamingIOError.metalUnavailable("Compact decode kernels are missing.")
+            guard let metadataKernels, let decode = concurrentDecode.value else {
+              throw Metal4DSTEMStreamingIOError.metalUnavailable(
+                "Compact decode kernels are missing.")
             }
             return try loadCompressedShard(
               descriptor: descriptor, shardIndex: shardIndex, shard: shard, index: index,
-              device: device, queue: queue, decode: decode,
+              device: concurrentDevice.value, queue: concurrentQueue.value, decode: decode,
               metadataKernels: metadataKernels,
-              validateDescriptors: validateDescriptors, maximumWidthBuffer: concurrentWidths.buffer,
+              validateDescriptors: concurrentValidationPipeline.value,
+              maximumWidthBuffer: concurrentWidths.buffer,
               verifyChecksums: verifyChecksums
             )
           }
@@ -1546,7 +1563,8 @@ public enum MetalCompactH5Loader {
       deviceAllocatedBytesAfter: UInt64(device.currentAllocatedSize),
       decodedShardSHA256Checks: verifyChecksums ? index.shards.count : 0,
       checksumsVerified: verifyChecksums,
-      decodedPayloadCopyBytes: verifyChecksums && index.storageLayout == .lz4V1 && nativeCache == nil
+      decodedPayloadCopyBytes: verifyChecksums && index.storageLayout == .lz4V1
+        && nativeCache == nil
         ? loadingShards.reduce(UInt64(0)) { $0 + $1.decodedBytes } : 0,
       mappedAuthenticationBytes: mappedAuthenticationBytes,
       preparedDPCBytes: index.metadata.preparedDPCMoments?.fileBytes ?? 0,
@@ -2010,8 +2028,9 @@ public enum MetalCompactH5Loader {
         "Compact shard \(shardIndex) GPU metadata validation failed (status \(tableError)): "
           + "check width bits, offset overflow, and payload/chunk coverage.")
     }
-    let gpuPreparationMilliseconds = max(
-      0, preparationCommand.gpuEndTime - preparationCommand.gpuStartTime) * 1_000
+    let gpuPreparationMilliseconds =
+      max(
+        0, preparationCommand.gpuEndTime - preparationCommand.gpuStartTime) * 1_000
     descriptorPreparationMilliseconds += milliseconds(from: preparationStart)
     let payloadWord = UInt32(shard.decodedBytes / 4)
 
@@ -2042,7 +2061,8 @@ public enum MetalCompactH5Loader {
     )
     decodeEncoder.endEncoding()
     try metadataKernels.encodeDecodeStatus(
-      input: decodeStatus, count: Int(shard.chunkCount), status: metadataStatus, command: decodeCommand)
+      input: decodeStatus, count: Int(shard.chunkCount), status: metadataStatus,
+      command: decodeCommand)
     try MetalCompactH5ResidentSource.complete(
       decodeCommand,
       operation: "shard \(shardIndex) raw LZ4 decode"
@@ -2118,7 +2138,8 @@ public enum MetalCompactH5Loader {
     }
     if verifyChecksums {
       guard let blit = uploadCommand.makeBlitCommandEncoder() else {
-        throw Metal4DSTEMStreamingIOError.metalUnavailable("Could not encode verified payload copy.")
+        throw Metal4DSTEMStreamingIOError.metalUnavailable(
+          "Could not encode verified payload copy.")
       }
       blit.copy(
         from: decodedStage, sourceOffset: 0, to: privatePayload,
