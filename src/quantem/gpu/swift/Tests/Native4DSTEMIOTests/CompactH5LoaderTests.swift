@@ -5,6 +5,140 @@ import XCTest
 @testable import Metal4DSTEMStreamingIO
 
 final class CompactH5LoaderTests: XCTestCase {
+  func testNativeCacheRestoresEveryUInt16ValueAndMoments() throws {
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let fixture = try makeCompactFixture(portable: true, preparedDPC: true)
+    let cache = fixture.url.appendingPathExtension("qgmc")
+    defer {
+      try? FileManager.default.removeItem(at: fixture.url)
+      try? FileManager.default.removeItem(at: cache)
+    }
+    let originalBytes = try Data(contentsOf: fixture.url)
+    let source = try MetalCompactH5Loader.load(sourceURL: fixture.url, device: device)
+    let originalMoments = try XCTUnwrap(source.preparedDPCMomentValues())
+    try source.saveNativeCache(to: cache)
+    source.releaseResidentStorage()
+    for policy in [MetalCompactH5AuthenticationPolicy.boundedSequential, .parallelMapped] {
+      let restored = try MetalCompactH5Loader.load(
+        sourceURL: fixture.url, device: device, authenticationPolicy: policy,
+        nativeCacheURL: cache
+      )
+      XCTAssertEqual(restored.metadata, source.metadata)
+      XCTAssertEqual(restored.loadMetrics.nativeCacheStatus, "hit")
+      XCTAssertEqual(restored.loadMetrics.nativeCacheDescriptorSHA256Checks, 1)
+      XCTAssertEqual(restored.loadMetrics.decodedShardSHA256Checks, 1)
+      XCTAssertEqual(restored.loadMetrics.gpuDecodeMilliseconds, 0)
+      XCTAssertGreaterThan(restored.loadMetrics.nativeCacheBytes, 65_536)
+      for scan in 0..<128 {
+        XCTAssertEqual(
+          try restored.extractDiffraction(scanRow: scan / 16, scanColumn: scan % 16),
+          fixture.values.map { $0[scan] }
+        )
+      }
+      XCTAssertEqual(try restored.preparedDPCMomentValues(), originalMoments)
+      let mask: [UInt8] = [1, 0, 1, 0, 1, 0]
+      _ = try restored.updateVirtualDetector(mask: mask)
+      XCTAssertEqual(
+        try restored.virtualDetectorValues(),
+        (0..<128).map {
+          fixture.values[0][$0] + fixture.values[2][$0] + fixture.values[4][$0]
+        })
+      XCTAssertNoThrow(
+        try Metal4DSTEMResidentCapabilities.compact(restored).residentReceipt.validate())
+      restored.releaseResidentStorage()
+    }
+    XCTAssertEqual(try Data(contentsOf: fixture.url), originalBytes)
+  }
+
+  func testNativeCacheMissingAndStaleFallBackToExactSource() throws {
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let fixture = try makeCompactFixture(portable: true)
+    let cache = fixture.url.appendingPathExtension("qgmc")
+    defer {
+      try? FileManager.default.removeItem(at: fixture.url)
+      try? FileManager.default.removeItem(at: cache)
+    }
+    let source = try MetalCompactH5Loader.load(
+      sourceURL: fixture.url, device: device, nativeCacheURL: cache
+    )
+    XCTAssertEqual(source.loadMetrics.nativeCacheStatus, "miss")
+    try source.saveNativeCache(to: cache)
+    source.releaseResidentStorage()
+    try FileManager.default.setAttributes(
+      [.modificationDate: Date(timeIntervalSince1970: 1)], ofItemAtPath: fixture.url.path
+    )
+    let restored = try MetalCompactH5Loader.load(
+      sourceURL: fixture.url, device: device, nativeCacheURL: cache
+    )
+    XCTAssertEqual(restored.loadMetrics.nativeCacheStatus, "stale")
+    XCTAssertEqual(restored.loadMetrics.nativeCacheDescriptorSHA256Checks, 0)
+    XCTAssertEqual(
+      try restored.extractDiffraction(scanRow: 4, scanColumn: 13), fixture.values.map { $0[77] })
+    restored.releaseResidentStorage()
+  }
+
+  func testNativeCachePayloadAndLookupCorruptionFailClosed() throws {
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let fixture = try makeCompactFixture(portable: true)
+    let cacheURL = fixture.url.appendingPathExtension("qgmc")
+    defer {
+      try? FileManager.default.removeItem(at: fixture.url)
+      try? FileManager.default.removeItem(at: cacheURL)
+    }
+    let source = try MetalCompactH5Loader.load(sourceURL: fixture.url, device: device)
+    try source.saveNativeCache(to: cacheURL)
+    source.releaseResidentStorage()
+    let file = try FileHandle(forReadingFrom: cacheURL)
+    let cache = try CompactNativeCache.read(from: file)
+    try file.close()
+    let original = try Data(contentsOf: cacheURL)
+    for offset in [cache.shards[0].payloadOffset, cache.shards[0].descriptorsOffset] {
+      var changed = original
+      changed[Int(offset)] ^= 1
+      try changed.write(to: cacheURL)
+      for policy in [MetalCompactH5AuthenticationPolicy.boundedSequential, .parallelMapped] {
+        XCTAssertThrowsError(
+          try MetalCompactH5Loader.load(
+            sourceURL: fixture.url, device: device, authenticationPolicy: policy,
+            nativeCacheURL: cacheURL
+          )
+        ) { error in
+          XCTAssertTrue(
+            error.localizedDescription.contains("SHA-256")
+              || error.localizedDescription.contains("parallel authentication"))
+        }
+      }
+    }
+  }
+
+  func testNativeCachePublicationNeverOverwritesAndCancellationRemovesPartial() throws {
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let fixture = try makeCompactFixture(portable: true)
+    let directory = fixture.url.deletingLastPathComponent()
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+    let cache = directory.appendingPathComponent("source.qgmc")
+    defer {
+      try? FileManager.default.removeItem(at: fixture.url)
+      try? FileManager.default.removeItem(at: directory)
+    }
+    let source = try MetalCompactH5Loader.load(sourceURL: fixture.url, device: device)
+    XCTAssertThrowsError(try source.saveNativeCache(to: cache, shouldCancel: { true }))
+    XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path), [])
+    try source.saveNativeCache(to: cache)
+    let bytes = try Data(contentsOf: cache)
+    XCTAssertThrowsError(try source.saveNativeCache(to: cache))
+    XCTAssertEqual(try Data(contentsOf: cache), bytes)
+    XCTAssertThrowsError(
+      try MetalCompactH5Loader.load(
+        sourceURL: fixture.url, device: device, nativeCacheURL: cache,
+        shouldCancel: { true }
+      ))
+    source.releaseResidentStorage()
+    XCTAssertThrowsError(
+      try source.saveNativeCache(to: directory.appendingPathComponent("released.qgmc")))
+  }
+
   func testSyntheticCompactSourceLoadsAndInteractsExactly() throws {
     let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
     let fixture = try makeCompactFixture()

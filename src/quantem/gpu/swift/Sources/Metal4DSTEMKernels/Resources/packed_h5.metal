@@ -361,6 +361,7 @@ kernel void compact_h5_validate_descriptors(
     uint errors = 0u;
     if (width > 16u) errors |= 1u;
     if (offset >= (1u << 27u)) errors |= 2u;
+    if (index == 0u && offset != 0u) errors |= 4u;
     uint expectedNext = offset + width * 4u;
     atomic_fetch_max_explicit(
         &maximumWidths[index / parameters.tileCount],

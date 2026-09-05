@@ -113,6 +113,10 @@ public struct MetalCompactH5Metadata: Equatable, Sendable {
 
 /// Measured phases for a successful compact HDF5 to private-Metal load.
 public struct MetalCompactH5LoadMetrics: Equatable, Sendable {
+  /// notRequested, miss, stale, or hit. Corrupt matching caches fail closed.
+  public let nativeCacheStatus: String
+  public let nativeCacheBytes: UInt64
+  public let nativeCacheDescriptorSHA256Checks: Int
   public let metadataMilliseconds: Double
   public let sourceReadMilliseconds: Double
   public let descriptorPreparationMilliseconds: Double
@@ -137,7 +141,7 @@ public struct MetalCompactH5LoadMetrics: Equatable, Sendable {
   public let totalResidentBytes: UInt64
 }
 
-/// Authentication strategy for direct QGIX payloads.
+/// Authentication strategy for direct QGIX or prepared native-cache payloads.
 public enum MetalCompactH5AuthenticationPolicy: Sendable, Equatable {
   /// Authenticate each bounded staging buffer before it is privately uploaded.
   case boundedSequential
@@ -193,6 +197,7 @@ private struct CompactH5ShardRecord {
   let descriptorCount: UInt32
   let chunkCount: UInt32
   let decodedSHA256: String
+  var descriptorsSHA256: String? = nil
 }
 
 private enum CompactH5StorageLayout {
@@ -399,6 +404,119 @@ public final class MetalCompactH5ResidentSource {
     self.preparedDPCOutputs = preparedDPCOutputs
     self.preparedDetectorProducts = preparedDetectorProducts
     detectorMask = [UInt8](repeating: 0, count: metadata.detectorPixelCount)
+  }
+
+  /// Save a disposable native acceleration cache without changing the source HDF5.
+  ///
+  /// This explicit one-time operation reads back only compact payload/lookup
+  /// buffers, never a dense cube. The destination must not exist. Callers own
+  /// cache location and eviction, and must serialize this with release/interaction.
+  /// Reopen with `MetalCompactH5Loader.load(..., nativeCacheURL: url)`.
+  public func saveNativeCache(
+    to destination: URL,
+    shouldCancel: () -> Bool = { false }
+  ) throws {
+    guard !isReleased, headerEncoding == 0,
+      metadata.embeddedScientificSemantics, metadata.workingDtype == "uint16"
+    else {
+      throw CompactNativeCache.invalid("requires a live exact uint16 QGIX v1 source.")
+    }
+    guard !FileManager.default.fileExists(atPath: destination.path) else {
+      throw CompactNativeCache.invalid("destination exists; choose a new cache path.")
+    }
+    let index = try MetalCompactH5Loader.parse(sourceURL: metadata.sourceURL)
+    guard index.metadata == metadata, index.shards.count == shards.count else {
+      throw CompactNativeCache.invalid("source changed after load; reload before preparing.")
+    }
+    let signature = try CompactNativeCache.signature(sourceURL: metadata.sourceURL)
+    let temporary = destination.deletingLastPathComponent()
+      .appendingPathComponent(".\(destination.lastPathComponent).\(UUID().uuidString).partial")
+    let fd = temporary.path.withCString { Darwin.open($0, O_RDWR | O_CREAT | O_EXCL, 0o600) }
+    guard fd >= 0 else { throw CompactNativeCache.invalid("could not create temporary cache.") }
+    let file = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+    defer {
+      try? file.close()
+      try? FileManager.default.removeItem(at: temporary)
+    }
+    let original = try FileHandle(forReadingFrom: metadata.sourceURL)
+    defer { try? original.close() }
+    try file.write(contentsOf: Data(count: CompactNativeCache.headerBytes))
+    var records: [CompactNativeCache.Shard] = []
+    for (ordinal, shard) in shards.enumerated() {
+      try autoreleasepool {
+        guard !shouldCancel() else { throw Metal4DSTEMStreamingIOError.cancelled }
+        let record = index.shards[ordinal]
+        guard
+          let payload = device.makeBuffer(
+            length: shard.payload.length, options: .storageModeShared),
+          let descriptors = device.makeBuffer(
+            length: shard.descriptors.length, options: .storageModeShared),
+          let command = queue.makeCommandBuffer(), let blit = command.makeBlitCommandEncoder()
+        else { throw CompactNativeCache.invalid("could not allocate bounded cache readback.") }
+        blit.copy(
+          from: shard.payload, sourceOffset: 0, to: payload, destinationOffset: 0,
+          size: payload.length)
+        blit.copy(
+          from: shard.descriptors, sourceOffset: 0, to: descriptors, destinationOffset: 0,
+          size: descriptors.length)
+        blit.endEncoding()
+        try Self.complete(command, operation: "native cache readback")
+        let payloadData = Data(
+          bytesNoCopy: payload.contents(), count: payload.length, deallocator: .none)
+        let headerData = Data(
+          bytesNoCopy: descriptors.contents(), count: descriptors.length, deallocator: .none)
+        let payloadSHA = CompactNativeCache.digest(payloadData)
+        guard payloadSHA == record.decodedSHA256 else {
+          throw CompactNativeCache.invalid("resident payload differs from source shard \(ordinal).")
+        }
+        // Bind the lookup table to the authoritative source widths, not merely
+        // to a newly computed hash of whatever happened to be resident.
+        try original.seek(toOffset: record.widthsOffset)
+        let widths = try CompactNativeCache.read(original, count: Int(record.widthsBytes))
+        let words = descriptors.contents().bindMemory(to: UInt32.self, capacity: widths.count)
+        var wordOffset: UInt32 = 0
+        for (i, width) in widths.enumerated() {
+          guard width <= 16, words[i] == (wordOffset << 5) | UInt32(width) else {
+            throw CompactNativeCache.invalid("lookup differs from source shard \(ordinal).")
+          }
+          wordOffset += UInt32(width) * 4
+        }
+        guard UInt64(wordOffset) * 4 == record.decodedBytes else {
+          throw CompactNativeCache.invalid("lookup coverage differs from source.")
+        }
+        let payloadOffset = try file.offset()
+        try file.write(contentsOf: payloadData)
+        let descriptorsOffset = try file.offset()
+        try file.write(contentsOf: headerData)
+        records.append(
+          CompactNativeCache.Shard(
+            payloadOffset: payloadOffset, payloadBytes: UInt64(payload.length),
+            payloadSHA256: payloadSHA, descriptorsOffset: descriptorsOffset,
+            descriptorsBytes: UInt64(descriptors.length),
+            descriptorsSHA256: CompactNativeCache.digest(headerData)
+          ))
+      }
+    }
+    guard !shouldCancel() else { throw Metal4DSTEMStreamingIOError.cancelled }
+    guard signature == (try CompactNativeCache.signature(sourceURL: metadata.sourceURL)) else {
+      throw CompactNativeCache.invalid("source changed during preparation; reload and retry.")
+    }
+    let cache = CompactNativeCache(
+      schema: "quantem.gpu.native-compact-cache/v1", sourceSignature: signature,
+      sourceManifestSHA256: metadata.manifestSHA256,
+      fileBytes: try file.offset(), shards: records
+    )
+    try cache.writeHeader(to: file)
+    try file.synchronize()
+    try file.close()
+    // renamex_np excludes existing destinations atomically, including a racer.
+    let result = temporary.path.withCString { from in
+      destination.path.withCString { to in Darwin.renamex_np(from, to, UInt32(RENAME_EXCL)) }
+    }
+    guard result == 0 else {
+      throw CompactNativeCache.invalid(
+        "atomic publication failed; existing destination was preserved.")
+    }
   }
 
   /// Return one complete exact mask-applied diffraction pattern as row-major u32.
@@ -975,16 +1093,65 @@ public enum MetalCompactH5Loader {
   ]
 
   /// Decode, authenticate, and publish one compact source in private Metal buffers.
+  ///
+  /// `nativeCacheURL` optionally reuses a cache previously saved from this exact
+  /// source. Missing/stale caches use the original decode path; corrupt caches
+  /// throw and should be removed/rebuilt by the caller. This call never creates
+  /// a cache. The default authentication remains bounded and sequential;
+  /// `parallelMapped` requires budget for additional file-backed residency.
   public static func load(
     sourceURL: URL,
     device: MTLDevice,
     authenticationPolicy: MetalCompactH5AuthenticationPolicy = .boundedSequential,
+    nativeCacheURL: URL? = nil,
     shouldCancel: () -> Bool = { false }
   ) throws -> MetalCompactH5ResidentSource {
     let totalStart = ContinuousClock.now
     let allocatedBefore = UInt64(device.currentAllocatedSize)
     let metadataStart = ContinuousClock.now
     let index = try parse(sourceURL: sourceURL)
+    var cacheStatus = nativeCacheURL == nil ? "notRequested" : "miss"
+    var cacheFile: FileHandle?
+    var cacheStamp: String?
+    var nativeCache: CompactNativeCache?
+    var loadingShards = index.shards
+    if let nativeCacheURL, FileManager.default.fileExists(atPath: nativeCacheURL.path) {
+      let file = try FileHandle(forReadingFrom: nativeCacheURL)
+      let initialStamp = try CompactNativeCache.stamp(file)
+      let cache = try CompactNativeCache.read(from: file)
+      let signature = try CompactNativeCache.signature(sourceURL: sourceURL)
+      if cache.sourceSignature != signature
+        || cache.sourceManifestSHA256 != index.metadata.manifestSHA256
+      {
+        cacheStatus = "stale"
+        try file.close()
+      } else {
+        guard index.storageLayout == .lz4V1,
+          index.metadata.embeddedScientificSemantics,
+          index.metadata.workingDtype == "uint16",
+          cache.shards.count == index.shards.count
+        else { throw CompactNativeCache.invalid("source contract does not match the cache.") }
+        loadingShards = try zip(index.shards, cache.shards).map { original, cached in
+          guard cached.payloadBytes == original.decodedBytes,
+            cached.payloadSHA256 == original.decodedSHA256,
+            cached.descriptorsBytes == UInt64(original.descriptorCount) * 4
+          else { throw CompactNativeCache.invalid("shard contract differs from source.") }
+          return CompactH5ShardRecord(
+            payloadOffset: cached.payloadOffset, payloadBytes: cached.payloadBytes,
+            lengthsOffset: 0, lengthsBytes: 0,
+            widthsOffset: cached.descriptorsOffset, widthsBytes: cached.descriptorsBytes,
+            decodedBytes: cached.payloadBytes, descriptorCount: original.descriptorCount,
+            chunkCount: 0, decodedSHA256: original.decodedSHA256,
+            descriptorsSHA256: cached.descriptorsSHA256
+          )
+        }
+        nativeCache = cache
+        cacheFile = file
+        cacheStamp = initialStamp
+        cacheStatus = "hit"
+      }
+    }
+    defer { try? cacheFile?.close() }
     let metadataMilliseconds = milliseconds(from: metadataStart)
     guard !shouldCancel() else { throw Metal4DSTEMStreamingIOError.cancelled }
     guard let queue = device.makeCommandQueue() else {
@@ -1059,28 +1226,29 @@ public enum MetalCompactH5Loader {
     var maximumTransientBytes: UInt64 = 0
     var mappedAuthenticationBytes: UInt64 = 0
     let payloadsPreauthenticated: Bool
-    if index.storageLayout == .directV3,
+    if index.storageLayout == .directV3 || nativeCache != nil,
       authenticationPolicy == .parallelMapped
     {
       let authenticationStart = ContinuousClock.now
       try authenticateDirectPayloads(
-        fileDescriptor: descriptor,
-        index: index
+        fileDescriptor: cacheFile?.fileDescriptor ?? descriptor,
+        fileBytes: nativeCache?.fileBytes ?? index.metadata.sourceBytes,
+        shards: loadingShards
       )
       decodedIntegrityMilliseconds += milliseconds(from: authenticationStart)
-      mappedAuthenticationBytes = index.metadata.sourceBytes
+      mappedAuthenticationBytes = nativeCache?.fileBytes ?? index.metadata.sourceBytes
       payloadsPreauthenticated = true
     } else {
       payloadsPreauthenticated = false
     }
     guard !shouldCancel() else { throw Metal4DSTEMStreamingIOError.cancelled }
 
-    for (shardIndex, shard) in index.shards.enumerated() {
+    for (shardIndex, shard) in loadingShards.enumerated() {
       try autoreleasepool {
         guard !shouldCancel() else { throw Metal4DSTEMStreamingIOError.cancelled }
-        if index.storageLayout == .directV3 {
+        if index.storageLayout == .directV3 || nativeCache != nil {
           let loaded = try loadDirectShard(
-            fileDescriptor: descriptor,
+            fileDescriptor: cacheFile?.fileDescriptor ?? descriptor,
             shardIndex: shardIndex,
             shard: shard,
             index: index,
@@ -1431,6 +1599,12 @@ public enum MetalCompactH5Loader {
       }
     }
 
+    if let cacheFile, let nativeCache {
+      guard try CompactNativeCache.stamp(cacheFile) == cacheStamp,
+        try CompactNativeCache.signature(sourceURL: sourceURL) == nativeCache.sourceSignature
+      else { throw CompactNativeCache.invalid("cache or source changed during load; retry.") }
+    }
+
     let maximumWidthValues = maximumWidthBuffer.contents().bindMemory(
       to: UInt32.self,
       capacity: index.metadata.detectorPixelCount
@@ -1529,6 +1703,9 @@ public enum MetalCompactH5Loader {
         + preparedDPCDisplayBytes
     )
     let metrics = MetalCompactH5LoadMetrics(
+      nativeCacheStatus: cacheStatus,
+      nativeCacheBytes: nativeCache?.fileBytes ?? 0,
+      nativeCacheDescriptorSHA256Checks: nativeCache?.shards.count ?? 0,
       metadataMilliseconds: metadataMilliseconds,
       sourceReadMilliseconds: sourceReadMilliseconds,
       descriptorPreparationMilliseconds: descriptorPreparationMilliseconds,
@@ -1827,10 +2004,11 @@ public enum MetalCompactH5Loader {
 
   private static func authenticateDirectPayloads(
     fileDescriptor: Int32,
-    index: CompactH5ParsedIndex
+    fileBytes sourceBytes: UInt64,
+    shards: [CompactH5ShardRecord]
   ) throws {
     let fileBytes = try exactInt(
-      index.metadata.sourceBytes,
+      sourceBytes,
       label: "mapped authentication bytes"
     )
     guard
@@ -1851,9 +2029,9 @@ public enum MetalCompactH5Loader {
     defer { Darwin.munmap(mapping, fileBytes) }
     let mappingAddress = UInt(bitPattern: mapping)
     let failures = ConcurrentStringCollector()
-    DispatchQueue.concurrentPerform(iterations: index.shards.count) { shardIndex in
+    DispatchQueue.concurrentPerform(iterations: shards.count) { shardIndex in
       autoreleasepool {
-        let shard = index.shards[shardIndex]
+        let shard = shards[shardIndex]
         guard let offset = Int(exactly: shard.payloadOffset),
           let count = Int(exactly: shard.payloadBytes)
         else {
@@ -1876,6 +2054,15 @@ public enum MetalCompactH5Loader {
           failures.append(
             "shard \(shardIndex) is \(observed), expected \(shard.decodedSHA256)"
           )
+        }
+        if let expected = shard.descriptorsSHA256 {
+          let headers = Data(
+            bytesNoCopy: mappedBytes.advanced(by: Int(shard.widthsOffset)),
+            count: Int(shard.widthsBytes), deallocator: .none
+          )
+          if CompactNativeCache.digest(headers) != expected {
+            failures.append("shard \(shardIndex) cached descriptor SHA-256 mismatch")
+          }
         }
       }
     }
@@ -1967,6 +2154,14 @@ public enum MetalCompactH5Loader {
             + "expected \(shard.decodedSHA256)."
         )
       }
+      if let expected = shard.descriptorsSHA256 {
+        let headerData = Data(
+          bytesNoCopy: headerStage.contents(), count: headerBytes, deallocator: .none
+        )
+        guard CompactNativeCache.digest(headerData) == expected else {
+          throw CompactNativeCache.invalid("shard \(shardIndex) descriptor SHA-256 mismatch.")
+        }
+      }
       decodedIntegrityMilliseconds = milliseconds(from: integrityStart)
     }
 
@@ -1976,8 +2171,11 @@ public enum MetalCompactH5Loader {
       / index.metadata.scanTile
     let checkpointWords = (tileCount + 31) / 32
     let widthWords = (tileCount + 7) / 8
-    guard index.metadata.scanTile == 32,
-      index.headerWordsPerPixel == checkpointWords + widthWords,
+    guard
+      (index.headerEncoding == 0 && index.metadata.scanTile == 128
+        && index.headerWordsPerPixel == tileCount)
+        || (index.headerEncoding == 1 && index.metadata.scanTile == 32
+          && index.headerWordsPerPixel == checkpointWords + widthWords),
       headerWords
         == index.metadata.detectorPixelCount * index.headerWordsPerPixel
     else {
@@ -2005,8 +2203,11 @@ public enum MetalCompactH5Loader {
       )
     }
     memset(descriptorStatus.contents(), 0, descriptorStatus.length)
+    let validationCount =
+      index.headerEncoding == 0
+      ? Int(shard.descriptorCount) : index.metadata.detectorPixelCount
     var descriptorParameters = CompactDescriptorParameters(
-      descriptorCount: UInt32(index.metadata.detectorPixelCount),
+      descriptorCount: UInt32(validationCount),
       payloadWords: payloadWords,
       tileCount: UInt32(tileCount),
       headerWordsPerPixel: UInt32(index.headerWordsPerPixel),
@@ -2051,7 +2252,7 @@ public enum MetalCompactH5Loader {
     )
     validation.setBuffer(maximumWidthBuffer, offset: 0, index: 3)
     validation.dispatchThreads(
-      MTLSize(width: index.metadata.detectorPixelCount, height: 1, depth: 1),
+      MTLSize(width: validationCount, height: 1, depth: 1),
       threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
     )
     validation.endEncoding()
@@ -2079,7 +2280,7 @@ public enum MetalCompactH5Loader {
     )
   }
 
-  private static func parse(sourceURL: URL) throws -> CompactH5ParsedIndex {
+  fileprivate static func parse(sourceURL: URL) throws -> CompactH5ParsedIndex {
     let attributes = try FileManager.default.attributesOfItem(atPath: sourceURL.path)
     guard let fileNumber = attributes[.size] as? NSNumber else {
       throw invalid("Could not determine compact source size for \(sourceURL.path).")
