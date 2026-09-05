@@ -5,6 +5,32 @@ import XCTest
 @testable import Metal4DSTEMStreamingIO
 
 final class CompactH5LoaderTests: XCTestCase {
+  func testInspectMatchesLoadMetadataWithoutMetalAllocation() throws {
+    let fixture = try makeCompactFixture(portable: true, preparedDPC: true)
+    defer { try? FileManager.default.removeItem(at: fixture.url) }
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let allocated = device.currentAllocatedSize
+    let metadata = try MetalCompactH5Loader.inspect(sourceURL: fixture.url)
+    XCTAssertEqual(device.currentAllocatedSize, allocated)
+    let source = try MetalCompactH5Loader.load(sourceURL: fixture.url, device: device)
+    defer { source.releaseResidentStorage() }
+    XCTAssertEqual(metadata, source.metadata)
+  }
+
+  func testInspectIsNotPayloadAuthentication() throws {
+    let fixture = try makeCompactFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.url) }
+    var bytes = try Data(contentsOf: fixture.url)
+    bytes[fixture.headerOffset] = 255
+    try bytes.write(to: fixture.url)
+    XCTAssertNoThrow(try MetalCompactH5Loader.inspect(sourceURL: fixture.url))
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    XCTAssertThrowsError(try MetalCompactH5Loader.load(sourceURL: fixture.url, device: device))
+    bytes[0] = 0
+    try bytes.write(to: fixture.url)
+    XCTAssertThrowsError(try MetalCompactH5Loader.inspect(sourceURL: fixture.url))
+  }
+
   func testTrustedDirectPreparedProductsMatchVerifiedProducts() throws {
     let fixture = try makeDirectCompactFixture(preparedDPC: true, preparedDetectorProducts: true)
     defer { try? FileManager.default.removeItem(at: fixture.url) }

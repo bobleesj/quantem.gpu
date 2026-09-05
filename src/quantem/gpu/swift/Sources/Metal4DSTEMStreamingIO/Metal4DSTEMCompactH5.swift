@@ -1144,6 +1144,14 @@ public final class MetalCompactH5ResidentSource {
 
 /// Fail-closed bounded loader for compact 4D-STEM HDF5 user-block payloads.
 public enum MetalCompactH5Loader {
+  /// Read structurally validated catalog metadata without loading the payload.
+  ///
+  /// This creates no Metal resources and does not authenticate payload bytes or
+  /// establish resident capabilities. `load` revalidates the file on every open.
+  public static func inspect(sourceURL: URL) throws -> MetalCompactH5Metadata {
+    try parse(sourceURL: sourceURL).metadata
+  }
+
   private static let containerMagic: [UInt8] = [
     0x51, 0x47, 0x50, 0x55, 0x48, 0x35, 0x00, 0x01,
   ]
