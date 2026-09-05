@@ -7,6 +7,7 @@ import json
 import runpy
 from pathlib import Path
 
+import h5py
 import numpy as np
 import pytest
 
@@ -43,8 +44,10 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+@pytest.mark.parametrize("unaligned_tail_bytes", [0, 1, 2, 3])
 def test_uint16_builder_preserves_width_16_and_mask_applied_products(
     tmp_path: Path,
+    unaligned_tail_bytes: int,
 ) -> None:
     values = np.zeros((128, 2), dtype="<u2")
     values[:, 0] = np.arange(128, dtype=np.uint16) * 509
@@ -145,6 +148,13 @@ def test_uint16_builder_preserves_width_16_and_mask_applied_products(
             expected_whole_file_sha256="0" * 64,
         )
 
+    if unaligned_tail_bytes:
+        with h5py.File(output, "r+") as handle:
+            handle.create_dataset(
+                "alignment_test_tail",
+                data=np.zeros(unaligned_tail_bytes, dtype=np.uint8),
+            )
+        assert output.stat().st_size % 4 == unaligned_tail_bytes
     original = output.read_bytes()
     working = values.copy()
     working[:, 1] = 0
@@ -168,6 +178,7 @@ def test_uint16_builder_preserves_width_16_and_mask_applied_products(
     )
     assert prepared.masked_detector_raw_values == (65535,)
     assert prepared.prepared_dpc_moments is not None
+    assert prepared.prepared_dpc_moments.file_offset % 4 == 0
     prepared_values = CompactH5ReferenceDecoder(prepared).prepared_dpc_moment_values()
     assert prepared_values is not None
     assert all(

@@ -1233,7 +1233,11 @@ def prepare_compact_h5_metadata_copy(
                 raise RuntimeError(
                     "Preparing an exact moment payload requires h5py."
                 ) from error
-            with h5py.File(temporary_path, "r+") as handle:
+            # Compressed sources can end at any byte offset. Align newly
+            # allocated datasets without changing existing payload ranges.
+            with h5py.File(
+                temporary_path, "r+", alignment_threshold=1, alignment_interval=4
+            ) as handle:
                 group = handle.require_group("quantem_gpu").require_group("prepared")
                 dataset_name = "dpc_moments_u32_v2"
                 if dataset_name in group:
