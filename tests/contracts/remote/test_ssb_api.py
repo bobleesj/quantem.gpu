@@ -197,7 +197,11 @@ def _request(
             "detectorBin": 1,
             "scanCrop": None,
         },
-        "backend": {"kind": "remote_cuda", "profile_id": "mjgoat", "gpu_index": 0},
+        "backend": {
+            "kind": "remote_cuda",
+            "profile_id": "remote-workstation",
+            "gpu_index": 0,
+        },
         "computeLoss": True,
         "measureWarm": False,
     }
@@ -210,7 +214,7 @@ def _prepare_request(source: dict, *, backend: dict | None = None) -> dict:
     reconstruction = _request(source)
     selected_backend = backend or {
         "kind": "remote_cuda",
-        "profile_id": "mjgoat",
+        "profile_id": "remote-workstation",
         "gpu_index": 0,
     }
     expected_identity = {
@@ -399,7 +403,11 @@ def _service(
 def _open_interactive(
     service, identity, *, backend=None, contract_version=INTERACTIVE_CONTRACT_VERSION
 ):
-    backend = backend or {"kind": "remote_cuda", "profile_id": "mjgoat", "gpu_index": 0}
+    backend = backend or {
+        "kind": "remote_cuda",
+        "profile_id": "remote-workstation",
+        "gpu_index": 0,
+    }
     initial = _request(identity)
     initial["jobID"] = str(uuid4())
     initial["backend"] = backend
