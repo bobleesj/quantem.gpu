@@ -5,6 +5,21 @@ C ABI for indexed/streamed sources and a C++ resident packed-detector session.
 The consuming app owns HDF5 metadata discovery, source authentication,
 Android storage grants and lifecycle, UI scheduling, and presentation.
 
+## Source map
+
+| Directory | Responsibility |
+|---|---|
+| [include](include) | Public C ABI and C++ contract/session headers |
+| [src](src) | Source lifecycle, validation, dispatch, and resident ownership |
+| [shaders](shaders) | Native Vulkan decode, detector, and FFT implementations |
+| [tests](tests) | Portable reference contracts and Android-only GPU admission |
+| [benchmarks](benchmarks) | Native benchmark entry points |
+
+The adjacent [android entry](../android/README.md) forwards to this CMake target;
+it is not another kernel implementation. The Python count-ANS integration does
+not add ANS loading to Vulkan. This backend's indexed/dense-staging and packed
+contracts remain distinct from that pending feature.
+
 ## Exact resident path
 
 `PackedDetectorSession` accepts a complete 512-square or 1024-square scan

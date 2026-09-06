@@ -53,7 +53,10 @@ def check_markdown(root: Path) -> list[str]:
         for path in sorted((root / "docs").rglob("*.md"))
         if "_build" not in path.parts
     ]
-    paths = [root / "README.md", root / "CONTRIBUTING.md", *docs]
+    # Backend entry points ship with the library and need the same moved-link
+    # protection as the site. Historical experiment records remain untouched.
+    backend_readmes = sorted((root / "src").rglob("README.md"))
+    paths = [root / "README.md", root / "CONTRIBUTING.md", *backend_readmes, *docs]
     failures: list[str] = []
     for source in paths:
         if not source.is_file():

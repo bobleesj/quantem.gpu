@@ -5,6 +5,12 @@ not require Python, SSH, WinUI, or a Windows compute server. It has no CPU
 fallback and does not choose a hardware adapter; the consumer enforces its
 hardware policy. Vortice packages remain pinned to 3.8.3.
 
+The implementation is [ImageFft.cs](ImageFft.cs), built by
+[Quantem.Gpu.Display.Direct3D.csproj](Quantem.Gpu.Display.Direct3D.csproj).
+The [older project entry](../../direct3d/README.md) compiles this same source;
+it does not contain another FFT implementation. Run the test command below
+from the repository root.
+
 ```csharp
 using var fft = new Quantem.Gpu.Display.Direct3D.ImageFft(device, context);
 var output = fft.LogMagnitude(sourceView, rows, columns,

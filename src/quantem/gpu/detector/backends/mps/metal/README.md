@@ -3,7 +3,13 @@
 `reductions.msl` contains detector-reduction Metal source. The adjacent
 [`kernels.py`](../kernels.py) reads, compiles, and dispatches it.
 
-- `reductions.msl` — masked_sum, detector_sum, prefix-sum, bin2.
+- [reductions.msl](reductions.msl) implements dense masked/detector sums,
+  prefix and row-span sums, explicit detector binning, mean diffraction,
+  radial accumulation, and CoM. Exact integer and floating-output entry points
+  have separate contracts; they are not interchangeable precision modes.
+- Packed and ANS count owners dispatch through their own IO-resident kernels,
+  not by expanding into this dense array path. See the
+  [representation contract](../../../../../../../docs/api/representations.md).
 - New detector kernels belong here; other scientific domains keep their own
   implementation directories.
 

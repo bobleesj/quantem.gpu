@@ -162,7 +162,7 @@ Regression entry points:
 ```bash
 python scripts/run_tests.py tests/contracts/io/test_representation.py tests/hardware/mps/test_mps_compact_v3.py -q
 PYTHONPATH=src pytest -q tests/contracts/test_webgpu_*lifetime.py tests/contracts/test_webgpu_resident_contract.py
-QGPU_RUN_PYTHON_PARITY=1 QGPU_PYTHON="$(command -v python)" swift test --package-path src/quantem/gpu/swift
+QGPU_RUN_PYTHON_PARITY=1 QGPU_PYTHON="$(command -v python)" swift test
 ```
 
 Use the {download}`Vulkan build guide <../../src/quantem/gpu/android/README.md>` for host
