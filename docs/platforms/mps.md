@@ -54,7 +54,7 @@ An existing supported Lossless Pack Format source remains packed:
 
 ```python
 packed = io.load("scan-lossless.h5", backend="mps")
-assert packed.representation is io.DataRepresentation.LOSSLESS_PACKED
+assert packed.representation is io.DataRepresentation.PACKED
 ```
 
 Python MPS currently accepts the direct-bitpacked profile through this generic

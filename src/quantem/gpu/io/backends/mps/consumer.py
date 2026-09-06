@@ -39,11 +39,6 @@ __all__ = [
 ]
 
 
-# Compatibility name retained for existing Apple consumers. The public values
-# now describe the representation rather than one backend implementation.
-MPSResidentRepresentation = DataRepresentation
-
-
 class MPSResidentProduct(str, Enum):
     """Product roles required by a complete interactive 4D-STEM consumer."""
 
@@ -111,7 +106,7 @@ class MPSResidentCapabilities:
     products: tuple[MPSResidentProductCapability, ...]
     resident_receipt: ResidentGenerationReceipt
 
-    SCHEMA = "quantem.gpu.apple-4dstem-resident-capabilities/v3"
+    SCHEMA = "quantem.gpu.apple-4dstem-resident-capabilities/v4"
 
     @property
     def full_interactive_resident(self) -> bool:
@@ -373,7 +368,7 @@ def _compact_capabilities(source: Any) -> MPSResidentCapabilities:
     )
     source_shape = tuple(int(value) for value in index.shape)
     receipt = ResidentGenerationReceipt(
-        representation=DataRepresentation.LOSSLESS_PACKED,
+        representation=DataRepresentation.PACKED,
         source_identity_sha256=index.source_identity_sha256,
         source_shape=source_shape,
         working_shape=source_shape,
@@ -456,7 +451,7 @@ def _compact_capabilities(source: Any) -> MPSResidentCapabilities:
         ),
     )
     return MPSResidentCapabilities(
-        representation=DataRepresentation.LOSSLESS_PACKED,
+        representation=DataRepresentation.PACKED,
         source_identity_sha256=index.source_identity_sha256,
         scan_shape=tuple(int(value) for value in index.shape[:2]),
         detector_shape=tuple(int(value) for value in index.shape[2:]),
@@ -572,7 +567,7 @@ class MPSPublicationEvent:
     counters: MPSPublicationCounters
     detail: str | None = None
 
-    SCHEMA = "quantem.gpu.apple-4dstem-publication/v1"
+    SCHEMA = "quantem.gpu.apple-4dstem-publication/v2"
 
     def to_dict(self) -> dict[str, Any]:
         """Return the stable cross-language JSON spelling."""

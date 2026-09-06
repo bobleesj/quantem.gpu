@@ -24,12 +24,12 @@ from typing import Any, Self
 
 import numpy as np
 
+from quantem.gpu.io import DataRepresentation
 from quantem.gpu.io.backends.mps.compact_v3 import load_compact_v3_mps
 from quantem.gpu.io.backends.mps.consumer import (
     MPSPublicationCounters,
     MPSPublicationMilestone,
     MPSPublicationRecorder,
-    MPSResidentRepresentation,
 )
 from quantem.gpu.io.backends.mps.resident_dpc import (
     MPSDPCConfiguration,
@@ -495,7 +495,7 @@ def _aba(sources: list[Any], bindings: list[dict[str, Any]]) -> dict[str, Any]:
         accepted = recorder.begin(
             generation,
             source.index.source_identity_sha256,
-            MPSResidentRepresentation.COMPACT_QGIX_V3_UINT8,
+            DataRepresentation.PACKED,
         )
         if not accepted:
             raise RuntimeError("new A-B-A generation was unexpectedly rejected")

@@ -46,11 +46,11 @@ Keep these three axes separate:
 
 | Axis | Public values | Question answered |
 |---|---|---|
-| Representation | `lossless_packed`, `dense` | How are all logical counts encoded? |
+| Representation | `packed`, `dense` | How are all logical counts encoded? |
 | Dtype | `uint8`, `uint16`, `uint32`, and supported floating types | What scientific value type is exposed? |
 | Residency | host, CUDA device, Apple unified/device memory, or WebGPU device | Where is the physical payload retained? |
 
-`lossless_packed` does not mean `uint8`, and `dense` does not imply host memory.
+`packed` does not mean `uint8`, and `dense` does not imply host memory.
 The format profile and schema remain provenance fields rather than additional
 public representation names. This lets new codecs evolve without changing
 scientist-facing algorithms.

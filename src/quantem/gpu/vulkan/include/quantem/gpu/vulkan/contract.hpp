@@ -12,12 +12,13 @@ namespace quantem::gpu::vulkan {
 
 // Representation describes the counts' encoding, independently of dtype,
 // allocation location, and whether the complete scan remains resident.
-enum class DataRepresentation : std::uint8_t { dense, lossless_packed };
+enum class DataRepresentation : std::uint8_t { dense, packed, ans };
 
 [[nodiscard]] constexpr std::string_view representation_name(DataRepresentation value) {
   switch (value) {
   case DataRepresentation::dense: return "dense";
-  case DataRepresentation::lossless_packed: return "lossless_packed";
+  case DataRepresentation::packed: return "packed";
+  case DataRepresentation::ans: return "ans";
   }
   throw std::invalid_argument("Unknown data representation");
 }

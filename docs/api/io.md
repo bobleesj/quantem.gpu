@@ -64,17 +64,28 @@ print(loaded.logical_bytes, loaded.resident_bytes)
 
 ### Representation
 
-See [Dense and lossless-packed data](representations.md) for per-backend
-operation support, exactness, and ownership. Both representations are retained;
+See [Count representations](representations.md) for per-backend
+operation support, exactness, and ownership. Dense and packed paths are retained;
 packed storage is not a replacement for algorithms that require dense arrays.
 
 `representation` describes how the complete logical array is retained. It has
-exactly two public values:
+the following public selectors on this integration branch:
 
 | Representation | Meaning |
 |---|---|
-| `"lossless_packed"` | Exact counts remain in the Lossless Pack Format and kernels address that representation directly |
 | `"dense"` | Every logical value occupies its ordinary dense array element |
+| `"packed"` | Exact integer counts use compact storage consumed by a matching kernel |
+| `"ans"` | Exact integer counts remain entropy-coded with the tables needed for decoding |
+
+These are the only representation names. The authenticated `storage_schema`
+selects the precise decoder within a representation; users do not select an
+internal bitpacking or block-compression profile through this argument.
+
+The new ANS-to-packed file workflow is available on Python MPS and CUDA;
+physical CUDA qualification remains pending. The explicit CPU reference can
+decode ANS to dense. GPU dense materialization, reverse conversions, and native
+file-reader integration remain pending. Do not infer support for every
+source/representation/backend combination from the selector names.
 
 Representation is independent of dtype and residency. A lossless-packed
 `uint8` source and a lossless-packed `uint16` source have the same
@@ -88,7 +99,8 @@ loaded = io.load("scan-lossless.h5", backend="auto")
 ```
 
 An existing Lossless Pack Format source stays packed. Ordinary HDF5 follows the
-current dense compatibility path. Loading never silently creates or evicts a
+current dense path. A standalone ANS source stays ANS unless a
+supported conversion is requested. Loading never silently creates or evicts a
 cache because those are consumer-policy decisions. Ask for dense explicitly
 when an algorithm truly requires it:
 
@@ -101,12 +113,12 @@ loaded = io.load(
 )
 ```
 
-Requesting `representation="lossless_packed"` for an ordinary HDF5 source
+Requesting `representation="packed"` for an ordinary HDF5 source
 fails with the preparation step instead of claiming that the source is packed.
 
 ### Selection and exact detector binning
 
-The dense compatibility path also supports regions and stochastic batches:
+The dense path also supports regions and stochastic batches:
 
 ```python
 full = io.load(
@@ -219,3 +231,44 @@ files and lossless bitshuffle/LZ4 storage for integer detector counts.
 `save` always returns a completion handle. With the default `wait=True`, the
 handle is already complete; with `wait=False`, call `saved.wait()` before using
 the output.
+
+(io-file-format-compression)=
+### File format, compression, and resident representation
+
+These are independent decisions, not different names for the same setting:
+
+| Option | Decision | Current examples |
+|---|---|---|
+| `format` on save | File layout | `"arina"`, `"quantem"` |
+| `compression` on save | Lossless file encoding | `"bitshuffle_lz4"` for Arina; `"ans"` for QuantEM |
+| `representation` on load | In-memory count layout | `"dense"`, `"packed"`, `"ans"` |
+
+For example, save an ANS-compressed QuantEM file, then use bitpacking in memory:
+
+```python
+# Step 1. Write native four-dimensional NumPy uint8/uint16 counts exactly.
+# The CPU encoder is an explicit reference; accelerated ANS saving is pending.
+io.save(
+    "experiment.qgpu", native_counts,
+    format="quantem", compression="ans", backend="cpu",
+)
+
+# Step 2. Load the file and select the representation used by GPU operations.
+with io.load("experiment.qgpu", representation="packed", backend="mps") as data:
+    print(data.shape, data.dtype, data.representation)
+```
+
+Loading detects the decoder from file contents. There is no `decompression=`
+argument, and changing a filename extension does not change the encoding.
+`compression="auto"` selects bitshuffle/LZ4 for Arina and ANS for QuantEM.
+Only `format="arina"` and `format="quantem"` are accepted: removed format
+aliases raise instead of redirecting the call. Incompatible format/compression
+pairs also raise. ANS is not an implemented HDF5 filter here. This API change
+does not change the bytes of the supported file formats.
+
+The standalone writer is transactional and never overwrites an existing file.
+Source/working shape, dtype, and calibration are preserved. ANS-to-packed does
+not materialize a full dense tensor, but both encoded representations coexist
+during conversion. This is not yet incremental file-shard streaming or a
+full-volume memory/performance qualification. `discover` and `inspect` support
+for this standalone envelope is also pending; use an explicit file path.

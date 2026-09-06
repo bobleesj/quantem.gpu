@@ -14,21 +14,28 @@ _LOSSLESS_PACK_CONTAINER_MAGIC = b"QGPUH5\0\x01"
 class DataRepresentation(str, Enum):
     """Public representation of the complete logical 4D-STEM array.
 
-    ``LOSSLESS_PACKED`` preserves every declared working value while retaining
-    a compact representation for accelerator kernels. ``DENSE`` stores one
-    unpacked value for every logical array element. Neither value changes scan
-    coverage, detector coverage, binning, calibration, or scientific dtype.
+    ``PACKED`` preserves every declared working value while retaining
+    compact count storage for accelerator kernels. ``DENSE`` stores one
+    unpacked value for every logical array element. No representation changes
+    scan coverage, detector coverage, binning, calibration, or scientific dtype.
+
+    ``ANS`` names an exact entropy-coded resident source. Disk encoding is
+    independent: an ANS file can be transcoded into packed storage. The
+    authenticated storage schema selects the precise decoder within a
+    representation. These names do not guarantee that every conversion or
+    backend is implemented.
 
     Examples
     --------
-    >>> DataRepresentation.parse("lossless_packed")
-    <DataRepresentation.LOSSLESS_PACKED: 'lossless_packed'>
+    >>> DataRepresentation.parse("packed")
+    <DataRepresentation.PACKED: 'packed'>
     >>> DataRepresentation.parse(DataRepresentation.DENSE)
     <DataRepresentation.DENSE: 'dense'>
     """
 
-    LOSSLESS_PACKED = "lossless_packed"
     DENSE = "dense"
+    PACKED = "packed"
+    ANS = "ans"
 
     @classmethod
     def parse(cls, value: DataRepresentation | str) -> DataRepresentation:
@@ -72,7 +79,9 @@ class DataRepresentation(str, Enum):
 
         Ordinary HDF5 is dense-compatible source evidence. A QuantEM lossless
         pack container carries a fixed user-block magic and is loaded directly
-        as ``LOSSLESS_PACKED``. This inspection reads only eight bytes.
+        as ``PACKED``. Standalone QuantEM/ANS files select ``ANS``
+        from their magic regardless of extension. This inspection reads only
+        eight bytes; it does not validate the complete file.
 
         Parameters
         ----------
@@ -95,8 +104,10 @@ class DataRepresentation(str, Enum):
                 magic = stream.read(len(_LOSSLESS_PACK_CONTAINER_MAGIC))
         except OSError:
             return cls.DENSE
+        if magic == b"QGANS\0\1\0":
+            return cls.ANS
         return (
-            cls.LOSSLESS_PACKED
+            cls.PACKED
             if magic == _LOSSLESS_PACK_CONTAINER_MAGIC
             else cls.DENSE
         )

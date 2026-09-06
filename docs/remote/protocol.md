@@ -102,7 +102,7 @@ after loading. It never triggers a load. A stale resident entry fails closed on
 the next scientific request.
 
 The response schema is `quantem.gpu.browse-residency/v2`. Its canonical
-`representation` is `lossless_packed` or `dense`; `storage_kind` remains a
+`representation` is `packed` or `dense`; `storage_kind` remains a
 legacy alias during client migration. For a lossless-packed resident source it
 reports `logical_tensor_bytes` separately from `physical_resident_bytes`, the
 storage schema, complete source

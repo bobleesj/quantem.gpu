@@ -48,7 +48,7 @@ def test_failed_mps_metadata_releases_storage_and_preserves_error(
     def unavailable_metadata(*args):
         raise failure
 
-    monkeypatch.setattr(loading, "_lossless_packed_metadata", unavailable_metadata)
+    monkeypatch.setattr(loading, "_packed_metadata", unavailable_metadata)
     with pytest.raises(ValueError) as caught:
         io.load(source, backend="mps")
     assert caught.value is failure
@@ -85,7 +85,7 @@ def test_failed_ssb_setup_releases_loaded_source_and_keeps_original_error(monkey
     resident = ReleaseOnlyResident(cleanup_fails=True)
     loaded = io.FourDSTEMData(
         resident,
-        {"representation": "lossless_packed", "working_dtype": "uint16"},
+        {"representation": "packed", "working_dtype": "uint16"},
     )
     monkeypatch.setattr(workflow, "_resolve_backend", lambda _: "cuda")
     monkeypatch.setattr(io, "load", lambda *args, **kwargs: loaded)

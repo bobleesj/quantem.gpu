@@ -53,7 +53,7 @@ def test_existing_lossless_pack_source_selects_packed_loader(
     expected = load_module.FourDSTEMData(
         object(),
         {
-            "representation": "lossless_packed",
+            "representation": "packed",
             "residency": "device",
             "working_shape": (2, 3, 4, 5),
             "working_dtype": "uint16",
@@ -69,12 +69,12 @@ def test_existing_lossless_pack_source_selects_packed_loader(
         calls.update(kwargs)
         return expected
 
-    monkeypatch.setattr(load_module, "_load_lossless_packed", fake_load)
+    monkeypatch.setattr(load_module, "_load_packed", fake_load)
 
     loaded = io.load(source, backend="mps", verbose=False)
 
     assert loaded is expected
-    assert loaded.representation is io.DataRepresentation.LOSSLESS_PACKED
+    assert loaded.representation is io.DataRepresentation.PACKED
     assert loaded.logical_bytes == 240
     assert loaded.resident_bytes == 80
     assert calls == {
@@ -85,13 +85,13 @@ def test_existing_lossless_pack_source_selects_packed_loader(
     }
 
 
-def test_lossless_packed_request_rejects_ordinary_hdf5(tmp_path) -> None:
+def test_packed_request_rejects_ordinary_hdf5(tmp_path) -> None:
     """Packing is never claimed when a source has not been prepared."""
     source = tmp_path / "ordinary.h5"
     source.write_bytes(b"\x89HDF\r\n\x1a\n")
 
     with pytest.raises(ValueError, match="Prepare an immutable lossless-packed"):
-        io.load(source, representation="lossless_packed", verbose=False)
+        io.load(source, representation="packed", verbose=False)
 
 
 def test_dense_request_does_not_silently_expand_lossless_pack(tmp_path) -> None:
@@ -107,13 +107,25 @@ def test_representation_values_do_not_encode_dtype() -> None:
     """Representation names remain independent of detector-count dtype."""
     assert {item.value for item in io.DataRepresentation} == {
         "dense",
-        "lossless_packed",
+        "packed",
+        "ans",
     }
+
+
+def test_removed_representation_names_have_no_aliases() -> None:
+    """Removed names fail explicitly instead of choosing another decoder."""
+    assert not hasattr(io.DataRepresentation, "LOSSLESS_PACKED")
+    contract = import_module("quantem.gpu.io.resident_contract")
+    consumer = import_module("quantem.gpu.io.backends.mps.consumer")
+    assert not hasattr(contract, "ResidentStorageEncoding")
+    assert not hasattr(consumer, "MPSResidentRepresentation")
+    with pytest.raises(ValueError, match="representation must be"):
+        io.DataRepresentation.parse("lossless_packed")
 
 
 def test_representation_wire_values_match_swift_and_receipt_schema() -> None:
     """Python, Swift, and JSON receipts use one backend-neutral vocabulary."""
-    expected = {"dense", "lossless_packed"}
+    expected = {"dense", "packed", "ans"}
     schema = json.loads(
         Path("src/quantem/gpu/io/resident_contract.schema.json").read_text()
     )
@@ -124,7 +136,8 @@ def test_representation_wire_values_match_swift_and_receipt_schema() -> None:
 
     assert set(schema["properties"]["representation"]["enum"]) == expected
     assert 'case dense' in swift
-    assert 'case losslessPacked = "lossless_packed"' in swift
+    assert 'case packed' in swift
+    assert 'case ans' in swift
 
 
 def test_detector_bin_is_the_canonical_public_spelling(monkeypatch) -> None:
@@ -214,7 +227,7 @@ def test_inspection_rejects_truncated_packed_index(tmp_path) -> None:
     report = io.inspect(source)
     assert not report.ready
     assert report.reason.startswith("invalid_lossless_pack_index:")
-    assert report.metadata["representation"] == "lossless_packed"
+    assert report.metadata["representation"] == "packed"
     assert report.pixel_mask is None
 
 

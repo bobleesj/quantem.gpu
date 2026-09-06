@@ -3,7 +3,7 @@ import type { DataRepresentation } from "./local-h5";
 
 /** Canonical camel-case form of resident_contract.schema.json. */
 export interface CompactH5ResidentReceipt {
-  readonly schema: "quantem.gpu.4dstem-resident-receipt/v2";
+  readonly schema: "quantem.gpu.4dstem-resident-receipt/v3";
   readonly representation: DataRepresentation;
   readonly sourceIdentitySHA256: string;
   readonly sourceShape: readonly [number, number, number, number];
@@ -86,6 +86,12 @@ export function requireMatchingResidentReceipt(
   }
   if (expected === null || typeof expected !== "object" || Array.isArray(expected)) {
     throw new Error("Expected resident receipt must be a trusted complete producer receipt.");
+  }
+  for (const receipt of [observed, expected]) {
+    if (receipt.schema !== "quantem.gpu.4dstem-resident-receipt/v3"
+        || !["dense", "packed", "ans"].includes(receipt.representation)) {
+      throw new Error("Use a v3 resident receipt schema with a canonical dense, packed, or ans representation.");
+    }
   }
   for (const key of new Set([...Object.keys(observed), ...Object.keys(expected)])) {
     const field = key as keyof CompactH5ResidentReceipt;

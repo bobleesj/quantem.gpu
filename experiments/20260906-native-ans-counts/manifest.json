@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260906-native-ans-counts",
+  "status": "succeeded",
+  "question": "Can native Metal validate the shared count-ANS arrays and return exact raw DPs and bounded binary-mask sums without expanding a full dense source?",
+  "paper": {
+    "authoritative_host": "MacBook Pro M5 Max 128 GB",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260906-native-ans-counts/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "e6714aacd0c8ff843353ec36a009c2da9ab709f4",
+    "entrypoint": "xcrun swift test --jobs 2 --filter MetalANSCountTests",
+    "dirty": true,
+    "diff_sha256": "2a77c5c073033521262588f9fa8126a09c877c28600f9dd32c93dad41d754ddc",
+    "snapshot_path": "local-evidence://representation-integration-20260906/runs/native-ans-broader-qualified/source.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "Independent Python count-ANS inverse and native uint8/uint16 fixture",
+      "path": "src/quantem/gpu/swift/Tests/Native4DSTEMIOTests/Fixtures/ans_counts_v1.json",
+      "sha256": "c0fc5e6a06a2d015b6306788cc93f5f9cce49148e6481b9e7cf6cca74e8ac960"
+    }
+  ],
+  "parameters": {
+    "artifact_results": {
+      "focused native ANS parity": "3 executed, 0 failures, 0 skips; bounded fixture correctness only",
+      "broader native IO regression": "103 executed, 3 explicit opt-in skips, 0 failures; two real-source and one Python-producer gate skipped",
+      "first compiler failure": "Source-modified compiler check, before test execution",
+      "compiler type error and source-modified retry": "UInt64/Int subtraction error fixed; unchanged source metadata check retained",
+      "linker metadata failure after type fix": "New Swift source compiled, existing object-modified check prevented tests"
+    },
+    "fixture_source_commit": "db552c4787fc7f4c94095f61dd3f410d11fd9273",
+    "source_and_working_shape": [3, 5, 2, 3],
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_and_stored_dtypes": ["uint8", "uint16"],
+    "DP_host_return_dtype": "uint32 exact widening of native stored counts",
+    "detector_sum_dtype": "uint64 exact",
+    "block_frames": 4,
+    "tail_frames": 3,
+    "scale": 4,
+    "rare_count_values": [0, 255, 256, 32768, 65535],
+    "reference": "Independent scalar Python rANS encoder/inverse; every fixture DP and every binary-mask output uses exact integer equality",
+    "recurrence": "Byte-normalized rANS L=2^23, initial state [L,2^31), frequency*(state>>scale)+slot-cumulative, terminal cursor=end and state=L; literal streams are raw uint16LE",
+    "public_advanced_boundary": [
+      "MetalANSCountArrays(shape:blockFrames:scale:logicalDtype:payload:offsets:modelIDs:contextOffsets:symbols:cumulative:frequencies:literal:)",
+      "MetalANSResidentSource(arrays:device:maximumAdditionalBytes:)",
+      "extractRawDiffraction(scanRow:scanColumn:) -> [UInt32]",
+      "sumVirtualDetector(mask:maximumDecodedBytes:) -> [UInt64]",
+      "releaseResidentStorage()"
+    ],
+    "constructor_validation": "Host tables and every GPU stream, including tail termination and logical count range, pass before publication; private buffers retain the immutable encoded source",
+    "memory_contract": {
+      "source_buffers": "residentBytes sums owned MTLBuffer lengths; excludes caller CPU arrays, pipelines, driver overhead and host results",
+      "upload_staging": "At most one 1 MiB shared staging buffer; private source arrays uploaded sequentially",
+      "constructor_budget": "maximumAdditionalBytes includes source tables, DP/request/status buffers and bounded upload staging",
+      "operation_budget": "maximumDecodedBytes caps decoded segment only; detector mask and uint64 scan result are additional",
+      "additional_operation_buffers": "lastOperationScratchBytes is decoded segment + detector mask + scan result; not measured process/driver peak",
+      "measured_physical_peak": null
+    },
+    "tests": [
+      "xcrun swift test --jobs 2 --filter MetalANSCountTests",
+      "xcrun swift test --skip-build --filter Native4DSTEMIOTests"
+    ],
+    "build": "Existing incremental debug build, jobs=2, Swift 6.3.3; owned-process disk guard retained at least 18 GiB plus 64 MiB; no fresh build directory",
+    "qualified": ["raw selected DP values", "request order and duplicate calls", "binary-mask integer sums", "block and tail boundaries", "host-copy isolation", "mask transitions", "malformed models and streams", "false uint8 declaration", "budget rejection", "release and recovery"],
+    "remaining": [
+      "Native shared disk-envelope reader and representation dispatch are not implemented here",
+      "No native ANS-to-packed conversion or batched gather public method",
+      "No calibration/cache/cancellation integration is added to this arrays-only boundary",
+      "Existing packed raw-DP API remains separate and unchanged",
+      "Real-data full-volume load and performance, physical peak memory and M5 24 GB device gate remain unmeasured",
+      "Small decoded segments may repeatedly decode entropy prefixes; no real-time promise",
+      "No app/UI, G_k or SSB changes"
+    ],
+    "build_failures_retained": "Three initial compile/link trials failed: unchanged source/object metadata checks and one corrected UInt64/Int subtraction port error. Existing file bytes matched HEAD. An unchanged incremental link retry then passed; external metadata cause was not proven. All logs remain retained."
+  },
+  "execution": {
+    "host": "MacBook Pro M5 Max 128 GB",
+    "backend": "native Swift/Metal, not Python MPS",
+    "gpu_ids": ["system-default Apple M5 Max"],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "focused native ANS parity",
+      "path": "local-evidence://representation-integration-20260906/runs/native-ans-focused-qualified/output.log",
+      "sha256": "029ca0d259b9b982d710214fa5562257d5ddc6f7239c85e5f006238a6d22301a",
+      "size_bytes": 2547,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "broader native IO regression",
+      "path": "local-evidence://representation-integration-20260906/runs/native-ans-broader-qualified/output.log",
+      "sha256": "ae98b1d2e5a0413fac8eedaa7caccee38688bb05540df5e8cbbd2631bbfa91a5",
+      "size_bytes": 30906,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "first compiler failure",
+      "path": "local-evidence://representation-integration-20260906/runs/native-ans-focused-first/output.log",
+      "sha256": "b63b429e266d07ad538a6581bb8e548e8e143a1d23c978618c0cfe21d9647c8a",
+      "size_bytes": 1179,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "compiler type error and source-modified retry",
+      "path": "local-evidence://representation-integration-20260906/runs/native-ans-focused-retry/output.log",
+      "sha256": "228cf76eb2aa5e48a1875ae37646c89a7996f6a8a9b233851c1b1794de912639",
+      "size_bytes": 4351,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "linker metadata failure after type fix",
+      "path": "local-evidence://representation-integration-20260906/runs/native-ans-focused-typefix/output.log",
+      "sha256": "104fcf3d65d13898195c10685f4bc633649abf6baca3f5815f348880a08d9298",
+      "size_bytes": 2972,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-06T15:28:21.899764Z",
+    "started": "2026-09-06T15:28:21.899941Z",
+    "finished": "2026-09-06T15:50:55.916678Z"
+  }
+}

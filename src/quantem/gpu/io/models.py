@@ -188,6 +188,18 @@ class FourDSTEMData(NamedTuple):
         """
         _release_owned_storage(self.data)
 
+    def to_representation(self, representation: DataRepresentation | str) -> FourDSTEMData:
+        """Return an exact independently owned conversion when supported.
+
+        The source remains usable and caller-owned. Requesting its current
+        representation returns this same object, not a second ownership lease.
+        Unsupported directions fail before hidden materialization or CPU work.
+        Conversion readiness is backend-specific during this integration.
+        """
+        from ._ans_dispatch import _convert_resident
+
+        return _convert_resident(self, representation)
+
     def __enter__(self):
         return self
 

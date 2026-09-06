@@ -7,10 +7,23 @@ final class Metal4DSTEMConsumerContractTests: XCTestCase {
   private let sourceA = String(repeating: "a", count: 64)
   private let sourceB = String(repeating: "b", count: 64)
 
+  func testCanonicalRepresentationNamesHaveNoLegacyAlias() throws {
+    for value in ["dense", "packed", "ans"] {
+      let encoded = Data("\"\(value)\"".utf8)
+      let representation = try JSONDecoder().decode(
+        Metal4DSTEMResidentRepresentation.self, from: encoded)
+      XCTAssertEqual(representation.rawValue, value)
+      XCTAssertEqual(try JSONEncoder().encode(representation), encoded)
+    }
+    XCTAssertThrowsError(
+      try JSONDecoder().decode(
+        Metal4DSTEMResidentRepresentation.self, from: Data("\"lossless_packed\"".utf8)))
+  }
+
   func testResidentReceiptSeparatesScientificWorkingAndPhysicalBytes() throws {
     let receipt = Metal4DSTEMResidentReceipt(
       schema: Metal4DSTEMResidentReceipt.currentSchema,
-      representation: .losslessPacked,
+      representation: .packed,
       sourceIdentitySHA256: sourceA,
       sourceShape: [512, 512, 192, 192],
       workingShape: [512, 512, 192, 192],
@@ -45,7 +58,7 @@ final class Metal4DSTEMConsumerContractTests: XCTestCase {
   func testResidentReceiptSupportsFull256AndExactDetectorBinTwo() throws {
     let full256 = Metal4DSTEMResidentReceipt(
       schema: Metal4DSTEMResidentReceipt.currentSchema,
-      representation: .losslessPacked,
+      representation: .packed,
       sourceIdentitySHA256: sourceA,
       sourceShape: [512, 512, 256, 256],
       workingShape: [512, 512, 256, 256],
@@ -268,7 +281,7 @@ final class Metal4DSTEMConsumerContractTests: XCTestCase {
       try recorder.begin(
         generation: 2,
         sourceIdentitySHA256: sourceB,
-        representation: .losslessPacked
+        representation: .packed
       )
     )
     XCTAssertFalse(

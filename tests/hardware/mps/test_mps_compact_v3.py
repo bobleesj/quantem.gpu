@@ -337,11 +337,11 @@ def test_public_dense_and_packed_detector_workflows_match(tmp_path: Path) -> Non
     inspection = io.inspect(path)
     assert inspection.ready
     assert inspection.reason == "index_complete_payload_unverified"
-    assert inspection.metadata["representation"] == "lossless_packed"
+    assert inspection.metadata["representation"] == "packed"
     assert inspection.scan_shape == (8, 16)
     assert inspection.detector_shape == (2, 3)
     assert not io.inspect(path, scan_shape=(16, 8)).ready
-    with io.load(path, backend="mps", representation="lossless_packed",
+    with io.load(path, backend="mps", representation="packed",
                  expected_source_sha256=checksum) as packed:
         session = detector.prepare(packed)
         np.testing.assert_array_equal(session.frame(23), dense.reshape(128, 2, 3)[23])
@@ -361,7 +361,7 @@ def test_public_dense_and_packed_detector_workflows_match(tmp_path: Path) -> Non
         assert packed.metadata["masked_detector_raw_values"] == [65535]
         assert packed.metadata["source_dtype"] == "uint16"
         assert packed.dtype == np.dtype("uint8")
-        assert packed.representation.value == "lossless_packed"
+        assert packed.representation.value == "packed"
         assert packed.logical_bytes == dense.nbytes
     assert packed.data.is_released
 
@@ -373,7 +373,7 @@ def test_public_packed_load_rejects_legacy_raw_loss_without_allocating(tmp_path:
     path = tmp_path / "mask-only.h5"
     _fixture(path, raw_exclusions=False)
     with pytest.raises(ValueError, match="Raw reconstruction requires"):
-        io.load(path, backend="mps", representation="lossless_packed")
+        io.load(path, backend="mps", representation="packed")
 
 
 def test_public_mps_load_checks_requested_source_identity(tmp_path: Path) -> None:

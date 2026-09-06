@@ -34,16 +34,24 @@ def _selected_representation(
     if requested is not None:
         selected = DataRepresentation.parse(requested)
         detected = [DataRepresentation.detect_source(path) for path in paths]
-        if selected is DataRepresentation.LOSSLESS_PACKED and any(
-            item is not selected for item in detected
+        if selected is DataRepresentation.ANS and any(
+            item is not DataRepresentation.ANS for item in detected
+        ):
+            raise NotImplementedError(
+                "representation='ans' requires an ANS source. Encoding other "
+                "sources to ANS during loading is not implemented."
+            )
+        if selected is DataRepresentation.PACKED and any(
+            item not in {DataRepresentation.PACKED, DataRepresentation.ANS}
+            for item in detected
         ):
             raise ValueError(
-                "representation='lossless_packed' requires a Lossless Pack Format "
-                "source. The supplied source is ordinary HDF5. Prepare an immutable "
+                "representation='packed' requires a packed or ANS source. "
+                "The supplied source is ordinary HDF5. Prepare an immutable "
                 "lossless-packed source first or request representation='dense'."
             )
         if selected is DataRepresentation.DENSE and any(
-            item is DataRepresentation.LOSSLESS_PACKED for item in detected
+            item is DataRepresentation.PACKED for item in detected
         ):
             raise ValueError(
                 "Dense expansion of a Lossless Pack Format source is not a load "
@@ -60,7 +68,7 @@ def _selected_representation(
     return detected.pop() if detected else DataRepresentation.DENSE
 
 
-def _lossless_packed_metadata(data: object, backend: str) -> dict[str, Any]:
+def _packed_metadata(data: object, backend: str) -> dict[str, Any]:
     """Build common exact metadata from one backend-specific packed source."""
     index = getattr(data, "index", None) or getattr(data, "metadata", None)
     if index is None or not hasattr(index, "manifest"):
@@ -82,7 +90,7 @@ def _lossless_packed_metadata(data: object, backend: str) -> dict[str, Any]:
     metadata = dict(manifest)
     metadata.update({
         "backend": backend,
-        "representation": DataRepresentation.LOSSLESS_PACKED.value,
+        "representation": DataRepresentation.PACKED.value,
         "residency": "device",
         "source_shape": tuple(manifest["source_shape"]),
         "working_shape": shape,
@@ -109,7 +117,7 @@ def _lossless_packed_metadata(data: object, backend: str) -> dict[str, Any]:
     return metadata
 
 
-def _load_lossless_packed(
+def _load_packed(
     source: str | os.PathLike[str] | Sequence[str | os.PathLike[str]],
     *,
     backend: str,
@@ -179,11 +187,11 @@ def _load_lossless_packed(
         )
     else:
         raise ValueError(
-            "representation='lossless_packed' requires an accelerator backend; "
+            "representation='packed' requires an accelerator backend; "
             "backend='cpu' is an explicit dense reference path."
         )
     try:
-        return FourDSTEMData(data, _lossless_packed_metadata(data, selected_backend))
+        return FourDSTEMData(data, _packed_metadata(data, selected_backend))
     except BaseException as error:
         _release_owned_storage(data, failure=error)
         raise
@@ -203,7 +211,7 @@ def _record_dense_representation(
         token = str(dtype).removeprefix("torch.")
         dtype = "uint4" if token == "uint4" else np.dtype(token).name
     selected = (
-        DataRepresentation.LOSSLESS_PACKED
+        DataRepresentation.PACKED
         if is_packed_uint4(data)
         else DataRepresentation.DENSE
     )

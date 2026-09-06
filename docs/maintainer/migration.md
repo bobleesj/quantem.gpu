@@ -27,7 +27,7 @@ keeping second copies.
 
 Dense loading remains supported, including host arrays and accelerator-resident
 arrays where the backend supports them. Representation (`dense` or
-`lossless_packed`), location (host or device), and scientific dtype are separate
+`packed`), location (host or device), and scientific dtype are separate
 choices. Original compressed HDF5 does not silently become a prepared packed
 file, and packed input does not silently expand into a dense volume.
 
@@ -71,28 +71,37 @@ domain's `backends/`; native Android code is owned by `vulkan/`.
 - Dense streaming orchestration still occupies `io/load.py`. Further splitting
   remains work, with source ordering, cancellation, and failure cleanup frozen.
 
-## Resident receipt v2 migration
+## Canonical representation names and receipt v3
 
-The resident receipt is now `quantem.gpu.4dstem-resident-receipt/v2`.
-`representation` is `dense` or `lossless_packed`; the separate `storage_encoding`
+The resident receipt is now `quantem.gpu.4dstem-resident-receipt/v3`.
+`representation` is `dense`, `packed`, or `ans`; the separate `storage_encoding`
 field is removed. `storage_schema`, source/working dtype, geometry, hashes, and
 byte counts retain the detailed scientific meaning. This is an explicit schema
-change, not wire compatibility with v1.
+change, not wire compatibility with v1 or v2. Existing sealed results keep their
+original versions; do not rewrite old evidence to make it look like a new run.
 
 Consumers of the earlier Python MPS representation enum must use
-`DataRepresentation.DENSE` or `DataRepresentation.LOSSLESS_PACKED`. Swift clients
-must use `.dense` or `.losslessPacked` in place of the earlier format-specific
-cases. An old type-name alias does not preserve old enum members or serialized
-values. Update v1 receipt parsers deliberately; do not accept unknown versions
-as though they were v2. The remote `storage_kind` field remains a legacy alias
-for the new `representation` field.
+`DataRepresentation.DENSE`, `.PACKED`, or `.ANS`. Swift clients use `.dense`,
+`.packed`, or `.ans`. The former `ResidentStorageEncoding` and
+`MPSResidentRepresentation` type aliases and the
+`lossless_packed` selector are removed. Update receipt parsers deliberately;
+unknown schema versions must fail closed. Apple capability records are v4 and
+publication records are v2. WebGPU and Vulkan share the three-value vocabulary;
+that does not qualify ANS loading or kernels on those backends.
+
+The remote `storage_kind` field also reports `packed`; its separate
+`storage_schema` continues to identify the decoder. Save calls accept only
+`format="arina"` or `format="quantem"`. Replace `format="ans"` with
+`format="quantem", compression="ans"`, and remove the old HDF5 format aliases.
+File encodings themselves are unchanged. Default loading remains source-native
+until automatic HDF5-to-packed conversion is implemented and qualified.
 
 ## Next migration steps
 
 1. Pin each consumer to a reviewed package revision. Export the complete
    WebGPU source graph with `webgpu.export_sources(...)`; build native clients
    from SwiftPM or the Vulkan CMake entry, without copying kernels.
-2. Adapt receipt parsers and capability controls to v2. Keep unsupported
+2. Adapt receipt parsers to v3 and Apple capability controls to v4. Keep unsupported
    operations unavailable rather than expanding or downcasting implicitly.
 3. Verify original compressed HDF5 and prepared packed inputs separately,
    including 512 and 1024 scans where admitted, file A–B–A switching,

@@ -38,7 +38,7 @@ import {
 type SourceDtype = "uint8" | "uint16" | "uint32" | "float32";
 type DecodeDtype = "uint8" | "uint16" | "uint32" | "float32";
 type DecodeDtypeRequest = DecodeDtype | "u1" | "u2" | "u4" | "u32" | "uint4" | "native" | "auto";
-export type DataRepresentation = "dense" | "lossless_packed";
+export type DataRepresentation = "dense" | "packed" | "ans";
 
 export interface LocalH5GpuChunk {
   buffer: GPUBuffer;

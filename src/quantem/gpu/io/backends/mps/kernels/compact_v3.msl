@@ -24,6 +24,14 @@ struct DetectorEntry {
     int coefficient;
 };
 
+struct SelectedBatchParameters {
+    uint selectionCount;
+    uint tileCount;
+    uint pixelCount;
+    uint scanTile;
+    uint headerWordsPerPixel;
+};
+
 struct DetectorParameters {
     uint scanCount;
     uint tileCount;
@@ -188,6 +196,27 @@ kernel void compact_v3_selected_diffraction(
             parameters.headerWordsPerPixel,
             pixel,
             parameters.scan
+        );
+}
+
+kernel void compact_v3_selected_diffractions(
+    device const uint *payload [[buffer(0)]],
+    device const uint *headers [[buffer(1)]],
+    device const uint *excluded [[buffer(2)]],
+    device uint *diffraction [[buffer(3)]],
+    constant SelectedBatchParameters &parameters [[buffer(4)]],
+    device const uint2 *selections [[buffer(5)]],
+    uint2 position [[thread_position_in_grid]]
+) {
+    uint pixel = position.x;
+    uint selection = position.y;
+    if (pixel >= parameters.pixelCount || selection >= parameters.selectionCount) return;
+    uint2 request = selections[selection];
+    diffraction[request.y * parameters.pixelCount + pixel] = excluded[pixel] != 0u
+        ? 0u
+        : sampleValue(
+            payload, headers, parameters.tileCount, parameters.scanTile,
+            parameters.headerWordsPerPixel, pixel, request.x
         );
 }
 

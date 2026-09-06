@@ -289,7 +289,7 @@ def test_webgpu_local_h5_source_tracks_show4dstem_loader_contract() -> None:
     assert "export async function loadShow4DSTEMLocalH5Master" in source
     assert "export const loadLocalH5Master = loadShow4DSTEMLocalH5Master" in source
     assert "export async function loadShow4DSTEMLocalH5MaskedSum" in source
-    assert 'export type DataRepresentation = "dense" | "lossless_packed";' in source
+    assert 'export type DataRepresentation = "dense" | "packed" | "ans";' in source
     assert 'representation: "dense"' in source
     assert 'residency: "device"' in source
     assert "logicalBytes:" in source

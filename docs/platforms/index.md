@@ -38,7 +38,7 @@ Loaded data uses one vocabulary across runtimes:
 
 | Field | Values | Meaning |
 |---|---|---|
-| `representation` | `lossless_packed`, `dense` | how every logical count is encoded |
+| `representation` | `packed`, `dense` | how every logical count is encoded |
 | `dtype` | scientific value type | the value range and arithmetic contract |
 | `residency` | host or runtime device location | where the physical payload remains |
 | `storage_schema` | versioned internal format | which decoder/profile produced it |

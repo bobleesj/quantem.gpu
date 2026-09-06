@@ -946,7 +946,7 @@ type CompactDetectorSelection = { mask: Uint8Array; selectedPixelCount: number; 
 const MAXIMUM_PACKED_VALUES = Float64Array.from({ length: 33 }, (_, width) => 2 ** width - 1);
 
 export class WebGPUCompactH5ResidentSource {
-  readonly representation = "lossless_packed" as const;
+  readonly representation = "packed" as const;
   readonly residency = "device" as const;
   readonly metadata: CompactH5Index;
   readonly loadProfile: WebGPUCompactH5LoadProfile;
@@ -3911,8 +3911,8 @@ function compactReceipt(metadata: CompactH5Index, implementationRevision: string
   if (!Number.isSafeInteger(logicalCount * 2)) throw new Error("Source logical bytes exceed the exact integer range.");
   const shape = Object.freeze([...metadata.shape]) as unknown as CompactH5Index["shape"];
   return Object.freeze({
-    schema: "quantem.gpu.4dstem-resident-receipt/v2",
-    representation: "lossless_packed",
+    schema: "quantem.gpu.4dstem-resident-receipt/v3",
+    representation: "packed",
     sourceIdentitySHA256: metadata.sourceIdentitySha256,
     sourceShape: shape, workingShape: shape, sourceDtype: "uint16",
     workingDtype: metadata.workingDtype,

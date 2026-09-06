@@ -3,7 +3,7 @@
 import numpy as np
 
 
-def is_lossless_packed_source(data: object) -> bool:
+def is_packed_source(data: object) -> bool:
     """Recognize package-owned sources before any dense-array conversion."""
     from quantem.gpu.io.backends.cuda.packed import CudaCompactH5ResidentSource
     from quantem.gpu.io.backends.mps.packed import MPSCompactV3Resident

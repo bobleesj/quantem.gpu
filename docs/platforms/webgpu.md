@@ -34,13 +34,13 @@ These files are package resources. A browser client bundles the canonical
 sources rather than maintaining a second scientific implementation.
 
 `LocalH5LoadResult` uses the same public representation vocabulary as Python
-and Swift. It reports `representation` as `"dense"` or `"lossless_packed"`,
+and Swift. It reports `representation` as `"dense"` or `"packed"`,
 `residency` as `"device"`, dense-equivalent `logicalBytes`, and allocated
 `residentBytes`. The current local native-HDF5 path reports `"dense"`.
 `loadCompactH5WebGPU` in `compact-h5.ts` loads a prepared Lossless Pack Format
 source and returns `WebGPUCompactH5ResidentSource` with the same fields and
-`representation="lossless_packed"`. Its exact resident receipt uses the shared
-v2 representation contract. The two existing source/lifetime interfaces remain
+`representation="packed"`. Its exact resident receipt uses the shared
+v3 representation contract. The two existing source/lifetime interfaces remain
 distinct; this is not yet a single automatic HDF5-to-packed browser load call.
 See [Dense and lossless-packed data](../api/representations.md) for limits and
 ownership.

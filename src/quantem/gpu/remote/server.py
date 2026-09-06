@@ -1270,9 +1270,9 @@ class BrowseService:
                 storage_schema = str(manifest.get("schema", ""))
                 supported_representation = {
                     ("quantem.gpu.packed-detector-h5/v1", "uint16"):
-                        DataRepresentation.LOSSLESS_PACKED,
+                        DataRepresentation.PACKED,
                     ("quantem.gpu.packed-detector-h5/v3", "uint8"):
-                        DataRepresentation.LOSSLESS_PACKED,
+                        DataRepresentation.PACKED,
                 }.get((storage_schema, str(working_dtype)))
                 if supported_representation is not None:
                     receipt = ResidentGenerationReceipt(
@@ -1339,11 +1339,11 @@ class BrowseService:
                 "physical_resident_bytes": resident_bytes,
                 "resident_generation": resident_generation,
                 "representation": (
-                    DataRepresentation.LOSSLESS_PACKED.value
+                    DataRepresentation.PACKED.value
                     if metadata is not None
                     else DataRepresentation.DENSE.value
                 ),
-                "storage_kind": "lossless_packed" if metadata is not None else "dense",
+                "storage_kind": "packed" if metadata is not None else "dense",
                 "storage_schema": (
                     manifest.get("schema")
                     if metadata is not None

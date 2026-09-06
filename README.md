@@ -128,7 +128,7 @@ dense = io.load(
 ```
 
 Both calls return `io.FourDSTEMData`. Its `representation` is either
-`lossless_packed` or `dense`; `residency` reports where the payload is retained,
+`packed` or `dense`; `residency` reports where the payload is retained,
 and `logical_bytes` and `resident_bytes` keep dense-equivalent size separate
 from physical storage. `detector_bin=1` keeps native detector sampling. See
 [Load, decode, and bin](docs/kernels/load-decode-bin.md),

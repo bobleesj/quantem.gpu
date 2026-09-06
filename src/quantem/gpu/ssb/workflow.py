@@ -762,7 +762,7 @@ class SSB:
         if (
             selected == "mps"
             and DataRepresentation.detect_source(source)
-            is DataRepresentation.LOSSLESS_PACKED
+            is DataRepresentation.PACKED
         ):
             raise NotImplementedError(
                 "Packed MPS detector sources are not supported by SSB.open. "
@@ -819,7 +819,7 @@ class SSB:
             data = loaded.data
             source_kind = (
                 "packed_detector"
-                if loaded.representation is DataRepresentation.LOSSLESS_PACKED
+                if loaded.representation is DataRepresentation.PACKED
                 else "detector"
             )
             source_storage_path = str(source)

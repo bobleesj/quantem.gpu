@@ -97,9 +97,12 @@ def compute_backend(data):
     One selection point here means callers (widget + web Browse) never branch
     on hardware themselves.
     """
-    from .packed import PackedDetectorCompute, is_lossless_packed_source
+    from .packed import PackedDetectorCompute, is_packed_source
+    from .counts import CountDetectorCompute, is_count_source
 
-    if is_lossless_packed_source(data):
+    if is_count_source(data):
+        return CountDetectorCompute(data)
+    if is_packed_source(data):
         return PackedDetectorCompute(data)
     if is_packed_uint4(data):
         if data.backend == "cuda":

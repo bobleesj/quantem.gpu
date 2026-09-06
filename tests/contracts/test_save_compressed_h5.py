@@ -180,6 +180,47 @@ def test_save_public_api_rejects_cuda_backend_for_numpy(tmp_path):
         save(tmp_path / "wrong_master.h5", data, backend="cuda")
 
 
+@pytest.mark.parametrize("dtype", [np.uint8, np.uint16])
+def test_arina_compression_choices_preserve_bitshuffle_chunks_and_counts(tmp_path, dtype):
+    from quantem.gpu.io import save
+
+    data = np.arange(3 * 2 * 4 * 5, dtype=dtype).reshape(3, 2, 4, 5)
+    data[0, 0, 0, 0] = np.iinfo(dtype).max
+    reference = None
+    for label, options in (
+        ("default", {}),
+        ("arina", {"format": "arina", "compression": "bitshuffle_lz4"}),
+        ("explicit_lz4", {"format": "arina", "compression": "lz4"}),
+        ("explicit_bslz4", {"format": "arina", "compression": "bslz4"}),
+    ):
+        master = tmp_path / f"{label}_master.h5"
+        save(
+            master,
+            data,
+            backend="cpu",
+            frames_per_file=4,
+            metadata={"detector_step_mrad": 0.05},
+            **options,
+        )
+        frames, filters, chunks = [], [], []
+        with h5py.File(master, "r") as handle:
+            assert handle.attrs["scan_shape"].tolist() == [3, 2]
+            assert handle.attrs["detector_step_mrad"] == 0.05
+            for dataset in handle["entry/data"].values():
+                assert dataset.dtype == np.dtype(dtype)
+                assert dataset.chunks == (1, 4, 5)
+                frames.append(dataset[:])
+                filters.append(dataset.id.get_create_plist().get_filter(0))
+                chunks.extend(
+                    dataset.id.read_direct_chunk((frame, 0, 0))
+                    for frame in range(dataset.shape[0])
+                )
+        np.testing.assert_array_equal(np.concatenate(frames), data.reshape(6, 4, 5))
+        if reference is None:
+            reference = filters, chunks
+        assert (filters, chunks) == reference
+
+
 def test_io_save_package_attribute_remains_callable_after_submodule_import():
     import quantem.gpu.io as io
     import quantem.gpu.io.save  # noqa: F401

@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260906-cuda-ans-counts",
+  "status": "succeeded",
+  "question": "Can a generic bounded rANS source preserve integer counts, requested scan order and exact binary-mask sums without full dense expansion?",
+  "paper": {
+    "authoritative_host": "MacBook Pro M5 Max 128 GB",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260906-cuda-ans-counts/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "ff4e86dd197c74ef79889534cdc246332e4c76a9",
+    "entrypoint": "python -m pytest tests/contracts/io tests/hardware/cuda/test_cuda_ans_counts.py -q",
+    "dirty": true,
+    "diff_sha256": "ccab7f3d9b81e8661f1c3d7d402b0c7f72ba12a01d8f0474769d4debcca1aab6",
+    "snapshot_path": "local-evidence://representation-integration-20260906/cuda-ans-counts/runtime-ff4e86d"
+  },
+  "inputs": [{
+    "dataset_id": "bounded-independent-count-rans-fixture-v1",
+    "path": "tests/parity/ans_counts_fixture.py",
+    "sha256": "77a5d1af94eaad9835a1aa31cc3d10991b2ff9277e346395706bd6e791616d8e"
+  }],
+  "parameters": {
+    "shape": [3, 5, 2, 3], "source_dtype": ["uint8", "uint16"],
+    "block_frames": 4, "scan_bin": 1, "detector_bin": 1, "crop": null,
+    "arithmetic": "exact integer", "additional_checks": "NVRTC compile only; serial C++ harness of actual integer kernels, no GPU execution or performance claims", "gpu_execution_gate": "not admitted: existing service2303 owns both devices; GPU0 also Sunshine19980 and unrelated1600042",
+    "artifact_results": {
+      "focused-cpu-suite-before-index-fix": "158 CPU tests passed, 11 skipped; retained pre-index-fix result, not physical CUDA",
+      "serial-actual-kernel-oracle": "6 actual integer-kernel serial CPU checks passed; not CUDA scheduling or memory qualification",
+      "focused-cpu-suite-after-index-fix": "159 CPU tests passed, 11 skipped; exact uint64 indices above 2^53 included; physical CUDA pending",
+      "nvrtc-compile-only": "Nine kernels compiled with NVRTC; no GPU execution or timing"
+    },
+    "evidence_format_note": "Artifact claims are indexed separately for canonical manifest validation. The original raw files and their hashes are unchanged."
+  },
+  "execution": {"host": "MacBook Pro M5 Max 128 GB", "backend": "cpu-reference", "gpu_ids": [], "gpu_model": null},
+  "outputs": [{
+    "artifact_id": "focused-cpu-suite-before-index-fix",
+    "path": "outputs/representation-integration-20260906/cuda-ans-counts/focused-final.xml",
+    "sha256": "4b959e83c916cebfe123d65afb0520d7d4f0b940dfcfd36281d901bb10a23ac6",
+    "size_bytes": 27083, "retention": "durable", "consuming_figures": []
+  }, {
+    "artifact_id": "serial-actual-kernel-oracle",
+    "path": "outputs/representation-integration-20260906/cuda-ans-counts/serial-kernels-v1.xml",
+    "sha256": "76244792ec39ec702dfc72550e003742bf85c30fe36419d68fa982ddf7d6bee9",
+    "size_bytes": 1180, "retention": "durable", "consuming_figures": []
+  }, {
+    "artifact_id": "focused-cpu-suite-after-index-fix",
+    "path": "outputs/representation-integration-20260906/cuda-ans-counts/focused-index-fix.xml",
+    "sha256": "f73a17558b06d5cbacc1c659bdead4c16906347fb56dea6efe638f99bab6789d",
+    "size_bytes": 27241, "retention": "durable", "consuming_figures": []
+  }, {
+    "artifact_id": "nvrtc-compile-only",
+    "path": "outputs/representation-integration-20260906/cuda-ans-counts/nvrtc-v2.json",
+    "sha256": "ae577c9fac0d5be2c80c5f22ac981177b939e25d9345dddccbe895f3754e6bda",
+    "size_bytes": 576, "retention": "durable", "consuming_figures": []
+  }],
+  "timestamps": {"created": "2026-09-06T15:13:27Z", "started": "2026-09-06T15:13:27Z", "finished": "2026-09-06T15:33:31Z"}
+}

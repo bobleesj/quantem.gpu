@@ -2,7 +2,7 @@
   "schema_version": 1,
   "source_revision": "68dbe3aa5f816e2d1c1ae976e1874790cffb4319",
   "source_revision_scope": "Latest clean canonical source/working metadata and cross-backend logical-pixel parity revision used by the current Python MPS and CPU rows. Native Swift/Metal rows remain bound to clean revision 5106ca4, and the current exact full-volume WebGPU distribution is bound to clean revision d8e6f56; every retained physical measurement keeps its own revision, fixture identity, cache state, and timing boundary.",
-  "documentation_update": "2026-09-04: refreshed representation/result/API vocabulary only; no benchmark value, acceptance state, fixture, device, cache state, or measurement revision changed. 2026-09-05: normalized executable test paths using tests/path_migrations.json; affected current pages and registry were verified as exact path-only substitutions. Historical transcripts and all numerical evidence remain unchanged.",
+  "documentation_update": "2026-09-04: refreshed representation/result/API vocabulary only; no benchmark value, acceptance state, fixture, device, cache state, or measurement revision changed. 2026-09-05: normalized executable test paths using tests/path_migrations.json; affected current pages and registry were verified as exact path-only substitutions. 2026-09-06: updated only the public packed name in CUDA/MPS/WebGPU platform pages and the WebGPU resident receipt reference from v2 to v3, relative to e78c46f2191ab0c50cc5fe72ce1b934cce19aaa8. No measured value, acceptance state, dataset, device, cache state, or measurement revision changed. Historical transcripts and all numerical evidence remain unchanged.",
   "purpose": "Fingerprints for the current benchmark dashboard, its authoritative registry and rendering inputs, provenance ledger, parity and methodology contracts, and canonical historical evidence. Landing, API, and backend capability pages intentionally do not duplicate measurements.",
   "pages": [
     {
@@ -17,17 +17,17 @@
     },
     {
       "path": "docs/platforms/cuda.md",
-      "sha256": "c739b3f885eafeae11940a065ad963e32c358e888b407b6a3ba49b67716e64ad",
+      "sha256": "5c9aabcf9c472dfab56e6d2097cbbf262c7041cd94d429ad0c3a6ad0c6844d84",
       "role": "CUDA 6 GiB minimum-device acceptance contract"
     },
     {
       "path": "docs/platforms/mps.md",
-      "sha256": "8593924021bc0e1bdf4f97826863a1b92bdac29f72e6b696e8e135ef14bcbf61",
+      "sha256": "f8251d9bd929df5ebe103739271d251bfc5bd0c732793600a64207714ff60789",
       "role": "Python MPS direct-Metal lifetime and resident-versus-peak memory contract"
     },
     {
       "path": "docs/platforms/webgpu.md",
-      "sha256": "4cc1bc311cfd0a85a52e4664fac1cf8dddc6d9c8b07eea681e1abbfa4cbd215b",
+      "sha256": "be2ec2dbc4abd864a7d5b2a6b58d980c6e86283e09dd917cc9cd463cf2ef854d",
       "role": "WebGPU 8 GB laptop acceptance contract"
     },
     {

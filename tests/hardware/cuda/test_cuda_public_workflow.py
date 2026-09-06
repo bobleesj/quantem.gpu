@@ -51,7 +51,7 @@ def test_real_packed_source_through_public_load_and_http(case, tmp_path):
         expected_source_sha256=case["source_sha256"],
     ) as loaded:
         source = loaded.data
-        assert loaded.representation is io.DataRepresentation.LOSSLESS_PACKED
+        assert loaded.representation is io.DataRepresentation.PACKED
         assert loaded.shape == tuple(case["shape"])
         assert loaded.dtype == np.dtype("uint16")
         assert loaded.resident_bytes == source.memory_pool_used_bytes
@@ -143,6 +143,6 @@ def test_real_packed_source_through_public_load_and_http(case, tmp_path):
         assert hashlib.sha256(result.content).hexdigest() == case["products"]["DP"]
         receipt = client.get("/api/browse/residency", params=common).json()
         assert receipt["resident"] is True and receipt["stale"] is False
-        assert receipt["representation"] == "lossless_packed"
+        assert receipt["representation"] == "packed"
         assert receipt["physical_resident_bytes"] > 0
         print(json.dumps({"shape": case["shape"], "http_products": "pass"}))

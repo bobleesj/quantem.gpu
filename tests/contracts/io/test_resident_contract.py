@@ -20,7 +20,7 @@ def _receipt(
 ) -> ResidentGenerationReceipt:
     shape = (512, 512, *detector_shape)
     return ResidentGenerationReceipt(
-        representation=DataRepresentation.LOSSLESS_PACKED,
+        representation=DataRepresentation.PACKED,
         source_identity_sha256="a" * 64,
         source_shape=shape,
         working_shape=shape,
@@ -113,7 +113,7 @@ def test_receipt_rejects_noncanonical_wire_values() -> None:
     with pytest.raises(ValueError, match="canonical"):
         replace(receipt, source_dtype="<u2").validate()
     with pytest.raises(TypeError, match="representation"):
-        replace(receipt, representation="lossless_packed").validate()
+        replace(receipt, representation="packed").validate()
     with pytest.raises(ValueError, match="positive integer"):
         replace(receipt, physical_resident_bytes=1.0).validate()
     with pytest.raises(ValueError, match="Implementation revision"):

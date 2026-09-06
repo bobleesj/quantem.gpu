@@ -115,6 +115,8 @@ parts:
           - file: maintainer/backend-layout-and-parity
             title: Repository architecture
           - file: developer/adding-backend
+          - file: developer/representation-integration
+            title: Count and Fourier representation integration
           - file: developer/writing
             title: Writing, notation, and units
           - file: developer/testing

@@ -113,7 +113,7 @@ struct PackedDetectorSessionAdmission {
   std::vector<PackedDetectorHeapAdmission> heaps;
   std::vector<PackedDetectorSourceMemory> source_memory;
   PackedDetectorLoadTimings load_timing;
-  DataRepresentation representation = DataRepresentation::lossless_packed;
+  DataRepresentation representation = DataRepresentation::packed;
 };
 
 struct PackedPreparedDpcMetrics {

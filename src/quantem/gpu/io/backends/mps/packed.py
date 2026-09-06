@@ -51,7 +51,8 @@ _INDEX_HEADER = struct.Struct("<8sIIIIIIIII")
 _SHARD_RECORD = struct.Struct("<QQQQQQQII32s")
 _SHA256_HEX_LENGTH = 64
 _CALIBRATION_DIGEST_ENCODING = "canonical-json-numbers-as-f64be-hex/v1"
-_pipeline_cache: dict[int, tuple[Any, Any, Any, Any, Any, Any, float]] = {}
+_pipeline_cache: dict[int, tuple[Any, ...]] = {}
+_SELECTED_STAGING_BYTES = 32 * 1024 * 1024
 
 
 class MPSCompactV3Error(ValueError):
@@ -826,6 +827,7 @@ def _make_pipelines(device, Metal):
         "compact_v3_detector_update",
         "compact_v3_full_decode_u8",
         "compact_v3_detector_sum_u64",
+        "compact_v3_selected_diffractions",
     ):
         function = library.newFunctionWithName_(name)
         pipeline, pipeline_error = device.newComputePipelineStateWithFunction_error_(
@@ -1136,6 +1138,7 @@ class MPSCompactV3Resident:
         detector_pipeline,
         full_decode_pipeline,
         detector_sum_pipeline,
+        selected_batch_pipeline,
         payload_buffers: list[Any],
         header_buffers: list[Any],
         excluded_buffer,
@@ -1158,6 +1161,7 @@ class MPSCompactV3Resident:
         self._detector_pipeline = detector_pipeline
         self._full_decode_pipeline = full_decode_pipeline
         self._detector_sum_pipeline = detector_sum_pipeline
+        self._selected_batch_pipeline = selected_batch_pipeline
         self._payload_buffers = payload_buffers
         self._header_buffers = header_buffers
         self._excluded_buffer = excluded_buffer
@@ -1219,16 +1223,117 @@ class MPSCompactV3Resident:
             count=self.index.detector_pixels,
         ).copy()
 
+    def extract_diffractions(self, scan_positions: np.ndarray) -> np.ndarray:
+        """Return requested working patterns in order, including duplicates.
+
+        Only requested positions are decoded. Temporary output buffers are
+        bounded to 32 MiB, or one pattern if it is larger. The returned array
+        owns its storage and contains the declared mask-applied working counts,
+        matching :meth:`extract_diffraction`; source exclusion constants remain
+        available separately in the authenticated metadata.
+
+        Parameters
+        ----------
+        scan_positions
+            Integer array with shape ``(count, 2)`` in scan row, column order.
+
+        Returns
+        -------
+        numpy.ndarray
+            Exact uint32 values with shape ``(count, detector_row, detector_column)``.
+            Empty selections return an empty array without dispatching work.
+
+        Examples
+        --------
+        >>> patterns = source.extract_diffractions([[2, 3], [0, 1], [2, 3]])
+        >>> np.array_equal(patterns[0], patterns[2])
+        True
+        """
+        self._require_resident()
+        positions = np.asarray(scan_positions)
+        detector_shape = self.index.shape[2:]
+        if positions.shape == (0,):
+            return np.empty((0, *detector_shape), dtype=np.uint32)
+        if positions.ndim != 2 or positions.shape[1] != 2:
+            raise ValueError("scan_positions must have shape (count, 2) in row, column order")
+        if positions.dtype.kind not in "iu":
+            raise ValueError("scan_positions must contain integer row, column coordinates")
+        if np.any(positions < 0) or np.any(positions >= self.index.shape[:2]):
+            raise IndexError("selected scan coordinate is outside the source")
+        count = positions.shape[0]
+        output = np.empty((count, *detector_shape), dtype=np.uint32)
+        if count == 0:
+            return output
+
+        pattern_bytes = self.index.detector_pixels * np.dtype(np.uint32).itemsize
+        capacity = min(count, max(1, _SELECTED_STAGING_BYTES // pattern_bytes))
+        output_buffer = None
+        selection_buffer = None
+        try:
+            output_buffer = _allocate_shared(
+                self._device, self._Metal, capacity * pattern_bytes, "selected patterns"
+            )
+            selection_buffer = _allocate_shared(
+                self._device, self._Metal, capacity * 8, "selected positions"
+            )
+            descriptors = np.frombuffer(
+                _buffer_view(selection_buffer), dtype="<u4"
+            ).reshape(capacity, 2)
+            staging = np.frombuffer(
+                _buffer_view(output_buffer), dtype="<u4"
+            ).reshape(capacity, *detector_shape)
+            for start in range(0, count, capacity):
+                batch = positions[start : start + capacity].astype(np.int64, copy=False)
+                global_scans = batch[:, 0] * self.index.shape[1] + batch[:, 1]
+                shards, local_scans = np.divmod(global_scans, self.index.scans_per_shard)
+                command = self._queue.commandBuffer()
+                encoder = command.computeCommandEncoder()
+                encoder.setComputePipelineState_(self._selected_batch_pipeline)
+                encoder.setBuffer_offset_atIndex_(self._excluded_buffer, 0, 2)
+                encoder.setBuffer_offset_atIndex_(output_buffer, 0, 3)
+                descriptor_start = 0
+                for shard in np.unique(shards):
+                    selected = np.flatnonzero(shards == shard)
+                    stop = descriptor_start + selected.size
+                    descriptors[descriptor_start:stop, 0] = local_scans[selected]
+                    descriptors[descriptor_start:stop, 1] = selected
+                    parameters = struct.pack(
+                        "<5I", selected.size, self.index.tile_count,
+                        self.index.detector_pixels, self.index.scan_tile,
+                        self.index.header_words_per_pixel,
+                    )
+                    encoder.setBuffer_offset_atIndex_(self._payload_buffers[shard], 0, 0)
+                    encoder.setBuffer_offset_atIndex_(self._header_buffers[shard], 0, 1)
+                    encoder.setBytes_length_atIndex_(parameters, len(parameters), 4)
+                    encoder.setBuffer_offset_atIndex_(
+                        selection_buffer, descriptor_start * 8, 5
+                    )
+                    encoder.dispatchThreads_threadsPerThreadgroup_(
+                        self._Metal.MTLSizeMake(self.index.detector_pixels, selected.size, 1),
+                        self._Metal.MTLSizeMake(256, 1, 1),
+                    )
+                    descriptor_start = stop
+                encoder.endEncoding()
+                _complete(command, "selected diffraction batch")
+                output[start : start + batch.shape[0]] = staging[:batch.shape[0]]
+            return output
+        finally:
+            _release(selection_buffer)
+            _release(output_buffer)
+
     def update_virtual_detector(
         self, mask: np.ndarray, *, force_rebase: bool = False
     ) -> MPSCompactV3DetectorMetrics:
         """Apply a binary row-major detector mask with exact signed deltas."""
         self._require_resident()
-        normalized = np.asarray(mask, dtype=np.uint8).reshape(-1).copy()
-        if normalized.size != self.index.detector_pixels or np.any(normalized > 1):
+        values = np.asarray(mask).reshape(-1)
+        if values.size != self.index.detector_pixels or not np.all(
+            (values == 0) | (values == 1)
+        ):
             raise ValueError(
                 "detector mask must contain one zero-or-one byte per pixel"
             )
+        normalized = values.astype(np.uint8, copy=True)
         if self.index.excluded_detector_pixels:
             normalized[np.asarray(self.index.excluded_detector_pixels)] = 0
         active = np.flatnonzero(normalized)
@@ -1282,7 +1387,7 @@ class MPSCompactV3Resident:
             changed = np.flatnonzero(normalized != self._detector_mask)
             coefficients = np.where(normalized[changed] != 0, 1, -1).astype(np.int32)
         mode = "rebase" if rebase else "delta"
-        if changed.size == 0:
+        if changed.size == 0 and not rebase:
             self._detector_mask = normalized
             return MPSCompactV3DetectorMetrics(mode, 0, 0.0, 0.0, 0.0)
         entries = np.frombuffer(
@@ -1616,6 +1721,7 @@ def load_compact_v3_mps(
         detector_pipeline,
         full_decode_pipeline,
         detector_sum_pipeline,
+        selected_batch_pipeline,
         queue,
         pipeline_compile_ms,
     ) = _make_pipelines(device, Metal)
@@ -1843,6 +1949,7 @@ def load_compact_v3_mps(
         detector_pipeline=detector_pipeline,
         full_decode_pipeline=full_decode_pipeline,
         detector_sum_pipeline=detector_sum_pipeline,
+        selected_batch_pipeline=selected_batch_pipeline,
         payload_buffers=payload_buffers,
         header_buffers=header_buffers,
         excluded_buffer=excluded_buffer,

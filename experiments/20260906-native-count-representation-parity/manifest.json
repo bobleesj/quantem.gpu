@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260906-native-count-representation-parity",
+  "status": "completed",
+  "question": "Do native dense and packed count sources preserve exact selected DPs and detector images through empty-mask and failed-request transitions?",
+  "paper": {
+    "authoritative_host": "MacBook Pro M5 Max 128 GB",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260906-native-count-representation-parity/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "8ca898e3a1a6af45b08807fbe7b985966098029f",
+    "entrypoint": "xcrun swift test --skip-build --filter Native4DSTEMIOTests",
+    "dirty": true,
+    "diff_sha256": "06bc102c8649044d9f184ba4419953cfcf3cc5bd5d23b91176106374afe8516e",
+    "snapshot_path": "local-evidence://representation-integration-20260906/runs/native-count-broader-fixed/source.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "frozen dense resident integer products v1",
+      "path": "tests/parity/fixtures/resident_integer_products_v1.json",
+      "sha256": "bc6de8428ffaf53d5e996470c3947328afd072cb72a4416325ce61819a600ea2"
+    },
+    {
+      "dataset_id": "deterministic v1 uint16 and v3 uint8 packed fixture producer and independent expected values",
+      "path": "src/quantem/gpu/swift/Tests/Native4DSTEMIOTests/CompactH5LoaderTests.swift",
+      "sha256": "5a4e25d43eeb44713b39a5037c11b144471a662079456d4eda0993b640ff4d3f"
+    }
+  ],
+  "parameters": {
+    "source_and_working_shape": [8, 16, 2, 3],
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "dtypes": ["uint16 for v1", "uint8 for v3", "uint32 exact DP and virtual-detector outputs", "uint64 detector sums"],
+    "explicit_excluded_detector_pixel": [1, 0],
+    "count_range_boundary_cases": [0, 255, 256, 65535],
+    "reference": "Plain scalar sum of deterministic test values; exact integer equality; mean follows existing Float division contract",
+    "selected_positions_row_column": [[7, 15], [0, 0], [4, 13], [0, 15], [1, 0], [4, 13]],
+    "selected_access_scope": "Repeated single DP requests, not a new batched gather or arbitrary-source selective loading API",
+    "cold_load_or_realtime_claim": false,
+    "G_k_or_SSB_changes": false,
+    "native_ans_integration": "not implemented by this change",
+    "physical_M5_24GB_gate": "Not run: active app acceptance process owns the device; no app was launched or stopped",
+    "native_test_command": "xcrun swift test --jobs 2 --filter 'CompactH5LoaderTests/testPacked|ResidentIntegerContractTests'",
+    "broader_test_command": "xcrun swift test --skip-build --filter Native4DSTEMIOTests",
+    "format_check": "xcrun swift-format lint --strict on the two changed Swift files",
+    "failures_preserved": "Both baseline trials failed with 8 stale-image assertions; no frozen expectations changed",
+    "fix": "GPU zero-fill the inactive detector output and publish only after completion when an empty forced rebase replaces a nonempty detector image",
+    "peak_memory_or_latency_qualification": "Not measured; bounded synthetic correctness checks only"
+  },
+  "execution": {
+    "host": "MacBook Pro M5 Max 128 GB",
+    "backend": "native Swift/Metal, not Python MPS",
+    "gpu_ids": ["system-default Apple M5 Max"],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact": "first baseline failure",
+      "path": "local-evidence://representation-integration-20260906/runs/native-count-empty-rebase-repro1/output.log",
+      "sha256": "eae5151bf3b5025848bbdcf577b71f4ae8634f0b45b8d56af2f22a8ceaa84d27",
+      "result": "1 test, 8 failed assertions: v1 and v3 forced-empty/all-excluded rebases retain a stale nonzero image"
+    },
+    {
+      "artifact": "repeated baseline failure",
+      "path": "local-evidence://representation-integration-20260906/runs/native-count-empty-rebase-repro2/output.log",
+      "sha256": "b899c0f9a33c7344e287414645b3c7cb95367489ce39c59859448f650818dd97",
+      "result": "Same 8 failed stale-image assertions reproduced; defect, not numerical drift"
+    },
+    {
+      "artifact": "focused fixed parity",
+      "path": "local-evidence://representation-integration-20260906/runs/native-count-focused-fixed/output.log",
+      "sha256": "c29bfdc07a4b3f9e34f0c8c035a11674d475afaf05ce166b267d24a6fc09b1bf",
+      "result": "5 tests passed, including dense frozen integer contracts and packed uint16/v3 DP, masks, release, and recovery"
+    },
+    {
+      "artifact": "broader native IO regression",
+      "path": "local-evidence://representation-integration-20260906/runs/native-count-broader-fixed/output.log",
+      "sha256": "e674faff00655e346714a92a143b8865a734e760ee5d11cd32242081b2ace247",
+      "result": "100 executed, 3 explicit opt-in skips, 0 failures; two real-source gates and Python producer parity were not enabled"
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-06T15:09:26Z",
+    "started": "2026-09-06T15:11:20Z",
+    "finished": "2026-09-06T15:13:54Z"
+  }
+}

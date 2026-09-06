@@ -6,12 +6,13 @@ import os
 /// Backend-neutral representation of a complete 4D-STEM generation.
 public enum Metal4DSTEMResidentRepresentation: String, Codable, Sendable {
   case dense
-  case losslessPacked = "lossless_packed"
+  case packed
+  case ans
 }
 
 /// Backend-neutral scientific and memory receipt for one resident generation.
 public struct Metal4DSTEMResidentReceipt: Codable, Equatable, Sendable {
-  public static let currentSchema = "quantem.gpu.4dstem-resident-receipt/v2"
+  public static let currentSchema = "quantem.gpu.4dstem-resident-receipt/v3"
 
   public let schema: String
   public let representation: Metal4DSTEMResidentRepresentation
@@ -210,7 +211,7 @@ public struct Metal4DSTEMResidentProductCapability: Codable, Equatable, Sendable
 
 /// UI-free capability receipt for one fully published resident generation.
 public struct Metal4DSTEMResidentCapabilities: Codable, Equatable, Sendable {
-  public static let currentSchema = "quantem.gpu.apple-4dstem-resident-capabilities/v3"
+  public static let currentSchema = "quantem.gpu.apple-4dstem-resident-capabilities/v4"
 
   public let schema: String
   public let representation: Metal4DSTEMResidentRepresentation
@@ -288,7 +289,7 @@ public struct Metal4DSTEMResidentCapabilities: Codable, Equatable, Sendable {
     )
     let representation: Metal4DSTEMResidentRepresentation =
       result.metrics.workingPayloadBytes == workingLogicalTensorBytes
-      ? .dense : .losslessPacked
+      ? .dense : .packed
     let receipt = Metal4DSTEMResidentReceipt(
       schema: Metal4DSTEMResidentReceipt.currentSchema,
       representation: representation,
@@ -394,7 +395,7 @@ public struct Metal4DSTEMResidentCapabilities: Codable, Equatable, Sendable {
     )
     let receipt = Metal4DSTEMResidentReceipt(
       schema: Metal4DSTEMResidentReceipt.currentSchema,
-      representation: .losslessPacked,
+      representation: .packed,
       sourceIdentitySHA256: metadata.sourceIdentitySHA256,
       sourceShape: shape,
       workingShape: shape,
@@ -476,7 +477,7 @@ public struct Metal4DSTEMResidentCapabilities: Codable, Equatable, Sendable {
     ]
     return Self(
       schema: currentSchema,
-      representation: .losslessPacked,
+      representation: .packed,
       sourceIdentitySHA256: metadata.sourceIdentitySHA256,
       scanRows: metadata.scanRows,
       scanColumns: metadata.scanColumns,
@@ -654,7 +655,7 @@ public struct Metal4DSTEMPublicationCounters: Codable, Equatable, Sendable {
 }
 
 public struct Metal4DSTEMPublicationEvent: Codable, Equatable, Sendable {
-  public static let currentSchema = "quantem.gpu.apple-4dstem-publication/v1"
+  public static let currentSchema = "quantem.gpu.apple-4dstem-publication/v2"
 
   public let schema: String
   public let generation: UInt64

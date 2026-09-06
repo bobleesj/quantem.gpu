@@ -50,7 +50,7 @@ packed. Its dtype and encoding profile stay separate metadata:
 
 ```python
 packed = io.load("scan-lossless.h5", backend="cuda")
-assert packed.representation is io.DataRepresentation.LOSSLESS_PACKED
+assert packed.representation is io.DataRepresentation.PACKED
 ```
 
 ## Execution and memory model

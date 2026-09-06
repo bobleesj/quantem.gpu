@@ -274,8 +274,8 @@ def test_existing_browse_routes_dispatch_to_bound_compact_source(tmp_path):
     )
     assert service._entry_bytes(service._master_cache[key]) == 1234
     resident_generation = residency.pop("resident_generation")
-    assert resident_generation["schema"] == "quantem.gpu.4dstem-resident-receipt/v2"
-    assert resident_generation["representation"] == "lossless_packed"
+    assert resident_generation["schema"] == "quantem.gpu.4dstem-resident-receipt/v3"
+    assert resident_generation["representation"] == "packed"
     assert resident_generation["source_shape"] == [2, 2, 4, 4]
     assert resident_generation["working_shape"] == [2, 2, 4, 4]
     assert resident_generation["source_logical_tensor_bytes"] == 128
@@ -294,8 +294,8 @@ def test_existing_browse_routes_dispatch_to_bound_compact_source(tmp_path):
         "resident_bytes": 1234,
         "logical_tensor_bytes": 128,
         "physical_resident_bytes": 1234,
-        "representation": "lossless_packed",
-        "storage_kind": "lossless_packed",
+        "representation": "packed",
+        "storage_kind": "packed",
         "storage_schema": "quantem.gpu.packed-detector-h5/v1",
         "lossless_exact": True,
         "source_shape": [2, 2, 4, 4],

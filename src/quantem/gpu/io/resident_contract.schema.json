@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "quantem.gpu.4dstem-resident-receipt/v2",
+  "$id": "quantem.gpu.4dstem-resident-receipt/v3",
   "title": "QuantEM.GPU exact 4D-STEM resident-generation receipt",
   "type": "object",
   "additionalProperties": false,
@@ -33,8 +33,8 @@
     "implementation_revision"
   ],
   "properties": {
-    "schema": {"const": "quantem.gpu.4dstem-resident-receipt/v2"},
-    "representation": {"enum": ["dense", "lossless_packed"]},
+    "schema": {"const": "quantem.gpu.4dstem-resident-receipt/v3"},
+    "representation": {"enum": ["dense", "packed", "ans"]},
     "source_identity_sha256": {"$ref": "#/$defs/sha256"},
     "source_shape": {"$ref": "#/$defs/shape"},
     "working_shape": {"$ref": "#/$defs/shape"},

@@ -51,7 +51,7 @@ The API is still release-candidate level. Prefer public functions documented
 here over internal backend modules.
 
 `quantem.gpu.io.load` returns `FourDSTEMData`. Its
-`DataRepresentation` is `lossless_packed` or `dense`; scientific dtype,
+`DataRepresentation` is `packed` or `dense`; scientific dtype,
 physical residency, and storage schema remain independent metadata.
 Both paths remain supported; see [Dense and lossless-packed data](representations.md)
 for the operation matrix, ownership rules, and remaining backend gates.

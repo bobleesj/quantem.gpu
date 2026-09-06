@@ -14,7 +14,7 @@ an added Linux Vulkan runtime. See the
 
 ## Resident representation
 
-`DataRepresentation` distinguishes `dense` from `lossless_packed`. `LoadPlan`
+`DataRepresentation` distinguishes `dense` from `packed`. `LoadPlan`
 reports dense decoded staging; `PackedDetectorSessionAdmission` reports packed
 resident storage. These fields do not change scientific dtype or turn bounded
 staging into a claim of full-volume residency. See the shared

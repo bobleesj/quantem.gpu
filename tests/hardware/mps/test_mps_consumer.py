@@ -8,13 +8,13 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from quantem.gpu.io import DataRepresentation
 from quantem.gpu.io.backends.mps.consumer import (
     MPSProductAvailability,
     MPSPublicationCounters,
     MPSPublicationMilestone,
     MPSPublicationRecorder,
     MPSResidentProduct,
-    MPSResidentRepresentation,
     MPSTimingBoundary,
     MPSTimingSummary,
     describe_resident,
@@ -83,7 +83,7 @@ def test_chunked_capabilities_preserve_dynamic_exact_integer_width() -> None:
 
     assert (
         capabilities.representation
-        is MPSResidentRepresentation.DENSE
+        is DataRepresentation.DENSE
     )
     assert capabilities.working_dtype == "uint16"
     assert capabilities.exact_integer_bits == 16
@@ -103,7 +103,7 @@ def test_compact_v3_receipt_does_not_invent_uint16() -> None:
     by_product = {item.product: item for item in capabilities.products}
 
     assert (
-        capabilities.representation is MPSResidentRepresentation.LOSSLESS_PACKED
+        capabilities.representation is DataRepresentation.PACKED
     )
     assert capabilities.working_dtype == "uint8"
     assert capabilities.exact_integer_bits == 8
@@ -162,7 +162,7 @@ def test_publication_recorder_rejects_stale_a_b_a_generations() -> None:
     assert recorder.begin(
         1,
         SOURCE_A,
-        MPSResidentRepresentation.DENSE,
+        DataRepresentation.DENSE,
         counters,
     )
     assert recorder.record(1, MPSPublicationMilestone.SOURCE_ADMITTED)
@@ -170,13 +170,13 @@ def test_publication_recorder_rejects_stale_a_b_a_generations() -> None:
     assert recorder.begin(
         2,
         SOURCE_B,
-        MPSResidentRepresentation.LOSSLESS_PACKED,
+        DataRepresentation.PACKED,
     )
     assert not recorder.record(1, MPSPublicationMilestone.FIRST_RESIDENT_PRESENT)
     assert recorder.begin(
         3,
         SOURCE_A,
-        MPSResidentRepresentation.DENSE,
+        DataRepresentation.DENSE,
     )
     assert recorder.record(3, MPSPublicationMilestone.RESIDENT_READY)
     assert recorder.record(3, MPSPublicationMilestone.FIRST_RESIDENT_PRESENT)
@@ -206,7 +206,7 @@ def test_present_requires_resident_ready_and_recovery_requires_loss() -> None:
     recorder.begin(
         7,
         SOURCE_A,
-        MPSResidentRepresentation.DENSE,
+        DataRepresentation.DENSE,
     )
 
     with pytest.raises(ValueError, match="invalid for the current generation"):

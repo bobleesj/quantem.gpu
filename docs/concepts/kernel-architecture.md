@@ -15,7 +15,7 @@ This structure prevents four optimized implementations from drifting into four
 different definitions of the science.
 
 For loaded 4D-STEM data, every runtime also shares two representation names:
-`lossless_packed` and `dense`. Dtype, device/host residency, file schema, and
+`packed` and `dense`. Dtype, device/host residency, file schema, and
 codec profile are separate fields. A backend may add a new internal codec
 without forcing every scientist or consumer application to learn another load
 mode.

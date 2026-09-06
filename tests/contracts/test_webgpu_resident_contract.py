@@ -9,11 +9,11 @@ from pathlib import Path
 
 import pytest
 
+from quantem.gpu.io import DataRepresentation
 from quantem.gpu.io.resident_contract import (
     ResidentGenerationReceipt,
     metadata_sha256,
 )
-from quantem.gpu.io import DataRepresentation
 from tests.contracts.test_webgpu_compact_v3_parser import _write_v3
 from tests.contracts.test_webgpu_compact_v3_parser import (
     compact_bundle as compact_bundle,  # noqa: PLC0414
@@ -72,12 +72,38 @@ console.log(JSON.stringify(JSON.parse(process.argv[2]).map(module.metadataSha256
     assert observed == [metadata_sha256(value) for value in metadata]
 
 
+@pytest.mark.parametrize(
+    ("schema", "representation"),
+    [
+        ("quantem.gpu.4dstem-resident-receipt/v2", "packed"),
+        ("quantem.gpu.4dstem-resident-receipt/v3", "lossless_packed"),
+    ],
+)
+def test_matching_removed_receipts_still_fail_closed(
+    receipt_bundle, schema, representation
+):
+    """Equality alone must not admit two identically obsolete receipts."""
+    observed = _node(
+        receipt_bundle,
+        """
+const module = await import(process.argv[1]);
+const receipt = JSON.parse(process.argv[2]);
+try {
+  module.requireMatchingResidentReceipt(receipt, receipt);
+  console.log(JSON.stringify('accepted'));
+} catch (error) { console.log(JSON.stringify(String(error))); }
+""",
+        json.dumps({"schema": schema, "representation": representation}),
+    )
+    assert "Use a v3 resident receipt" in observed
+
+
 def _expected_receipt(source: Path) -> ResidentGenerationReceipt:
     contents = source.read_bytes()
     header_bytes = struct.unpack_from("<I", contents, 8)[0]
     manifest = json.loads(contents[24 : 24 + header_bytes])
     return ResidentGenerationReceipt(
-        representation=DataRepresentation.LOSSLESS_PACKED,
+        representation=DataRepresentation.PACKED,
         source_identity_sha256=manifest["source_identity_sha256"],
         source_shape=(1, 64, 2, 3),
         working_shape=(1, 64, 2, 3),

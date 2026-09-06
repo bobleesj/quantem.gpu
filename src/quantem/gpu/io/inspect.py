@@ -55,9 +55,9 @@ def inspect(
     """
     if (
         DataRepresentation.detect_source(filepath)
-        is DataRepresentation.LOSSLESS_PACKED
+        is DataRepresentation.PACKED
     ):
-        return _inspect_lossless_packed(filepath, scan_shape)
+        return _inspect_packed(filepath, scan_shape)
     readiness = inspect_master_readiness(filepath, scan_shape=scan_shape)
     try:
         metadata = get_metadata(str(filepath))
@@ -104,7 +104,7 @@ def inspect(
     )
 
 
-def _inspect_lossless_packed(
+def _inspect_packed(
     filepath: str | PathLike[str], scan_shape: tuple[int, int] | None
 ) -> Inspection:
     """Inspect a packed source without authenticating or decoding its payload."""
@@ -117,9 +117,9 @@ def _inspect_lossless_packed(
             ready=False,
             reason=f"invalid_lossless_pack_index: {error}",
             action="Use a complete, authenticated Lossless Pack Format container.",
-            metadata={"representation": DataRepresentation.LOSSLESS_PACKED.value},
+            metadata={"representation": DataRepresentation.PACKED.value},
             pixel_mask=None,
-            source_kind="lossless_packed",
+            source_kind="packed",
             actual_frames=None,
             expected_frames=int(np.prod(scan_shape)) if scan_shape else None,
             scan_shape=scan_shape,
@@ -137,7 +137,7 @@ def _inspect_lossless_packed(
     )
     metadata = dict(index.manifest)
     metadata.update(
-        representation=DataRepresentation.LOSSLESS_PACKED.value,
+        representation=DataRepresentation.PACKED.value,
         working_shape=shape,
         scan_shape=shape[:2],
         detector_shape=shape[2:],
@@ -157,7 +157,7 @@ def _inspect_lossless_packed(
         ),
         metadata=metadata,
         pixel_mask=mask.reshape(shape[2:]),
-        source_kind="lossless_packed",
+        source_kind="packed",
         actual_frames=shape[0] * shape[1],
         expected_frames=(
             int(np.prod(scan_shape)) if scan_shape is not None else shape[0] * shape[1]

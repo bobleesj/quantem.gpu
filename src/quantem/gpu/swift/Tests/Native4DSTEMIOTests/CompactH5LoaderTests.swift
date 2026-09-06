@@ -5,6 +5,83 @@ import XCTest
 @testable import Metal4DSTEMStreamingIO
 
 final class CompactH5LoaderTests: XCTestCase {
+  func testPackedEmptyForcedRebaseClearsPreviousDetectorImage() throws {
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    for direct in [false, true] {
+      let fixture = try direct ? makeDirectCompactFixture() : makeCompactFixture(portable: true)
+      defer { try? FileManager.default.removeItem(at: fixture.url) }
+      let source = try MetalCompactH5Loader.load(sourceURL: fixture.url, device: device)
+      defer { source.releaseResidentStorage() }
+      let full = [UInt8](repeating: 1, count: 6)
+      let empty = [UInt8](repeating: 0, count: 6)
+      let excludedOnly: [UInt8] = [0, 0, 0, 1, 0, 0]
+      for mask in [empty, excludedOnly] {
+        try source.updateVirtualDetector(mask: full, forceRebase: true)
+        XCTAssertTrue(try source.virtualDetectorValues().contains { $0 > 0 })
+        let result = try source.updateVirtualDetector(mask: mask, forceRebase: true)
+        XCTAssertEqual(result.mode, "rebase")
+        XCTAssertEqual(result.fftDispatchCount, 0)
+        XCTAssertEqual(try source.virtualDetectorValues(), [UInt32](repeating: 0, count: 128))
+        // An unchanged empty request must retain the newly published zero image.
+        try source.updateVirtualDetector(mask: mask)
+        XCTAssertEqual(try source.virtualDetectorValues(), [UInt32](repeating: 0, count: 128))
+      }
+    }
+  }
+
+  func testPackedDPOrderDuplicatesAndMaskRecoveryPreserveExactCounts() throws {
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    for direct in [false, true] {
+      let fixture =
+        try direct
+        ? makeDirectCompactFixture() : makeCompactFixture(portable: true, fullRange: true)
+      defer { try? FileManager.default.removeItem(at: fixture.url) }
+      let source = try MetalCompactH5Loader.load(sourceURL: fixture.url, device: device)
+      defer { source.releaseResidentStorage() }
+      if !direct { XCTAssertEqual(fixture.values[4].max(), UInt32(UInt16.max)) }
+      // Explicit row/column requests cross row boundaries and revisit the same DP.
+      // This verifies repeated single-DP access, not a batched selection API.
+      let positions = [(7, 15), (0, 0), (4, 13), (0, 15), (1, 0), (4, 13)]
+      let masks: [[UInt8]] = [
+        [0, 0, 0, 0, 0, 0], [1, 0, 1, 0, 0, 0], [1, 1, 1, 1, 1, 1],
+        [0, 1, 0, 1, 1, 0], [0, 0, 0, 0, 0, 0], [1, 0, 1, 0, 0, 0],
+      ]
+      for mask in masks {
+        try source.updateVirtualDetector(mask: mask)
+        let expected = (0..<128).map { scan in
+          mask.indices.reduce(UInt32(0)) { sum, pixel in
+            sum + (mask[pixel] == 0 ? 0 : fixture.values[pixel][scan])
+          }
+        }
+        XCTAssertEqual(try source.virtualDetectorValues(), expected)
+        for (row, column) in positions {
+          var result = try source.extractDiffraction(scanRow: row, scanColumn: column)
+          XCTAssertEqual(result, fixture.values.map { $0[row * 16 + column] })
+          result[0] = .max
+          XCTAssertEqual(
+            try source.extractDiffraction(scanRow: row, scanColumn: column),
+            fixture.values.map { $0[row * 16 + column] })
+        }
+        for invalid in [[UInt8](repeating: 1, count: 5), [2, 0, 0, 0, 0, 0]] {
+          XCTAssertThrowsError(try source.updateVirtualDetector(mask: invalid))
+          XCTAssertEqual(try source.virtualDetectorValues(), expected)
+        }
+        for (row, column) in [(-1, 0), (8, 0), (0, -1), (0, 16)] {
+          XCTAssertThrowsError(try source.extractDiffraction(scanRow: row, scanColumn: column))
+          XCTAssertEqual(try source.virtualDetectorValues(), expected)
+        }
+      }
+      let mean = try source.meanDiffractionPattern()
+      let sums = fixture.values.map { $0.reduce(UInt64(0)) { $0 + UInt64($1) } }
+      XCTAssertEqual(mean.detectorSum, sums)
+      XCTAssertEqual(mean.mean, sums.map { Float($0) / 128 })
+      source.releaseResidentStorage()
+      XCTAssertThrowsError(try source.extractDiffraction(scanRow: 0, scanColumn: 0))
+      XCTAssertThrowsError(try source.updateVirtualDetector(mask: masks[0]))
+      XCTAssertThrowsError(try source.meanDiffractionPattern())
+    }
+  }
+
   func testInspectMatchesLoadMetadataWithoutMetalAllocation() throws {
     let fixture = try makeCompactFixture(portable: true, preparedDPC: true)
     defer { try? FileManager.default.removeItem(at: fixture.url) }
@@ -520,7 +597,7 @@ final class CompactH5LoaderTests: XCTestCase {
     let source = try MetalCompactH5Loader.load(sourceURL: fixture.url, device: device)
     let capabilities = try Metal4DSTEMResidentCapabilities.compact(source)
 
-    XCTAssertEqual(capabilities.representation, .losslessPacked)
+    XCTAssertEqual(capabilities.representation, .packed)
     XCTAssertEqual(capabilities.residentReceipt.sourceShape, [8, 16, 2, 3])
     XCTAssertEqual(capabilities.residentReceipt.workingShape, [8, 16, 2, 3])
     XCTAssertEqual(capabilities.residentReceipt.sourceDtype, "uint16")
@@ -1013,11 +1090,12 @@ private struct CompactFixture {
 
 private func makeCompactFixture(
   portable: Bool = false,
+  fullRange: Bool = false,
   preparedDPC: Bool = false,
   preparedDPCOverrides: [String: Any] = [:],
   scanOrigin: Int = 0
 ) throws -> CompactFixture {
-  let widths: [UInt8] = [2, 3, 4, 16, 9, 2]
+  let widths: [UInt8] = [2, 3, 4, 16, fullRange ? 16 : 9, 2]
   var values: [[UInt32]] = []
   values.reserveCapacity(widths.count)
   for (pixel, width) in widths.enumerated() {
@@ -1034,6 +1112,10 @@ private func makeCompactFixture(
     values.append(pixelValues)
   }
   values[3] = [UInt32](repeating: 0, count: 128)
+  if fullRange {
+    let boundaries: [UInt32] = [0, 255, 256, UInt32(UInt16.max)]
+    values[4] = (0..<128).map { boundaries[$0 % boundaries.count] }
+  }
   var decodedWords = [UInt32](
     repeating: 0,
     count: widths.reduce(0) { $0 + Int($1) * 4 }

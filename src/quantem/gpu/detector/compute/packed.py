@@ -2,5 +2,5 @@
 
 from quantem.gpu.detector.backends.packed import (
     PackedDetectorCompute as PackedDetectorCompute,
-    is_lossless_packed_source as is_lossless_packed_source,
+    is_packed_source as is_packed_source,
 )

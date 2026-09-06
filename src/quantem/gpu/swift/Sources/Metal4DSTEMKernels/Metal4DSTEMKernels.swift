@@ -192,6 +192,11 @@ public enum Metal4DSTEMKernels {
     try makeLibrary(resource: "packed_h5", device: device)
   }
 
+  /// Compile exact count-ANS validation, bounded decode, and detector reductions.
+  public static func makeANSCountsLibrary(device: MTLDevice) throws -> MTLLibrary {
+    try makeLibrary(resource: "ans_counts", device: device)
+  }
+
   /// Compile the shared CoM/DPC/iDPC small-field library.
   public static func makeDPCLibrary(device: MTLDevice) throws -> MTLLibrary {
     try makeLibrary(resource: "dpc", device: device)

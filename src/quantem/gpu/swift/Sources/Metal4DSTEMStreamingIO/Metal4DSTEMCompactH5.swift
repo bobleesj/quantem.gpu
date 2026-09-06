@@ -822,6 +822,34 @@ public final class MetalCompactH5ResidentSource {
       }
     }
     if entries.isEmpty {
+      if isRebase {
+        // An empty forced rebase replaces the old image; it is not an
+        // unchanged-mask no-op. Publish only after the zero image completes.
+        let nextOutput = 1 - activeDetectorOutput
+        let wallStart = ContinuousClock.now
+        guard let command = queue.makeCommandBuffer(),
+          let blit = command.makeBlitCommandEncoder()
+        else {
+          throw Metal4DSTEMStreamingIOError.metalUnavailable(
+            "Metal could not clear the empty compact virtual-detector result."
+          )
+        }
+        blit.fill(
+          buffer: detectorOutputs[nextOutput],
+          range: 0..<(metadata.scanCount * MemoryLayout<UInt32>.stride), value: 0
+        )
+        blit.endEncoding()
+        try Self.complete(command, operation: "empty virtual detector")
+        activeDetectorOutput = nextOutput
+        detectorMask = normalized
+        return MetalCompactH5DetectorMetrics(
+          mode: "rebase",
+          changedDetectorPixels: 0,
+          wallMilliseconds: Self.milliseconds(from: wallStart),
+          gpuMilliseconds: max(0, command.gpuEndTime - command.gpuStartTime) * 1_000,
+          fftDispatchCount: 0
+        )
+      }
       detectorMask = normalized
       return MetalCompactH5DetectorMetrics(
         mode: isRebase ? "rebase" : "delta",

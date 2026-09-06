@@ -86,6 +86,7 @@ exclude = [
 artifacts = [
     "src/quantem/gpu/remote/*.json",
     "src/quantem/gpu/io/*.json",
+    "src/quantem/gpu/io/backends/cuda/*.cu",
     "src/quantem/gpu/io/backends/mps/kernels/*.msl",
     "src/quantem/gpu/io/backends/webgpu/*.ts",
     "src/quantem/gpu/webgpu/*.ts",

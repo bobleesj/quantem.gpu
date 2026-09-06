@@ -24,7 +24,7 @@ Native Swift uses the same public representation values as Python and WebGPU:
 ```swift
 public enum Metal4DSTEMResidentRepresentation: String, Codable, Sendable {
   case dense
-  case losslessPacked = "lossless_packed"
+  case packed = "packed"
 }
 ```
 

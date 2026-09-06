@@ -78,8 +78,8 @@ from ._metadata import (
 from ._packed import (
     _source_paths as _source_paths,
     _selected_representation as _selected_representation,
-    _lossless_packed_metadata as _lossless_packed_metadata,
-    _load_lossless_packed as _load_lossless_packed,
+    _packed_metadata as _packed_metadata,
+    _load_packed as _load_packed,
     _record_dense_representation as _record_dense_representation,
 )
 
@@ -4976,7 +4976,7 @@ def load(
     drift: Sequence | np.ndarray | None = None,
     detector_bin: int = 1,
     det_bin: int | None = None,
-    apply_mask: bool = True,
+    apply_mask: bool | None = None,
     auto_narrow: bool = True,
     output: str = "native",
     stack: bool = True,
@@ -4988,11 +4988,21 @@ def load(
 
     All spatial arguments use ``(row, col)`` order. ``representation`` selects
     how the complete logical data is retained. Existing Lossless Pack Format
-    sources select ``"lossless_packed"`` automatically; ordinary HDF5 remains
-    dense during the compatibility period. Pass ``representation="dense"``
+    sources select ``"packed"`` automatically; ordinary HDF5 remains
+    dense. Pass ``representation="dense"``
     explicitly when an unpacked array is required.
 
-    ``dtype`` is the output-precision control for the legacy dense path.
+    Self-contained ANS files default to ``representation="ans"`` and retain
+    stored native counts. ``representation="packed"`` requests an explicit
+    ANS-to-bitpacked GPU transcode where implemented. CPU reference expansion
+    requires ``backend="cpu", representation="dense"``. Unsupported conversions
+    raise instead of silently loading HDF5, expanding densely, or using CPU.
+    ``apply_mask=None`` preserves historical HDF5 masking defaults but leaves ANS
+    stored counts unchanged; compute detector masks explicitly on its products.
+    File format and compression are detected from contents, independently of
+    resident representation. No ``decompression=`` argument is needed.
+
+    ``dtype`` is the output-precision control for the dense path.
     ``"u8"`` requests a saturating browse output;
     it is lossless only when a complete source audit proves every corrected
     count is at most 255. Use ``"u16"`` or the native dtype for exact
@@ -5004,16 +5014,20 @@ def load(
     Parameters
     ----------
     source
-        One master/data HDF5 path, a folder, or a list of master paths.
+        One master/data HDF5 path, a folder, a list of master paths, or one
+        standalone QuantEM/ANS file path. ANS folder discovery is pending.
     dtype
         Requested output dtype, such as ``"u8"``, ``"u16"``, ``"u32"``,
         ``"f32"``, ``"u4"``, ``"native"``, or ``"auto"``. Explicit
         ``"u8"`` saturates values above 255; ``"auto"`` is an advisory
         compact-dtype choice and is not a complete-source losslessness audit.
     representation
-        ``"lossless_packed"`` or ``"dense"``. When omitted, the loader detects
-        an existing lossless-packed container and otherwise retains the current
-        dense compatibility path. Representation never changes scan coverage,
+        ``"dense"``, ``"packed"``, or ``"ans"``. The authenticated storage
+        schema selects the exact decoder within each representation.
+        When omitted, the loader detects the source-native representation;
+        ordinary HDF5 uses the dense path. Unsupported
+        source/representation/backend combinations raise rather than transform
+        implicitly. Representation never changes scan coverage,
         detector coverage, binning, calibration, or scientific dtype.
     expected_source_sha256
         Optional externally retained whole-file identity for a lossless-packed
@@ -5086,6 +5100,29 @@ def load(
             raise ValueError("expected_source_sha256 conflicts with source_integrity.")
         expected_source_sha256 = source_integrity.whole_file_sha256
     selected_representation = _selected_representation(source, representation)
+    paths = _source_paths(source)
+    if any(DataRepresentation.detect_source(path) is DataRepresentation.ANS for path in paths):
+        from ._ans_dispatch import _load_ans
+
+        if len(paths) != 1:
+            raise ValueError("Load one ANS source at a time; mixed-source stacking is not implemented.")
+        if any(value is not None for value in (
+            dataset_path, scan_shape, scan_region, detector_region, target_scan_region,
+            scan_shift_row_col, scan_indices, random_positions, drift, devices,
+        )) or detector_bin != 1 or output != "native" or not stack or scan_order != "row-major":
+            raise NotImplementedError("ANS loading preserves its full declared geometry; selection/binning/reordering controls are not implemented yet.")
+        if dtype not in {None, "native"}:
+            raise ValueError("ANS loading preserves its native integer dtype; remove dtype=.")
+        if source_integrity is not None:
+            raise NotImplementedError("ANS uses expected_source_sha256 for whole-file authentication; the existing chunked integrity receipt describes another format.")
+        if apply_mask:
+            raise ValueError("ANS retains original counts. Pass apply_mask=False and apply detector masks explicitly when computing products.")
+        return _load_ans(paths[0], backend=backend, representation=selected_representation,
+                         expected_sha256=expected_source_sha256, device=device)
+    # HDF5/prepared-packed loads use their declared working-mask contract. ANS files
+    # retain original counts by default; detector masks are product controls.
+    if apply_mask is None:
+        apply_mask = True
     if (
         representation is not None
         and selected_representation is DataRepresentation.DENSE
@@ -5096,7 +5133,7 @@ def load(
             "representation='dense' cannot request packed dtype='u4'. "
             "Use dtype='u8' or a wider scientific dtype for dense storage."
         )
-    if selected_representation is DataRepresentation.LOSSLESS_PACKED:
+    if selected_representation is DataRepresentation.PACKED:
         conflicts = {
             "dataset_path": dataset_path,
             "scan_shape": scan_shape,
@@ -5135,7 +5172,7 @@ def load(
                 "apply_mask=True, output='native', and stack=True. Scientific "
                 "transformations belong in downstream kernels."
             )
-        return _load_lossless_packed(
+        return _load_packed(
             source,
             backend=backend,
             expected_source_sha256=expected_source_sha256,

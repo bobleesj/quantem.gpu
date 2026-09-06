@@ -24,7 +24,7 @@ def test_public_load_forwards_one_source_seal_and_rejects_conflicts(
         return marker
 
     monkeypatch.setattr(
-        import_module("quantem.gpu.io.load"), "_load_lossless_packed", load_source
+        import_module("quantem.gpu.io.load"), "_load_packed", load_source
     )
     assert io.load(source, source_integrity=integrity) is marker
     assert calls[0][1]["source_integrity"] is integrity

@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-from quantem.gpu.io import _memory as memory_module
-
-
 import sys
 import threading
 import types
@@ -11,6 +8,8 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+
+from quantem.gpu.io import _memory as memory_module
 
 
 def _mock_mps_backend(monkeypatch) -> None:
@@ -630,6 +629,12 @@ def _numpy_resampled_scan_crop_reference(
 def test_resample_scan_crop_matches_numpy_reference() -> None:
     """The public resident-array resampler should match explicit bilinear math."""
     cp = pytest.importorskip("cupy")
+    try:
+        device_count = cp.cuda.runtime.getDeviceCount()
+    except cp.cuda.runtime.CUDARuntimeError as error:
+        pytest.skip(f"CUDA resampling requires an available runtime: {error}")
+    if device_count == 0:
+        pytest.skip("CUDA resampling requires a visible CUDA device.")
     from quantem.gpu.io.load import resample_scan_crop
 
     data_np = np.arange(5 * 6 * 2 * 3, dtype=np.uint16).reshape(5, 6, 2, 3)

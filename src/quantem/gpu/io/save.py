@@ -1900,18 +1900,37 @@ def save(
     verbose: bool = False,
     source_master: str | None = None,
     frames_per_file: int = 32768,
-    format: str = "arina-h5",
+    format: str = "arina",
     backend: str = "auto",
-    compression: str = "lz4",
+    compression: str = "auto",
     compression_level: int = 0,
 ) -> SaveResult:
     """Save 4D-STEM data as an Arina-style bitshuffle+LZ4 HDF5 set.
+
+    ``format="quantem", compression="ans"`` instead writes one self-contained
+    file, not an HDF5 master/shard set. This new path currently requires
+    ``backend="cpu"`` explicitly for the bounded reference encoder and accepts
+    native four-dimensional NumPy uint8/uint16 counts without dtype conversion.
+    It preserves provided metadata and never overwrites an existing destination.
+    Accelerated ANS saving and resident reverse conversions remain pending.
+    The HDF5-specific options and discussion below do not apply to ANS files.
+    ``compression="auto"`` preserves the existing default encoding: ANS for
+    QuantEM files and bitshuffle/LZ4 for Arina files.
+    Loading detects compression from the file, not its extension; select only
+    the desired in-memory ``representation`` when calling ``io.load``::
+
+        save("experiment.qgpu", native_counts, format="quantem",
+             compression="ans", backend="cpu")
+        # Later: io.load("experiment.qgpu", representation="packed", backend="mps")
 
     Output: a master HDF5 file pointing to ``*_data_NNNNNN.h5`` external files
     with per-frame HDF5 chunks. Matches Arina row/column native chunking. The
     public compression method is Bitshuffle/LZ4; ``backend="auto"`` chooses the
     CUDA or MPS/Metal implementation from the input data. The CPU reference
     writer is available only when requested explicitly.
+
+    ``format="arina"`` names the acquisition/layout and writes HDF5 files;
+    compression is selected separately.
 
     Drift-correction recipe (the canonical use case)
     ------------------------------------------------
@@ -1998,8 +2017,8 @@ def save(
     Parameters
     ----------
     filepath : str
-        Output master HDF5 path. External data files are written next to it
-        with the same prefix.
+        Output file path. For Arina, external data files are written next to
+        the master with the same prefix. QuantEM writes a standalone file.
     data : np.ndarray | cp.ndarray
         4D-STEM data. Shape (N, det_row, det_col) or (scan_row, scan_col,
         det_row, det_col). CuPy arrays save without a host copy.
@@ -2012,16 +2031,20 @@ def save(
         smaller, 4× faster, sub-noise-floor error).
     batch_size : int
         Frames compressed per GPU pass. ``None`` uses the backend default.
-    format : {"arina-h5"}
-        Output container. ``"arina-h5"`` writes the QuantEM/Arina-style
-        master/data layout.
+    format : {"arina", "quantem"}
+        Output file layout. ``"arina"`` writes the QuantEM/Arina-style
+        master/data layout. ``"quantem"`` writes the standalone exact count
+        container; currently only ANS compression with the explicitly requested
+        CPU reference encoder is implemented.
     backend : {"auto", "cuda", "mps", "cpu"}
         Compression/write backend. ``"auto"`` keeps CUDA CuPy arrays on CUDA
         and MPS tensors or chunk-backed MPS loads on Metal. It never selects
         the CPU reference writer silently.
-    compression : {"lz4", "bslz4", "bitshuffle_lz4"}
-        Bitshuffle/LZ4 compression. Other codecs are retained only for
-        internal archival helpers.
+    compression : {"auto", "ans", "lz4", "bslz4", "bitshuffle_lz4"}
+        File compression, independent of the loaded resident representation.
+        ``"auto"`` uses ANS for QuantEM or bitshuffle/LZ4 for Arina, preserving
+        previous default file encodings. ANS is not an Arina/HDF5 filter.
+        Other codecs are retained only for internal archival helpers.
     compression_level : int
         Codec level. 0 = codec default. Ignored for LZ4.
     metadata : dict | None
@@ -2035,10 +2058,49 @@ def save(
     """
     import time
 
+    normalized_format = str(format).lower()
+    if normalized_format not in {"arina", "quantem"}:
+        raise ValueError(
+            f"Unsupported save format {format!r}; use format='arina' or 'quantem'."
+        )
+    if isinstance(compression, str):
+        compression = compression.lower()
+    if compression == "auto":
+        compression = "ans" if normalized_format == "quantem" else "lz4"
+
+    if normalized_format == "quantem":
+        from ._ans import write_ans_reference
+        from .models import FourDSTEMData
+
+        if compression != "ans":
+            raise ValueError(
+                f"format='quantem' does not support compression={compression!r}; "
+                "use compression='ans', or format='arina' for bitshuffle/LZ4."
+            )
+        if compression_level not in (None, 0):
+            raise ValueError(
+                f"ANS has no compression_level control; got {compression_level!r}. "
+                "Remove compression_level to preserve the exact codec contract."
+            )
+        if backend != "cpu":
+            raise NotImplementedError("ANS saving currently requires backend='cpu' explicitly for the exact reference encoder; accelerated encoding is pending.")
+        if isinstance(data, FourDSTEMData):
+            metadata = dict(data.metadata) if metadata is None else metadata
+            data = data.data
+        if dtype is not None or scan_shape is not None or source_master is not None:
+            raise ValueError("ANS reference saving preserves a native 4D array; remove dtype, scan_shape, and source_master controls.")
+        write_ans_reference(filepath, data, metadata=metadata,
+                            block_frames=256 if batch_size is None else batch_size)
+        return SaveResult(str(filepath), "cpu", complete=True)
+
     t0 = time.perf_counter()
-    normalized_format = str(format).lower().replace("_", "-")
-    if normalized_format not in {"arina-h5", "arina", "h5"}:
-        raise ValueError("save() currently supports format='arina-h5'")
+    if compression == "ans":
+        raise ValueError(
+            "compression='ans' is not supported for format='arina'; "
+            "use format='quantem', or compression='bitshuffle_lz4' for Arina."
+        )
+    if compression in {"bslz4", "bitshuffle_lz4"}:
+        compression = "lz4"
     normalized_backend = str(backend).lower()
     if normalized_backend not in {"auto", "cuda", "mps", "cpu"}:
         raise ValueError("backend must be 'auto', 'cuda', 'mps', or 'cpu'")

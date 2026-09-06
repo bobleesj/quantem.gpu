@@ -519,12 +519,15 @@ class _ArrayComputeBackend:
 
 def _resolve_backend(data):
     """Return the array compute backend for this data."""
-    from .backends.packed import PackedDetectorCompute, is_lossless_packed_source
+    from .backends.packed import PackedDetectorCompute, is_packed_source
+    from .backends.counts import CountDetectorCompute, is_count_source
 
     data = _unwrap_core_4dstem(data)
     if hasattr(data, "_fields") and "data" in getattr(data, "_fields", ()):
         data = data.data
-    if is_lossless_packed_source(data):
+    if is_count_source(data):
+        return CountDetectorCompute(data)
+    if is_packed_source(data):
         return PackedDetectorCompute(data)
     if is_packed_uint4(data):
         from quantem.gpu.detector.backends.dispatch import compute_backend

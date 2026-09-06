@@ -24,11 +24,6 @@ __all__ = [
     "metadata_sha256",
 ]
 
-# Compatibility import for the unreleased receipt prototype. New code uses
-# DataRepresentation so one public term describes dense and lossless-packed data.
-ResidentStorageEncoding = DataRepresentation
-
-
 def _is_sha256(value: object) -> bool:
     return (
         isinstance(value, str)
@@ -126,7 +121,7 @@ class ResidentGenerationReceipt:
     implementation_revision: str | None = None
     lossless_exact: bool = True
 
-    SCHEMA = "quantem.gpu.4dstem-resident-receipt/v2"
+    SCHEMA = "quantem.gpu.4dstem-resident-receipt/v3"
 
     def validate(self) -> None:
         """Fail closed if the receipt can misstate scientific or memory state."""

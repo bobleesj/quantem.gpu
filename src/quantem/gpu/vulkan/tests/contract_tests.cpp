@@ -57,8 +57,11 @@ int main() {
   require(quantem::gpu::vulkan::representation_name(plan.representation) == "dense",
           "dense staging representation is independent of full residency");
   require(quantem::gpu::vulkan::representation_name(
-              quantem::gpu::vulkan::DataRepresentation::lossless_packed) ==
-              "lossless_packed", "shared packed representation name");
+              quantem::gpu::vulkan::DataRepresentation::packed) ==
+              "packed", "shared packed representation name");
+  require(quantem::gpu::vulkan::representation_name(
+              quantem::gpu::vulkan::DataRepresentation::ans) ==
+              "ans", "shared ANS name does not imply Vulkan ANS kernel support");
   require(plan.maximum_shard_bytes <= 1073741824ULL, "allocation bound");
 
   auto binned = request;

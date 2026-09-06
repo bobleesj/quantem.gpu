@@ -20,11 +20,12 @@ ALLOWED_STATUSES = {
     "planned",
     "running",
     "completed",
+    "succeeded",
     "failed",
     "refuted",
     "superseded",
 }
-TERMINAL_STATUSES = {"completed", "failed", "refuted", "superseded"}
+TERMINAL_STATUSES = {"completed", "succeeded", "failed", "refuted", "superseded"}
 
 
 def _read_json(path: Path) -> dict:
@@ -200,11 +201,49 @@ def _validate_experiments(errors: list[str]) -> tuple[int, set[str]]:
             if not manifest["outputs"]:
                 errors.append(f"{label} terminal status needs retained outputs")
         for item in manifest["outputs"]:
+            artifact_id = item.get("artifact_id", item.get("artifact"))
             artifact_hash = item.get("sha256") or item.get("sha256_manifest", "")
             if not FULL_SHA256.fullmatch(artifact_hash):
-                errors.append(f"{label} output {item.get('artifact')} lacks SHA-256")
-            if not item.get("result", "").strip():
-                errors.append(f"{label} output {item.get('artifact')} lacks a result")
+                errors.append(f"{label} output {artifact_id} lacks SHA-256")
+            # Retain historical results unchanged. The shared research schema
+            # puts artifact identity/retention in outputs and claims in parameters.
+            result = item.get("result") or manifest["parameters"].get(
+                "artifact_results", {}
+            ).get(artifact_id, "")
+            if not isinstance(result, str) or not result.strip():
+                errors.append(f"{label} output {artifact_id} lacks a result")
+            if "artifact_id" in item:
+                required_output = {
+                    "artifact_id",
+                    "path",
+                    "sha256",
+                    "size_bytes",
+                    "retention",
+                    "consuming_figures",
+                }
+                if required_output - set(item):
+                    errors.append(
+                        f"{label} output {artifact_id} lacks retention metadata"
+                    )
+                size = item.get("size_bytes")
+                if type(size) is not int or size < 0:
+                    errors.append(
+                        f"{label} output {artifact_id} has invalid size_bytes"
+                    )
+                if item.get("retention") not in {
+                    "paper",
+                    "durable",
+                    "recomputable",
+                    "scratch",
+                }:
+                    errors.append(f"{label} output {artifact_id} has invalid retention")
+                figures = item.get("consuming_figures")
+                if not isinstance(figures, list) or not all(
+                    isinstance(value, str) for value in figures
+                ):
+                    errors.append(
+                        f"{label} output {artifact_id} has invalid consuming_figures"
+                    )
 
         for value in _all_strings(manifest):
             lower = value.lower()
@@ -232,6 +271,7 @@ def _validate_runs_index(experiment_ids: set[str], errors: list[str]) -> None:
         "planned": "planned",
         "running": "running",
         "completed": "ok",
+        "succeeded": "ok",
         "failed": "failed",
         "refuted": "refuted",
         "superseded": "superseded",
@@ -245,7 +285,10 @@ def _validate_runs_index(experiment_ids: set[str], errors: list[str]) -> None:
             errors.append(f"experiments/RUNS.md repeats {experiment_id}")
             continue
         manifest = _read_json(EXPERIMENT_ROOT / experiment_id / "manifest.json")
-        expected = status_map[manifest["status"]]
+        expected = status_map.get(manifest["status"])
+        if expected is None:
+            # _validate_experiments reports unknown states; never crash the audit.
+            continue
         if not statuses[0].startswith(expected):
             errors.append(
                 f"experiments/RUNS.md status for {experiment_id} must start with "
