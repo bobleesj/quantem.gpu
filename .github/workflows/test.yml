@@ -35,7 +35,9 @@ jobs:
           --module ESNext --moduleResolution bundler --types @webgpu/types
           src/quantem/gpu/webgpu/index.ts
       - name: Validate profiling registry
-        run: python scripts/check_profile_registry.py
+        run: |
+          python scripts/check_profile_registry.py
+          python scripts/backend_status.py check
       - name: Run Python tests
         run: PYTHONPATH=src pytest -q
 
@@ -53,6 +55,7 @@ jobs:
       - name: Build and verify documentation
         run: |
           python scripts/check_profile_registry.py
+          python scripts/backend_status.py check
           python scripts/check_docs_links.py
           python -m pytest -q tests/infrastructure/test_docs_site.py tests/infrastructure/test_backend_load_checklist.py tests/infrastructure/test_profile_registry.py tests/infrastructure/test_benchmark_registry.py
           jupyter-book build docs

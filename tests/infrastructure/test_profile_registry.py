@@ -43,8 +43,12 @@ def test_profile_matrix_keeps_current_gaps_and_unsupported_paths_explicit() -> N
     assert cells["dpc.com-rotation-idpc::swift-metal"]["state"] == "evidence-gap"
     assert cells["dpc.com-rotation-idpc::webgpu"]["state"] == "evidence-gap"
     assert cells["ssb.calibration-200-nelder-mead::mps"]["state"] == "evidence-gap"
-    assert cells["ssb.object-phase-loss::swift-metal"]["state"] == "ready"
-    assert cells["ssb.calibration-200-nelder-mead::swift-metal"]["state"] == "ready"
+    # Historical scientific results are retained, but were not linked as
+    # complete cell-scoped release evidence by the original profiling plan.
+    assert cells["ssb.object-phase-loss::swift-metal"]["state"] == "evidence-gap"
+    assert (
+        cells["ssb.calibration-200-nelder-mead::swift-metal"]["state"] == "evidence-gap"
+    )
     assert cells["io.selective-scan-loading::cpu-reference"]["state"] == "unsupported"
     assert cells["io.selective-scan-loading::cuda"]["state"] == "evidence-gap"
     assert cells["io.selective-scan-loading::mps"]["state"] == "evidence-gap"
@@ -52,7 +56,10 @@ def test_profile_matrix_keeps_current_gaps_and_unsupported_paths_explicit() -> N
     assert cells["io.selective-scan-loading::webgpu"]["state"] == "evidence-gap"
     assert cells["io.selective-scan-loading::vulkan"]["state"] == "unsupported"
     assert cells["io.decode-bin-provenance::vulkan"]["state"] == "evidence-gap"
-    assert cells["display.transform-histogram-color-fft::direct3d"]["state"] == "evidence-gap"
+    assert (
+        cells["display.transform-histogram-color-fft::direct3d"]["state"]
+        == "evidence-gap"
+    )
 
     for cell in cells.values():
         if cell["backend"] in {"vulkan", "direct3d"}:

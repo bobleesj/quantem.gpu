@@ -12,9 +12,12 @@ through an authenticated, bounded shard loader. It allocates the final
 device-readable packed buffers and validates the full source plan before
 publishing a session. It does not allocate a dense 4D array.
 
-- Expanded descriptors preserve unsigned integer values with widths 0–16.
+- Expanded descriptors preserve unsigned integer values with widths 0–16 and
+  admit either 32- or 128-scan tiles. The portable owning packer remains 128-scan.
 - Compact 32-scan nibble headers currently admit widths 0–8 only. The shared
-  compact uint16 header encoding is not yet admitted by this Vulkan backend.
+  v3 compact profile also requires a uint8 working array; a full uint16 compact
+  profile needs a separate shared encoding contract. Admission rejects unused
+  payload prefixes, noncanonical checkpoints, and nonzero unused width nibbles.
 - Raw-LZ4 decoding can write directly into the final packed payload.
 - Selected diffraction is decoded on the GPU from resident data.
 - BF/DF/ADF movement and radius changes use exact full sums or signed mask
@@ -80,6 +83,9 @@ uses its `glslc` or an explicit `QUANTEM_GPU_GLSLC` path. Link
 platform dependencies.
 
 Host tests and cross-compilation are not physical-device acceptance.
+The Android-only `quantem_gpu_android_packed_admission_tests` target adds
+expanded 32-scan uint16 and compact-header corruption regression cases; its
+synthetic codec fixtures are not full real-source or application qualification.
 Run device tests only with the application's physical-device owner. Record
 source identity, exact shape/dtype/mask, artifact hashes, memory, real-file
 open-to-presentation, and actual detector-center/radius gestures separately.

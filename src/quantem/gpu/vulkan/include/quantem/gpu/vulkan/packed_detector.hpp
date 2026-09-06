@@ -41,6 +41,16 @@ void validate_packed_detector_shard(
     std::span<const std::uint32_t> descriptors,
     std::span<const std::uint32_t> words);
 
+/** Validate expanded descriptors with the source's declared 32- or 128-scan tile.
+ * Widths remain 0..16; the final tile reserves ceil(scan_tile*width/32) words.
+ * This does not reinterpret compact nibble headers or change the source dtype.
+ * The four-argument overload retains the original 128-scan contract.
+ */
+void validate_packed_detector_shard(
+    std::uint32_t scan_count, std::uint32_t detector_pixels,
+    std::span<const std::uint32_t> descriptors,
+    std::span<const std::uint32_t> words, std::uint32_t scan_tile);
+
 /** Check device buffer bounds and a reserved process budget before upload.
  * available_process_bytes is the total budget reserved for this admission,
  * including already_admitted_bytes and staging_bytes, not the device RAM size.

@@ -27,13 +27,19 @@ the original integer without expanding the complete four-dimensional array.
 
 The expanded format uses one uint32 descriptor per detector-pixel/scan-tile
 pair. The low five bits store width 0–16 and the high 27 bits store a uint32
-payload offset. A 128-scan tile occupies `16 * width` bytes. The host packer,
-validator, and reference unpacker are in `packed_detector.cpp`.
+payload offset. A 128-scan tile occupies `16 * width` bytes; an admitted
+32-scan tile occupies `4 * width` bytes. The owning host packer and reference
+unpacker remain 128-scan. The non-owning validator accepts the explicitly
+declared tile size, and the resident session passes that size through without
+repacking or narrowing. These contracts live in `packed_detector.cpp`.
 
 The resident session also accepts 32-scan compact nibble headers with
 checkpoints. **This Vulkan compact-header path currently admits only widths
-0–8.** The shared compact uint16 encoding is not yet supported here; do not
-infer cross-backend format parity from the branch merge.
+0–8.** The shared v3 compact profile likewise requires a uint8 working array.
+A full uint16 compact profile needs a shared encoding decision and parity
+fixtures, not merely a relaxed Vulkan width check. Compact admission requires
+canonical zero-based payload coverage, checkpoint offsets, and zero unused
+width nibbles; do not infer cross-backend format parity from the branch merge.
 
 A dense `512 × 512 × 192 × 192` uint8 array is 9 GiB; uint16 is 18 GiB.
 Packed size depends on the complete source's value distribution plus headers.

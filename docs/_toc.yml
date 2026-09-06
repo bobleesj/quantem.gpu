@@ -86,6 +86,8 @@ parts:
         sections:
           - file: performance/coverage
             title: Coverage and runbooks
+          - file: performance/backend-readiness
+            title: Evidence-backed readiness
           - file: performance/results
             title: Verified benchmark results
           - file: performance/changes

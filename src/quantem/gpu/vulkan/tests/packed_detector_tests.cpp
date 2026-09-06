@@ -90,6 +90,57 @@ void borrowed_validation_and_lengths() {
   validate_packed_detector_shard(zero);
 }
 
+void expanded_tile_widths_and_validation() {
+  // Independent descriptor arithmetic, including partial final tiles. The owning
+  // reference packer still uses 128 scans and must not generate this 32-scan test.
+  for (const auto scan_tile : {32U, 128U}) {
+    for (const auto scans : {1U, 31U, 32U, 33U, 127U, 128U, 129U, 4096U}) {
+      constexpr auto pixels = 17U;
+      const auto tiles = scans / scan_tile + (scans % scan_tile != 0U);
+      std::vector<std::uint32_t> descriptors;
+      std::uint32_t word_offset = 0;
+      for (std::uint32_t width = 0; width <= 16U; ++width) {
+        for (std::uint32_t tile = 0; tile < tiles; ++tile) {
+          descriptors.push_back((word_offset << 5U) | width);
+          word_offset += scan_tile * width / 32U;
+        }
+      }
+      const std::vector<std::uint32_t> words(word_offset, UINT32_MAX);
+      validate_packed_detector_shard(scans, pixels, descriptors, words, scan_tile);
+      const auto original = descriptors;
+      auto invalid = descriptors;
+      invalid[0] = 17U;
+      rejects([&] { validate_packed_detector_shard(scans, pixels, invalid, words, scan_tile); },
+              "Declared scan tile must not admit widths above uint16");
+      invalid = descriptors;
+      invalid.back() += 32U;
+      rejects([&] { validate_packed_detector_shard(scans, pixels, invalid, words, scan_tile); },
+              "Declared scan tile must require canonical offsets");
+      rejects([&] { validate_packed_detector_shard(scans, pixels, descriptors,
+          std::span(words).first(words.size() - 1U), scan_tile); },
+              "Declared scan tile must reject truncated payload");
+      auto trailing = words;
+      trailing.push_back(0U);
+      rejects([&] { validate_packed_detector_shard(scans, pixels, descriptors, trailing, scan_tile); },
+              "Declared scan tile must reject trailing payload");
+      rejects([&] { validate_packed_detector_shard(scans, pixels,
+          std::span(descriptors).first(descriptors.size() - 1U), words, scan_tile); },
+              "Declared scan tile must reject incorrect header length");
+      require(descriptors == original, "Tile validation must preserve borrowed headers");
+    }
+  }
+  const std::array<std::uint32_t, 1> zero{0U};
+  for (const auto scan_tile : {0U, 1U, 16U, 64U, 256U, UINT32_MAX}) {
+    rejects([&] { validate_packed_detector_shard(1U, 1U, zero, {}, scan_tile); },
+            "Unsupported scan tile must fail before tile arithmetic");
+  }
+  validate_packed_detector_shard(32U, 1U, zero, {}, 32U);
+  const std::array<std::uint32_t, 2> two_zero_tiles{0U, 0U};
+  validate_packed_detector_shard(33U, 1U, two_zero_tiles, {}, 32U);
+  rejects([&] { validate_packed_detector_shard(33U, 1U, two_zero_tiles, {}); },
+          "Legacy four-argument validator must retain its 128-scan contract");
+}
+
 void canonical_aperture_boundaries() {
   auto selected_count = [](const auto &mask) {
     return std::count(mask.begin(), mask.end(), 1);
@@ -365,6 +416,7 @@ int main() {
   try {
     all_widths_and_tails(); std::cout << "PASS all_widths_and_tails\n";
     borrowed_validation_and_lengths(); std::cout << "PASS borrowed_validation_and_lengths\n";
+    expanded_tile_widths_and_validation(); std::cout << "PASS expanded_tile_widths_and_validation\n";
     canonical_aperture_boundaries(); std::cout << "PASS canonical_aperture_boundaries\n";
     frozen_macos_float_masks(); std::cout << "PASS frozen_macos_float_masks (13)\n";
     continuous_drag_and_rebase(); std::cout << "PASS continuous_drag_and_rebase\n";
@@ -374,7 +426,7 @@ int main() {
     prepared_dpc_exact_oracle_and_fail_closed();
     std::cout << "PASS prepared_dpc_exact_oracle_and_fail_closed\n";
     full_uint32_range(); std::cout << "PASS full_uint32_range\n";
-    std::cout << "HOST_PREFLIGHT_PASS: 9 groups, 130 exact drag states; GPU not executed\n";
+    std::cout << "HOST_PREFLIGHT_PASS: 10 groups, 130 exact drag states; GPU not executed\n";
     return 0;
   } catch (const std::exception &error) {
     std::cerr << "FAIL: " << error.what() << '\n';

@@ -1,0 +1,659 @@
+{
+  "schema": "quantem.gpu.resident-integer-products/v1",
+  "fixture_origin": "Independent hand-selected integer vectors; synthetic, not real acquisition evidence.",
+  "axis_order": [
+    "scan_row",
+    "scan_column",
+    "detector_row",
+    "detector_column"
+  ],
+  "shape": [
+    2,
+    3,
+    3,
+    4
+  ],
+  "source_dtype": "uint16",
+  "excluded_detector_flat_indices": [
+    0,
+    11
+  ],
+  "raw_frames_u16": [
+    [
+      0,
+      1,
+      255,
+      256,
+      257,
+      1023,
+      32767,
+      32768,
+      65534,
+      65535,
+      4095,
+      4096
+    ],
+    [
+      1,
+      255,
+      256,
+      257,
+      1023,
+      32767,
+      32768,
+      65534,
+      65535,
+      4095,
+      4096,
+      0
+    ],
+    [
+      255,
+      256,
+      257,
+      1023,
+      32767,
+      32768,
+      65534,
+      65535,
+      4095,
+      4096,
+      0,
+      1
+    ],
+    [
+      256,
+      257,
+      1023,
+      32767,
+      32768,
+      65534,
+      65535,
+      4095,
+      4096,
+      0,
+      1,
+      255
+    ],
+    [
+      257,
+      1023,
+      32767,
+      32768,
+      65534,
+      65535,
+      4095,
+      4096,
+      0,
+      1,
+      255,
+      256
+    ],
+    [
+      1023,
+      32767,
+      32768,
+      65534,
+      65535,
+      4095,
+      4096,
+      0,
+      1,
+      255,
+      256,
+      257
+    ]
+  ],
+  "expected_working_frames_u16": [
+    [
+      0,
+      1,
+      255,
+      256,
+      257,
+      1023,
+      32767,
+      32768,
+      65534,
+      65535,
+      4095,
+      0
+    ],
+    [
+      0,
+      255,
+      256,
+      257,
+      1023,
+      32767,
+      32768,
+      65534,
+      65535,
+      4095,
+      4096,
+      0
+    ],
+    [
+      0,
+      256,
+      257,
+      1023,
+      32767,
+      32768,
+      65534,
+      65535,
+      4095,
+      4096,
+      0,
+      0
+    ],
+    [
+      0,
+      257,
+      1023,
+      32767,
+      32768,
+      65534,
+      65535,
+      4095,
+      4096,
+      0,
+      1,
+      0
+    ],
+    [
+      0,
+      1023,
+      32767,
+      32768,
+      65534,
+      65535,
+      4095,
+      4096,
+      0,
+      1,
+      255,
+      0
+    ],
+    [
+      0,
+      32767,
+      32768,
+      65534,
+      65535,
+      4095,
+      4096,
+      0,
+      1,
+      255,
+      256,
+      0
+    ]
+  ],
+  "detector_masks": [
+    {
+      "id": "bf_center",
+      "geometry": {
+        "center_row_column": [
+          1,
+          1
+        ],
+        "inner_radius_px": 0,
+        "outer_radius_px": 1,
+        "profile": "binary32-inner-inclusive-outer-exclusive"
+      },
+      "mask_u8": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "expected_sum_u64": [
+        1023,
+        32767,
+        32768,
+        65534,
+        65535,
+        4095
+      ]
+    },
+    {
+      "id": "bf_translate",
+      "geometry": {
+        "center_row_column": [
+          1,
+          2
+        ],
+        "inner_radius_px": 0,
+        "outer_radius_px": 1,
+        "profile": "binary32-inner-inclusive-outer-exclusive"
+      },
+      "mask_u8": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "expected_sum_u64": [
+        32767,
+        32768,
+        65534,
+        65535,
+        4095,
+        4096
+      ]
+    },
+    {
+      "id": "bf_expand",
+      "geometry": {
+        "center_row_column": [
+          1,
+          2
+        ],
+        "inner_radius_px": 0,
+        "outer_radius_px": 2,
+        "profile": "binary32-inner-inclusive-outer-exclusive"
+      },
+      "mask_u8": [
+        0,
+        1,
+        1,
+        1,
+        0,
+        1,
+        1,
+        1,
+        0,
+        1,
+        1,
+        1
+      ],
+      "expected_sum_u64": [
+        136700,
+        140028,
+        169469,
+        169212,
+        140540,
+        139771
+      ]
+    },
+    {
+      "id": "annulus",
+      "geometry": {
+        "center_row_column": [
+          1,
+          2
+        ],
+        "inner_radius_px": 1,
+        "outer_radius_px": 2,
+        "profile": "binary32-inner-inclusive-outer-exclusive"
+      },
+      "mask_u8": [
+        0,
+        1,
+        1,
+        1,
+        0,
+        1,
+        0,
+        1,
+        0,
+        1,
+        1,
+        1
+      ],
+      "expected_sum_u64": [
+        103933,
+        107260,
+        103935,
+        103677,
+        136445,
+        135675
+      ]
+    },
+    {
+      "id": "annulus_inner_resize",
+      "geometry": {
+        "center_row_column": [
+          1,
+          2
+        ],
+        "inner_radius_px": 1.25,
+        "outer_radius_px": 2,
+        "profile": "binary32-inner-inclusive-outer-exclusive"
+      },
+      "mask_u8": [
+        0,
+        1,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        1
+      ],
+      "expected_sum_u64": [
+        65792,
+        4607,
+        5375,
+        33024,
+        33792,
+        98556
+      ]
+    },
+    {
+      "id": "annulus_outer_resize",
+      "geometry": {
+        "center_row_column": [
+          1,
+          2
+        ],
+        "inner_radius_px": 1.25,
+        "outer_radius_px": 2.5,
+        "profile": "binary32-inner-inclusive-outer-exclusive"
+      },
+      "mask_u8": [
+        1,
+        1,
+        0,
+        1,
+        1,
+        0,
+        0,
+        0,
+        1,
+        1,
+        0,
+        1
+      ],
+      "expected_sum_u64": [
+        131583,
+        71165,
+        42237,
+        69888,
+        99326,
+        164092
+      ]
+    },
+    {
+      "id": "zero_width",
+      "geometry": {
+        "center_row_column": [
+          1,
+          1
+        ],
+        "inner_radius_px": 1,
+        "outer_radius_px": 1,
+        "profile": "binary32-inner-inclusive-outer-exclusive"
+      },
+      "mask_u8": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "expected_sum_u64": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "id": "full",
+      "mask_u8": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "expected_sum_u64": [
+        202491,
+        206586,
+        206331,
+        206076,
+        206074,
+        205307
+      ]
+    },
+    {
+      "id": "empty",
+      "mask_u8": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "expected_sum_u64": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  ],
+  "request_order": [
+    "full",
+    "bf_center",
+    "bf_translate",
+    "bf_expand",
+    "annulus",
+    "annulus_inner_resize",
+    "annulus_outer_resize",
+    "annulus_outer_resize",
+    "empty",
+    "empty",
+    "full",
+    "bf_center"
+  ],
+  "selected_scan_row_columns": [
+    [
+      1,
+      2
+    ],
+    [
+      0,
+      1
+    ],
+    [
+      1,
+      2
+    ],
+    [
+      0,
+      0
+    ]
+  ],
+  "expected_selected_frames_u16": [
+    [
+      0,
+      32767,
+      32768,
+      65534,
+      65535,
+      4095,
+      4096,
+      0,
+      1,
+      255,
+      256,
+      0
+    ],
+    [
+      0,
+      255,
+      256,
+      257,
+      1023,
+      32767,
+      32768,
+      65534,
+      65535,
+      4095,
+      4096,
+      0
+    ],
+    [
+      0,
+      32767,
+      32768,
+      65534,
+      65535,
+      4095,
+      4096,
+      0,
+      1,
+      255,
+      256,
+      0
+    ],
+    [
+      0,
+      1,
+      255,
+      256,
+      257,
+      1023,
+      32767,
+      32768,
+      65534,
+      65535,
+      4095,
+      0
+    ]
+  ],
+  "selected_scan_sum_u64": [
+    0,
+    65790,
+    66047,
+    131581,
+    132350,
+    41980,
+    73727,
+    98302,
+    131071,
+    70140,
+    8703,
+    0
+  ],
+  "geometry_counterexample": {
+    "shape": [
+      3,
+      3
+    ],
+    "center_row_column": [
+      1,
+      1
+    ],
+    "inner_radius_px": 0,
+    "outer_radius_px": 1,
+    "half_open_mask_u8": [
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0
+    ],
+    "closed_mask_u8": [
+      0,
+      1,
+      0,
+      1,
+      1,
+      1,
+      0,
+      1,
+      0
+    ]
+  },
+  "large_sum": {
+    "shape": [
+      1,
+      2,
+      17,
+      17
+    ],
+    "source_dtype": "uint16",
+    "fill": 65535,
+    "overrides": [
+      {
+        "flat_index": 0,
+        "value": 65534
+      }
+    ],
+    "expected_full_sum_u64": [
+      18939614,
+      18939615
+    ]
+  },
+  "invalid_selected_scan_row_columns": [
+    [
+      -1,
+      0
+    ],
+    [
+      0,
+      -1
+    ],
+    [
+      2,
+      0
+    ],
+    [
+      0,
+      3
+    ]
+  ]
+}

@@ -37,7 +37,8 @@ void main() {
   uint base = pixel * expected_words;
   uint pixel_base = headers.values[base];
   uint relative_word = 0u;
-  uint errors = 0u;
+  // Canonical coverage starts at word zero, not at an arbitrary unused prefix.
+  uint errors = pixel == 0u && pixel_base != 0u ? 8u : 0u;
   for (uint checkpoint = 0u; checkpoint < checkpoint_words; ++checkpoint) {
     if (checkpoint != 0u &&
         headers.values[base + checkpoint] != relative_word)
@@ -50,6 +51,10 @@ void main() {
       uint remaining_tiles = parameters.tile_count -
           (first_width_word + word) * 8u;
       uint width_count = min(8u, remaining_tiles);
+      // The shared compact format requires every unused width nibble to be zero.
+      // Guard the shift so a full eight-width word never shifts by 32 bits.
+      if (width_count < 8u && (packed >> (width_count * 4u)) != 0u)
+        errors |= 16u;
       for (uint nibble = 0u; nibble < width_count; ++nibble) {
         uint width = (packed >> (nibble * 4u)) & 15u;
         if (width > 8u)

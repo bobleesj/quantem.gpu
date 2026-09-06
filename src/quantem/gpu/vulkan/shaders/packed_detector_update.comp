@@ -145,8 +145,9 @@ void main() {
                 tile_entries[lane] = entries[batch_start + lane];
             uint descriptor_count = batch_count * tiles_per_group;
             if (parameters.scan_tile == 32u) {
-                // Compact 1024 scans have four tiles per group and at most
-                // eight payload words per descriptor. One lane can publish a
+                // Both compact and expanded 32-scan headers have four tiles
+                // per group, with at most sixteen payload words per descriptor.
+                // One lane can publish a
                 // descriptor and its short contiguous payload before the same
                 // barrier, removing one workgroup-wide synchronization per
                 // eight changed detector columns.

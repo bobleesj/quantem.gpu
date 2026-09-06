@@ -114,15 +114,26 @@ void validate_packed_detector_shard(const PackedDetectorShard &shard) {
 void validate_packed_detector_shard(std::uint32_t scans, std::uint32_t pixels,
                                   std::span<const std::uint32_t> descriptors,
                                   std::span<const std::uint32_t> words) {
+  validate_packed_detector_shard(scans, pixels, descriptors, words,
+                                PackedDetectorShard::scan_tile);
+}
+
+void validate_packed_detector_shard(std::uint32_t scans, std::uint32_t pixels,
+                                  std::span<const std::uint32_t> descriptors,
+                                  std::span<const std::uint32_t> words,
+                                  std::uint32_t scan_tile) {
   validate_shape(scans, pixels);
-  if (descriptors.size() != std::size_t{pixels} * tile_count(scans))
+  if (scan_tile != 32U && scan_tile != 128U)
+    throw std::invalid_argument("Expanded packed descriptors require a 32- or 128-scan tile");
+  const auto tiles = scans / scan_tile + (scans % scan_tile != 0U);
+  if (descriptors.size() != std::size_t{pixels} * tiles)
     throw std::invalid_argument("Packed detector descriptor count does not match shape");
   std::uint64_t cursor = 0;
   for (const auto descriptor : descriptors) {
     const auto width = descriptor & 31U;
     if (width > 16 || (descriptor >> 5) != cursor)
       throw std::invalid_argument("Packed detector width or canonical word offset is invalid");
-    cursor += width * 4;
+    cursor += width * (scan_tile / 32U);
     if (cursor > words.size() || cursor > maximum_words)
       throw std::invalid_argument("Packed detector payload is truncated or exceeds offset range");
   }

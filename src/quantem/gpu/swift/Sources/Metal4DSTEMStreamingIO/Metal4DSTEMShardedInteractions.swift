@@ -237,15 +237,46 @@ public final class Metal4DSTEMShardedInteractions {
           + "and next \(nextMask.count)."
       )
     }
+    let invalidValue =
+      nextMask.first(where: { $0 > 1 })
+      ?? previousMask?.first(where: { $0 > 1 })
+    if let invalidValue {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "Custom detector masks must contain only binary 0/1 values; received "
+          + "\(invalidValue). Use a binary selection instead of detector weights."
+      )
+    }
+    let outputBytes =
+      plan.provenance.outputScanRows
+      * plan.provenance.outputScanColumns * MemoryLayout<UInt32>.stride
     try validateOutput(
       output,
-      requiredBytes: plan.provenance.outputScanRows
-        * plan.provenance.outputScanColumns
-        * MemoryLayout<UInt32>.stride,
+      requiredBytes: outputBytes,
       label: "custom virtual detector"
     )
     let entries = Self.wordEntries(previousMask: previousMask, nextMask: nextMask)
-    guard !entries.isEmpty else { return 0 }
+    guard !entries.isEmpty else {
+      // An unchanged detector is a no-op. An empty rebase replaces any old sum.
+      guard previousMask == nil else { return 0 }
+      if shouldCancel() { throw Metal4DSTEMStreamingIOError.cancelled }
+      let started = CFAbsoluteTimeGetCurrent()
+      guard let command = queue.makeCommandBuffer(),
+        let blit = command.makeBlitCommandEncoder()
+      else {
+        throw Metal4DSTEMStreamingIOError.metalUnavailable(
+          "Metal could not clear the empty custom-detector result."
+        )
+      }
+      blit.fill(buffer: output, range: 0..<outputBytes, value: 0)
+      blit.endEncoding()
+      command.commit()
+      command.waitUntilCompleted()
+      if let error = command.error {
+        throw Metal4DSTEMStreamingIOError.commandFailed(error.localizedDescription)
+      }
+      if shouldCancel() { throw Metal4DSTEMStreamingIOError.cancelled }
+      return (CFAbsoluteTimeGetCurrent() - started) * 1_000
+    }
     if previousMask != nil,
       shards.allSatisfy({ $0.storageMode == .shared })
     {

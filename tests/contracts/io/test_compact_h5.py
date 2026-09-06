@@ -59,8 +59,11 @@ def _write_fixture(
     values: np.ndarray,
     *,
     include_calibration: bool = True,
+    shape: tuple[int, int, int, int] = (2, 3, 2, 2),
+    masked_pixels: tuple[int, ...] = (2,),
 ) -> None:
-    shape = (2, 3, 2, 2)
+    scan_count = shape[0] * shape[1]
+    assert values.shape == (scan_count, shape[2] * shape[3])
     widths, decoded = _pack_detector_major(values)
     chunks = [decoded[start : start + 128] for start in range(0, len(decoded), 128)]
     compressed_chunks = [_raw_lz4_literals(chunk) for chunk in chunks]
@@ -83,16 +86,18 @@ def _write_fixture(
         "detector_bin": 1,
         "crop": None,
         "shard_count": 1,
-        "scans_per_shard": 6,
+        "scans_per_shard": scan_count,
         "payload_chunk_bytes": 128,
         "payload_chunk_codec": "independent raw LZ4 blocks",
         "payload_chunk_length_codec": "uint8 encoded_bytes_minus_one",
         "descriptor_codec": "uint8 five-bit widths",
-        "masked_detector_pixels": [[1, 0]],
+        "masked_detector_pixels": [
+            list(divmod(pixel, shape[3])) for pixel in masked_pixels
+        ],
         "shards": [
             {
                 "ordinal": 0,
-                "scan_count": 6,
+                "scan_count": scan_count,
                 "payload_file_offset": payload_offset,
                 "payload_file_bytes": len(compressed),
                 "payload_compressed_sha256": hashlib.sha256(compressed).hexdigest(),
@@ -119,8 +124,11 @@ def _write_fixture(
             "method": "test-fixture",
         }
     header = json.dumps(manifest, separators=(",", ":"), sort_keys=True).encode()
-    binary = bytearray(struct.pack("<8sIIIIIII", b"QGIX\0\0\0\1", 1, 128, *shape, 6))
-    binary.extend(struct.pack("<II", 1, 2))
+    binary = bytearray(
+        struct.pack("<8sIIIIIII", b"QGIX\0\0\0\1", 1, 128, *shape, scan_count)
+    )
+    binary.extend(struct.pack("<I", len(masked_pixels)))
+    binary.extend(struct.pack(f"<{len(masked_pixels)}I", *masked_pixels))
     binary.extend(source_identity)
     binary.extend(
         struct.pack(

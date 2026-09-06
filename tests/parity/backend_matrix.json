@@ -84,10 +84,11 @@
       "coverage": {
         "vulkan": {
           "level": "partial-hardware",
-          "qualification": "Indexed uint16 decode and dense staging; exact packed residency. Scan bin1, detector bin1, crop none only. Fresh shared-pin device qualification remains pending.",
+          "qualification": "Indexed uint16 decode and dense staging; packed residency with expanded 32/128-scan uint16 descriptors or compact 32-scan uint8 headers. Scan bin1, detector bin1, crop none only. Expanded32 and compact malformed-header regressions require Android execution; fresh shared-pin full-real-source device qualification remains pending.",
           "gates": [
             "src/quantem/gpu/vulkan/tests/contract_tests.cpp",
             "src/quantem/gpu/vulkan/tests/qh5_indexed_source_tests.cpp",
+            "src/quantem/gpu/vulkan/tests/packed_admission_tests.cpp",
             "src/quantem/gpu/vulkan/tests/packed_detector_session_tests.cpp"
           ]
         },
@@ -306,6 +307,7 @@
     {
       "id": "detector.integer-products",
       "parity": "Exact mean-DP integer accumulation and BF/ABF/ADF/DF sums using one mask definition.",
+      "contract_profiles": ["quantem.gpu.resident-integer-products/v1"],
       "coverage": {
         "vulkan": {
           "level": "partial-hardware",
@@ -324,23 +326,24 @@
         },
         "cpu-reference": {
           "level": "reference",
-          "gates": ["tests/parity/test_products_parity.py", "tests/parity/test_integer_detector_products.py"]
+          "gates": ["tests/parity/test_products_parity.py", "tests/parity/test_integer_detector_products.py", "tests/parity/test_resident_integer_contract.py"]
         },
         "cuda": {
           "level": "required",
-          "gates": ["tests/hardware/cuda/test_cuda_virtual_image.py", "tests/e2e/test_realdata_parity.py"]
+          "gates": ["tests/hardware/cuda/test_cuda_virtual_image.py", "tests/e2e/test_realdata_parity.py", "tests/hardware/cuda/test_resident_integer_contract.py"]
         },
         "mps": {
           "level": "required",
-          "gates": ["tests/parity/test_products_parity.py", "tests/contracts/test_mps_chunk_dispatch.py"]
+          "gates": ["tests/parity/test_products_parity.py", "tests/contracts/test_mps_chunk_dispatch.py", "tests/hardware/mps/test_resident_integer_contract.py"]
         },
         "swift-metal": {
           "level": "required",
-          "gates": ["src/quantem/gpu/swift/Tests/Metal4DSTEMKernelsTests/Metal4DSTEMKernelsTests.swift"]
+          "gates": ["src/quantem/gpu/swift/Tests/Metal4DSTEMKernelsTests/Metal4DSTEMKernelsTests.swift", "src/quantem/gpu/swift/Tests/Native4DSTEMIOTests/ResidentIntegerContractTests.swift"]
         },
         "webgpu": {
           "level": "required-hardware",
-          "gates": ["tests/infrastructure/test_webgpu_sources.py", "docs/maintainer/backend-4dstem-load-checklist.md"]
+          "qualification": "The compact-v1 uint16 adapter exercises exact integer products. Dense maskedSum and compact selected-frame sums return float32 and do not satisfy the exact-output or duplicate-selected-frame-sum subcontracts.",
+          "gates": ["tests/infrastructure/test_webgpu_sources.py", "docs/maintainer/backend-4dstem-load-checklist.md", "tests/parity/test_webgpu_resident_integer_contract.py", "tests/parity/webgpu/webgpu_resident_integer_contract.ts"]
         }
       }
     },

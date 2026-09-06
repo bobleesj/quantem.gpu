@@ -336,7 +336,7 @@ struct PackedDetectorSession::Impl {
         if (resident.header_encoding == 0U) {
           validate_packed_detector_shard(resident.scans, pixels,
                                          destination.descriptors,
-                                         destination.words);
+                                         destination.words, resident.scan_tile);
         } else {
           has_compact_headers = true;
         }

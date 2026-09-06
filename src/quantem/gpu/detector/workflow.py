@@ -61,9 +61,37 @@ class DetectorSession:
         return int(self._backend.n_frames)
 
     def frame(self, index: int) -> np.ndarray:
-        """Return one detector frame."""
+        """Return one detector frame without converting counts for display.
 
-        return np.asarray(self._backend.frame(int(index)))
+        Parameters
+        ----------
+        index : int
+            Nonnegative row-major scan index, smaller than ``num_frames``.
+
+        Returns
+        -------
+        numpy.ndarray
+            Independent copy of the complete pattern in the working dtype.
+            Editing this small output does not change the resident source.
+
+        Raises
+        ------
+        IndexError
+            If the scan index is outside the loaded source.
+
+        Examples
+        --------
+        >>> session = prepare(np.zeros((2, 3, 4, 5), dtype=np.uint16))
+        >>> session.frame(1 * session.scan_shape[1] + 2).shape
+        (4, 5)
+        """
+        index = int(index)
+        if not 0 <= index < self.num_frames:
+            raise IndexError(
+                f"Scan index {index} is outside {self.num_frames} frames; "
+                "use a nonnegative row-major index within the loaded scan."
+            )
+        return np.array(self._backend.frame(index), copy=True)
 
     def reduce_frames(self, indices, mode: str = "mean") -> np.ndarray:
         """Reduce selected scan frames with ``mean``, ``sum``, or ``max``."""
@@ -103,9 +131,20 @@ class DetectorSession:
         )
 
     def masked_sum_exact(self, mask) -> np.ndarray:
-        """Return an exact uint64 virtual-detector image for one mask."""
-
-        return _exact_to_numpy(self._backend.masked_sum_exact(mask)).reshape(
+        """Return an exact uint64 image for a full-shape binary detector mask."""
+        values = np.asarray(mask)
+        if values.shape != self.detector_shape:
+            raise ValueError(
+                f"Detector mask shape {values.shape} does not match "
+                f"{self.detector_shape}; provide one mask value for each "
+                "detector (row, column)."
+            )
+        if not np.all((values == 0) | (values == 1)):
+            raise ValueError(
+                "Exact detector masks must be binary; provide only 0/1 or "
+                "False/True values. Weighted masks require a weighted reducer."
+            )
+        return _exact_to_numpy(self._backend.masked_sum_exact(values)).reshape(
             self.scan_shape
         )
 
@@ -313,7 +352,12 @@ class _ArrayComputeBackend:
         )
 
     def frame(self, index: int) -> np.ndarray:
-        return _reduced_to_numpy(self.flat[int(index)])
+        frame = self.flat[int(index)]
+        if _is_cupy_array(frame):
+            return frame.get()
+        if _is_torch_tensor(frame):
+            return frame.detach().cpu().numpy()
+        return np.asarray(frame)
 
     def reduce_frames(self, scan_indices, reduce: str = "mean") -> np.ndarray:
         selected = self.flat[np.asarray(scan_indices, dtype=np.intp)]
