@@ -333,7 +333,7 @@ private struct CompactSelectedParameters {
   var payloadLayout: UInt32 = 0
 }
 
-private struct CompactDetectorEntry {
+struct CompactDetectorEntry {
   var pixel: UInt32
   var coefficient: Int32
 }
@@ -371,7 +371,7 @@ private struct CompactDetectorSumParameters {
   var payloadLayout: UInt32 = 0
 }
 
-private struct CompactResidentShard {
+struct CompactResidentShard {
   let payload: MTLBuffer
   let descriptors: MTLBuffer
 }
@@ -524,6 +524,7 @@ public final class MetalCompactH5ResidentSource {
   private var preparedDPCMomentBuffer: MTLBuffer?
   private var preparedDPCOutputs: [MTLBuffer]
   private var preparedDetectorProducts: [String: CompactPreparedDetectorResident]
+  private var detectorRegions: CompactDetectorRegions?
   private var residencyLease: CompactResidencyLease?
   private var activeDetectorOutput = 0
   private var detectorMask: [UInt8]
@@ -540,6 +541,8 @@ public final class MetalCompactH5ResidentSource {
     let preparedValues: MTLBuffer?
     let clearsOutput: Bool
     let shouldEncode: Bool
+    var rawEntryCount: Int = 0
+    var aggregateEntryCount: Int = 0
   }
 
   fileprivate init(
@@ -568,7 +571,8 @@ public final class MetalCompactH5ResidentSource {
     preparedDPCMomentBuffer: MTLBuffer?,
     preparedDPCOutputs: [MTLBuffer],
     preparedDetectorProducts: [String: CompactPreparedDetectorResident],
-    residencyLease: CompactResidencyLease? = nil
+    residencyLease: CompactResidencyLease? = nil,
+    detectorRegions: CompactDetectorRegions? = nil
   ) {
     self.metadata = metadata
     self.loadMetrics = loadMetrics
@@ -596,6 +600,7 @@ public final class MetalCompactH5ResidentSource {
     self.preparedDPCOutputs = preparedDPCOutputs
     self.preparedDetectorProducts = preparedDetectorProducts
     self.residencyLease = residencyLease
+    self.detectorRegions = detectorRegions
     detectorMask = [UInt8](repeating: 0, count: metadata.detectorPixelCount)
   }
 
@@ -1035,7 +1040,7 @@ public final class MetalCompactH5ResidentSource {
           )
         }
         // Residents have independent outputs; shards write disjoint scan ranges.
-        // No dispatch consumes another dispatch's output in this submission.
+        // No dispatch consumes another dispatch's output in this encoder.
         for (source, update) in reductions {
           try source.encodeDetectorUpdate(update, command: command, sharedEncoder: encoder)
         }
@@ -1051,6 +1056,17 @@ public final class MetalCompactH5ResidentSource {
         }
         command = next
         for lease in residencyLeases { lease.attach(command) }
+      }
+      let aggregateUpdates = zip(sources, updates).filter { $0.1.aggregateEntryCount > 0 }
+      if !aggregateUpdates.isEmpty {
+        guard let encoder = command.makeComputeCommandEncoder(dispatchType: .concurrent) else {
+          throw Metal4DSTEMStreamingIOError.metalUnavailable(
+            "Cannot encode exact aggregate detector updates")
+        }
+        for (source, update) in aggregateUpdates {
+          try source.encodeDetectorRegions(update, encoder: encoder)
+        }
+        encoder.endEncoding()
       }
       if profilePhases {
         try complete(command, operation: "diagnostic aggregate detector phase")
@@ -1097,12 +1113,12 @@ public final class MetalCompactH5ResidentSource {
       if profilePhases {
         phaseMilliseconds[2] = gpuMilliseconds
         gpuMilliseconds += phaseMilliseconds[0] + phaseMilliseconds[1]
-        var aggregateEntries = [Int](repeating: 0, count: sources.count)
+        let aggregateEntries = updates.map(\.aggregateEntryCount)
         let record: [String: Any] = [
           "phase": "detector_update_stages", "diagnostic_split_commands": true,
           "raw_gpu_ms": phaseMilliseconds[0], "aggregate_gpu_ms": phaseMilliseconds[1],
           "snapshot_gpu_ms": phaseMilliseconds[2], "submission_count": submissionCount,
-          "raw_entries": zip(updates, aggregateEntries).map { $0.changedDetectorPixels - $1 },
+          "raw_entries": updates.map(\.rawEntryCount),
           "aggregate_entries": aggregateEntries, "modes": updates.map(\.mode),
         ]
         var json = try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys])
@@ -1123,7 +1139,7 @@ public final class MetalCompactH5ResidentSource {
     let measuredWallMilliseconds = milliseconds(from: wallStart)
     hostStamp("publication_end_ms")
     if hostProfile {
-      var aggregateEntries = [Int](repeating: 0, count: sources.count)
+      let aggregateEntries = updates.map(\.aggregateEntryCount)
       let record: [String: Any] = [
         "phase": "detector_host_stages", "diagnostic_only": true,
         "stages_ms_from_call_entry": hostStages,
@@ -1135,7 +1151,7 @@ public final class MetalCompactH5ResidentSource {
         "mask_sha256": SHA256.hash(data: Data(mask)).map { String(format: "%02x", $0) }.joined(),
         "source_identities": sources.map { $0.metadata.sourceIdentitySHA256 },
         "modes": updates.map(\.mode),
-        "raw_entries": zip(updates, aggregateEntries).map { $0.changedDetectorPixels - $1 },
+        "raw_entries": updates.map(\.rawEntryCount),
         "aggregate_entries": aggregateEntries,
         "force_rebase": forceRebase, "capture_snapshots": captureSnapshots,
       ]
@@ -1248,14 +1264,19 @@ public final class MetalCompactH5ResidentSource {
         )
       }
     }
+    let entryCount = entries.count
+    let aggregateCount =
+      forceRebase
+      ? 0
+      : detectorRegions?.decompose(
+        &entries, rows: metadata.detectorRows, columns: metadata.detectorColumns) ?? 0
     if !entries.isEmpty {
       _ = entries.withUnsafeBytes { raw in
         memcpy(detectorEntryBuffer.contents(), raw.baseAddress!, raw.count)
       }
     }
-    let entryCount = entries.count
     let clearsOutput = !isComplement && isRebase && entryCount == 0
-    let update = PendingDetectorUpdate(
+    var update = PendingDetectorUpdate(
       normalizedMask: normalized, nextOutput: nextOutput,
       mode: isComplement ? "complement" : (isRebase ? "rebase" : "delta"),
       changedDetectorPixels: entryCount,
@@ -1263,6 +1284,8 @@ public final class MetalCompactH5ResidentSource {
       clearsOutput: clearsOutput,
       shouldEncode: isComplement || clearsOutput || entryCount != 0
     )
+    update.rawEntryCount = entries.count
+    update.aggregateEntryCount = aggregateCount
     return update
   }
 
@@ -1312,8 +1335,10 @@ public final class MetalCompactH5ResidentSource {
     }
     // Crossover tests cover core, outer and mixed-radius entries. The
     // scan-lane topology wins tiny deltas; pixel lanes win from 32 entries.
-    let rawEntryCount = update.changedDetectorPixels
-    let nextBuffer = detectorOutputs[update.nextOutput]
+    let rawEntryCount = update.rawEntryCount
+    let nextBuffer =
+      update.aggregateEntryCount > 0
+      ? detectorRegions!.intermediate : detectorOutputs[update.nextOutput]
     let usesScanCooperative =
       payloadLayout == 1 && rawEntryCount >= 32
       && planarScanCooperativePipeline != nil
@@ -1364,6 +1389,34 @@ public final class MetalCompactH5ResidentSource {
   private func publishDetectorUpdate(_ update: PendingDetectorUpdate) {
     if update.shouldEncode { activeDetectorOutput = update.nextOutput }
     detectorMask = update.normalizedMask
+  }
+
+  private func encodeDetectorRegions(
+    _ update: PendingDetectorUpdate, encoder: MTLComputeCommandEncoder
+  ) throws {
+    guard let detectorRegions, detectorRegions.shards.count == shards.count else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "Exact detector aggregate was released; reload the source")
+    }
+    encoder.setComputePipelineState(
+      update.aggregateEntryCount < 32 ? detectorPipeline : pixelLaneDetectorPipeline)
+    for index in shards.indices {
+      var parameters = CompactDetectorParameters(
+        scanCount: UInt32(metadata.scansPerShard), tileCount: UInt32(metadata.scansPerShard / 32),
+        entryCount: UInt32(update.aggregateEntryCount),
+        outputOffset: UInt32(index * metadata.scansPerShard),
+        mode: 0, scanTile: 32, headerWordsPerPixel: 0, headerEncoding: 0, payloadLayout: 0)
+      encoder.setBuffer(detectorRegions.shards[index].payload, offset: 0, index: 0)
+      encoder.setBuffer(detectorRegions.shards[index].descriptors, offset: 0, index: 1)
+      encoder.setBuffer(detectorRegions.entries, offset: 0, index: 2)
+      encoder.setBuffer(detectorRegions.intermediate, offset: 0, index: 3)
+      encoder.setBuffer(detectorOutputs[update.nextOutput], offset: 0, index: 4)
+      encoder.setBytes(&parameters, length: MemoryLayout.stride(ofValue: parameters), index: 5)
+      encoder.setBuffer(detectorRegions.intermediate, offset: 0, index: 6)
+      encoder.dispatchThreadgroups(
+        MTLSize(width: (metadata.scansPerShard + 31) / 32, height: 1, depth: 1),
+        threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
+    }
   }
 
   /// Copy one canonical prepared map into the active detector output.
@@ -1632,6 +1685,7 @@ public final class MetalCompactH5ResidentSource {
     preparedDPCMomentBuffer = nil
     preparedDPCOutputs.removeAll(keepingCapacity: false)
     preparedDetectorProducts.removeAll(keepingCapacity: false)
+    detectorRegions = nil
     detectorMask.removeAll(keepingCapacity: false)
     detectorSumReady = false
     isReleased = true
@@ -1792,9 +1846,9 @@ public enum MetalCompactH5Loader {
     packed.detectorSum.withUnsafeBytes {
       detectorSum.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count)
     }
-    let interactionBytes = UInt64(pixels * 24 + scans * 16)
-    let totalBytes = metadata.residentBytes + interactionBytes
-    let planned = totalBytes + packed.stagingBytes
+    var interactionBytes = UInt64(pixels * 24 + scans * 16)
+    var totalBytes = metadata.residentBytes + interactionBytes
+    var planned = totalBytes + packed.stagingBytes
     if let maximumAdditionalBytes, planned > maximumAdditionalBytes {
       throw invalid(
         "Original resident plus interaction buffers exceeds the memory budget; open fewer acquisitions"
@@ -1813,13 +1867,49 @@ public enum MetalCompactH5Loader {
     let pixelLane = try kernel("compact_h5_detector_update_pixel_lanes")
     let fullDecode = try kernel(Metal4DSTEMKernels.compactH5FullDecodeU8Function)
     let sum = try kernel(Metal4DSTEMKernels.compactH5DetectorSumFunction)
+    let originalPayloadLayout: UInt32 = 0
+    let residentShards = packed.shards.map {
+      CompactResidentShard(payload: $0.payload, descriptors: $0.headers)
+    }
+    var detectorRegions: CompactDetectorRegions?
+    var auxiliaryScratch: UInt64 = 0
+    var auxiliaryGPU = 0.0
+    if CompactDetectorRegions.enabled {
+      let allocated = UInt64(device.currentAllocatedSize)
+      // Original packing has returned and drained its commands. Its scratch
+      // peak remains in `planned`, but is not live during this separate phase.
+      // Account for every allocation still held, including driver retirement.
+      let heldAdditional = max(
+        totalBytes, allocated >= allocatedBefore ? allocated - allocatedBefore : 0)
+      let available =
+        maximumAdditionalBytes.map { $0 > heldAdditional ? $0 - heldAdditional : 0 } ?? 0
+      let built = try CompactDetectorRegions.build(
+        shards: residentShards, metadata: metadata, headerWords: packed.headerStride,
+        headerEncoding: packed.maximum <= 255 ? 1 : 2, payloadLayout: originalPayloadLayout,
+        device: device, queue: queue,
+        library: library, availableBytes: available, shouldCancel: shouldCancel)
+      detectorRegions = built.auxiliary
+      auxiliaryScratch = built.scratchBytes
+      auxiliaryGPU = built.gpuMilliseconds
+      let auxiliaryBytes = detectorRegions?.bytes ?? 0
+      // Keep the higher of the two independently bounded phase peaks. Neither
+      // phase may consume memory beyond the caller's unchanged admission limit.
+      planned = max(planned, heldAdditional + built.peakBytes)
+      interactionBytes += auxiliaryBytes
+      totalBytes += auxiliaryBytes
+    }
+    if let maximumAdditionalBytes, planned > maximumAdditionalBytes {
+      throw invalid(
+        "Original resident preparation exceeds the memory budget; release another acquisition and retry"
+      )
+    }
     var metrics = MetalCompactH5LoadMetrics(
       nativeCacheStatus: "originalDirect", nativeCacheBytes: 0,
       nativeCacheDescriptorSHA256Checks: 0,
       plannedAdditionalBytes: planned, sourceReadPolicy: "systemDefault", maximumInFlightShards: 1,
       shardPipelineMilliseconds: milliseconds(from: started), metadataMilliseconds: 0,
       sourceReadMilliseconds: packed.readSeconds * 1000, descriptorPreparationMilliseconds: 0,
-      gpuPreparationMilliseconds: packed.packingSeconds * 1000,
+      gpuPreparationMilliseconds: packed.packingSeconds * 1000 + auxiliaryGPU,
       gpuDecodeMilliseconds: packed.decodeSeconds * 1000,
       decodedIntegrityMilliseconds: 0, privateUploadMilliseconds: 0,
       preparedDPCReadMilliseconds: 0, preparedDPCAuthenticationMilliseconds: 0,
@@ -1827,7 +1917,8 @@ public enum MetalCompactH5Loader {
       preparedDetectorProductReadMilliseconds: 0,
       preparedDetectorProductAuthenticationMilliseconds: 0,
       totalMilliseconds: milliseconds(from: started), residentBytes: metadata.residentBytes,
-      maximumTransientBytes: packed.stagingBytes, deviceAllocatedBytesBefore: allocatedBefore,
+      maximumTransientBytes: max(packed.stagingBytes, auxiliaryScratch),
+      deviceAllocatedBytesBefore: allocatedBefore,
       deviceAllocatedBytesAfter: UInt64(device.currentAllocatedSize), decodedShardSHA256Checks: 0,
       checksumsVerified: false, decodedPayloadCopyBytes: 0, mappedAuthenticationBytes: 0,
       preparedDPCBytes: UInt64(packed.moments.count), preparedDetectorProductBytes: 0,
@@ -1839,15 +1930,13 @@ public enum MetalCompactH5Loader {
       metadata: metadata, loadMetrics: metrics, device: device, queue: queue,
       selectedPipeline: selected, detectorPipeline: detector, pixelLaneDetectorPipeline: pixelLane,
       fullDecodePipeline: fullDecode, detectorSumPipeline: sum,
-      headerEncoding: packed.maximum <= 255 ? 1 : 2, payloadLayout: 0,
+      headerEncoding: packed.maximum <= 255 ? 1 : 2, payloadLayout: originalPayloadLayout,
       headerWordsPerPixel: UInt32(packed.headerStride),
-      shards: packed.shards.map {
-        CompactResidentShard(payload: $0.payload, descriptors: $0.headers)
-      },
+      shards: residentShards,
       excluded: excluded, maximumWidths: packed.maximumWidths, detectorOutputs: [outputA, outputB],
       detectorEntryBuffer: entries, diffractionOutput: diffraction, detectorSumOutput: detectorSum,
       preparedDPCMomentBuffer: momentBuffer, preparedDPCOutputs: [dpc.row, dpc.column],
-      preparedDetectorProducts: [:])
+      preparedDetectorProducts: [:], detectorRegions: detectorRegions)
     // Pipeline creation may take time after the earlier cancellation poll.
     // Do not publish an interaction object if cancellation arrived meanwhile.
     guard !shouldCancel() else {

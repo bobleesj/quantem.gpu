@@ -33,6 +33,9 @@ extension MetalCompactH5Loader {
   /// No packed-count file or full dense volume is created. Every packed count is
   /// checked against its decoded input on Metal before the resident is returned.
   /// Logical SHA-256 fields remain nil: this path does not hash a dense tensor.
+  /// When the supplied memory budget admits them, exact detector-region sums
+  /// accelerate mask interiors. Boundaries and diffraction reads still use
+  /// original counts. Their storage and preparation are included in metrics.
   /// Optional source-bound DPC sums avoid repeating that reduction. Missing or
   /// incompatible provenance/bounds discard the hint and recompute exact sums.
   /// `packingPlanURL` optionally saves bounded, disposable layout metadata,
@@ -78,10 +81,23 @@ extension MetalCompactH5Loader {
       throw OriginalHDF5Packing.invalid(
         "Original data changed during loading; reopen its folder and retry")
     }
-    return try residentFromOriginal(
+    let resident = try residentFromOriginal(
       packed, device: device, started: started,
       allocatedBefore: allocatedBefore, maximumAdditionalBytes: maximumAdditionalBytes,
       shouldCancel: shouldCancel)
+    do {
+      // Region preparation extends readiness past the final original read.
+      // Recheck the complete input binding before handing ownership over.
+      guard !shouldCancel() else { throw Metal4DSTEMStreamingIOError.cancelled }
+      guard try OriginalHDF5Packing.inputStamps(source) == initialInputs else {
+        throw OriginalHDF5Packing.invalid(
+          "Original data changed during resident preparation; reopen its folder and retry")
+      }
+      return resident
+    } catch {
+      resident.releaseResidentStorage()
+      throw error
+    }
   }
 }
 
@@ -308,7 +324,13 @@ final class OriginalHDF5Packing {
     }
     let started = CFAbsoluteTimeGetCurrent()
     let pixels = dataset.detectorRows * dataset.detectorCols
+    // Target 160 MiB of dense decode storage, with one 32-scan packing tile minimum.
+    // Smaller detector geometries retain the existing 4096-frame window.
+    // Only processing windows change, never the requested scan coverage.
     var frames = min(4096, source.logicalFrameCount)
+    while frames > 32 && UInt64(frames) * source.decodedBytesPerFrame > (UInt64(160) << 20) {
+      frames = max(32, (frames / 2 / 32) * 32)
+    }
     while source.logicalFrameCount % frames != 0 { frames -= 32 }
     let windows = try source.windows(
       maximumDecodedBytes: UInt64(frames) * source.decodedBytesPerFrame, alignToScanRows: false)
@@ -432,6 +454,7 @@ final class OriginalHDF5Packing {
     var residentBytes: UInt64 = 0
     var detectorSum = [UInt64](repeating: 0, count: pixels)
     var profile = priorProfile ?? Profile()
+    profile.decodeWindowFrames = frames
     if ignoreCachedPlan { profile.planFallbacks += 1 }
     profile.planStatus = !cachePlans ? "notRequested" : (planReader != nil ? "hit" : "miss")
     profile.reusedDPC = cachedDPC != nil
@@ -465,17 +488,19 @@ final class OriginalHDF5Packing {
       if shouldCancel() { throw Metal4DSTEMStreamingIOError.cancelled }
       let plan = try compressedReadPlan(slice, source: source)
       additionalReadReserve = max(additionalReadReserve, plan.reservedBytes)
-      // Reserve the second input explicitly before the reader can allocate it.
-      // The baseline reserve already covers one input and all packing staging.
+      // The allocated fixed buffers are known now. Admit both live inputs
+      // and the existing conservative two-payload reserve before submission.
+      let prospectiveInput = max(largestInput, currentInputBytes + plan.reservedBytes)
+      let prospectiveStaging = fixedStaging + prospectiveInput + largestPayload * 2
       if let maximumAdditionalBytes,
-        residentBytes + stagingReserve + additionalReadReserve > maximumAdditionalBytes
+        residentBytes + prospectiveStaging > maximumAdditionalBytes
       {
         if cachePlans { throw CacheMismatch(profile: profile, retryWithoutPlan: true) }
         throw Self.invalid(
           "Compressed read-ahead exceeds the available memory budget; release another resident and retry"
         )
       }
-      largestInput = max(largestInput, currentInputBytes + plan.reservedBytes)
+      largestInput = prospectiveInput
       peakStaging = fixedStaging + largestInput + largestPayload * 2
       profile.maximumConcurrentInputBytes = largestInput
       profile.additionalReadReserveBytes = additionalReadReserve
@@ -624,9 +649,14 @@ final class OriginalHDF5Packing {
         }
         profile.prefixWall += CFAbsoluteTimeGetCurrent() - prefixStarted
         let payloadBytes = max(4, Int(wordCount) * 4)
+        let prospectivePayload = max(largestPayload, UInt64(payloadBytes))
+        let admissionStaging =
+          readAheadEnabled
+          ? fixedStaging + largestInput + prospectivePayload * 2
+          : stagingReserve + additionalReadReserve
         if let maximumAdditionalBytes,
-          residentBytes + stagingReserve + additionalReadReserve
-            + UInt64(payloadBytes + headerBytes) > maximumAdditionalBytes
+          residentBytes + admissionStaging + UInt64(payloadBytes + headerBytes)
+            > maximumAdditionalBytes
         {
           if cachePlans { throw CacheMismatch(profile: profile, retryWithoutPlan: true) }
           throw Self.invalid(

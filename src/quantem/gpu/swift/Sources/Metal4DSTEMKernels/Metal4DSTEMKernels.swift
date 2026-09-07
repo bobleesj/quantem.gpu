@@ -230,8 +230,14 @@ public enum Metal4DSTEMKernels {
       throw Metal4DSTEMKernelsError.missingResource("\(resource).metal")
     }
     do {
+      var source = try String(contentsOf: url, encoding: .utf8)
+      if resource == "packed_h5" {
+        let regions = url.deletingLastPathComponent()
+          .appendingPathComponent("compact_detector_regions.metal")
+        source += "\n" + (try String(contentsOf: regions, encoding: .utf8))
+      }
       return try device.makeLibrary(
-        source: String(contentsOf: url, encoding: .utf8),
+        source: source,
         options: nil
       )
     } catch {

@@ -43,17 +43,31 @@ do {
       UInt64(frames * pixels * 2) + (768 << 20) + readReserve + shardBytes + shardBytes / 2
     var progressCount = 0
     var budgetRejected = false
+    let readAhead = ProcessInfo.processInfo.environment["QGPU_ORIGINAL_READ_AHEAD"] != "0"
     do {
-      _ = try MetalCompactH5Loader.load(
+      let admitted = try MetalCompactH5Loader.load(
         source: indexed, device: device, maximumAdditionalBytes: budget,
         progress: { _, _ in progressCount += 1 })
+      defer { admitted.releaseResidentStorage() }
+      precondition(readAhead, "Sequential admission must retain its original reserve")
+      precondition(admitted.loadMetrics.plannedAdditionalBytes <= budget)
+      for frame in [0, 4095, 4096, 8192, 12287] {
+        let dp = try admitted.extractDiffraction(
+          scanRow: frame / native.scanCols, scanColumn: frame % native.scanCols)
+        precondition(dp.count == pixels && dp.allSatisfy { $0 == 65535 })
+      }
     } catch Metal4DSTEMStreamingIOError.invalidRequest(let message) {
       precondition(message.contains("Exact packed counts exceed"), message)
       budgetRejected = true
     }
-    precondition(
-      budgetRejected && progressCount == 1,
-      "Budget must admit first shard and reject second before payload allocation")
+    if readAhead {
+      precondition(!budgetRejected && progressCount == 3)
+      print("DIRECT_READ_AHEAD_OLD_RESERVE_REGRESSION_PASS")
+    } else {
+      precondition(
+        budgetRejected && progressCount == 1,
+        "Sequential budget must admit first shard and reject second before payload allocation")
+    }
     func recover() throws {
       let fresh = try Native4DSTEMIndexedSource.open(dataset: native)
       let restored = try MetalCompactH5Loader.load(source: fresh, device: device)
@@ -112,7 +126,8 @@ do {
     try recover()
     // Count only polls after the last source progress event. Read-ahead's timed
     // polling before that event cannot influence this deterministic late gate.
-    // These three calls are pack completion, pre-library, and pre-publication.
+    // With no auxiliary budget, four polls cover pack completion, pre-library,
+    // resident completion, and the final source-bound public publication.
     var completedSource = false
     var completionPolls = 0
     let lateBaseline = try MetalCompactH5Loader.load(
@@ -122,7 +137,7 @@ do {
         return false
       }, progress: { done, total in completedSource = done == total })
     precondition(
-      completedSource && completionPolls == 3,
+      completedSource && completionPolls == 4,
       "Update the phase proof if completion cancellation polls change")
     lateBaseline.releaseResidentStorage()
     completedSource = false
@@ -135,16 +150,91 @@ do {
         shouldCancel: {
           guard completedSource else { return false }
           completionPolls += 1
-          return completionPolls == 3
+          return completionPolls == 4
         }, progress: { done, total in completedSource = done == total })
       latePublished = true
       unexpected.releaseResidentStorage()
     } catch Metal4DSTEMStreamingIOError.cancelled { lateCancelled = true }
-    precondition(lateCancelled && !latePublished && completedSource && completionPolls == 3)
+    precondition(lateCancelled && !latePublished && completedSource && completionPolls == 4)
     try recover()
     print("FINAL_PUBLICATION_CANCELLATION_AND_EXACT_RECOVERY_PASS")
     precondition(!FileManager.default.fileExists(atPath: destination.path))
     print("DIRECT_MIDSTREAM_BUDGET_SOURCE_MUTATION_AND_RECOVERY_PASS budget=\(budget)")
+    exit(0)
+  }
+  if CommandLine.arguments.last == "direct-budget" {
+    let frames = 2048
+    let pixels = 192 * 192
+    let scans = frames * 6
+    precondition(native.scanRows * native.scanCols == scans)
+    precondition(native.detectorRows == 192 && native.detectorCols == 192)
+    precondition(ProcessInfo.processInfo.environment["QGPU_ORIGINAL_READ_AHEAD"] == "1")
+    precondition(ProcessInfo.processInfo.environment["QGPU_ORIGINAL_SCALAR_DECODE"] == "1")
+    let windowPayload = UInt64(frames * pixels * 2)
+    let windowHeaders = UInt64(pixels * 10 * 4)
+    let shardBytes = windowPayload + windowHeaders
+    func verify(_ resident: MetalCompactH5ResidentSource) throws {
+      precondition(resident.metadata.workingDtype == "uint16")
+      precondition(resident.metadata.shardCount == 6)
+      precondition(resident.metadata.residentBytes == shardBytes * 6 + UInt64(scans * 32))
+      for frame in [0, 4095, 4096, 8191, 8192, scans - 1] {
+        let dp = try resident.extractDiffraction(
+          scanRow: frame / native.scanCols, scanColumn: frame % native.scanCols)
+        precondition(dp.count == pixels && dp.allSatisfy { $0 == 65535 })
+      }
+      let total = UInt64(pixels) * 65535
+      let weighted = UInt64(192 * 192 * 191 / 2) * 65535
+      let dpc = try resident.preparedDPCMomentValues()!
+      precondition(dpc.total.count == scans && dpc.total.allSatisfy { $0 == total })
+      precondition(dpc.detectorRowMoment.allSatisfy { $0 == weighted })
+      precondition(dpc.detectorColumnMoment.allSatisfy { $0 == weighted })
+      _ = try resident.updateVirtualDetector(mask: [UInt8](repeating: 1, count: pixels))
+      let virtual = try resident.virtualDetectorValues()
+      precondition(virtual.count == scans && virtual.allSatisfy { $0 == UInt32(total) })
+    }
+    let seed = try MetalCompactH5Loader.load(source: indexed, device: device)
+    try verify(seed)
+    let planned = seed.loadMetrics.plannedAdditionalBytes
+    let staging = seed.loadMetrics.maximumTransientBytes
+    seed.releaseResidentStorage()
+    let budget = planned + (8 << 20)
+    let partialDPC = UInt64(frames * (pixels / 4096) * 32)
+    let oldStaging = windowPayload * 2 + partialDPC + (768 << 20)
+    // This is below the old window-6 admission even without its input reserve.
+    // It is above the unchanged initial guard and the reported conservative
+    // publication plan, so an old-code failure is specifically over-reservation.
+    precondition(budget > oldStaging && budget < oldStaging + shardBytes * 6)
+    var visited = [Int]()
+    let admitted = try MetalCompactH5Loader.load(
+      source: indexed, device: device, maximumAdditionalBytes: budget,
+      progress: { done, _ in visited.append(done) })
+    try verify(admitted)
+    precondition(visited == [2048, 4096, 6144, 8192, 10240, 12288])
+    precondition(admitted.loadMetrics.plannedAdditionalBytes <= budget)
+    admitted.releaseResidentStorage()
+    let insufficient = budget - shardBytes / 2
+    precondition(insufficient > oldStaging)
+    visited.removeAll()
+    var rejected = false
+    do {
+      let unexpected = try MetalCompactH5Loader.load(
+        source: indexed, device: device, maximumAdditionalBytes: insufficient,
+        progress: { done, _ in visited.append(done) })
+      unexpected.releaseResidentStorage()
+    } catch Metal4DSTEMStreamingIOError.invalidRequest(let message) {
+      precondition(message.contains("Exact packed counts exceed"), message)
+      rejected = true
+    }
+    precondition(
+      rejected && visited == [2048, 4096, 6144, 8192, 10240], "Reject window 6 before allocation")
+    let restored = try MetalCompactH5Loader.load(
+      source: indexed, device: device, maximumAdditionalBytes: budget)
+    try verify(restored)
+    restored.releaseResidentStorage()
+    precondition(!FileManager.default.fileExists(atPath: destination.path))
+    print(
+      "DIRECT_TIGHT_BUDGET_EXACT_RECOVERY_PASS planned=\(planned) staging=\(staging) budget=\(budget) insufficient=\(insufficient)"
+    )
     exit(0)
   }
   let started = CFAbsoluteTimeGetCurrent()

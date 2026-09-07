@@ -72,9 +72,11 @@ do {
     if FileManager.default.fileExists(atPath: receipt.path) {
       let bytes = try JSONDecoder().decode(UInt64.self, from: Data(contentsOf: receipt))
       precondition(
-        resident.loadMetrics.totalResidentBytes == bytes, "Plan changed retained count memory")
+        resident.loadMetrics.residentBytes == bytes, "Plan changed retained original-count memory")
     } else {
-      try JSONEncoder().encode(resident.loadMetrics.totalResidentBytes).write(to: receipt)
+      // Optional detector-region products may fit on a cheaper reopen even
+      // when they did not fit initial decode staging. Count storage is stable.
+      try JSONEncoder().encode(resident.loadMetrics.residentBytes).write(to: receipt)
     }
     print("PACKING_PLAN_EXACT_ALL_DP_DPC_SUMS_PASS \(scans * pixels)")
   }
@@ -281,10 +283,13 @@ do {
     }
     let normalBytes = try JSONDecoder().decode(UInt64.self, from: Data(contentsOf: receipt))
     let budget = base + (64 << 20) + readReserve + normalBytes
-    try check(
-      MetalCompactH5Loader.load(
-        source: source, device: device,
-        maximumAdditionalBytes: budget, packingPlanURL: plan))
+    let repaired = try MetalCompactH5Loader.load(
+      source: source, device: device,
+      maximumAdditionalBytes: budget, packingPlanURL: plan)
+    precondition(
+      repaired.loadMetrics.plannedAdditionalBytes <= budget,
+      "Repaired layout exceeded the unchanged loading budget")
+    try check(repaired)
     print("PACKING_PLAN_OVERSIZED_PAYLOAD_BUDGET_RECOVERY_PASS")
   } else if mode == "reserve" {
     // This exact fixture admits normal two-window low/high-u16 residency but

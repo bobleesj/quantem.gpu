@@ -34,6 +34,7 @@ extension OriginalHDF5Packing {
       let planReader = OriginalPackingLayoutCache.Reader(url: packingPlanURL, binding: binding)
     else { return nil }
     var profile = priorProfile ?? Profile()
+    profile.decodeWindowFrames = frames
     profile.planStatus = "hit"
     profile.reusedDPC = true
     let stageProfiler = OriginalPackingStageProfiler.makeIfRequested(

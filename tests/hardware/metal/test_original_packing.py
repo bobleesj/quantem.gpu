@@ -10,14 +10,13 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from pathlib import Path
 import shutil
-import subprocess
 import struct
+import subprocess
 import sys
+from pathlib import Path
 
 import pytest
-
 
 pytestmark = pytest.mark.skipif(
     sys.platform != "darwin", reason="Requires a physical macOS Metal device"
@@ -360,15 +359,20 @@ def test_original_packing_plan_reopen_and_faults(
         plan.write_bytes(_rewrite_layout(manifest, windows))
         profiles = run("audit")
         assert profiles[-1]["packing_plan_fallbacks"] == 1
-        # Both windows now request valid but oversized sixteen-bit layouts.
-        # The second retained payload must exceed the bounded cache budget;
-        # the original low-width source still fits the uncached fallback.
+        # Both windows now request oversized sixteen-bit layouts. Admission
+        # uses actual staging, so this small fixture no longer exhausts the
+        # budget. Count verification must still reject the nonminimal cached
+        # layout, repair it, and permit an exact subsequent reopen. The large
+        # direct-read fixture below separately proves hard-budget rejection.
         windows[1] = windows[0].copy()
         manifest["records"][1]["payloadWordCount"] = pixels * tiles * 16
         plan.write_bytes(_rewrite_layout(manifest, windows))
         profiles = run("payload-budget")
         assert profiles[-1]["packing_plan_fallbacks"] == 1
-        assert profiles[-1]["packing_plan_status"] == "notRequested"
+        assert profiles[-1]["packing_plan_status"] == "stored"
+        profiles = run("audit")
+        assert profiles[-1]["packing_plan_status"] == "hit"
+        assert profiles[-1]["packing_plan_fallbacks"] == 0
         plan.write_bytes(original_plan)
         profiles = run("reserve")
         assert profiles[-1]["packing_plan_fallbacks"] == 1
@@ -843,3 +847,169 @@ def test_original_hdf5_exact_packed_resident(
             reference.raw_diffraction(frame // scan_cols, frame % scan_cols),
             values[frame],
         )
+
+
+@pytest.mark.parametrize(
+    "scans,rows,columns,cacheable",
+    [(96, 960, 960, False), (224, 512, 960, True)],
+)
+def test_wide_detector_short_scan_reopens_without_partial_packing_tiles(
+    original_packing_executable, tmp_path, scans, rows, columns, cacheable
+):
+    """A wide detector keeps every scan when its decode window must shrink."""
+    h5py = pytest.importorskip("h5py")
+    plugin = pytest.importorskip("hdf5plugin")
+    np = pytest.importorskip("numpy")
+    pixels = rows * columns
+    coordinates = np.arange(pixels, dtype=np.uint64)
+    count_hash, dpc_hash = hashlib.sha256(), hashlib.sha256()
+    detector_hashes = [hashlib.sha256() for _ in range(3)]
+    detector_sum = np.zeros(pixels, dtype=np.uint64)
+    source = tmp_path / "wide_data_000001.h5"
+    with h5py.File(source, "x") as handle:
+        data = handle.create_dataset(
+            "entry/data/data",
+            shape=(scans, rows, columns),
+            dtype="uint16",
+            chunks=(1, rows, columns),
+            **plugin.Bitshuffle(nelems=0, cname="lz4"),
+        )
+        for frame in range(scans):
+            values = ((coordinates * 7 + frame * 13) % 251).astype(np.uint16)
+            values[17] = 65535
+            data[frame] = values.reshape(rows, columns)
+            count_hash.update(values.astype("<u4").tobytes())
+            detector_sum += values
+            for offset, digest in enumerate(detector_hashes):
+                selected = (coordinates + offset) % 3 == 0
+                digest.update(np.asarray(values[selected].sum(), dtype="<u4").tobytes())
+            basis = np.asarray(
+                [
+                    values.sum(dtype=np.uint64),
+                    (values * (coordinates // columns)).sum(dtype=np.uint64),
+                    (values * (coordinates % columns)).sum(dtype=np.uint64),
+                    0,
+                ],
+                dtype="<u8",
+            )
+            dpc_hash.update(basis.tobytes())
+    master = tmp_path / "wide_master.h5"
+    with h5py.File(master, "x") as handle:
+        group = handle.create_group("entry/data")
+        group.attrs["scan_shape"] = [scans // 8, 8]
+        group["data_000001"] = h5py.ExternalLink(source.name, "/entry/data/data")
+    oracle = tmp_path / "oracle.json"
+    oracle.write_text(
+        json.dumps(
+            {
+                "countsSHA256": count_hash.hexdigest(),
+                "detectorSHA256": [digest.hexdigest() for digest in detector_hashes],
+                "dpcSHA256": dpc_hash.hexdigest(),
+                "sumSHA256": hashlib.sha256(
+                    detector_sum.astype("<u8").tobytes()
+                ).hexdigest(),
+                "maximum": 65535,
+            }
+        )
+    )
+    before = {
+        path: (hashlib.sha256(path.read_bytes()).hexdigest(), path.stat().st_mtime_ns)
+        for path in (master, source)
+    }
+    profiles = []
+    for _ in range(2):
+        result = subprocess.run(
+            [
+                str(original_packing_executable.with_name("PackingPlanParity")),
+                str(master),
+                str(tmp_path / "wide.qgplan"),
+                str(oracle),
+                "audit",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert result.stdout.count("PACKING_PLAN_EXACT_ALL_DP_DPC_SUMS_PASS") == 1
+        profiles.extend(
+            json.loads(line.split(" ", 1)[1])
+            for line in result.stderr.splitlines()
+            if line.startswith("ORIGINAL_PACK_PROFILE ")
+        )
+    assert len(profiles) == 2
+    assert all(profile["decode_window_frames"] == 32 for profile in profiles)
+    # Large metadata can exceed the existing 4 MiB layout-cache record limit.
+    # That is an uncached reread, not permission to omit scans or change counts.
+    assert profiles[1]["packing_plan_reused_windows"] == (
+        scans // 32 if cacheable else 0
+    )
+    assert (tmp_path / "wide.qgplan").exists() is cacheable
+    assert before == {
+        path: (hashlib.sha256(path.read_bytes()).hexdigest(), path.stat().st_mtime_ns)
+        for path in (master, source)
+    }
+
+
+def test_direct_read_ahead_tight_budget_preserves_full_counts(
+    original_packing_executable, tmp_path
+):
+    """Admit reported bounded-window staging, reject a true later-window excess."""
+    h5py = pytest.importorskip("h5py")
+    plugin = pytest.importorskip("hdf5plugin")
+    np = pytest.importorskip("numpy")
+    data = tmp_path / "budget_data_000001.h5"
+    with h5py.File(data, "x") as handle:
+        counts = handle.create_dataset(
+            "entry/data/data",
+            shape=(12288, 192, 192),
+            dtype="uint16",
+            chunks=(1, 192, 192),
+            **plugin.Bitshuffle(nelems=0, cname="lz4"),
+        )
+        # A bounded 4.5 MiB fixture buffer, not a dense acquisition-sized copy.
+        block = np.full((64, 192, 192), 65535, dtype=np.uint16)
+        for first in range(0, 12288, 64):
+            counts[first : first + 64] = block
+    master = tmp_path / "budget_master.h5"
+    with h5py.File(master, "x") as handle:
+        group = handle.create_group("entry/data")
+        group.attrs["scan_shape"] = [192, 64]
+        group["data_000001"] = h5py.ExternalLink(data.name, "/entry/data/data")
+    before = {
+        path: (hashlib.sha256(path.read_bytes()).hexdigest(), path.stat().st_mtime_ns)
+        for path in (master, data)
+    }
+    result = subprocess.run(
+        [
+            str(original_packing_executable),
+            str(master),
+            str(tmp_path / "unused.qgix"),
+            "direct-budget",
+        ],
+        env={
+            **os.environ,
+            "QGPU_ORIGINAL_DIRECT_READ": "1",
+            "QGPU_ORIGINAL_READ_AHEAD": "1",
+            "QGPU_ORIGINAL_SCALAR_DECODE": "1",
+        },
+        capture_output=True,
+        text=True,
+        timeout=240,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "DIRECT_TIGHT_BUDGET_EXACT_RECOVERY_PASS" in result.stdout
+    profiles = [
+        json.loads(line.split(" ", 1)[1])
+        for line in result.stderr.splitlines()
+        if line.startswith("ORIGINAL_PACK_PROFILE ")
+    ]
+    assert len(profiles) == 3
+    assert all(profile["compressed_read_ahead"] for profile in profiles)
+    assert all(profile["scalar_decode_slices"] == 6 for profile in profiles)
+    assert all(profile["packing_plan_status"] == "notRequested" for profile in profiles)
+    assert before == {
+        path: (hashlib.sha256(path.read_bytes()).hexdigest(), path.stat().st_mtime_ns)
+        for path in (master, data)
+    }
+    assert not (tmp_path / "unused.qgix").exists()

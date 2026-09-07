@@ -18,6 +18,7 @@ enum OriginalPackingDiagnostics {
 
 extension OriginalHDF5Packing {
   struct Profile {
+    var decodeWindowFrames = 0
     var readBytes: UInt64 = 0
     var read = 0.0, copy = 0.0, decodeGPU = 0.0, decodeWall = 0.0
     var decodeAndHeadersGPU = 0.0, decodeAndHeadersWall = 0.0
@@ -51,6 +52,7 @@ extension OriginalHDF5Packing {
     var json: [String: Any] {
       [
         "source_read_bytes": readBytes, "source_read_seconds": read,
+        "decode_window_frames": decodeWindowFrames,
         "input_copy_seconds": copy, "decode_gpu_seconds": decodeGPU,
         "decode_and_headers_gpu_seconds": decodeAndHeadersGPU,
         "decode_and_headers_wall_seconds": decodeAndHeadersWall,
