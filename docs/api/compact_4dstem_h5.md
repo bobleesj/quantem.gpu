@@ -354,6 +354,22 @@ FFT work is independent of detector reduction. An FFT-off interaction must
 report zero FFT dispatches. A backend may not recompute FFTs during detector
 movement and still label that measurement FFT-off.
 
+### Resident tilt-series updates
+
+When several exact sources are already resident on one device, a backend may
+apply the same detector mask to all of them in one queue submission. Every
+source keeps a distinct persistent scan-map output; publication occurs only
+after the shared submission completes, so a failed update cannot expose a
+partially updated tilt series. Duplicate source objects, mixed devices, and
+different detector `(row, column)` geometries are rejected.
+
+This batch operation reduces command-submission and presentation overhead. It
+does not merge, downcast, bin, crop, or otherwise shrink the source residents.
+Memory qualification must therefore report the sum of the measured resident
+allocations for the selected sources. The Swift/Metal entry point is
+`MetalCompactH5ResidentSource.updateVirtualDetectors`, and the WebGPU entry
+point is `WebGPUCompactH5ResidentSource.maskedSumDisplayBuffersBatch`.
+
 ## Bounded resident lifecycle
 
 A conforming exact-`uint16`/LZ4 loader processes one shard at a time:

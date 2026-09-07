@@ -143,8 +143,15 @@ public enum MetalDisplayKernels {
   public static let vertexFunction = "metal_display_vertex"
   public static let fragmentFunction = "metal_display_fragment"
   public static let rangeFunction = "metal_range_u32"
+  /// SIMD-reduced u32 range; bindings are identical to `rangeFunction`.
+  public static let simdRangeFunction = "metal_range_u32_simd"
   public static let floatRangeFunction = "metal_range_f32"
   public static let histogramFunction = "metal_histogram_u32"
+  /// Histogram using a completed u32 [minimum, maximum] buffer at index 3.
+  /// Other bindings match `histogramFunction`; parameter low/high are ignored.
+  /// Order the range producer before this dispatch with an encoder boundary
+  /// or a buffer barrier. Clear histogram bins before encoding.
+  public static let histogramFromRangeFunction = "metal_histogram_u32_from_range"
   public static let floatFragmentFunction = "metal_display_fragment_f32"
   public static let floatHistogramFunction = "metal_histogram_f32"
 

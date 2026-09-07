@@ -48,6 +48,10 @@ let package = Package(
       targets: ["MetalCompactH5Benchmark"]
     ),
     .executable(
+      name: "metal-original-hdf5-benchmark",
+      targets: ["MetalOriginalHDF5Benchmark"]
+    ),
+    .executable(
       name: "metal-4dstem-dpc-benchmark",
       targets: ["Metal4DSTEMDPCBenchmark"]
     ),
@@ -151,6 +155,11 @@ let package = Package(
       name: "MetalCompactH5Benchmark",
       dependencies: ["Metal4DSTEMStreamingIO"],
       path: "src/quantem/gpu/swift/Benchmarks/MetalCompactH5Benchmark"
+    ),
+    .executableTarget(
+      name: "MetalOriginalHDF5Benchmark",
+      dependencies: ["Native4DSTEMIO", "Metal4DSTEMStreamingIO"],
+      path: "src/quantem/gpu/swift/Benchmarks/MetalOriginalHDF5Benchmark"
     ),
     .executableTarget(
       name: "Metal4DSTEMDPCBenchmark",

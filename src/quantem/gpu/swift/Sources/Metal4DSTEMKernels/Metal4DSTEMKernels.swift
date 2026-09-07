@@ -197,6 +197,11 @@ public enum Metal4DSTEMKernels {
     try makeLibrary(resource: "ans_counts", device: device)
   }
 
+  /// Compile bounded original-HDF5 to lossless resident packing kernels.
+  public static func makeOriginalPackingLibrary(device: MTLDevice) throws -> MTLLibrary {
+    try makeLibrary(resource: "original_packing", device: device)
+  }
+
   /// Compile the shared CoM/DPC/iDPC small-field library.
   public static func makeDPCLibrary(device: MTLDevice) throws -> MTLLibrary {
     try makeLibrary(resource: "dpc", device: device)

@@ -1925,6 +1925,26 @@
     }
   },
   "runbooks": {
+    "swift-original-packed-load": {
+      "title": "Original HDF5 to exact packed Metal resident",
+      "owner": "Physical Apple Silicon Mac",
+      "tier": "scheduled physical profile",
+      "evidence_level": "physical performance",
+      "command": "swift run -c release metal-original-hdf5-benchmark \"$QGPU_INPUT\" \"$QGPU_INDEX_DIR\" --repeats 7 --plan-directory \"$QGPU_PLAN_DIR\" --reuse-products --oracle \"$QGPU_ORACLE_JSON\"",
+      "preflight": [
+        "Record the clean source revision and executable/resource SHA-256 values.",
+        "Use original unbinned HDF5 acquisitions with independently frozen full-count hashes.",
+        "Record index/layout/product reuse; OS source pages are uncontrolled, not cold.",
+        "Serialize GPU profiling and retain first-load outliers."
+      ],
+      "required_environment": ["QGPU_INPUT", "QGPU_INDEX_DIR", "QGPU_PLAN_DIR", "QGPU_ORACLE_JSON"],
+      "required_artifacts": [
+        "Raw benchmark JSON lines including failures and release records",
+        "Independent full-count oracle and source/working dtype and geometry",
+        "Separate process/device memory, pressure and swap telemetry"
+      ],
+      "promotion_boundary": "Resident-ready is not first UI presentation. Require a separately pinned Live4DSTEM normal Open Folder and switching acceptance run."
+    },
     "registry-smoke": {
       "title": "Portable registry and parity smoke",
       "owner": "Portable CI runner",

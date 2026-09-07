@@ -928,12 +928,10 @@ def _read_prepared_center_of_mass(
     com_row = np.zeros(total.shape, dtype=np.float32)
     com_column = np.zeros(total.shape, dtype=np.float32)
     com_row[nonzero] = (
-        row_moment[nonzero].astype(np.float64)
-        / total[nonzero].astype(np.float64)
+        row_moment[nonzero].astype(np.float64) / total[nonzero].astype(np.float64)
     ).astype(np.float32)
     com_column[nonzero] = (
-        column_moment[nonzero].astype(np.float64)
-        / total[nonzero].astype(np.float64)
+        column_moment[nonzero].astype(np.float64) / total[nonzero].astype(np.float64)
     ).astype(np.float32)
     return com_row.reshape(index.shape[:2]), com_column.reshape(index.shape[:2])
 
@@ -997,6 +995,11 @@ def load_compact_h5_cuda(
         raise ValueError(
             f"CUDA compact loading does not support QGIX v{index.schema_version}."
         )
+    if index.header_encoding == 2:
+        raise ValueError(
+            "CUDA compact loading does not support exact uint16 checkpoint "
+            "headers (encoding 2). Use the native Swift/Metal loader."
+        )
     whole_file_integrity_ms = 0.0
     if index.schema_version == 3:
         index.require_raw_reconstruction()
@@ -1016,16 +1019,13 @@ def load_compact_h5_cuda(
         expected_whole_file_sha256 is None
     ):
         raise ValueError(
-            f"{integrity_mode} integrity mode requires "
-            "expected_whole_file_sha256."
+            f"{integrity_mode} integrity mode requires expected_whole_file_sha256."
         )
     if integrity_mode == "chunked":
         if integrity_chunk_bytes <= 0:
             raise ValueError("integrity_chunk_bytes must be greater than zero.")
         if not expected_chunk_sha256:
-            raise ValueError(
-                "chunked integrity mode requires expected_chunk_sha256."
-            )
+            raise ValueError("chunked integrity mode requires expected_chunk_sha256.")
     if index.schema_version == 3 and integrity_mode != "decoded":
         raise ValueError(
             "QGIX v3 already uses its direct-payload integrity path; "
@@ -1264,9 +1264,7 @@ def load_compact_h5_cuda(
                             f"Compact shard {shard_index} decoded SHA-256 is {digest}, "
                             f"expected {shard.decoded_sha256}."
                         )
-                    integrity_ms += (
-                        time.perf_counter() - integrity_start
-                    ) * 1_000.0
+                    integrity_ms += (time.perf_counter() - integrity_start) * 1_000.0
                 resident_shards.append(
                     _CudaCompactShard(
                         payload=decoded.view(cp.uint32),
@@ -1775,8 +1773,7 @@ def _timed_chunk_sha256_file(
     for ordinal, (actual, wanted) in enumerate(zip(observed, expected, strict=True)):
         if actual != wanted:
             raise ValueError(
-                f"Compact HDF5 chunk {ordinal} SHA-256 is {actual}, expected "
-                f"{wanted}."
+                f"Compact HDF5 chunk {ordinal} SHA-256 is {actual}, expected {wanted}."
             )
     return (time.perf_counter() - started) * 1_000.0
 

@@ -8,6 +8,7 @@ struct NativeFileIdentity {
   let inode: UInt64
   let bytes: UInt64
   let modificationNanoseconds: UInt64
+  let changeNanoseconds: UInt64
 }
 
 func nativeCanonicalURL(_ input: URL) -> URL {
@@ -19,7 +20,8 @@ func nativeFileIdentity(for input: URL) throws -> NativeFileIdentity {
   var status = stat()
   let result = url.path.withCString { Darwin.lstat($0, &status) }
   guard result == 0, status.st_size >= 0, status.st_mtimespec.tv_sec >= 0,
-    status.st_mtimespec.tv_nsec >= 0
+    status.st_mtimespec.tv_nsec >= 0, status.st_ctimespec.tv_sec >= 0,
+    status.st_ctimespec.tv_nsec >= 0
   else {
     throw Native4DSTEMIOError.invalidData("Could not inspect \(url.path)")
   }
@@ -27,10 +29,12 @@ func nativeFileIdentity(for input: URL) throws -> NativeFileIdentity {
   let nanoseconds = UInt64(status.st_mtimespec.tv_nsec)
   return NativeFileIdentity(
     path: url.path,
-    device: UInt64(status.st_dev),
+    device: UInt64(truncatingIfNeeded: status.st_dev),
     inode: UInt64(status.st_ino),
     bytes: UInt64(status.st_size),
-    modificationNanoseconds: seconds * 1_000_000_000 + nanoseconds
+    modificationNanoseconds: seconds * 1_000_000_000 + nanoseconds,
+    changeNanoseconds: UInt64(status.st_ctimespec.tv_sec) * 1_000_000_000
+      + UInt64(status.st_ctimespec.tv_nsec)
   )
 }
 
@@ -43,12 +47,14 @@ func nativeDatasetSignature(for files: [URL]) throws -> String {
     var inode = identity.inode.littleEndian
     var bytes = identity.bytes.littleEndian
     var modificationNanoseconds = identity.modificationNanoseconds.littleEndian
+    var changeNanoseconds = identity.changeNanoseconds.littleEndian
     withUnsafeBytes(of: &device) { digest.update(bufferPointer: $0) }
     withUnsafeBytes(of: &inode) { digest.update(bufferPointer: $0) }
     withUnsafeBytes(of: &bytes) { digest.update(bufferPointer: $0) }
     withUnsafeBytes(of: &modificationNanoseconds) {
       digest.update(bufferPointer: $0)
     }
+    withUnsafeBytes(of: &changeNanoseconds) { digest.update(bufferPointer: $0) }
   }
   return digest.finalize().prefix(10).map { String(format: "%02x", $0) }.joined()
 }
@@ -65,6 +71,9 @@ private struct NativeContentSnapshot: Codable, Equatable {
   let inode: UInt64
   let bytes: UInt64
   let modificationNanoseconds: UInt64
+  // Restoring mtime after an in-place rewrite must not preserve cached hashes.
+  // This required field also makes older cache snapshots a one-time miss.
+  let changeNanoseconds: UInt64
 }
 
 private func nativeContentSnapshot(for url: URL) throws -> NativeContentSnapshot {
@@ -74,7 +83,8 @@ private func nativeContentSnapshot(for url: URL) throws -> NativeContentSnapshot
     device: identity.device,
     inode: identity.inode,
     bytes: identity.bytes,
-    modificationNanoseconds: identity.modificationNanoseconds
+    modificationNanoseconds: identity.modificationNanoseconds,
+    changeNanoseconds: identity.changeNanoseconds
   )
 }
 

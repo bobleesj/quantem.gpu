@@ -219,10 +219,14 @@ class CompactH5Index:
                 scan_tile,
                 header_encoding,
             ) = _INDEX_HEADER_V3.unpack_from(binary)
-            if reserved != 0 or scan_tile != _SCAN_TILE_V3 or header_encoding != 1:
+            if (
+                reserved != 0
+                or scan_tile != _SCAN_TILE_V3
+                or header_encoding not in (1, 2)
+            ):
                 raise ValueError(
                     f"{path} compact v3 requires reserved=0, scan_tile=32, and "
-                    "compact header encoding 1."
+                    "compact header encoding 1 (uint8) or 2 (uint16)."
                 )
             payload_chunk_bytes = 0
             schema_version = 3
@@ -759,11 +763,14 @@ class CompactH5ReferenceDecoder:
                 raise ValueError(
                     f"Compact v3 shard {shard_index} has nonzero tail width nibbles."
                 )
+        if self.index.header_encoding == 2:
+            widths[widths == 15] = 16
         maximum_width = int(widths.max(initial=0))
-        if maximum_width > 8:
+        permitted_width = 16 if self.index.header_encoding == 2 else 8
+        if maximum_width > permitted_width:
             raise ValueError(
                 f"Compact v3 shard {shard_index} requires width {maximum_width}; "
-                "the direct uint8 contract permits at most 8."
+                f"this direct encoding permits at most {permitted_width}."
             )
         if self.index.excluded_detector_pixels and np.any(
             widths[np.asarray(self.index.excluded_detector_pixels)] != 0
@@ -1602,11 +1609,11 @@ def _validate_prepared_dpc_moments(
         raise ValueError(  # noqa: TRY004 - malformed serialized input
             f"{path} compact prepared DPC moments are not an object."
         )
-    if schema_version == 1:
-        if manifest.get("working_dtype") != "uint16":
-            raise ValueError(
-                f"{path} compact prepared DPC moments require uint16 working data."
-            )
+    if schema_version == 1 and manifest.get("working_dtype") != "uint16":
+        raise ValueError(
+            f"{path} compact prepared DPC moments require uint16 working data."
+        )
+    if manifest.get("working_dtype") == "uint16":
         schema = "quantem.gpu.prepared-dpc-moments/v2"
         working_dtype = "uint16"
         maximum_value = int(np.iinfo(np.uint16).max)
@@ -1674,7 +1681,7 @@ def _validate_prepared_dpc_moments(
         "narrow_products": max(row_moment_bound, column_moment_bound)
         <= np.iinfo(np.uint32).max,
     }
-    if schema_version == 3:
+    if working_dtype == "uint8":
         expected.pop("working_dtype")
         expected.pop("maximum_value")
     mismatches = {
@@ -1800,13 +1807,16 @@ def _validate_manifest(
                 "pixel indices."
             )
         manifest_pixels.extend(coordinates)
+        source_dtype = manifest.get("source_dtype")
+        if source_dtype not in {"uint8", "uint16"}:
+            raise ValueError(f"{path} compact v3 source dtype must be uint8 or uint16.")
         expected = {
             "schema": "quantem.gpu.packed-detector-h5/v3",
             "status": "complete",
             "payload_codec": "direct-bitpacked-u32",
             "source_shape": list(shape),
-            "source_dtype": "uint16",
-            "working_dtype": "uint8",
+            "source_dtype": source_dtype,
+            "working_dtype": "uint16" if header_encoding == 2 else "uint8",
             "working_value_definition": (
                 "all admitted source counts exactly; authenticated dead pixels "
                 "set to zero"
@@ -1840,7 +1850,9 @@ def _validate_manifest(
     if schema_version == 3:
         for field in (
             "source_raw_logical_sha256",
-            "prepared_uint8_sha256",
+            "working_logical_sha256"
+            if header_encoding == 2
+            else "prepared_uint8_sha256",
             "detector_mask_sha256",
         ):
             value = manifest.get(field)
@@ -1850,7 +1862,7 @@ def _validate_manifest(
                 or any(character not in "0123456789abcdef" for character in value)
             ):
                 raise ValueError(f"{path} compact v3 {field} is invalid.")
-        if header_encoding != 1:
+        if header_encoding not in (1, 2):
             raise ValueError(f"{path} compact v3 header encoding is unsupported.")
         pixel_sequence_sha256 = manifest.get("masked_detector_pixels_sha256")
         if pixel_sequence_sha256 is not None:

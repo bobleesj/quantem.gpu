@@ -20,7 +20,8 @@ public struct MetalCompactH5PreparedDPCMoments: Equatable, Sendable {
   public let fileOffset: UInt64
   public let fileBytes: UInt64
   public let sha256: String
-  public let workingLogicalSHA256: String
+  /// Nil for in-memory original-HDF5 residents, which do not hash a dense tensor.
+  public let workingLogicalSHA256: String?
   public let workingDtype: String
   public let detectorMaskSHA256: String
   public let scanCount: Int
@@ -34,7 +35,7 @@ public struct MetalCompactH5PreparedDPCMoments: Equatable, Sendable {
 
   /// Backward-compatible name for QGIX-v3 uint8 moment receipts.
   @available(*, deprecated, message: "Use workingLogicalSHA256.")
-  public var workingUInt8SHA256: String { workingLogicalSHA256 }
+  public var workingUInt8SHA256: String? { workingLogicalSHA256 }
 }
 
 /// One exact source-bound canonical virtual-detector product.
@@ -130,8 +131,11 @@ public struct MetalCompactH5LoadMetrics: Equatable, Sendable {
   public let metadataMilliseconds: Double
   public let sourceReadMilliseconds: Double
   public let descriptorPreparationMilliseconds: Double
-  /// GPU timestamp duration for parallel descriptor/chunk offset construction.
+  /// Standalone GPU preparation commands: descriptor construction for compact
+  /// input, or packing/products for original input. Fused intervals are separate.
   public let gpuPreparationMilliseconds: Double
+  /// Decode-only commands. Fused intervals are counted separately; zero does
+  /// not imply free decoding when a combined interval is present.
   public let gpuDecodeMilliseconds: Double
   public let decodedIntegrityMilliseconds: Double
   public let privateUploadMilliseconds: Double
@@ -156,6 +160,16 @@ public struct MetalCompactH5LoadMetrics: Equatable, Sendable {
   public let preparedDetectorProductBytes: UInt64
   public let interactionResidentBytes: UInt64
   public let totalResidentBytes: UInt64
+  /// True only when original loading accepted source-bound exact DPC sums.
+  public internal(set) var reusedPreparedDPC = false
+  /// Combined GPU interval, not separable into decode/header timings. Add this
+  /// to decode-only and preparation durations when summing GPU work.
+  public internal(set) var gpuDecodeAndHeaderMilliseconds = 0.0
+  /// Checked original decode, packing, verification and summary in one interval.
+  /// Nil means this path was not used. Add to the other command durations, but
+  /// do not attribute a fraction to decoding or packing without isolated timing.
+  /// Includes a rejected fused attempt if the successful load retried normally.
+  public internal(set) var gpuDecodeAndPackingMilliseconds: Double? = nil
 }
 
 /// Authentication and scheduling strategy for exact compact shard payloads.
@@ -192,6 +206,22 @@ public struct MetalCompactH5DetectorMetrics: Equatable, Sendable {
   public let fftDispatchCount: Int
 }
 
+/// Per-source result from one shared detector update across a resident series.
+public struct MetalCompactH5DetectorSeriesItemMetrics: Equatable, Sendable {
+  public let sourceIdentitySHA256: String
+  public let mode: String
+  public let changedDetectorPixels: Int
+}
+
+/// Timing and exact update results for one resident-series detector request.
+public struct MetalCompactH5DetectorSeriesMetrics: Equatable, Sendable {
+  public let sources: [MetalCompactH5DetectorSeriesItemMetrics]
+  public let wallMilliseconds: Double
+  public let gpuMilliseconds: Double
+  public let submissionCount: Int
+  public let fftDispatchCount: Int
+}
+
 /// Streaming exact hash of all mask-applied working values in scan-major order.
 public struct MetalCompactH5LogicalHashMetrics: Equatable, Sendable {
   public let sha256: String
@@ -216,6 +246,19 @@ public struct MetalCompactH5ExactDPCMoments: Equatable, Sendable {
   public let total: [UInt64]
   public let detectorRowMoment: [UInt64]
   public let detectorColumnMoment: [UInt64]
+  public let sourceIdentitySHA256: String?
+  public let detectorMaskSHA256: String?
+
+  public init(
+    total: [UInt64], detectorRowMoment: [UInt64], detectorColumnMoment: [UInt64],
+    sourceIdentitySHA256: String? = nil, detectorMaskSHA256: String? = nil
+  ) {
+    self.total = total
+    self.detectorRowMoment = detectorRowMoment
+    self.detectorColumnMoment = detectorColumnMoment
+    self.sourceIdentitySHA256 = sourceIdentitySHA256
+    self.detectorMaskSHA256 = detectorMaskSHA256
+  }
 }
 
 private struct CompactH5ShardRecord {
@@ -287,6 +330,7 @@ private struct CompactSelectedParameters {
   var scanTile: UInt32
   var headerWordsPerPixel: UInt32
   var headerEncoding: UInt32
+  var payloadLayout: UInt32 = 0
 }
 
 private struct CompactDetectorEntry {
@@ -303,6 +347,7 @@ private struct CompactDetectorParameters {
   var scanTile: UInt32
   var headerWordsPerPixel: UInt32
   var headerEncoding: UInt32
+  var payloadLayout: UInt32 = 0
 }
 
 private struct CompactFullDecodeParameters {
@@ -313,6 +358,7 @@ private struct CompactFullDecodeParameters {
   var headerWordsPerPixel: UInt32
   var headerEncoding: UInt32
   var outputWordCount: UInt32
+  var payloadLayout: UInt32 = 0
 }
 
 private struct CompactDetectorSumParameters {
@@ -322,6 +368,7 @@ private struct CompactDetectorSumParameters {
   var scanTile: UInt32
   var headerWordsPerPixel: UInt32
   var headerEncoding: UInt32
+  var payloadLayout: UInt32 = 0
 }
 
 private struct CompactResidentShard {
@@ -395,6 +442,55 @@ private struct CompactPreparedDetectorLoadResult {
   let bytes: UInt64
 }
 
+// A private lifetime owner keeps newer Metal types out of older-platform APIs.
+private final class CompactResidencyLease {
+  let attach: (MTLCommandBuffer) -> Void
+  let allocationCount: Int
+  let allocatedBytes: UInt64
+  let footprintExcessBytes: UInt64
+  private var endAction: (() -> Void)?
+
+  @available(macOS 15.0, iOS 18.0, *)
+  init(device: MTLDevice, buffers: [MTLBuffer]) throws {
+    var identities = Set<ObjectIdentifier>()
+    let unique = buffers.filter { identities.insert(ObjectIdentifier($0 as AnyObject)).inserted }
+    let descriptor = MTLResidencySetDescriptor()
+    descriptor.label = "Compact source stable allocations"
+    descriptor.initialCapacity = unique.count
+    let set = try device.makeResidencySet(descriptor: descriptor)
+    for buffer in unique { set.addAllocation(buffer) }
+    set.commit()
+    guard set.allocationCount == unique.count,
+      unique.allSatisfy({ set.containsAllocation($0) })
+    else {
+      set.removeAllAllocations()
+      set.commit()
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "Metal residency set did not retain every stable source allocation.")
+    }
+    allocationCount = set.allocationCount
+    allocatedBytes = set.allocatedSize
+    let resourceBytes = unique.reduce(UInt64(0)) { $0 + UInt64($1.allocatedSize) }
+    footprintExcessBytes = set.allocatedSize > resourceBytes ? set.allocatedSize - resourceBytes : 0
+    attach = { $0.useResidencySet(set) }
+    endAction = {
+      set.endResidency()
+      set.removeAllAllocations()
+      set.commit()
+    }
+    // Advisory residency, not pinning: competing apps may still defer work.
+    set.requestResidency()
+  }
+
+  func end() {
+    let action = endAction
+    endAction = nil
+    action?()
+  }
+
+  deinit { end() }
+}
+
 /// Exact interactions over a validated compact HDF5 source resident in Metal.
 ///
 /// The large payload and descriptor buffers use private Metal storage. Detector
@@ -409,9 +505,14 @@ public final class MetalCompactH5ResidentSource {
   private let queue: MTLCommandQueue
   private let selectedPipeline: MTLComputePipelineState
   private let detectorPipeline: MTLComputePipelineState
+  private let pixelLaneDetectorPipeline: MTLComputePipelineState
+  private let planarILPDetectorPipeline: MTLComputePipelineState?
+  private let planarScanCooperativePipeline: MTLComputePipelineState?
+  private let planarFusedDetectorPipeline: MTLComputePipelineState?
   private let fullDecodePipeline: MTLComputePipelineState
   private let detectorSumPipeline: MTLComputePipelineState
   private let headerEncoding: UInt32
+  private let payloadLayout: UInt32
   private let headerWordsPerPixel: UInt32
   private var shards: [CompactResidentShard]
   private var excluded: MTLBuffer?
@@ -423,10 +524,23 @@ public final class MetalCompactH5ResidentSource {
   private var preparedDPCMomentBuffer: MTLBuffer?
   private var preparedDPCOutputs: [MTLBuffer]
   private var preparedDetectorProducts: [String: CompactPreparedDetectorResident]
+  private var residencyLease: CompactResidencyLease?
   private var activeDetectorOutput = 0
   private var detectorMask: [UInt8]
   private var detectorSumReady = false
   public private(set) var isReleased = false
+
+  fileprivate func markOriginalDetectorSumReady() { detectorSumReady = true }
+
+  private struct PendingDetectorUpdate {
+    let normalizedMask: [UInt8]
+    let nextOutput: Int
+    let mode: String
+    let changedDetectorPixels: Int
+    let preparedValues: MTLBuffer?
+    let clearsOutput: Bool
+    let shouldEncode: Bool
+  }
 
   fileprivate init(
     metadata: MetalCompactH5Metadata,
@@ -435,9 +549,14 @@ public final class MetalCompactH5ResidentSource {
     queue: MTLCommandQueue,
     selectedPipeline: MTLComputePipelineState,
     detectorPipeline: MTLComputePipelineState,
+    pixelLaneDetectorPipeline: MTLComputePipelineState,
+    planarILPDetectorPipeline: MTLComputePipelineState? = nil,
+    planarScanCooperativePipeline: MTLComputePipelineState? = nil,
+    planarFusedDetectorPipeline: MTLComputePipelineState? = nil,
     fullDecodePipeline: MTLComputePipelineState,
     detectorSumPipeline: MTLComputePipelineState,
     headerEncoding: UInt32,
+    payloadLayout: UInt32,
     headerWordsPerPixel: UInt32,
     shards: [CompactResidentShard],
     excluded: MTLBuffer,
@@ -448,7 +567,8 @@ public final class MetalCompactH5ResidentSource {
     detectorSumOutput: MTLBuffer,
     preparedDPCMomentBuffer: MTLBuffer?,
     preparedDPCOutputs: [MTLBuffer],
-    preparedDetectorProducts: [String: CompactPreparedDetectorResident]
+    preparedDetectorProducts: [String: CompactPreparedDetectorResident],
+    residencyLease: CompactResidencyLease? = nil
   ) {
     self.metadata = metadata
     self.loadMetrics = loadMetrics
@@ -456,9 +576,14 @@ public final class MetalCompactH5ResidentSource {
     self.queue = queue
     self.selectedPipeline = selectedPipeline
     self.detectorPipeline = detectorPipeline
+    self.pixelLaneDetectorPipeline = pixelLaneDetectorPipeline
+    self.planarILPDetectorPipeline = planarILPDetectorPipeline
+    self.planarScanCooperativePipeline = planarScanCooperativePipeline
+    self.planarFusedDetectorPipeline = planarFusedDetectorPipeline
     self.fullDecodePipeline = fullDecodePipeline
     self.detectorSumPipeline = detectorSumPipeline
     self.headerEncoding = headerEncoding
+    self.payloadLayout = payloadLayout
     self.headerWordsPerPixel = headerWordsPerPixel
     self.shards = shards
     self.excluded = excluded
@@ -470,6 +595,7 @@ public final class MetalCompactH5ResidentSource {
     self.preparedDPCMomentBuffer = preparedDPCMomentBuffer
     self.preparedDPCOutputs = preparedDPCOutputs
     self.preparedDetectorProducts = preparedDetectorProducts
+    self.residencyLease = residencyLease
     detectorMask = [UInt8](repeating: 0, count: metadata.detectorPixelCount)
   }
 
@@ -483,7 +609,7 @@ public final class MetalCompactH5ResidentSource {
     to destination: URL,
     shouldCancel: () -> Bool = { false }
   ) throws {
-    guard !isReleased, headerEncoding == 0,
+    guard !isReleased, headerEncoding == 0, payloadLayout == 0,
       metadata.embeddedScientificSemantics, metadata.workingDtype == "uint16"
     else {
       throw CompactNativeCache.invalid("requires a live exact uint16 QGIX v1 source.")
@@ -591,7 +717,40 @@ public final class MetalCompactH5ResidentSource {
     scanRow: Int,
     scanColumn: Int
   ) throws -> [UInt32] {
-    guard !isReleased, let excluded, let diffractionOutput,
+    guard let diffractionOutput else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "The compact resident source has been released. Load it again before requesting diffraction."
+      )
+    }
+    try extractDiffraction(scanRow: scanRow, scanColumn: scanColumn, into: diffractionOutput)
+    return Self.u32Values(diffractionOutput, count: metadata.detectorPixelCount)
+  }
+
+  /// Decode one exact mask-applied diffraction pattern into an owned Metal buffer.
+  ///
+  /// The shared buffer contains detector-row-major uint32 counts and remains
+  /// unchanged by later extraction or source release. No CPU array or dense 4D
+  /// allocation is made. Serialize this operation with interactions and release;
+  /// release snapshots after their display consumers finish.
+  public func snapshotDiffraction(scanRow: Int, scanColumn: Int) throws -> MTLBuffer {
+    guard !isReleased else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "The compact resident source has been released. Load it again before requesting diffraction."
+      )
+    }
+    let bytes = metadata.detectorPixelCount * MemoryLayout<UInt32>.stride
+    guard let output = device.makeBuffer(length: bytes, options: .storageModeShared) else {
+      throw Metal4DSTEMStreamingIOError.allocationFailed(
+        label: "selected diffraction snapshot", bytes: UInt64(bytes))
+    }
+    try extractDiffraction(scanRow: scanRow, scanColumn: scanColumn, into: output)
+    return output
+  }
+
+  private func extractDiffraction(
+    scanRow: Int, scanColumn: Int, into output: MTLBuffer
+  ) throws {
+    guard !isReleased, let excluded,
       shards.count == metadata.shardCount
     else {
       throw Metal4DSTEMStreamingIOError.invalidRequest(
@@ -615,7 +774,8 @@ public final class MetalCompactH5ResidentSource {
       pixelCount: UInt32(metadata.detectorPixelCount),
       scanTile: UInt32(metadata.scanTile),
       headerWordsPerPixel: headerWordsPerPixel,
-      headerEncoding: headerEncoding
+      headerEncoding: headerEncoding,
+      payloadLayout: payloadLayout
     )
     guard let command = queue.makeCommandBuffer(),
       let encoder = command.makeComputeCommandEncoder()
@@ -628,7 +788,7 @@ public final class MetalCompactH5ResidentSource {
     encoder.setBuffer(shards[shardIndex].payload, offset: 0, index: 0)
     encoder.setBuffer(shards[shardIndex].descriptors, offset: 0, index: 1)
     encoder.setBuffer(excluded, offset: 0, index: 2)
-    encoder.setBuffer(diffractionOutput, offset: 0, index: 3)
+    encoder.setBuffer(output, offset: 0, index: 3)
     encoder.setBytes(
       &parameters,
       length: MemoryLayout.stride(ofValue: parameters),
@@ -639,11 +799,8 @@ public final class MetalCompactH5ResidentSource {
       threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
     )
     encoder.endEncoding()
+    residencyLease?.attach(command)
     try Self.complete(command, operation: "selected diffraction")
-    return Self.u32Values(
-      diffractionOutput,
-      count: metadata.detectorPixelCount
-    )
   }
 
   /// Return the exact detector sum and float32 mean diffraction pattern.
@@ -678,7 +835,8 @@ public final class MetalCompactH5ResidentSource {
           pixelCount: UInt32(metadata.detectorPixelCount),
           scanTile: UInt32(metadata.scanTile),
           headerWordsPerPixel: headerWordsPerPixel,
-          headerEncoding: headerEncoding
+          headerEncoding: headerEncoding,
+          payloadLayout: payloadLayout
         )
         encoder.setComputePipelineState(detectorSumPipeline)
         encoder.setBuffer(shard.payload, offset: 0, index: 0)
@@ -722,13 +880,286 @@ public final class MetalCompactH5ResidentSource {
 
   /// Apply a row-major detector mask and atomically publish its exact u32 scan map.
   ///
-  /// The first call is a full rebase. Later calls use signed mask deltas. A mask
-  /// that could overflow a u32 accumulator is rejected before GPU execution.
+  /// The first call is a full rebase. Later calls choose signed mask deltas or
+  /// a smaller full rebase. A mask that could overflow a u32 accumulator is
+  /// rejected before GPU execution.
   @discardableResult
   public func updateVirtualDetector(
     mask: [UInt8],
     forceRebase: Bool = false
   ) throws -> MetalCompactH5DetectorMetrics {
+    let batch = try Self.updateVirtualDetectors(
+      [self], mask: mask, forceRebase: forceRebase
+    )
+    let source = batch.sources[0]
+    return MetalCompactH5DetectorMetrics(
+      mode: source.mode,
+      changedDetectorPixels: source.changedDetectorPixels,
+      wallMilliseconds: batch.wallMilliseconds,
+      gpuMilliseconds: batch.gpuMilliseconds,
+      fftDispatchCount: batch.fftDispatchCount
+    )
+  }
+
+  /// Apply one exact detector mask to every source in a resident tilt series.
+  ///
+  /// All source updates are encoded into one Metal command buffer and become
+  /// visible only after that shared submission completes. Sources must use the
+  /// same Metal device and detector geometry. Each source retains its own
+  /// persistent output buffer, so no dense 4D tensor or cross-source copy is
+  /// introduced.
+  ///
+  /// ```swift
+  /// let metrics = try MetalCompactH5ResidentSource.updateVirtualDetectors(
+  ///   residentTilts, mask: brightFieldMask
+  /// )
+  /// ```
+  @discardableResult
+  public static func updateVirtualDetectors(
+    _ sources: [MetalCompactH5ResidentSource],
+    mask: [UInt8],
+    forceRebase: Bool = false
+  ) throws -> MetalCompactH5DetectorSeriesMetrics {
+    try performDetectorUpdates(
+      sources, mask: mask, forceRebase: forceRebase, captureSnapshots: false
+    ).metrics
+  }
+
+  /// Update exact detector maps and return independently owned display images.
+  ///
+  /// The images contain scan-row-major uint32 counts. Reduction and image
+  /// copies share one command submission and completion wait; GPU timing
+  /// includes both operations. Later source updates and release cannot change
+  /// these snapshots. On failure, the caller's previous snapshots are retained.
+  /// Serialize this call with other updates and release on the same sources.
+  ///
+  /// ```swift
+  /// var images: [MTLBuffer] = []
+  /// let metrics = try MetalCompactH5ResidentSource.updateVirtualDetectors(
+  ///   tilts, mask: detectorMask, snapshots: &images
+  /// )
+  /// ```
+  @discardableResult
+  public static func updateVirtualDetectors(
+    _ sources: [MetalCompactH5ResidentSource],
+    mask: [UInt8],
+    forceRebase: Bool = false,
+    snapshots: inout [MTLBuffer]
+  ) throws -> MetalCompactH5DetectorSeriesMetrics {
+    let completed = try performDetectorUpdates(
+      sources, mask: mask, forceRebase: forceRebase, captureSnapshots: true
+    )
+    snapshots = completed.snapshots
+    return completed.metrics
+  }
+
+  private static func performDetectorUpdates(
+    _ sources: [MetalCompactH5ResidentSource],
+    mask: [UInt8],
+    forceRebase: Bool,
+    captureSnapshots: Bool
+  ) throws -> (metrics: MetalCompactH5DetectorSeriesMetrics, snapshots: [MTLBuffer]) {
+    let hostProfile =
+      ProcessInfo.processInfo.environment["COMPACT_UPDATE_HOST_PROFILE"] == "1"
+      && ProcessInfo.processInfo.environment["COMPACT_UPDATE_PHASE_PROFILE"] != "1"
+    let hostProfileStart = ContinuousClock.now
+    var hostStages: [String: Double] = [:]
+    var commandHostTimes: [String: Double] = [:]
+    func hostStamp(_ name: String) {
+      if hostProfile { hostStages[name] = milliseconds(from: hostProfileStart) }
+    }
+    guard let first = sources.first else {
+      return (
+        MetalCompactH5DetectorSeriesMetrics(
+          sources: [], wallMilliseconds: 0, gpuMilliseconds: 0,
+          submissionCount: 0, fftDispatchCount: 0
+        ), []
+      )
+    }
+    guard Set(sources.map(ObjectIdentifier.init)).count == sources.count else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "A resident detector series cannot contain the same source twice. "
+          + "Remove duplicate sources before updating the series."
+      )
+    }
+    guard
+      sources.allSatisfy({
+        ($0.device as AnyObject) === (first.device as AnyObject)
+          && $0.metadata.detectorRows == first.metadata.detectorRows
+          && $0.metadata.detectorColumns == first.metadata.detectorColumns
+      })
+    else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "A resident detector series requires one Metal device and matching "
+          + "detector (row, column) geometry. Load the tilts together."
+      )
+    }
+
+    hostStamp("prepare_start_ms")
+    let updates = try sources.map {
+      try $0.prepareDetectorUpdate(mask: mask, forceRebase: forceRebase)
+    }
+    hostStamp("prepare_end_ms")
+    let wallStart = ContinuousClock.now
+    let snapshots = captureSnapshots ? try allocateDetectorSnapshots(sources) : []
+    hostStamp("snapshot_allocation_end_ms")
+    let needsSubmission = captureSnapshots || updates.contains(where: \.shouldEncode)
+    var gpuMilliseconds = 0.0
+    let profilePhases = ProcessInfo.processInfo.environment["COMPACT_UPDATE_PHASE_PROFILE"] == "1"
+    var phaseMilliseconds = [Double](repeating: 0, count: 3)
+    var submissionCount = 0
+    let residencyLeases = sources.compactMap(\.residencyLease)
+    guard residencyLeases.count <= 32 else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "Experimental residency sets support up to 32 sources per batch. Disable COMPACT_RESIDENCY_SETS or use a smaller series."
+      )
+    }
+    if needsSubmission {
+      guard var command = first.queue.makeCommandBuffer() else {
+        throw Metal4DSTEMStreamingIOError.metalUnavailable(
+          "Metal could not create a command buffer for the resident detector series."
+        )
+      }
+      for lease in residencyLeases { lease.attach(command) }
+      for (source, update) in zip(sources, updates)
+      where update.shouldEncode && (update.preparedValues != nil || update.clearsOutput) {
+        try source.encodeDetectorUpdate(update, command: command)
+      }
+      let reductions = zip(sources, updates).filter {
+        $0.1.shouldEncode && $0.1.preparedValues == nil && !$0.1.clearsOutput
+      }
+      if !reductions.isEmpty {
+        guard let encoder = command.makeComputeCommandEncoder(dispatchType: .concurrent) else {
+          throw Metal4DSTEMStreamingIOError.metalUnavailable(
+            "Metal could not create the concurrent resident-series encoder."
+          )
+        }
+        // Residents have independent outputs; shards write disjoint scan ranges.
+        // No dispatch consumes another dispatch's output in this submission.
+        for (source, update) in reductions {
+          try source.encodeDetectorUpdate(update, command: command, sharedEncoder: encoder)
+        }
+        encoder.endEncoding()
+      }
+      if profilePhases {
+        try complete(command, operation: "diagnostic raw detector phase")
+        submissionCount += 1
+        phaseMilliseconds[0] = max(0, command.gpuEndTime - command.gpuStartTime) * 1_000
+        guard let next = first.queue.makeCommandBuffer() else {
+          throw Metal4DSTEMStreamingIOError.metalUnavailable(
+            "Metal could not create diagnostic aggregate command.")
+        }
+        command = next
+        for lease in residencyLeases { lease.attach(command) }
+      }
+      if profilePhases {
+        try complete(command, operation: "diagnostic aggregate detector phase")
+        submissionCount += 1
+        phaseMilliseconds[1] = max(0, command.gpuEndTime - command.gpuStartTime) * 1_000
+        guard let next = first.queue.makeCommandBuffer() else {
+          throw Metal4DSTEMStreamingIOError.metalUnavailable(
+            "Metal could not create diagnostic snapshot command.")
+        }
+        command = next
+        for lease in residencyLeases { lease.attach(command) }
+      }
+      if captureSnapshots {
+        guard let encoder = command.makeBlitCommandEncoder() else {
+          throw Metal4DSTEMStreamingIOError.metalUnavailable(
+            "Metal could not encode the completed detector image snapshots."
+          )
+        }
+        for (index, source) in sources.enumerated() {
+          let update = updates[index]
+          let outputIndex = update.shouldEncode ? update.nextOutput : source.activeDetectorOutput
+          encoder.copy(
+            from: source.detectorOutputs[outputIndex], sourceOffset: 0,
+            to: snapshots[index], destinationOffset: 0, size: snapshots[index].length
+          )
+        }
+        encoder.endEncoding()
+      }
+      hostStamp("encoding_end_ms")
+      if hostProfile {
+        try complete(command, operation: "resident detector series", hostStamp: hostStamp)
+      } else {
+        try complete(command, operation: "resident detector series")
+      }
+      if hostProfile {
+        // kernel* timestamps describe CPU driver scheduling, not GPU shaders.
+        commandHostTimes = [
+          "kernel_start": command.kernelStartTime, "kernel_end": command.kernelEndTime,
+          "gpu_start": command.gpuStartTime, "gpu_end": command.gpuEndTime,
+        ]
+      }
+      submissionCount += 1
+      gpuMilliseconds = max(0, command.gpuEndTime - command.gpuStartTime) * 1_000
+      if profilePhases {
+        phaseMilliseconds[2] = gpuMilliseconds
+        gpuMilliseconds += phaseMilliseconds[0] + phaseMilliseconds[1]
+        var aggregateEntries = [Int](repeating: 0, count: sources.count)
+        let record: [String: Any] = [
+          "phase": "detector_update_stages", "diagnostic_split_commands": true,
+          "raw_gpu_ms": phaseMilliseconds[0], "aggregate_gpu_ms": phaseMilliseconds[1],
+          "snapshot_gpu_ms": phaseMilliseconds[2], "submission_count": submissionCount,
+          "raw_entries": zip(updates, aggregateEntries).map { $0.changedDetectorPixels - $1 },
+          "aggregate_entries": aggregateEntries, "modes": updates.map(\.mode),
+        ]
+        var json = try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys])
+        json.append(10)
+        FileHandle.standardError.write(json)
+      }
+    }
+    for (source, update) in zip(sources, updates) {
+      source.publishDetectorUpdate(update)
+    }
+    let sourceMetrics = zip(sources, updates).map { source, update in
+      MetalCompactH5DetectorSeriesItemMetrics(
+        sourceIdentitySHA256: source.metadata.sourceIdentitySHA256,
+        mode: update.mode,
+        changedDetectorPixels: update.changedDetectorPixels
+      )
+    }
+    let measuredWallMilliseconds = milliseconds(from: wallStart)
+    hostStamp("publication_end_ms")
+    if hostProfile {
+      var aggregateEntries = [Int](repeating: 0, count: sources.count)
+      let record: [String: Any] = [
+        "phase": "detector_host_stages", "diagnostic_only": true,
+        "stages_ms_from_call_entry": hostStages,
+        "command_host_times_seconds": commandHostTimes,
+        "wall_after_prepare_ms": measuredWallMilliseconds,
+        "gpu_interval_ms": gpuMilliseconds,
+        "submission_count": submissionCount, "source_count": sources.count,
+        "residency_set_count": residencyLeases.count,
+        "mask_sha256": SHA256.hash(data: Data(mask)).map { String(format: "%02x", $0) }.joined(),
+        "source_identities": sources.map { $0.metadata.sourceIdentitySHA256 },
+        "modes": updates.map(\.mode),
+        "raw_entries": zip(updates, aggregateEntries).map { $0.changedDetectorPixels - $1 },
+        "aggregate_entries": aggregateEntries,
+        "force_rebase": forceRebase, "capture_snapshots": captureSnapshots,
+      ]
+      // Logging is outside the reported wall interval and must not change
+      // scientific success or snapshot publication if diagnostics fail.
+      if var json = try? JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]) {
+        json.append(10)
+        FileHandle.standardError.write(json)
+      }
+    }
+    return (
+      MetalCompactH5DetectorSeriesMetrics(
+        sources: sourceMetrics,
+        wallMilliseconds: measuredWallMilliseconds,
+        gpuMilliseconds: gpuMilliseconds,
+        submissionCount: submissionCount,
+        fftDispatchCount: 0
+      ), snapshots
+    )
+  }
+
+  private func prepareDetectorUpdate(
+    mask: [UInt8], forceRebase: Bool
+  ) throws -> PendingDetectorUpdate {
     guard !isReleased, detectorOutputs.count == 2, let detectorEntryBuffer,
       shards.count == metadata.shardCount
     else {
@@ -745,9 +1176,8 @@ public final class MetalCompactH5ResidentSource {
           + "of \(metadata.detectorPixelCount) row-major detector pixels."
       )
     }
-    let excludedSet = Set(metadata.excludedDetectorPixels)
     var normalized = mask
-    for pixel in excludedSet { normalized[pixel] = 0 }
+    for pixel in metadata.excludedDetectorPixels { normalized[pixel] = 0 }
     var maximumSum: UInt64 = 0
     for pixel in normalized.indices where normalized[pixel] != 0 {
       let width = maximumWidths[pixel]
@@ -759,60 +1189,57 @@ public final class MetalCompactH5ResidentSource {
           + "Use a narrower detector or a future u64 reduction path."
       )
     }
-
-    if let prepared = preparedDetectorProducts.values.first(where: {
-      $0.mask == normalized
-    }) {
+    let nextOutput = 1 - activeDetectorOutput
+    if !forceRebase,
+      let prepared = preparedDetectorProducts.values.first(where: {
+        $0.mask == normalized
+      })
+    {
       let changedCount = zip(normalized, detectorMask).count { $0 != $1 }
-      if changedCount == 0 {
-        return MetalCompactH5DetectorMetrics(
-          mode: "delta",
-          changedDetectorPixels: 0,
-          wallMilliseconds: 0,
-          gpuMilliseconds: 0,
-          fftDispatchCount: 0
-        )
-      }
-      let nextOutput = 1 - activeDetectorOutput
-      let wallStart = ContinuousClock.now
-      guard let command = queue.makeCommandBuffer(),
-        let blit = command.makeBlitCommandEncoder()
-      else {
-        throw Metal4DSTEMStreamingIOError.metalUnavailable(
-          "Metal could not encode prepared virtual-detector activation."
-        )
-      }
-      blit.copy(
-        from: prepared.values,
-        sourceOffset: 0,
-        to: detectorOutputs[nextOutput],
-        destinationOffset: 0,
-        size: metadata.scanCount * MemoryLayout<UInt32>.stride
-      )
-      blit.endEncoding()
-      try Self.complete(command, operation: "prepared virtual detector")
-      activeDetectorOutput = nextOutput
-      detectorMask = normalized
-      return MetalCompactH5DetectorMetrics(
-        mode: "prepared",
+      return PendingDetectorUpdate(
+        normalizedMask: normalized, nextOutput: nextOutput,
+        mode: changedCount == 0 ? "delta" : "prepared",
         changedDetectorPixels: changedCount,
-        wallMilliseconds: Self.milliseconds(from: wallStart),
-        gpuMilliseconds: max(0, command.gpuEndTime - command.gpuStartTime) * 1_000,
-        fftDispatchCount: 0
+        preparedValues: changedCount == 0 ? nil : prepared.values,
+        clearsOutput: false,
+        shouldEncode: changedCount != 0
       )
     }
-
-    let isRebase = forceRebase || detectorMask.allSatisfy({ $0 == 0 })
+    let selectedCount = normalized.count { $0 != 0 }
+    let changedCount = zip(normalized, detectorMask).count { $0 != $1 }
+    if !forceRebase && changedCount == 0 {
+      return PendingDetectorUpdate(
+        normalizedMask: normalized, nextOutput: nextOutput, mode: "delta",
+        changedDetectorPixels: 0, preparedValues: nil, clearsOutput: false,
+        shouldEncode: false
+      )
+    }
+    let complementCount =
+      metadata.detectorPixelCount
+      - metadata.excludedDetectorPixels.count - selectedCount
+    // Authenticated exact totals are already resident. Subtracting their
+    // complement is cheaper for nearly full detectors and preserves counts.
+    // A forced rebase deliberately bypasses all prepared evidence for audits.
+    let preferComplement =
+      !forceRebase && preparedDPCMomentBuffer != nil
+      && complementCount < min(selectedCount, changedCount)
+    // A small detector moved far away can be cheaper to sum from zero than
+    // to subtract its old support and add the new support. Both are exact.
+    let preferRebase =
+      forceRebase || detectorMask.allSatisfy({ $0 == 0 })
+      || selectedCount < changedCount
+    let isComplement = preferComplement
+    let isRebase = preferRebase
     var entries: [CompactDetectorEntry] = []
     entries.reserveCapacity(metadata.detectorPixelCount)
     for pixel in normalized.indices {
-      if isRebase {
-        if normalized[pixel] != 0 {
-          entries.append(
-            CompactDetectorEntry(pixel: UInt32(pixel), coefficient: 1)
-          )
+      if isComplement {
+        if normalized[pixel] == 0 && !metadata.excludedDetectorPixels.contains(pixel) {
+          entries.append(CompactDetectorEntry(pixel: UInt32(pixel), coefficient: -1))
         }
-      } else if normalized[pixel] != detectorMask[pixel] {
+      } else if isRebase, normalized[pixel] != 0 {
+        entries.append(CompactDetectorEntry(pixel: UInt32(pixel), coefficient: 1))
+      } else if !isRebase, normalized[pixel] != detectorMask[pixel] {
         entries.append(
           CompactDetectorEntry(
             pixel: UInt32(pixel),
@@ -821,75 +1248,104 @@ public final class MetalCompactH5ResidentSource {
         )
       }
     }
-    if entries.isEmpty {
-      if isRebase {
-        // An empty forced rebase replaces the old image; it is not an
-        // unchanged-mask no-op. Publish only after the zero image completes.
-        let nextOutput = 1 - activeDetectorOutput
-        let wallStart = ContinuousClock.now
-        guard let command = queue.makeCommandBuffer(),
-          let blit = command.makeBlitCommandEncoder()
-        else {
-          throw Metal4DSTEMStreamingIOError.metalUnavailable(
-            "Metal could not clear the empty compact virtual-detector result."
-          )
-        }
-        blit.fill(
-          buffer: detectorOutputs[nextOutput],
-          range: 0..<(metadata.scanCount * MemoryLayout<UInt32>.stride), value: 0
-        )
-        blit.endEncoding()
-        try Self.complete(command, operation: "empty virtual detector")
-        activeDetectorOutput = nextOutput
-        detectorMask = normalized
-        return MetalCompactH5DetectorMetrics(
-          mode: "rebase",
-          changedDetectorPixels: 0,
-          wallMilliseconds: Self.milliseconds(from: wallStart),
-          gpuMilliseconds: max(0, command.gpuEndTime - command.gpuStartTime) * 1_000,
-          fftDispatchCount: 0
+    if !entries.isEmpty {
+      _ = entries.withUnsafeBytes { raw in
+        memcpy(detectorEntryBuffer.contents(), raw.baseAddress!, raw.count)
+      }
+    }
+    let entryCount = entries.count
+    let clearsOutput = !isComplement && isRebase && entryCount == 0
+    let update = PendingDetectorUpdate(
+      normalizedMask: normalized, nextOutput: nextOutput,
+      mode: isComplement ? "complement" : (isRebase ? "rebase" : "delta"),
+      changedDetectorPixels: entryCount,
+      preparedValues: nil,
+      clearsOutput: clearsOutput,
+      shouldEncode: isComplement || clearsOutput || entryCount != 0
+    )
+    return update
+  }
+
+  private func encodeDetectorUpdate(
+    _ update: PendingDetectorUpdate,
+    command: MTLCommandBuffer,
+    sharedEncoder: MTLComputeCommandEncoder? = nil
+  ) throws {
+    guard let detectorEntryBuffer else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "The compact resident source was released before its detector update. "
+          + "Reload the tilt series and try again."
+      )
+    }
+    if let prepared = update.preparedValues {
+      guard let blit = command.makeBlitCommandEncoder() else {
+        throw Metal4DSTEMStreamingIOError.metalUnavailable(
+          "Metal could not encode a prepared detector product for the resident series."
         )
       }
-      detectorMask = normalized
-      return MetalCompactH5DetectorMetrics(
-        mode: isRebase ? "rebase" : "delta",
-        changedDetectorPixels: 0,
-        wallMilliseconds: 0,
-        gpuMilliseconds: 0,
-        fftDispatchCount: 0
+      blit.copy(
+        from: prepared, sourceOffset: 0,
+        to: detectorOutputs[update.nextOutput], destinationOffset: 0,
+        size: metadata.scanCount * MemoryLayout<UInt32>.stride
       )
+      blit.endEncoding()
+      return
     }
-    _ = entries.withUnsafeBytes { raw in
-      memcpy(detectorEntryBuffer.contents(), raw.baseAddress!, raw.count)
+    if update.clearsOutput {
+      guard let blit = command.makeBlitCommandEncoder() else {
+        throw Metal4DSTEMStreamingIOError.metalUnavailable(
+          "Metal could not clear a resident detector output for the resident series."
+        )
+      }
+      blit.fill(
+        buffer: detectorOutputs[update.nextOutput],
+        range: 0..<metadata.scanCount * MemoryLayout<UInt32>.stride,
+        value: 0
+      )
+      blit.endEncoding()
+      return
     }
-    let nextOutput = 1 - activeDetectorOutput
-    let wallStart = ContinuousClock.now
-    guard let command = queue.makeCommandBuffer(),
-      let encoder = command.makeComputeCommandEncoder()
-    else {
+    guard let encoder = sharedEncoder ?? command.makeComputeCommandEncoder() else {
       throw Metal4DSTEMStreamingIOError.metalUnavailable(
-        "Metal could not encode a compact virtual-detector update."
+        "Metal could not encode an exact detector update for the resident series."
       )
     }
-    encoder.setComputePipelineState(detectorPipeline)
+    // Crossover tests cover core, outer and mixed-radius entries. The
+    // scan-lane topology wins tiny deltas; pixel lanes win from 32 entries.
+    let rawEntryCount = update.changedDetectorPixels
+    let nextBuffer = detectorOutputs[update.nextOutput]
+    let usesScanCooperative =
+      payloadLayout == 1 && rawEntryCount >= 32
+      && planarScanCooperativePipeline != nil
+    let widePipeline =
+      payloadLayout == 1
+      ? (planarScanCooperativePipeline ?? planarILPDetectorPipeline ?? pixelLaneDetectorPipeline)
+      : pixelLaneDetectorPipeline
+    encoder.setComputePipelineState(rawEntryCount < 32 ? detectorPipeline : widePipeline)
     for shardIndex in shards.indices {
       var parameters = CompactDetectorParameters(
         scanCount: UInt32(metadata.scansPerShard),
         tileCount: UInt32(
           (metadata.scansPerShard + metadata.scanTile - 1) / metadata.scanTile
         ),
-        entryCount: UInt32(entries.count),
+        entryCount: UInt32(rawEntryCount),
         outputOffset: UInt32(shardIndex * metadata.scansPerShard),
-        mode: isRebase ? 1 : 0,
+        mode: update.mode == "complement" ? 2 : (update.mode == "rebase" ? 1 : 0),
         scanTile: UInt32(metadata.scanTile),
         headerWordsPerPixel: headerWordsPerPixel,
-        headerEncoding: headerEncoding
+        headerEncoding: headerEncoding,
+        payloadLayout: payloadLayout
       )
       encoder.setBuffer(shards[shardIndex].payload, offset: 0, index: 0)
       encoder.setBuffer(shards[shardIndex].descriptors, offset: 0, index: 1)
       encoder.setBuffer(detectorEntryBuffer, offset: 0, index: 2)
       encoder.setBuffer(detectorOutputs[activeDetectorOutput], offset: 0, index: 3)
-      encoder.setBuffer(detectorOutputs[nextOutput], offset: 0, index: 4)
+      encoder.setBuffer(nextBuffer, offset: 0, index: 4)
+      // The fallback is never read unless mode == 2; binding it keeps the
+      // pipeline argument valid for sources without prepared totals.
+      encoder.setBuffer(
+        preparedDPCMomentBuffer ?? detectorOutputs[activeDetectorOutput], offset: 0, index: 6
+      )
       encoder.setBytes(
         &parameters,
         length: MemoryLayout.stride(ofValue: parameters),
@@ -897,24 +1353,17 @@ public final class MetalCompactH5ResidentSource {
       )
       encoder.dispatchThreadgroups(
         MTLSize(
-          width: (metadata.scansPerShard + 31) / 32,
-          height: 1,
-          depth: 1
-        ),
+          width: (metadata.scansPerShard + (usesScanCooperative ? 127 : 31))
+            / (usesScanCooperative ? 128 : 32), height: 1, depth: 1),
         threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1)
       )
     }
-    encoder.endEncoding()
-    try Self.complete(command, operation: "virtual detector")
-    activeDetectorOutput = nextOutput
-    detectorMask = normalized
-    return MetalCompactH5DetectorMetrics(
-      mode: isRebase ? "rebase" : "delta",
-      changedDetectorPixels: entries.count,
-      wallMilliseconds: Self.milliseconds(from: wallStart),
-      gpuMilliseconds: max(0, command.gpuEndTime - command.gpuStartTime) * 1_000,
-      fftDispatchCount: 0
-    )
+    if sharedEncoder == nil { encoder.endEncoding() }
+  }
+
+  private func publishDetectorUpdate(_ update: PendingDetectorUpdate) {
+    if update.shouldEncode { activeDetectorOutput = update.nextOutput }
+    detectorMask = update.normalizedMask
   }
 
   /// Copy one canonical prepared map into the active detector output.
@@ -932,6 +1381,8 @@ public final class MetalCompactH5ResidentSource {
   }
 
   /// Read the last completely published virtual-detector map in scan-row order.
+  ///
+  /// Use `snapshotVirtualDetectors` for Metal display without an array readback.
   public func virtualDetectorValues() throws -> [UInt32] {
     guard !isReleased, detectorOutputs.count == 2 else {
       throw Metal4DSTEMStreamingIOError.invalidRequest(
@@ -943,6 +1394,69 @@ public final class MetalCompactH5ResidentSource {
       detectorOutputs[activeDetectorOutput],
       count: metadata.scanCount
     )
+  }
+
+  /// Copy completed exact detector maps into independently owned Metal buffers.
+  ///
+  /// The returned buffers contain scan-row-major uint32 counts and remain
+  /// unchanged by later source updates or release. All copies share one GPU
+  /// submission; no scientific image is read into a CPU array. Callers must
+  /// serialize this operation with updates and release on these sources, and
+  /// release old snapshots when their display consumers finish.
+  ///
+  /// ```swift
+  /// let images = try MetalCompactH5ResidentSource.snapshotVirtualDetectors(tilts)
+  /// ```
+  public static func snapshotVirtualDetectors(
+    _ sources: [MetalCompactH5ResidentSource]
+  ) throws -> [MTLBuffer] {
+    guard let first = sources.first else { return [] }
+    guard
+      sources.allSatisfy({
+        !$0.isReleased && $0.detectorOutputs.count == 2
+          && ($0.device as AnyObject) === (first.device as AnyObject)
+      })
+    else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "Detector snapshots require live sources on the same Metal device. "
+          + "Load the sources together before requesting display images."
+      )
+    }
+    let outputs = try allocateDetectorSnapshots(sources)
+    guard let command = first.queue.makeCommandBuffer(),
+      let encoder = command.makeBlitCommandEncoder()
+    else {
+      throw Metal4DSTEMStreamingIOError.metalUnavailable(
+        "Metal could not encode detector image snapshots."
+      )
+    }
+    for (source, output) in zip(sources, outputs) {
+      encoder.copy(
+        from: source.detectorOutputs[source.activeDetectorOutput], sourceOffset: 0,
+        to: output, destinationOffset: 0, size: output.length
+      )
+    }
+    encoder.endEncoding()
+    try Self.complete(command, operation: "detector image snapshots")
+    return outputs
+  }
+
+  private static func allocateDetectorSnapshots(
+    _ sources: [MetalCompactH5ResidentSource]
+  ) throws -> [MTLBuffer] {
+    try sources.map { source in
+      guard
+        let buffer = source.device.makeBuffer(
+          length: source.metadata.scanCount * MemoryLayout<UInt32>.stride,
+          options: .storageModeShared
+        )
+      else {
+        throw Metal4DSTEMStreamingIOError.metalUnavailable(
+          "Metal could not allocate a detector image snapshot."
+        )
+      }
+      return buffer
+    }
   }
 
   /// Return the prepared centered row and column DPC maps without rescanning the cube.
@@ -987,7 +1501,9 @@ public final class MetalCompactH5ResidentSource {
     return MetalCompactH5ExactDPCMoments(
       total: total,
       detectorRowMoment: row,
-      detectorColumnMoment: column
+      detectorColumnMoment: column,
+      sourceIdentitySHA256: metadata.sourceIdentitySHA256,
+      detectorMaskSHA256: prepared.detectorMaskSHA256
     )
   }
 
@@ -1054,7 +1570,8 @@ public final class MetalCompactH5ResidentSource {
         scanTile: UInt32(metadata.scanTile),
         headerWordsPerPixel: headerWordsPerPixel,
         headerEncoding: headerEncoding,
-        outputWordCount: outputWords
+        outputWordCount: outputWords,
+        payloadLayout: payloadLayout
       )
       guard let command = queue.makeCommandBuffer(),
         let encoder = command.makeComputeCommandEncoder()
@@ -1104,6 +1621,8 @@ public final class MetalCompactH5ResidentSource {
   /// provenance without retaining its Metal allocation.
   public func releaseResidentStorage() {
     guard !isReleased else { return }
+    residencyLease?.end()
+    residencyLease = nil
     shards.removeAll(keepingCapacity: false)
     detectorOutputs.removeAll(keepingCapacity: false)
     detectorEntryBuffer = nil
@@ -1147,10 +1666,14 @@ public final class MetalCompactH5ResidentSource {
 
   fileprivate static func complete(
     _ command: MTLCommandBuffer,
-    operation: String
+    operation: String,
+    hostStamp: ((String) -> Void)? = nil
   ) throws {
+    hostStamp?("before_commit_ms")
     command.commit()
+    hostStamp?("after_commit_ms")
     command.waitUntilCompleted()
+    hostStamp?("after_wait_ms")
     if let error = command.error {
       throw Metal4DSTEMStreamingIOError.commandFailed(
         "Compact HDF5 \(operation) failed: \(error.localizedDescription)"
@@ -1179,6 +1702,161 @@ public final class MetalCompactH5ResidentSource {
 
 /// Fail-closed bounded loader for compact 4D-STEM HDF5 user-block payloads.
 public enum MetalCompactH5Loader {
+  /// Finish the existing interaction object from freshly verified private blocks.
+  /// There is no file publication, payload hashing, or payload upload in this step.
+  static func residentFromOriginal(
+    _ packed: OriginalPackedBuffers, device: MTLDevice, started: ContinuousClock.Instant,
+    allocatedBefore: UInt64, maximumAdditionalBytes: UInt64?, shouldCancel: () -> Bool
+  ) throws -> MetalCompactH5ResidentSource {
+    let dataset = packed.dataset
+    let scans = dataset.scanRows * dataset.scanCols
+    let pixels = dataset.detectorRows * dataset.detectorCols
+    let working = packed.maximum <= 255 ? "uint8" : "uint16"
+    let identity = dataset.sourceIdentitySHA256!
+    func digest(_ data: Data) -> String {
+      SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+    func buffer(_ size: Int) throws -> MTLBuffer {
+      guard let result = device.makeBuffer(length: size, options: .storageModeShared) else {
+        throw invalid(
+          "Cannot allocate original-resident interaction buffers; release another acquisition")
+      }
+      memset(result.contents(), 0, result.length)
+      return result
+    }
+    let maximumValue: UInt64 = packed.maximum <= 255 ? 255 : 65535
+    let totalBound = UInt64(pixels) * maximumValue
+    let rowBound = UInt64(pixels * (dataset.detectorRows - 1) / 2) * maximumValue
+    let columnBound = UInt64(pixels * (dataset.detectorCols - 1) / 2) * maximumValue
+    let maskSHA = digest(Data(repeating: 1, count: pixels))
+    let calibrationJSON = try JSONSerialization.data(
+      withJSONObject: [
+        "source_identity": identity, "center_row": packed.calibration.0,
+        "center_column": packed.calibration.1, "radius": packed.calibration.2,
+      ], options: [.sortedKeys])
+    let manifest = try JSONSerialization.data(
+      withJSONObject: [
+        "schema": "original-hdf5-resident/v1", "source_identity": identity,
+        "shape": [dataset.scanRows, dataset.scanCols, dataset.detectorRows, dataset.detectorCols],
+        "source_dtype": dataset.sourceDtype, "working_dtype": working,
+        "every_count_roundtrip_verified": true, "logical_hash_computed": false,
+        "bad_pixel_policy": "preserve_all_source_counts", "scan_bin": 1, "detector_bin": 1,
+      ], options: [.sortedKeys])
+    let prepared = MetalCompactH5PreparedDPCMoments(
+      fileOffset: 0, fileBytes: UInt64(packed.moments.count), sha256: digest(packed.moments),
+      workingLogicalSHA256: nil, workingDtype: working, detectorMaskSHA256: maskSHA,
+      scanCount: scans, selectedDetectorPixels: pixels, detectorColumns: dataset.detectorCols,
+      totalBound: totalBound, rowMomentBound: rowBound, columnMomentBound: columnBound,
+      narrowInteger: totalBound <= UInt32.max,
+      narrowProducts: max(rowBound, columnBound) <= UInt32.max)
+    let payloadBytes = packed.shards.reduce(UInt64(0)) {
+      $0 + UInt64($1.payload.length + $1.headers.length)
+    }
+    let metadata = MetalCompactH5Metadata(
+      sourceURL: URL(fileURLWithPath: dataset.masterPath ?? dataset.dataFiles[0]),
+      sourceBytes: UInt64(dataset.sourceBytes), schema: "quantem.gpu.packed-detector-h5/v3",
+      payloadCodec: "direct-bitpacked-u32", sourceDtype: dataset.sourceDtype,
+      manifestSHA256: digest(manifest), workingDtype: working, embeddedScientificSemantics: true,
+      scanRows: dataset.scanRows, scanColumns: dataset.scanCols,
+      detectorRows: dataset.detectorRows, detectorColumns: dataset.detectorCols,
+      scansPerShard: packed.frames, scanTile: 32, payloadChunkBytes: 0,
+      sourceIdentitySHA256: identity, sourceRawLogicalSHA256: nil, workingLogicalSHA256: nil,
+      detectorMaskSHA256: maskSHA, maskedDetectorPixelsSHA256: nil, maskedDetectorRawValues: nil,
+      rawAccessMode: "exact_no_exclusions",
+      detectorCalibration: MetalCompactH5DetectorCalibration(
+        detectorCenterRow: packed.calibration.0, detectorCenterColumn: packed.calibration.1,
+        brightFieldRadius: packed.calibration.2, dpcRotationDegrees: nil,
+        dpcComponentOrderExchanged: nil,
+        method: "mean-DP half-p99 threshold; automatic initial detector, not angular calibration"),
+      detectorCalibrationSchema: "quantem.gpu.detector-calibration/v1",
+      detectorCalibrationSHA256: digest(calibrationJSON), preparedDPCMoments: prepared,
+      preparedDetectorProducts: nil, excludedDetectorPixels: [], shardCount: packed.shards.count,
+      residentBytes: payloadBytes + UInt64(packed.moments.count))
+    let momentBuffer = try packed.moments.withUnsafeBytes { raw -> MTLBuffer in
+      guard
+        let result = device.makeBuffer(
+          bytes: raw.baseAddress!, length: raw.count, options: .storageModeShared)
+      else {
+        throw invalid("Cannot retain original DPC sums")
+      }
+      return result
+    }
+    let dpc = try primeDPC(
+      moments: momentBuffer, prepared: prepared, metadata: metadata, device: device)
+    let excluded = try buffer(pixels * 4)
+    let entries = try buffer(pixels * 8)
+    let outputA = try buffer(scans * 4)
+    let outputB = try buffer(scans * 4)
+    let diffraction = try buffer(pixels * 4)
+    let detectorSum = try buffer(pixels * 8)
+    packed.detectorSum.withUnsafeBytes {
+      detectorSum.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count)
+    }
+    let interactionBytes = UInt64(pixels * 24 + scans * 16)
+    let totalBytes = metadata.residentBytes + interactionBytes
+    let planned = totalBytes + packed.stagingBytes
+    if let maximumAdditionalBytes, planned > maximumAdditionalBytes {
+      throw invalid(
+        "Original resident plus interaction buffers exceeds the memory budget; open fewer acquisitions"
+      )
+    }
+    guard !shouldCancel() else { throw Metal4DSTEMStreamingIOError.cancelled }
+    guard let queue = device.makeCommandQueue() else {
+      throw invalid("Cannot create resident interaction queue")
+    }
+    let library = try Metal4DSTEMKernels.makeCompactH5Library(device: device)
+    func kernel(_ name: String) throws -> MTLComputePipelineState {
+      try pipeline(library: library, name: name, device: device)
+    }
+    let selected = try kernel(Metal4DSTEMKernels.compactH5SelectedDiffractionFunction)
+    let detector = try kernel(Metal4DSTEMKernels.compactH5DetectorUpdateFunction)
+    let pixelLane = try kernel("compact_h5_detector_update_pixel_lanes")
+    let fullDecode = try kernel(Metal4DSTEMKernels.compactH5FullDecodeU8Function)
+    let sum = try kernel(Metal4DSTEMKernels.compactH5DetectorSumFunction)
+    var metrics = MetalCompactH5LoadMetrics(
+      nativeCacheStatus: "originalDirect", nativeCacheBytes: 0,
+      nativeCacheDescriptorSHA256Checks: 0,
+      plannedAdditionalBytes: planned, sourceReadPolicy: "systemDefault", maximumInFlightShards: 1,
+      shardPipelineMilliseconds: milliseconds(from: started), metadataMilliseconds: 0,
+      sourceReadMilliseconds: packed.readSeconds * 1000, descriptorPreparationMilliseconds: 0,
+      gpuPreparationMilliseconds: packed.packingSeconds * 1000,
+      gpuDecodeMilliseconds: packed.decodeSeconds * 1000,
+      decodedIntegrityMilliseconds: 0, privateUploadMilliseconds: 0,
+      preparedDPCReadMilliseconds: 0, preparedDPCAuthenticationMilliseconds: 0,
+      preparedDPCPrimeMilliseconds: dpc.primeMilliseconds,
+      preparedDetectorProductReadMilliseconds: 0,
+      preparedDetectorProductAuthenticationMilliseconds: 0,
+      totalMilliseconds: milliseconds(from: started), residentBytes: metadata.residentBytes,
+      maximumTransientBytes: packed.stagingBytes, deviceAllocatedBytesBefore: allocatedBefore,
+      deviceAllocatedBytesAfter: UInt64(device.currentAllocatedSize), decodedShardSHA256Checks: 0,
+      checksumsVerified: false, decodedPayloadCopyBytes: 0, mappedAuthenticationBytes: 0,
+      preparedDPCBytes: UInt64(packed.moments.count), preparedDetectorProductBytes: 0,
+      interactionResidentBytes: interactionBytes, totalResidentBytes: totalBytes)
+    metrics.reusedPreparedDPC = packed.reusedDPC
+    metrics.gpuDecodeAndHeaderMilliseconds = packed.decodeAndHeaderSeconds * 1000
+    metrics.gpuDecodeAndPackingMilliseconds = packed.combinedDecodePackingSeconds.map { $0 * 1000 }
+    let resident = MetalCompactH5ResidentSource(
+      metadata: metadata, loadMetrics: metrics, device: device, queue: queue,
+      selectedPipeline: selected, detectorPipeline: detector, pixelLaneDetectorPipeline: pixelLane,
+      fullDecodePipeline: fullDecode, detectorSumPipeline: sum,
+      headerEncoding: packed.maximum <= 255 ? 1 : 2, payloadLayout: 0,
+      headerWordsPerPixel: UInt32(packed.headerStride),
+      shards: packed.shards.map {
+        CompactResidentShard(payload: $0.payload, descriptors: $0.headers)
+      },
+      excluded: excluded, maximumWidths: packed.maximumWidths, detectorOutputs: [outputA, outputB],
+      detectorEntryBuffer: entries, diffractionOutput: diffraction, detectorSumOutput: detectorSum,
+      preparedDPCMomentBuffer: momentBuffer, preparedDPCOutputs: [dpc.row, dpc.column],
+      preparedDetectorProducts: [:])
+    // Pipeline creation may take time after the earlier cancellation poll.
+    // Do not publish an interaction object if cancellation arrived meanwhile.
+    guard !shouldCancel() else {
+      resident.releaseResidentStorage()
+      throw Metal4DSTEMStreamingIOError.cancelled
+    }
+    resident.markOriginalDetectorSumReady()
+    return resident
+  }
   /// Read structurally validated catalog metadata without loading the payload.
   ///
   /// This creates no Metal resources and does not authenticate payload bytes or
@@ -1280,7 +1958,7 @@ public enum MetalCompactH5Loader {
       }
     }
     defer { try? cacheFile?.close() }
-    let plannedAdditionalBytes = try plannedAdditionalBytes(
+    var plannedAdditionalBytes = try plannedAdditionalBytes(
       index: index, loadingShards: loadingShards, nativeCache: nativeCache,
       authenticationPolicy: authenticationPolicy
     )
@@ -1330,6 +2008,24 @@ public enum MetalCompactH5Loader {
       name: Metal4DSTEMKernels.compactH5DetectorUpdateFunction,
       device: device
     )
+    let pixelLaneDetector = try pipeline(
+      library: library,
+      name: "compact_h5_detector_update_pixel_lanes",
+      device: device
+    )
+    let planarILPDetector =
+      ProcessInfo.processInfo.environment["COMPACT_RAW_PLANE_ILP"] == "1"
+      ? try pipeline(
+        library: library, name: "compact_h5_detector_update_planar_ilp", device: device) : nil
+    let planarScanCooperative =
+      ProcessInfo.processInfo.environment["COMPACT_RAW_SCAN_COOPERATIVE"] == "1"
+      ? try pipeline(
+        library: library, name: "compact_h5_detector_update_planar_scan_cooperative", device: device
+      ) : nil
+    let planarFusedDetector =
+      ProcessInfo.processInfo.environment["COMPACT_RAW_AUX_FUSED"] == "1"
+      ? try pipeline(
+        library: library, name: "compact_h5_detector_update_planar_fused", device: device) : nil
     let fullDecode = try pipeline(
       library: library,
       name: Metal4DSTEMKernels.compactH5FullDecodeU8Function,
@@ -1555,12 +2251,64 @@ public enum MetalCompactH5Loader {
     memset(diffraction.contents(), 0, diffraction.length)
     memset(detectorSumOutput.contents(), 0, detectorSumOutput.length)
     let preparedDPCDisplayBytes = preparedDPC == nil ? 0 : scanMapBytes * 2
-    let interactionResidentBytes = UInt64(
+    var interactionResidentBytes = UInt64(
       excludedValues.count * 4 + scanMapBytes * 2 + diffractionBytes
         + detectorSumBytes
         + index.metadata.detectorPixelCount * MemoryLayout<CompactDetectorEntry>.stride
         + preparedDPCDisplayBytes
     )
+    let residentPayloadLayout: UInt32 = 0
+    var residencyLease: CompactResidencyLease?
+    if ProcessInfo.processInfo.environment["COMPACT_RESIDENCY_SETS"] == "1" {
+      if #available(macOS 15.0, iOS 18.0, *) {
+        let residencyStart = ContinuousClock.now
+        var stableBuffers = residentShards.flatMap { [$0.payload, $0.descriptors] }
+        stableBuffers += [
+          excludedBuffer, detectorA, detectorB, diffraction,
+          detectorSumOutput, detectorEntries,
+        ]
+        if let preparedDPC {
+          stableBuffers += [preparedDPC.moments, preparedDPC.row, preparedDPC.column]
+        }
+        stableBuffers += preparedDetectorProducts.products.values.map(\.values)
+        let lease = try CompactResidencyLease(device: device, buffers: stableBuffers)
+        residencyLease = lease
+        // Conservatively reserve the excess reported set footprint. It may
+        // include allocation rounding, not only new driver bookkeeping.
+        plannedAdditionalBytes = try add(
+          plannedAdditionalBytes, lease.footprintExcessBytes,
+          label: "residency set footprint excess")
+        interactionResidentBytes = try add(
+          interactionResidentBytes, lease.footprintExcessBytes,
+          label: "residency set footprint excess")
+        let allocatedNow = UInt64(device.currentAllocatedSize)
+        let heldAdditional = allocatedNow > allocatedBefore ? allocatedNow - allocatedBefore : 0
+        if let maximumAdditionalBytes,
+          plannedAdditionalBytes > maximumAdditionalBytes
+            || heldAdditional > maximumAdditionalBytes
+            || lease.footprintExcessBytes > maximumAdditionalBytes - heldAdditional
+        {
+          lease.end()
+          throw invalid("Residency set bookkeeping exceeds the existing loader memory budget.")
+        }
+        guard !shouldCancel() else {
+          lease.end()
+          throw Metal4DSTEMStreamingIOError.cancelled
+        }
+        let record: [String: Any] = [
+          "phase": "residency_set_prepared", "requested": true,
+          "advisory_not_pinned": true, "allocation_count": lease.allocationCount,
+          "set_allocated_bytes": lease.allocatedBytes,
+          "footprint_excess_bytes": lease.footprintExcessBytes,
+          "host_preparation_ms": milliseconds(from: residencyStart),
+          "source_identity": index.metadata.sourceIdentitySHA256,
+        ]
+        if var json = try? JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]) {
+          json.append(10)
+          FileHandle.standardError.write(json)
+        }
+      }
+    }
     let metrics = MetalCompactH5LoadMetrics(
       nativeCacheStatus: cacheStatus,
       nativeCacheBytes: nativeCache?.fileBytes ?? 0,
@@ -1600,16 +2348,21 @@ public enum MetalCompactH5Loader {
       interactionResidentBytes: interactionResidentBytes,
       totalResidentBytes: index.metadata.residentBytes + interactionResidentBytes
     )
-    return MetalCompactH5ResidentSource(
+    let resident = MetalCompactH5ResidentSource(
       metadata: index.metadata,
       loadMetrics: metrics,
       device: device,
       queue: queue,
       selectedPipeline: selected,
       detectorPipeline: detector,
+      pixelLaneDetectorPipeline: pixelLaneDetector,
+      planarILPDetectorPipeline: planarILPDetector,
+      planarScanCooperativePipeline: planarScanCooperative,
+      planarFusedDetectorPipeline: planarFusedDetector,
       fullDecodePipeline: fullDecode,
       detectorSumPipeline: detectorSum,
       headerEncoding: index.headerEncoding,
+      payloadLayout: residentPayloadLayout,
       headerWordsPerPixel: UInt32(index.headerWordsPerPixel),
       shards: residentShards,
       excluded: excludedBuffer,
@@ -1620,8 +2373,10 @@ public enum MetalCompactH5Loader {
       detectorSumOutput: detectorSumOutput,
       preparedDPCMomentBuffer: preparedDPC?.moments,
       preparedDPCOutputs: preparedDPC.map { [$0.row, $0.column] } ?? [],
-      preparedDetectorProducts: preparedDetectorProducts.products
+      preparedDetectorProducts: preparedDetectorProducts.products,
+      residencyLease: residencyLease
     )
+    return resident
   }
 
   /// Conservative sum rather than assuming nonoverlap of upload/authentication.
@@ -1743,6 +2498,17 @@ public enum MetalCompactH5Loader {
       }
     }
 
+    return try primeDPC(
+      moments: moments, prepared: prepared, metadata: index.metadata,
+      device: device, readMilliseconds: readMilliseconds,
+      authenticationMilliseconds: authenticationMilliseconds)
+  }
+
+  private static func primeDPC(
+    moments: MTLBuffer, prepared: MetalCompactH5PreparedDPCMoments,
+    metadata: MetalCompactH5Metadata, device: MTLDevice,
+    readMilliseconds: Double = 0, authenticationMilliseconds: Double = 0
+  ) throws -> CompactPreparedDPCLoadResult {
     let primeStart = ContinuousClock.now
     let words = moments.contents().bindMemory(
       to: UInt32.self,
@@ -1765,10 +2531,10 @@ public enum MetalCompactH5Loader {
         throw invalid("Compact prepared DPC padding words must be zero.")
       }
       let rowLimit = total.multipliedReportingOverflow(
-        by: UInt64(index.metadata.detectorRows - 1)
+        by: UInt64(metadata.detectorRows - 1)
       )
       let columnLimit = total.multipliedReportingOverflow(
-        by: UInt64(index.metadata.detectorColumns - 1)
+        by: UInt64(metadata.detectorColumns - 1)
       )
       guard total <= prepared.totalBound,
         rowMoment <= prepared.rowMomentBound,
@@ -2390,7 +3156,8 @@ public enum MetalCompactH5Loader {
     guard
       (index.headerEncoding == 0 && index.metadata.scanTile == 128
         && index.headerWordsPerPixel == tileCount)
-        || (index.headerEncoding == 1 && index.metadata.scanTile == 32
+        || ((index.headerEncoding == 1 || index.headerEncoding == 2)
+          && index.metadata.scanTile == 32
           && index.headerWordsPerPixel == checkpointWords + widthWords),
       headerWords
         == index.metadata.detectorPixelCount * index.headerWordsPerPixel
@@ -2571,7 +3338,7 @@ public enum MetalCompactH5Loader {
     let storageLayout: CompactH5StorageLayout
     let schema: String
     let payloadCodec: String
-    let headerEncoding: UInt32
+    var headerEncoding: UInt32
     if magic == indexMagicV1 {
       storageLayout = .lz4V1
       schema = "quantem.gpu.packed-detector-h5/v1"
@@ -2610,9 +3377,12 @@ public enum MetalCompactH5Loader {
       cursor += 4
       let encodedHeaderLayout = readU32(binary, at: cursor)
       cursor += 4
-      guard secondHeaderWord == 0, scanTile == 32, encodedHeaderLayout == 1 else {
+      guard secondHeaderWord == 0, scanTile == 32,
+        encodedHeaderLayout == 1 || encodedHeaderLayout == 2
+      else {
         throw invalid("Compact QGIX v3 header layout is unsupported.")
       }
+      headerEncoding = encodedHeaderLayout
     } else {
       scanTile = 128
     }
@@ -2789,12 +3559,13 @@ public enum MetalCompactH5Loader {
     if storageLayout == .directV3 {
       guard intValue(manifest["scan_tile"]) == scanTile,
         manifest["payload_codec"] as? String == payloadCodec,
-        validSHA256(manifest["prepared_uint8_sha256"])
+        validSHA256(
+          manifest[headerEncoding == 2 ? "working_logical_sha256" : "prepared_uint8_sha256"])
       else {
         throw invalid("Compact QGIX v3 JSON contract is incomplete or unsupported.")
       }
       if manifest["source_dtype"] != nil {
-        guard manifest["source_dtype"] as? String == "uint16",
+        guard ["uint8", "uint16"].contains(manifest["source_dtype"] as? String ?? ""),
           intValue(manifest["scan_bin"]) == 1,
           intValue(manifest["detector_bin"]) == 1,
           manifest["crop"] is NSNull,
@@ -2895,15 +3666,15 @@ public enum MetalCompactH5Loader {
       else {
         throw invalid("Compact working dtype or payload codec is unsupported.")
       }
-    } else if workingDtype != "uint8" {
-      throw invalid("Compact QGIX v3 direct payload requires exact uint8 working values.")
+    } else if workingDtype != (headerEncoding == 2 ? "uint16" : "uint8") {
+      throw invalid("Compact QGIX v3 working dtype disagrees with its header encoding.")
     }
     let sourceRawSHA = manifest["source_raw_logical_sha256"] as? String
     guard sourceRawSHA == nil || validSHA256(sourceRawSHA) else {
       throw invalid("Compact source logical SHA-256 is malformed.")
     }
     let workingLogicalSHA: String? =
-      storageLayout == .lz4V1
+      storageLayout == .lz4V1 || workingDtype == "uint16"
       ? manifest["working_logical_sha256"] as? String
       : manifest["prepared_uint8_sha256"] as? String
     guard workingLogicalSHA == nil || validSHA256(workingLogicalSHA) else {
@@ -3152,11 +3923,12 @@ public enum MetalCompactH5Loader {
     let workingField: String
     let maximumValue: UInt64
     let workingSHA: String
-    switch storageLayout {
-    case .lz4V1:
-      guard parentManifest["working_dtype"] as? String == "uint16" else {
-        throw invalid("Compact prepared DPC moments require uint16 working data.")
-      }
+    if storageLayout == .lz4V1,
+      parentManifest["working_dtype"] as? String != "uint16"
+    {
+      throw invalid("Compact prepared DPC moments require uint16 working data.")
+    }
+    if parentManifest["working_dtype"] as? String == "uint16" {
       schema = "quantem.gpu.prepared-dpc-moments/v2"
       workingDtype = "uint16"
       workingField = "working_logical_sha256"
@@ -3167,7 +3939,7 @@ public enum MetalCompactH5Loader {
         throw invalid("Compact prepared DPC parent working identity is invalid.")
       }
       workingSHA = digest
-    case .directV3:
+    } else {
       schema = "quantem.gpu.prepared-dpc-moments/v1"
       workingDtype = "uint8"
       workingField = "working_uint8_sha256"
@@ -3239,7 +4011,7 @@ public enum MetalCompactH5Loader {
       "row_moment_bound": String(rowMomentBound),
       "column_moment_bound": String(columnMomentBound),
     ]
-    if case .lz4V1 = storageLayout {
+    if workingDtype == "uint16" {
       expectedStrings["working_dtype"] = workingDtype
     }
     for (key, expected) in expectedStrings where prepared[key] as? String != expected {
@@ -3254,7 +4026,7 @@ public enum MetalCompactH5Loader {
     else {
       throw invalid("Compact prepared DPC fields disagree with the exact source bounds.")
     }
-    if case .lz4V1 = storageLayout {
+    if workingDtype == "uint16" {
       guard exactUInt64(prepared["maximum_value"]) == maximumValue else {
         throw invalid("Compact prepared DPC maximum value disagrees with uint16.")
       }

@@ -171,6 +171,7 @@ def _write_v3_fixture(
     include_masked_raw_values: bool = True,
     masked_raw_values: tuple[object, ...] | None = None,
     scan_shape: tuple[int, int] | None = None,
+    header_encoding: int = 1,
 ) -> dict[str, int]:
     """Write an independent one-shard QGIX v3 fixture for parser tests."""
     scan_count, detector_pixels = values.shape
@@ -179,7 +180,8 @@ def _write_v3_fixture(
     working = values.copy()
     if masked_pixels:
         working[:, list(masked_pixels)] = 0
-    assert int(working.max(initial=0)) <= 255
+    assert header_encoding in (1, 2)
+    assert int(working.max(initial=0)) <= (255 if header_encoding == 1 else 65535)
     tile_count = scan_count // 32
     widths = np.zeros((detector_pixels, tile_count), dtype=np.uint8)
     pixel_payloads: list[list[int]] = []
@@ -188,6 +190,8 @@ def _write_v3_fixture(
         for tile in range(tile_count):
             column = working[tile * 32 : (tile + 1) * 32, pixel]
             width = int(np.bitwise_or.reduce(column)).bit_length()
+            if header_encoding == 2 and width == 15:
+                width = 16
             widths[pixel, tile] = width
             tile_words = [0] * width
             for scan, item in enumerate(column):
@@ -215,9 +219,8 @@ def _write_v3_fixture(
     for checkpoint in range(1, checkpoint_words):
         headers[:, checkpoint] = cumulative[:, checkpoint * 32]
     for tile in range(tile_count):
-        headers[:, checkpoint_words + tile // 8] |= widths[:, tile].astype(
-            np.uint32
-        ) << ((tile % 8) * 4)
+        codes = np.minimum(widths[:, tile], 15).astype(np.uint32)
+        headers[:, checkpoint_words + tile // 8] |= codes << ((tile % 8) * 4)
     header_payload = headers.tobytes()
 
     shape = (*(scan_shape or (1, scan_count)), *detector_shape)
@@ -263,9 +266,24 @@ def _write_v3_fixture(
         else:
             raw_values = list(masked_raw_values)
         manifest["masked_detector_raw_values"] = raw_values
+    if header_encoding == 2:
+        manifest["working_dtype"] = "uint16"
+        manifest.pop("prepared_uint8_sha256")
+        manifest["working_logical_sha256"] = hashlib.sha256(
+            working.astype("<u2").tobytes()
+        ).hexdigest()
     header = json.dumps(manifest, separators=(",", ":"), sort_keys=True).encode()
     binary = bytearray(
-        struct.pack("<8sIIIIIIIII", b"QGIX\0\0\0\3", 1, 0, *shape, scan_count, 32, 1)
+        struct.pack(
+            "<8sIIIIIIIII",
+            b"QGIX\0\0\0\3",
+            1,
+            0,
+            *shape,
+            scan_count,
+            32,
+            header_encoding,
+        )
     )
     binary.extend(struct.pack("<I", len(masked_pixels)))
     binary.extend(mask_bytes)
@@ -450,6 +468,38 @@ def test_parser_rejects_changed_contract_metadata(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="CRC-32"):
         CompactH5Index.from_file(path)
+
+
+def test_v3_uint16_preserves_counts_across_checkpoints(tmp_path: Path) -> None:
+    """Retain real wide counts and masked constants across every tile boundary."""
+    values = np.zeros((1280, 6), dtype=np.uint16)
+    for tile in range(40):
+        width = (0, 8, 9, 14, 15, 16)[tile % 6]
+        values[tile * 32 : (tile + 1) * 32, :5] = (1 << width) - 1
+    values[:6, 0] = [254, 255, 256, 32767, 32768, 65535]
+    values[:, 5] = 65535
+    path = tmp_path / "direct-v3-uint16.h5"
+    _write_v3_fixture(
+        path, values, detector_shape=(2, 3), masked_pixels=(5,), header_encoding=2
+    )
+    index = CompactH5Index.from_file(path)
+    decoder = CompactH5ReferenceDecoder(index)
+    decoder.validate_shard_metadata(0)
+    decoder.validate_shard_payload(0)
+    assert index.header_encoding == 2
+    for scan in range(1280):
+        np.testing.assert_array_equal(
+            decoder.raw_diffraction(0, scan), values[scan].reshape(2, 3)
+        )
+    for selected in ([0, 1], [1, 2, 3], list(range(6)), []):
+        mask = np.zeros(6, dtype=np.uint8)
+        mask[selected] = 1
+        working = values.copy()
+        working[:, 5] = 0
+        expected = working[:, selected].sum(axis=1, dtype=np.uint64)
+        np.testing.assert_array_equal(
+            decoder.detector_sum(mask.reshape(2, 3)).ravel(), expected
+        )
 
 
 def test_v3_reference_decoder_preserves_exact_values_mask_and_products(
@@ -653,6 +703,23 @@ def test_v3_prepared_copy_adds_portable_raw_contract_without_mutating_source(
             expected_source_sha256="0" * 64,
         )
     assert not wrong_hash_destination.exists()
+
+
+def test_cuda_rejects_uint16_checkpoint_headers_before_allocation(
+    tmp_path, monkeypatch
+):
+    """A shared parser must not silently enable an unsupported GPU decoder."""
+    from quantem.gpu.io.backends.cuda import packed
+
+    values = np.tile(np.array([[0, 65535], [256, 32768]], dtype=np.uint16), (16, 1))
+    path = tmp_path / "exact-u16.h5"
+    _write_v3_fixture(
+        path, values, detector_shape=(1, 2), masked_pixels=(), header_encoding=2
+    )
+    # Any attempted CuPy access fails: rejection belongs before device work.
+    monkeypatch.setattr(packed, "cp", object())
+    with pytest.raises(ValueError, match="encoding 2.*native Swift/Metal"):
+        packed.load_compact_h5_cuda(path)
 
 
 @pytest.mark.parametrize(

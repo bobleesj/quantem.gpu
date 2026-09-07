@@ -31,6 +31,9 @@ Native Swift/Metal products for macOS and iOS clients:
 - `MetalImageRuntime` for histogram, range, and display contracts.
 - `Native4DSTEMIO` for Python-free HDF5/EMD discovery, prepared QH5 indexes,
   and bounded native frame windows.
+- `MetalCompactH5Loader.load(source:device:)` for original HDF5 directly into
+  exact packed Metal residency, without a dense 4D allocation. See
+  [original HDF5 loading and reload benchmarks](original-hdf5-metal-packing.md).
 - `NativeLosslessPackV1Producer` for an authenticated, resource-planned,
   cancellable original-HDF5-to-lossless-pack lifecycle. See the
   [native Lossless Pack Format v1 producer contract](native_lossless_pack_v1_producer.md).

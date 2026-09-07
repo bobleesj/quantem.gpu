@@ -27,17 +27,16 @@ inline float metal_signed_log1p(float value) {
     return copysign(log(1.0f + abs(value)), value);
 }
 
-inline float metal_normalize_u32(
-    uint value,
-    constant MetalDisplayParameters &parameters
+inline float metal_normalize_u32_range(
+    uint value, uint minimum, uint maximum, uint scaleMode
 ) {
-    uint high = max(parameters.low, parameters.high);
-    if (high == parameters.low) return 0.5f;
-    uint clipped = clamp(value, parameters.low, high);
-    float low = float(parameters.low);
+    uint high = max(minimum, maximum);
+    if (high == minimum) return 0.5f;
+    uint clipped = clamp(value, minimum, high);
+    float low = float(minimum);
     float highValue = float(high);
     float displayValue = float(clipped);
-    if (parameters.scaleMode == 1u) {
+    if (scaleMode == 1u) {
         low = log(1.0f + low);
         highValue = log(1.0f + highValue);
         displayValue = log(1.0f + displayValue);
@@ -46,6 +45,14 @@ inline float metal_normalize_u32(
         (displayValue - low) / max(1.0e-30f, highValue - low),
         0.0f,
         1.0f
+    );
+}
+
+inline float metal_normalize_u32(
+    uint value, constant MetalDisplayParameters &parameters
+) {
+    return metal_normalize_u32_range(
+        value, parameters.low, parameters.high, parameters.scaleMode
     );
 }
 
@@ -159,6 +166,24 @@ kernel void metal_range_u32(
     atomic_fetch_max_explicit(&valueRange[1], value, memory_order_relaxed);
 }
 
+// Same range contract; one pair of global atomics per active SIMD group.
+kernel void metal_range_u32_simd(
+    device const uint *values [[buffer(0)]],
+    device atomic_uint *valueRange [[buffer(1)]],
+    constant uint &count [[buffer(2)]],
+    uint index [[thread_position_in_grid]],
+    uint lane [[thread_index_in_simdgroup]]
+) {
+    uint minimum = index < count ? values[index] : 0xffffffffu;
+    uint maximum = index < count ? values[index] : 0u;
+    minimum = simd_min(minimum);
+    maximum = simd_max(maximum);
+    if (lane == 0u) {
+        atomic_fetch_min_explicit(&valueRange[0], minimum, memory_order_relaxed);
+        atomic_fetch_max_explicit(&valueRange[1], maximum, memory_order_relaxed);
+    }
+}
+
 inline uint metal_ordered_float_bits(float value) {
     uint bits = as_type<uint>(value);
     return (bits & 0x80000000u) != 0u ? ~bits : bits ^ 0x80000000u;
@@ -187,6 +212,24 @@ kernel void metal_histogram_u32(
     uint count = parameters.rows * parameters.cols;
     if (index >= count) return;
     float normalized = metal_normalize_u32(values[index], parameters);
+    uint bin = min(255u, uint(normalized * 256.0f));
+    atomic_fetch_add_explicit(&bins[bin], 1u, memory_order_relaxed);
+}
+
+// Range must be complete before this dispatch (encoder boundary or buffer
+// barrier). The caller clears bins before encoding, as with the original API.
+kernel void metal_histogram_u32_from_range(
+    device const uint *values [[buffer(0)]],
+    device atomic_uint *bins [[buffer(1)]],
+    constant MetalDisplayParameters &parameters [[buffer(2)]],
+    device const uint *valueRange [[buffer(3)]],
+    uint index [[thread_position_in_grid]]
+) {
+    uint count = parameters.rows * parameters.cols;
+    if (index >= count) return;
+    float normalized = metal_normalize_u32_range(
+        values[index], valueRange[0], valueRange[1], parameters.scaleMode
+    );
     uint bin = min(255u, uint(normalized * 256.0f));
     atomic_fetch_add_explicit(&bins[bin], 1u, memory_order_relaxed);
 }

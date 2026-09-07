@@ -589,6 +589,73 @@ final class CompactH5LoaderTests: XCTestCase {
     XCTAssertEqual(try source.virtualDetectorValues(), translatedExpected)
   }
 
+  func testResidentTiltSeriesUpdatesEveryExactImageInOneSubmission() throws {
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let fixture = try makeCompactFixture(portable: true)
+    defer { try? FileManager.default.removeItem(at: fixture.url) }
+    let sources = try (0..<2).map { _ in
+      try MetalCompactH5Loader.load(sourceURL: fixture.url, device: device)
+    }
+    defer {
+      for source in sources { source.releaseResidentStorage() }
+    }
+
+    let brightFieldMask: [UInt8] = [1, 0, 1, 0, 1, 0]
+    let brightField = try MetalCompactH5ResidentSource.updateVirtualDetectors(
+      sources, mask: brightFieldMask
+    )
+    let expectedBrightField = (0..<128).map { scan in
+      fixture.values[0][scan] + fixture.values[2][scan] + fixture.values[4][scan]
+    }
+    XCTAssertEqual(brightField.submissionCount, 1)
+    XCTAssertEqual(brightField.sources.count, 2)
+    XCTAssertTrue(brightField.sources.allSatisfy { $0.mode == "rebase" })
+    for source in sources {
+      XCTAssertEqual(try source.virtualDetectorValues(), expectedBrightField)
+    }
+
+    let translatedMask: [UInt8] = [0, 1, 1, 0, 1, 0]
+    let translated = try MetalCompactH5ResidentSource.updateVirtualDetectors(
+      sources, mask: translatedMask
+    )
+    let expectedTranslated = (0..<128).map { scan in
+      fixture.values[1][scan] + fixture.values[2][scan] + fixture.values[4][scan]
+    }
+    XCTAssertEqual(translated.submissionCount, 1)
+    XCTAssertTrue(
+      translated.sources.allSatisfy {
+        $0.mode == "delta" && $0.changedDetectorPixels == 2
+      }
+    )
+    for source in sources {
+      XCTAssertEqual(try source.virtualDetectorValues(), expectedTranslated)
+    }
+
+    let cleared = try MetalCompactH5ResidentSource.updateVirtualDetectors(
+      sources, mask: Array(repeating: 0, count: 6), forceRebase: true
+    )
+    XCTAssertEqual(cleared.submissionCount, 1)
+    for source in sources {
+      XCTAssertEqual(try source.virtualDetectorValues(), Array(repeating: 0, count: 128))
+    }
+  }
+
+  func testResidentTiltSeriesRejectsDuplicateOwnership() throws {
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let fixture = try makeCompactFixture(portable: true)
+    defer { try? FileManager.default.removeItem(at: fixture.url) }
+    let source = try MetalCompactH5Loader.load(sourceURL: fixture.url, device: device)
+    defer { source.releaseResidentStorage() }
+
+    XCTAssertThrowsError(
+      try MetalCompactH5ResidentSource.updateVirtualDetectors(
+        [source, source], mask: [1, 0, 1, 0, 1, 0]
+      )
+    ) { error in
+      XCTAssertTrue(error.localizedDescription.contains("same source twice"))
+    }
+  }
+
   func testPortableV1SourcePublishesExactUInt16Receipt() throws {
     let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
     let fixture = try makeCompactFixture(portable: true)

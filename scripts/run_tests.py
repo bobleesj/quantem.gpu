@@ -25,6 +25,7 @@ SUITES = {
     "hardware": "tests/hardware",
     "hardware/cuda": "tests/hardware/cuda",
     "hardware/mps": "tests/hardware/mps",
+    "hardware/metal": "tests/hardware/metal",
     "e2e": "tests/e2e",
     "infrastructure": "tests/infrastructure",
 }

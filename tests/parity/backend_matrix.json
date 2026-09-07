@@ -113,7 +113,7 @@
         },
         "swift-metal": {
           "level": "required",
-          "gates": ["src/quantem/gpu/swift/Tests/Native4DSTEMIOTests/Native4DSTEMIOTests.swift", "src/quantem/gpu/swift/Tests/Metal4DSTEMKernelsTests/Metal4DSTEMKernelsTests.swift"]
+          "gates": ["src/quantem/gpu/swift/Tests/Native4DSTEMIOTests/Native4DSTEMIOTests.swift", "src/quantem/gpu/swift/Tests/Metal4DSTEMKernelsTests/Metal4DSTEMKernelsTests.swift", "tests/hardware/metal/test_original_packing.py"]
         },
         "webgpu": {
           "level": "required-hardware",
