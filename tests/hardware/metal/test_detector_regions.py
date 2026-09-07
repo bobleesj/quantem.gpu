@@ -1,4 +1,4 @@
-"""Exact original-file detector interactions with automatic exact detector-region sums.
+"""Exact original-file interactions with bounded optional detector-region sums.
 
 The NumPy oracle reads generated counts, not packing descriptors or shader
 helpers. No private acquisition or cached virtual image is used as evidence.
@@ -198,7 +198,12 @@ def _acquisition(folder, *, index=0, dtype="uint16", scans=8192, wide=False):
 
 
 def _run(executable, folder, mode, count=1):
-    baseline_modes = {"baseline", "plan-baseline", "tight-baseline"}
+    baseline_modes = {
+        "baseline",
+        "default",
+        "plan-baseline",
+        "tight-baseline",
+    }
     env = {
         **os.environ,
         "QGPU_ORIGINAL_DETECTOR_REGIONS": "0" if mode in baseline_modes else "1",
@@ -232,6 +237,7 @@ def _run(executable, folder, mode, count=1):
     ]
     if mode in baseline_modes:
         assert records == []
+        assert all(sum(stage["aggregate_entries"]) == 0 for stage in stages)
     elif mode == "budget":
         assert len(records) == count, records
         # Scratch from the finished decode phase is no longer live. Optional
@@ -308,7 +314,17 @@ def test_original_detectors_and_budget_are_exact(
     """Whole blocks, curved boundaries and DP reads preserve original counts."""
     files = _acquisition(tmp_path, dtype=dtype, wide=dtype == "uint16")
     before = {file: hashlib.sha256(file.read_bytes()).hexdigest() for file in files}
-    _run(detector_regions_executable, tmp_path, "baseline")
+    baseline = _run(detector_regions_executable, tmp_path, "baseline")
+    default = _run(detector_regions_executable, tmp_path, "default")
+
+    def load_lines(run):
+        return [
+            line
+            for line in run.stdout.splitlines()
+            if line.startswith("DETECTOR_REGIONS_LOAD ")
+        ]
+
+    assert load_lines(default) == load_lines(baseline)
     if dtype == "uint16":
         # Prove BOTH processes succeed under the same measured direct-reopen
         # budget. Exact optional sums may reuse memory from finished scratch.
@@ -337,7 +353,7 @@ def test_original_detectors_and_budget_are_exact(
             baseline_loads[0].split("budget=")[-1]
             == skipped_loads[0].split("budget=")[-1]
         )
-    _run(detector_regions_executable, tmp_path, "default")
+    _run(detector_regions_executable, tmp_path, "regions")
     _run(detector_regions_executable, tmp_path, "cancel")
     assert {
         file: hashlib.sha256(file.read_bytes()).hexdigest() for file in files

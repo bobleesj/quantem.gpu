@@ -3,13 +3,10 @@ import Metal
 
 /// Optional exact sums over whole detector blocks. Source counts are untouched.
 struct CompactDetectorRegions {
-  // Region sums are an exact acceleration, never a replacement for evidence.
+  // Additional resident summaries are a diagnostic tradeoff, not the default.
+  // Normal interactions use the original compact counts without this cache.
   static var enabled: Bool {
-    #if QGPU_PACKING_DIAGNOSTICS
-      return ProcessInfo.processInfo.environment["QGPU_ORIGINAL_DETECTOR_REGIONS"] != "0"
-    #else
-      return true
-    #endif
+    OriginalPackingDiagnostics.enabled("DETECTOR_REGIONS")
   }
 
   let blockSide: Int

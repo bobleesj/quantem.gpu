@@ -43,6 +43,13 @@ public endpoint list and FFT contract, see
 The native load, audit, and cache contract is documented in
 [Native 4D-STEM load and cache contract](../../../../docs/api/native_4dstem_io.md).
 
+Original HDF5 detector interactions operate on the lossless packed count
+resident. Normal builds do not add a resident detector-region sum cache or
+retain a dense 4D copy. Detector outputs and bounded interaction buffers remain
+accounted for separately from the packed counts. An optional sum-cache experiment
+is available only in explicitly instrumented builds; it is not the default
+memory or performance contract.
+
 ## Build, test, and measure
 
 ```bash
