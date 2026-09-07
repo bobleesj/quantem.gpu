@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260906-original-packed-metal",
+  "status": "succeeded",
+  "question": "Does the current native API reread and reconstruct full original uint16 HDF5 counts in bounded packed residency without changing scientific values?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260906-original-packed-metal/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "e305f9216ed359397e27f69882931ffe16de8d99",
+    "entrypoint": "metal-original-hdf5-benchmark",
+    "dirty": false
+  },
+  "inputs": [
+    {
+      "dataset_id": "original-512x512x192x192-u16-fixture-d",
+      "path": "private-fixture://original-u16-fixture-d",
+      "sha256": "b364e25625ca9749ad5251eed4ebe28a771d727073f361ae35eb7cd42443117e"
+    }
+  ],
+  "parameters": {
+    "input_hash_encoding": "full original counts in scan-major uint32 little-endian, not physical file bytes",
+    "source_identity_sha256": "532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350",
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "source_dtype": "uint16",
+    "working_dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "exclusions": 0,
+    "repeats": 7,
+    "resident_bytes": 2014617028,
+    "source_read_bytes_each_load": 2155414447,
+    "cache_state": "original compressed source reread every visit; existing QH5 index and source-bound packing layout; exact DPC sums reused after first load; OS pages uncontrolled",
+    "timing_boundary": "indexed source open through synchronous complete packed-resident return; catalog and independent full-count audit separate",
+    "target_seconds": 1,
+    "target_met": false,
+    "first_visible_frame_measured": false,
+    "artifact_results": {
+      "loads.jsonl": "Seven exact loads: p50 1.49666 s, p95/max 2.08612 s; independent full-count audit once; source reread and resident release each visit.",
+      "verification.json": "97 tests pass; executable/resource hashes retained; 2.01462 GB residency; no cold-I/O or UI claim.",
+      "phases.txt": "Read/decode/fused work intervals and time -l memory telemetry; phases overlap and are not summed as wall time."
+    }
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "integrated-gpu-0"
+    ],
+    "gpu_model": "Apple M5, 10 GPU cores, 24 GB unified memory"
+  },
+  "outputs": [
+    {
+      "artifact_id": "loads.jsonl",
+      "path": "experiments/20260906-original-packed-metal/loads.jsonl",
+      "sha256": "73603576f7405de0c293aea5f99079bfc9c60a61b1b89305700f6d36b25e8764",
+      "size_bytes": 8496,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "verification.json",
+      "path": "experiments/20260906-original-packed-metal/verification.json",
+      "sha256": "9a3be3ee8f2d077e1cb17e81410c263bfb066c50ed01f7a1e4d28de885e87ca5",
+      "size_bytes": 2236,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "phases.txt",
+      "path": "experiments/20260906-original-packed-metal/phases.txt",
+      "sha256": "e03580bc0113f2fb6ecc707e41d2d4de6427e4d2fe007e2358e379da3ffd8f5e",
+      "size_bytes": 13230,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-07T04:49:43.832Z",
+    "started": "2026-09-07T04:49:43.832Z",
+    "finished": "2026-09-07T04:51:03.693Z"
+  }
+}

@@ -194,7 +194,12 @@ def test_current_load_table_has_one_explicit_row_per_configuration() -> None:
     )[0]
     assert section.index("| Python MPS |") < section.index("| Native Swift/Metal |")
     assert "Process physical-footprint peak" in section
-    assert "~0.706 GiB" in section
+    # The current row advances with qualified measurements; keep testing that
+    # its measured footprint is rendered instead of pinning a historical run.
+    measured = [row for row in current if row.get("process_footprint_peak_bytes")]
+    assert measured
+    for row in measured:
+        assert _bytes(row["process_footprint_peak_bytes"]) in section
 
 
 def test_current_webgpu_full_native_row_requires_complete_output_parity() -> None:

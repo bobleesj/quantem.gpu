@@ -1,0 +1,45 @@
+{
+  "status": "pass",
+  "source_revision": "e305f9216ed359397e27f69882931ffe16de8d99",
+  "tests": {
+    "passed": 97,
+    "failed": 0,
+    "skipped": 0,
+    "junit_sha256": "5cd69747f58085b6c5fa683601d2479a6dabe30d60025c98ed9d888d5663bd75"
+  },
+  "binary_and_resources": {
+    "metal-original-hdf5-benchmark": "a3627797867764eef090a91c100ae556a890218cf63c935245ef9d59e62b4e80",
+    "MetalKernels_Metal4DSTEMKernels.bundle/Resources/ans_counts.metal": "c58a7397fb5c97453711785dfa9722132dc5f24a055090985b688db3716be54b",
+    "MetalKernels_Metal4DSTEMKernels.bundle/Resources/detector.metal": "62ecde7eb07610ad358a2834b274476f5580201b0c58f450c495adab35c97716",
+    "MetalKernels_Metal4DSTEMKernels.bundle/Resources/dpc.metal": "8ba200b8f32ed8d06e2e394ae8bfaa29e1a06945f5b4baafa3a637301803f8a1",
+    "MetalKernels_Metal4DSTEMKernels.bundle/Resources/original_packing.metal": "434da62ee1db7cb173aeaa1e8a072a8a14715233dadfdcd4826e2fbcb4e7c63c",
+    "MetalKernels_Metal4DSTEMKernels.bundle/Resources/packed_h5.metal": "403b4ce85160caf2a1f006befa6b67fcaaaa1506817aed094e9e88730eaf0047",
+    "MetalKernels_Metal4DSTEMKernels.bundle/Resources/qh5idx.metal": "93ed986359daa5032280ff28184b9e0b70a497f97518279e7cd1ee7fa68b3b34",
+    "MetalKernels_Native4DSTEMIO.bundle/Resources/HDF5-LICENSE.txt": "69f2a21629543898211b108bfb32d6d9c08f00cc5d825f7dc7f0fe1ff2804b5c"
+  },
+  "benchmark": {
+    "first_load_included": true,
+    "independently_audited_acquisitions": 1,
+    "loads": 7,
+    "max_seconds": 2.086119055747986,
+    "p50_seconds": 1.4966599941253662,
+    "p95_seconds": 2.086119055747986,
+    "phase": "complete"
+  },
+  "first_load_seconds": 2.086119055747986,
+  "return_load_seconds": [
+    1.4905370473861694,
+    1.4966599941253662,
+    1.4843809604644775,
+    1.4978970289230347,
+    1.4921320676803589,
+    1.5057669878005981
+  ],
+  "process_peak_footprint_bytes": 2717811408,
+  "maximum_rss_bytes": 199000064,
+  "memory_scope": "whole benchmark process including full count audit; not process-tree sampling",
+  "cold_io_claim": false,
+  "ui_present_measured": false,
+  "full_count_audit": "one complete source, once outside timing; later visits selected-DP checks",
+  "registration_timing": "reconciled after the completed local run"
+}
