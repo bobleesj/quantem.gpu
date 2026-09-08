@@ -18,5 +18,8 @@ The public Python modules and Swift products are documented under the
 [API reference](../api/index.md). Backend internals may change behind those
 contracts; consumer code should not import them.
 
+The [exact CUDA resident-series guide](compact-resident.md) distinguishes the
+general H5/ANS source path from the preserved prepared-series implementation.
+
 ```{tableofcontents}
 ```

@@ -97,6 +97,8 @@ parts:
           - file: backends
             title: Backend coverage
           - file: performance/methodology
+          - file: performance/cuda-count-codecs
+            title: CUDA codec speed and peak memory
           - file: performance/continuous-profiling
             title: Continuous profiling
           - file: performance/parity
@@ -119,6 +121,8 @@ parts:
           - file: developer/adding-backend
           - file: developer/representation-integration
             title: Count and Fourier representation integration
+          - file: developer/compact-resident
+            title: Exact CUDA resident series
           - file: developer/writing
             title: Writing, notation, and units
           - file: developer/testing

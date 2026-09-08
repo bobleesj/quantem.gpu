@@ -1,0 +1,16 @@
+{
+  "format": "compact-prepared-series-v1",
+  "query_abi": "compact-series-v1",
+  "decoder": "funnel32-pairs4",
+  "provenance": "Active resident owner source captured in 0908-05-native-preview-version; exact extraction validated in 0908-06-packaged-resident-backend.",
+  "kernels": {
+    "coarse_module.cu": "4ab6639e7b304ad6809b1caeb0da31fb75597161792de179f9180338fc4ac3ef",
+    "groups.cu": "c4213a718f9ed7452623a6983b8e4c10d17b3b627881891b8ffef017703221e8",
+    "module.cu": "adff4e9853b577b9d0afc2d8cabb3600be8931d653a795ac4d87ef29a8dbe67c",
+    "palette.cu": "91368881bae37c9f6fb71dd7339e5873a1a08d2b7c7957bce30600e290121804",
+    "pattern_module.cu": "c937c503bf2f4d1149a6e5616f359bb2082631e181f9c9d43d7d9af94e8096e3",
+    "planner.cpp": "990d3755f591bba413e2eb29df5e2d904e83a3d146f85c061489f7e208365320",
+    "sparse_module.cu": "9ffbc8bbf686e1c3523d62b5ef6f0cf20895f5d5db47aa8455abf19fc9b452d6",
+    "tile_module.cu": "8e41a6803310b6b3161a1785612470016743e34ea605bcbb12547773dfc2a800"
+  }
+}

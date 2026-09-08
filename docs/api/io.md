@@ -62,6 +62,31 @@ print(loaded.residency)
 print(loaded.logical_bytes, loaded.resident_bytes)
 ```
 
+(cuda-h5-ans-residency)=
+### Stream complete H5 counts into CUDA ANS residency
+
+```python
+from quantem.gpu import io, detector
+
+loaded = io.load("scan_master.h5", backend="cuda", representation="ans",
+                 dtype="native", apply_mask=False)
+session = detector.prepare(loaded)
+pattern = session.frame(0, output="native")
+```
+
+This opt-in CUDA path streams bounded chunks of a complete uint8/uint16 H5
+acquisition, preserves every stored count, and builds exact spatial sums while
+those chunks are available. The library's default H5 representation remains
+dense. Existing ANS files keep their original encoded buffers. Prepare a list
+of equally shaped acquisitions for joint native DP and detector queries:
+`detector.prepare([first, second])`.
+
+The runtime H5 resident uses a separate internal ANS profile from the portable
+ANS file format. Its `resident_profile`, `physical_resident_bytes`, `index_bytes`
+and `load_timings` metadata describe the actual loaded representation. Saving
+or transcoding this new resident is not yet implemented. Complete-series
+120 Hz throughput is not established by the bounded CUDA parity tests.
+
 ### Representation
 
 See [Count representations](representations.md) for per-backend
@@ -81,8 +106,10 @@ These are the only representation names. The authenticated `storage_schema`
 selects the precise decoder within a representation; users do not select an
 internal bitpacking or block-compression profile through this argument.
 
-The new ANS-to-packed file workflow is available on Python MPS and CUDA;
-physical CUDA qualification remains pending. The explicit CPU reference can
+The new ANS-to-packed file workflow is available on Python MPS and CUDA, with
+bounded physical integer-parity evidence. That evidence does not qualify
+complete-series loading, peak memory, or interactive throughput. The explicit
+CPU reference can
 decode ANS to dense. GPU dense materialization, reverse conversions, and native
 file-reader integration remain pending. Do not infer support for every
 source/representation/backend combination from the selector names.

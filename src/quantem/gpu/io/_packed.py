@@ -34,13 +34,8 @@ def _selected_representation(
     if requested is not None:
         selected = DataRepresentation.parse(requested)
         detected = [DataRepresentation.detect_source(path) for path in paths]
-        if selected is DataRepresentation.ANS and any(
-            item is not DataRepresentation.ANS for item in detected
-        ):
-            raise NotImplementedError(
-                "representation='ans' requires an ANS source. Encoding other "
-                "sources to ANS during loading is not implemented."
-            )
+        if selected is DataRepresentation.ANS and any(item is DataRepresentation.PACKED for item in detected):
+            raise NotImplementedError("Conversion from prepared packed H5 requires an ANS source or ordinary H5; load prepared packed sources natively.")
         if selected is DataRepresentation.PACKED and any(
             item not in {DataRepresentation.PACKED, DataRepresentation.ANS}
             for item in detected

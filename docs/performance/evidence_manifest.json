@@ -2,7 +2,7 @@
   "schema_version": 1,
   "source_revision": "68dbe3aa5f816e2d1c1ae976e1874790cffb4319",
   "source_revision_scope": "Latest clean canonical source/working metadata and cross-backend logical-pixel parity revision used by the current Python MPS and CPU rows. Native Swift/Metal rows remain bound to clean revision 5106ca4, and the current exact full-volume WebGPU distribution is bound to clean revision d8e6f56; every retained physical measurement keeps its own revision, fixture identity, cache state, and timing boundary.",
-  "documentation_update": "2026-09-04: refreshed representation/result/API vocabulary only; no benchmark value, acceptance state, fixture, device, cache state, or measurement revision changed. 2026-09-05: normalized executable test paths using tests/path_migrations.json; affected current pages and registry were verified as exact path-only substitutions. 2026-09-06: updated only the public packed name in CUDA/MPS/WebGPU platform pages and the WebGPU resident receipt reference from v2 to v3, relative to e78c46f2191ab0c50cc5fe72ce1b934cce19aaa8. No measured value, acceptance state, dataset, device, cache state, or measurement revision changed. Historical transcripts and all numerical evidence remain unchanged.",
+  "documentation_update": "2026-09-04: refreshed representation/result/API vocabulary only; no benchmark value, acceptance state, fixture, device, cache state, or measurement revision changed. 2026-09-05: normalized executable test paths using tests/path_migrations.json; affected current pages and registry were verified as exact path-only substitutions. 2026-09-06: updated only the public packed name in CUDA/MPS/WebGPU platform pages and the WebGPU resident receipt reference from v2 to v3, relative to e78c46f2191ab0c50cc5fe72ce1b934cce19aaa8. No measured value, acceptance state, dataset, device, cache state, or measurement revision changed. Historical transcripts and all numerical evidence remain unchanged. 2026-09-08: added a separate experimental CUDA count-codec page and anonymous measured summary; appended compressed-resident accounting to methodology. Existing numerical results and qualification states remain unchanged; the new record does not qualify the public ANS API.",
   "purpose": "Fingerprints for the current benchmark dashboard, its authoritative registry and rendering inputs, provenance ledger, parity and methodology contracts, and canonical historical evidence. Landing, API, and backend capability pages intentionally do not duplicate measurements.",
   "fingerprint_review_2026_09_08": "Audited against e305f92^ and bd6d337^, whose registry and changes-page hashes match the prior fingerprints. e305f92 added the original-packed runbook; 3a843bb added the independently retained 20260906-original-packed-metal measurement and selected it as the current row; bd6d337 added an explicitly unqualified investigation link. Regenerated-table validation passes. No retained measurement, numerical oracle, tolerance, or historical row was changed in this review; only these three document/input fingerprints and stale current-row expectations were synchronized.",
   "pages": [
@@ -58,7 +58,7 @@
     },
     {
       "path": "docs/performance/methodology.md",
-      "sha256": "a3b8a9107fe2976499b0cb331991cfc12ffdc07d4217197238519f8fd1815078",
+      "sha256": "ccd3f29a49abc55c53028f9b91284c3e6a9bcc2ad75a94c02526dfeb0cf9da1c",
       "role": "Benchmark state, provenance, and scientific-resolution contract"
     },
     {
@@ -105,6 +105,11 @@
       "path": "docs/maintainer/m2-air-lz4-match-unroll-2026-08-18.md",
       "sha256": "fc5ce5fcc3295cec11a411161de7270f196857e927013971935f8512ee2125a1",
       "role": "Physical M2 Air Metal load/decode evidence"
+    },
+    {
+      "path": "docs/performance/cuda-count-codecs.md",
+      "sha256": "7acac87cd5340904f0b47eeef8cbab03c599dbcdfde61f13d32f984d11a87c68",
+      "role": "CUDA count-codec investigation: separate resident layout, shared scratch and unmeasured standalone peak"
     }
   ],
   "authoritative_inputs": [
@@ -147,6 +152,11 @@
       "path": "experiments/20260822-platform-computer-profile/manifest.json",
       "sha256": "7a3eb8c443ebcadf9b2f483e9acd06188e73c4fc883e9cd7847c70188041dc73",
       "role": "Completed physical-device matrix ledger with accepted, partial, refuted, blocked, and pending atomic gates"
+    },
+    {
+      "path": "docs/performance/data/cuda-count-codecs-2026-09-08.json",
+      "sha256": "551de00663a1ddb9f74ad7f32bd873cef0afdbc1f01b92c523978a6797594120",
+      "role": "Anonymous portable GPU codec timing and memory record; prototype scope, source/evidence hashes and null full-load peak gates"
     }
   ]
 }

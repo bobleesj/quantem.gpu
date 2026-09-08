@@ -56,41 +56,65 @@ class DetectorSession:
 
     @property
     def num_frames(self) -> int:
-        """Number of scan frames in the prepared data."""
+        """Number of scan positions per acquisition in the prepared data."""
 
         return int(self._backend.n_frames)
 
-    def frame(self, index: int) -> np.ndarray:
-        """Return one detector frame without converting counts for display.
+    @property
+    def series_shape(self) -> tuple[int, ...]:
+        """Leading acquisition dimensions; empty for a single 4D acquisition."""
+        return tuple(getattr(self._backend, "series_shape", ()))
+
+    @property
+    def backend_metadata(self) -> dict:
+        """Scientific format and implementation identity, when supplied."""
+        return dict(getattr(self._backend, "backend_metadata", {}))
+
+    @property
+    def timings(self) -> dict:
+        """Completed backend timings for the last request, excluding display."""
+        return dict(getattr(self._backend, "last", {}))
+
+    @property
+    def detector_validity(self) -> np.ndarray | None:
+        """Copy the stored detector-validity mask when the source provides it."""
+        valid = getattr(self._backend, "valid_pixels", None)
+        return None if valid is None else np.array(valid, dtype=bool, copy=True)
+
+    def frame(self, index: int, *, output: str = "numpy", out=None):
+        """Return one detector frame.
 
         Parameters
         ----------
-        index : int
-            Nonnegative row-major scan index, smaller than ``num_frames``.
-
-        Returns
-        -------
-        numpy.ndarray
-            Independent copy of the complete pattern in the working dtype.
-            Editing this small output does not change the resident source.
-
-        Raises
-        ------
-        IndexError
-            If the scan index is outside the loaded source.
+        index
+            Flat scan index in row-major order. A compact series decodes this
+            position across every acquisition in one calculation.
+        output
+            ``"numpy"`` preserves the host-returning default. ``"native"``
+            requests a supported device-native result without a host copy.
+        out
+            Optional contiguous device buffer, only with ``output="native"``.
+            Point patterns retain uint8/uint16 with leading ``series_shape``.
+            The operation finishes before returning; do not reuse ``out`` while
+            a consumer still reads it. Without ``out``, the result owns storage.
 
         Examples
         --------
-        >>> session = prepare(np.zeros((2, 3, 4, 5), dtype=np.uint16))
-        >>> session.frame(1 * session.scan_shape[1] + 2).shape
-        (4, 5)
+        >>> patterns = session.frame(256 * 512 + 256, output="native")
         """
+        _check_output(output, out)
         index = int(index)
         if not 0 <= index < self.num_frames:
             raise IndexError(
                 f"Scan index {index} is outside {self.num_frames} frames; "
                 "use a nonnegative row-major index within the loaded scan."
             )
+        native = getattr(self._backend, "frame_native", None)
+        if native is not None:
+            result = native(index, out=out)
+            return result if output == "native" else result.get()
+        if output == "native":
+            raise NotImplementedError("This backend has no native frame output; use output='numpy'.")
         return np.array(self._backend.frame(index), copy=True)
 
     def reduce_frames(self, indices, mode: str = "mean") -> np.ndarray:
@@ -123,15 +147,60 @@ class DetectorSession:
 
         return _reduced_to_numpy(self._backend.mean_dp())
 
-    def masked_sum(self, mask) -> np.ndarray:
-        """Return a float32 virtual-detector image for one detector mask."""
+    def masked_sum(self, mask, *, output: str = "numpy", out=None):
+        """Return a float32 virtual-detector image for one detector mask.
 
-        return _reduced_to_numpy(self._backend.masked_sum(mask)).reshape(
-            self.scan_shape
-        )
+        Parameters
+        ----------
+        mask
+            Detector mask in ``(row, col)`` order. Compact sources support binary
+            masks and preserve the stored detector-validity semantics.
+        output
+            ``"numpy"`` retains the float32 host default. ``"native"`` for a
+            count series returns exact uint32/uint64 counts, shape
+            ``(*series_shape, *scan_shape)``, without host conversion.
+        out
+            Optional contiguous native output array on the source device.
+            Only valid with ``output="native"``. The result is complete on
+            return. Finish reading it before reusing this buffer. Without
+            ``out``, each native result owns separate storage.
 
-    def masked_sum_exact(self, mask) -> np.ndarray:
-        """Return an exact uint64 image for a full-shape binary detector mask."""
+        Examples
+        --------
+        >>> images = session.masked_sum(mask, output="native")
+        """
+        _check_output(output, out)
+        native = getattr(self._backend, "masked_sum_native", None)
+        if native is not None:
+            result = native(mask, out=out)
+        elif output == "native":
+            raise NotImplementedError("This backend has no native detector output; use output='numpy'.")
+        else:
+            result = self._backend.masked_sum(mask)
+        if output == "native":
+            return result
+        return _reduced_to_numpy(result).reshape((*self.series_shape, *self.scan_shape))
+
+    def masked_sum_exact(self, mask, *, output: str = "numpy", out=None):
+        """Return an exact uint64 virtual-detector image for one mask.
+
+        Parameters
+        ----------
+        mask
+            Full-resolution detector mask. Compact masks must be binary.
+        output
+            ``"numpy"`` retains the exact uint64 host default. ``"native"``
+            returns the compact backend's exact uint32 all-acquisition array;
+            this supported detector shape cannot overflow uint32.
+        out
+            Optional native uint32 buffer, with the ownership and completion
+            rules documented by :meth:`masked_sum`.
+
+        Examples
+        --------
+        >>> exact_images = session.masked_sum_exact(mask, output="native")
+        """
+        _check_output(output, out)
         values = np.asarray(mask)
         if values.shape != self.detector_shape:
             raise ValueError(
@@ -144,9 +213,16 @@ class DetectorSession:
                 "Exact detector masks must be binary; provide only 0/1 or "
                 "False/True values. Weighted masks require a weighted reducer."
             )
-        return _exact_to_numpy(self._backend.masked_sum_exact(values)).reshape(
-            self.scan_shape
-        )
+        native = getattr(self._backend, "masked_sum_native", None)
+        if native is not None:
+            result = native(mask, out=out)
+        elif output == "native":
+            raise NotImplementedError("This backend has no native exact output; use output='numpy'.")
+        else:
+            result = self._backend.masked_sum_exact(mask)
+        if output == "native":
+            return result
+        return _exact_to_numpy(result).reshape((*self.series_shape, *self.scan_shape))
 
     def center_of_mass(self, mask=None) -> tuple[np.ndarray, np.ndarray]:
         """Return mean-subtracted detector CoM in ``(row, col)`` order."""
@@ -253,8 +329,33 @@ class DetectorSession:
         self._backend = None
 
 
+def _check_output(output: str, out) -> None:
+    if output not in ("numpy", "native"):
+        raise ValueError(f"Use output='numpy' or 'native'; got {output!r}.")
+    if out is not None and output != "native":
+        raise ValueError("out is a device buffer; use output='native' with it.")
+
+
 def prepare(data) -> DetectorSession:
-    """Prepare one backend-neutral detector session."""
+    """Prepare detector queries over one source or a list of CUDA acquisitions.
+
+    Parameters
+    ----------
+    data
+        A loaded source, array, or list of equally shaped uint8/uint16 CUDA
+        acquisitions. A list retains its complete acquisition axis and uses
+        one joint kernel launch per native detector or point-pattern query.
+
+    Returns
+    -------
+    DetectorSession
+        A session borrowing the supplied sources and owning query workspaces.
+
+    Examples
+    --------
+    >>> session = prepare([first_loaded, second_loaded])  # doctest: +SKIP
+    >>> images = session.masked_sum(mask, output="native")  # doctest: +SKIP
+    """
 
     return DetectorSession(data)
 
@@ -519,16 +620,41 @@ class _ArrayComputeBackend:
 
 def _resolve_backend(data):
     """Return the array compute backend for this data."""
+    if isinstance(data, list):
+        from .backends.cuda.series import CudaSeriesCompute
+
+        from quantem.gpu._compact.interaction import StreamedSeriesCompute
+        from quantem.gpu._compact.streamed import StreamedCounts
+
+        sources = [item.data if hasattr(item, "_fields") and "data" in item._fields else item for item in data]
+        from quantem.gpu.io.backends.cuda._ans import CudaANSResidentCounts, CudaPackedResidentCounts
+
+        if sources and all(isinstance(source, (StreamedCounts, CudaANSResidentCounts, CudaPackedResidentCounts)) for source in sources):
+            return StreamedSeriesCompute(data)
+        return CudaSeriesCompute(data)
     from .backends.packed import PackedDetectorCompute, is_packed_source
     from .backends.counts import CountDetectorCompute, is_count_source
 
     data = _unwrap_core_4dstem(data)
     if hasattr(data, "_fields") and "data" in getattr(data, "_fields", ()):
         data = data.data
+    from quantem.gpu._compact.streamed import StreamedCounts
+    from quantem.gpu._compact.interaction import StreamedSeriesCompute
+
+    if isinstance(data, StreamedCounts):
+        result = StreamedSeriesCompute([data])
+        result.series_shape = ()
+        result.valid_pixels = result.valid_pixels[0]
+        result.backend_metadata["series_shape"] = ()
+        return result
     if is_count_source(data):
         return CountDetectorCompute(data)
     if is_packed_source(data):
         return PackedDetectorCompute(data)
+    from quantem.gpu._compact.source import CompactSeries
+
+    if isinstance(data, CompactSeries):
+        return data
     if is_packed_uint4(data):
         from quantem.gpu.detector.backends.dispatch import compute_backend
 
@@ -576,8 +702,7 @@ def masked_sum(data, det_mask) -> np.ndarray:
     This is the small public helper for code that needs the shared widget/live
     masked-sum compute path without constructing a widget-local dataset object.
     """
-    backend = _resolve_backend(data)
-    return _reduced_to_numpy(backend.masked_sum(det_mask)).reshape(_scan_shape(data, backend))
+    return prepare(data).masked_sum(det_mask)
 
 
 def auto_probe(mean_dp):
@@ -602,16 +727,28 @@ def auto_probe(mean_dp):
     return (cy, cx), radius
 
 
-def detector_mask(center, lo_px, hi_px, det_shape) -> np.ndarray:
+def detector_mask(center, lo_px, hi_px, det_shape, *, dtype=np.float32) -> np.ndarray:
     """THE virtual-detector geometry primitive: boolean ``(det_row, det_col)`` mask
     of pixels whose distance from ``center`` (row, col) is in ``[lo_px, hi_px]``
     detector pixels. Every detector everywhere - ``ds.bf/adf/df``, the standalone
     ``virtual``, and the Show4DSTEM viewer's circle/annular ROIs - builds its mask
-    here, so a viewer ROI and ``ds.adf()`` are pixel-identical by construction."""
+    here, so a viewer ROI and ``ds.adf()`` are pixel-identical by construction.
+
+    ``dtype=np.float64`` uses inclusive float64 Euclidean distances for native
+    compact-series interactions. The default float32 calculation is unchanged.
+
+    Examples
+    --------
+    >>> mask = detector_mask((95.5, 95.5), 40, 80, (192, 192), dtype=np.float64)
+    """
     cy, cx = center
-    rows = np.arange(det_shape[0], dtype=np.float32)[:, None]
-    cols = np.arange(det_shape[1], dtype=np.float32)[None, :]
-    dist = np.sqrt((rows - cy) ** 2 + (cols - cx) ** 2)
+    precision = np.dtype(dtype)
+    if precision not in (np.dtype(np.float32), np.dtype(np.float64)):
+        raise ValueError(f"Use float32 or float64 detector geometry; got {dtype!r}.")
+    rows = np.arange(det_shape[0], dtype=precision)[:, None]
+    cols = np.arange(det_shape[1], dtype=precision)[None, :]
+    dist = (np.hypot(rows - cy, cols - cx) if precision == np.dtype(np.float64)
+            else np.sqrt((rows - cy) ** 2 + (cols - cx) ** 2))
     return (dist >= lo_px) & (dist <= hi_px)
 
 

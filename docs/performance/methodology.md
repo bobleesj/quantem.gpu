@@ -125,6 +125,55 @@ during, and after the run. On WebGPU, browser-process RSS is a useful host
 signal but is not a complete GPU-device allocation measurement; an 8 GB gate
 also requires whole-system pressure/swap and the physical device run.
 
+(cuda-compressed-resident-memory)=
+### CUDA compressed-resident memory
+
+For lossless packed and ANS sources, record these quantities separately:
+
+| Memory kind | Meaning |
+|---|---|
+| Used source payload | Encoded bytes actually occupied; exclude unused capacity |
+| Resident metadata | Offsets, modes, bit widths, model tables, validity and checksums retained on device |
+| Interaction indexes | Exact summaries or checkpoints needed by the measured query path |
+| Logical resident layout | Sum of used source, retained metadata and indexes; state table sharing and padding assumptions |
+| Allocator live high-water | Maximum simultaneously live bytes tracked by the named allocator during the measured interval |
+| Allocator reserved high-water | Maximum reservation, including reusable free blocks; separate pools by owner and lifetime |
+| Incremental process/device peak | Extra actual allocation above a stable, recorded baseline, including memory outside the allocator |
+| Whole-device sampled peak | All occupants plus this operation; identify sampling cadence and gaps |
+| Host peak | Process RSS and pinned staging, with their counters and overlap stated |
+
+Peak is the maximum **simultaneous** footprint, not the sum of stage peaks.
+Do not add live allocations to the reservation containing them. Do not add
+active model bytes to scratch that already contains their allocated capacity.
+If independent-pool maxima occur at different times, their sum is an upper
+bound rather than a measured simultaneous peak. Persistent source growth,
+fragmentation and retained allocator blocks can all affect the final admission
+requirement.
+
+A benchmark that reserves a common arena for every codec measures the common
+arena. It cannot infer a per-codec peak difference from those identical
+reservations. Record the difference as unmeasured until standalone ownership
+and allocations are profiled. Similarly, summing used block sizes estimates a
+resident layout; streaming every block through small scratch does not measure
+the peak of keeping the whole source resident.
+
+For ANS-to-packed conversion with independent output ownership, retain and
+count both source and destination at the overlap peak. In-place conversion,
+source release and replacement are separate ownership contracts. Avoiding a
+dense intermediate does not eliminate the two encoded representations' overlap.
+
+Measure the entire source-to-ready interval and its components: compressed
+input staging, native decode, encoding, index construction, first exact product
+and output handoff. Repeat load/release cycles, synchronize completed device
+work before interpreting a release, and record post-release live/reserved
+baselines. A smaller payload does not by itself establish a lower load peak
+or support for a particular GPU capacity.
+
+See the [CUDA count-codec investigation](cuda-count-codecs.md) for an example
+that explicitly keeps calculated resident storage separate from measured
+shared scratch and unmeasured full-load peak. Missing peak counters stay null
+in its downloadable evidence; they are not zeros or inferred fit guarantees.
+
 ## Minimum-device memory gates
 
 Minimum-device support is a complete-pipeline claim, not a payload comparison:
