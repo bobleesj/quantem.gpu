@@ -274,6 +274,11 @@ enum OriginalPackingLayoutCache {
     private var records: [Record] = []
     private var fileBytes = reservedBytes
     private var scratch: [UInt8]
+    // Compression and file writes run on this serial queue so a window's plan
+    // (about 1 MiB of headers, 3-4 ms to encode and write) never delays the
+    // next Metal submission. `finish` drains the queue before publishing.
+    private let queue = DispatchQueue(
+      label: "qgpu.original-packing.plan-writer", qos: .userInitiated)
 
     init?(url: URL, binding: Binding) {
       guard let geometry = binding.geometry else { return nil }
@@ -308,9 +313,15 @@ enum OriginalPackingLayoutCache {
 
     deinit { abandon() }
 
+    /// Queues the window asynchronously. A failed write is reported by `finish`.
     @discardableResult
     func append(headerData: Data, payloadWordCount: UInt32) -> Bool {
-      guard let handle else { return false }
+      queue.async { self.appendNow(headerData: headerData, payloadWordCount: payloadWordCount) }
+      return true
+    }
+
+    private func appendNow(headerData: Data, payloadWordCount: UInt32) {
+      guard let handle else { return }
       do {
         guard records.count < geometry.windowCount, headerData.count == geometry.headerBytes,
           payloadWordCount > 0, payloadWordCount <= geometry.maximumPayloadWords
@@ -358,15 +369,17 @@ enum OriginalPackingLayoutCache {
         try handle.write(contentsOf: compressed)
         records.append(record)
         fileBytes = nextBytes
-        return true
       } catch {
         abandon()
-        return false
       }
     }
 
     @discardableResult
     func finish() -> Bool {
+      queue.sync { finishNow() }
+    }
+
+    private func finishNow() -> Bool {
       guard let handle else { return false }
       do {
         guard records.count == geometry.windowCount else { throw Failure.invalid }
