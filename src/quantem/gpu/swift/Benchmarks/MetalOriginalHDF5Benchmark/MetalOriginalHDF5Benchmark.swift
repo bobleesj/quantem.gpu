@@ -15,6 +15,8 @@ enum MetalOriginalHDF5Benchmark {
     let budget: UInt64
     let reuseProducts: Bool
     let oracle: [String: String]
+    let detectorTrials: Int
+    let series: Bool
 
     init() throws {
       var args = Array(CommandLine.arguments.dropFirst())
@@ -22,7 +24,7 @@ enum MetalOriginalHDF5Benchmark {
         throw failure(
           "Usage: metal-original-hdf5-benchmark INPUT INDEX_DIRECTORY "
             + "[--repeats N] [--budget-bytes N] [--plan-directory DIR] "
-            + "[--reuse-products] [--oracle JSON]"
+            + "[--reuse-products] [--oracle JSON] [--detector-trials N] [--series]"
         )
       }
       input = URL(fileURLWithPath: args.removeFirst())
@@ -32,8 +34,11 @@ enum MetalOriginalHDF5Benchmark {
       var plan: URL?
       var oracle: [String: String] = [:]
       var reuse = false
+      var detectorTrials = 0
+      var series = false
       while !args.isEmpty {
         let flag = args.removeFirst()
+        if flag == "--series" { series = true; continue }
         if flag == "--reuse-products" {
           reuse = true
           continue
@@ -41,6 +46,11 @@ enum MetalOriginalHDF5Benchmark {
         guard !args.isEmpty else { throw failure("Missing value for \(flag)") }
         let value = args.removeFirst()
         switch flag {
+        case "--detector-trials":
+          guard let count = Int(value), (1...100).contains(count) else {
+            throw failure("Detector trials must be in 1...100")
+          }
+          detectorTrials = count
         case "--repeats":
           guard let count = Int(value), (1...500).contains(count) else {
             throw failure("Repeats must be in 1...500")
@@ -66,6 +76,8 @@ enum MetalOriginalHDF5Benchmark {
       planDirectory = plan
       reuseProducts = reuse
       self.oracle = oracle
+      self.detectorTrials = detectorTrials
+      self.series = series
     }
   }
 
@@ -112,6 +124,10 @@ enum MetalOriginalHDF5Benchmark {
         "scan-row/scan-column/detector-row/detector-column uint32 little-endian",
     ])
     var products: [String: MetalCompactH5ExactDPCMoments] = [:]
+    if options.series {
+      try benchmarkSeries(catalog.datasets, options: options, device: device)
+      return
+    }
     var fingerprints: [String: [String]] = [:]
     var audited = Set<String>()
     var timings: [Double] = []
@@ -150,36 +166,68 @@ enum MetalOriginalHDF5Benchmark {
             throw failure("Return visit changed diffraction counts")
           }
           fingerprints[identity] = observed
-          let dpc = try resident.preparedDPCMomentValues()
+          guard let dpc = try resident.preparedDPCMomentValues() else {
+            throw failure("Original resident is missing exact per-scan DPC sums")
+          }
           if let prior = products[identity], prior != dpc {
             throw failure("Return visit changed DPC sums")
           }
           if options.reuseProducts { products[identity] = dpc }
-          if !options.oracle.isEmpty && !audited.contains(identity) {
+          // Every newly reconstructed resident must earn its own full-count
+          // result; an earlier load's audit cannot certify a later layout.
+          if !options.oracle.isEmpty {
             guard let expected = options.oracle[identity] else {
               throw failure("Independent full-count oracle missing for an acquisition")
             }
             let auditStarted = CFAbsoluteTimeGetCurrent()
             var hash = SHA256()
+            var expectedDetectorSum = [UInt64](repeating: 0, count: metadata.detectorPixelCount)
             for frame in 0..<metadata.scanCount {
               try autoreleasepool {
                 let values = try resident.extractDiffraction(
                   scanRow: frame / metadata.scanColumns, scanColumn: frame % metadata.scanColumns)
                 values.withUnsafeBytes { hash.update(bufferPointer: $0) }
+                var total: UInt64 = 0, rowMoment: UInt64 = 0, columnMoment: UInt64 = 0
+                for detectorRow in 0..<metadata.detectorRows {
+                  for detectorColumn in 0..<metadata.detectorColumns {
+                    let pixel = detectorRow * metadata.detectorColumns + detectorColumn
+                    let value = UInt64(values[pixel])
+                    expectedDetectorSum[pixel] += value
+                    total += value
+                    rowMoment += value * UInt64(detectorRow)
+                    columnMoment += value * UInt64(detectorColumn)
+                  }
+                }
+                guard total == dpc.total[frame], rowMoment == dpc.detectorRowMoment[frame],
+                  columnMoment == dpc.detectorColumnMoment[frame]
+                else { throw failure("DPC sums differ from the independently authenticated full counts") }
               }
             }
             let observed = hex(hash.finalize())
             guard observed == expected else {
               throw failure("Independent full-count parity failed")
             }
+            let mean = try resident.meanDiffractionPattern()
+            let divisor = Float(metadata.scanCount)
+            guard mean.detectorSum == expectedDetectorSum,
+              zip(mean.mean, expectedDetectorSum).allSatisfy({
+                $0.0.bitPattern == (Float($0.1) / divisor).bitPattern
+              })
+            else { throw failure("Mean diffraction differs from the independently authenticated full counts") }
             audited.insert(identity)
             try emit([
-              "phase": "full_count_parity", "source_identity": identity,
+              "phase": "full_count_parity", "cycle": cycle, "source_identity": identity,
               "sha256_u32_le": observed, "pass": true,
+              "mean_from_full_counts_exact": true,
+              "dpc_from_full_counts_exact": true,
+              "maximum_detector_sum_u64": expectedDetectorSum.max() ?? 0,
               "seconds_excluded_from_load": CFAbsoluteTimeGetCurrent() - auditStarted,
             ])
           }
           let metrics = resident.loadMetrics
+          if options.detectorTrials > 0 {
+            try benchmarkDetectors(resident, trials: options.detectorTrials, cycle: cycle)
+          }
           timings.append(seconds)
           try emit([
             "phase": "resident", "cycle": cycle, "source_identity": identity,
@@ -200,11 +248,14 @@ enum MetalOriginalHDF5Benchmark {
           ])
         }
         let released = UInt64(device.currentAllocatedSize)
+        try emit(["phase": "released", "cycle": cycle, "source_identity": identity,
+          "resident_count": 0, "device_allocated_bytes": released])
         if let baseline = releasedBaseline, released > baseline + (64 << 20) {
+          try emit(["phase": "release_budget_failed", "baseline_bytes": baseline,
+            "observed_bytes": released, "allowed_growth_bytes": 64 << 20])
           throw failure("Released device allocations grew by more than 64 MiB")
         }
         releasedBaseline = releasedBaseline ?? released
-        try emit(["phase": "released", "resident_count": 0, "device_allocated_bytes": released])
       }
     }
     let sorted = timings.sorted()
