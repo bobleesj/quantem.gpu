@@ -6,6 +6,18 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- Load original Arina HDF5 acquisitions (bitshuffle uint8/uint16, no crop or
+  bin) directly into exact lossless block-packed Metal residents on Apple GPUs,
+  with every count round-trip verified and about 2.0-2.5 GB resident per full
+  512x512x192x192 uint16 acquisition. Exact detector updates use bounded
+  8x8 region sums within the resident's own memory, and multi-resident detector
+  updates run as one Metal submission. Packing plans (disposable per-source
+  layout metadata) are written off the load thread, so a first open no longer
+  pays the write on the load path. Registered the Apple M5 load-capacity
+  measurement: a full load is GPU-saturated (two concurrent loads gain only
+  24% throughput), so subsecond loading on that device needs a faster decode
+  kernel rather than more overlap.
+
 - Route sealed CUDA packed loading and SSB through `io.load`, add source-preserving
   browse-registry preparation, and expose authenticated prepared CoM without
   dense detector expansion or new end-to-end timing claims.
