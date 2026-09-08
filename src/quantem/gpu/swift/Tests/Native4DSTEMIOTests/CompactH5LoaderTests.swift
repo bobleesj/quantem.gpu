@@ -274,7 +274,8 @@ final class CompactH5LoaderTests: XCTestCase {
       )
       source.releaseResidentStorage()
     }
-    var baselineAllocation = device.currentAllocatedSize
+    let baselineAllocation = device.currentAllocatedSize
+    print("COMPACT_CANCELLATION warmed_allocation=\(baselineAllocation)")
     for corruptWidth in [false, true] {
       let fixture = try makeMultishardCompactFixture()
       defer { try? FileManager.default.removeItem(at: fixture.url) }
@@ -295,15 +296,18 @@ final class CompactH5LoaderTests: XCTestCase {
           XCTAssertTrue(error.localizedDescription.contains(corruptWidth ? "bits" : "SHA-256"))
         }
       }
-      // Earlier command buffers can release storage while this failure drains.
-      // Require no growth, then use the lower value for the next failure.
+      // Compare every failure with the same successful-load baseline. Driver
+      // allocation can shrink between calls; a temporary low-water mark is
+      // not a new memory budget for a later, different cancellation phase.
       assertAllocationRetires(device, to: baselineAllocation)
-      baselineAllocation = device.currentAllocatedSize
+      print(
+        "COMPACT_CANCELLATION corrupt_width=\(corruptWidth) allocated=\(device.currentAllocatedSize)"
+      )
     }
     let fixture = try makeMultishardCompactFixture()
     defer { try? FileManager.default.removeItem(at: fixture.url) }
     let callingThread = Thread.current
-    for cancelAt in [1, 4, 5] {
+    for cancelAt in Array(repeating: [1, 4, 5], count: 10).flatMap({ $0 }) {
       var calls = 0
       try autoreleasepool {
         XCTAssertThrowsError(
@@ -322,7 +326,7 @@ final class CompactH5LoaderTests: XCTestCase {
         }
       }
       assertAllocationRetires(device, to: baselineAllocation)
-      baselineAllocation = device.currentAllocatedSize
+      print("COMPACT_CANCELLATION cancel_at=\(cancelAt) allocated=\(device.currentAllocatedSize)")
     }
   }
 
