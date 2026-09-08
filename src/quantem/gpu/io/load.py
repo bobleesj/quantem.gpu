@@ -22,6 +22,7 @@ import tempfile
 import warnings
 from collections.abc import Sequence
 from itertools import pairwise
+from pathlib import Path
 from typing import Any, Literal, Self
 
 from quantem.gpu.device._cupy import cp
@@ -5012,8 +5013,14 @@ def load(
     Parameters
     ----------
     source
-        One master/data HDF5 path, a folder, a list of master paths, or one
-        standalone QuantEM/ANS file path. ANS folder discovery is pending.
+        One master/data HDF5 path, a folder, a list of master paths, or a
+        standalone QuantEM/ANS file.
+        A completed prepared compact-series folder is recognized through its
+        ``checkpoint.json``. The initial CUDA format supports the complete
+        66-acquisition native shape and query-ready indexes. It preserves raw
+        uint16 counts and original validity metadata without expanding data.
+        Source-only archives and H5-to-compact encoding are not yet supported
+        through this prepared-folder path.
     dtype
         Requested output dtype, such as ``"u8"``, ``"u16"``, ``"u32"``,
         ``"f32"``, ``"u4"``, ``"native"``, or ``"auto"``. Explicit
@@ -5073,6 +5080,50 @@ def load(
         multi-frame detector object in ``FourDSTEMData.data`` while background
         decoding fills its dataset slots.
     """
+    if isinstance(source, (str, os.PathLike)):
+        prepared = Path(source)
+        if prepared.is_dir() and (prepared / "checkpoint.json").is_file():
+            unsupported = {
+                "dataset_path": dataset_path, "scan_shape": scan_shape,
+                "scan_region": scan_region, "detector_region": detector_region,
+                "target_scan_region": target_scan_region,
+                "scan_shift_row_col": scan_shift_row_col,
+                "scan_indices": scan_indices, "random_positions": random_positions,
+                "drift": drift, "devices": devices,
+                "representation": representation,
+                "expected_source_sha256": expected_source_sha256,
+                "source_integrity": source_integrity,
+            }
+            selected = [name for name, value in unsupported.items() if value is not None]
+            if (selected or scan_order != "row-major" or det_bin not in (None, 1)
+                    or detector_bin != 1 or not stack or apply_mask is False or output != "native"
+                    or backend not in ("auto", "cuda")):
+                raise NotImplementedError(
+                    "Prepared compact series require complete native CUDA data, "
+                    "row-major order and original validity semantics. Remove "
+                    f"selection/conversion options ({', '.join(selected) or 'nondefault load options'})."
+                )
+            native_dtype = dtype
+            if isinstance(dtype, str) and dtype.lower() in ("auto", "native", "u16"):
+                native_dtype = None
+            if native_dtype is not None and np.dtype(native_dtype) != np.dtype(np.uint16):
+                raise NotImplementedError("Prepared counts remain lossless uint16; use dtype=None or 'u16'.")
+            from quantem.gpu._compact.load import load as load_prepared
+
+            selected_device = 0 if device is None else int(str(device).removeprefix("cuda:"))
+            if verbose:
+                print(f"Loading complete encoded series onto cuda:{selected_device}.")
+            data = load_prepared(prepared, device=selected_device)
+            metadata = {
+                "scan_shape": data.scan_shape, "detector_shape": data.det_shape,
+                "series_shape": data.series_shape, "n_frames": data.n_frames,
+                "source_shape": data.shape, "source_dtype": data.dtype.str,
+                "storage_format": data.storage_format,
+                "valid_pixels": data.valid_pixels,
+                "load_seconds": data.load_seconds, "load_timing": data.load_timing,
+            }
+            return LoadResult(data, metadata)
+
     if output not in {"native", "torch"}:
         raise ValueError("output must be 'native' or 'torch'")
     if det_bin is not None:
@@ -5117,6 +5168,24 @@ def load(
             raise ValueError("ANS retains original counts. Pass apply_mask=False and apply detector masks explicitly when computing products.")
         return _load_ans(paths[0], backend=backend, representation=selected_representation,
                          expected_sha256=expected_source_sha256, device=device)
+    if selected_representation is DataRepresentation.ANS:
+        from .backends import resolve_backend
+        from ._streamed import load_h5_ans
+
+        if resolve_backend(backend) != "cuda":
+            raise NotImplementedError("H5-to-ANS loading requires backend='cuda'.")
+        if len(paths) != 1:
+            raise ValueError("Load each complete H5 acquisition separately, then use detector.prepare(list).")
+        if any(value is not None for value in (
+            scan_region, detector_region, target_scan_region, scan_shift_row_col,
+            scan_indices, random_positions, drift, devices, expected_source_sha256,
+            source_integrity,
+        )) or detector_bin != 1 or output != "native" or not stack or scan_order != "row-major":
+            raise ValueError("H5-to-ANS preserves complete native acquisitions; remove selection, conversion and multi-device options.")
+        if dtype not in {None, "native"} or apply_mask:
+            raise ValueError("H5-to-ANS preserves raw native counts; use dtype='native' and apply_mask=False.")
+        return load_h5_ans(paths[0], scan_shape=scan_shape, dataset_path=dataset_path,
+                           device=device, verbose=verbose)
     # HDF5/prepared-packed loads use their declared working-mask contract. ANS files
     # retain original counts by default; detector masks are product controls.
     if apply_mask is None:

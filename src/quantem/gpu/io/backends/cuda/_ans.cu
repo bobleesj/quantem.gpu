@@ -7,6 +7,7 @@ typedef unsigned long long u64;
 static const u32 LOWER = 1u << 23;
 
 struct Reader {
+    __device__ Reader() = default;
     const u8* payload;
     const u16* symbols;
     const u16* cumulative;

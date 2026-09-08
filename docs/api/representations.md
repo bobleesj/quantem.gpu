@@ -20,7 +20,8 @@ for the canonical save/load workflow and its current limits.
 | QuantEM/ANS file to dense counts | Explicit CPU reference | Bounded exact integer tests |
 | QuantEM/ANS file to ANS resident | Python MPS | Physical small-file integer parity |
 | QuantEM/ANS file to packed resident | Python MPS | Physical small-file integer parity |
-| QuantEM/ANS file to ANS or packed resident | CUDA | Host oracle and compilation; physical GPU pending |
+| QuantEM/ANS file to ANS or packed resident | CUDA | Bounded physical GPU integer parity |
+| Complete H5 to runtime ANS with spatial indexes | CUDA | Bounded real and adversarial count parity; full-66 throughput unqualified |
 | ANS arrays to exact DP and mask sums | Native Swift/Metal | Small physical integer tests; file reader pending |
 | GPU dense materialization and reverse conversions for the new profile | Pending | Not qualified |
 
@@ -29,6 +30,10 @@ For these new profiles, `detector.prepare(data).frame(...)` and
 not qualified by those tests. Same-representation conversion returns the same
 owner; ANS-to-packed creates an independent owner without closing the source.
 Both encoded forms coexist at conversion peak, without full dense expansion.
+For measured codec tradeoffs and the distinction between payload, scratch and
+complete-process peak, see the
+[CUDA count-codec investigation](../performance/cuda-count-codecs.md). Its
+experimental kernels do not change the qualification table above.
 The following sections document the retained dense/`packed` baseline,
 not a promise that its operations automatically work on the new ANS profile.
 
@@ -52,9 +57,12 @@ The default is currently **source-native**, not automatic transcoding. An
 ordinary HDF5 source follows the existing dense path; a prepared Lossless Pack
 Format source stays packed; a standalone ANS source stays ANS. ANS-to-packed is
 an explicit implemented conversion on Python MPS/CUDA, while unsupported
-conversions raise with a corrective next step. Automatic original-HDF5 packing
-and prepared-packed to dense materialization are not implemented by Python
-`io.load` yet. Native
+conversions raise with a corrective next step. Explicit
+`io.load(..., backend="cuda", representation="ans", apply_mask=False)` now
+streams complete uint8/uint16 H5 acquisitions into a runtime ANS resident with
+exact spatial indexes. This profile has no qualified save or conversion path.
+Automatic original-HDF5 packing and prepared-packed to dense materialization
+remain unimplemented. Native
 preparation is a separate, authenticated
 [producer lifecycle](native_lossless_pack_v1_producer.md).
 

@@ -145,14 +145,20 @@ def test_invalid_scientific_metadata_is_not_persisted(tmp_path, metadata):
     assert not path.exists()
 
 
-def test_source_mutation_is_rejected_before_publication(tmp_path):
+def test_observable_source_stat_change_is_rejected_before_publication(tmp_path):
     path = write_ans_reference(
         tmp_path / "mutable.ans", np.zeros((2, 2, 1, 1), dtype=np.uint8)
     )
     with ANSFile(path) as source:
+        import os
+
+        before = path.stat()
         with path.open("r+b") as writer:
             writer.seek(65536)
             writer.write(b"\xff")
             writer.flush()
+        # Some filesystems coalesce nearby write timestamps. Exercise the stat
+        # guard deterministically; payload checksum rejection has separate tests.
+        os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000_000))
         with pytest.raises(ValueError, match="changed during"):
             source.assert_unchanged()

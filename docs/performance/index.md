@@ -18,6 +18,7 @@ which optimizations were accepted, rejected, or remain provisional.
 | [Native Swift and Metal](../platforms/swift-metal.md) | SwiftPM product structure, exact resident-summary contract, ownership boundary, and links to retained timing |
 | [Python MPS](../platforms/mps.md) | Direct-Metal output lifetime, resident-versus-driver memory accounting, profiling fields, and focused checks |
 | [Benchmark methodology](methodology.md) | Required timing stages, cold/warm definitions, memory reporting, and acceptance rules |
+| [CUDA codec speed and peak memory](cuda-count-codecs.md) | Experimental count ANS versus bitpacking: GPU timings, calculated resident layouts, measured shared scratch, and unresolved per-codec/full-load peaks |
 | [Continuous profiling](continuous-profiling.md) | PR smoke, weekly physical profiles, manual signoff, comparison keys, run registry, and regression decisions |
 | [Cross-backend parity](parity.md) | Exact integer contracts, floating metrics, fixtures, and hardware gates |
 | [Optimization ledger](../maintainer/backend-optimization-matrix.md) | Accepted and rejected IO, kernel, display, and browser experiments |

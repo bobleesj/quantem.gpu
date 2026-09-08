@@ -261,7 +261,12 @@ class ANSFile:
         self.assert_unchanged()
 
     def assert_unchanged(self):
-        """Reject mutation of the immutable source during audit/upload."""
+        """Reject changed file identity/timestamps during audit or upload.
+
+        This cheap stat guard assumes an immutable input. Filesystem timestamps
+        can coalesce nearby writes, so it is not content authentication against
+        a concurrent writer. Section checksums are verified when opening.
+        """
         if self._stream is None or _stat_identity(self._stream) != self._identity:
             raise ValueError(
                 "ANS source changed during audit/upload; freeze it and retry."
