@@ -99,7 +99,8 @@ def test_prepared_folder_uses_existing_io_load(tmp_path, monkeypatch):
     (tmp_path / "checkpoint.json").write_text(
         '{"format":"compact-prepared-series-v1"}'
     )
-    from quantem.gpu._compact import load as compact_load
+    import sys
+    from types import SimpleNamespace
 
     source = _FixtureSeries()
     source.load_seconds = 0.25
@@ -110,7 +111,11 @@ def test_prepared_folder_uses_existing_io_load(tmp_path, monkeypatch):
         calls.append((path, device))
         return source
 
-    monkeypatch.setattr(compact_load, "load", load_prepared)
+    monkeypatch.setitem(
+        sys.modules,
+        "quantem.gpu._compact.load",
+        SimpleNamespace(load=load_prepared),
+    )
     loaded = io.load(tmp_path, backend="cuda", device=1, verbose=False)
     assert calls == [(tmp_path, 1)]
     assert loaded.data is source

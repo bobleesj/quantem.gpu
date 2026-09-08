@@ -7,11 +7,21 @@ import pytest
 from quantem.gpu import detector, io
 
 
+@pytest.fixture(autouse=True)
+def cuda_device():
+    """Run these scientific workflows only when a CUDA device is available."""
+    cp = pytest.importorskip("cupy")
+    try:
+        available = cp.cuda.runtime.getDeviceCount() > 0
+    except cp.cuda.runtime.CUDARuntimeError:
+        available = False
+    if not available:
+        pytest.skip("Requires an admitted CUDA device.")
+
+
 @pytest.mark.parametrize("dtype", [np.uint8, np.uint16])
 def test_h5_opens_encoded_and_mixes_with_original_ans(tmp_path, dtype):
     cp = pytest.importorskip("cupy")
-    if not cp.cuda.runtime.getDeviceCount():
-        pytest.skip("Requires an admitted CUDA device.")
     rng = np.random.default_rng(2026)
     raw = rng.poisson(2, (1, 513, 11, 7)).astype(dtype)
     raw[:, ::3, 0, 0] = np.iinfo(dtype).max
