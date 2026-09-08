@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-mixed-original-folder",
+  "status": "completed",
+  "question": "Can the unchanged native app browse all seven original integer and three float acquisitions in one nested folder with exact full residents and single-request navigation?",
+  "paper": {"repository": "quantem.gpu", "authoritative_host": "apple-m5-24gb"},
+  "code": {"revision": "12608ce28c6382f1413b169de747f4b4177b1202", "dirty": false, "entrypoint": "Live4DSTEM/Tests/NativeUI/drive_folder.py", "app_revision": "f8b06ac09b64e254666da4a3e67c5392302b967b", "app_sha256": "cd219e2be0537f119a99fe2f1594c69d9e02113eed0270ef114ba6a6e692ce34"},
+  "inputs": [{"dataset_id": "small-original-float", "path": "private-source/pdpt_x64_y64.raw", "sha256": "c431b6ae2a506b189ae86fbaf254d97de7c9258383c6dde96c7a871d1a9f7805"}],
+  "parameters": {"distinct_acquisitions": 10, "source_inventory": "Local test folder inventory.json; original files hardlinked, no conversions", "scan_bin": 1, "detector_bin": 1, "crop": null, "route": "native controller hooks, not physical pointer or Finder", "experimental_empad": true, "numpy_supported": false, "background_contention": "Original NumPy transfer writes local disk during this descriptive run; no isolated speed or cold IO claim", "followup": "Repeat full ten-acquisition traversal, then compare the seven ARINA originals and exercise detector/scan dragging; three separate EMPAD numerical and recovery journeys"},
+  "execution": {"host": "apple-m5-24gb", "backend": "native-metal", "gpu_model": "Apple M5"},
+  "outputs": [{"artifact_id": "native-mixed-original-receipt", "path": "experiments/20260908-mixed-original-folder/result.json", "sha256": "bb6c7f5e61a7fb1948c0eb9b8d2ff8076a2b614676f87e7ba299084b19a96707", "size_bytes": 29629, "retention": "durable", "consuming_figures": [], "result": "Two complete ten-source traversals, 42 navigation requests applied once, three numerical EMPAD recovery journeys pass. Seven integer residents 14.75 GB; selected DP 120/s steady, ADF all-seven center 73.9/s. No NumPy native or cold IO claim; invalid test invocation retained."}],
+  "timestamps": {"created": "2026-09-08", "started": "2026-09-08", "finished": "2026-09-08"}
+}

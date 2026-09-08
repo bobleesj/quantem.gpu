@@ -1,0 +1,8 @@
+{
+  "attempt": 1,
+  "status": "failed",
+  "error": "ValueError: To change to a dtype of a different size, the last axis must be contiguous",
+  "location": "_unshuffle bit-plane inverse",
+  "result_claimed": false,
+  "correction": "Make the reconstructed byte matrix contiguous before reinterpreting as uint32. Repeat every candidate's exact round trip."
+}

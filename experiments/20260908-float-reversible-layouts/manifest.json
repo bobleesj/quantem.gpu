@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-float-reversible-layouts",
+  "status": "refuted",
+  "question": "Do reversible byte/bit-plane layouts or neighboring-scan integer predictors plus entropy compression project below 20 GiB for the full merged float32 acquisition?",
+  "paper": {"repository": "quantem.gpu", "authoritative_host": "apple-m5-24gb"},
+  "code": {"revision": "ab6352da6cf898479e5cdae22a842324db520c4e", "dirty": false, "entrypoint": "experiments/20260908-float-reversible-layouts/probe.py", "note": "New standalone capacity probe, no production changes; script fingerprint retained with result."},
+  "inputs": [{"dataset_id": "merged-float32-512", "path": "private-source/merged_nobin.npy", "sha256": "24d7ec1fe83ec12faddf026a92b8f97f003202dc68a326664ec35f3a0d8c7057"}],
+  "parameters": {"shape": [512,512,192,192], "dtype": "float32", "scan_bin": 1, "detector_bin": 1, "crop": null, "sample_blocks": 32, "frames_per_block": 8, "seed": 20260908, "performance_claim": false, "lossless": true, "followup": "Verify best sampled candidate byte-shuffle-zstd3 over the full source with full_audit.py, count storage and compare every decompressed byte", "failed_attempt": "failed-attempt.json"},
+  "execution": {"host": "linux-data-source", "backend": "numpy-cpu-capacity-screen", "gpu_model": "not-used", "target": "apple-m5-24gb"},
+  "outputs": [
+    {"artifact_id": "stratified-candidates", "path": "experiments/20260908-float-reversible-layouts/result.json", "sha256": "27459eefbd167badb8a888a2f718814021dbbe5d4a8a0e3dd31c22abe0f51548", "size_bytes": 14752, "retention": "durable", "consuming_figures": [], "result": "Six lossless candidates project 31.01-33.10 GB; all sampled bytes round-trip exactly. Not a whole-file size or GPU measurement."},
+    {"artifact_id": "full-source-best-candidate", "path": "experiments/20260908-float-reversible-layouts/full-result.json", "sha256": "fbb5119b58b802d682a23fe4b5ad003f9fd646d163a7ae69572443aa4c7cdd20", "size_bytes": 627, "retention": "durable", "consuming_figures": [], "result": "Whole source SHA matched and all 9663676416 words decoded exactly. Compressed payload 30921859858 bytes plus 262152-byte block index; exceeds 24 GB physical RAM. No native GPU decoder or speed claim."},
+    {"artifact_id": "invalid-first-attempt", "path": "experiments/20260908-float-reversible-layouts/failed-attempt.json", "sha256": "b0df780dc88209aa3d5ad264a9c3489e34d6e4f04b4c53976d620cf5e773f2ab", "size_bytes": 356, "retention": "durable", "consuming_figures": [], "result": "Inverse bit-plane view failed contiguity before producing results; contiguous reconstruction fixed and all cases rerun."}
+  ],
+  "timestamps": {"created": "2026-09-08", "started": "2026-09-08", "finished": "2026-09-08"}
+}

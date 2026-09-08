@@ -1,0 +1,449 @@
+{
+  "decision": "refuted",
+  "reason": "Candidate did not beat both controls in large ADF center or ABF center/resize. Candidate removed; no performance gain claimed.",
+  "device": "Apple M5, 24 GB, 120 Hz, AC power",
+  "source_pages": "uncontrolled",
+  "representation": "full original float32, exact XOR packing, no bin/crop/clipping",
+  "resident_bytes": 6725071728,
+  "app_control_a_sha256": "dffc9ce82f4160d3a5d6dd715aed6d094d194fc47a62eee92903165441f12f73",
+  "app_b_and_a2_sha256": "e1e0b741522f9698878b3f59e77464f628bf581f1692f9d56d1b89fcab4d805d",
+  "shader_control_sha256": "4b13ca7fedb79131f48300966b6765e18d44fc7b4e0fbb8da130866130c27c5b",
+  "shader_candidate_sha256": "eb121946c1197e898a235ae6a5a39ce169c30c35fb8be0ff70f8e76b33b8d510",
+  "candidate_diff": "if (d.y == 32) return d.x ^ packed[d.w + index % 128]; after the zero-width return in empad_word",
+  "parity": "16 hardware tests pass on both candidates, all packing widths and signed/cancellation/nonfinite sums; no full-volume audit because candidate rejected",
+  "runs": {
+    "control-a": {
+      "evidence_directory": "empad-word-control-a",
+      "drive_sha256": "52435ad3a17d580cd0031c6097ded23c36aa4a3b047d7a7495595f3856a4a5fe",
+      "problems": [],
+      "exit": 0,
+      "console_errors": [],
+      "navigation": {
+        "sent": 6,
+        "received": 6,
+        "applied_once": 6,
+        "retries": 0
+      },
+      "phases": {
+        "scan-drag": {
+          "all_tiles": null,
+          "selected_dp": {
+            "distinct": 356,
+            "per_s": 119.3,
+            "per_input_second": 118.6,
+            "first_presented_delay_ms": 22.07,
+            "interval_ms": {
+              "n": 355,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "backend_gpu_ms": {
+            "n": 109,
+            "p50": 4.55,
+            "p95": 6.95,
+            "max": 9.31
+          },
+          "incomplete_comparison_generations": 0
+        },
+        "large-ABF-center": {
+          "all_tiles": {
+            "distinct": 71,
+            "per_s": 35.3,
+            "per_input_second": 34.5,
+            "first_presented_delay_ms": 57.36,
+            "interval_ms": {
+              "n": 70,
+              "p50": 25.0,
+              "p95": 41.67,
+              "max": 58.33
+            }
+          },
+          "selected_dp": null,
+          "backend_gpu_ms": {
+            "n": 72,
+            "p50": 24.19,
+            "p95": 26.79,
+            "max": 34.92
+          },
+          "incomplete_comparison_generations": 0
+        },
+        "large-ABF-resize": {
+          "all_tiles": {
+            "distinct": 83,
+            "per_s": 40.3,
+            "per_input_second": 40.4,
+            "first_presented_delay_ms": 16.67,
+            "interval_ms": {
+              "n": 82,
+              "p50": 25.0,
+              "p95": 41.67,
+              "max": 50.0
+            }
+          },
+          "selected_dp": null,
+          "backend_gpu_ms": {
+            "n": 83,
+            "p50": 20.73,
+            "p95": 26.45,
+            "max": 36.26
+          },
+          "incomplete_comparison_generations": 0
+        },
+        "large-ADF-center": {
+          "all_tiles": {
+            "distinct": 47,
+            "per_s": 22.8,
+            "per_input_second": 23.0,
+            "first_presented_delay_ms": 21.39,
+            "interval_ms": {
+              "n": 46,
+              "p50": 41.67,
+              "p95": 58.33,
+              "max": 83.33
+            }
+          },
+          "selected_dp": null,
+          "backend_gpu_ms": {
+            "n": 47,
+            "p50": 39.61,
+            "p95": 42.71,
+            "max": 49.71
+          },
+          "incomplete_comparison_generations": 1
+        },
+        "large-ADF-resize": {
+          "all_tiles": {
+            "distinct": 59,
+            "per_s": 28.6,
+            "per_input_second": 29.0,
+            "first_presented_delay_ms": 12.42,
+            "interval_ms": {
+              "n": 58,
+              "p50": 33.33,
+              "p95": 41.67,
+              "max": 66.67
+            }
+          },
+          "selected_dp": null,
+          "backend_gpu_ms": {
+            "n": 59,
+            "p50": 31.9,
+            "p95": 36.5,
+            "max": 49.03
+          },
+          "incomplete_comparison_generations": 0
+        },
+        "scan-drag-2": {
+          "all_tiles": null,
+          "selected_dp": {
+            "distinct": 348,
+            "per_s": 118.0,
+            "per_input_second": 116.0,
+            "first_presented_delay_ms": 58.17,
+            "interval_ms": {
+              "n": 347,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "backend_gpu_ms": null,
+          "incomplete_comparison_generations": 0
+        }
+      }
+    },
+    "candidate-b": {
+      "evidence_directory": "empad-word-candidate-b",
+      "drive_sha256": "4e2fa537c738aa87808e2919ccf40ef3851bc0f79c9b7a010af0382dff087585",
+      "problems": [],
+      "exit": 0,
+      "console_errors": [],
+      "navigation": {
+        "sent": 6,
+        "received": 6,
+        "applied_once": 6,
+        "retries": 0
+      },
+      "phases": {
+        "scan-drag": {
+          "all_tiles": null,
+          "selected_dp": {
+            "distinct": 355,
+            "per_s": 119.0,
+            "per_input_second": 118.3,
+            "first_presented_delay_ms": 26.0,
+            "interval_ms": {
+              "n": 354,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "backend_gpu_ms": null,
+          "incomplete_comparison_generations": 0
+        },
+        "large-ABF-center": {
+          "all_tiles": {
+            "distinct": 69,
+            "per_s": 34.3,
+            "per_input_second": 33.5,
+            "first_presented_delay_ms": 54.07,
+            "interval_ms": {
+              "n": 68,
+              "p50": 25.0,
+              "p95": 41.67,
+              "max": 50.0
+            }
+          },
+          "selected_dp": null,
+          "backend_gpu_ms": {
+            "n": 70,
+            "p50": 24.51,
+            "p95": 27.75,
+            "max": 39.2
+          },
+          "incomplete_comparison_generations": 0
+        },
+        "large-ABF-resize": {
+          "all_tiles": {
+            "distinct": 88,
+            "per_s": 42.8,
+            "per_input_second": 43.0,
+            "first_presented_delay_ms": 11.74,
+            "interval_ms": {
+              "n": 87,
+              "p50": 25.0,
+              "p95": 25.0,
+              "max": 41.67
+            }
+          },
+          "selected_dp": null,
+          "backend_gpu_ms": {
+            "n": 88,
+            "p50": 19.95,
+            "p95": 23.74,
+            "max": 38.04
+          },
+          "incomplete_comparison_generations": 0
+        },
+        "large-ADF-center": {
+          "all_tiles": {
+            "distinct": 48,
+            "per_s": 23.4,
+            "per_input_second": 23.5,
+            "first_presented_delay_ms": 24.26,
+            "interval_ms": {
+              "n": 47,
+              "p50": 41.67,
+              "p95": 50.0,
+              "max": 91.67
+            }
+          },
+          "selected_dp": null,
+          "backend_gpu_ms": {
+            "n": 48,
+            "p50": 38.28,
+            "p95": 42.27,
+            "max": 48.15
+          },
+          "incomplete_comparison_generations": 1
+        },
+        "large-ADF-resize": {
+          "all_tiles": {
+            "distinct": 61,
+            "per_s": 29.5,
+            "per_input_second": 29.5,
+            "first_presented_delay_ms": 15.31,
+            "interval_ms": {
+              "n": 60,
+              "p50": 33.33,
+              "p95": 41.67,
+              "max": 58.33
+            }
+          },
+          "selected_dp": null,
+          "backend_gpu_ms": {
+            "n": 61,
+            "p50": 30.87,
+            "p95": 34.71,
+            "max": 50.09
+          },
+          "incomplete_comparison_generations": 0
+        },
+        "scan-drag-2": {
+          "all_tiles": null,
+          "selected_dp": {
+            "distinct": 348,
+            "per_s": 118.3,
+            "per_input_second": 116.0,
+            "first_presented_delay_ms": 60.21,
+            "interval_ms": {
+              "n": 347,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "backend_gpu_ms": null,
+          "incomplete_comparison_generations": 0
+        }
+      }
+    },
+    "control-a2": {
+      "evidence_directory": "empad-word-control-a2",
+      "drive_sha256": "bbdd825c025efae257f6d85d309434f9489cbfd58df5a28fcefd22617b287a08",
+      "problems": [],
+      "exit": 0,
+      "console_errors": [],
+      "navigation": {
+        "sent": 6,
+        "received": 6,
+        "applied_once": 6,
+        "retries": 0
+      },
+      "phases": {
+        "scan-drag": {
+          "all_tiles": null,
+          "selected_dp": {
+            "distinct": 357,
+            "per_s": 120.0,
+            "per_input_second": 119.0,
+            "first_presented_delay_ms": 28.48,
+            "interval_ms": {
+              "n": 356,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 8.33
+            }
+          },
+          "backend_gpu_ms": null,
+          "incomplete_comparison_generations": 0
+        },
+        "large-ABF-center": {
+          "all_tiles": {
+            "distinct": 70,
+            "per_s": 34.9,
+            "per_input_second": 34.5,
+            "first_presented_delay_ms": 54.08,
+            "interval_ms": {
+              "n": 69,
+              "p50": 25.0,
+              "p95": 33.33,
+              "max": 50.0
+            }
+          },
+          "selected_dp": null,
+          "backend_gpu_ms": {
+            "n": 71,
+            "p50": 24.07,
+            "p95": 27.14,
+            "max": 34.95
+          },
+          "incomplete_comparison_generations": 0
+        },
+        "large-ABF-resize": {
+          "all_tiles": {
+            "distinct": 90,
+            "per_s": 44.0,
+            "per_input_second": 44.0,
+            "first_presented_delay_ms": 17.32,
+            "interval_ms": {
+              "n": 89,
+              "p50": 25.0,
+              "p95": 25.0,
+              "max": 41.67
+            }
+          },
+          "selected_dp": null,
+          "backend_gpu_ms": {
+            "n": 90,
+            "p50": 20.06,
+            "p95": 22.76,
+            "max": 37.01
+          },
+          "incomplete_comparison_generations": 0
+        },
+        "large-ADF-center": {
+          "all_tiles": {
+            "distinct": 49,
+            "per_s": 23.6,
+            "per_input_second": 23.5,
+            "first_presented_delay_ms": 21.51,
+            "interval_ms": {
+              "n": 48,
+              "p50": 41.67,
+              "p95": 50.0,
+              "max": 83.33
+            }
+          },
+          "selected_dp": null,
+          "backend_gpu_ms": {
+            "n": 49,
+            "p50": 38.7,
+            "p95": 41.01,
+            "max": 50.36
+          },
+          "incomplete_comparison_generations": 1
+        },
+        "large-ADF-resize": {
+          "all_tiles": {
+            "distinct": 57,
+            "per_s": 27.7,
+            "per_input_second": 28.0,
+            "first_presented_delay_ms": 11.0,
+            "interval_ms": {
+              "n": 56,
+              "p50": 33.33,
+              "p95": 41.67,
+              "max": 75.0
+            }
+          },
+          "selected_dp": null,
+          "backend_gpu_ms": {
+            "n": 57,
+            "p50": 32.96,
+            "p95": 37.31,
+            "max": 49.18
+          },
+          "incomplete_comparison_generations": 0
+        },
+        "scan-drag-2": {
+          "all_tiles": null,
+          "selected_dp": {
+            "distinct": 348,
+            "per_s": 118.0,
+            "per_input_second": 115.9,
+            "first_presented_delay_ms": 58.86,
+            "interval_ms": {
+              "n": 347,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "backend_gpu_ms": null,
+          "incomplete_comparison_generations": 0
+        }
+      }
+    }
+  },
+  "inputs": [
+    {
+      "file": "acquisition_7_CL 720mm_ mag37k_300 kV_spt 8_conv 0.5mrad_rot 81.0_1ms_256x256.raw",
+      "bytes": 4362076160,
+      "sha256": "94e22a5e57727c70651b5762f652931444e999e32b321a415c291964dc6ab786"
+    },
+    {
+      "file": "pdpt_x64_y64.raw",
+      "bytes": 272629760,
+      "sha256": "c431b6ae2a506b189ae86fbaf254d97de7c9258383c6dde96c7a871d1a9f7805"
+    },
+    {
+      "file": "scan_x256_y256.raw",
+      "bytes": 4362076160,
+      "sha256": "5f5bbae2295aea62a1d6bd74c6611ae7c913d473c3ae83435fc85eda87abd325"
+    }
+  ]
+}

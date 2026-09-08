@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-empad-wide-word",
+  "status": "refuted",
+  "question": "Does bypassing variable-width extraction for full-width packed rows improve large EMPAD apertures without changing allocation or measurement bits?",
+  "paper": {"repository": "quantem.gpu", "authoritative_host": "apple-m5-24gb"},
+  "code": {"revision": "ab6352da6cf898479e5cdae22a842324db520c4e", "dirty": true, "diff_sha256": "e040f01f2bdc30cdc3c117fc65c06a324806114e4f216a5f4a3742717f82c027", "snapshot_path": "local-validation/empad-compatibility-control-backend.patch", "entrypoint": "Live4DSTEM/Tests/NativeUI/drive_folder.py"},
+  "inputs": [
+    {"dataset_id": "zenodo-mos2-mose2", "path": "https://zenodo.org/records/17246822", "sha256": "5f5bbae2295aea62a1d6bd74c6611ae7c913d473c3ae83435fc85eda87abd325"},
+    {"dataset_id": "zenodo-snse-acquisition-7", "path": "https://zenodo.org/records/10079791", "sha256": "94e22a5e57727c70651b5762f652931444e999e32b321a415c291964dc6ab786"},
+    {"dataset_id": "autodisk-pdpt", "path": "local-original/pdpt_x64_y64.raw", "sha256": "c431b6ae2a506b189ae86fbaf254d97de7c9258383c6dde96c7a871d1a9f7805"}
+  ],
+  "parameters": {"representation": "exact float32 XOR row packing", "shape": [256,256,128,128], "rtol": 0.000001, "atol": 0.000001, "scan_bin": 1, "detector_bin": 1, "crop": null, "control": "general bit extraction", "candidate": "direct full-width word XOR when width is 32", "timing": "native actual presentations; original source pages uncontrolled", "allocation_change": 0},
+  "execution": {"host": "apple-m5-24gb", "backend": "swift-metal", "gpu_model": "Apple M5"},
+  "outputs": [{"artifact_id": "native-aba", "path": "experiments/20260908-empad-wide-word/result.json", "sha256": "9f2a5b4eae34ce9c32b4292ca5a9980541ff5c88d91dbcb2508ef9d571ad03ec", "size_bytes": 12775, "retention": "durable", "consuming_figures": [], "result": "No consistent gain: all-three ADF center 22.8/23.4/23.6 Hz. Candidate removed. Same 6,725,071,728 resident bytes; 18 navigation requests applied once; no functional failures; 120 Hz all-tile target fails."}],
+  "timestamps": {"created": "2026-09-08", "started": "2026-09-08", "finished": "2026-09-08"}
+}

@@ -1,0 +1,28 @@
+{
+  "audit_wall_seconds" : 8.2799710035324097,
+  "cold_io_claim" : false,
+  "cpu_codec" : false,
+  "cpu_prefix_scan" : false,
+  "descriptor_bytes" : 1207959552,
+  "device" : "Apple M5",
+  "dtype" : "float32",
+  "exact_gpu_word_parity" : true,
+  "full_resident_loaded" : false,
+  "metal_allocation_before_buffers" : 458752,
+  "native_app_loaded" : false,
+  "packing_gpu_seconds" : 1.6199568751035258,
+  "payload_bytes" : 36429611552,
+  "peak_audit_metal_allocated_bytes" : 19628032,
+  "physical_memory_bytes" : 25769803776,
+  "read_seconds" : 4.2295432090759277,
+  "required_resident_bytes_before_alignment" : 37637571104,
+  "scope" : "Whole-source Metal bit-packing and unpacking parity, bounded windows, not full residency",
+  "shape" : [
+    512,
+    512,
+    192,
+    192
+  ],
+  "unpack_and_verify_gpu_seconds" : 0.81876091769663617,
+  "words_verified" : 9663676416
+}

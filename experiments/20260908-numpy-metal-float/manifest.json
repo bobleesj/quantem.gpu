@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-numpy-metal-float",
+  "status": "refuted",
+  "question": "Does the existing exact Metal float bit packer fit the complete merged NumPy acquisition within 24 GB, with every unpacked word equal to the original?",
+  "paper": {"repository": "quantem.gpu", "authoritative_host": "apple-m5-24gb"},
+  "code": {"revision": "ab6352da6cf898479e5cdae22a842324db520c4e", "dirty": false, "entrypoint": "experiments/20260908-numpy-metal-float/audit.swift", "note": "Unchanged production empad_describe_simd, empad_pack_simd and empad_word; new experiment-only GPU offset scan and bit comparator. Fingerprints retained before execution."},
+  "inputs": [{"dataset_id": "merged-float32-512", "path": "private-source/merged_nobin.npy", "sha256": "24d7ec1fe83ec12faddf026a92b8f97f003202dc68a326664ec35f3a0d8c7057"}],
+  "parameters": {"shape": [512,512,192,192], "dtype": "float32", "scan_bin": 1, "detector_bin": 1, "crop": null, "window_frames": 64, "packing_block_words": 128, "memory_budget_bytes": 268435456, "all_words_required": true, "repeats": 2, "compute": "Metal describe, prefix offsets, packing, unpacking and exact comparison; CPU file reads and scalar reporting only", "scope": "Full-source GPU capacity and parity audit in bounded windows, not all-resident app loading or one-second acceptance"},
+  "execution": {"host": "apple-m5-24gb", "backend": "metal", "gpu_model": "Apple M5"},
+  "outputs": [
+    {"artifact_id": "full-metal-parity-first", "path": "experiments/20260908-numpy-metal-float/result.json", "sha256": "5f3ad673e4c0bbb8d0e7ad975319b6deb18ef1a5a183ff399072652838996142", "size_bytes": 870, "retention": "durable", "consuming_figures": [], "result": "All 9663676416 source words packed/unpacked exactly by Metal. Required payload plus descriptors 37637571104 bytes. Packing GPU time 1.7246s; full bounded audit 8.4357s, not app loading."},
+    {"artifact_id": "full-metal-parity-repeat", "path": "experiments/20260908-numpy-metal-float/repeat.json", "sha256": "7dc25f1a825323eb0a8e4c287ad17683abc56e7ffdcaea60035821b77a870857", "size_bytes": 871, "retention": "durable", "consuming_figures": [], "result": "Second full-source GPU round trip exact, identical packed capacity. Packing GPU time 1.6200s; audit 8.2800s. Capacity exceeds physical RAM; native NumPy loading remains unsupported."}
+  ],
+  "timestamps": {"created": "2026-09-08", "started": "2026-09-08", "finished": "2026-09-08"}
+}

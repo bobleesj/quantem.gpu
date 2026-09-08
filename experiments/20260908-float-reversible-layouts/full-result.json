@@ -1,0 +1,22 @@
+{
+  "scope": "Complete CPU source capacity and bit-exact compression audit",
+  "source_sha256": "24d7ec1fe83ec12faddf026a92b8f97f003202dc68a326664ec35f3a0d8c7057",
+  "source_bytes": 38654705792,
+  "shape": [
+    512,
+    512,
+    192,
+    192
+  ],
+  "dtype": "float32",
+  "words_verified": 9663676416,
+  "blocks": 32768,
+  "frames_per_block": 8,
+  "codec": "byte-shuffle-zstd3",
+  "compressed_bytes": 30921859858,
+  "block_index_bytes": 262152,
+  "exact_roundtrip": true,
+  "native_gpu_decoder_implemented": false,
+  "gpu_load_time_measured": false,
+  "excludes": "Metal alignment, staging, decoder state, app and OS memory"
+}
