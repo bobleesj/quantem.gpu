@@ -76,10 +76,16 @@ jobs:
           src/quantem/gpu/swift/Benchmarks
       - name: Run Swift tests
         run: swift test
+      - name: Check native EMPAD source contract
+        run: |
+          swift build -c release --package-path tests/hardware/metal/swift_original_packing --product EMPADSourceParity
+          export EMPAD_SOURCE_PARITY_EXE="$PWD/tests/hardware/metal/swift_original_packing/.build/release/EMPADSourceParity"
+          python3 tests/hardware/metal/test_empad_source.py -v EMPADSourceTests.test_rectangular_raw_preserves_measurements_and_selection EMPADSourceTests.test_xml_acquisition_matches_raw_frame_bits EMPADSourceTests.test_xml_conflicts_and_unsafe_entities_are_rejected EMPADSourceTests.test_incomplete_and_ambiguous_acquisitions_do_not_open EMPADSourceTests.test_source_changes_with_restored_mtime_are_rejected
       - name: Compile Metal for iOS
         run: |
           xcrun -sdk iphoneos metal -c src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/detector.metal -o /tmp/quantem-detector.air
           xcrun -sdk iphoneos metal -c src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/qh5idx.metal -o /tmp/quantem-qh5idx.air
+          xcrun -sdk iphoneos metal -c src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/empad_float.metal -o /tmp/quantem-empad.air
           xcrun -sdk iphoneos metal -c src/quantem/gpu/swift/Sources/MetalDisplayKernels/Resources/display.metal -o /tmp/quantem-display.air
       - name: Build Swift libraries for iOS
         run: |

@@ -39,6 +39,21 @@
   },
   "capabilities": [
     {
+      "id": "io.empad-float-resident",
+      "contract_version": "empad-source/v1",
+      "public_owner": "NativeEMPADSource.open / MetalEMPADResidentSource.load",
+      "parity": "Original 128x128 float32 detector bits, explicit rectangular scan shape, footer separation, selected-frame ordering, and floating-point aperture sums without quantization.",
+      "coverage": {
+        "cpu-reference": {"level": "reference-fixture", "gates": ["tests/hardware/metal/test_empad_source.py", "tests/hardware/metal/test_empad_public.py"], "qualification": "Independent original-byte and NumPy float64 aperture oracles; not a Python resident implementation."},
+        "swift-metal": {"level": "partial-hardware", "gates": ["tests/hardware/metal/test_empad_source.py", "tests/hardware/metal/test_empad_public.py"], "qualification": "Native original EMPAD source, exact float-word packing, DP and aperture kernels. Consumer integration, DPC, full cancellation and native release gates remain pending."},
+        "cuda": {"level": "not-implemented", "gates": ["docs/maintainer/empad-contract.md"]},
+        "mps": {"level": "not-implemented", "gates": ["docs/maintainer/empad-contract.md"]},
+        "webgpu": {"level": "not-implemented", "gates": ["docs/maintainer/empad-contract.md"]},
+        "direct3d": {"level": "not-implemented", "gates": ["docs/maintainer/empad-contract.md"]},
+        "vulkan": {"level": "not-implemented", "gates": ["docs/maintainer/empad-contract.md"]}
+      }
+    },
+    {
       "id": "geometry.scan-quarter-turn",
       "parity": "Byte-exact scan-row/column quarter turns with unchanged detector patterns, dtype, and coordinate convention.",
       "coverage": {

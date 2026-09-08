@@ -13,6 +13,13 @@ let package = Package(
   ],
   targets: [
     .executableTarget(
+      name: "EMPADSourceParity",
+      dependencies: [
+        .product(name: "Native4DSTEMIO", package: "quantem.gpu"),
+        .product(name: "Metal4DSTEMStreamingIO", package: "quantem.gpu"),
+      ]
+    ),
+    .executableTarget(
       name: "OriginalZeroTailParity",
       dependencies: [.product(name: "Metal4DSTEMKernels", package: "quantem.gpu")],
       swiftSettings: [.swiftLanguageMode(.v5)]

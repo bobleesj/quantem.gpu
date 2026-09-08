@@ -43,6 +43,13 @@ public struct Metal4DSTEMResidentReceipt: Codable, Equatable, Sendable {
   public let implementationRevision: String?
 
   public func validate() throws {
+    if sourceDtype == "float32" || workingDtype == "float32" {
+      guard sourceDtype == workingDtype, scanBin == 1, detectorBin == 1, crop == nil else {
+        throw Metal4DSTEMStreamingIOError.invalidRequest(
+          "An exact float32 resident must preserve the original dtype and full tensor shape."
+        )
+      }
+    }
     guard schema == Self.currentSchema,
       Self.validSHA256(sourceIdentitySHA256),
       sourceShape.count == 4, workingShape.count == 4,
@@ -142,7 +149,7 @@ public struct Metal4DSTEMResidentReceipt: Codable, Equatable, Sendable {
     switch dtype {
     case "uint8": 1
     case "uint16": 2
-    case "uint32": 4
+    case "uint32", "float32": 4
     case "uint64": 8
     default: nil
     }
@@ -189,6 +196,7 @@ public enum Metal4DSTEMProductAvailability: String, Codable, Sendable {
 /// Numerical boundary advertised for one resident product.
 public enum Metal4DSTEMProductNumerics: String, Codable, Sendable {
   case exactInteger
+  case exactFloat32Bits = "exact-float32-bits"
   case exactIntegerThenFloat32 = "exact-integer-then-float32"
   case frozenFloat32 = "frozen-float32"
 }
@@ -249,6 +257,51 @@ public struct Metal4DSTEMResidentCapabilities: Codable, Equatable, Sendable {
       && residentReceipt.storageSchema == storageSchema
       && Set(products.map(\.product)) == Set(Metal4DSTEMResidentProduct.allCases)
       && products.allSatisfy { $0.availability != .unavailable }
+  }
+
+  /// Describe a full float32 EMPAD tensor without advertising missing products.
+  /// The scientific source identity covers dtype, shape and original detector
+  /// words, not footer bytes or acquisition filenames. DPC/mean/FFT remain
+  /// unavailable until a qualified implementation supplies those products.
+  public static func empad(_ source: MetalEMPADResidentSource) throws -> Self {
+    guard !source.isReleased else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "EMPAD resident storage was released. Reload it before requesting capabilities.")
+    }
+    let shape = [source.source.scanRows, source.source.scanColumns, 128, 128]
+    let logicalBytes = try Metal4DSTEMResidentReceipt.logicalBytes(shape: shape, bytesPerValue: 4)
+    let storageSchema = "quantem.gpu.empad-xor-row-packed/v1"
+    let receipt = Metal4DSTEMResidentReceipt(
+      schema: Metal4DSTEMResidentReceipt.currentSchema, representation: .packed,
+      sourceIdentitySHA256: source.sourceIdentitySHA256,
+      sourceShape: shape, workingShape: shape, sourceDtype: "float32", workingDtype: "float32",
+      sourceLogicalTensorBytes: logicalBytes, workingLogicalTensorBytes: logicalBytes,
+      physicalResidentBytes: source.residentBytes,
+      containerBytes: UInt64(source.source.sourceBytes),
+      storageSchema: storageSchema, losslessExact: true, scanBin: 1, detectorBin: 1, crop: nil,
+      detectorMaskCount: 0, detectorMaskSHA256: nil, detectorMaskSchema: nil,
+      calibrationSchema: nil, calibrationSHA256: nil,
+      provenanceSchema: nil, provenanceSHA256: nil,
+      sourceRawLogicalSHA256: source.logicalSHA256, workingLogicalSHA256: source.logicalSHA256,
+      implementationRevision: nil)
+    try receipt.validate()
+    let available: Set<Metal4DSTEMResidentProduct> = [
+      .diffractionPattern, .brightField, .annularBrightField, .annularDarkField, .total,
+    ]
+    let products = Metal4DSTEMResidentProduct.allCases.map { product in
+      Metal4DSTEMResidentProductCapability(
+        product: product,
+        availability: available.contains(product) ? .residentOnDemand : .unavailable,
+        numerics: product == .diffractionPattern ? .exactFloat32Bits : .frozenFloat32)
+    }
+    return Self(
+      schema: currentSchema, representation: .packed,
+      sourceIdentitySHA256: source.sourceIdentitySHA256,
+      scanRows: shape[0], scanColumns: shape[1], detectorRows: 128, detectorColumns: 128,
+      storageSchema: storageSchema, workingDtype: "float32", exactIntegerBits: 0,
+      logicalTensorBytes: logicalBytes, completeSourceResident: true,
+      residentBytes: source.residentBytes, residentStorageBytes: source.residentBytes,
+      lossless: true, residentReceipt: receipt, products: products)
   }
 
   /// Describe an exact indexed/sharded uint16 result without taking ownership.

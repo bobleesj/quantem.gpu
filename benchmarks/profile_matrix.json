@@ -62,6 +62,9 @@
     }
   },
   "capabilities": {
+    "io.empad-float-resident": {
+      "required_metrics": ["total_wall_ms", "peak_memory", "resident_bytes", "output_hashes"]
+    },
     "geometry.scan-quarter-turn": {
       "required_metrics": [
         "rotation_ms",
@@ -193,6 +196,13 @@
     "timestamps"
   ],
   "cells": [
+    {"id": "io.empad-float-resident::cpu-reference", "capability": "io.empad-float-resident", "backend": "cpu-reference", "support_level": "reference-fixture", "pr_gate": "original-byte-and-float-reference", "scheduled_profile": "none", "release_signoff": false, "runner": "portable-cpu", "state": "evidence-gap", "evidence_note": "Original-byte oracle and public-file checks exist; complete cell-scoped signoff evidence is not retained yet."},
+    {"id": "io.empad-float-resident::swift-metal", "capability": "io.empad-float-resident", "backend": "swift-metal", "support_level": "partial-hardware", "pr_gate": "native-empad-source-and-resident-parity", "scheduled_profile": "none", "release_signoff": true, "runner": "physical-native-swift-metal", "state": "evidence-gap", "evidence_note": "Initial native float packing, selected DP and aperture parity on Apple M5. Full consumer, DPC, cancellation and release qualification remain pending; no FPS or load-time claim."},
+    {"id": "io.empad-float-resident::cuda", "capability": "io.empad-float-resident", "backend": "cuda", "support_level": "not-implemented", "pr_gate": "unsupported-contract", "scheduled_profile": "none", "release_signoff": false, "runner": "portable-ci", "state": "unsupported"},
+    {"id": "io.empad-float-resident::mps", "capability": "io.empad-float-resident", "backend": "mps", "support_level": "not-implemented", "pr_gate": "unsupported-contract", "scheduled_profile": "none", "release_signoff": false, "runner": "portable-ci", "state": "unsupported"},
+    {"id": "io.empad-float-resident::webgpu", "capability": "io.empad-float-resident", "backend": "webgpu", "support_level": "not-implemented", "pr_gate": "unsupported-contract", "scheduled_profile": "none", "release_signoff": false, "runner": "portable-ci", "state": "unsupported"},
+    {"id": "io.empad-float-resident::direct3d", "capability": "io.empad-float-resident", "backend": "direct3d", "support_level": "not-implemented", "pr_gate": "unsupported-contract", "scheduled_profile": "none", "release_signoff": false, "runner": "portable-ci", "state": "unsupported"},
+    {"id": "io.empad-float-resident::vulkan", "capability": "io.empad-float-resident", "backend": "vulkan", "support_level": "not-implemented", "pr_gate": "unsupported-contract", "scheduled_profile": "none", "release_signoff": false, "runner": "portable-ci", "state": "unsupported"},
     {"id": "geometry.scan-quarter-turn::cpu-reference", "capability": "geometry.scan-quarter-turn", "backend": "cpu-reference", "support_level": "reference-fixture", "pr_gate": "frozen-reference-fixture", "scheduled_profile": "weekly", "release_signoff": true, "runner": "portable-cpu", "state": "evidence-gap", "evidence_note": "No cell-scoped immutable signoff evidence was linked when the readiness join was introduced. Historical benchmark artifacts remain retained; test presence alone is not release evidence."},
     {"id": "geometry.scan-quarter-turn::cuda", "capability": "geometry.scan-quarter-turn", "backend": "cuda", "support_level": "required", "pr_gate": "source-contract-and-synthetic-parity", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-cuda", "state": "evidence-gap", "evidence_note": "No cell-scoped immutable signoff evidence was linked when the readiness join was introduced. Historical benchmark artifacts remain retained; test presence alone is not release evidence."},
     {"id": "geometry.scan-quarter-turn::mps", "capability": "geometry.scan-quarter-turn", "backend": "mps", "support_level": "required", "pr_gate": "source-contract-and-synthetic-parity", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-python-mps", "state": "evidence-gap", "evidence_note": "No cell-scoped immutable signoff evidence was linked when the readiness join was introduced. Historical benchmark artifacts remain retained; test presence alone is not release evidence."},

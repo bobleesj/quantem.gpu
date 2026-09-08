@@ -202,6 +202,11 @@ public enum Metal4DSTEMKernels {
     try makeLibrary(resource: "original_packing", device: device)
   }
 
+  /// Compile lossless EMPAD float-word packing and floating-point reductions.
+  public static func makeEMPADLibrary(device: MTLDevice) throws -> MTLLibrary {
+    try makeLibrary(resource: "empad_float", device: device)
+  }
+
   /// Compile the shared CoM/DPC/iDPC small-field library.
   public static func makeDPCLibrary(device: MTLDevice) throws -> MTLLibrary {
     try makeLibrary(resource: "dpc", device: device)
@@ -236,9 +241,17 @@ public enum Metal4DSTEMKernels {
           .appendingPathComponent("compact_detector_regions.metal")
         source += "\n" + (try String(contentsOf: regions, encoding: .utf8))
       }
+      let options: MTLCompileOptions?
+      if resource == "empad_float" {
+        let strict = MTLCompileOptions()
+        strict.fastMathEnabled = false
+        options = strict
+      } else {
+        options = nil
+      }
       return try device.makeLibrary(
         source: source,
-        options: nil
+        options: options
       )
     } catch {
       throw Metal4DSTEMKernelsError.libraryCompilation(

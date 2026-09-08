@@ -64,7 +64,7 @@ def test_readiness_keeps_missing_features_and_measurements_visible() -> None:
 
     assert set(status["backends"]) == set(BACKENDS)
     for backend, entry in status["backends"].items():
-        assert len(entry["cells"]) == 9
+        assert len(entry["cells"]) == 10
         assert entry["blocking_cells"] == [
             cell["id"]
             for cell in entry["cells"]

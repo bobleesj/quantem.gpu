@@ -2,7 +2,7 @@ import CryptoKit
 import Darwin
 import Foundation
 
-struct NativeFileIdentity {
+struct NativeFileIdentity: Sendable, Equatable {
   let path: String
   let device: UInt64
   let inode: UInt64
