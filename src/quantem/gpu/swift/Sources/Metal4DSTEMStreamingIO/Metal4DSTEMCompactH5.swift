@@ -1212,9 +1212,11 @@ public final class MetalCompactH5ResidentSource {
         },
         "planar_variants": sources.map(\.planarVariant),
         "planar_pipeline_required_threads": sources.map { source -> Int in
-          if #available(macOS 26.0, iOS 26.0, *) {
-            return source.planarScanCooperativePipeline?.requiredThreadsPerThreadgroup.width ?? 0
-          }
+          #if compiler(>=6.2)
+            if #available(macOS 26.0, iOS 26.0, *) {
+              return source.planarScanCooperativePipeline?.requiredThreadsPerThreadgroup.width ?? 0
+            }
+          #endif
           return 0
         },
         "mask_sha256": SHA256.hash(data: Data(mask)).map { String(format: "%02x", $0) }.joined(),
@@ -1974,10 +1976,14 @@ public enum MetalCompactH5Loader {
         descriptor.maxTotalThreadsPerThreadgroup = 128
         descriptor.threadGroupSizeIsMultipleOfThreadExecutionWidth = true
         if compactKernelOption("RAW_REQUIRED_THREADS", byDefault: false) {
-          guard #available(macOS 26.0, iOS 26.0, *) else {
-            throw invalid("Required-thread profiling needs macOS or iOS 26 or later")
-          }
-          descriptor.requiredThreadsPerThreadgroup = MTLSize(width: 128, height: 1, depth: 1)
+          #if compiler(>=6.2)
+            guard #available(macOS 26.0, iOS 26.0, *) else {
+              throw invalid("Required-thread profiling needs macOS or iOS 26 or later")
+            }
+            descriptor.requiredThreadsPerThreadgroup = MTLSize(width: 128, height: 1, depth: 1)
+          #else
+            throw invalid("Required-thread profiling needs the Xcode 26 SDK; rebuild with Xcode 26")
+          #endif
         }
         let result = try device.makeComputePipelineState(
           descriptor: descriptor, options: [], reflection: nil)
