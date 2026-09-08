@@ -1,0 +1,115 @@
+{
+ "schema_version": 1,
+ "experiment_id": "20260907-apple-m5-load-concurrency",
+ "status": "succeeded",
+ "question": "Does the Apple M5 GPU have spare capacity during an original-HDF5 packed-resident load, so that pipelining decode and packing windows could approach a 1 s load, or is the load already GPU-saturated?",
+ "paper": {
+  "authoritative_host": "apple-m5-24gb",
+  "repository": "quantem.gpu",
+  "manifest_path": "experiments/20260907-apple-m5-load-concurrency/manifest.json"
+ },
+ "code": {
+  "repository": "https://github.com/bobleesj/quantem.gpu",
+  "revision": "5c198bad7cfd25f2ff287a8501c097dd63312458",
+  "entrypoint": "metal-original-hdf5-benchmark",
+  "dirty": false
+ },
+ "inputs": [
+  {
+   "dataset_id": "private-tilt-series--17x0y",
+   "path": "private-fixture://tilt-series/-17.0x_0.0y",
+   "sha256": "532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350"
+  },
+  {
+   "dataset_id": "private-tilt-series-0x0y",
+   "path": "private-fixture://tilt-series/0.0x_0.0y",
+   "sha256": "6f94694a3d63c41edca118a74aae1384b1f61316699154a8dda0e8ac5e1af64f"
+  }
+ ],
+ "parameters": {
+  "shape": [
+   512,
+   512,
+   192,
+   192
+  ],
+  "source_dtype": "uint16",
+  "working_dtype": "uint16",
+  "scan_bin": 1,
+  "detector_bin": 1,
+  "crop": null,
+  "repeats_per_process": 4,
+  "budget_bytes": 8000000000,
+  "cache_state": "fresh index and packing-plan directories; plan written on cycle 0 and reused after; original counts reread every cycle; OS pages uncontrolled",
+  "timing_boundary": "benchmark resident_ready per cycle; no UI, no first-visible-frame",
+  "target_seconds": 1,
+  "target_met": false,
+  "artifact_results": {
+   "conc-A.log": "p50 2.722 s, max 2.736 s",
+   "conc-B.log": "p50 2.753 s, max 3.273 s",
+   "solo-0.0y_20260128_14-42-13_master.log": "p50 1.695 s, max 2.128 s",
+   "solo-0.0y_20260128_14-43-06_master.log": "p50 1.686 s, max 1.860 s",
+   "summary.json": "solo 0.591 loads/s vs concurrent 0.731 loads/s; spare capacity about 24%"
+  }
+ },
+ "execution": {
+  "host": "apple-m5-24gb",
+  "backend": "swift-metal",
+  "gpu_ids": [
+   "integrated-gpu-0"
+  ],
+  "gpu_model": "Apple M5, 10 GPU cores, 24 GB unified memory"
+ },
+ "outputs": [
+  {
+   "artifact_id": "conc-A.log",
+   "path": "experiments/20260907-apple-m5-load-concurrency/conc-A.log",
+   "sha256": "e6a4573a83908278985be5cf4dd8f17fa0c3d277ed9374d3b34cb28357654858",
+   "size_bytes": 5150,
+   "retention": "durable",
+   "consuming_figures": [],
+   "result": "concurrent benchmark, four loads"
+  },
+  {
+   "artifact_id": "conc-B.log",
+   "path": "experiments/20260907-apple-m5-load-concurrency/conc-B.log",
+   "sha256": "cd3956edcafaa9b7a7a86a7264935c470e0ed7229db0decf5130190ef2a729f9",
+   "size_bytes": 5149,
+   "retention": "durable",
+   "consuming_figures": [],
+   "result": "concurrent benchmark, four loads"
+  },
+  {
+   "artifact_id": "solo-0.0y_20260128_14-42-13_master.log",
+   "path": "experiments/20260907-apple-m5-load-concurrency/solo-0.0y_20260128_14-42-13_master.log",
+   "sha256": "50150bd14f0ef089afc972c439579f1872e9577a6bf53e016c02c323625c39d8",
+   "size_bytes": 5147,
+   "retention": "durable",
+   "consuming_figures": [],
+   "result": "solo benchmark, four loads"
+  },
+  {
+   "artifact_id": "solo-0.0y_20260128_14-43-06_master.log",
+   "path": "experiments/20260907-apple-m5-load-concurrency/solo-0.0y_20260128_14-43-06_master.log",
+   "sha256": "5b41f4c2a34b142c42ceca00c3ea388ca1807fe335071bf642baf51e330f243d",
+   "size_bytes": 5152,
+   "retention": "durable",
+   "consuming_figures": [],
+   "result": "solo benchmark, four loads"
+  },
+  {
+   "artifact_id": "summary.json",
+   "path": "experiments/20260907-apple-m5-load-concurrency/summary.json",
+   "sha256": "39b1dee8f2adbc38bac8df0c77bb23ff88b7117ac9023e7c4498089ba2d87e96",
+   "size_bytes": 468,
+   "retention": "durable",
+   "consuming_figures": [],
+   "result": "concurrent benchmark, four loads"
+  }
+ ],
+ "timestamps": {
+  "created": "2026-09-08T03:06:16.000Z",
+  "started": "2026-09-08T03:06:16.000Z",
+  "finished": "2026-09-08T03:06:16.000Z"
+ }
+}

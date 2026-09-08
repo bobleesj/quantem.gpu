@@ -1,0 +1,14 @@
+{
+ "solo_p50_seconds": [
+  1.695241928100586,
+  1.6863499879837036
+ ],
+ "concurrent_p50_seconds": [
+  2.7217389345169067,
+  2.753337025642395
+ ],
+ "solo_throughput_loads_per_s": 0.591,
+ "concurrent_throughput_loads_per_s": 0.731,
+ "spare_gpu_capacity_estimate": 0.235,
+ "note": "Two independent processes each loaded a different original uint16 acquisition four times; the first cold cycle of each solo run wrote the packing plan and is included in max but not p50."
+}
