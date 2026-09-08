@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-numpy-float-capacity",
+  "status": "refuted",
+  "question": "Can the existing exact 128-word float XOR representation fit a complete merged 512x512x192x192 float32 acquisition within a 24 GB Mac's resident budget?",
+  "paper": {"repository": "quantem.gpu", "authoritative_host": "apple-m5-24gb"},
+  "code": {"revision": "12608ce28c6382f1413b169de747f4b4177b1202", "dirty": false, "entrypoint": "experiments/20260908-numpy-float-capacity/audit.py", "note": "New standalone source audit; existing backend source is unchanged. Audit script fingerprint recorded in terminal evidence."},
+  "inputs": [{"dataset_id": "merged-float32-512", "path": "private-source/merged_nobin.npy", "sha256": "24d7ec1fe83ec12faddf026a92b8f97f003202dc68a326664ec35f3a0d8c7057"}],
+  "parameters": {"shape": [512,512,192,192], "dtype": "float32", "scan_bin": 1, "detector_bin": 1, "crop": null, "block_words": 128, "bounded_read_bytes": 16777216, "performance_claim": false, "source_copied_without_conversion": true},
+  "execution": {"host": "linux-data-source", "backend": "numpy-cpu-source-inspection", "gpu_model": "not-used", "target": "apple-m5-24gb"},
+  "outputs": [{"artifact_id": "complete-source-capacity", "path": "experiments/20260908-numpy-float-capacity/result.json", "sha256": "5125e6fc694d12ecae67449ec6041a93258094adcaebbdcfbf07493c4d778c7b", "size_bytes": 846, "retention": "durable", "consuming_figures": [], "result": "All 9663676416 words authenticated: existing lossless XOR storage requires 37637571104 bytes before overhead, exceeding target memory. No native load, speed, or release claim."}],
+  "timestamps": {"created": "2026-09-08", "finished": "2026-09-08"}
+}

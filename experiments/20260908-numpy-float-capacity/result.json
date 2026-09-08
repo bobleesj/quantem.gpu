@@ -1,0 +1,20 @@
+{
+  "shape": [512, 512, 192, 192],
+  "dtype": "float32",
+  "source_bytes": 38654705792,
+  "source_sha256": "24d7ec1fe83ec12faddf026a92b8f97f003202dc68a326664ec35f3a0d8c7057",
+  "audit_script_sha256": "9b914d66d9a3df5ad45608703940475c13af81ac60740d1777d2062fb98b5c41",
+  "words_audited": 9663676416,
+  "zero_words": 856375257,
+  "fractional_words": 8807300314,
+  "nonfinite_words": 0,
+  "minimum": 0.0,
+  "maximum": 1716.4454345703125,
+  "block_words": 128,
+  "width_histogram": [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,17,543899,2840805,564652,0,47794137,23753962,0],
+  "payload_bytes": 36429611552,
+  "descriptor_bytes": 1207959552,
+  "packed_bytes": 37637571104,
+  "memory_comparison": "Excludes Metal page alignment, staging, products and app memory",
+  "scope": "Complete CPU source-capacity audit, not native load or GPU timing"
+}
