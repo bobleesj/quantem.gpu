@@ -19,7 +19,42 @@ The native format entry point is `NativeEMPADSource.open(_:scanShape:)`.
   entities or follow an acquisition computer's absolute filesystem path.
 - Frame selection retains request order and duplicates. No transpose, binning,
   scan crop or detector mask is implicit. Physical calibration is unknown
-  unless separately supplied, and must not be invented.
+  unless supplied in supported acquisition metadata or explicitly by the user.
+  Importing sampling changes coordinate labels, never recorded measurements.
+
+## Acquisition sampling and missing dimensions
+
+`NativeEMPADSource` exposes optional `scanCalibration`,
+`diffractionSamplingInverseNanometers`, and `acquisitionDate`. These reuse the
+existing source-calibration model and do not add a second loading API.
+
+- EMPAD 1.2 `full_scan_field_of_view` stores the same maximum-axis field in
+  `x` and `y`, multiplied by `scale_factor`. The reader divides by that factor
+  and the larger scan dimension, then converts meters to angstroms. Unequal
+  fields, nonpositive factors and nonfinite values do not establish calibration.
+- Legacy `optics.get_full_scan_field_of_view` provides the row/column fields
+  in meters. Each is divided by its corresponding scan dimension.
+- Legacy `calibrated_pixelsize` follows the EMPAD conversion to inverse
+  nanometers (`value * 1e9`). Newer exports omit it; no camera-length estimate
+  or assumed diffraction sampling substitutes for missing metadata.
+
+These conventions follow the documented
+[RosettaSciIO EMPAD reader](https://github.com/hyperspy/rosettasciio/blob/main/rsciio/empad/_api.py).
+The implementation independently parses only the recognized metadata fields;
+no external reader code or detector correction is included.
+
+An otherwise unresolved shape raises `NativeEMPADSourceError.missingScanShape`
+with the resolved RAW URL. Callers can request original dimensions and retry
+the same entry point. This is distinct from malformed XML, conflicting
+dimensions, or incomplete records. The app keys confirmed dimensions by that
+RAW URL so XML and RAW aliases share one answer. The original files remain
+unchanged. Tests cover rectangular sampling, unavailable calibration, exact
+selected float bits, and native metadata entry followed by quit/relaunch.
+
+This does not implement EMPAD-G2. Its original acquisition needs both a
+matching background and sensor calibration, as specified by the
+[EMPAD-G2 reader](https://github.com/sezelt/empad2). Neither an arbitrary gain
+map nor the conventional float32 interpretation is a valid substitute.
 
 ## Scope and remaining gates
 
