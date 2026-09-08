@@ -4,7 +4,9 @@ import Metal4DSTEMStreamingIO
 extension MetalOriginalHDF5Benchmark {
   /// Measure full-scan mask sums after loading, separately from presentation.
   /// Each repeat follows the same masks; exact output hashes must remain stable.
-  static func benchmarkDetectors(_ source: MetalCompactH5ResidentSource, trials: Int, cycle: Int) throws {
+  static func benchmarkDetectors(_ source: MetalCompactH5ResidentSource, trials: Int, cycle: Int)
+    throws
+  {
     let metadata = source.metadata
     let centerRow = Double(metadata.detectorRows - 1) / 2
     let centerColumn = Double(metadata.detectorColumns - 1) / 2

@@ -182,17 +182,23 @@ public struct NativeEMPADSource: Sendable {
       var vectors: [iovec] = []
       vectors.reserveCapacity(frames * 2)
       for frame in 0..<frames {
-        vectors.append(iovec(iov_base: output.baseAddress!.advanced(by: (first + frame) * pixels * 4), iov_len: pixels * 4))
+        vectors.append(
+          iovec(
+            iov_base: output.baseAddress!.advanced(by: (first + frame) * pixels * 4),
+            iov_len: pixels * 4))
         vectors.append(iovec(iov_base: footer, iov_len: 1024))
       }
       var next = 0
       while next < vectors.count {
         let received = vectors.withUnsafeBufferPointer {
-          Darwin.readv(handle.fileDescriptor, $0.baseAddress!.advanced(by: next), Int32($0.count - next))
+          Darwin.readv(
+            handle.fileDescriptor, $0.baseAddress!.advanced(by: next), Int32($0.count - next))
         }
         if received < 0 && errno == EINTR { continue }
         guard received > 0 else {
-          throw EMPADError("EMPAD RAW ended or failed during frame \(indices[first]). Restore the complete acquisition.")
+          throw EMPADError(
+            "EMPAD RAW ended or failed during frame \(indices[first]). Restore the complete acquisition."
+          )
         }
         var remaining = received
         while remaining > 0 {
@@ -209,7 +215,8 @@ public struct NativeEMPADSource: Sendable {
       #if _endian(big)
         for pixel in (first * pixels)..<((first + frames) * pixels) {
           let word = output.loadUnaligned(fromByteOffset: pixel * 4, as: UInt32.self)
-          output.storeBytes(of: UInt32(littleEndian: word), toByteOffset: pixel * 4, as: UInt32.self)
+          output.storeBytes(
+            of: UInt32(littleEndian: word), toByteOffset: pixel * 4, as: UInt32.self)
         }
       #endif
       first += frames

@@ -282,7 +282,8 @@ public struct Metal4DSTEMResidentCapabilities: Codable, Equatable, Sendable {
       storageSchema: storageSchema, losslessExact: true, scanBin: 1, detectorBin: 1, crop: nil,
       detectorMaskCount: 0, detectorMaskSHA256: nil, detectorMaskSchema: nil,
       calibrationSchema: nil, calibrationSHA256: nil,
-      provenanceSchema: "quantem.gpu.empad-tensor/v1", provenanceSHA256: source.sourceIdentitySHA256,
+      provenanceSchema: "quantem.gpu.empad-tensor/v1",
+      provenanceSHA256: source.sourceIdentitySHA256,
       sourceRawLogicalSHA256: source.logicalSHA256, workingLogicalSHA256: source.logicalSHA256,
       implementationRevision: nil)
     try receipt.validate()

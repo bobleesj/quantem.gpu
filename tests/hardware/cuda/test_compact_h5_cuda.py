@@ -194,6 +194,7 @@ def test_cuda_compact_loader_requires_v3_whole_file_seal_before_dispatch(
         "from_file",
         lambda path: SimpleNamespace(
             schema_version=3,
+            header_encoding=1,
             require_raw_reconstruction=lambda: None,
         ),
     )
@@ -208,6 +209,7 @@ def test_cuda_compact_loader_rejects_v3_whole_file_mismatch_before_dispatch(
 
     index = SimpleNamespace(
         schema_version=3,
+        header_encoding=1,
         path="not-opened.h5",
         require_raw_reconstruction=lambda: None,
     )

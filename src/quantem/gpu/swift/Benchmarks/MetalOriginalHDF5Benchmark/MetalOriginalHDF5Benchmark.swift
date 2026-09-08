@@ -38,7 +38,10 @@ enum MetalOriginalHDF5Benchmark {
       var series = false
       while !args.isEmpty {
         let flag = args.removeFirst()
-        if flag == "--series" { series = true; continue }
+        if flag == "--series" {
+          series = true
+          continue
+        }
         if flag == "--reuse-products" {
           reuse = true
           continue
@@ -187,7 +190,9 @@ enum MetalOriginalHDF5Benchmark {
                 let values = try resident.extractDiffraction(
                   scanRow: frame / metadata.scanColumns, scanColumn: frame % metadata.scanColumns)
                 values.withUnsafeBytes { hash.update(bufferPointer: $0) }
-                var total: UInt64 = 0, rowMoment: UInt64 = 0, columnMoment: UInt64 = 0
+                var total: UInt64 = 0
+                var rowMoment: UInt64 = 0
+                var columnMoment: UInt64 = 0
                 for detectorRow in 0..<metadata.detectorRows {
                   for detectorColumn in 0..<metadata.detectorColumns {
                     let pixel = detectorRow * metadata.detectorColumns + detectorColumn
@@ -200,7 +205,9 @@ enum MetalOriginalHDF5Benchmark {
                 }
                 guard total == dpc.total[frame], rowMoment == dpc.detectorRowMoment[frame],
                   columnMoment == dpc.detectorColumnMoment[frame]
-                else { throw failure("DPC sums differ from the independently authenticated full counts") }
+                else {
+                  throw failure("DPC sums differ from the independently authenticated full counts")
+                }
               }
             }
             let observed = hex(hash.finalize())
@@ -213,7 +220,10 @@ enum MetalOriginalHDF5Benchmark {
               zip(mean.mean, expectedDetectorSum).allSatisfy({
                 $0.0.bitPattern == (Float($0.1) / divisor).bitPattern
               })
-            else { throw failure("Mean diffraction differs from the independently authenticated full counts") }
+            else {
+              throw failure(
+                "Mean diffraction differs from the independently authenticated full counts")
+            }
             audited.insert(identity)
             try emit([
               "phase": "full_count_parity", "cycle": cycle, "source_identity": identity,
@@ -248,11 +258,15 @@ enum MetalOriginalHDF5Benchmark {
           ])
         }
         let released = UInt64(device.currentAllocatedSize)
-        try emit(["phase": "released", "cycle": cycle, "source_identity": identity,
-          "resident_count": 0, "device_allocated_bytes": released])
+        try emit([
+          "phase": "released", "cycle": cycle, "source_identity": identity,
+          "resident_count": 0, "device_allocated_bytes": released,
+        ])
         if let baseline = releasedBaseline, released > baseline + (64 << 20) {
-          try emit(["phase": "release_budget_failed", "baseline_bytes": baseline,
-            "observed_bytes": released, "allowed_growth_bytes": 64 << 20])
+          try emit([
+            "phase": "release_budget_failed", "baseline_bytes": baseline,
+            "observed_bytes": released, "allowed_growth_bytes": 64 << 20,
+          ])
           throw failure("Released device allocations grew by more than 64 MiB")
         }
         releasedBaseline = releasedBaseline ?? released

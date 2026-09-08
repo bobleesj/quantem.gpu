@@ -18,6 +18,7 @@ EXPECTED_CAPABILITIES = {
     "geometry.scan-quarter-turn",
     "io.decode-bin-provenance",
     "io.selective-scan-loading",
+    "io.empad-float-resident",
     "detector.integer-products",
     "screening.prepared-products",
     "dpc.com-rotation-idpc",

@@ -1996,7 +1996,8 @@ public enum MetalCompactH5Loader {
       ProcessInfo.processInfo.environment["COMPACT_RAW_PLANE_ILP"] == "1"
       ? try kernel("compact_h5_detector_update_planar_ilp") : nil
     let quadVector = compactKernelOption("RAW_QUAD_VECTOR", byDefault: true)
-    let planarVariant = compactKernelOption("RAW_CONSTANT_WIDE", byDefault: false)
+    let planarVariant =
+      compactKernelOption("RAW_CONSTANT_WIDE", byDefault: false)
       ? "compact_h5_detector_update_planar_quad_constant"
       : "compact_h5_detector_update_planar_quad_vector"
     let originalPlanarScan =

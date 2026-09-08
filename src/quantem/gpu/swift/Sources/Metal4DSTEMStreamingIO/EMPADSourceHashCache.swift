@@ -43,12 +43,14 @@ struct EMPADSourceHashCache: Codable {
 
   static func write(_ url: URL?, snapshot: Data, hash: String) {
     guard let url else { return }
-    let record = Self(schema: version, snapshot: snapshot, logicalSHA256: hash,
+    let record = Self(
+      schema: version, snapshot: snapshot, logicalSHA256: hash,
       checksum: checksum(snapshot: snapshot, hash: hash))
     guard let data = try? JSONEncoder().encode(record) else { return }
     // Cache permissions/corruption cannot prevent a valid original-source load.
     do {
-      try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+      try FileManager.default.createDirectory(
+        at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
       try data.write(to: url, options: .atomic)
     } catch {}
   }

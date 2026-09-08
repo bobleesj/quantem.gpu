@@ -28,10 +28,14 @@ extension MetalOriginalHDF5Benchmark {
         receipt.detectorMaskCount == 0
       else { throw failure("Series lost complete source counts") }
       residentBytes += source.loadMetrics.totalResidentBytes
-      guard residentBytes < options.budget else { throw failure("Series exceeded its resident budget") }
-      try emit(["phase": "series_load", "source_identity": identity,
+      guard residentBytes < options.budget else {
+        throw failure("Series exceeded its resident budget")
+      }
+      try emit([
+        "phase": "series_load", "source_identity": identity,
         "seconds": CFAbsoluteTimeGetCurrent() - start, "resident_count": sources.count,
-        "resident_bytes": residentBytes, "device_allocated_bytes": device.currentAllocatedSize])
+        "resident_bytes": residentBytes, "device_allocated_bytes": device.currentAllocatedSize,
+      ])
     }
     guard let first = sources.first else { throw failure("No sources for series test") }
     let metadata = first.metadata
@@ -43,8 +47,12 @@ extension MetalOriginalHDF5Benchmark {
         for (step, offset) in offsets.enumerated() {
           try autoreleasepool {
             let mask: [UInt8] = (0..<metadata.detectorPixelCount).map { pixel in
-              let row = Double(pixel / metadata.detectorColumns) - Double(metadata.detectorRows - 1) / 2 - offset.0
-              let column = Double(pixel % metadata.detectorColumns) - Double(metadata.detectorColumns - 1) / 2 - offset.1
+              let row =
+                Double(pixel / metadata.detectorColumns) - Double(metadata.detectorRows - 1) / 2
+                - offset.0
+              let column =
+                Double(pixel % metadata.detectorColumns) - Double(metadata.detectorColumns - 1) / 2
+                - offset.1
               let r2 = row * row + column * column
               return (inner == 0 || r2 > inner * inner) && r2 <= outer * outer ? 1 : 0
             }
@@ -62,19 +70,25 @@ extension MetalOriginalHDF5Benchmark {
             let call = (CFAbsoluteTimeGetCurrent() - started) * 1000
             guard snapshots.count == sources.count else { throw failure("Missing series snapshot") }
             for (source, snapshot) in zip(sources, snapshots) {
-              let values = Array(UnsafeBufferPointer(
-                start: snapshot.contents().assumingMemoryBound(to: UInt32.self), count: source.metadata.scanCount))
+              let values = Array(
+                UnsafeBufferPointer(
+                  start: snapshot.contents().assumingMemoryBound(to: UInt32.self),
+                  count: source.metadata.scanCount))
               let hash = digest(values)
               let key = "\(source.metadata.sourceIdentitySHA256):\(name):\(step)"
-              guard hashes[key] == nil || hashes[key] == hash else { throw failure("Series repeat or heterogeneous fallback differs") }
+              guard hashes[key] == nil || hashes[key] == hash else {
+                throw failure("Series repeat or heterogeneous fallback differs")
+              }
               hashes[key] = hash
-              try emit(["phase": "series_detector", "source_identity": source.metadata.sourceIdentitySHA256,
+              try emit([
+                "phase": "series_detector", "source_identity": source.metadata.sourceIdentitySHA256,
                 "trial": trial, "case": name, "step": step, "sha256_u32_le": hash,
                 "gpu_ms": metrics.gpuMilliseconds, "call_ms": call,
                 "wall_after_prepare_ms": metrics.wallMilliseconds,
                 "source_count": sources.count, "submission_count": metrics.submissionCount,
                 "heterogeneous_history": trial == max(2, options.detectorTrials) - 1,
-                "ui_present_measured": false])
+                "ui_present_measured": false,
+              ])
             }
           }
         }
@@ -82,21 +96,30 @@ extension MetalOriginalHDF5Benchmark {
     }
     for fill: UInt8 in [0, 1, 1, 0] {
       try autoreleasepool {
-      let mask = [UInt8](repeating: fill, count: metadata.detectorPixelCount)
-      var snapshots: [MTLBuffer] = []
-      _ = try MetalCompactH5ResidentSource.updateVirtualDetectors(sources, mask: mask, snapshots: &snapshots)
-      for (source, snapshot) in zip(sources, snapshots) {
-        guard let dpc = try source.preparedDPCMomentValues() else { throw failure("Missing exact totals") }
-        let values = UnsafeBufferPointer(start: snapshot.contents().assumingMemoryBound(to: UInt32.self), count: source.metadata.scanCount)
-        guard values.indices.allSatisfy({ UInt64(values[$0]) == (fill == 0 ? 0 : dpc.total[$0]) })
-        else { throw failure("Empty/full/unchanged mask differs from exact totals") }
-      }
+        let mask = [UInt8](repeating: fill, count: metadata.detectorPixelCount)
+        var snapshots: [MTLBuffer] = []
+        _ = try MetalCompactH5ResidentSource.updateVirtualDetectors(
+          sources, mask: mask, snapshots: &snapshots)
+        for (source, snapshot) in zip(sources, snapshots) {
+          guard let dpc = try source.preparedDPCMomentValues() else {
+            throw failure("Missing exact totals")
+          }
+          let values = UnsafeBufferPointer(
+            start: snapshot.contents().assumingMemoryBound(to: UInt32.self),
+            count: source.metadata.scanCount)
+          guard values.indices.allSatisfy({ UInt64(values[$0]) == (fill == 0 ? 0 : dpc.total[$0]) })
+          else { throw failure("Empty/full/unchanged mask differs from exact totals") }
+        }
       }
     }
-    try emit(["phase": "series_boundary_parity", "empty_full_unchanged_masks": true,
-      "sources": sources.count, "full_scan_counts_preserved": true])
+    try emit([
+      "phase": "series_boundary_parity", "empty_full_unchanged_masks": true,
+      "sources": sources.count, "full_scan_counts_preserved": true,
+    ])
     for source in sources { source.releaseResidentStorage() }
-    try emit(["phase": "complete", "series": true, "resident_bytes": residentBytes,
-      "released_device_allocated_bytes": device.currentAllocatedSize])
+    try emit([
+      "phase": "complete", "series": true, "resident_bytes": residentBytes,
+      "released_device_allocated_bytes": device.currentAllocatedSize,
+    ])
   }
 }
