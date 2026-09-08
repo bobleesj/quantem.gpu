@@ -1967,7 +1967,7 @@ public enum MetalCompactH5Loader {
     guard let queue = device.makeCommandQueue() else {
       throw invalid("Cannot create resident interaction queue")
     }
-    let library = try Metal4DSTEMKernels.makeCompactH5Library(device: device)
+    let library = try CompactH5KernelCache.shared.library(device: device)
     func kernel(_ name: String) throws -> MTLComputePipelineState {
       if name == "compact_h5_detector_update_planar_quad_vector",
         compactKernelOption("RAW_FIXED_THREADS", byDefault: false)
@@ -1997,7 +1997,7 @@ public enum MetalCompactH5Loader {
         }
         return result
       }
-      return try pipeline(library: library, name: name, device: device)
+      return try pipeline(name: name, device: device)
     }
     let selected = try kernel(Metal4DSTEMKernels.compactH5SelectedDiffractionFunction)
     let detector = try kernel(Metal4DSTEMKernels.compactH5DetectorUpdateFunction)
@@ -2256,15 +2256,13 @@ public enum MetalCompactH5Loader {
         "Metal could not create the compact HDF5 command queue."
       )
     }
-    let library = try Metal4DSTEMKernels.makeCompactH5Library(device: device)
     let metadataKernels =
       index.storageLayout == .lz4V1 && nativeCache == nil
-      ? try CompactH5MetadataKernels(device: device, library: library) : nil
+      ? try CompactH5KernelCache.shared.metadata(device: device) : nil
     let decode =
       metadataKernels == nil
       ? nil
-      : try pipeline(
-        library: library, name: "compact_h5_lz4_decode_simd32", device: device)
+      : try pipeline(name: "compact_h5_lz4_decode_simd32", device: device)
     if let decode {
       guard decode.threadExecutionWidth == 32, decode.maxTotalThreadsPerThreadgroup >= 256 else {
         throw Metal4DSTEMStreamingIOError.metalUnavailable(
@@ -2272,45 +2270,37 @@ public enum MetalCompactH5Loader {
       }
     }
     let validateDescriptors = try pipeline(
-      library: library,
       name: Metal4DSTEMKernels.compactH5ValidateDescriptorsFunction,
       device: device
     )
     let selected = try pipeline(
-      library: library,
       name: Metal4DSTEMKernels.compactH5SelectedDiffractionFunction,
       device: device
     )
     let detector = try pipeline(
-      library: library,
       name: Metal4DSTEMKernels.compactH5DetectorUpdateFunction,
       device: device
     )
     let pixelLaneDetector = try pipeline(
-      library: library,
       name: "compact_h5_detector_update_pixel_lanes",
       device: device
     )
     let planarILPDetector =
       ProcessInfo.processInfo.environment["COMPACT_RAW_PLANE_ILP"] == "1"
-      ? try pipeline(
-        library: library, name: "compact_h5_detector_update_planar_ilp", device: device) : nil
+      ? try pipeline(name: "compact_h5_detector_update_planar_ilp", device: device) : nil
     let planarScanCooperative =
       ProcessInfo.processInfo.environment["COMPACT_RAW_SCAN_COOPERATIVE"] == "1"
       ? try pipeline(
-        library: library, name: "compact_h5_detector_update_planar_scan_cooperative", device: device
+        name: "compact_h5_detector_update_planar_scan_cooperative", device: device
       ) : nil
     let planarFusedDetector =
       ProcessInfo.processInfo.environment["COMPACT_RAW_AUX_FUSED"] == "1"
-      ? try pipeline(
-        library: library, name: "compact_h5_detector_update_planar_fused", device: device) : nil
+      ? try pipeline(name: "compact_h5_detector_update_planar_fused", device: device) : nil
     let fullDecode = try pipeline(
-      library: library,
       name: Metal4DSTEMKernels.compactH5FullDecodeU8Function,
       device: device
     )
     let detectorSum = try pipeline(
-      library: library,
       name: Metal4DSTEMKernels.compactH5DetectorSumFunction,
       device: device
     )
@@ -4074,17 +4064,11 @@ public enum MetalCompactH5Loader {
   }
 
   private static func pipeline(
-    library: MTLLibrary,
     name: String,
     device: MTLDevice
   ) throws -> MTLComputePipelineState {
-    guard let function = library.makeFunction(name: name) else {
-      throw Metal4DSTEMStreamingIOError.metalUnavailable(
-        "Compact Metal function \(name) is missing."
-      )
-    }
     do {
-      return try device.makeComputePipelineState(function: function)
+      return try CompactH5KernelCache.shared.pipeline(name: name, device: device)
     } catch {
       throw Metal4DSTEMStreamingIOError.metalUnavailable(
         "Compact Metal pipeline \(name) failed: \(error.localizedDescription)"

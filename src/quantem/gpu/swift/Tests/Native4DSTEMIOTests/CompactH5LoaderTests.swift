@@ -1,6 +1,5 @@
 import CryptoKit
 import Metal
-import Metal4DSTEMKernels
 import XCTest
 
 @testable import Metal4DSTEMStreamingIO
@@ -278,28 +277,13 @@ final class CompactH5LoaderTests: XCTestCase {
     let baselineAllocation = device.currentAllocatedSize
     print("COMPACT_CANCELLATION warmed_allocation=\(baselineAllocation)")
     print("COMPACT_CANCELLATION device=\(device.name)")
-    // Isolate driver/compiler allocations from dataset storage without changing
-    // the warmed baseline or the strict cancellation retirement assertion.
-    for repetition in 0..<30 {
-      try autoreleasepool {
-        let queue = try XCTUnwrap(device.makeCommandQueue())
-        let command = try XCTUnwrap(queue.makeCommandBuffer())
-        command.commit()
-        command.waitUntilCompleted()
-      }
-      if repetition % 10 == 9 {
-        print("COMPACT_QUEUE_ONLY n=\(repetition + 1) allocated=\(device.currentAllocatedSize)")
-      }
-    }
-    for repetition in 0..<30 {
-      try autoreleasepool {
-        let library = try Metal4DSTEMKernels.makeCompactH5Library(device: device)
-        let function = try XCTUnwrap(library.makeFunction(name: "compact_h5_lz4_decode_simd32"))
-        _ = try device.makeComputePipelineState(function: function)
-      }
-      if repetition % 10 == 9 {
-        print("COMPACT_PIPELINE_ONLY n=\(repetition + 1) allocated=\(device.currentAllocatedSize)")
-      }
+    // Repeated opens must reuse compiled code as well as retire data buffers.
+    let firstPipeline = try CompactH5KernelCache.shared.pipeline(
+      name: "compact_h5_lz4_decode_simd32", device: device)
+    for _ in 0..<30 {
+      let reused = try CompactH5KernelCache.shared.pipeline(
+        name: "compact_h5_lz4_decode_simd32", device: device)
+      XCTAssertTrue(firstPipeline === reused)
     }
     for corruptWidth in [false, true] {
       let fixture = try makeMultishardCompactFixture()
