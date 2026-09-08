@@ -166,7 +166,7 @@ public struct Metal4DSTEMLoadPlan: Equatable, Hashable, Sendable {
       sourceScanRows <= Int.max / sourceScanColumns,
       detectorRows <= Int.max / detectorColumns
     else { throw Metal4DSTEMLoadPlanError.invalidSourceShape }
-    guard sourceBytesPerValue == 1 || sourceBytesPerValue == 2 else {
+    guard [1, 2, 4].contains(sourceBytesPerValue) else {
       throw Metal4DSTEMLoadPlanError.invalidSourceBytesPerValue(sourceBytesPerValue)
     }
     guard Self.supportedScanBins.contains(scanBin) else {

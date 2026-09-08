@@ -13,6 +13,7 @@ import struct
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 @unittest.skipUnless(os.environ.get("EMPAD_SOURCE_PARITY_EXE"), "Build EMPADSourceParity first")
@@ -40,7 +41,7 @@ class EMPADSourceTests(unittest.TestCase):
                 stream.write(struct.pack("<I", 0xDEADBEEF) * 256)
 
     def read(self, source, *shape, succeeds=True, metal=False, budget=None,
-             mutate=None, cancel_at=None):
+             mutate=None, cancel_at=None, hash_cache=None, cache_hit=None):
         output = self.root / "selected.bin"
         indices = (5, 0, 3, 0) + ((64, 65) if len(self.frames) > 64 else ())
         environment = dict(os.environ, EMPAD_TEST_METAL="1" if metal else "0")
@@ -50,6 +51,8 @@ class EMPADSourceTests(unittest.TestCase):
             environment["EMPAD_TEST_MUTATE"] = mutate
         if cancel_at is not None:
             environment["EMPAD_TEST_CANCEL_AT"] = str(cancel_at)
+        if hash_cache is not None:
+            environment["EMPAD_TEST_HASH_CACHE"] = str(hash_cache)
         result = subprocess.run(
             [os.environ["EMPAD_SOURCE_PARITY_EXE"], str(source), str(output),
              ",".join(map(str, indices)), *map(str, shape)], capture_output=True, text=True,
@@ -57,6 +60,8 @@ class EMPADSourceTests(unittest.TestCase):
         )
         if succeeds:
             self.assertEqual(result.returncode, 0, result.stderr)
+            if cache_hit is not None:
+                self.assertIn(f"EMPAD_SOURCE_HASH cached={int(cache_hit)}", result.stdout)
             self.assertIn(f"scan={self.shape[0]}x{self.shape[1]}", result.stdout)
             self.assertEqual(output.read_bytes(), b"".join(self.frames[i] for i in indices))
             if metal:
@@ -78,7 +83,7 @@ class EMPADSourceTests(unittest.TestCase):
                 self.assertEqual(capabilities["exactIntegerBits"], 0)
                 products = {entry["product"]: entry for entry in capabilities["products"]}
                 self.assertEqual(products["diffraction-pattern"]["numerics"], "exact-float32-bits")
-                self.assertEqual(products["dpc"]["availability"], "unavailable")
+                self.assertEqual(products["dpc"]["availability"], "resident-on-demand")
             if cancel_at is not None:
                 self.assertIn(f"EMPAD_CANCELLED checks={cancel_at}", result.stdout)
         else:
@@ -86,6 +91,7 @@ class EMPADSourceTests(unittest.TestCase):
             if mutate is not None:
                 self.assertIn("changed during loading", result.stderr)
 
+    @patch.dict(os.environ, {"QGPU_EMPAD_WINDOW": "64"})
     def test_metal_packing_and_apertures_across_staging_windows(self):
         self.frames *= 11
         self.shape = (2, 33)
@@ -95,6 +101,18 @@ class EMPADSourceTests(unittest.TestCase):
                 stream.write(frame)
                 stream.write(struct.pack("<I", 0xDEADBEEF) * 256)
         self.read(self.raw, metal=True)
+        for name in ("com-row", "com-column"):
+            coordinates = struct.unpack(f"<{len(self.frames)}f", (self.root / ("selected.bin." + name)).read_bytes())
+            self.assertTrue(all(math.isnan(value) for value in coordinates))
+        mean = struct.unpack("<16384f", (self.root / "selected.bin.mean").read_bytes())
+        decoded = [struct.unpack("<16384f", frame) for frame in self.frames]
+        for pixel, measured in enumerate(mean):
+            values = [frame[pixel] for frame in decoded]
+            expected = math.fsum(values) / len(values)
+            if math.isnan(expected):
+                self.assertTrue(math.isnan(measured))
+            else:
+                self.assertTrue(math.isclose(measured, expected, rel_tol=1e-6, abs_tol=1e-6))
         products = (self.root / "selected.bin.products").read_bytes()
         actual = struct.unpack(f"<{4 * len(self.frames)}f", products)
         for kind in range(4):
@@ -115,6 +133,130 @@ class EMPADSourceTests(unittest.TestCase):
         self.read(self.raw, metal=True, budget=1, succeeds=False)
         self.read(self.raw, metal=True, cancel_at=1)
         self.read(self.raw, metal=True, cancel_at=5)
+
+    def test_every_packing_width_preserves_original_bits(self):
+        # Force every width from 0 through 32, including cross-word fields,
+        # signed zero and non-finite payloads. Packing must do no float math.
+        self.frames = []
+        with self.raw.open("wb") as stream:
+            for frame in range(6):
+                words = []
+                for row in range(128):
+                    width = row % 33
+                    mask = (1 << width) - 1
+                    base = 0x3F800000
+                    words.extend(base ^ (0 if col == 0 else mask if col == 1 else
+                                 ((col * 2654435761 + frame) & mask)) for col in range(128))
+                pixels = struct.pack("<16384I", *words)
+                self.frames.append(pixels)
+                stream.write(pixels)
+                stream.write(b"\xff" * 1024)
+        self.read(self.raw, metal=True)
+
+    def test_small_budget_reduces_staging_not_source_coverage(self):
+        # Below Metal's fixed command/pipeline overhead must fail closed.
+        self.read(self.raw, metal=True, budget=700000, succeeds=False)
+        self.frames *= 11
+        self.shape = (2, 33)
+        self.raw = self.root / "scan_x33_y2.raw"
+        with self.raw.open("wb") as stream:
+            for frame in self.frames:
+                stream.write(frame)
+                stream.write(b"\xff" * 1024)
+        # The complete acquisition fits, but its full staging pair does not.
+        self.read(self.raw, metal=True, budget=6 * 1024 * 1024)
+
+    def test_cancellation_before_final_publication(self):
+        self.read(self.raw, metal=True, cancel_at=5)
+
+    def test_hash_cache_reuses_only_unchanged_original_identity(self):
+        cache = self.root / "source-hashes.json"
+        original = self.raw.read_bytes()
+        self.read(self.raw, metal=True, hash_cache=cache, cache_hit=False)
+        self.read(self.raw, metal=True, hash_cache=cache, cache_hit=True)
+        self.assertEqual(self.raw.read_bytes(), original)
+        record = json.loads(cache.read_text())
+        record["logicalSHA256"] = "0" * 64
+        cache.write_text(json.dumps(record))
+        self.read(self.raw, metal=True, hash_cache=cache, cache_hit=False)
+        stamp = self.raw.stat()
+        self.frames[0] = struct.pack("<f", 0.625) + self.frames[0][4:]
+        with self.raw.open("r+b") as stream:
+            stream.write(self.frames[0][:4])
+        os.utime(self.raw, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+        self.read(self.raw, metal=True, hash_cache=cache, cache_hit=False)
+        self.read(self.raw, metal=True, hash_cache=cache, cache_hit=True)
+
+    def test_hash_cache_cannot_overwrite_source(self):
+        original = self.raw.read_bytes()
+        self.read(self.raw, metal=True, hash_cache=self.raw, cache_hit=False)
+        alias = self.root / "alias.json"
+        alias.symlink_to(self.raw)
+        self.read(self.raw, metal=True, hash_cache=alias, cache_hit=False)
+        self.assertEqual(self.raw.read_bytes(), original)
+
+    @patch.dict(os.environ, {"EMPAD_TEST_APERTURE_SEQUENCE": "1"})
+    def test_aperture_sequence_recovers_after_removing_nonfinite_pixels(self):
+        self.read(self.raw, metal=True)
+        masks = (self.root / "selected.bin.aperture-masks").read_bytes()
+        measured = struct.unpack("<576f", (self.root / "selected.bin.apertures").read_bytes())
+        decoded = [struct.unpack("<16384f", frame) for frame in self.frames]
+        for step in range(96):
+            mask = masks[step * 16384:(step + 1) * 16384]
+            for frame, values in enumerate(decoded):
+                expected = sum(value for value, included in zip(values, mask) if included)
+                actual = measured[step * 6 + frame]
+                if math.isnan(expected):
+                    self.assertTrue(math.isnan(actual))
+                else:
+                    self.assertTrue(math.isclose(actual, expected, rel_tol=1e-6, abs_tol=1e-6),
+                                    (step, frame, actual, expected))
+
+    def test_nearly_cancelled_apertures_keep_low_order_parts(self):
+        annulus = [p for p in range(16384)
+                   if 64 <= (p // 128 - 64) ** 2 + (p % 128 - 64) ** 2 <= 256]
+        self.frames = []
+        for frame in range(6):
+            values = [0.0] * 16384
+            # Separate large terms and small residuals across lanes/groups.
+            for index in range(189):
+                values[annulus[(index + frame * 37) % len(annulus)]] = (1e8, 0.125, -1e8)[index % 3]
+            self.frames.append(struct.pack("<16384f", *values))
+        with self.raw.open("wb") as stream:
+            for frame in self.frames:
+                stream.write(frame)
+                stream.write(bytes(1024))
+        self.read(self.raw, metal=True)
+        actual = struct.unpack("<24f", (self.root / "selected.bin.products").read_bytes())
+        for kind in range(4):
+            expected = 0.0 if kind == 2 else 63 * 0.125
+            for frame in range(6):
+                self.assertTrue(math.isclose(actual[kind * 6 + frame], expected,
+                                             rel_tol=1e-6, abs_tol=1e-6),
+                                (kind, frame, actual[kind * 6 + frame], expected))
+
+    def test_signed_and_zero_intensity_coordinates(self):
+        values = [[0.0] * 16384, [-0.125] * 16384,
+                  [float(pixel // 128) - 63.5 for pixel in range(16384)],
+                  [0.0] * 16384, [0.0] * 16384, [0.125] * 16384]
+        values[3][7 * 128 + 12] = 0.25
+        values[4][3 * 128 + 9] = -0.25
+        values[4][12 * 128 + 4] = 1.5
+        self.frames = [struct.pack("<16384f", *frame) for frame in values]
+        with self.raw.open("wb") as stream:
+            for frame in self.frames:
+                stream.write(frame)
+                stream.write(bytes(1024))
+        self.read(self.raw, metal=True)
+        for name, coordinate in (("com-row", lambda p: p // 128), ("com-column", lambda p: p % 128)):
+            measured = struct.unpack("<6f", (self.root / ("selected.bin." + name)).read_bytes())
+            for frame, actual in zip(values, measured):
+                total = math.fsum(frame)
+                if total == 0:
+                    self.assertTrue(math.isnan(actual))
+                else:
+                    expected = math.fsum(value * coordinate(pixel) for pixel, value in enumerate(frame)) / total
+                    self.assertTrue(math.isclose(actual, expected, rel_tol=1e-6, abs_tol=1e-6))
 
     def test_source_changes_with_restored_mtime_are_rejected(self):
         self.read(self.raw, mutate="raw", succeeds=False)

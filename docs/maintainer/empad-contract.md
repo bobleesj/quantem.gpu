@@ -48,9 +48,12 @@ These checks detect filesystem changes; they are not a file lock.
 
 `Metal4DSTEMResidentCapabilities.empad(_:)` exposes the actual float32 tensor,
 packed bytes and available products. Selected DP numerics are exact float32
-bits, not integer counts. Missing mean-DP/DPC/iDPC/FFT capabilities remain
-unavailable, so this partial implementation does not advertise
-`fullInteractiveResident`. Capabilities cannot be obtained after release.
+bits, not integer counts. Mean DP and CoM now have native float kernels;
+CoM and float image buffers feed the shared DPC/iDPC and FFT kernels. The
+backend advertises these compute prerequisites through `fullInteractiveResident`.
+That flag is not a native application or release certificate: the experimental
+consumer still has separate UI integration gates (including its average-DP
+control). Capabilities cannot be obtained after release.
 The logical SHA-256 covers little-endian detector words in scan order. Source
 tensor identity hashes the UTF-8 domain `quantem.gpu.empad-tensor/v1\0float32-le\0`,
 four little-endian UInt64 shape dimensions and the lowercase logical hash's
@@ -62,6 +65,13 @@ Aperture integration uses compensated float32 summation with strict arithmetic.
 Selected non-finite values propagate; unselected values do not participate.
 Floating reductions are qualified against a float64 reference with `rtol=1e-6`,
 `atol=1e-6`, not falsely described as exact integer sums.
+
+Mean DP is the arithmetic mean of all scan positions, with the same float
+tolerance. CoM is `sum(value * coordinate) / sum(value)` for zero-based detector
+row and column coordinates. Signed weights participate without clipping. A zero
+total or any non-finite detector measurement yields NaN CoM coordinates. These
+derived operations do not change packed samples; their consumer integration
+and live UI qualification remain separate gates.
 
 Required evidence: independent raw-word parity, rectangular scan orientation,
 XML and RAW opening, footer separation, retained negatives/fractions/non-finite
@@ -117,6 +127,43 @@ No FPS, cold-I/O, 512 × 512 scaling, application or release claim follows from
 these tests. Python MPS, CUDA, WebGPU, Direct3D and Vulkan EMPAD loading remain
 unsupported; the canonical backend matrices record the native path as partial.
 
+## Native consumer and cooperative aperture experiment
+
+The experimental Live4DSTEM route now discovers XML/RAW files, loads original
+samples into this float resident, and uses the existing viewer for selected DP,
+BF/ABF/ADF, derived products and FFT. It is gated separately from the installed
+release. The input stage and float packing differ from ARINA's bitshuffle/LZ4
+integer loader; the session, presentation and interaction workflow are shared.
+
+See `experiments/20260908-empad-native-cooperative` for the controlled native
+serial/cooperative/serial test. A 32-lane group cooperates on each aperture sum,
+retaining compensated accumulation rather than assigning an entire pattern to
+one thread. Complete sample parity, float64 product parity and actual native
+presentations are distinct acceptance checks. No dense resident is added.
+
+## Current native loading and interaction controls
+
+The current reader scatters complete RAW records directly into bounded shared
+Metal staging buffers; only the format's two footer rows are omitted. SIMD
+row description and unique-writer packing preserve every physical float32 bit.
+The optional `sourceHashCacheURL` argument stores a source-snapshot-bound
+checksum record, never detector arrays. A matching record skips checksum
+computation, not original reads, packing, or source-mutation checks. Report
+`reusedSourceHash` separately from OS page-cache state and retained residents.
+
+Completed aperture sums now retain a compensated high/low pair per scan
+position. Changes integrate entering and leaving mask pixels. Incomplete prior
+commands, large mask changes and periodic rebasing use a complete sum; removing
+nonfinite pixels recomputes affected frames. This adds eight bytes per scan
+position, not a second 4D representation, and respects the allocation budget.
+The original full-sum control remains available for experiments with
+`QGPU_EMPAD_INCREMENTAL=0`. Scientific tolerances are unchanged.
+
+See the [loading experiment](../../experiments/20260908-empad-hash-cache/manifest.json)
+and [aperture experiment](../../experiments/20260908-empad-incremental-apertures/manifest.json)
+for native presentation evidence and unmet performance targets. Kernel speed
+does not establish a 120 Hz UI result.
+
 ## Format references and public validation candidates
 
 - [AutoDisk demonstration and original RAW](https://github.com/swang59/AutoDisk_Demo):
@@ -138,8 +185,12 @@ unsupported; the canonical backend matrices record the native path as partial.
 - [LiberTEM EMPAD reader](https://libertem.github.io/LiberTEM/_modules/libertem/io/dataset/empad.html)
 - [Public 256 × 256 scan, 128 × 128 EMPAD detector](https://zenodo.org/records/17246822):
   `scan_x256_y256.raw`, published MD5 `c50f643c2cc87360bfdc746afd026cce`.
-  Acquisition metadata and author attribution remain with that record. This is
-  a candidate, not evidence of a completed download or qualification.
+  Acquisition metadata and author attribution remain with that record. The
+  complete 4,362,076,160-byte original was downloaded and checksum-verified.
+  All 1,073,741,824 physical detector samples passed bitwise resident parity;
+  BF/ABF/ADF, total, mean DP and CoM passed independent float64 references at
+  the unchanged 1e-6 relative/absolute tolerance. Native UI performance is a
+  separate gate: see `experiments/20260908-empad-original-load`.
 - [Cornell-associated EMPAD-G2 work and dataset reference](https://www.paradim.org/highlights/MIP_120)
   describes a different acquisition generation; do not conflate its raw format
   with conventional EMPAD float32 exports.

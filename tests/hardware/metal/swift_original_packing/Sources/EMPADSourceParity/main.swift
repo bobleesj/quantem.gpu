@@ -6,7 +6,7 @@ import Native4DSTEMIO
 // Emit source bits, not decimal float strings, for an independent file oracle.
 let arguments = Array(CommandLine.arguments.dropFirst())
 guard arguments.count >= 3 else {
-  fatalError("usage: EMPADSourceParity input output frame[,frame] [scan_rows scan_cols]")
+  fatalError("usage: EMPADSourceParity input output all|frame[,frame] [scan_rows scan_cols]")
 }
 let shape: (row: Int, col: Int)? =
   arguments.count == 5
@@ -22,8 +22,12 @@ if let mutation = ProcessInfo.processInfo.environment["EMPAD_TEST_MUTATE"] {
   try FileManager.default.setAttributes(
     [.modificationDate: attributes[.modificationDate]!], ofItemAtPath: target.path)
 }
-let indices = arguments[2].split(separator: ",").map { Int($0)! }
-let values: [Float]
+let indices = arguments[2] == "all" ? Array(0..<source.frameCount)
+  : arguments[2].split(separator: ",").map { Int($0)! }
+let outputURL = URL(fileURLWithPath: arguments[1])
+FileManager.default.createFile(atPath: outputURL.path, contents: nil)
+let outputHandle = try FileHandle(forWritingTo: outputURL)
+defer { try? outputHandle.close() }
 if ProcessInfo.processInfo.environment["EMPAD_TEST_METAL"] == "1" {
   let device = MTLCreateSystemDefaultDevice()!
   let queue = device.makeCommandQueue()!
@@ -46,15 +50,16 @@ if ProcessInfo.processInfo.environment["EMPAD_TEST_METAL"] == "1" {
     // Complete the same load and parity checks immediately after cancellation.
   }
   let resident = try MetalEMPADResidentSource.load(
-    source, device: device, memoryBudgetBytes: budget)
+    source, device: device, memoryBudgetBytes: budget,
+    sourceHashCacheURL: ProcessInfo.processInfo.environment["EMPAD_TEST_HASH_CACHE"].map { URL(fileURLWithPath: $0) })
+  print("EMPAD_SOURCE_HASH cached=\(resident.reusedSourceHash ? 1 : 0)")
   let capabilities = try Metal4DSTEMResidentCapabilities.empad(resident)
   try capabilities.residentReceipt.validate()
-  guard !capabilities.fullInteractiveResident, capabilities.completeSourceResident else {
-    fatalError("Partial EMPAD product support was incorrectly advertised")
+  guard capabilities.fullInteractiveResident, capabilities.completeSourceResident else {
+    fatalError("Complete EMPAD resident prerequisites were not advertised")
   }
   try JSONEncoder().encode(capabilities).write(
     to: URL(fileURLWithPath: arguments[1] + ".capabilities.json"))
-  var selected: [Float] = []
   let buffer = device.makeBuffer(length: 16384 * 4, options: .storageModeShared)!
   for index in indices {
     let command = queue.makeCommandBuffer()!
@@ -66,11 +71,10 @@ if ProcessInfo.processInfo.environment["EMPAD_TEST_METAL"] == "1" {
     guard command.status == .completed else {
       fatalError("Diffraction command failed: \(String(describing: command.error))")
     }
-    selected.append(
-      contentsOf: UnsafeBufferPointer(
-        start: buffer.contents().assumingMemoryBound(to: Float.self), count: 16384))
+    // Stream one exact pattern at a time: auditing a large acquisition must
+    // not materialize a second dense 4D tensor in host memory.
+    try outputHandle.write(contentsOf: Data(bytes: buffer.contents(), count: 16384 * 4))
   }
-  values = selected
   var products = Data()
   let alias = device.makeBuffer(
     length: max(16384, source.frameCount * 4), options: .storageModeShared)!
@@ -105,6 +109,50 @@ if ProcessInfo.processInfo.environment["EMPAD_TEST_METAL"] == "1" {
     products.append(Data(bytes: output.contents(), count: output.length))
   }
   try products.write(to: URL(fileURLWithPath: arguments[1] + ".products"))
+  let mean = device.makeBuffer(length: 16384 * 4, options: .storageModeShared)!
+  let comRow = device.makeBuffer(length: source.frameCount * 4, options: .storageModeShared)!
+  let comColumn = device.makeBuffer(length: source.frameCount * 4, options: .storageModeShared)!
+  let derivedCommand = queue.makeCommandBuffer()!
+  try resident.encodeMeanDiffraction(into: mean, command: derivedCommand)
+  try resident.encodeCenterOfMass(intoRow: comRow, intoColumn: comColumn, command: derivedCommand)
+  derivedCommand.commit()
+  derivedCommand.waitUntilCompleted()
+  guard derivedCommand.status == .completed else { fatalError("EMPAD derived command failed") }
+  for (name, buffer) in [("mean", mean), ("com-row", comRow), ("com-column", comColumn)] {
+    try Data(bytes: buffer.contents(), count: buffer.length).write(
+      to: URL(fileURLWithPath: arguments[1] + "." + name))
+  }
+  if ProcessInfo.processInfo.environment["EMPAD_TEST_APERTURE_SEQUENCE"] == "1" {
+    let mask = device.makeBuffer(length: 16384, options: .storageModeShared)!
+    let image = device.makeBuffer(length: source.frameCount * 4, options: .storageModeShared)!
+    let destination = URL(fileURLWithPath: arguments[1] + ".apertures")
+    FileManager.default.createFile(atPath: destination.path, contents: nil)
+    let stream = try FileHandle(forWritingTo: destination)
+    defer { try? stream.close() }
+    var masks = Data()
+    for step in 0..<96 {
+      let values = mask.contents().assumingMemoryBound(to: UInt8.self)
+      let centerRow = 64.0 + 4.0 * sin(Double(step) * 0.2)
+      let centerColumn = 64.0 + 4.0 * cos(Double(step) * 0.2)
+      let inner = 24.0 + 2.0 * sin(Double(step) * 0.3)
+      let outer = 60.0 + 2.0 * cos(Double(step) * 0.3)
+      for pixel in 0..<16384 {
+        let row = Double(pixel / 128) - centerRow
+        let col = Double(pixel % 128) - centerColumn
+        let square = row * row + col * col
+        values[pixel] = step == 0 ? 1 : step == 1 ? (pixel < 8 ? 0 : 1)
+          : (square >= inner * inner && square <= outer * outer ? 1 : 0)
+      }
+      let command = queue.makeCommandBuffer()!
+      try resident.encodeVirtualImage(mask: mask, into: image, command: command)
+      command.commit(); command.waitUntilCompleted()
+      guard command.status == .completed else { fatalError("EMPAD aperture sequence command failed") }
+      try stream.write(contentsOf: Data(bytes: image.contents(), count: image.length))
+      masks.append(Data(bytes: mask.contents(), count: 16384))
+    }
+    try masks.write(to: URL(fileURLWithPath: arguments[1] + ".aperture-masks"))
+    print("EMPAD_APERTURE_SEQUENCE steps=96")
+  }
   print("EMPAD_METAL_PARITY device=\(device.name) resident_bytes=\(resident.residentBytes)")
   resident.releaseResidentStorage()
   do {
@@ -118,14 +166,14 @@ if ProcessInfo.processInfo.environment["EMPAD_TEST_METAL"] == "1" {
     fatalError("Released resident accepted an interaction")
   } catch {}
 } else {
-  values = try source.readFrames(indices)
+  let values = try source.readFrames(indices)
+  var output = Data(capacity: values.count * 4)
+  for value in values {
+    var bits = value.bitPattern.littleEndian
+    withUnsafeBytes(of: &bits) { output.append(contentsOf: $0) }
+  }
+  try outputHandle.write(contentsOf: output)
 }
-var output = Data(capacity: values.count * 4)
-for value in values {
-  var bits = value.bitPattern.littleEndian
-  withUnsafeBytes(of: &bits) { output.append(contentsOf: $0) }
-}
-try output.write(to: URL(fileURLWithPath: arguments[1]))
 print(
-  "EMPAD_SOURCE_PARITY scan=\(source.scanRows)x\(source.scanColumns) detector=128x128 dtype=float32 frames=\(indices.count) bytes=\(output.count)"
+  "EMPAD_SOURCE_PARITY scan=\(source.scanRows)x\(source.scanColumns) detector=128x128 dtype=float32 frames=\(indices.count) bytes=\(indices.count * 16384 * 4)"
 )

@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// Original EMPAD float32 frames, with their 256-word frame footer kept separate.
@@ -132,28 +133,88 @@ public struct NativeEMPADSource: Sendable {
   /// 128×128 measured pixels per requested frame, with no binning or crop.
   /// Example: `try source.readFrames([0, 3, 0])`.
   public func readFrames(_ indices: [Int]) throws -> [Float] {
+    guard indices.allSatisfy({ (0..<frameCount).contains($0) }) else {
+      throw EMPADError("EMPAD frame selection is outside 0..<\(frameCount).")
+    }
+    let (bytes, overflow) = indices.count.multipliedReportingOverflow(by: 16384 * 4)
+    guard !overflow else { throw EMPADError("EMPAD selection exceeds addressable memory.") }
+    var values = [Float](repeating: 0, count: bytes / 4)
+    try values.withUnsafeMutableBytes { try readFrames(indices, into: $0) }
+    return values
+  }
+
+  package func sourceSnapshot() throws -> Data {
+    try validateUnchanged()
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    return try encoder.encode(rawIdentity)
+  }
+
+  // Backend-only destination form avoids a second staging allocation/copy.
+  // It has the same ordered selection and source snapshot checks as readFrames.
+  package func readFrames(_ indices: [Int], into output: UnsafeMutableRawBufferPointer) throws {
     try validateUnchanged()
     guard indices.allSatisfy({ (0..<frameCount).contains($0) }) else {
       throw EMPADError("EMPAD frame selection is outside 0..<\(frameCount).")
     }
     let handle = try FileHandle(forReadingFrom: rawURL)
     defer { try? handle.close() }
-    var values: [Float] = []
-    for index in indices {
-      try handle.seek(toOffset: UInt64(index * Self.frameBytes))
-      let count = Self.detectorRows * Self.detectorColumns
-      guard let bytes = try handle.read(upToCount: count * 4), bytes.count == count * 4 else {
-        throw EMPADError("EMPAD RAW ended during frame \(index). Restore the complete acquisition.")
+    let pixels = Self.detectorRows * Self.detectorColumns
+    let (count, overflow) = indices.count.multipliedReportingOverflow(by: pixels)
+    guard !overflow else { throw EMPADError("EMPAD selection exceeds addressable memory.") }
+    guard output.count / 4 >= count else {
+      throw EMPADError("EMPAD frame destination is too small.")
+    }
+    let footer = UnsafeMutableRawPointer.allocate(byteCount: 1024, alignment: 64)
+    defer { footer.deallocate() }
+    var first = 0
+    while first < indices.count {
+      // Coalesce only consecutive requests. Arbitrary order and duplicates
+      // remain exact; each read covers at most 64 records with 1 KiB scratch.
+      var frames = 1
+      while frames < 64, first + frames < indices.count,
+        indices[first + frames] == indices[first] + frames
+      { frames += 1 }
+      try handle.seek(toOffset: UInt64(indices[first] * Self.frameBytes))
+      // Scatter the original record directly into the destination. Footer
+      // slots may share scratch because their contents are never consumed.
+      // This avoids allocating and copying a second RAW-sized staging window.
+      var vectors: [iovec] = []
+      vectors.reserveCapacity(frames * 2)
+      for frame in 0..<frames {
+        vectors.append(iovec(iov_base: output.baseAddress!.advanced(by: (first + frame) * pixels * 4), iov_len: pixels * 4))
+        vectors.append(iovec(iov_base: footer, iov_len: 1024))
       }
-      bytes.withUnsafeBytes { buffer in
-        for offset in stride(from: 0, to: bytes.count, by: 4) {
-          let word = buffer.loadUnaligned(fromByteOffset: offset, as: UInt32.self)
-          values.append(Float(bitPattern: UInt32(littleEndian: word)))
+      var next = 0
+      while next < vectors.count {
+        let received = vectors.withUnsafeBufferPointer {
+          Darwin.readv(handle.fileDescriptor, $0.baseAddress!.advanced(by: next), Int32($0.count - next))
+        }
+        if received < 0 && errno == EINTR { continue }
+        guard received > 0 else {
+          throw EMPADError("EMPAD RAW ended or failed during frame \(indices[first]). Restore the complete acquisition.")
+        }
+        var remaining = received
+        while remaining > 0 {
+          if remaining >= vectors[next].iov_len {
+            remaining -= vectors[next].iov_len
+            next += 1
+          } else {
+            vectors[next].iov_base = vectors[next].iov_base!.advanced(by: remaining)
+            vectors[next].iov_len -= remaining
+            remaining = 0
+          }
         }
       }
+      #if _endian(big)
+        for pixel in (first * pixels)..<((first + frames) * pixels) {
+          let word = output.loadUnaligned(fromByteOffset: pixel * 4, as: UInt32.self)
+          output.storeBytes(of: UInt32(littleEndian: word), toByteOffset: pixel * 4, as: UInt32.self)
+        }
+      #endif
+      first += frames
     }
     try validateUnchanged()
-    return values
   }
 
   private static func shapeFromFilename(_ url: URL) -> (row: Int, col: Int)? {

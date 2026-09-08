@@ -261,8 +261,9 @@ public struct Metal4DSTEMResidentCapabilities: Codable, Equatable, Sendable {
 
   /// Describe a full float32 EMPAD tensor without advertising missing products.
   /// The scientific source identity covers dtype, shape and original detector
-  /// words, not footer bytes or acquisition filenames. DPC/mean/FFT remain
-  /// unavailable until a qualified implementation supplies those products.
+  /// words, not footer bytes or acquisition filenames. CoM supplies the input
+  /// for the shared DPC/iDPC kernels; 2D products supply the shared FFT kernels.
+  /// Availability is not consumer or release qualification.
   public static func empad(_ source: MetalEMPADResidentSource) throws -> Self {
     guard !source.isReleased else {
       throw Metal4DSTEMStreamingIOError.invalidRequest(
@@ -281,17 +282,14 @@ public struct Metal4DSTEMResidentCapabilities: Codable, Equatable, Sendable {
       storageSchema: storageSchema, losslessExact: true, scanBin: 1, detectorBin: 1, crop: nil,
       detectorMaskCount: 0, detectorMaskSHA256: nil, detectorMaskSchema: nil,
       calibrationSchema: nil, calibrationSHA256: nil,
-      provenanceSchema: nil, provenanceSHA256: nil,
+      provenanceSchema: "quantem.gpu.empad-tensor/v1", provenanceSHA256: source.sourceIdentitySHA256,
       sourceRawLogicalSHA256: source.logicalSHA256, workingLogicalSHA256: source.logicalSHA256,
       implementationRevision: nil)
     try receipt.validate()
-    let available: Set<Metal4DSTEMResidentProduct> = [
-      .diffractionPattern, .brightField, .annularBrightField, .annularDarkField, .total,
-    ]
     let products = Metal4DSTEMResidentProduct.allCases.map { product in
       Metal4DSTEMResidentProductCapability(
         product: product,
-        availability: available.contains(product) ? .residentOnDemand : .unavailable,
+        availability: .residentOnDemand,
         numerics: product == .diffractionPattern ? .exactFloat32Bits : .frozenFloat32)
     }
     return Self(

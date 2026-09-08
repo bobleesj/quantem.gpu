@@ -6,6 +6,16 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- Add experimental native EMPAD XML/RAW loading into lossless float32-bit
+  packed Metal residents, with full-source parity, compensated BF/ABF/ADF,
+  CoM and mean diffraction. Cooperative packing and reductions reuse bounded
+  staging; optional source-checksum metadata never replaces full source reads.
+  On an Apple M5 (24 GB), overlapped first-use hashing reduced native
+  full-resident presentation from 2.11-2.39 s to 1.53-1.61 s for a public
+  4.36 GB acquisition, at unchanged 4.36 GB residency. This is not a cold-I/O,
+  subsecond-first-open or universal 120 Hz claim. Reproduction and limitations
+  are retained in `experiments/20260908-empad-first-open`.
+
 - Load original Arina HDF5 acquisitions (bitshuffle uint8/uint16, no crop or
   bin) directly into exact lossless block-packed Metal residents on Apple GPUs,
   with every count round-trip verified and about 2.0-2.5 GB resident per full
