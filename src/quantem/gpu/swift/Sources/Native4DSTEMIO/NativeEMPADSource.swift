@@ -17,6 +17,11 @@ public struct NativeEMPADSource: Sendable {
   public let metadataURL: URL?
   public let scanRows: Int
   public let scanColumns: Int
+  /// Physical sampling supplied by the acquisition, independent of count decoding.
+  public let scanCalibration: Native4DSTEMScanCalibration?
+  /// Legacy EMPAD XML diffraction sampling, in inverse nanometers per pixel.
+  public let diffractionSamplingInverseNanometers: Double?
+  public let acquisitionDate: String?
   private let rawIdentity: NativeFileIdentity
   private let metadataIdentity: NativeFileIdentity?
   public var frameCount: Int { scanRows * scanColumns }
@@ -40,19 +45,21 @@ public struct NativeEMPADSource: Sendable {
     var metadataURL: URL?
     var metadataShape: (row: Int, col: Int)?
     var metadataIdentity: NativeFileIdentity?
+    var metadata: EMPADXML?
     let xml =
       source.pathExtension.lowercased() == "xml"
       ? source : source.deletingPathExtension().appendingPathExtension("xml")
     if FileManager.default.fileExists(atPath: xml.path) {
       metadataIdentity = try nativeFileIdentity(for: xml)
-      let metadata = try EMPADXML.read(xml)
+      let parsed = try EMPADXML.read(xml)
+      metadata = parsed
       guard metadataIdentity == (try nativeFileIdentity(for: xml)) else {
         throw EMPADError("EMPAD XML changed while being read. Reopen the acquisition.")
       }
       // Acquisition metadata often contains an absolute path from the scope.
       // Resolve only a sibling basename; XML cannot redirect arbitrary reads.
       let basename =
-        metadata.filename.replacingOccurrences(of: "\\", with: "/")
+        parsed.filename.replacingOccurrences(of: "\\", with: "/")
         .split(separator: "/").last.map(String.init) ?? ""
       guard !basename.isEmpty, basename != ".", basename != "..",
         URL(fileURLWithPath: basename).pathExtension.lowercased() == "raw"
@@ -63,7 +70,7 @@ public struct NativeEMPADSource: Sendable {
           "\(xml.lastPathComponent) names a different RAW file. Open the XML acquisition instead.")
       }
       metadataURL = xml
-      metadataShape = metadata.shape
+      metadataShape = parsed.shape
     } else if source.pathExtension.lowercased() == "xml" {
       throw EMPADError(
         "EMPAD XML is missing: \(source.lastPathComponent). Restore its metadata file.")
@@ -84,9 +91,7 @@ public struct NativeEMPADSource: Sendable {
       )
     }
     guard let shape = scanShape ?? documentedShape, shape.row > 0, shape.col > 0 else {
-      throw EMPADError(
-        "EMPAD scan shape is missing. Open the matching XML or provide scanShape: (row: ..., col: ...)."
-      )
+      throw NativeEMPADSourceError.missingScanShape(rawURL: raw)
     }
     let (frames, frameOverflow) = shape.row.multipliedReportingOverflow(by: shape.col)
     let (bytes, byteOverflow) = frames.multipliedReportingOverflow(by: frameBytes)
@@ -108,6 +113,9 @@ public struct NativeEMPADSource: Sendable {
     return NativeEMPADSource(
       rawURL: raw, metadataURL: metadataURL,
       scanRows: shape.row, scanColumns: shape.col,
+      scanCalibration: metadata?.scanCalibration(rows: shape.row, columns: shape.col),
+      diffractionSamplingInverseNanometers: metadata?.diffractionSampling,
+      acquisitionDate: metadata?.acquisitionDate,
       rawIdentity: rawIdentity, metadataIdentity: metadataIdentity)
   }
 
@@ -238,6 +246,15 @@ public struct NativeEMPADSource: Sendable {
   }
 }
 
+/// Missing metadata is recoverable without treating malformed data as a scan.
+public enum NativeEMPADSourceError: LocalizedError {
+  case missingScanShape(rawURL: URL)
+
+  public var errorDescription: String? {
+    "EMPAD scan shape is missing. Open the matching XML or provide scanShape: (row: ..., col: ...)."
+  }
+}
+
 private struct EMPADError: LocalizedError {
   let errorDescription: String?
   init(_ message: String) { errorDescription = message }
@@ -245,6 +262,41 @@ private struct EMPADError: LocalizedError {
 
 private final class EMPADXML: NSObject, XMLParserDelegate {
   var filename = ""
+  var acquisitionDate: String?
+  var diffractionSampling: Double? {
+    guard let value = positive("iom_measurements/calibrated_pixelsize") else { return nil }
+    let sampling = value * 1e9
+    return sampling.isFinite ? sampling : nil
+  }
+
+  func scanCalibration(rows: Int, columns: Int) -> Native4DSTEMScanCalibration? {
+    let modern = "iom_measurements/full_scan_field_of_view/"
+    let legacy = "iom_measurements/optics.get_full_scan_field_of_view"
+    let row: Double, column: Double, evidence: String
+    if let x = positive(modern + "x"), let y = positive(modern + "y"),
+      x == y, let factor = positive(modern + "scale_factor") {
+      // EMPAD 1.2 records the same maximum-axis FOV in x and y, including
+      // its instrument scale factor. Sampling is isotropic even for rectangles.
+      row = x / factor / Double(max(rows, columns)) * 1e10
+      column = row
+      evidence = "EMPAD XML full_scan_field_of_view / scale_factor / maximum scan dimension"
+    } else if let text = fields[legacy],
+      let data = text.data(using: .utf8),
+      let fov = try? JSONDecoder().decode([Double].self, from: data),
+      fov.count == 2, fov.allSatisfy({ $0.isFinite && $0 > 0 }) {
+      row = fov[0] / Double(rows) * 1e10
+      column = fov[1] / Double(columns) * 1e10
+      evidence = "EMPAD XML optics.get_full_scan_field_of_view (meters, row/column)"
+    } else { return nil }
+    let calibration = Native4DSTEMScanCalibration(rowSamplingAngstrom: row,
+      columnSamplingAngstrom: column, origin: .sourceMetadata, evidence: evidence)
+    return calibration.isValid ? calibration : nil
+  }
+
+  private func positive(_ key: String) -> Double? {
+    guard let value = Double(fields[key] ?? ""), value.isFinite, value > 0 else { return nil }
+    return value
+  }
   var shape: (row: Int, col: Int)? {
     if let row = Int(fields["pix_y"] ?? ""), let col = Int(fields["pix_x"] ?? "") {
       return (row, col)
@@ -319,6 +371,7 @@ private final class EMPADXML: NSObject, XMLParserDelegate {
       filename = candidate
     }
     if stack.count == 2, name == "scan_parameters" { scanMode = attributes["mode"] ?? "acquire" }
+    if stack.count == 2, name == "timestamp" { acquisitionDate = attributes["isoformat"] }
   }
 
   func parser(_ parser: XMLParser, foundCharacters string: String) { content += string }
@@ -331,6 +384,9 @@ private final class EMPADXML: NSObject, XMLParserDelegate {
     if stack.count == 3, stack[1] == "scan_parameters" {
       setField(scanMode + "/" + name, value: value, parser: parser)
     }
+    if stack.count >= 3, stack[1] == "iom_measurements" {
+      setField(stack.dropFirst().joined(separator: "/"), value: value, parser: parser)
+    }
     if name == "scan_parameters" { scanMode = "" }
     _ = stack.popLast()
     content = ""
@@ -338,7 +394,12 @@ private final class EMPADXML: NSObject, XMLParserDelegate {
 
   private func setField(_ key: String, value: String, parser: XMLParser) {
     guard
-      ["pix_x", "pix_y", "type", "acquire/scan_resolution_x", "acquire/scan_resolution_y"].contains(
+      ["pix_x", "pix_y", "type", "acquire/scan_resolution_x", "acquire/scan_resolution_y",
+       "iom_measurements/calibrated_pixelsize",
+       "iom_measurements/optics.get_full_scan_field_of_view",
+       "iom_measurements/full_scan_field_of_view/x",
+       "iom_measurements/full_scan_field_of_view/y",
+       "iom_measurements/full_scan_field_of_view/scale_factor"].contains(
         key)
     else { return }
     if let previous = fields[key], previous != value { parser.abortParsing() }

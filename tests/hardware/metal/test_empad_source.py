@@ -306,6 +306,47 @@ class EMPADSourceTests(unittest.TestCase):
                        '<pix_x>3</pix_x><pix_y>2</pix_y></root>')
         self.read(xml)
 
+    def test_xml_sampling_preserves_rectangular_acquisition_units(self):
+        xml = self.root / "acquisition.xml"
+        prefix = '<root><raw_file filename="scan_x3_y2.raw"/>'
+        # Modern fields describe the maximum dimension, not separate x/y FOVs.
+        xml.write_text(prefix + '<timestamp isoformat="2026-01-02T03:04:05"/>'
+                       '<iom_measurements><full_scan_field_of_view>'
+                       '<x>2.16e-9</x><y>2.16e-9</y><scale_factor>0.72</scale_factor>'
+                       '</full_scan_field_of_view></iom_measurements></root>')
+        self.read(xml)
+        metadata = json.loads((self.root / 'selected.bin.metadata.json').read_text())
+        self.assertAlmostEqual(metadata['scanRowAngstrom'], 10)
+        self.assertAlmostEqual(metadata['scanColumnAngstrom'], 10)
+        self.assertIsNone(metadata['diffractionInverseNanometers'])
+        self.assertEqual(metadata['acquisitionDate'], '2026-01-02T03:04:05')
+        xml.write_text(prefix + '<iom_measurements>'
+                       '<optics.get_full_scan_field_of_view>[2e-9, 6e-9]</optics.get_full_scan_field_of_view>'
+                       '<calibrated_pixelsize>1.826537060227288e-10</calibrated_pixelsize>'
+                       '</iom_measurements></root>')
+        self.read(xml)
+        metadata = json.loads((self.root / 'selected.bin.metadata.json').read_text())
+        self.assertAlmostEqual(metadata['scanRowAngstrom'], 10)
+        self.assertAlmostEqual(metadata['scanColumnAngstrom'], 20)
+        self.assertAlmostEqual(metadata['diffractionInverseNanometers'], 0.1826537060227288)
+        # Unknown or malformed calibration must not invent physical units.
+        xml.write_text(prefix + '<iom_measurements><full_scan_field_of_view>'
+                       '<x>2e-9</x><y>4e-9</y><scale_factor>0</scale_factor>'
+                       '</full_scan_field_of_view><calibrated_pixelsize>nan</calibrated_pixelsize>'
+                       '</iom_measurements></root>')
+        self.read(xml)
+        metadata = json.loads((self.root / 'selected.bin.metadata.json').read_text())
+        self.assertIsNone(metadata['scanRowAngstrom'])
+        self.assertIsNone(metadata['diffractionInverseNanometers'])
+
+    def test_xml_without_dimensions_can_use_explicit_shape(self):
+        unnamed = self.root / 'unlabelled.raw'
+        self.raw.rename(unnamed)
+        xml = self.root / 'acquisition.xml'
+        xml.write_text('<root><raw_file filename="unlabelled.raw"/></root>')
+        self.read(xml, succeeds=False)
+        self.read(xml, 2, 3)
+
     def test_incomplete_and_ambiguous_acquisitions_do_not_open(self):
         unnamed = self.root / "unlabelled.raw"
         self.raw.rename(unnamed)

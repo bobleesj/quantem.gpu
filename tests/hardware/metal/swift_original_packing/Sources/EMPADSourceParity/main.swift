@@ -12,6 +12,14 @@ let shape: (row: Int, col: Int)? =
   arguments.count == 5
   ? (Int(arguments[3])!, Int(arguments[4])!) : nil
 let source = try NativeEMPADSource.open(URL(fileURLWithPath: arguments[0]), scanShape: shape)
+let metadata: [String: Any] = [
+  "scanRowAngstrom": source.scanCalibration?.rowSamplingAngstrom as Any? ?? NSNull(),
+  "scanColumnAngstrom": source.scanCalibration?.columnSamplingAngstrom as Any? ?? NSNull(),
+  "diffractionInverseNanometers": source.diffractionSamplingInverseNanometers as Any? ?? NSNull(),
+  "acquisitionDate": source.acquisitionDate as Any? ?? NSNull(),
+]
+try JSONSerialization.data(withJSONObject: metadata).write(
+  to: URL(fileURLWithPath: arguments[1] + ".metadata.json"))
 if let mutation = ProcessInfo.processInfo.environment["EMPAD_TEST_MUTATE"] {
   let target = mutation == "xml" ? source.metadataURL! : source.rawURL
   let attributes = try FileManager.default.attributesOfItem(atPath: target.path)
