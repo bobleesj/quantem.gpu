@@ -297,7 +297,7 @@ final class CompactH5LoaderTests: XCTestCase {
       }
       // Earlier command buffers can release storage while this failure drains.
       // Require no growth, then use the lower value for the next failure.
-      XCTAssertLessThanOrEqual(device.currentAllocatedSize, baselineAllocation)
+      assertAllocationRetires(device, to: baselineAllocation)
       baselineAllocation = device.currentAllocatedSize
     }
     let fixture = try makeMultishardCompactFixture()
@@ -321,9 +321,22 @@ final class CompactH5LoaderTests: XCTestCase {
           }
         }
       }
-      XCTAssertLessThanOrEqual(device.currentAllocatedSize, baselineAllocation)
+      assertAllocationRetires(device, to: baselineAllocation)
       baselineAllocation = device.currentAllocatedSize
     }
+  }
+
+  private func assertAllocationRetires(
+    _ device: MTLDevice, to baseline: Int, file: StaticString = #filePath, line: UInt = #line
+  ) {
+    // Completed commands can still be retiring driver-owned storage. Keep the
+    // exact no-growth bound, but do not confuse deferred retirement with a leak.
+    // This is a teardown assertion, not a load-latency measurement.
+    let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+    while device.currentAllocatedSize > baseline && ContinuousClock.now < deadline {
+      Thread.sleep(forTimeInterval: 0.01)
+    }
+    XCTAssertLessThanOrEqual(device.currentAllocatedSize, baseline, file: file, line: line)
   }
 
   func testSourceAvoidCachingPreservesParityAndRejectsIncompatibleModes() throws {

@@ -4,6 +4,7 @@
   "source_revision_scope": "Latest clean canonical source/working metadata and cross-backend logical-pixel parity revision used by the current Python MPS and CPU rows. Native Swift/Metal rows remain bound to clean revision 5106ca4, and the current exact full-volume WebGPU distribution is bound to clean revision d8e6f56; every retained physical measurement keeps its own revision, fixture identity, cache state, and timing boundary.",
   "documentation_update": "2026-09-04: refreshed representation/result/API vocabulary only; no benchmark value, acceptance state, fixture, device, cache state, or measurement revision changed. 2026-09-05: normalized executable test paths using tests/path_migrations.json; affected current pages and registry were verified as exact path-only substitutions. 2026-09-06: updated only the public packed name in CUDA/MPS/WebGPU platform pages and the WebGPU resident receipt reference from v2 to v3, relative to e78c46f2191ab0c50cc5fe72ce1b934cce19aaa8. No measured value, acceptance state, dataset, device, cache state, or measurement revision changed. Historical transcripts and all numerical evidence remain unchanged.",
   "purpose": "Fingerprints for the current benchmark dashboard, its authoritative registry and rendering inputs, provenance ledger, parity and methodology contracts, and canonical historical evidence. Landing, API, and backend capability pages intentionally do not duplicate measurements.",
+  "fingerprint_review_2026_09_08": "Audited against e305f92^ and bd6d337^, whose registry and changes-page hashes match the prior fingerprints. e305f92 added the original-packed runbook; 3a843bb added the independently retained 20260906-original-packed-metal measurement and selected it as the current row; bd6d337 added an explicitly unqualified investigation link. Regenerated-table validation passes. No retained measurement, numerical oracle, tolerance, or historical row was changed in this review; only these three document/input fingerprints and stale current-row expectations were synchronized.",
   "pages": [
     {
       "path": "docs/intro.md",
@@ -52,7 +53,7 @@
     },
     {
       "path": "docs/performance/changes.md",
-      "sha256": "ac8cd018f6c8ac28bcbc14086ac8c843cb096ca7600df989f95017c65df0d931",
+      "sha256": "5253cf19810d5b393be57578b1ea4ae787ef4b6cf6d6f1f31e22cf9f4aec6060",
       "role": "Benchmark promotion, rejection, and supersession decisions without copied values"
     },
     {
@@ -109,12 +110,12 @@
   "authoritative_inputs": [
     {
       "path": "benchmarks/benchmark_registry.json",
-      "sha256": "13b50ba1fc4409ca884da5fa4b04e2ab5dfd95520672457d124409f7b843d1e6",
+      "sha256": "3dfccf688c79b64ef51f225eb5fe1bc84b993944a641375114822cabfdd854c5",
       "role": "Atomic Platform, Computer, module, detector-bin, dtype/residency configuration, state, measurement, and runbook registry"
     },
     {
       "path": "docs/_generated/benchmark_coverage.md",
-      "sha256": "d564c1d4901c409e1bc9501ca1e6ed6606c0e22f1a5533a82afdf13345991f2f",
+      "sha256": "305d8b4455cdb46ff80622ed415dcbb9f694841e8ef93af18f008d2d7709b04e",
       "role": "Generated filterable detector-product, dtype/residency, coverage, retained-measurement, and runbook tables"
     },
     {

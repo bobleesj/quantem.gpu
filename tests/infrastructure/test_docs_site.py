@@ -493,10 +493,15 @@ def test_platform_first_io_tables_expose_current_bins_devices_and_dates() -> Non
     ]
     assert {int(row[bin_index]) for row in native_24} == {1, 2, 4}
     bin1 = next(row for row in native_24 if int(row[bin_index]) == 1)
-    assert bin1[p50_index] == "3.424108 s"
-    assert bin1[footprint_index] == "18.673 GiB"
-    assert bin1[swap_index] == "~0.706 GiB"
-    assert bin1[2] == "◐ Partial"
+    # The current row is the retained original-HDF5 packed-resident run,
+    # not the older dense-resident smoke measurement.
+    assert bin1[p50_index] == "1.496660 s"
+    assert bin1[p95_index] == "2.086119 s"
+    assert bin1[footprint_index] == "2.531 GiB"
+    assert bin1[swap_index] == "n/a"
+    assert bin1[2] == "✓ Measured"
+    assert bin1[revision_index] == "`e305f9216ed359397e27f69882931ffe16de8d99`"
+    assert "synchronous complete packed-resident return" in bin1[headers.index("Wall boundary")]
 
     bin2 = next(row for row in native_24 if int(row[bin_index]) == 2)
     assert (bin2[p50_index], bin2[p95_index], bin2[footprint_index]) == (
@@ -685,7 +690,7 @@ def test_load_memory_rows_separate_payload_from_measured_peak() -> None:
         full_native_24gb[rss_index],
         full_native_24gb[footprint_index],
         full_native_24gb[swap_index],
-    ) == ("18.000 GiB", "18.587 GiB", "0.611 GiB", "18.673 GiB", "~0.706 GiB")
+    ) == ("18.000 GiB", "n/a", "n/a", "2.531 GiB", "n/a")
 
     dashboard = Path("docs/dashboard.md").read_text(encoding="utf-8")
     dashboard_words = " ".join(dashboard.split())

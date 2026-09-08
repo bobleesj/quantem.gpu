@@ -775,15 +775,24 @@ final class Native4DSTEMIOTests: XCTestCase {
     XCTAssertEqual(catalog.input, "\(fixture.master.path) | \(fixture.data.path)")
   }
 
-  func testDatasetIdentityIgnoresMetadataOnlyStatusChanges() throws {
+  func testPermissionChangeInvalidatesSnapshotButPreservesContentIdentity() throws {
     let fixture = try copiedFixture()
     let before = try nativeDatasetSignature(for: [fixture.master, fixture.data])
+    let contentBefore = try nativeSourceHashes(master: fixture.master, dataFiles: [fixture.data])
+    let identityBefore = try nativeFileIdentity(for: fixture.master)
     try FileManager.default.setAttributes(
-      [.posixPermissions: 0o600],
+      [.posixPermissions: 0o400],
       ofItemAtPath: fixture.master.path
     )
     let after = try nativeDatasetSignature(for: [fixture.master, fixture.data])
-    XCTAssertEqual(after, before)
+    let identityAfter = try nativeFileIdentity(for: fixture.master)
+    XCTAssertEqual(identityAfter.modificationNanoseconds, identityBefore.modificationNanoseconds)
+    XCTAssertNotEqual(identityAfter.changeNanoseconds, identityBefore.changeNanoseconds)
+    XCTAssertNotEqual(after, before)
+    let contentAfter = try nativeSourceHashes(master: fixture.master, dataFiles: [fixture.data])
+    XCTAssertEqual(contentAfter.aggregate, contentBefore.aggregate)
+    XCTAssertEqual(contentAfter.members, contentBefore.members)
+    XCTAssertEqual(contentAfter.master, contentBefore.master)
   }
 
   func testParallelSourceHashingPreservesOrderedExactIdentity() throws {
