@@ -432,6 +432,10 @@ private final class CompactShardLoadCollector: @unchecked Sendable {
   func finish() throws -> [CompactShardLoadResult] {
     try lock.withLock { try values.map { try $0.get() } }
   }
+
+  func removeAll() {
+    lock.withLock { values.removeAll(keepingCapacity: false) }
+  }
 }
 
 private struct CompactPreparedDPCLoadResult {
@@ -2377,9 +2381,15 @@ public enum MetalCompactH5Loader {
       guard !shouldCancel() else { throw Metal4DSTEMStreamingIOError.cancelled }
       let count = min(maximumInFlightShards, loadingShards.count - first)
       let results = CompactShardLoadCollector(count: count)
+      // A cancelled window must drop its completed results even if Dispatch
+      // retains the worker closure longer than concurrentPerform's return.
+      defer { results.removeAll() }
       DispatchQueue.concurrentPerform(iterations: count) { slot in
-        let result: Result<CompactShardLoadResult, Error> = Result {
-          try autoreleasepool {
+        // Drain the whole worker, including transfer into the collector. GCD
+        // workers may stay alive after cancellation; returning Metal objects
+        // out of a narrower pool can leave autoreleased transfers on that thread.
+        autoreleasepool {
+          let result: Result<CompactShardLoadResult, Error> = Result {
             let shardIndex = first + slot
             let shard = shardRecords[shardIndex]
             if isDirect {
@@ -2405,8 +2415,8 @@ public enum MetalCompactH5Loader {
               verifyChecksums: verifyChecksums
             )
           }
+          results.set(result, at: slot)
         }
-        results.set(result, at: slot)
       }
       guard !shouldCancel() else { throw Metal4DSTEMStreamingIOError.cancelled }
       var windowTransientBytes: UInt64 = 0
