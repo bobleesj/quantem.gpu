@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "privacy_redaction": {
+    "original_log_sha256": "3b7563e057d637711a0d54c5bebf6aac084bbb25ad120dcc40ea678cf3f1d983",
+    "changes": "Replaced only the Python executable and repository absolute paths with role placeholders; test outcomes and scientific references are unchanged. Original log retained privately."
+  },
+  "experiment_id": "20260908-apple-m5-qualified-defaults-parity",
+  "status": "failed",
+  "question": "Do all original-HDF5 scientific workflows and malformed-stream recovery pass after making qualified packed kernels the normal defaults?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260908-apple-m5-qualified-defaults-parity/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "a0aaa52be1fb7b66406f8624527383178509e1f7",
+    "entrypoint": "tests/hardware/metal/test_original_packing.py",
+    "dirty": true,
+    "diff_sha256": "5b2c76a66cf4aa1b49d2e2122d46616652232c9f2eba3ca1b3b8bd87938000e5",
+    "snapshot_path": "local-evidence://20260908-packed-optimization/qualified-defaults.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "existing deterministic synthetic HDF5 fixtures and independent expectations",
+      "path": "tests/hardware/metal/test_original_packing.py",
+      "sha256": "88f7ef9a68b5d5225aed2f70a14c5eb2a06cc01aa8b63891a89922c3cedac67b"
+    }
+  ],
+  "parameters": {
+    "tests": 38,
+    "environment": "No optimization overrides. Fixture compiles diagnostics only for explicit fault/legacy-path probes; all unspecified controls use the new normal defaults.",
+    "source_dtype": [
+      "uint8",
+      "uint16"
+    ],
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "public_api_changed": false,
+    "fixture_source_snapshot": "local-evidence://20260908-packed-optimization/zero-tail-permanent-fixture.tar",
+    "fixture_source_sha256": "22254f9014e66e0649a14f2c66d0b43714d4d70727dfede943eae42b9ab1cce6",
+    "changes": "Four-column planes/32threads/directDPC/terminalzero defaults, shared mask preparation and no-growth original residency hints. Removed refuted code-cache, vector2, deferredverification and in-place conversion prototypes.",
+    "cold_io_claim": false,
+    "native_fps_claim": false,
+    "failure": "32 passed,6 failed187.08s. Two tests required isolateddecode_gpu_seconds despite fuseddirect decode; four counted the newlydirect-DPC seed as a cached-DPC recovery. Numerical checks reached before these assertions passed, but later fault cases remained unexecuted. Raw failing evidence retained; no numeric tolerance/reference changed."
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "integrated-gpu-0"
+    ],
+    "gpu_model": "Apple M5 24 GB"
+  },
+  "outputs": [
+    {
+      "artifact_id": "pytest-log",
+      "path": "experiments/20260908-apple-m5-qualified-defaults-parity/result.log",
+      "sha256": "80656feffe94486a23f3f6c9bd29ace59292a463672cf00914b21e2ab56285ca",
+      "size_bytes": 9045,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "32 passed,6 failed187.08s. Two tests required isolateddecode_gpu_seconds despite fuseddirect decode; four counted the newlydirect-DPC seed as a cached-DPC recovery. Numerical checks reached before these assertions passed, but later fault cases remained unexecuted. Raw failing evidence retained; no numeric tolerance/reference changed."
+    },
+    {
+      "artifact_id": "pytest-xml",
+      "path": "experiments/20260908-apple-m5-qualified-defaults-parity/result.xml",
+      "sha256": "e68f2e4f3951e43eba20ef98d03d72900e588e03bd62beb38cb2002d35c06efb",
+      "size_bytes": 8411,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "32 pass6fail, exact original run"
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-08T10:07:41Z",
+    "started": "2026-09-08T10:08:02.000Z",
+    "finished": "2026-09-08T10:11:10.000Z"
+  }
+}

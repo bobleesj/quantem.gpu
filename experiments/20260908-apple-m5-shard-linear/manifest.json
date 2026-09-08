@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-apple-m5-shard-linear",
+  "status": "succeeded",
+  "question": "Does one-dimensional workgroup ordering restore shard locality in an indirect-address detector dispatch?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260908-apple-m5-shard-linear/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "a0aaa52be1fb7b66406f8624527383178509e1f7",
+    "entrypoint": "metal-original-hdf5-benchmark --repeats 1 --detector-trials 8",
+    "dirty": true,
+    "diff_sha256": "29e8b2a0ef36354b36c8af17d30a2309e5e564eb4eae47498fe5f63b64b17ffc",
+    "snapshot_path": "local-evidence://20260908-packed-optimization/shard-linear.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-1",
+      "path": "private-fixture://tilt-series/446d2751716a5985e417f29cc19feea81b4dcf2bcbbf428578b6965e16d26f71",
+      "sha256": "4c5597ac5eb804cee7e01e1874ab69ad7f16c36e7eb9fa147083ac6d9dbedc65"
+    },
+    {
+      "dataset_id": "tilt-series-2",
+      "path": "private-fixture://tilt-series/fe15c891bb065252242350728162e60320860f4c9dfbe2b6c21bb983ccd879c4",
+      "sha256": "047f589fb4b94e070793e23ebaa3c41ddc4efe71e7dc2f9048d2caa25dc079af"
+    },
+    {
+      "dataset_id": "tilt-series-3",
+      "path": "private-fixture://tilt-series/aa18159030e03a756f7a057e9422ce645dfbe4bb0df7bc9eac6c6aeee2d55db1",
+      "sha256": "7b9a58202bd9251e843e255668689968f1fec49da3e19c5883584342cb96a476"
+    },
+    {
+      "dataset_id": "tilt-series-4",
+      "path": "private-fixture://tilt-series/6f94694a3d63c41edca118a74aae1384b1f61316699154a8dda0e8ac5e1af64f",
+      "sha256": "fe34acc72d659b9d94a578ba5191224c7461488be96ea8d7bba98aec4c35b1e0"
+    },
+    {
+      "dataset_id": "tilt-series-5",
+      "path": "private-fixture://tilt-series/88907d90d0be36cce51ed15cfc82e0967c5641e190c0428e2e9ceb8aaf23c59b",
+      "sha256": "ac9d184644ab526a86137ad7d37e714b9fc1b521a6efe80d6a0ae324ae88de91"
+    },
+    {
+      "dataset_id": "tilt-series-6",
+      "path": "private-fixture://tilt-series/532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350",
+      "sha256": "4b193525246c3fceeee9edbc8fce83a76b3adbfa65baf2d031a60ecddf6c6144"
+    },
+    {
+      "dataset_id": "tilt-series-7",
+      "path": "private-fixture://tilt-series/8b006c84044f4c7d6842ab1c896359d7c5fe0e331d76dcf7a7a1f7be429523e3",
+      "sha256": "09a1a093bca8a1234ea82ffeafe1e3f87fa516e72e3eb8d706ca93297e65a123"
+    }
+  ],
+  "parameters": {
+    "sources": 7,
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "source_dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "excluded_pixels": 0,
+    "budget_bytes": 8000000000,
+    "trials": 8,
+    "ui_present_measured": false,
+    "baseline": "20260908-apple-m5-detector-baseline",
+    "environment": {
+      "COMPACT_DETECTOR_SHARD_BATCH": "1",
+      "COMPACT_DETECTOR_WIDTH_ORDER": "0"
+    },
+    "parity_scope": "840 full-image hashes against independently HDF5-validated frozen reference",
+    "contention": "No other owned GPU/CPU benchmark running",
+    "timing_boundary": "GPU timestamps and synchronized API including mask preparation; readback outside timed call",
+    "timestamp_source": "Retained stdout file creation and last-write times on the measured host",
+    "indirect_pointer_table_bytes": 2048,
+    "new_resident_buffers": 0,
+    "dispatches_per_acquisition": 1,
+    "previous_dispatches_per_acquisition": 128,
+    "grid_order": "1D scan group contiguous within each source shard"
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "integrated-gpu-0"
+    ],
+    "gpu_model": "Apple M5 24 GB"
+  },
+  "outputs": [
+    {
+      "artifact_id": "comparison",
+      "path": "experiments/20260908-apple-m5-shard-linear/comparison.json",
+      "sha256": "2d8a0eaa1d33b168a9dab302c86c07f0ab2a2ccbc56f99f6d549273bfbfc3431",
+      "size_bytes": 5576,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "840 exact full maps and identical resident bytes. Wide cases ~0.96-1.05x, one small BF case0.58x. No broad steady throughput gain. Retain only for native first-batch driver investigation; default off."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-08T05:41:13Z",
+    "started": "2026-09-08T05:41:13Z",
+    "finished": "2026-09-08T05:47:01Z"
+  }
+}

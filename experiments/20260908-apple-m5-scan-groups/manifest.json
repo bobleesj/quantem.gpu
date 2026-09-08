@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-apple-m5-scan-groups",
+  "status": "refuted",
+  "question": "Can adjacent scan SIMD groups reuse packed header/payload cache lines and remove threadgroup partial reduction without more GPU memory or count changes?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260908-apple-m5-scan-groups/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "a0aaa52be1fb7b66406f8624527383178509e1f7",
+    "entrypoint": "metal-original-hdf5-benchmark --repeats 1 --detector-trials 8",
+    "dirty": true,
+    "diff_sha256": "11f4abdf46295b985b82659d496e25fc3cc8a16c24a879b9c4aebdd48e4d1e7d",
+    "snapshot_path": "local-evidence://20260908-packed-optimization/scan-groups.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-anchor",
+      "path": "private-fixture://tilt-series/-17.0x_0.0y",
+      "sha256": "532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350"
+    }
+  ],
+  "parameters": {
+    "sources": 7,
+    "concurrent_residents": 1,
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "source_dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "budget_bytes": 8000000000,
+    "trials": 8,
+    "source_snapshot_sha256": "3d32dcdc73592430c1a07a3bfac61f137ede49280e662d7ce6c2034b4d1b6b0e",
+    "snapshot_scope": "new benchmark sources; unchanged production kernels",
+    "cache_state": "packing plans created by baseline; source pages uncontrolled; load times not compared",
+    "timing_boundary": "synchronized detector reduction; CPU readback/hash/reference outside timed operation",
+    "ui_present_measured": false,
+    "parity_scope": "full detector output repeat fingerprints and CPU sums of three extracted raw DPs; independent HDF5 oracle pending",
+    "baseline": "20260908-apple-m5-detector-baseline",
+    "environment": {
+      "COMPACT_DETECTOR_WIDTH_ORDER": "0",
+      "COMPACT_DETECTOR_SCAN_GROUPS": "1"
+    },
+    "benchmark_addition": "call_ms_including_mask_preparation adds CPU preparation to measured API boundary; not available for previous trials"
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "integrated-gpu-0"
+    ],
+    "gpu_model": "Apple M5 24 GB"
+  },
+  "outputs": [
+    {
+      "artifact_id": "comparison",
+      "path": "experiments/20260908-apple-m5-scan-groups/comparison.json",
+      "sha256": "dad660773d6db14fc169f8bd2ea09137cb8bf3072c1779d9f74054dd7f6284f9",
+      "size_bytes": 5574,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "840 exact hashes and unchanged resident bytes. Wider ADF moves regress: 0.897-0.943x baseline throughput. Some small moves improve. Reject as default; topology patch retained."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-08T05:04:00Z",
+    "started": "2026-09-08T05:04:00Z",
+    "finished": "2026-09-08T05:05:12Z"
+  }
+}

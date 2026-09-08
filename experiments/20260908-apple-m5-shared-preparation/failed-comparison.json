@@ -1,0 +1,52 @@
+[
+  {
+    "case": "control-a",
+    "started_unix": 1788855803.979883,
+    "binary_sha256": "7e8d853d0984b6f9d5511ffcc34b7572c5b8f479a55d85ab05a95fa0150ee3f3",
+    "metal_resource_sha256": {
+      "MetalKernels_MetalSSBKernels.bundle/Resources/ssb.metal": "b1c56f17776a7841be0b8ffcf08b85cda32a914c11cb4b4913a2cf4a5ad60306",
+      "MetalKernels_MetalImageFFT.bundle/Resources/fft.metal": "fbefa9fea2b2b198b014939fa6a8834293c61eca1ce08af0bbfdfec9aee60052",
+      "MetalKernels_MetalDisplayKernels.bundle/Resources/display.metal": "c74a945450b1002b95bbc319ae0ca3387905c4476991c487cd76aca6b12ce59f",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/compact_detector_regions.metal": "b35b1bd86454de67503f94ac2336afdd3824b7aeb54dcc546a62d987d8f5ca22",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/ans_counts.metal": "c58a7397fb5c97453711785dfa9722132dc5f24a055090985b688db3716be54b",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/dpc.metal": "8ba200b8f32ed8d06e2e394ae8bfaa29e1a06945f5b4baafa3a637301803f8a1",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/detector.metal": "62ecde7eb07610ad358a2834b274476f5580201b0c58f450c495adab35c97716",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/original_packing.metal": "c1fdc2715cdc57fe21f049a04bfbdfdc8851bcbd451e75d7d37df200781e1e5e",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/packed_h5.metal": "a8e9be28560e978b7cd277b5677eb9064fa3feecec150b2aeb8b853d1210dfe7",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/qh5idx.metal": "ddb5dde23529331b4d69331de62478f3f3cfc3768f5dcb3a29020f8858e89743"
+    },
+    "environment": {
+      "COMPACT_ORIGINAL_FUSED_PLANES": "1",
+      "COMPACT_ORIGINAL_PLANES": "0",
+      "QGPU_ORIGINAL_PROFILE": "1",
+      "QGPU_ORIGINAL_STAGE_PROFILE": "0",
+      "QGPU_ORIGINAL_PLANE_VECTOR4": "1",
+      "QGPU_ORIGINAL_PLANE_VECTOR2": "0",
+      "QGPU_ORIGINAL_STANDARD_PLANES": "1",
+      "QGPU_ORIGINAL_DIRECT_DPC": "1",
+      "QGPU_ORIGINAL_DECODE_THREADS": "32",
+      "QGPU_ORIGINAL_PACK_THREADS": "32",
+      "QGPU_ORIGINAL_ZERO_SCRATCH": "0",
+      "QGPU_ORIGINAL_SORT_BLOCKS": "0",
+      "QGPU_ORIGINAL_COOPERATIVE_BLOCK": "0",
+      "QGPU_ORIGINAL_PLANE_DEFERRED_VERIFY": "0",
+      "COMPACT_RESIDENCY_SETS": "1",
+      "COMPACT_RAW_QUAD_VECTOR": "1",
+      "COMPACT_RAW_VECTOR_THREADS": "128",
+      "COMPACT_RAW_QUAD_SCAN": "1",
+      "COMPACT_RAW_OCTO_SCAN": "0",
+      "COMPACT_RAW_PLANE_ILP": "0",
+      "COMPACT_RAW_SCAN_COOPERATIVE": "0",
+      "COMPACT_DETECTOR_WIDTH_BUCKETS": "0",
+      "COMPACT_UPDATE_HOST_PROFILE": "1",
+      "COMPACT_UPDATE_PHASE_PROFILE": "0",
+      "COMPACT_SHARED_MASK_PREPARATION": "0"
+    },
+    "exit": 0,
+    "finished_unix": 1788855819.358999,
+    "stdout_sha256": "2cb95e29ae2f4937434ab1545fb4e0c430195be6a9b067fd5f1e4ec7326a0623",
+    "stderr_sha256": "eae14173735c99ed6fb64581eb70af47df8574a52767b6627db71129ec795b4b",
+    "accepted": false,
+    "failure": ""
+  }
+]

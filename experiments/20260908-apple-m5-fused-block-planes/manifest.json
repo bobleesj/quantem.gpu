@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-apple-m5-fused-block-planes",
+  "status": "refuted",
+  "question": "Can immediate per-SIMD source-block decode and exact bit-plane packing improve locality without additional GPU buffers?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260908-apple-m5-fused-block-planes/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "a0aaa52be1fb7b66406f8624527383178509e1f7",
+    "entrypoint": "experiments/20260908-apple-m5-planar-topology/run_cases.py",
+    "dirty": true,
+    "snapshot_path": "local-evidence://20260908-packed-optimization/fused-block.patch",
+    "diff_sha256": "56524d4aa850cc179f948234d655782efc999eca55cf5244ca14f279120badb5"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-anchor",
+      "path": "private-fixture://tilt-series/532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350",
+      "sha256": "4b193525246c3fceeee9edbc8fce83a76b3adbfa65baf2d031a60ecddf6c6144"
+    }
+  ],
+  "parameters": {
+    "sources": 1,
+    "source_dtype": "uint16",
+    "max_count": 65535,
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "new_gpu_buffers": 0,
+    "scope": "OneSIMD decodes32complete8192byteLZ4blocks, then packs4096detectorpixels fromthose32scans. Same scratch; existing partial sum/max buffers zeroed then integeratomics. Only full one-slice windows qualify, others retain exact prior path. Completecommand timings only; fused splitstagecounter unavailable.",
+    "cold_io_claim": false,
+    "native_fps_claim": false
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "integrated-gpu-0"
+    ],
+    "gpu_model": "Apple M5 24 GB"
+  },
+  "outputs": [
+    {
+      "artifact_id": "backend-comparison",
+      "path": "experiments/20260908-apple-m5-fused-block-planes/comparison.json",
+      "sha256": "86c10ff8512a06e3b1fbfead1f875ef3ebbd6a045fcd2028ea5b8dfc03e17990",
+      "size_bytes": 15388,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "9loads540maps exact,no fallback,same residentbytes;110of128windows use fusedpipeline each load.1.455s vs1.063/1.066controls: rejected. No hardwareoccupancy claim."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-08T09:12:00Z",
+    "finished": "2026-09-08T09:13:00Z"
+  }
+}

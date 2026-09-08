@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-apple-m5-first-batch-host",
+  "status": "succeeded",
+  "question": "Where does the first seven-resident detector update spend wall time outside GPU timestamps?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260908-apple-m5-first-batch-host/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "a0aaa52be1fb7b66406f8624527383178509e1f7",
+    "entrypoint": "Live4DSTEM/Tests/NativeUI/profile_seven_tilts.py",
+    "dirty": true,
+    "diff_sha256": "d2d761b52395351d12a59a643cff84d5f9d4c73729df374b7b153ec97b5ae1d2",
+    "snapshot_path": "local-evidence://20260908-packed-optimization/first-batch-host.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-anchor",
+      "path": "private-fixture://tilt-series/-17.0x_0.0y",
+      "sha256": "532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350"
+    }
+  ],
+  "parameters": {
+    "app_revision": "689c4b71b7651e1ff175d19cfae2c6c8f472091a",
+    "input_manifest_scope": "anchor master hash from retained load-concurrency baseline; full local seven-file identity inventory retained with run",
+    "shape_per_source": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "sources": 7,
+    "source_dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "repeats": 1,
+    "cache_state": "existing packing plans; OS source pages uncontrolled; fresh app process",
+    "resident_limit_bytes": 14752175312,
+    "timing_boundary": "native hook trajectories and drawable presentation, separately from backend GPU timing",
+    "run_root": "local-evidence://20260908-packed-optimization/first-batch-host",
+    "app_binary_sha256": "5a7e730d88f0a926d9bc06b849a5637e473a702fbd0b9dfe16f284d2a2aa03f3",
+    "app_dirty": true,
+    "backend_dirty": false,
+    "environment": {
+      "DIAG": "1",
+      "COMPACT_UPDATE_HOST_PROFILE": "1"
+    },
+    "diagnostic_cpu_sampling": true,
+    "benchmark_script_changes": "Per-tile completion and input-duration denominator record startup gaps"
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "integrated-gpu-0"
+    ],
+    "gpu_model": "Apple M5, 24 GB unified memory, 120 Hz display"
+  },
+  "outputs": [
+    {
+      "artifact_id": "host-stages",
+      "path": "experiments/20260908-apple-m5-first-batch-host/summary.json",
+      "sha256": "5d6892333eebd3e8cd1282e67104d4d98f2878a847dd4004dbe6bf2f337c4550",
+      "size_bytes": 2166,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "First-batch encode ~2 ms, wait ~3.732 s; driver kernelStart/End interval 3.438 s vs GPU 293.596 ms. No evidence attributing the driver interval to Swift or shader math; further residency diagnosis needed."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-08T05:27:00Z",
+    "started": "2026-09-08T05:27:00Z",
+    "finished": "2026-09-08T05:32:39Z"
+  }
+}

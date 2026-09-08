@@ -1,0 +1,164 @@
+{
+  "status": "pass",
+  "binary_sha256": "a1696744ad16dcfaee2583cc8f8e7a8382cd4e50a1e4a74cf157bca267da379f",
+  "native_public_steps": 58,
+  "public_single_clicks": 30,
+  "public_max_observed_allocated_bytes": 12141445120,
+  "public_drags": [
+    {
+      "name": "scan",
+      "surface": "selected-diffraction",
+      "interval": [
+        278899.7401630834,
+        278901.74082987505
+      ],
+      "evidence": {
+        "changing_frames": 197,
+        "content_evidence": "distinct DP hashes",
+        "held_seconds": 2.0006667916313745,
+        "updates_per_second": 98.46717145705365,
+        "max_gap_ms": 81.14612498320639,
+        "p95_gap_ms": 16.66650001425296
+      }
+    },
+    {
+      "name": "detector",
+      "surface": "custom-detector",
+      "interval": [
+        278902.2117471251,
+        278904.21354062506
+      ],
+      "evidence": {
+        "presented_generations": 202,
+        "content_evidence": "submission-bound presentation IDs; not per-frame pixel parity",
+        "held_seconds": 2.0017934999777935,
+        "updates_per_second": 100.90950939856725,
+        "max_gap_ms": 92.8660833160393,
+        "p95_gap_ms": 16.66650001425296
+      }
+    }
+  ],
+  "seven_final": {
+    "resident_count": 7,
+    "allocated_bytes": 14883897344,
+    "memory_budget_bytes": 17162698752,
+    "comparison_visible": true
+  },
+  "seven_selected_dp": {
+    "distinct": 357,
+    "per_s": 120,
+    "per_input_second": 118.3,
+    "first_presented_delay_ms": 45.12,
+    "interval_ms": {
+      "n": 356,
+      "p50": 8.33,
+      "p95": 8.33,
+      "max": 8.33
+    }
+  },
+  "seven_detectors": {
+    "large-ABF-center": {
+      "distinct": 218,
+      "per_s": 110.8,
+      "per_input_second": 107.1,
+      "first_presented_delay_ms": 76.34,
+      "interval_ms": {
+        "n": 217,
+        "p50": 8.33,
+        "p95": 16.67,
+        "max": 16.67
+      }
+    },
+    "large-ABF-resize": {
+      "distinct": 236,
+      "per_s": 117,
+      "per_input_second": 116.3,
+      "first_presented_delay_ms": 13.04,
+      "interval_ms": {
+        "n": 235,
+        "p50": 8.33,
+        "p95": 8.33,
+        "max": 16.67
+      }
+    },
+    "large-ADF-center": {
+      "distinct": 205,
+      "per_s": 101.6,
+      "per_input_second": 100.9,
+      "first_presented_delay_ms": 18.39,
+      "interval_ms": {
+        "n": 204,
+        "p50": 8.33,
+        "p95": 16.67,
+        "max": 50
+      }
+    },
+    "large-ADF-resize": {
+      "distinct": 232,
+      "per_s": 115.5,
+      "per_input_second": 114.4,
+      "first_presented_delay_ms": 19.61,
+      "interval_ms": {
+        "n": 231,
+        "p50": 8.33,
+        "p95": 8.33,
+        "max": 16.67
+      }
+    }
+  },
+  "seven_navigation": {
+    "sent": 15,
+    "received": 15,
+    "applied_once": 15,
+    "retries": 0
+  },
+  "seven_problems": [],
+  "input_hashes": [
+    "446d2751716a5985e417f29cc19feea81b4dcf2bcbbf428578b6965e16d26f71",
+    "532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350",
+    "6f94694a3d63c41edca118a74aae1384b1f61316699154a8dda0e8ac5e1af64f",
+    "88907d90d0be36cce51ed15cfc82e0967c5641e190c0428e2e9ceb8aaf23c59b",
+    "8b006c84044f4c7d6842ab1c896359d7c5fe0e331d76dcf7a7a1f7be429523e3",
+    "aa18159030e03a756f7a057e9422ce645dfbe4bb0df7bc9eac6c6aeee2d55db1",
+    "fe15c891bb065252242350728162e60320860f4c9dfbe2b6c21bb983ccd879c4"
+  ],
+  "units": {
+    "bytes": "decimal bytes",
+    "rates": "distinct drawable presentations per second",
+    "input": "full 512x512x192x192 uint16; no crop/bin"
+  },
+  "tests": {
+    "harness_unit_tests": 23,
+    "cpu_checks": [
+      "memory pressure wiring",
+      "presentation timestamps",
+      "atomic scan position",
+      "compact snapshot orchestration",
+      "comparison reference"
+    ],
+    "strict_uint8_product_parity": "pass exact BF/ABF/ADF and selected-DP hash; tiny memory admission rejects",
+    "swift_release_build": "pass",
+    "swift_test": "not run: Command Line Tools only",
+    "full_source_uint16_independent_parity": "not rerun in this cleanup turn; native uint16 interaction tested"
+  },
+  "prior_attempts": [
+    "candidate-01 failed an obsolete one-resident assertion; corrected to preserve bounded packed LRU",
+    "candidate-02 and candidate-03 failed text entry: inherited Command flag; fixed explicit Unicode flags and paired key events",
+    "candidate-04 passed public operations, failed premature AX startup observation on relaunch; added bounded window readiness",
+    "candidate-05 passed full public journey",
+    "candidate-06 passed strengthened FFT hash retention and cancellation-during-reload checks"
+  ],
+  "release": {
+    "new_zip_created": false,
+    "pushed": false,
+    "installed_app_unchanged": true,
+    "pending": [
+      "freeze and pin app/backend revisions",
+      "full XCTest on Xcode",
+      "exact signed/notarized fresh-ZIP run"
+    ],
+    "cold_io_claimed": false,
+    "all_detectors_120_hz_claimed": false
+  },
+  "evidence_root": "local-evidence://20260908-packed-optimization/public-ui-gate"
+}

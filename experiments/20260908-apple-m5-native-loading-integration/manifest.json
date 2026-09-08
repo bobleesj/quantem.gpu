@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-apple-m5-native-loading-integration",
+  "status": "succeeded",
+  "question": "Does the actually executed32-thread four-column source loading kernel improve native seven-source readiness over scalar-plane128?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260908-apple-m5-native-loading-integration/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "a0aaa52be1fb7b66406f8624527383178509e1f7",
+    "entrypoint": "experiments/20260908-apple-m5-native-reuse/run.py",
+    "dirty": true,
+    "benchmark_source_snapshot": "local-evidence://20260908-packed-optimization/benchmark-source-series-fixed.tar",
+    "benchmark_source_sha256": "efb5063ca1f5d63af41079722cfe12e01e2e97a3af7d825e46c72cab0b8d4ebc",
+    "diff_sha256": "2a52b9057c5813ad706ad0f476ac90ae380bf80dd73e9605bdee153416690917",
+    "snapshot_path": "local-evidence://20260908-packed-optimization/lazy-planes.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-1",
+      "path": "private-fixture://tilt-series/446d2751716a5985e417f29cc19feea81b4dcf2bcbbf428578b6965e16d26f71",
+      "sha256": "4c5597ac5eb804cee7e01e1874ab69ad7f16c36e7eb9fa147083ac6d9dbedc65"
+    },
+    {
+      "dataset_id": "tilt-series-2",
+      "path": "private-fixture://tilt-series/fe15c891bb065252242350728162e60320860f4c9dfbe2b6c21bb983ccd879c4",
+      "sha256": "047f589fb4b94e070793e23ebaa3c41ddc4efe71e7dc2f9048d2caa25dc079af"
+    },
+    {
+      "dataset_id": "tilt-series-3",
+      "path": "private-fixture://tilt-series/aa18159030e03a756f7a057e9422ce645dfbe4bb0df7bc9eac6c6aeee2d55db1",
+      "sha256": "7b9a58202bd9251e843e255668689968f1fec49da3e19c5883584342cb96a476"
+    },
+    {
+      "dataset_id": "tilt-series-4",
+      "path": "private-fixture://tilt-series/6f94694a3d63c41edca118a74aae1384b1f61316699154a8dda0e8ac5e1af64f",
+      "sha256": "fe34acc72d659b9d94a578ba5191224c7461488be96ea8d7bba98aec4c35b1e0"
+    },
+    {
+      "dataset_id": "tilt-series-5",
+      "path": "private-fixture://tilt-series/88907d90d0be36cce51ed15cfc82e0967c5641e190c0428e2e9ceb8aaf23c59b",
+      "sha256": "ac9d184644ab526a86137ad7d37e714b9fc1b521a6efe80d6a0ae324ae88de91"
+    },
+    {
+      "dataset_id": "tilt-series-6",
+      "path": "private-fixture://tilt-series/532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350",
+      "sha256": "4b193525246c3fceeee9edbc8fce83a76b3adbfa65baf2d031a60ecddf6c6144"
+    },
+    {
+      "dataset_id": "tilt-series-7",
+      "path": "private-fixture://tilt-series/8b006c84044f4c7d6842ab1c896359d7c5fe0e331d76dcf7a7a1f7be429523e3",
+      "sha256": "09a1a093bca8a1234ea82ffeafe1e3f87fa516e72e3eb8d706ca93297e65a123"
+    }
+  ],
+  "parameters": {
+    "sources": 7,
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "source_dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "expected_resident_bytes": 14752175312,
+    "new_resident_buffers": 0,
+    "arms": [
+      "legacy-a",
+      "qualified-loading",
+      "legacy-b"
+    ],
+    "scope": "Same explicitly instrumented build. Scalar-plane128 control vs vector4x32 qualified loading. Stage counters MUST confirm executed decode/packing threadcounts and vectorcolumns. Passive gesture observer; all-seven actual presentations, DP/average, no coldIO claim.",
+    "correction_of": "Prior native matrices' QGPU_ORIGINAL settings were compile-disabled; their actual detector FPS remains recorded but their loading was scalar-plane128, not qualifiedvector4x32.",
+    "native_binary_sha256": "4df6e6cd6b0cb9a77175ff4d7b2ab606bfaaea7ee84c72d971c5314d27397c42",
+    "app_diff_sha256": "6cfc160714343b4bbb1e55c718a353beed3f0c3948f7a3ece4c52f9a301df27d"
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "integrated-gpu-0"
+    ],
+    "gpu_model": "Apple M5 24 GB"
+  },
+  "outputs": [
+    {
+      "artifact_id": "native-comparison",
+      "path": "experiments/20260908-apple-m5-native-loading-integration/comparison.json",
+      "sha256": "d0d24f97e13f34f886a212ad3c850422704a4efe48c563bdf3670bbcb20a81a8",
+      "size_bytes": 120967,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Actual counters confirm128scalar/32vector4/128scalar. Catalog2.64/1.48/2.00s; additional6readiness10.22/6.38/10.08s. Same14,752,175,312residentbytes. ADF106.4/92.7/104.2completeupdates/s andABF112.6/100.7/114.6; loadingwins but interactionnotimproved, not120all-workloads. SelectedDP120steadyall, afteraverage120/119/119.3. No4–5seven-source readiness claim."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-08T09:04:00Z",
+    "finished": "2026-09-08T09:10:00Z"
+  }
+}

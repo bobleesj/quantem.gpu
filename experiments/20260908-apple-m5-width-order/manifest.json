@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-apple-m5-width-order",
+  "status": "succeeded",
+  "question": "Does ordering detector entries by proven maximum bit width reduce SIMD-wide fallback costs without changing any exact output or GPU-memory allocation?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260908-apple-m5-width-order/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "a0aaa52be1fb7b66406f8624527383178509e1f7",
+    "entrypoint": "metal-original-hdf5-benchmark --repeats 1 --detector-trials 8",
+    "dirty": true,
+    "diff_sha256": "b779c41cbc3a035fb87568decf3a83c13b94b78733c7ef9ff7e4f1a2e7e07df8",
+    "snapshot_path": "local-evidence://20260908-packed-optimization/width-order.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-anchor",
+      "path": "private-fixture://tilt-series/-17.0x_0.0y",
+      "sha256": "532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350"
+    }
+  ],
+  "parameters": {
+    "sources": 7,
+    "concurrent_residents": 1,
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "source_dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "budget_bytes": 8000000000,
+    "trials": 8,
+    "source_snapshot_sha256": "3d32dcdc73592430c1a07a3bfac61f137ede49280e662d7ce6c2034b4d1b6b0e",
+    "snapshot_scope": "new benchmark sources; unchanged production kernels",
+    "cache_state": "packing plans created by baseline; source pages uncontrolled; load times not compared",
+    "timing_boundary": "synchronized detector reduction; CPU readback/hash/reference outside timed operation",
+    "ui_present_measured": false,
+    "parity_scope": "full detector output repeat fingerprints and CPU sums of three extracted raw DPs; independent HDF5 oracle pending",
+    "baseline": "20260908-apple-m5-detector-baseline",
+    "environment": {
+      "COMPACT_DETECTOR_WIDTH_ORDER": "1"
+    },
+    "control_repeat": "local-evidence://20260908-packed-optimization/detector-control-repeat.jsonl"
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "integrated-gpu-0"
+    ],
+    "gpu_model": "Apple M5 24 GB"
+  },
+  "outputs": [
+    {
+      "artifact_id": "control-comparison",
+      "path": "experiments/20260908-apple-m5-width-order/control-comparison.json",
+      "sha256": "87cfe4de7a0aa36a9ef519bd52c13704cfccc15b28b40750d19621424abacc74",
+      "size_bytes": 5576,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "840 exact hashes match control with identical resident bytes; wide-detector GPU ratios 1.007-1.162x, BF 0.932-1.114x. Mixed result; not enabled by default. CPU sort overhead not separately timed in this trial."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-08T05:01:00Z",
+    "started": "2026-09-08T05:01:00Z",
+    "finished": "2026-09-08T05:03:50Z"
+  }
+}

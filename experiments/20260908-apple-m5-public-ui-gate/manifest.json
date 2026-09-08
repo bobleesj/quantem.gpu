@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-apple-m5-public-ui-gate",
+  "status": "completed",
+  "question": "Do public macOS controls and held pointer drags exercise the exact packed viewer without regression after dense-path removal?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260908-apple-m5-public-ui-gate/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/Live4DSTEM",
+    "revision": "689c4b71b7651e1ff175d19cfae2c6c8f472091a",
+    "dirty": true,
+    "entrypoint": "Tests/NativeUI/public_release_gate.py",
+    "diff_sha256": "9844842099ef65db857315e45148948c58245fa644df85618d0c7dce901ebc19",
+    "snapshot_path": "local-evidence://20260908-packed-optimization/public-ui-gate/cleanup-and-gate.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "many-files-1",
+      "path": "private-fixture://many-files/1a57b44b26fc9feb76c82fa00123e86c58ac094f72032f877882543c94a45e6a",
+      "sha256": "1a57b44b26fc9feb76c82fa00123e86c58ac094f72032f877882543c94a45e6a"
+    },
+    {
+      "dataset_id": "many-files-2",
+      "path": "private-fixture://many-files/1be810b96fdff8e384ad4cb6ebd49adff9b4ab0a6503cd5fed9106e09f5aa286",
+      "sha256": "1be810b96fdff8e384ad4cb6ebd49adff9b4ab0a6503cd5fed9106e09f5aa286"
+    },
+    {
+      "dataset_id": "many-files-3",
+      "path": "private-fixture://many-files/71ea49e1b9a9441423076c158ffc1acc77c25956b9b6ca5509a4e2b3ad209651",
+      "sha256": "71ea49e1b9a9441423076c158ffc1acc77c25956b9b6ca5509a4e2b3ad209651"
+    },
+    {
+      "dataset_id": "many-files-4",
+      "path": "private-fixture://many-files/891232f1584e40406ef2ce846179dd11358849d096bd6604324b915a46f9038b",
+      "sha256": "891232f1584e40406ef2ce846179dd11358849d096bd6604324b915a46f9038b"
+    },
+    {
+      "dataset_id": "many-files-5",
+      "path": "private-fixture://many-files/bead1cf80f2e40465506e55d643b6fd6974197d06d26a7a4a8de9ec725d73f44",
+      "sha256": "bead1cf80f2e40465506e55d643b6fd6974197d06d26a7a4a8de9ec725d73f44"
+    },
+    {
+      "dataset_id": "many-files-6",
+      "path": "private-fixture://many-files/f26b4947a709e92262b43e72d0595fcf44f56a771f2a01c417c2b7a2e41a21cc",
+      "sha256": "f26b4947a709e92262b43e72d0595fcf44f56a771f2a01c417c2b7a2e41a21cc"
+    },
+    {
+      "dataset_id": "tilt-series-1",
+      "path": "private-fixture://tilt-series/446d2751716a5985e417f29cc19feea81b4dcf2bcbbf428578b6965e16d26f71",
+      "sha256": "446d2751716a5985e417f29cc19feea81b4dcf2bcbbf428578b6965e16d26f71"
+    },
+    {
+      "dataset_id": "tilt-series-2",
+      "path": "private-fixture://tilt-series/532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350",
+      "sha256": "532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350"
+    },
+    {
+      "dataset_id": "tilt-series-3",
+      "path": "private-fixture://tilt-series/6f94694a3d63c41edca118a74aae1384b1f61316699154a8dda0e8ac5e1af64f",
+      "sha256": "6f94694a3d63c41edca118a74aae1384b1f61316699154a8dda0e8ac5e1af64f"
+    },
+    {
+      "dataset_id": "tilt-series-4",
+      "path": "private-fixture://tilt-series/88907d90d0be36cce51ed15cfc82e0967c5641e190c0428e2e9ceb8aaf23c59b",
+      "sha256": "88907d90d0be36cce51ed15cfc82e0967c5641e190c0428e2e9ceb8aaf23c59b"
+    },
+    {
+      "dataset_id": "tilt-series-5",
+      "path": "private-fixture://tilt-series/8b006c84044f4c7d6842ab1c896359d7c5fe0e331d76dcf7a7a1f7be429523e3",
+      "sha256": "8b006c84044f4c7d6842ab1c896359d7c5fe0e331d76dcf7a7a1f7be429523e3"
+    },
+    {
+      "dataset_id": "tilt-series-6",
+      "path": "private-fixture://tilt-series/aa18159030e03a756f7a057e9422ce645dfbe4bb0df7bc9eac6c6aeee2d55db1",
+      "sha256": "aa18159030e03a756f7a057e9422ce645dfbe4bb0df7bc9eac6c6aeee2d55db1"
+    },
+    {
+      "dataset_id": "tilt-series-7",
+      "path": "private-fixture://tilt-series/fe15c891bb065252242350728162e60320860f4c9dfbe2b6c21bb983ccd879c4",
+      "sha256": "fe15c891bb065252242350728162e60320860f4c9dfbe2b6c21bb983ccd879c4"
+    }
+  ],
+  "parameters": {
+    "baseline_binary_sha256": "80f2feaca501cffd675b24ef5fe3648457409ea281bc221aceca054914de69e6",
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "public_controls": true,
+    "cold_io_claim": false,
+    "changes": "Removed dead dense 4D paths, retained scalar2D and packed paths; public native gate and adversarial evidence checks. Production kernels unchanged in this cleanup.",
+    "run_root": "local-evidence://20260908-packed-optimization/public-ui-gate",
+    "candidate_binary_sha256": "a1696744ad16dcfaee2583cc8f8e7a8382cd4e50a1e4a74cf157bca267da379f"
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "integrated-gpu-0"
+    ],
+    "gpu_model": "Apple M5 24 GB"
+  },
+  "outputs": [
+    {
+      "artifact_id": "public-native-cleanup-validation",
+      "path": "experiments/20260908-apple-m5-public-ui-gate/result.json",
+      "sha256": "4ca420c818aa1100f6d8346716e91e664885f3c409b904fcbf81533f3168dc0b",
+      "size_bytes": 4971,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Public native gate passed58 steps including30single clicks; seven-resident recheck passes14.75GB, selectedDP120/ssteady. Not all-detector120Hz or release-ready."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-08T15:15:14.575Z",
+    "started": "2026-09-08T15:15:14.575Z",
+    "finished": "2026-09-08T15:44:23Z"
+  }
+}

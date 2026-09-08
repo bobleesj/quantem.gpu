@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-apple-m5-zero-scratch",
+  "status": "refuted",
+  "question": "Can bulk clearing existing scratch and skipping validated zero-repeat stores reduce dependent LZ4 time, with all bytes and malformed-stream rejection preserved?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260908-apple-m5-zero-scratch/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "a0aaa52be1fb7b66406f8624527383178509e1f7",
+    "entrypoint": "experiments/20260908-apple-m5-planar-topology/run_cases.py",
+    "dirty": true,
+    "benchmark_source_snapshot": "local-evidence://20260908-packed-optimization/benchmark-source-direct-dpc.tar",
+    "benchmark_source_sha256": "d5ec5cde391d34a03ba7d77bd0e1ec0f8b2719701b97b7dfdf5db5fb2a64a303",
+    "diff_sha256": "29d6abbfd3f3369509d5c34f801ab7538e3abaab371243dbebc1d18bea5165a9",
+    "snapshot_path": "local-evidence://20260908-packed-optimization/zero-scratch.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-1",
+      "path": "private-fixture://tilt-series/446d2751716a5985e417f29cc19feea81b4dcf2bcbbf428578b6965e16d26f71",
+      "sha256": "4c5597ac5eb804cee7e01e1874ab69ad7f16c36e7eb9fa147083ac6d9dbedc65"
+    },
+    {
+      "dataset_id": "tilt-series-2",
+      "path": "private-fixture://tilt-series/fe15c891bb065252242350728162e60320860f4c9dfbe2b6c21bb983ccd879c4",
+      "sha256": "047f589fb4b94e070793e23ebaa3c41ddc4efe71e7dc2f9048d2caa25dc079af"
+    },
+    {
+      "dataset_id": "tilt-series-3",
+      "path": "private-fixture://tilt-series/aa18159030e03a756f7a057e9422ce645dfbe4bb0df7bc9eac6c6aeee2d55db1",
+      "sha256": "7b9a58202bd9251e843e255668689968f1fec49da3e19c5883584342cb96a476"
+    },
+    {
+      "dataset_id": "tilt-series-4",
+      "path": "private-fixture://tilt-series/6f94694a3d63c41edca118a74aae1384b1f61316699154a8dda0e8ac5e1af64f",
+      "sha256": "fe34acc72d659b9d94a578ba5191224c7461488be96ea8d7bba98aec4c35b1e0"
+    },
+    {
+      "dataset_id": "tilt-series-5",
+      "path": "private-fixture://tilt-series/88907d90d0be36cce51ed15cfc82e0967c5641e190c0428e2e9ceb8aaf23c59b",
+      "sha256": "ac9d184644ab526a86137ad7d37e714b9fc1b521a6efe80d6a0ae324ae88de91"
+    },
+    {
+      "dataset_id": "tilt-series-6",
+      "path": "private-fixture://tilt-series/532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350",
+      "sha256": "4b193525246c3fceeee9edbc8fce83a76b3adbfa65baf2d031a60ecddf6c6144"
+    },
+    {
+      "dataset_id": "tilt-series-7",
+      "path": "private-fixture://tilt-series/8b006c84044f4c7d6842ab1c896359d7c5fe0e331d76dcf7a7a1f7be429523e3",
+      "sha256": "09a1a093bca8a1234ea82ffeafe1e3f87fa516e72e3eb8d706ca93297e65a123"
+    }
+  ],
+  "parameters": {
+    "sources": 7,
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "source_dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "new_resident_buffers": 0,
+    "repeats": 2,
+    "trials": 4,
+    "benchmark_binary_sha256": "878a872dabe2a3fe9d8b038d2defd28ed64d1f2dc59261ef5e1c20ed7a79024e",
+    "qh5idx_resource_sha256": "8d7ecf9fdb3a43ee0379fa404b0825fcdd70b660879afbc880ee576d4519e9c9",
+    "scope": "First explicit Metal fixture parity over reused poisoned scratch, valid long LZ4 repeats and malformed input. Then all-seven A/B/A exact original loading, zero-fill cost included. Existing scratch only, no clipped prefix or reduced source.",
+    "cases": "experiments/20260908-apple-m5-zero-scratch/cases.json",
+    "fixture": "experiments/20260908-apple-m5-zero-scratch/check_lz4.swift",
+    "initial_fixture_compile": "Swift typechecker rejected complex untyped literal; fixed with explicit tuple types. Failure log retained.",
+    "native_ui_claim": false,
+    "cold_io_claim": false
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "integrated-gpu-0"
+    ],
+    "gpu_model": "Apple M5 24 GB"
+  },
+  "outputs": [
+    {
+      "artifact_id": "comparison",
+      "path": "experiments/20260908-apple-m5-zero-scratch/comparison.json",
+      "sha256": "653262d36fc7004e1f16a25aa882d5de3ff5b090641682e34170b4f911d1affd",
+      "size_bytes": 41876,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "42loads2520maps exact; unchanged resident bytes, no fallback. Reopen1.464s vs1.224/1.183 controls: slower, rejected."
+    },
+    {
+      "artifact_id": "fixture",
+      "path": "experiments/20260908-apple-m5-zero-scratch/fixture-result.json",
+      "sha256": "9d314ce0c6924cd18e715cb24cc5cd893f3a71d0265264605a96a83fa09ba609",
+      "size_bytes": 106,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "18 exact 8192-byte blocks and10 malformed streams rejected with poisoned reused scratch."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-08T07:42:55.673Z",
+    "started": "2026-09-08T07:42:55.673Z",
+    "finished": "2026-09-08T07:49:35Z"
+  }
+}

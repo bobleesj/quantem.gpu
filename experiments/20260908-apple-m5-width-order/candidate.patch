@@ -1,0 +1,30 @@
+diff --git a/src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/Metal4DSTEMCompactH5.swift b/src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/Metal4DSTEMCompactH5.swift
+index 6f262cb..ca78bab 100644
+--- a/src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/Metal4DSTEMCompactH5.swift
++++ b/src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/Metal4DSTEMCompactH5.swift
+@@ -529,6 +529,8 @@ public final class MetalCompactH5ResidentSource {
+   private var activeDetectorOutput = 0
+   private var detectorMask: [UInt8]
+   private var detectorSumReady = false
++  private let widthOrderedEntries =
++    ProcessInfo.processInfo.environment["COMPACT_DETECTOR_WIDTH_ORDER"] == "1"
+   public private(set) var isReleased = false
+ 
+   fileprivate func markOriginalDetectorSumReady() { detectorSumReady = true }
+@@ -1270,6 +1272,16 @@ public final class MetalCompactH5ResidentSource {
+       ? 0
+       : detectorRegions?.decompose(
+         &entries, rows: metadata.detectorRows, columns: metadata.detectorColumns) ?? 0
++    if widthOrderedEntries {
++      // Keep rare high-count pixels from selecting the wide reduction for an
++      // otherwise narrow SIMD group. Only summation order changes; no count or
++      // GPU allocation changes. Preserve pixel order within equal widths.
++      entries.sort {
++        let left = maximumWidths[Int($0.pixel)]
++        let right = maximumWidths[Int($1.pixel)]
++        return left == right ? $0.pixel < $1.pixel : left < right
++      }
++    }
+     if !entries.isEmpty {
+       _ = entries.withUnsafeBytes { raw in
+         memcpy(detectorEntryBuffer.contents(), raw.baseAddress!, raw.count)

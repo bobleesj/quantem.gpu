@@ -1,0 +1,2758 @@
+[
+  {
+    "case": "quad-a",
+    "flags": {},
+    "binary_sha256": "e809dc9dee14918e9ce3cc0aa3cfbae93a559c08030e97f91f1a4548fa7875fc",
+    "metal_resource_sha256": {
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/ans_counts.metal": "c58a7397fb5c97453711785dfa9722132dc5f24a055090985b688db3716be54b",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/compact_detector_regions.metal": "b35b1bd86454de67503f94ac2336afdd3824b7aeb54dcc546a62d987d8f5ca22",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/detector.metal": "62ecde7eb07610ad358a2834b274476f5580201b0c58f450c495adab35c97716",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/dpc.metal": "8ba200b8f32ed8d06e2e394ae8bfaa29e1a06945f5b4baafa3a637301803f8a1",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/original_packing.metal": "c1fdc2715cdc57fe21f049a04bfbdfdc8851bcbd451e75d7d37df200781e1e5e",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/packed_h5.metal": "2f33eaa08b2720a1e1c091eca4407f35b19d7cb0cda6592c8f8bfff1c143fc91",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/qh5idx.metal": "8d7ecf9fdb3a43ee0379fa404b0825fcdd70b660879afbc880ee576d4519e9c9",
+      "MetalKernels_MetalDisplayKernels.bundle/Resources/display.metal": "c74a945450b1002b95bbc319ae0ca3387905c4476991c487cd76aca6b12ce59f",
+      "MetalKernels_MetalImageFFT.bundle/Resources/fft.metal": "fbefa9fea2b2b198b014939fa6a8834293c61eca1ce08af0bbfdfec9aee60052",
+      "MetalKernels_MetalSSBKernels.bundle/Resources/ssb.metal": "b1c56f17776a7841be0b8ffcf08b85cda32a914c11cb4b4913a2cf4a5ad60306"
+    },
+    "returncode": 0,
+    "summary": {
+      "launched": 1788853894.6473348,
+      "pid": 6924,
+      "catalog_s": 2.28,
+      "catalog_state": {
+        "dataset_count": 7,
+        "resident_count": 1,
+        "allocated_bytes": 2038251520,
+        "cache_state": "resident"
+      },
+      "compare_ready_s": 6.78,
+      "compare_state": {
+        "resident_count": 7,
+        "allocated_bytes": 14827208704,
+        "memory_budget_bytes": 17162698752,
+        "comparison_resident_bytes": 14752175312,
+        "comparison_count": 7
+      },
+      "custom_drag": [
+        "settled",
+        30.8
+      ],
+      "scan_drag": [
+        "settled",
+        3.8
+      ],
+      "average_diffraction": {
+        "ready_after_hook_seconds": 0.0899575420000005,
+        "dataset_id": "8c977f2ff4f75365d28a",
+        "scan_count": 262144,
+        "hash": "7b58be5eaa5ebd1f",
+        "static_full_scan_mean_not_fps": true,
+        "drawable_presented": true
+      },
+      "scan_after_average": [
+        "settled",
+        3.5
+      ],
+      "final_state": {
+        "resident_count": 7,
+        "allocated_bytes": 14873542656,
+        "comparison_visible": true
+      },
+      "exit": 0,
+      "analysis": {
+        "large-ABF-center": {
+          "span_s": 6.07,
+          "tiles_presenting": 7,
+          "expected_comparison_tiles": 7,
+          "all_tiles_presented_generations": {
+            "distinct": 457,
+            "per_s": 76.4,
+            "per_input_second": 75.6,
+            "first_presented_delay_ms": 73.46,
+            "interval_ms": {
+              "n": 456,
+              "p50": 8.33,
+              "p95": 25.0,
+              "max": 41.67
+            }
+          },
+          "incomplete_comparison_generations": 0,
+          "presented_per_tile": {
+            "5e9a856e6f45f416de9a": {
+              "distinct": 457,
+              "per_s": 76.4,
+              "per_input_second": 75.6,
+              "first_presented_delay_ms": 73.46,
+              "interval_ms": {
+                "n": 456,
+                "p50": 8.33,
+                "p95": 25.0,
+                "max": 41.67
+              }
+            },
+            "aa37171a768c5202847e": {
+              "distinct": 457,
+              "per_s": 76.4,
+              "per_input_second": 75.6,
+              "first_presented_delay_ms": 73.46,
+              "interval_ms": {
+                "n": 456,
+                "p50": 8.33,
+                "p95": 25.0,
+                "max": 41.67
+              }
+            },
+            "8c977f2ff4f75365d28a": {
+              "distinct": 457,
+              "per_s": 76.4,
+              "per_input_second": 75.6,
+              "first_presented_delay_ms": 73.46,
+              "interval_ms": {
+                "n": 456,
+                "p50": 8.33,
+                "p95": 25.0,
+                "max": 41.67
+              }
+            },
+            "6efe6ff6cec0316a330d": {
+              "distinct": 457,
+              "per_s": 76.4,
+              "per_input_second": 75.6,
+              "first_presented_delay_ms": 73.46,
+              "interval_ms": {
+                "n": 456,
+                "p50": 8.33,
+                "p95": 25.0,
+                "max": 41.67
+              }
+            },
+            "46165a8d74f5aceb0d12": {
+              "distinct": 457,
+              "per_s": 76.4,
+              "per_input_second": 75.6,
+              "first_presented_delay_ms": 73.46,
+              "interval_ms": {
+                "n": 456,
+                "p50": 8.33,
+                "p95": 25.0,
+                "max": 41.67
+              }
+            },
+            "05b875f2e2c7af2adc51": {
+              "distinct": 457,
+              "per_s": 76.4,
+              "per_input_second": 75.6,
+              "first_presented_delay_ms": 73.46,
+              "interval_ms": {
+                "n": 456,
+                "p50": 8.33,
+                "p95": 25.0,
+                "max": 41.67
+              }
+            },
+            "75291f2086a0454a2bef": {
+              "distinct": 457,
+              "per_s": 76.4,
+              "per_input_second": 75.6,
+              "first_presented_delay_ms": 73.46,
+              "interval_ms": {
+                "n": 456,
+                "p50": 8.33,
+                "p95": 25.0,
+                "max": 41.67
+              }
+            }
+          },
+          "accepted_masks": 458,
+          "accepted_per_s": 76.0,
+          "presented_generations": {
+            "distinct": 457,
+            "per_s": 76.4,
+            "per_input_second": 75.6,
+            "first_presented_delay_ms": 73.46,
+            "interval_ms": {
+              "n": 456,
+              "p50": 8.33,
+              "p95": 25.0,
+              "max": 41.67
+            }
+          },
+          "reduction_ms": {
+            "n": 458,
+            "p50": 9.99,
+            "p95": 11.84,
+            "max": 40.66
+          },
+          "backend_gpu_ms": {
+            "n": 458,
+            "p50": 8.27,
+            "p95": 9.63,
+            "max": 38.96
+          },
+          "changed_px_per_source": {
+            "n": 3206,
+            "p50": 1066.0,
+            "p95": 1100,
+            "max": 4747
+          },
+          "modes": {
+            "delta": 3206
+          },
+          "selected_dp": null
+        },
+        "large-ABF-resize": {
+          "span_s": 6.04,
+          "tiles_presenting": 7,
+          "expected_comparison_tiles": 7,
+          "all_tiles_presented_generations": {
+            "distinct": 650,
+            "per_s": 107.9,
+            "per_input_second": 107.6,
+            "first_presented_delay_ms": 17.85,
+            "interval_ms": {
+              "n": 649,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 33.33
+            }
+          },
+          "incomplete_comparison_generations": 0,
+          "presented_per_tile": {
+            "5e9a856e6f45f416de9a": {
+              "distinct": 650,
+              "per_s": 107.9,
+              "per_input_second": 107.6,
+              "first_presented_delay_ms": 17.85,
+              "interval_ms": {
+                "n": 649,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 33.33
+              }
+            },
+            "aa37171a768c5202847e": {
+              "distinct": 650,
+              "per_s": 107.9,
+              "per_input_second": 107.6,
+              "first_presented_delay_ms": 17.85,
+              "interval_ms": {
+                "n": 649,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 33.33
+              }
+            },
+            "8c977f2ff4f75365d28a": {
+              "distinct": 650,
+              "per_s": 107.9,
+              "per_input_second": 107.6,
+              "first_presented_delay_ms": 17.85,
+              "interval_ms": {
+                "n": 649,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 33.33
+              }
+            },
+            "6efe6ff6cec0316a330d": {
+              "distinct": 650,
+              "per_s": 107.9,
+              "per_input_second": 107.6,
+              "first_presented_delay_ms": 17.85,
+              "interval_ms": {
+                "n": 649,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 33.33
+              }
+            },
+            "46165a8d74f5aceb0d12": {
+              "distinct": 650,
+              "per_s": 107.9,
+              "per_input_second": 107.6,
+              "first_presented_delay_ms": 17.85,
+              "interval_ms": {
+                "n": 649,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 33.33
+              }
+            },
+            "05b875f2e2c7af2adc51": {
+              "distinct": 650,
+              "per_s": 107.9,
+              "per_input_second": 107.6,
+              "first_presented_delay_ms": 17.85,
+              "interval_ms": {
+                "n": 649,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 33.33
+              }
+            },
+            "75291f2086a0454a2bef": {
+              "distinct": 650,
+              "per_s": 107.9,
+              "per_input_second": 107.6,
+              "first_presented_delay_ms": 17.85,
+              "interval_ms": {
+                "n": 649,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 33.33
+              }
+            }
+          },
+          "accepted_masks": 650,
+          "accepted_per_s": 107.9,
+          "presented_generations": {
+            "distinct": 650,
+            "per_s": 107.9,
+            "per_input_second": 107.6,
+            "first_presented_delay_ms": 17.85,
+            "interval_ms": {
+              "n": 649,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 33.33
+            }
+          },
+          "reduction_ms": {
+            "n": 650,
+            "p50": 4.46,
+            "p95": 7.94,
+            "max": 23.88
+          },
+          "backend_gpu_ms": {
+            "n": 650,
+            "p50": 2.73,
+            "p95": 5.92,
+            "max": 22.16
+          },
+          "changed_px_per_source": {
+            "n": 4550,
+            "p50": 220.0,
+            "p95": 273,
+            "max": 1191
+          },
+          "modes": {
+            "delta": 4550
+          },
+          "selected_dp": null
+        },
+        "large-ADF-center": {
+          "span_s": 6.07,
+          "tiles_presenting": 7,
+          "expected_comparison_tiles": 7,
+          "all_tiles_presented_generations": {
+            "distinct": 469,
+            "per_s": 77.7,
+            "per_input_second": 77.6,
+            "first_presented_delay_ms": 12.65,
+            "interval_ms": {
+              "n": 468,
+              "p50": 8.33,
+              "p95": 25.0,
+              "max": 58.33
+            }
+          },
+          "incomplete_comparison_generations": 0,
+          "presented_per_tile": {
+            "5e9a856e6f45f416de9a": {
+              "distinct": 469,
+              "per_s": 77.7,
+              "per_input_second": 77.6,
+              "first_presented_delay_ms": 12.65,
+              "interval_ms": {
+                "n": 468,
+                "p50": 8.33,
+                "p95": 25.0,
+                "max": 58.33
+              }
+            },
+            "aa37171a768c5202847e": {
+              "distinct": 469,
+              "per_s": 77.7,
+              "per_input_second": 77.6,
+              "first_presented_delay_ms": 12.65,
+              "interval_ms": {
+                "n": 468,
+                "p50": 8.33,
+                "p95": 25.0,
+                "max": 58.33
+              }
+            },
+            "8c977f2ff4f75365d28a": {
+              "distinct": 469,
+              "per_s": 77.7,
+              "per_input_second": 77.6,
+              "first_presented_delay_ms": 12.65,
+              "interval_ms": {
+                "n": 468,
+                "p50": 8.33,
+                "p95": 25.0,
+                "max": 58.33
+              }
+            },
+            "6efe6ff6cec0316a330d": {
+              "distinct": 469,
+              "per_s": 77.7,
+              "per_input_second": 77.6,
+              "first_presented_delay_ms": 12.65,
+              "interval_ms": {
+                "n": 468,
+                "p50": 8.33,
+                "p95": 25.0,
+                "max": 58.33
+              }
+            },
+            "46165a8d74f5aceb0d12": {
+              "distinct": 469,
+              "per_s": 77.7,
+              "per_input_second": 77.6,
+              "first_presented_delay_ms": 12.65,
+              "interval_ms": {
+                "n": 468,
+                "p50": 8.33,
+                "p95": 25.0,
+                "max": 58.33
+              }
+            },
+            "75291f2086a0454a2bef": {
+              "distinct": 469,
+              "per_s": 77.7,
+              "per_input_second": 77.6,
+              "first_presented_delay_ms": 12.65,
+              "interval_ms": {
+                "n": 468,
+                "p50": 8.33,
+                "p95": 25.0,
+                "max": 58.33
+              }
+            },
+            "05b875f2e2c7af2adc51": {
+              "distinct": 469,
+              "per_s": 77.7,
+              "per_input_second": 77.6,
+              "first_presented_delay_ms": 12.65,
+              "interval_ms": {
+                "n": 468,
+                "p50": 8.33,
+                "p95": 25.0,
+                "max": 58.33
+              }
+            }
+          },
+          "accepted_masks": 469,
+          "accepted_per_s": 77.8,
+          "presented_generations": {
+            "distinct": 469,
+            "per_s": 77.7,
+            "per_input_second": 77.6,
+            "first_presented_delay_ms": 12.65,
+            "interval_ms": {
+              "n": 468,
+              "p50": 8.33,
+              "p95": 25.0,
+              "max": 58.33
+            }
+          },
+          "reduction_ms": {
+            "n": 469,
+            "p50": 7.42,
+            "p95": 11.51,
+            "max": 46.1
+          },
+          "backend_gpu_ms": {
+            "n": 469,
+            "p50": 5.42,
+            "p95": 9.5,
+            "max": 44.34
+          },
+          "changed_px_per_source": {
+            "n": 3283,
+            "p50": 718,
+            "p95": 1418,
+            "max": 6902
+          },
+          "modes": {
+            "delta": 3283
+          },
+          "selected_dp": null
+        },
+        "large-ADF-resize": {
+          "span_s": 6.02,
+          "tiles_presenting": 7,
+          "expected_comparison_tiles": 7,
+          "all_tiles_presented_generations": {
+            "distinct": 642,
+            "per_s": 107.0,
+            "per_input_second": 106.7,
+            "first_presented_delay_ms": 19.98,
+            "interval_ms": {
+              "n": 641,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 33.33
+            }
+          },
+          "incomplete_comparison_generations": 0,
+          "presented_per_tile": {
+            "5e9a856e6f45f416de9a": {
+              "distinct": 642,
+              "per_s": 107.0,
+              "per_input_second": 106.7,
+              "first_presented_delay_ms": 19.98,
+              "interval_ms": {
+                "n": 641,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 33.33
+              }
+            },
+            "aa37171a768c5202847e": {
+              "distinct": 642,
+              "per_s": 107.0,
+              "per_input_second": 106.7,
+              "first_presented_delay_ms": 19.98,
+              "interval_ms": {
+                "n": 641,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 33.33
+              }
+            },
+            "8c977f2ff4f75365d28a": {
+              "distinct": 642,
+              "per_s": 107.0,
+              "per_input_second": 106.7,
+              "first_presented_delay_ms": 19.98,
+              "interval_ms": {
+                "n": 641,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 33.33
+              }
+            },
+            "6efe6ff6cec0316a330d": {
+              "distinct": 642,
+              "per_s": 107.0,
+              "per_input_second": 106.7,
+              "first_presented_delay_ms": 19.98,
+              "interval_ms": {
+                "n": 641,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 33.33
+              }
+            },
+            "46165a8d74f5aceb0d12": {
+              "distinct": 642,
+              "per_s": 107.0,
+              "per_input_second": 106.7,
+              "first_presented_delay_ms": 19.98,
+              "interval_ms": {
+                "n": 641,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 33.33
+              }
+            },
+            "75291f2086a0454a2bef": {
+              "distinct": 642,
+              "per_s": 107.0,
+              "per_input_second": 106.7,
+              "first_presented_delay_ms": 19.98,
+              "interval_ms": {
+                "n": 641,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 33.33
+              }
+            },
+            "05b875f2e2c7af2adc51": {
+              "distinct": 642,
+              "per_s": 107.0,
+              "per_input_second": 106.7,
+              "first_presented_delay_ms": 19.98,
+              "interval_ms": {
+                "n": 641,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 33.33
+              }
+            }
+          },
+          "accepted_masks": 645,
+          "accepted_per_s": 107.2,
+          "presented_generations": {
+            "distinct": 642,
+            "per_s": 107.0,
+            "per_input_second": 106.7,
+            "first_presented_delay_ms": 19.98,
+            "interval_ms": {
+              "n": 641,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 33.33
+            }
+          },
+          "reduction_ms": {
+            "n": 645,
+            "p50": 5.21,
+            "p95": 8.47,
+            "max": 23.51
+          },
+          "backend_gpu_ms": {
+            "n": 645,
+            "p50": 3.38,
+            "p95": 6.69,
+            "max": 21.8
+          },
+          "changed_px_per_source": {
+            "n": 4515,
+            "p50": 236,
+            "p95": 468,
+            "max": 1044
+          },
+          "modes": {
+            "delta": 4515
+          },
+          "selected_dp": null
+        },
+        "scan-drag": {
+          "span_s": 3.02,
+          "tiles_presenting": 0,
+          "expected_comparison_tiles": 7,
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "presented_per_tile": {},
+          "accepted_masks": 0,
+          "accepted_per_s": null,
+          "presented_generations": null,
+          "reduction_ms": null,
+          "backend_gpu_ms": null,
+          "changed_px_per_source": null,
+          "modes": null,
+          "selected_dp": {
+            "distinct": 354,
+            "per_s": 120.0,
+            "per_input_second": 117.5,
+            "first_presented_delay_ms": 69.27,
+            "interval_ms": {
+              "n": 353,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 8.33
+            }
+          }
+        },
+        "scan-drag-2": {
+          "span_s": 3.01,
+          "tiles_presenting": 0,
+          "expected_comparison_tiles": 7,
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "presented_per_tile": {},
+          "accepted_masks": 0,
+          "accepted_per_s": null,
+          "presented_generations": null,
+          "reduction_ms": null,
+          "backend_gpu_ms": null,
+          "changed_px_per_source": null,
+          "modes": null,
+          "selected_dp": {
+            "distinct": 356,
+            "per_s": 119.0,
+            "per_input_second": 117.9,
+            "first_presented_delay_ms": 27.96,
+            "interval_ms": {
+              "n": 355,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 25.0
+            }
+          }
+        }
+      },
+      "first_comparison_submission": {
+        "source_count": 7,
+        "call_to_publication_ms": 5613.43525,
+        "driver_interval_ms": 5441.677000024356,
+        "gpu_interval_ms": 169.04349997639656,
+        "cpu_prepare_ms": 1.158541,
+        "excluded_from_steady_drag_rates": true,
+        "not_a_drawable_presentation_measurement": true
+      }
+    }
+  },
+  {
+    "case": "octo",
+    "flags": {
+      "COMPACT_RAW_OCTO_SCAN": "1"
+    },
+    "binary_sha256": "e809dc9dee14918e9ce3cc0aa3cfbae93a559c08030e97f91f1a4548fa7875fc",
+    "metal_resource_sha256": {
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/ans_counts.metal": "c58a7397fb5c97453711785dfa9722132dc5f24a055090985b688db3716be54b",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/compact_detector_regions.metal": "b35b1bd86454de67503f94ac2336afdd3824b7aeb54dcc546a62d987d8f5ca22",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/detector.metal": "62ecde7eb07610ad358a2834b274476f5580201b0c58f450c495adab35c97716",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/dpc.metal": "8ba200b8f32ed8d06e2e394ae8bfaa29e1a06945f5b4baafa3a637301803f8a1",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/original_packing.metal": "c1fdc2715cdc57fe21f049a04bfbdfdc8851bcbd451e75d7d37df200781e1e5e",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/packed_h5.metal": "2f33eaa08b2720a1e1c091eca4407f35b19d7cb0cda6592c8f8bfff1c143fc91",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/qh5idx.metal": "8d7ecf9fdb3a43ee0379fa404b0825fcdd70b660879afbc880ee576d4519e9c9",
+      "MetalKernels_MetalDisplayKernels.bundle/Resources/display.metal": "c74a945450b1002b95bbc319ae0ca3387905c4476991c487cd76aca6b12ce59f",
+      "MetalKernels_MetalImageFFT.bundle/Resources/fft.metal": "fbefa9fea2b2b198b014939fa6a8834293c61eca1ce08af0bbfdfec9aee60052",
+      "MetalKernels_MetalSSBKernels.bundle/Resources/ssb.metal": "b1c56f17776a7841be0b8ffcf08b85cda32a914c11cb4b4913a2cf4a5ad60306"
+    },
+    "returncode": 0,
+    "summary": {
+      "launched": 1788853950.447646,
+      "pid": 10527,
+      "catalog_s": 1.61,
+      "catalog_state": {
+        "dataset_count": 7,
+        "resident_count": 1,
+        "allocated_bytes": 2024980480,
+        "cache_state": "resident"
+      },
+      "compare_ready_s": 6.46,
+      "compare_state": {
+        "resident_count": 7,
+        "allocated_bytes": 14827208704,
+        "memory_budget_bytes": 17162698752,
+        "comparison_resident_bytes": 14752175312,
+        "comparison_count": 7
+      },
+      "custom_drag": [
+        "settled",
+        27.3
+      ],
+      "scan_drag": [
+        "settled",
+        2.8
+      ],
+      "average_diffraction": {
+        "ready_after_hook_seconds": 0.08666824999999534,
+        "dataset_id": "8c977f2ff4f75365d28a",
+        "scan_count": 262144,
+        "hash": "7b58be5eaa5ebd1f",
+        "static_full_scan_mean_not_fps": true,
+        "drawable_presented": true
+      },
+      "scan_after_average": [
+        "settled",
+        3.5
+      ],
+      "final_state": {
+        "resident_count": 7,
+        "allocated_bytes": 14873542656,
+        "comparison_visible": true
+      },
+      "exit": 0,
+      "analysis": {
+        "large-ABF-center": {
+          "span_s": 6.06,
+          "tiles_presenting": 7,
+          "expected_comparison_tiles": 7,
+          "all_tiles_presented_generations": {
+            "distinct": 434,
+            "per_s": 72.6,
+            "per_input_second": 71.8,
+            "first_presented_delay_ms": 63.79,
+            "interval_ms": {
+              "n": 433,
+              "p50": 16.67,
+              "p95": 25.0,
+              "max": 33.33
+            }
+          },
+          "incomplete_comparison_generations": 0,
+          "presented_per_tile": {
+            "5e9a856e6f45f416de9a": {
+              "distinct": 434,
+              "per_s": 72.6,
+              "per_input_second": 71.8,
+              "first_presented_delay_ms": 63.79,
+              "interval_ms": {
+                "n": 433,
+                "p50": 16.67,
+                "p95": 25.0,
+                "max": 33.33
+              }
+            },
+            "aa37171a768c5202847e": {
+              "distinct": 434,
+              "per_s": 72.6,
+              "per_input_second": 71.8,
+              "first_presented_delay_ms": 63.79,
+              "interval_ms": {
+                "n": 433,
+                "p50": 16.67,
+                "p95": 25.0,
+                "max": 33.33
+              }
+            },
+            "8c977f2ff4f75365d28a": {
+              "distinct": 434,
+              "per_s": 72.6,
+              "per_input_second": 71.8,
+              "first_presented_delay_ms": 63.79,
+              "interval_ms": {
+                "n": 433,
+                "p50": 16.67,
+                "p95": 25.0,
+                "max": 33.33
+              }
+            },
+            "6efe6ff6cec0316a330d": {
+              "distinct": 434,
+              "per_s": 72.6,
+              "per_input_second": 71.8,
+              "first_presented_delay_ms": 63.79,
+              "interval_ms": {
+                "n": 433,
+                "p50": 16.67,
+                "p95": 25.0,
+                "max": 33.33
+              }
+            },
+            "46165a8d74f5aceb0d12": {
+              "distinct": 434,
+              "per_s": 72.6,
+              "per_input_second": 71.8,
+              "first_presented_delay_ms": 63.79,
+              "interval_ms": {
+                "n": 433,
+                "p50": 16.67,
+                "p95": 25.0,
+                "max": 33.33
+              }
+            },
+            "75291f2086a0454a2bef": {
+              "distinct": 434,
+              "per_s": 72.6,
+              "per_input_second": 71.8,
+              "first_presented_delay_ms": 63.79,
+              "interval_ms": {
+                "n": 433,
+                "p50": 16.67,
+                "p95": 25.0,
+                "max": 33.33
+              }
+            },
+            "05b875f2e2c7af2adc51": {
+              "distinct": 434,
+              "per_s": 72.6,
+              "per_input_second": 71.8,
+              "first_presented_delay_ms": 63.79,
+              "interval_ms": {
+                "n": 433,
+                "p50": 16.67,
+                "p95": 25.0,
+                "max": 33.33
+              }
+            }
+          },
+          "accepted_masks": 435,
+          "accepted_per_s": 72.2,
+          "presented_generations": {
+            "distinct": 434,
+            "per_s": 72.6,
+            "per_input_second": 71.8,
+            "first_presented_delay_ms": 63.79,
+            "interval_ms": {
+              "n": 433,
+              "p50": 16.67,
+              "p95": 25.0,
+              "max": 33.33
+            }
+          },
+          "reduction_ms": {
+            "n": 435,
+            "p50": 10.26,
+            "p95": 11.64,
+            "max": 40.2
+          },
+          "backend_gpu_ms": {
+            "n": 435,
+            "p50": 8.54,
+            "p95": 9.53,
+            "max": 38.49
+          },
+          "changed_px_per_source": {
+            "n": 3045,
+            "p50": 1070,
+            "p95": 1100,
+            "max": 4747
+          },
+          "modes": {
+            "delta": 3045
+          },
+          "selected_dp": null
+        },
+        "large-ABF-resize": {
+          "span_s": 6.04,
+          "tiles_presenting": 7,
+          "expected_comparison_tiles": 7,
+          "all_tiles_presented_generations": {
+            "distinct": 652,
+            "per_s": 108.1,
+            "per_input_second": 107.8,
+            "first_presented_delay_ms": 12.52,
+            "interval_ms": {
+              "n": 651,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 33.33
+            }
+          },
+          "incomplete_comparison_generations": 0,
+          "presented_per_tile": {
+            "5e9a856e6f45f416de9a": {
+              "distinct": 652,
+              "per_s": 108.1,
+              "per_input_second": 107.8,
+              "first_presented_delay_ms": 12.52,
+              "interval_ms": {
+                "n": 651,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 33.33
+              }
+            },
+            "aa37171a768c5202847e": {
+              "distinct": 652,
+              "per_s": 108.1,
+              "per_input_second": 107.8,
+              "first_presented_delay_ms": 12.52,
+              "interval_ms": {
+                "n": 651,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 33.33
+              }
+            },
+            "8c977f2ff4f75365d28a": {
+              "distinct": 652,
+              "per_s": 108.1,
+              "per_input_second": 107.8,
+              "first_presented_delay_ms": 12.52,
+              "interval_ms": {
+                "n": 651,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 33.33
+              }
+            },
+            "6efe6ff6cec0316a330d": {
+              "distinct": 652,
+              "per_s": 108.1,
+              "per_input_second": 107.8,
+              "first_presented_delay_ms": 12.52,
+              "interval_ms": {
+                "n": 651,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 33.33
+              }
+            },
+            "46165a8d74f5aceb0d12": {
+              "distinct": 652,
+              "per_s": 108.1,
+              "per_input_second": 107.8,
+              "first_presented_delay_ms": 12.52,
+              "interval_ms": {
+                "n": 651,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 33.33
+              }
+            },
+            "75291f2086a0454a2bef": {
+              "distinct": 652,
+              "per_s": 108.1,
+              "per_input_second": 107.8,
+              "first_presented_delay_ms": 12.52,
+              "interval_ms": {
+                "n": 651,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 33.33
+              }
+            },
+            "05b875f2e2c7af2adc51": {
+              "distinct": 652,
+              "per_s": 108.1,
+              "per_input_second": 107.8,
+              "first_presented_delay_ms": 12.52,
+              "interval_ms": {
+                "n": 651,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 33.33
+              }
+            }
+          },
+          "accepted_masks": 652,
+          "accepted_per_s": 108.3,
+          "presented_generations": {
+            "distinct": 652,
+            "per_s": 108.1,
+            "per_input_second": 107.8,
+            "first_presented_delay_ms": 12.52,
+            "interval_ms": {
+              "n": 651,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 33.33
+            }
+          },
+          "reduction_ms": {
+            "n": 652,
+            "p50": 4.93,
+            "p95": 8.39,
+            "max": 18.44
+          },
+          "backend_gpu_ms": {
+            "n": 652,
+            "p50": 3.22,
+            "p95": 6.61,
+            "max": 16.78
+          },
+          "changed_px_per_source": {
+            "n": 4564,
+            "p50": 220.0,
+            "p95": 387,
+            "max": 1122
+          },
+          "modes": {
+            "delta": 4564
+          },
+          "selected_dp": null
+        },
+        "large-ADF-center": {
+          "span_s": 6.07,
+          "tiles_presenting": 7,
+          "expected_comparison_tiles": 7,
+          "all_tiles_presented_generations": {
+            "distinct": 414,
+            "per_s": 68.5,
+            "per_input_second": 68.5,
+            "first_presented_delay_ms": 18.97,
+            "interval_ms": {
+              "n": 413,
+              "p50": 16.67,
+              "p95": 25.0,
+              "max": 66.67
+            }
+          },
+          "incomplete_comparison_generations": 0,
+          "presented_per_tile": {
+            "5e9a856e6f45f416de9a": {
+              "distinct": 414,
+              "per_s": 68.5,
+              "per_input_second": 68.5,
+              "first_presented_delay_ms": 18.97,
+              "interval_ms": {
+                "n": 413,
+                "p50": 16.67,
+                "p95": 25.0,
+                "max": 66.67
+              }
+            },
+            "aa37171a768c5202847e": {
+              "distinct": 414,
+              "per_s": 68.5,
+              "per_input_second": 68.5,
+              "first_presented_delay_ms": 18.97,
+              "interval_ms": {
+                "n": 413,
+                "p50": 16.67,
+                "p95": 25.0,
+                "max": 66.67
+              }
+            },
+            "8c977f2ff4f75365d28a": {
+              "distinct": 414,
+              "per_s": 68.5,
+              "per_input_second": 68.5,
+              "first_presented_delay_ms": 18.97,
+              "interval_ms": {
+                "n": 413,
+                "p50": 16.67,
+                "p95": 25.0,
+                "max": 66.67
+              }
+            },
+            "6efe6ff6cec0316a330d": {
+              "distinct": 414,
+              "per_s": 68.5,
+              "per_input_second": 68.5,
+              "first_presented_delay_ms": 18.97,
+              "interval_ms": {
+                "n": 413,
+                "p50": 16.67,
+                "p95": 25.0,
+                "max": 66.67
+              }
+            },
+            "46165a8d74f5aceb0d12": {
+              "distinct": 414,
+              "per_s": 68.5,
+              "per_input_second": 68.5,
+              "first_presented_delay_ms": 18.97,
+              "interval_ms": {
+                "n": 413,
+                "p50": 16.67,
+                "p95": 25.0,
+                "max": 66.67
+              }
+            },
+            "05b875f2e2c7af2adc51": {
+              "distinct": 414,
+              "per_s": 68.5,
+              "per_input_second": 68.5,
+              "first_presented_delay_ms": 18.97,
+              "interval_ms": {
+                "n": 413,
+                "p50": 16.67,
+                "p95": 25.0,
+                "max": 66.67
+              }
+            },
+            "75291f2086a0454a2bef": {
+              "distinct": 414,
+              "per_s": 68.5,
+              "per_input_second": 68.5,
+              "first_presented_delay_ms": 18.97,
+              "interval_ms": {
+                "n": 413,
+                "p50": 16.67,
+                "p95": 25.0,
+                "max": 66.67
+              }
+            }
+          },
+          "accepted_masks": 414,
+          "accepted_per_s": 68.6,
+          "presented_generations": {
+            "distinct": 414,
+            "per_s": 68.5,
+            "per_input_second": 68.5,
+            "first_presented_delay_ms": 18.97,
+            "interval_ms": {
+              "n": 413,
+              "p50": 16.67,
+              "p95": 25.0,
+              "max": 66.67
+            }
+          },
+          "reduction_ms": {
+            "n": 414,
+            "p50": 10.5,
+            "p95": 11.59,
+            "max": 48.41
+          },
+          "backend_gpu_ms": {
+            "n": 414,
+            "p50": 8.79,
+            "p95": 9.44,
+            "max": 45.4
+          },
+          "changed_px_per_source": {
+            "n": 2898,
+            "p50": 1387.0,
+            "p95": 1422,
+            "max": 6902
+          },
+          "modes": {
+            "delta": 2898
+          },
+          "selected_dp": null
+        },
+        "large-ADF-resize": {
+          "span_s": 6.02,
+          "tiles_presenting": 7,
+          "expected_comparison_tiles": 7,
+          "all_tiles_presented_generations": {
+            "distinct": 640,
+            "per_s": 106.6,
+            "per_input_second": 106.4,
+            "first_presented_delay_ms": 15.35,
+            "interval_ms": {
+              "n": 639,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 41.67
+            }
+          },
+          "incomplete_comparison_generations": 0,
+          "presented_per_tile": {
+            "5e9a856e6f45f416de9a": {
+              "distinct": 640,
+              "per_s": 106.6,
+              "per_input_second": 106.4,
+              "first_presented_delay_ms": 15.35,
+              "interval_ms": {
+                "n": 639,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 41.67
+              }
+            },
+            "aa37171a768c5202847e": {
+              "distinct": 640,
+              "per_s": 106.6,
+              "per_input_second": 106.4,
+              "first_presented_delay_ms": 15.35,
+              "interval_ms": {
+                "n": 639,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 41.67
+              }
+            },
+            "8c977f2ff4f75365d28a": {
+              "distinct": 640,
+              "per_s": 106.6,
+              "per_input_second": 106.4,
+              "first_presented_delay_ms": 15.35,
+              "interval_ms": {
+                "n": 639,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 41.67
+              }
+            },
+            "6efe6ff6cec0316a330d": {
+              "distinct": 640,
+              "per_s": 106.6,
+              "per_input_second": 106.4,
+              "first_presented_delay_ms": 15.35,
+              "interval_ms": {
+                "n": 639,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 41.67
+              }
+            },
+            "46165a8d74f5aceb0d12": {
+              "distinct": 640,
+              "per_s": 106.6,
+              "per_input_second": 106.4,
+              "first_presented_delay_ms": 15.35,
+              "interval_ms": {
+                "n": 639,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 41.67
+              }
+            },
+            "05b875f2e2c7af2adc51": {
+              "distinct": 640,
+              "per_s": 106.6,
+              "per_input_second": 106.4,
+              "first_presented_delay_ms": 15.35,
+              "interval_ms": {
+                "n": 639,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 41.67
+              }
+            },
+            "75291f2086a0454a2bef": {
+              "distinct": 640,
+              "per_s": 106.6,
+              "per_input_second": 106.4,
+              "first_presented_delay_ms": 15.35,
+              "interval_ms": {
+                "n": 639,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 41.67
+              }
+            }
+          },
+          "accepted_masks": 643,
+          "accepted_per_s": 106.9,
+          "presented_generations": {
+            "distinct": 640,
+            "per_s": 106.6,
+            "per_input_second": 106.4,
+            "first_presented_delay_ms": 15.35,
+            "interval_ms": {
+              "n": 639,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 41.67
+            }
+          },
+          "reduction_ms": {
+            "n": 643,
+            "p50": 5.02,
+            "p95": 8.36,
+            "max": 15.06
+          },
+          "backend_gpu_ms": {
+            "n": 643,
+            "p50": 3.11,
+            "p95": 6.61,
+            "max": 13.3
+          },
+          "changed_px_per_source": {
+            "n": 4501,
+            "p50": 236,
+            "p95": 472,
+            "max": 1203
+          },
+          "modes": {
+            "delta": 4501
+          },
+          "selected_dp": null
+        },
+        "scan-drag": {
+          "span_s": 3.01,
+          "tiles_presenting": 0,
+          "expected_comparison_tiles": 7,
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "presented_per_tile": {},
+          "accepted_masks": 0,
+          "accepted_per_s": null,
+          "presented_generations": null,
+          "reduction_ms": null,
+          "backend_gpu_ms": null,
+          "changed_px_per_source": null,
+          "modes": null,
+          "selected_dp": {
+            "distinct": 354,
+            "per_s": 120.0,
+            "per_input_second": 117.6,
+            "first_presented_delay_ms": 66.22,
+            "interval_ms": {
+              "n": 353,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 8.33
+            }
+          }
+        },
+        "scan-drag-2": {
+          "span_s": 3.01,
+          "tiles_presenting": 0,
+          "expected_comparison_tiles": 7,
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "presented_per_tile": {},
+          "accepted_masks": 0,
+          "accepted_per_s": null,
+          "presented_generations": null,
+          "reduction_ms": null,
+          "backend_gpu_ms": null,
+          "changed_px_per_source": null,
+          "modes": null,
+          "selected_dp": {
+            "distinct": 357,
+            "per_s": 119.3,
+            "per_input_second": 118.7,
+            "first_presented_delay_ms": 22.75,
+            "interval_ms": {
+              "n": 356,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          }
+        }
+      },
+      "first_comparison_submission": {
+        "source_count": 7,
+        "call_to_publication_ms": 2063.99,
+        "driver_interval_ms": 1924.4576250202954,
+        "gpu_interval_ms": 137.2713750170078,
+        "cpu_prepare_ms": 1.262084,
+        "excluded_from_steady_drag_rates": true,
+        "not_a_drawable_presentation_measurement": true
+      }
+    }
+  },
+  {
+    "case": "quad-vector",
+    "flags": {
+      "COMPACT_RAW_QUAD_VECTOR": "1"
+    },
+    "binary_sha256": "e809dc9dee14918e9ce3cc0aa3cfbae93a559c08030e97f91f1a4548fa7875fc",
+    "metal_resource_sha256": {
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/ans_counts.metal": "c58a7397fb5c97453711785dfa9722132dc5f24a055090985b688db3716be54b",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/compact_detector_regions.metal": "b35b1bd86454de67503f94ac2336afdd3824b7aeb54dcc546a62d987d8f5ca22",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/detector.metal": "62ecde7eb07610ad358a2834b274476f5580201b0c58f450c495adab35c97716",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/dpc.metal": "8ba200b8f32ed8d06e2e394ae8bfaa29e1a06945f5b4baafa3a637301803f8a1",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/original_packing.metal": "c1fdc2715cdc57fe21f049a04bfbdfdc8851bcbd451e75d7d37df200781e1e5e",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/packed_h5.metal": "2f33eaa08b2720a1e1c091eca4407f35b19d7cb0cda6592c8f8bfff1c143fc91",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/qh5idx.metal": "8d7ecf9fdb3a43ee0379fa404b0825fcdd70b660879afbc880ee576d4519e9c9",
+      "MetalKernels_MetalDisplayKernels.bundle/Resources/display.metal": "c74a945450b1002b95bbc319ae0ca3387905c4476991c487cd76aca6b12ce59f",
+      "MetalKernels_MetalImageFFT.bundle/Resources/fft.metal": "fbefa9fea2b2b198b014939fa6a8834293c61eca1ce08af0bbfdfec9aee60052",
+      "MetalKernels_MetalSSBKernels.bundle/Resources/ssb.metal": "b1c56f17776a7841be0b8ffcf08b85cda32a914c11cb4b4913a2cf4a5ad60306"
+    },
+    "returncode": 0,
+    "summary": {
+      "launched": 1788854000.3631082,
+      "pid": 14303,
+      "catalog_s": 1.46,
+      "catalog_state": {
+        "dataset_count": 7,
+        "resident_count": 1,
+        "allocated_bytes": 2038251520,
+        "cache_state": "resident"
+      },
+      "compare_ready_s": 6.53,
+      "compare_state": {
+        "resident_count": 7,
+        "allocated_bytes": 14827208704,
+        "memory_budget_bytes": 17162698752,
+        "comparison_resident_bytes": 14752175312,
+        "comparison_count": 7
+      },
+      "custom_drag": [
+        "settled",
+        27.5
+      ],
+      "scan_drag": [
+        "settled",
+        2.9
+      ],
+      "average_diffraction": {
+        "ready_after_hook_seconds": 0.08611829199999477,
+        "dataset_id": "8c977f2ff4f75365d28a",
+        "scan_count": 262144,
+        "hash": "7b58be5eaa5ebd1f",
+        "static_full_scan_mean_not_fps": true,
+        "drawable_presented": true
+      },
+      "scan_after_average": [
+        "settled",
+        3.6
+      ],
+      "final_state": {
+        "resident_count": 7,
+        "allocated_bytes": 14873542656,
+        "comparison_visible": true
+      },
+      "exit": 0,
+      "analysis": {
+        "large-ABF-center": {
+          "span_s": 6.07,
+          "tiles_presenting": 7,
+          "expected_comparison_tiles": 7,
+          "all_tiles_presented_generations": {
+            "distinct": 564,
+            "per_s": 94.4,
+            "per_input_second": 93.5,
+            "first_presented_delay_ms": 60.47,
+            "interval_ms": {
+              "n": 563,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 33.33
+            }
+          },
+          "incomplete_comparison_generations": 0,
+          "presented_per_tile": {
+            "5e9a856e6f45f416de9a": {
+              "distinct": 564,
+              "per_s": 94.4,
+              "per_input_second": 93.5,
+              "first_presented_delay_ms": 60.47,
+              "interval_ms": {
+                "n": 563,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 33.33
+              }
+            },
+            "aa37171a768c5202847e": {
+              "distinct": 564,
+              "per_s": 94.4,
+              "per_input_second": 93.6,
+              "first_presented_delay_ms": 60.47,
+              "interval_ms": {
+                "n": 563,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 33.33
+              }
+            },
+            "8c977f2ff4f75365d28a": {
+              "distinct": 564,
+              "per_s": 94.4,
+              "per_input_second": 93.6,
+              "first_presented_delay_ms": 60.47,
+              "interval_ms": {
+                "n": 563,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 33.33
+              }
+            },
+            "6efe6ff6cec0316a330d": {
+              "distinct": 564,
+              "per_s": 94.4,
+              "per_input_second": 93.5,
+              "first_presented_delay_ms": 60.47,
+              "interval_ms": {
+                "n": 563,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 33.33
+              }
+            },
+            "46165a8d74f5aceb0d12": {
+              "distinct": 564,
+              "per_s": 94.4,
+              "per_input_second": 93.5,
+              "first_presented_delay_ms": 60.47,
+              "interval_ms": {
+                "n": 563,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 33.33
+              }
+            },
+            "75291f2086a0454a2bef": {
+              "distinct": 564,
+              "per_s": 94.4,
+              "per_input_second": 93.5,
+              "first_presented_delay_ms": 60.47,
+              "interval_ms": {
+                "n": 563,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 33.33
+              }
+            },
+            "05b875f2e2c7af2adc51": {
+              "distinct": 564,
+              "per_s": 94.4,
+              "per_input_second": 93.5,
+              "first_presented_delay_ms": 60.47,
+              "interval_ms": {
+                "n": 563,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 33.33
+              }
+            }
+          },
+          "accepted_masks": 565,
+          "accepted_per_s": 93.8,
+          "presented_generations": {
+            "distinct": 564,
+            "per_s": 94.4,
+            "per_input_second": 93.6,
+            "first_presented_delay_ms": 60.47,
+            "interval_ms": {
+              "n": 563,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 33.33
+            }
+          },
+          "reduction_ms": {
+            "n": 565,
+            "p50": 6.63,
+            "p95": 10.58,
+            "max": 40.71
+          },
+          "backend_gpu_ms": {
+            "n": 565,
+            "p50": 4.84,
+            "p95": 8.89,
+            "max": 38.97
+          },
+          "changed_px_per_source": {
+            "n": 3955,
+            "p50": 549,
+            "p95": 1091,
+            "max": 4747
+          },
+          "modes": {
+            "delta": 3955
+          },
+          "selected_dp": null
+        },
+        "large-ABF-resize": {
+          "span_s": 6.03,
+          "tiles_presenting": 7,
+          "expected_comparison_tiles": 7,
+          "all_tiles_presented_generations": {
+            "distinct": 658,
+            "per_s": 109.2,
+            "per_input_second": 109.0,
+            "first_presented_delay_ms": 11.61,
+            "interval_ms": {
+              "n": 657,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 41.67
+            }
+          },
+          "incomplete_comparison_generations": 0,
+          "presented_per_tile": {
+            "5e9a856e6f45f416de9a": {
+              "distinct": 658,
+              "per_s": 109.2,
+              "per_input_second": 109.0,
+              "first_presented_delay_ms": 11.61,
+              "interval_ms": {
+                "n": 657,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 41.67
+              }
+            },
+            "aa37171a768c5202847e": {
+              "distinct": 658,
+              "per_s": 109.2,
+              "per_input_second": 109.0,
+              "first_presented_delay_ms": 11.61,
+              "interval_ms": {
+                "n": 657,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 41.67
+              }
+            },
+            "8c977f2ff4f75365d28a": {
+              "distinct": 658,
+              "per_s": 109.2,
+              "per_input_second": 109.0,
+              "first_presented_delay_ms": 11.61,
+              "interval_ms": {
+                "n": 657,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 41.67
+              }
+            },
+            "6efe6ff6cec0316a330d": {
+              "distinct": 658,
+              "per_s": 109.2,
+              "per_input_second": 109.0,
+              "first_presented_delay_ms": 11.61,
+              "interval_ms": {
+                "n": 657,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 41.67
+              }
+            },
+            "46165a8d74f5aceb0d12": {
+              "distinct": 658,
+              "per_s": 109.2,
+              "per_input_second": 109.0,
+              "first_presented_delay_ms": 11.61,
+              "interval_ms": {
+                "n": 657,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 41.67
+              }
+            },
+            "05b875f2e2c7af2adc51": {
+              "distinct": 658,
+              "per_s": 109.2,
+              "per_input_second": 109.0,
+              "first_presented_delay_ms": 11.61,
+              "interval_ms": {
+                "n": 657,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 41.67
+              }
+            },
+            "75291f2086a0454a2bef": {
+              "distinct": 658,
+              "per_s": 109.2,
+              "per_input_second": 109.0,
+              "first_presented_delay_ms": 11.61,
+              "interval_ms": {
+                "n": 657,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 41.67
+              }
+            }
+          },
+          "accepted_masks": 659,
+          "accepted_per_s": 109.5,
+          "presented_generations": {
+            "distinct": 658,
+            "per_s": 109.2,
+            "per_input_second": 109.0,
+            "first_presented_delay_ms": 11.61,
+            "interval_ms": {
+              "n": 657,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 41.67
+            }
+          },
+          "reduction_ms": {
+            "n": 659,
+            "p50": 5.38,
+            "p95": 8.13,
+            "max": 15.65
+          },
+          "backend_gpu_ms": {
+            "n": 659,
+            "p50": 3.57,
+            "p95": 6.57,
+            "max": 14.09
+          },
+          "changed_px_per_source": {
+            "n": 4613,
+            "p50": 220,
+            "p95": 344,
+            "max": 1370
+          },
+          "modes": {
+            "delta": 4613
+          },
+          "selected_dp": null
+        },
+        "large-ADF-center": {
+          "span_s": 6.06,
+          "tiles_presenting": 7,
+          "expected_comparison_tiles": 7,
+          "all_tiles_presented_generations": {
+            "distinct": 459,
+            "per_s": 76.0,
+            "per_input_second": 76.1,
+            "first_presented_delay_ms": 9.93,
+            "interval_ms": {
+              "n": 458,
+              "p50": 8.33,
+              "p95": 25.0,
+              "max": 75.0
+            }
+          },
+          "incomplete_comparison_generations": 0,
+          "presented_per_tile": {
+            "5e9a856e6f45f416de9a": {
+              "distinct": 459,
+              "per_s": 76.0,
+              "per_input_second": 76.1,
+              "first_presented_delay_ms": 9.93,
+              "interval_ms": {
+                "n": 458,
+                "p50": 8.33,
+                "p95": 25.0,
+                "max": 75.0
+              }
+            },
+            "aa37171a768c5202847e": {
+              "distinct": 459,
+              "per_s": 76.0,
+              "per_input_second": 76.1,
+              "first_presented_delay_ms": 9.93,
+              "interval_ms": {
+                "n": 458,
+                "p50": 8.33,
+                "p95": 25.0,
+                "max": 75.0
+              }
+            },
+            "8c977f2ff4f75365d28a": {
+              "distinct": 459,
+              "per_s": 76.0,
+              "per_input_second": 76.1,
+              "first_presented_delay_ms": 9.93,
+              "interval_ms": {
+                "n": 458,
+                "p50": 8.33,
+                "p95": 25.0,
+                "max": 75.0
+              }
+            },
+            "6efe6ff6cec0316a330d": {
+              "distinct": 459,
+              "per_s": 76.0,
+              "per_input_second": 76.1,
+              "first_presented_delay_ms": 9.93,
+              "interval_ms": {
+                "n": 458,
+                "p50": 8.33,
+                "p95": 25.0,
+                "max": 75.0
+              }
+            },
+            "46165a8d74f5aceb0d12": {
+              "distinct": 459,
+              "per_s": 76.0,
+              "per_input_second": 76.1,
+              "first_presented_delay_ms": 9.93,
+              "interval_ms": {
+                "n": 458,
+                "p50": 8.33,
+                "p95": 25.0,
+                "max": 75.0
+              }
+            },
+            "05b875f2e2c7af2adc51": {
+              "distinct": 459,
+              "per_s": 76.0,
+              "per_input_second": 76.1,
+              "first_presented_delay_ms": 9.93,
+              "interval_ms": {
+                "n": 458,
+                "p50": 8.33,
+                "p95": 25.0,
+                "max": 75.0
+              }
+            },
+            "75291f2086a0454a2bef": {
+              "distinct": 459,
+              "per_s": 76.0,
+              "per_input_second": 76.1,
+              "first_presented_delay_ms": 9.93,
+              "interval_ms": {
+                "n": 458,
+                "p50": 8.33,
+                "p95": 25.0,
+                "max": 75.0
+              }
+            }
+          },
+          "accepted_masks": 459,
+          "accepted_per_s": 76.2,
+          "presented_generations": {
+            "distinct": 459,
+            "per_s": 76.0,
+            "per_input_second": 76.1,
+            "first_presented_delay_ms": 9.93,
+            "interval_ms": {
+              "n": 458,
+              "p50": 8.33,
+              "p95": 25.0,
+              "max": 75.0
+            }
+          },
+          "reduction_ms": {
+            "n": 459,
+            "p50": 9.79,
+            "p95": 11.16,
+            "max": 48.44
+          },
+          "backend_gpu_ms": {
+            "n": 459,
+            "p50": 8.0,
+            "p95": 9.1,
+            "max": 46.56
+          },
+          "changed_px_per_source": {
+            "n": 3213,
+            "p50": 1367,
+            "p95": 1418,
+            "max": 6902
+          },
+          "modes": {
+            "delta": 3213
+          },
+          "selected_dp": null
+        },
+        "large-ADF-resize": {
+          "span_s": 6.03,
+          "tiles_presenting": 7,
+          "expected_comparison_tiles": 7,
+          "all_tiles_presented_generations": {
+            "distinct": 610,
+            "per_s": 101.6,
+            "per_input_second": 101.3,
+            "first_presented_delay_ms": 21.79,
+            "interval_ms": {
+              "n": 609,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 41.67
+            }
+          },
+          "incomplete_comparison_generations": 0,
+          "presented_per_tile": {
+            "5e9a856e6f45f416de9a": {
+              "distinct": 610,
+              "per_s": 101.6,
+              "per_input_second": 101.3,
+              "first_presented_delay_ms": 21.79,
+              "interval_ms": {
+                "n": 609,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 41.67
+              }
+            },
+            "aa37171a768c5202847e": {
+              "distinct": 610,
+              "per_s": 101.6,
+              "per_input_second": 101.3,
+              "first_presented_delay_ms": 21.79,
+              "interval_ms": {
+                "n": 609,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 41.67
+              }
+            },
+            "8c977f2ff4f75365d28a": {
+              "distinct": 610,
+              "per_s": 101.6,
+              "per_input_second": 101.3,
+              "first_presented_delay_ms": 21.79,
+              "interval_ms": {
+                "n": 609,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 41.67
+              }
+            },
+            "6efe6ff6cec0316a330d": {
+              "distinct": 610,
+              "per_s": 101.6,
+              "per_input_second": 101.3,
+              "first_presented_delay_ms": 21.79,
+              "interval_ms": {
+                "n": 609,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 41.67
+              }
+            },
+            "46165a8d74f5aceb0d12": {
+              "distinct": 610,
+              "per_s": 101.6,
+              "per_input_second": 101.3,
+              "first_presented_delay_ms": 21.79,
+              "interval_ms": {
+                "n": 609,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 41.67
+              }
+            },
+            "05b875f2e2c7af2adc51": {
+              "distinct": 610,
+              "per_s": 101.6,
+              "per_input_second": 101.3,
+              "first_presented_delay_ms": 21.79,
+              "interval_ms": {
+                "n": 609,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 41.67
+              }
+            },
+            "75291f2086a0454a2bef": {
+              "distinct": 610,
+              "per_s": 101.6,
+              "per_input_second": 101.3,
+              "first_presented_delay_ms": 21.79,
+              "interval_ms": {
+                "n": 609,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 41.67
+              }
+            }
+          },
+          "accepted_masks": 611,
+          "accepted_per_s": 101.5,
+          "presented_generations": {
+            "distinct": 610,
+            "per_s": 101.6,
+            "per_input_second": 101.3,
+            "first_presented_delay_ms": 21.79,
+            "interval_ms": {
+              "n": 609,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 41.67
+            }
+          },
+          "reduction_ms": {
+            "n": 611,
+            "p50": 4.92,
+            "p95": 8.88,
+            "max": 13.1
+          },
+          "backend_gpu_ms": {
+            "n": 611,
+            "p50": 2.99,
+            "p95": 6.93,
+            "max": 11.26
+          },
+          "changed_px_per_source": {
+            "n": 4277,
+            "p50": 239,
+            "p95": 496,
+            "max": 1011
+          },
+          "modes": {
+            "delta": 4277
+          },
+          "selected_dp": null
+        },
+        "scan-drag": {
+          "span_s": 3.01,
+          "tiles_presenting": 0,
+          "expected_comparison_tiles": 7,
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "presented_per_tile": {},
+          "accepted_masks": 0,
+          "accepted_per_s": null,
+          "presented_generations": null,
+          "reduction_ms": null,
+          "backend_gpu_ms": null,
+          "changed_px_per_source": null,
+          "modes": null,
+          "selected_dp": {
+            "distinct": 354,
+            "per_s": 120.0,
+            "per_input_second": 117.6,
+            "first_presented_delay_ms": 67.65,
+            "interval_ms": {
+              "n": 353,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 8.33
+            }
+          }
+        },
+        "scan-drag-2": {
+          "span_s": 3.01,
+          "tiles_presenting": 0,
+          "expected_comparison_tiles": 7,
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "presented_per_tile": {},
+          "accepted_masks": 0,
+          "accepted_per_s": null,
+          "presented_generations": null,
+          "reduction_ms": null,
+          "backend_gpu_ms": null,
+          "changed_px_per_source": null,
+          "modes": null,
+          "selected_dp": {
+            "distinct": 357,
+            "per_s": 119.3,
+            "per_input_second": 118.3,
+            "first_presented_delay_ms": 28.35,
+            "interval_ms": {
+              "n": 356,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 25.0
+            }
+          }
+        }
+      },
+      "first_comparison_submission": {
+        "source_count": 7,
+        "call_to_publication_ms": 2144.236042,
+        "driver_interval_ms": 1991.7472499946598,
+        "gpu_interval_ms": 150.29224997851998,
+        "cpu_prepare_ms": 1.216917,
+        "excluded_from_steady_drag_rates": true,
+        "not_a_drawable_presentation_measurement": true
+      }
+    }
+  },
+  {
+    "case": "quad-b",
+    "flags": {},
+    "binary_sha256": "e809dc9dee14918e9ce3cc0aa3cfbae93a559c08030e97f91f1a4548fa7875fc",
+    "metal_resource_sha256": {
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/ans_counts.metal": "c58a7397fb5c97453711785dfa9722132dc5f24a055090985b688db3716be54b",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/compact_detector_regions.metal": "b35b1bd86454de67503f94ac2336afdd3824b7aeb54dcc546a62d987d8f5ca22",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/detector.metal": "62ecde7eb07610ad358a2834b274476f5580201b0c58f450c495adab35c97716",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/dpc.metal": "8ba200b8f32ed8d06e2e394ae8bfaa29e1a06945f5b4baafa3a637301803f8a1",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/original_packing.metal": "c1fdc2715cdc57fe21f049a04bfbdfdc8851bcbd451e75d7d37df200781e1e5e",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/packed_h5.metal": "2f33eaa08b2720a1e1c091eca4407f35b19d7cb0cda6592c8f8bfff1c143fc91",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/qh5idx.metal": "8d7ecf9fdb3a43ee0379fa404b0825fcdd70b660879afbc880ee576d4519e9c9",
+      "MetalKernels_MetalDisplayKernels.bundle/Resources/display.metal": "c74a945450b1002b95bbc319ae0ca3387905c4476991c487cd76aca6b12ce59f",
+      "MetalKernels_MetalImageFFT.bundle/Resources/fft.metal": "fbefa9fea2b2b198b014939fa6a8834293c61eca1ce08af0bbfdfec9aee60052",
+      "MetalKernels_MetalSSBKernels.bundle/Resources/ssb.metal": "b1c56f17776a7841be0b8ffcf08b85cda32a914c11cb4b4913a2cf4a5ad60306"
+    },
+    "returncode": 0,
+    "summary": {
+      "launched": 1788854050.7157,
+      "pid": 17697,
+      "catalog_s": 1.47,
+      "catalog_state": {
+        "dataset_count": 7,
+        "resident_count": 1,
+        "allocated_bytes": 2031042560,
+        "cache_state": "resident"
+      },
+      "compare_ready_s": 6.43,
+      "compare_state": {
+        "resident_count": 7,
+        "allocated_bytes": 14827208704,
+        "memory_budget_bytes": 17162698752,
+        "comparison_resident_bytes": 14752175312,
+        "comparison_count": 7
+      },
+      "custom_drag": [
+        "settled",
+        27.0
+      ],
+      "scan_drag": [
+        "settled",
+        2.9
+      ],
+      "average_diffraction": {
+        "ready_after_hook_seconds": 0.09408045899999706,
+        "dataset_id": "8c977f2ff4f75365d28a",
+        "scan_count": 262144,
+        "hash": "7b58be5eaa5ebd1f",
+        "static_full_scan_mean_not_fps": true,
+        "drawable_presented": true
+      },
+      "scan_after_average": [
+        "settled",
+        4.2
+      ],
+      "final_state": {
+        "resident_count": 7,
+        "allocated_bytes": 14873542656,
+        "comparison_visible": true
+      },
+      "exit": 0,
+      "analysis": {
+        "large-ABF-center": {
+          "span_s": 6.06,
+          "tiles_presenting": 7,
+          "expected_comparison_tiles": 7,
+          "all_tiles_presented_generations": {
+            "distinct": 431,
+            "per_s": 72.1,
+            "per_input_second": 71.5,
+            "first_presented_delay_ms": 64.81,
+            "interval_ms": {
+              "n": 430,
+              "p50": 16.67,
+              "p95": 25.0,
+              "max": 50.0
+            }
+          },
+          "incomplete_comparison_generations": 0,
+          "presented_per_tile": {
+            "5e9a856e6f45f416de9a": {
+              "distinct": 431,
+              "per_s": 72.1,
+              "per_input_second": 71.5,
+              "first_presented_delay_ms": 64.81,
+              "interval_ms": {
+                "n": 430,
+                "p50": 16.67,
+                "p95": 25.0,
+                "max": 50.0
+              }
+            },
+            "aa37171a768c5202847e": {
+              "distinct": 431,
+              "per_s": 72.1,
+              "per_input_second": 71.5,
+              "first_presented_delay_ms": 64.81,
+              "interval_ms": {
+                "n": 430,
+                "p50": 16.67,
+                "p95": 25.0,
+                "max": 50.0
+              }
+            },
+            "8c977f2ff4f75365d28a": {
+              "distinct": 431,
+              "per_s": 72.1,
+              "per_input_second": 71.5,
+              "first_presented_delay_ms": 64.81,
+              "interval_ms": {
+                "n": 430,
+                "p50": 16.67,
+                "p95": 25.0,
+                "max": 50.0
+              }
+            },
+            "6efe6ff6cec0316a330d": {
+              "distinct": 431,
+              "per_s": 72.1,
+              "per_input_second": 71.5,
+              "first_presented_delay_ms": 64.81,
+              "interval_ms": {
+                "n": 430,
+                "p50": 16.67,
+                "p95": 25.0,
+                "max": 50.0
+              }
+            },
+            "46165a8d74f5aceb0d12": {
+              "distinct": 431,
+              "per_s": 72.1,
+              "per_input_second": 71.5,
+              "first_presented_delay_ms": 64.81,
+              "interval_ms": {
+                "n": 430,
+                "p50": 16.67,
+                "p95": 25.0,
+                "max": 50.0
+              }
+            },
+            "05b875f2e2c7af2adc51": {
+              "distinct": 431,
+              "per_s": 72.1,
+              "per_input_second": 71.5,
+              "first_presented_delay_ms": 64.81,
+              "interval_ms": {
+                "n": 430,
+                "p50": 16.67,
+                "p95": 25.0,
+                "max": 50.0
+              }
+            },
+            "75291f2086a0454a2bef": {
+              "distinct": 431,
+              "per_s": 72.1,
+              "per_input_second": 71.5,
+              "first_presented_delay_ms": 64.81,
+              "interval_ms": {
+                "n": 430,
+                "p50": 16.67,
+                "p95": 25.0,
+                "max": 50.0
+              }
+            }
+          },
+          "accepted_masks": 432,
+          "accepted_per_s": 71.7,
+          "presented_generations": {
+            "distinct": 431,
+            "per_s": 72.1,
+            "per_input_second": 71.5,
+            "first_presented_delay_ms": 64.81,
+            "interval_ms": {
+              "n": 430,
+              "p50": 16.67,
+              "p95": 25.0,
+              "max": 50.0
+            }
+          },
+          "reduction_ms": {
+            "n": 432,
+            "p50": 10.23,
+            "p95": 13.64,
+            "max": 40.71
+          },
+          "backend_gpu_ms": {
+            "n": 432,
+            "p50": 8.42,
+            "p95": 11.77,
+            "max": 38.8
+          },
+          "changed_px_per_source": {
+            "n": 3024,
+            "p50": 1068.0,
+            "p95": 1575,
+            "max": 4747
+          },
+          "modes": {
+            "delta": 3024
+          },
+          "selected_dp": null
+        },
+        "large-ABF-resize": {
+          "span_s": 6.04,
+          "tiles_presenting": 7,
+          "expected_comparison_tiles": 7,
+          "all_tiles_presented_generations": {
+            "distinct": 643,
+            "per_s": 106.6,
+            "per_input_second": 106.5,
+            "first_presented_delay_ms": 7.87,
+            "interval_ms": {
+              "n": 642,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 50.0
+            }
+          },
+          "incomplete_comparison_generations": 0,
+          "presented_per_tile": {
+            "5e9a856e6f45f416de9a": {
+              "distinct": 643,
+              "per_s": 106.6,
+              "per_input_second": 106.5,
+              "first_presented_delay_ms": 7.87,
+              "interval_ms": {
+                "n": 642,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 50.0
+              }
+            },
+            "aa37171a768c5202847e": {
+              "distinct": 643,
+              "per_s": 106.6,
+              "per_input_second": 106.5,
+              "first_presented_delay_ms": 7.87,
+              "interval_ms": {
+                "n": 642,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 50.0
+              }
+            },
+            "8c977f2ff4f75365d28a": {
+              "distinct": 643,
+              "per_s": 106.6,
+              "per_input_second": 106.5,
+              "first_presented_delay_ms": 7.87,
+              "interval_ms": {
+                "n": 642,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 50.0
+              }
+            },
+            "6efe6ff6cec0316a330d": {
+              "distinct": 643,
+              "per_s": 106.6,
+              "per_input_second": 106.5,
+              "first_presented_delay_ms": 7.87,
+              "interval_ms": {
+                "n": 642,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 50.0
+              }
+            },
+            "46165a8d74f5aceb0d12": {
+              "distinct": 643,
+              "per_s": 106.6,
+              "per_input_second": 106.5,
+              "first_presented_delay_ms": 7.87,
+              "interval_ms": {
+                "n": 642,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 50.0
+              }
+            },
+            "75291f2086a0454a2bef": {
+              "distinct": 643,
+              "per_s": 106.6,
+              "per_input_second": 106.5,
+              "first_presented_delay_ms": 7.87,
+              "interval_ms": {
+                "n": 642,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 50.0
+              }
+            },
+            "05b875f2e2c7af2adc51": {
+              "distinct": 643,
+              "per_s": 106.6,
+              "per_input_second": 106.5,
+              "first_presented_delay_ms": 7.87,
+              "interval_ms": {
+                "n": 642,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 50.0
+              }
+            }
+          },
+          "accepted_masks": 644,
+          "accepted_per_s": 107.0,
+          "presented_generations": {
+            "distinct": 643,
+            "per_s": 106.6,
+            "per_input_second": 106.5,
+            "first_presented_delay_ms": 7.87,
+            "interval_ms": {
+              "n": 642,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 50.0
+            }
+          },
+          "reduction_ms": {
+            "n": 644,
+            "p50": 4.97,
+            "p95": 8.69,
+            "max": 20.91
+          },
+          "backend_gpu_ms": {
+            "n": 644,
+            "p50": 3.19,
+            "p95": 6.9,
+            "max": 19.08
+          },
+          "changed_px_per_source": {
+            "n": 4508,
+            "p50": 223.0,
+            "p95": 425,
+            "max": 1122
+          },
+          "modes": {
+            "delta": 4508
+          },
+          "selected_dp": null
+        },
+        "large-ADF-center": {
+          "span_s": 6.06,
+          "tiles_presenting": 7,
+          "expected_comparison_tiles": 7,
+          "all_tiles_presented_generations": {
+            "distinct": 401,
+            "per_s": 66.6,
+            "per_input_second": 66.5,
+            "first_presented_delay_ms": 20.31,
+            "interval_ms": {
+              "n": 400,
+              "p50": 16.67,
+              "p95": 25.0,
+              "max": 66.67
+            }
+          },
+          "incomplete_comparison_generations": 0,
+          "presented_per_tile": {
+            "5e9a856e6f45f416de9a": {
+              "distinct": 401,
+              "per_s": 66.6,
+              "per_input_second": 66.5,
+              "first_presented_delay_ms": 20.31,
+              "interval_ms": {
+                "n": 400,
+                "p50": 16.67,
+                "p95": 25.0,
+                "max": 66.67
+              }
+            },
+            "aa37171a768c5202847e": {
+              "distinct": 401,
+              "per_s": 66.6,
+              "per_input_second": 66.5,
+              "first_presented_delay_ms": 20.31,
+              "interval_ms": {
+                "n": 400,
+                "p50": 16.67,
+                "p95": 25.0,
+                "max": 66.67
+              }
+            },
+            "8c977f2ff4f75365d28a": {
+              "distinct": 401,
+              "per_s": 66.6,
+              "per_input_second": 66.5,
+              "first_presented_delay_ms": 20.31,
+              "interval_ms": {
+                "n": 400,
+                "p50": 16.67,
+                "p95": 25.0,
+                "max": 66.67
+              }
+            },
+            "6efe6ff6cec0316a330d": {
+              "distinct": 401,
+              "per_s": 66.6,
+              "per_input_second": 66.5,
+              "first_presented_delay_ms": 20.31,
+              "interval_ms": {
+                "n": 400,
+                "p50": 16.67,
+                "p95": 25.0,
+                "max": 66.67
+              }
+            },
+            "46165a8d74f5aceb0d12": {
+              "distinct": 401,
+              "per_s": 66.6,
+              "per_input_second": 66.5,
+              "first_presented_delay_ms": 20.31,
+              "interval_ms": {
+                "n": 400,
+                "p50": 16.67,
+                "p95": 25.0,
+                "max": 66.67
+              }
+            },
+            "05b875f2e2c7af2adc51": {
+              "distinct": 401,
+              "per_s": 66.6,
+              "per_input_second": 66.5,
+              "first_presented_delay_ms": 20.31,
+              "interval_ms": {
+                "n": 400,
+                "p50": 16.67,
+                "p95": 25.0,
+                "max": 66.67
+              }
+            },
+            "75291f2086a0454a2bef": {
+              "distinct": 401,
+              "per_s": 66.6,
+              "per_input_second": 66.5,
+              "first_presented_delay_ms": 20.31,
+              "interval_ms": {
+                "n": 400,
+                "p50": 16.67,
+                "p95": 25.0,
+                "max": 66.67
+              }
+            }
+          },
+          "accepted_masks": 401,
+          "accepted_per_s": 66.6,
+          "presented_generations": {
+            "distinct": 401,
+            "per_s": 66.6,
+            "per_input_second": 66.5,
+            "first_presented_delay_ms": 20.31,
+            "interval_ms": {
+              "n": 400,
+              "p50": 16.67,
+              "p95": 25.0,
+              "max": 66.67
+            }
+          },
+          "reduction_ms": {
+            "n": 401,
+            "p50": 10.76,
+            "p95": 15.17,
+            "max": 47.48
+          },
+          "backend_gpu_ms": {
+            "n": 401,
+            "p50": 8.99,
+            "p95": 13.22,
+            "max": 45.53
+          },
+          "changed_px_per_source": {
+            "n": 2807,
+            "p50": 1387,
+            "p95": 2070,
+            "max": 6902
+          },
+          "modes": {
+            "delta": 2807
+          },
+          "selected_dp": null
+        },
+        "large-ADF-resize": {
+          "span_s": 6.03,
+          "tiles_presenting": 7,
+          "expected_comparison_tiles": 7,
+          "all_tiles_presented_generations": {
+            "distinct": 622,
+            "per_s": 103.4,
+            "per_input_second": 103.0,
+            "first_presented_delay_ms": 17.0,
+            "interval_ms": {
+              "n": 621,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 41.67
+            }
+          },
+          "incomplete_comparison_generations": 0,
+          "presented_per_tile": {
+            "5e9a856e6f45f416de9a": {
+              "distinct": 622,
+              "per_s": 103.4,
+              "per_input_second": 103.0,
+              "first_presented_delay_ms": 17.0,
+              "interval_ms": {
+                "n": 621,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 41.67
+              }
+            },
+            "aa37171a768c5202847e": {
+              "distinct": 622,
+              "per_s": 103.4,
+              "per_input_second": 103.0,
+              "first_presented_delay_ms": 17.0,
+              "interval_ms": {
+                "n": 621,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 41.67
+              }
+            },
+            "8c977f2ff4f75365d28a": {
+              "distinct": 622,
+              "per_s": 103.4,
+              "per_input_second": 103.0,
+              "first_presented_delay_ms": 17.0,
+              "interval_ms": {
+                "n": 621,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 41.67
+              }
+            },
+            "6efe6ff6cec0316a330d": {
+              "distinct": 622,
+              "per_s": 103.4,
+              "per_input_second": 103.0,
+              "first_presented_delay_ms": 17.0,
+              "interval_ms": {
+                "n": 621,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 41.67
+              }
+            },
+            "46165a8d74f5aceb0d12": {
+              "distinct": 622,
+              "per_s": 103.4,
+              "per_input_second": 103.0,
+              "first_presented_delay_ms": 17.0,
+              "interval_ms": {
+                "n": 621,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 41.67
+              }
+            },
+            "75291f2086a0454a2bef": {
+              "distinct": 622,
+              "per_s": 103.4,
+              "per_input_second": 103.0,
+              "first_presented_delay_ms": 17.0,
+              "interval_ms": {
+                "n": 621,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 41.67
+              }
+            },
+            "05b875f2e2c7af2adc51": {
+              "distinct": 622,
+              "per_s": 103.4,
+              "per_input_second": 103.0,
+              "first_presented_delay_ms": 17.0,
+              "interval_ms": {
+                "n": 621,
+                "p50": 8.33,
+                "p95": 16.67,
+                "max": 41.67
+              }
+            }
+          },
+          "accepted_masks": 623,
+          "accepted_per_s": 103.5,
+          "presented_generations": {
+            "distinct": 622,
+            "per_s": 103.4,
+            "per_input_second": 103.0,
+            "first_presented_delay_ms": 17.0,
+            "interval_ms": {
+              "n": 621,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 41.67
+            }
+          },
+          "reduction_ms": {
+            "n": 623,
+            "p50": 4.76,
+            "p95": 8.68,
+            "max": 18.48
+          },
+          "backend_gpu_ms": {
+            "n": 623,
+            "p50": 2.88,
+            "p95": 6.76,
+            "max": 16.31
+          },
+          "changed_px_per_source": {
+            "n": 4361,
+            "p50": 239,
+            "p95": 483,
+            "max": 1011
+          },
+          "modes": {
+            "delta": 4361
+          },
+          "selected_dp": null
+        },
+        "scan-drag": {
+          "span_s": 3.01,
+          "tiles_presenting": 0,
+          "expected_comparison_tiles": 7,
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "presented_per_tile": {},
+          "accepted_masks": 0,
+          "accepted_per_s": null,
+          "presented_generations": null,
+          "reduction_ms": null,
+          "backend_gpu_ms": null,
+          "changed_px_per_source": null,
+          "modes": null,
+          "selected_dp": {
+            "distinct": 355,
+            "per_s": 120.0,
+            "per_input_second": 117.6,
+            "first_presented_delay_ms": 61.95,
+            "interval_ms": {
+              "n": 354,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 8.33
+            }
+          }
+        },
+        "scan-drag-2": {
+          "span_s": 3.01,
+          "tiles_presenting": 0,
+          "expected_comparison_tiles": 7,
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "presented_per_tile": {},
+          "accepted_masks": 0,
+          "accepted_per_s": null,
+          "presented_generations": null,
+          "reduction_ms": null,
+          "backend_gpu_ms": null,
+          "changed_px_per_source": null,
+          "modes": null,
+          "selected_dp": {
+            "distinct": 356,
+            "per_s": 119.0,
+            "per_input_second": 118.0,
+            "first_presented_delay_ms": 28.88,
+            "interval_ms": {
+              "n": 355,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 25.0
+            }
+          }
+        }
+      },
+      "first_comparison_submission": {
+        "source_count": 7,
+        "call_to_publication_ms": 1668.4716250000001,
+        "driver_interval_ms": 1498.6614166700747,
+        "gpu_interval_ms": 167.47449999093078,
+        "cpu_prepare_ms": 1.249209,
+        "excluded_from_steady_drag_rates": true,
+        "not_a_drawable_presentation_measurement": true
+      }
+    }
+  }
+]

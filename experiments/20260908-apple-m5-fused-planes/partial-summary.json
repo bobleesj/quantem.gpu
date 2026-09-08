@@ -1,0 +1,15 @@
+{
+  "accepted": false,
+  "failure": "Immediate post-release device allocation growth exceeded64MiB; last failing allocation value missing in this driver version. Added logging before gate for next run.",
+  "completed_loads": 19,
+  "checked_maps": 2280,
+  "exact_map_mismatches": 0,
+  "last_successful_released_bytes": 4915200,
+  "first_released_bytes": 720896,
+  "reused_load_p50_seconds": 2.1829249262809753,
+  "raw_sha256": "09b846469a57eacb69e3263fb03730c2727226707fba2b99935f7927a6d8b654",
+  "raw_bytes": 1310653,
+  "candidate_binary_sha256": "81b13e628f6fb7e211a8acb1f22aa025629af11562455d1b5455cf955a90f408",
+  "control_b_ran": false,
+  "interpretation": "Failed memory gate, incomplete A/B/A, no accepted performance claim; preserve evidence."
+}

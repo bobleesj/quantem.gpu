@@ -1,0 +1,104 @@
+[
+  {
+    "case": "control-a",
+    "started_unix": 1788864958.5144022,
+    "accepted": true,
+    "binary_sha256": "7f728a0b6d26bae240a35e8d14ae260478afa1409d0bf96c0681c882a611cd5e",
+    "metal_resource_sha256": {
+      "MetalKernels_MetalSSBKernels.bundle/Resources/ssb.metal": "b1c56f17776a7841be0b8ffcf08b85cda32a914c11cb4b4913a2cf4a5ad60306",
+      "MetalKernels_MetalImageFFT.bundle/Resources/fft.metal": "fbefa9fea2b2b198b014939fa6a8834293c61eca1ce08af0bbfdfec9aee60052",
+      "MetalKernels_MetalDisplayKernels.bundle/Resources/display.metal": "c74a945450b1002b95bbc319ae0ca3387905c4476991c487cd76aca6b12ce59f",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/compact_detector_regions.metal": "b35b1bd86454de67503f94ac2336afdd3824b7aeb54dcc546a62d987d8f5ca22",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/ans_counts.metal": "c58a7397fb5c97453711785dfa9722132dc5f24a055090985b688db3716be54b",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/dpc.metal": "8ba200b8f32ed8d06e2e394ae8bfaa29e1a06945f5b4baafa3a637301803f8a1",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/detector.metal": "62ecde7eb07610ad358a2834b274476f5580201b0c58f450c495adab35c97716",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/original_packing.metal": "30caada082068e6ea98577b7b2a50a5c20a86bfb90384a079cc632bb9e7d44a7",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/packed_h5.metal": "8c93b5c70e93e89575aace9fbea628dfdd86a46f30becd41038a1ac1e9146b66",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/qh5idx.metal": "7f7a260fa7cdf5444d61b1ace17feb151237af3cce95584000e04b47229a2e66"
+    },
+    "environment": {
+      "QGPU_ORIGINAL_PROFILE": "1",
+      "COMPACT_UPDATE_HOST_PROFILE": "1",
+      "COMPACT_PLANAR_WIDTH_BUCKETS": "0"
+    },
+    "exit": 0,
+    "finished_unix": 1788864973.622735,
+    "stdout_sha256": "c6647e16ea18d889037d704a6ae09e4028040cd022beb645e2876cdf6595b037",
+    "stderr_sha256": "6b0d166b020ad120ab4db745efad3a28bc1dd975f300a51f6ad518d78832b316",
+    "exact_maps": 420,
+    "resident_bytes": 14752175312,
+    "released_device_allocated_bytes": 1769472,
+    "total_load_seconds": 9.592065930366516,
+    "call_median_ms": 70.4200267791748,
+    "gpu_median_ms": 69.28791667451151,
+    "width_bucketed_updates": 0
+  },
+  {
+    "case": "bucketed",
+    "started_unix": 1788864973.630892,
+    "accepted": true,
+    "binary_sha256": "7f728a0b6d26bae240a35e8d14ae260478afa1409d0bf96c0681c882a611cd5e",
+    "metal_resource_sha256": {
+      "MetalKernels_MetalSSBKernels.bundle/Resources/ssb.metal": "b1c56f17776a7841be0b8ffcf08b85cda32a914c11cb4b4913a2cf4a5ad60306",
+      "MetalKernels_MetalImageFFT.bundle/Resources/fft.metal": "fbefa9fea2b2b198b014939fa6a8834293c61eca1ce08af0bbfdfec9aee60052",
+      "MetalKernels_MetalDisplayKernels.bundle/Resources/display.metal": "c74a945450b1002b95bbc319ae0ca3387905c4476991c487cd76aca6b12ce59f",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/compact_detector_regions.metal": "b35b1bd86454de67503f94ac2336afdd3824b7aeb54dcc546a62d987d8f5ca22",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/ans_counts.metal": "c58a7397fb5c97453711785dfa9722132dc5f24a055090985b688db3716be54b",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/dpc.metal": "8ba200b8f32ed8d06e2e394ae8bfaa29e1a06945f5b4baafa3a637301803f8a1",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/detector.metal": "62ecde7eb07610ad358a2834b274476f5580201b0c58f450c495adab35c97716",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/original_packing.metal": "30caada082068e6ea98577b7b2a50a5c20a86bfb90384a079cc632bb9e7d44a7",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/packed_h5.metal": "8c93b5c70e93e89575aace9fbea628dfdd86a46f30becd41038a1ac1e9146b66",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/qh5idx.metal": "7f7a260fa7cdf5444d61b1ace17feb151237af3cce95584000e04b47229a2e66"
+    },
+    "environment": {
+      "QGPU_ORIGINAL_PROFILE": "1",
+      "COMPACT_UPDATE_HOST_PROFILE": "1",
+      "COMPACT_PLANAR_WIDTH_BUCKETS": "1"
+    },
+    "exit": 0,
+    "finished_unix": 1788864988.0086012,
+    "stdout_sha256": "0c2f2be829100bf257b95fe2653ac2b50d9c266abc74ff9a8d488f51b7934f84",
+    "stderr_sha256": "2120d8b272d8d2b2fe2bdf42b5839cbff0a5b8227d517e4495791c8efaab08cc",
+    "exact_maps": 420,
+    "resident_bytes": 14752175312,
+    "released_device_allocated_bytes": 1769472,
+    "total_load_seconds": 9.376236915588379,
+    "call_median_ms": 67.99596548080444,
+    "gpu_median_ms": 66.9531666644616,
+    "width_bucketed_updates": 405
+  },
+  {
+    "case": "control-b",
+    "started_unix": 1788864988.0180569,
+    "accepted": true,
+    "binary_sha256": "7f728a0b6d26bae240a35e8d14ae260478afa1409d0bf96c0681c882a611cd5e",
+    "metal_resource_sha256": {
+      "MetalKernels_MetalSSBKernels.bundle/Resources/ssb.metal": "b1c56f17776a7841be0b8ffcf08b85cda32a914c11cb4b4913a2cf4a5ad60306",
+      "MetalKernels_MetalImageFFT.bundle/Resources/fft.metal": "fbefa9fea2b2b198b014939fa6a8834293c61eca1ce08af0bbfdfec9aee60052",
+      "MetalKernels_MetalDisplayKernels.bundle/Resources/display.metal": "c74a945450b1002b95bbc319ae0ca3387905c4476991c487cd76aca6b12ce59f",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/compact_detector_regions.metal": "b35b1bd86454de67503f94ac2336afdd3824b7aeb54dcc546a62d987d8f5ca22",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/ans_counts.metal": "c58a7397fb5c97453711785dfa9722132dc5f24a055090985b688db3716be54b",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/dpc.metal": "8ba200b8f32ed8d06e2e394ae8bfaa29e1a06945f5b4baafa3a637301803f8a1",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/detector.metal": "62ecde7eb07610ad358a2834b274476f5580201b0c58f450c495adab35c97716",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/original_packing.metal": "30caada082068e6ea98577b7b2a50a5c20a86bfb90384a079cc632bb9e7d44a7",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/packed_h5.metal": "8c93b5c70e93e89575aace9fbea628dfdd86a46f30becd41038a1ac1e9146b66",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/qh5idx.metal": "7f7a260fa7cdf5444d61b1ace17feb151237af3cce95584000e04b47229a2e66"
+    },
+    "environment": {
+      "QGPU_ORIGINAL_PROFILE": "1",
+      "COMPACT_UPDATE_HOST_PROFILE": "1",
+      "COMPACT_PLANAR_WIDTH_BUCKETS": "0"
+    },
+    "exit": 0,
+    "finished_unix": 1788865002.3080819,
+    "stdout_sha256": "faabc60457bd444bdf6e087d44394c5692fe8a295082876d040a6e47fe24dbbc",
+    "stderr_sha256": "379456f17201c8682d0921504fe8cc075207f8c142bf501fb8fd52694d0f4213",
+    "exact_maps": 420,
+    "resident_bytes": 14752175312,
+    "released_device_allocated_bytes": 1769472,
+    "total_load_seconds": 9.3404381275177,
+    "call_median_ms": 69.7144865989685,
+    "gpu_median_ms": 68.19150000228547,
+    "width_bucketed_updates": 0
+  }
+]

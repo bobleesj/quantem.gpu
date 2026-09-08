@@ -1,0 +1,117 @@
+[
+  {
+    "case": "control-a",
+    "environment": {
+      "QGPU_ORIGINAL_PLANE_VECTOR4": "1",
+      "QGPU_ORIGINAL_STANDARD_PLANES": "1",
+      "COMPACT_RAW_QUAD_SCAN": "1"
+    },
+    "started_unix": 1788854515.063479,
+    "binary_sha256": "af401f9c9611577e06c1e65f134ef2d5bdd677f24d087f7231c44149be15d99f",
+    "metal_resource_sha256": {
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/ans_counts.metal": "c58a7397fb5c97453711785dfa9722132dc5f24a055090985b688db3716be54b",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/compact_detector_regions.metal": "b35b1bd86454de67503f94ac2336afdd3824b7aeb54dcc546a62d987d8f5ca22",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/detector.metal": "62ecde7eb07610ad358a2834b274476f5580201b0c58f450c495adab35c97716",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/dpc.metal": "8ba200b8f32ed8d06e2e394ae8bfaa29e1a06945f5b4baafa3a637301803f8a1",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/original_packing.metal": "c1fdc2715cdc57fe21f049a04bfbdfdc8851bcbd451e75d7d37df200781e1e5e",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/packed_h5.metal": "4a93e35c336b8de232ec84d99100835c72606374d41e9296953d0f1df5472ddc",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/qh5idx.metal": "bfb6950895ff824e16ad1cfa8a69fdb191e15f6120f45293a623eae930417064",
+      "MetalKernels_MetalDisplayKernels.bundle/Resources/display.metal": "c74a945450b1002b95bbc319ae0ca3387905c4476991c487cd76aca6b12ce59f",
+      "MetalKernels_MetalImageFFT.bundle/Resources/fft.metal": "fbefa9fea2b2b198b014939fa6a8834293c61eca1ce08af0bbfdfec9aee60052",
+      "MetalKernels_MetalSSBKernels.bundle/Resources/ssb.metal": "b1c56f17776a7841be0b8ffcf08b85cda32a914c11cb4b4913a2cf4a5ad60306"
+    },
+    "accepted": false,
+    "exit": 1,
+    "finished_unix": 1788854517.669661,
+    "stdout_sha256": "211de62346eda0c91049d4ac7eaceb01bfdf9fe58f7cb4370e8afa05ab3aa514",
+    "stderr_sha256": "88f2226db9ae8827507c965996240adae4231e45baec5e1512da4d5b224ae49d",
+    "failure": "Incomplete run"
+  },
+  {
+    "case": "length-sort",
+    "environment": {
+      "QGPU_ORIGINAL_PLANE_VECTOR4": "1",
+      "QGPU_ORIGINAL_STANDARD_PLANES": "1",
+      "COMPACT_RAW_QUAD_SCAN": "1",
+      "QGPU_ORIGINAL_SORT_BLOCKS": "1"
+    },
+    "started_unix": 1788854517.6736598,
+    "binary_sha256": "af401f9c9611577e06c1e65f134ef2d5bdd677f24d087f7231c44149be15d99f",
+    "metal_resource_sha256": {
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/ans_counts.metal": "c58a7397fb5c97453711785dfa9722132dc5f24a055090985b688db3716be54b",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/compact_detector_regions.metal": "b35b1bd86454de67503f94ac2336afdd3824b7aeb54dcc546a62d987d8f5ca22",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/detector.metal": "62ecde7eb07610ad358a2834b274476f5580201b0c58f450c495adab35c97716",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/dpc.metal": "8ba200b8f32ed8d06e2e394ae8bfaa29e1a06945f5b4baafa3a637301803f8a1",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/original_packing.metal": "c1fdc2715cdc57fe21f049a04bfbdfdc8851bcbd451e75d7d37df200781e1e5e",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/packed_h5.metal": "4a93e35c336b8de232ec84d99100835c72606374d41e9296953d0f1df5472ddc",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/qh5idx.metal": "bfb6950895ff824e16ad1cfa8a69fdb191e15f6120f45293a623eae930417064",
+      "MetalKernels_MetalDisplayKernels.bundle/Resources/display.metal": "c74a945450b1002b95bbc319ae0ca3387905c4476991c487cd76aca6b12ce59f",
+      "MetalKernels_MetalImageFFT.bundle/Resources/fft.metal": "fbefa9fea2b2b198b014939fa6a8834293c61eca1ce08af0bbfdfec9aee60052",
+      "MetalKernels_MetalSSBKernels.bundle/Resources/ssb.metal": "b1c56f17776a7841be0b8ffcf08b85cda32a914c11cb4b4913a2cf4a5ad60306"
+    },
+    "accepted": false,
+    "exit": 1,
+    "finished_unix": 1788854519.763752,
+    "stdout_sha256": "d90bdacc0f463f0734b1984248d32c1516804f70eaf0b3e1de5bd83625410127",
+    "stderr_sha256": "f026226c1df316c243b3bad7fb98c88ce5356b4dd3c3bc366ed6168cb16fb638",
+    "failure": "Incomplete run"
+  },
+  {
+    "case": "bucket-sort",
+    "environment": {
+      "QGPU_ORIGINAL_PLANE_VECTOR4": "1",
+      "QGPU_ORIGINAL_STANDARD_PLANES": "1",
+      "COMPACT_RAW_QUAD_SCAN": "1",
+      "QGPU_ORIGINAL_SORT_BLOCKS": "1",
+      "QGPU_ORIGINAL_SORT_BLOCK_BUCKETS": "1"
+    },
+    "started_unix": 1788854519.767802,
+    "binary_sha256": "af401f9c9611577e06c1e65f134ef2d5bdd677f24d087f7231c44149be15d99f",
+    "metal_resource_sha256": {
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/ans_counts.metal": "c58a7397fb5c97453711785dfa9722132dc5f24a055090985b688db3716be54b",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/compact_detector_regions.metal": "b35b1bd86454de67503f94ac2336afdd3824b7aeb54dcc546a62d987d8f5ca22",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/detector.metal": "62ecde7eb07610ad358a2834b274476f5580201b0c58f450c495adab35c97716",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/dpc.metal": "8ba200b8f32ed8d06e2e394ae8bfaa29e1a06945f5b4baafa3a637301803f8a1",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/original_packing.metal": "c1fdc2715cdc57fe21f049a04bfbdfdc8851bcbd451e75d7d37df200781e1e5e",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/packed_h5.metal": "4a93e35c336b8de232ec84d99100835c72606374d41e9296953d0f1df5472ddc",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/qh5idx.metal": "bfb6950895ff824e16ad1cfa8a69fdb191e15f6120f45293a623eae930417064",
+      "MetalKernels_MetalDisplayKernels.bundle/Resources/display.metal": "c74a945450b1002b95bbc319ae0ca3387905c4476991c487cd76aca6b12ce59f",
+      "MetalKernels_MetalImageFFT.bundle/Resources/fft.metal": "fbefa9fea2b2b198b014939fa6a8834293c61eca1ce08af0bbfdfec9aee60052",
+      "MetalKernels_MetalSSBKernels.bundle/Resources/ssb.metal": "b1c56f17776a7841be0b8ffcf08b85cda32a914c11cb4b4913a2cf4a5ad60306"
+    },
+    "accepted": false,
+    "exit": 1,
+    "finished_unix": 1788854521.8790069,
+    "stdout_sha256": "1b278252d0355bf96b132033ad5de740ef34c5fa6517c8482fd3aebe375813c5",
+    "stderr_sha256": "df8195a0370ab162c0f4ebe4ce170d7d6fbb30ac929d117cc899eb49d31ab8bb",
+    "failure": "Incomplete run"
+  },
+  {
+    "case": "control-b",
+    "environment": {
+      "QGPU_ORIGINAL_PLANE_VECTOR4": "1",
+      "QGPU_ORIGINAL_STANDARD_PLANES": "1",
+      "COMPACT_RAW_QUAD_SCAN": "1"
+    },
+    "started_unix": 1788854521.88297,
+    "binary_sha256": "af401f9c9611577e06c1e65f134ef2d5bdd677f24d087f7231c44149be15d99f",
+    "metal_resource_sha256": {
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/ans_counts.metal": "c58a7397fb5c97453711785dfa9722132dc5f24a055090985b688db3716be54b",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/compact_detector_regions.metal": "b35b1bd86454de67503f94ac2336afdd3824b7aeb54dcc546a62d987d8f5ca22",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/detector.metal": "62ecde7eb07610ad358a2834b274476f5580201b0c58f450c495adab35c97716",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/dpc.metal": "8ba200b8f32ed8d06e2e394ae8bfaa29e1a06945f5b4baafa3a637301803f8a1",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/original_packing.metal": "c1fdc2715cdc57fe21f049a04bfbdfdc8851bcbd451e75d7d37df200781e1e5e",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/packed_h5.metal": "4a93e35c336b8de232ec84d99100835c72606374d41e9296953d0f1df5472ddc",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/qh5idx.metal": "bfb6950895ff824e16ad1cfa8a69fdb191e15f6120f45293a623eae930417064",
+      "MetalKernels_MetalDisplayKernels.bundle/Resources/display.metal": "c74a945450b1002b95bbc319ae0ca3387905c4476991c487cd76aca6b12ce59f",
+      "MetalKernels_MetalImageFFT.bundle/Resources/fft.metal": "fbefa9fea2b2b198b014939fa6a8834293c61eca1ce08af0bbfdfec9aee60052",
+      "MetalKernels_MetalSSBKernels.bundle/Resources/ssb.metal": "b1c56f17776a7841be0b8ffcf08b85cda32a914c11cb4b4913a2cf4a5ad60306"
+    },
+    "accepted": false,
+    "exit": 1,
+    "finished_unix": 1788854523.973957,
+    "stdout_sha256": "8c8ee7bf2fb93a2010c24ae1e725317ed9239edfa25afdc016b8ab78e922e054",
+    "stderr_sha256": "37d7907793a2e1998b4a6cb5ffd8d60b6a580500b9bc18fac57efbc21054637b",
+    "failure": "Incomplete run"
+  }
+]

@@ -1,0 +1,50 @@
+[
+  {
+    "name": "control-a",
+    "environment": {
+      "QGPU_ORIGINAL_PLANE_VECTOR4": "1",
+      "QGPU_ORIGINAL_STANDARD_PLANES": "1",
+      "QGPU_ORIGINAL_DIRECT_DPC": "1",
+      "COMPACT_RAW_QUAD_VECTOR": "1",
+      "COMPACT_RESIDENCY_SETS": "1",
+      "COMPACT_RAW_VECTOR_THREADS": "128",
+      "COMPACT_RAW_QUAD_BATCH": "0"
+    }
+  },
+  {
+    "name": "vector256",
+    "environment": {
+      "QGPU_ORIGINAL_PLANE_VECTOR4": "1",
+      "QGPU_ORIGINAL_STANDARD_PLANES": "1",
+      "QGPU_ORIGINAL_DIRECT_DPC": "1",
+      "COMPACT_RAW_QUAD_VECTOR": "1",
+      "COMPACT_RESIDENCY_SETS": "1",
+      "COMPACT_RAW_VECTOR_THREADS": "256",
+      "COMPACT_RAW_QUAD_BATCH": "0"
+    }
+  },
+  {
+    "name": "vector512",
+    "environment": {
+      "QGPU_ORIGINAL_PLANE_VECTOR4": "1",
+      "QGPU_ORIGINAL_STANDARD_PLANES": "1",
+      "QGPU_ORIGINAL_DIRECT_DPC": "1",
+      "COMPACT_RAW_QUAD_VECTOR": "1",
+      "COMPACT_RESIDENCY_SETS": "1",
+      "COMPACT_RAW_VECTOR_THREADS": "512",
+      "COMPACT_RAW_QUAD_BATCH": "0"
+    }
+  },
+  {
+    "name": "control-b",
+    "environment": {
+      "QGPU_ORIGINAL_PLANE_VECTOR4": "1",
+      "QGPU_ORIGINAL_STANDARD_PLANES": "1",
+      "QGPU_ORIGINAL_DIRECT_DPC": "1",
+      "COMPACT_RAW_QUAD_VECTOR": "1",
+      "COMPACT_RESIDENCY_SETS": "1",
+      "COMPACT_RAW_VECTOR_THREADS": "128",
+      "COMPACT_RAW_QUAD_BATCH": "0"
+    }
+  }
+]

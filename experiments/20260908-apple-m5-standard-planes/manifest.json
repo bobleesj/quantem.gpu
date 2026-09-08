@@ -1,0 +1,141 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-apple-m5-standard-planes",
+  "status": "succeeded",
+  "question": "Can the first-load and uint8-compatible bounded packing path produce bit planes without a separate conversion pass or more resident bytes?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260908-apple-m5-standard-planes/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "a0aaa52be1fb7b66406f8624527383178509e1f7",
+    "entrypoint": "experiments/20260908-apple-m5-planar-topology/run_cases.py",
+    "dirty": true,
+    "diff_sha256": "004ddead35f128209d302fef474ccf30d803a60b97f9e6930de922cb9c1918ab",
+    "snapshot_path": "local-evidence://20260908-packed-optimization/standard-planes.patch",
+    "benchmark_source_snapshot": "local-evidence://20260908-packed-optimization/benchmark-source-9cde.tar",
+    "benchmark_source_sha256": "ff8a2604e069691e99fcc630884ea8313ac4fe26b79fd8c3d660818e0da42963"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-1",
+      "path": "private-fixture://tilt-series/446d2751716a5985e417f29cc19feea81b4dcf2bcbbf428578b6965e16d26f71",
+      "sha256": "4c5597ac5eb804cee7e01e1874ab69ad7f16c36e7eb9fa147083ac6d9dbedc65"
+    },
+    {
+      "dataset_id": "tilt-series-2",
+      "path": "private-fixture://tilt-series/fe15c891bb065252242350728162e60320860f4c9dfbe2b6c21bb983ccd879c4",
+      "sha256": "047f589fb4b94e070793e23ebaa3c41ddc4efe71e7dc2f9048d2caa25dc079af"
+    },
+    {
+      "dataset_id": "tilt-series-3",
+      "path": "private-fixture://tilt-series/aa18159030e03a756f7a057e9422ce645dfbe4bb0df7bc9eac6c6aeee2d55db1",
+      "sha256": "7b9a58202bd9251e843e255668689968f1fec49da3e19c5883584342cb96a476"
+    },
+    {
+      "dataset_id": "tilt-series-4",
+      "path": "private-fixture://tilt-series/6f94694a3d63c41edca118a74aae1384b1f61316699154a8dda0e8ac5e1af64f",
+      "sha256": "fe34acc72d659b9d94a578ba5191224c7461488be96ea8d7bba98aec4c35b1e0"
+    },
+    {
+      "dataset_id": "tilt-series-5",
+      "path": "private-fixture://tilt-series/88907d90d0be36cce51ed15cfc82e0967c5641e190c0428e2e9ceb8aaf23c59b",
+      "sha256": "ac9d184644ab526a86137ad7d37e714b9fc1b521a6efe80d6a0ae324ae88de91"
+    },
+    {
+      "dataset_id": "tilt-series-6",
+      "path": "private-fixture://tilt-series/532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350",
+      "sha256": "4b193525246c3fceeee9edbc8fce83a76b3adbfa65baf2d031a60ecddf6c6144"
+    },
+    {
+      "dataset_id": "tilt-series-7",
+      "path": "private-fixture://tilt-series/8b006c84044f4c7d6842ab1c896359d7c5fe0e331d76dcf7a7a1f7be429523e3",
+      "sha256": "09a1a093bca8a1234ea82ffeafe1e3f87fa516e72e3eb8d706ca93297e65a123"
+    }
+  ],
+  "parameters": {
+    "sources": 7,
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "source_dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "excluded_pixels": 0,
+    "new_resident_buffers": 0,
+    "repeats": 2,
+    "trials": 4,
+    "cases": "experiments/20260908-apple-m5-standard-planes/cases.json",
+    "benchmark_binary_sha256": "5bbe4ad78ff155abaa313ec89b79bd3dcd3ece0a371c06f3675fbbbe31de4f1e",
+    "scope": "A/B/A all-seven full loads. First cycle computes DPC and uses bounded u16 staging; candidate directly packs same-byte planes using verified low-bit transposition. Second cycle uses vector4 direct bitshuffle in all arms. Genuine uint8 runtime remains a separate gate.",
+    "cpu_precheck": "2212 cells (32 counts each), widths0–16 including65535: exact",
+    "cold_io_claim": false,
+    "native_ui_claim": false
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "integrated-gpu-0"
+    ],
+    "gpu_model": "Apple M5 24 GB"
+  },
+  "outputs": [
+    {
+      "artifact_id": "comparison",
+      "path": "experiments/20260908-apple-m5-standard-planes/comparison.json",
+      "sha256": "4fc95a0257ba50e638b203e1fe759076931eaf0c54a530b0e4505a890288fda5",
+      "size_bytes": 37094,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "42 loads and2520 frozen maps exact, unchanged resident bytes. Same-byte layout available on first-load bounded path; first median2.075s, repeat1.167s; not a native FPS or cold-IO claim."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-08T07:11:00Z",
+    "started": "2026-09-08T07:10:51.630Z",
+    "finished": "2026-09-08T07:12:36.799Z"
+  },
+  "result": {
+    "full_loads": 42,
+    "exact_detector_maps": 2520,
+    "resident_bytes_unchanged": true,
+    "first_p50_seconds": [
+      {
+        "case": "control-a",
+        "seconds": 2.0148268938064575
+      },
+      {
+        "case": "standard-planes",
+        "seconds": 2.0746209621429443
+      },
+      {
+        "case": "control-b",
+        "seconds": 2.0229920148849487
+      }
+    ],
+    "reopen_p50_seconds": [
+      {
+        "case": "control-a",
+        "seconds": 1.1552770137786865
+      },
+      {
+        "case": "standard-planes",
+        "seconds": 1.1672348976135254
+      },
+      {
+        "case": "control-b",
+        "seconds": 1.1657500267028809
+      }
+    ],
+    "interpretation": "Same-byte planes cover bounded first-load path at about 3% first-open cost, avoiding a separate ~1.2 s conversion. Reopens retain vector4 speed. Full-volume SHA audit of the new path and genuine uint8 coverage remain separate gates.",
+    "native_ui_claim": false,
+    "cold_io_claim": false
+  }
+}

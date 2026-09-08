@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-original-detector-oracle",
+  "status": "succeeded",
+  "question": "Do all 105 full-scan BF/ABF/ADF detector results across seven acquisitions exactly equal independent h5py/NumPy integration of original uint16 HDF5 without exclusions?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260908-original-detector-oracle/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "a0aaa52be1fb7b66406f8624527383178509e1f7",
+    "entrypoint": "experiments/20260908-apple-m5-detector-baseline/hdf5_oracle.py --index INDEX --reference BASELINE",
+    "dirty": true,
+    "diff_sha256": "d20f281d91d8309087f9087dcaf8e4e696242beb32764800f08eca25783d3dff",
+    "snapshot_path": "experiments/20260908-apple-m5-detector-baseline/hdf5_oracle.py"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-anchor",
+      "path": "private-fixture://tilt-series/-17.0x_0.0y",
+      "sha256": "532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "sources": 7,
+    "source_dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "excluded_pixels": 0,
+    "batch_frames": 256,
+    "backend_reference": "h5py 3.16.0, NumPy 2.4.3, HDF5 bitshuffle plugin",
+    "benchmark": "20260908-apple-m5-detector-baseline",
+    "gpu_compute": false,
+    "full_original_count_hash": true
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "cpu-reference",
+    "gpu_ids": [],
+    "gpu_model": null
+  },
+  "outputs": [
+    {
+      "artifact_id": "independent-reference",
+      "path": "experiments/20260908-original-detector-oracle/results.jsonl",
+      "sha256": "057211418a9960a3165eec64a1888422e7f64bcc7220a40431db71450d36fce9",
+      "size_bytes": 40142,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Seven full original uint16 acquisitions, 105 full-scan BF/ABF/ADF maps exactly match packed baseline fingerprints. Independent raw u32 count hashes recorded. All maxima 65535, no excluded pixels or bin/crop. CPU reference only, not a performance benchmark."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-08T05:06:23Z",
+    "started": "2026-09-08T05:06:23Z",
+    "finished": "2026-09-08T05:24:35Z"
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-apple-m5-bounded-tail",
+  "status": "refuted",
+  "question": "Can an exact SIMD-uniform upper plane bound improve packing of verified zero-tail blocks?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260908-apple-m5-bounded-tail/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "a0aaa52be1fb7b66406f8624527383178509e1f7",
+    "entrypoint": "experiments/20260908-apple-m5-planar-topology/run_cases.py",
+    "dirty": true,
+    "snapshot_path": "local-evidence://20260908-packed-optimization/bounded-tail.patch",
+    "diff_sha256": "4d4494b031589a2e17930510af3de1ae5935a2d5a2bbc07c5a8d45fe55b8a0ec"
+  },
+  "inputs": [
+    {
+      "dataset_id": "deterministic LZ4 plane-boundary and malformed fixtures",
+      "path": "experiments/20260908-apple-m5-zero-tail/check_lz4.swift",
+      "sha256": "0f83274a3d36634d3b76354aab56aa6cd97f4c48baad5153aa951d4dbb6e2d4b"
+    },
+    {
+      "dataset_id": "tilt-series-6",
+      "path": "private-fixture://tilt-series/532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350",
+      "sha256": "4b193525246c3fceeee9edbc8fce83a76b3adbfa65baf2d031a60ecddf6c6144"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "source_dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "new_resident_buffers": 0,
+    "repeats": 3,
+    "detector_trials": 4,
+    "scope": "Zero-tail baseline A/B/A. Bound covers both validated nonzero scratch prefix and every allocated cached payload plane; no omitted allocated words, hotpixels preserved. Zero-tail metadata reuses dead sum buffer.",
+    "native_fps_claim": false,
+    "cold_io_claim": false
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "integrated-gpu-0"
+    ],
+    "gpu_model": "Apple M5 24 GB"
+  },
+  "outputs": [{"artifact_id":"backend-comparison","path":"experiments/20260908-apple-m5-bounded-tail/comparison.json","sha256":"0bac525340aae2512ba317cf3812ce3dc74e15382853ac1616d22477e69a323e","size_bytes":15494,"retention":"durable","consuming_figures":[],"result":"9loads540maps exact,samebytes;0.995vs0.973/0.983seconds. No gain; prototype removed."}],
+  "timestamps": {
+    "created": "2026-09-08T09:34:00Z",
+    "finished": "2026-09-08T09:35:00Z"
+  }
+}

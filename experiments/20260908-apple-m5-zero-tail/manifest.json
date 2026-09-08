@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-apple-m5-zero-tail",
+  "status": "succeeded",
+  "question": "Can validated terminal-zero LZ4 matches avoid scratch writes and improve exact original-HDF5 reconstruction without additional resident buffers?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260908-apple-m5-zero-tail/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "a0aaa52be1fb7b66406f8624527383178509e1f7",
+    "entrypoint": "experiments/20260908-apple-m5-planar-topology/run_cases.py",
+    "dirty": true,
+    "snapshot_path": "local-evidence://20260908-packed-optimization/zero-tail.patch",
+    "diff_sha256": "1a91aebfe332e2638aeedf2ef819b4a07e231e8474449eef4f4adc1806948a34"
+  },
+  "inputs": [
+    {
+      "dataset_id": "deterministic LZ4 plane-boundary and malformed fixtures",
+      "path": "experiments/20260908-apple-m5-zero-tail/check_lz4.swift",
+      "sha256": "0f83274a3d36634d3b76354aab56aa6cd97f4c48baad5153aa951d4dbb6e2d4b"
+    },
+    {
+      "dataset_id": "tilt-series-6",
+      "path": "private-fixture://tilt-series/532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350",
+      "sha256": "4b193525246c3fceeee9edbc8fce83a76b3adbfa65baf2d031a60ecddf6c6144"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "source_dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "new_resident_buffers": 0,
+    "repeats": 3,
+    "detector_trials": 4,
+    "scope": "Only validated terminal zero match plus final short zero literals; aligned tail offsets reuse dead sum buffer before reduction. Full stream exact, warm plan and small DPC metadata reuse; original compressed counts reread each cycle. Malformed/poisoned scratch fixtures first.",
+    "native_fps_claim": false,
+    "cold_io_claim": false
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "integrated-gpu-0"
+    ],
+    "gpu_model": "Apple M5 24 GB"
+  },
+  "outputs": [
+    {"artifact_id": "backend-comparison", "path": "experiments/20260908-apple-m5-zero-tail/comparison.json", "sha256": "94b86371844cb173c4dae27533d8b127e17f859e39150e2a4249c279f95181a0", "size_bytes": 15344, "retention": "durable", "consuming_figures": [], "result": "9loads540maps exact, same residentbytes; warm repeat0.982vs1.108/1.097seconds. Not nativeFPS or coldIO."},
+    {"artifact_id": "gpu-fixtures", "path": "experiments/20260908-apple-m5-zero-tail/fixture-result.json", "sha256": "44d52bce40de0ee82346e369755b27331202eaafc8ff9b1f7d7ad7c408ee278e", "size_bytes": 130, "retention": "durable", "consuming_figures": [], "result": "212exact blocks,10malformed rejections,2actual skipped zero tails; poisoned scratch."},
+    {"artifact_id": "extended-boundary-fixture-source", "path": "experiments/20260908-apple-m5-zero-tail/check_boundaries.swift", "sha256": "c750c85f4a1429b11f0cc7d79e59d9e581600a674f5a2dff367e8e879fc25808", "size_bytes": 7392, "retention": "durable", "consuming_figures": [], "result": "Deterministic independent LZ4 stream builder and poisoned-scratch GPU oracle; source retained for reproduction."},
+    {"artifact_id": "extended-boundary-validation", "path": "experiments/20260908-apple-m5-zero-tail/boundary-result.json", "sha256": "792ba7e1fe25ab868af929f9a09197a35a6c722e20a05625572c9654788f0993", "size_bytes": 135, "retention": "durable", "consuming_figures": [], "result": "Additional validation after anchor:2702exactblocks,458malformed rejections,1247actual zero tails. All alignments, final literal lengths0–14, hotbytes before zero suffix; scratch and metadata canaries preserved."}
+  ],
+  "timestamps": {
+    "created": "2026-09-08T09:30:00Z",
+    "finished": "2026-09-08T09:31:06Z"
+  }
+}

@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "privacy_redaction": {
+    "original_log_sha256": "8153290eae41792aab118e70b90e77c0a7117f0f2e2f3418e73291c1e9d5ba45",
+    "changes": "Replaced only the Python executable and repository absolute paths with role placeholders; test outcomes and scientific references are unchanged. Original log retained privately."
+  },
+  "experiment_id": "20260908-apple-m5-qualified-defaults-budget-fixed",
+  "status": "succeeded",
+  "question": "Do all original-HDF5 scientific workflows and malformed-stream recovery pass after making qualified packed kernels the normal defaults?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260908-apple-m5-qualified-defaults-budget-fixed/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "a0aaa52be1fb7b66406f8624527383178509e1f7",
+    "entrypoint": "tests/hardware/metal/test_original_packing.py",
+    "dirty": true,
+    "diff_sha256": "446255f37a020239fba5b6d55bac08327f56c39d00bf079b65af0128a2fefc9e",
+    "snapshot_path": "local-evidence://20260908-packed-optimization/qualified-defaults-budget-fixed.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "existing deterministic synthetic HDF5 fixtures and independent expectations",
+      "path": "tests/hardware/metal/test_original_packing.py",
+      "sha256": "88f7ef9a68b5d5225aed2f70a14c5eb2a06cc01aa8b63891a89922c3cedac67b"
+    }
+  ],
+  "parameters": {
+    "tests": 38,
+    "environment": "No optimization overrides. Fixture compiles diagnostics only for explicit fault/legacy-path probes; all unspecified controls use the new normal defaults.",
+    "source_dtype": [
+      "uint8",
+      "uint16"
+    ],
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "public_api_changed": false,
+    "fixture_source_snapshot": "local-evidence://20260908-packed-optimization/zero-tail-permanent-fixture.tar",
+    "fixture_source_sha256": "22254f9014e66e0649a14f2c66d0b43714d4d70727dfede943eae42b9ab1cce6",
+    "changes": "Four-column planes/32threads/directDPC/terminalzero defaults, shared mask preparation and no-growth original residency hints. Removed refuted code-cache, vector2, deferredverification and in-place conversion prototypes.",
+    "cold_io_claim": false,
+    "native_fps_claim": false,
+    "changed": "Same kernels and fixed budgets. Explicit legacy bounded-staging reserve test disables direct DPC, while new reserve-optimized check requires exact counts and planned bytes within identical budget without fallback. Fault/numerical expectations unchanged."
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "integrated-gpu-0"
+    ],
+    "gpu_model": "Apple M5 24 GB"
+  },
+  "outputs": [
+    {
+      "artifact_id": "pytest-log",
+      "path": "experiments/20260908-apple-m5-qualified-defaults-budget-fixed/result.log",
+      "size_bytes": 5590,
+      "sha256": "cb1b665c5a6ba61da3fd8513392756e22a84c1be48a4a27069ce2d0f535170fd",
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "38 passed in292.78s. Exact original-count references unchanged, legacy reserve fallback and cheaper default same-budget path both validated."
+    },
+    {
+      "artifact_id": "pytest-xml",
+      "path": "experiments/20260908-apple-m5-qualified-defaults-budget-fixed/result.xml",
+      "size_bytes": 5908,
+      "sha256": "c2fd640c855093ff22ad03bcc45ec02728caa1531eb0c7e40b4f8f2ca4623e55",
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "38 passed in292.78s. Exact original-count references unchanged, legacy reserve fallback and cheaper default same-budget path both validated."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-08T10:19:46.000Z",
+    "started": "2026-09-08T10:19:46.000Z",
+    "finished": "2026-09-08T10:24:40.000Z"
+  }
+}

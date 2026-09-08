@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-apple-m5-plane-write-scheduling",
+  "status": "succeeded",
+  "question": "Can deferred readback validation or four-column vector loads reduce direct-plane packing time without extra resident buffers?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260908-apple-m5-plane-write-scheduling/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "a0aaa52be1fb7b66406f8624527383178509e1f7",
+    "entrypoint": "experiments/20260908-apple-m5-planar-topology/run_cases.py",
+    "dirty": true,
+    "diff_sha256": "8a0ea848e4d47f8f95f6fb938cee9f619d50ec7f514a1a2b035be823afda1201",
+    "snapshot_path": "local-evidence://20260908-packed-optimization/planar-candidates.patch",
+    "benchmark_source_snapshot": "local-evidence://20260908-packed-optimization/benchmark-source-9cde.tar",
+    "benchmark_source_sha256": "ff8a2604e069691e99fcc630884ea8313ac4fe26b79fd8c3d660818e0da42963"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-1",
+      "path": "private-fixture://tilt-series/446d2751716a5985e417f29cc19feea81b4dcf2bcbbf428578b6965e16d26f71",
+      "sha256": "4c5597ac5eb804cee7e01e1874ab69ad7f16c36e7eb9fa147083ac6d9dbedc65"
+    },
+    {
+      "dataset_id": "tilt-series-2",
+      "path": "private-fixture://tilt-series/fe15c891bb065252242350728162e60320860f4c9dfbe2b6c21bb983ccd879c4",
+      "sha256": "047f589fb4b94e070793e23ebaa3c41ddc4efe71e7dc2f9048d2caa25dc079af"
+    },
+    {
+      "dataset_id": "tilt-series-3",
+      "path": "private-fixture://tilt-series/aa18159030e03a756f7a057e9422ce645dfbe4bb0df7bc9eac6c6aeee2d55db1",
+      "sha256": "7b9a58202bd9251e843e255668689968f1fec49da3e19c5883584342cb96a476"
+    },
+    {
+      "dataset_id": "tilt-series-4",
+      "path": "private-fixture://tilt-series/6f94694a3d63c41edca118a74aae1384b1f61316699154a8dda0e8ac5e1af64f",
+      "sha256": "fe34acc72d659b9d94a578ba5191224c7461488be96ea8d7bba98aec4c35b1e0"
+    },
+    {
+      "dataset_id": "tilt-series-5",
+      "path": "private-fixture://tilt-series/88907d90d0be36cce51ed15cfc82e0967c5641e190c0428e2e9ceb8aaf23c59b",
+      "sha256": "ac9d184644ab526a86137ad7d37e714b9fc1b521a6efe80d6a0ae324ae88de91"
+    },
+    {
+      "dataset_id": "tilt-series-6",
+      "path": "private-fixture://tilt-series/532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350",
+      "sha256": "4b193525246c3fceeee9edbc8fce83a76b3adbfa65baf2d031a60ecddf6c6144"
+    },
+    {
+      "dataset_id": "tilt-series-7",
+      "path": "private-fixture://tilt-series/8b006c84044f4c7d6842ab1c896359d7c5fe0e331d76dcf7a7a1f7be429523e3",
+      "sha256": "09a1a093bca8a1234ea82ffeafe1e3f87fa516e72e3eb8d706ca93297e65a123"
+    }
+  ],
+  "parameters": {
+    "sources": 7,
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "source_dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "excluded_pixels": 0,
+    "new_resident_buffers": 0,
+    "repeats": 2,
+    "trials": 4,
+    "cases": "experiments/20260908-apple-m5-plane-write-scheduling/cases.json",
+    "scope": "Four cases A/deferred/vector4/A, all seven sources, two cycles and four repeats of15 masks; all actual stored planes verified, high absent bits checked, no excluded pixels.",
+    "baseline": "20260908-apple-m5-planes-seven-confirm",
+    "reference": "20260908-original-detector-oracle",
+    "timing_boundary": "Original indexed source through full resident return; synchronized detector call and GPU timestamps. Cold IO and native presentation not measured.",
+    "cpu_precheck": "49152 vector column addresses and four uint16 component transposes pass",
+    "benchmark_binary_sha256": "6c64c19810b0f953bf13070d90a64dc6c68ebfec1b5408338c103ef9d98bd705"
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "integrated-gpu-0"
+    ],
+    "gpu_model": "Apple M5 24 GB"
+  },
+  "outputs": [
+    {
+      "artifact_id": "comparison",
+      "path": "experiments/20260908-apple-m5-plane-write-scheduling/summary.json",
+      "sha256": "fe4fbd16813860e92536ed2ae853eca18e59516ec3b3dc6ab5db7394bd5a31f1",
+      "size_bytes": 49327,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "56 full loads/3360 maps exact; same resident bytes and all releases pass. Vector4 median1.164s vs controls1.395/1.386s (16–17% lower wall); deferred validation1.415s rejected. No native or cold IO claim."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-08T06:59:00Z",
+    "started": "2026-09-08T07:01:52.072Z",
+    "finished": "2026-09-08T07:04:18.641Z"
+  }
+}

@@ -1,0 +1,27 @@
+[
+  {
+    "name": "control-a",
+    "environment": {
+      "QGPU_ORIGINAL_PLANE_VECTOR4": "1",
+      "QGPU_ORIGINAL_STANDARD_PLANES": "1",
+      "COMPACT_RAW_QUAD_SCAN": "1"
+    }
+  },
+  {
+    "name": "zero-scratch",
+    "environment": {
+      "QGPU_ORIGINAL_PLANE_VECTOR4": "1",
+      "QGPU_ORIGINAL_STANDARD_PLANES": "1",
+      "COMPACT_RAW_QUAD_SCAN": "1",
+      "QGPU_ORIGINAL_ZERO_SCRATCH": "1"
+    }
+  },
+  {
+    "name": "control-b",
+    "environment": {
+      "QGPU_ORIGINAL_PLANE_VECTOR4": "1",
+      "QGPU_ORIGINAL_STANDARD_PLANES": "1",
+      "COMPACT_RAW_QUAD_SCAN": "1"
+    }
+  }
+]

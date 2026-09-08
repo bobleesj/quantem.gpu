@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-apple-m5-lazy-planes",
+  "status": "refuted",
+  "question": "Can checked lossless sparse bit-plane scratch reduce original-HDF5 reopen time with no additional GPU buffers?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260908-apple-m5-lazy-planes/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "a0aaa52be1fb7b66406f8624527383178509e1f7",
+    "entrypoint": "experiments/20260908-apple-m5-lazy-planes/check_lz4.swift",
+    "dirty": true,
+    "snapshot_path": "local-evidence://20260908-packed-optimization/lazy-planes.patch",
+    "diff_sha256": "2a52b9057c5813ad706ad0f476ac90ae380bf80dd73e9605bdee153416690917"
+  },
+  "inputs": [
+    {
+      "dataset_id": "deterministic LZ4 plane-boundary and malformed fixtures",
+      "path": "experiments/20260908-apple-m5-lazy-planes/check_lz4.swift",
+      "sha256": "3b9b720ae28d7e2845e2f2c190196e8ab9ba8973d8cbb2f3b2fb48f64c9751b1"
+    }
+  ],
+  "parameters": {
+    "new_gpu_buffers": 0,
+    "source_dtype": "uint16",
+    "max_count": 65535,
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "scope": "Presence masks reuse existing sums buffer before reduce. Complete checked LZ4 parse; inactive 512-byte planes are logical zero. Only warmed layout+DPC cache, still full original count reconstruction. No cold-I/O claim.",
+    "prior_failures": [
+      "Initial build modified source while compiling; failed build log retained, retry succeeded.",
+      "Initial fixture encoded distance511 via trapping UInt8 initializer; CPU fixture trap before GPU result. Fixed low-byte encoding; no kernel change."
+    ]
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "integrated-gpu-0"
+    ],
+    "gpu_model": "Apple M5 24 GB"
+  },
+  "outputs": [
+    {
+      "artifact_id": "backend-comparison",
+      "path": "experiments/20260908-apple-m5-lazy-planes/comparison.json",
+      "sha256": "00f4283fa3f1ea05690370aaf500f272735d4628fee5cd719e66c22ce7c15d62",
+      "size_bytes": 15361,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "9original loads540fullmaps exact,same residentbytes,no fallback. Lazyreopen1.452s vs~1.1scontrols; slower, notpromoted."
+    },
+    {
+      "artifact_id": "decoder-fixtures",
+      "path": "experiments/20260908-apple-m5-lazy-planes/fixture-result.json",
+      "sha256": "34d5c85cfba812c5488b09567e0aa0328701eb4e1fe71db51009dc00e6ee82ae",
+      "size_bytes": 107,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "124exact blocks10malformed rejected, poisoned scratch, all16planes, boundary/history overlaps, bounded mask writes."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-08T09:00:00Z",
+    "finished": "2026-09-08T09:03:39.918Z"
+  }
+}

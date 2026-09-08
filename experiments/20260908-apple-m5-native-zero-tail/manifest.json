@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-apple-m5-native-zero-tail",
+  "status": "succeeded",
+  "question": "Does the exact terminal-zero decoder improve native seven-acquisition readiness without regressing actual complete-frame presentation or resident memory?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260908-apple-m5-native-zero-tail/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/Live4DSTEM",
+    "revision": "689c4b71b7651e1ff175d19cfae2c6c8f472091a",
+    "dirty": true,
+    "entrypoint": "Tests/NativeUI/profile_seven_tilts.py",
+    "snapshot_path": "local-evidence://20260908-packed-optimization/native-zero-tail-app.patch",
+    "diff_sha256": "a34711e2885b6a88854ebc8ea7b1c97a247fcc50f4ba718a29fd9cd4de5e57df"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-1",
+      "path": "private-fixture://tilt-series/446d2751716a5985e417f29cc19feea81b4dcf2bcbbf428578b6965e16d26f71",
+      "sha256": "4c5597ac5eb804cee7e01e1874ab69ad7f16c36e7eb9fa147083ac6d9dbedc65"
+    },
+    {
+      "dataset_id": "tilt-series-2",
+      "path": "private-fixture://tilt-series/fe15c891bb065252242350728162e60320860f4c9dfbe2b6c21bb983ccd879c4",
+      "sha256": "047f589fb4b94e070793e23ebaa3c41ddc4efe71e7dc2f9048d2caa25dc079af"
+    },
+    {
+      "dataset_id": "tilt-series-3",
+      "path": "private-fixture://tilt-series/aa18159030e03a756f7a057e9422ce645dfbe4bb0df7bc9eac6c6aeee2d55db1",
+      "sha256": "7b9a58202bd9251e843e255668689968f1fec49da3e19c5883584342cb96a476"
+    },
+    {
+      "dataset_id": "tilt-series-4",
+      "path": "private-fixture://tilt-series/6f94694a3d63c41edca118a74aae1384b1f61316699154a8dda0e8ac5e1af64f",
+      "sha256": "fe34acc72d659b9d94a578ba5191224c7461488be96ea8d7bba98aec4c35b1e0"
+    },
+    {
+      "dataset_id": "tilt-series-5",
+      "path": "private-fixture://tilt-series/88907d90d0be36cce51ed15cfc82e0967c5641e190c0428e2e9ceb8aaf23c59b",
+      "sha256": "ac9d184644ab526a86137ad7d37e714b9fc1b521a6efe80d6a0ae324ae88de91"
+    },
+    {
+      "dataset_id": "tilt-series-6",
+      "path": "private-fixture://tilt-series/532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350",
+      "sha256": "4b193525246c3fceeee9edbc8fce83a76b3adbfa65baf2d031a60ecddf6c6144"
+    },
+    {
+      "dataset_id": "tilt-series-7",
+      "path": "private-fixture://tilt-series/8b006c84044f4c7d6842ab1c896359d7c5fe0e331d76dcf7a7a1f7be429523e3",
+      "sha256": "09a1a093bca8a1234ea82ffeafe1e3f87fa516e72e3eb8d706ca93297e65a123"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "source_dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "resident_bytes_gate": 14752175312,
+    "app_binary_sha256": "3c8fb2713727527768fbe4e428f5b3b3324c69684264ff36390b4065a1222b47",
+    "backend_snapshot": "local-evidence://20260908-packed-optimization/library-reuse.patch",
+    "backend_diff_sha256": "9cab8199d3bd069d3ae8fc0ca7873d65a20a41156caa5c0c70c5e76994e6f341",
+    "diagnostics_compiled": true,
+    "observer": "No state requests during gestures; log-only observation until settle.",
+    "driver": "Hook-driven normal native controller actions; no pointer targeting.",
+    "scope": "A/B/A zero-tail0/1/0. All arms vector4x32, standardplanes/directDPC,quadvector128,sharedpreparation,leases. Libraryreuse off. SelectedDP andstaticaverage,largeABF/ADFcenter/resize three repeats. Report true presentation independently of resident-readiness.",
+    "cold_io_claim": false,
+    "release_claim": false,
+    "interpretation": "Decoder improves additional-six readiness5.79s vs6.65/6.33s controls. First resident actual presentation1.12556s vs1.55285/1.20392s. Catalog includeslaunch/polling and is not first-presented latency. No120 all-detector claim: candidate ADFcenter94.2,ADFresize108.9,ABFcenter109.6,ABFresize112.5complete generations/s; selectedDP120steady,116.8fullinput. First-use host profiling disabled so unavailable, not zero."
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "integrated-gpu-0"
+    ],
+    "gpu_model": "Apple M5 24 GB"
+  },
+  "outputs": [
+    {
+      "artifact_id": "native-comparison",
+      "path": "experiments/20260908-apple-m5-native-zero-tail/comparison.json",
+      "sha256": "3c4f73737ba94d56de14311908fef4d7bfa09abf39205a28667f18d2c786c449",
+      "size_bytes": 118033,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Three arms completed all7 visible,14,752,175,312resident bytes,selectedDPlog/VIlinear,FFTinitiallyhidden,fullscanaverageactuallypresented. Loading gain; 120-wide-detector and4-5sfullyinteractive targets unmet."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-08T09:59:00Z",
+    "finished": "2026-09-08T10:04:08.000Z"
+  }
+}

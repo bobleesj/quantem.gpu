@@ -1,0 +1,37 @@
+[
+  {
+    "name": "control-a",
+    "environment": {
+      "QGPU_ORIGINAL_PLANE_VECTOR4": "1",
+      "QGPU_ORIGINAL_STANDARD_PLANES": "1",
+      "COMPACT_RAW_QUAD_SCAN": "1"
+    }
+  },
+  {
+    "name": "length-sort",
+    "environment": {
+      "QGPU_ORIGINAL_PLANE_VECTOR4": "1",
+      "QGPU_ORIGINAL_STANDARD_PLANES": "1",
+      "COMPACT_RAW_QUAD_SCAN": "1",
+      "QGPU_ORIGINAL_SORT_BLOCKS": "1"
+    }
+  },
+  {
+    "name": "bucket-sort",
+    "environment": {
+      "QGPU_ORIGINAL_PLANE_VECTOR4": "1",
+      "QGPU_ORIGINAL_STANDARD_PLANES": "1",
+      "COMPACT_RAW_QUAD_SCAN": "1",
+      "QGPU_ORIGINAL_SORT_BLOCKS": "1",
+      "QGPU_ORIGINAL_SORT_BLOCK_BUCKETS": "1"
+    }
+  },
+  {
+    "name": "control-b",
+    "environment": {
+      "QGPU_ORIGINAL_PLANE_VECTOR4": "1",
+      "QGPU_ORIGINAL_STANDARD_PLANES": "1",
+      "COMPACT_RAW_QUAD_SCAN": "1"
+    }
+  }
+]

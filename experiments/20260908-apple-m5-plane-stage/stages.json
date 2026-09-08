@@ -1,0 +1,91 @@
+{
+  "0": [
+    {
+      "expected_windows": 128,
+      "invalid_or_unsupported_windows": 0,
+      "missing_windows": 0,
+      "record": "summary",
+      "recorded_windows": 128,
+      "status": "complete",
+      "valid_window_command_seconds": 1.2215060833259486,
+      "valid_window_stage_seconds": {
+        "checked_lz4": 0.5261777820000001,
+        "gather_pack_verify_partials": 0.6564221629999999,
+        "range_validation": 0.014060086999999997,
+        "retained_header_blit": 0.28888678900000003,
+        "summary_reduction": 0.015149531999999997
+      },
+      "valid_window_unattributed_seconds": -0.2791902696740516,
+      "valid_windows": 128,
+      "postprocessed_encoder_union_seconds": 1.2141838999999999,
+      "postprocessed_overlapping_encoder_seconds": 0.28651245300000006,
+      "corrected_unattributed_seconds": 0.007322183325948695
+    },
+    {
+      "expected_windows": 128,
+      "invalid_or_unsupported_windows": 0,
+      "missing_windows": 0,
+      "record": "summary",
+      "recorded_windows": 128,
+      "status": "complete",
+      "valid_window_command_seconds": 1.215124375099549,
+      "valid_window_stage_seconds": {
+        "checked_lz4": 0.5319213000000002,
+        "gather_pack_verify_partials": 0.6466125820000002,
+        "range_validation": 0.011613872,
+        "retained_header_blit": 0.29612374500000005,
+        "summary_reduction": 0.016546002000000004
+      },
+      "valid_window_unattributed_seconds": -0.2876931259004514,
+      "valid_windows": 128,
+      "postprocessed_encoder_union_seconds": 1.2075543819999999,
+      "postprocessed_overlapping_encoder_seconds": 0.2952631190000006,
+      "corrected_unattributed_seconds": 0.007569993099549199
+    }
+  ],
+  "1": [
+    {
+      "expected_windows": 128,
+      "invalid_or_unsupported_windows": 0,
+      "missing_windows": 0,
+      "record": "summary",
+      "recorded_windows": 128,
+      "status": "complete",
+      "valid_window_command_seconds": 1.4231826665636618,
+      "valid_window_stage_seconds": {
+        "checked_lz4": 0.5310253329999999,
+        "gather_pack_verify_partials": 0.8605587870000001,
+        "range_validation": 0.009881113,
+        "retained_header_blit": 0.2930202490000001,
+        "summary_reduction": 0.014089205000000006
+      },
+      "valid_window_unattributed_seconds": -0.28539202043633827,
+      "valid_windows": 128,
+      "postprocessed_encoder_union_seconds": 1.415964771,
+      "postprocessed_overlapping_encoder_seconds": 0.2926099160000002,
+      "corrected_unattributed_seconds": 0.007217895563661703
+    },
+    {
+      "expected_windows": 128,
+      "invalid_or_unsupported_windows": 0,
+      "missing_windows": 0,
+      "record": "summary",
+      "recorded_windows": 128,
+      "status": "complete",
+      "valid_window_command_seconds": 1.4502287501236424,
+      "valid_window_stage_seconds": {
+        "checked_lz4": 0.526354004,
+        "gather_pack_verify_partials": 0.871236005,
+        "range_validation": 0.015329372999999995,
+        "retained_header_blit": 0.2998064540000003,
+        "summary_reduction": 0.02262000700000001
+      },
+      "valid_window_unattributed_seconds": -0.2851170928763578,
+      "valid_windows": 128,
+      "postprocessed_encoder_union_seconds": 1.43678801,
+      "postprocessed_overlapping_encoder_seconds": 0.2985578330000003,
+      "corrected_unattributed_seconds": 0.013440740123642492
+    }
+  ],
+  "interpretation": "Calibrated encoder spans; blit overlaps compute, so individual stage spans must not be summed. Original negative unattributed field is superseded by union-based calculation. Profiler source corrected for future measurements."
+}

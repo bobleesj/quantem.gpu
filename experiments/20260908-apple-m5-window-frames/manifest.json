@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-apple-m5-window-frames",
+  "status": "refuted",
+  "question": "Can1024-frame processing windows reduce cache pressure versus2048 without increasing exact resident payload/header bytes?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260908-apple-m5-window-frames/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "a0aaa52be1fb7b66406f8624527383178509e1f7",
+    "entrypoint": "experiments/20260908-apple-m5-planar-topology/run_cases.py",
+    "dirty": true,
+    "snapshot_path": "local-evidence://20260908-packed-optimization/window-frames.patch",
+    "diff_sha256": "984ab2107fc1ccb870455ffd417f3c226d086316aa224e5664521b62b67c0dbd"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-anchor",
+      "path": "private-fixture://tilt-series/532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350",
+      "sha256": "4b193525246c3fceeee9edbc8fce83a76b3adbfa65baf2d031a60ecddf6c6144"
+    }
+  ],
+  "parameters": {
+    "sources": 1,
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "source_dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "windows": [
+      2048,
+      1024,
+      2048
+    ],
+    "new_gpu_resident_buffers": "Source shard count changes, exact payload/header byte sum must not increase. Scratch halves; runtime allocation independently gated.",
+    "scope": "New benchmark-owned plan directory perwindow configuration. Warmup prepares plans; timed repeated calls reread originalHDF5 and reconstruct every count.512/256windows not attempted: headerbase overhead would increase residentbytes.",
+    "native_fps_claim": false,
+    "cold_io_claim": false
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "integrated-gpu-0"
+    ],
+    "gpu_model": "Apple M5 24 GB"
+  },
+  "outputs": [
+    {
+      "artifact_id": "backend-comparison",
+      "path": "experiments/20260908-apple-m5-window-frames/comparison.json",
+      "sha256": "de53b65c6af08f3cdde7cb0bf1989db8f5ddd79b60e41b03a78ba8fc87f2ee54",
+      "size_bytes": 15385,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "9loads540maps exact,same residentbytes;1024reopen1.097vs2048controls1.092/1.101s. Device allocation~1MiBhigher withmorebufferobjects; no benefit, retain2048."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-08T09:16:00Z",
+    "finished": "2026-09-08T09:18:00Z"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-apple-m5-seven-baseline",
+  "status": "succeeded",
+  "question": "Does the unchanged seven-source native baseline reproduce large-annulus GPU saturation and its memory ceiling before detector-kernel optimization?",
+  "paper": {"authoritative_host": "apple-m5-24gb", "repository": "quantem.gpu", "manifest_path": "experiments/20260908-apple-m5-seven-baseline/manifest.json"},
+  "code": {"repository": "https://github.com/bobleesj/quantem.gpu", "revision": "a0aaa52be1fb7b66406f8624527383178509e1f7", "entrypoint": "Live4DSTEM/Tests/NativeUI/profile_seven_tilts.py", "dirty": false},
+  "inputs": [{"dataset_id": "tilt-series-anchor", "path": "private-fixture://tilt-series/-17.0x_0.0y", "sha256": "532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350"}],
+  "parameters": {"app_revision": "689c4b71b7651e1ff175d19cfae2c6c8f472091a", "input_manifest_scope": "anchor master hash from retained load-concurrency baseline; full local seven-file identity inventory retained with run", "shape_per_source": [512,512,192,192], "sources": 7, "source_dtype": "uint16", "scan_bin": 1, "detector_bin": 1, "crop": null, "repeats": 3, "cache_state": "existing packing plans; OS source pages uncontrolled; fresh app process", "resident_limit_bytes": 14752175312, "timing_boundary": "native hook trajectories and drawable presentation, separately from backend GPU timing", "run_root": "local-evidence://20260908-packed-optimization/baseline-seven"},
+  "execution": {"host": "apple-m5-24gb", "backend": "swift-metal", "gpu_ids": ["integrated-gpu-0"], "gpu_model": "Apple M5, 24 GB unified memory, 120 Hz display"},
+  "outputs": [{"artifact_id": "summary", "path": "experiments/20260908-apple-m5-seven-baseline/summary.json", "sha256": "69266410dddd1c1fd87587acad173b400cc4daa0d1d58738b95470c32eff0ee1", "size_bytes": 3514, "retention": "durable", "consuming_figures": [], "result": "ADF center 13.2 presented/s; selected DP 119.6/s; 14.752 GB resident. ABF center invalid timing: only one accepted mask, no presented generations. Four visible tiles only. No new acceptance pass."}],
+  "timestamps": {"created": "2026-09-08T04:55:14Z", "started": "2026-09-08T04:55:14Z", "finished": "2026-09-08T04:57:57Z"}
+}

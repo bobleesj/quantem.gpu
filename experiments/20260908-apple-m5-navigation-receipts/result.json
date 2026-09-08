@@ -1,0 +1,324 @@
+{
+  "scope": "Native process-bound navigation regression; not release qualification",
+  "original_timeout_cause": "Unproven. Original failure has no receive receipt; repeated legacy transport passed.",
+  "backend_unchanged": true,
+  "physical_pointer_claim": false,
+  "cold_io_claim": false,
+  "retries": 0,
+  "runs": [
+    {
+      "name": "traced-stress",
+      "raw_path": "local-evidence://20260908-packed-optimization/navigation-fix/traced-stress/result.json",
+      "raw_sha256": "7f21bc57a47e91019ac678dc5ef3d4d4eca99b8c6fbd563987990845c9a6041b",
+      "exit": 0,
+      "failures": [],
+      "native_received": 155,
+      "native_applied": 155
+    },
+    {
+      "name": "legacy-repeat",
+      "raw_path": "local-evidence://20260908-packed-optimization/navigation-fix/legacy-repeat/drive.json",
+      "raw_sha256": "e1d2dea16d95d007a230c4efda7392ed2d74d9fbed46f604e98ef66e3875181f",
+      "exit": 0,
+      "failures": [],
+      "native_received": 13,
+      "native_applied": 13,
+      "presentation": {
+        "scan-drag": {
+          "all_tiles": null,
+          "selected_dp": {
+            "distinct": 359,
+            "per_s": 120.0,
+            "per_input_second": 119.0,
+            "first_presented_delay_ms": 26.42,
+            "interval_ms": {
+              "n": 358,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 8.33
+            }
+          }
+        }
+      },
+      "final_memory": {
+        "resident_count": 5,
+        "allocated_bytes": 10928930816,
+        "memory_budget_bytes": 17162698752,
+        "comparison_visible": false
+      }
+    },
+    {
+      "name": "legacy-repeat-2",
+      "raw_path": "local-evidence://20260908-packed-optimization/navigation-fix/legacy-repeat-2/drive.json",
+      "raw_sha256": "69132c097f79ad14d00b5df93df0805e43e6e11a82a482df6ca0e839bcb3ac50",
+      "exit": 0,
+      "failures": [],
+      "native_received": 13,
+      "native_applied": 13,
+      "presentation": {
+        "scan-drag": {
+          "all_tiles": null,
+          "selected_dp": {
+            "distinct": 358,
+            "per_s": 120.0,
+            "per_input_second": 118.9,
+            "first_presented_delay_ms": 35.19,
+            "interval_ms": {
+              "n": 357,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 8.33
+            }
+          }
+        }
+      },
+      "final_memory": {
+        "resident_count": 5,
+        "allocated_bytes": 10932535296,
+        "memory_budget_bytes": 17162698752,
+        "comparison_visible": false
+      }
+    },
+    {
+      "name": "legacy-repeat-3",
+      "raw_path": "local-evidence://20260908-packed-optimization/navigation-fix/legacy-repeat-3/drive.json",
+      "raw_sha256": "1428c4942c537b707b68ee54e8bc77c9f8480a92d681948cc978e908983f56cf",
+      "exit": 0,
+      "failures": [],
+      "native_received": 13,
+      "native_applied": 13,
+      "presentation": {
+        "scan-drag": {
+          "all_tiles": null,
+          "selected_dp": {
+            "distinct": 358,
+            "per_s": 119.7,
+            "per_input_second": 118.9,
+            "first_presented_delay_ms": 26.81,
+            "interval_ms": {
+              "n": 357,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          }
+        }
+      },
+      "final_memory": {
+        "resident_count": 5,
+        "allocated_bytes": 10932535296,
+        "memory_budget_bytes": 17162698752,
+        "comparison_visible": false
+      }
+    },
+    {
+      "name": "legacy-repeat-4",
+      "raw_path": "local-evidence://20260908-packed-optimization/navigation-fix/legacy-repeat-4/drive.json",
+      "raw_sha256": "73ab3c024c609b1e2d5a386daf6d31f75ccbb2cd65ceb495419c07e9fb8ac154",
+      "exit": 0,
+      "failures": [],
+      "native_received": 13,
+      "native_applied": 13,
+      "presentation": {
+        "scan-drag": {
+          "all_tiles": null,
+          "selected_dp": {
+            "distinct": 353,
+            "per_s": 118.7,
+            "per_input_second": 117.3,
+            "first_presented_delay_ms": 38.61,
+            "interval_ms": {
+              "n": 352,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 33.33
+            }
+          }
+        }
+      },
+      "final_memory": {
+        "resident_count": 5,
+        "allocated_bytes": 10932535296,
+        "memory_budget_bytes": 17162698752,
+        "comparison_visible": false
+      }
+    },
+    {
+      "name": "pipe-stress",
+      "raw_path": "local-evidence://20260908-packed-optimization/navigation-fix/pipe-stress/result.json",
+      "raw_sha256": "528ab5e9ac685190db0eba705708912016dc7557c5a3aa632fb92dbd564c0535",
+      "exit": 0,
+      "failures": [],
+      "navigation_receipts": {
+        "sent": 155,
+        "received": 155,
+        "applied_once": 155,
+        "retries": 0
+      },
+      "forced_reload": [
+        {
+          "name": "forced-reload",
+          "action_to_presented_s": 1.1878164999999967,
+          "presentation": {
+            "request": "D3E7BA93-E312-425E-A720-E6D7B88426B3",
+            "id": "dec50af05217a607ad0e",
+            "generation": "37",
+            "phase": "reload_source_pages_unspecified",
+            "wall_seconds": "1.1199464166420512",
+            "physical_resident_bytes": "11353713052",
+            "presented_time": "276436.73901737505"
+          }
+        }
+      ]
+    },
+    {
+      "name": "pipe-six-final",
+      "raw_path": "local-evidence://20260908-packed-optimization/navigation-fix/pipe-six-final/drive.json",
+      "raw_sha256": "df64a6ea9bb4b1a3b4fbaad013c9525e720b7375f7d9255eb19248fad6fff1fc",
+      "exit": 0,
+      "failures": [],
+      "navigation_receipts": {
+        "sent": 13,
+        "received": 13,
+        "applied_once": 13,
+        "retries": 0
+      },
+      "presentation": {
+        "scan-drag": {
+          "all_tiles": null,
+          "selected_dp": {
+            "distinct": 358,
+            "per_s": 120.0,
+            "per_input_second": 119.0,
+            "first_presented_delay_ms": 33.88,
+            "interval_ms": {
+              "n": 357,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 8.33
+            }
+          }
+        }
+      },
+      "final_memory": {
+        "resident_count": 5,
+        "allocated_bytes": 10932535296,
+        "memory_budget_bytes": 17162698752,
+        "comparison_visible": false
+      },
+      "initial_presentation_sample": null
+    },
+    {
+      "name": "pipe-seven-final",
+      "raw_path": "local-evidence://20260908-packed-optimization/navigation-fix/pipe-seven-final/drive.json",
+      "raw_sha256": "0361548f745722b99269e90a37383858151118b8481110db6266ed732c504193",
+      "exit": 0,
+      "failures": [],
+      "navigation_receipts": {
+        "sent": 15,
+        "received": 15,
+        "applied_once": 15,
+        "retries": 0
+      },
+      "presentation": {
+        "scan-drag": {
+          "all_tiles": null,
+          "selected_dp": {
+            "distinct": 357,
+            "per_s": 120.0,
+            "per_input_second": 118.3,
+            "first_presented_delay_ms": 44.76,
+            "interval_ms": {
+              "n": 356,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 8.33
+            }
+          }
+        },
+        "large-ABF-center": {
+          "all_tiles": {
+            "distinct": 207,
+            "per_s": 104.7,
+            "per_input_second": 101.8,
+            "first_presented_delay_ms": 63.63,
+            "interval_ms": {
+              "n": 206,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 25.0
+            }
+          },
+          "selected_dp": null
+        },
+        "large-ABF-resize": {
+          "all_tiles": {
+            "distinct": 232,
+            "per_s": 114.5,
+            "per_input_second": 114.1,
+            "first_presented_delay_ms": 9.97,
+            "interval_ms": {
+              "n": 231,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "selected_dp": null
+        },
+        "large-ADF-center": {
+          "all_tiles": {
+            "distinct": 215,
+            "per_s": 106.1,
+            "per_input_second": 105.8,
+            "first_presented_delay_ms": 20.67,
+            "interval_ms": {
+              "n": 214,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 50.0
+            }
+          },
+          "selected_dp": null
+        },
+        "large-ADF-resize": {
+          "all_tiles": {
+            "distinct": 224,
+            "per_s": 112.0,
+            "per_input_second": 111.1,
+            "first_presented_delay_ms": 19.09,
+            "interval_ms": {
+              "n": 223,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 25.0
+            }
+          },
+          "selected_dp": null
+        },
+        "scan-drag-2": {
+          "all_tiles": null,
+          "selected_dp": {
+            "distinct": 354,
+            "per_s": 120.0,
+            "per_input_second": 117.6,
+            "first_presented_delay_ms": 64.55,
+            "interval_ms": {
+              "n": 353,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 8.33
+            }
+          }
+        }
+      },
+      "final_memory": {
+        "resident_count": 7,
+        "allocated_bytes": 14886273024,
+        "memory_budget_bytes": 17162698752,
+        "comparison_visible": true
+      },
+      "initial_presentation_sample": null
+    }
+  ]
+}

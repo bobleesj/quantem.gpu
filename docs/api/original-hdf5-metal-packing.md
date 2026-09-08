@@ -53,7 +53,9 @@ are still reread and decoded on each direct load. No subsecond guarantee is made
   does not remove counts. This estimate is not angular calibration.
 - The entire acquisition is range-audited. Working uint8 is selected only
   when every count is <=255; otherwise the resident retains uint16 counts.
-- Every packed value is decoded back and compared on Metal before publication.
+- Every count is checked against its packed representation on Metal before
+  publication, either by exact scalar reconstruction or source bit-plane
+  comparison. The latter does not need to materialize a dense count tensor.
   Independent NumPy/HDF5 tests check decoder and downstream scientific parity.
   Direct loads leave raw/working logical SHA-256 fields nil because they do not
   hash a dense tensor. File preparation records those hashes. GPU roundtrip
@@ -114,10 +116,17 @@ cycles through the discovered acquisitions, keeps one complete 4D resident,
 and releases it before each next selection. A return visit rereads and
 reconstructs the source. The optional oracle maps each source identity to an
 independently computed full-count SHA-256 in scan-major uint32 little-endian
-order; every acquisition is checked once, outside its loading timer. Subsequent
-visits compare selected diffraction counts; they are not repeat full-volume
-hash audits. Omit the two cache options to measure fresh packing/products on
-every visit.
+order. With `--oracle`, every reconstructed resident is fully audited on every
+visit, outside its loading timer; it must not inherit a previous visit's pass.
+Without that oracle, selected diffraction samples are only repeatability checks,
+not an independent full-volume validation. Omit the two cache options to measure
+fresh packing and products on every visit.
+
+`--detector-trials N` additionally measures fixed BF, ABF, and ADF transitions.
+`--series` retains the discovered acquisitions together and exercises concurrent
+detector submissions; it is a different memory and timing workflow from the
+single-resident loop. Complete map hashes must be compared with the independent
+reference, and these kernel timings must not be labeled native presented FPS.
 
 JSON lines report catalog time separately from indexed-open-to-resident-ready
 time, include the first load, and expose GPU decode/fused intervals without

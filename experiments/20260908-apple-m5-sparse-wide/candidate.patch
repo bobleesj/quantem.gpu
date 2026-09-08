@@ -1,0 +1,105 @@
+diff --git a/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/packed_h5.metal b/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/packed_h5.metal
+index 590045c..343f328 100644
+--- a/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/packed_h5.metal
++++ b/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/packed_h5.metal
+@@ -852,12 +852,11 @@ inline uint compactLowBitScanSums(
+     }
+     // Distinct lane bits add without carry; this is the coefficient bitmask.
+     uint positive = simd_sum(coefficient == 1 ? (1u << scanLane) : 0u);
+-    uint negative = ~positive;
+     low = compactTransposeBits(low, scanLane);
+-    uint sum = popcount(low & positive) - popcount(low & negative);
++    uint sum = (popcount(low & positive) - popcount(low & ~positive));
+     if (maximumWidth == 2u) {
+         high = compactTransposeBits(high, scanLane);
+-        sum += 2u * (popcount(high & positive) - popcount(high & negative));
++        sum += 2u * (popcount(high & positive) - popcount(high & ~positive));
+     }
+     return sum;
+ }
+@@ -1028,6 +1027,43 @@ kernel void compact_h5_detector_update_pixel_lanes(
+             );
+             continue;
+         }
++        // A few wide entries must not force every lane into a wide-field
++        // reduction. Keep their full values and broadcast their descriptors;
++        // each output lane extracts its own scan, without a dense expansion.
++        uint wideMask = simd_sum(width > 4u ? (1u << scanLane) : 0u);
++        if (popcount(wideMask) <= 4u) {
++            uint narrowDescriptor = width <= 4u ? descriptor : 0u;
++            uint narrowMaximum = simd_max(width <= 4u ? width : 0u);
++            if (narrowMaximum <= 2u) {
++                partial += compactLowBitScanSums(
++                    payload, narrowDescriptor, coefficient, parameters,
++                    scanBase, scanLane, narrowMaximum);
++            } else {
++                partial += compactMediumBitScanSums(
++                    payload, narrowDescriptor, coefficient, parameters,
++                    scanBase, scanLane, narrowMaximum);
++            }
++            while (wideMask != 0u) {
++                uint owner = ctz(wideMask);
++                uint wideDescriptor = simd_shuffle(descriptor, owner);
++                int wideCoefficient = simd_shuffle(coefficient, owner);
++                uint wideWidth = wideDescriptor & 31u;
++                uint scan = scanBase + scanLane;
++                if (scan < parameters.scanCount) {
++                    uint bit = (scan % parameters.scanTile) * wideWidth;
++                    uint word = (wideDescriptor >> 5u) + bit / 32u;
++                    uint shift = bit % 32u;
++                    uint value = payload[word] >> shift;
++                    if (shift + wideWidth > 32u) {
++                        value |= payload[word + 1u] << (32u - shift);
++                    }
++                    value &= (1u << wideWidth) - 1u;
++                    partial += wideCoefficient == 1 ? value : 0u - value;
++                }
++                wideMask &= wideMask - 1u;
++            }
++            continue;
++        }
+         if (maximumWidth <= 11u) {
+             // 32 * 2047 = 65504 fits each independent sixteen-bit sum.
+             partial += compactPackedScanSums<2u, 16u>(
+diff --git a/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/qh5idx.metal b/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/qh5idx.metal
+index c033336..676374e 100644
+--- a/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/qh5idx.metal
++++ b/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/qh5idx.metal
+@@ -1892,6 +1892,7 @@ kernel void h5lz4dc_full_u16_aligned_fill_qh5idx(
+     )) atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+ }
+ 
++
+ kernel void h5lz4dc_full_u16_aligned_copy_qh5idx(
+     const device uchar *h5File [[buffer(0)]],
+     const device uint2 *blockMetadata [[buffer(1)]],
+diff --git a/src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/Metal4DSTEMCompactH5.swift b/src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/Metal4DSTEMCompactH5.swift
+index 6f262cb..ca78bab 100644
+--- a/src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/Metal4DSTEMCompactH5.swift
++++ b/src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/Metal4DSTEMCompactH5.swift
+@@ -529,6 +529,8 @@ public final class MetalCompactH5ResidentSource {
+   private var activeDetectorOutput = 0
+   private var detectorMask: [UInt8]
+   private var detectorSumReady = false
++  private let widthOrderedEntries =
++    ProcessInfo.processInfo.environment["COMPACT_DETECTOR_WIDTH_ORDER"] == "1"
+   public private(set) var isReleased = false
+ 
+   fileprivate func markOriginalDetectorSumReady() { detectorSumReady = true }
+@@ -1270,6 +1272,16 @@ public final class MetalCompactH5ResidentSource {
+       ? 0
+       : detectorRegions?.decompose(
+         &entries, rows: metadata.detectorRows, columns: metadata.detectorColumns) ?? 0
++    if widthOrderedEntries {
++      // Keep rare high-count pixels from selecting the wide reduction for an
++      // otherwise narrow SIMD group. Only summation order changes; no count or
++      // GPU allocation changes. Preserve pixel order within equal widths.
++      entries.sort {
++        let left = maximumWidths[Int($0.pixel)]
++        let right = maximumWidths[Int($1.pixel)]
++        return left == right ? $0.pixel < $1.pixel : left < right
++      }
++    }
+     if !entries.isEmpty {
+       _ = entries.withUnsafeBytes { raw in
+         memcpy(detectorEntryBuffer.contents(), raw.baseAddress!, raw.count)

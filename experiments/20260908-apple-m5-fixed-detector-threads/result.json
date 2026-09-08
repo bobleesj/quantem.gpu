@@ -1,0 +1,210 @@
+[
+  {
+    "case": "control-a",
+    "started_unix": 1788864681.9233549,
+    "accepted": true,
+    "binary_sha256": "bd2a6e89618e37965bbf6a78e04b89bb3753dc57c58823dd96aa51f1a146113e",
+    "metal_resource_sha256": {
+      "MetalKernels_MetalSSBKernels.bundle/Resources/ssb.metal": "b1c56f17776a7841be0b8ffcf08b85cda32a914c11cb4b4913a2cf4a5ad60306",
+      "MetalKernels_MetalImageFFT.bundle/Resources/fft.metal": "fbefa9fea2b2b198b014939fa6a8834293c61eca1ce08af0bbfdfec9aee60052",
+      "MetalKernels_MetalDisplayKernels.bundle/Resources/display.metal": "c74a945450b1002b95bbc319ae0ca3387905c4476991c487cd76aca6b12ce59f",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/compact_detector_regions.metal": "b35b1bd86454de67503f94ac2336afdd3824b7aeb54dcc546a62d987d8f5ca22",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/ans_counts.metal": "c58a7397fb5c97453711785dfa9722132dc5f24a055090985b688db3716be54b",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/dpc.metal": "8ba200b8f32ed8d06e2e394ae8bfaa29e1a06945f5b4baafa3a637301803f8a1",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/detector.metal": "62ecde7eb07610ad358a2834b274476f5580201b0c58f450c495adab35c97716",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/original_packing.metal": "30caada082068e6ea98577b7b2a50a5c20a86bfb90384a079cc632bb9e7d44a7",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/packed_h5.metal": "8c93b5c70e93e89575aace9fbea628dfdd86a46f30becd41038a1ac1e9146b66",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/qh5idx.metal": "7f7a260fa7cdf5444d61b1ace17feb151237af3cce95584000e04b47229a2e66"
+    },
+    "environment": {
+      "QGPU_ORIGINAL_PROFILE": "1",
+      "COMPACT_UPDATE_HOST_PROFILE": "1",
+      "COMPACT_RAW_FIXED_THREADS": "0",
+      "COMPACT_RAW_REQUIRED_THREADS": "0"
+    },
+    "exit": 0,
+    "finished_unix": 1788864696.919017,
+    "stdout_sha256": "4144238301b890d5261b01318f2d69ffc42d55c63e2ee5f6c730ce4dca1fd81c",
+    "stderr_sha256": "b4f05e21a62e2ae01fa8ac57295e4c436fdcb39ffa7b6d25d423dfbc0ff05c2b",
+    "exact_maps": 420,
+    "resident_bytes": 14752175312,
+    "released_device_allocated_bytes": 1769472,
+    "total_load_seconds": 9.763236165046692,
+    "call_median_ms": 67.7804946899414,
+    "gpu_median_ms": 66.61850000091363,
+    "pipeline_thread_limits": [
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024
+    ],
+    "pipeline_required_threads": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  {
+    "case": "bounded",
+    "started_unix": 1788864696.9272268,
+    "accepted": true,
+    "binary_sha256": "bd2a6e89618e37965bbf6a78e04b89bb3753dc57c58823dd96aa51f1a146113e",
+    "metal_resource_sha256": {
+      "MetalKernels_MetalSSBKernels.bundle/Resources/ssb.metal": "b1c56f17776a7841be0b8ffcf08b85cda32a914c11cb4b4913a2cf4a5ad60306",
+      "MetalKernels_MetalImageFFT.bundle/Resources/fft.metal": "fbefa9fea2b2b198b014939fa6a8834293c61eca1ce08af0bbfdfec9aee60052",
+      "MetalKernels_MetalDisplayKernels.bundle/Resources/display.metal": "c74a945450b1002b95bbc319ae0ca3387905c4476991c487cd76aca6b12ce59f",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/compact_detector_regions.metal": "b35b1bd86454de67503f94ac2336afdd3824b7aeb54dcc546a62d987d8f5ca22",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/ans_counts.metal": "c58a7397fb5c97453711785dfa9722132dc5f24a055090985b688db3716be54b",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/dpc.metal": "8ba200b8f32ed8d06e2e394ae8bfaa29e1a06945f5b4baafa3a637301803f8a1",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/detector.metal": "62ecde7eb07610ad358a2834b274476f5580201b0c58f450c495adab35c97716",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/original_packing.metal": "30caada082068e6ea98577b7b2a50a5c20a86bfb90384a079cc632bb9e7d44a7",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/packed_h5.metal": "8c93b5c70e93e89575aace9fbea628dfdd86a46f30becd41038a1ac1e9146b66",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/qh5idx.metal": "7f7a260fa7cdf5444d61b1ace17feb151237af3cce95584000e04b47229a2e66"
+    },
+    "environment": {
+      "QGPU_ORIGINAL_PROFILE": "1",
+      "COMPACT_UPDATE_HOST_PROFILE": "1",
+      "COMPACT_RAW_FIXED_THREADS": "1",
+      "COMPACT_RAW_REQUIRED_THREADS": "0"
+    },
+    "exit": 0,
+    "finished_unix": 1788864711.081737,
+    "stdout_sha256": "96db8929969f7b51ead7fe854e57e147eb56d14cc005b613a1191775fa3c2640",
+    "stderr_sha256": "7c73c3cd804b5cf74f58d7dc95ad40f4fbe0f1ab7ccbd64197bc5c34667cc85d",
+    "exact_maps": 420,
+    "resident_bytes": 14752175312,
+    "released_device_allocated_bytes": 1769472,
+    "total_load_seconds": 9.329969048500061,
+    "call_median_ms": 70.15705108642578,
+    "gpu_median_ms": 69.05747916607652,
+    "pipeline_thread_limits": [
+      128,
+      128,
+      128,
+      128,
+      128,
+      128,
+      128
+    ],
+    "pipeline_required_threads": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  {
+    "case": "required",
+    "started_unix": 1788864711.0923069,
+    "accepted": true,
+    "binary_sha256": "bd2a6e89618e37965bbf6a78e04b89bb3753dc57c58823dd96aa51f1a146113e",
+    "metal_resource_sha256": {
+      "MetalKernels_MetalSSBKernels.bundle/Resources/ssb.metal": "b1c56f17776a7841be0b8ffcf08b85cda32a914c11cb4b4913a2cf4a5ad60306",
+      "MetalKernels_MetalImageFFT.bundle/Resources/fft.metal": "fbefa9fea2b2b198b014939fa6a8834293c61eca1ce08af0bbfdfec9aee60052",
+      "MetalKernels_MetalDisplayKernels.bundle/Resources/display.metal": "c74a945450b1002b95bbc319ae0ca3387905c4476991c487cd76aca6b12ce59f",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/compact_detector_regions.metal": "b35b1bd86454de67503f94ac2336afdd3824b7aeb54dcc546a62d987d8f5ca22",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/ans_counts.metal": "c58a7397fb5c97453711785dfa9722132dc5f24a055090985b688db3716be54b",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/dpc.metal": "8ba200b8f32ed8d06e2e394ae8bfaa29e1a06945f5b4baafa3a637301803f8a1",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/detector.metal": "62ecde7eb07610ad358a2834b274476f5580201b0c58f450c495adab35c97716",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/original_packing.metal": "30caada082068e6ea98577b7b2a50a5c20a86bfb90384a079cc632bb9e7d44a7",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/packed_h5.metal": "8c93b5c70e93e89575aace9fbea628dfdd86a46f30becd41038a1ac1e9146b66",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/qh5idx.metal": "7f7a260fa7cdf5444d61b1ace17feb151237af3cce95584000e04b47229a2e66"
+    },
+    "environment": {
+      "QGPU_ORIGINAL_PROFILE": "1",
+      "COMPACT_UPDATE_HOST_PROFILE": "1",
+      "COMPACT_RAW_FIXED_THREADS": "1",
+      "COMPACT_RAW_REQUIRED_THREADS": "1"
+    },
+    "exit": 0,
+    "finished_unix": 1788864725.326405,
+    "stdout_sha256": "30bb11943fe60cd8579dd62c7e6a4ed27680cfef9f6e1d33459fcc6681502f9e",
+    "stderr_sha256": "09136547d9a1c3d90bb4af55f6babc5fc7e2ef3e9e87078c2418becfa085f044",
+    "exact_maps": 420,
+    "resident_bytes": 14752175312,
+    "released_device_allocated_bytes": 1769472,
+    "total_load_seconds": 9.380778074264526,
+    "call_median_ms": 70.21498680114746,
+    "gpu_median_ms": 68.98264582559932,
+    "pipeline_thread_limits": [
+      128,
+      128,
+      128,
+      128,
+      128,
+      128,
+      128
+    ],
+    "pipeline_required_threads": [
+      128,
+      128,
+      128,
+      128,
+      128,
+      128,
+      128
+    ]
+  },
+  {
+    "case": "control-b",
+    "started_unix": 1788864725.335964,
+    "accepted": true,
+    "binary_sha256": "bd2a6e89618e37965bbf6a78e04b89bb3753dc57c58823dd96aa51f1a146113e",
+    "metal_resource_sha256": {
+      "MetalKernels_MetalSSBKernels.bundle/Resources/ssb.metal": "b1c56f17776a7841be0b8ffcf08b85cda32a914c11cb4b4913a2cf4a5ad60306",
+      "MetalKernels_MetalImageFFT.bundle/Resources/fft.metal": "fbefa9fea2b2b198b014939fa6a8834293c61eca1ce08af0bbfdfec9aee60052",
+      "MetalKernels_MetalDisplayKernels.bundle/Resources/display.metal": "c74a945450b1002b95bbc319ae0ca3387905c4476991c487cd76aca6b12ce59f",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/compact_detector_regions.metal": "b35b1bd86454de67503f94ac2336afdd3824b7aeb54dcc546a62d987d8f5ca22",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/ans_counts.metal": "c58a7397fb5c97453711785dfa9722132dc5f24a055090985b688db3716be54b",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/dpc.metal": "8ba200b8f32ed8d06e2e394ae8bfaa29e1a06945f5b4baafa3a637301803f8a1",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/detector.metal": "62ecde7eb07610ad358a2834b274476f5580201b0c58f450c495adab35c97716",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/original_packing.metal": "30caada082068e6ea98577b7b2a50a5c20a86bfb90384a079cc632bb9e7d44a7",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/packed_h5.metal": "8c93b5c70e93e89575aace9fbea628dfdd86a46f30becd41038a1ac1e9146b66",
+      "MetalKernels_Metal4DSTEMKernels.bundle/Resources/qh5idx.metal": "7f7a260fa7cdf5444d61b1ace17feb151237af3cce95584000e04b47229a2e66"
+    },
+    "environment": {
+      "QGPU_ORIGINAL_PROFILE": "1",
+      "COMPACT_UPDATE_HOST_PROFILE": "1",
+      "COMPACT_RAW_FIXED_THREADS": "0",
+      "COMPACT_RAW_REQUIRED_THREADS": "0"
+    },
+    "exit": 0,
+    "finished_unix": 1788864739.5639071,
+    "stdout_sha256": "d658cd33b38f688892213303708a2570e2026034b136a58e69d373b03cc2c331",
+    "stderr_sha256": "210ae7782d37be65c4e6d4015c545a5babed4ff309a2cd2653d60fe17388b16e",
+    "exact_maps": 420,
+    "resident_bytes": 14752175312,
+    "released_device_allocated_bytes": 1769472,
+    "total_load_seconds": 9.311501264572144,
+    "call_median_ms": 71.33400440216064,
+    "gpu_median_ms": 69.49831249949057,
+    "pipeline_thread_limits": [
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024
+    ],
+    "pipeline_required_threads": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  }
+]

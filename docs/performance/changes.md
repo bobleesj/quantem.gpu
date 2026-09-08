@@ -4,6 +4,17 @@ This ledger separates documentation revisions from the implementation revision
 that produced a benchmark. A documentation edit never makes an older timing a
 measurement of the current code.
 
+## 2026-09-08: unpublished native packed-resident candidate
+
+The [dated investigation](../maintainer/2026-09-08-packed-resident-optimization.md)
+records exact original-HDF5 reconstruction, seven-resident detector reductions,
+native presentation measurements, rejected experiments, and corrected timing
+assumptions. It is not a release signoff or a replacement for the older source
+checkpoints below. The 120 Hz wide-detector and four-to-five-second seven-load
+targets remain unmet.
+
+## 2026-08-22: previous review
+
 - **Ledger reviewed:** 2026-08-22
 - **Integration base:** origin/main `75be74e`
 - **Current clean benchmark source checkpoints:** canonical Python/CPU metadata

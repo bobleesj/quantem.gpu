@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-apple-m5-cooperative-block",
+  "status": "refuted",
+  "question": "Can SIMD-cooperative full LZ4 copy improve loading despite replicated token parsing, at identical scratch and resident sizes?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260908-apple-m5-cooperative-block/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "a0aaa52be1fb7b66406f8624527383178509e1f7",
+    "entrypoint": "experiments/20260908-apple-m5-planar-topology/run_cases.py",
+    "dirty": true,
+    "benchmark_source_snapshot": "local-evidence://20260908-packed-optimization/benchmark-source-direct-dpc.tar",
+    "benchmark_source_sha256": "d5ec5cde391d34a03ba7d77bd0e1ec0f8b2719701b97b7dfdf5db5fb2a64a303",
+    "diff_sha256": "eb7f72f0e41906d070c46e7e978a3cf93fe51692a06a1f748a3132b7380b8593",
+    "snapshot_path": "local-evidence://20260908-packed-optimization/cooperative-block.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-6",
+      "path": "private-fixture://tilt-series/532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350",
+      "sha256": "4b193525246c3fceeee9edbc8fce83a76b3adbfa65baf2d031a60ecddf6c6144"
+    }
+  ],
+  "parameters": {
+    "sources": 1,
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "source_dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "new_resident_buffers": 0,
+    "repeats": 2,
+    "trials": 4,
+    "scope": "Full8192-byte validated LZ4 SIMD-local copy, no outputprefix skipped. Reused poisoned scratch valid/malformedfixtures then single-anchor A/B/A screen; all7confirmation only if improved. No extraGPU buffers.",
+    "cold_io_claim": false,
+    "native_ui_claim": false,
+    "cases": "experiments/20260908-apple-m5-cooperative-block/cases.json",
+    "fixture": "experiments/20260908-apple-m5-cooperative-block/check_lz4.swift"
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "integrated-gpu-0"
+    ],
+    "gpu_model": "Apple M5 24 GB"
+  },
+  "outputs": [
+    {
+      "artifact_id": "comparison",
+      "path": "experiments/20260908-apple-m5-cooperative-block/comparison.json",
+      "sha256": "ee4b8e40b8888027cedd037290cdc6b8d1c9bff90ad8c26182e15ddedf269d7f",
+      "size_bytes": 15043,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Anchor6loads360maps exact,samebuffers;cooperative1.571s vs1.131/1.186controls,slower. Noall7performanceclaim;candidate rejected."
+    },
+    {
+      "artifact_id": "fixture",
+      "path": "experiments/20260908-apple-m5-cooperative-block/fixture-result.json",
+      "sha256": "9d314ce0c6924cd18e715cb24cc5cd893f3a71d0265264605a96a83fa09ba609",
+      "size_bytes": 106,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "18validfull8192-byteblocks and10malformedstreams pass on scalar/cooperativekernels; reusedpoisonedscratch."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-08T08:12:00Z",
+    "started": "2026-09-08T08:12:00Z",
+    "finished": "2026-09-08T08:16:00Z"
+  }
+}

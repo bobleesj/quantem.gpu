@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-apple-m5-frame-lanes",
+  "status": "refuted",
+  "question": "Does grouping LZ4 work by detector block across frames reduce lane divergence and full original-to-packed latency without additional GPU memory?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260908-apple-m5-frame-lanes/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "a0aaa52be1fb7b66406f8624527383178509e1f7",
+    "entrypoint": "metal-original-hdf5-benchmark --repeats 3 --reuse-products; frame-lane scheduling 0,1,0",
+    "dirty": true,
+    "diff_sha256": "044d09e8409e52962db5ec68bbcb84e471065cb228461e095e46a894676c4896",
+    "snapshot_path": "local-evidence://20260908-packed-optimization/frame-lanes-full.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-1",
+      "path": "private-fixture://tilt-series/446d2751716a5985e417f29cc19feea81b4dcf2bcbbf428578b6965e16d26f71",
+      "sha256": "4c5597ac5eb804cee7e01e1874ab69ad7f16c36e7eb9fa147083ac6d9dbedc65"
+    },
+    {
+      "dataset_id": "tilt-series-2",
+      "path": "private-fixture://tilt-series/fe15c891bb065252242350728162e60320860f4c9dfbe2b6c21bb983ccd879c4",
+      "sha256": "047f589fb4b94e070793e23ebaa3c41ddc4efe71e7dc2f9048d2caa25dc079af"
+    },
+    {
+      "dataset_id": "tilt-series-3",
+      "path": "private-fixture://tilt-series/aa18159030e03a756f7a057e9422ce645dfbe4bb0df7bc9eac6c6aeee2d55db1",
+      "sha256": "7b9a58202bd9251e843e255668689968f1fec49da3e19c5883584342cb96a476"
+    },
+    {
+      "dataset_id": "tilt-series-4",
+      "path": "private-fixture://tilt-series/6f94694a3d63c41edca118a74aae1384b1f61316699154a8dda0e8ac5e1af64f",
+      "sha256": "fe34acc72d659b9d94a578ba5191224c7461488be96ea8d7bba98aec4c35b1e0"
+    },
+    {
+      "dataset_id": "tilt-series-5",
+      "path": "private-fixture://tilt-series/88907d90d0be36cce51ed15cfc82e0967c5641e190c0428e2e9ceb8aaf23c59b",
+      "sha256": "ac9d184644ab526a86137ad7d37e714b9fc1b521a6efe80d6a0ae324ae88de91"
+    },
+    {
+      "dataset_id": "tilt-series-6",
+      "path": "private-fixture://tilt-series/532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350",
+      "sha256": "4b193525246c3fceeee9edbc8fce83a76b3adbfa65baf2d031a60ecddf6c6144"
+    },
+    {
+      "dataset_id": "tilt-series-7",
+      "path": "private-fixture://tilt-series/8b006c84044f4c7d6842ab1c896359d7c5fe0e331d76dcf7a7a1f7be429523e3",
+      "sha256": "09a1a093bca8a1234ea82ffeafe1e3f87fa516e72e3eb8d706ca93297e65a123"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "sources": 7,
+    "repeats_per_arm": 3,
+    "arms": [
+      "control-a",
+      "frame-lanes",
+      "control-b"
+    ],
+    "source_dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "excluded_pixels": 0,
+    "budget_bytes": 8000000000,
+    "build_flags": [
+      "-c",
+      "release",
+      "--disable-sandbox",
+      "-Xswiftc",
+      "-DQGPU_PACKING_DIAGNOSTICS"
+    ],
+    "binary_sha256": "e7aba35f84f4858402a9dfb9f1dead8356435b1abc89697fc4eab7017bb7c9da",
+    "cache_state": "existing packing plans, reused CPU DPC moments after cycle 0, original counts reread every time, uncontrolled OS source pages",
+    "timing_boundary": "indexed source open through full packed resident return, no UI",
+    "cold_io_claim": false,
+    "ui_present_measured": false,
+    "parity": "all count roundtrip at load; selected frame hashes compared across arms, independent full oracle ongoing",
+    "contention": "owned CPU oracle suspended for timed arms and resumed by shell EXIT trap",
+    "timestamp_source": "Retained stdout file creation and last-write times on the measured host"
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "integrated-gpu-0"
+    ],
+    "gpu_model": "Apple M5 24 GB"
+  },
+  "outputs": [
+    {
+      "artifact_id": "comparison",
+      "path": "experiments/20260908-apple-m5-frame-lanes/comparison.json",
+      "sha256": "43bfecff84ab980879aa939f0dbc120c36f73133814f1ba5db1d4cc0c68710ce",
+      "size_bytes": 1962,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "All 63 loads complete, matched selected-frame hashes and identical resident allocation. Candidate repeated-load medians 1.522/1.488 s vs control A 1.448/1.407 s and B 1.450/1.354 s. Reject candidate."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-08T05:11:34.000Z",
+    "started": "2026-09-08T05:11:34.000Z",
+    "finished": "2026-09-08T05:13:18.000Z"
+  }
+}

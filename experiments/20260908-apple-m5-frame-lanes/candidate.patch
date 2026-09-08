@@ -1,0 +1,56 @@
+diff --git a/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/qh5idx.metal b/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/qh5idx.metal
+index c033336..5e081cd 100644
+--- a/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/qh5idx.metal
++++ b/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/qh5idx.metal
+@@ -1892,6 +1892,35 @@ kernel void h5lz4dc_full_u16_aligned_fill_qh5idx(
+     )) atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+ }
+ 
++// Neighboring lanes decode the same detector block from neighboring frames.
++// This is a bijective work permutation for any frame count, including tails.
++// It groups similar spatial statistics without a work-list allocation.
++kernel void h5lz4dc_full_u16_frame_lanes_qh5idx(
++    const device uchar *h5File [[buffer(0)]],
++    const device uint2 *blockMetadata [[buffer(1)]],
++    constant ulong &rangeStart [[buffer(2)]],
++    constant uint &blocksPerFrame [[buffer(3)]],
++    constant uint &frameElements [[buffer(4)]],
++    device uchar *scratch [[buffer(5)]],
++    constant uint &metadataFrameOffset [[buffer(6)]],
++    device atomic_uint *errors [[buffer(10)]],
++    constant uint &frameCount [[buffer(11)]],
++    uint linearBlock [[thread_position_in_grid]]
++) {
++    if (blocksPerFrame == 0u || ulong(blocksPerFrame) * 4096ul != frameElements) {
++        atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
++        return;
++    }
++    if (ulong(linearBlock) >= ulong(frameCount) * blocksPerFrame) return;
++    uint frame = linearBlock % frameCount;
++    uint block = linearBlock / frameCount;
++    uint2 metadata = blockMetadata[(ulong(metadataFrameOffset) + frame) * blocksPerFrame + block];
++    if (!bslz4DecompressFullSerialCheckedToDevice<true>(
++        scratch + ulong(frame) * frameElements * 2ul + ulong(block) * 8192ul,
++        h5File + rangeStart + ulong(metadata.x), metadata.y
++    )) atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
++}
++
+ kernel void h5lz4dc_full_u16_aligned_copy_qh5idx(
+     const device uchar *h5File [[buffer(0)]],
+     const device uint2 *blockMetadata [[buffer(1)]],
+diff --git a/src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/MetalOriginalHDF5Packing.swift b/src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/MetalOriginalHDF5Packing.swift
+index 0a065b3..fbc247e 100644
+--- a/src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/MetalOriginalHDF5Packing.swift
++++ b/src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/MetalOriginalHDF5Packing.swift
+@@ -222,7 +222,10 @@ final class OriginalHDF5Packing {
+       let function: String
+       switch (alignedRepeatFill, alignedHistoryCopy) {
+       case (true, true): function = "h5lz4dc_full_u16_aligned_fill_copy_qh5idx"
+-      case (true, false): function = "h5lz4dc_full_u16_aligned_fill_qh5idx"
++      case (true, false):
++        function = OriginalPackingDiagnostics.enabled("FRAME_LANES")
++          ? "h5lz4dc_full_u16_frame_lanes_qh5idx"
++          : "h5lz4dc_full_u16_aligned_fill_qh5idx"
+       case (false, true): function = "h5lz4dc_full_u16_aligned_copy_qh5idx"
+       case (false, false): function = "h5lz4dc_full_u16_scalar_qh5idx"
+       }

@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-apple-m5-original-residency",
+  "status": "succeeded",
+  "question": "Do advisory residency sets for existing original-HDF5 packed allocations reduce first interaction latency without extra resident memory?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260908-apple-m5-original-residency/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "a0aaa52be1fb7b66406f8624527383178509e1f7",
+    "entrypoint": "Live4DSTEM/Tests/NativeUI/profile_seven_tilts.py",
+    "dirty": true,
+    "diff_sha256": "f99e22dbe3120c484617a6ae869b3fa6f30ed4cefdce212f317e27ed3908e1bc",
+    "snapshot_path": "local-evidence://20260908-packed-optimization/original-residency.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-anchor",
+      "path": "private-fixture://tilt-series/-17.0x_0.0y",
+      "sha256": "532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350"
+    }
+  ],
+  "parameters": {
+    "app_revision": "689c4b71b7651e1ff175d19cfae2c6c8f472091a",
+    "input_manifest_scope": "anchor master hash from retained load-concurrency baseline; full local seven-file identity inventory retained with run",
+    "shape_per_source": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "sources": 7,
+    "source_dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "repeats": 1,
+    "cache_state": "existing packing plans; OS source pages uncontrolled; fresh app process",
+    "resident_limit_bytes": 14752175312,
+    "timing_boundary": "native hook trajectories and drawable presentation, separately from backend GPU timing",
+    "run_root": "local-evidence://20260908-packed-optimization/original-residency-{a,candidate,b}",
+    "app_binary_sha256": "3bd9c7fb8a4fd8b4297c6575ea2201eb92e09b9db01018ba1a3de443121f7ab5",
+    "app_dirty": true,
+    "backend_dirty": true,
+    "environment": {
+      "DIAG": "1",
+      "COMPACT_UPDATE_HOST_PROFILE": "1"
+    },
+    "diagnostic_cpu_sampling": false,
+    "benchmark_script_changes": "Per-tile completion and input-duration denominator record startup gaps",
+    "app_diff_sha256": "b9b5f8d4bf3d1f24cdc2492864d92dca36b2c5ea2f0223c6337cf79de0da89f7",
+    "app_snapshot": "local-evidence://20260908-packed-optimization/shard-native-app.patch",
+    "arms": [
+      0,
+      1,
+      0
+    ],
+    "dependency_resolution": "Temporary sibling package path for this local build; exact reviewed pin required before release",
+    "experiment_flag": "COMPACT_RESIDENCY_SETS",
+    "zero_extra_residency_set_bytes_required": true,
+    "confirmation": "20260908-apple-m5-native-residency-repeat"
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "integrated-gpu-0"
+    ],
+    "gpu_model": "Apple M5, 24 GB unified memory, 120 Hz display"
+  },
+  "outputs": [
+    {
+      "artifact_id": "control-a",
+      "path": "experiments/20260908-apple-m5-original-residency/control-a.json",
+      "sha256": "42785886f55c796785939b16ddaad789db993e7f6e3fdb28b2daeda43431f88d",
+      "size_bytes": 12681,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Initial existing-buffer advisory-residency A/B/A, exactsame14.75GB. First-driver2.839/1.052/2.511s; later independently repeated on current planes in native-residency-repeat. No zero-latency claim."
+    },
+    {
+      "artifact_id": "candidate",
+      "path": "experiments/20260908-apple-m5-original-residency/candidate.json",
+      "sha256": "4a3ee60c1aa8c1e778883961e9615a26523ac6928194fa447afdc1a896cf5ace",
+      "size_bytes": 12667,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Initial existing-buffer advisory-residency A/B/A, exactsame14.75GB. First-driver2.839/1.052/2.511s; later independently repeated on current planes in native-residency-repeat. No zero-latency claim."
+    },
+    {
+      "artifact_id": "control-b",
+      "path": "experiments/20260908-apple-m5-original-residency/control-b.json",
+      "sha256": "995fae9856f6774750eed14ad0a64b4c6bafc06efb6f9dc4ef00838f87196be9",
+      "size_bytes": 12663,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Initial existing-buffer advisory-residency A/B/A, exactsame14.75GB. First-driver2.839/1.052/2.511s; later independently repeated on current planes in native-residency-repeat. No zero-latency claim."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-08T05:55:00Z",
+    "started": "2026-09-08T05:55:00Z",
+    "finished": "2026-09-08T05:56:20.696368Z"
+  }
+}

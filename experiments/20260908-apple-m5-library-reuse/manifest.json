@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-apple-m5-library-reuse",
+  "status": "succeeded",
+  "question": "Does bounded reuse of identical compiled Metal libraries reduce original-HDF5 reopen latency without additional dataset buffers?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260908-apple-m5-library-reuse/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "a0aaa52be1fb7b66406f8624527383178509e1f7",
+    "entrypoint": "experiments/20260908-apple-m5-planar-topology/run_cases.py",
+    "dirty": true,
+    "snapshot_path": "local-evidence://20260908-packed-optimization/library-reuse.patch",
+    "diff_sha256": "9cab8199d3bd069d3ae8fc0ca7873d65a20a41156caa5c0c70c5e76994e6f341"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-6",
+      "path": "private-fixture://tilt-series/532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350",
+      "sha256": "4b193525246c3fceeee9edbc8fce83a76b3adbfa65baf2d031a60ecddf6c6144"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "source_dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "new_resident_buffers": 0,
+    "repeats": 3,
+    "detector_trials": 4,
+    "scope": "Same device identity and complete source-string equality before reusing a compiled library. NSCache capped16 records; no acquisition data retained. A/B/A with proven zero-tail packing enabled throughout; count and release gates unchanged.",
+    "native_fps_claim": false,
+    "cold_io_claim": false,
+    "result": "9 loads and540 exact maps; warm reopen0.97342s vs1.01232/0.98645s controls. Six actual code-cache hits; no resident byte increase. Small anchor gain requires seven-source confirmation.",
+    "benchmark_binary_sha256": "aa0188f1e49e3aa9f92c4138f9d07327f93559937306cbdd341840d193e3a0ed"
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "integrated-gpu-0"
+    ],
+    "gpu_model": "Apple M5 24 GB"
+  },
+  "outputs": [
+    {
+      "artifact_id": "comparison",
+      "path": "experiments/20260908-apple-m5-library-reuse/comparison.json",
+      "sha256": "49ca6c6c8c876c1308139ddcb091535b66040a9542035f339dac23f0b76e264d",
+      "size_bytes": 15545,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "9 loads and540 exact maps; warm reopen0.97342s vs1.01232/0.98645s controls. Six actual code-cache hits; no resident byte increase. Small anchor gain requires seven-source confirmation."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-08T09:52:00Z",
+    "started": "2026-09-08T09:57:31.977Z",
+    "finished": "2026-09-08T09:57:47.712Z"
+  }
+}

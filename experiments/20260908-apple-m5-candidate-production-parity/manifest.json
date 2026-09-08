@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-apple-m5-candidate-production-parity",
+  "status": "failed",
+  "question": "Do the candidate same-byte bit-plane loading, direct DPC, and vector detector paths satisfy the existing production uint8/uint16 exactness and failure contracts?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260908-apple-m5-candidate-production-parity/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "a0aaa52be1fb7b66406f8624527383178509e1f7",
+    "entrypoint": "tests/hardware/metal/test_original_packing.py",
+    "dirty": true,
+    "diff_sha256": "3b565fd1f604daa35ad1feedc79435b231b873b7eecb5d7348f291eeb471f018",
+    "snapshot_path": "local-evidence://20260908-packed-optimization/quad-batch.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "existing deterministic synthetic HDF5 fixtures and independent expectations",
+      "path": "tests/hardware/metal/test_original_packing.py",
+      "sha256": "88f7ef9a68b5d5225aed2f70a14c5eb2a06cc01aa8b63891a89922c3cedac67b"
+    }
+  ],
+  "parameters": {
+    "tests_collected": 37,
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "dtypes": [
+      "uint8",
+      "uint16"
+    ],
+    "no_frozen_expectation_changes": true,
+    "scope": "Existing release-mode suite: full counts, late high counts, saturated pixels, multiple shards, source failures, cancellation, budgets, decoder malformed streams and display ranges. Synthetic fixture mutations only, no private source changes. A new inline common vector function is compiled; experimental cross-shard batch dispatch is disabled for this production regression.",
+    "environment": {
+      "COMPACT_ORIGINAL_FUSED_PLANES": "1",
+      "QGPU_ORIGINAL_STANDARD_PLANES": "1",
+      "QGPU_ORIGINAL_PLANE_VECTOR4": "1",
+      "QGPU_ORIGINAL_DIRECT_DPC": "1",
+      "QGPU_ORIGINAL_DECODE_THREADS": "32",
+      "QGPU_ORIGINAL_PACK_THREADS": "32",
+      "COMPACT_RAW_QUAD_VECTOR": "1",
+      "COMPACT_RAW_VECTOR_THREADS": "128",
+      "COMPACT_RESIDENCY_SETS": "1",
+      "COMPACT_SHARED_MASK_PREPARATION": "1",
+      "COMPACT_RAW_QUAD_BATCH": "0"
+    },
+    "cold_io_or_native_fps_claim": false
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "integrated-gpu-0"
+    ],
+    "gpu_model": "Apple M5 24 GB"
+  },
+  "outputs": [
+    {
+      "artifact_id": "pytest-output",
+      "path": "local-evidence://20260908-packed-optimization/candidate-parity.log",
+      "sha256": "74c5993315d3fe14530d2455bc7651a65b2413f9090461a5a91d8acf29539cd0",
+      "size_bytes": 182208,
+      "result": "15 passed,22 failed. Six legacy-kernel/profile assertions conflict with globally forced new experimental kernels;16 valid small/wide original loads reject nonzero residency-set footprint. No frozen expectations changed.",
+      "retention": "scratch",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "pytest-junit",
+      "path": "local-evidence://20260908-packed-optimization/candidate-parity.xml",
+      "sha256": "e3f1168faa7f7c772d12220d4d503d2562b7628981a90abc7de749649da6cc57",
+      "size_bytes": 198513,
+      "retention": "scratch",
+      "consuming_figures": [],
+      "result": "Machine-readable failures matching the retained pytest log; no skipped tests."
+    },
+    {
+      "artifact_id": "small-source-confirmation",
+      "path": "local-evidence://20260908-packed-optimization/candidate-parity-confirm.log",
+      "sha256": "ea6f65978edc52e2391fa3736858205d73688c98a525e82f281460aba6f649f4",
+      "size_bytes": 124,
+      "result": "Same small-source rejection reproduced with the unchanged built executable.",
+      "retention": "scratch",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-08T08:35:00Z",
+    "started": "2026-09-08T08:37:00Z",
+    "finished": "2026-09-08T08:39:20Z"
+  }
+}

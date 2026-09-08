@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-apple-m5-sorted-blocks",
+  "status": "failed",
+  "question": "Does grouping similar compressed LZ4 lengths reduce decode divergence enough to offset CPU metadata ordering?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260908-apple-m5-sorted-blocks/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "a0aaa52be1fb7b66406f8624527383178509e1f7",
+    "entrypoint": "experiments/20260908-apple-m5-planar-topology/run_cases.py",
+    "dirty": true,
+    "benchmark_source_snapshot": "local-evidence://20260908-packed-optimization/benchmark-source-direct-dpc.tar",
+    "benchmark_source_sha256": "d5ec5cde391d34a03ba7d77bd0e1ec0f8b2719701b97b7dfdf5db5fb2a64a303",
+    "diff_sha256": "2bfdca0e6b0851d9504df621825cad1763fd561bdef676cfff633ad3e378a8d8",
+    "snapshot_path": "local-evidence://20260908-packed-optimization/sorted-vector-groups.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-1",
+      "path": "private-fixture://tilt-series/446d2751716a5985e417f29cc19feea81b4dcf2bcbbf428578b6965e16d26f71",
+      "sha256": "4c5597ac5eb804cee7e01e1874ab69ad7f16c36e7eb9fa147083ac6d9dbedc65"
+    },
+    {
+      "dataset_id": "tilt-series-2",
+      "path": "private-fixture://tilt-series/fe15c891bb065252242350728162e60320860f4c9dfbe2b6c21bb983ccd879c4",
+      "sha256": "047f589fb4b94e070793e23ebaa3c41ddc4efe71e7dc2f9048d2caa25dc079af"
+    },
+    {
+      "dataset_id": "tilt-series-3",
+      "path": "private-fixture://tilt-series/aa18159030e03a756f7a057e9422ce645dfbe4bb0df7bc9eac6c6aeee2d55db1",
+      "sha256": "7b9a58202bd9251e843e255668689968f1fec49da3e19c5883584342cb96a476"
+    },
+    {
+      "dataset_id": "tilt-series-4",
+      "path": "private-fixture://tilt-series/6f94694a3d63c41edca118a74aae1384b1f61316699154a8dda0e8ac5e1af64f",
+      "sha256": "fe34acc72d659b9d94a578ba5191224c7461488be96ea8d7bba98aec4c35b1e0"
+    },
+    {
+      "dataset_id": "tilt-series-5",
+      "path": "private-fixture://tilt-series/88907d90d0be36cce51ed15cfc82e0967c5641e190c0428e2e9ceb8aaf23c59b",
+      "sha256": "ac9d184644ab526a86137ad7d37e714b9fc1b521a6efe80d6a0ae324ae88de91"
+    },
+    {
+      "dataset_id": "tilt-series-6",
+      "path": "private-fixture://tilt-series/532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350",
+      "sha256": "4b193525246c3fceeee9edbc8fce83a76b3adbfa65baf2d031a60ecddf6c6144"
+    },
+    {
+      "dataset_id": "tilt-series-7",
+      "path": "private-fixture://tilt-series/8b006c84044f4c7d6842ab1c896359d7c5fe0e331d76dcf7a7a1f7be429523e3",
+      "sha256": "09a1a093bca8a1234ea82ffeafe1e3f87fa516e72e3eb8d706ca93297e65a123"
+    }
+  ],
+  "parameters": {
+    "sources": 7,
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "source_dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "new_resident_buffers": 0,
+    "repeats": 2,
+    "trials": 4,
+    "scope": "Exact source-only metadata permutation, length or256-bytebucket order; same GPU metadata allocation; valid GPU order fixtures then all7A/B/C/A. No source/cache mutation.",
+    "cold_io_claim": false,
+    "native_ui_claim": false,
+    "cases": "experiments/20260908-apple-m5-sorted-blocks/cases.json",
+    "failure": "Runtime packed_h5 compilation rejected uint3 threads_per_threadgroup alongside scalar grid coordinates. Four cases produced no residents; no performance conclusion. Sorted decode fixture684blocks exact. Fixed candidate uses scalar builtin, next experiment records rerun."
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "integrated-gpu-0"
+    ],
+    "gpu_model": "Apple M5 24 GB"
+  },
+  "outputs": [
+    {
+      "artifact_id": "failure",
+      "path": "experiments/20260908-apple-m5-sorted-blocks/failed-comparison.json",
+      "sha256": "7a3e394b23a38c7f416846e1d5e6115839431d0ee4fa1c99f6b48ec07b4703a9",
+      "size_bytes": 8327,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Runtime packed_h5 compilation rejected uint3 threads_per_threadgroup alongside scalar grid coordinates. Four cases produced no residents; no performance conclusion. Sorted decode fixture684blocks exact. Fixed candidate uses scalar builtin, next experiment records rerun."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-08T08:00:43Z",
+    "started": "2026-09-08T08:00:43Z",
+    "finished": "2026-09-08T08:03:00Z"
+  }
+}

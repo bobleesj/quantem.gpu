@@ -1,0 +1,73 @@
+diff --git a/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/packed_h5.metal b/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/packed_h5.metal
+index 590045c..cefb3da 100644
+--- a/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/packed_h5.metal
++++ b/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/packed_h5.metal
+@@ -594,8 +594,9 @@ inline uint compactSumWidthNibbles(uint packed, uint count, uint headerEncoding)
+         : (count == 0u ? 0u : (1u << (count * 4u)) - 1u);
+     packed &= mask;
+     uint bytes = (packed & 0x0f0f0f0fu) + ((packed >> 4u) & 0x0f0f0f0fu);
+-    uint total = (bytes & 0xffu) + ((bytes >> 8u) & 0xffu)
+-        + ((bytes >> 16u) & 0xffu) + ((bytes >> 24u) & 0xffu);
++    // Each byte holds at most 30. Their sum is at most 120, so the
++    // high byte of this modulo-u32 product is the exact sum, without carry.
++    uint total = (bytes * 0x01010101u) >> 24u;
+     if (headerEncoding == 2u) {
+         // One additional word for each nibble 15, which represents width 16.
+         uint full = packed & (packed >> 1u) & (packed >> 2u) & (packed >> 3u);
+@@ -852,12 +853,11 @@ inline uint compactLowBitScanSums(
+     }
+     // Distinct lane bits add without carry; this is the coefficient bitmask.
+     uint positive = simd_sum(coefficient == 1 ? (1u << scanLane) : 0u);
+-    uint negative = ~positive;
+     low = compactTransposeBits(low, scanLane);
+-    uint sum = popcount(low & positive) - popcount(low & negative);
++    uint sum = (popcount(low & positive) - popcount(low & ~positive));
+     if (maximumWidth == 2u) {
+         high = compactTransposeBits(high, scanLane);
+-        sum += 2u * (popcount(high & positive) - popcount(high & negative));
++        sum += 2u * (popcount(high & positive) - popcount(high & ~positive));
+     }
+     return sum;
+ }
+diff --git a/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/qh5idx.metal b/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/qh5idx.metal
+index c033336..676374e 100644
+--- a/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/qh5idx.metal
++++ b/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/qh5idx.metal
+@@ -1892,6 +1892,7 @@ kernel void h5lz4dc_full_u16_aligned_fill_qh5idx(
+     )) atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+ }
+ 
++
+ kernel void h5lz4dc_full_u16_aligned_copy_qh5idx(
+     const device uchar *h5File [[buffer(0)]],
+     const device uint2 *blockMetadata [[buffer(1)]],
+diff --git a/src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/Metal4DSTEMCompactH5.swift b/src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/Metal4DSTEMCompactH5.swift
+index 6f262cb..ca78bab 100644
+--- a/src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/Metal4DSTEMCompactH5.swift
++++ b/src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/Metal4DSTEMCompactH5.swift
+@@ -529,6 +529,8 @@ public final class MetalCompactH5ResidentSource {
+   private var activeDetectorOutput = 0
+   private var detectorMask: [UInt8]
+   private var detectorSumReady = false
++  private let widthOrderedEntries =
++    ProcessInfo.processInfo.environment["COMPACT_DETECTOR_WIDTH_ORDER"] == "1"
+   public private(set) var isReleased = false
+ 
+   fileprivate func markOriginalDetectorSumReady() { detectorSumReady = true }
+@@ -1270,6 +1272,16 @@ public final class MetalCompactH5ResidentSource {
+       ? 0
+       : detectorRegions?.decompose(
+         &entries, rows: metadata.detectorRows, columns: metadata.detectorColumns) ?? 0
++    if widthOrderedEntries {
++      // Keep rare high-count pixels from selecting the wide reduction for an
++      // otherwise narrow SIMD group. Only summation order changes; no count or
++      // GPU allocation changes. Preserve pixel order within equal widths.
++      entries.sort {
++        let left = maximumWidths[Int($0.pixel)]
++        let right = maximumWidths[Int($1.pixel)]
++        return left == right ? $0.pixel < $1.pixel : left < right
++      }
++    }
+     if !entries.isEmpty {
+       _ = entries.withUnsafeBytes { raw in
+         memcpy(detectorEntryBuffer.contents(), raw.baseAddress!, raw.count)

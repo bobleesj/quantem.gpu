@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-apple-m5-shard-native",
+  "status": "refuted",
+  "question": "Does batching existing packed scan shards reduce first native interaction driver latency at the same memory ceiling?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260908-apple-m5-shard-native/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "a0aaa52be1fb7b66406f8624527383178509e1f7",
+    "entrypoint": "Live4DSTEM/Tests/NativeUI/profile_seven_tilts.py",
+    "dirty": true,
+    "diff_sha256": "29e8b2a0ef36354b36c8af17d30a2309e5e564eb4eae47498fe5f63b64b17ffc",
+    "snapshot_path": "local-evidence://20260908-packed-optimization/shard-linear.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-anchor",
+      "path": "private-fixture://tilt-series/-17.0x_0.0y",
+      "sha256": "532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350"
+    }
+  ],
+  "parameters": {
+    "app_revision": "689c4b71b7651e1ff175d19cfae2c6c8f472091a",
+    "input_manifest_scope": "anchor master hash from retained load-concurrency baseline; full local seven-file identity inventory retained with run",
+    "shape_per_source": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "sources": 7,
+    "source_dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "repeats": 1,
+    "cache_state": "existing packing plans; OS source pages uncontrolled; fresh app process",
+    "resident_limit_bytes": 14752175312,
+    "timing_boundary": "native hook trajectories and drawable presentation, separately from backend GPU timing",
+    "run_root": "local-evidence://20260908-packed-optimization/shard-native-{a,candidate,b}",
+    "app_binary_sha256": "1aa24c8a154b806ea1186318d29c37eae4d93aa52f96cd7ba5a9f207ea50c118",
+    "app_dirty": true,
+    "backend_dirty": true,
+    "environment": {
+      "DIAG": "1",
+      "COMPACT_UPDATE_HOST_PROFILE": "1",
+      "COMPACT_DETECTOR_WIDTH_ORDER": "0"
+    },
+    "diagnostic_cpu_sampling": false,
+    "benchmark_script_changes": "Per-tile completion and input-duration denominator record startup gaps",
+    "app_diff_sha256": "b9b5f8d4bf3d1f24cdc2492864d92dca36b2c5ea2f0223c6337cf79de0da89f7",
+    "app_snapshot": "local-evidence://20260908-packed-optimization/shard-native-app.patch",
+    "arms": [
+      0,
+      1,
+      0
+    ],
+    "dependency_resolution": "Temporary sibling package path for this local build; exact reviewed pin required before release"
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "integrated-gpu-0"
+    ],
+    "gpu_model": "Apple M5, 24 GB unified memory, 120 Hz display"
+  },
+  "outputs": [
+    {
+      "artifact_id": "native-comparison",
+      "path": "experiments/20260908-apple-m5-shard-native/comparison.json",
+      "sha256": "ff22c1224a9cfc658b743e946b126818e3275d2f77d7f03c2417c9dac14ad116",
+      "size_bytes": 48893,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "A/B/A first-driver intervals4.773/3.032/2.528 s; candidate not better than both controls. No supported first-interaction or all-workload throughput gain. Exact 14.752 GB packed bytes and seven presented tiles preserved. Remove shard-batch candidate."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-08T05:47:01Z",
+    "started": "2026-09-08T05:47:01Z",
+    "finished": "2026-09-08T05:50:46Z"
+  }
+}

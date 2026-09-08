@@ -1,0 +1,36 @@
+[
+  {
+    "name": "control-a",
+    "environment": {
+      "QGPU_ORIGINAL_PLANE_VECTOR4": "1",
+      "QGPU_ORIGINAL_STANDARD_PLANES": "1",
+      "QGPU_ORIGINAL_DIRECT_DPC": "1",
+      "QGPU_ORIGINAL_WINDOW_FRAMES": "2048",
+      "COMPACT_RAW_QUAD_VECTOR": "1",
+      "COMPACT_RESIDENCY_SETS": "1"
+    }
+  },
+  {
+    "name": "window1024",
+    "plan_subdirectory": "window1024",
+    "environment": {
+      "QGPU_ORIGINAL_PLANE_VECTOR4": "1",
+      "QGPU_ORIGINAL_STANDARD_PLANES": "1",
+      "QGPU_ORIGINAL_DIRECT_DPC": "1",
+      "QGPU_ORIGINAL_WINDOW_FRAMES": "1024",
+      "COMPACT_RAW_QUAD_VECTOR": "1",
+      "COMPACT_RESIDENCY_SETS": "1"
+    }
+  },
+  {
+    "name": "control-b",
+    "environment": {
+      "QGPU_ORIGINAL_PLANE_VECTOR4": "1",
+      "QGPU_ORIGINAL_STANDARD_PLANES": "1",
+      "QGPU_ORIGINAL_DIRECT_DPC": "1",
+      "QGPU_ORIGINAL_WINDOW_FRAMES": "2048",
+      "COMPACT_RAW_QUAD_VECTOR": "1",
+      "COMPACT_RESIDENCY_SETS": "1"
+    }
+  }
+]

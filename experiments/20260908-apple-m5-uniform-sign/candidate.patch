@@ -1,0 +1,52 @@
+diff --git a/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/packed_h5.metal b/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/packed_h5.metal
+index 590045c..42a152c 100644
+--- a/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/packed_h5.metal
++++ b/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/packed_h5.metal
+@@ -824,6 +824,14 @@ inline uint compactEvenBits(uint value) {
+     return (value | (value >> 8u)) & 0x0000ffffu;
+ }
+ 
++// Entries added together or removed together need only one population count.
++// The sign mask is SIMD-uniform; mixed-sign groups retain the exact difference.
++inline uint compactSignedBitSum(uint bits, uint positive) {
++    if (positive == 0xffffffffu) return popcount(bits);
++    if (positive == 0u) return 0u - popcount(bits);
++    return popcount(bits & positive) - popcount(bits & ~positive);
++}
++
+ inline uint compactLowBitScanSums(
+     device const uint *payload,
+     uint descriptor,
+@@ -852,12 +860,11 @@ inline uint compactLowBitScanSums(
+     }
+     // Distinct lane bits add without carry; this is the coefficient bitmask.
+     uint positive = simd_sum(coefficient == 1 ? (1u << scanLane) : 0u);
+-    uint negative = ~positive;
+     low = compactTransposeBits(low, scanLane);
+-    uint sum = popcount(low & positive) - popcount(low & negative);
++    uint sum = compactSignedBitSum(low, positive);
+     if (maximumWidth == 2u) {
+         high = compactTransposeBits(high, scanLane);
+-        sum += 2u * (popcount(high & positive) - popcount(high & negative));
++        sum += 2u * compactSignedBitSum(high, positive);
+     }
+     return sum;
+ }
+@@ -919,7 +926,7 @@ inline uint compactMediumBitScanSums(
+     uint sum = 0u;
+     for (uint plane = 0u; plane < maximumWidth; ++plane) {
+         uint bits = compactTransposeBits(planes[plane], scanLane);
+-        sum += (1u << plane) * (popcount(bits & positive) - popcount(bits & ~positive));
++        sum += (1u << plane) * compactSignedBitSum(bits, positive);
+     }
+     return sum;
+ }
+@@ -1010,7 +1017,7 @@ kernel void compact_h5_detector_update_pixel_lanes(
+                     ? payload[(descriptor >> 5u) + plane] : 0u;
+                 bits = compactTransposeBits(bits, scanLane);
+                 partial += (1u << plane)
+-                    * (popcount(bits & positive) - popcount(bits & ~positive));
++                    * compactSignedBitSum(bits, positive);
+             }
+             continue;
+         }

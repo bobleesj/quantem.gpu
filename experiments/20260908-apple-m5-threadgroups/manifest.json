@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-apple-m5-threadgroups",
+  "status": "succeeded",
+  "question": "Which supported scalar-decode and verified-pack threadgroup sizes minimize exact original-HDF5 packed reopen time?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260908-apple-m5-threadgroups/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "a0aaa52be1fb7b66406f8624527383178509e1f7",
+    "entrypoint": "experiments/20260908-apple-m5-threadgroups/run.py",
+    "dirty": true,
+    "diff_sha256": "ea75121e6601791040fe1a4969f40368c82610f82cc808a5904b5516345fd59f",
+    "snapshot_path": "local-evidence://20260908-packed-optimization/threadgroup-matrix.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-6",
+      "path": "private-fixture://tilt-series/532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350",
+      "sha256": "4b193525246c3fceeee9edbc8fce83a76b3adbfa65baf2d031a60ecddf6c6144"
+    }
+  ],
+  "parameters": {
+    "sources": 1,
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "source_dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "excluded_pixels": 0,
+    "new_resident_buffers": 0,
+    "budget_bytes": 8000000000,
+    "decode_threads": [
+      32,
+      64,
+      128,
+      256,
+      512
+    ],
+    "pack_threads": [
+      32,
+      64,
+      128,
+      256,
+      512
+    ],
+    "layouts": [
+      0,
+      1
+    ],
+    "repeats_per_case": 3,
+    "detector_trials_per_load": 1,
+    "shuffled_seed": 20260908,
+    "repeated_controls_every_cases": 5,
+    "cases": 60,
+    "loads": 180,
+    "expected_maps": 2700,
+    "cache_state": "Exact cached DPC and metadata packing plans reused after cycle0, all4D counts reread; OS pages uncontrolled",
+    "benchmark_binary_sha256": "56ae95c56e9aeeffe9012f3eb2ddf37d0ce0be898607c85a1ec2b795aaf2b165",
+    "timing_boundary": "Complete original source open through packed resident return; not UI",
+    "diagnostic_only": false,
+    "full_seven_source_confirmation_required": true,
+    "source_snapshot_includes": "Direct plane gather, optional original planar interaction selection (off here), union-corrected profiler (off), diagnostics-only threadgroup controls"
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "integrated-gpu-0"
+    ],
+    "gpu_model": "Apple M5 24 GB"
+  },
+  "outputs": [
+    {
+      "artifact_id": "summary",
+      "path": "experiments/20260908-apple-m5-threadgroups/summary.json",
+      "sha256": "2ca08be91fcb167706ecc5fff361ae2813b71924b8af61192ecbbbca31dbd642",
+      "size_bytes": 42800,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "All60 cases/180loads/2700maps pass exactness and release memory. Plane packing32threads yields1.325-1.362s across decoder settings vs repeated interleaved128controls1.386-1.423s; one-source screening only, full7confirmation pending."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-08T06:18:00Z",
+    "started": "2026-09-08T06:18:00Z",
+    "finished": "2026-09-08T06:25:00Z"
+  }
+}

@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-apple-m5-navigation-receipts",
+  "status": "completed",
+  "question": "Does each single native next/previous request arrive and advance selection exactly once across repeated six-file navigation?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260908-apple-m5-navigation-receipts/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/Live4DSTEM",
+    "revision": "689c4b71b7651e1ff175d19cfae2c6c8f472091a",
+    "dirty": true,
+    "entrypoint": "Tests/NativeUI/stress_folder_replacement.py",
+    "diff_sha256": "f1a2e4193d2fb020cda2df36fdbc03382c0251c0ac198be1aa6253bacaccc221",
+    "snapshot_path": "local-evidence://20260908-packed-optimization/navigation-fix/trace-app.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "many-files-1",
+      "path": "private-fixture://many-files/1a57b44b26fc9feb76c82fa00123e86c58ac094f72032f877882543c94a45e6a",
+      "sha256": "1a57b44b26fc9feb76c82fa00123e86c58ac094f72032f877882543c94a45e6a"
+    },
+    {
+      "dataset_id": "many-files-2",
+      "path": "private-fixture://many-files/1be810b96fdff8e384ad4cb6ebd49adff9b4ab0a6503cd5fed9106e09f5aa286",
+      "sha256": "1be810b96fdff8e384ad4cb6ebd49adff9b4ab0a6503cd5fed9106e09f5aa286"
+    },
+    {
+      "dataset_id": "many-files-3",
+      "path": "private-fixture://many-files/71ea49e1b9a9441423076c158ffc1acc77c25956b9b6ca5509a4e2b3ad209651",
+      "sha256": "71ea49e1b9a9441423076c158ffc1acc77c25956b9b6ca5509a4e2b3ad209651"
+    },
+    {
+      "dataset_id": "many-files-4",
+      "path": "private-fixture://many-files/891232f1584e40406ef2ce846179dd11358849d096bd6604324b915a46f9038b",
+      "sha256": "891232f1584e40406ef2ce846179dd11358849d096bd6604324b915a46f9038b"
+    },
+    {
+      "dataset_id": "many-files-5",
+      "path": "private-fixture://many-files/bead1cf80f2e40465506e55d643b6fd6974197d06d26a7a4a8de9ec725d73f44",
+      "sha256": "bead1cf80f2e40465506e55d643b6fd6974197d06d26a7a4a8de9ec725d73f44"
+    },
+    {
+      "dataset_id": "many-files-6",
+      "path": "private-fixture://many-files/f26b4947a709e92262b43e72d0595fcf44f56a771f2a01c417c2b7a2e41a21cc",
+      "sha256": "f26b4947a709e92262b43e72d0595fcf44f56a771f2a01c417c2b7a2e41a21cc"
+    }
+  ],
+  "parameters": {
+    "pipe_followup": {
+      "final_app_diff_sha256": "22870de5eeb23511cdf24678bf48d1671b16e94bcd321d57bf1f10062c4edf27",
+      "final_app_diff_path": "local-evidence://20260908-packed-optimization/navigation-fix/final-app.patch",
+      "driver_sha256": "10ff52cbbffeaaa83ecec2b36cfbed8182f375beb51e47731cfcd7472df3678c",
+      "transport_helper_sha256": "469f698c8a0d5a958d42eb5632b8f5e9a337dfe98cdf774337b2ae4226424f00",
+      "stress_driver_sha256": "20467a4925ee4e0f8f609b623779813ac64f1b4a2c6df91b48e9ed11a348836f",
+      "receipt_tests_sha256": "c1ac5c01358c1ad7033978e562b7188f8c60caea74bcd2d07f2e6ecae7de826b",
+      "final_replay_binary_sha256": "80f2feaca501cffd675b24ef5fe3648457409ea281bc221aceca054914de69e6",
+      "final_replay_changes": "Report packaged qgpuRevision separately from qualification revision; missing packaged revision is null. Receipt verifier also checks FIFO order and retains sent commands.",
+      "final_replays": ["pipe-six-final", "pipe-seven-final"],
+      "binary_sha256": "0b8ef2073fac7febed3a390c833fc3fc0e56a1425149824a5e7db50e5c5aa76c",
+      "transport": "child-process stdin; exactly-once receipts; no retry",
+      "cycles": 30,
+      "reason": "Four original-transport replays and one traced stress pass did not reproduce the original failure. Replace documented lossy test transport, without claiming it caused that failure.",
+      "run_root": "local-evidence://20260908-packed-optimization/navigation-fix/pipe-stress"
+    },
+    "binary_sha256": "edcb760b480cd11c0f9c0da2688efa3c76335d6cb20e1fd3510d8f0e258d94f6",
+    "source_fingerprint_kind": "backend sourceIdentitySHA256 from preceding resident loads, not independent whole-file digest",
+    "count": 6,
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "crop": null,
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "cycles": 30,
+    "backend_unchanged": true,
+    "cold_io_claim": false,
+    "physical_pointer_claim": false,
+    "changes": "Navigation request IDs and native received/applied receipts only; no retries or production navigation changes.",
+    "run_root": "local-evidence://20260908-packed-optimization/navigation-fix"
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "integrated-gpu-0"
+    ],
+    "gpu_model": "Apple M5 24 GB"
+  },
+  "outputs": [{
+    "artifact_id": "navigation-recheck",
+    "path": "experiments/20260908-apple-m5-navigation-receipts/result.json",
+    "sha256": "9a998035ab097c76b986124d7999070869415f6c4497ad5978ca95e851967da7",
+    "size_bytes": 9496,
+    "retention": "durable",
+    "consuming_figures": [],
+    "result": "183 direct-pipe selections received/applied once with zero retry; all native runs pass. Prior traced155 and four legacy13 runs pass. Original timeout cause remains unproven. No release-ready claim."
+  }],
+  "timestamps": {
+    "created": "2026-09-08T14:52:57.069Z",
+    "started": "2026-09-08T14:52:57.069Z",
+    "finished": "2026-09-08T15:04:11Z"
+  }
+}

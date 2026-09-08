@@ -1,0 +1,40 @@
+[
+  {
+    "name": "vector128-a",
+    "environment": {
+      "QGPU_ORIGINAL_PLANE_VECTOR4": "1",
+      "QGPU_ORIGINAL_STANDARD_PLANES": "1",
+      "COMPACT_RAW_QUAD_SCAN": "1",
+      "COMPACT_RAW_QUAD_VECTOR": "1"
+    }
+  },
+  {
+    "name": "vector32",
+    "environment": {
+      "QGPU_ORIGINAL_PLANE_VECTOR4": "1",
+      "QGPU_ORIGINAL_STANDARD_PLANES": "1",
+      "COMPACT_RAW_QUAD_SCAN": "1",
+      "COMPACT_RAW_QUAD_VECTOR": "1",
+      "COMPACT_RAW_VECTOR_THREADS": "32"
+    }
+  },
+  {
+    "name": "vector64",
+    "environment": {
+      "QGPU_ORIGINAL_PLANE_VECTOR4": "1",
+      "QGPU_ORIGINAL_STANDARD_PLANES": "1",
+      "COMPACT_RAW_QUAD_SCAN": "1",
+      "COMPACT_RAW_QUAD_VECTOR": "1",
+      "COMPACT_RAW_VECTOR_THREADS": "64"
+    }
+  },
+  {
+    "name": "vector128-b",
+    "environment": {
+      "QGPU_ORIGINAL_PLANE_VECTOR4": "1",
+      "QGPU_ORIGINAL_STANDARD_PLANES": "1",
+      "COMPACT_RAW_QUAD_SCAN": "1",
+      "COMPACT_RAW_QUAD_VECTOR": "1"
+    }
+  }
+]

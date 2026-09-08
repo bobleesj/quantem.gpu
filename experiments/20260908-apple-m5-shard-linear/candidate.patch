@@ -1,0 +1,217 @@
+diff --git a/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/packed_h5.metal b/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/packed_h5.metal
+index 590045c..14ead77 100644
+--- a/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/packed_h5.metal
++++ b/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/packed_h5.metal
+@@ -852,12 +852,11 @@ inline uint compactLowBitScanSums(
+     }
+     // Distinct lane bits add without carry; this is the coefficient bitmask.
+     uint positive = simd_sum(coefficient == 1 ? (1u << scanLane) : 0u);
+-    uint negative = ~positive;
+     low = compactTransposeBits(low, scanLane);
+-    uint sum = popcount(low & positive) - popcount(low & negative);
++    uint sum = (popcount(low & positive) - popcount(low & ~positive));
+     if (maximumWidth == 2u) {
+         high = compactTransposeBits(high, scanLane);
+-        sum += 2u * (popcount(high & positive) - popcount(high & negative));
++        sum += 2u * (popcount(high & positive) - popcount(high & ~positive));
+     }
+     return sum;
+ }
+@@ -971,16 +970,16 @@ inline uint compactPackedScanSums(
+ // Latency-oriented topology for nontrivial detector deltas. Each SIMD lane
+ // owns a detector entry, not a scan sample; small deltas use the scan-lane
+ // kernel above to avoid the fixed cost of the transposed reduction.
+-kernel void compact_h5_detector_update_pixel_lanes(
+-    device const uint *payload [[buffer(0)]],
+-    device const uint *descriptors [[buffer(1)]],
+-    device const CompactDetectorEntry *entries [[buffer(2)]],
+-    device const uint *previous [[buffer(3)]],
+-    device uint *next [[buffer(4)]],
+-    constant CompactDetectorParameters &parameters [[buffer(5)]],
+-    device const uint *preparedMoments [[buffer(6)]],
+-    uint group [[threadgroup_position_in_grid]],
+-    uint lane [[thread_index_in_threadgroup]]
++inline void compactPixelLaneUpdate(
++    device const uint *payload,
++    device const uint *descriptors,
++    device const CompactDetectorEntry *entries,
++    device const uint *previous,
++    device uint *next,
++    constant CompactDetectorParameters &parameters,
++    device const uint *preparedMoments,
++    uint group, uint lane,
++    threadgroup uint *partials
+ ) {
+     constexpr uint scansPerGroup = 32u;
+     constexpr uint entryGroups = 4u;
+@@ -1055,7 +1054,6 @@ kernel void compact_h5_detector_update_pixel_lanes(
+             if (scanLane == sample) partial += sum;
+         }
+     }
+-    threadgroup uint partials[128];
+     partials[lane] = partial;
+     threadgroup_barrier(mem_flags::mem_threadgroup);
+     uint scan = scanBase + scanLane;
+@@ -1072,6 +1070,48 @@ kernel void compact_h5_detector_update_pixel_lanes(
+     }
+ }
+ 
++kernel void compact_h5_detector_update_pixel_lanes(
++    device const uint *payload [[buffer(0)]],
++    device const uint *descriptors [[buffer(1)]],
++    device const CompactDetectorEntry *entries [[buffer(2)]],
++    device const uint *previous [[buffer(3)]],
++    device uint *next [[buffer(4)]],
++    constant CompactDetectorParameters &parameters [[buffer(5)]],
++    device const uint *preparedMoments [[buffer(6)]],
++    uint group [[threadgroup_position_in_grid]],
++    uint lane [[thread_index_in_threadgroup]]
++) {
++    threadgroup uint partials[128];
++    compactPixelLaneUpdate(payload, descriptors, entries, previous, next,
++        parameters, preparedMoments, group, lane, partials);
++}
++
++struct CompactShardPointers {
++    device const uint *payload;
++    device const uint *descriptors;
++};
++
++// One dispatch spans independently allocated, equal-sized scan shards.
++// The pointer table is command metadata, not another resident count buffer.
++kernel void compact_h5_detector_update_shard_batch(
++    constant CompactShardPointers *shards [[buffer(0)]],
++    device const CompactDetectorEntry *entries [[buffer(2)]],
++    device const uint *previous [[buffer(3)]],
++    device uint *next [[buffer(4)]],
++    constant CompactDetectorParameters &parameters [[buffer(5)]],
++    device const uint *preparedMoments [[buffer(6)]],
++    uint group [[threadgroup_position_in_grid]],
++    uint lane [[thread_index_in_threadgroup]]
++) {
++    threadgroup uint partials[128];
++    uint groupsPerShard = (parameters.scanCount + 31u) / 32u;
++    uint shard = group / groupsPerShard;
++    uint offset = shard * parameters.scanCount;
++    compactPixelLaneUpdate(shards[shard].payload, shards[shard].descriptors,
++        entries, previous + offset, next + offset, parameters,
++        parameters.mode == 2u ? preparedMoments + ulong(offset) * 8ul : preparedMoments,
++        group % groupsPerShard, lane, partials);
++}
+ // Experimental raw-planar ILP: expose two independent transpose chains while
+ // preserving the single-plane tail and exact signed modulo-u32 accumulation.
+ kernel void compact_h5_detector_update_planar_ilp(
+diff --git a/src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/Metal4DSTEMCompactH5.swift b/src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/Metal4DSTEMCompactH5.swift
+index 6f262cb..dbdfa4b 100644
+--- a/src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/Metal4DSTEMCompactH5.swift
++++ b/src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/Metal4DSTEMCompactH5.swift
+@@ -506,6 +506,7 @@ public final class MetalCompactH5ResidentSource {
+   private let selectedPipeline: MTLComputePipelineState
+   private let detectorPipeline: MTLComputePipelineState
+   private let pixelLaneDetectorPipeline: MTLComputePipelineState
++  private let shardBatchDetectorPipeline: MTLComputePipelineState?
+   private let planarILPDetectorPipeline: MTLComputePipelineState?
+   private let planarScanCooperativePipeline: MTLComputePipelineState?
+   private let planarFusedDetectorPipeline: MTLComputePipelineState?
+@@ -529,6 +530,8 @@ public final class MetalCompactH5ResidentSource {
+   private var activeDetectorOutput = 0
+   private var detectorMask: [UInt8]
+   private var detectorSumReady = false
++  private let widthOrderedEntries =
++    ProcessInfo.processInfo.environment["COMPACT_DETECTOR_WIDTH_ORDER"] == "1"
+   public private(set) var isReleased = false
+ 
+   fileprivate func markOriginalDetectorSumReady() { detectorSumReady = true }
+@@ -553,6 +556,7 @@ public final class MetalCompactH5ResidentSource {
+     selectedPipeline: MTLComputePipelineState,
+     detectorPipeline: MTLComputePipelineState,
+     pixelLaneDetectorPipeline: MTLComputePipelineState,
++    shardBatchDetectorPipeline: MTLComputePipelineState? = nil,
+     planarILPDetectorPipeline: MTLComputePipelineState? = nil,
+     planarScanCooperativePipeline: MTLComputePipelineState? = nil,
+     planarFusedDetectorPipeline: MTLComputePipelineState? = nil,
+@@ -581,6 +585,7 @@ public final class MetalCompactH5ResidentSource {
+     self.selectedPipeline = selectedPipeline
+     self.detectorPipeline = detectorPipeline
+     self.pixelLaneDetectorPipeline = pixelLaneDetectorPipeline
++    self.shardBatchDetectorPipeline = shardBatchDetectorPipeline
+     self.planarILPDetectorPipeline = planarILPDetectorPipeline
+     self.planarScanCooperativePipeline = planarScanCooperativePipeline
+     self.planarFusedDetectorPipeline = planarFusedDetectorPipeline
+@@ -1270,6 +1275,16 @@ public final class MetalCompactH5ResidentSource {
+       ? 0
+       : detectorRegions?.decompose(
+         &entries, rows: metadata.detectorRows, columns: metadata.detectorColumns) ?? 0
++    if widthOrderedEntries {
++      // Keep rare high-count pixels from selecting the wide reduction for an
++      // otherwise narrow SIMD group. Only summation order changes; no count or
++      // GPU allocation changes. Preserve pixel order within equal widths.
++      entries.sort {
++        let left = maximumWidths[Int($0.pixel)]
++        let right = maximumWidths[Int($1.pixel)]
++        return left == right ? $0.pixel < $1.pixel : left < right
++      }
++    }
+     if !entries.isEmpty {
+       _ = entries.withUnsafeBytes { raw in
+         memcpy(detectorEntryBuffer.contents(), raw.baseAddress!, raw.count)
+@@ -1339,6 +1354,38 @@ public final class MetalCompactH5ResidentSource {
+     let nextBuffer =
+       update.aggregateEntryCount > 0
+       ? detectorRegions!.intermediate : detectorOutputs[update.nextOutput]
++    if let pipeline = shardBatchDetectorPipeline, rawEntryCount >= 32,
++      payloadLayout == 0, !shards.isEmpty, shards.count <= 256,
++      metadata.scanCount == shards.count * metadata.scansPerShard
++    {
++      var parameters = CompactDetectorParameters(
++        scanCount: UInt32(metadata.scansPerShard),
++        tileCount: UInt32((metadata.scansPerShard + metadata.scanTile - 1) / metadata.scanTile),
++        entryCount: UInt32(rawEntryCount), outputOffset: 0,
++        mode: update.mode == "complement" ? 2 : (update.mode == "rebase" ? 1 : 0),
++        scanTile: UInt32(metadata.scanTile), headerWordsPerPixel: headerWordsPerPixel,
++        headerEncoding: headerEncoding, payloadLayout: payloadLayout)
++      let addresses = shards.flatMap { [$0.payload.gpuAddress, $0.descriptors.gpuAddress] }
++      encoder.setComputePipelineState(pipeline)
++      addresses.withUnsafeBytes { bytes in
++        encoder.setBytes(bytes.baseAddress!, length: bytes.count, index: 0)
++      }
++      for shard in shards {
++        // Indirect GPU addresses require explicit resource usage declarations.
++        encoder.useResource(shard.payload, usage: .read)
++        encoder.useResource(shard.descriptors, usage: .read)
++      }
++      encoder.setBuffer(detectorEntryBuffer, offset: 0, index: 2)
++      encoder.setBuffer(detectorOutputs[activeDetectorOutput], offset: 0, index: 3)
++      encoder.setBuffer(nextBuffer, offset: 0, index: 4)
++      encoder.setBytes(&parameters, length: MemoryLayout.stride(ofValue: parameters), index: 5)
++      encoder.setBuffer(preparedDPCMomentBuffer ?? detectorOutputs[activeDetectorOutput], offset: 0, index: 6)
++      encoder.dispatchThreadgroups(
++        MTLSize(width: ((metadata.scansPerShard + 31) / 32) * shards.count, height: 1, depth: 1),
++        threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
++      if sharedEncoder == nil { encoder.endEncoding() }
++      return
++    }
+     let usesScanCooperative =
+       payloadLayout == 1 && rawEntryCount >= 32
+       && planarScanCooperativePipeline != nil
+@@ -1865,6 +1912,12 @@ public enum MetalCompactH5Loader {
+     let selected = try kernel(Metal4DSTEMKernels.compactH5SelectedDiffractionFunction)
+     let detector = try kernel(Metal4DSTEMKernels.compactH5DetectorUpdateFunction)
+     let pixelLane = try kernel("compact_h5_detector_update_pixel_lanes")
++    let shardBatch: MTLComputePipelineState?
++    if ProcessInfo.processInfo.environment["COMPACT_DETECTOR_SHARD_BATCH"] == "1" {
++      shardBatch = try kernel("compact_h5_detector_update_shard_batch")
++    } else {
++      shardBatch = nil
++    }
+     let fullDecode = try kernel(Metal4DSTEMKernels.compactH5FullDecodeU8Function)
+     let sum = try kernel(Metal4DSTEMKernels.compactH5DetectorSumFunction)
+     let originalPayloadLayout: UInt32 = 0
+@@ -1929,6 +1982,7 @@ public enum MetalCompactH5Loader {
+     let resident = MetalCompactH5ResidentSource(
+       metadata: metadata, loadMetrics: metrics, device: device, queue: queue,
+       selectedPipeline: selected, detectorPipeline: detector, pixelLaneDetectorPipeline: pixelLane,
++      shardBatchDetectorPipeline: shardBatch,
+       fullDecodePipeline: fullDecode, detectorSumPipeline: sum,
+       headerEncoding: packed.maximum <= 255 ? 1 : 2, payloadLayout: originalPayloadLayout,
+       headerWordsPerPixel: UInt32(packed.headerStride),

@@ -1,0 +1,29 @@
+{
+  "source_count": 7,
+  "first_submissions": [
+    {
+      "arm": "a",
+      "call_to_publication_ms": 5310.5435,
+      "driver_interval_ms": 5080.365874979179,
+      "gpu_interval_ms": 227.60849999031052,
+      "cpu_prepare_ms": 1.215041
+    },
+    {
+      "arm": "candidate",
+      "call_to_publication_ms": 2126.047791,
+      "driver_interval_ms": 1956.3711249793414,
+      "gpu_interval_ms": 167.49787499429658,
+      "cpu_prepare_ms": 1.244458
+    },
+    {
+      "arm": "b",
+      "call_to_publication_ms": 2029.468667,
+      "driver_interval_ms": 1796.244208351709,
+      "gpu_interval_ms": 231.15662499913014,
+      "cpu_prepare_ms": 1.169667
+    }
+  ],
+  "excluded_from_steady_drag_rates": true,
+  "not_drawable_measurements": true,
+  "interpretation": "Seven resident-ready hook times do not include this later first full detector computation. First-use driver delay remains an acceptance issue; controls vary strongly. Do not report only steady drag rates as complete interactive readiness."
+}

@@ -1,0 +1,147 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-apple-m5-defaults-fresh-plan-audit",
+  "status": "succeeded",
+  "question": "Do normal untuned defaults preserve every original count across fresh packing-plan creation and subsequent exact reopen for all seven acquisitions?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260908-apple-m5-defaults-fresh-plan-audit/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "a0aaa52be1fb7b66406f8624527383178509e1f7",
+    "entrypoint": "src/quantem/gpu/swift/Benchmarks/MetalOriginalHDF5Benchmark/MetalOriginalHDF5Benchmark.swift",
+    "dirty": true,
+    "benchmark_source_snapshot": "local-evidence://20260908-packed-optimization/benchmark-source-series-fixed.tar",
+    "benchmark_source_sha256": "efb5063ca1f5d63af41079722cfe12e01e2e97a3af7d825e46c72cab0b8d4ebc",
+    "diff_sha256": "d5b4daf49571ba45456e4fa7846de640794bd9d49c5c07d5bd235b02861c7817",
+    "snapshot_path": "local-evidence://20260908-packed-optimization/ordinary-defaults.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-1",
+      "path": "private-fixture://tilt-series/446d2751716a5985e417f29cc19feea81b4dcf2bcbbf428578b6965e16d26f71",
+      "sha256": "4c5597ac5eb804cee7e01e1874ab69ad7f16c36e7eb9fa147083ac6d9dbedc65"
+    },
+    {
+      "dataset_id": "tilt-series-2",
+      "path": "private-fixture://tilt-series/fe15c891bb065252242350728162e60320860f4c9dfbe2b6c21bb983ccd879c4",
+      "sha256": "047f589fb4b94e070793e23ebaa3c41ddc4efe71e7dc2f9048d2caa25dc079af"
+    },
+    {
+      "dataset_id": "tilt-series-3",
+      "path": "private-fixture://tilt-series/aa18159030e03a756f7a057e9422ce645dfbe4bb0df7bc9eac6c6aeee2d55db1",
+      "sha256": "7b9a58202bd9251e843e255668689968f1fec49da3e19c5883584342cb96a476"
+    },
+    {
+      "dataset_id": "tilt-series-4",
+      "path": "private-fixture://tilt-series/6f94694a3d63c41edca118a74aae1384b1f61316699154a8dda0e8ac5e1af64f",
+      "sha256": "fe34acc72d659b9d94a578ba5191224c7461488be96ea8d7bba98aec4c35b1e0"
+    },
+    {
+      "dataset_id": "tilt-series-5",
+      "path": "private-fixture://tilt-series/88907d90d0be36cce51ed15cfc82e0967c5641e190c0428e2e9ceb8aaf23c59b",
+      "sha256": "ac9d184644ab526a86137ad7d37e714b9fc1b521a6efe80d6a0ae324ae88de91"
+    },
+    {
+      "dataset_id": "tilt-series-6",
+      "path": "private-fixture://tilt-series/532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350",
+      "sha256": "4b193525246c3fceeee9edbc8fce83a76b3adbfa65baf2d031a60ecddf6c6144"
+    },
+    {
+      "dataset_id": "tilt-series-7",
+      "path": "private-fixture://tilt-series/8b006c84044f4c7d6842ab1c896359d7c5fe0e331d76dcf7a7a1f7be429523e3",
+      "sha256": "09a1a093bca8a1234ea82ffeafe1e3f87fa516e72e3eb8d706ca93297e65a123"
+    }
+  ],
+  "parameters": {
+    "sources": 7,
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "source_dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "excluded_pixels": 0,
+    "new_resident_buffers": 0,
+    "repeats": 2,
+    "detector_trials": 1,
+    "reuse_products": true,
+    "scope": "Fresh empty packing-plan directory; first pass cannot reuse plans or DPC. Second pass reuses only bounded metadata and exact small DPC sums, reconstructing every count from source again.",
+    "cold_io_claim": false,
+    "native_ui_claim": false,
+    "environment": {
+      "QGPU_ORIGINAL_PROFILE": "1"
+    },
+    "diagnostics_compiled": false,
+    "private_fixed_thread_probe": "Not enabled in ordinary build; normal pipeline unchanged.",
+    "run_root": "local-evidence://20260908-packed-optimization/defaults-fresh-plan-audit",
+    "independent_reference": "experiments/20260908-original-detector-oracle/results.jsonl",
+    "benchmark_binary_sha256": "6ce51726ccbd77e54662afce601fa87c5d811419045e0d970afb51d82d76caf9",
+    "original_packing_resource_sha256": "45b097318f171880b101c3d9d4c8be328c58aad575314d46f53b25190ab05dc2",
+    "validated_counts": 135291469824,
+    "detector_maps": 210,
+    "audit_seconds_excluded": 1077.0426431894302,
+    "release_max_bytes": 4915200,
+    "load_seconds_by_cycle": [
+      [
+        2.421178102493286,
+        2.2406200170516968,
+        2.2688390016555786,
+        2.2484819889068604,
+        2.2412220239639282,
+        2.290637969970703,
+        2.3592569828033447
+      ],
+      [
+        0.9916390180587769,
+        1.0003910064697266,
+        0.9868199825286865,
+        1.0193099975585938,
+        1.007857084274292,
+        1.0203129053115845,
+        1.0246319770812988
+      ]
+    ],
+    "zero_tail_slices_by_cycle": [
+      0,
+      1022
+    ],
+    "packing_plan_status_by_cycle": [
+      "stored",
+      "hit"
+    ],
+    "packing_plan_fallbacks": 0,
+    "detector_validation": "210 maps independently compared after execution against frozen original-HDF5 oracle. Raw in-process independent_hdf5_parity is false because invocation supplied the full-count oracle, not detector-map oracle. Raw records unchanged.",
+    "timing_qualification": "OS source pages uncontrolled; light CPU documentation tasks ran during excluded full-count audit. Descriptive timing, not a controlled performance comparison."
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "integrated-gpu-0"
+    ],
+    "gpu_model": "Apple M5 24 GB"
+  },
+  "outputs": [
+    {
+      "artifact_id": "full-count-results",
+      "path": "experiments/20260908-apple-m5-defaults-fresh-plan-audit/results.jsonl",
+      "sha256": "b222cd85d9c1b5e408ba5947f315292ae5570647fe1b85748e29aa520662ef6a",
+      "size_bytes": 141006,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "14 independently authenticated full volumes, 210 exact detector maps, no fallback, released memory <=4.92 MB. Fresh-plan2.24–2.42s; reused-plan0.987–1.025s; full reconstruction, not 2D cache. Not cold I/O or native presentation."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-08T10:24:14Z",
+    "started": "2026-09-08T10:27:20Z",
+    "finished": "2026-09-08T10:45:43.215740Z"
+  }
+}

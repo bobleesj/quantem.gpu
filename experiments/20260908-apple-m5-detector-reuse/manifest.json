@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-apple-m5-detector-reuse",
+  "status": "succeeded",
+  "question": "Can eight-tile header reuse or four-tile vector transposition improve wide exact detector updates beyond the qualified quad-scan kernel?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260908-apple-m5-detector-reuse/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "a0aaa52be1fb7b66406f8624527383178509e1f7",
+    "entrypoint": "experiments/20260908-apple-m5-planar-topology/run_cases.py",
+    "dirty": true,
+    "benchmark_source_snapshot": "local-evidence://20260908-packed-optimization/benchmark-source-direct-dpc.tar",
+    "benchmark_source_sha256": "d5ec5cde391d34a03ba7d77bd0e1ec0f8b2719701b97b7dfdf5db5fb2a64a303",
+    "diff_sha256": "0cfea1a4cfb67951a12ff0910e5ea4834e21c2c755487fa9c05f73c1e4bd5340",
+    "snapshot_path": "local-evidence://20260908-packed-optimization/detector-reuse.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-1",
+      "path": "private-fixture://tilt-series/446d2751716a5985e417f29cc19feea81b4dcf2bcbbf428578b6965e16d26f71",
+      "sha256": "4c5597ac5eb804cee7e01e1874ab69ad7f16c36e7eb9fa147083ac6d9dbedc65"
+    },
+    {
+      "dataset_id": "tilt-series-2",
+      "path": "private-fixture://tilt-series/fe15c891bb065252242350728162e60320860f4c9dfbe2b6c21bb983ccd879c4",
+      "sha256": "047f589fb4b94e070793e23ebaa3c41ddc4efe71e7dc2f9048d2caa25dc079af"
+    },
+    {
+      "dataset_id": "tilt-series-3",
+      "path": "private-fixture://tilt-series/aa18159030e03a756f7a057e9422ce645dfbe4bb0df7bc9eac6c6aeee2d55db1",
+      "sha256": "7b9a58202bd9251e843e255668689968f1fec49da3e19c5883584342cb96a476"
+    },
+    {
+      "dataset_id": "tilt-series-4",
+      "path": "private-fixture://tilt-series/6f94694a3d63c41edca118a74aae1384b1f61316699154a8dda0e8ac5e1af64f",
+      "sha256": "fe34acc72d659b9d94a578ba5191224c7461488be96ea8d7bba98aec4c35b1e0"
+    },
+    {
+      "dataset_id": "tilt-series-5",
+      "path": "private-fixture://tilt-series/88907d90d0be36cce51ed15cfc82e0967c5641e190c0428e2e9ceb8aaf23c59b",
+      "sha256": "ac9d184644ab526a86137ad7d37e714b9fc1b521a6efe80d6a0ae324ae88de91"
+    },
+    {
+      "dataset_id": "tilt-series-6",
+      "path": "private-fixture://tilt-series/532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350",
+      "sha256": "4b193525246c3fceeee9edbc8fce83a76b3adbfa65baf2d031a60ecddf6c6144"
+    },
+    {
+      "dataset_id": "tilt-series-7",
+      "path": "private-fixture://tilt-series/8b006c84044f4c7d6842ab1c896359d7c5fe0e331d76dcf7a7a1f7be429523e3",
+      "sha256": "09a1a093bca8a1234ea82ffeafe1e3f87fa516e72e3eb8d706ca93297e65a123"
+    }
+  ],
+  "parameters": {
+    "sources": 7,
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "source_dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "new_resident_buffers": 0,
+    "repeats": 2,
+    "trials": 8,
+    "scope": "A/B/C/A: quad-scan,octo-scan,quad-vector,quad-scan. Different register/threadgroup topology only, same exact bit-plane resident and unsigned arithmetic; all full detector hashes and stage/layout/memory gates.",
+    "benchmark_binary_sha256": "2544f937ffbfe31fc7620c44829d96eca48b5da40230380dbe2fb51431d91664",
+    "packed_h5_resource_sha256": "2f33eaa08b2720a1e1c091eca4407f35b19d7cb0cda6592c8f8bfff1c143fc91",
+    "cpu_formula": {
+      "header_addresses": 12416,
+      "signed_scan_sums": 1536,
+      "maximum_preserved": 65535
+    },
+    "cases": "experiments/20260908-apple-m5-detector-reuse/cases.json",
+    "run_root": "local-evidence://20260908-packed-optimization/detector-reuse"
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "integrated-gpu-0"
+    ],
+    "gpu_model": "Apple M5 24 GB"
+  },
+  "outputs": [
+    {
+      "artifact_id": "comparison",
+      "path": "experiments/20260908-apple-m5-detector-reuse/comparison.json",
+      "sha256": "93dd8fc3283ff10d200f0c3f870bd0f6963ecba02a8e42a8f61313bc39aa78ed",
+      "size_bytes": 55831,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "56loads6720maps exact; nofallback/wronglayout/residentgrowth. Large ADF octo16.20–17.28ms vsquad17.84–19.26,vector16.76–17.67ms. SmallBF delta regresses0.50–0.62ms to1.85octo/0.99vector. Native crossover validation pending."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-08T07:33:22.455Z",
+    "started": "2026-09-08T07:37:41.088Z",
+    "finished": "2026-09-08T07:41:09.323Z"
+  }
+}

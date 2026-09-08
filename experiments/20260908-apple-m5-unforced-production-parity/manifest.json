@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-apple-m5-unforced-production-parity",
+  "status": "succeeded",
+  "question": "Does the complete existing original-HDF5 packing production suite still pass without forcing experimental kernel flags?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260908-apple-m5-unforced-production-parity/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "a0aaa52be1fb7b66406f8624527383178509e1f7",
+    "entrypoint": "tests/hardware/metal/test_original_packing.py",
+    "dirty": true,
+    "diff_sha256": "513648d496b09a2262e3ffee83cbb1296bba877129628e5f126afd604c246278",
+    "snapshot_path": "local-evidence://20260908-packed-optimization/residency-decline.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "existing deterministic synthetic HDF5 fixtures and independent expectations",
+      "path": "tests/hardware/metal/test_original_packing.py",
+      "sha256": "88f7ef9a68b5d5225aed2f70a14c5eb2a06cc01aa8b63891a89922c3cedac67b"
+    }
+  ],
+  "parameters": {
+    "tests_collected": 37,
+    "no_frozen_expectation_changes": true,
+    "environment": "Original test-owned configurations; no global experimental overrides",
+    "cold_io_or_native_fps_claim": false
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "integrated-gpu-0"
+    ],
+    "gpu_model": "Apple M5 24 GB"
+  },
+  "outputs": [
+    {
+      "artifact_id": "pytest-log",
+      "path": "local-evidence://20260908-packed-optimization/unforced-parity.log",
+      "sha256": "a10c4e77e488c1aac0666f2e817d657c249560b36c3ebdedb5ea79b091a9960b",
+      "size_bytes": 5461,
+      "retention": "scratch",
+      "consuming_figures": [],
+      "result": "37 passed in293.74s; complete existing suite, unforced kernel configuration, no skips or changed expectations."
+    },
+    {
+      "artifact_id": "pytest-junit",
+      "path": "local-evidence://20260908-packed-optimization/unforced-parity.xml",
+      "sha256": "65ece29c5fe146f0e442f36d80b7019914a69acee6bf2520e4f434409470bc49",
+      "size_bytes": 5753,
+      "retention": "scratch",
+      "consuming_figures": [],
+      "result": "Machine-readable37tests,0failures,0skips."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-08T08:57:00Z",
+    "started": "2026-09-08T08:57:00Z",
+    "finished": "2026-09-08T09:02:01.000Z"
+  }
+}

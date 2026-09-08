@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-apple-m5-candidate-parity-fixed",
+  "status": "succeeded",
+  "question": "Do the candidate same-byte bit-plane loading, direct DPC, and vector detector paths satisfy the existing production uint8/uint16 exactness and failure contracts?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260908-apple-m5-candidate-parity-fixed/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "a0aaa52be1fb7b66406f8624527383178509e1f7",
+    "entrypoint": "tests/hardware/metal/test_original_packing.py",
+    "dirty": true,
+    "diff_sha256": "513648d496b09a2262e3ffee83cbb1296bba877129628e5f126afd604c246278",
+    "snapshot_path": "local-evidence://20260908-packed-optimization/residency-decline.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "existing deterministic synthetic HDF5 fixtures and independent expectations",
+      "path": "tests/hardware/metal/test_original_packing.py",
+      "sha256": "88f7ef9a68b5d5225aed2f70a14c5eb2a06cc01aa8b63891a89922c3cedac67b"
+    }
+  ],
+  "parameters": {
+    "tests_collected": 30,
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "dtypes": [
+      "uint8",
+      "uint16"
+    ],
+    "no_frozen_expectation_changes": true,
+    "scope": "All30 existing semantic production tests, excluding seven tests deliberately asserting old internal kernel scheduling counters. Follow with all37 in their original unforced configuration. Residency hint declines when it would exceed existing memory; scientific packed path and limits unchanged.",
+    "environment": {
+      "COMPACT_ORIGINAL_FUSED_PLANES": "1",
+      "QGPU_ORIGINAL_STANDARD_PLANES": "1",
+      "QGPU_ORIGINAL_PLANE_VECTOR4": "1",
+      "QGPU_ORIGINAL_DIRECT_DPC": "1",
+      "QGPU_ORIGINAL_DECODE_THREADS": "32",
+      "QGPU_ORIGINAL_PACK_THREADS": "32",
+      "COMPACT_RAW_QUAD_VECTOR": "1",
+      "COMPACT_RAW_VECTOR_THREADS": "128",
+      "COMPACT_RESIDENCY_SETS": "1",
+      "COMPACT_SHARED_MASK_PREPARATION": "1",
+      "COMPACT_RAW_QUAD_BATCH": "0"
+    },
+    "cold_io_or_native_fps_claim": false,
+    "selection": "not original_packing_plan_reopen_and_faults and not direct_bitshuffle_original_reopen",
+    "correction_of": "20260908-apple-m5-candidate-production-parity"
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "integrated-gpu-0"
+    ],
+    "gpu_model": "Apple M5 24 GB"
+  },
+  "outputs": [
+    {
+      "artifact_id": "pytest-log",
+      "path": "local-evidence://20260908-packed-optimization/candidate-parity-fixed.log",
+      "sha256": "c5fbd36e7ff6ef3bfe3e59f1d8029e397cf08c761bb2db778c6f028876721670",
+      "size_bytes": 4642,
+      "retention": "scratch",
+      "consuming_figures": [],
+      "result": "30 passed,7 explicitly deselected in70.18s. Includes actualuint8/uint16, high/saturated counts, allDPs, DPC/sums, exact detector maps, cancellation/failures/budgets and display histogram. Seven legacy scheduling tests not claimed here."
+    },
+    {
+      "artifact_id": "pytest-junit",
+      "path": "local-evidence://20260908-packed-optimization/candidate-parity-fixed.xml",
+      "sha256": "2c5421d184fc09bda561d95e6000fe6d89989073b6aff62d7a91e26273f64e9a",
+      "size_bytes": 4713,
+      "retention": "scratch",
+      "consuming_figures": [],
+      "result": "Machine-readable30 passing tests; no failures or runtime skips."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-08T08:41:00Z",
+    "started": "2026-09-08T08:41:00Z",
+    "finished": "2026-09-08T08:42:45Z"
+  }
+}

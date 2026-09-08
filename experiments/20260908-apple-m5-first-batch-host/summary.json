@@ -1,0 +1,72 @@
+{
+  "count": 501,
+  "first": {
+    "aggregate_entries": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "capture_snapshots": true,
+    "command_host_times_seconds": {
+      "gpu_end": 242009.89327029168,
+      "gpu_start": 242009.59967454168,
+      "kernel_end": 242009.599626375,
+      "kernel_start": 242006.16175762503
+    },
+    "diagnostic_only": true,
+    "force_rebase": false,
+    "gpu_interval_ms": 293.59575000125915,
+    "mask_sha256": "8e58769fefaf1085fe0b345942694ac764742df86851e53b16398f2d4c329259",
+    "modes": [
+      "rebase",
+      "rebase",
+      "rebase",
+      "rebase",
+      "rebase",
+      "rebase",
+      "rebase"
+    ],
+    "phase": "detector_host_stages",
+    "raw_entries": [
+      12064,
+      12064,
+      12064,
+      12064,
+      12064,
+      12064,
+      12064
+    ],
+    "residency_set_count": 0,
+    "source_count": 7,
+    "source_identities": [
+      "532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350",
+      "8b006c84044f4c7d6842ab1c896359d7c5fe0e331d76dcf7a7a1f7be429523e3",
+      "aa18159030e03a756f7a057e9422ce645dfbe4bb0df7bc9eac6c6aeee2d55db1",
+      "6f94694a3d63c41edca118a74aae1384b1f61316699154a8dda0e8ac5e1af64f",
+      "446d2751716a5985e417f29cc19feea81b4dcf2bcbbf428578b6965e16d26f71",
+      "fe15c891bb065252242350728162e60320860f4c9dfbe2b6c21bb983ccd879c4",
+      "88907d90d0be36cce51ed15cfc82e0967c5641e190c0428e2e9ceb8aaf23c59b"
+    ],
+    "stages_ms_from_call_entry": {
+      "after_commit_ms": 2.168208,
+      "after_wait_ms": 3733.762458,
+      "before_commit_ms": 2.158458,
+      "encoding_end_ms": 2.156458,
+      "prepare_end_ms": 0.950208,
+      "prepare_start_ms": 0.0045,
+      "publication_end_ms": 3733.813792,
+      "snapshot_allocation_end_ms": 1.024042
+    },
+    "submission_count": 1,
+    "wall_after_prepare_ms": 3732.862791
+  },
+  "steady_median_wall_ms": 4.622,
+  "steady_median_gpu_ms": 3.8980624958639964,
+  "first_driver_interval_ms": 3437.868749984773,
+  "interpretation": "kernel_start/end are CPU driver times, not Metal shader execution",
+  "sampling_caveat": "One-second process sampling is diagnostic, not an uncontended performance run"
+}

@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-apple-m5-planes-native",
+  "status": "succeeded",
+  "question": "Do same-byte bit-plane residents improve actual all-seven tile presentations and selected diffraction?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260908-apple-m5-planes-native/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "a0aaa52be1fb7b66406f8624527383178509e1f7",
+    "entrypoint": "Live4DSTEM/Tests/NativeUI/profile_seven_tilts.py",
+    "dirty": true,
+    "diff_sha256": "f1c473103b6544cd64bfa6ecf562e6612ef294a6f69dfdd932112f68b99d78cd",
+    "snapshot_path": "local-evidence://20260908-packed-optimization/original-planes.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-anchor",
+      "path": "private-fixture://tilt-series/-17.0x_0.0y",
+      "sha256": "532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350"
+    }
+  ],
+  "parameters": {
+    "app_revision": "689c4b71b7651e1ff175d19cfae2c6c8f472091a",
+    "input_manifest_scope": "anchor master hash from retained load-concurrency baseline; full local seven-file identity inventory retained with run",
+    "shape_per_source": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "sources": 7,
+    "source_dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "repeats": 1,
+    "cache_state": "existing packing plans; OS source pages uncontrolled; fresh app process",
+    "resident_limit_bytes": 14752175312,
+    "timing_boundary": "native hook trajectories and drawable presentation, separately from backend GPU timing",
+    "run_root": "local-evidence://20260908-packed-optimization/planes-native-{a,candidate,b}",
+    "app_binary_sha256": "53097695116bb9c520b71583f7a80d24eb7e9cf046bae8ce3e360f5c1cf21cc3",
+    "app_dirty": true,
+    "backend_dirty": true,
+    "environment": {
+      "DIAG": "1",
+      "COMPACT_UPDATE_HOST_PROFILE": "1",
+      "COMPACT_RESIDENCY_SETS": "0"
+    },
+    "diagnostic_cpu_sampling": false,
+    "benchmark_script_changes": "Per-tile completion and input-duration denominator record startup gaps",
+    "app_diff_sha256": "b9b5f8d4bf3d1f24cdc2492864d92dca36b2c5ea2f0223c6337cf79de0da89f7",
+    "app_snapshot": "local-evidence://20260908-packed-optimization/shard-native-app.patch",
+    "arms": [
+      0,
+      1,
+      0
+    ],
+    "dependency_resolution": "Temporary sibling package path for this local build; exact reviewed pin required before release",
+    "experiment_flag": "COMPACT_ORIGINAL_PLANES",
+    "prototype_conversion_cost_included": true
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "integrated-gpu-0"
+    ],
+    "gpu_model": "Apple M5, 24 GB unified memory, 120 Hz display"
+  },
+  "outputs": [
+    {
+      "artifact_id": "comparison",
+      "path": "experiments/20260908-apple-m5-planes-native/comparison.json",
+      "sha256": "76bef9b780cdb4e117856b8b135838573473af440602e9a62c5ce2360a7de541",
+      "size_bytes": 48916,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "All seven exact resident bytes unchanged. A/B/A ABF center12.1/43.1/12.1 presented/s, ADF15.9/28.5/15.0. Selected DP~120 steady. Candidate load2.81+14.33s is worse; prototype only, no release acceptance."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-08T05:59:00Z",
+    "started": "2026-09-08T05:59:00Z",
+    "finished": "2026-09-08T06:01:55Z"
+  }
+}

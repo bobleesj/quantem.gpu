@@ -1,0 +1,34 @@
+[
+  {
+    "name": "control-a",
+    "environment": {
+      "QGPU_ORIGINAL_PLANE_VECTOR4": "1"
+    }
+  },
+  {
+    "name": "vector2-p32",
+    "environment": {
+      "QGPU_ORIGINAL_PLANE_VECTOR2": "1"
+    }
+  },
+  {
+    "name": "vector2-p64",
+    "environment": {
+      "QGPU_ORIGINAL_PLANE_VECTOR2": "1",
+      "QGPU_ORIGINAL_PACK_THREADS": "64"
+    }
+  },
+  {
+    "name": "vector4-p64",
+    "environment": {
+      "QGPU_ORIGINAL_PLANE_VECTOR4": "1",
+      "QGPU_ORIGINAL_PACK_THREADS": "64"
+    }
+  },
+  {
+    "name": "control-b",
+    "environment": {
+      "QGPU_ORIGINAL_PLANE_VECTOR4": "1"
+    }
+  }
+]

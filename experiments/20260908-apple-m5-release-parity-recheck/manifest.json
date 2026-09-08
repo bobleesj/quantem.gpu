@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-apple-m5-release-parity-recheck",
+  "status": "succeeded",
+  "question": "Do current ordinary-default scientific paths still pass the unchanged 38-test suite after later disabled diagnostic probes were added?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260908-apple-m5-release-parity-recheck/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "a0aaa52be1fb7b66406f8624527383178509e1f7",
+    "entrypoint": "tests/hardware/metal/test_original_packing.py",
+    "dirty": true,
+    "diff_sha256": "0bed5df887164524d157fd66cd480d1a62e3985bf83af5015c55fcc7a8944908",
+    "snapshot_path": "local-evidence://20260908-packed-optimization/release-preflight/backend.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "existing deterministic synthetic HDF5 fixtures and independent expectations",
+      "path": "tests/hardware/metal/test_original_packing.py",
+      "sha256": "88f7ef9a68b5d5225aed2f70a14c5eb2a06cc01aa8b63891a89922c3cedac67b"
+    }
+  ],
+  "parameters": {
+    "tests": 38,
+    "environment": "No optimization overrides. Fixture compiles diagnostics only for explicit fault/legacy-path probes; all unspecified controls use the new normal defaults.",
+    "source_dtype": [
+      "uint8",
+      "uint16"
+    ],
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "public_api_changed": false,
+    "fixture_source_snapshot": "local-evidence://20260908-packed-optimization/zero-tail-permanent-fixture.tar",
+    "fixture_source_sha256": "22254f9014e66e0649a14f2c66d0b43714d4d70727dfede943eae42b9ab1cce6",
+    "changes": "Rebuild fixture against current source including disabled compiler/width/constant-wide probes; all prior expected counts and budgets unchanged.",
+    "cold_io_claim": false,
+    "native_fps_claim": false,
+    "changed": "No new numerical test edits in this recheck.",
+    "run_root": "local-evidence://20260908-packed-optimization/release-preflight",
+    "raw_xml_sha256": "6aaacf1a015b62cd377c0ee577341e5694cad0334480fd1fb1cbfb46c7a4044d",
+    "raw_xml_path": "local-evidence://20260908-packed-optimization/release-preflight/parity.xml"
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "integrated-gpu-0"
+    ],
+    "gpu_model": "Apple M5 24 GB"
+  },
+  "outputs": [
+    {
+      "artifact_id": "pytest-log",
+      "path": "experiments/20260908-apple-m5-release-parity-recheck/result.log",
+      "sha256": "e916f39427d792cd20db6401d49dbdf974901b562eaab408cd1a53c40b477295",
+      "size_bytes": 111,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "38 passed, zero skips/failures in289.13s. Frozen scientific expectations and budgets unchanged."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-08T14:43:00Z",
+    "started": "2026-09-08T14:43:15.532546Z",
+    "finished": "2026-09-08T14:48:04.666Z"
+  }
+}

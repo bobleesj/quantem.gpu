@@ -65,6 +65,8 @@ parts:
         title: API reference
         sections:
           - file: api/io
+          - file: api/original-hdf5-metal-packing
+            title: Original HDF5 packed loading
           - file: api/representations
             title: Dense and lossless-packed data
           - file: api/images_dpc
@@ -123,6 +125,8 @@ parts:
       - file: maintainer/index
         title: Maintainer archive
         sections:
+          - file: maintainer/2026-09-08-packed-resident-optimization
+            title: Packed-resident optimization evidence
           - file: maintainer/migration
           - file: maintainer/native-metal-hdf5-postmortem
           - file: maintainer/m2-air-lz4-match-unroll-2026-08-18

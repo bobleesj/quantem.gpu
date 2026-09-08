@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-apple-m5-native-shared-preparation",
+  "status": "failed",
+  "question": "Does validated shared mask preparation improve actual seven-source native presentations without changing resident memory or exact counts?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260908-apple-m5-native-shared-preparation/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "a0aaa52be1fb7b66406f8624527383178509e1f7",
+    "entrypoint": "experiments/20260908-apple-m5-native-reuse/run.py",
+    "dirty": true,
+    "benchmark_source_snapshot": "local-evidence://20260908-packed-optimization/benchmark-source-series-fixed.tar",
+    "benchmark_source_sha256": "efb5063ca1f5d63af41079722cfe12e01e2e97a3af7d825e46c72cab0b8d4ebc",
+    "diff_sha256": "572f540fd016dc0cec90a08751919cfa2f8a0497c236bc77faa230ce66379009",
+    "snapshot_path": "local-evidence://20260908-packed-optimization/shared-preparation.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-1",
+      "path": "private-fixture://tilt-series/446d2751716a5985e417f29cc19feea81b4dcf2bcbbf428578b6965e16d26f71",
+      "sha256": "4c5597ac5eb804cee7e01e1874ab69ad7f16c36e7eb9fa147083ac6d9dbedc65"
+    },
+    {
+      "dataset_id": "tilt-series-2",
+      "path": "private-fixture://tilt-series/fe15c891bb065252242350728162e60320860f4c9dfbe2b6c21bb983ccd879c4",
+      "sha256": "047f589fb4b94e070793e23ebaa3c41ddc4efe71e7dc2f9048d2caa25dc079af"
+    },
+    {
+      "dataset_id": "tilt-series-3",
+      "path": "private-fixture://tilt-series/aa18159030e03a756f7a057e9422ce645dfbe4bb0df7bc9eac6c6aeee2d55db1",
+      "sha256": "7b9a58202bd9251e843e255668689968f1fec49da3e19c5883584342cb96a476"
+    },
+    {
+      "dataset_id": "tilt-series-4",
+      "path": "private-fixture://tilt-series/6f94694a3d63c41edca118a74aae1384b1f61316699154a8dda0e8ac5e1af64f",
+      "sha256": "fe34acc72d659b9d94a578ba5191224c7461488be96ea8d7bba98aec4c35b1e0"
+    },
+    {
+      "dataset_id": "tilt-series-5",
+      "path": "private-fixture://tilt-series/88907d90d0be36cce51ed15cfc82e0967c5641e190c0428e2e9ceb8aaf23c59b",
+      "sha256": "ac9d184644ab526a86137ad7d37e714b9fc1b521a6efe80d6a0ae324ae88de91"
+    },
+    {
+      "dataset_id": "tilt-series-6",
+      "path": "private-fixture://tilt-series/532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350",
+      "sha256": "4b193525246c3fceeee9edbc8fce83a76b3adbfa65baf2d031a60ecddf6c6144"
+    },
+    {
+      "dataset_id": "tilt-series-7",
+      "path": "private-fixture://tilt-series/8b006c84044f4c7d6842ab1c896359d7c5fe0e331d76dcf7a7a1f7be429523e3",
+      "sha256": "09a1a093bca8a1234ea82ffeafe1e3f87fa516e72e3eb8d706ca93297e65a123"
+    }
+  ],
+  "parameters": {
+    "sources": 7,
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "source_dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "expected_resident_bytes": 14752175312,
+    "new_resident_buffers": 0,
+    "trajectory_repeats": 3,
+    "arms": [
+      "control-a",
+      "shared",
+      "control-b"
+    ],
+    "experimental_flag": "COMPACT_SHARED_MASK_PREPARATION",
+    "native_ui_claim": true,
+    "cold_io_claim": false,
+    "scope": "Same native binary and resources; vector128 and residency leases in all arms. All seven actual tile presentations, selected and static average DP, first-use latency separately.",
+    "native_binary_sha256": "5696c8e50c9c70ecd2b2a25d547bba6c0ba4f9e0033bf9fe6d07a6beb693b2e3",
+    "app_diff_sha256": "47632e69cfa41ac6c3227d75acdfafd237cb7bdd51553bc4b28859b0bd2d3513",
+    "executed_loading_correction": {
+      "observed_decode_threads": 128,
+      "observed_packing_threads": 128,
+      "observed_layout": 1,
+      "reason": "Native build omitted QGPU_PACKING_DIAGNOSTICS. Requested32thread/vector4/standardplanes/directDPC flags did not execute. Vectorcolumn profile was not yet emitted; code shows diagnostic defaults select scalarplanes. This run measures actual native presentation with scalar-plane128 loading, not qualified vector4x32 loading.",
+      "affected_claims": "Loading configuration attribution only; actual presented cadence, resident bytes and raw timings remain recorded. COMPACT detector/residency/shared flags are not compile gated.",
+      "follow_up": "20260908-apple-m5-native-loading-integration"
+    }
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "integrated-gpu-0"
+    ],
+    "gpu_model": "Apple M5 24 GB"
+  },
+  "outputs": [
+    {
+      "artifact_id": "native-comparison",
+      "path": "experiments/20260908-apple-m5-native-shared-preparation/comparison.json",
+      "sha256": "7019543df14bd2f7ddd0791c5ce601f4638b8ad936e916774230a9c6101dbc60",
+      "size_bytes": 63232,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "ABF93.7/97.2/78.4 andADF70.4/83.5/82.1 complete presentations/s. Same14.752GB; first selectedDP120steady, but selected after average118.0/82.8/105.4 with29/667/142ms maximum gaps. 120Hz end-to-end acceptance fails; shared candidate's667ms gap contains646.6ms synchronous nextDrawable on main thread, not DP extraction. Native improvement not unconditionally accepted."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-08T08:34:00Z",
+    "started": "2026-09-08T08:34:00Z",
+    "finished": "2026-09-08T08:36:23.000Z"
+  }
+}

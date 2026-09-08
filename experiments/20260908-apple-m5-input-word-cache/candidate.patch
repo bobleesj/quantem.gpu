@@ -1,0 +1,168 @@
+diff --git a/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/packed_h5.metal b/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/packed_h5.metal
+index 590045c..f771671 100644
+--- a/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/packed_h5.metal
++++ b/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/packed_h5.metal
+@@ -852,12 +852,11 @@ inline uint compactLowBitScanSums(
+     }
+     // Distinct lane bits add without carry; this is the coefficient bitmask.
+     uint positive = simd_sum(coefficient == 1 ? (1u << scanLane) : 0u);
+-    uint negative = ~positive;
+     low = compactTransposeBits(low, scanLane);
+-    uint sum = popcount(low & positive) - popcount(low & negative);
++    uint sum = (popcount(low & positive) - popcount(low & ~positive));
+     if (maximumWidth == 2u) {
+         high = compactTransposeBits(high, scanLane);
+-        sum += 2u * (popcount(high & positive) - popcount(high & negative));
++        sum += 2u * (popcount(high & positive) - popcount(high & ~positive));
+     }
+     return sum;
+ }
+diff --git a/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/qh5idx.metal b/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/qh5idx.metal
+index c033336..7572e57 100644
+--- a/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/qh5idx.metal
++++ b/src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/qh5idx.metal
+@@ -1696,19 +1696,36 @@ inline void bslz4DecompressPrefixSerialToDevice(
+ // Exact full-stream scalar decode with bounded scratch and explicit failure.
+ // Every independent LZ4 block is decoded completely by one thread. The output
+ // is only bounded transient bitshuffle scratch; it is not a reduced resident.
+-template <bool alignedRepeatFill = false, bool alignedHistoryCopy = false>
++template <bool cachedInput>
++inline uchar bslz4InputByte(
++    const device uchar *input, uint length, uint index,
++    thread uint &cachedOffset, thread uint &cachedWord
++) {
++    if (!cachedInput) return input[index];
++    uint aligned = index & ~3u;
++    if (aligned != cachedOffset) {
++        // No speculative read beyond the final compressed block boundary.
++        if (length - aligned < 4u) return input[index];
++        cachedWord = as_type<uint>(*((const device packed_uchar4 *)(input + aligned)));
++        cachedOffset = aligned;
++    }
++    return uchar(cachedWord >> ((index & 3u) * 8u));
++}
++
++template <bool alignedRepeatFill = false, bool alignedHistoryCopy = false, bool cachedInput = false>
+ inline bool bslz4DecompressFullSerialCheckedToDevice(
+     device uchar *destination, const device uchar *compressed, uint compressedLength
+ ) {
+     uint inputIndex = 0u, outputIndex = 0u;
++    uint cachedOffset = 0xffffffffu, cachedWord = 0u;
+     while (inputIndex < compressedLength) {
+-        uchar token = compressed[inputIndex++];
++        uchar token = bslz4InputByte<cachedInput>(compressed, compressedLength, inputIndex++, cachedOffset, cachedWord);
+         uint literalCount = uint(token >> 4u);
+         if (literalCount == 15u) {
+             uchar next;
+             do {
+                 if (inputIndex >= compressedLength) return false;
+-                next = compressed[inputIndex++];
++                next = bslz4InputByte<cachedInput>(compressed, compressedLength, inputIndex++, cachedOffset, cachedWord);
+                 if (uint(next) > 8192u - min(literalCount, 8192u)) return false;
+                 literalCount += uint(next);
+             } while (next == 255u);
+@@ -1730,7 +1747,13 @@ inline bool bslz4DecompressFullSerialCheckedToDevice(
+         outputIndex += literalCount;
+         if (inputIndex == compressedLength) return outputIndex == 8192u;
+         if (compressedLength - inputIndex < 2u || outputIndex == 8192u) return false;
+-        uint distance = uint(bslz4ReadWordDevice(compressed + inputIndex));
++        uint distance;
++        if (cachedInput) {
++            distance = uint(bslz4InputByte<true>(compressed, compressedLength, inputIndex, cachedOffset, cachedWord))
++                | (uint(bslz4InputByte<true>(compressed, compressedLength, inputIndex + 1u, cachedOffset, cachedWord)) << 8u);
++        } else {
++            distance = uint(bslz4ReadWordDevice(compressed + inputIndex));
++        }
+         inputIndex += 2u;
+         if (distance == 0u || distance > outputIndex) return false;
+         uint matchLength = 4u + uint(token & 15u);
+@@ -1738,7 +1761,7 @@ inline bool bslz4DecompressFullSerialCheckedToDevice(
+             uchar next;
+             do {
+                 if (inputIndex >= compressedLength) return false;
+-                next = compressed[inputIndex++];
++                next = bslz4InputByte<cachedInput>(compressed, compressedLength, inputIndex++, cachedOffset, cachedWord);
+                 if (uint(next) > 8192u - min(matchLength, 8192u)) return false;
+                 matchLength += uint(next);
+             } while (next == 255u);
+@@ -1892,6 +1915,34 @@ kernel void h5lz4dc_full_u16_aligned_fill_qh5idx(
+     )) atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+ }
+ 
++
++kernel void h5lz4dc_full_u16_cached_input_qh5idx(
++    const device uchar *h5File [[buffer(0)]],
++    const device uint2 *blockMetadata [[buffer(1)]],
++    constant ulong &rangeStart [[buffer(2)]],
++    constant uint &blocksPerFrame [[buffer(3)]],
++    constant uint &frameElements [[buffer(4)]],
++    device uchar *scratch [[buffer(5)]],
++    constant uint &metadataFrameOffset [[buffer(6)]],
++    device atomic_uint *errors [[buffer(10)]],
++    constant uint &frameCount [[buffer(11)]],
++    uint linearBlock [[thread_position_in_grid]]
++) {
++    if (blocksPerFrame == 0u || ulong(blocksPerFrame) * 4096ul != frameElements) {
++        atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
++        return;
++    }
++    if (ulong(linearBlock) >= ulong(frameCount) * blocksPerFrame) return;
++    uint frame = linearBlock / blocksPerFrame;
++    uint block = linearBlock % blocksPerFrame;
++    uint2 metadata = blockMetadata[(ulong(metadataFrameOffset) + frame) * blocksPerFrame + block];
++    if (!bslz4DecompressFullSerialCheckedToDevice<true, false, true>(
++        scratch + ulong(frame) * frameElements * 2ul + ulong(block) * 8192ul,
++        h5File + rangeStart + ulong(metadata.x), metadata.y
++    )) atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
++}
++
++
+ kernel void h5lz4dc_full_u16_aligned_copy_qh5idx(
+     const device uchar *h5File [[buffer(0)]],
+     const device uint2 *blockMetadata [[buffer(1)]],
+diff --git a/src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/Metal4DSTEMCompactH5.swift b/src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/Metal4DSTEMCompactH5.swift
+index 6f262cb..ca78bab 100644
+--- a/src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/Metal4DSTEMCompactH5.swift
++++ b/src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/Metal4DSTEMCompactH5.swift
+@@ -529,6 +529,8 @@ public final class MetalCompactH5ResidentSource {
+   private var activeDetectorOutput = 0
+   private var detectorMask: [UInt8]
+   private var detectorSumReady = false
++  private let widthOrderedEntries =
++    ProcessInfo.processInfo.environment["COMPACT_DETECTOR_WIDTH_ORDER"] == "1"
+   public private(set) var isReleased = false
+ 
+   fileprivate func markOriginalDetectorSumReady() { detectorSumReady = true }
+@@ -1270,6 +1272,16 @@ public final class MetalCompactH5ResidentSource {
+       ? 0
+       : detectorRegions?.decompose(
+         &entries, rows: metadata.detectorRows, columns: metadata.detectorColumns) ?? 0
++    if widthOrderedEntries {
++      // Keep rare high-count pixels from selecting the wide reduction for an
++      // otherwise narrow SIMD group. Only summation order changes; no count or
++      // GPU allocation changes. Preserve pixel order within equal widths.
++      entries.sort {
++        let left = maximumWidths[Int($0.pixel)]
++        let right = maximumWidths[Int($1.pixel)]
++        return left == right ? $0.pixel < $1.pixel : left < right
++      }
++    }
+     if !entries.isEmpty {
+       _ = entries.withUnsafeBytes { raw in
+         memcpy(detectorEntryBuffer.contents(), raw.baseAddress!, raw.count)
+diff --git a/src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/MetalOriginalHDF5Packing.swift b/src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/MetalOriginalHDF5Packing.swift
+index 0a065b3..bc3ae00 100644
+--- a/src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/MetalOriginalHDF5Packing.swift
++++ b/src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/MetalOriginalHDF5Packing.swift
+@@ -222,7 +222,10 @@ final class OriginalHDF5Packing {
+       let function: String
+       switch (alignedRepeatFill, alignedHistoryCopy) {
+       case (true, true): function = "h5lz4dc_full_u16_aligned_fill_copy_qh5idx"
+-      case (true, false): function = "h5lz4dc_full_u16_aligned_fill_qh5idx"
++      case (true, false):
++        function = OriginalPackingDiagnostics.enabled("INPUT_WORD_CACHE")
++          ? "h5lz4dc_full_u16_cached_input_qh5idx"
++          : "h5lz4dc_full_u16_aligned_fill_qh5idx"
+       case (false, true): function = "h5lz4dc_full_u16_aligned_copy_qh5idx"
+       case (false, false): function = "h5lz4dc_full_u16_scalar_qh5idx"
+       }

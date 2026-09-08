@@ -1,0 +1,22 @@
+[
+  {
+    "name": "control-a",
+    "environment": {}
+  },
+  {
+    "name": "deferred-validation",
+    "environment": {
+      "QGPU_ORIGINAL_PLANE_DEFERRED_VERIFY": "1"
+    }
+  },
+  {
+    "name": "vector-four",
+    "environment": {
+      "QGPU_ORIGINAL_PLANE_VECTOR4": "1"
+    }
+  },
+  {
+    "name": "control-b",
+    "environment": {}
+  }
+]
