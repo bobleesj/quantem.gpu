@@ -1,0 +1,802 @@
+{
+  "schema": "empad-loading-experiment/v1",
+  "date": "2026-09-08",
+  "host": "apple-m5-24gb",
+  "source": {
+    "doi_url": "https://zenodo.org/records/17246822",
+    "file_bytes": 4362076160,
+    "shape": [
+      256,
+      256,
+      128,
+      128
+    ],
+    "dtype": "float32",
+    "sha256": "5f5bbae2295aea62a1d6bd74c6611ae7c913d473c3ae83435fc85eda87abd325",
+    "physical_samples": 1073741824,
+    "packed_resident_bytes": 4358391856
+  },
+  "code": {
+    "backend_head": "1405fab95320583cbb804e06fd4ef4365f118a5d",
+    "app_head": "3b300f744160d7cf3c5e731a8c30d2937147a00b",
+    "dirty": true,
+    "app_sha256": "c2823bae2b6522015f8e562766289e2b62b685828e77fdd4c416d940382b93d1",
+    "metal_sha256": "4b13ca7fedb79131f48300966b6765e18d44fc7b4e0fbb8da130866130c27c5b",
+    "backend_patch_sha256": "9769fb2c82ba814a2cb73aed2484ac71108500b2fb2fff2ae9404400c0674bd8",
+    "app_patch_sha256": "50d3419f63e54c595b95290283bec9037ed42f482ba5e08e363f014d60cd22b0",
+    "snapshot_root": "local-validation/2026-09-08-empad-loading"
+  },
+  "controls": {
+    "first": "full checksum calculation; LIVE4DSTEM_EMPAD_HASH_CACHE=0",
+    "repeat": "default valid source checksum metadata; all frames reread and packed",
+    "source_read": "scatter readv into shared Metal staging; record footers excluded, not physical detector pixels",
+    "stage_times": "CPU wall measurements including waits, not pure GPU execution",
+    "power": "AC charging for final tests",
+    "cold_io": false,
+    "raw_logs": "local-validation/2026-09-08-empad-loading/<run-name>",
+    "earlier_builds": {
+      "empad-readv-native-controls": "2653a10dbc918c1529f351a947278947d5d8db16a154f46f834638231019c8e1",
+      "empad-hash-cache-native-controls": "earlier copy-based reader; exact binary hash not captured"
+    }
+  },
+  "acceptance": {
+    "repeat_full_reread_presentation_seconds": [
+      0.9613899166579358,
+      0.8957695833523758,
+      0.9886854166979901
+    ],
+    "hash_disabled_presentation_seconds": [
+      2.2701925833243877,
+      2.1865525416797027,
+      2.256785166624468
+    ],
+    "one_second_repeat_observed": true,
+    "one_second_first_hash_miss": false,
+    "universal_subsecond_guarantee": false,
+    "all_samples_bitwise_exact": true,
+    "rtol": 0.000001,
+    "atol": 0.000001,
+    "synthetic_tests_passed": 14,
+    "ui_driver_unit_tests": 27,
+    "atomic_scan_mapping_cases": 1024,
+    "cache_miss_and_hit_full_sample_audits": "both passed; final default integration audited again",
+    "native_controls": "viewer BF/ABF/ADF buffers, contrast, colormaps, light/dark, FFT, failed-file retention, forced reload, folder replacement and return passed",
+    "release_ready": false
+  },
+  "limitations": [
+    "Original loading baseline was approximately 13.44 s before packing and initial-product optimization; this experiment is the additional hash/read stage change.",
+    "An intermediate optional tree-kernel build took 1.036 s on one checksum-cache-hit startup. Do not imply every startup or device is subsecond.",
+    "Retained-resident file switches are separate from full rereads and are not included in the subsecond loading claim.",
+    "Full source data are not cached by this metadata mechanism. Existing ARINA resident caches are a separate app feature.",
+    "First-presented records are reported as captured. Non-EMPAD markers vary between controls; no timing is invented for a missing marker.",
+    "No release, installed app replacement, tag or push was performed."
+  ],
+  "runs": {
+    "empad-hash-cache-native-controls": {
+      "steps": [
+        {
+          "name": "original EMPAD open",
+          "resident_bytes": 4375658496
+        },
+        {
+          "name": "actual viewer bf parity",
+          "max_relative": 3.7818584549961276e-8
+        },
+        {
+          "name": "actual viewer abf parity",
+          "max_relative": 5.95597900183867e-8
+        },
+        {
+          "name": "actual viewer adf parity",
+          "max_relative": 5.958839554133406e-8
+        },
+        {
+          "name": "failed-file retention",
+          "hashes": {
+            "selected_diffraction_hash": "c7ee3de12a4457a5",
+            "virtual_image_hash": "bb0089e3f8966b9b",
+            "fft_hash": "312c71f8fc00b96b"
+          },
+          "loading": false
+        },
+        {
+          "name": "forced EMPAD reload",
+          "generation": 3
+        },
+        {
+          "name": "ARINA folder replacement",
+          "datasets": 7
+        },
+        {
+          "name": "FFT restored after folder replacement",
+          "fft_hash": "312c71f8fc00b96b"
+        },
+        {
+          "name": "mixed source round trip",
+          "allocated_bytes": 4378230784
+        }
+      ],
+      "failures": [],
+      "scope": "native hook-driven, original full acquisitions",
+      "exit": 0,
+      "first_presented": [
+        {
+          "request": "C0B97AEB-5EC4-442B-B684-279C88AB369A",
+          "id": "2cdd7df19b9e4b4296d528ac74e9303990e43e43ae1c7c3192d7370756e26758",
+          "generation": "1",
+          "phase": "open_source_pages_unspecified",
+          "wall_seconds": "2.351848541642539",
+          "physical_resident_bytes": "4358391856",
+          "presented_time": "291167.94116104173"
+        },
+        {
+          "request": "79F798A0-EAFF-407B-9F76-425B10278B9F",
+          "id": "2cdd7df19b9e4b4296d528ac74e9303990e43e43ae1c7c3192d7370756e26758",
+          "generation": "3",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "1.0906317083281465",
+          "physical_resident_bytes": "4358391856",
+          "presented_time": "291182.44931466674"
+        },
+        {
+          "request": "F8FC737B-F3D4-4AF1-A5F6-798317536589",
+          "id": "c6a56332e1d2065e5538",
+          "generation": "4",
+          "phase": "open_source_pages_unspecified",
+          "wall_seconds": "0.9791901666321792",
+          "physical_resident_bytes": "2014617028",
+          "presented_time": "291183.5243014584"
+        },
+        {
+          "request": "18CDFBDF-802E-4020-B6C8-98AB9C49C41B",
+          "id": "c6a56332e1d2065e5538",
+          "generation": "4",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.03656245832098648",
+          "physical_resident_bytes": "4027514520",
+          "presented_time": "291184.5826216667"
+        },
+        {
+          "request": "3439FCC2-7954-4138-814D-A9B7DBE8224A",
+          "id": "2cdd7df19b9e4b4296d528ac74e9303990e43e43ae1c7c3192d7370756e26758",
+          "generation": "6",
+          "phase": "open_source_pages_unspecified",
+          "wall_seconds": "1.04243937501451",
+          "physical_resident_bytes": "4358391856",
+          "presented_time": "291185.6742748334"
+        }
+      ],
+      "navigation": {
+        "sent": 2,
+        "received": 2,
+        "applied_once": 2,
+        "retries": 0,
+        "commands": [
+          {
+            "navigation_sent": "next",
+            "request": "57c0b09fe1d04f70bef3201ef8e024d3",
+            "sent_unix": 1788894434.855584,
+            "transport": "process-stdin"
+          },
+          {
+            "navigation_sent": "previous",
+            "request": "19d3c4715f32420ea06dc536065c7159",
+            "sent_unix": 1788894435.816035,
+            "transport": "process-stdin"
+          }
+        ]
+      },
+      "load_stage_logs": [
+        "EMPAD_LOAD total=2.042817 read=0.459087 hash=1.307778 analyze=0.005237 pack=0.268145 chunks=128 hash_cached=0 frames_read=65536",
+        "EMPAD_APP_LOAD resident=2.044476 products=0.142470 presentation_preparation=0.004118 total=2.191065",
+        "EMPAD_LOAD total=0.887390 read=0.487660 hash=0.000007 analyze=0.154547 pack=0.242318 chunks=128 hash_cached=1 frames_read=65536",
+        "EMPAD_APP_LOAD resident=0.888007 products=0.123714 presentation_preparation=0.003651 total=1.015372",
+        "EMPAD_LOAD total=0.808571 read=0.464415 hash=0.000001 analyze=0.129487 pack=0.211959 chunks=128 hash_cached=1 frames_read=65536",
+        "EMPAD_APP_LOAD resident=0.809145 products=0.133780 presentation_preparation=0.003934 total=0.946859"
+      ]
+    },
+    "empad-readv-native-controls": {
+      "steps": [
+        {
+          "name": "original EMPAD open",
+          "resident_bytes": 4362387456
+        },
+        {
+          "name": "actual viewer bf parity",
+          "max_relative": 3.7818584549961276e-8
+        },
+        {
+          "name": "actual viewer abf parity",
+          "max_relative": 5.95597900183867e-8
+        },
+        {
+          "name": "actual viewer adf parity",
+          "max_relative": 5.958839554133406e-8
+        },
+        {
+          "name": "failed-file retention",
+          "hashes": {
+            "selected_diffraction_hash": "c7ee3de12a4457a5",
+            "virtual_image_hash": "bb0089e3f8966b9b",
+            "fft_hash": "312c71f8fc00b96b"
+          },
+          "loading": false
+        },
+        {
+          "name": "forced EMPAD reload",
+          "generation": 3
+        },
+        {
+          "name": "ARINA folder replacement",
+          "datasets": 7
+        },
+        {
+          "name": "FFT restored after folder replacement",
+          "fft_hash": "312c71f8fc00b96b"
+        },
+        {
+          "name": "mixed source round trip",
+          "allocated_bytes": 4378230784
+        }
+      ],
+      "failures": [],
+      "scope": "native hook-driven, original full acquisitions",
+      "exit": 0,
+      "first_presented": [
+        {
+          "request": "FA6118D3-2297-4DCF-ABA9-950617FCEB63",
+          "id": "2cdd7df19b9e4b4296d528ac74e9303990e43e43ae1c7c3192d7370756e26758",
+          "generation": "1",
+          "phase": "open_source_pages_unspecified",
+          "wall_seconds": "0.9780609166482463",
+          "physical_resident_bytes": "4358391856",
+          "presented_time": "291437.9170093334"
+        },
+        {
+          "request": "C8CE161D-8EAB-44E5-84C8-3E90056A56F3",
+          "id": "2cdd7df19b9e4b4296d528ac74e9303990e43e43ae1c7c3192d7370756e26758",
+          "generation": "3",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "0.9136611666181125",
+          "physical_resident_bytes": "4358391856",
+          "presented_time": "291452.5501687084"
+        },
+        {
+          "request": "6628C140-3507-4E4E-9005-317D4D1E8698",
+          "id": "c6a56332e1d2065e5538",
+          "generation": "4",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.0353785416809842",
+          "physical_resident_bytes": "4027514520",
+          "presented_time": "291454.59181104176"
+        },
+        {
+          "request": "593C324C-2CF1-4AF3-9D05-19F1848121E8",
+          "id": "2cdd7df19b9e4b4296d528ac74e9303990e43e43ae1c7c3192d7370756e26758",
+          "generation": "6",
+          "phase": "open_source_pages_unspecified",
+          "wall_seconds": "0.8929188332986087",
+          "physical_resident_bytes": "4358391856",
+          "presented_time": "291455.5334664167"
+        }
+      ],
+      "navigation": {
+        "sent": 2,
+        "received": 2,
+        "applied_once": 2,
+        "retries": 0,
+        "commands": [
+          {
+            "navigation_sent": "next",
+            "request": "8cde93cb1b754e1d82a804239b932360",
+            "sent_unix": 1788894704.8447082,
+            "transport": "process-stdin"
+          },
+          {
+            "navigation_sent": "previous",
+            "request": "b65bcba2b5b445d5a90ad459d71e50b9",
+            "sent_unix": 1788894705.824955,
+            "transport": "process-stdin"
+          }
+        ]
+      },
+      "load_stage_logs": [
+        "EMPAD_LOAD total=0.665245 read=0.320077 hash=0.000002 analyze=0.122896 pack=0.219293 chunks=128 hash_cached=1 frames_read=65536",
+        "EMPAD_APP_LOAD resident=0.665954 products=0.138360 presentation_preparation=0.004296 total=0.808610",
+        "EMPAD_LOAD total=0.687077 read=0.318460 hash=0.000002 analyze=0.131804 pack=0.234081 chunks=128 hash_cached=1 frames_read=65536",
+        "EMPAD_APP_LOAD resident=0.687747 products=0.147343 presentation_preparation=0.003703 total=0.838793",
+        "EMPAD_LOAD total=0.660042 read=0.356663 hash=0.000003 analyze=0.111289 pack=0.189048 chunks=128 hash_cached=1 frames_read=65536",
+        "EMPAD_APP_LOAD resident=0.660637 products=0.137595 presentation_preparation=0.003892 total=0.802124"
+      ]
+    },
+    "empad-final-native-miss": {
+      "steps": [
+        {
+          "name": "original EMPAD open",
+          "resident_bytes": 4376182784
+        },
+        {
+          "name": "actual viewer bf parity",
+          "max_relative": 3.7818584549961276e-8
+        },
+        {
+          "name": "actual viewer abf parity",
+          "max_relative": 5.95597900183867e-8
+        },
+        {
+          "name": "actual viewer adf parity",
+          "max_relative": 5.958839554133406e-8
+        },
+        {
+          "name": "failed-file retention",
+          "hashes": {
+            "selected_diffraction_hash": "c7ee3de12a4457a5",
+            "virtual_image_hash": "bb0089e3f8966b9b",
+            "fft_hash": "312c71f8fc00b96b"
+          },
+          "loading": false
+        },
+        {
+          "name": "forced EMPAD reload",
+          "generation": 3
+        },
+        {
+          "name": "ARINA folder replacement",
+          "datasets": 7
+        },
+        {
+          "name": "FFT restored after folder replacement",
+          "fft_hash": "312c71f8fc00b96b"
+        },
+        {
+          "name": "mixed source round trip",
+          "allocated_bytes": 4378755072
+        }
+      ],
+      "failures": [],
+      "scope": "native hook-driven, original full acquisitions",
+      "exit": 0,
+      "first_presented": [
+        {
+          "request": "03AFFB33-69FA-4C11-934A-637C3EB34FC2",
+          "id": "2cdd7df19b9e4b4296d528ac74e9303990e43e43ae1c7c3192d7370756e26758",
+          "generation": "1",
+          "phase": "open_source_pages_unspecified",
+          "wall_seconds": "2.2701925833243877",
+          "physical_resident_bytes": "4358391856",
+          "presented_time": "291699.73473962507"
+        },
+        {
+          "request": "7F40E567-CDB0-4211-8FE5-F64F77524EFB",
+          "id": "2cdd7df19b9e4b4296d528ac74e9303990e43e43ae1c7c3192d7370756e26758",
+          "generation": "3",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "2.1865525416797027",
+          "physical_resident_bytes": "4358391856",
+          "presented_time": "291715.9262152917"
+        },
+        {
+          "request": "2F9A8F7B-BCC2-41D2-807D-943A7286B2C7",
+          "id": "c6a56332e1d2065e5538",
+          "generation": "4",
+          "phase": "open_source_pages_unspecified",
+          "wall_seconds": "1.0172030000248924",
+          "physical_resident_bytes": "2014617028",
+          "presented_time": "291717.0678685001"
+        },
+        {
+          "request": "7516B9F0-5B28-41C3-A011-E51F80286327",
+          "id": "d32bc747dbe481c29bfa",
+          "generation": "5",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "1.0101059166481718",
+          "physical_resident_bytes": "4027514520",
+          "presented_time": "291718.15118904173"
+        },
+        {
+          "request": "BFD1CB4B-6412-457A-82AE-41F451E7B9C6",
+          "id": "c6a56332e1d2065e5538",
+          "generation": "4",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.03750145831145346",
+          "physical_resident_bytes": "4027514520",
+          "presented_time": "291718.27618750004"
+        },
+        {
+          "request": "65BE5A36-F5C1-4179-8C73-EBC6C653D1F7",
+          "id": "2cdd7df19b9e4b4296d528ac74e9303990e43e43ae1c7c3192d7370756e26758",
+          "generation": "6",
+          "phase": "open_source_pages_unspecified",
+          "wall_seconds": "2.256785166624468",
+          "physical_resident_bytes": "4358391856",
+          "presented_time": "291720.5844934167"
+        }
+      ],
+      "navigation": {
+        "sent": 2,
+        "received": 2,
+        "applied_once": 2,
+        "retries": 0,
+        "commands": [
+          {
+            "navigation_sent": "next",
+            "request": "b6fcc05dd28c44b09ab0be96cf13155d",
+            "sent_unix": 1788894968.4139168,
+            "transport": "process-stdin"
+          },
+          {
+            "navigation_sent": "previous",
+            "request": "c5301c9331394554b671e2e3594ceefb",
+            "sent_unix": 1788894969.511435,
+            "transport": "process-stdin"
+          }
+        ]
+      },
+      "load_stage_logs": [
+        "EMPAD_LOAD total=1.965355 read=0.339593 hash=1.326264 analyze=0.005206 pack=0.290614 chunks=128 hash_cached=0 frames_read=65536",
+        "EMPAD_APP_LOAD resident=1.966184 products=0.134403 presentation_preparation=0.004214 total=2.104801",
+        "EMPAD_LOAD total=1.940544 read=0.331137 hash=1.307498 analyze=0.005165 pack=0.292402 chunks=128 hash_cached=0 frames_read=65536",
+        "EMPAD_APP_LOAD resident=1.941102 products=0.139449 presentation_preparation=0.003712 total=2.084263",
+        "EMPAD_LOAD total=1.972642 read=0.362470 hash=1.321613 analyze=0.005207 pack=0.279723 chunks=128 hash_cached=0 frames_read=65536",
+        "EMPAD_APP_LOAD resident=1.973373 products=0.146101 presentation_preparation=0.003891 total=2.123365"
+      ]
+    },
+    "empad-final-native-hit": {
+      "steps": [
+        {
+          "name": "original EMPAD open",
+          "resident_bytes": 4376182784
+        },
+        {
+          "name": "actual viewer bf parity",
+          "max_relative": 3.7818584549961276e-8
+        },
+        {
+          "name": "actual viewer abf parity",
+          "max_relative": 5.95597900183867e-8
+        },
+        {
+          "name": "actual viewer adf parity",
+          "max_relative": 5.958839554133406e-8
+        },
+        {
+          "name": "failed-file retention",
+          "hashes": {
+            "selected_diffraction_hash": "c7ee3de12a4457a5",
+            "virtual_image_hash": "bb0089e3f8966b9b",
+            "fft_hash": "312c71f8fc00b96b"
+          },
+          "loading": false
+        },
+        {
+          "name": "forced EMPAD reload",
+          "generation": 3
+        },
+        {
+          "name": "ARINA folder replacement",
+          "datasets": 7
+        },
+        {
+          "name": "FFT restored after folder replacement",
+          "fft_hash": "312c71f8fc00b96b"
+        },
+        {
+          "name": "mixed source round trip",
+          "allocated_bytes": 4378755072
+        }
+      ],
+      "failures": [],
+      "scope": "native hook-driven, original full acquisitions",
+      "exit": 0,
+      "first_presented": [
+        {
+          "request": "F432A709-2CF8-4491-84EA-F5A40AA83E21",
+          "id": "2cdd7df19b9e4b4296d528ac74e9303990e43e43ae1c7c3192d7370756e26758",
+          "generation": "1",
+          "phase": "open_source_pages_unspecified",
+          "wall_seconds": "0.9613899166579358",
+          "physical_resident_bytes": "4358391856",
+          "presented_time": "291731.8468602917"
+        },
+        {
+          "request": "9AD162BB-C187-4715-8F37-AEBF933771EC",
+          "id": "2cdd7df19b9e4b4296d528ac74e9303990e43e43ae1c7c3192d7370756e26758",
+          "generation": "3",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "0.8957695833523758",
+          "physical_resident_bytes": "4358391856",
+          "presented_time": "291746.55085341673"
+        },
+        {
+          "request": "5D1968CC-A296-4606-ACA6-9D950280CC1B",
+          "id": "c6a56332e1d2065e5538",
+          "generation": "4",
+          "phase": "open_source_pages_unspecified",
+          "wall_seconds": "1.0106387916603126",
+          "physical_resident_bytes": "2014617028",
+          "presented_time": "291747.57584129175"
+        },
+        {
+          "request": "AFB1D9A7-ACE8-4A69-8AD5-8C625DAB7B9D",
+          "id": "d32bc747dbe481c29bfa",
+          "generation": "5",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "0.975239249994047",
+          "physical_resident_bytes": "4027514520",
+          "presented_time": "291748.66749504174"
+        },
+        {
+          "request": "796C0BED-8850-434F-8BBF-728D1A48D987",
+          "id": "c6a56332e1d2065e5538",
+          "generation": "4",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.037370999983977526",
+          "physical_resident_bytes": "4027514520",
+          "presented_time": "291748.80916004174"
+        },
+        {
+          "request": "4BC7D3FF-A5AF-4F77-87D7-785CBA6A68F7",
+          "id": "2cdd7df19b9e4b4296d528ac74e9303990e43e43ae1c7c3192d7370756e26758",
+          "generation": "6",
+          "phase": "open_source_pages_unspecified",
+          "wall_seconds": "0.9886854166979901",
+          "physical_resident_bytes": "4358391856",
+          "presented_time": "291749.85081429174"
+        }
+      ],
+      "navigation": {
+        "sent": 2,
+        "received": 2,
+        "applied_once": 2,
+        "retries": 0,
+        "commands": [
+          {
+            "navigation_sent": "next",
+            "request": "c31e60cc6a6f43e7be6d408d246a0fd8",
+            "sent_unix": 1788894998.965167,
+            "transport": "process-stdin"
+          },
+          {
+            "navigation_sent": "previous",
+            "request": "b5880520993d4b40bdd07bf5f3587f7a",
+            "sent_unix": 1788895000.0448158,
+            "transport": "process-stdin"
+          }
+        ]
+      },
+      "load_stage_logs": [
+        "EMPAD_LOAD total=0.672783 read=0.334237 hash=0.000002 analyze=0.121385 pack=0.214201 chunks=128 hash_cached=1 frames_read=65536",
+        "EMPAD_APP_LOAD resident=0.673514 products=0.113805 presentation_preparation=0.004120 total=0.791439",
+        "EMPAD_LOAD total=0.676332 read=0.321021 hash=0.000005 analyze=0.129846 pack=0.222949 chunks=128 hash_cached=1 frames_read=65536",
+        "EMPAD_APP_LOAD resident=0.676916 products=0.122061 presentation_preparation=0.003685 total=0.802662",
+        "EMPAD_LOAD total=0.760921 read=0.406502 hash=0.000002 analyze=0.125916 pack=0.225358 chunks=128 hash_cached=1 frames_read=65536",
+        "EMPAD_APP_LOAD resident=0.761552 products=0.129876 presentation_preparation=0.003785 total=0.895213"
+      ]
+    }
+  },
+  "mixed_folder": {
+    "analysis": {
+      "scan-drag": {
+        "span_s": 3,
+        "tiles_presenting": 0,
+        "scan_path": "unique-pixel",
+        "expected_comparison_tiles": 0,
+        "all_tiles_presented_generations": null,
+        "incomplete_comparison_generations": 0,
+        "presented_per_tile": {},
+        "accepted_masks": 0,
+        "accepted_per_s": null,
+        "presented_generations": null,
+        "reduction_ms": null,
+        "backend_gpu_ms": null,
+        "changed_px_per_source": null,
+        "modes": null,
+        "selected_dp": {
+          "distinct": 357,
+          "per_s": 119.7,
+          "per_input_second": 119,
+          "first_presented_delay_ms": 20.86,
+          "interval_ms": {
+            "n": 356,
+            "p50": 8.33,
+            "p95": 8.33,
+            "max": 16.67
+          }
+        }
+      },
+      "large-ABF-center": {
+        "span_s": 2.04,
+        "tiles_presenting": 0,
+        "scan_path": null,
+        "expected_comparison_tiles": 0,
+        "all_tiles_presented_generations": null,
+        "incomplete_comparison_generations": 0,
+        "presented_per_tile": {},
+        "accepted_masks": 142,
+        "accepted_per_s": 70.2,
+        "presented_generations": {
+          "distinct": 141,
+          "per_s": 70.3,
+          "per_input_second": 69,
+          "first_presented_delay_ms": 35.6,
+          "interval_ms": {
+            "n": 140,
+            "p50": 16.67,
+            "p95": 16.67,
+            "max": 25
+          }
+        },
+        "reduction_ms": null,
+        "backend_gpu_ms": null,
+        "changed_px_per_source": null,
+        "modes": null,
+        "selected_dp": null
+      },
+      "large-ABF-resize": {
+        "span_s": 2.02,
+        "tiles_presenting": 0,
+        "scan_path": null,
+        "expected_comparison_tiles": 0,
+        "all_tiles_presented_generations": null,
+        "incomplete_comparison_generations": 0,
+        "presented_per_tile": {},
+        "accepted_masks": 215,
+        "accepted_per_s": 106.7,
+        "presented_generations": {
+          "distinct": 214,
+          "per_s": 106.9,
+          "per_input_second": 105.9,
+          "first_presented_delay_ms": 24.24,
+          "interval_ms": {
+            "n": 213,
+            "p50": 8.33,
+            "p95": 16.67,
+            "max": 16.67
+          }
+        },
+        "reduction_ms": null,
+        "backend_gpu_ms": null,
+        "changed_px_per_source": null,
+        "modes": null,
+        "selected_dp": null
+      },
+      "large-ADF-center": {
+        "span_s": 2.04,
+        "tiles_presenting": 0,
+        "scan_path": null,
+        "expected_comparison_tiles": 0,
+        "all_tiles_presented_generations": null,
+        "incomplete_comparison_generations": 0,
+        "presented_per_tile": {},
+        "accepted_masks": 99,
+        "accepted_per_s": 48.6,
+        "presented_generations": {
+          "distinct": 99,
+          "per_s": 48.6,
+          "per_input_second": 48,
+          "first_presented_delay_ms": 19.82,
+          "interval_ms": {
+            "n": 98,
+            "p50": 16.67,
+            "p95": 25,
+            "max": 33.33
+          }
+        },
+        "reduction_ms": null,
+        "backend_gpu_ms": null,
+        "changed_px_per_source": null,
+        "modes": null,
+        "selected_dp": null
+      },
+      "large-ADF-resize": {
+        "span_s": 2.03,
+        "tiles_presenting": 0,
+        "scan_path": null,
+        "expected_comparison_tiles": 0,
+        "all_tiles_presented_generations": null,
+        "incomplete_comparison_generations": 0,
+        "presented_per_tile": {},
+        "accepted_masks": 149,
+        "accepted_per_s": 73.6,
+        "presented_generations": {
+          "distinct": 149,
+          "per_s": 73.4,
+          "per_input_second": 73,
+          "first_presented_delay_ms": 13.51,
+          "interval_ms": {
+            "n": 148,
+            "p50": 16.67,
+            "p95": 16.67,
+            "max": 33.33
+          }
+        },
+        "reduction_ms": null,
+        "backend_gpu_ms": null,
+        "changed_px_per_source": null,
+        "modes": null,
+        "selected_dp": null
+      }
+    },
+    "performance_gate": {
+      "minimum_fps": 118,
+      "status": "fail"
+    },
+    "problems": [
+      "Presentation gate >= 118.0 updates/s failed: large-ABF-center: 70.3 updates/s, p95 16.67 ms; large-ABF-resize: 106.9 updates/s, p95 16.67 ms; large-ADF-center: 48.6 updates/s, p95 25.0 ms; large-ADF-resize: 73.4 updates/s, p95 16.67 ms"
+    ],
+    "console_errors": [],
+    "exit": 0,
+    "first_presented_records": [
+      {
+        "request": "80D3A25F-C5B6-43AC-8284-75DACDD57CCF",
+        "id": "d081b5d295b06be76489760749b3424327b909250dddce2faedafbf161889bfd",
+        "generation": "1",
+        "phase": "open_source_pages_unspecified",
+        "wall_seconds": "0.3649611250148155",
+        "physical_resident_bytes": "236838288",
+        "presented_time": "291761.82567204174"
+      },
+      {
+        "request": "F7E20073-11B9-4BF2-B292-F92C49A470D9",
+        "id": "2cdd7df19b9e4b4296d528ac74e9303990e43e43ae1c7c3192d7370756e26758",
+        "generation": "2",
+        "phase": "reload_source_pages_unspecified",
+        "wall_seconds": "0.8868533333297819",
+        "physical_resident_bytes": "4595230144",
+        "presented_time": "291763.9173139584"
+      },
+      {
+        "request": "85F83A9B-F8AF-4605-817C-6C543DA79ACD",
+        "id": "d081b5d295b06be76489760749b3424327b909250dddce2faedafbf161889bfd",
+        "generation": "1",
+        "phase": "resident_cache_switch",
+        "wall_seconds": "0.061048916657455266",
+        "physical_resident_bytes": "4595230144",
+        "presented_time": "291764.5423065001"
+      },
+      {
+        "request": "E399B6CC-B920-458E-A5EE-D23F76AB8D23",
+        "id": "2cdd7df19b9e4b4296d528ac74e9303990e43e43ae1c7c3192d7370756e26758",
+        "generation": "2",
+        "phase": "resident_cache_switch",
+        "wall_seconds": "0.05388483335264027",
+        "physical_resident_bytes": "4595230144",
+        "presented_time": "291764.90063566674"
+      }
+    ],
+    "navigation_receipts": {
+      "sent": 3,
+      "received": 3,
+      "applied_once": 3,
+      "retries": 0,
+      "commands": [
+        {
+          "navigation_sent": "next",
+          "request": "0f771cb5b4a44c508362e6cb81de4b21",
+          "sent_unix": 1788895014.3035462,
+          "transport": "process-stdin"
+        },
+        {
+          "navigation_sent": "previous",
+          "request": "d69521ddb48742fb9c7a180665effc81",
+          "sent_unix": 1788895015.7534132,
+          "transport": "process-stdin"
+        },
+        {
+          "navigation_sent": "next",
+          "request": "3c575aa81d9845c088e1ae83afde3b27",
+          "sent_unix": 1788895016.119027,
+          "transport": "process-stdin"
+        }
+      ]
+    },
+    "final": {
+      "allocated_bytes": 4623679488,
+      "resident_count": 2,
+      "source_dtype": null,
+      "full_scan": null,
+      "scan_bin": null,
+      "detector_bin": null
+    }
+  }
+}

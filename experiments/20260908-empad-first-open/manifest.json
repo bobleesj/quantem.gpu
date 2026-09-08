@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-empad-first-open",
+  "status": "completed",
+  "question": "Can faster exact SHA-256 and bounded overlap reduce first-open full EMPAD residency without changing source identity, counts, or memory policy?",
+  "paper": {"repository": "quantem.gpu", "authoritative_host": "apple-m5-24gb"},
+  "code": {"revision": "1405fab95320583cbb804e06fd4ef4365f118a5d", "dirty": true, "diff_sha256": "b544fd3e8183d00356649448cb8b126a5ea17c81b6a21aa98143396bea196fff", "snapshot_path": "local-validation/2026-09-08-empad-first-open/backend.patch", "entrypoint": "experiments/20260908-empad-first-open/compare.py"},
+  "inputs": [{"dataset_id": "zenodo-mos2-mose2", "path": "https://zenodo.org/records/17246822", "sha256": "5f5bbae2295aea62a1d6bd74c6611ae7c913d473c3ae83435fc85eda87abd325"}],
+  "parameters": {"shape": [256,256,128,128], "dtype": "float32", "scan_bin": 1, "detector_bin": 1, "crop": null, "source_hash_required_before_return": true, "cold_io_claim": false, "initial_probe": "CryptoKit/CommonCrypto/CryptoKit SHA-256 of the complete original file; 32 MiB read window; three repetitions each"},
+  "followup_probe": "Compare 512/256/512-frame pipelined windows. Halving a window may recover the extra transient 32 MiB staging without sacrificing overlap; resident count bytes must remain identical.",
+  "execution": {"host": "apple-m5-24gb", "backend": "swift-metal", "gpu_model": "Apple M5"},
+  "native_artifact": {"app_sha256": "60314a8e4290c4ca0da940d96f4f606b8badf476bca560b258fde945bf5ec120", "app_patch_sha256": "caf63d54ac1f0e0198e332c23429aac160853b6f0da00d9aede5b4f61d50bb5b", "app_patch_path": "local-validation/2026-09-08-empad-first-open/app.patch"},
+  "outputs": [{"artifact_id": "bounded-first-open-results", "path": "experiments/20260908-empad-first-open/result.json", "sha256": "5f78f2c44c1b70d684d9256a989b143aa5570a1b1fd78906a9955c3754c4490a", "size_bytes": 3381, "retention": "durable", "consuming_figures": [], "result": "Native full first-open 2.11-2.39 to 1.53-1.61 seconds, exact billion-word parity, same resident bytes, bounded peak. One-second first-open target unmet; folder-return cancellation fixed and retested. No release or FPS claim."}],
+  "timestamps": {"created": "2026-09-08", "finished": "2026-09-08"}
+}

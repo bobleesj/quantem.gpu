@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-empad-native-cooperative",
+  "status": "completed",
+  "question": "Does a compensated 32-lane aperture reduction improve actual native EMPAD detector presentations without changing packed bytes or scientific tolerances?",
+  "paper": {"repository": "quantem.gpu", "authoritative_host": "apple-m5-24gb"},
+  "code": {
+    "revision": "1405fab95320583cbb804e06fd4ef4365f118a5d",
+    "dirty": true,
+    "diff_sha256": "b69302938101ef32eb0a9f6f87807bba06a470c5a2eadad49e9bf4f6f92f4c38",
+    "diff_scope": "git diff -- src/quantem/gpu/swift",
+    "entrypoint": "Live4DSTEM/Tests/NativeUI/drive_folder.py"
+  },
+  "inputs": [{"dataset_id": "autodisk-pdpt-original", "path": "https://github.com/swang59/AutoDisk_Demo", "sha256": "c431b6ae2a506b189ae86fbaf254d97de7c9258383c6dde96c7a871d1a9f7805"}],
+  "parameters": {
+    "shape": [64, 64, 128, 128], "dtype": "float32", "scan_bin": 1,
+    "detector_bin": 1, "crop": null, "clip": false,
+    "rtol": 0.000001, "atol": 0.000001,
+    "arms": ["serial-a", "cooperative-b", "serial-a2"],
+    "control": "QGPU_EMPAD_SERIAL_DETECTOR=1",
+    "consumer_gate": "LIVE4DSTEM_ENABLE_EXPERIMENTAL_EMPAD=1",
+    "resident_bytes": 236838288,
+    "cold_io_claim": false, "release_claim": false,
+    "baseline": "local-evidence://empad-native-journey-01",
+    "baseline_limitations": "Only one distinct acquisition; navigation receipts fail because no navigation was requested. Screenshot was captured after app exit and is not app visual evidence."
+  },
+  "execution": {"host": "apple-m5-24gb", "backend": "swift-metal", "gpu_model": "Apple M5", "display_hz": 120},
+  "outputs": [{
+    "artifact_id": "native-before-after",
+    "path": "experiments/20260908-empad-native-cooperative/result.json",
+    "sha256": "b83218bdc6f4b0b8dcfb211b8ed7ebe93c9f7505a8e5a8757df72bba78c168cf",
+    "size_bytes": 4071,
+    "retention": "durable",
+    "consuming_figures": [],
+    "result": "Same-binary serial/cooperative/serial native test: ABF116–120 vs8.8–9.4updates/s, ADF81.8–82.2 vs6.0–6.5; packed bytes unchanged; 67.1M samples exact and frozen float tolerances pass. Full original-to-present0.942s vs1.155–1.216s, source pages unspecified. Separate red/green UI test fixes black FFT after folder replacement. Not a release qualification."
+  }],
+  "timestamps": {"created": "2026-09-08", "finished": "2026-09-08T18:03:10Z"}
+}

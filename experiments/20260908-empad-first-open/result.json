@@ -1,0 +1,59 @@
+{
+  "schema": "empad-first-open-comparison/v1",
+  "host": "apple-m5-24gb",
+  "source_shape": [256, 256, 128, 128],
+  "source_dtype": "float32",
+  "container_bytes": 4362076160,
+  "logical_sha256": "8604450db7ddd478bf4424377ba359d0146d4752992ebfc3220310cfc392525c",
+  "resident_bytes_all_arms": 4358391856,
+  "source_reduction": false,
+  "hash_reuse_in_first_open_comparison": false,
+  "cold_io_claim": false,
+  "backend_seconds": {
+    "serial_a": [1.975037, 1.875067, 1.834321],
+    "pipeline_512": [1.278189, 1.310713, 1.279687],
+    "serial_b": [1.891037, 1.978487, 1.929257],
+    "window_followup_512_a": [1.329395, 1.327268, 1.317370],
+    "window_followup_256": [1.348152, 1.339403, 1.423699],
+    "window_followup_512_b": [1.322361, 1.327009, 1.331390]
+  },
+  "process_peak_bytes": {
+    "serial_a": [4431430352, 4432560848, 4432495312],
+    "pipeline_512": [4465001168, 4465181416, 4465033936],
+    "pipeline_256": [4432151224, 4432183992, 4415455928]
+  },
+  "native_visible_seconds": {
+    "serial_a": [2.157291791634634, 2.110580916691106, 2.1414597500115633],
+    "pipeline_512": [1.5854178750305437, 1.4869627499720082, 1.5757715833024122],
+    "serial_b": [2.2052591249812394, 2.3428831250057556, 2.3928300417028368],
+    "pipeline_256": [1.6128198750084266, 1.561890916666016, 1.5866940416162834],
+    "final_app_after_folder_fix": [1.579294666647911, 1.5315880000125617, 1.6143514583818614],
+    "checksum_hit_before_folder_fix": [1.003602624987252, 0.9332799166440964, 0.9074502916773781]
+  },
+  "final_app_sha256": "60314a8e4290c4ca0da940d96f4f606b8badf476bca560b258fde945bf5ec120",
+  "before_folder_fix_app_sha256": "1de84bbbfd3c4188681125702a090cf993ad20ccb044608eeb02d6ede75284ad",
+  "initial_native_comparison_app_sha256": "c0a6670d47aff6ac559182216b50ceb0c2d3d63aa5dea53eba3f39b1920a4d37",
+  "parity_executable_sha256": "63371036b051a9f453b8b24cc0aa35637b24314ba9219ad2d7e55bf87c976bde",
+  "tests": {
+    "source_workflow_tests": {"passed": 14, "skipped": 0},
+    "physical_detector_values_bit_exact": 1073741824,
+    "full_volume_parity_seconds_excluded_from_loading": 32.801,
+    "product_reference": "float64, unchanged rtol=1e-6 and atol=1e-6",
+    "native_harness_unit_tests_passed": 27,
+    "final_native_workflow_failures": [],
+    "active_loading_replacement_cycles": 3,
+    "active_loading_replacement_allocated_bytes": [253034496, 253165568, 253165568],
+    "final_target_processes": 0
+  },
+  "retained_failures": [
+    "Initial serial native control timed out awaiting ABF after detector changed to Custom; cause not established. Three repeated control/candidate workflows passed.",
+    "Returning to the retained folder while another folder loaded discarded the newest request. Fixed the idle-only duplicate guard; three cancellation cycles and the extended native workflow passed."
+  ],
+  "limitations": [
+    "One-second first-open target remains unmet; measured SHA-256 work remains approximately 1.31 seconds.",
+    "Latest extended native run has no first-presentation marker for two ARINA transitions. They reached ready state, but their load-to-visible timing is not claimed.",
+    "No new 120 FPS or seven-tilt performance qualification in this loading-only experiment.",
+    "SnSe downloads encountered gateway errors. New acquisitions are not yet verified or tested.",
+    "No installed app replacement, release, commit, or push."
+  ]
+}

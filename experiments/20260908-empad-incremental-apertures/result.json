@@ -1,0 +1,3112 @@
+{
+  "schema": "empad-aperture-experiment/v1",
+  "date": "2026-09-08",
+  "source": {
+    "url": "https://zenodo.org/records/17246822",
+    "shape": [
+      256,
+      256,
+      128,
+      128
+    ],
+    "dtype": "float32",
+    "source_bytes": 4362076160,
+    "packed_resident_bytes": 4358391856,
+    "accumulator_bytes": 524288
+  },
+  "decision": {
+    "adopt": "128-thread compensated incremental integration; default in experimental EMPAD backend, QGPU_EMPAD_INCREMENTAL=0 retains full-sum control",
+    "reject": [
+      "32 threads: slower wide center movement than 128 in A/B/A",
+      "256 threads: no consistent improvement in AC comparison",
+      "five-stage compensated SIMD tree: no material center-drag improvement; removed from production"
+    ],
+    "complete_mission": false,
+    "wide_empad_120hz": false,
+    "no_new_dense_4d_copy": true,
+    "no_integer_conversion": true
+  },
+  "code": {
+    "backend_head": "1405fab95320583cbb804e06fd4ef4365f118a5d",
+    "app_head": "3b300f744160d7cf3c5e731a8c30d2937147a00b",
+    "dirty": true,
+    "final_app_sha256": "c2823bae2b6522015f8e562766289e2b62b685828e77fdd4c416d940382b93d1",
+    "final_metal_sha256": "4b13ca7fedb79131f48300966b6765e18d44fc7b4e0fbb8da130866130c27c5b",
+    "final_backend_patch_sha256": "9769fb2c82ba814a2cb73aed2484ac71108500b2fb2fff2ae9404400c0674bd8",
+    "tree_candidate_app_sha256": "2bba0c019049cc3fe4aaf01f14a7bf3131ff94646d59f805b6931e7e5a187a69",
+    "tree_candidate_metal_sha256": "f0d50028c7ecbea9d732cb667e182d8184dc04b53924b97ad7b1f689f468ffa2",
+    "tree_patch_sha256": "7cd25c195981a166d7f8fb4fcb1a2c19c68045e6be50b9f14a8a559791ce832b"
+  },
+  "correctness": {
+    "rtol": 0.000001,
+    "atol": 0.000001,
+    "full_original_words": 1073741824,
+    "final_full_word_and_products": "passed",
+    "synthetic_cases": 14,
+    "sequence_steps": 96,
+    "full_scan_oracle_steps": 8,
+    "sampled_frames_at_other_steps": 128,
+    "includes": [
+      "NaN removal recovery",
+      "nearly cancelled signed measurements",
+      "64-update rebasing",
+      "all bit-packing widths",
+      "source mutation and cache corruption",
+      "allocation budgets and cancellation"
+    ]
+  },
+  "controls": {
+    "raw_log_root": "local-validation/2026-09-08-empad-loading",
+    "power": "32/128/32 series on battery; 256/128 and tree/control/final on AC charging. Do not attribute across-power differences solely to code.",
+    "same_binary_tree_control": "tree-a sets QGPU_EMPAD_DELTA_TREE=1; tree-control does not. Both set QGPU_EMPAD_INCREMENTAL=1.",
+    "presentation": "distinct native presented generations and intervals, not input counts or reciprocal kernel timings",
+    "baseline_full_integration_hz": {
+      "ABF_center": 40.2,
+      "ABF_resize": 39.3,
+      "ADF_center": 30.1,
+      "ADF_resize": 30.2
+    },
+    "final_mixed_folder_hz": {
+      "ABF_center": 70.3,
+      "ABF_resize": 106.9,
+      "ADF_center": 48.6,
+      "ADF_resize": 73.4
+    },
+    "strict_gate_fps": 118,
+    "strict_empad_gate": "failed"
+  },
+  "variants": {
+    "empad-incremental-native": {
+      "analysis": {
+        "scan-drag": {
+          "selected_dp": {
+            "distinct": 357,
+            "per_s": 119.7,
+            "per_input_second": 119,
+            "first_presented_delay_ms": 21.76,
+            "interval_ms": {
+              "n": 356,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "presented_generations": null,
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ABF-center": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 159,
+            "per_s": 79,
+            "per_input_second": 78,
+            "first_presented_delay_ms": 31.24,
+            "interval_ms": {
+              "n": 158,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 25
+            }
+          },
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ABF-resize": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 234,
+            "per_s": 116.5,
+            "per_input_second": 115.4,
+            "first_presented_delay_ms": 19.91,
+            "interval_ms": {
+              "n": 233,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 25
+            }
+          },
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ADF-center": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 114,
+            "per_s": 56.3,
+            "per_input_second": 56,
+            "first_presented_delay_ms": 20.68,
+            "interval_ms": {
+              "n": 113,
+              "p50": 16.67,
+              "p95": 25,
+              "max": 33.33
+            }
+          },
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ADF-resize": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 170,
+            "per_s": 84.5,
+            "per_input_second": 84,
+            "first_presented_delay_ms": 24.64,
+            "interval_ms": {
+              "n": 169,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 33.33
+            }
+          },
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        }
+      },
+      "problems": [
+        "Presentation gate >= 118.0 updates/s failed: large-ABF-center: 79.0 updates/s, p95 16.67 ms; large-ABF-resize: 116.5 updates/s, p95 8.33 ms; large-ADF-center: 56.3 updates/s, p95 25.0 ms; large-ADF-resize: 84.5 updates/s, p95 16.67 ms"
+      ],
+      "console_errors": [],
+      "exit": 0,
+      "performance_gate": {
+        "minimum_fps": 118,
+        "status": "fail"
+      },
+      "first_presented_records": [
+        {
+          "request": "0ED0C991-A03E-4D6D-9387-646B5FFAE39F",
+          "id": "2cdd7df19b9e4b4296d528ac74e9303990e43e43ae1c7c3192d7370756e26758",
+          "generation": "1",
+          "phase": "open_source_pages_unspecified",
+          "wall_seconds": "2.3310429166886024",
+          "physical_resident_bytes": "4358391856",
+          "presented_time": "290504.1202381251"
+        }
+      ],
+      "final": {
+        "allocated_bytes": 4386390016,
+        "resident_count": 1,
+        "source_dtype": null,
+        "full_scan": null,
+        "scan_bin": null,
+        "detector_bin": null
+      }
+    },
+    "empad-delta-32-a": {
+      "analysis": {
+        "scan-drag": {
+          "selected_dp": {
+            "distinct": 356,
+            "per_s": 119.3,
+            "per_input_second": 118.6,
+            "first_presented_delay_ms": 21.64,
+            "interval_ms": {
+              "n": 355,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "presented_generations": null,
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ABF-center": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 145,
+            "per_s": 72,
+            "per_input_second": 71.5,
+            "first_presented_delay_ms": 32.85,
+            "interval_ms": {
+              "n": 144,
+              "p50": 16.67,
+              "p95": 16.67,
+              "max": 25
+            }
+          },
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ABF-resize": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 234,
+            "per_s": 116.5,
+            "per_input_second": 115.9,
+            "first_presented_delay_ms": 18.38,
+            "interval_ms": {
+              "n": 233,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ADF-center": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 104,
+            "per_s": 50.9,
+            "per_input_second": 51,
+            "first_presented_delay_ms": 25.81,
+            "interval_ms": {
+              "n": 103,
+              "p50": 16.67,
+              "p95": 25,
+              "max": 41.67
+            }
+          },
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ADF-resize": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 150,
+            "per_s": 74.2,
+            "per_input_second": 73.4,
+            "first_presented_delay_ms": 22.38,
+            "interval_ms": {
+              "n": 149,
+              "p50": 16.67,
+              "p95": 16.67,
+              "max": 33.33
+            }
+          },
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        }
+      },
+      "problems": [
+        "Presentation gate >= 118.0 updates/s failed: large-ABF-center: 72.0 updates/s, p95 16.67 ms; large-ABF-resize: 116.5 updates/s, p95 8.33 ms; large-ADF-center: 50.9 updates/s, p95 25.0 ms; large-ADF-resize: 74.2 updates/s, p95 16.67 ms"
+      ],
+      "console_errors": [],
+      "exit": 0,
+      "performance_gate": {
+        "minimum_fps": 118,
+        "status": "fail"
+      },
+      "first_presented_records": [
+        {
+          "request": "225CBA41-D9F5-43BF-98F2-41AE1F10070D",
+          "id": "2cdd7df19b9e4b4296d528ac74e9303990e43e43ae1c7c3192d7370756e26758",
+          "generation": "1",
+          "phase": "open_source_pages_unspecified",
+          "wall_seconds": "2.3458443750278093",
+          "physical_resident_bytes": "4358391856",
+          "presented_time": "290679.3138603751"
+        }
+      ],
+      "final": {
+        "allocated_bytes": 4386390016,
+        "resident_count": 1,
+        "source_dtype": null,
+        "full_scan": null,
+        "scan_bin": null,
+        "detector_bin": null
+      }
+    },
+    "empad-delta-128-b": {
+      "analysis": {
+        "scan-drag": {
+          "selected_dp": {
+            "distinct": 356,
+            "per_s": 119.3,
+            "per_input_second": 118.5,
+            "first_presented_delay_ms": 23.86,
+            "interval_ms": {
+              "n": 355,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "presented_generations": null,
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ABF-center": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 162,
+            "per_s": 81.2,
+            "per_input_second": 79.4,
+            "first_presented_delay_ms": 44.41,
+            "interval_ms": {
+              "n": 161,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 25
+            }
+          },
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ABF-resize": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 233,
+            "per_s": 116,
+            "per_input_second": 115.4,
+            "first_presented_delay_ms": 18.27,
+            "interval_ms": {
+              "n": 232,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 25
+            }
+          },
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ADF-center": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 111,
+            "per_s": 55,
+            "per_input_second": 54.5,
+            "first_presented_delay_ms": 25.76,
+            "interval_ms": {
+              "n": 110,
+              "p50": 16.67,
+              "p95": 33.33,
+              "max": 41.67
+            }
+          },
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ADF-resize": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 163,
+            "per_s": 81.3,
+            "per_input_second": 80.4,
+            "first_presented_delay_ms": 26.63,
+            "interval_ms": {
+              "n": 162,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 33.33
+            }
+          },
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        }
+      },
+      "problems": [
+        "Presentation gate >= 118.0 updates/s failed: large-ABF-center: 81.2 updates/s, p95 16.67 ms; large-ABF-resize: 116.0 updates/s, p95 8.33 ms; large-ADF-center: 55.0 updates/s, p95 33.33 ms; large-ADF-resize: 81.3 updates/s, p95 16.67 ms"
+      ],
+      "console_errors": [],
+      "exit": 0,
+      "performance_gate": {
+        "minimum_fps": 118,
+        "status": "fail"
+      },
+      "first_presented_records": [
+        {
+          "request": "1E905A0A-61B5-4A2F-913C-C4BEC0376CE4",
+          "id": "2cdd7df19b9e4b4296d528ac74e9303990e43e43ae1c7c3192d7370756e26758",
+          "generation": "1",
+          "phase": "open_source_pages_unspecified",
+          "wall_seconds": "2.3162417500279844",
+          "physical_resident_bytes": "4358391856",
+          "presented_time": "290735.8381535834"
+        }
+      ],
+      "final": {
+        "allocated_bytes": 4386390016,
+        "resident_count": 1,
+        "source_dtype": null,
+        "full_scan": null,
+        "scan_bin": null,
+        "detector_bin": null
+      }
+    },
+    "empad-delta-32-a2": {
+      "analysis": {
+        "scan-drag": {
+          "selected_dp": {
+            "distinct": 356,
+            "per_s": 119.3,
+            "per_input_second": 118.6,
+            "first_presented_delay_ms": 21.8,
+            "interval_ms": {
+              "n": 355,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "presented_generations": null,
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ABF-center": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 144,
+            "per_s": 72.4,
+            "per_input_second": 70.9,
+            "first_presented_delay_ms": 48.6,
+            "interval_ms": {
+              "n": 143,
+              "p50": 16.67,
+              "p95": 25,
+              "max": 25
+            }
+          },
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ABF-resize": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 234,
+            "per_s": 116,
+            "per_input_second": 115.4,
+            "first_presented_delay_ms": 23.82,
+            "interval_ms": {
+              "n": 233,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ADF-center": {
+          "selected_dp": {
+            "distinct": 46,
+            "per_s": 50,
+            "per_input_second": 23,
+            "first_presented_delay_ms": 1098.08,
+            "interval_ms": {
+              "n": 45,
+              "p50": 16.67,
+              "p95": 25,
+              "max": 33.33
+            }
+          },
+          "presented_generations": {
+            "distinct": 102,
+            "per_s": 50.1,
+            "per_input_second": 50,
+            "first_presented_delay_ms": 23.09,
+            "interval_ms": {
+              "n": 101,
+              "p50": 16.67,
+              "p95": 41.67,
+              "max": 66.67
+            }
+          },
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ADF-resize": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 208,
+            "per_s": 81.2,
+            "per_input_second": 78,
+            "first_presented_delay_ms": 28.22,
+            "interval_ms": {
+              "n": 207,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 33.33
+            }
+          },
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        }
+      },
+      "problems": [
+        "Presentation gate >= 118.0 updates/s failed: large-ABF-center: 72.4 updates/s, p95 25.0 ms; large-ABF-resize: 116.0 updates/s, p95 8.33 ms; large-ADF-center: 50.1 updates/s, p95 41.67 ms; large-ADF-resize: 81.2 updates/s, p95 16.67 ms"
+      ],
+      "console_errors": [],
+      "exit": 0,
+      "performance_gate": {
+        "minimum_fps": 118,
+        "status": "fail"
+      },
+      "first_presented_records": [
+        {
+          "request": "D77A6DE5-473B-4341-91BC-CF4C2903A568",
+          "id": "2cdd7df19b9e4b4296d528ac74e9303990e43e43ae1c7c3192d7370756e26758",
+          "generation": "1",
+          "phase": "open_source_pages_unspecified",
+          "wall_seconds": "2.3246867083362304",
+          "physical_resident_bytes": "4358391856",
+          "presented_time": "290791.8082809584"
+        }
+      ],
+      "final": {
+        "allocated_bytes": 4387389440,
+        "resident_count": 1,
+        "source_dtype": null,
+        "full_scan": null,
+        "scan_bin": null,
+        "detector_bin": null
+      }
+    },
+    "empad-delta-256-ac": {
+      "analysis": {
+        "scan-drag": {
+          "selected_dp": {
+            "distinct": 356,
+            "per_s": 119.3,
+            "per_input_second": 118.5,
+            "first_presented_delay_ms": 29.08,
+            "interval_ms": {
+              "n": 355,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "presented_generations": null,
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ABF-center": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 141,
+            "per_s": 70.9,
+            "per_input_second": 69.5,
+            "first_presented_delay_ms": 49.2,
+            "interval_ms": {
+              "n": 140,
+              "p50": 16.67,
+              "p95": 16.67,
+              "max": 25
+            }
+          },
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ABF-resize": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 218,
+            "per_s": 108.5,
+            "per_input_second": 107.4,
+            "first_presented_delay_ms": 21.69,
+            "interval_ms": {
+              "n": 217,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 25
+            }
+          },
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ADF-center": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 111,
+            "per_s": 54.5,
+            "per_input_second": 54,
+            "first_presented_delay_ms": 21.89,
+            "interval_ms": {
+              "n": 110,
+              "p50": 16.67,
+              "p95": 25,
+              "max": 33.33
+            }
+          },
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ADF-resize": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 155,
+            "per_s": 77,
+            "per_input_second": 76,
+            "first_presented_delay_ms": 29.87,
+            "interval_ms": {
+              "n": 154,
+              "p50": 16.67,
+              "p95": 16.67,
+              "max": 33.33
+            }
+          },
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        }
+      },
+      "problems": [
+        "Presentation gate >= 118.0 updates/s failed: large-ABF-center: 70.9 updates/s, p95 16.67 ms; large-ABF-resize: 108.5 updates/s, p95 16.67 ms; large-ADF-center: 54.5 updates/s, p95 25.0 ms; large-ADF-resize: 77.0 updates/s, p95 16.67 ms"
+      ],
+      "console_errors": [],
+      "exit": 0,
+      "performance_gate": {
+        "minimum_fps": 118,
+        "status": "fail"
+      },
+      "first_presented_records": [
+        {
+          "request": "D3CABAA5-633F-4D79-8012-45579B36150A",
+          "id": "2cdd7df19b9e4b4296d528ac74e9303990e43e43ae1c7c3192d7370756e26758",
+          "generation": "1",
+          "phase": "open_source_pages_unspecified",
+          "wall_seconds": "2.3561216249945574",
+          "physical_resident_bytes": "4358391856",
+          "presented_time": "290907.1318527917"
+        }
+      ],
+      "final": {
+        "allocated_bytes": 4386390016,
+        "resident_count": 1,
+        "source_dtype": null,
+        "full_scan": null,
+        "scan_bin": null,
+        "detector_bin": null
+      }
+    },
+    "empad-delta-128-ac": {
+      "analysis": {
+        "scan-drag": {
+          "selected_dp": {
+            "distinct": 357,
+            "per_s": 120,
+            "per_input_second": 119,
+            "first_presented_delay_ms": 26.54,
+            "interval_ms": {
+              "n": 356,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 8.33
+            }
+          },
+          "presented_generations": null,
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ABF-center": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 145,
+            "per_s": 72.9,
+            "per_input_second": 71.5,
+            "first_presented_delay_ms": 50.86,
+            "interval_ms": {
+              "n": 144,
+              "p50": 16.67,
+              "p95": 16.67,
+              "max": 25
+            }
+          },
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ABF-resize": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 229,
+            "per_s": 113.5,
+            "per_input_second": 112.4,
+            "first_presented_delay_ms": 25.37,
+            "interval_ms": {
+              "n": 228,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 25
+            }
+          },
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ADF-center": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 107,
+            "per_s": 52.8,
+            "per_input_second": 52.5,
+            "first_presented_delay_ms": 16.48,
+            "interval_ms": {
+              "n": 106,
+              "p50": 16.67,
+              "p95": 25,
+              "max": 41.67
+            }
+          },
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ADF-resize": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 158,
+            "per_s": 79.2,
+            "per_input_second": 78.5,
+            "first_presented_delay_ms": 25.62,
+            "interval_ms": {
+              "n": 157,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 41.67
+            }
+          },
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        }
+      },
+      "problems": [
+        "Presentation gate >= 118.0 updates/s failed: large-ABF-center: 72.9 updates/s, p95 16.67 ms; large-ABF-resize: 113.5 updates/s, p95 8.33 ms; large-ADF-center: 52.8 updates/s, p95 25.0 ms; large-ADF-resize: 79.2 updates/s, p95 16.67 ms"
+      ],
+      "console_errors": [],
+      "exit": 0,
+      "performance_gate": {
+        "minimum_fps": 118,
+        "status": "fail"
+      },
+      "first_presented_records": [
+        {
+          "request": "0436BC28-5A92-4B37-A0B4-03271991E766",
+          "id": "2cdd7df19b9e4b4296d528ac74e9303990e43e43ae1c7c3192d7370756e26758",
+          "generation": "1",
+          "phase": "open_source_pages_unspecified",
+          "wall_seconds": "2.3513031666516326",
+          "physical_resident_bytes": "4358391856",
+          "presented_time": "290948.43968625006"
+        }
+      ],
+      "final": {
+        "allocated_bytes": 4382785536,
+        "resident_count": 1,
+        "source_dtype": null,
+        "full_scan": null,
+        "scan_bin": null,
+        "detector_bin": null
+      }
+    },
+    "empad-tree-native-a": {
+      "analysis": {
+        "scan-drag": {
+          "selected_dp": {
+            "distinct": 357,
+            "per_s": 120,
+            "per_input_second": 119,
+            "first_presented_delay_ms": 27.38,
+            "interval_ms": {
+              "n": 356,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 8.33
+            }
+          },
+          "presented_generations": null,
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ABF-center": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 147,
+            "per_s": 73.3,
+            "per_input_second": 72.5,
+            "first_presented_delay_ms": 37.43,
+            "interval_ms": {
+              "n": 146,
+              "p50": 16.67,
+              "p95": 16.67,
+              "max": 33.33
+            }
+          },
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ABF-resize": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 234,
+            "per_s": 116.5,
+            "per_input_second": 115.4,
+            "first_presented_delay_ms": 18.57,
+            "interval_ms": {
+              "n": 233,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 25
+            }
+          },
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ADF-center": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 108,
+            "per_s": 53.3,
+            "per_input_second": 53,
+            "first_presented_delay_ms": 30.18,
+            "interval_ms": {
+              "n": 107,
+              "p50": 16.67,
+              "p95": 25,
+              "max": 33.33
+            }
+          },
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ADF-resize": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 162,
+            "per_s": 80.5,
+            "per_input_second": 79.5,
+            "first_presented_delay_ms": 25.41,
+            "interval_ms": {
+              "n": 161,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 33.33
+            }
+          },
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        }
+      },
+      "problems": [
+        "Presentation gate >= 118.0 updates/s failed: large-ABF-center: 73.3 updates/s, p95 16.67 ms; large-ABF-resize: 116.5 updates/s, p95 8.33 ms; large-ADF-center: 53.3 updates/s, p95 25.0 ms; large-ADF-resize: 80.5 updates/s, p95 16.67 ms"
+      ],
+      "console_errors": [],
+      "exit": 0,
+      "performance_gate": {
+        "minimum_fps": 118,
+        "status": "fail"
+      },
+      "first_presented_records": [
+        {
+          "request": "F47AB1D4-4DFC-4ADB-8E55-846DA62A9746",
+          "id": "2cdd7df19b9e4b4296d528ac74e9303990e43e43ae1c7c3192d7370756e26758",
+          "generation": "1",
+          "phase": "open_source_pages_unspecified",
+          "wall_seconds": "1.0358352499897592",
+          "physical_resident_bytes": "4358391856",
+          "presented_time": "291539.51163350005"
+        }
+      ],
+      "final": {
+        "allocated_bytes": 4382785536,
+        "resident_count": 1,
+        "source_dtype": null,
+        "full_scan": null,
+        "scan_bin": null,
+        "detector_bin": null
+      }
+    },
+    "empad-tree-native-control": {
+      "analysis": {
+        "scan-drag": {
+          "selected_dp": {
+            "distinct": 356,
+            "per_s": 119.7,
+            "per_input_second": 118.6,
+            "first_presented_delay_ms": 26.83,
+            "interval_ms": {
+              "n": 355,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "presented_generations": null,
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ABF-center": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 146,
+            "per_s": 73.4,
+            "per_input_second": 71.5,
+            "first_presented_delay_ms": 50.46,
+            "interval_ms": {
+              "n": 145,
+              "p50": 16.67,
+              "p95": 16.67,
+              "max": 25
+            }
+          },
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ABF-resize": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 223,
+            "per_s": 111,
+            "per_input_second": 109.9,
+            "first_presented_delay_ms": 22.45,
+            "interval_ms": {
+              "n": 222,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 16.67
+            }
+          },
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ADF-center": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 108,
+            "per_s": 53.1,
+            "per_input_second": 52.5,
+            "first_presented_delay_ms": 20.68,
+            "interval_ms": {
+              "n": 107,
+              "p50": 16.67,
+              "p95": 25,
+              "max": 33.33
+            }
+          },
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ADF-resize": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 167,
+            "per_s": 82,
+            "per_input_second": 82,
+            "first_presented_delay_ms": 22.83,
+            "interval_ms": {
+              "n": 166,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 33.33
+            }
+          },
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        }
+      },
+      "problems": [
+        "Presentation gate >= 118.0 updates/s failed: large-ABF-center: 73.4 updates/s, p95 16.67 ms; large-ABF-resize: 111.0 updates/s, p95 16.67 ms; large-ADF-center: 53.1 updates/s, p95 25.0 ms; large-ADF-resize: 82.0 updates/s, p95 16.67 ms"
+      ],
+      "console_errors": [],
+      "exit": 0,
+      "performance_gate": {
+        "minimum_fps": 118,
+        "status": "fail"
+      },
+      "first_presented_records": [
+        {
+          "request": "AE795B60-0D81-4CF9-A11E-AB773CB32989",
+          "id": "2cdd7df19b9e4b4296d528ac74e9303990e43e43ae1c7c3192d7370756e26758",
+          "generation": "1",
+          "phase": "open_source_pages_unspecified",
+          "wall_seconds": "0.9723682083422318",
+          "physical_resident_bytes": "4358391856",
+          "presented_time": "291565.91549116676"
+        }
+      ],
+      "final": {
+        "allocated_bytes": 4386390016,
+        "resident_count": 1,
+        "source_dtype": null,
+        "full_scan": null,
+        "scan_bin": null,
+        "detector_bin": null
+      }
+    }
+  },
+  "final_mixed_folder": {
+    "analysis": {
+      "scan-drag": {
+        "selected_dp": {
+          "distinct": 357,
+          "per_s": 119.7,
+          "per_input_second": 119,
+          "first_presented_delay_ms": 20.86,
+          "interval_ms": {
+            "n": 356,
+            "p50": 8.33,
+            "p95": 8.33,
+            "max": 16.67
+          }
+        },
+        "presented_generations": null,
+        "all_tiles_presented_generations": null,
+        "incomplete_comparison_generations": 0,
+        "tiles_presenting": 0,
+        "reduction_ms": null
+      },
+      "large-ABF-center": {
+        "selected_dp": null,
+        "presented_generations": {
+          "distinct": 141,
+          "per_s": 70.3,
+          "per_input_second": 69,
+          "first_presented_delay_ms": 35.6,
+          "interval_ms": {
+            "n": 140,
+            "p50": 16.67,
+            "p95": 16.67,
+            "max": 25
+          }
+        },
+        "all_tiles_presented_generations": null,
+        "incomplete_comparison_generations": 0,
+        "tiles_presenting": 0,
+        "reduction_ms": null
+      },
+      "large-ABF-resize": {
+        "selected_dp": null,
+        "presented_generations": {
+          "distinct": 214,
+          "per_s": 106.9,
+          "per_input_second": 105.9,
+          "first_presented_delay_ms": 24.24,
+          "interval_ms": {
+            "n": 213,
+            "p50": 8.33,
+            "p95": 16.67,
+            "max": 16.67
+          }
+        },
+        "all_tiles_presented_generations": null,
+        "incomplete_comparison_generations": 0,
+        "tiles_presenting": 0,
+        "reduction_ms": null
+      },
+      "large-ADF-center": {
+        "selected_dp": null,
+        "presented_generations": {
+          "distinct": 99,
+          "per_s": 48.6,
+          "per_input_second": 48,
+          "first_presented_delay_ms": 19.82,
+          "interval_ms": {
+            "n": 98,
+            "p50": 16.67,
+            "p95": 25,
+            "max": 33.33
+          }
+        },
+        "all_tiles_presented_generations": null,
+        "incomplete_comparison_generations": 0,
+        "tiles_presenting": 0,
+        "reduction_ms": null
+      },
+      "large-ADF-resize": {
+        "selected_dp": null,
+        "presented_generations": {
+          "distinct": 149,
+          "per_s": 73.4,
+          "per_input_second": 73,
+          "first_presented_delay_ms": 13.51,
+          "interval_ms": {
+            "n": 148,
+            "p50": 16.67,
+            "p95": 16.67,
+            "max": 33.33
+          }
+        },
+        "all_tiles_presented_generations": null,
+        "incomplete_comparison_generations": 0,
+        "tiles_presenting": 0,
+        "reduction_ms": null
+      }
+    },
+    "problems": [
+      "Presentation gate >= 118.0 updates/s failed: large-ABF-center: 70.3 updates/s, p95 16.67 ms; large-ABF-resize: 106.9 updates/s, p95 16.67 ms; large-ADF-center: 48.6 updates/s, p95 25.0 ms; large-ADF-resize: 73.4 updates/s, p95 16.67 ms"
+    ],
+    "console_errors": [],
+    "exit": 0,
+    "performance_gate": {
+      "minimum_fps": 118,
+      "status": "fail"
+    },
+    "first_presented_records": [
+      {
+        "request": "80D3A25F-C5B6-43AC-8284-75DACDD57CCF",
+        "id": "d081b5d295b06be76489760749b3424327b909250dddce2faedafbf161889bfd",
+        "generation": "1",
+        "phase": "open_source_pages_unspecified",
+        "wall_seconds": "0.3649611250148155",
+        "physical_resident_bytes": "236838288",
+        "presented_time": "291761.82567204174"
+      },
+      {
+        "request": "F7E20073-11B9-4BF2-B292-F92C49A470D9",
+        "id": "2cdd7df19b9e4b4296d528ac74e9303990e43e43ae1c7c3192d7370756e26758",
+        "generation": "2",
+        "phase": "reload_source_pages_unspecified",
+        "wall_seconds": "0.8868533333297819",
+        "physical_resident_bytes": "4595230144",
+        "presented_time": "291763.9173139584"
+      },
+      {
+        "request": "85F83A9B-F8AF-4605-817C-6C543DA79ACD",
+        "id": "d081b5d295b06be76489760749b3424327b909250dddce2faedafbf161889bfd",
+        "generation": "1",
+        "phase": "resident_cache_switch",
+        "wall_seconds": "0.061048916657455266",
+        "physical_resident_bytes": "4595230144",
+        "presented_time": "291764.5423065001"
+      },
+      {
+        "request": "E399B6CC-B920-458E-A5EE-D23F76AB8D23",
+        "id": "2cdd7df19b9e4b4296d528ac74e9303990e43e43ae1c7c3192d7370756e26758",
+        "generation": "2",
+        "phase": "resident_cache_switch",
+        "wall_seconds": "0.05388483335264027",
+        "physical_resident_bytes": "4595230144",
+        "presented_time": "291764.90063566674"
+      }
+    ],
+    "navigation": {
+      "sent": 3,
+      "received": 3,
+      "applied_once": 3,
+      "retries": 0,
+      "commands": [
+        {
+          "navigation_sent": "next",
+          "request": "0f771cb5b4a44c508362e6cb81de4b21",
+          "sent_unix": 1788895014.3035462,
+          "transport": "process-stdin"
+        },
+        {
+          "navigation_sent": "previous",
+          "request": "d69521ddb48742fb9c7a180665effc81",
+          "sent_unix": 1788895015.7534132,
+          "transport": "process-stdin"
+        },
+        {
+          "navigation_sent": "next",
+          "request": "3c575aa81d9845c088e1ae83afde3b27",
+          "sent_unix": 1788895016.119027,
+          "transport": "process-stdin"
+        }
+      ]
+    },
+    "final": {
+      "allocated_bytes": 4623679488,
+      "resident_count": 2,
+      "source_dtype": null,
+      "full_scan": null,
+      "scan_bin": null,
+      "detector_bin": null
+    }
+  },
+  "arina_single": {
+    "analysis": {
+      "scan-drag": {
+        "selected_dp": {
+          "distinct": 356,
+          "per_s": 119.3,
+          "per_input_second": 118.6,
+          "first_presented_delay_ms": 22.75,
+          "interval_ms": {
+            "n": 355,
+            "p50": 8.33,
+            "p95": 8.33,
+            "max": 16.67
+          }
+        },
+        "presented_generations": null,
+        "all_tiles_presented_generations": null,
+        "incomplete_comparison_generations": 0,
+        "tiles_presenting": 0,
+        "reduction_ms": null
+      },
+      "large-ABF-center": {
+        "selected_dp": null,
+        "presented_generations": {
+          "distinct": 239,
+          "per_s": 120,
+          "per_input_second": 117.9,
+          "first_presented_delay_ms": 35.87,
+          "interval_ms": {
+            "n": 238,
+            "p50": 8.33,
+            "p95": 8.33,
+            "max": 8.33
+          }
+        },
+        "all_tiles_presented_generations": null,
+        "incomplete_comparison_generations": 0,
+        "tiles_presenting": 0,
+        "reduction_ms": null
+      },
+      "large-ABF-resize": {
+        "selected_dp": null,
+        "presented_generations": {
+          "distinct": 241,
+          "per_s": 119.5,
+          "per_input_second": 119.4,
+          "first_presented_delay_ms": 3.65,
+          "interval_ms": {
+            "n": 240,
+            "p50": 8.33,
+            "p95": 8.33,
+            "max": 16.67
+          }
+        },
+        "all_tiles_presented_generations": null,
+        "incomplete_comparison_generations": 0,
+        "tiles_presenting": 0,
+        "reduction_ms": null
+      },
+      "large-ADF-center": {
+        "selected_dp": null,
+        "presented_generations": {
+          "distinct": 241,
+          "per_s": 120,
+          "per_input_second": 118.9,
+          "first_presented_delay_ms": 18.19,
+          "interval_ms": {
+            "n": 240,
+            "p50": 8.33,
+            "p95": 8.33,
+            "max": 8.33
+          }
+        },
+        "all_tiles_presented_generations": null,
+        "incomplete_comparison_generations": 0,
+        "tiles_presenting": 0,
+        "reduction_ms": null
+      },
+      "large-ADF-resize": {
+        "selected_dp": null,
+        "presented_generations": {
+          "distinct": 241,
+          "per_s": 119.5,
+          "per_input_second": 119.4,
+          "first_presented_delay_ms": 2.07,
+          "interval_ms": {
+            "n": 240,
+            "p50": 8.33,
+            "p95": 8.33,
+            "max": 16.67
+          }
+        },
+        "all_tiles_presented_generations": null,
+        "incomplete_comparison_generations": 0,
+        "tiles_presenting": 0,
+        "reduction_ms": null
+      }
+    },
+    "problems": [],
+    "console_errors": [],
+    "exit": 0,
+    "performance_gate": {
+      "minimum_fps": 118,
+      "status": "pass"
+    },
+    "first_presented_records": [
+      {
+        "request": "A2F845D9-CC16-41F4-808C-E08D4ACC3052",
+        "id": "c6a56332e1d2065e5538",
+        "generation": "1",
+        "phase": "open_source_pages_unspecified",
+        "wall_seconds": "1.120978249993641",
+        "physical_resident_bytes": "2014617028",
+        "presented_time": "291795.98776591674"
+      }
+    ],
+    "navigation": {
+      "status": "not-applicable",
+      "reason": "Only one distinct acquisition; no navigation was requested or tested"
+    },
+    "final": {
+      "allocated_bytes": 2052472832,
+      "resident_count": 1,
+      "source_dtype": null,
+      "full_scan": null
+    }
+  },
+  "arina_seven": {
+    "empad-final-arina-seven": {
+      "analysis": {
+        "scan-drag": {
+          "selected_dp": {
+            "distinct": 356,
+            "per_s": 119.7,
+            "per_input_second": 118.6,
+            "first_presented_delay_ms": 27.32,
+            "interval_ms": {
+              "n": 355,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "presented_generations": null,
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ABF-center": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 162,
+            "per_s": 80.2,
+            "per_input_second": 80,
+            "first_presented_delay_ms": 20.85,
+            "interval_ms": {
+              "n": 161,
+              "p50": 8.33,
+              "p95": 25,
+              "max": 41.67
+            }
+          },
+          "all_tiles_presented_generations": {
+            "distinct": 161,
+            "per_s": 81.4,
+            "per_input_second": 79.5,
+            "first_presented_delay_ms": 62.51,
+            "interval_ms": {
+              "n": 160,
+              "p50": 8.33,
+              "p95": 25,
+              "max": 41.67
+            }
+          },
+          "incomplete_comparison_generations": 1,
+          "tiles_presenting": 7,
+          "reduction_ms": {
+            "n": 162,
+            "p50": 6.05,
+            "p95": 13.83,
+            "max": 41.96
+          }
+        },
+        "large-ABF-resize": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 231,
+            "per_s": 113.6,
+            "per_input_second": 113.7,
+            "first_presented_delay_ms": 11.32,
+            "interval_ms": {
+              "n": 230,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 16.67
+            }
+          },
+          "all_tiles_presented_generations": {
+            "distinct": 231,
+            "per_s": 113.6,
+            "per_input_second": 113.7,
+            "first_presented_delay_ms": 11.32,
+            "interval_ms": {
+              "n": 230,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 16.67
+            }
+          },
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 7,
+          "reduction_ms": {
+            "n": 231,
+            "p50": 3.69,
+            "p95": 6.47,
+            "max": 21.73
+          }
+        },
+        "large-ADF-center": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 204,
+            "per_s": 100.7,
+            "per_input_second": 99.9,
+            "first_presented_delay_ms": 19.89,
+            "interval_ms": {
+              "n": 203,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 50
+            }
+          },
+          "all_tiles_presented_generations": {
+            "distinct": 204,
+            "per_s": 100.7,
+            "per_input_second": 99.9,
+            "first_presented_delay_ms": 19.89,
+            "interval_ms": {
+              "n": 203,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 50
+            }
+          },
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 7,
+          "reduction_ms": {
+            "n": 204,
+            "p50": 5.84,
+            "p95": 9.95,
+            "max": 45.86
+          }
+        },
+        "large-ADF-resize": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 225,
+            "per_s": 111.5,
+            "per_input_second": 110.8,
+            "first_presented_delay_ms": 14.25,
+            "interval_ms": {
+              "n": 224,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 25
+            }
+          },
+          "all_tiles_presented_generations": {
+            "distinct": 225,
+            "per_s": 111.5,
+            "per_input_second": 110.8,
+            "first_presented_delay_ms": 14.25,
+            "interval_ms": {
+              "n": 224,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 25
+            }
+          },
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 7,
+          "reduction_ms": {
+            "n": 227,
+            "p50": 3.31,
+            "p95": 6.55,
+            "max": 12.03
+          }
+        },
+        "scan-drag-2": {
+          "selected_dp": {
+            "distinct": 354,
+            "per_s": 120,
+            "per_input_second": 118,
+            "first_presented_delay_ms": 58.78,
+            "interval_ms": {
+              "n": 353,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 8.33
+            }
+          },
+          "presented_generations": null,
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        }
+      },
+      "problems": [],
+      "console_errors": [],
+      "exit": 0,
+      "first_presented_records": [
+        {
+          "request": "32515E31-0B38-434C-A002-6E7DED69C74B",
+          "id": "c6a56332e1d2065e5538",
+          "generation": "1",
+          "phase": "open_source_pages_unspecified",
+          "wall_seconds": "1.0886740416754037",
+          "physical_resident_bytes": "2014617028",
+          "presented_time": "291819.41248725005"
+        },
+        {
+          "request": "81C2FBB9-7AB2-4044-A5EC-5A08084A482F",
+          "id": "d32bc747dbe481c29bfa",
+          "generation": "2",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "0.9743506666854955",
+          "physical_resident_bytes": "4027514520",
+          "presented_time": "291821.64579400007"
+        },
+        {
+          "request": "6499078F-E8C9-4183-AE36-0B3F2DB7BCC0",
+          "id": "b4d52d5d2c90bd1dfaaa",
+          "generation": "3",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "1.0439724582829513",
+          "physical_resident_bytes": "6133010176",
+          "presented_time": "291823.30410762504"
+        },
+        {
+          "request": "6B11D31B-741E-44E0-864B-D0F51FD363FC",
+          "id": "56c5d39576b3eacc9344",
+          "generation": "4",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "1.1012481666402891",
+          "physical_resident_bytes": "8255573436",
+          "presented_time": "291825.02075379173"
+        },
+        {
+          "request": "FD5DE538-0798-475C-AF9C-5EF6979BEE6B",
+          "id": "9169a5ff4eca2dabbd90",
+          "generation": "5",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "1.1259625416714698",
+          "physical_resident_bytes": "10457439484",
+          "presented_time": "291826.7290667501"
+        },
+        {
+          "request": "8F373FB2-7A48-472F-9DB2-878E3B8B1D81",
+          "id": "e013a188317ae2ef487e",
+          "generation": "6",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "1.1619993333588354",
+          "physical_resident_bytes": "12569914512",
+          "presented_time": "291828.36238054174"
+        },
+        {
+          "request": "BD29CB5E-C3A6-4C4F-88C4-2E7D35E42A6B",
+          "id": "7d10b4395359e13e7d88",
+          "generation": "7",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "1.257309999957215",
+          "physical_resident_bytes": "12737558284",
+          "presented_time": "291830.0956931667"
+        },
+        {
+          "request": "C169EB61-A3DE-473F-A547-A5CB7BA39FDC",
+          "id": "e013a188317ae2ef487e",
+          "generation": "6",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.057739666663110256",
+          "physical_resident_bytes": "12737558284",
+          "presented_time": "291830.7540185417"
+        },
+        {
+          "request": "5EF0E7AF-B6C3-43EF-B065-3F097C76D383",
+          "id": "9169a5ff4eca2dabbd90",
+          "generation": "5",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.05953562504146248",
+          "physical_resident_bytes": "12737558284",
+          "presented_time": "291831.1206808334"
+        },
+        {
+          "request": "86C76248-95BE-43B6-B3A4-5E5DCDB2FAC3",
+          "id": "56c5d39576b3eacc9344",
+          "generation": "4",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.03567120834486559",
+          "physical_resident_bytes": "12737558284",
+          "presented_time": "291831.49567637505"
+        },
+        {
+          "request": "F60F7AD3-98AD-4A46-9AEC-924A9A33314B",
+          "id": "b4d52d5d2c90bd1dfaaa",
+          "generation": "3",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.04021970834583044",
+          "physical_resident_bytes": "12737558284",
+          "presented_time": "291831.87067191675"
+        },
+        {
+          "request": "FF26FD74-7BFA-4B2B-97D8-19B372346A71",
+          "id": "d32bc747dbe481c29bfa",
+          "generation": "2",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.04516616661567241",
+          "physical_resident_bytes": "12737558284",
+          "presented_time": "291832.2290009167"
+        },
+        {
+          "request": "372DA68C-9DA9-48EE-AA58-5CAD468252E3",
+          "id": "c6a56332e1d2065e5538",
+          "generation": "8",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "1.1140907083172351",
+          "physical_resident_bytes": "12569914512",
+          "presented_time": "291833.64565066673"
+        },
+        {
+          "request": "9776D820-A388-4D65-A459-56C9F06F987F",
+          "id": "d32bc747dbe481c29bfa",
+          "generation": "2",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.04900208330946043",
+          "physical_resident_bytes": "12569914512",
+          "presented_time": "291833.9789799584"
+        },
+        {
+          "request": "2D1937D2-C95E-468E-9926-B4C66FDF3360",
+          "id": "b4d52d5d2c90bd1dfaaa",
+          "generation": "3",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.045417374989483505",
+          "physical_resident_bytes": "12569914512",
+          "presented_time": "291834.0289794167"
+        },
+        {
+          "request": "78075A30-9A8E-4565-AD11-61D1DB1EEA15",
+          "id": "56c5d39576b3eacc9344",
+          "generation": "4",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.04433079162845388",
+          "physical_resident_bytes": "12569914512",
+          "presented_time": "291834.0789787917"
+        }
+      ],
+      "navigation": {
+        "sent": 15,
+        "received": 15,
+        "applied_once": 15,
+        "retries": 0
+      },
+      "final": {
+        "allocated_bytes": 14885683200,
+        "resident_count": 7
+      }
+    },
+    "empad-qualified-arina-seven": {
+      "analysis": {
+        "scan-drag": {
+          "selected_dp": {
+            "distinct": 354,
+            "per_s": 119.3,
+            "per_input_second": 117.9,
+            "first_presented_delay_ms": 42.49,
+            "interval_ms": {
+              "n": 353,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "presented_generations": null,
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ABF-center": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 125,
+            "per_s": 61.2,
+            "per_input_second": 61.3,
+            "first_presented_delay_ms": 13.24,
+            "interval_ms": {
+              "n": 124,
+              "p50": 16.67,
+              "p95": 16.67,
+              "max": 50
+            }
+          },
+          "all_tiles_presented_generations": {
+            "distinct": 124,
+            "per_s": 62.3,
+            "per_input_second": 60.8,
+            "first_presented_delay_ms": 63.24,
+            "interval_ms": {
+              "n": 123,
+              "p50": 16.67,
+              "p95": 16.67,
+              "max": 33.33
+            }
+          },
+          "incomplete_comparison_generations": 1,
+          "tiles_presenting": 7,
+          "reduction_ms": {
+            "n": 126,
+            "p50": 10.38,
+            "p95": 18.96,
+            "max": 42.93
+          }
+        },
+        "large-ABF-resize": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 142,
+            "per_s": 69.6,
+            "per_input_second": 69.4,
+            "first_presented_delay_ms": 17.87,
+            "interval_ms": {
+              "n": 141,
+              "p50": 16.67,
+              "p95": 16.67,
+              "max": 16.67
+            }
+          },
+          "all_tiles_presented_generations": {
+            "distinct": 142,
+            "per_s": 69.6,
+            "per_input_second": 69.4,
+            "first_presented_delay_ms": 17.87,
+            "interval_ms": {
+              "n": 141,
+              "p50": 16.67,
+              "p95": 16.67,
+              "max": 16.67
+            }
+          },
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 7,
+          "reduction_ms": {
+            "n": 144,
+            "p50": 4.75,
+            "p95": 9.13,
+            "max": 16.05
+          }
+        },
+        "large-ADF-center": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 126,
+            "per_s": 61.2,
+            "per_input_second": 60.8,
+            "first_presented_delay_ms": 21.81,
+            "interval_ms": {
+              "n": 125,
+              "p50": 16.67,
+              "p95": 16.67,
+              "max": 66.67
+            }
+          },
+          "all_tiles_presented_generations": {
+            "distinct": 126,
+            "per_s": 61.2,
+            "per_input_second": 60.8,
+            "first_presented_delay_ms": 21.81,
+            "interval_ms": {
+              "n": 125,
+              "p50": 16.67,
+              "p95": 25,
+              "max": 66.67
+            }
+          },
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 7,
+          "reduction_ms": {
+            "n": 126,
+            "p50": 10.1,
+            "p95": 15.2,
+            "max": 45.72
+          }
+        },
+        "large-ADF-resize": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 138,
+            "per_s": 67.9,
+            "per_input_second": 68,
+            "first_presented_delay_ms": 14.12,
+            "interval_ms": {
+              "n": 137,
+              "p50": 16.67,
+              "p95": 16.67,
+              "max": 16.67
+            }
+          },
+          "all_tiles_presented_generations": {
+            "distinct": 138,
+            "per_s": 67.9,
+            "per_input_second": 68,
+            "first_presented_delay_ms": 14.12,
+            "interval_ms": {
+              "n": 137,
+              "p50": 16.67,
+              "p95": 16.67,
+              "max": 16.67
+            }
+          },
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 7,
+          "reduction_ms": {
+            "n": 141,
+            "p50": 5.13,
+            "p95": 9.26,
+            "max": 10.63
+          }
+        },
+        "scan-drag-2": {
+          "selected_dp": {
+            "distinct": 352,
+            "per_s": 119.7,
+            "per_input_second": 117.2,
+            "first_presented_delay_ms": 69.66,
+            "interval_ms": {
+              "n": 351,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "presented_generations": null,
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        }
+      },
+      "problems": [],
+      "console_errors": [],
+      "exit": 0,
+      "first_presented_records": [
+        {
+          "request": "62F7EC07-3E84-4602-AA28-E075EF890495",
+          "id": "c6a56332e1d2065e5538",
+          "generation": "1",
+          "phase": "open_source_pages_unspecified",
+          "wall_seconds": "1.0961763333762065",
+          "physical_resident_bytes": "2014617028",
+          "presented_time": "290222.6487448334"
+        },
+        {
+          "request": "EA6C3BB7-2161-429B-B192-00E69E3EF72F",
+          "id": "d32bc747dbe481c29bfa",
+          "generation": "2",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "0.9365758333588019",
+          "physical_resident_bytes": "4027514520",
+          "presented_time": "290224.76538516674"
+        },
+        {
+          "request": "3AFB80DF-78F1-4CC5-A2A7-4618F9C1E7A2",
+          "id": "b4d52d5d2c90bd1dfaaa",
+          "generation": "3",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "0.9693849583272822",
+          "physical_resident_bytes": "6133010176",
+          "presented_time": "290226.2736996667"
+        },
+        {
+          "request": "8BF63653-2D42-4F80-83C4-30744A530142",
+          "id": "56c5d39576b3eacc9344",
+          "generation": "4",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "1.0461704166373238",
+          "physical_resident_bytes": "8255573436",
+          "presented_time": "290227.8570132084"
+        },
+        {
+          "request": "2892B885-15FE-4ACF-AB9C-D721FF6374A1",
+          "id": "9169a5ff4eca2dabbd90",
+          "generation": "5",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "1.040872166689951",
+          "physical_resident_bytes": "10457439484",
+          "presented_time": "290229.4486598751"
+        },
+        {
+          "request": "7516BD75-8872-41BB-9816-71DC9FB9920F",
+          "id": "e013a188317ae2ef487e",
+          "generation": "6",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "1.0718985833227634",
+          "physical_resident_bytes": "12569914512",
+          "presented_time": "290231.01530687505"
+        },
+        {
+          "request": "81B0A6A6-4594-4A80-9519-E189463644DE",
+          "id": "7d10b4395359e13e7d88",
+          "generation": "7",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "1.146732916648034",
+          "physical_resident_bytes": "12737558284",
+          "presented_time": "290232.65695304173"
+        },
+        {
+          "request": "0A935FE7-0228-4F5E-B236-5EFA975EDB52",
+          "id": "e013a188317ae2ef487e",
+          "generation": "6",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.055682083358988166",
+          "physical_resident_bytes": "12737558284",
+          "presented_time": "290233.2236125834"
+        },
+        {
+          "request": "B68C7B5F-18BD-4472-8716-4930AE0A6BAB",
+          "id": "9169a5ff4eca2dabbd90",
+          "generation": "5",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.05197674996452406",
+          "physical_resident_bytes": "12737558284",
+          "presented_time": "290233.6069410834"
+        },
+        {
+          "request": "A3307D3E-6AB7-46D4-882F-408FC3CE048F",
+          "id": "56c5d39576b3eacc9344",
+          "generation": "4",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.04230120830470696",
+          "physical_resident_bytes": "12737558284",
+          "presented_time": "290233.97360325005"
+        },
+        {
+          "request": "CCB6EFEC-B544-40DE-A215-FD3373C90DDA",
+          "id": "b4d52d5d2c90bd1dfaaa",
+          "generation": "3",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.05193150002742186",
+          "physical_resident_bytes": "12737558284",
+          "presented_time": "290234.3569317501"
+        },
+        {
+          "request": "F44F04B5-0670-4C1C-95FD-6357914066F5",
+          "id": "d32bc747dbe481c29bfa",
+          "generation": "2",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.044601166679058224",
+          "physical_resident_bytes": "12737558284",
+          "presented_time": "290234.70692741673"
+        },
+        {
+          "request": "C7DE9228-9956-4E11-9536-E1A966CFBEDB",
+          "id": "c6a56332e1d2065e5538",
+          "generation": "8",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "1.0192412916803733",
+          "physical_resident_bytes": "12569914512",
+          "presented_time": "290236.0569105417"
+        },
+        {
+          "request": "48264A2D-FB23-4A43-8177-C4EB9CC3DB98",
+          "id": "d32bc747dbe481c29bfa",
+          "generation": "2",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.04588741663610563",
+          "physical_resident_bytes": "12569914512",
+          "presented_time": "290236.5152381667"
+        },
+        {
+          "request": "0A0E7BDE-611A-4CE9-A19F-76AE48B9CF43",
+          "id": "b4d52d5d2c90bd1dfaaa",
+          "generation": "3",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.03708166669821367",
+          "physical_resident_bytes": "12569914512",
+          "presented_time": "290236.5569043334"
+        },
+        {
+          "request": "4A0850A5-E765-4EE0-A2DE-F478FB399FAF",
+          "id": "56c5d39576b3eacc9344",
+          "generation": "4",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.04125295829726383",
+          "physical_resident_bytes": "12569914512",
+          "presented_time": "290236.6152369584"
+        }
+      ],
+      "navigation": {
+        "sent": 15,
+        "received": 15,
+        "applied_once": 15,
+        "retries": 0
+      },
+      "final": {
+        "allocated_bytes": 14886273024,
+        "resident_count": 7
+      }
+    },
+    "empad-load-arina-regression": {
+      "analysis": {
+        "scan-drag": {
+          "selected_dp": {
+            "distinct": 357,
+            "per_s": 119.7,
+            "per_input_second": 118.9,
+            "first_presented_delay_ms": 26.59,
+            "interval_ms": {
+              "n": 356,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "presented_generations": null,
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ABF-center": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 206,
+            "per_s": 101.2,
+            "per_input_second": 100.7,
+            "first_presented_delay_ms": 8.79,
+            "interval_ms": {
+              "n": 205,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 66.67
+            }
+          },
+          "all_tiles_presented_generations": {
+            "distinct": 205,
+            "per_s": 104.2,
+            "per_input_second": 100.2,
+            "first_presented_delay_ms": 75.46,
+            "interval_ms": {
+              "n": 204,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 25
+            }
+          },
+          "incomplete_comparison_generations": 1,
+          "tiles_presenting": 7,
+          "reduction_ms": {
+            "n": 206,
+            "p50": 5.75,
+            "p95": 10.01,
+            "max": 39.49
+          }
+        },
+        "large-ABF-resize": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 229,
+            "per_s": 113.1,
+            "per_input_second": 112.4,
+            "first_presented_delay_ms": 14.3,
+            "interval_ms": {
+              "n": 228,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 25
+            }
+          },
+          "all_tiles_presented_generations": {
+            "distinct": 229,
+            "per_s": 113.1,
+            "per_input_second": 112.4,
+            "first_presented_delay_ms": 14.3,
+            "interval_ms": {
+              "n": 228,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 25
+            }
+          },
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 7,
+          "reduction_ms": {
+            "n": 230,
+            "p50": 3.5,
+            "p95": 7.53,
+            "max": 16.99
+          }
+        },
+        "large-ADF-center": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 212,
+            "per_s": 104.2,
+            "per_input_second": 104.7,
+            "first_presented_delay_ms": 12.75,
+            "interval_ms": {
+              "n": 211,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 58.33
+            }
+          },
+          "all_tiles_presented_generations": {
+            "distinct": 212,
+            "per_s": 104.2,
+            "per_input_second": 104.7,
+            "first_presented_delay_ms": 12.75,
+            "interval_ms": {
+              "n": 211,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 58.33
+            }
+          },
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 7,
+          "reduction_ms": {
+            "n": 212,
+            "p50": 5.8,
+            "p95": 9.66,
+            "max": 45.82
+          }
+        },
+        "large-ADF-resize": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 235,
+            "per_s": 116,
+            "per_input_second": 115.4,
+            "first_presented_delay_ms": 13.16,
+            "interval_ms": {
+              "n": 234,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "all_tiles_presented_generations": {
+            "distinct": 235,
+            "per_s": 116,
+            "per_input_second": 115.4,
+            "first_presented_delay_ms": 13.16,
+            "interval_ms": {
+              "n": 234,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 7,
+          "reduction_ms": {
+            "n": 235,
+            "p50": 4.42,
+            "p95": 6.58,
+            "max": 14.64
+          }
+        },
+        "scan-drag-2": {
+          "selected_dp": {
+            "distinct": 353,
+            "per_s": 120,
+            "per_input_second": 117.6,
+            "first_presented_delay_ms": 60.37,
+            "interval_ms": {
+              "n": 352,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 8.33
+            }
+          },
+          "presented_generations": null,
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        }
+      },
+      "problems": [],
+      "console_errors": [],
+      "exit": 0,
+      "first_presented_records": [
+        {
+          "request": "F2D73295-1DB3-40FC-8F9B-3322E9A1B155",
+          "id": "c6a56332e1d2065e5538",
+          "generation": "1",
+          "phase": "open_source_pages_unspecified",
+          "wall_seconds": "1.091534583363682",
+          "physical_resident_bytes": "2014617028",
+          "presented_time": "289833.3702293334"
+        },
+        {
+          "request": "6FB57912-9581-49D8-A92B-3239DF5ADD32",
+          "id": "d32bc747dbe481c29bfa",
+          "generation": "2",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "0.9722650416661054",
+          "physical_resident_bytes": "4027514520",
+          "presented_time": "289835.5452022084"
+        },
+        {
+          "request": "FC3622EC-4CBD-4800-A64C-CD93AFE1C034",
+          "id": "b4d52d5d2c90bd1dfaaa",
+          "generation": "3",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "0.997007041645702",
+          "physical_resident_bytes": "6133010176",
+          "presented_time": "289837.18684845837"
+        },
+        {
+          "request": "5EDC5BAE-D46E-4206-AA25-BDB5B3387D42",
+          "id": "56c5d39576b3eacc9344",
+          "generation": "4",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "1.053870583360549",
+          "physical_resident_bytes": "8255573436",
+          "presented_time": "289838.8659943334"
+        },
+        {
+          "request": "186F8CE0-D085-42CB-B6A5-F2A875451A4C",
+          "id": "9169a5ff4eca2dabbd90",
+          "generation": "5",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "1.0615829166490585",
+          "physical_resident_bytes": "10457439484",
+          "presented_time": "289840.5659733334"
+        },
+        {
+          "request": "DF208DE1-18BE-440B-A3F6-8F219FE6369F",
+          "id": "e013a188317ae2ef487e",
+          "generation": "6",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "1.2114872916718014",
+          "physical_resident_bytes": "12569914512",
+          "presented_time": "289842.39095087507"
+        },
+        {
+          "request": "B3388EAB-84AC-4FDC-A2F9-C3F785C15FC8",
+          "id": "7d10b4395359e13e7d88",
+          "generation": "7",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "1.155548250011634",
+          "physical_resident_bytes": "12737558284",
+          "presented_time": "289844.0242641667"
+        },
+        {
+          "request": "87BFB7F6-3FDC-48C3-8022-D7478B11259D",
+          "id": "e013a188317ae2ef487e",
+          "generation": "6",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.05786620837170631",
+          "physical_resident_bytes": "12737558284",
+          "presented_time": "289844.59925704176"
+        },
+        {
+          "request": "27A6F866-37CE-4A59-B9AC-461ED6689B80",
+          "id": "9169a5ff4eca2dabbd90",
+          "generation": "5",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.05815491668181494",
+          "physical_resident_bytes": "12737558284",
+          "presented_time": "289844.9659192917"
+        },
+        {
+          "request": "C362EE3F-D081-4805-ABBD-87D5B246237A",
+          "id": "56c5d39576b3eacc9344",
+          "generation": "4",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.04200704162940383",
+          "physical_resident_bytes": "12737558284",
+          "presented_time": "289845.31591500004"
+        },
+        {
+          "request": "E9A0E58D-56BC-485A-93EC-E26315EDE134",
+          "id": "b4d52d5d2c90bd1dfaaa",
+          "generation": "3",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.04198945831740275",
+          "physical_resident_bytes": "12737558284",
+          "presented_time": "289845.6825771667"
+        },
+        {
+          "request": "7CBC2EEC-F61B-4E09-AAAD-EE27C222DFEA",
+          "id": "d32bc747dbe481c29bfa",
+          "generation": "2",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.04404924996197224",
+          "physical_resident_bytes": "12737558284",
+          "presented_time": "289846.0575725834"
+        },
+        {
+          "request": "183D14B6-4804-420F-BDBB-D8BD40AC44C5",
+          "id": "c6a56332e1d2065e5538",
+          "generation": "8",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "1.0425869166501798",
+          "physical_resident_bytes": "12569914512",
+          "presented_time": "289847.4075560834"
+        },
+        {
+          "request": "78AAFB5C-7814-478A-A37C-D4F5D09636DC",
+          "id": "d32bc747dbe481c29bfa",
+          "generation": "2",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.050859708338975906",
+          "physical_resident_bytes": "12569914512",
+          "presented_time": "289847.89088350005"
+        },
+        {
+          "request": "116D0734-3222-49B5-A0DB-1246FC3D5810",
+          "id": "b4d52d5d2c90bd1dfaaa",
+          "generation": "3",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.03217779169790447",
+          "physical_resident_bytes": "12569914512",
+          "presented_time": "289847.9242165001"
+        },
+        {
+          "request": "81C37923-F71F-4961-BE7F-B0A975224C85",
+          "id": "56c5d39576b3eacc9344",
+          "generation": "4",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.035287125036120415",
+          "physical_resident_bytes": "12569914512",
+          "presented_time": "289847.98254904174"
+        }
+      ],
+      "navigation": {
+        "sent": 15,
+        "received": 15,
+        "applied_once": 15,
+        "retries": 0
+      },
+      "final": {
+        "allocated_bytes": 14885683200,
+        "resident_count": 7
+      }
+    },
+    "empad-arina-seven-regression": {
+      "analysis": {
+        "scan-drag": {
+          "selected_dp": {
+            "distinct": 358,
+            "per_s": 119.3,
+            "per_input_second": 118.5,
+            "first_presented_delay_ms": 22.44,
+            "interval_ms": {
+              "n": 357,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "presented_generations": null,
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ABF-center": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 200,
+            "per_s": 99.1,
+            "per_input_second": 97.9,
+            "first_presented_delay_ms": 23.53,
+            "interval_ms": {
+              "n": 199,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 50
+            }
+          },
+          "all_tiles_presented_generations": {
+            "distinct": 199,
+            "per_s": 101.1,
+            "per_input_second": 97.4,
+            "first_presented_delay_ms": 73.53,
+            "interval_ms": {
+              "n": 198,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 25
+            }
+          },
+          "incomplete_comparison_generations": 1,
+          "tiles_presenting": 7,
+          "reduction_ms": {
+            "n": 200,
+            "p50": 5.9,
+            "p95": 9.78,
+            "max": 37.85
+          }
+        },
+        "large-ABF-resize": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 235,
+            "per_s": 116.5,
+            "per_input_second": 116.4,
+            "first_presented_delay_ms": 10.71,
+            "interval_ms": {
+              "n": 234,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "all_tiles_presented_generations": {
+            "distinct": 235,
+            "per_s": 116.5,
+            "per_input_second": 116.4,
+            "first_presented_delay_ms": 10.71,
+            "interval_ms": {
+              "n": 234,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 7,
+          "reduction_ms": {
+            "n": 236,
+            "p50": 4.06,
+            "p95": 6.79,
+            "max": 20.78
+          }
+        },
+        "large-ADF-center": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 199,
+            "per_s": 97.8,
+            "per_input_second": 97.9,
+            "first_presented_delay_ms": 12.93,
+            "interval_ms": {
+              "n": 198,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 58.33
+            }
+          },
+          "all_tiles_presented_generations": {
+            "distinct": 199,
+            "per_s": 97.8,
+            "per_input_second": 97.9,
+            "first_presented_delay_ms": 12.93,
+            "interval_ms": {
+              "n": 198,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 58.33
+            }
+          },
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 7,
+          "reduction_ms": {
+            "n": 199,
+            "p50": 5.67,
+            "p95": 9.77,
+            "max": 45.17
+          }
+        },
+        "large-ADF-resize": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 232,
+            "per_s": 115,
+            "per_input_second": 114.3,
+            "first_presented_delay_ms": 16.38,
+            "interval_ms": {
+              "n": 231,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "all_tiles_presented_generations": {
+            "distinct": 232,
+            "per_s": 115,
+            "per_input_second": 114.3,
+            "first_presented_delay_ms": 16.38,
+            "interval_ms": {
+              "n": 231,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 7,
+          "reduction_ms": {
+            "n": 233,
+            "p50": 3.28,
+            "p95": 6.85,
+            "max": 13.62
+          }
+        },
+        "scan-drag-2": {
+          "selected_dp": {
+            "distinct": 354,
+            "per_s": 119.7,
+            "per_input_second": 117.6,
+            "first_presented_delay_ms": 55.91,
+            "interval_ms": {
+              "n": 353,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "presented_generations": null,
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        }
+      },
+      "problems": [],
+      "console_errors": [],
+      "exit": 0,
+      "first_presented_records": [
+        {
+          "request": "615D1671-B27F-4961-8B66-500A89E6A994",
+          "id": "c6a56332e1d2065e5538",
+          "generation": "1",
+          "phase": "open_source_pages_unspecified",
+          "wall_seconds": "1.091887541639153",
+          "physical_resident_bytes": "2014617028",
+          "presented_time": "287100.9167461667"
+        },
+        {
+          "request": "C2F557A3-5A8B-4669-906A-1F0E7085858C",
+          "id": "d32bc747dbe481c29bfa",
+          "generation": "2",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "0.944965708302334",
+          "physical_resident_bytes": "4027514520",
+          "presented_time": "287103.08338562504"
+        },
+        {
+          "request": "104B91F7-7DF7-45D5-8D97-045ED2B7F066",
+          "id": "b4d52d5d2c90bd1dfaaa",
+          "generation": "3",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "1.1129414166789502",
+          "physical_resident_bytes": "6133010176",
+          "presented_time": "287104.7125317084"
+        },
+        {
+          "request": "E227C44D-08D5-42C6-8DE7-D92DD37A6585",
+          "id": "56c5d39576b3eacc9344",
+          "generation": "4",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "1.105385250004474",
+          "physical_resident_bytes": "8255573436",
+          "presented_time": "287106.40417700005"
+        },
+        {
+          "request": "4CAFCA00-92AE-48EC-B474-D06DA2B6C651",
+          "id": "9169a5ff4eca2dabbd90",
+          "generation": "5",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "1.1020900416770019",
+          "physical_resident_bytes": "10457439484",
+          "presented_time": "287107.9791570001"
+        },
+        {
+          "request": "A76A25E6-CE99-48C7-B686-1A1156BE8FBF",
+          "id": "e013a188317ae2ef487e",
+          "generation": "6",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "1.2486717500141822",
+          "physical_resident_bytes": "12569914512",
+          "presented_time": "287109.8208003334"
+        },
+        {
+          "request": "2A6E9AF2-4E7E-477D-B299-9C30D8206BF9",
+          "id": "7d10b4395359e13e7d88",
+          "generation": "7",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "1.1908879166585393",
+          "physical_resident_bytes": "12737558284",
+          "presented_time": "287111.52077879175"
+        },
+        {
+          "request": "DB669857-67F5-4A43-AA7A-C2F4A2BF42E7",
+          "id": "e013a188317ae2ef487e",
+          "generation": "6",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.05868820834439248",
+          "physical_resident_bytes": "12737558284",
+          "presented_time": "287112.0791052084"
+        },
+        {
+          "request": "8A2ECE97-5459-4458-B270-B8CA314E083A",
+          "id": "9169a5ff4eca2dabbd90",
+          "generation": "5",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.05751816666452214",
+          "physical_resident_bytes": "12737558284",
+          "presented_time": "287112.47076675005"
+        },
+        {
+          "request": "EC44DED8-7409-4AFE-83FE-3CF3DF762BB9",
+          "id": "56c5d39576b3eacc9344",
+          "generation": "4",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.033239083364605904",
+          "physical_resident_bytes": "12737558284",
+          "presented_time": "287112.8124291251"
+        },
+        {
+          "request": "5DA5F8B0-E2C2-4C11-B3E5-822448802443",
+          "id": "b4d52d5d2c90bd1dfaaa",
+          "generation": "3",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.04069683328270912",
+          "physical_resident_bytes": "12737558284",
+          "presented_time": "287113.16242470837"
+        },
+        {
+          "request": "84741CD8-88FD-41DD-AF9F-4D33263D366E",
+          "id": "d32bc747dbe481c29bfa",
+          "generation": "2",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.042508416692726314",
+          "physical_resident_bytes": "12737558284",
+          "presented_time": "287113.5124203334"
+        },
+        {
+          "request": "8970DFB5-1E67-478E-9BD7-3B6F21FF8632",
+          "id": "c6a56332e1d2065e5538",
+          "generation": "8",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "1.3643951666890644",
+          "physical_resident_bytes": "12569914512",
+          "presented_time": "287115.20406575006"
+        },
+        {
+          "request": "56119541-3A8E-4D55-87EC-C4605F8364FE",
+          "id": "b4d52d5d2c90bd1dfaaa",
+          "generation": "3",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.0341760833398439",
+          "physical_resident_bytes": "12569914512",
+          "presented_time": "287115.63739362505"
+        },
+        {
+          "request": "55485FFA-9C2F-4641-9AEC-22EAEA36C856",
+          "id": "56c5d39576b3eacc9344",
+          "generation": "4",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.037428458337672055",
+          "physical_resident_bytes": "12569914512",
+          "presented_time": "287115.6957262084"
+        }
+      ],
+      "navigation": {
+        "sent": 15,
+        "received": 15,
+        "applied_once": 15,
+        "retries": 0
+      },
+      "final": {
+        "allocated_bytes": 14885683200,
+        "resident_count": 7
+      }
+    },
+    "empad-final-arina-seven-repeat": {
+      "analysis": {
+        "scan-drag": {
+          "selected_dp": {
+            "distinct": 357,
+            "per_s": 119.7,
+            "per_input_second": 119,
+            "first_presented_delay_ms": 20.92,
+            "interval_ms": {
+              "n": 356,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "presented_generations": null,
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        },
+        "large-ABF-center": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 211,
+            "per_s": 104.1,
+            "per_input_second": 102.9,
+            "first_presented_delay_ms": 18.61,
+            "interval_ms": {
+              "n": 210,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 50
+            }
+          },
+          "all_tiles_presented_generations": {
+            "distinct": 210,
+            "per_s": 106.3,
+            "per_input_second": 102.4,
+            "first_presented_delay_ms": 68.61,
+            "interval_ms": {
+              "n": 209,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 25
+            }
+          },
+          "incomplete_comparison_generations": 1,
+          "tiles_presenting": 7,
+          "reduction_ms": {
+            "n": 211,
+            "p50": 5.89,
+            "p95": 9.76,
+            "max": 38.37
+          }
+        },
+        "large-ABF-resize": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 230,
+            "per_s": 113.6,
+            "per_input_second": 113.3,
+            "first_presented_delay_ms": 12.48,
+            "interval_ms": {
+              "n": 229,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 16.67
+            }
+          },
+          "all_tiles_presented_generations": {
+            "distinct": 230,
+            "per_s": 113.6,
+            "per_input_second": 112.8,
+            "first_presented_delay_ms": 12.48,
+            "interval_ms": {
+              "n": 229,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 16.67
+            }
+          },
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 7,
+          "reduction_ms": {
+            "n": 230,
+            "p50": 3.29,
+            "p95": 6.92,
+            "max": 21.2
+          }
+        },
+        "large-ADF-center": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 194,
+            "per_s": 95.3,
+            "per_input_second": 94.9,
+            "first_presented_delay_ms": 11.62,
+            "interval_ms": {
+              "n": 193,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 58.33
+            }
+          },
+          "all_tiles_presented_generations": {
+            "distinct": 194,
+            "per_s": 95.3,
+            "per_input_second": 94.9,
+            "first_presented_delay_ms": 11.62,
+            "interval_ms": {
+              "n": 193,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 58.33
+            }
+          },
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 7,
+          "reduction_ms": {
+            "n": 194,
+            "p50": 5.94,
+            "p95": 10.11,
+            "max": 45.4
+          }
+        },
+        "large-ADF-resize": {
+          "selected_dp": null,
+          "presented_generations": {
+            "distinct": 209,
+            "per_s": 104.4,
+            "per_input_second": 103.9,
+            "first_presented_delay_ms": 14.73,
+            "interval_ms": {
+              "n": 208,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 16.67
+            }
+          },
+          "all_tiles_presented_generations": {
+            "distinct": 209,
+            "per_s": 104.4,
+            "per_input_second": 103.9,
+            "first_presented_delay_ms": 14.73,
+            "interval_ms": {
+              "n": 208,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 25
+            }
+          },
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 7,
+          "reduction_ms": {
+            "n": 212,
+            "p50": 3.65,
+            "p95": 7.48,
+            "max": 10.14
+          }
+        },
+        "scan-drag-2": {
+          "selected_dp": {
+            "distinct": 354,
+            "per_s": 120,
+            "per_input_second": 117.9,
+            "first_presented_delay_ms": 59.3,
+            "interval_ms": {
+              "n": 353,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 8.33
+            }
+          },
+          "presented_generations": null,
+          "all_tiles_presented_generations": null,
+          "incomplete_comparison_generations": 0,
+          "tiles_presenting": 0,
+          "reduction_ms": null
+        }
+      },
+      "problems": [],
+      "console_errors": [],
+      "exit": 0,
+      "first_presented_records": [
+        {
+          "request": "FF3072E7-15EB-45CD-9077-8F2F80725DD7",
+          "id": "c6a56332e1d2065e5538",
+          "generation": "1",
+          "phase": "open_source_pages_unspecified",
+          "wall_seconds": "1.221334083355032",
+          "physical_resident_bytes": "2014617028",
+          "presented_time": "291894.38659775007"
+        },
+        {
+          "request": "2095BA12-9580-4983-9167-A0A46A1488DE",
+          "id": "d32bc747dbe481c29bfa",
+          "generation": "2",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "0.9985572916921228",
+          "physical_resident_bytes": "4027514520",
+          "presented_time": "291896.6532375834"
+        },
+        {
+          "request": "FEBF41E1-7FB6-4808-9130-B7E002B13708",
+          "id": "b4d52d5d2c90bd1dfaaa",
+          "generation": "3",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "1.0154393750126474",
+          "physical_resident_bytes": "6133010176",
+          "presented_time": "291898.1782195834"
+        },
+        {
+          "request": "E9E0AC7D-FAE7-48FD-B5FC-E3BF97FD7ABC",
+          "id": "56c5d39576b3eacc9344",
+          "generation": "4",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "1.0547520000254735",
+          "physical_resident_bytes": "8255573436",
+          "presented_time": "291899.83653329173"
+        },
+        {
+          "request": "A66DCFD4-FFD0-4F83-82EE-827B11220024",
+          "id": "9169a5ff4eca2dabbd90",
+          "generation": "5",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "1.075807083339896",
+          "physical_resident_bytes": "10457439484",
+          "presented_time": "291901.5323465001"
+        },
+        {
+          "request": "EF048252-9E21-4A4B-A385-50157E29C01E",
+          "id": "e013a188317ae2ef487e",
+          "generation": "6",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "1.1325981249683537",
+          "physical_resident_bytes": "12569914512",
+          "presented_time": "291903.15316050005"
+        },
+        {
+          "request": "C46F9385-746B-4C7D-BA6B-DB859C792B79",
+          "id": "7d10b4395359e13e7d88",
+          "generation": "7",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "1.2650962083716877",
+          "physical_resident_bytes": "12737558284",
+          "presented_time": "291904.98647204175"
+        },
+        {
+          "request": "4D00419D-2D76-406E-B684-66B18A2FA2F5",
+          "id": "e013a188317ae2ef487e",
+          "generation": "6",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.051213375001680106",
+          "physical_resident_bytes": "12737558284",
+          "presented_time": "291905.6197977917"
+        },
+        {
+          "request": "84E25E11-C0A6-4FF8-8225-3A7B13726F57",
+          "id": "9169a5ff4eca2dabbd90",
+          "generation": "5",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.03770904167322442",
+          "physical_resident_bytes": "12737558284",
+          "presented_time": "291905.9697937084"
+        },
+        {
+          "request": "CCDC5A4E-F07B-442E-B1D5-0B214C9B37D3",
+          "id": "56c5d39576b3eacc9344",
+          "generation": "4",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.034843375033233315",
+          "physical_resident_bytes": "12737558284",
+          "presented_time": "291906.30312304175"
+        },
+        {
+          "request": "5BF50EFE-8099-4C0E-9890-F19419D9ADA8",
+          "id": "b4d52d5d2c90bd1dfaaa",
+          "generation": "3",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.03988745831884444",
+          "physical_resident_bytes": "12737558284",
+          "presented_time": "291906.6531189584"
+        },
+        {
+          "request": "4A43A120-3FDE-4126-A1FD-7DC2CCB46A15",
+          "id": "d32bc747dbe481c29bfa",
+          "generation": "2",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.053509000048507005",
+          "physical_resident_bytes": "12737558284",
+          "presented_time": "291907.0114480001"
+        },
+        {
+          "request": "91A537F4-E3B9-481C-8281-A80628C4E226",
+          "id": "c6a56332e1d2065e5538",
+          "generation": "8",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "1.0501890833256766",
+          "physical_resident_bytes": "12569914512",
+          "presented_time": "291908.35309875006"
+        },
+        {
+          "request": "93537B6E-46DC-4CC6-B5C6-F5DCC687786B",
+          "id": "d32bc747dbe481c29bfa",
+          "generation": "2",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.038694625021889806",
+          "physical_resident_bytes": "12569914512",
+          "presented_time": "291908.7864268334"
+        },
+        {
+          "request": "F20B0636-4B7E-477F-99E4-4F3FECEA670F",
+          "id": "56c5d39576b3eacc9344",
+          "generation": "4",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.04442099999869242",
+          "physical_resident_bytes": "12569914512",
+          "presented_time": "291908.8947588334"
+        }
+      ],
+      "navigation": {
+        "sent": 15,
+        "received": 15,
+        "applied_once": 15,
+        "retries": 0
+      },
+      "final": {
+        "allocated_bytes": 14885683200,
+        "resident_count": 7
+      }
+    }
+  },
+  "limitations": [
+    "The 120 Hz target is not met for all wide EMPAD apertures; the installed release remains unchanged.",
+    "The final mixed-folder test used two genuinely distinct public EMPAD acquisitions. Retained-resident return visits are not full-load measurements.",
+    "Two final seven-tilt runs handled 30 navigation commands exactly once in total, not 30 distinct acquisitions.",
+    "ARINA single passes the 118 Hz/p95 gate. Seven-source comparison varies across runs: earlier 61–116.5 Hz, final 80.2–113.6 Hz. This is not a rigorous zero-regression proof or universal 120 Hz pass.",
+    "One incomplete comparison generation is retained in some phase records; no claim that every accepted input was presented by every tile.",
+    "No ARINA reconstruction kernel was changed by this optimization. OS scheduling, power, memory pressure and presentation variability remain uncontrolled.",
+    "Other scientific features and every dataset/device are not exhaustively covered by this run."
+  ]
+}

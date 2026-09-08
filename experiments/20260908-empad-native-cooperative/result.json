@@ -1,0 +1,53 @@
+{
+  "scope": "Original AutoDisk 64x64 scan, 128x128 detector, float32; native hook-driven presentations on Apple M5",
+  "binary_sha256": "d752cddc6863cd1af87927454a5b4e0d42a2d31cf29f43e8b1dc1c6340a599ce",
+  "app_base_revision": "3b300f744160d7cf3c5e731a8c30d2937147a00b",
+  "source_modified": true,
+  "resident_bytes_all_arms": 236838288,
+  "arms": [
+    {"name": "serial-a", "first_presented_seconds": 1.2161917916382663,
+     "scan_dp_per_second": 108.6, "large_abf_center_per_second": 9.4,
+     "large_abf_resize_per_second": 8.9, "large_adf_center_per_second": 6.5,
+     "large_adf_resize_per_second": 6.5,
+     "evidence_sha256": "b7ea9fde591a21d43586406fad291dae11692cdecd12568ba9c54894884a9430"},
+    {"name": "cooperative-b", "first_presented_seconds": 0.9423886250006035,
+     "scan_dp_per_second": 108.6, "large_abf_center_per_second": 120.0,
+     "large_abf_resize_per_second": 116.0, "large_adf_center_per_second": 82.2,
+     "large_adf_resize_per_second": 81.8,
+     "evidence_sha256": "189812efd249bbd041890ca24a6f347df8d5e8c829078b3bc3c906794feb10d8"},
+    {"name": "serial-a2", "first_presented_seconds": 1.155112583306618,
+     "scan_dp_per_second": 108.6, "large_abf_center_per_second": 8.9,
+     "large_abf_resize_per_second": 8.8, "large_adf_center_per_second": 6.5,
+     "large_adf_resize_per_second": 6.0,
+     "evidence_sha256": "0a08e7502c5dd8b6e48c70bcd1d0f1d381d0e8bf3eb069aea69e30c4734c59a5"}
+  ],
+  "parity": {
+    "original_sample_words_exact": 67108864,
+    "rtol": 0.000001, "atol": 0.000001,
+    "bf_max_relative": 6.82902154e-8, "abf_max_relative": 6.86685975e-8,
+    "adf_max_relative": 6.94193149e-8, "total_max_relative": 6.62014089e-8,
+    "mean_and_com": "passed independent float64 reference",
+    "synthetic_tests": "7 passed including nonfinite bits, rectangular scans, cancellation, corruption, budgets, signed and zero-intensity CoM",
+    "public_parity_log_sha256": "4c63f92614563ae66e1cf7cdf6544d4b79d5bbc02493c6c243eb49501d333f02"
+  },
+  "native_controls": {
+    "actual_viewer_bf_abf_adf_max_relative": [6.834942984888217e-8, 7.034764053719562e-8, 6.648102561931029e-8],
+    "actual_selected_dp": "bit-exact against original central scan position",
+    "verified": ["BF/ABF/ADF", "contrast", "gray/viridis", "light/dark appearance", "FFT reveal", "failed-file retained DP/VI/FFT", "forced reload", "EMPAD to ARINA folder to EMPAD", "normal quit"],
+    "regression": "FFT remained black after folder replacement because EMPAD publication incorrectly requested disabled FFT. Changed to shared automatic policy: hidden initially, compute when visible.",
+    "red_test_sha256": "be45efd2ccaa84ce0667c878b45f1798d999800c7d6af9950dcec9604fb3cf73",
+    "fixed_test_sha256": "03d87fe350d748e1e6d5b29fa8929a551681da0fe0cee9902ae2a44ad595110e",
+    "fixed_binary_sha256": "0b322b6d4ba80ab938d7708ce2ca5f25a660d5646d24893ee21eb8d5f33c58d4",
+    "arina_regression_sha256": "27906cccc08545594eb94b64ec76964848f4e07245a669f97ef35538a5e337a6",
+    "arina_regression": "Seven original full512x512x192x192 uint16 sources visited, 15 navigation commands each applied once, return visits and rapid switching; seven-way comparison resident 14.75GB, device allocation14.886GB within17.163GBbudget, no console errors or crash. Retained-resident switches are not full reconstruction timings."
+  },
+  "limitations": [
+    "One distinct public EMPAD acquisition; not a many-acquisition EMPAD stress test",
+    "Original file reread and resident reconstructed; operating-system page state unspecified, not cold I/O",
+    "No hardware counter occupancy or bandwidth profile; actual presentations measured",
+    "Full initial parity audit time excluded from load timings",
+    "120 Hz not achieved for all gestures, especially large ADF and selected DP",
+    "Initial controls test missed a persistent black FFT after folder replacement; strengthened native regression reproduced it; correction tracked separately",
+    "Experimental development build, not installed or notarized; average-DP UI and complete release qualification remain pending"
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-empad-hash-cache",
+  "status": "completed",
+  "question": "Can a source-snapshot-bound metadata hash cache bring repeat full original EMPAD loading toward one second while still rereading and packing every detector word?",
+  "paper": {"repository": "quantem.gpu", "authoritative_host": "apple-m5-24gb"},
+  "code": {"revision": "1405fab95320583cbb804e06fd4ef4365f118a5d", "dirty": true, "diff_sha256": "9769fb2c82ba814a2cb73aed2484ac71108500b2fb2fff2ae9404400c0674bd8", "snapshot_path": "local-validation/2026-09-08-empad-loading/final-qualified-backend.patch", "entrypoint": "Live4DSTEM/Tests/NativeUI/drive_empad.py"},
+  "inputs": [{"dataset_id": "zenodo-mos2-mose2", "path": "https://zenodo.org/records/17246822", "sha256": "5f5bbae2295aea62a1d6bd74c6611ae7c913d473c3ae83435fc85eda87abd325"}],
+  "parameters": {"shape": [256,256,128,128], "dtype": "float32", "crop": null, "scan_bin": 1, "detector_bin": 1, "rtol": 0.000001, "atol": 0.000001, "cache_contents": "hash, file snapshot and corruption checksum only; no measurements or images", "cold_io_claim": false, "first_hash_miss_separate": true},
+  "execution": {"host": "apple-m5-24gb", "backend": "swift-metal", "gpu_model": "Apple M5"},
+  "outputs": [{"artifact_id": "complete-reread-results", "path": "experiments/20260908-empad-hash-cache/result.json", "sha256": "c2153d8a37092db62d1cdcff0412118d33be8ff4f666866d4e86e316a1195455", "size_bytes": 29148, "retention": "durable", "consuming_figures": [], "result": "Final full reread-to-present 0.896–0.989 s with checksum metadata; 2.19–2.27 s with hash reuse disabled. All billion detector words exact. No cold-I/O or universal subsecond claim; 120 Hz wide-detector gate remains unmet."}],
+  "timestamps": {"created": "2026-09-08", "finished": "2026-09-08"}
+}

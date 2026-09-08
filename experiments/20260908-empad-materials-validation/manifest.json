@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260908-empad-materials-validation",
+  "status": "running",
+  "question": "Does checksum calculation explain the repeat-open difference, and do additional original public EMPAD materials pass the same full-resident and native UI workflow?",
+  "paper": {"repository": "quantem.gpu", "authoritative_host": "apple-m5-24gb"},
+  "code": {"revision": "1405fab95320583cbb804e06fd4ef4365f118a5d", "dirty": true, "diff_sha256": "9769fb2c82ba814a2cb73aed2484ac71108500b2fb2fff2ae9404400c0674bd8", "snapshot_path": "local-validation/2026-09-08-empad-loading/final-qualified-backend.patch", "entrypoint": "Live4DSTEM/Tests/NativeUI/drive_empad.py"},
+  "inputs": [{"dataset_id": "zenodo-mos2-mose2", "path": "https://zenodo.org/records/17246822", "sha256": "5f5bbae2295aea62a1d6bd74c6611ae7c913d473c3ae83435fc85eda87abd325"}],
+  "candidates": [{"url": "https://zenodo.org/records/10079791", "material": "SnSe", "status": "original layout verified; three downloads running; tests pending", "files": [{"acquisition": 7, "bytes": 4362076160, "md5": "3ddea699e1e09008f20405dc0331090a"}, {"acquisition": 8, "bytes": 4362076160, "md5": "044c8497c431735ae1bfc09685c72029"}, {"acquisition": 10, "bytes": 4362076160, "md5": "e76fb4991e6eb2c96995ddb45990dde5"}]}, {"url": "https://zenodo.org/records/10825339", "material": "vitrified cells and organelles", "status": "original record identified; not downloaded or tested"}],
+  "parameters": {"scan_bin": 1, "detector_bin": 1, "crop": null, "rtol": 0.000001, "atol": 0.000001, "cold_io_claim": false, "checksum_cache_miss_and_hit_separate": true, "app_sha256": "c2823bae2b6522015f8e562766289e2b62b685828e77fdd4c416d940382b93d1"},
+  "resumed_job": {"reason": "Original downloads interrupted by gateway errors; retain partial bytes and retry both published endpoints after first-open optimization", "qualification_experiment": "20260908-empad-first-open", "app_sha256": "60314a8e4290c4ca0da940d96f4f606b8badf476bca560b258fde945bf5ec120", "parity_executable_sha256": "63371036b051a9f453b8b24cc0aa35637b24314ba9219ad2d7e55bf87c976bde", "native_driver_sha256": "03b09e6eea1439e5df5233ead2b08cd7ddd216ed86ee16d0da172ee0ced11749", "status": "downloading; new-material tests pending", "local_artifact_directory": "2026-09-08 SnSe Materials Final"},
+  "execution": {"host": "apple-m5-24gb", "backend": "swift-metal", "gpu_model": "Apple M5"},
+  "test_artifacts": {"native_empad_driver_sha256": "b22a5bd2e1eebf976065f4ca1a5c274285d3fa871092c1e61536d97408015846", "public_parity_driver_sha256": "7f4f9cbe35168642c2ad233c88c00ab7a890c59b89f8962e5d193093a081ef7e", "parity_executable_sha256": "af86bef9543875c38593a23dcf51e8b674041448ee194b76e7b097cd93670d85"},
+  "outputs": [{"artifact_id": "timing-diagnosis-and-plan", "path": "experiments/20260908-empad-materials-validation/README.md", "sha256": "00a6bae54638e02ac0b6898f7877d88a3f443ad9584ab3843506bc0bdaf34de0", "size_bytes": 3675, "retention": "durable", "consuming_figures": [], "result": "Existing native logs identify 1.307-1.326 s SHA-256 cost; three SnSe acquisitions downloading, parity and native tests pending."}],
+  "timestamps": {"created": "2026-09-08"}
+}

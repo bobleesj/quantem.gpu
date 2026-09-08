@@ -1,0 +1,1121 @@
+{
+  "status": "completed experiment; larger aperture speed target not met",
+  "hardware": {
+    "model": "Apple M5",
+    "memory_gb": 24,
+    "display_hz": 120
+  },
+  "code": {
+    "backend_base": "1405fab95320583cbb804e06fd4ef4365f118a5d",
+    "app_base": "3b300f744160d7cf3c5e731a8c30d2937147a00b",
+    "dirty": true,
+    "backend_swift_diff_sha256": "72c14739c4243e2a9e6f854e27fb2942a8a47758a4edd215796acc6508194a18",
+    "app_sources_sha256": "21ce01e424bffd5ee2c26e60e42158c0c2958bf3396186efd031200d312383a1",
+    "final_executable_sha256": "78520d25c67365a9e6b2994b288ce10986d66ce7f2b7327bd41fbabad6f28c30",
+    "final_bundled_empad_kernel_sha256": "cab19cdba3e4df52b624fd5bf0d1720c5cc1b9f7939e18d5501b5cb6604e2334"
+  },
+  "scope": {
+    "native_window": true,
+    "driver": "controller hooks, not physical pointer/Finder",
+    "crop": null,
+    "binning": 1,
+    "dtype": "original float32 bits",
+    "rtol": 1e-06,
+    "atol": 1e-06,
+    "cold_io_claim": false,
+    "installed_release_changed": false,
+    "release_ready": false
+  },
+  "runs": [
+    {
+      "name": "empad-frame-budget-control-a-repeat",
+      "evidence_sha256": "647c642c33f435a35394d2706567391a93e0d4f7619e6bd4cbc77a8c787a4c7f",
+      "process_exit": 0,
+      "problems": [],
+      "performance_gate": {
+        "status": "not requested"
+      },
+      "first_presented": [
+        {
+          "request": "273D5C3A-8077-430D-9DDA-11A7FAAE3887",
+          "id": "d081b5d295b06be76489760749b3424327b909250dddce2faedafbf161889bfd",
+          "generation": "1",
+          "phase": "open_source_pages_unspecified",
+          "wall_seconds": "0.9292894167010672",
+          "physical_resident_bytes": "236838288",
+          "presented_time": "287906.2608103334"
+        }
+      ],
+      "final_memory": {
+        "resident_count": 1,
+        "allocated_bytes": 260521984,
+        "memory_budget_bytes": 17162698752,
+        "comparison_visible": false
+      },
+      "navigation_receipts": {
+        "status": "not-applicable",
+        "reason": "Only one distinct acquisition; no navigation was requested or tested"
+      },
+      "presentations": {
+        "scan-drag": {
+          "rate": {
+            "distinct": 357,
+            "per_s": 119.7,
+            "per_input_second": 119.0,
+            "first_presented_delay_ms": 23.07,
+            "interval_ms": {
+              "n": 356,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "scan_path": null
+        },
+        "large-ABF-center": {
+          "rate": {
+            "distinct": 235,
+            "per_s": 118.5,
+            "per_input_second": 115.9,
+            "first_presented_delay_ms": 42.78,
+            "interval_ms": {
+              "n": 234,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 25.0
+            }
+          },
+          "scan_path": null
+        },
+        "large-ABF-resize": {
+          "rate": {
+            "distinct": 232,
+            "per_s": 114.5,
+            "per_input_second": 114.4,
+            "first_presented_delay_ms": 2.46,
+            "interval_ms": {
+              "n": 231,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 25.0
+            }
+          },
+          "scan_path": null
+        },
+        "large-ADF-center": {
+          "rate": {
+            "distinct": 162,
+            "per_s": 80.5,
+            "per_input_second": 80.0,
+            "first_presented_delay_ms": 17.72,
+            "interval_ms": {
+              "n": 161,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 25.0
+            }
+          },
+          "scan_path": null
+        },
+        "large-ADF-resize": {
+          "rate": {
+            "distinct": 164,
+            "per_s": 81.8,
+            "per_input_second": 81.0,
+            "first_presented_delay_ms": 18.09,
+            "interval_ms": {
+              "n": 163,
+              "p50": 8.33,
+              "p95": 25.0,
+              "max": 25.0
+            }
+          },
+          "scan_path": null
+        }
+      },
+      "exact_final_scan": []
+    },
+    {
+      "name": "empad-frame-budget-candidate-b",
+      "evidence_sha256": "b0b3e792d42afd6241177aec1a4cec6b17659887d843d23a322fc07af5f7c22a",
+      "process_exit": 0,
+      "problems": [],
+      "performance_gate": {
+        "status": "not requested"
+      },
+      "first_presented": [
+        {
+          "request": "F6B8CBB3-38ED-4720-80DE-115C4F911D78",
+          "id": "d081b5d295b06be76489760749b3424327b909250dddce2faedafbf161889bfd",
+          "generation": "1",
+          "phase": "open_source_pages_unspecified",
+          "wall_seconds": "0.9671293332939968",
+          "physical_resident_bytes": "236838288",
+          "presented_time": "287928.53136250004"
+        }
+      ],
+      "final_memory": {
+        "resident_count": 1,
+        "allocated_bytes": 260521984,
+        "memory_budget_bytes": 17162698752,
+        "comparison_visible": false
+      },
+      "navigation_receipts": {
+        "status": "not-applicable",
+        "reason": "Only one distinct acquisition; no navigation was requested or tested"
+      },
+      "presentations": {
+        "scan-drag": {
+          "rate": {
+            "distinct": 357,
+            "per_s": 119.7,
+            "per_input_second": 119.0,
+            "first_presented_delay_ms": 22.87,
+            "interval_ms": {
+              "n": 356,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "scan_path": null
+        },
+        "large-ABF-center": {
+          "rate": {
+            "distinct": 237,
+            "per_s": 120.0,
+            "per_input_second": 117.9,
+            "first_presented_delay_ms": 41.39,
+            "interval_ms": {
+              "n": 236,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 8.33
+            }
+          },
+          "scan_path": null
+        },
+        "large-ABF-resize": {
+          "rate": {
+            "distinct": 240,
+            "per_s": 119.5,
+            "per_input_second": 119.4,
+            "first_presented_delay_ms": 4.3,
+            "interval_ms": {
+              "n": 239,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "scan_path": null
+        },
+        "large-ADF-center": {
+          "rate": {
+            "distinct": 240,
+            "per_s": 119.0,
+            "per_input_second": 118.9,
+            "first_presented_delay_ms": 1.55,
+            "interval_ms": {
+              "n": 239,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 25.0
+            }
+          },
+          "scan_path": null
+        },
+        "large-ADF-resize": {
+          "rate": {
+            "distinct": 240,
+            "per_s": 119.5,
+            "per_input_second": 119.4,
+            "first_presented_delay_ms": 5.66,
+            "interval_ms": {
+              "n": 239,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "scan_path": null
+        }
+      },
+      "exact_final_scan": []
+    },
+    {
+      "name": "empad-frame-budget-control-a2",
+      "evidence_sha256": "3519982cfbe78b5c16f5d2ea067d3d0a9ae7fb084b1a1c83920436c51aff9ec9",
+      "process_exit": 0,
+      "problems": [],
+      "performance_gate": {
+        "status": "not requested"
+      },
+      "first_presented": [
+        {
+          "request": "D67F4E59-287B-4ADD-8973-8378FA711B37",
+          "id": "d081b5d295b06be76489760749b3424327b909250dddce2faedafbf161889bfd",
+          "generation": "1",
+          "phase": "open_source_pages_unspecified",
+          "wall_seconds": "0.9418083333293907",
+          "physical_resident_bytes": "236838288",
+          "presented_time": "287960.0643005417"
+        }
+      ],
+      "final_memory": {
+        "resident_count": 1,
+        "allocated_bytes": 260521984,
+        "memory_budget_bytes": 17162698752,
+        "comparison_visible": false
+      },
+      "navigation_receipts": {
+        "status": "not-applicable",
+        "reason": "Only one distinct acquisition; no navigation was requested or tested"
+      },
+      "presentations": {
+        "scan-drag": {
+          "rate": {
+            "distinct": 357,
+            "per_s": 119.7,
+            "per_input_second": 119.0,
+            "first_presented_delay_ms": 23.64,
+            "interval_ms": {
+              "n": 356,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "scan_path": null
+        },
+        "large-ABF-center": {
+          "rate": {
+            "distinct": 235,
+            "per_s": 119.5,
+            "per_input_second": 116.5,
+            "first_presented_delay_ms": 58.12,
+            "interval_ms": {
+              "n": 234,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "scan_path": null
+        },
+        "large-ABF-resize": {
+          "rate": {
+            "distinct": 232,
+            "per_s": 114.5,
+            "per_input_second": 114.4,
+            "first_presented_delay_ms": 1.92,
+            "interval_ms": {
+              "n": 231,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 25.0
+            }
+          },
+          "scan_path": null
+        },
+        "large-ADF-center": {
+          "rate": {
+            "distinct": 166,
+            "per_s": 82.5,
+            "per_input_second": 82.5,
+            "first_presented_delay_ms": 17.03,
+            "interval_ms": {
+              "n": 165,
+              "p50": 8.33,
+              "p95": 16.67,
+              "max": 16.67
+            }
+          },
+          "scan_path": null
+        },
+        "large-ADF-resize": {
+          "rate": {
+            "distinct": 164,
+            "per_s": 81.2,
+            "per_input_second": 81.0,
+            "first_presented_delay_ms": 1.78,
+            "interval_ms": {
+              "n": 163,
+              "p50": 8.33,
+              "p95": 25.0,
+              "max": 25.0
+            }
+          },
+          "scan_path": null
+        }
+      },
+      "exact_final_scan": []
+    },
+    {
+      "name": "empad-cancellation-small-pacing",
+      "evidence_sha256": "e4141926445e133a4a7774157ec9a0643a15a46deac69aedf6995297e8643bbd",
+      "process_exit": 0,
+      "problems": [],
+      "performance_gate": {
+        "status": "not requested"
+      },
+      "first_presented": [
+        {
+          "request": "088D8F17-C5BC-4DA5-9503-66C6E0428A18",
+          "id": "d081b5d295b06be76489760749b3424327b909250dddce2faedafbf161889bfd",
+          "generation": "1",
+          "phase": "open_source_pages_unspecified",
+          "wall_seconds": "0.9551310417009518",
+          "physical_resident_bytes": "236838288",
+          "presented_time": "288524.9156405001"
+        }
+      ],
+      "final_memory": {
+        "resident_count": 1,
+        "allocated_bytes": 260521984,
+        "memory_budget_bytes": 17162698752,
+        "comparison_visible": false
+      },
+      "navigation_receipts": {
+        "status": "not-applicable",
+        "reason": "Only one distinct acquisition; no navigation was requested or tested"
+      },
+      "presentations": {
+        "scan-drag": {
+          "rate": {
+            "distinct": 358,
+            "per_s": 120.0,
+            "per_input_second": 119.3,
+            "first_presented_delay_ms": 25.91,
+            "interval_ms": {
+              "n": 357,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 8.33
+            }
+          },
+          "scan_path": "unique-pixel"
+        },
+        "large-ABF-center": {
+          "rate": {
+            "distinct": 236,
+            "per_s": 120.0,
+            "per_input_second": 117.4,
+            "first_presented_delay_ms": 48.26,
+            "interval_ms": {
+              "n": 235,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 8.33
+            }
+          },
+          "scan_path": null
+        },
+        "large-ABF-resize": {
+          "rate": {
+            "distinct": 241,
+            "per_s": 119.5,
+            "per_input_second": 119.4,
+            "first_presented_delay_ms": 2.39,
+            "interval_ms": {
+              "n": 240,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "scan_path": null
+        },
+        "large-ADF-center": {
+          "rate": {
+            "distinct": 239,
+            "per_s": 120.0,
+            "per_input_second": 118.9,
+            "first_presented_delay_ms": 22.71,
+            "interval_ms": {
+              "n": 238,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 8.33
+            }
+          },
+          "scan_path": null
+        },
+        "large-ADF-resize": {
+          "rate": {
+            "distinct": 241,
+            "per_s": 119.5,
+            "per_input_second": 119.4,
+            "first_presented_delay_ms": 1.47,
+            "interval_ms": {
+              "n": 240,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "scan_path": null
+        }
+      },
+      "exact_final_scan": []
+    },
+    {
+      "name": "empad-small-speed-gate",
+      "evidence_sha256": "65fa4a9d03ffd4525983093bafe66a612c03e63c448942de08159fb4d41b81e4",
+      "process_exit": 0,
+      "problems": [],
+      "performance_gate": {
+        "minimum_fps": 118.0,
+        "status": "pass"
+      },
+      "first_presented": [
+        {
+          "request": "B1226AC1-AEFA-420D-A5CB-FD52B813D972",
+          "id": "d081b5d295b06be76489760749b3424327b909250dddce2faedafbf161889bfd",
+          "generation": "1",
+          "phase": "open_source_pages_unspecified",
+          "wall_seconds": "0.9437488333787769",
+          "physical_resident_bytes": "236838288",
+          "presented_time": "288566.82762666675"
+        }
+      ],
+      "final_memory": {
+        "resident_count": 1,
+        "allocated_bytes": 260521984,
+        "memory_budget_bytes": 17162698752,
+        "comparison_visible": false
+      },
+      "navigation_receipts": {
+        "status": "not-applicable",
+        "reason": "Only one distinct acquisition; no navigation was requested or tested"
+      },
+      "presentations": {
+        "scan-drag": {
+          "rate": {
+            "distinct": 357,
+            "per_s": 119.7,
+            "per_input_second": 119.0,
+            "first_presented_delay_ms": 24.02,
+            "interval_ms": {
+              "n": 356,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "scan_path": "unique-pixel"
+        },
+        "large-ABF-center": {
+          "rate": {
+            "distinct": 236,
+            "per_s": 120.0,
+            "per_input_second": 116.9,
+            "first_presented_delay_ms": 53.02,
+            "interval_ms": {
+              "n": 235,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 8.33
+            }
+          },
+          "scan_path": null
+        },
+        "large-ABF-resize": {
+          "rate": {
+            "distinct": 241,
+            "per_s": 119.5,
+            "per_input_second": 119.4,
+            "first_presented_delay_ms": 4.07,
+            "interval_ms": {
+              "n": 240,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "scan_path": null
+        },
+        "large-ADF-center": {
+          "rate": {
+            "distinct": 240,
+            "per_s": 119.5,
+            "per_input_second": 119.4,
+            "first_presented_delay_ms": 7.75,
+            "interval_ms": {
+              "n": 239,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "scan_path": null
+        },
+        "large-ADF-resize": {
+          "rate": {
+            "distinct": 241,
+            "per_s": 119.5,
+            "per_input_second": 119.4,
+            "first_presented_delay_ms": 3.29,
+            "interval_ms": {
+              "n": 240,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "scan_path": null
+        }
+      },
+      "exact_final_scan": []
+    },
+    {
+      "name": "empad-final-small-gate",
+      "evidence_sha256": "76281c7974d473a195bbf14691c69e7bc9ad0448b0636b79c716a4d440be2977",
+      "process_exit": 0,
+      "problems": [],
+      "performance_gate": {
+        "minimum_fps": 118.0,
+        "status": "pass"
+      },
+      "first_presented": [
+        {
+          "request": "DF7891EE-A02C-41AB-BD43-359EACB11E55",
+          "id": "d081b5d295b06be76489760749b3424327b909250dddce2faedafbf161889bfd",
+          "generation": "1",
+          "phase": "open_source_pages_unspecified",
+          "wall_seconds": "0.9489863333292305",
+          "physical_resident_bytes": "236838288",
+          "presented_time": "288790.5457064167"
+        }
+      ],
+      "final_memory": {
+        "resident_count": 1,
+        "allocated_bytes": 256884736,
+        "memory_budget_bytes": 17162698752,
+        "comparison_visible": false
+      },
+      "navigation_receipts": {
+        "status": "not-applicable",
+        "reason": "Only one distinct acquisition; no navigation was requested or tested"
+      },
+      "presentations": {
+        "scan-drag": {
+          "rate": {
+            "distinct": 358,
+            "per_s": 120.0,
+            "per_input_second": 119.3,
+            "first_presented_delay_ms": 25.76,
+            "interval_ms": {
+              "n": 357,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 8.33
+            }
+          },
+          "scan_path": "unique-pixel"
+        },
+        "large-ABF-center": {
+          "rate": {
+            "distinct": 236,
+            "per_s": 120.0,
+            "per_input_second": 117.4,
+            "first_presented_delay_ms": 46.49,
+            "interval_ms": {
+              "n": 235,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 8.33
+            }
+          },
+          "scan_path": null
+        },
+        "large-ABF-resize": {
+          "rate": {
+            "distinct": 240,
+            "per_s": 119.0,
+            "per_input_second": 119.5,
+            "first_presented_delay_ms": 0.28,
+            "interval_ms": {
+              "n": 239,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 25.0
+            }
+          },
+          "scan_path": null
+        },
+        "large-ADF-center": {
+          "rate": {
+            "distinct": 238,
+            "per_s": 118.0,
+            "per_input_second": 117.9,
+            "first_presented_delay_ms": 3.18,
+            "interval_ms": {
+              "n": 237,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 33.33
+            }
+          },
+          "scan_path": null
+        },
+        "large-ADF-resize": {
+          "rate": {
+            "distinct": 240,
+            "per_s": 119.5,
+            "per_input_second": 119.4,
+            "first_presented_delay_ms": 6.85,
+            "interval_ms": {
+              "n": 239,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "scan_path": null
+        }
+      },
+      "exact_final_scan": [
+        {
+          "row": 5,
+          "column": 39,
+          "exact": true,
+          "name": "final-scan-word-parity"
+        }
+      ]
+    },
+    {
+      "name": "empad-mos2-native-pacing",
+      "evidence_sha256": "8ffcfe478d22334f97eac306d5f474ced0229a8fdcdaab34476428521ff8970b",
+      "process_exit": 0,
+      "problems": [],
+      "performance_gate": {
+        "status": "not requested"
+      },
+      "first_presented": [
+        {
+          "request": "3A6CC936-27F6-4C2B-9F1D-BC15A0732C53",
+          "id": "2cdd7df19b9e4b4296d528ac74e9303990e43e43ae1c7c3192d7370756e26758",
+          "generation": "1",
+          "phase": "open_source_pages_unspecified",
+          "wall_seconds": "13.350244208355434",
+          "physical_resident_bytes": "4358391856",
+          "presented_time": "288500.09094754176"
+        }
+      ],
+      "final_memory": {
+        "resident_count": 1,
+        "allocated_bytes": 4389847040,
+        "memory_budget_bytes": 17162698752,
+        "comparison_visible": false
+      },
+      "navigation_receipts": {
+        "status": "not-applicable",
+        "reason": "Only one distinct acquisition; no navigation was requested or tested"
+      },
+      "presentations": {
+        "scan-drag": {
+          "rate": {
+            "distinct": 357,
+            "per_s": 120.0,
+            "per_input_second": 119.0,
+            "first_presented_delay_ms": 27.63,
+            "interval_ms": {
+              "n": 356,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 8.33
+            }
+          },
+          "scan_path": "unique-pixel"
+        },
+        "large-ABF-center": {
+          "rate": {
+            "distinct": 48,
+            "per_s": 23.9,
+            "per_input_second": 23.5,
+            "first_presented_delay_ms": 61.23,
+            "interval_ms": {
+              "n": 47,
+              "p50": 41.67,
+              "p95": 41.67,
+              "max": 50.0
+            }
+          },
+          "scan_path": null
+        },
+        "large-ABF-resize": {
+          "rate": {
+            "distinct": 48,
+            "per_s": 23.4,
+            "per_input_second": 23.5,
+            "first_presented_delay_ms": 24.25,
+            "interval_ms": {
+              "n": 47,
+              "p50": 41.67,
+              "p95": 50.0,
+              "max": 50.0
+            }
+          },
+          "scan_path": null
+        },
+        "large-ADF-center": {
+          "rate": {
+            "distinct": 39,
+            "per_s": 18.7,
+            "per_input_second": 18.5,
+            "first_presented_delay_ms": 20.59,
+            "interval_ms": {
+              "n": 38,
+              "p50": 50.0,
+              "p95": 58.33,
+              "max": 58.33
+            }
+          },
+          "scan_path": null
+        },
+        "large-ADF-resize": {
+          "rate": {
+            "distinct": 39,
+            "per_s": 18.7,
+            "per_input_second": 18.5,
+            "first_presented_delay_ms": 27.68,
+            "interval_ms": {
+              "n": 38,
+              "p50": 50.0,
+              "p95": 58.33,
+              "max": 58.33
+            }
+          },
+          "scan_path": null
+        }
+      },
+      "exact_final_scan": []
+    },
+    {
+      "name": "empad-two-originals-speed-gate",
+      "evidence_sha256": "6ac61561a21926d74561eb0d4ea30ef96733256f10490e8008a7d9d9c9270944",
+      "process_exit": 0,
+      "problems": [
+        "Presentation gate >= 118.0 updates/s failed: scan-drag: 29.9 updates/s, p95 41.67 ms; large-ABF-center: 23.9 updates/s, p95 50.0 ms; large-ABF-resize: 23.3 updates/s, p95 50.0 ms; large-ADF-center: 18.6 updates/s, p95 58.33 ms; large-ADF-resize: 18.6 updates/s, p95 58.33 ms"
+      ],
+      "performance_gate": {
+        "minimum_fps": 118.0,
+        "status": "fail"
+      },
+      "first_presented": [
+        {
+          "request": "EDCCC1A5-30B6-4A43-B049-0BB2A95292F7",
+          "id": "d081b5d295b06be76489760749b3424327b909250dddce2faedafbf161889bfd",
+          "generation": "1",
+          "phase": "open_source_pages_unspecified",
+          "wall_seconds": "0.9739783749682829",
+          "physical_resident_bytes": "236838288",
+          "presented_time": "288600.0855489584"
+        },
+        {
+          "request": "8CAF8715-4E22-4D2C-B757-BF1CD99EB494",
+          "id": "2cdd7df19b9e4b4296d528ac74e9303990e43e43ae1c7c3192d7370756e26758",
+          "generation": "2",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "13.220684041676577",
+          "physical_resident_bytes": "4595230144",
+          "presented_time": "288614.5603695001"
+        },
+        {
+          "request": "AB34E802-4574-462F-B588-8A74D1442FC8",
+          "id": "d081b5d295b06be76489760749b3424327b909250dddce2faedafbf161889bfd",
+          "generation": "1",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.058038958348333836",
+          "physical_resident_bytes": "4595230144",
+          "presented_time": "288615.10202950006"
+        },
+        {
+          "request": "047BD678-FB3F-4C85-B0BC-163B66D65532",
+          "id": "2cdd7df19b9e4b4296d528ac74e9303990e43e43ae1c7c3192d7370756e26758",
+          "generation": "2",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.05228879168862477",
+          "physical_resident_bytes": "4595230144",
+          "presented_time": "288615.4603583334"
+        }
+      ],
+      "final_memory": {
+        "resident_count": 2,
+        "allocated_bytes": 4634804224,
+        "memory_budget_bytes": 17162698752,
+        "comparison_visible": false
+      },
+      "navigation_receipts": {
+        "sent": 3,
+        "received": 3,
+        "applied_once": 3,
+        "retries": 0
+      },
+      "presentations": {
+        "scan-drag": {
+          "rate": {
+            "distinct": 89,
+            "per_s": 29.9,
+            "per_input_second": 29.7,
+            "first_presented_delay_ms": 22.94,
+            "interval_ms": {
+              "n": 88,
+              "p50": 33.33,
+              "p95": 41.67,
+              "max": 41.67
+            }
+          },
+          "scan_path": "unique-pixel"
+        },
+        "large-ABF-center": {
+          "rate": {
+            "distinct": 48,
+            "per_s": 23.9,
+            "per_input_second": 23.5,
+            "first_presented_delay_ms": 65.72,
+            "interval_ms": {
+              "n": 47,
+              "p50": 41.67,
+              "p95": 50.0,
+              "max": 50.0
+            }
+          },
+          "scan_path": null
+        },
+        "large-ABF-resize": {
+          "rate": {
+            "distinct": 48,
+            "per_s": 23.3,
+            "per_input_second": 23.5,
+            "first_presented_delay_ms": 25.94,
+            "interval_ms": {
+              "n": 47,
+              "p50": 41.67,
+              "p95": 50.0,
+              "max": 91.67
+            }
+          },
+          "scan_path": null
+        },
+        "large-ADF-center": {
+          "rate": {
+            "distinct": 39,
+            "per_s": 18.6,
+            "per_input_second": 18.5,
+            "first_presented_delay_ms": 20.66,
+            "interval_ms": {
+              "n": 38,
+              "p50": 50.0,
+              "p95": 58.33,
+              "max": 58.33
+            }
+          },
+          "scan_path": null
+        },
+        "large-ADF-resize": {
+          "rate": {
+            "distinct": 38,
+            "per_s": 18.6,
+            "per_input_second": 18.5,
+            "first_presented_delay_ms": 28.5,
+            "interval_ms": {
+              "n": 37,
+              "p50": 50.0,
+              "p95": 58.33,
+              "max": 58.33
+            }
+          },
+          "scan_path": null
+        }
+      },
+      "exact_final_scan": []
+    },
+    {
+      "name": "empad-two-originals-fixed",
+      "evidence_sha256": "1c3b9b0bd2de9ac0e2293848b240859cd65d51f3443a7950fbe7ada3bf96ed8f",
+      "process_exit": 0,
+      "problems": [
+        "Presentation gate >= 118.0 updates/s failed: large-ABF-center: 20.0 updates/s, p95 50.0 ms; large-ABF-resize: 19.6 updates/s, p95 58.33 ms; large-ADF-center: 16.4 updates/s, p95 108.33 ms; large-ADF-resize: 15.7 updates/s, p95 66.67 ms"
+      ],
+      "performance_gate": {
+        "minimum_fps": 118.0,
+        "status": "fail"
+      },
+      "first_presented": [
+        {
+          "request": "4E9AE261-866C-4A7E-A605-6B09CD619D16",
+          "id": "d081b5d295b06be76489760749b3424327b909250dddce2faedafbf161889bfd",
+          "generation": "1",
+          "phase": "open_source_pages_unspecified",
+          "wall_seconds": "0.93785608332837",
+          "physical_resident_bytes": "236838288",
+          "presented_time": "288736.4797015417"
+        },
+        {
+          "request": "A2702BC3-E70F-4534-84B6-A08162206F74",
+          "id": "2cdd7df19b9e4b4296d528ac74e9303990e43e43ae1c7c3192d7370756e26758",
+          "generation": "2",
+          "phase": "reload_source_pages_unspecified",
+          "wall_seconds": "13.86701212497428",
+          "physical_resident_bytes": "4595230144",
+          "presented_time": "288751.57118125004"
+        },
+        {
+          "request": "3FDB99CF-AB83-41FE-82EA-E8A27797E4DF",
+          "id": "d081b5d295b06be76489760749b3424327b909250dddce2faedafbf161889bfd",
+          "generation": "1",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.04801341670099646",
+          "physical_resident_bytes": "4595230144",
+          "presented_time": "288752.1545073751"
+        },
+        {
+          "request": "C9EF06E5-A677-4D5E-9AED-4331C545E206",
+          "id": "2cdd7df19b9e4b4296d528ac74e9303990e43e43ae1c7c3192d7370756e26758",
+          "generation": "2",
+          "phase": "resident_cache_switch",
+          "wall_seconds": "0.04638183332281187",
+          "physical_resident_bytes": "4595230144",
+          "presented_time": "288752.50450304174"
+        }
+      ],
+      "final_memory": {
+        "resident_count": 2,
+        "allocated_bytes": 4631674880,
+        "memory_budget_bytes": 17162698752,
+        "comparison_visible": false
+      },
+      "navigation_receipts": {
+        "sent": 3,
+        "received": 3,
+        "applied_once": 3,
+        "retries": 0
+      },
+      "presentations": {
+        "scan-drag": {
+          "rate": {
+            "distinct": 357,
+            "per_s": 119.7,
+            "per_input_second": 119.0,
+            "first_presented_delay_ms": 21.26,
+            "interval_ms": {
+              "n": 356,
+              "p50": 8.33,
+              "p95": 8.33,
+              "max": 16.67
+            }
+          },
+          "scan_path": "unique-pixel"
+        },
+        "large-ABF-center": {
+          "rate": {
+            "distinct": 41,
+            "per_s": 20.0,
+            "per_input_second": 19.5,
+            "first_presented_delay_ms": 65.25,
+            "interval_ms": {
+              "n": 40,
+              "p50": 50.0,
+              "p95": 50.0,
+              "max": 58.33
+            }
+          },
+          "scan_path": null
+        },
+        "large-ABF-resize": {
+          "rate": {
+            "distinct": 41,
+            "per_s": 19.6,
+            "per_input_second": 19.5,
+            "first_presented_delay_ms": 18.01,
+            "interval_ms": {
+              "n": 40,
+              "p50": 50.0,
+              "p95": 58.33,
+              "max": 58.33
+            }
+          },
+          "scan_path": null
+        },
+        "large-ADF-center": {
+          "rate": {
+            "distinct": 34,
+            "per_s": 16.4,
+            "per_input_second": 16.5,
+            "first_presented_delay_ms": 30.49,
+            "interval_ms": {
+              "n": 33,
+              "p50": 58.33,
+              "p95": 108.33,
+              "max": 116.67
+            }
+          },
+          "scan_path": null
+        },
+        "large-ADF-resize": {
+          "rate": {
+            "distinct": 33,
+            "per_s": 15.7,
+            "per_input_second": 15.5,
+            "first_presented_delay_ms": 27.84,
+            "interval_ms": {
+              "n": 32,
+              "p50": 66.67,
+              "p95": 66.67,
+              "max": 66.67
+            }
+          },
+          "scan_path": null
+        }
+      },
+      "exact_final_scan": [
+        {
+          "row": 1,
+          "column": 103,
+          "exact": true,
+          "name": "final-scan-word-parity"
+        }
+      ]
+    }
+  ],
+  "parity": {
+    "all_original_mos2_words_exact": 1073741824,
+    "synthetic_tests": 8,
+    "native_harness_tests": 27,
+    "mixed_grid_cpu_checks": 1024,
+    "before_fix_abf_failures": 8,
+    "after_fix_abf_max_relative": 5.94815033e-08,
+    "native_mos2_bf_abf_adf_max_relative": [
+      3.7818584549961276e-08,
+      5.95597900183867e-08,
+      5.958839554133406e-08
+    ]
+  },
+  "evidence_logs": {
+    "empad-mos2-full-parity": "5d4e273275d86743de8f4c85b432116e08e47b9af395efdca148c32b695e9c95",
+    "empad-mos2-full-parity-fixed": "bc6291cdfad6423a0c764c7c87777958c9f7b70edf83be01630db51e81509087",
+    "empad-cancellation-synthetic": "2a73738fa60200bbf95a2e24277edee2e5f24913ab62e3b8b7c58477a236528c",
+    "empad-mixed-position-cpu": "74b33c68fb1acbac4601754216e95c28c8317af9bf6bd42d25c888cd8462754d",
+    "empad-frame-budget-harness-tests": "5fa0d054e34d8950443faeaf9f321571705214f8583787943c8618935b6c12fe"
+  },
+  "controls": {
+    "empad-frame-budget-controls": {
+      "evidence_sha256": "27c1540af1fdf415848687b612562e0776c0f0ac058190b09617782485878b8c",
+      "failures": []
+    },
+    "empad-mos2-native-controls": {
+      "evidence_sha256": "d0daba9a8294cb4f15348804d0f5e6857a94c95f73fd8cd1ad0ec9a466be630b",
+      "failures": []
+    }
+  },
+  "limitations": [
+    "Larger scan aperture integration still 15.7-23.9 presented updates/s in measured runs; >=118 gate fails",
+    "Small scan gate is >=118 steady updates/s and p95 <=8.475ms, not zero missed refreshes; final ADF max gap33.33ms",
+    "One initial control run ended at unexpected Custom state instead of BF; retained, cause unresolved",
+    "512x512 MoS2 candidate metadata found but original file not downloaded or tested",
+    "Full EMPAD average-DP UI and release qualification remain pending",
+    "Residency of float32 MoS2 source is4358391856bytes; no claim of integer-like compression"
+  ]
+}
