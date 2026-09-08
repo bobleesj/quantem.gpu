@@ -272,9 +272,12 @@ private final class EMPADXML: NSObject, XMLParserDelegate {
   func scanCalibration(rows: Int, columns: Int) -> Native4DSTEMScanCalibration? {
     let modern = "iom_measurements/full_scan_field_of_view/"
     let legacy = "iom_measurements/optics.get_full_scan_field_of_view"
-    let row: Double, column: Double, evidence: String
+    let row: Double
+    let column: Double
+    let evidence: String
     if let x = positive(modern + "x"), let y = positive(modern + "y"),
-      x == y, let factor = positive(modern + "scale_factor") {
+      x == y, let factor = positive(modern + "scale_factor")
+    {
       // EMPAD 1.2 records the same maximum-axis FOV in x and y, including
       // its instrument scale factor. Sampling is isotropic even for rectangles.
       row = x / factor / Double(max(rows, columns)) * 1e10
@@ -283,12 +286,16 @@ private final class EMPADXML: NSObject, XMLParserDelegate {
     } else if let text = fields[legacy],
       let data = text.data(using: .utf8),
       let fov = try? JSONDecoder().decode([Double].self, from: data),
-      fov.count == 2, fov.allSatisfy({ $0.isFinite && $0 > 0 }) {
+      fov.count == 2, fov.allSatisfy({ $0.isFinite && $0 > 0 })
+    {
       row = fov[0] / Double(rows) * 1e10
       column = fov[1] / Double(columns) * 1e10
       evidence = "EMPAD XML optics.get_full_scan_field_of_view (meters, row/column)"
-    } else { return nil }
-    let calibration = Native4DSTEMScanCalibration(rowSamplingAngstrom: row,
+    } else {
+      return nil
+    }
+    let calibration = Native4DSTEMScanCalibration(
+      rowSamplingAngstrom: row,
       columnSamplingAngstrom: column, origin: .sourceMetadata, evidence: evidence)
     return calibration.isValid ? calibration : nil
   }
@@ -394,12 +401,14 @@ private final class EMPADXML: NSObject, XMLParserDelegate {
 
   private func setField(_ key: String, value: String, parser: XMLParser) {
     guard
-      ["pix_x", "pix_y", "type", "acquire/scan_resolution_x", "acquire/scan_resolution_y",
-       "iom_measurements/calibrated_pixelsize",
-       "iom_measurements/optics.get_full_scan_field_of_view",
-       "iom_measurements/full_scan_field_of_view/x",
-       "iom_measurements/full_scan_field_of_view/y",
-       "iom_measurements/full_scan_field_of_view/scale_factor"].contains(
+      [
+        "pix_x", "pix_y", "type", "acquire/scan_resolution_x", "acquire/scan_resolution_y",
+        "iom_measurements/calibrated_pixelsize",
+        "iom_measurements/optics.get_full_scan_field_of_view",
+        "iom_measurements/full_scan_field_of_view/x",
+        "iom_measurements/full_scan_field_of_view/y",
+        "iom_measurements/full_scan_field_of_view/scale_factor",
+      ].contains(
         key)
     else { return }
     if let previous = fields[key], previous != value { parser.abortParsing() }
