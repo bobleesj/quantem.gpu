@@ -27,11 +27,18 @@ extension OriginalHDF5Packing {
     var headersGPU = 0.0, dpcGPU = 0.0, valuesGPU = 0.0, verifyGPU = 0.0
     var prefixWall = 0.0
     var scalarSlices = 0
+    var scalarDecodeThreads = 128, bitshufflePackingThreads = 128
+    var decodePipelineThreadLimit = 0
+    var packingPipelineThreadLimit = 0
+    var bitshufflePixelsPerThread = 1
     var alignedFillSlices = 0
+    var zeroTailSlices = 0
     var alignedCopySlices = 0
     var transposeSlices = 0
     var directBitshuffleWindows = 0, directBitshuffleShortSlices = 0
     var directBitshuffleSIMDGatherWindows = 0
+    var packedPayloadLayout: UInt32 = 0
+    var maximumWidthHistogram: [Int] = []
     var directBitshuffleGPU = 0.0, directBitshuffleWall = 0.0
     var planRead = 0.0, planDecodeGPU = 0.0, planDecodeCPU = 0.0, planWrite = 0.0
     var planReadBytes: UInt64 = 0, planOutputBytes: UInt64 = 0
@@ -66,12 +73,20 @@ extension OriginalHDF5Packing {
         "isolated_verify_and_retention_gpu_seconds": verifyGPU,
         "prefix_wall_seconds": prefixWall,
         "scalar_decode_slices": scalarSlices,
+        "scalar_decode_threads": scalarDecodeThreads,
+        "decode_pipeline_thread_limit": decodePipelineThreadLimit,
+        "packing_pipeline_thread_limit": packingPipelineThreadLimit,
+        "bitshuffle_packing_threads": bitshufflePackingThreads,
+        "bitshuffle_pixels_per_thread": bitshufflePixelsPerThread,
         "aligned_repeat_fill_slices": alignedFillSlices,
+        "zero_tail_slices": zeroTailSlices,
         "aligned_history_copy_slices": alignedCopySlices,
         "transpose_unshuffle_slices": transposeSlices,
         "direct_bitshuffle_windows": directBitshuffleWindows,
         "direct_bitshuffle_short_slices": directBitshuffleShortSlices,
         "direct_bitshuffle_simd_gather_windows": directBitshuffleSIMDGatherWindows,
+        "packed_payload_layout": packedPayloadLayout,
+        "maximum_width_histogram": maximumWidthHistogram,
         "direct_bitshuffle_gpu_seconds": directBitshuffleGPU,
         "direct_bitshuffle_wall_seconds": directBitshuffleWall,
         "direct_bitshuffle_dense_bytes": 0,

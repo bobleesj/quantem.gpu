@@ -265,7 +265,9 @@ enum OriginalPackingLayoutCache {
 
   /// Single-owner streaming writer. A failed or abandoned write removes only
   /// its uniquely created temporary file; the previous complete cache survives.
-  final class Writer {
+  /// Mutable state is confined to the serial queue after initialization.
+  /// Queued closures retain the writer, so deinitialization cannot race them.
+  final class Writer: @unchecked Sendable {
     private let destination, temporary: URL
     private let destinationStamp: SourceStamp?
     private let binding: Binding

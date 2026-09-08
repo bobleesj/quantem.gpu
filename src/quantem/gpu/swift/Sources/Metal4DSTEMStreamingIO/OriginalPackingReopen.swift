@@ -5,7 +5,7 @@ import Native4DSTEMIO
 extension OriginalHDF5Packing {
   func packBitshufflePlan(
     source: Native4DSTEMIndexedSource, windows: [Native4DSTEMIndexedWindow], frames: Int,
-    moments: Data, packingPlanURL: URL, maximumAdditionalBytes: UInt64?, priorProfile: Profile?,
+    moments: Data?, packingPlanURL: URL, maximumAdditionalBytes: UInt64?, priorProfile: Profile?,
     validateInputs: () throws -> Void, shouldCancel: () -> Bool,
     progress: (Int, Int) -> Void
   ) throws -> OriginalPackedBuffers? {
@@ -14,14 +14,25 @@ extension OriginalHDF5Packing {
     guard cpuPlanDecode, let scalarDecode, let bitshuffleValues, let bitshuffleReduce,
       let rangesPipeline, scalarDecode.threadExecutionWidth == 32,
       source.sourceBytesPerValue == 2, pixels.isMultiple(of: 4096),
+      moments != nil || (bitshuffleDPC != nil && dataset.detectorCols.isMultiple(of: 32)),
       source.shards.allSatisfy({ Int($0.index.metadata.nBlocksPerFrame) * 4096 == pixels }),
       let identity = dataset.sourceIdentitySHA256
     else { return nil }
     let tiles = frames / 32
+    let useZeroTail =
+      moments != nil && frames <= 8192 && alignedRepeatFill && !alignedHistoryCopy
+      && bitshufflePayloadLayout == 1 && bitshufflePixelsPerThread == 4
+      && zeroTailDecode != nil && zeroTailValues != nil
     let checkpoints = (tiles + 31) / 32
     let headerStride = checkpoints + (tiles + 7) / 8
     let headerBytes = pixels * headerStride * 4
     let headerCapacity = ((headerBytes + 8191) / 8192) * 8192
+    // After retaining the private header copy, the shared slot is dead until
+    // its next CPU plan decode. Reuse it for exact per-scan DPC values, never
+    // allocate another GPU staging or resident buffer.
+    guard moments != nil || headerCapacity >= frames * 32 else { return nil }
+    var residentMomentData = moments ?? Data()
+    if moments == nil { residentMomentData.reserveCapacity(source.logicalFrameCount * 32) }
     let sourceFiles =
       (dataset.masterPath.map { [URL(fileURLWithPath: $0)] } ?? []) + source.shards.map(\.sourceURL)
     guard
@@ -34,9 +45,15 @@ extension OriginalHDF5Packing {
       let planReader = OriginalPackingLayoutCache.Reader(url: packingPlanURL, binding: binding)
     else { return nil }
     var profile = priorProfile ?? Profile()
+    profile.scalarDecodeThreads = scalarDecodeThreads
+    profile.decodePipelineThreadLimit = scalarDecode.maxTotalThreadsPerThreadgroup
+    profile.packingPipelineThreadLimit =
+      (useZeroTail ? zeroTailValues! : bitshuffleValues).maxTotalThreadsPerThreadgroup
+    profile.bitshufflePackingThreads = bitshufflePackingThreads
+    profile.bitshufflePixelsPerThread = bitshufflePixelsPerThread
     profile.decodeWindowFrames = frames
     profile.planStatus = "hit"
-    profile.reusedDPC = true
+    profile.reusedDPC = moments != nil
     let stageProfiler = OriginalPackingStageProfiler.makeIfRequested(
       device: device, expectedWindows: windows.count)
     defer { stageProfiler?.reportSummary() }
@@ -51,7 +68,7 @@ extension OriginalHDF5Packing {
     let fixedStaging =
       UInt64(
         scratchBytes + 2 * partialBytes + headerCapacity + 1
-          + extraHeaderBytes + pixels * 16 + 8 + moments.count) + (64 << 20)
+          + extraHeaderBytes + pixels * 16 + 8 + source.logicalFrameCount * 32) + (64 << 20)
     var residentBytes: UInt64 = 0
     var peakStaging = fixedStaging
     func admit(inputBytes: UInt64, payloadBytes: UInt64) throws {
@@ -215,7 +232,7 @@ extension OriginalHDF5Packing {
             let encoder = stageWindow.map({ $0.computeEncoder(command, stage: sliceIndex) })
               ?? command.makeComputeCommandEncoder()
           else { throw Self.invalid("Cannot encode exact source decode") }
-          encoder.setComputePipelineState(scalarDecode)
+          encoder.setComputePipelineState(useZeroTail ? zeroTailDecode! : scalarDecode)
           encoder.setBuffer(input.compressed, offset: 0, index: 0)
           encoder.setBuffer(input.metadata, offset: 0, index: 1)
           encoder.setBytes(&zero64, length: 8, index: 2)
@@ -225,9 +242,17 @@ extension OriginalHDF5Packing {
           encoder.setBytes(&zero, length: 4, index: 6)
           encoder.setBuffer(errors, offset: 0, index: 10)
           encoder.setBytes(&frameCount, length: 4, index: 11)
+          if useZeroTail {
+            // Exact terminal-zero metadata temporarily reuses the sum buffer.
+            // Packing consumes it before the summary reduction overwrites it.
+            var tailOffset = UInt32(frameOffset * blocks)
+            encoder.setBuffer(sums, offset: 0, index: 12)
+            encoder.setBytes(&tailOffset, length: 4, index: 13)
+            profile.zeroTailSlices += 1
+          }
           encoder.dispatchThreads(
             MTLSize(width: count * blocks, height: 1, depth: 1),
-            threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
+            threadsPerThreadgroup: MTLSize(width: scalarDecodeThreads, height: 1, depth: 1))
           encoder.endEncoding()
           profile.scalarSlices += 1
           if count < 2048 { profile.directBitshuffleShortSlices += 1 }
@@ -244,18 +269,19 @@ extension OriginalHDF5Packing {
           })
             ?? command.makeComputeCommandEncoder()
         else { throw Self.invalid("Cannot encode verified bitshuffle packing") }
-        packing.setComputePipelineState(bitshuffleValues)
+        packing.setComputePipelineState(useZeroTail ? zeroTailValues! : bitshuffleValues)
         for (index, value) in [scratch, headers, payload, errors].enumerated() {
           packing.setBuffer(value, offset: 0, index: index)
         }
         packing.setBytes(&shape, length: MemoryLayout<Shape>.stride, index: 4)
         packing.setBuffer(partialSums, offset: 0, index: 5)
         packing.setBuffer(partialMaximums, offset: 0, index: 6)
+        if useZeroTail { packing.setBuffer(sums, offset: 0, index: 7) }
         packing.dispatchThreads(
-          MTLSize(width: pixels * checkpoints, height: 1, depth: 1),
+          MTLSize(width: pixels * checkpoints / bitshufflePixelsPerThread, height: 1, depth: 1),
           threadsPerThreadgroup: MTLSize(
             width: bitshuffleSIMDGather
-              ? 128
+              ? bitshufflePackingThreads
               : min(64, bitshuffleValues.maxTotalThreadsPerThreadgroup), height: 1, depth: 1))
         packing.endEncoding()
         guard
@@ -284,6 +310,20 @@ extension OriginalHDF5Packing {
           from: headers, sourceOffset: 0, to: privateHeaders, destinationOffset: 0,
           size: headerBytes)
         blit.endEncoding()
+        if moments == nil {
+          guard let bitshuffleDPC, let dpc = command.makeComputeCommandEncoder() else {
+            throw Self.invalid("Cannot encode exact source-bitshuffle DPC")
+          }
+          dpc.setComputePipelineState(bitshuffleDPC)
+          dpc.setBuffer(scratch, offset: 0, index: 0)
+          dpc.setBuffer(headers, offset: 0, index: 1)
+          dpc.setBytes(&shape, length: MemoryLayout<Shape>.stride, index: 2)
+          dpc.setBuffer(errors, offset: 0, index: 3)
+          dpc.dispatchThreads(
+            MTLSize(width: frames * 32, height: 1, depth: 1),
+            threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
+          dpc.endEncoding()
+        }
         if shouldCancel() { throw Metal4DSTEMStreamingIOError.cancelled }
         let commandStarted = CFAbsoluteTimeGetCurrent()
         // No pending command escapes this scope, even when cancellation or a
@@ -330,6 +370,9 @@ extension OriginalHDF5Packing {
         }
         if let preparationError { throw preparationError }
         if shouldCancel() { throw Metal4DSTEMStreamingIOError.cancelled }
+        if moments == nil {
+          residentMomentData.append(Data(bytes: headers.contents(), count: frames * 32))
+        }
         let sumWords = sums.contents().assumingMemoryBound(to: UInt64.self)
         for pixel in 0..<pixels { detectorSum[pixel] += sumWords[pixel] }
         residentShards.append((payload, privateHeaders))
@@ -356,10 +399,16 @@ extension OriginalHDF5Packing {
     if maximum <= 255 && maximumWidths.contains(where: { $0 > 8 }) {
       throw CacheMismatch(profile: profile)
     }
+    profile.packedPayloadLayout = bitshufflePayloadLayout
+    profile.maximumWidthHistogram = maximumWidths.reduce(into: [Int](repeating: 0, count: 17)) {
+      $0[Int($1)] += 1
+    }
     reportProfile(profile)
     return OriginalPackedBuffers(
+      payloadLayout: bitshufflePayloadLayout,
       dataset: dataset, frames: frames, headerStride: headerStride,
-      shards: residentShards, moments: moments, detectorSum: detectorSum, maximum: maximum,
+      shards: residentShards, moments: residentMomentData, detectorSum: detectorSum,
+      maximum: maximum,
       maximumWidths: maximumWidths,
       calibration: measuredDetector(
         detectorSum, rows: dataset.detectorRows, columns: dataset.detectorCols,
@@ -367,7 +416,7 @@ extension OriginalHDF5Packing {
       readSeconds: profile.read, decodeSeconds: profile.decodeGPU,
       decodeAndHeaderSeconds: profile.decodeAndHeadersGPU,
       packingSeconds: profile.productsGPU + profile.packingGPU + profile.planDecodeGPU,
-      reusedDPC: true, combinedDecodePackingSeconds: profile.directBitshuffleGPU)
+      reusedDPC: moments != nil, combinedDecodePackingSeconds: profile.directBitshuffleGPU)
   }
 
   func decodePlan(

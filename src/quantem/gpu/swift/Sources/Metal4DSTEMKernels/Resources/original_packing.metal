@@ -51,6 +51,126 @@ kernel void original_packing_values_verified_checkpoints(
     }
 }
 
+inline uint originalEvenBits(uint value) {
+    value &= 0x55555555u;
+    value = (value | (value >> 1u)) & 0x33333333u;
+    value = (value | (value >> 2u)) & 0x0f0f0f0fu;
+    value = (value | (value >> 4u)) & 0x00ff00ffu;
+    return (value | (value >> 8u)) & 0xffffu;
+}
+
+inline uint originalThirdBits(uint value) {
+    uint high = (value >> 20u) & 0x400u;
+    value &= 0x09249249u;
+    value = (value ^ (value >> 2u)) & 0x030c30c3u;
+    value = (value ^ (value >> 4u)) & 0x0300f00fu;
+    value = (value ^ (value >> 8u)) & 0x030000ffu;
+    value = (value ^ (value >> 16u)) & 0x000003ffu;
+    return value | high;
+}
+
+inline uint originalFourthBits(uint value) {
+    value &= 0x11111111u;
+    value = (value | (value >> 3u)) & 0x03030303u;
+    value = (value | (value >> 6u)) & 0x000f000fu;
+    return (value | (value >> 12u)) & 0xffu;
+}
+
+// First-load path: verify the bounded decoded source against interleaved
+// words, then transpose the verified cell in registers and verify its stores.
+// Widths zero and one need no conversion; common two- to four-bit cases
+// use exact register-level transposition.
+inline uint originalPackCountsAsPlanes(
+    const device uchar *source, const device uint *headers,
+    volatile device uint *payload, device atomic_uint *errors,
+    constant OriginalPackingShape &s, uint index) {
+    if (!s.pixels || !s.scans || s.scans % 32u || (s.sourceBytes != 1u && s.sourceBytes != 2u)) {
+        atomic_fetch_or_explicit(errors, 2u, memory_order_relaxed);
+        return 0u;
+    }
+    uint tiles = s.scans / 32u, checkpoints = (tiles + 31u) / 32u;
+    uint pixel = index % s.pixels, checkpoint = index / s.pixels;
+    if (checkpoint >= checkpoints || atomic_load_explicit(errors, memory_order_relaxed)) return 0u;
+    uint stride = checkpoints + (tiles + 7u) / 8u;
+    uint offset = headers[pixel * stride];
+    if (checkpoint) offset += headers[pixel * stride + checkpoint];
+    uint sum = 0u;
+    for (uint tile = checkpoint * 32u; tile < min(tiles, (checkpoint + 1u) * 32u); ++tile) {
+        uint bits = (headers[pixel * stride + checkpoints + tile / 8u] >> ((tile % 8u) * 4u)) & 15u;
+        if (bits == 15u) bits = 16u;
+        uint originals[32];
+        uint packed = 0u, occupied = 0u, outputWord = 0u;
+        for (uint sample = 0u; sample < 32u; ++sample) {
+            uint value = original_count(source, tile * 32u + sample, pixel, s);
+            originals[sample] = value;
+            sum += value;
+            if (bits) {
+                packed |= value << occupied;
+                occupied += bits;
+                if (occupied >= 32u) {
+                    payload[offset + outputWord++] = packed;
+                    occupied -= 32u;
+                    packed = occupied ? value >> (bits - occupied) : 0u;
+                }
+            }
+        }
+        uint mask = (1u << bits) - 1u;
+        for (uint sample = 0u; sample < 32u; ++sample) {
+            uint bit = sample * bits, shift = bit % 32u;
+            ulong value = bits ? ulong(payload[offset + bit / 32u]) >> shift : 0u;
+            if (shift + bits > 32u) value |= ulong(payload[offset + bit / 32u + 1u]) << (32u - shift);
+            if ((value & mask) != originals[sample])
+                atomic_fetch_add_explicit(errors, 1u, memory_order_relaxed);
+        }
+        if (bits > 1u) {
+            uint4 words = uint4(0u);
+            if (bits <= 4u) {
+                for (uint word = 0u; word < bits; ++word) words[word] = payload[offset + word];
+            }
+            for (uint plane = 0u; plane < bits; ++plane) {
+                uint value = 0u;
+                if (bits == 2u) {
+                    value = originalEvenBits(words[0] >> plane)
+                        | (originalEvenBits(words[1] >> plane) << 16u);
+                } else if (bits == 3u) {
+                    uint secondShift = (plane + 1u) % 3u, thirdShift = (plane + 2u) % 3u;
+                    uint firstCount = (34u - plane) / 3u, secondCount = (34u - secondShift) / 3u;
+                    value = originalThirdBits(words[0] >> plane)
+                        | (originalThirdBits(words[1] >> secondShift) << firstCount)
+                        | (originalThirdBits(words[2] >> thirdShift) << (firstCount + secondCount));
+                } else if (bits == 4u) {
+                    for (uint word = 0u; word < 4u; ++word)
+                        value |= originalFourthBits(words[word] >> plane) << (8u * word);
+                } else {
+                    for (uint sample = 0u; sample < 32u; ++sample)
+                        value |= ((originals[sample] >> plane) & 1u) << sample;
+                }
+                payload[offset + plane] = value;
+                if (payload[offset + plane] != value)
+                    atomic_fetch_add_explicit(errors, 1u, memory_order_relaxed);
+            }
+        }
+        offset += bits;
+    }
+    return sum;
+}
+
+kernel void original_packing_values_planes_checkpoints(
+    const device uchar *source [[buffer(0)]], const device uint *headers [[buffer(1)]],
+    volatile device uint *payload [[buffer(2)]], device atomic_uint *errors [[buffer(3)]],
+    constant OriginalPackingShape &s [[buffer(4)]], uint index [[thread_position_in_grid]]) {
+    originalPackCountsAsPlanes(source, headers, payload, errors, s, index);
+}
+
+kernel void original_packing_values_planes_checkpoints_summary(
+    const device uchar *source [[buffer(0)]], const device uint *headers [[buffer(1)]],
+    volatile device uint *payload [[buffer(2)]], device atomic_uint *errors [[buffer(3)]],
+    constant OriginalPackingShape &s [[buffer(4)]], device uint *partialSums [[buffer(5)]],
+    uint index [[thread_position_in_grid]]) {
+    if (!s.pixels || index >= s.pixels * ((s.scans / 32u + 31u) / 32u)) return;
+    partialSums[index] = originalPackCountsAsPlanes(source, headers, payload, errors, s, index);
+}
+
 // Input is complete checked LZ4-expanded uint16
 // bitshuffle blocks, not dense counts. All frames and all 16 planes remain.
 // Count verification below compares actual packed payload with reconstructed
@@ -156,6 +276,203 @@ kernel void original_packing_bitshuffle_transpose_verified_summary(
         partialSums[ulong(checkpoint) * s.pixels + pixel] = sum;
         partialMaximums[ulong(checkpoint) * s.pixels + pixel] = maximum;
     }
+}
+
+// Transpose source bit planes across 32 scan positions directly into the
+// resident cell. Every source bit is checked, including absent high planes;
+// this proves all counts without constructing 32 scalar counts per lane.
+inline void originalPackingBitshufflePlanes(
+    const device uchar *source, const device uint *headers,
+    volatile device uint *payload, device atomic_uint *errors,
+    constant OriginalPackingShape &s, device uint *partialSums,
+    device uint *partialMaximums, uint index, uint lane, uint simdWidth,
+    uint groupThreads) {
+    bool invalid = !s.pixels || !s.scans || s.scans % 32u || s.sourceBytes != 2u
+        || s.pixels % 4096u || simdWidth != 32u || index % 32u != lane
+        || groupThreads % 32u != 0u;
+    if (simd_any(invalid)) {
+        if (lane == 0u) atomic_fetch_or_explicit(errors, 2u, memory_order_relaxed);
+        return;
+    }
+    uint tiles = s.scans / 32u, checkpoints = (tiles + 31u) / 32u;
+    uint pixel = index % s.pixels, checkpoint = index / s.pixels;
+    if (checkpoint >= checkpoints) return;
+    if (simd_any(atomic_load_explicit(errors, memory_order_relaxed) != 0u)) return;
+    uint stride = checkpoints + (tiles + 7u) / 8u;
+    uint offset = headers[pixel * stride];
+    if (checkpoint) offset += headers[pixel * stride + checkpoint];
+    uint sum = 0u, maximum = 0u;
+    bool valid = true;
+    for (uint tile = checkpoint * 32u; tile < min(tiles, (checkpoint + 1u) * 32u); ++tile) {
+        uint bits = (headers[pixel * stride + checkpoints + tile / 8u] >> ((tile % 8u) * 4u)) & 15u;
+        if (bits == 15u) bits = 16u;
+        uint candidates = 0xffffffffu, tileMaximum = 0u;
+        for (int plane = 15; plane >= 0; --plane) {
+            ulong scan = ulong(tile) * 32ul + lane;
+            const device uint *input = (const device uint *)(source
+                + scan * s.pixels * 2ul + ulong(pixel / 4096u) * 8192ul);
+            uint value = input[uint(plane) * 128u + (pixel % 4096u) / 32u];
+            if (simd_any(value != 0u)) {
+                #pragma unroll
+                for (uint shift = 1u; shift <= 16u; shift *= 2u) {
+                    uint mask = 0xffffffffu / ((1u << shift) + 1u);
+                    uint other = simd_shuffle_xor(value, shift);
+                    value = (lane & shift)
+                        ? (value & ~mask) | ((other & ~mask) >> shift)
+                        : (value & mask) | ((other & mask) << shift);
+                }
+            }
+            uint restored = 0u;
+            if (uint(plane) < bits) {
+                payload[offset + uint(plane)] = value;
+                restored = payload[offset + uint(plane)];
+            }
+            if (restored != value) {
+                atomic_fetch_add_explicit(errors, 1u, memory_order_relaxed);
+                valid = false;
+            }
+            sum += popcount(value) << uint(plane);
+            uint nextCandidates = candidates & value;
+            if (nextCandidates != 0u) {
+                tileMaximum |= 1u << uint(plane);
+                candidates = nextCandidates;
+            }
+        }
+        maximum = max(maximum, tileMaximum);
+        offset += bits;
+    }
+    if (valid) {
+        partialSums[ulong(checkpoint) * s.pixels + pixel] = sum;
+        partialMaximums[ulong(checkpoint) * s.pixels + pixel] = maximum;
+    }
+}
+
+kernel void original_packing_bitshuffle_planes_verified_summary(
+    const device uchar *source [[buffer(0)]], const device uint *headers [[buffer(1)]],
+    volatile device uint *payload [[buffer(2)]], device atomic_uint *errors [[buffer(3)]],
+    constant OriginalPackingShape &s [[buffer(4)]], device uint *partialSums [[buffer(5)]],
+    device uint *partialMaximums [[buffer(6)]], uint index [[thread_position_in_grid]],
+    uint lane [[thread_index_in_simdgroup]], uint simdWidth [[threads_per_simdgroup]],
+    uint groupThreads [[threads_per_threadgroup]]) {
+    originalPackingBitshufflePlanes(source, headers, payload, errors, s,
+        partialSums, partialMaximums, index, lane, simdWidth, groupThreads);
+}
+
+
+// Four neighboring source words per lane improve transaction utilization.
+// Each component remains an independent exact detector column. No temporary
+// count volume or auxiliary resident representation is constructed.
+template<typename Vector, uint columns, bool hasZeroTail = false>
+inline void originalPackingBitshufflePlaneVectors(
+    const device uchar *source, const device uint *headers,
+    volatile device uint *payload, device atomic_uint *errors,
+    constant OriginalPackingShape &s, device uint *partialSums,
+    device uint *partialMaximums, uint index,
+    uint lane, uint simdWidth,
+    uint groupThreads, const device uint *zeroTails = nullptr) {
+    bool invalid = !s.pixels || !s.scans || s.scans % 32u || s.sourceBytes != 2u
+        || s.pixels % 4096u || simdWidth != 32u || index % 32u != lane
+        || groupThreads % 32u != 0u;
+    if (simd_any(invalid)) {
+        if (lane == 0u) atomic_fetch_or_explicit(errors, 2u, memory_order_relaxed);
+        return;
+    }
+    uint tiles = s.scans / 32u, checkpoints = (tiles + 31u) / 32u;
+    uint checkpoint = index / (s.pixels / columns);
+    if (checkpoint >= checkpoints) return;
+    if (simd_any(atomic_load_explicit(errors, memory_order_relaxed) != 0u)) return;
+    uint pixelGroup = ((index % (s.pixels / columns)) / 32u) * (32u * columns);
+    Vector pixels;
+    #pragma unroll
+    for (uint part = 0u; part < columns; ++part) pixels[part] = pixelGroup + lane + part * 32u;
+    uint stride = checkpoints + (tiles + 7u) / 8u;
+    Vector offset, sum = Vector(0u), maximum = Vector(0u);
+    #pragma unroll
+    for (uint part = 0u; part < columns; ++part) {
+        offset[part] = headers[pixels[part] * stride];
+        if (checkpoint) offset[part] += headers[pixels[part] * stride + checkpoint];
+    }
+    bool valid = true;
+    for (uint tile = checkpoint * 32u; tile < min(tiles, (checkpoint + 1u) * 32u); ++tile) {
+        Vector bits;
+        #pragma unroll
+        for (uint part = 0u; part < columns; ++part) {
+            uint width = (headers[pixels[part] * stride + checkpoints + tile / 8u]
+                >> ((tile % 8u) * 4u)) & 15u;
+            bits[part] = width == 15u ? 16u : width;
+        }
+        Vector candidates = Vector(0xffffffffu), tileMaximum = Vector(0u);
+        uint zeroTail = 8192u;
+        if (hasZeroTail) zeroTail = zeroTails[(tile * 32u + lane) * (s.pixels / 4096u) + pixelGroup / 4096u];
+        for (int plane = 15; plane >= 0; --plane) {
+            ulong scan = ulong(tile) * 32ul + lane;
+            const device Vector *input = (const device Vector *)(source
+                + scan * s.pixels * 2ul + ulong(pixelGroup / 4096u) * 8192ul);
+            uint sourceByte = uint(plane) * 512u + (pixelGroup % 4096u) / 8u;
+            Vector value = sourceByte < zeroTail
+                ? input[sourceByte / (4u * columns)] : Vector(0u);
+            if (simd_any(any(value != Vector(0u)))) {
+                #pragma unroll
+                for (uint shift = 1u; shift <= 16u; shift *= 2u) {
+                    uint mask = 0xffffffffu / ((1u << shift) + 1u);
+                    Vector other = simd_shuffle_xor(value, shift);
+                    value = (lane & shift)
+                        ? (value & ~mask) | ((other & ~mask) >> shift)
+                        : (value & mask) | ((other & mask) << shift);
+                }
+            }
+            #pragma unroll
+            for (uint part = 0u; part < columns; ++part) {
+                if (uint(plane) < bits[part]) payload[offset[part] + uint(plane)] = value[part];
+            }
+            #pragma unroll
+            for (uint part = 0u; part < columns; ++part) {
+                uint restored = uint(plane) < bits[part]
+                    ? payload[offset[part] + uint(plane)] : 0u;
+                if (restored != value[part]) {
+                    atomic_fetch_add_explicit(errors, 1u, memory_order_relaxed);
+                    valid = false;
+                }
+            }
+            sum += popcount(value) << uint(plane);
+            Vector nextCandidates = candidates & value;
+            auto hasCandidate = nextCandidates != Vector(0u);
+            tileMaximum |= select(Vector(0u), Vector(1u << uint(plane)), hasCandidate);
+            candidates = select(candidates, nextCandidates, hasCandidate);
+        }
+        maximum = max(maximum, tileMaximum);
+        offset += bits;
+    }
+    if (valid) {
+        #pragma unroll
+        for (uint part = 0u; part < columns; ++part) {
+            partialSums[ulong(checkpoint) * s.pixels + pixels[part]] = sum[part];
+            partialMaximums[ulong(checkpoint) * s.pixels + pixels[part]] = maximum[part];
+        }
+    }
+}
+
+
+kernel void original_packing_bitshuffle_planes_vector4_summary(
+    const device uchar *source [[buffer(0)]], const device uint *headers [[buffer(1)]],
+    volatile device uint *payload [[buffer(2)]], device atomic_uint *errors [[buffer(3)]],
+    constant OriginalPackingShape &s [[buffer(4)]], device uint *partialSums [[buffer(5)]],
+    device uint *partialMaximums [[buffer(6)]], uint index [[thread_position_in_grid]],
+    uint lane [[thread_index_in_simdgroup]], uint simdWidth [[threads_per_simdgroup]],
+    uint groupThreads [[threads_per_threadgroup]]) {
+    originalPackingBitshufflePlaneVectors<uint4, 4u>(source, headers, payload, errors, s,
+        partialSums, partialMaximums, index, lane, simdWidth, groupThreads);
+}
+
+kernel void original_packing_bitshuffle_planes_zero_tail_summary(
+    const device uchar *source [[buffer(0)]], const device uint *headers [[buffer(1)]],
+    volatile device uint *payload [[buffer(2)]], device atomic_uint *errors [[buffer(3)]],
+    constant OriginalPackingShape &s [[buffer(4)]], device uint *partialSums [[buffer(5)]],
+    device uint *partialMaximums [[buffer(6)]], const device uint *zeroTails [[buffer(7)]],
+    uint index [[thread_position_in_grid]], uint lane [[thread_index_in_simdgroup]],
+    uint simdWidth [[threads_per_simdgroup]], uint groupThreads [[threads_per_threadgroup]]) {
+    originalPackingBitshufflePlaneVectors<uint4, 4u, true>(source, headers, payload, errors, s,
+        partialSums, partialMaximums, index, lane, simdWidth, groupThreads, zeroTails);
 }
 
 kernel void original_packing_bitshuffle_verified_summary(
@@ -412,6 +729,52 @@ kernel void original_packing_verify(
         }
         offset += bits;
     }
+}
+
+// Exact intensity and row/column weighted sums directly from source bit planes.
+// A 32-pixel word stays within one detector row (columns must be divisible by 32).
+// Five bit-position masks recover the column weight without dense unshuffle.
+kernel void original_packing_bitshuffle_dpc(
+    const device uchar *source [[buffer(0)]], device ulong4 *dpc [[buffer(1)]],
+    constant OriginalPackingShape &s [[buffer(2)]], device atomic_uint *errors [[buffer(3)]],
+    uint index [[thread_position_in_grid]], uint lane [[thread_index_in_simdgroup]],
+    uint simdWidth [[threads_per_simdgroup]]) {
+    if (s.sourceBytes != 2u || s.pixels % 4096u || !s.columns || s.columns % 32u
+        || simdWidth != 32u) {
+        if (index == 0u) atomic_fetch_or_explicit(errors, 4u, memory_order_relaxed);
+        return;
+    }
+    uint scan = index / 32u;
+    if (scan >= s.scans) return;
+    ulong total = 0ul, row = 0ul, column = 0ul;
+    for (uint wordIndex = lane; wordIndex < s.pixels / 32u; wordIndex += 32u) {
+        uint pixel = wordIndex * 32u;
+        const device uint *block = (const device uint *)(source
+            + ulong(scan) * s.pixels * 2ul + ulong(pixel / 4096u) * 8192ul);
+        uint rowIndex = pixel / s.columns, columnIndex = pixel % s.columns;
+        for (uint plane = 0u; plane < 16u; ++plane) {
+            uint word = block[plane * 128u + (pixel % 4096u) / 32u];
+            if (!word) continue;
+            ulong count = ulong(popcount(word));
+            uint localColumn = popcount(word & 0xaaaaaaaau)
+                + 2u * popcount(word & 0xccccccccu)
+                + 4u * popcount(word & 0xf0f0f0f0u)
+                + 8u * popcount(word & 0xff00ff00u)
+                + 16u * popcount(word & 0xffff0000u);
+            total += count << plane;
+            row += (count * rowIndex) << plane;
+            column += (count * columnIndex + ulong(localColumn)) << plane;
+        }
+    }
+    for (uint delta = 16u; delta; delta >>= 1u) {
+        total += ulong(simd_shuffle_down(uint(total), delta))
+            | (ulong(simd_shuffle_down(uint(total >> 32u), delta)) << 32u);
+        row += ulong(simd_shuffle_down(uint(row), delta))
+            | (ulong(simd_shuffle_down(uint(row >> 32u), delta)) << 32u);
+        column += ulong(simd_shuffle_down(uint(column), delta))
+            | (ulong(simd_shuffle_down(uint(column >> 32u), delta)) << 32u);
+    }
+    if (lane == 0u) dpc[scan] = ulong4(total, row, column, 0ul);
 }
 
 kernel void original_packing_moments(

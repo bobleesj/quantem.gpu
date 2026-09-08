@@ -103,6 +103,7 @@ extension MetalCompactH5Loader {
 
 /// Internal ownership transfer, never a persisted cache or public result type.
 struct OriginalPackedBuffers {
+  var payloadLayout: UInt32 = 0
   let dataset: Native4DSTEMDataset
   let frames: Int
   let headerStride: Int
@@ -187,6 +188,7 @@ final class OriginalHDF5Packing {
   let decode8, decode16, headersPipeline, valuesPipeline: MTLComputePipelineState
   let verifyPipeline, momentsPipeline, narrowPipeline: MTLComputePipelineState
   let scalarDecode, scalarUnshuffle: MTLComputePipelineState?
+  let standardPlaneValues, standardPlaneSummary: MTLComputePipelineState?
   let rangesPipeline, verifiedValuesPipeline: MTLComputePipelineState?
   let checkpointPacking: Bool
   let alignedRepeatFill: Bool
@@ -196,7 +198,13 @@ final class OriginalHDF5Packing {
   let planDecode, summaryValues, summaryReduce: MTLComputePipelineState?
   let cpuPlanDecode: Bool
   let bitshuffleValues, bitshuffleReduce: MTLComputePipelineState?
+  let bitshuffleDPC: MTLComputePipelineState?
+  let zeroTailDecode, zeroTailValues: MTLComputePipelineState?
+  var bitshufflePayloadLayout: UInt32 = 0
+  var bitshufflePixelsPerThread = 1
   let bitshuffleSIMDGather: Bool
+  let scalarDecodeThreads: Int
+  let bitshufflePackingThreads: Int
 
   init(device: MTLDevice, cachePlans: Bool = false) throws {
     self.device = device
@@ -207,9 +215,24 @@ final class OriginalHDF5Packing {
     self.queue = queue
     let decode = try Metal4DSTEMKernels.makeHDF5Library(device: device)
     let packing = try Metal4DSTEMKernels.makeOriginalPackingLibrary(device: device)
-    func pipeline(_ library: MTLLibrary, _ name: String) throws -> MTLComputePipelineState {
+    func pipeline(
+      _ library: MTLLibrary, _ name: String, boundedDecode: Bool = false,
+      boundedPacking: Bool = false
+    ) throws -> MTLComputePipelineState {
       guard let function = library.makeFunction(name: name) else {
         throw Self.invalid("Missing kernel \(name)")
+      }
+      if (boundedDecode
+        && OriginalPackingDiagnostics.enabled("FIXED_DECODE_PIPELINE", byDefault: false))
+        || (boundedPacking
+          && OriginalPackingDiagnostics.enabled("FIXED_PACK_PIPELINE", byDefault: false))
+      {
+        let descriptor = MTLComputePipelineDescriptor()
+        descriptor.computeFunction = function
+        descriptor.maxTotalThreadsPerThreadgroup = 32
+        descriptor.threadGroupSizeIsMultipleOfThreadExecutionWidth = true
+        return try device.makeComputePipelineState(
+          descriptor: descriptor, options: [], reflection: nil)
       }
       return try device.makeComputePipelineState(function: function)
     }
@@ -226,7 +249,7 @@ final class OriginalHDF5Packing {
       case (false, true): function = "h5lz4dc_full_u16_aligned_copy_qh5idx"
       case (false, false): function = "h5lz4dc_full_u16_scalar_qh5idx"
       }
-      scalarDecode = try pipeline(decode, function)
+      scalarDecode = try pipeline(decode, function, boundedDecode: true)
       scalarUnshuffle = try pipeline(
         decode,
         transposeUnshuffle
@@ -264,15 +287,49 @@ final class OriginalHDF5Packing {
       summaryValues = nil
       summaryReduce = nil
     }
+    if checkpointPacking, rangesPipeline != nil, verifiedValuesPipeline != nil,
+      OriginalPackingDiagnostics.enabled("STANDARD_PLANES", byDefault: true)
+    {
+      standardPlaneValues = try pipeline(packing, "original_packing_values_planes_checkpoints")
+      standardPlaneSummary = try pipeline(
+        packing, "original_packing_values_planes_checkpoints_summary")
+    } else {
+      standardPlaneValues = nil
+      standardPlaneSummary = nil
+    }
     if cpuPlanDecode && OriginalPackingDiagnostics.enabled("DIRECT_BITSHUFFLE", byDefault: true) {
+      let usePlanes =
+        OriginalPackingDiagnostics.enabled("PLANES", byDefault: true)
+        && OriginalPackingDiagnostics.enabled("SIMD_GATHER", byDefault: true)
+      let vectorPlanes =
+        usePlanes && OriginalPackingDiagnostics.enabled("PLANE_VECTOR4", byDefault: true)
+      let vectorColumns = vectorPlanes ? 4 : 1
+      let planeFunction =
+        vectorPlanes
+        ? "original_packing_bitshuffle_planes_vector4_summary"
+        : "original_packing_bitshuffle_planes_verified_summary"
       let cooperative =
         OriginalPackingDiagnostics.enabled("SIMD_GATHER", byDefault: true)
-        ? try? pipeline(packing, "original_packing_bitshuffle_transpose_verified_summary") : nil
+        ? try? pipeline(
+          packing,
+          usePlanes
+            ? planeFunction
+            : "original_packing_bitshuffle_transpose_verified_summary",
+          boundedPacking: vectorPlanes) : nil
+      if usePlanes && cooperative == nil {
+        throw Self.invalid(
+          "Exact bit-plane packing could not create its SIMD kernel; rebuild the Metal resources and retry"
+        )
+      }
       if let cooperative, cooperative.threadExecutionWidth == 32,
-        cooperative.maxTotalThreadsPerThreadgroup >= 128
+        cooperative.maxTotalThreadsPerThreadgroup
+          >= (OriginalPackingDiagnostics.enabled("FIXED_PACK_PIPELINE", byDefault: false)
+            ? 32 : 128)
       {
         bitshuffleValues = cooperative
         bitshuffleSIMDGather = true
+        bitshufflePayloadLayout = usePlanes ? 1 : 0
+        bitshufflePixelsPerThread = vectorColumns
       } else {
         bitshuffleValues = try pipeline(packing, "original_packing_bitshuffle_verified_summary")
         bitshuffleSIMDGather = false
@@ -287,7 +344,38 @@ final class OriginalHDF5Packing {
     valuesPipeline = try pipeline(packing, "original_packing_values")
     verifyPipeline = try pipeline(packing, "original_packing_verify")
     momentsPipeline = try pipeline(packing, "original_packing_moments")
+    bitshuffleDPC =
+      OriginalPackingDiagnostics.enabled("DIRECT_DPC", byDefault: true)
+      ? try pipeline(packing, "original_packing_bitshuffle_dpc") : nil
+    if OriginalPackingDiagnostics.enabled("ZERO_TAIL", byDefault: true) {
+      zeroTailDecode = try pipeline(
+        decode, "h5lz4dc_full_u16_zero_tail_qh5idx", boundedDecode: true)
+      zeroTailValues = try pipeline(
+        packing, "original_packing_bitshuffle_planes_zero_tail_summary", boundedPacking: true)
+    } else {
+      zeroTailDecode = nil
+      zeroTailValues = nil
+    }
     narrowPipeline = try pipeline(packing, "original_packing_u8")
+    func diagnosticThreads(_ name: String, maximum: Int) throws -> Int {
+      #if QGPU_PACKING_DIAGNOSTICS
+        if let text = ProcessInfo.processInfo.environment["QGPU_ORIGINAL_" + name] {
+          guard let value = Int(text), [32, 64, 128, 256, 512].contains(value), value <= maximum
+          else {
+            throw Self.invalid(
+              "Unsupported \(name); select a supported multiple of32 from32,64,128,256,512")
+          }
+          return value
+        }
+      #endif
+      return 32
+    }
+    scalarDecodeThreads = try diagnosticThreads(
+      "DECODE_THREADS",
+      maximum: scalarDecode?.maxTotalThreadsPerThreadgroup ?? 128)
+    bitshufflePackingThreads = try diagnosticThreads(
+      "PACK_THREADS",
+      maximum: bitshuffleValues?.maxTotalThreadsPerThreadgroup ?? 128)
   }
 
   func pack(
@@ -297,6 +385,7 @@ final class OriginalHDF5Packing {
     shouldCancel: () -> Bool, progress: (Int, Int) -> Void
   ) throws -> OriginalPackedBuffers? {
     let dataset = source.dataset
+    let standardPlanes = destination == nil && standardPlaneValues != nil
     guard let identity = dataset.sourceIdentitySHA256,
       source.logicalFrameCount.isMultiple(of: 32),
       ["uint8", "uint16"].contains(dataset.sourceDtype)
@@ -348,7 +437,8 @@ final class OriginalHDF5Packing {
       && source.shards.allSatisfy { Int($0.index.metadata.nBlocksPerFrame) * 4096 == pixels }
     let scratchBytes = useScalar ? frames * pixels * 2 : 0
     let cachedDPC = destination == nil ? validatedDPC(preparedDPC, source: source) : nil
-    if destination == nil, !ignoreCachedPlan, let cachedDPC, let packingPlanURL,
+    if destination == nil, !ignoreCachedPlan,
+      cachedDPC != nil || bitshuffleDPC != nil, let packingPlanURL,
       let direct = try packBitshufflePlan(
         source: source, windows: windows, frames: frames,
         moments: cachedDPC, packingPlanURL: packingPlanURL,
@@ -454,6 +544,9 @@ final class OriginalHDF5Packing {
     var residentBytes: UInt64 = 0
     var detectorSum = [UInt64](repeating: 0, count: pixels)
     var profile = priorProfile ?? Profile()
+    profile.scalarDecodeThreads = scalarDecodeThreads
+    profile.decodePipelineThreadLimit = scalarDecode?.maxTotalThreadsPerThreadgroup ?? 0
+    profile.bitshufflePackingThreads = bitshufflePackingThreads
     profile.decodeWindowFrames = frames
     if ignoreCachedPlan { profile.planFallbacks += 1 }
     profile.planStatus = !cachePlans ? "notRequested" : (planReader != nil ? "hit" : "miss")
@@ -690,14 +783,16 @@ final class OriginalHDF5Packing {
               throw CacheMismatch(profile: profile)
             }
             try encode(
-              packingCommand, pipeline: summaryValues, buffers: [dense, headers, payload, errors],
+              packingCommand, pipeline: standardPlanes ? standardPlaneSummary! : summaryValues,
+              buffers: [dense, headers, payload, errors],
               shape: &shape, count: pixels * checkpoints, afterShape: planPartials)
             try encode(
               packingCommand, pipeline: summaryReduce,
               buffers: [planPartials, headers, sums, widths, errors], shape: &shape, count: pixels)
           } else {
             try encode(
-              packingCommand, pipeline: verifiedValuesPipeline,
+              packingCommand,
+              pipeline: standardPlanes ? standardPlaneValues! : verifiedValuesPipeline,
               buffers: [dense, headers, payload, errors],
               shape: &shape, count: pixels * (checkpointPacking ? checkpoints : 1))
           }
@@ -803,8 +898,13 @@ final class OriginalHDF5Packing {
           profile.planOutputBytes = size.uint64Value
         }
       }
+      profile.maximumWidthHistogram = maximumWidths.reduce(into: [Int](repeating: 0, count: 17)) {
+        $0[Int($1)] += 1
+      }
+      profile.packedPayloadLayout = standardPlanes ? 1 : 0
       reportProfile(profile)
       return OriginalPackedBuffers(
+        payloadLayout: standardPlanes ? 1 : 0,
         dataset: dataset, frames: frames, headerStride: headerStride,
         shards: residentShards, moments: residentMomentData, detectorSum: detectorSum,
         maximum: maximum, maximumWidths: maximumWidths,
@@ -992,7 +1092,7 @@ final class OriginalHDF5Packing {
       encoder.setBytes(&frameCount, length: 4, index: 11)
       encoder.dispatchThreads(
         MTLSize(width: Int(frameCount) * Int(blocks), height: 1, depth: 1),
-        threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
+        threadsPerThreadgroup: MTLSize(width: scalarDecodeThreads, height: 1, depth: 1))
     } else {
       encoder.dispatchThreadgroups(
         MTLSize(width: Int(frameCount), height: 1, depth: Int(blocks)),

@@ -12,6 +12,7 @@ final class OriginalPackingStageProfiler {
   private var recordedWindows = 0, validWindows = 0
   private var totals: [String: Double] = [:]
   private var commandSeconds = 0.0
+  private var encoderUnionSeconds = 0.0
 
   static func makeIfRequested(device: MTLDevice, expectedWindows: Int)
     -> OriginalPackingStageProfiler?
@@ -42,6 +43,7 @@ final class OriginalPackingStageProfiler {
       "reason": unavailableReason ?? "", "device": device.name, "registry_id": device.registryID,
       "expected_windows": expectedWindows, "sampling": "existing_encoder_boundaries",
       "diagnostic_only": true,
+      "encoder_spans_additive": false,
     ])
   }
 
@@ -199,10 +201,32 @@ final class OriginalPackingStageProfiler {
       }
       validWindows += 1
       commandSeconds += gpuSeconds
+      // Blit work can overlap compute encoders. Summing pass spans would
+      // double-count that time and produce a misleading negative remainder.
+      let spans: [(start: UInt64, end: UInt64)] = (0..<window.stages.count).map {
+        (start: timestamps[$0 * 2], end: timestamps[$0 * 2 + 1])
+      }.sorted { $0.start < $1.start }
+      var unionStart: UInt64 = spans[0].start
+      var unionEnd: UInt64 = spans[0].end
+      var unionTicks: UInt64 = 0
+      for span in spans.dropFirst() {
+        if span.start > unionEnd {
+          unionTicks += unionEnd - unionStart
+          unionStart = span.start
+          unionEnd = span.end
+        } else {
+          unionEnd = max(unionEnd, span.end)
+        }
+      }
+      unionTicks += unionEnd - unionStart
+      let unionSeconds = Double(unionTicks) * secondsPerTick
+      encoderUnionSeconds += unionSeconds
       row["calibrated_seconds_per_gpu_tick"] = secondsPerTick
       row["encoder_seconds"] = intervals
       row["stage_seconds"] = sums
-      row["unattributed_command_seconds"] = gpuSeconds - intervals.reduce(0, +)
+      row["encoder_span_union_seconds"] = unionSeconds
+      row["overlapping_encoder_seconds"] = intervals.reduce(0, +) - unionSeconds
+      row["unattributed_command_seconds"] = gpuSeconds - unionSeconds
       row["status"] = "valid"
     } else {
       row["status"] = unavailableReason == nil ? "invalid" : "unsupported"
@@ -218,7 +242,9 @@ final class OriginalPackingStageProfiler {
       "invalid_or_unsupported_windows": recordedWindows - validWindows,
       "missing_windows": expectedWindows - recordedWindows,
       "valid_window_stage_seconds": totals, "valid_window_command_seconds": commandSeconds,
-      "valid_window_unattributed_seconds": commandSeconds - totals.values.reduce(0, +),
+      "valid_window_encoder_union_seconds": encoderUnionSeconds,
+      "valid_window_overlapping_encoder_seconds": totals.values.reduce(0, +) - encoderUnionSeconds,
+      "valid_window_unattributed_seconds": commandSeconds - encoderUnionSeconds,
       "status": validWindows == expectedWindows ? "complete" : "incomplete",
     ])
   }

@@ -291,21 +291,23 @@ do {
       "Repaired layout exceeded the unchanged loading budget")
     try check(repaired)
     print("PACKING_PLAN_OVERSIZED_PAYLOAD_BUDGET_RECOVERY_PASS")
-  } else if mode == "reserve" {
+  } else if mode == "reserve" || mode == "reserve-optimized" {
     // This exact fixture admits normal two-window low/high-u16 residency but
     // cannot afford the optional plan's additional 64 MiB staging reservation.
     precondition(native.sourceDtype == "uint16")
-    // Scalar decoding and fused DPC are production defaults, not prerequisites
-    // that callers must enable through experimental environment variables.
+    // Preserve coverage of the older bounded-staging fallback. The normal
+    // direct bitshuffle/DPC path now fits this same budget without retrying.
+    if mode == "reserve" { setenv("QGPU_ORIGINAL_DIRECT_DPC", "0", 1) }
     let frames = 4096
     let base = UInt64(frames * pixels * 4 + frames * (pixels / 4096) * 32) + (768 << 20)
     let budget = base + (63 << 20)
     try check(
       MetalCompactH5Loader.load(source: source, device: device, maximumAdditionalBytes: budget))
-    try check(
-      MetalCompactH5Loader.load(
-        source: source, device: device,
-        maximumAdditionalBytes: budget, packingPlanURL: plan))
+    let reopened = try MetalCompactH5Loader.load(
+      source: source, device: device,
+      maximumAdditionalBytes: budget, packingPlanURL: plan)
+    precondition(reopened.loadMetrics.plannedAdditionalBytes <= budget)
+    try check(reopened)
     print("PACKING_PLAN_OPTIONAL_RESERVE_FALLBACK_PASS")
   } else if mode == "source-change" {
     let changed = URL(fileURLWithPath: native.dataFiles[0])

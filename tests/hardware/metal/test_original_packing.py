@@ -72,6 +72,25 @@ def test_production_decoder_alignment_and_malformed_streams(
     assert "PRODUCTION_DECODER_5436_CASES_PASS" in result.stdout
 
 
+def test_zero_tail_decoder_preserves_counts_and_rejects_truncated_files(
+    original_packing_executable,
+):
+    """Zero-tail reuse preserves every count even with poisoned old scratch."""
+    result = subprocess.run(
+        [str(original_packing_executable.with_name("OriginalZeroTailParity"))],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    rows = [json.loads(line) for line in result.stdout.splitlines() if line.startswith("{")]
+    assert len(rows) == 1
+    assert rows[0]["exact_blocks"] == 2702
+    assert rows[0]["malformed_streams_rejected"] == 458
+    assert rows[0]["skipped_zero_tails"] == 1247
+    assert rows[0]["reused_poisoned_scratch"]
+
+
 def test_display_range_histogram_without_cpu_roundtrip(original_packing_executable):
     """DP display ranges and linear/log bins match the established GPU path."""
     result = subprocess.run(
@@ -326,7 +345,13 @@ def test_original_packing_plan_reopen_and_faults(
     assert profiles[1]["packing_plan_status"] == "hit"
     assert profiles[1]["packing_plan_reused_windows"] == 2
     assert profiles[1]["source_read_bytes"] == profiles[0]["source_read_bytes"] > 0
-    assert profiles[1]["decode_gpu_seconds"] > 0
+    # Source decode is either isolated or fused directly into bit-plane
+    # packing. Require time on the path that actually processed the counts.
+    decode_time = (
+        "direct_bitshuffle_gpu_seconds"
+        if profiles[1]["direct_bitshuffle_windows"] else "decode_gpu_seconds"
+    )
+    assert profiles[1][decode_time] > 0
     if os.environ.get("QGPU_ORIGINAL_CPU_PLAN") == "1":
         assert profiles[1]["packing_plan_decode_cpu_seconds"] > 0
         assert profiles[1]["packing_plan_decode_gpu_seconds"] == 0
@@ -374,6 +399,9 @@ def test_original_packing_plan_reopen_and_faults(
         assert profiles[-1]["packing_plan_status"] == "hit"
         assert profiles[-1]["packing_plan_fallbacks"] == 0
         plan.write_bytes(original_plan)
+        profiles = run("reserve-optimized")
+        assert profiles[-1]["packing_plan_fallbacks"] == 0
+        assert profiles[-1]["direct_bitshuffle_windows"] == 2
         profiles = run("reserve")
         assert profiles[-1]["packing_plan_fallbacks"] == 1
         profiles = run("source-change")
@@ -636,7 +664,11 @@ def test_direct_bitshuffle_original_reopen(
     plan.write_bytes(original_plan)
     profiles, output = run("overlap-cancel", overlap=True)
     assert "PACKING_PLAN_OVERLAP_PREFETCH_CANCEL_DRAIN_RECOVERY_PASS" in output
-    assert sum(value["packing_plan_overlap_windows"] == 1 for value in profiles) == 3
+    # The seed may now compute DPC directly from source bitshuffle too. Count
+    # the three intended cached-DPC control/recovery loads, not that seed.
+    recoveries = [value for value in profiles if value["prepared_dpc_reused"]]
+    assert len(recoveries) == 3
+    assert all(value["packing_plan_overlap_windows"] == 1 for value in recoveries)
     manifest, headers = _layout_headers(original_plan)
     struct.pack_into(
         "<I", headers[0], 4, struct.unpack_from("<I", headers[0], 4)[0] + 1

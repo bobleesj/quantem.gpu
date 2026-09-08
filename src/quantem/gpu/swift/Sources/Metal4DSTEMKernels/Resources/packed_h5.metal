@@ -634,6 +634,7 @@ inline uint compactDescriptorFor(
     return (offset << 5u) | width;
 }
 
+
 inline uint compactCellValue(
     device const uint *payload, uint descriptor, uint scanInTile,
     uint payloadLayout
@@ -1198,6 +1199,142 @@ kernel void compact_h5_detector_update_planar_scan_cooperative(
             ? preparedMoments[(p.outputOffset + scan) * 8u] : previous[p.outputOffset + scan]);
         next[p.outputOffset + scan] = output + partial;
     }
+}
+
+
+
+// Carry four independent scan-tile bit matrices through the shuffle network
+// together, exposing their instruction independence without another buffer.
+template <bool constantWide = false>
+inline void compactPlanarQuadVector(
+    device const uint *payload, device const uint *descriptors,
+    device const CompactDetectorEntry *entries,
+    device const uint *previous, device uint *next,
+    constant CompactDetectorParameters &p, device const uint *preparedMoments,
+    uint group, uint lane, uint groupSize, threadgroup uint *partials) {
+    uint scanLane = lane % 32u, entryGroup = lane / 32u;
+    uint scanBase = group * 128u;
+    uint4 partial(0u);
+    for (uint first = 0u; first < p.entryCount; first += groupSize) {
+        uint4 widths(0u), offsets(0u);
+        int coefficient = 1;
+        if (first + lane < p.entryCount) {
+            CompactDetectorEntry entry = entries[first + lane];
+            coefficient = entry.coefficient;
+            uint tile = scanBase / p.scanTile;
+            uint descriptor = compactDescriptorFor(descriptors, p.tileCount,
+                p.headerWordsPerPixel, p.headerEncoding, entry.pixel, tile);
+            uint widthWord = 0u, offset = descriptor >> 5u;
+            if (p.headerEncoding != 0u) {
+                uint checkpoints = (p.tileCount + 31u) / 32u;
+                widthWord = descriptors[entry.pixel * p.headerWordsPerPixel + checkpoints + tile / 8u]
+                    >> ((tile % 8u) * 4u);
+            }
+            #pragma unroll
+            for (uint part = 0u; part < 4u; ++part) {
+                if (scanBase + part * 32u < p.scanCount) {
+                    if (p.headerEncoding == 0u) {
+                        uint cell = descriptors[entry.pixel * p.tileCount + tile + part];
+                        offsets[part] = cell >> 5u;
+                        widths[part] = cell & 31u;
+                    } else {
+                        uint width = (widthWord >> (part * 4u)) & 15u;
+                        if (p.headerEncoding == 2u && width == 15u) width = 16u;
+                        offsets[part] = offset;
+                        widths[part] = width;
+                        offset += width;
+                    }
+                }
+            }
+        }
+        if (constantWide && simd_any(any(widths > uint4(8u)))) {
+            // A uniform bit plane is either all zero or all one. Authenticate
+            // every plane before replacing a wide tile with its exact constant.
+            // Nonuniform tiles retain the ordinary transposition below.
+            uint4 constants(0u);
+            #pragma unroll
+            for (uint part = 0u; part < 4u; ++part) {
+                if (widths[part] > 8u) {
+                    uint value = 0u;
+                    bool uniform = true;
+                    for (uint plane = 0u; plane < widths[part]; ++plane) {
+                        uint bits = payload[offsets[part] + plane];
+                        if (bits != 0u && bits != 0xffffffffu) {
+                            uniform = false;
+                            break;
+                        }
+                        value |= (bits & 1u) << plane;
+                    }
+                    if (uniform) {
+                        constants[part] = coefficient == 1 ? value : 0u - value;
+                        widths[part] = 0u;
+                    }
+                }
+            }
+            partial += simd_sum(constants);
+        }
+        uint positive = simd_sum(coefficient == 1 ? (1u << scanLane) : 0u);
+        uint maximumWidth = simd_max(max(max(widths.x, widths.y), max(widths.z, widths.w)));
+        for (uint plane = 0u; plane < maximumWidth; ++plane) {
+            uint4 value(0u);
+            #pragma unroll
+            for (uint part = 0u; part < 4u; ++part) {
+                if (widths[part] > plane) value[part] = payload[offsets[part] + plane];
+            }
+            #pragma unroll
+            for (uint distance = 16u; distance; distance >>= 1u) {
+                uint mask = 0xffffffffu / ((1u << distance) + 1u);
+                uint4 partner = simd_shuffle_xor(value, distance);
+                value = (scanLane & distance)
+                    ? ((partner >> distance) & mask) | (value & ~mask)
+                    : (value & mask) | ((partner & mask) << distance);
+            }
+            partial += (popcount(value & positive) - popcount(value & ~positive)) << plane;
+        }
+    }
+    for (uint tile = 0u; tile < 4u; ++tile) partials[tile * groupSize + lane] = partial[tile];
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (entryGroup == 0u) {
+        for (uint tile = 0u; tile < 4u; ++tile) {
+            uint scan = scanBase + tile * 32u + scanLane;
+            if (scan < p.scanCount) {
+                uint output = p.mode == 1u ? 0u : (p.mode == 2u
+                    ? preparedMoments[(p.outputOffset + scan) * 8u] : previous[p.outputOffset + scan]);
+                for (uint part = 0u; part < groupSize / 32u; ++part) {
+                    output += partials[tile * groupSize + scanLane + part * 32u];
+                }
+                next[p.outputOffset + scan] = output;
+            }
+        }
+    }
+}
+
+kernel void compact_h5_detector_update_planar_quad_vector(
+    device const uint *payload [[buffer(0)]],
+    device const uint *descriptors [[buffer(1)]],
+    device const CompactDetectorEntry *entries [[buffer(2)]],
+    device const uint *previous [[buffer(3)]], device uint *next [[buffer(4)]],
+    constant CompactDetectorParameters &p [[buffer(5)]],
+    device const uint *preparedMoments [[buffer(6)]],
+    uint group [[threadgroup_position_in_grid]], uint lane [[thread_index_in_threadgroup]],
+    uint groupSize [[threads_per_threadgroup]]) {
+    threadgroup uint partials[512];
+    compactPlanarQuadVector(payload, descriptors, entries, previous, next,
+        p, preparedMoments, group, lane, groupSize, partials);
+}
+
+kernel void compact_h5_detector_update_planar_quad_constant(
+    device const uint *payload [[buffer(0)]],
+    device const uint *descriptors [[buffer(1)]],
+    device const CompactDetectorEntry *entries [[buffer(2)]],
+    device const uint *previous [[buffer(3)]], device uint *next [[buffer(4)]],
+    constant CompactDetectorParameters &p [[buffer(5)]],
+    device const uint *preparedMoments [[buffer(6)]],
+    uint group [[threadgroup_position_in_grid]], uint lane [[thread_index_in_threadgroup]],
+    uint groupSize [[threads_per_threadgroup]]) {
+    threadgroup uint partials[512];
+    compactPlanarQuadVector<true>(payload, descriptors, entries, previous, next,
+        p, preparedMoments, group, lane, groupSize, partials);
 }
 
 

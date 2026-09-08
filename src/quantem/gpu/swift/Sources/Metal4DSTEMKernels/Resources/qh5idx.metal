@@ -1696,9 +1696,10 @@ inline void bslz4DecompressPrefixSerialToDevice(
 // Exact full-stream scalar decode with bounded scratch and explicit failure.
 // Every independent LZ4 block is decoded completely by one thread. The output
 // is only bounded transient bitshuffle scratch; it is not a reduced resident.
-template <bool alignedRepeatFill = false, bool alignedHistoryCopy = false>
+template <bool alignedRepeatFill = false, bool alignedHistoryCopy = false, bool skipZeroTail = false>
 inline bool bslz4DecompressFullSerialCheckedToDevice(
-    device uchar *destination, const device uchar *compressed, uint compressedLength
+    device uchar *destination, const device uchar *compressed, uint compressedLength,
+    thread uint *zeroTail = nullptr
 ) {
     uint inputIndex = 0u, outputIndex = 0u;
     while (inputIndex < compressedLength) {
@@ -1750,6 +1751,26 @@ inline bool bslz4DecompressFullSerialCheckedToDevice(
         if (distance <= 2u) {
             uchar first = destination[outputIndex - distance];
             uchar second = destination[outputIndex - 1u];
+            if (skipZeroTail && first == 0u && second == 0u && inputIndex < compressedLength) {
+                // Only elide a fully validated terminal zero match followed by
+                // one short literal-only token. Other streams use the decoder
+                // below, including malformed endings and nonzero hot pixels.
+                uint finalCount = uint(compressed[inputIndex] >> 4u);
+                bool terminal = finalCount < 15u
+                    && compressedLength - inputIndex == finalCount + 1u
+                    && outputIndex + matchLength + finalCount == 8192u;
+                if (terminal) {
+                    for (uint byte = 0u; byte < finalCount; ++byte) {
+                        terminal = terminal && compressed[inputIndex + 1u + byte] == 0u;
+                    }
+                    if (terminal) {
+                        uint alignedStart = min(8192u, (outputIndex + 15u) & ~15u);
+                        for (uint byte = outputIndex; byte < alignedStart; ++byte) destination[byte] = 0u;
+                        *zeroTail = alignedStart;
+                        return true;
+                    }
+                }
+            }
             if (alignedRepeatFill && matchLength >= 64u) {
                 // Blocks are 8192-byte aligned. Preserve the two-byte phase
                 // while peeling the prefix before aligned 16-byte writes.
@@ -1890,6 +1911,34 @@ kernel void h5lz4dc_full_u16_aligned_fill_qh5idx(
         scratch + ulong(frame) * frameElements * 2ul + ulong(block) * 8192ul,
         h5File + rangeStart + ulong(metadata.x), metadata.y
     )) atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+}
+
+kernel void h5lz4dc_full_u16_zero_tail_qh5idx(
+    const device uchar *h5File [[buffer(0)]],
+    const device uint2 *blockMetadata [[buffer(1)]],
+    constant ulong &rangeStart [[buffer(2)]],
+    constant uint &blocksPerFrame [[buffer(3)]],
+    constant uint &frameElements [[buffer(4)]],
+    device uchar *scratch [[buffer(5)]],
+    constant uint &metadataFrameOffset [[buffer(6)]],
+    device atomic_uint *errors [[buffer(10)]],
+    constant uint &frameCount [[buffer(11)]],
+    device uint *zeroTails [[buffer(12)]], constant uint &tailOffset [[buffer(13)]],
+    uint linearBlock [[thread_position_in_grid]]
+) {
+    if (blocksPerFrame == 0u || ulong(blocksPerFrame) * 4096ul != frameElements) {
+        atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+        return;
+    }
+    if (ulong(linearBlock) >= ulong(frameCount) * blocksPerFrame) return;
+    uint frame = linearBlock / blocksPerFrame, block = linearBlock % blocksPerFrame;
+    uint2 metadata = blockMetadata[(ulong(metadataFrameOffset) + frame) * blocksPerFrame + block];
+    uint zeroTail = 8192u;
+    bool valid = bslz4DecompressFullSerialCheckedToDevice<true, false, true>(
+        scratch + ulong(frame) * frameElements * 2ul + ulong(block) * 8192ul,
+        h5File + rangeStart + ulong(metadata.x), metadata.y, &zeroTail);
+    zeroTails[tailOffset + linearBlock] = zeroTail;
+    if (!valid) atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
 }
 
 kernel void h5lz4dc_full_u16_aligned_copy_qh5idx(

@@ -13,6 +13,11 @@ let package = Package(
   ],
   targets: [
     .executableTarget(
+      name: "OriginalZeroTailParity",
+      dependencies: [.product(name: "Metal4DSTEMKernels", package: "quantem.gpu")],
+      swiftSettings: [.swiftLanguageMode(.v5)]
+    ),
+    .executableTarget(
       name: "DisplayRangeParity",
       dependencies: [.product(name: "MetalDisplayKernels", package: "quantem.gpu")],
       swiftSettings: [.swiftLanguageMode(.v5)]
