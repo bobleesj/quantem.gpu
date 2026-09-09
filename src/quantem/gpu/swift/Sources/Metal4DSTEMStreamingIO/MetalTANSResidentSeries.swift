@@ -391,7 +391,7 @@ final class MetalTANSResidentSeries {
     let unsorted = mask.indices.filter { residual[$0] != 0 }
     let dense = unsorted.filter { cacheMapValues[$0] < 0 }
     let sparse = unsorted.filter { cacheMapValues[$0] >= 0 }
-    let selected = (useBatchedDetector ? dense + sparse : unsorted).map(UInt32.init)
+    let selected = (useBatchedDetector ? dense + sparse : unsorted).map { UInt32($0) }
     let signs: [Int32] = selected.map { residual[Int($0)] }
     let groups = (selected.count + 31) / 32
     // The batched kernel is also valid for a selected acquisition. Its record
