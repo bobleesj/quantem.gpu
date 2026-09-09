@@ -7,8 +7,8 @@ compatible kernels address exact integer counts without expanding the complete
 4D array. Choosing packed storage must not silently choose another dtype,
 mask, scan selection, detector bin, or calibration.
 
-The three selectors are `"dense"`, `"packed"`, and `"ans"`. They describe
-in-memory layout, separately from file `format` and `compression`. There are no
+The four selectors are `"dense"`, `"packed"`, `"ans"`, and `"paired"`. They
+describe in-memory layout, separately from file `format` and `compression`. There are no
 representation-name aliases. Within `packed`, the authenticated storage schema
 selects the matching decoder; different profiles do not share a decoder merely
 because they share this public name.
@@ -27,6 +27,8 @@ the entry-point and implementation map.
 | QuantEM/ANS file to packed resident | Python MPS | Physical small-file integer parity |
 | QuantEM/ANS file to ANS or packed resident | CUDA | Bounded physical GPU integer parity |
 | Complete H5 to runtime ANS with spatial indexes | CUDA | Bounded real and adversarial count parity; full-66 throughput unqualified |
+| Complete uint16 H5 to paired-count tANS resident with polar index (`"paired"`) | CUDA | Synthetic exact sums and frames; frozen full-array digests on one native acquisition; 69-acquisition series load measured on one device |
+| Saved paired resident form to paired resident | CUDA | Byte-identical reopen on synthetic and native sources |
 | ANS arrays to exact DP and mask sums | Native Swift/Metal | Small physical integer tests; file reader pending |
 | GPU dense materialization and reverse conversions for the new profile | Pending | Not qualified |
 
@@ -66,6 +68,11 @@ conversions raise with a corrective next step. Explicit
 `io.load(..., backend="cuda", representation="ans", apply_mask=False)` now
 streams complete uint8/uint16 H5 acquisitions into a runtime ANS resident with
 exact spatial indexes. This profile has no qualified save or conversion path.
+`representation="paired"` is the second opt-in CUDA layout for complete uint16
+acquisitions; it streams whole shards with direct I/O, keeps every count, saves
+its resident arrays once (`loaded.data.save(path)`) and reopens that file under
+the same selector without decoding. See the
+[paired resident layout](../developer/paired-resident.md) for its contract.
 Automatic original-HDF5 packing and prepared-packed to dense materialization
 remain unimplemented. Native
 preparation is a separate, authenticated

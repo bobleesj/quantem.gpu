@@ -30,6 +30,7 @@ from .streamed import Chunk, StreamedCounts, field_count
 
 QUERY_ABI = "paired-polar-counts-v1"
 RESIDENT_MAGIC = "quantem-paired-resident-v1"
+FILE_MAGIC = b"QGPUPAIR"  # first eight bytes of a saved form; io.load detects it
 MODELS = 32
 STATES = 1024
 GUARD_BYTES = 8
@@ -230,7 +231,9 @@ class PairedCounts(StreamedCounts):
         ks = self.kernels
         with cp.cuda.Device(self.device):
             started = time.perf_counter()
-            scratch = cp.empty((2 * self.interval + 4, streams), cp.uint8)
+            # One coded pair can emit seven bytes past the 2*interval guard before the
+            # encoder gives up on a stream, plus one flush byte; keep those in bounds.
+            scratch = cp.empty((2 * self.interval + 16, streams), cp.uint8)
             sizes, states = cp.empty(streams, cp.uint32), cp.empty(streams, cp.uint32)
             models = cp.empty(streams, cp.uint8)
             grid = ((streams + 127) // 128,)
@@ -272,8 +275,8 @@ class PairedCounts(StreamedCounts):
     def save(self, path) -> dict:
         """Write the exact resident arrays once so the source reopens without decoding.
 
-        The file is a small JSON header followed by every chunk array at a 4096-byte
-        aligned offset, in chunk order. Reopening reads it with direct I/O straight into
+        The file starts with the fixed ``QGPUPAIR`` magic, a small JSON header and
+        every chunk array at a 4096-byte aligned offset, in chunk order. Reopening reads it with direct I/O straight into
         device memory (``PairedCounts.load``); bytes are identical to this source.
 
         Examples
@@ -301,10 +304,10 @@ class PairedCounts(StreamedCounts):
             valid=np.packbits(self.valid_pixels.ravel()).tobytes().hex(), chunks=table,
         )
         blob = json.dumps(header).encode()
-        data_start = (len(blob) + 16 + ALIGN - 1) & ~(ALIGN - 1)
+        data_start = (len(blob) + 24 + ALIGN - 1) & ~(ALIGN - 1)
         started = time.perf_counter()
         with open(path, "wb") as handle:
-            handle.write(len(blob).to_bytes(8, "little") + data_start.to_bytes(8, "little") + blob)
+            handle.write(FILE_MAGIC + len(blob).to_bytes(8, "little") + data_start.to_bytes(8, "little") + blob)
             handle.truncate(data_start)
             for offset, array in arrays:
                 handle.seek(data_start + offset)
@@ -351,6 +354,8 @@ class PairedCounts(StreamedCounts):
 
 def _read_header(path):
     with open(path, "rb") as handle:
+        if handle.read(8) != FILE_MAGIC:
+            raise ValueError(f"{path} is not a saved paired resident form (missing {FILE_MAGIC!r} magic).")
         length = int.from_bytes(handle.read(8), "little")
         data_start = int.from_bytes(handle.read(8), "little")
         return json.loads(handle.read(length)), data_start

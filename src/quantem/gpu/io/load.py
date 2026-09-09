@@ -5060,7 +5060,10 @@ def load(
     explicitly when an unpacked array is required.
 
     Self-contained ANS files default to ``representation="ans"`` and retain
-    stored native counts. ``representation="packed"`` requests an explicit
+    stored native counts. ``representation="paired"`` streams complete uint16
+    acquisitions (one path or a list, each returned as its own source) into
+    the CUDA paired-count tANS resident layout, and a saved paired resident
+    form reopens under the same name without decoding. ``representation="packed"`` requests an explicit
     ANS-to-bitpacked GPU transcode where implemented. CPU reference expansion
     requires ``backend="cpu", representation="dense"``. Unsupported conversions
     raise instead of silently loading HDF5, expanding densely, or using CPU.
@@ -5215,6 +5218,27 @@ def load(
         expected_source_sha256 = source_integrity.whole_file_sha256
     selected_representation = _selected_representation(source, representation)
     paths = _source_paths(source)
+    if selected_representation is DataRepresentation.PAIRED:
+        from .backends import resolve_backend
+        from ._paired import load_h5_paired, load_paired_file
+
+        if resolve_backend(backend) != "cuda":
+            raise NotImplementedError("The paired resident layout requires backend='cuda'.")
+        if any(value is not None for value in (
+            dataset_path, scan_region, detector_region, target_scan_region, scan_shift_row_col,
+            scan_indices, random_positions, drift, devices, expected_source_sha256, source_integrity,
+        )) or detector_bin != 1 or output != "native" or scan_order != "row-major":
+            raise ValueError("The paired layout preserves complete native acquisitions; remove selection, conversion and multi-device options.")
+        if dtype not in {None, "native"} or apply_mask:
+            raise ValueError("The paired layout preserves raw native counts; use dtype='native' and apply_mask=False.")
+        saved = [DataRepresentation.detect_source(path) is DataRepresentation.PAIRED for path in paths]
+        if all(saved):
+            loaded = [load_paired_file(path, device=device, verbose=verbose) for path in paths]
+        elif any(saved):
+            raise ValueError("Load saved paired resident forms and original HDF5 acquisitions in separate calls.")
+        else:
+            loaded = load_h5_paired(paths, scan_shape=scan_shape, device=device, verbose=verbose)
+        return loaded[0] if isinstance(source, (str, os.PathLike)) else loaded
     if any(DataRepresentation.detect_source(path) is DataRepresentation.ANS for path in paths):
         from ._ans_dispatch import _load_ans
 

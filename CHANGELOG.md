@@ -10,8 +10,11 @@ new `rcN` heading when that rc is published to TestPyPI.
   `PairedCounts` codes complete 512-scan blocks with 32 Poisson pair models and an
   adaptive polar interaction index, `detector.prepare` selects the paired query
   kernels automatically, and `PairedCounts.save`/`load` reopen the exact resident
-  arrays without decoding. The default byte-rANS layout and every existing load
-  path are unchanged.
+  arrays without decoding. `io.load(..., representation="paired")` streams complete
+  uint16 acquisitions (one path or a list) through a direct-I/O loader whose
+  shard reads run ahead across files, and reopens saved paired resident forms
+  from their `QGPUPAIR` magic. The default byte-rANS layout and every existing
+  load path are unchanged.
 - Add experimental native EMPAD XML/RAW loading into lossless float32-bit
   packed Metal residents, with full-source parity, compensated BF/ABF/ADF,
   CoM and mean diffraction. Cooperative packing and reductions reuse bounded
