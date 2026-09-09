@@ -14,6 +14,7 @@
 // Stack ships as uint8 (clip(0,255): real detector counts are often 0-~200, so
 // the value IS the count after a count-range audit), uint16, uint32, or float32.
 import { getGPUDevice } from "../../../device/webgpu";
+import { isRansBatch, ransMaskedSumBuffersBatch, ransMaskedSumDeltaBuffersBatch, type RansDetectorCompute } from "./rans";
 import { annulusMask, diskMask } from "../../geometry";
 import { decodeBslz4ToStack, decodeBslz4Batch, type Bslz4Spec } from "../../../io/backends/webgpu/bslz4";
 import { FFT_2D_SHADER } from "../../../dpc/backends/webgpu/fft";
@@ -482,6 +483,8 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
 
 const MAX_WG = 65535;   // max workgroups per dispatch dimension; >this needs a 2D grid
 
+type CoMEncoder = (pass: GPUComputePassEncoder, indices: GPUBuffer, output: GPUBuffer, detCols: number, count: number) => GPUBuffer[];
+
 interface Chunk { buffer: GPUBuffer; startScan: number; nScan: number; }
 
 interface TraitReader { get(name: string): any; }
@@ -580,6 +583,15 @@ export class DetectorCompute {
   // every reduction so the offline result matches CUDA's apply_mask path - the
   // browser data is filtered automatically, no per-call masking needed.
   badPx: Uint32Array = new Uint32Array(0);
+
+  private residentCoMEncoder?: CoMEncoder;
+
+  /** @internal Reuse DPC and iDPC products with an exact resident CoM decoder. */
+  static fromResidentCoM(device: GPUDevice, scanCount: number, detSize: number, encode: CoMEncoder): DetectorCompute {
+    const compute = new DetectorCompute(device, [], scanCount, detSize, 3);
+    compute.residentCoMEncoder = encode;
+    return compute;
+  }
 
   private constructor(device: GPUDevice, chunks: Chunk[], scanCount: number, detSize: number, mode: number) {
     this.device = device; this.chunks = chunks; this.scanCount = scanCount; this.detSize = detSize; this.mode = mode;
@@ -703,10 +715,10 @@ export class DetectorCompute {
     }
     const enc = device.createCommandEncoder();
     const pass = enc.beginComputePass();
-    this.encodeMaskedCoM(pass, idxBuf, com, detCols, integerFlags);
+    const decodeTemps = this.encodeMaskedCoM(pass, idxBuf, com, detCols, n, integerFlags);
     pass.end();
     device.queue.submit([enc.finish()]);
-    this.retireBuffers([idxBuf]);
+    this.retireBuffers([idxBuf, ...decodeTemps]);
     return { buffer: com, n };
   }
 
@@ -730,7 +742,7 @@ export class DetectorCompute {
     const compDims = this.uniform([this.scanCount, comp, 0, 0]);
     const enc = device.createCommandEncoder();
     const pass = enc.beginComputePass();
-    this.encodeMaskedCoM(pass, idxBuf, com, detCols, integerFlags);
+    const decodeTemps = this.encodeMaskedCoM(pass, idxBuf, com, detCols, n, integerFlags);
     pass.setPipeline(this.dpcMeanPipe);
     pass.setBindGroup(0, device.createBindGroup({ layout: this.dpcMeanPipe.getBindGroupLayout(0), entries: [
       { binding: 0, resource: { buffer: com } }, { binding: 1, resource: { buffer: mean } }, { binding: 2, resource: { buffer: meanDims } } ] }));
@@ -756,7 +768,7 @@ export class DetectorCompute {
     return {
       buffer: out,
       n,
-      cleanup: () => { idxBuf.destroy(); com.destroy(); mean.destroy(); residualMean.destroy(); meanDims.destroy(); compDims.destroy(); },
+      cleanup: () => { decodeTemps.forEach((b) => b.destroy()); idxBuf.destroy(); com.destroy(); mean.destroy(); residualMean.destroy(); meanDims.destroy(); compDims.destroy(); },
     };
   }
 
@@ -792,7 +804,7 @@ export class DetectorCompute {
     const colDims = this.uniform([this.scanCount, 1, 0, 0]);
     const enc = device.createCommandEncoder();
     const pass = enc.beginComputePass();
-    this.encodeMaskedCoM(pass, idxBuf, com, detCols, integerFlags);
+    const decodeTemps = this.encodeMaskedCoM(pass, idxBuf, com, detCols, n, integerFlags);
     pass.setPipeline(this.dpcMeanPipe);
     pass.setBindGroup(0, device.createBindGroup({ layout: this.dpcMeanPipe.getBindGroupLayout(0), entries: [
       { binding: 0, resource: { buffer: com } }, { binding: 1, resource: { buffer: mean } }, { binding: 2, resource: { buffer: meanDims } } ] }));
@@ -829,7 +841,7 @@ export class DetectorCompute {
       row: rowCache,
       col: colCache,
       n,
-      cleanup: () => this.retireBuffers([idxBuf, com, mean, rowResidualMean, colResidualMean, meanDims, rowDims, colDims]),
+      cleanup: () => this.retireBuffers([...decodeTemps, idxBuf, com, mean, rowResidualMean, colResidualMean, meanDims, rowDims, colDims]),
     };
   }
 
@@ -1069,6 +1081,8 @@ export class DetectorCompute {
   // visible tilt. This keeps seven-tilt compare interaction from paying seven
   // JavaScript/API submission paths while preserving the exact masked sum.
   static maskedSumBuffersBatch(computes: DetectorCompute[], mask: Uint32Array): { buffers: GPUBuffer[]; n: number; path: "batched-submit" } {
+    // Browser-resident rANS sources keep exact images on the GPU; they answer the same batch contract.
+    if (isRansBatch(computes as unknown[])) return ransMaskedSumBuffersBatch(computes as unknown as RansDetectorCompute[], mask);
     const owner = computes[0];
     if (!owner) return { buffers: [], n: 0, path: "batched-submit" };
     const device = owner.device;
@@ -1114,6 +1128,7 @@ export class DetectorCompute {
     addedMask: Uint32Array,
     removedMask: Uint32Array,
   ): { buffers: GPUBuffer[]; path: "delta" | "delta-u8-words" | "delta-u8-word-major"; addedPixels: number; removedPixels: number; changedWords?: number } {
+    if (isRansBatch(computes as unknown[])) return ransMaskedSumDeltaBuffersBatch(computes as unknown as RansDetectorCompute[], addedMask, removedMask, previous);
     const owner = computes[0];
     if (!owner || computes.length === 0) return { buffers: [], path: "delta", addedPixels: 0, removedPixels: 0 };
     if (previous.length !== computes.length) {
@@ -1476,7 +1491,8 @@ export class DetectorCompute {
     return this.comDimsCache.rows;
   }
 
-  private encodeMaskedCoM(pass: GPUComputePassEncoder, idxBuf: GPUBuffer, com: GPUBuffer, detCols: number, integerFlags: number) {
+  private encodeMaskedCoM(pass: GPUComputePassEncoder, idxBuf: GPUBuffer, com: GPUBuffer, detCols: number, count: number, integerFlags: number): GPUBuffer[] {
+    if (this.residentCoMEncoder) return this.residentCoMEncoder(pass, idxBuf, com, detCols, count);
     pass.setPipeline(this.maskedComPipe);
     for (const cd of this.comDims(detCols, integerFlags)) {
       const bind = this.device.createBindGroup({ layout: this.maskedComPipe.getBindGroupLayout(0), entries: [
@@ -1484,6 +1500,7 @@ export class DetectorCompute {
         { binding: 2, resource: { buffer: com } }, { binding: 3, resource: { buffer: cd.dims } }, { binding: 4, resource: { buffer: cd.dims2 } } ] });
       pass.setBindGroup(0, bind); pass.dispatchWorkgroups(cd.gx, cd.gy);
     }
+    return [];
   }
 
   // DP over a real-space ROI: f32[detSize]. scanMask is GLOBAL; chunks accumulate

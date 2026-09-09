@@ -226,6 +226,54 @@ class DetectorSession:
             return result
         return _exact_to_numpy(result).reshape((*self.series_shape, *self.scan_shape))
 
+    def masked_sum_batch_exact(self, mask) -> np.ndarray:
+        """Return all acquisition images as one exact integer batch.
+
+        The supported compact owner returns uint32 with shape
+        ``(acquisition, scan_row, scan_col)``. This performs one backend batch
+        operation; it never iterates the acquisitions through 4D reducers.
+
+        Parameters
+        ----------
+        mask
+            Full-resolution binary detector mask in ``(row, col)`` order.
+
+        Returns
+        -------
+        numpy.ndarray
+            Independently owned, immutable uint32 image batch.
+
+        Examples
+        --------
+        >>> images = prepare(resident_data).masked_sum_batch_exact(mask)
+        """
+        operation = getattr(self._backend, "masked_sum_batch_exact", None)
+        if operation is None:
+            raise NotImplementedError("This detector backend has no exact all-acquisition batch operation.")
+        return operation(mask)
+
+    def frame_batch(self, index: int) -> np.ndarray:
+        """Return exact point DPs across all acquisitions.
+
+        Parameters
+        ----------
+        index
+            Flat native scan index, ``scan_row * scan_columns + scan_col``.
+
+        Returns
+        -------
+        numpy.ndarray
+            Immutable uint16 ``(acquisition, det_row, det_col)`` batch.
+
+        Examples
+        --------
+        >>> patterns = prepare(resident_data).frame_batch(scan_row * 512 + scan_col)
+        """
+        operation = getattr(self._backend, "frame_batch", None)
+        if operation is None:
+            raise NotImplementedError("This detector backend has no all-acquisition point-DP operation.")
+        return operation(index)
+
     def center_of_mass(self, mask=None) -> tuple[np.ndarray, np.ndarray]:
         """Return mean-subtracted detector CoM in ``(row, col)`` order."""
 
@@ -640,6 +688,10 @@ def _resolve_backend(data):
     data = _unwrap_core_4dstem(data)
     if hasattr(data, "_fields") and "data" in getattr(data, "_fields", ()):
         data = data.data
+    from quantem.gpu.io._resident import is_cuda_resident, _ResidentBackend
+
+    if is_cuda_resident(data):
+        return _ResidentBackend(data)
     from quantem.gpu._compact.streamed import StreamedCounts
     from quantem.gpu._compact.interaction import StreamedSeriesCompute
 

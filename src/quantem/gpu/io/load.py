@@ -19,6 +19,7 @@ import os
 import pickle
 import re
 import tempfile
+import threading
 import warnings
 from collections.abc import Sequence
 from itertools import pairwise
@@ -103,8 +104,8 @@ _PREPARED_SCAN_CROP_CACHE_VERSION = 1
 
 # Lazy bitshuffle+LZ4 kernel proxies. The kernels compile only on first CALL
 # (inside the cuda decompress path), so importing this module never touches
-# cupy. Each proxy resolves + caches its real kernel on first use, so the
-# per-launch cost after that is one list read.
+# CUDA. The cached object is a context-aware launch callable, not a concrete
+# function belonging to whichever device happened to load first.
 def _lazy_kernel(_name):
     _cache = []
 
@@ -124,7 +125,16 @@ _bitshuffle_tail_kernel_u16 = _lazy_kernel("bitshuffle_tail_kernel_u16")
 _bitshuffle_tail_kernel_u32 = _lazy_kernel("bitshuffle_tail_kernel_u32")
 _clip_u16_to_u8_kernel = _lazy_kernel("clip_u16_to_u8_kernel")
 _clip_u32_to_u8_kernel = _lazy_kernel("clip_u32_to_u8_kernel")
-_RESAMPLE_SCAN_CROP_KERNELS: dict[str, Any] = {}
+_clip_u16_to_u8_count_kernel = _lazy_kernel("clip_u16_to_u8_count_kernel")
+_clip_u32_to_u8_count_kernel = _lazy_kernel("clip_u32_to_u8_count_kernel")
+_RESAMPLE_SCAN_CROP_KERNELS: dict[tuple[int, int, str], Any] = {}
+
+
+def _io_context_key() -> tuple[int, int]:
+    """Resolve ownership only when an I/O operation actually uses CUDA."""
+    from .backends.cuda.decoder import _current_context_key
+
+    return _current_context_key()
 
 __version__ = "0.0.3"
 __all__ = ["FourDSTEMData", "LoadResult", "load"]
@@ -223,7 +233,7 @@ def _resample_scan_crop_kernel(dtype: np.dtype):
             "scan-crop resampling supports uint8, uint16, uint32, "
             f"and float32 decoded crops; got {dtype}."
         )
-    key = dtype.str
+    key = (*_io_context_key(), dtype.str)
     kernel = _RESAMPLE_SCAN_CROP_KERNELS.get(key)
     if kernel is not None:
         return kernel
@@ -483,6 +493,9 @@ class GPUDecompressor:
         self.max_frames = max_frames
         self.max_frame_bytes = max_frame_bytes
         self.n_blocks_per_frame = n_blocks_per_frame
+        self._context_key = _io_context_key()
+        self._load_lock = threading.Lock()
+        self._failed = False
         self._h5lz4dc = _h5lz4dc_kernel
         self._shuf = _bitshuffle_kernel
         # Pinned memory for fast CPU->GPU transfers
@@ -523,6 +536,29 @@ class GPUDecompressor:
         cp.ndarray
             CuPy array on GPU with shape (n_frames, height, width).
         """
+        with self._load_lock, cp.cuda.Device(self._context_key[0]):
+            if self._failed:
+                raise RuntimeError(
+                    "This decompressor has an unfinished failed operation. "
+                    "Its buffers remain retained; create a new healthy session."
+                )
+            if _io_context_key() != self._context_key:
+                raise RuntimeError(
+                    "This decompressor belongs to a different CUDA context. "
+                    "Create a new decompressor in the active context."
+                )
+            try:
+                return self._load(filepath, dataset_path)
+            except BaseException as error:
+                try:
+                    cp.cuda.get_current_stream().synchronize()
+                except BaseException as drain_error:
+                    self._failed = True
+                    _FAILED_DECOMPRESSIONS.append((self, error, drain_error))
+                raise
+
+    def _load(self, filepath: str, dataset_path: str) -> cp.ndarray:
+        """Decode under the instance lock and its owning context."""
         with h5py.File(filepath, "r") as f:
             ds = f[dataset_path]
             n_frames = ds.shape[0]
@@ -684,14 +720,15 @@ class GPUDecompressor:
                             np.uint32(frame_bytes),
                         ),
                     )
-        cp.cuda.Device().synchronize()
         total_bytes = n_frames * frame_bytes
         # Return an independent copy - the view into _shuffled_output would
         # keep the entire oversized pre-allocated buffer alive, preventing
         # the caller from releasing the raw block via `del data`.
-        return self._shuffled_output[:total_bytes].view(dtype).reshape(
+        result = self._shuffled_output[:total_bytes].view(dtype).reshape(
             (n_frames,) + frame_shape
         ).copy()
+        cp.cuda.get_current_stream().synchronize()
+        return result
 
 
 @njit(cache=True, parallel=True)
@@ -743,8 +780,9 @@ def _parse_headers(
 
 _parse_headers_bulk = _parse_headers  # Same function, works with uint64 offsets
 
-# Lazy-initialized decompressor (not at import time to save GPU memory)
-_default_decompressor = None
+# A failed fence cannot return buffers to an allocator while work may use them.
+# Exception tracebacks retain the failing decoder's local device arrays too.
+_FAILED_DECOMPRESSIONS: list[tuple[object, BaseException, BaseException]] = []
 
 
 _POSIX_FADV_SEQUENTIAL = 2
@@ -2375,8 +2413,9 @@ def _decompress_prepared(
     prune_pinned: bool = True,
     prune_device_pool: bool = True,
 ) -> cp.ndarray:
-    """Consume one prepared master and always release its host staging buffer."""
+    """Release host staging only after its device accesses have completed."""
     read_buffer = prepared["read_buffer"]
+    release_buffer = True
     try:
         return _decompress_prepared_impl(
             prepared,
@@ -2389,20 +2428,22 @@ def _decompress_prepared(
             streaming_upload=streaming_upload,
             prune_device_pool=prune_device_pool,
         )
-    except BaseException:
+    except BaseException as error:
         # A failed kernel or allocation may follow an asynchronous H2D from the
         # page-locked buffer. Finish any queued access before making it reusable.
         if cp is not None:
             try:
                 cp.cuda.Device().synchronize()
-            except Exception:  # noqa: BLE001, S110 - preserve the original failure
-                pass
+            except BaseException as drain_error:
+                release_buffer = False
+                _FAILED_DECOMPRESSIONS.append((prepared, error, drain_error))
         raise
     finally:
-        if prune_pinned:
-            _release_pinned(read_buffer)
-        else:
-            _release_pinned(read_buffer, prune=False)
+        if release_buffer:
+            if prune_pinned:
+                _release_pinned(read_buffer)
+            else:
+                _release_pinned(read_buffer, prune=False)
 
 
 def _discover_chunk_names(filepath: str) -> list[str]:
@@ -3156,6 +3197,22 @@ def _load_master_optimized(
     return result, prepared.get("pixel_mask")
 
 
+def _required_source_error(filepath, error: Exception) -> Exception:
+    """Identify a required acquisition while preserving common I/O error types."""
+    message = (
+        f"Could not load required source {os.fspath(filepath)!r}: {error}. "
+        "No complete series was returned. Check the source and its sibling "
+        "files, then retry the complete load."
+    )
+    if isinstance(error, FileNotFoundError):
+        return FileNotFoundError(message)
+    if isinstance(error, OSError):
+        return OSError(message)
+    if isinstance(error, ValueError):
+        return ValueError(message)
+    return RuntimeError(message)
+
+
 def _load_sharded(
     filepaths: list[str],
     devices: list[int] | str,
@@ -3183,7 +3240,11 @@ def _load_sharded(
     if devices == "all":
         devices = list(range(cp.cuda.runtime.getDeviceCount()))
     devices = [int(d) for d in devices]
+    if not devices or len(devices) != len(set(devices)):
+        raise ValueError("devices must contain distinct CUDA device indices.")
     n_files = len(filepaths)
+    if not n_files:
+        raise ValueError("Provide at least one source file to load.")
     assign = _assign_indices_to_devices(filepaths, devices)
     if verbose:
         bin_str = f", det_bin={det_bin}" if det_bin > 1 else ""
@@ -3192,7 +3253,6 @@ def _load_sharded(
     shards: dict[int, cp.ndarray] = {}
     shard_order: dict[int, list[int]] = {}
     meta_box: dict[int, dict] = {}
-    skipped: list[int] = []
 
     def worker(dev: int):
         idxs = assign[dev]
@@ -3201,50 +3261,59 @@ def _load_sharded(
         with cp.cuda.Device(dev):
             stacked = None
             order = []
-            for idx in idxs:
-                try:
-                    r = load(filepaths[idx], dataset_path=dataset_path,
-                             apply_mask=apply_mask, scan_shape=scan_shape,
-                             scan_order=scan_order,
-                             det_bin=det_bin, verbose=False,
-                             auto_narrow=auto_narrow, dtype=output_dtype)
-                except (FileNotFoundError, OSError, ValueError) as e:
-                    if verbose:
-                        print(f"  gpu{dev} [{idx+1}/{n_files}] SKIPPED: {e}")
-                    skipped.append(idx)
-                    continue
-                d = r.data
-                meta_box.setdefault(dev, r.metadata)
-                # Pre-allocate the per-device stack on the first file, then copy
-                # each file into its slot and free the temp — peak is stack +
-                # one transient file, not stack + all files (which cp.stack does).
-                if stacked is None:
-                    stacked = cp.empty((len(idxs), *d.shape), dtype=d.dtype)
-                    anchor = d.shape
-                if d.shape != anchor:
-                    if verbose:
-                        print(f"  gpu{dev} [{idx+1}/{n_files}] SKIPPED: shape mismatch")
-                    del d, r
+            try:
+                for idx in idxs:
+                    try:
+                        result = load(
+                            filepaths[idx], dataset_path=dataset_path,
+                            apply_mask=apply_mask, scan_shape=scan_shape,
+                            scan_order=scan_order, backend="cuda",
+                            det_bin=det_bin, verbose=False,
+                            auto_narrow=auto_narrow, dtype=output_dtype,
+                        )
+                    except (OSError, ValueError) as error:
+                        raise _required_source_error(filepaths[idx], error) from error
+                    data = result.data
+                    meta_box.setdefault(dev, result.metadata)
+                    if stacked is None:
+                        stacked = cp.empty((len(idxs), *data.shape), dtype=data.dtype)
+                    if data.shape != stacked.shape[1:] or data.dtype != stacked.dtype:
+                        raise ValueError(
+                            f"Required source {filepaths[idx]!r} has shape/dtype "
+                            f"{data.shape}/{data.dtype}; expected "
+                            f"{stacked.shape[1:]}/{stacked.dtype}. "
+                            "Load matching acquisitions or load them separately."
+                        )
+                    stacked[len(order)] = data
+                    order.append(idx)
+                    del data, result
                     cp.get_default_memory_pool().free_all_blocks()
-                    skipped.append(idx)
-                    continue
-                stacked[len(order)] = d
-                order.append(idx)
-                del d, r
-                cp.get_default_memory_pool().free_all_blocks()
-            if order:
-                shards[dev] = stacked[:len(order)] if len(order) < len(idxs) else stacked
-                shard_order[dev] = order
+                cp.cuda.get_current_stream().synchronize()
+            except BaseException as error:
+                try:
+                    cp.cuda.get_current_stream().synchronize()
+                except BaseException as drain_error:
+                    _FAILED_DECOMPRESSIONS.append((locals(), error, drain_error))
+                raise
+            shards[dev] = stacked
+            shard_order[dev] = order
 
     t0 = time.perf_counter()
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(devices)) as pool:
         list(pool.map(worker, devices))
 
-    if not shards:
-        raise FileNotFoundError(f"All {n_files} files failed to load")
-
     device_map = {idx: dev for dev, idxs in shard_order.items() for idx in idxs}
-    meta = dict(next(iter(meta_box.values())))
+    first = shards[device_map[0]]
+    for dev, data in shards.items():
+        if data.shape[1:] != first.shape[1:] or data.dtype != first.dtype:
+            path = filepaths[shard_order[dev][0]]
+            raise ValueError(
+                f"Required source {path!r} has shape/dtype "
+                f"{data.shape[1:]}/{data.dtype}; expected "
+                f"{first.shape[1:]}/{first.dtype}. "
+                "Load matching acquisitions or load them separately."
+            )
+    meta = dict(meta_box[device_map[0]])
     meta["device_map"] = device_map
     meta["shard_order"] = shard_order
     meta["sharded"] = True
@@ -3253,8 +3322,7 @@ def _load_sharded(
         total_gib = sum(s.nbytes for s in shards.values()) / (1 << 30)
         per = " ".join(f"gpu{d}:{shards[d].shape[0]}f/{shards[d].nbytes/(1<<30):.0f}GiB"
                        for d in sorted(shards))
-        skip = f" (skipped {len(skipped)})" if skipped else ""
-        print(f"  Done: {len(device_map)} files{skip} sharded [{per}] "
+        print(f"  Done: {len(device_map)} files sharded [{per}] "
               f"total {total_gib:.1f} GiB in {dt:.2f}s")
     return LoadResult(shards, meta)
 
@@ -5583,7 +5651,7 @@ def _load_many_parallel(masters, *, gpus=None, max_concurrent=None, verbose=Fals
                 prepared = _prepare_master(
                     masters[i],
                     _discover_chunk_names(masters[i]),
-                    True,
+                    load_kwargs.get("apply_mask", True),
                 )
             except Exception as exc:  # noqa: BLE001 - transport worker failures
                 if _put(("error", i, exc)):
@@ -5616,7 +5684,7 @@ def _load_many_parallel(masters, *, gpus=None, max_concurrent=None, verbose=Fals
                 break
             kind, i, payload = item
             if kind == "error":
-                raise payload
+                raise _required_source_error(masters[i], payload) from payload
             prepared = payload
             d = dev[i]
             with (cp.cuda.Device(d) if d is not None else nullcontext()):
@@ -5949,10 +6017,7 @@ def _load_impl(
             verbose=verbose, auto_narrow=auto_narrow, output_dtype=output_dtype,
         )
 
-    # Multi-file: load first to get shape, pre-allocate, copy in-place.
-    # Mixed scan shapes: explicit `scan_shape` wins; else first successful
-    # file anchors the stack and any later file with a different shape is
-    # skipped (same skipped-list pattern as missing data files).
+    # Every requested source contributes exactly one slot, in input order.
     if isinstance(filepath, (list, tuple)):
         if len(filepath) == 0:
             raise ValueError("Empty file list")
@@ -5973,106 +6038,133 @@ def _load_impl(
         # serial load() in the consumer.
         prep_q: queue.Queue = queue.Queue(maxsize=2)
         _SENTINEL = object()
+        cancelled = threading.Event()
+
+        def put_prepared(item) -> bool:
+            while not cancelled.is_set():
+                try:
+                    prep_q.put(item, timeout=0.1)
+                    return True
+                except queue.Full:
+                    pass
+            return False
+
+        def release_queued(item) -> None:
+            if item is not _SENTINEL and item[2] is not None:
+                _release_pinned(item[2]["read_buffer"])
 
         def producer():
-            for i, fp in enumerate(filepath):
-                try:
-                    chunk_names = _discover_chunk_names(fp)
-                    if not chunk_names:
-                        prep_q.put((i, fp, None, None))  # fallback to serial
-                        continue
-                    prepared = _prepare_master(fp, chunk_names, apply_mask)
-                    prep_q.put((i, fp, prepared, None))
-                except (FileNotFoundError, OSError, ValueError) as e:
-                    prep_q.put((i, fp, None, e))
-            prep_q.put(_SENTINEL)
+            try:
+                for i, fp in enumerate(filepath):
+                    if cancelled.is_set():
+                        break
+                    try:
+                        chunk_names = _discover_chunk_names(fp)
+                        prepared = (
+                            _prepare_master(fp, chunk_names, apply_mask)
+                            if chunk_names else None
+                        )
+                    except BaseException as error:
+                        put_prepared((i, fp, None, error))
+                        return
+                    item = (i, fp, prepared, None)
+                    if not put_prepared(item):
+                        release_queued(item)
+                        return
+            finally:
+                put_prepared(_SENTINEL)
 
-        threading.Thread(target=producer, daemon=True).start()
+        producer_thread = threading.Thread(target=producer, daemon=True)
+        producer_thread.start()
 
         meta = None
         out = None
-        n_loaded = 0
-        skipped = []
         effective_shape = scan_shape
         t_multi_start = time.perf_counter()
-        while True:
-            item = prep_q.get()
-            if item is _SENTINEL:
-                break
-            i, fp, prepared, err = item
-            if err is not None:
-                if verbose:
-                    print(f"  [{i+1}/{n_files}] SKIPPED: {err}")
-                skipped.append(i)
-                continue
-            try:
-                if prepared is None:
-                    # Fallback: not a chunked master — full serial load.
-                    r = load(fp, dataset_path=dataset_path, apply_mask=apply_mask,
-                             scan_shape=effective_shape, scan_order=scan_order, det_bin=det_bin,
-                             verbose=False, auto_narrow=auto_narrow,
-                             dtype=output_dtype)
-                    fmeta, d = r.metadata, r.data
-                else:
-                    d = _decompress_prepared(
-                        prepared, verbose=False, auto_narrow=auto_narrow,
-                        det_bin=det_bin, streaming_bin=(det_bin > 1),
-                        output_dtype=output_dtype)
-                    fmeta = get_metadata(fp)
-                    if prepared.get("pixel_mask") is not None:
-                        fmeta["pixel_mask"] = prepared["pixel_mask"]
-                    d = _apply_scan_shape(d, effective_shape, fmeta, scan_order)
-                    fmeta["scan_order"] = scan_order
-            except (FileNotFoundError, OSError, ValueError) as e:
-                if verbose:
-                    print(f"  [{i+1}/{n_files}] SKIPPED: {e}")
-                skipped.append(i)
-                continue
-            if out is None:
-                meta = fmeta
-                out = cp.empty((n_files, *d.shape), dtype=d.dtype)
-                if effective_shape is None:
-                    effective_shape = meta.get("scan_shape")
-            if d.shape != out.shape[1:]:
-                if verbose:
-                    print(f"  [{i+1}/{n_files}] SKIPPED: shape {tuple(d.shape)} "
-                          f"differs from anchor {tuple(out.shape[1:])}")
-                del d
+        try:
+            while True:
+                item = prep_q.get()
+                if item is _SENTINEL:
+                    break
+                i, fp, prepared, error = item
+                if error is not None:
+                    if isinstance(error, Exception):
+                        raise _required_source_error(fp, error) from error
+                    raise error
+                try:
+                    if prepared is None:
+                        result = load(
+                            fp, dataset_path=dataset_path, apply_mask=apply_mask,
+                            scan_shape=effective_shape, scan_order=scan_order,
+                            det_bin=det_bin, verbose=False, backend="cuda",
+                            auto_narrow=auto_narrow, dtype=output_dtype,
+                        )
+                        fmeta, data = result.metadata, result.data
+                    else:
+                        data = _decompress_prepared(
+                            prepared, verbose=False, auto_narrow=auto_narrow,
+                            det_bin=det_bin, streaming_bin=(det_bin > 1),
+                            output_dtype=output_dtype,
+                        )
+                        fmeta = get_metadata(fp)
+                        if prepared.get("pixel_mask") is not None:
+                            fmeta["pixel_mask"] = prepared["pixel_mask"]
+                        data = _apply_scan_shape(
+                            data, effective_shape, fmeta, scan_order
+                        )
+                        fmeta["scan_order"] = scan_order
+                except (OSError, ValueError) as error:
+                    raise _required_source_error(fp, error) from error
+                if out is None:
+                    meta = fmeta
+                    out = cp.empty((n_files, *data.shape), dtype=data.dtype)
+                    if effective_shape is None:
+                        effective_shape = meta.get("scan_shape")
+                if data.shape != out.shape[1:] or data.dtype != out.dtype:
+                    raise ValueError(
+                        f"Required source {fp!r} has shape/dtype "
+                        f"{data.shape}/{data.dtype}; expected "
+                        f"{out.shape[1:]}/{out.dtype}. "
+                        "Load matching acquisitions or load them separately."
+                    )
+                out[i] = data
+                del data
                 cp.get_default_memory_pool().free_all_blocks()
-                skipped.append(i)
-                continue
-            out[n_loaded] = d
-            del d
-            cp.get_default_memory_pool().free_all_blocks()
-            n_loaded += 1
-        if out is None:
-            raise FileNotFoundError(
-                f"All {n_files} files failed to load (missing data files)"
-            )
-        if n_loaded < n_files:
-            out = out[:n_loaded]
-        # Record the per-dataset names (loaded order, skips dropped) so the viewer
-        # can label the dataset slider with each source file instead of an index.
-        skipped_set = set(skipped)
+            cp.cuda.get_current_stream().synchronize()
+        except BaseException as error:
+            try:
+                cp.cuda.get_current_stream().synchronize()
+            except BaseException as drain_error:
+                _FAILED_DECOMPRESSIONS.append((locals(), error, drain_error))
+            raise
+        finally:
+            cancelled.set()
+            while producer_thread.is_alive() or not prep_q.empty():
+                try:
+                    pending = prep_q.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+                release_queued(pending)
+            producer_thread.join()
+
+        # The labels and stack share the original acquisition order.
         loaded_names = [
             os.path.basename(str(filepath[i]))[:-len("_master.h5")]
             if str(filepath[i]).endswith("_master.h5") else os.path.basename(str(filepath[i]))
-            for i in range(n_files) if i not in skipped_set
+            for i in range(n_files)
         ]
         meta["file_names"] = loaded_names
-        meta["n_files"] = n_loaded
+        meta["n_files"] = n_files
         if verbose:
             t_multi = time.perf_counter() - t_multi_start
             size_gb = out.nbytes / 1e9 if out is not None else 0
-            skip_msg = f" (skipped {len(skipped)})" if skipped else ""
-            print(f"  Done: {n_loaded} files{skip_msg} → {tuple(out.shape)} ({size_gb:.1f} GB) in {t_multi:.2f}s")
+            print(f"  Done: {n_files} files → {tuple(out.shape)} ({size_gb:.1f} GB) in {t_multi:.2f}s")
         return LoadResult(out, meta)
 
     if not os.path.isfile(filepath):
         raise FileNotFoundError(f"HDF5 file not found: {filepath}")
 
     t0 = time.perf_counter()
-    global _default_decompressor
 
     with h5py.File(filepath, "r") as f:
         data_group = f.get("entry/data")
@@ -6214,26 +6306,21 @@ def _load_impl(
         meta["scan_order"] = scan_order
         return LoadResult(data, meta)
 
-    # For 3D data, use cached GPUDecompressor
-    if (
-        _default_decompressor is None
-        or frame_bytes > _default_decompressor.max_frame_bytes
-        or n_blocks_per_frame > _default_decompressor.n_blocks_per_frame
-    ):
-        _default_decompressor = GPUDecompressor(
-            max_compressed_bytes=1024 * 1024 * 1024,
-            max_frames=70000,
-            max_frame_bytes=frame_bytes,
-            n_blocks_per_frame=n_blocks_per_frame,
-        )
-
-    data = _default_decompressor.load(filepath, dataset_path)
+    # The previous global owner was discarded after every load anyway. Keep
+    # this operation's buffers private so concurrent devices cannot replace it.
+    decompressor = GPUDecompressor(
+        max_compressed_bytes=1024 * 1024 * 1024,
+        max_frames=70000,
+        max_frame_bytes=frame_bytes,
+        n_blocks_per_frame=n_blocks_per_frame,
+    )
+    data = decompressor.load(filepath, dataset_path)
     if output_dtype is not None and not _is_uint4_load_dtype(output_dtype):
         data = data.astype(output_dtype)
 
     # Free decompressor buffers - they hold ~12 GB of GPU memory
     # and are only needed during decompression.
-    _default_decompressor = None
+    del decompressor
     cp.get_default_memory_pool().free_all_blocks()
     cp.get_default_pinned_memory_pool().free_all_blocks()
 

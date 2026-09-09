@@ -3,6 +3,7 @@
 import hashlib
 import math
 from copy import deepcopy
+from contextlib import ExitStack
 
 import numpy as np
 
@@ -56,16 +57,14 @@ def _load_ans(source, *, backend, representation, expected_sha256, device):
         raise NotImplementedError(
             "CPU reference loading requires representation='dense'; GPU residency needs CUDA or MPS."
         )
-    if device is not None:
-        raise NotImplementedError(
-            "Explicit ANS device selection is not implemented; no work was launched."
-        )
+    if device is not None and backend != "cuda":
+        raise ValueError("Explicit ANS device selection requires backend='cuda'; omit device for CPU or MPS.")
     if target is DataRepresentation.DENSE and backend != "cpu":
         raise NotImplementedError(
             "ANS-to-dense GPU materialization is not qualified yet; load as 'ans' or 'packed'."
         )
     owner = None
-    with ANSFile(source, expected_sha256=expected_sha256) as encoded:
+    with ANSFile(source, expected_sha256=expected_sha256) as encoded, ExitStack() as contexts:
         metadata = deepcopy(encoded.metadata)
         source_shape = metadata.get("source_shape", encoded.shape)
         source_dtype = metadata.get("source_dtype", encoded.dtype.name)
@@ -128,6 +127,10 @@ def _load_ans(source, *, backend, representation, expected_sha256, device):
             elif backend == "cuda":
                 from .backends.cuda._ans import CudaANSResidentCounts
 
+                import cupy as cp
+
+                selected_device = cp.cuda.runtime.getDevice() if device is None else int(device)
+                contexts.enter_context(cp.cuda.Device(selected_device))
                 owner = CudaANSResidentCounts(**encoded.runtime_arguments())
             else:
                 from .backends.mps._ans import MPSANSResidentCounts

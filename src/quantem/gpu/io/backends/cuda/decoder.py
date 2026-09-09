@@ -1,7 +1,7 @@
 """CUDA kernels for bitshuffle+LZ4 compression and decompression.
 
 This module contains the raw CUDA kernel source code and compiled kernels.
-Kernels are compiled at module import time for fast first load().
+Kernels compile on first use in each device context.
 
 Kernels
 -------
@@ -13,9 +13,11 @@ compact_kernel : Compact scattered compressed blocks
 """
 from __future__ import annotations
 
+import threading
+
 # cupy is the CUDA toolkit; it is absent on a Mac / plain laptop. Guard the
 # import so this module loads anywhere — the kernels are compiled lazily on
-# first access (see the module __getattr__ at the bottom), so a non-CUDA box
+# first launch (see the module __getattr__ at the bottom), so a non-CUDA box
 # can import quantem.gpu.io without ever touching cupy.
 try:
     import cupy as cp
@@ -1103,12 +1105,11 @@ extern "C" __global__ void clip_u32_to_u8_kernel(
 
 # Kernel names are exposed as module attributes (for example,
 # ``decoder.h5lz4dc_kernel``)
-# but the CUDA module is compiled LAZILY on first access, not at import. This
+# but the CUDA module is compiled lazily on first launch, not at import. This
 # keeps importing the IO namespace working on a non-CUDA box (the
 # compile needs cupy + a GPU); only a caller that actually decompresses on the
-# cuda backend triggers the compile. The compiled functions are cached after
-# the first access, so there is no per-launch overhead — the lookup cost is
-# paid once.
+# cuda backend triggers the compile. Concrete functions are cached by context;
+# the public callables resolve the active context on every launch.
 _KERNEL_FUNCS = {
     "h5lz4dc_kernel": "h5lz4dc_batched",
     "bitshuffle_kernel": "shuf_8192_32_batched",
@@ -1130,32 +1131,60 @@ _KERNEL_FUNCS = {
     "clip_u16_to_u8_count_kernel": "clip_u16_to_u8_count_kernel",
     "clip_u32_to_u8_count_kernel": "clip_u32_to_u8_count_kernel",
 }
-_cuda_module = None
+_cuda_modules: dict[tuple[int, int], object] = {}
+_cuda_functions: dict[tuple[int, int, str], object] = {}
+_kernel_lock = threading.RLock()
+
+
+def _current_context_key() -> tuple[int, int]:
+    """Identify the context used by this operation, without changing devices."""
+    if cp is None:
+        raise ImportError(
+            "CuPy is required for CUDA I/O. Install CuPy or select "
+            "backend='cpu' or backend='mps'."
+        )
+    device = int(cp.cuda.runtime.getDevice())
+    context = int(cp.cuda.driver.ctxGetCurrent())
+    if not context:
+        # First use may precede any array allocation. Initialize only the
+        # already selected device; never replace an existing context.
+        cp.cuda.runtime.free(0)
+        context = int(cp.cuda.driver.ctxGetCurrent())
+    if not context:
+        raise RuntimeError(f"CUDA I/O could not initialize device {device}.")
+    return device, context
 
 
 def _compile_module():
-    """Compile the CUDA kernel source once and cache it. Needs cupy + a GPU."""
-    global _cuda_module
-    if _cuda_module is None:
-        if cp is None:
-            raise ImportError(
-                "cupy is required to compile the bitshuffle+LZ4 CUDA kernels "
-                "(the cuda decompress backend). Install cupy on an NVIDIA box, "
-                "or use load(backend='cpu' / 'mps')."
+    """Return the module owned by the currently selected device and context."""
+    key = _current_context_key()
+    with _kernel_lock:
+        if key not in _cuda_modules:
+            _cuda_modules[key] = cp.RawModule(
+                code=_CUDA_LZ4_SOURCE, options=("-std=c++11", "-w")
             )
-        _cuda_module = cp.RawModule(
-            code=_CUDA_LZ4_SOURCE, options=("-std=c++11", "-w")
-        )
-    return _cuda_module
+        return _cuda_modules[key]
+
+
+def _get_kernel(name: str):
+    """Resolve a concrete function in the context of this launch."""
+    key = (*_current_context_key(), name)
+    with _kernel_lock:
+        if key not in _cuda_functions:
+            _cuda_functions[key] = _compile_module().get_function(
+                _KERNEL_FUNCS[name]
+            )
+        return _cuda_functions[key]
 
 
 def __getattr__(name: str):
-    """PEP 562 lazy attribute: compile + return a kernel the first time its
-    module-level name is read, then cache it in globals so later reads are a
-    plain dict hit."""
-    fn = _KERNEL_FUNCS.get(name)
-    if fn is None:
+    """Return a lazy launch callable that remains valid across device switches."""
+    if name not in _KERNEL_FUNCS:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    kernel = _compile_module().get_function(fn)
-    globals()[name] = kernel
-    return kernel
+
+    def launch(*args, **kwargs):
+        return _get_kernel(name)(*args, **kwargs)
+
+    launch.__name__ = name
+    globals()[name] = launch
+    return launch

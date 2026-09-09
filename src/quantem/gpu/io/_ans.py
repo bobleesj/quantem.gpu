@@ -142,7 +142,9 @@ class ANSFile:
     Malformed entropy streams are checked by the decoder before publication.
     """
 
-    def __init__(self, path, *, expected_sha256=None):
+    def __init__(
+        self, path: str | Path, *, expected_sha256: str | None = None
+    ):
         self.path = Path(path)
         self.arrays = {}
         self._stream = self.path.open("rb")
@@ -260,7 +262,7 @@ class ANSFile:
         self.encoded_nbytes = sum(value.nbytes for value in self.arrays.values())
         self.assert_unchanged()
 
-    def assert_unchanged(self):
+    def assert_unchanged(self) -> None:
         """Reject changed file identity/timestamps during audit or upload.
 
         This cheap stat guard assumes an immutable input. Filesystem timestamps
@@ -272,7 +274,7 @@ class ANSFile:
                 "ANS source changed during audit/upload; freeze it and retry."
             )
 
-    def runtime_arguments(self):
+    def runtime_arguments(self) -> dict:
         """Return the one backend-neutral array contract while mappings are open."""
         if self._stream is None:
             raise RuntimeError("ANS source is closed; reopen it before loading.")
@@ -284,7 +286,7 @@ class ANSFile:
             **self.arrays,
         )
 
-    def decode_block_reference(self, block):
+    def decode_block_reference(self, block: int) -> np.ndarray:
         """Decode a bounded block on CPU for independent parity, not a GPU fallback."""
         if self._stream is None:
             raise RuntimeError("ANS source is closed.")
@@ -335,7 +337,7 @@ class ANSFile:
                 raise ValueError("rANS terminal state or byte consumption is invalid.")
         return out.reshape(frames, *self.shape[2:])
 
-    def close(self):
+    def close(self) -> None:
         """Release mapped source ownership; previously borrowed arrays expire."""
         for values in self.arrays.values():
             mapping = getattr(values, "_mmap", None)
@@ -388,7 +390,14 @@ def _encode_column(values, scale):
     return payload, model
 
 
-def write_ans_reference(path, data, *, metadata=None, block_frames=256, scale=15):
+def write_ans_reference(
+    path: str | Path,
+    data: np.ndarray,
+    *,
+    metadata: dict | None = None,
+    block_frames: int = 256,
+    scale: int = 15,
+) -> Path:
     """Write exact uint8/uint16 counts transactionally using bounded CPU blocks.
 
     This is an explicitly requested reference encoder, not an accelerated
@@ -396,6 +405,33 @@ def write_ans_reference(path, data, *, metadata=None, block_frames=256, scale=15
     row/column dimensions. Original excluded/saturated pixels are stored too.
     No output is overwritten. The writer retains encoded tables and indexes,
     but never makes a full dense copy of the source or full compressed payload.
+
+    Parameters
+    ----------
+    path : str or Path
+        New destination; existing files are never replaced.
+    data : numpy.ndarray
+        Native uint8/uint16 counts in scan-row, scan-column, detector-row,
+        detector-column order. Memory maps are accepted.
+    metadata : dict, optional
+        JSON-compatible acquisition provenance, including original geometry.
+    block_frames : int, optional
+        Independent stream length in scan positions; bounded to 32 MiB blocks.
+    scale : int, optional
+        Probability precision in bits, from 1 to 15.
+
+    Returns
+    -------
+    pathlib.Path
+        Atomically published count-ANS container.
+
+    Examples
+    --------
+    >>> counts = np.zeros((2, 3, 4, 5), dtype=np.uint16)
+    >>> path = write_ans_reference("counts.ans", counts)
+    >>> with ANSFile(path) as source:
+    ...     np.array_equal(source.decode_block_reference(0), counts.reshape(6, 4, 5))
+    True
     """
     if not isinstance(data, np.ndarray) or data.ndim != 4:
         raise TypeError(
@@ -424,6 +460,26 @@ def write_ans_reference(path, data, *, metadata=None, block_frames=256, scale=15
     if not isinstance(metadata, dict):
         raise TypeError("metadata must be a dictionary.")
     _validate_scientific_metadata(metadata, data.shape, data.dtype.name)
+    scans = data.shape[0] * data.shape[1]
+
+    def blocks():
+        for first in range(0, scans, block_frames):
+            indices = np.arange(first, min(first + block_frames, scans))
+            rows, columns = np.divmod(indices, data.shape[1])
+            yield np.ascontiguousarray(data[rows, columns])
+
+    return _write_ans_blocks(
+        path, blocks(), shape=data.shape, dtype=data.dtype,
+        metadata=metadata, block_frames=block_frames, scale=scale,
+    )
+
+
+def _write_ans_blocks(path, blocks, *, shape, dtype, metadata, block_frames, scale):
+    """Encode consecutive bounded native blocks using the single count-ANS writer."""
+    dtype = np.dtype(dtype)
+    pixels = shape[2] * shape[3]
+    scans = shape[0] * shape[1]
+    _validate_scientific_metadata(metadata, shape, dtype.name)
     path = Path(path)
     if path.exists():
         raise FileExistsError(
@@ -450,14 +506,18 @@ def write_ans_reference(path, data, *, metadata=None, block_frames=256, scale=15
         ) as stream:
             temporary = Path(stream.name)
             stream.write(bytes(_DATA_START))
-            scans = data.shape[0] * data.shape[1]
-            for first in range(0, scans, block_frames):
-                indices = np.arange(first, min(first + block_frames, scans))
-                rows, columns = np.divmod(indices, data.shape[1])
-                block = np.ascontiguousarray(data[rows, columns])
+            written = 0
+            for block in blocks:
+                expected_frames = min(block_frames, scans - written)
+                if (not isinstance(block, np.ndarray) or block.dtype != dtype
+                        or block.shape != (expected_frames, *shape[2:])
+                        or expected_frames < 1):
+                    raise ValueError("ANS input blocks must exactly cover the declared native shape.")
+                block = np.ascontiguousarray(block)
+                written += len(block)
                 logical_digest.update(memoryview(block).cast("B"))
                 for pixel in range(pixels):
-                    detector_row, detector_column = divmod(pixel, data.shape[3])
+                    detector_row, detector_column = divmod(pixel, shape[3])
                     values = block[:, detector_row, detector_column]
                     encoded = _encode_column(values, scale)
                     # Incompressible streams use a declared exact literal profile.
@@ -485,6 +545,8 @@ def write_ans_reference(path, data, *, metadata=None, block_frames=256, scale=15
                     payload_digest.update(payload)
                     offsets.append(offsets[-1] + len(payload))
                     models.append(model)
+            if written != scans:
+                raise ValueError("ANS input ended before the declared scan shape was complete.")
             sections["payload"] = {
                 "offset": _DATA_START,
                 "count": offsets[-1],
@@ -514,8 +576,8 @@ def write_ans_reference(path, data, *, metadata=None, block_frames=256, scale=15
                 "schema": "quantem.gpu.count-ans.v1",
                 "codec": "block-column-rans-byte-v1",
                 "order": "scan_row,scan_column,detector_row,detector_column",
-                "shape": list(data.shape),
-                "dtype": data.dtype.name,
+                "shape": list(shape),
+                "dtype": dtype.name,
                 "block_frames": block_frames,
                 "scale": scale,
                 "metadata": metadata,

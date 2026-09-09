@@ -13,6 +13,7 @@ Read these pages in order:
 6. [Testing and evidence](testing.md)
 7. [Benchmark methodology](../performance/methodology.md)
 8. [Cross-backend parity](../performance/parity.md)
+9. [Exact count-ANS codec and retained formats](count-ans.md)
 
 The public Python modules and Swift products are documented under the
 [API reference](../api/index.md). Backend internals may change behind those

@@ -129,6 +129,10 @@ parts:
             title: Reproducing resident count analysis
           - file: developer/writing
             title: Writing, notation, and units
+          - file: developer/experimental-resident-ans
+            title: Experimental resident ANS
+          - file: developer/count-ans
+            title: Count-ANS container
           - file: developer/testing
       - file: maintainer/index
         title: Maintainer archive

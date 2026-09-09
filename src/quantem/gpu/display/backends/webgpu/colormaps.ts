@@ -1,3 +1,5 @@
+import { validateUint32ImageView, type Uint32ImageView } from "./borrowed-image";
+export type { Uint32ImageView } from "./borrowed-image";
 // Canonical reusable WebGPU display implementation owned by quantem.gpu.
 // quantem.widget imports this source through its generated engine tree.
 
@@ -105,6 +107,28 @@ export function renderToOffscreenReuse(
 // per output pixel sums that pixel across the N frames (loop on the GPU, parallel
 // over pixels) and divides. Replaces a CPU per-pixel double-loop on the UI thread.
 const AVERAGE_SHADER = /* wgsl */ `
+// Correctly round small integer-count means. Hardware f32 division may use a
+// reciprocal approximation, differing from Math.fround(integerSum / n) by 1 ULP.
+// Binary long division retains the remainder for round-to-nearest, ties-to-even.
+fn count_mean(sum: u32, n: u32) -> f32 {
+  if (sum == 0u) { return 0.0; }
+  var exponent = i32(firstLeadingBit(sum)) - i32(firstLeadingBit(n));
+  if (exponent >= 0) {
+    if (sum < (n << u32(exponent))) { exponent--; }
+  } else {
+    if ((sum << u32(-exponent)) < n) { exponent--; }
+  }
+  var mantissa = sum / n;
+  var remainder = sum % n;
+  let shift = u32(23 - exponent);
+  for (var bit = 0u; bit < shift; bit++) {
+    remainder *= 2u;
+    mantissa = (mantissa << 1u) | select(0u, 1u, remainder >= n);
+    if (remainder >= n) { remainder -= n; }
+  }
+  if (remainder * 2u > n || (remainder * 2u == n && (mantissa & 1u) != 0u)) { mantissa++; }
+  return bitcast<f32>((u32(exponent + 127) << 23u) + mantissa - 0x800000u);
+}
 struct AvgParams { n: u32, frameSize: u32 };
 @group(0) @binding(0) var<storage, read> src: array<f32>;
 @group(0) @binding(1) var<storage, read_write> dst: array<f32>;
@@ -117,7 +141,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   for (var j = 0u; j < p.n; j = j + 1u) {
     s = s + src[j * p.frameSize + i];
   }
-  dst[i] = s / f32(p.n);
+  if (s >= 0.0 && s <= 16777215.0 && floor(s) == s && p.n <= 65535u) {
+    dst[i] = count_mean(u32(s), p.n);
+  } else {
+    dst[i] = s / f32(p.n);
+  }
 }
 `;
 
@@ -609,7 +637,8 @@ fn unpack_rgb(rgb: u32) -> vec4f {
 }
 `;
 
-const DIRECT_SLOT_GPU_RANGE_COLORMAP_SHADER = DISPLAY_NORMALIZE_WGSL + /* wgsl */ `
+function directSlotGpuRangeShader(integerCounts = false): string {
+  return DISPLAY_NORMALIZE_WGSL + /* wgsl */ `
 struct Params {
   src_width: u32,
   src_height: u32,
@@ -631,10 +660,13 @@ struct Params {
 struct RangeOut { vmin: f32, vmax: f32, _p0: f32, _p1: f32 };
 
 @group(0) @binding(0) var<uniform> params: Params;
-@group(0) @binding(1) var<storage, read> data: array<f32>;
+@group(0) @binding(1) var<storage, read> data: array<${integerCounts ? "u32" : "f32"}>;
 @group(0) @binding(2) var<storage, read> lut: array<u32>;
 @group(0) @binding(3) var<storage, read> range_in: RangeOut;
 
+fn display_value(index: u32) -> f32 {
+  return ${integerCounts ? "f32(data[index]) / range_in._p0" : "data[index]"};
+}
 struct VSOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
 
 @vertex fn vs(@builtin(vertex_index) vi: u32) -> VSOut {
@@ -682,10 +714,10 @@ fn unpack_rgb(rgb: u32) -> vec4f {
     let ty = src_fy - f32(y0);
     let row0 = y0 * params.src_width;
     let row1 = y1 * params.src_width;
-    let v00 = data[row0 + x0];
-    let v10 = data[row0 + x1];
-    let v01 = data[row1 + x0];
-    let v11 = data[row1 + x1];
+    let v00 = display_value(row0 + x0);
+    let v10 = display_value(row0 + x1);
+    let v01 = display_value(row1 + x0);
+    let v11 = display_value(row1 + x1);
     let v0 = v00 + (v10 - v00) * tx;
     let v1 = v01 + (v11 - v01) * tx;
     val = v0 + (v1 - v0) * ty;
@@ -693,7 +725,7 @@ fn unpack_rgb(rgb: u32) -> vec4f {
     let src_local_x = min(u32(image_x * f32(region_w) / out_w), region_w - 1u);
     let src_x = min(region_x0 + src_local_x, params.src_width - 1u);
     let src_y = min(u32(image_y * f32(params.src_height) / out_h), params.src_height - 1u);
-    val = data[src_y * params.src_width + src_x];
+    val = display_value(src_y * params.src_width + src_x);
   }
   if (params.log_scale == 1u) {
     if (val >= 0.0) { val = log(1.0 + val); } else { val = -log(1.0 - val); }
@@ -706,6 +738,7 @@ fn unpack_rgb(rgb: u32) -> vec4f {
   return unpack_rgb(lut[lut_idx]);
 }
 `;
+}
 
 function shouldSmoothDirectSample(
   smooth: boolean | undefined,
@@ -1144,9 +1177,8 @@ interface VolumeSliceAlignment {
 // the GPU has consumed them. We push them here when recorded into an encoder
 // and destroy them once the caller has submitted the work.
 const paramsBufQueue: GPUBuffer[] = [];
-function flushParamsBufQueue(): void {
-  for (const b of paramsBufQueue) b.destroy();
-  paramsBufQueue.length = 0;
+function flushParamsBufQueue(start = 0): void {
+  for (const b of paramsBufQueue.splice(start)) b.destroy();
 }
 
 /**
@@ -1168,6 +1200,7 @@ type GPUSlot = {
   // Populated by computeRange* on GPU and consumed directly by the range-aware
   // colormap shader (no CPU readback between passes).
   rangeBuffer: GPUBuffer | null;
+  rangePartialsBuffer: GPUBuffer | null;
   liveRange?: {
     groups: number;
     partials: GPUBuffer;
@@ -1201,6 +1234,7 @@ export class GPUColormapEngine {
   private directGridPipeline: GPURenderPipeline | null = null;
   private directGridRangesPipeline: GPURenderPipeline | null = null;
   private directSlotPipeline: GPURenderPipeline | null = null;
+  private directSlotGpuRangeU32Pipeline: GPURenderPipeline | null = null;
   private directSlotGpuRangePipeline: GPURenderPipeline | null = null;
   private packedPanelTransformPipeline: GPUComputePipeline | null = null;
   private blitPipeline: GPURenderPipeline | null = null;
@@ -1278,6 +1312,7 @@ export class GPUColormapEngine {
     slot.histBinsBuffer.destroy();
     slot.histReadBuffer.destroy();
     slot.rangeBuffer?.destroy();
+    slot.rangePartialsBuffer?.destroy();
     slot.liveRange?.partials.destroy();
     slot.liveRange?.parameters.destroy();
     for (const buf of slot.directRegionParamsBuffers) buf?.destroy();
@@ -1481,10 +1516,10 @@ export class GPUColormapEngine {
     });
   }
 
-  private ensureDirectSlotGpuRangePipeline(format: GPUTextureFormat): void {
-    if (this.directSlotGpuRangePipeline) return;
-    const module = this.device.createShaderModule({ code: DIRECT_SLOT_GPU_RANGE_COLORMAP_SHADER });
-    this.directSlotGpuRangePipeline = this.device.createRenderPipeline({
+  private ensureDirectSlotGpuRangePipeline(format: GPUTextureFormat, integerCounts = false): void {
+    if (integerCounts ? this.directSlotGpuRangeU32Pipeline : this.directSlotGpuRangePipeline) return;
+    const module = this.device.createShaderModule({ code: directSlotGpuRangeShader(integerCounts) });
+    const pipeline = this.device.createRenderPipeline({
       layout: "auto",
       vertex: { module, entryPoint: "vs" },
       fragment: {
@@ -1494,6 +1529,8 @@ export class GPUColormapEngine {
       },
       primitive: { topology: "triangle-list" },
     });
+    if (integerCounts) this.directSlotGpuRangeU32Pipeline = pipeline;
+    else this.directSlotGpuRangePipeline = pipeline;
   }
 
   private ensurePackedPanelTransformPipeline(): void {
@@ -1591,6 +1628,7 @@ export class GPUColormapEngine {
       histBinsBuffer,
       histReadBuffer,
       rangeBuffer: null,
+      rangePartialsBuffer: null,
       directGridBindGroup: null,
       directSlotBindGroup: null,
       directRegionParamsBuffers: [],
@@ -1657,6 +1695,7 @@ export class GPUColormapEngine {
       histBinsBuffer: this.device.createBuffer({ size: 256 * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC }),
       histReadBuffer: this.device.createBuffer({ size: 256 * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }),
       rangeBuffer: null,
+      rangePartialsBuffer: null,
       directGridBindGroup: null,
       directSlotBindGroup: null,
       directRegionParamsBuffers: [],
@@ -1685,6 +1724,11 @@ export class GPUColormapEngine {
    * @example
    * engine.adoptBuffer(41, residentDisplay.buffer, 512, 512, "borrowed");
    */
+  /** Display caller-owned storage; the caller retains its lifetime. */
+  borrowBuffer(idx: number, buffer: GPUBuffer, width: number, height: number): void {
+    this.adoptBuffer(idx, buffer, width, height, "borrowed");
+  }
+
   adoptBuffer(idx: number, buffer: GPUBuffer, width: number, height: number, ownership: GPUBufferOwnership = "owned"): void {
     while (this.slots.length <= idx) this.slots.push(null as never);
     const old = this.slots[idx];
@@ -1728,6 +1772,7 @@ export class GPUColormapEngine {
         usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
       }),
       rangeBuffer: null,
+      rangePartialsBuffer: null,
       directGridBindGroup: null,
       directSlotBindGroup: null,
       directRegionParamsBuffers: [],
@@ -3167,15 +3212,145 @@ export class GPUColormapEngine {
       smooth?: boolean;
     },
   ): boolean {
+    return this.renderSlotsDirectWithGpuRangeToCanvases([idx], [ctx], vminPct, vmaxPct, logScale, opts) === 1;
+  }
+
+  /** Present distinct resident slots with one queue submission. */
+  renderSlotsDirectWithGpuRangeToCanvases(
+    indices: number[], contexts: GPUCanvasContext[], vminPct: number, vmaxPct: number,
+    logScale: boolean,
+    opts: { width: number; height: number; bgRgb: number;
+      transform?: { zoom: number; panX: number; panY: number }; smooth?: boolean },
+  ): number {
+    if (indices.length !== contexts.length || new Set(indices).size !== indices.length) {
+      throw new Error("Supply one distinct resident slot for each canvas context.");
+    }
     const encoder = this.device.createCommandEncoder();
-    const rendered = this.encodeSlotDirectWithGpuRangeToCanvas(encoder, idx, vminPct, vmaxPct, logScale, ctx, opts);
-    if (rendered) this.device.queue.submit([encoder.finish()]);
-    return rendered;
+    const paramsStart = paramsBufQueue.length;
+    let rendered = 0;
+    try {
+      indices.forEach((idx, i) => {
+        if (this.encodeSlotDirectWithGpuRangeToCanvas(encoder, idx, vminPct, vmaxPct, logScale, contexts[i], opts)) rendered++;
+      });
+      if (rendered) this.device.queue.submit([encoder.finish()]);
+      return rendered;
+    } finally {
+      flushParamsBufQueue(paramsStart);
+    }
+  }
+
+  /**
+   * Draw distinct resident images into one canvas, retaining per-image GPU ranges.
+   * Rectangles use canvas pixels. Pan uses source pixels, as in scientific views.
+   * Source buffers remain unchanged; only display uniforms and ranges are written.
+   * Optional count views are borrowed for this submission, keyed by slot index.
+   * Their float32 means feed the same range/log/interpolation operations as float
+   * slots. They never replace owned slot buffers and must outlive queued work.
+   */
+  renderSlotsDirectWithGpuRangeToCanvas(
+    indices: number[],
+    rectangles: { x: number; y: number; width: number; height: number }[],
+    ctx: GPUCanvasContext,
+    vminPct: number,
+    vmaxPct: number,
+    logScale: boolean,
+    opts: { width: number; height: number; bgRgb: number;
+      transform?: { zoom: number; panX: number; panY: number }; smooth?: boolean; counts?: ReadonlyMap<number, Uint32ImageView> },
+  ): number {
+    if (indices.length !== rectangles.length || new Set(indices).size !== indices.length) {
+      throw new Error("Supply one rectangle for each distinct resident slot.");
+    }
+    if (!Number.isInteger(opts.width) || !Number.isInteger(opts.height) || opts.width < 1 || opts.height < 1) {
+      throw new Error("Canvas dimensions must be positive integer pixels.");
+    }
+    for (const rect of rectangles) {
+      if (![rect.x, rect.y, rect.width, rect.height].every(Number.isInteger)
+        || rect.x < 0 || rect.y < 0 || rect.width < 1 || rect.height < 1
+        || rect.x + rect.width > opts.width || rect.y + rect.height > opts.height) {
+        throw new Error("Image rectangles must be positive integer pixel regions inside the canvas.");
+      }
+    }
+    if (opts.counts) {
+      if (opts.counts.size !== indices.length) throw new Error('Supply one count image for every shared display slot.');
+      for (const idx of indices) {
+        const slot = this.slots[idx], view = opts.counts.get(idx);
+        if (!slot || !view) throw new Error('Every count image requires an initialized display slot.');
+        validateUint32ImageView(view, this.device, slot.count);
+      }
+    }
+    if (!this.lutBuffer || !indices.length) return 0;
+    this.ensureRangeRegionPipeline(Boolean(opts.counts));
+    this.ensureDirectSlotGpuRangePipeline(navigator.gpu.getPreferredCanvasFormat(), Boolean(opts.counts));
+    const pipeline = opts.counts ? this.directSlotGpuRangeU32Pipeline : this.directSlotGpuRangePipeline;
+    if (!pipeline) return 0;
+    const encoder = this.device.createCommandEncoder();
+    const paramsStart = paramsBufQueue.length;
+    const draws: { rect: typeof rectangles[number]; group: GPUBindGroup }[] = [];
+    try {
+      indices.forEach((idx, i) => {
+        const slot = this.slots[idx], counts = opts.counts?.get(idx);
+        if (!slot || !this.recordComputeRangeRegion(encoder, idx, undefined, logScale, counts)) return;
+        const rect = rectangles[i];
+        const pu = this.directGridParamsU32;
+        const pf = this.directGridParamsF32;
+        pu[0] = slot.width; pu[1] = slot.height; pu[2] = 0; pu[3] = slot.width;
+        pu[4] = rect.height; pu[5] = rect.width;
+        pf[6] = rect.x; pf[7] = rect.y;
+        pu[8] = logScale ? 1 : 0; pu[9] = opts.bgRgb & 0xFFFFFF;
+        const zoom = Math.max(1e-6, opts.transform?.zoom ?? 1);
+        pf[10] = zoom;
+        pu[11] = shouldSmoothDirectSample(opts.smooth, zoom, slot.width, slot.height, rect.width, rect.height) ? 1 : 0;
+        pf[12] = vminPct; pf[13] = vmaxPct;
+        pf[14] = (opts.transform?.panX ?? 0) * rect.width / slot.width;
+        pf[15] = (opts.transform?.panY ?? 0) * rect.height / slot.height;
+        this.device.queue.writeBuffer(slot.paramsBuffer, 0, this.directGridParams);
+        draws.push({ rect, group: this.device.createBindGroup({
+          layout: pipeline.getBindGroupLayout(0),
+          entries: [
+            { binding: 0, resource: { buffer: slot.paramsBuffer } },
+            { binding: 1, resource: counts
+              ? { buffer: counts.buffer, offset: counts.byteOffset, size: counts.count * 4 }
+              : { buffer: slot.dataBuffer } },
+            { binding: 2, resource: { buffer: this.lutBuffer! } },
+            { binding: 3, resource: { buffer: this.ensureSlotRangeBuffer(slot) } },
+          ],
+        }) });
+      });
+      if (!draws.length) return 0;
+      const pass = encoder.beginRenderPass({ colorAttachments: [{
+        view: ctx.getCurrentTexture().createView(), loadOp: "clear", storeOp: "store",
+        clearValue: { r: (opts.bgRgb & 0xFF) / 255, g: ((opts.bgRgb >> 8) & 0xFF) / 255,
+          b: ((opts.bgRgb >> 16) & 0xFF) / 255, a: 1 },
+      }] });
+      pass.setPipeline(pipeline);
+      for (const { rect, group } of draws) {
+        pass.setViewport(rect.x, rect.y, rect.width, rect.height, 0, 1);
+        pass.setScissorRect(rect.x, rect.y, rect.width, rect.height);
+        pass.setBindGroup(0, group);
+        pass.draw(3);
+      }
+      pass.end();
+      this.device.queue.submit([encoder.finish()]);
+      return draws.length;
+    } finally {
+      flushParamsBufQueue(paramsStart);
+    }
   }
 
   private encodeSlotDirectWithGpuRangeToCanvas(
     encoder: GPUCommandEncoder,
-    ...[idx, vminPct, vmaxPct, logScale, ctx, opts]: Parameters<GPUColormapEngine["renderSlotDirectWithGpuRangeToCanvas"]>
+    idx: number,
+    vminPct: number,
+    vmaxPct: number,
+    logScale: boolean,
+    ctx: GPUCanvasContext,
+    opts: {
+      width: number;
+      height: number;
+      bgRgb: number;
+      transform?: { zoom: number; panX: number; panY: number };
+      smooth?: boolean;
+    },
   ): boolean {
     if (!this.lutBuffer) return false;
     const slot = this.slots[idx];
@@ -3809,29 +3984,30 @@ export class GPUColormapEngine {
   async readDataSlots(indices: number[]): Promise<(Float32Array | null)[]> {
     if (indices.length === 0) return [];
     const encoder = this.device.createCommandEncoder();
-    const jobs = indices.map((idx) => {
-      const slot = this.slots[idx];
-      if (!slot) return null;
-      if (slot.dataKind !== "f32") {
-        throw new Error("readDataSlots only supports float32 display slots");
+    const jobs: ({readBuffer: GPUBuffer; byteSize: number} | null)[] = [];
+    try {
+      for (const idx of indices) {
+        const slot = this.slots[idx];
+        if (!slot) { jobs.push(null); continue; }
+        if (slot.dataKind !== "f32") throw new Error("readDataSlots only supports float32 display slots");
+        const byteSize = slot.count * Float32Array.BYTES_PER_ELEMENT;
+        const readBuffer = this.device.createBuffer({
+          size: byteSize, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+        });
+        jobs.push({readBuffer, byteSize});
+        encoder.copyBufferToBuffer(slot.dataBuffer, 0, readBuffer, 0, byteSize);
       }
-      const byteSize = slot.count * Float32Array.BYTES_PER_ELEMENT;
-      const readBuffer = this.device.createBuffer({
-        size: byteSize,
-        usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
-      });
-      encoder.copyBufferToBuffer(slot.dataBuffer, 0, readBuffer, 0, byteSize);
-      return { readBuffer, byteSize };
-    });
-    this.device.queue.submit([encoder.finish()]);
-    await Promise.all(jobs.map(job => job?.readBuffer.mapAsync(GPUMapMode.READ)));
-    return jobs.map((job) => {
-      if (!job) return null;
-      const data = new Float32Array(job.readBuffer.getMappedRange().slice(0, job.byteSize));
-      job.readBuffer.unmap();
-      job.readBuffer.destroy();
-      return data;
-    });
+      this.device.queue.submit([encoder.finish()]);
+      await Promise.all(jobs.map(job => job?.readBuffer.mapAsync(GPUMapMode.READ)));
+      return jobs.map(job => job
+        ? new Float32Array(job.readBuffer.getMappedRange().slice(0, job.byteSize)) : null);
+    } finally {
+      for (const job of jobs) {
+        if (!job) continue;
+        if (job.readBuffer.mapState === "mapped") job.readBuffer.unmap();
+        job.readBuffer.destroy();
+      }
+    }
   }
 
   // ── GPU min/max reduction ──
@@ -4111,7 +4287,10 @@ fn reduce(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_i
   // by reducing on GPU and feeding the result straight into the colormap pass
   // via a small storage buffer (no mapAsync between the two passes).
 
+  private rangeU32Pipelines: [GPUComputePipeline, GPUComputePipeline, GPUComputePipeline] | null = null;
   private rangeRegionPipeline: GPUComputePipeline | null = null;
+  private rangePartialsPipeline: GPUComputePipeline | null = null;
+  private rangeFinalizePipeline: GPUComputePipeline | null = null;
   private colormapRangePipeline: GPUComputePipeline | null = null;
   // Per-panel scratch state for `renderPerPanelGpu` when N panels share ONE
   // GPU slot (full frame). Each entry holds the panel-sized rgba output
@@ -4136,77 +4315,85 @@ fn reduce(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_i
     return entry;
   }
 
-  private ensureRangeRegionPipeline(): void {
-    if (this.rangeRegionPipeline) return;
-    // Single-workgroup grid-stride reduction over a rectangular region of a
-    // larger frame buffer. region = (x_offset, y_offset, width, height).
-    // fullWidth is the stride of the underlying data buffer.
+  private ensureRangeRegionPipeline(integerCounts = false): void {
+    if (integerCounts ? this.rangeU32Pipelines : this.rangeRegionPipeline) return;
+    // Keep the single-workgroup entry point for existing direct callers. Large
+    // slot ranges use the same finite/log transform and tree reduction in two
+    // stages, distributing the image reads across many workgroups.
     const code = DISPLAY_NORMALIZE_WGSL + /* wgsl */ `
 struct RangeOut { vmin: f32, vmax: f32, _p0: f32, _p1: f32 };
-struct RegionParams { region: vec4u, fullWidth: u32, log_scale: u32, _pad1: u32, _pad2: u32 };
-
-@group(0) @binding(0) var<storage, read> data: array<f32>;
+struct RegionParams { region: vec4u, fullWidth: u32, log_scale: u32, partial_count: u32, _pad2: u32 };
+@group(0) @binding(0) var<storage, read> data: array<${integerCounts ? "u32" : "f32"}>;
 @group(0) @binding(1) var<uniform> params: RegionParams;
 @group(0) @binding(2) var<storage, read_write> out: RangeOut;
-
+@group(0) @binding(3) var<storage, read_write> partials: array<vec2f>;
 var<workgroup> sMin: array<f32, 256>;
 var<workgroup> sMax: array<f32, 256>;
-
-@compute @workgroup_size(256)
-fn reduce(@builtin(local_invocation_index) lid: u32) {
-  var lmin = 1.0e38;
-  var lmax = -1.0e38;
-  let rw = params.region.z;
-  let rh = params.region.w;
-  let n = rw * rh;
-  var i = lid;
-  loop {
-    if (i >= n) { break; }
-    let r = i / rw;
-    let c = i - r * rw;
-    var v = data[(params.region.y + r) * params.fullWidth + params.region.x + c];
-    if (!display_is_finite(v)) {
-      i = i + 256u;
-      continue;
-    }
-    if (params.log_scale == 1u) {
-      if (v >= 0.0) { v = log(1.0 + v); } else { v = -log(1.0 - v); }
-    }
-    if (v < lmin) { lmin = v; }
-    if (v > lmax) { lmax = v; }
-    i = i + 256u;
-  }
-  sMin[lid] = lmin;
-  sMax[lid] = lmax;
+fn reduce_pair(lid: u32, low: f32, high: f32) -> vec2f {
+  sMin[lid] = low; sMax[lid] = high;
   workgroupBarrier();
-  var s = 128u;
-  loop {
-    if (s == 0u) { break; }
-    if (lid < s) {
-      sMin[lid] = min(sMin[lid], sMin[lid + s]);
-      sMax[lid] = max(sMax[lid], sMax[lid + s]);
+  for (var stride = 128u; stride > 0u; stride >>= 1u) {
+    if (lid < stride) {
+      sMin[lid] = min(sMin[lid], sMin[lid + stride]);
+      sMax[lid] = max(sMax[lid], sMax[lid + stride]);
     }
     workgroupBarrier();
-    s = s >> 1u;
   }
-  if (lid == 0u) {
-    if (sMax[0] >= sMin[0]) {
-      out.vmin = sMin[0];
-      out.vmax = sMax[0];
-    } else {
-      out.vmin = 0.0;
-      out.vmax = 0.0;
+  return vec2f(sMin[0], sMax[0]);
+}
+fn region_range(lid: u32, first: u32, step: u32) -> vec2f {
+  var low = 1.0e38; var high = -1.0e38;
+  let width = params.region.z;
+  let count = width * params.region.w;
+  for (var index = first; index < count; index += step) {
+    let row = index / width; let col = index - row * width;
+    let at = (params.region.y + row) * params.fullWidth + params.region.x + col;
+    var value = ${integerCounts ? "f32(data[at]) / bitcast<f32>(params._pad2)" : "data[at]"};
+    if (!display_is_finite(value)) { continue; }
+    if (params.log_scale == 1u) {
+      if (value >= 0.0) { value = log(1.0 + value); } else { value = -log(1.0 - value); }
     }
-    out._p0 = 0.0;
-    out._p1 = 0.0;
+    if (value < low) { low = value; }
+    if (value > high) { high = value; }
   }
+  return reduce_pair(lid, low, high);
+}
+fn store_range(lid: u32, result: vec2f) {
+  if (lid == 0u) {
+    if (result.y >= result.x) { out.vmin = result.x; out.vmax = result.y; }
+    else { out.vmin = 0.0; out.vmax = 0.0; }
+    out._p0 = ${integerCounts ? "bitcast<f32>(params._pad2)" : "0.0"}; out._p1 = 0.0;
+  }
+}
+@compute @workgroup_size(256)
+fn reduce(@builtin(local_invocation_index) lid: u32) {
+  store_range(lid, region_range(lid, lid, 256u));
+}
+@compute @workgroup_size(256)
+fn reduce_partials(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) group: vec3u) {
+  let result = region_range(lid, group.x * 256u + lid, params.partial_count * 256u);
+  if (lid == 0u) { partials[group.x] = result; }
+}
+@compute @workgroup_size(256)
+fn finalize(@builtin(local_invocation_index) lid: u32) {
+  var low = 1.0e38; var high = -1.0e38;
+  for (var index = lid; index < params.partial_count; index += 256u) {
+    low = min(low, partials[index].x); high = max(high, partials[index].y);
+  }
+  store_range(lid, reduce_pair(lid, low, high));
 }
 `;
     const module = this.device.createShaderModule({ code });
-    this.rangeRegionPipeline = this.device.createComputePipeline({
-      layout: "auto",
-      compute: { module, entryPoint: "reduce" },
+    const pipeline = (entryPoint: string) => this.device.createComputePipeline({
+      layout: "auto", compute: { module, entryPoint },
     });
+    if (integerCounts) {
+      this.rangeU32Pipelines = [pipeline("reduce"), pipeline("reduce_partials"), pipeline("finalize")];
+      return;
+    }
+    this.rangeRegionPipeline = pipeline("reduce");
+    this.rangePartialsPipeline = pipeline("reduce_partials");
+    this.rangeFinalizePipeline = pipeline("finalize");
   }
 
   private ensureColormapRangePipeline(): void {
@@ -4288,35 +4475,66 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     idx: number,
     region?: { x: number; y: number; width: number; height: number },
     logScale: boolean = false,
+    counts?: Uint32ImageView,
   ): boolean {
-    this.ensureRangeRegionPipeline();
     const slot = this.slots[idx];
-    if (!slot || !this.rangeRegionPipeline) return false;
+    if (!slot) return false;
+    if (counts) validateUint32ImageView(counts, this.device, slot.count);
+    this.ensureRangeRegionPipeline(Boolean(counts));
+    const [rangePipeline, partialsPipeline, finalizePipeline] = counts ? this.rangeU32Pipelines!
+      : [this.rangeRegionPipeline!, this.rangePartialsPipeline!, this.rangeFinalizePipeline!];
+    const input: GPUBufferBinding = counts
+      ? { buffer: counts.buffer, offset: counts.byteOffset, size: counts.count * 4 }
+      : { buffer: slot.dataBuffer };
     const r = region ?? { x: 0, y: 0, width: slot.width, height: slot.height };
     const rangeBuf = this.ensureSlotRangeBuffer(slot);
-
-    // Region params: 32 bytes = vec4u + 4xu32 (we only use first u32 of the tail)
+    const partialCount = Math.max(1, Math.min(1024, Math.ceil(r.width * r.height / 1024)));
+    // These parameters belong to this recorded region. They are never rewritten
+    // while another region or an earlier queued frame still references them.
     const paramsBuf = this.device.createBuffer({
-      size: 32,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
-    this.device.queue.writeBuffer(
-      paramsBuf, 0,
-      new Uint32Array([r.x, r.y, r.width, r.height, slot.width, logScale ? 1 : 0, 0, 0]),
-    );
-
-    const bg = this.device.createBindGroup({
-      layout: this.rangeRegionPipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: { buffer: slot.dataBuffer } },
-        { binding: 1, resource: { buffer: paramsBuf } },
-        { binding: 2, resource: { buffer: rangeBuf } },
-      ],
-    });
+    const params = new Uint32Array([r.x, r.y, r.width, r.height, slot.width, logScale ? 1 : 0, partialCount, 0]);
+    if (counts) new Float32Array(params.buffer)[7] = counts.divisor;
+    this.device.queue.writeBuffer(paramsBuf, 0, params);
     const pass = encoder.beginComputePass();
-    pass.setPipeline(this.rangeRegionPipeline);
-    pass.setBindGroup(0, bg);
-    pass.dispatchWorkgroups(1);
+    if (partialCount === 1) {
+      pass.setPipeline(rangePipeline);
+      pass.setBindGroup(0, this.device.createBindGroup({
+        layout: rangePipeline.getBindGroupLayout(0), entries: [
+          { binding: 0, resource: input },
+          { binding: 1, resource: { buffer: paramsBuf } },
+          { binding: 2, resource: { buffer: rangeBuf } },
+        ],
+      }));
+      pass.dispatchWorkgroups(1);
+    } else {
+      if (!slot.rangePartialsBuffer) {
+        slot.rangePartialsBuffer = this.device.createBuffer({
+          size: Math.max(1, Math.min(1024, Math.ceil(slot.count / 1024))) * 8,
+          usage: GPUBufferUsage.STORAGE,
+        });
+      }
+      const partials = slot.rangePartialsBuffer;
+      pass.setPipeline(partialsPipeline!);
+      pass.setBindGroup(0, this.device.createBindGroup({
+        layout: partialsPipeline!.getBindGroupLayout(0), entries: [
+          { binding: 0, resource: input },
+          { binding: 1, resource: { buffer: paramsBuf } },
+          { binding: 3, resource: { buffer: partials } },
+        ],
+      }));
+      pass.dispatchWorkgroups(partialCount);
+      pass.setPipeline(finalizePipeline!);
+      pass.setBindGroup(0, this.device.createBindGroup({
+        layout: finalizePipeline!.getBindGroupLayout(0), entries: [
+          { binding: 1, resource: { buffer: paramsBuf } },
+          { binding: 2, resource: { buffer: rangeBuf } },
+          { binding: 3, resource: { buffer: partials } },
+        ],
+      }));
+      pass.dispatchWorkgroups(1);
+    }
     pass.end();
     // paramsBuf can be destroyed once the encoder is submitted; defer to caller.
     // Stash on the slot's rangeBuffer-adjacent state via the returned descriptor.
