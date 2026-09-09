@@ -20,6 +20,9 @@ contracts; consumer code should not import them.
 
 The [exact CUDA resident-series guide](compact-resident.md) distinguishes the
 general H5/ANS source path from the preserved prepared-series implementation.
+The [resident reproduction guide](reproducing-resident-analysis.md) maps these
+implementations to the existing public entry points and separates reusable
+software from private study settings, evidence and manuscript writing.
 
 ```{tableofcontents}
 ```

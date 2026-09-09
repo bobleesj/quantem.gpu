@@ -103,6 +103,7 @@ def test_prepared_folder_uses_existing_io_load(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
     source = _FixtureSeries()
+    source.resident_bytes = 512
     source.load_seconds = 0.25
     source.load_timing = {"stream_seconds": 0.20}
     calls = []
@@ -120,7 +121,22 @@ def test_prepared_folder_uses_existing_io_load(tmp_path, monkeypatch):
     assert calls == [(tmp_path, 1)]
     assert loaded.data is source
     assert loaded.metadata["series_shape"] == (2,)
-    assert detector.prepare(loaded).series_shape == (2,)
+    assert loaded.representation is io.DataRepresentation.ANS
+    assert loaded.lossless
+    assert loaded.dtype == np.dtype("uint16")
+    assert loaded.logical_bytes == source.counts.nbytes
+    assert loaded.resident_bytes == 512
+    assert loaded.metadata["resident_codec"] == "tans"
+    assert loaded.metadata["resident_profile"] == source.storage_format
+    assert loaded.to_representation("ans") is loaded
+    session = detector.prepare(loaded)
+    assert session.series_shape == (2,)
+    mask = np.ones(session.detector_shape, bool)
+    np.testing.assert_array_equal(
+        session.masked_sum_exact(mask),
+        (source.counts * source.valid).sum(axis=(-2, -1), dtype=np.uint64),
+    )
+    np.testing.assert_array_equal(session.frame(0), source.counts[:, 0, 0])
 
 
 def test_fractional_annuli_keep_float64_inclusive_boundaries():

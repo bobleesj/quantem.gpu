@@ -5108,21 +5108,9 @@ def load(
                 native_dtype = None
             if native_dtype is not None and np.dtype(native_dtype) != np.dtype(np.uint16):
                 raise NotImplementedError("Prepared counts remain lossless uint16; use dtype=None or 'u16'.")
-            from quantem.gpu._compact.load import load as load_prepared
+            from ._prepared_series import load_prepared_series
 
-            selected_device = 0 if device is None else int(str(device).removeprefix("cuda:"))
-            if verbose:
-                print(f"Loading complete encoded series onto cuda:{selected_device}.")
-            data = load_prepared(prepared, device=selected_device)
-            metadata = {
-                "scan_shape": data.scan_shape, "detector_shape": data.det_shape,
-                "series_shape": data.series_shape, "n_frames": data.n_frames,
-                "source_shape": data.shape, "source_dtype": data.dtype.str,
-                "storage_format": data.storage_format,
-                "valid_pixels": data.valid_pixels,
-                "load_seconds": data.load_seconds, "load_timing": data.load_timing,
-            }
-            return LoadResult(data, metadata)
+            return load_prepared_series(prepared, device=device, verbose=verbose)
 
     if output not in {"native", "torch"}:
         raise ValueError("output must be 'native' or 'torch'")

@@ -14,6 +14,11 @@ selects the matching decoder; different profiles do not share a decoder merely
 because they share this public name.
 See {ref}`file format and compression <io-file-format-compression>`
 for the canonical save/load workflow and its current limits.
+Prepared CUDA series also report `representation="ans"`, with the fixed
+`resident_profile` and `resident_codec="tans"` distinguishing their paired-tANS
+dense component and sparse-count layout from portable or runtime rANS sources.
+See the [reproduction guide](../developer/reproducing-resident-analysis.md) for
+the entry-point and implementation map.
 
 | New count workflow | Implementation | Qualification |
 |---|---|---|

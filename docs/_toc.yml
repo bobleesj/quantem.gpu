@@ -123,6 +123,8 @@ parts:
             title: Count and Fourier representation integration
           - file: developer/compact-resident
             title: Exact CUDA resident series
+          - file: developer/reproducing-resident-analysis
+            title: Reproducing resident count analysis
           - file: developer/writing
             title: Writing, notation, and units
           - file: developer/testing
