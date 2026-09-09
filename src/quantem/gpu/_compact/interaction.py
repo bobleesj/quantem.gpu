@@ -181,6 +181,14 @@ class StreamedSeriesCompute(CudaSeriesCompute):
         }
         self.lock, self.last = threading.Lock(), {}
 
+    def _plan(self, values):
+        """Decompose a signed mask into index fields plus residual pixels."""
+        return plan(values)
+
+    def _cost(self, selection):
+        """Tile reads are random access; pixel residuals decode whole streams."""
+        return len(selection[0]) + len(selection[2]) * 4
+
     def masked_sum_native(self, mask, *, out=None):
         import cupy as cp
 
@@ -192,12 +200,10 @@ class StreamedSeriesCompute(CudaSeriesCompute):
         values = values.astype(np.int32)
         with self.lock, cp.cuda.Device(self.device):
             started = time.perf_counter()
-            selection, delta = plan(values), False
+            selection, delta = self._plan(values), False
             if self.previous_mask is not None:
-                change = plan(values - self.previous_mask)
-                # Tile reads are random access; pixel residuals decode whole streams.
-                cost = lambda p: len(p[0]) + len(p[2]) * 4
-                if cost(change) < cost(selection):
+                change = self._plan(values - self.previous_mask)
+                if self._cost(change) < self._cost(selection):
                     selection, delta = change, True
             fi, _fc, pi, _pc = selection
             result = self._output(

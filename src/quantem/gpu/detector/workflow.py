@@ -679,6 +679,10 @@ def _resolve_backend(data):
         sources = [item.data if hasattr(item, "_fields") and "data" in item._fields else item for item in data]
         from quantem.gpu.io.backends.cuda._ans import CudaANSResidentCounts, CudaPackedResidentCounts
 
+        from quantem.gpu._compact.paired import PairedCounts, PairedSeriesCompute
+
+        if sources and all(isinstance(source, PairedCounts) for source in sources):
+            return PairedSeriesCompute(data)
         if sources and all(isinstance(source, (StreamedCounts, CudaANSResidentCounts, CudaPackedResidentCounts)) for source in sources):
             return StreamedSeriesCompute(data)
         return CudaSeriesCompute(data)
@@ -696,7 +700,9 @@ def _resolve_backend(data):
     from quantem.gpu._compact.interaction import StreamedSeriesCompute
 
     if isinstance(data, StreamedCounts):
-        result = StreamedSeriesCompute([data])
+        from quantem.gpu._compact.paired import PairedCounts, PairedSeriesCompute
+
+        result = (PairedSeriesCompute if isinstance(data, PairedCounts) else StreamedSeriesCompute)([data])
         result.series_shape = ()
         result.valid_pixels = result.valid_pixels[0]
         result.backend_metadata["series_shape"] = ()
