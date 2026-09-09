@@ -276,6 +276,82 @@ public final class MetalDisplayStatistics: @unchecked Sendable {
     )
   }
 
+  /// Analyze independent equal-shaped images with two GPU synchronization points.
+  /// Returns image-major statistics, then in the caller's requested scale order.
+  /// Uses the same range and histogram kernels as `analyzeUInt32`; never copies
+  /// scientific images to the CPU. Only ranges and 256-bin summaries are read.
+  public func analyzeUInt32Batch(
+    values: [MTLBuffer], rows: Int, columns: Int,
+    scales: [MetalDisplayScale] = [.linear, .logarithmic]
+  ) throws -> [[MetalUInt32Statistics]] {
+    guard !values.isEmpty else { return [] }
+    guard !scales.isEmpty else { return values.map { _ in [] } }
+    let counts = try values.map {
+      try validate(values: $0, rows: rows, columns: columns, stride: 4)
+    }
+    let ranges = try values.map { _ in try makeBuffer(length: 8, purpose: "batch UInt32 range") }
+    for range in ranges {
+      let pointer = range.contents().assumingMemoryBound(to: UInt32.self)
+      pointer[0] = .max
+      pointer[1] = 0
+    }
+    let histograms = try values.map { _ in try scales.map { _ in try makeHistogramBuffer() } }
+    lock.lock()
+    defer { lock.unlock() }
+    guard let rangeCommand = queue.makeCommandBuffer(),
+      let rangeEncoder = rangeCommand.makeComputeCommandEncoder()
+    else {
+      throw MetalImageRuntimeError.allocation("batch range command")
+    }
+    rangeEncoder.setComputePipelineState(rangeUInt32)
+    for index in values.indices {
+      rangeEncoder.setBuffer(values[index], offset: 0, index: 0)
+      rangeEncoder.setBuffer(ranges[index], offset: 0, index: 1)
+      var count = UInt32(counts[index])
+      rangeEncoder.setBytes(&count, length: 4, index: 2)
+      dispatch(rangeEncoder, pipeline: rangeUInt32, count: counts[index])
+    }
+    rangeEncoder.endEncoding()
+    try commitAndWait(rangeCommand)
+    guard let command = queue.makeCommandBuffer(),
+      let encoder = command.makeComputeCommandEncoder()
+    else {
+      throw MetalImageRuntimeError.allocation("batch histogram command")
+    }
+    encoder.setComputePipelineState(histogramUInt32)
+    var result: [[MetalUInt32Statistics]] = []
+    for index in values.indices {
+      let pointer = ranges[index].contents().assumingMemoryBound(to: UInt32.self)
+      let minimum = pointer[0] == .max ? 0 : pointer[0]
+      let maximum = pointer[0] == .max ? 0 : pointer[1]
+      for (scaleIndex, scale) in scales.enumerated() {
+        var parameters = MetalDisplayParameters(
+          rows: rows, cols: columns,
+          low: minimum, high: maximum, scale: scale)
+        encoder.setBuffer(values[index], offset: 0, index: 0)
+        encoder.setBuffer(histograms[index][scaleIndex], offset: 0, index: 1)
+        withUnsafeBytes(of: &parameters) {
+          encoder.setBytes($0.baseAddress!, length: $0.count, index: 2)
+        }
+        dispatch(encoder, pipeline: histogramUInt32, count: counts[index])
+      }
+    }
+    encoder.endEncoding()
+    try commitAndWait(command)
+    for index in values.indices {
+      let pointer = ranges[index].contents().assumingMemoryBound(to: UInt32.self)
+      let minimum = pointer[0] == .max ? 0 : pointer[0]
+      let maximum = pointer[0] == .max ? 0 : pointer[1]
+      result.append(
+        histograms[index].map { histogram in
+          MetalUInt32Statistics(
+            valueRange: ranges[index], histogram: histogram,
+            minimum: minimum, maximum: maximum, bins: bins(from: histogram))
+        })
+    }
+    return result
+  }
+
   public func analyzeFloat32(
     values: MTLBuffer,
     rows: Int,
