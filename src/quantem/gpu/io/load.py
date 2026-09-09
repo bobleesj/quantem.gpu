@@ -5019,6 +5019,8 @@ def load(
         ``checkpoint.json``. The initial CUDA format supports the complete
         66-acquisition native shape and query-ready indexes. It preserves raw
         uint16 counts and original validity metadata without expanding data.
+        Omit representation or pass ``representation="ans"`` for this path;
+        its recorded profile selects the paired-tANS/sparse decoder.
         Source-only archives and H5-to-compact encoding are not yet supported
         through this prepared-folder path.
     dtype
@@ -5083,6 +5085,14 @@ def load(
     if isinstance(source, (str, os.PathLike)):
         prepared = Path(source)
         if prepared.is_dir() and (prepared / "checkpoint.json").is_file():
+            if (
+                representation is not None
+                and DataRepresentation.parse(representation) is not DataRepresentation.ANS
+            ):
+                raise NotImplementedError(
+                    "Prepared series retain their ANS representation; use "
+                    "representation='ans' or omit it. Conversion is not implemented."
+                )
             unsupported = {
                 "dataset_path": dataset_path, "scan_shape": scan_shape,
                 "scan_region": scan_region, "detector_region": detector_region,
@@ -5090,7 +5100,6 @@ def load(
                 "scan_shift_row_col": scan_shift_row_col,
                 "scan_indices": scan_indices, "random_positions": random_positions,
                 "drift": drift, "devices": devices,
-                "representation": representation,
                 "expected_source_sha256": expected_source_sha256,
                 "source_integrity": source_integrity,
             }

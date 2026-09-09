@@ -190,11 +190,13 @@ class DetectorSession:
             Full-resolution detector mask. Compact masks must be binary.
         output
             ``"numpy"`` retains the exact uint64 host default. ``"native"``
-            returns the compact backend's exact uint32 all-acquisition array;
-            this supported detector shape cannot overflow uint32.
+            returns exact uint32/uint64 counts with leading ``series_shape``.
+            The prepared fixed-shape series fits uint32; general CUDA series
+            select the accumulator from the native dtype and detector size.
         out
-            Optional native uint32 buffer, with the ownership and completion
-            rules documented by :meth:`masked_sum`.
+            Optional native buffer with the backend's exact sum dtype and
+            shape, following the ownership and completion rules documented
+            by :meth:`masked_sum`.
 
         Examples
         --------

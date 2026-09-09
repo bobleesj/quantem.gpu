@@ -1,6 +1,7 @@
 """Public detector workflow and unchanged host defaults, without CUDA allocation."""
 
 import numpy as np
+import pytest
 
 from quantem.gpu import detector, io
 from quantem.gpu._compact.source import CompactSeries
@@ -94,7 +95,8 @@ def test_existing_numpy_workflow_keeps_shape_and_precision():
     np.testing.assert_array_equal(session.frame(0), counts[0, 0])
 
 
-def test_prepared_folder_uses_existing_io_load(tmp_path, monkeypatch):
+@pytest.mark.parametrize("representation", [None, "ans", io.DataRepresentation.ANS])
+def test_prepared_folder_uses_existing_io_load(tmp_path, monkeypatch, representation):
     """The normal load API selects the compact loader without generic H5 decoding."""
     (tmp_path / "checkpoint.json").write_text(
         '{"format":"compact-prepared-series-v1"}'
@@ -117,7 +119,9 @@ def test_prepared_folder_uses_existing_io_load(tmp_path, monkeypatch):
         "quantem.gpu._compact.load",
         SimpleNamespace(load=load_prepared),
     )
-    loaded = io.load(tmp_path, backend="cuda", device=1, verbose=False)
+    loaded = io.load(
+        tmp_path, backend="cuda", device=1, representation=representation, verbose=False
+    )
     assert calls == [(tmp_path, 1)]
     assert loaded.data is source
     assert loaded.metadata["series_shape"] == (2,)
@@ -137,6 +141,10 @@ def test_prepared_folder_uses_existing_io_load(tmp_path, monkeypatch):
         (source.counts * source.valid).sum(axis=(-2, -1), dtype=np.uint64),
     )
     np.testing.assert_array_equal(session.frame(0), source.counts[:, 0, 0])
+    for conversion in ("dense", "packed"):
+        with pytest.raises(NotImplementedError, match="Conversion is not implemented"):
+            io.load(tmp_path, backend="cuda", representation=conversion, verbose=False)
+    assert calls == [(tmp_path, 1)]  # Rejected conversions did not reload the source.
 
 
 def test_fractional_annuli_keep_float64_inclusive_boundaries():

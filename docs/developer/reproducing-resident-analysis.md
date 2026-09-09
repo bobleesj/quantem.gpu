@@ -16,14 +16,16 @@ justifies combining them.
 |---|---|---|---|
 | Ordinary complete uint8/uint16 H5 into an indexed resident | `io.load(path, backend="cuda", representation="ans", apply_mask=False)` | Runtime rANS in `_compact/streamed.py`; H5 loading in `io/_streamed.py` | No qualified archive writer or resident conversion |
 | Portable QuantEM/ANS file | `io.load(path, backend="cuda", expected_source_sha256=seal)` | Portable rANS in `io/_ans.py`, GPU readers in `io/backends/` | Different format/model from historical storage experiments; MPS also supports its documented subset |
-| Completed query-ready series folder | `io.load(path, backend="cuda", device=0)` | Fixed prepared paired-tANS/sparse layout in `_compact/`; IO result adapter in `io/_prepared_series.py` | Fixed complete native shape, prebuilt indexes; no arbitrary source encoder |
+| Completed query-ready series folder | `io.load(path, backend="cuda", representation="ans", device=0)` | Fixed prepared paired-tANS/sparse layout in `_compact/`; IO result adapter in `io/_prepared_series.py` | Fixed complete native shape, prebuilt indexes; no arbitrary source encoder |
 | Authenticated prepared packed source | `io.load(path, backend="cuda", representation="packed", expected_source_sha256=seal)` | Profile-specific readers in `io/backends/` | Check the [representation contract](../api/representations.md) for device and format coverage |
 | Original HDF5 into native Metal integer packing | Native Swift `MetalOriginalHDF5Packing` workflow | Swift/Metal sources in the same package repository | Separate native lifecycle; not an automatic Python H5-to-packed conversion |
 
 The `ans` selector names the representation family. The format/profile selects
 the compatible decoder. rANS and tANS streams are not interchangeable. A
 prepared-series result reports `resident_codec="tans"` for its dense component;
-the profile also includes sparse counts and exact indexes.
+the profile also includes sparse counts and exact indexes. Prepared folders
+accept either automatic representation detection or explicit
+`representation="ans"`; unsupported conversions fail before device loading.
 
 See [native Metal original-HDF5 packing](../api/original-hdf5-metal-packing.md)
 for its entry points and [prepared CUDA series](compact-resident.md) for the

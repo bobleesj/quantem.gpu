@@ -35,6 +35,9 @@ Choose your entry point:
   Swift/Metal, WebGPU, Vulkan, and CPU reference internals.
 - [Dense, packed, and ANS data](docs/api/representations.md): representation,
   dtype, ownership, and current operation support for each runtime.
+- [Resident analysis entry points](docs/developer/reproducing-resident-analysis.md):
+  load and query retained representations, pin implementations, and reproduce
+  scientific results without copying backend code.
 - [QuantEM.GPU Remote](docs/remote/index.md): deploy the CUDA engine as a
   loopback service and connect locally or through SSH.
 - [Verified performance](docs/performance/results.md): dated, revision-pinned
