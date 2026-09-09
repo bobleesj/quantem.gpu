@@ -197,6 +197,12 @@ public enum Metal4DSTEMKernels {
     try makeLibrary(resource: "ans_counts", device: device)
   }
 
+  /// Compile exact paired tANS archive diffraction queries.
+  @_spi(EntropySeriesPrototype)
+  public static func makeTANSLibrary(device: MTLDevice) throws -> MTLLibrary {
+    try makeLibrary(resource: "tans", device: device)
+  }
+
   /// Compile bounded original-HDF5 to lossless resident packing kernels.
   public static func makeOriginalPackingLibrary(device: MTLDevice) throws -> MTLLibrary {
     try makeLibrary(resource: "original_packing", device: device)
