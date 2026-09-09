@@ -74,8 +74,8 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
     }
     let signatureFiles =
       (FileManager.default.fileExists(atPath: source.path) ? [source] : [])
-      + dataFiles
-    let signature = try nativeDatasetSignature(for: signatureFiles)
+      + dataFiles + [companionMetadata(for: source)].compactMap { $0 }
+    let signature = try nativeDatasetSignature(for: signatureFiles) + "-calibration-v2"
     let indexRoot = cacheDirectory.appendingPathComponent(signature, isDirectory: true)
     let datasetCache = indexRoot.appendingPathComponent("dataset.json")
     if let cached = try cachedDataset(
@@ -218,7 +218,14 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
       sourceIdentitySHA256: hashes?.aggregate,
       masterSHA256: hashes?.master,
       orderedMemberSHA256: hashes?.members,
-      sourceScanCalibration: nil,
+      sourceScanCalibration: spatialCalibration.sampling.map {
+        Native4DSTEMScanCalibration(
+          rowSamplingAngstrom: $0.row * 10,
+          columnSamplingAngstrom: $0.column * 10,
+          origin: .sourceMetadata,
+          evidence: spatialCalibration.metadata["spatial_calibration_source"] ?? "HDF5 metadata"
+        )
+      },
       scalarImageRawPath: nil,
       detectorMaskSHA256: master.detectorMaskSHA256
     )
@@ -453,6 +460,20 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
     if let sampling = master.scanPixelSizeNanometer {
       return (sampling, ["spatial_calibration_source": "HDF5 metadata"])
     }
+    if let companion = companionMetadata(for: source) {
+      // An explicitly paired but invalid companion must not silently borrow a
+      // different acquisition's calibration from another file in the folder.
+      guard
+        let metadata = try? NativeHDF5Bridge.inspectMaster(
+          at: companion, detectorRows: 0, detectorColumns: 0),
+        let shape = metadata.scanShape,
+        shape.rows == scanShape.rows, shape.columns == scanShape.columns,
+        let sampling = metadata.scanPixelSizeNanometer
+      else { return (nil, [:]) }
+      return (
+        sampling, ["spatial_calibration_source": "NXem companion · \(companion.lastPathComponent)"]
+      )
+    }
     guard let emd = unambiguousVeloxSibling(for: source),
       let fieldOfView = try? NativeHDF5Bridge.veloxFieldOfViewNanometer(at: emd),
       scanShape.rows > 0,
@@ -467,6 +488,14 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
       (row: row, column: column),
       ["spatial_calibration_source": "Velox EMD · \(emd.lastPathComponent)"]
     )
+  }
+
+  private func companionMetadata(for source: URL) -> URL? {
+    let name = source.lastPathComponent
+    guard name.hasSuffix("_master.h5") else { return nil }
+    let companion = source.deletingLastPathComponent().appendingPathComponent(
+      String(name.dropLast("_master.h5".count)) + "_em_metadata.h5")
+    return FileManager.default.fileExists(atPath: companion.path) ? companion : nil
   }
 
   private func unambiguousVeloxSibling(for source: URL) -> URL? {

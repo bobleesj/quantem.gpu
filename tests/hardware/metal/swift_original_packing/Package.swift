@@ -13,6 +13,10 @@ let package = Package(
   ],
   targets: [
     .executableTarget(
+      name: "CatalogCalibrationParity",
+      dependencies: [.product(name: "Native4DSTEMIO", package: "quantem.gpu")]
+    ),
+    .executableTarget(
       name: "EMPADSourceParity",
       dependencies: [
         .product(name: "Native4DSTEMIO", package: "quantem.gpu"),

@@ -547,6 +547,29 @@ static void qh5_read_reciprocal_sampling(hid_t file, qh5_master_info *info) {
 }
 
 static void qh5_read_scan_pixel_size(hid_t file, qh5_master_info *info) {
+  // NXem scan-controller metadata uses x=column and y=row. Never substitute
+  // detector sensor pitch for specimen scan sampling.
+  char *scan_type = qh5_read_dataset_string(file,
+    "/electron_microscope/scan_controller/scan_type");
+  uint64_t rows = 0, columns = 0, frames = 0;
+  double row = 0, column = 0;
+  if (scan_type != NULL && strcmp(scan_type, "regular") == 0
+      && qh5_read_integer_dataset(file, "/electron_microscope/scan_controller/regular_scan/n_pixels_y", &rows)
+      && qh5_read_integer_dataset(file, "/electron_microscope/scan_controller/regular_scan/n_pixels_x", &columns)
+      && qh5_read_integer_dataset(file, "/electron_microscope/scan_controller/regular_scan/n_frames", &frames)
+      && rows > 0 && columns > 0 && frames == 1
+      && qh5_read_length_meters_with_policy(file, "/electron_microscope/scan_controller/regular_scan/pixel_size_y", &row, 1)
+      && qh5_read_length_meters_with_policy(file, "/electron_microscope/scan_controller/regular_scan/pixel_size_x", &column, 1)) {
+    info->has_scan_shape = 1;
+    info->scan_rows = rows;
+    info->scan_columns = columns;
+    info->has_scan_pixel_size = 1;
+    info->scan_pixel_row_nm = row * 1e9;
+    info->scan_pixel_column_nm = column * 1e9;
+    free(scan_type);
+    return;
+  }
+  free(scan_type);
   const char *row_paths[] = {
     "/entry/instrument/scan/y_pixel_size",
     "/entry/instrument/scan/step_y",
