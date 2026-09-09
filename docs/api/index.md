@@ -50,6 +50,11 @@ Native Swift/Metal products for macOS and iOS clients:
 Native clients call these endpoints directly. They are not a local Python
 backend.
 
+The dated [experimental native Metal entropy-series SPI](experimental_metal_entropy_series.md)
+is a separate opt-in prepared-archive consumer. It documents the 2026-09-08
+implementation, exact-count contract, measured limits and missing encoder/API
+gates; it is not part of the stable entry points above.
+
 The API is still release-candidate level. Prefer public functions documented
 here over internal backend modules.
 

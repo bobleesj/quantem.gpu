@@ -74,6 +74,8 @@ parts:
           - file: api/movie
           - file: api/metal_image
           - file: api/native_4dstem_io
+          - file: api/experimental_metal_entropy_series
+            title: Experimental Metal entropy series (2026-09-08)
           - file: api/native_lossless_pack_v1_producer
             title: Native Lossless Pack Format v1 producer
           - file: api/compact_4dstem_h5
