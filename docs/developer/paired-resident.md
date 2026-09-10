@@ -126,7 +126,7 @@ Complete series through the package only (private owner script over
 
 | measurement | value |
 | --- | --- |
-| original HDF5 to resident, 64 with the default loader then 5 with `PairedLoader(rolling_scans=512, rings=2)` | 38.7 s |
+| original HDF5 to resident, 64 with the default loader then 5 with `PairedLoader(rolling_scans=512, rings=2)` (32.0 s once chunk tables are parsed from the staged image) | 38.7 s |
 | resident bytes, sum (index 6.7 GiB of it) | 90.3 GiB |
 | peak device bytes in use during loading | 94.4 GiB |
 | `detector.prepare` | 53 ms |

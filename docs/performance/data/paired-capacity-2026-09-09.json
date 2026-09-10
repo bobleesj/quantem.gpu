@@ -122,6 +122,15 @@
    "acquisitions": 69,
    "value_bytes": 98230468608,
    "memory_kind": "cudaMemGetInfo total minus free"
+  },
+  {
+   "measurement": "series load, original HDF5 to resident, 65 with the default loader then 4 with the lean tail loader, chunk tables parsed from the staged image (revision 91d6f5b6)",
+   "acquisitions": 69,
+   "value_seconds": 32.01,
+   "statistic": "single run wall",
+   "boundary": "first shard read to last source resident",
+   "cache_state": "shards read with direct I/O",
+   "parity": "414 frozen digests exact"
   }
  ]
 }
