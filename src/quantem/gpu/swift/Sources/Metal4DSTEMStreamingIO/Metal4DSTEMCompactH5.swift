@@ -1176,7 +1176,8 @@ public final class MetalCompactH5ResidentSource {
         for (index, source) in sources.enumerated() where source.virtualDetectorUsesFloatDisplay {
           let update = updates[index]
           let outputIndex = update.shouldEncode ? update.nextOutput : source.activeDetectorOutput
-          try source.encodeWideDisplay(from: source.detectorOutputs[outputIndex], to: snapshots[index], command: command)
+          try source.encodeWideDisplay(
+            from: source.detectorOutputs[outputIndex], to: snapshots[index], command: command)
         }
       }
       hostStamp("encoding_end_ms")
@@ -1476,7 +1477,9 @@ public final class MetalCompactH5ResidentSource {
       payloadLayout == 1
       ? (planarScanCooperativePipeline ?? planarILPDetectorPipeline ?? pixelLaneDetectorPipeline)
       : pixelLaneDetectorPipeline
-    encoder.setComputePipelineState(virtualDetectorUsesFloatDisplay ? detectorPipeline : (rawEntryCount < 32 ? detectorPipeline : widePipeline))
+    encoder.setComputePipelineState(
+      virtualDetectorUsesFloatDisplay
+        ? detectorPipeline : (rawEntryCount < 32 ? detectorPipeline : widePipeline))
     let scansPerGroup = virtualDetectorUsesFloatDisplay || usesScanCooperative ? 128 : 32
     for shardIndex in shards.indices {
       var parameters = CompactDetectorParameters(
@@ -1569,7 +1572,9 @@ public final class MetalCompactH5ResidentSource {
   /// Use `snapshotVirtualDetectors` for Metal display without an array readback.
   public func virtualDetectorValues() throws -> [UInt32] {
     guard !virtualDetectorUsesFloatDisplay else {
-      throw Metal4DSTEMStreamingIOError.invalidRequest("This source has UInt64 detector sums. Use virtualDetectorValues64() for exact counts or snapshotVirtualDetectors() for display.")
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "This source has UInt64 detector sums. Use virtualDetectorValues64() for exact counts or snapshotVirtualDetectors() for display."
+      )
     }
     guard !isReleased, detectorOutputs.count == 2 else {
       throw Metal4DSTEMStreamingIOError.invalidRequest(
@@ -1587,24 +1592,32 @@ public final class MetalCompactH5ResidentSource {
   /// Example: `let counts = try source.virtualDetectorValues64()`.
   public func virtualDetectorValues64() throws -> [UInt64] {
     guard !isReleased, detectorOutputs.count == 2 else {
-      throw Metal4DSTEMStreamingIOError.invalidRequest("Reload the released source before reading detector sums.")
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "Reload the released source before reading detector sums.")
     }
     if !virtualDetectorUsesFloatDisplay { return try virtualDetectorValues().map(UInt64.init) }
-    return Array(UnsafeBufferPointer(start: detectorOutputs[activeDetectorOutput].contents()
-      .assumingMemoryBound(to: UInt64.self), count: metadata.scanCount))
+    return Array(
+      UnsafeBufferPointer(
+        start: detectorOutputs[activeDetectorOutput].contents()
+          .assumingMemoryBound(to: UInt64.self), count: metadata.scanCount))
   }
 
-  private func encodeWideDisplay(from values: MTLBuffer, to output: MTLBuffer, command: MTLCommandBuffer) throws {
-    let pipeline = try CompactH5KernelCache.shared.pipeline(name: "compact_h5_u64_display", device: device)
+  private func encodeWideDisplay(
+    from values: MTLBuffer, to output: MTLBuffer, command: MTLCommandBuffer
+  ) throws {
+    let pipeline = try CompactH5KernelCache.shared.pipeline(
+      name: "compact_h5_u64_display", device: device)
     guard let encoder = command.makeComputeCommandEncoder() else {
-      throw Metal4DSTEMStreamingIOError.metalUnavailable("Cannot encode the detector display snapshot. Retry the update.")
+      throw Metal4DSTEMStreamingIOError.metalUnavailable(
+        "Cannot encode the detector display snapshot. Retry the update.")
     }
     var count = UInt32(metadata.scanCount)
     encoder.setComputePipelineState(pipeline)
     encoder.setBuffer(values, offset: 0, index: 0)
     encoder.setBuffer(output, offset: 0, index: 1)
     encoder.setBytes(&count, length: 4, index: 2)
-    encoder.dispatchThreads(MTLSize(width: Int(count), height: 1, depth: 1),
+    encoder.dispatchThreads(
+      MTLSize(width: Int(count), height: 1, depth: 1),
       threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
     encoder.endEncoding()
   }
@@ -1654,7 +1667,8 @@ public final class MetalCompactH5ResidentSource {
     }
     encoder.endEncoding()
     for (source, output) in zip(sources, outputs) where source.virtualDetectorUsesFloatDisplay {
-      try source.encodeWideDisplay(from: source.detectorOutputs[source.activeDetectorOutput], to: output, command: command)
+      try source.encodeWideDisplay(
+        from: source.detectorOutputs[source.activeDetectorOutput], to: output, command: command)
     }
     try Self.complete(command, operation: "detector image snapshots")
     return outputs
@@ -1731,7 +1745,8 @@ public final class MetalCompactH5ResidentSource {
   /// Like other resident methods, call on the resident's serialized owner queue.
   public func countSummary() throws -> MetalCompactH5CountSummary {
     guard !isReleased, let moments = preparedDPCMomentBuffer,
-      let prepared = metadata.preparedDPCMoments else {
+      let prepared = metadata.preparedDPCMoments
+    else {
       throw Metal4DSTEMStreamingIOError.invalidRequest(
         "Count summary requires a live resident with prepared DPC totals. Load the dataset again.")
     }
@@ -1739,14 +1754,19 @@ public final class MetalCompactH5ResidentSource {
     let started = CFAbsoluteTimeGetCurrent()
     let count = prepared.scanCount
     guard count > 0, count == metadata.scanCount, count <= Int(UInt32.max),
-      !maximumMaskSumBound.multipliedReportingOverflow(by: UInt64(count)).overflow else {
-      throw Metal4DSTEMStreamingIOError.invalidRequest("The dataset count sum exceeds the exact UInt64 range.")
+      !maximumMaskSumBound.multipliedReportingOverflow(by: UInt64(count)).overflow
+    else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "The dataset count sum exceeds the exact UInt64 range.")
     }
-    let pipeline = try CompactH5KernelCache.shared.pipeline(name: "compact_h5_total_counts", device: device)
+    let pipeline = try CompactH5KernelCache.shared.pipeline(
+      name: "compact_h5_total_counts", device: device)
     guard pipeline.maxTotalThreadsPerThreadgroup >= 256,
       let output = device.makeBuffer(length: 8, options: .storageModeShared),
-      let command = queue.makeCommandBuffer(), let encoder = command.makeComputeCommandEncoder() else {
-      throw Metal4DSTEMStreamingIOError.metalUnavailable("Cannot allocate the count summary. Close another dataset and retry.")
+      let command = queue.makeCommandBuffer(), let encoder = command.makeComputeCommandEncoder()
+    else {
+      throw Metal4DSTEMStreamingIOError.metalUnavailable(
+        "Cannot allocate the count summary. Close another dataset and retry.")
     }
     command.label = "Exact dataset count summary"
     var scans = UInt32(count)
@@ -1754,7 +1774,8 @@ public final class MetalCompactH5ResidentSource {
     encoder.setBuffer(moments, offset: 0, index: 0)
     encoder.setBuffer(output, offset: 0, index: 1)
     encoder.setBytes(&scans, length: 4, index: 2)
-    encoder.dispatchThreadgroups(MTLSize(width: 1, height: 1, depth: 1),
+    encoder.dispatchThreadgroups(
+      MTLSize(width: 1, height: 1, depth: 1),
       threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
     encoder.endEncoding()
     command.commit()
@@ -1988,7 +2009,8 @@ public enum MetalCompactH5Loader {
       memset(result.contents(), 0, result.length)
       return result
     }
-    let maximumValue: UInt64 = packed.maximum <= 255 ? 255 : (packed.maximum <= 65535 ? 65535 : UInt64(UInt32.max))
+    let maximumValue: UInt64 =
+      packed.maximum <= 255 ? 255 : (packed.maximum <= 65535 ? 65535 : UInt64(UInt32.max))
     let totalBound = UInt64(pixels) * maximumValue
     let rowBound = UInt64(pixels * (dataset.detectorRows - 1) / 2) * maximumValue
     let columnBound = UInt64(pixels * (dataset.detectorCols - 1) / 2) * maximumValue
@@ -2101,7 +2123,8 @@ public enum MetalCompactH5Loader {
       return try pipeline(name: name, device: device)
     }
     let selected = try kernel(Metal4DSTEMKernels.compactH5SelectedDiffractionFunction)
-    let detector = try kernel(is32 ? "compact_h5_detector_update_u64" : Metal4DSTEMKernels.compactH5DetectorUpdateFunction)
+    let detector = try kernel(
+      is32 ? "compact_h5_detector_update_u64" : Metal4DSTEMKernels.compactH5DetectorUpdateFunction)
     let pixelLane = try kernel("compact_h5_detector_update_pixel_lanes")
     let originalPlanarILP =
       ProcessInfo.processInfo.environment["COMPACT_RAW_PLANE_ILP"] == "1"

@@ -185,7 +185,8 @@ final class OriginalHDF5Packing {
   }
   let device: MTLDevice
   let queue: MTLCommandQueue
-  let decode8, decode16, decode32, unshuffle32, headersPipeline, valuesPipeline: MTLComputePipelineState
+  let decode8, decode16, decode32, unshuffle32, headersPipeline,
+    valuesPipeline: MTLComputePipelineState
   let verifyPipeline, momentsPipeline, narrowPipeline: MTLComputePipelineState
   let scalarDecode, scalarUnshuffle: MTLComputePipelineState?
   let standardPlaneValues, standardPlaneSummary: MTLComputePipelineState?
@@ -399,7 +400,9 @@ final class OriginalHDF5Packing {
       )
     }
     guard destination == nil || source.sourceBytesPerValue != 4 else {
-      throw Self.invalid("uint32 source loading requires direct packed residency; on-disk packed export is not supported yet")
+      throw Self.invalid(
+        "uint32 source loading requires direct packed residency; on-disk packed export is not supported yet"
+      )
     }
     // Reject master or data changes during loading, even when a writer restores
     // the modification timestamp. These cheap stamps are not content hashes.
@@ -442,7 +445,8 @@ final class OriginalHDF5Packing {
       && frames >= 2048 && pixels.isMultiple(of: 4096)
       && windows.contains { $0.slices.contains { $0.globalFrameRange.count >= 2048 } }
       && source.shards.allSatisfy { Int($0.index.metadata.nBlocksPerFrame) * 4096 == pixels }
-    let scratchBytes = source.sourceBytesPerValue == 4 ? frames * pixels * 4 : (useScalar ? frames * pixels * 2 : 0)
+    let scratchBytes =
+      source.sourceBytesPerValue == 4 ? frames * pixels * 4 : (useScalar ? frames * pixels * 2 : 0)
     let cachedDPC = destination == nil ? validatedDPC(preparedDPC, source: source) : nil
     if destination == nil, !ignoreCachedPlan,
       cachedDPC != nil || bitshuffleDPC != nil, let packingPlanURL,
@@ -457,8 +461,8 @@ final class OriginalHDF5Packing {
     let partialDPCBlocks = source.sourceBytesPerValue == 4 ? pixels / 2048 : pixels / 4096
     let partialBytes =
       cachedDPC == nil
-      && ((source.sourceBytesPerValue == 4 && dpcUnshuffle32?.threadExecutionWidth == 32)
-        || (useScalar && dpcUnshuffle?.threadExecutionWidth == 32))
+        && ((source.sourceBytesPerValue == 4 && dpcUnshuffle32?.threadExecutionWidth == 32)
+          || (useScalar && dpcUnshuffle?.threadExecutionWidth == 32))
       ? frames * partialDPCBlocks * 32 : 0
     // The existing plan summary uses uint32 partial sums. uint32 source data
     // builds fresh headers until that optional cache has a wide-sum schema.
@@ -584,7 +588,8 @@ final class OriginalHDF5Packing {
       destination == nil
       && OriginalPackingDiagnostics.enabled("READ_AHEAD", byDefault: true)
     let readAheadDepth = source.sourceBytesPerValue == 4 ? 2 : 1
-    let reader = readAheadEnabled
+    let reader =
+      readAheadEnabled
       ? CompressedReadAhead(device: device, depth: readAheadDepth) : nil
     defer { reader?.cancelAndDrain() }
     let orderedSlices = readAheadEnabled ? windows.flatMap(\.slices) : []
@@ -671,7 +676,8 @@ final class OriginalHDF5Packing {
               expectedFrameStart: slice.globalFrameRange.lowerBound, shouldCancel: shouldCancel)
             profile.readWait += CFAbsoluteTimeGetCurrent() - waitStarted
             if shouldCancel() { throw Metal4DSTEMStreamingIOError.cancelled }
-            pendingReadBytes = pendingReadBytes >= preparedInput!.reservedBytes
+            pendingReadBytes =
+              pendingReadBytes >= preparedInput!.reservedBytes
               ? pendingReadBytes - preparedInput!.reservedBytes : 0
             if sliceOrdinal < orderedSlices.count {
               try enqueueRead(
@@ -1103,7 +1109,9 @@ final class OriginalHDF5Packing {
       throw Self.invalid("Cannot encode source decode")
     }
     encoder.setComputePipelineState(
-      is32 ? decode32 : (scalar ? scalarDecode! : (source.sourceBytesPerValue == 1 ? decode8 : decode16)))
+      is32
+        ? decode32
+        : (scalar ? scalarDecode! : (source.sourceBytesPerValue == 1 ? decode8 : decode16)))
     encoder.setBuffer(compressed, offset: 0, index: 0)
     encoder.setBuffer(metadata, offset: 0, index: 1)
     encoder.setBytes(&zero64, length: 8, index: 2)

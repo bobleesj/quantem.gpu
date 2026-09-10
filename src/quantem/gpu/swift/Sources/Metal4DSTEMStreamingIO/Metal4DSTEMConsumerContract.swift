@@ -440,9 +440,12 @@ public struct Metal4DSTEMResidentCapabilities: Codable, Equatable, Sendable {
       metadata.detectorRows, metadata.detectorColumns,
     ]
     let sourceLogicalTensorBytes = try Metal4DSTEMResidentReceipt.logicalBytes(
-      shape: shape, bytesPerValue: metadata.sourceDtype == "uint8" ? 1 : (metadata.sourceDtype == "uint32" ? 4 : 2)
+      shape: shape,
+      bytesPerValue: metadata.sourceDtype == "uint8"
+        ? 1 : (metadata.sourceDtype == "uint32" ? 4 : 2)
     )
-    let workingBytesPerValue: UInt64 = metadata.workingDtype == "uint8" ? 1 : (metadata.workingDtype == "uint32" ? 4 : 2)
+    let workingBytesPerValue: UInt64 =
+      metadata.workingDtype == "uint8" ? 1 : (metadata.workingDtype == "uint32" ? 4 : 2)
     let workingLogicalTensorBytes = try Metal4DSTEMResidentReceipt.logicalBytes(
       shape: shape, bytesPerValue: workingBytesPerValue
     )
