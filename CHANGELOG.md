@@ -6,6 +6,11 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- Share percentile selection, display-limit conversion, and reusable-buffer
+  Metal range/histogram encoding through `MetalImageRuntime`. Mixed integer
+  and float batches use one caller-owned command buffer; synchronous helpers
+  use the same implementation. Colormap tables remain in `MetalDisplayKernels`.
+  Float statistics now expose raw `valueRange` rather than ordered reduction bits.
 - Open original little-endian uint32 bitshuffle/LZ4 Arina acquisitions into the
   same lossless packed Metal residents as uint8/uint16, decoding all 32 planes
   in bounded windows with exact UInt64 detector sums and fused uint32 DPC

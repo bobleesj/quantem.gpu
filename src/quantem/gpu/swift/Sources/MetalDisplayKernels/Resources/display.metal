@@ -58,7 +58,7 @@ inline float metal_normalize_u32(
 
 inline float metal_normalize_f32(
     float value,
-    constant MetalFloatDisplayParameters &parameters
+    MetalFloatDisplayParameters parameters
 ) {
     if (isnan(value)) return 0.0f;
     if (isinf(value)) return value > 0.0f ? 1.0f : 0.0f;
@@ -247,4 +247,38 @@ kernel void metal_histogram_f32(
     float normalized = metal_normalize_f32(value, parameters);
     uint bin = min(255u, uint(normalized * 256.0f));
     atomic_fetch_add_explicit(&bins[bin], 1u, memory_order_relaxed);
+}
+
+inline float metal_decode_ordered_float(uint ordered) {
+    uint bits = (ordered & 0x80000000u) != 0u ? ordered ^ 0x80000000u : ~ordered;
+    return as_type<float>(bits);
+}
+
+// Range producer and histogram are ordered by an encoder boundary. For a
+// histogram-only update the range already contains ordinary float bits.
+kernel void metal_histogram_f32_from_range(
+    device const float *values [[buffer(0)]],
+    device atomic_uint *bins [[buffer(1)]],
+    constant MetalFloatDisplayParameters &parameters [[buffer(2)]],
+    device const uint *valueRange [[buffer(3)]],
+    constant uint &rangeIsOrdered [[buffer(4)]],
+    uint index [[thread_position_in_grid]]
+) {
+    if (index >= parameters.rows * parameters.cols) return;
+    float value = values[index];
+    if (!isfinite(value)) return;
+    MetalFloatDisplayParameters resolved = parameters;
+    resolved.low = rangeIsOrdered ? metal_decode_ordered_float(valueRange[0]) : as_type<float>(valueRange[0]);
+    resolved.high = rangeIsOrdered ? metal_decode_ordered_float(valueRange[1]) : as_type<float>(valueRange[1]);
+    float normalized = metal_normalize_f32(value, resolved);
+    uint bin = min(255u, uint(normalized * 256.0f));
+    atomic_fetch_add_explicit(&bins[bin], 1u, memory_order_relaxed);
+}
+
+kernel void metal_finish_range_f32(device uint *valueRange [[buffer(0)]]) {
+    bool valid = valueRange[0] != 0xffffffffu;
+    float low = valid ? metal_decode_ordered_float(valueRange[0]) : 0.0f;
+    float high = valid ? metal_decode_ordered_float(valueRange[1]) : 0.0f;
+    valueRange[0] = as_type<uint>(low);
+    valueRange[1] = as_type<uint>(high);
 }
