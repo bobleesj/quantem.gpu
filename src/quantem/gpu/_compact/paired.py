@@ -372,7 +372,10 @@ class PairedCounts(StreamedCounts):
             opening many files; a private one is created otherwise.
         allocate
             ``allocate(shape, dtype)`` returning the destination device array, for
-            callers that manage residency themselves; defaults to ``cupy.empty``.
+            callers that manage residency themselves. By default every array of the
+            file is a view into one device allocation, so a series of many files does
+            not lose the driver's per-allocation granularity to hundreds of small
+            chunk arrays.
         """
         import cupy as cp
 
@@ -384,13 +387,34 @@ class PairedCounts(StreamedCounts):
         with cp.cuda.Device(cp.cuda.Device().id if device is None else device):
             source = cls(shape, np.dtype(header["dtype"]), valid)
             owned = reader or ResidentFileReader()
+            if allocate is None:
+                allocate = _arena_allocator(header)
             try:
-                source.chunks = owned.read(path, header, data_start, allocate or (lambda shape, dtype: cp.empty(shape, dtype)))
+                source.chunks = owned.read(path, header, data_start, allocate)
             finally:
                 if reader is None:
                     owned.close()
             source.ready_scans = int(shape[0] * shape[1])
             return source
+
+
+def _arena_allocator(header: dict):
+    """Carve the file's arrays, in chunk order, from one 512-byte aligned device buffer."""
+    import cupy as cp
+
+    total = sum((spec["nbytes"] + 511) & ~511 for chunk in header["chunks"] for spec in chunk["arrays"])
+    arena = cp.empty(max(total, 1), cp.uint8)
+    cursor = [0]
+
+    def allocate(shape, dtype):
+        nbytes = int(np.prod(shape)) * np.dtype(dtype).itemsize
+        if nbytes == 0:
+            return cp.empty(shape, dtype)
+        view = arena[cursor[0] : cursor[0] + nbytes].view(dtype).reshape(shape)
+        cursor[0] += (nbytes + 511) & ~511
+        return view
+
+    return allocate
 
 
 def _read_header(path):

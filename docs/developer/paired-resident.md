@@ -119,6 +119,28 @@ The last acquisitions of a full device fit only with a smaller loader
 (`PairedLoader(rolling_scans=512, rings=2)`); that tail policy belongs to the
 application.
 
+Complete series through the package only (private owner script over
+`PairedLoader`, `PairedCounts.load` and `detector.prepare`; 69 acquisitions of
+512x512x192x192 uint16 on one device, single run):
+
+| measurement | value |
+| --- | --- |
+| original HDF5 to resident, 64 with the default loader then 5 with `PairedLoader(rolling_scans=512, rings=2)` | 38.7 s |
+| resident bytes, sum (index 6.7 GiB of it) | 90.3 GiB |
+| peak device bytes in use during loading | 94.4 GiB |
+| `detector.prepare` | 53 ms |
+| frozen full-array virtual-image digests, six masks per source | 414 exact |
+| headless center gestures, 64 fresh masks, wall p50 / p95 | 14.1 / 16.3 ms |
+| headless scan gestures (native diffraction pattern), wall p50 | 1.3 ms |
+| save every source as the paired form, 39 on one drive and 30 on another | 192 s |
+| reopen every saved form, one reader per drive, to 69 resident | 9.6 s |
+
+Record:
+{download}`paired-capacity-2026-09-09.json <../performance/data/paired-capacity-2026-09-09.json>`.
+Reopening carves every array of a file from one device allocation; with one
+allocation per chunk array the driver's allocation granularity cost about 7 GB
+across the series and only 66 files fit.
+
 Feeding a reconstruction from the resident form (three 512x512x192x192 sources,
 `PairedFeed(depth=2)`, consumer idle, same device shared with a desktop):
 
