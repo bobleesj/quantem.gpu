@@ -51,6 +51,7 @@ $I[R_r,R_c,k_r,k_c]$ with $\mathbf R=(R_r,R_c)$ and $\mathbf k=(k_r,k_c)$.
 | malformed stream | `ValueError` from the query; the result is not returned |
 | saved form | `QGPUPAIR` magic, JSON header (`quantem-paired-resident-v1`) plus 4096-aligned arrays; `io.inspect` reports `source_kind="paired"` with `resident_bytes`; `io.load` detects it; reopen refuses another ABI |
 | application streaming | `PairedLoader.stream(paths, admit=...)` yields `(path, FourDSTEMData)` per acquisition while later files are still being read |
+| queued queries | `session.masked_sum(..., output="native", out=..., wait=False)` and `session.frame(..., wait=False)` return once the kernels are queued; `session.finish()` waits for the oldest and raises for a malformed stream; a failed decode invalidates the incremental plan and taints queued deltas built on it |
 
 Coding parameters (32 models, 1024 states, 2-byte stream header, sparse mode
 preferred unless the paired stream saves at least two bytes) are fixed by the

@@ -81,7 +81,7 @@ class DetectorSession:
         valid = getattr(self._backend, "valid_pixels", None)
         return None if valid is None else np.array(valid, dtype=bool, copy=True)
 
-    def frame(self, index: int, *, output: str = "numpy", out=None):
+    def frame(self, index: int, *, output: str = "numpy", out=None, wait: bool = True):
         """Return one detector frame.
 
         Parameters
@@ -111,7 +111,7 @@ class DetectorSession:
             )
         native = getattr(self._backend, "frame_native", None)
         if native is not None:
-            result = native(index, out=out)
+            result = native(index, out=out) if wait else native(index, out=out, wait=False)
             return result if output == "native" else result.get()
         if output == "native":
             raise NotImplementedError("This backend has no native frame output; use output='numpy'.")
@@ -147,7 +147,15 @@ class DetectorSession:
 
         return _reduced_to_numpy(self._backend.mean_dp())
 
-    def masked_sum(self, mask, *, output: str = "numpy", out=None):
+    def finish(self) -> dict:
+        """Wait for the oldest query launched with ``wait=False`` and return its timings.
+
+        Raises ``ValueError`` if an encoded stream failed exact decoding, in which
+        case that result must not be used.
+        """
+        return self._backend.finish()
+
+    def masked_sum(self, mask, *, output: str = "numpy", out=None, wait: bool = True):
         """Return a float32 virtual-detector image for one detector mask.
 
         Parameters
@@ -164,6 +172,11 @@ class DetectorSession:
             Only valid with ``output="native"``. The result is complete on
             return. Finish reading it before reusing this buffer. Without
             ``out``, each native result owns separate storage.
+        wait
+            ``False`` (native output on a streamed CUDA series only) returns as
+            soon as the kernels are queued; the result is complete after
+            :meth:`finish`, which also raises for a malformed stream. Several
+            queries may be in flight so the host plans while the device works.
 
         Examples
         --------
@@ -172,7 +185,7 @@ class DetectorSession:
         _check_output(output, out)
         native = getattr(self._backend, "masked_sum_native", None)
         if native is not None:
-            result = native(mask, out=out)
+            result = native(mask, out=out) if wait else native(mask, out=out, wait=False)
         elif output == "native":
             raise NotImplementedError("This backend has no native detector output; use output='numpy'.")
         else:

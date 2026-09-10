@@ -153,3 +153,23 @@ def test_mixed_chunk_sizes_beyond_the_grid_y_limit():
     expected = cp.concatenate([raw, raw])[:, cp.asarray(mask & valid)].sum(axis=1, dtype=cp.uint64)
     got = session.masked_sum(mask, output="native").reshape(3, -1)
     assert all(bool(cp.array_equal(got[i], expected).get()) for i in range(3))
+
+
+def test_non_blocking_queries_finish_in_order_with_exact_results():
+    """Two masks queued back to back give the same sums as blocking calls, and finish() reports each."""
+    raw, valid = _synthetic(19, 1024)
+    source = PairedCounts((1, 1024, 19, 19), np.uint16, valid)
+    source.append(raw)
+    session = detector.prepare([source])
+    masks = [detector.detector_mask((9.5, 9.5), 0., 5., (19, 19), dtype=np.float64),
+             detector.detector_mask((9.25, 9.75), 3., 8., (19, 19), dtype=np.float64)]
+    expected = [session.masked_sum(mask, output="native").copy() for mask in masks]
+    outs = [cp.empty_like(expected[0]) for _ in masks]
+    for mask, out in zip(masks, outs):
+        session.masked_sum(mask, output="native", out=out, wait=False)
+    timings = [session.finish() for _ in masks]
+    assert all(t["gpu_ms"] > 0 and "residual_pixels" in t for t in timings)
+    assert all(bool(cp.array_equal(out, want).get()) for out, want in zip(outs, expected))
+    frame = session.frame(700, output="native", wait=False)
+    session.finish()
+    assert bool(cp.array_equal(frame.reshape(19, 19)[cp.asarray(valid)], raw[700][cp.asarray(valid)]).get())

@@ -17,8 +17,9 @@ new `rcN` heading when that rc is published to TestPyPI.
   hand whole 512-scan count blocks (optionally as float32 amplitudes) to
   reconstruction consumers from a prefetch stream; `io.inspect` reports saved
   paired forms and `PairedLoader.stream` yields public results per acquisition
-  for applications. The default byte-rANS layout and every existing load path
-  are unchanged.
+  for applications; native streamed queries accept `wait=False` with
+  `session.finish()` so a viewer keeps the device busy while it plans the next
+  mask. The default byte-rANS layout and every existing load path are unchanged.
 - Add experimental native EMPAD XML/RAW loading into lossless float32-bit
   packed Metal residents, with full-source parity, compensated BF/ABF/ADF,
   CoM and mean diffraction. Cooperative packing and reductions reuse bounded

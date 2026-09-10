@@ -144,7 +144,8 @@ class StreamedSeriesCompute(CudaSeriesCompute):
         with cp.cuda.Device(self.device):
             self.descriptors = cp.asarray(rows, dtype=cp.uint64)
             self.chunk_count = len(rows)
-            self.errors = cp.zeros(1, cp.uint32)
+            self.error_slots = cp.zeros(8, cp.uint32)   # one counter per query in flight
+            self.errors = self.error_slots[:1]
             self.previous = cp.empty(
                 (*self.series_shape, *self.scan_shape), self.sum_dtype
             )
@@ -156,6 +157,9 @@ class StreamedSeriesCompute(CudaSeriesCompute):
             self.kernels = kernels(self.device)
             cp.cuda.get_current_stream().synchronize()
         self.previous_mask = None
+        self._inflight = []   # (begin, end, errors, started, info) for queries launched with wait=False
+        self._launches = 0
+        self._tainted_from = None   # launch index of a failed query; later incremental queries built on it
         self.keepalive.extend(
             (
                 self.descriptors,
@@ -189,7 +193,69 @@ class StreamedSeriesCompute(CudaSeriesCompute):
         """Tile reads are random access; pixel residuals decode whole streams."""
         return len(selection[0]) + len(selection[2]) * 4
 
-    def masked_sum_native(self, mask, *, out=None):
+    def _launch(self):
+        """Fresh timing events and an error counter for one query; the counter is zeroed on the stream."""
+        import cupy as cp
+
+        slot = self._launches % len(self.error_slots)
+        self._launches += 1
+        self._current_launch = self._launches
+        errors = self.error_slots[slot : slot + 1]
+        errors.fill(0)
+        begin = cp.cuda.Event()
+        begin.record()
+        return begin, errors
+
+    def _finish(self, begin, errors, started, info, wait):
+        """Record the end of a query; block for it and publish timings unless the caller finishes later."""
+        import cupy as cp
+
+        end = cp.cuda.Event()
+        end.record()
+        if not wait:
+            self._inflight.append((begin, end, errors, started, info))
+            return
+        end.synchronize()
+        self._publish(begin, end, errors, started, info)
+
+    def _publish(self, begin, end, errors, started, info):
+        import cupy as cp
+
+        launch = info.get("launch", 0)
+        built_on_failure = (info.get("incremental") and self._tainted_from is not None and launch > self._tainted_from)
+        if int(errors.get()[0]) or built_on_failure:
+            # A failed decode poisons the incremental state: plan the next query in full,
+            # and refuse queued queries that were planned as deltas against this result.
+            self.previous_mask = None
+            if self._tainted_from is None:
+                self._tainted_from = launch
+            raise ValueError(
+                "An encoded stream failed exact decoding; this result is not ready."
+            )
+        if not info.get("incremental"):
+            self._tainted_from = None
+        self.last = {
+            "gpu_ms": float(cp.cuda.get_elapsed_time(begin, end)),
+            "wall_ms": (time.perf_counter() - started) * 1000,
+            "acquisitions": len(self.owners),
+            **info,
+        }
+
+    def finish(self) -> dict:
+        """Wait for the oldest query launched with ``wait=False``; raise if a stream failed exact decoding.
+
+        Returns that query's timings (also in ``last``). Results and the incremental
+        planning state stay ordered on the stream, so several queries may be in
+        flight while the host plans the next one.
+        """
+        if not self._inflight:
+            return dict(self.last)
+        begin, end, errors, started, info = self._inflight.pop(0)
+        end.synchronize()
+        self._publish(begin, end, errors, started, info)
+        return dict(self.last)
+
+    def masked_sum_native(self, mask, *, out=None, wait=True):
         import cupy as cp
 
         values = np.asarray(mask)
@@ -209,7 +275,7 @@ class StreamedSeriesCompute(CudaSeriesCompute):
             result = self._output(
                 out, (*self.series_shape, *self.scan_shape), self.sum_dtype
             )
-            self.begin.record()
+            begin, errors = self._launch()
             for target, source in zip(
                 (
                     self.selected_fields,
@@ -220,7 +286,6 @@ class StreamedSeriesCompute(CudaSeriesCompute):
                 selection,
             ):
                 target[: len(source)].set(source)
-            self.errors.fill(0)
             bits = self.sum_dtype.itemsize * 8
             u32 = np.uint32
             self.kernels[f"index_u{bits}"](
@@ -252,26 +317,19 @@ class StreamedSeriesCompute(CudaSeriesCompute):
                         self.pixel_coefficients,
                         u32(len(pi)),
                         result,
-                        self.errors,
+                        errors,
                         np.uint64(self.n_frames),
                         u32(self.pixels),
                         u32(self.interval),
                     ),
                 )
-            self._complete(started)
-            cp.copyto(self.previous, result)
-            cp.cuda.get_current_stream().synchronize()
+            cp.copyto(self.previous, result)   # ordered on the stream after the sums; the next delta plan reads it
             self.previous_mask = values.copy()
-            self.last.update(
-                wall_ms=(time.perf_counter() - started) * 1000,
-                query_launches=1 + bool(len(pi)),
-                residual_pixels=len(pi),
-                spatial_fields=len(fi),
-                incremental=delta,
-            )
+            self._finish(begin, errors, started, dict(query_launches=1 + bool(len(pi)), residual_pixels=len(pi),
+                                                      spatial_fields=len(fi), incremental=delta, launch=self._current_launch), wait)
             return result
 
-    def frame_native(self, index, *, out=None):
+    def frame_native(self, index, *, out=None, wait=True):
         import cupy as cp
 
         index = int(index)
@@ -282,19 +340,18 @@ class StreamedSeriesCompute(CudaSeriesCompute):
             result = self._output(
                 out, (*self.series_shape, *self.det_shape), self.frame_dtype
             )
-            self.begin.record()
-            self.errors.fill(0)
+            begin, errors = self._launch()
             self.kernels[f"frame_u{self.frame_dtype.itemsize * 8}"](
                 ((self.pixels + 127) // 128, self.chunk_count),
                 (128,),
                 (
                     self.descriptors,
                     result,
-                    self.errors,
+                    errors,
                     np.uint32(index),
                     np.uint32(self.pixels),
                     np.uint32(self.interval),
                 ),
             )
-            self._complete(started)
+            self._finish(begin, errors, started, dict(query_launches=1, launch=self._current_launch), wait)
             return result
