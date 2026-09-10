@@ -2062,6 +2062,79 @@ kernel void h5unshuffle_u32_qh5idx(
     }
 }
 
+// The uint32 variant keeps exact row/column moments in the same SIMD
+// unshuffle that publishes the resident counts.  This avoids a second pass
+// over the full decoded window while retaining the same uint64 accumulation
+// and source-mask semantics as the uint16 DPC path below.
+kernel void h5unshuffle_u32_dpc_qh5idx(
+    const device uchar *scratch [[buffer(0)]],
+    constant uint &blocksPerFrame [[buffer(3)]],
+    constant uint &frameElements [[buffer(4)]],
+    device uint *output [[buffer(5)]],
+    const device uchar *badPixelMask [[buffer(7)]],
+    device atomic_uint *countAudit [[buffer(8)]],
+    constant uint &globalFrameOffset [[buffer(9)]],
+    device atomic_uint *errors [[buffer(10)]],
+    constant uint &frameCount [[buffer(11)]],
+    device ulong4 *partialDPC [[buffer(12)]],
+    constant uint &detectorColumns [[buffer(13)]],
+    uint3 position [[threadgroup_position_in_grid]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint group [[simdgroup_index_in_threadgroup]]) {
+    uint frame = position.x, block = position.z;
+    if (atomic_load_explicit(errors, memory_order_relaxed) || frame >= frameCount
+        || block >= blocksPerFrame || detectorColumns == 0u) return;
+    const device uint *planes = (const device uint *)(scratch
+        + ulong(frame) * frameElements * 4ul + ulong(block) * 8192ul);
+    ulong total = 0ul, row = 0ul, column = 0ul;
+    uint maximum = 0u, above255 = 0u;
+    threadgroup ulong4 dpcByGroup[4];
+    // Four SIMD groups transpose the 32 bit planes in registers. Each group
+    // owns every fourth 32-bit word, covering all 2048 values in the block.
+    for (uint word = group; word < 64u; word += 4u) {
+        uint value = planes[lane * 64u + word];
+        for (uint shift = 1u; shift <= 16u; shift *= 2u) {
+            uint mask = 0xffffffffu / ((1u << shift) + 1u);
+            uint other = simd_shuffle_xor(value, shift);
+            value = (lane & shift) ? (value & ~mask) | ((other & ~mask) >> shift)
+                                  : (value & mask) | ((other & mask) << shift);
+        }
+        uint pixel = block * 2048u + word * 32u + lane;
+        uint stored = badPixelMask[pixel] ? 0u : value;
+        output[ulong(frame) * frameElements + pixel] = stored;
+        maximum = max(maximum, stored);
+        above255 += stored > 255u;
+        total += ulong(stored);
+        row += ulong(stored) * (pixel / detectorColumns);
+        column += ulong(stored) * (pixel % detectorColumns);
+    }
+    maximum = simd_max(maximum);
+    above255 = simd_sum(above255);
+    for (uint delta = 16u; delta; delta >>= 1u) {
+        total += ulong(simd_shuffle_down(uint(total), delta))
+            | (ulong(simd_shuffle_down(uint(total >> 32u), delta)) << 32u);
+        row += ulong(simd_shuffle_down(uint(row), delta))
+            | (ulong(simd_shuffle_down(uint(row >> 32u), delta)) << 32u);
+        column += ulong(simd_shuffle_down(uint(column), delta))
+            | (ulong(simd_shuffle_down(uint(column >> 32u), delta)) << 32u);
+    }
+    if (lane == 0u) {
+        atomic_fetch_max_explicit(&countAudit[(globalFrameOffset + frame) * 2u], maximum,
+                                  memory_order_relaxed);
+        atomic_fetch_add_explicit(&countAudit[(globalFrameOffset + frame) * 2u + 1u], above255,
+                                  memory_order_relaxed);
+        dpcByGroup[group] = ulong4(total, row, column, 0ul);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (group == 0u && lane == 0u) {
+        ulong4 dpc(0ul);
+        for (uint simdgroup = 0u; simdgroup < 4u; ++simdgroup) {
+            dpc += dpcByGroup[simdgroup];
+        }
+        partialDPC[ulong(frame) * blocksPerFrame + block] = dpc;
+    }
+}
+
 kernel void h5unshuffle_u16_scalar_qh5idx(
     const device uchar *scratch [[buffer(0)]],
     constant uint &blocksPerFrame [[buffer(3)]],

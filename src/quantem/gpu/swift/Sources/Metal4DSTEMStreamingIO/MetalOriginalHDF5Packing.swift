@@ -194,7 +194,7 @@ final class OriginalHDF5Packing {
   let alignedRepeatFill: Bool
   let alignedHistoryCopy: Bool
   let transposeUnshuffle: Bool
-  let dpcUnshuffle, dpcReduce: MTLComputePipelineState?
+  let dpcUnshuffle, dpcUnshuffle32, dpcReduce: MTLComputePipelineState?
   let planDecode, summaryValues, summaryReduce: MTLComputePipelineState?
   let cpuPlanDecode: Bool
   let bitshuffleValues, bitshuffleReduce: MTLComputePipelineState?
@@ -262,9 +262,11 @@ final class OriginalHDF5Packing {
     }
     if OriginalPackingDiagnostics.enabled("FUSED_DPC", byDefault: true) {
       dpcUnshuffle = try pipeline(decode, "h5unshuffle_u16_dpc_qh5idx")
+      dpcUnshuffle32 = try pipeline(decode, "h5unshuffle_u32_dpc_qh5idx")
       dpcReduce = try pipeline(decode, "h5reduce_u16_dpc_qh5idx")
     } else {
       dpcUnshuffle = nil
+      dpcUnshuffle32 = nil
       dpcReduce = nil
     }
     checkpointPacking =
@@ -452,9 +454,12 @@ final class OriginalHDF5Packing {
     {
       return direct
     }
+    let partialDPCBlocks = source.sourceBytesPerValue == 4 ? pixels / 2048 : pixels / 4096
     let partialBytes =
-      useScalar && cachedDPC == nil && dpcUnshuffle?.threadExecutionWidth == 32
-      ? frames * (pixels / 4096) * 32 : 0
+      cachedDPC == nil
+      && ((source.sourceBytesPerValue == 4 && dpcUnshuffle32?.threadExecutionWidth == 32)
+        || (useScalar && dpcUnshuffle?.threadExecutionWidth == 32))
+      ? frames * partialDPCBlocks * 32 : 0
     // The existing plan summary uses uint32 partial sums. uint32 source data
     // builds fresh headers until that optional cache has a wide-sum schema.
     let cachePlans = destination == nil && packingPlanURL != nil && source.sourceBytesPerValue != 4
@@ -654,7 +659,9 @@ final class OriginalHDF5Packing {
         }
         memset(audit.contents(), 0, audit.length)
         let fuseDPC =
-          partialDPC != nil && window.slices.allSatisfy { $0.globalFrameRange.count >= 2048 }
+          partialDPC != nil
+          && (source.sourceBytesPerValue == 4
+            || window.slices.allSatisfy { $0.globalFrameRange.count >= 2048 })
         for (sliceIndex, slice) in window.slices.enumerated() {
           if shouldCancel() { throw Metal4DSTEMStreamingIOError.cancelled }
           let preparedInput: CompressedReadInput?
@@ -1121,11 +1128,24 @@ final class OriginalHDF5Packing {
           width: 32, height: source.sourceBytesPerValue == 1 ? 8 : 4, depth: 1))
     }
     encoder.endEncoding()
-    if scalar, let selectedUnshuffle = is32 ? unshuffle32 : scalarUnshuffle {
+    let selectedUnshuffle: MTLComputePipelineState?
+    if is32 {
+      selectedUnshuffle = partialDPC == nil ? unshuffle32 : dpcUnshuffle32
+    } else {
+      selectedUnshuffle = scalarUnshuffle
+    }
+    if scalar, let selectedUnshuffle {
       guard let unshuffle = command.makeComputeCommandEncoder() else {
         throw Self.invalid("Cannot encode exact unshuffle")
       }
-      unshuffle.setComputePipelineState(partialDPC == nil ? selectedUnshuffle : dpcUnshuffle!)
+      if partialDPC != nil {
+        guard let dpcUnshuffle = is32 ? dpcUnshuffle32 : dpcUnshuffle else {
+          throw Self.invalid("Missing exact uint32 DPC unshuffle kernel")
+        }
+        unshuffle.setComputePipelineState(dpcUnshuffle)
+      } else {
+        unshuffle.setComputePipelineState(selectedUnshuffle)
+      }
       unshuffle.setBuffer(scratch, offset: 0, index: 0)
       unshuffle.setBytes(&blocks, length: 4, index: 3)
       unshuffle.setBytes(&pixelCount, length: 4, index: 4)
