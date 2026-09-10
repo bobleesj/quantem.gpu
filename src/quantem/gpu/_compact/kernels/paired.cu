@@ -421,8 +421,9 @@ template<typename Output>
 __device__ void pm_residual(const u64* descriptors, const u32* selected, const int* coefficients, u32 count,
                             Output* output, u32* errors, u64 scans, u32 pixels, const u16* work, const u32* counts,
                             u32 max_blocks) {
-    u32 sb = blockIdx.y, chunk = sb / max_blocks, block = sb % max_blocks, lane = threadIdx.x & 31;
-    u32 at = blockIdx.x * blockDim.x + threadIdx.x, active = counts[sb];
+    // Work items (chunk, block) go in grid x: a series of many small chunks exceeds the 65,535 limit of y.
+    u32 sb = blockIdx.x, chunk = sb / max_blocks, block = sb % max_blocks, lane = threadIdx.x & 31;
+    u32 at = blockIdx.y * blockDim.x + threadIdx.x, active = counts[sb];
     if ((at / 32) * 32 >= active) return;
     const u64* d = descriptors + u64(chunk) * PM_DESCRIPTOR;
     u32 interval = d[12], first = block * interval, length = min(interval, u32(d[8]) - first);

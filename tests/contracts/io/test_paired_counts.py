@@ -132,3 +132,24 @@ def test_feed_blocks_match_chunk_decodes():
         seen.append((block.source, block.first))
     assert seen == [(0, 0), (1, 0), (0, 512), (1, 512)]
     assert [b.first for b in PairedFeed(sources[:1], block_scans=1024, order="source")] == [0, 512]
+
+
+def test_mixed_chunk_sizes_beyond_the_grid_y_limit():
+    """A series whose tail was appended in 512-scan pieces still answers masks exactly."""
+    raw, valid = _synthetic(17, 512)
+    sources = []
+    for n in range(2):
+        source = PairedCounts((1, 512 * 2, 17, 17), np.uint16, valid)
+        source.append(cp.concatenate([raw, raw]))  # one 1024-scan chunk
+        sources.append(source)
+    small = PairedCounts((1, 512 * 2, 17, 17), np.uint16, valid)
+    small.append(raw)
+    small.append(raw)  # two 512-scan chunks: work list is chunks x max_blocks
+    sources.append(small)
+    session = detector.prepare(sources)
+    assert session._backend.chunk_count * 2 == 8
+    mask = np.zeros((17, 17), bool)
+    mask[3:9, 4:12] = True
+    expected = cp.concatenate([raw, raw])[:, cp.asarray(mask & valid)].sum(axis=1, dtype=cp.uint64)
+    got = session.masked_sum(mask, output="native").reshape(3, -1)
+    assert all(bool(cp.array_equal(got[i], expected).get()) for i in range(3))

@@ -662,7 +662,7 @@ class PairedSeriesCompute(StreamedSeriesCompute):
                 self.work_counts.fill(0)
                 extra = (self.work["array"], self.work_counts, np.uint32(blocks))
                 ks[f"plan_u{bits}"]((total,), (256,), (*args[:8], *extra))
-                ks[f"residual_u{bits}"](((count + 255) // 256, total), (256,), (*args[:8], *extra))
+                ks[f"residual_u{bits}"]((total, (count + 255) // 256), (256,), (*args[:8], *extra))
 
             self.kernels[f"index_u{bits}"] = index
             self.kernels[f"residual_u{bits}"] = residual

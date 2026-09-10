@@ -44,7 +44,7 @@ $I[R_r,R_c,k_r,k_c]$ with $\mathbf R=(R_r,R_c)$ and $\mathbf k=(k_r,k_c)$.
 | item | value |
 | --- | --- |
 | query ABI | `paired-polar-counts-v1` |
-| input | complete multiples of 512 scans, native `uint8`/`uint16`, detector up to 65,535 pixels per group of 32 streams |
+| input | complete multiples of 512 scans, native `uint8`/`uint16`, detector up to 65,535 pixels per group of 32 streams; chunks of any block count may mix within one series (the residual work list is a one-dimensional grid) |
 | H5 loader | `uint16` bitshuffle+LZ4 shards with one frame per chunk; a partial final LZ4 block must hold a multiple of 8 values; one path or a list, every acquisition returned as its own source; `backend="cuda"`, `dtype="native"`, `apply_mask=False`, no selection or binning options |
 | virtual image | exact `uint32` sums, `uint64` when a full-detector sum could exceed `2**32` |
 | diffraction pattern | native dtype, invalid pixels reported as zero |
