@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-apple-m5-uint32-fused-dpc",
+  "status": "succeeded",
+  "question": "Can exact uint32 DPC moments be accumulated during unshuffle without changing packed resident counts?",
+  "paper": {"repository": "quantem.gpu", "authoritative_host": "apple-m5-24gb"},
+  "code": {
+    "revision": "7f06596beef137c0aca0569fa05d069ce52c4d36",
+    "dirty": false,
+    "diff_scope": "uint32 SIMD unshuffle with uint64 DPC partials and one reduction",
+    "entrypoint": "metal-original-hdf5-benchmark and Live4DSTEM native folder hooks"
+  },
+  "inputs": [{
+    "dataset_id": "original-uint32-512",
+    "sha256": "01f731d7f95a3bb2d15ec072b72821bf140cd53918d29e284650bc93e37ee17c",
+    "identity_scope": "catalog source identity"
+  }],
+  "parameters": {
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_dtype": "uint32",
+    "resident": "lossless packed Metal resident",
+    "exactness": "all source bits preserved; no crop, bin, clipping, or inferred sentinel masking"
+  },
+  "execution": {"host": "apple-m5-24gb", "backend": "swift-metal", "gpu_model": "Apple M5"},
+  "outputs": [{
+    "artifact_id": "uint32-fused-dpc-profile",
+    "path": "experiments/20260909-apple-m5-uint32-fused-dpc/result.json",
+    "sha256": "5ec825d095a9881b4f9f3c6506967a0b18ed531aaace82fbf858e27bf0480c3f",
+    "size_bytes": 1798,
+    "retention": "durable",
+    "consuming_figures": [],
+    "result": "Three exact synthetic parity cases and native two-file folder drive pass; DPC GPU stage falls from 0.770 to 0.357 seconds in comparable runs"
+  }],
+  "timestamps": {"created": "2026-09-09", "started": "2026-09-09", "finished": "2026-09-09"}
+}

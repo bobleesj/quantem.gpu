@@ -1,0 +1,47 @@
+{
+  "schema": "quantem-gpu-original-packed-benchmark/v1",
+  "device": "Apple M5",
+  "source_dtype": "uint32",
+  "shape": [512, 512, 192, 192],
+  "scan_bin": 1,
+  "detector_bin": 1,
+  "crop": null,
+  "resident": "lossless packed Metal resident",
+  "parity": {
+    "synthetic_cases": 3,
+    "synthetic_exact": true,
+    "native_folder_drive": true,
+    "native_datasets": 2,
+    "native_full_scan": true,
+    "native_resident_count": 1,
+    "native_console_errors": 0,
+    "native_comparison_gate": "not-run: original HDF5 is single-resident and comparison admission requires compact files"
+  },
+  "timing_seconds": {
+    "native_baseline_first_open": 10.10,
+    "native_fused_first_open": 10.49,
+    "native_baseline_next": 9.32,
+    "native_fused_next": 9.37,
+    "native_baseline_return": 9.75,
+    "native_fused_return": 9.53,
+    "source_read_sum_fused": 13.796,
+    "source_read_bytes_fused": 7623851990
+  },
+  "gpu_seconds": {
+    "dpc_products_baseline": 0.770,
+    "dpc_products_fused": 0.357,
+    "decode_fused": 1.460,
+    "packing_fused": 0.670,
+    "fused_dpc_windows": 256
+  },
+  "interaction": {
+    "selected_dp_updates_per_second": 119.7,
+    "large_abf_center_updates_per_second": 7.6,
+    "large_adf_center_updates_per_second": 6.6,
+    "large_abf_resize_updates_per_second": 119.5,
+    "large_adf_resize_updates_per_second": 117.0,
+    "product_switch_seconds": [0.09, 0.10, 0.09, 0.10, 0.10]
+  },
+  "conclusion": "Fusing exact uint64 DPC accumulation into the uint32 SIMD unshuffle cuts the measured DPC products stage by 53.6 percent while preserving all-count parity and the full packed resident. Native cold folder-open wall time remains 9.37-10.49 seconds because the 7.62 GB source read dominates; this does not evidence a one-second cold open.",
+  "release_ready": false
+}
