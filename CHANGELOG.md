@@ -25,6 +25,34 @@ new `rcN` heading when that rc is published to TestPyPI.
   shader's signed log1p mapping for logarithmic thresholds. A nonempty UInt32
   range of only `UInt32.max` is no longer reported as empty.
 
+- `session.masked_sum(..., block_stride=k)` on a paired native series sums every
+  k-th 512-scan block of the mask (every k-th scan row of a 512-wide raster) and
+  leaves the other rows of `out` untouched, at about 1/k of the device time. The
+  rows written are exact; consecutive queries at one stride build on each other
+  incrementally and a change of stride starts from a full plan. A viewer uses it
+  to keep every tile moving with a fast detector drag and follows it with one
+  exact batch when the pointer pauses.
+- The paired residual decoder refills its bit reservoir once per three coded
+  pairs from a prefetched window instead of checking before every symbol, and
+  the packed warp reduction biases products as it multiplies: 28 percent fewer
+  instructions and 26 to 28 percent less device time per detector update on
+  recorded centre drags, byte-identical outputs (`docs/performance/data/paired-decoder-2026-09-09.json`).
+  Incremental masks whose change touches no index leaf skip the index pass and
+  copy the previous sums.
+- Add the opt-in paired-count tANS resident layout (`quantem.gpu._compact.paired`):
+  `PairedCounts` codes complete 512-scan blocks with 32 Poisson pair models and an
+  adaptive polar interaction index, `detector.prepare` selects the paired query
+  kernels automatically, and `PairedCounts.save`/`load` reopen the exact resident
+  arrays without decoding. `io.load(..., representation="paired")` streams complete
+  uint16 acquisitions (one path or a list) through a direct-I/O loader whose
+  shard reads run ahead across files, and reopens saved paired resident forms
+  from their `QGPUPAIR` magic. `PairedCounts.decode_blocks` and `PairedFeed`
+  hand whole 512-scan count blocks (optionally as float32 amplitudes) to
+  reconstruction consumers from a prefetch stream; `io.inspect` reports saved
+  paired forms and `PairedLoader.stream` yields public results per acquisition
+  for applications; native streamed queries accept `wait=False` with
+  `session.finish()` so a viewer keeps the device busy while it plans the next
+  mask. The default byte-rANS layout and every existing load path are unchanged.
 - Add experimental native EMPAD XML/RAW loading into lossless float32-bit
   packed Metal residents, with full-source parity, compensated BF/ABF/ADF,
   CoM and mean diffraction. Cooperative packing and reductions reuse bounded

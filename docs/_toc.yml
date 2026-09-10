@@ -118,6 +118,8 @@ parts:
         sections:
           - file: developer/kernel-lifecycle
             title: Kernel development lifecycle
+          - file: developer/paired-resident
+            title: Paired-count resident layout
           - file: maintainer/backend-layout-and-parity
             title: Repository architecture
           - file: developer/adding-backend

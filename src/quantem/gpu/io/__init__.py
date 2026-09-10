@@ -11,6 +11,7 @@ from .inspect import inspect
 from .integrity import SourceIntegrity as SourceIntegrity
 from .models import FourDSTEMData as FourDSTEMData
 from .models import LoadResult as LoadResult
+from ._paired import PairedLoader as PairedLoader
 from .load import load
 from .representation import DataRepresentation as DataRepresentation
 from .save import save

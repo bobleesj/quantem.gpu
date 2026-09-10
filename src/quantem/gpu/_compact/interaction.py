@@ -144,7 +144,8 @@ class StreamedSeriesCompute(CudaSeriesCompute):
         with cp.cuda.Device(self.device):
             self.descriptors = cp.asarray(rows, dtype=cp.uint64)
             self.chunk_count = len(rows)
-            self.errors = cp.zeros(1, cp.uint32)
+            self.error_slots = cp.zeros(8, cp.uint32)   # one counter per query in flight
+            self.errors = self.error_slots[:1]
             self.previous = cp.empty(
                 (*self.series_shape, *self.scan_shape), self.sum_dtype
             )
@@ -156,6 +157,21 @@ class StreamedSeriesCompute(CudaSeriesCompute):
             self.kernels = kernels(self.device)
             cp.cuda.get_current_stream().synchronize()
         self.previous_mask = None
+        self.block_stride = 1
+        self.previous_stride = 1
+        self._inflight = []   # (begin, end, done, errors_slot, started, info) for queries launched with wait=False
+        self._launches = 0
+        self._tainted_from = None   # launch index of a failed query; later incremental queries built on it
+        import cupy as cp
+
+        with cp.cuda.Device(self.device):
+            # Pinned staging so selection uploads and error readbacks are asynchronous: a
+            # synchronous memcpy waits for every kernel queued ahead of it, which would
+            # serialise queries meant to overlap the host's planning of the next one.
+            self._staging = [cp.cuda.alloc_pinned_memory(n * 4) for n in (self.fields, self.fields, self.pixels, self.pixels)]
+            self._staging_views = [np.frombuffer(m, dtype, n) for m, dtype, n in zip(self._staging, (np.uint32, np.int32, np.uint32, np.int32), (self.fields, self.fields, self.pixels, self.pixels))]
+            self._error_pinned = cp.cuda.alloc_pinned_memory(len(self.error_slots) * 4)
+            self._error_host = np.frombuffer(self._error_pinned, np.uint32, len(self.error_slots))
         self.keepalive.extend(
             (
                 self.descriptors,
@@ -181,7 +197,83 @@ class StreamedSeriesCompute(CudaSeriesCompute):
         }
         self.lock, self.last = threading.Lock(), {}
 
-    def masked_sum_native(self, mask, *, out=None):
+    def _plan(self, values):
+        """Decompose a signed mask into index fields plus residual pixels."""
+        return plan(values)
+
+    def _cost(self, selection):
+        """Tile reads are random access; pixel residuals decode whole streams."""
+        return len(selection[0]) + len(selection[2]) * 4
+
+    def _launch(self):
+        """Fresh timing events and an error counter for one query; the counter is zeroed on the stream."""
+        import cupy as cp
+
+        slot = self._launches % len(self.error_slots)
+        self._launches += 1
+        self._current_launch = self._launches
+        self._current_slot = slot
+        errors = self.error_slots[slot : slot + 1]
+        errors.fill(0)
+        begin = cp.cuda.Event()
+        begin.record()
+        return begin, errors
+
+    def _finish(self, begin, errors, started, info, wait):
+        """Record the end of a query; block for it and publish timings unless the caller finishes later."""
+        import cupy as cp
+
+        end = cp.cuda.Event()
+        end.record()
+        slot = self._current_slot
+        stream = cp.cuda.get_current_stream()
+        errors.data.copy_to_host_async(self._error_pinned.ptr + slot * 4, 4, stream)   # ordered after the kernels
+        done = cp.cuda.Event(disable_timing=True)
+        done.record()
+        if not wait:
+            self._inflight.append((begin, end, done, slot, started, info))
+            return
+        done.synchronize()
+        self._publish(begin, end, slot, started, info)
+
+    def _publish(self, begin, end, slot, started, info):
+        import cupy as cp
+
+        launch = info.get("launch", 0)
+        built_on_failure = (info.get("incremental") and self._tainted_from is not None and launch > self._tainted_from)
+        if int(self._error_host[slot]) or built_on_failure:
+            # A failed decode poisons the incremental state: plan the next query in full,
+            # and refuse queued queries that were planned as deltas against this result.
+            self.previous_mask = None
+            if self._tainted_from is None:
+                self._tainted_from = launch
+            raise ValueError(
+                "An encoded stream failed exact decoding; this result is not ready."
+            )
+        if not info.get("incremental"):
+            self._tainted_from = None
+        self.last = {
+            "gpu_ms": float(cp.cuda.get_elapsed_time(begin, end)),
+            "wall_ms": (time.perf_counter() - started) * 1000,
+            "acquisitions": len(self.owners),
+            **info,
+        }
+
+    def finish(self) -> dict:
+        """Wait for the oldest query launched with ``wait=False``; raise if a stream failed exact decoding.
+
+        Returns that query's timings (also in ``last``). Results and the incremental
+        planning state stay ordered on the stream, so several queries may be in
+        flight while the host plans the next one.
+        """
+        if not self._inflight:
+            return dict(self.last)
+        begin, end, done, slot, started, info = self._inflight.pop(0)
+        done.synchronize()   # this query and its error readback only, not anything queued after it
+        self._publish(begin, end, slot, started, info)
+        return dict(self.last)
+
+    def masked_sum_native(self, mask, *, out=None, wait=True, block_stride=1):
         import cupy as cp
 
         values = np.asarray(mask)
@@ -192,47 +284,69 @@ class StreamedSeriesCompute(CudaSeriesCompute):
         values = values.astype(np.int32)
         with self.lock, cp.cuda.Device(self.device):
             started = time.perf_counter()
-            selection, delta = plan(values), False
+            selection, delta = None, False
+            stride = int(block_stride)
+            if stride < 1:
+                raise ValueError("block_stride counts 512-scan blocks; use 1 or more.")
+            self.block_stride = stride   # the paired launch wrappers read it
+            if stride != self.previous_stride:
+                # The baseline holds sums on the previous stride's rows only; a query on
+                # other rows must start from a full plan.
+                self.previous_mask = None
             if self.previous_mask is not None:
-                change = plan(values - self.previous_mask)
-                # Tile reads are random access; pixel residuals decode whole streams.
-                cost = lambda p: len(p[0]) + len(p[2]) * 4
-                if cost(change) < cost(selection):
+                change = self._plan(values - self.previous_mask)
+                # A small change (a nudged detector) is always cheaper than re-planning the
+                # whole mask, so the full plan is not even computed for it.
+                if len(change[2]) <= 1024 and len(change[0]) <= 256:
                     selection, delta = change, True
+                else:
+                    selection = self._plan(values)
+                    if self._cost(change) < self._cost(selection):
+                        selection, delta = change, True
+            if selection is None:
+                selection = self._plan(values)
             fi, _fc, pi, _pc = selection
             result = self._output(
                 out, (*self.series_shape, *self.scan_shape), self.sum_dtype
             )
-            self.begin.record()
-            for target, source in zip(
+            begin, errors = self._launch()
+            stream = cp.cuda.get_current_stream()
+            for target, staging, source in zip(
                 (
                     self.selected_fields,
                     self.field_coefficients,
                     self.selected_pixels,
                     self.pixel_coefficients,
                 ),
+                self._staging_views,
                 selection,
             ):
-                target[: len(source)].set(source)
-            self.errors.fill(0)
+                if len(source):
+                    staging[: len(source)] = source
+                    target[: len(source)].set(staging[: len(source)], stream=stream)
             bits = self.sum_dtype.itemsize * 8
             u32 = np.uint32
-            self.kernels[f"index_u{bits}"](
-                ((self.max_scans + 127) // 128, self.chunk_count),
-                (128,),
-                (
-                    self.descriptors,
-                    self.selected_fields,
-                    self.field_coefficients,
-                    u32(len(fi)),
-                    self.previous,
-                    result,
-                    np.uint64(self.n_frames),
-                    u32(self.fields),
-                    u32(self.interval),
-                    np.int32(delta),
-                ),
-            )
+            if delta and not len(fi):
+                # A thin change ring touches no whole index leaf: the index pass would only
+                # copy the previous sums, which a device memcpy does in a tenth of the time.
+                cp.copyto(result, self.previous)
+            else:
+                self.kernels[f"index_u{bits}"](
+                    ((self.max_scans + 127) // 128, self.chunk_count),
+                    (128,),
+                    (
+                        self.descriptors,
+                        self.selected_fields,
+                        self.field_coefficients,
+                        u32(len(fi)),
+                        self.previous,
+                        result,
+                        np.uint64(self.n_frames),
+                        u32(self.fields),
+                        u32(self.interval),
+                        np.int32(delta),
+                    ),
+                )
             if len(pi):
                 groups = math.ceil(len(pi) / 32) * math.ceil(
                     self.max_scans / self.interval / self.residual_warps
@@ -246,26 +360,21 @@ class StreamedSeriesCompute(CudaSeriesCompute):
                         self.pixel_coefficients,
                         u32(len(pi)),
                         result,
-                        self.errors,
+                        errors,
                         np.uint64(self.n_frames),
                         u32(self.pixels),
                         u32(self.interval),
                     ),
                 )
-            self._complete(started)
-            cp.copyto(self.previous, result)
-            cp.cuda.get_current_stream().synchronize()
+            cp.copyto(self.previous, result)   # ordered on the stream after the sums; the next delta plan reads it
             self.previous_mask = values.copy()
-            self.last.update(
-                wall_ms=(time.perf_counter() - started) * 1000,
-                query_launches=1 + bool(len(pi)),
-                residual_pixels=len(pi),
-                spatial_fields=len(fi),
-                incremental=delta,
-            )
+            self.previous_stride = stride
+            self._finish(begin, errors, started, dict(query_launches=1 + bool(len(pi)), residual_pixels=len(pi),
+                                                      spatial_fields=len(fi), incremental=delta, launch=self._current_launch,
+                                                      block_stride=stride), wait)
             return result
 
-    def frame_native(self, index, *, out=None):
+    def frame_native(self, index, *, out=None, wait=True):
         import cupy as cp
 
         index = int(index)
@@ -276,19 +385,18 @@ class StreamedSeriesCompute(CudaSeriesCompute):
             result = self._output(
                 out, (*self.series_shape, *self.det_shape), self.frame_dtype
             )
-            self.begin.record()
-            self.errors.fill(0)
+            begin, errors = self._launch()
             self.kernels[f"frame_u{self.frame_dtype.itemsize * 8}"](
                 ((self.pixels + 127) // 128, self.chunk_count),
                 (128,),
                 (
                     self.descriptors,
                     result,
-                    self.errors,
+                    errors,
                     np.uint32(index),
                     np.uint32(self.pixels),
                     np.uint32(self.interval),
                 ),
             )
-            self._complete(started)
+            self._finish(begin, errors, started, dict(query_launches=1, launch=self._current_launch), wait)
             return result

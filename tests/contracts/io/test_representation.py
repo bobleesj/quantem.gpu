@@ -109,6 +109,7 @@ def test_representation_values_do_not_encode_dtype() -> None:
         "dense",
         "packed",
         "ans",
+        "paired",
     }
 
 

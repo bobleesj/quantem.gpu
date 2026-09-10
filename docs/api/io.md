@@ -87,6 +87,40 @@ and `load_timings` metadata describe the actual loaded representation. Saving
 or transcoding this new resident is not yet implemented. Complete-series
 120 Hz throughput is not established by the bounded CUDA parity tests.
 
+(cuda-h5-paired-residency)=
+### Stream complete uint16 H5 counts into the paired CUDA layout
+
+```python
+from quantem.gpu import io, detector
+
+series = io.load(masters, backend="cuda", representation="paired",
+                 dtype="native", apply_mask=False)
+session = detector.prepare([item.data for item in series])
+images = session.masked_sum(detector_mask, output="native")
+preview = session.masked_sum(detector_mask, output="native", out=images, block_stride=4)   # every 4th scan row, 1/4 of the time
+```
+
+`representation="paired"` accepts one master or a list. Each acquisition
+becomes its own exact `PairedCounts` source; a list is loaded by one streaming
+pipeline whose shard reads run ahead across file boundaries, so the series
+proceeds at the drive's rate. The layout needs complete uint16 acquisitions
+whose scan count is a multiple of 512. Per-source `load_timings` report the
+direct-read, header-parse, encode and index seconds separately from the
+resident-ready wall time.
+
+Save the resident arrays once and reopen them without decoding:
+
+```python
+series[0].data.save("acquisition.paired")
+reopened = io.load("acquisition.paired", backend="cuda", dtype="native", apply_mask=False)
+```
+
+The saved form starts with the fixed `QGPUPAIR` magic, so `io.load` selects
+`"paired"` for it automatically; asking for another representation on that file
+raises. Applications that admit acquisitions against a memory budget can drive
+`quantem.gpu.io.PairedLoader.load_many(paths, admit=...)` directly and stop the
+series while earlier files are still streaming.
+
 ### Representation
 
 See [Count representations](representations.md) for per-backend
@@ -101,6 +135,7 @@ the following public selectors on this integration branch:
 | `"dense"` | Every logical value occupies its ordinary dense array element |
 | `"packed"` | Exact integer counts use compact storage consumed by a matching kernel |
 | `"ans"` | Exact integer counts remain entropy-coded with the tables needed for decoding |
+| `"paired"` | Exact integer counts in the CUDA paired-count tANS layout with a polar interaction index; explicit for original HDF5, detected for saved paired resident forms |
 
 These are the only representation names. The authenticated `storage_schema`
 selects the precise decoder within a representation; users do not select an

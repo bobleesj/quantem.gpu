@@ -81,7 +81,7 @@ class DetectorSession:
         valid = getattr(self._backend, "valid_pixels", None)
         return None if valid is None else np.array(valid, dtype=bool, copy=True)
 
-    def frame(self, index: int, *, output: str = "numpy", out=None):
+    def frame(self, index: int, *, output: str = "numpy", out=None, wait: bool = True):
         """Return one detector frame.
 
         Parameters
@@ -111,7 +111,7 @@ class DetectorSession:
             )
         native = getattr(self._backend, "frame_native", None)
         if native is not None:
-            result = native(index, out=out)
+            result = native(index, out=out) if wait else native(index, out=out, wait=False)
             return result if output == "native" else result.get()
         if output == "native":
             raise NotImplementedError("This backend has no native frame output; use output='numpy'.")
@@ -147,7 +147,15 @@ class DetectorSession:
 
         return _reduced_to_numpy(self._backend.mean_dp())
 
-    def masked_sum(self, mask, *, output: str = "numpy", out=None):
+    def finish(self) -> dict:
+        """Wait for the oldest query launched with ``wait=False`` and return its timings.
+
+        Raises ``ValueError`` if an encoded stream failed exact decoding, in which
+        case that result must not be used.
+        """
+        return self._backend.finish()
+
+    def masked_sum(self, mask, *, output: str = "numpy", out=None, wait: bool = True, block_stride: int = 1):
         """Return a float32 virtual-detector image for one detector mask.
 
         Parameters
@@ -164,6 +172,18 @@ class DetectorSession:
             Only valid with ``output="native"``. The result is complete on
             return. Finish reading it before reusing this buffer. Without
             ``out``, each native result owns separate storage.
+        wait
+            ``False`` (native output on a streamed CUDA series only) returns as
+            soon as the kernels are queued; the result is complete after
+            :meth:`finish`, which also raises for a malformed stream. Several
+            queries may be in flight so the host plans while the device works.
+        block_stride
+            Paired native series only. ``k > 1`` sums every k-th 512-scan block
+            (every k-th scan row of a 512-wide raster) and leaves the other rows
+            of ``out`` untouched, at about ``1/k`` of the device time: a viewer's
+            preview of a moving mask on its tiles. The values written are exact.
+            Consecutive queries at the same stride build on each other
+            incrementally; a change of stride starts from a full plan.
 
         Examples
         --------
@@ -171,8 +191,11 @@ class DetectorSession:
         """
         _check_output(output, out)
         native = getattr(self._backend, "masked_sum_native", None)
+        if block_stride != 1 and (native is None or output != "native" or not hasattr(self._backend, "block_stride")):
+            raise ValueError("block_stride needs a paired native series with output='native'.")
         if native is not None:
-            result = native(mask, out=out)
+            extra = {} if block_stride == 1 else dict(block_stride=block_stride)
+            result = native(mask, out=out, **extra) if wait else native(mask, out=out, wait=False, **extra)
         elif output == "native":
             raise NotImplementedError("This backend has no native detector output; use output='numpy'.")
         else:
@@ -679,6 +702,10 @@ def _resolve_backend(data):
         sources = [item.data if hasattr(item, "_fields") and "data" in item._fields else item for item in data]
         from quantem.gpu.io.backends.cuda._ans import CudaANSResidentCounts, CudaPackedResidentCounts
 
+        from quantem.gpu._compact.paired import PairedCounts, PairedSeriesCompute
+
+        if sources and all(isinstance(source, PairedCounts) for source in sources):
+            return PairedSeriesCompute(data)
         if sources and all(isinstance(source, (StreamedCounts, CudaANSResidentCounts, CudaPackedResidentCounts)) for source in sources):
             return StreamedSeriesCompute(data)
         return CudaSeriesCompute(data)
@@ -696,7 +723,9 @@ def _resolve_backend(data):
     from quantem.gpu._compact.interaction import StreamedSeriesCompute
 
     if isinstance(data, StreamedCounts):
-        result = StreamedSeriesCompute([data])
+        from quantem.gpu._compact.paired import PairedCounts, PairedSeriesCompute
+
+        result = (PairedSeriesCompute if isinstance(data, PairedCounts) else StreamedSeriesCompute)([data])
         result.series_shape = ()
         result.valid_pixels = result.valid_pixels[0]
         result.backend_metadata["series_shape"] = ()
