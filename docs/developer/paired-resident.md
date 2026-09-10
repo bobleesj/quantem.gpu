@@ -45,11 +45,12 @@ $I[R_r,R_c,k_r,k_c]$ with $\mathbf R=(R_r,R_c)$ and $\mathbf k=(k_r,k_c)$.
 | --- | --- |
 | query ABI | `paired-polar-counts-v1` |
 | input | complete multiples of 512 scans, native `uint8`/`uint16`, detector up to 65,535 pixels per group of 32 streams; chunks of any block count may mix within one series (the residual work list is a one-dimensional grid) |
-| H5 loader | `uint16` bitshuffle+LZ4 shards with one frame per chunk; a partial final LZ4 block must hold a multiple of 8 values; one path or a list, every acquisition returned as its own source; `backend="cuda"`, `dtype="native"`, `apply_mask=False`, no selection or binning options |
+| H5 loader | `uint16` bitshuffle+LZ4 shards with one frame per chunk (chunk tables and LZ4 block headers are parsed from the staged image, so the drive only sees sequential direct reads); a partial final LZ4 block must hold a multiple of 8 values; one path or a list, every acquisition returned as its own source; `backend="cuda"`, `dtype="native"`, `apply_mask=False`, no selection or binning options |
 | virtual image | exact `uint32` sums, `uint64` when a full-detector sum could exceed `2**32` |
 | diffraction pattern | native dtype, invalid pixels reported as zero |
 | malformed stream | `ValueError` from the query; the result is not returned |
-| saved form | `QGPUPAIR` magic, JSON header (`quantem-paired-resident-v1`) plus 4096-aligned arrays; `io.load` detects it; reopen refuses another ABI |
+| saved form | `QGPUPAIR` magic, JSON header (`quantem-paired-resident-v1`) plus 4096-aligned arrays; `io.inspect` reports `source_kind="paired"` with `resident_bytes`; `io.load` detects it; reopen refuses another ABI |
+| application streaming | `PairedLoader.stream(paths, admit=...)` yields `(path, FourDSTEMData)` per acquisition while later files are still being read |
 
 Coding parameters (32 models, 1024 states, 2-byte stream header, sparse mode
 preferred unless the paired stream saves at least two bytes) are fixed by the

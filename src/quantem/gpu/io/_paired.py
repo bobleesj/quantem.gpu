@@ -19,6 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
 
 import numpy as np
+from numba import njit
 
 from quantem.gpu._compact.paired import QUERY_ABI, PairedCounts
 
@@ -110,6 +111,17 @@ class PairedLoader:
             return source, timings
         raise ValueError(f"{path} was not admitted.")
 
+    def stream(self, paths, *, scan_shape=None, device=None, admit=None, verbose=False):
+        """Yield ``(path, FourDSTEMData)`` per admitted acquisition, as :func:`io.load` returns.
+
+        The same pipeline as :meth:`load_many`, with each source wrapped in the
+        public result type (``representation="paired"``, per-source
+        ``load_timings``), so an application can present acquisitions one by one
+        while later files are still streaming in.
+        """
+        for path, source, timings in self.load_many(paths, scan_shape=scan_shape, device=device, admit=admit):
+            yield path, _result(source, timings, verbose)
+
     def load_many(self, paths, *, scan_shape=None, device=None, admit=None):
         """Yield ``(path, source, timings)`` for each acquisition, in order.
 
@@ -188,7 +200,7 @@ class PairedLoader:
 
     def _describe(self, path, scan_shape):
         """Inspect one master and list its shards with their chunk tables."""
-        from .load import _discover_chunk_names, _get_master_frame_sources
+        from .load import _discover_chunk_names, _master_frame_source_refs
 
         started = time.perf_counter()
         info = inspect(path, scan_shape=scan_shape)
@@ -207,31 +219,29 @@ class PairedLoader:
         if info.pixel_mask is not None:
             valid &= np.asarray(info.pixel_mask) == 0
         names = _discover_chunk_names(str(path)) or ["data"]
-        infos, _ = _get_master_frame_sources(str(path), names, apply_mask=False)
+        refs, _, _ = _master_frame_source_refs(str(path), names, apply_mask=False)
         blocks = (frame_bytes + BLOCK_SIZE - 1) // BLOCK_SIZE
-        shards = []
-        for source in infos:
-            if tuple(source["frame_shape"]) != tuple(info.detector_shape) or np.dtype(source["dtype"]) != dtype:
-                raise ValueError(f"{source['path']} does not match the inspected detector geometry.")
-            shards.append(dict(path=source["path"], n_frames=int(source["n_frames"]), chunk_infos=np.asarray(source["chunk_infos"], np.uint64), blocks=blocks, frame_bytes=frame_bytes))
-        if sum(shard["n_frames"] for shard in shards) != math.prod(info.scan_shape):
-            raise ValueError(f"{path}: shards hold {sum(s['n_frames'] for s in shards)} frames for {math.prod(info.scan_shape)} scan positions.")
+        # Shard chunk tables are read from the staged image by the reader thread, not from disk here.
+        shards = [dict(path=shard_path, dataset_path=dataset_path, blocks=blocks, frame_bytes=frame_bytes, detector_shape=tuple(info.detector_shape)) for shard_path, dataset_path in refs]
         return dict(path=str(path), shape=shape, dtype=dtype, valid=valid, shards=shards, frame_bytes=frame_bytes, blocks=blocks,
                     metadata=dict(info.metadata), pixel_mask=info.pixel_mask, describe_seconds=time.perf_counter() - started)
 
     def _read_and_parse(self, shard: dict) -> dict:
-        """Reader thread: direct read of one shard plus its LZ4 block header parse."""
+        """Reader thread: direct read of one shard, its chunk table and LZ4 block starts."""
         slot = self.free_slots.get()
         try:
             staging = self.staging[slot]
             size, read_seconds = _read_direct(shard["path"], staging)
-            offsets = np.ascontiguousarray(shard["chunk_infos"][:, 0], np.uint64)
-            sizes = np.ascontiguousarray(shard["chunk_infos"][:, 1], np.uint64)
-            n = shard["n_frames"]
+            started = time.perf_counter()
+            offsets, sizes, n, frame_shape, dtype = _chunk_table(staging, size, shard["dataset_path"], shard["path"])
+            if frame_shape != shard["detector_shape"] or dtype != np.dtype("uint16"):
+                raise ValueError(f"{shard['path']}: dataset is {frame_shape} {dtype}, the master declares {shard['detector_shape']} uint16.")
             if int(offsets[-1] + sizes[-1]) > size:
                 raise ValueError(f"{shard['path']}: chunk table extends past the file end.")
-            started = time.perf_counter()
-            starts = _block_starts(staging, offsets, sizes, shard["blocks"], shard["frame_bytes"], shard["path"])
+            starts = np.empty(n * shard["blocks"], np.uint32)
+            status = _walk_block_starts(staging, offsets, sizes, shard["blocks"], shard["frame_bytes"], BLOCK_SIZE, starts)
+            if status:
+                raise ValueError(f"{shard['path']}: chunk headers do not describe {shard['frame_bytes']}-byte frames in {shard['blocks']} LZ4 blocks (code {status}).")
             return dict(slot=slot, offsets=offsets, starts=starts, frames=n, size=size, read_seconds=read_seconds, header_seconds=time.perf_counter() - started)
         except BaseException:
             self.free_slots.put(slot)
@@ -387,7 +397,6 @@ class _DeviceBuffers:
         self.lz4_frames = scans
         self.lz4 = [cp.empty(scans * self.frame_bytes, cp.uint8) for _ in range(2)]
         self.frames = 0
-        self.reserve(max(shard["n_frames"] for shard in description["shards"]), None)
 
     def reserve(self, frames: int, stream) -> None:
         """Size the per-shard chunk tables for ``frames``; grows only after draining the stream."""
@@ -397,7 +406,8 @@ class _DeviceBuffers:
             return
         if stream is not None:
             stream.synchronize()
-        self.frames = frames
+        self.frames = max(frames, 16384)  # one growth covers the usual shard sizes
+        frames = self.frames
         self.offsets = [cp.empty(frames, cp.uint64) for _ in range(2)]
         self.starts = [cp.empty(frames * self.blocks, cp.uint32) for _ in range(2)]
         self.counts = cp.full(frames, self.blocks, cp.uint32)
@@ -411,29 +421,96 @@ class _DeviceBuffers:
         self.host_offsets = self.host_starts = None
 
 
-def _block_starts(staging: np.ndarray, offsets: np.ndarray, sizes: np.ndarray, blocks: int, frame_bytes: int, path: str) -> np.ndarray:
-    """Walk every chunk's bitshuffle+LZ4 block table with vectorized gathers.
+def _chunk_table(staging: np.ndarray, size: int, dataset_path: str, path: str):
+    """Read one shard's chunk offsets and sizes from its staged image, not from disk."""
+    import h5py
 
-    Each chunk starts with the uncompressed byte count (8 bytes) and the block size
-    (4 bytes), then per block a 4-byte compressed length followed by the block. The
-    walk is one gather per block over all frames, so it is thread-safe (reader
-    threads run it concurrently) and needs no compiled helper.
+    image = _ImageFile(memoryview(staging)[:size])
+    with h5py.File(image, "r") as handle:
+        dataset = handle[dataset_path]
+        if dataset.chunks is None or dataset.ndim != 3 or int(dataset.chunks[0]) != 1:
+            raise ValueError(f"{path}: the paired loader needs one detector frame per HDF5 chunk; got chunks={dataset.chunks}.")
+        table = []
+        dataset.id.chunk_iter(lambda info: table.append((info.byte_offset, info.size)))
+        if len(table) != dataset.shape[0]:
+            raise ValueError(f"{path}: {len(table)} stored chunks for {dataset.shape[0]} frames; every frame must be written.")
+        array = np.asarray(table, np.uint64)
+        return np.ascontiguousarray(array[:, 0]), np.ascontiguousarray(array[:, 1]), int(dataset.shape[0]), tuple(int(v) for v in dataset.shape[1:]), np.dtype(dataset.dtype)
+
+
+class _ImageFile:
+    """Minimal read-only file object over a staged HDF5 image for h5py's file-like driver."""
+
+    def __init__(self, view: memoryview):
+        self.view, self.position = view, 0
+
+    def read(self, size: int = -1) -> bytes:
+        stop = len(self.view) if size is None or size < 0 else min(len(self.view), self.position + size)
+        data = bytes(self.view[self.position : stop])
+        self.position = stop
+        return data
+
+    def readinto(self, buffer) -> int:
+        stop = min(len(self.view), self.position + len(buffer))
+        count = stop - self.position
+        buffer[:count] = self.view[self.position : stop]
+        self.position = stop
+        return count
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        base = (0, self.position, len(self.view))[whence]
+        self.position = max(0, min(len(self.view), base + offset))
+        return self.position
+
+    def tell(self) -> int:
+        return self.position
+
+    def readable(self) -> bool:
+        return True
+
+    def writable(self) -> bool:
+        return False
+
+    def seekable(self) -> bool:
+        return True
+
+    def flush(self) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
+
+
+@njit(nogil=True, cache=True)
+def _walk_block_starts(staging, offsets, sizes, blocks, frame_bytes, block_size, starts):
+    """Walk every chunk's bitshuffle+LZ4 block table; returns 0 or an error code.
+
+    Each chunk begins with the uncompressed byte count (8 bytes) and the block
+    size (4 bytes), then per block a 4-byte compressed length and the block.
+    Runs without the interpreter lock so reader threads parse concurrently.
     """
-    lanes = np.arange(4, dtype=np.uint64)
-    header = staging[offsets[:, None] + np.arange(12, dtype=np.uint64)].astype(np.uint64)
-    uncompressed = (header[:, :8] << (np.arange(8, dtype=np.uint64)[::-1] * 8)).sum(axis=1)
-    block_size = (header[:, 8:12] << (lanes[::-1] * 8)).sum(axis=1)
-    if np.any(uncompressed != frame_bytes) or np.any(block_size < BLOCK_SIZE):
-        raise ValueError(f"{path}: chunk headers do not describe {frame_bytes}-byte frames in {BLOCK_SIZE}-byte LZ4 blocks.")
-    starts = np.empty((len(offsets), blocks), np.uint32)
-    position = np.full(len(offsets), 12, np.uint64)
-    for block in range(blocks):
-        starts[:, block] = position
-        lengths = (staging[(offsets + position)[:, None] + lanes].astype(np.uint64) << (lanes[::-1] * 8)).sum(axis=1)
-        position += 4 + lengths
-    if np.any(position > sizes):
-        raise ValueError(f"{path}: an LZ4 block table runs past its chunk.")
-    return starts.reshape(-1)
+    for i in range(offsets.shape[0]):
+        base = offsets[i]
+        uncompressed = 0
+        for k in range(8):
+            uncompressed = (uncompressed << 8) | staging[base + k]
+        if uncompressed != frame_bytes:
+            return 1
+        declared = 0
+        for k in range(8, 12):
+            declared = (declared << 8) | staging[base + k]
+        if declared != block_size:
+            return 2
+        position = 12
+        for b in range(blocks):
+            starts[i * blocks + b] = position
+            length = 0
+            for k in range(4):
+                length = (length << 8) | staging[base + position + k]
+            position += 4 + length
+        if position > sizes[i]:
+            return 3
+    return 0
 
 
 def _fresh_timings(description: dict) -> dict:

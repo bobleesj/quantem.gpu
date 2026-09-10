@@ -84,6 +84,8 @@ def inspect(
     representation = DataRepresentation.detect_source(filepath)
     if representation is DataRepresentation.ANS:
         return _inspect_ans(path, scan_shape)
+    if representation is DataRepresentation.PAIRED:
+        return _inspect_paired(path, scan_shape)
     if representation is DataRepresentation.PACKED:
         return _inspect_packed(filepath, scan_shape)
     readiness = inspect_master_readiness(filepath, scan_shape=scan_shape)
@@ -187,6 +189,29 @@ def _inspect_ans(path: Path, scan_shape) -> Inspection:
                       shape[0] * shape[1],
                       int(np.prod(scan_shape)) if scan_shape is not None else shape[0] * shape[1],
                       shape[:2], shape[2:], document["dtype"],
+                      {"path": str(path.resolve()), "size": path.stat().st_size})
+
+
+def _inspect_paired(path: Path, scan_shape) -> Inspection:
+    """Read the declared geometry of a saved paired resident form; arrays stay unread."""
+    from quantem.gpu._compact.paired import QUERY_ABI, _read_header
+
+    header, _ = _read_header(path)
+    shape = tuple(header.get("shape", ()))
+    if header.get("query_abi") != QUERY_ABI or len(shape) != 4 or header.get("dtype") not in ("uint8", "uint16"):
+        raise ValueError(f"{path.name} is not a paired resident form for query ABI {QUERY_ABI}.")
+    matches = scan_shape is None or tuple(scan_shape) == shape[:2]
+    resident_bytes = sum(spec["nbytes"] for chunk in header["chunks"] for spec in chunk["arrays"])
+    metadata = dict(representation="paired", resident_profile=QUERY_ABI, working_shape=shape,
+                    scan_shape=shape[:2], detector_shape=shape[2:], dtype=header["dtype"],
+                    resident_bytes=resident_bytes, chunks=len(header["chunks"]))
+    valid = np.unpackbits(np.frombuffer(bytes.fromhex(header["valid"]), np.uint8))[: shape[2] * shape[3]].reshape(shape[2:])
+    mask = (valid == 0).astype(np.uint32)
+    return Inspection(matches, "header_complete_payload_unverified" if matches else "scan_shape_mismatch",
+                      "Load to reopen the exact resident arrays.", metadata, mask, "paired",
+                      shape[0] * shape[1],
+                      int(np.prod(scan_shape)) if scan_shape is not None else shape[0] * shape[1],
+                      shape[:2], shape[2:], header["dtype"],
                       {"path": str(path.resolve()), "size": path.stat().st_size})
 
 
