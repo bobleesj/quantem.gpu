@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-apple-m5-uint32-read-ahead",
+  "status": "succeeded",
+  "question": "Can bounded concurrent compressed reads reduce exact original uint32 packed-resident load time without changing the resident representation?",
+  "paper": {"repository": "quantem.gpu", "authoritative_host": "apple-m5-24gb"},
+  "code": {
+    "revision": "fc549c9cb2d0a7f574914dbe4435b03fdb9aee4f",
+    "dirty": false,
+    "diff_scope": "two-deep concurrent compressed read-ahead for direct uint32 residency",
+    "entrypoint": "metal-original-hdf5-benchmark and Live4DSTEM native uint32 hooks"
+  },
+  "inputs": [{
+    "dataset_id": "original-uint32-512",
+    "sha256": "01f731d7f95a3bb2d15ec072b72821bf140cd53918d29e284650bc93e37ee17c",
+    "identity_scope": "catalog source identity"
+  }],
+  "parameters": {
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_dtype": "uint32",
+    "resident": "lossless packed Metal resident",
+    "read_ahead_depth": 2,
+    "exactness": "all source bits preserved; no crop, bin, clipping, or inferred sentinel masking"
+  },
+  "execution": {"host": "apple-m5-24gb", "backend": "swift-metal", "gpu_model": "Apple M5"},
+  "outputs": [{
+    "artifact_id": "uint32-read-ahead-profile",
+    "path": "experiments/20260909-apple-m5-uint32-read-ahead/result.json",
+    "sha256": "c7e0637f8d9ebc944e7175124d10899a551dfe40116ff606a32be1be282928a5",
+    "size_bytes": 1091,
+    "retention": "durable",
+    "consuming_figures": [],
+    "result": "Exact synthetic parity 3/3 and native two-cycle parity/reload/recovery pass; end-to-end source read remains the limiting stage"
+  }],
+  "timestamps": {"created": "2026-09-09", "started": "2026-09-09", "finished": "2026-09-09"}
+}

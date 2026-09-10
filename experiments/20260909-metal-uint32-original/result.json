@@ -1,0 +1,51 @@
+{
+  "status": "partial-validation-not-release-ready",
+  "implementation": {
+    "source": "original little-endian uint32 ARINA bitshuffle/LZ4",
+    "resident": "lossless blockwise Metal bit packing, bounded dense staging only",
+    "count_preservation": "all bits; explicit source mask only; no guessed sentinel exclusion",
+    "detector_sums": "UInt64 exact; Float32 GPU display snapshot",
+    "geometry": "scan bin 1, detector bin 1, no crop"
+  },
+  "parity": {
+    "uint32_synthetic_cases": 3,
+    "values_per_case": 131072,
+    "reload_cycles_per_case": 2,
+    "checks": ["all diffraction values", "mean diffraction and exact totals", "DPC totals and row/column moments", "whole-acquisition count", "full/partial/empty masks", "delta versus rebase", "UInt64 sums above UInt32.max", "Float32 display conversion", "cross-shard input", "source file hashes unchanged"],
+    "uint8_uint16_regression_tests_passed": 25,
+    "app_cpu_admission_checks_passed": 13,
+    "big_endian_negative": "rejected explicitly with corrective instruction"
+  },
+  "native_real_uint32": {
+    "shape": [512, 512, 192, 192],
+    "source_identity_sha256": "50372d2225a11c65574d7c5d38dca5892829bd1ff579d4b42eaa59a2d15bfa07",
+    "executable_sha256": "25cf76fe0fb3501222b5ad8f8132d5ea8f84d736a117ffbee71eacaa15f08bea",
+    "independent_raw_hdf5_parity": "two native launches: every selected DP pixel plus 15 BF/ABF/ADF sample checks per launch",
+    "failed_file_retention": "pass",
+    "forced_reload": "pass",
+    "quit_relaunch": "pass",
+    "process_invariant": "zero/one/zero for both launches",
+    "source_size_mtime": "unchanged",
+    "earlier_interaction_executable_sha256": "4c3fbad36f3468724d13d9f95919c55ba47bec5f3d118d97d7670b81d46b3b1a",
+    "earlier_interaction": "BF/ABF/ADF/iDPC, FFT reveal and scan/detector dragging; no console error",
+    "steady_selected_dp_hz": 120.0,
+    "large_abf_center_hz": 38.7,
+    "large_adf_center_hz": 13.1,
+    "resident_allocated_bytes": 722616320,
+    "first_ready_poll_seconds": 5.53,
+    "first_presentation_record": "missing in initial single-file test; do not substitute loader timing",
+    "performance_scope": "report-only under concurrent source/cloud activity; not cold IO, not subsecond, not 120 Hz wide-detector acceptance"
+  },
+  "mixed_folder": {
+    "recognized_complete_acquisitions": 98,
+    "recognized_uint32_acquisitions": 72,
+    "remaining_incomplete_acquisitions": 6,
+    "scripted_visits_completed_in_retry": 31,
+    "full_traversal": "pending; unexpected selections outside scripted sequence in two runs",
+    "retry_process_exit": 130,
+    "retry_driver_json_caveat": "Interrupted old harness wrote problems=[]; NOT a pass. Harness now records KeyboardInterrupt as a problem.",
+    "observed_uint32_512_first_visits_seconds": [3.07, 4.06, 4.5]
+  },
+  "remaining": ["uncontended complete mixed-folder traversal", "wide uint32 detector optimization", "uint32 exact UInt64 numerical export rather than current declared Float32 products", "persistent uint32 packing-plan support if needed", "fresh release packaging/notarization gates"],
+  "distribution": "local uncommitted development build; no release, push, or installed app replacement"
+}

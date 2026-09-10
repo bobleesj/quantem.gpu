@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "quantity": "whole-acquisition valid detector counts",
+  "shape": [
+    512,
+    512,
+    192,
+    192
+  ],
+  "source_dtype": "uint16",
+  "scan_bin": 1,
+  "detector_bin": 1,
+  "crop": null,
+  "total_counts": 17727184,
+  "scan_count": 262144,
+  "mean_counts_per_pattern": 67.62384033203125,
+  "scan_pixel_area_angstrom_squared": 17.246486123456794,
+  "detected_electrons_per_angstrom_squared": 3.9210213517092423,
+  "assumption": "Native ARINA counts treated as detected electrons; not incident dose. Masked pixels excluded; no detector-efficiency correction.",
+  "oracle": {
+    "method": "Independent streamed original HDF5 UInt64 sum",
+    "samples": 9663676416,
+    "total_counts": 17727184,
+    "exact": true,
+    "seconds": 27.486241707985755
+  },
+  "timing": {
+    "gpu_ms": 0.33858331153169274,
+    "summary_wall_ms": 0.5539655685424805,
+    "readback_bytes": 8,
+    "scope": "One added scalar reduction over existing prepared DPC buffer; not load or FPS",
+    "seven_gpu_ms": [
+      0.317375001,
+      0.3181250067,
+      0.3293750342,
+      0.3242500243,
+      0.3468749928,
+      0.3227916895,
+      0.3188333358
+    ],
+    "seven_wall_ms": [
+      0.578045845,
+      0.4689693451,
+      0.5009174347,
+      0.4719495773,
+      0.4990100861,
+      0.4680156708,
+      0.4730224609
+    ]
+  },
+  "validation": {
+    "uint64_kernel_cases": 9,
+    "normalization_cpu": "pass; anisotropic, area override, zero, missing/invalid calibration, unknown electron units",
+    "arina_invariant_states": 44,
+    "arina_distinct_acquisitions": 7,
+    "empad_no_false_electron_units_states": 15,
+    "empad_distinct_acquisitions": 3,
+    "folder_regressions": "BF/ABF/ADF/iDPC, rapid/return visits, scan/custom detector trajectories, FFT; hook-driven native",
+    "console_errors": 0,
+    "public_ui": "partial: rendered source estimate and AX product selection; calibration editor retest stopped on focus change",
+    "release_ready": false
+  },
+  "failures_retained": [
+    "Initial shader compilation rejected reserved variable name thread; renamed tid, kernel parity passed.",
+    "Public editor footer offscreen/identifier propagation: fixed in app; uninterrupted public Save/Reset remains pending.",
+    "Second public attempt lacked an AX window tree; third stopped safely on foreground application change."
+  ],
+  "artifact": {
+    "app_base": "37afe4517c7639862e268f52a7d2bde5cac78988",
+    "backend_base": "11089e6996f5e2316bdb0198a3942fd1a647c7b5",
+    "dirty": true,
+    "app_executable_sha256": "1371ea2668aca05483f4eb000c046c2d3b73037b9808e1e70650f59bbdeb0033",
+    "metal_resource_sha256": "780eb3eec8a9b69ec93c96a21aa03ccca1a67bff6d9b7482631dc19e23799f80",
+    "private_raw_evidence_sha256": "8b7175aca222d95697050749211784c6818e2ff64fe08c2977496c9752ab53f1"
+  }
+}

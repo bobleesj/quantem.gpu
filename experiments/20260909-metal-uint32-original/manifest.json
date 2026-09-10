@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-metal-uint32-original",
+  "status": "failed",
+  "question": "Can original uint32 bitshuffle/LZ4 HDF5 load into exact bounded-stage Metal packed residents and support native scientific interaction without narrowing counts?",
+  "paper": {"repository": "quantem.gpu", "authoritative_host": "apple-m5-24gb"},
+  "code": {
+    "revision": "11089e6996f5e2316bdb0198a3942fd1a647c7b5",
+    "dirty": true,
+    "diff_sha256": "9eecd7b85ce52e84e2e5feabe4e79a40c4f2dbf3c27b811a2fb87d53280c01d1",
+    "diff_scope": "tracked Swift package source diff; additional metadata source files already existed untracked",
+    "entrypoint": "tests/hardware/metal/test_uint32_packing.py"
+  },
+  "inputs": [{"dataset_id": "original-uint32-calibrated-512", "sha256": "50372d2225a11c65574d7c5d38dca5892829bd1ff579d4b42eaa59a2d15bfa07", "identity_scope": "catalog source identity, not a single file checksum"}],
+  "parameters": {
+    "scan_bin": 1, "detector_bin": 1, "crop": null,
+    "source_dtype": "uint32", "raw_counts": "preserve every bit, including maximum values; no inferred hot-pixel clipping",
+    "detector_accumulator": "UInt64", "display_surface": "Float32 conversion only, exact integer sums retained separately",
+    "cases": ["sparse", "boundary values", "full uint32 range", "complete original SSD acquisitions"],
+    "registration": "Registered after initial failing functional checks and before native UI timings",
+    "performance": "report only; concurrent cloud upload is a confounder"
+  },
+  "execution": {"host": "apple-m5-24gb", "backend": "swift-metal", "gpu_model": "Apple M5"},
+  "outputs": [{"artifact_id": "uint32-validation", "path": "experiments/20260909-metal-uint32-original/result.json", "sha256": "ab68fb93a66157a6d4f6e926d9ea1c9bbd4db471d2aa848c7e7dc00a1245f5bd", "size_bytes": 3192, "retention": "durable", "consuming_figures": [], "result": "Exact uint32 parity and real native export/reload pass. Overall acceptance incomplete: two mixed-folder runs interrupted by unrequested selections; wide ADF 13.1 Hz, not 120 Hz. No release."}],
+  "timestamps": {"created": "2026-09-09", "started": "2026-09-09", "finished": "2026-09-09"}
+}

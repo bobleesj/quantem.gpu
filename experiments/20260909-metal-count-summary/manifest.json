@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-metal-count-summary",
+  "status": "completed",
+  "question": "Can existing exact per-scan GPU totals produce a full-acquisition count/detected-dose summary in milliseconds without rereading the 4D payload?",
+  "paper": {
+    "repository": "quantem.gpu",
+    "authoritative_host": "apple-m5-24gb"
+  },
+  "code": {
+    "revision": "11089e6996f5e2316bdb0198a3942fd1a647c7b5",
+    "dirty": true,
+    "diff_sha256": "68e0eb4ef941c73dc4722cd01c5e98e31fcc4dba6de1df630ca1b318c6bebedf",
+    "snapshot_path": "local-validation/detected-dose-controller-20260909/count-summary-backend.patch",
+    "entrypoint": "Live4DSTEM/Tests/NativeUI/drive_detected_dose.py"
+  },
+  "inputs": [
+    {
+      "dataset_id": "calibrated-arina-full-scan",
+      "path": "local-validation/calibrated-arina-512",
+      "sha256": "97140ad23ad1e2fe5ac2d0c303a2bccccee7eaeb6925d4250814d79ead296872"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "source_dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "exclusions": "existing source detector mask",
+    "readback_bytes": 8,
+    "threads": 256,
+    "threadgroups": 1,
+    "comparison": "new diagnostic, no before/after load-speed or FPS claim",
+    "registration": "Reconciled after functional validation; not preregistered as a performance sweep"
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_model": "Apple M5"
+  },
+  "outputs": [
+    {
+      "artifact_id": "count-summary-validation",
+      "path": "experiments/20260909-metal-count-summary/result.json",
+      "sha256": "0a290fcef7be8452269c08c3268f0b9c5124a1f4a93f63f28e5c506bb03be209",
+      "size_bytes": 2803,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Exact full-source total; 0.34 ms GPU / 0.55 ms wall added summary. Seven-file invariance and three EMPAD regressions pass. Public calibration Save/Reset remains pending after focus contention."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09",
+    "started": "2026-09-09",
+    "finished": "2026-09-09"
+  }
+}
