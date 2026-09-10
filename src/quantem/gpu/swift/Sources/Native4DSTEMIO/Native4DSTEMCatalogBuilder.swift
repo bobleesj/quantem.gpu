@@ -133,7 +133,8 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
               frameCount: metadata.nFrames,
               detectorRows: metadata.detRows,
               detectorColumns: metadata.detCols,
-              sourceBytes: metadata.srcDtype == "uint32" ? 4 : (metadata.srcDtype == "uint8" ? 1 : 2),
+              sourceBytes: metadata.srcDtype == "uint32"
+                ? 4 : (metadata.srcDtype == "uint8" ? 1 : 2),
               chunks: []
             )
           )
@@ -187,9 +188,12 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
     let metadata = master.metadata.merging(companion) { _, new in new }
       .merging(spatialCalibration.metadata) { _, new in new }
     let microscope = NativeMicroscopeMetadata(metadata: metadata)
-    let reciprocal: (row: Double, column: Double)? = master.reciprocalSampling
+    let reciprocal: (row: Double, column: Double)? =
+      master.reciprocalSampling
       ?? {
-        guard let row = microscope.angularRowMrad, let column = microscope.angularColumnMrad else { return nil }
+        guard let row = microscope.angularRowMrad, let column = microscope.angularColumnMrad else {
+          return nil
+        }
         return (row, column)
       }()
     let sourceBytes = try dataFiles.reduce(0) { total, file in
@@ -505,10 +509,17 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
     guard let url = companionMetadata(for: source) else {
       return ["sourceFormat": "ARINA HDF5"]
     }
-    guard let companion = try? NativeHDF5Bridge.inspectMaster(at: url, detectorRows: 0, detectorColumns: 0),
+    guard
+      let companion = try? NativeHDF5Bridge.inspectMaster(
+        at: url, detectorRows: 0, detectorColumns: 0),
       let shape = companion.scanShape,
-      shape.rows == scanShape.rows, shape.columns == scanShape.columns else {
-      return ["sourceFormat": "ARINA HDF5", "microscope_metadata_warning": "Paired metadata is unreadable or has mismatched scan dimensions"]
+      shape.rows == scanShape.rows, shape.columns == scanShape.columns
+    else {
+      return [
+        "sourceFormat": "ARINA HDF5",
+        "microscope_metadata_warning":
+          "Paired metadata is unreadable or has mismatched scan dimensions",
+      ]
     }
     var metadata = companion.metadata
     metadata["sourceFormat"] = "ARINA HDF5 + NXem metadata"

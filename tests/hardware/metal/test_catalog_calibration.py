@@ -74,6 +74,32 @@ class CatalogCalibrationTests(unittest.TestCase):
         self.companion.rename(self.root / "other_em_metadata.h5")
         self.assertNotIn("sourceScanCalibration", self.read())
 
+    def test_microscope_metadata_units_and_pair_identity(self):
+        self.metadata()
+        with h5py.File(self.companion, "a") as f:
+            values = {
+                "electron_source/accelerating_voltage": (300000, "V"),
+                "illumination_system/semi_convergence_angle": (0, "mrad"),
+                "imaging_system/camera_length": (0.23, "m"),
+                "imaging_system/reciprocal_pixel_size_y": (0.18217391304347827, "mrad"),
+                "imaging_system/reciprocal_pixel_size_x": (0.00018217391304347827, "rad"),
+                "scan_controller/regular_scan/dwell_time": (0.00005, "s"),
+            }
+            for path, (value, unit) in values.items():
+                d = f.create_dataset("electron_microscope/" + path, data=value)
+                d.attrs["units"] = unit
+        dataset = self.read()
+        self.assertEqual(dataset["metadata"]["sourceFormat"], "ARINA HDF5 + NXem metadata")
+        self.assertEqual(dataset["metadata"]["microscope_metadata_source"], self.companion.name)
+        self.assertAlmostEqual(dataset["kPixelSizeRow"], 0.18217391304347827, places=15)
+        self.assertAlmostEqual(dataset["kPixelSizeCol"], 0.18217391304347827, places=15)
+        self.assertEqual(dataset["kPixelUnit"], "mrad")
+        with h5py.File(self.companion, "a") as f:
+            f["electron_microscope/scan_controller/regular_scan/n_pixels_y"][()] = 3
+        rejected = self.read()
+        self.assertEqual(rejected["metadata"]["sourceFormat"], "ARINA HDF5")
+        self.assertNotIn("kPixelSizeRow", rejected)
+
 
 if __name__ == "__main__":
     unittest.main()
