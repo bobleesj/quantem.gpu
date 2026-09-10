@@ -157,6 +157,8 @@ class StreamedSeriesCompute(CudaSeriesCompute):
             self.kernels = kernels(self.device)
             cp.cuda.get_current_stream().synchronize()
         self.previous_mask = None
+        self.block_stride = 1
+        self.previous_stride = 1
         self._inflight = []   # (begin, end, done, errors_slot, started, info) for queries launched with wait=False
         self._launches = 0
         self._tainted_from = None   # launch index of a failed query; later incremental queries built on it
@@ -271,7 +273,7 @@ class StreamedSeriesCompute(CudaSeriesCompute):
         self._publish(begin, end, slot, started, info)
         return dict(self.last)
 
-    def masked_sum_native(self, mask, *, out=None, wait=True):
+    def masked_sum_native(self, mask, *, out=None, wait=True, block_stride=1):
         import cupy as cp
 
         values = np.asarray(mask)
@@ -283,6 +285,14 @@ class StreamedSeriesCompute(CudaSeriesCompute):
         with self.lock, cp.cuda.Device(self.device):
             started = time.perf_counter()
             selection, delta = None, False
+            stride = int(block_stride)
+            if stride < 1:
+                raise ValueError("block_stride counts 512-scan blocks; use 1 or more.")
+            self.block_stride = stride   # the paired launch wrappers read it
+            if stride != self.previous_stride:
+                # The baseline holds sums on the previous stride's rows only; a query on
+                # other rows must start from a full plan.
+                self.previous_mask = None
             if self.previous_mask is not None:
                 change = self._plan(values - self.previous_mask)
                 # A small change (a nudged detector) is always cheaper than re-planning the
@@ -358,8 +368,10 @@ class StreamedSeriesCompute(CudaSeriesCompute):
                 )
             cp.copyto(self.previous, result)   # ordered on the stream after the sums; the next delta plan reads it
             self.previous_mask = values.copy()
+            self.previous_stride = stride
             self._finish(begin, errors, started, dict(query_launches=1 + bool(len(pi)), residual_pixels=len(pi),
-                                                      spatial_fields=len(fi), incremental=delta, launch=self._current_launch), wait)
+                                                      spatial_fields=len(fi), incremental=delta, launch=self._current_launch,
+                                                      block_stride=stride), wait)
             return result
 
     def frame_native(self, index, *, out=None, wait=True):

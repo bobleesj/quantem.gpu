@@ -155,7 +155,7 @@ class DetectorSession:
         """
         return self._backend.finish()
 
-    def masked_sum(self, mask, *, output: str = "numpy", out=None, wait: bool = True):
+    def masked_sum(self, mask, *, output: str = "numpy", out=None, wait: bool = True, block_stride: int = 1):
         """Return a float32 virtual-detector image for one detector mask.
 
         Parameters
@@ -177,6 +177,13 @@ class DetectorSession:
             soon as the kernels are queued; the result is complete after
             :meth:`finish`, which also raises for a malformed stream. Several
             queries may be in flight so the host plans while the device works.
+        block_stride
+            Paired native series only. ``k > 1`` sums every k-th 512-scan block
+            (every k-th scan row of a 512-wide raster) and leaves the other rows
+            of ``out`` untouched, at about ``1/k`` of the device time: a viewer's
+            preview of a moving mask on its tiles. The values written are exact.
+            Consecutive queries at the same stride build on each other
+            incrementally; a change of stride starts from a full plan.
 
         Examples
         --------
@@ -184,8 +191,11 @@ class DetectorSession:
         """
         _check_output(output, out)
         native = getattr(self._backend, "masked_sum_native", None)
+        if block_stride != 1 and (native is None or output != "native" or not hasattr(self._backend, "block_stride")):
+            raise ValueError("block_stride needs a paired native series with output='native'.")
         if native is not None:
-            result = native(mask, out=out) if wait else native(mask, out=out, wait=False)
+            extra = {} if block_stride == 1 else dict(block_stride=block_stride)
+            result = native(mask, out=out, **extra) if wait else native(mask, out=out, wait=False, **extra)
         elif output == "native":
             raise NotImplementedError("This backend has no native detector output; use output='numpy'.")
         else:

@@ -674,7 +674,10 @@ class PairedSeriesCompute(StreamedSeriesCompute):
         self.kernels = dict(self.kernels)
         for bits in (32, 64):
             def index(grid, block, args, bits=bits):
-                ks[f"index_u{bits}"](grid, block, (*args[:8], args[9]), shared_mem=shared)
+                stride = self.block_stride
+                per_block = self.interval // block[0]
+                launched = -(-blocks // stride) * per_block   # thread blocks per chunk at this stride
+                ks[f"index_u{bits}"]((launched, grid[1]), block, (*args[:8], args[9], np.uint32(stride)), shared_mem=shared)
 
             def residual(grid, block, args, bits=bits):
                 count = int(args[3])
@@ -683,10 +686,13 @@ class PairedSeriesCompute(StreamedSeriesCompute):
                 if count > self.work["capacity"]:
                     self.work["array"] = cp.empty((total, count), cp.uint16)
                     self.work["capacity"] = count
+                stride = self.block_stride
+                launched = -(-blocks // stride)   # 512-scan blocks per chunk at this stride
+                items = self.chunk_count * launched
                 self.work_counts.fill(0)
-                extra = (self.work["array"], self.work_counts, np.uint32(blocks))
-                ks[f"plan_u{bits}"]((total,), (256,), (*args[:8], *extra))
-                ks[f"residual_u{bits}"]((total, (count + 255) // 256), (256,), (*args[:8], *extra))
+                extra = (self.work["array"], self.work_counts, np.uint32(launched), np.uint32(stride))
+                ks[f"plan_u{bits}"]((items,), (256,), (*args[:8], *extra))
+                ks[f"residual_u{bits}"]((items, (count + 255) // 256), (256,), (*args[:8], *extra))
 
             self.kernels[f"index_u{bits}"] = index
             self.kernels[f"residual_u{bits}"] = residual

@@ -173,3 +173,45 @@ def test_non_blocking_queries_finish_in_order_with_exact_results():
     frame = session.frame(700, output="native", wait=False)
     session.finish()
     assert bool(cp.array_equal(frame.reshape(19, 19)[cp.asarray(valid)], raw[700][cp.asarray(valid)]).get())
+
+
+@pytest.mark.parametrize("q,scans,stride", [(17, 2048, 2), (19, 3072, 3), (17, 2048, 8)])
+def test_block_stride_sums_every_kth_block_exactly_and_resets_the_baseline(q, scans, stride):
+    """A strided sum writes exact values on every stride-th 512-scan block and nothing else."""
+    raw, valid = _synthetic(q, scans)
+    source = PairedCounts((1, scans, q, q), np.uint16, valid)
+    source.append(raw)
+    session = detector.prepare([source])
+    masks = [detector.detector_mask((q * 0.5 + 0.125, q * 0.5 + 0.375), 2.25, q * 0.45, (q, q), dtype=np.float64),
+             detector.detector_mask((q * 0.5 - 1.5, q * 0.5 + 2.0), 1.0, q * 0.4, (q, q), dtype=np.float64)]
+    exact = session.masked_sum(masks[0], output="native")   # establishes the incremental baseline
+    out = cp.full((1, 1, scans), 7, cp.uint32)
+    strided = session.masked_sum(masks[1], output="native", out=out, block_stride=stride)
+    expected = raw[:, cp.asarray(masks[1] & valid)].sum(axis=1, dtype=cp.uint64).reshape(1, 1, scans)
+    blocks = -(-scans // 512)
+    for block in range(blocks):
+        rows = slice(block * 512, (block + 1) * 512)
+        if block % stride == 0:
+            assert bool(cp.array_equal(strided[0, 0, rows], expected[0, 0, rows]).get())
+        else:
+            assert int(strided[0, 0, rows].min().get()) == 7 and int(strided[0, 0, rows].max().get()) == 7
+    assert session.timings["block_stride"] == stride and not session.timings["incremental"]
+    # A second query at the same stride builds on the first incrementally and stays exact.
+    nudged = detector.detector_mask((q * 0.5 - 1.25, q * 0.5 + 2.25), 1.0, q * 0.4, (q, q), dtype=np.float64)
+    session.masked_sum(nudged, output="native", out=out, block_stride=stride)
+    assert session.timings["incremental"]
+    nudged_expected = raw[:, cp.asarray(nudged & valid)].sum(axis=1, dtype=cp.uint64).reshape(1, 1, scans)
+    for block in range(blocks):
+        rows = slice(block * 512, (block + 1) * 512)
+        if block % stride == 0:
+            assert bool(cp.array_equal(out[0, 0, rows], nudged_expected[0, 0, rows]).get())
+    # The next ordinary query starts from a fresh full plan and is exact everywhere.
+    following = session.masked_sum(masks[1], output="native")
+    assert not session.timings["incremental"]
+    assert bool(cp.array_equal(following.reshape(1, 1, scans), expected).get())
+    # And incremental queries work again afterwards.
+    again = session.masked_sum(masks[0], output="native")
+    assert session.timings["incremental"]
+    assert bool(cp.array_equal(again, exact).get())
+    with pytest.raises(ValueError):
+        session.masked_sum(masks[0], output="numpy", block_stride=2)

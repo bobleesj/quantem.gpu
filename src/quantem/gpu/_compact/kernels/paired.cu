@@ -384,8 +384,10 @@ extern "C" __global__ void pm_frame_u16(const u64* d, u16* o, u32* e, u32 index,
 
 template<typename Output>
 __device__ void pm_plan(const u64* descriptors, const u32* selected, const int* coefficients, u32 count,
-                        Output* output, u32* errors, u64 scans, u32 pixels, u16* work, u32* counts, u32 max_blocks) {
-    u32 sb = blockIdx.x, chunk = sb / max_blocks, block = sb % max_blocks, lane = threadIdx.x & 31;
+                        Output* output, u32* errors, u64 scans, u32 pixels, u16* work, u32* counts, u32 max_blocks, u32 stride) {
+    // `max_blocks` work items per chunk cover blocks 0, stride, 2*stride, ...: a viewer may
+    // sum every k-th 512-scan block of a moving mask and leave the other rows untouched.
+    u32 sb = blockIdx.x, chunk = sb / max_blocks, block = (sb % max_blocks) * stride, lane = threadIdx.x & 31;
     const u64* d = descriptors + u64(chunk) * PM_DESCRIPTOR;
     u32 interval = d[12], first = block * interval;
     if (first >= d[8]) return;
@@ -438,9 +440,9 @@ __device__ void pm_plan(const u64* descriptors, const u32* selected, const int* 
 template<typename Output>
 __device__ void pm_residual(const u64* descriptors, const u32* selected, const int* coefficients, u32 count,
                             Output* output, u32* errors, u64 scans, u32 pixels, const u16* work, const u32* counts,
-                            u32 max_blocks) {
+                            u32 max_blocks, u32 stride) {
     // Work items (chunk, block) go in grid x: a series of many small chunks exceeds the 65,535 limit of y.
-    u32 sb = blockIdx.x, chunk = sb / max_blocks, block = sb % max_blocks, lane = threadIdx.x & 31;
+    u32 sb = blockIdx.x, chunk = sb / max_blocks, block = (sb % max_blocks) * stride, lane = threadIdx.x & 31;
     u32 at = blockIdx.y * blockDim.x + threadIdx.x, active = counts[sb];
     if ((at / 32) * 32 >= active) return;
     const u64* d = descriptors + u64(chunk) * PM_DESCRIPTOR;
@@ -491,8 +493,8 @@ __device__ void pm_residual(const u64* descriptors, const u32* selected, const i
 }
 
 #define PM_RESIDUAL(BITS, TYPE) \
-extern "C" __global__ void pm_plan_u##BITS(const u64* d, const u32* s, const int* c, u32 n, TYPE* o, u32* e, u64 scans, u32 pixels, u16* work, u32* counts, u32 blocks) { pm_plan(d, s, c, n, o, e, scans, pixels, work, counts, blocks); } \
-extern "C" __global__ void pm_residual_u##BITS(const u64* d, const u32* s, const int* c, u32 n, TYPE* o, u32* e, u64 scans, u32 pixels, const u16* work, const u32* counts, u32 blocks) { pm_residual(d, s, c, n, o, e, scans, pixels, work, counts, blocks); }
+extern "C" __global__ void pm_plan_u##BITS(const u64* d, const u32* s, const int* c, u32 n, TYPE* o, u32* e, u64 scans, u32 pixels, u16* work, u32* counts, u32 blocks, u32 stride) { pm_plan(d, s, c, n, o, e, scans, pixels, work, counts, blocks, stride); } \
+extern "C" __global__ void pm_residual_u##BITS(const u64* d, const u32* s, const int* c, u32 n, TYPE* o, u32* e, u64 scans, u32 pixels, const u16* work, const u32* counts, u32 blocks, u32 stride) { pm_residual(d, s, c, n, o, e, scans, pixels, work, counts, blocks, stride); }
 PM_RESIDUAL(32, u32)
 PM_RESIDUAL(64, u64)
 
@@ -566,10 +568,11 @@ extern "C" __global__ void pm_unpack_fields(const u32* p, const u64* o, const u8
 // per-field tag, word offset and minimum are loaded once per block.
 template<typename Output>
 __device__ void pm_index_sum(const u64* descriptors, const u32* selected, const int* coefficients, u32 count,
-                             const Output* previous, Output* output, u64 scans, u32 fields, int delta,
+                             const Output* previous, Output* output, u64 scans, u32 fields, int delta, u32 stride,
                              u32* s_word, u32* s_base, u32* s_width, int* s_coef) {
     const u64* d = descriptors + u64(blockIdx.y) * PM_DESCRIPTOR;
-    u32 interval = d[12], scan0 = blockIdx.x * blockDim.x;
+    u32 interval = d[12], per_block = interval / blockDim.x;
+    u32 scan0 = (blockIdx.x / per_block) * stride * interval + (blockIdx.x % per_block) * blockDim.x;
     if (scan0 >= d[8]) return;
     const u32* payload = (const u32*)d[4];
     const u64* offsets = (const u64*)d[5];
@@ -601,9 +604,9 @@ __device__ void pm_index_sum(const u64* descriptors, const u32* selected, const 
     output[at] = value;
 }
 #define PM_INDEX(BITS, TYPE) \
-extern "C" __global__ void pm_index_u##BITS(const u64* d, const u32* selected, const int* coefficients, u32 count, const TYPE* previous, TYPE* output, u64 scans, u32 fields, int delta) { \
+extern "C" __global__ void pm_index_u##BITS(const u64* d, const u32* selected, const int* coefficients, u32 count, const TYPE* previous, TYPE* output, u64 scans, u32 fields, int delta, u32 stride) { \
     extern __shared__ u32 shared[]; \
-    pm_index_sum<TYPE>(d, selected, coefficients, count, previous, output, scans, fields, delta, shared, shared + fields, shared + 2 * fields, (int*)(shared + 3 * fields)); }
+    pm_index_sum<TYPE>(d, selected, coefficients, count, previous, output, scans, fields, delta, stride, shared, shared + fields, shared + 2 * fields, (int*)(shared + 3 * fields)); }
 PM_INDEX(32, u32)
 PM_INDEX(64, u64)
 
