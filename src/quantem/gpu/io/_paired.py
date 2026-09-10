@@ -554,10 +554,17 @@ def load_h5_paired(paths, *, scan_shape, device, verbose):
     return results
 
 
-def load_paired_file(path, *, device, verbose):
-    """Reopen a saved paired resident form as an exact source without decoding."""
+def load_paired_file(path, *, device, verbose, reader=None, allocate=None):
+    """Reopen a saved paired resident form as an exact source without decoding.
+
+    ``reader`` shares one :class:`ResidentFileReader` (its pinned staging is a large
+    page-locked allocation) across a series of files, and ``allocate(shape, dtype)``
+    lets the caller place the arrays, for example inside one device block reserved
+    for the whole series, so a running application beside the load sees no driver
+    allocation per file.
+    """
     started = time.perf_counter()
-    source = PairedCounts.load(path, device=device)
+    source = PairedCounts.load(path, device=device, reader=reader, allocate=allocate)
     timings = dict(metadata={}, pixel_mask=None, shape=source.shape, dtype=source.dtype, resident_ready_seconds=time.perf_counter() - started, resident_bytes=source.nbytes)
     return _result(source, timings, verbose)
 
