@@ -585,33 +585,47 @@ class ResidentFileReader:
                     pieces.append((data_start + spec["offset"] + at, take, flat, at))
                     at += take
             chunks.append(Chunk(entry["first"], entry["scans"], tuple(arrays)))
+        # Pieces that follow each other in the file are read together, up to ``span``
+        # bytes per read: a saved form holds thousands of small pieces, and one read
+        # plus one future per piece kept the interpreter busy enough to starve a GUI
+        # thread in the same process (2026-09-10). The device copies stay per piece.
+        groups = []   # (file offset, length, [(piece index, offset inside the group)])
+        for index, (offset, length, _, _) in enumerate(pieces):
+            if groups and groups[-1][0] + groups[-1][1] == offset and groups[-1][1] + length <= self.span:
+                groups[-1][2].append((index, groups[-1][1]))
+                groups[-1][1] += length
+            else:
+                groups.append([offset, length, [(index, 0)]])
         fd = os.open(path, os.O_RDONLY | os.O_DIRECT)
         pending, inflight = {}, []
         try:
-            def submit(index):
+            def submit(group):
                 while not self.free:
                     event, slot = inflight.pop(0)
                     event.synchronize()
                     self.free.append(slot)
                 slot = self.free.pop()
-                offset, length, _, _ = pieces[index]
-                pending[index] = self.executor.submit(self._read, fd, offset, length, slot)
+                offset, length, _ = groups[group]
+                pending[group] = self.executor.submit(self._read, fd, offset, length, slot)
 
             ahead = max(1, len(self.slots) - 2)
-            for index in range(min(ahead, len(pieces))):
-                submit(index)
+            for group in range(min(ahead, len(groups))):
+                submit(group)
             with self.stream:
-                for index in range(len(pieces)):
-                    slot, lead, got = pending.pop(index).result()
-                    offset, length, flat, at = pieces[index]
+                for group in range(len(groups)):
+                    slot, lead, got = pending.pop(group).result()
+                    offset, length, members = groups[group]
                     if got < lead + length:
                         raise OSError(f"Short read of {path} at byte {offset}.")
-                    flat[at : at + length].set(self._host_view(slot, lead + length)[lead:], stream=self.stream)
+                    view = self._host_view(slot, lead + length)
+                    for index, inside in members:
+                        _, piece_length, flat, at = pieces[index]
+                        flat[at : at + piece_length].set(view[lead + inside : lead + inside + piece_length], stream=self.stream)
                     event = cp.cuda.Event()
                     event.record(self.stream)
                     inflight.append((event, slot))
-                    if index + ahead < len(pieces):
-                        submit(index + ahead)
+                    if group + ahead < len(groups):
+                        submit(group + ahead)
             for event, slot in inflight:
                 event.synchronize()
                 self.free.append(slot)
