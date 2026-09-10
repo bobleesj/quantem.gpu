@@ -98,7 +98,9 @@ public enum MetalHistogramDisplayContract {
         maximum: maximum,
         scale: scale
       )
-      let index = min(binCount - 1, max(0, Int((fraction * 255).rounded())))
+      // Match the GPU's equal-width, half-open bins; the maximum belongs to
+      // the final bin. Rounding to 255 intervals shifts interior samples.
+      let index = min(binCount - 1, max(0, Int(fraction * Double(binCount))))
       bins[index] &+= 1
     }
     return MetalHistogramReference(
@@ -117,13 +119,15 @@ public enum MetalHistogramDisplayContract {
   ) -> Double {
     guard value.isFinite, minimum.isFinite, maximum.isFinite else { return 0 }
     let span = max(0, maximum - minimum)
-    guard span > 0 else { return 0 }
+    guard span > 0 else { return 0.5 }
     let shifted = min(span, max(0, value - minimum))
     switch scale {
     case .linear:
       return shifted / span
     case .logarithmic:
-      return log1p(shifted) / log1p(span)
+      let low = signedLog(minimum)
+      let high = signedLog(maximum)
+      return (signedLog(minimum + shifted) - low) / (high - low)
     }
   }
 
@@ -141,8 +145,15 @@ public enum MetalHistogramDisplayContract {
     case .linear:
       return minimum + clamped * span
     case .logarithmic:
-      return minimum + expm1(clamped * log1p(span))
+      let low = signedLog(minimum)
+      let high = signedLog(maximum)
+      let value = low + clamped * (high - low)
+      return value < 0 ? -expm1(-value) : expm1(value)
     }
+  }
+
+  private static func signedLog(_ value: Double) -> Double {
+    value < 0 ? -log1p(-value) : log1p(value)
   }
 
   public static func zone(
@@ -250,8 +261,9 @@ public final class MetalDisplayStatistics: @unchecked Sendable {
     lock.lock()
     defer { lock.unlock() }
     try runRange(pipeline: rangeUInt32, values: values, range: range, count: count)
-    let minimum = rangePointer[0] == .max ? 0 : rangePointer[0]
-    let maximum = rangePointer[0] == .max ? 0 : rangePointer[1]
+    // Nonempty UInt32 input may legitimately contain only UInt32.max.
+    let minimum = rangePointer[0]
+    let maximum = rangePointer[1]
     let histogram = try makeHistogramBuffer()
     var parameters = MetalDisplayParameters(
       rows: rows,
@@ -322,8 +334,8 @@ public final class MetalDisplayStatistics: @unchecked Sendable {
     var result: [[MetalUInt32Statistics]] = []
     for index in values.indices {
       let pointer = ranges[index].contents().assumingMemoryBound(to: UInt32.self)
-      let minimum = pointer[0] == .max ? 0 : pointer[0]
-      let maximum = pointer[0] == .max ? 0 : pointer[1]
+      let minimum = pointer[0]
+      let maximum = pointer[1]
       for (scaleIndex, scale) in scales.enumerated() {
         var parameters = MetalDisplayParameters(
           rows: rows, cols: columns,
@@ -566,23 +578,22 @@ public struct MetalUInt32SurfaceState: @unchecked Sendable {
   public func displayParameters() -> MetalDisplayParameters {
     let minimum = statistics.minimum
     let maximum = max(minimum, statistics.maximum)
-    let span = Double(maximum - minimum)
+    func threshold(_ fraction: Double) -> UInt32 {
+      let value = MetalHistogramDisplayContract.rawValue(
+        fraction: fraction,
+        minimum: Double(minimum), maximum: Double(maximum),
+        scale: scale == .logarithmic ? .logarithmic : .linear)!
+      return UInt32(min(Double(maximum), max(Double(minimum), value)).rounded())
+    }
     return MetalDisplayParameters(
       rows: rows,
       cols: columns,
-      low: minimum
-        + UInt32((span * rawDisplayFraction(contrastLow, span: span)).rounded()),
-      high: minimum
-        + UInt32((span * rawDisplayFraction(contrastHigh, span: span)).rounded()),
+      low: threshold(contrastLow),
+      high: threshold(contrastHigh),
       scale: scale
     )
   }
 
-  private func rawDisplayFraction(_ fraction: Double, span: Double) -> Double {
-    guard scale == .logarithmic else { return fraction }
-    let safeSpan = max(1.0e-20, span)
-    return expm1(log1p(safeSpan) * fraction) / safeSpan
-  }
 }
 
 public struct MetalFloat32SurfaceState: @unchecked Sendable {
@@ -636,21 +647,20 @@ public struct MetalFloat32SurfaceState: @unchecked Sendable {
   }
 
   public func displayParameters() -> MetalFloatDisplayParameters {
-    let span = Double(statistics.maximum - statistics.minimum)
+    func threshold(_ fraction: Double) -> Float {
+      Float(
+        MetalHistogramDisplayContract.rawValue(
+          fraction: fraction,
+          minimum: Double(statistics.minimum), maximum: Double(statistics.maximum),
+          scale: scale == .logarithmic ? .logarithmic : .linear) ?? 0)
+    }
     return MetalFloatDisplayParameters(
       rows: rows,
       cols: columns,
-      low: statistics.minimum
-        + Float(span * rawDisplayFraction(contrastLow, span: span)),
-      high: statistics.minimum
-        + Float(span * rawDisplayFraction(contrastHigh, span: span)),
+      low: threshold(contrastLow),
+      high: threshold(contrastHigh),
       scale: scale
     )
   }
 
-  private func rawDisplayFraction(_ fraction: Double, span: Double) -> Double {
-    guard scale == .logarithmic else { return fraction }
-    let safeSpan = max(1.0e-20, span)
-    return expm1(log1p(safeSpan) * fraction) / safeSpan
-  }
 }
