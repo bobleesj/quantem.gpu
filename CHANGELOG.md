@@ -6,6 +6,9 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- Native Metal SSB accepts uint8, uint16, and uint32 BF columns without integer
+  narrowing, and saves complete versioned reconstructions with calibration,
+  optimization history, source identity and image checksums for local reopening.
 - Share percentile selection, display-limit conversion, and reusable-buffer
   Metal range/histogram encoding through `MetalImageRuntime`. Mixed integer
   and float batches use one caller-owned command buffer; synchronous helpers

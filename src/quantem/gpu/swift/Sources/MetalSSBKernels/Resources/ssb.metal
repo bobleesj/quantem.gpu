@@ -216,13 +216,17 @@ inline void ifft512_radix8_registers(
     r4 = y4; r5 = y5; r6 = y6; r7 = y7;
 }
 
-kernel void uint8_to_complex(
+kernel void counts_to_complex(
     device const uchar *input [[buffer(0)]],
     device float2 *output [[buffer(1)]],
     constant uint &count [[buffer(2)]],
+    constant uint &byte_width [[buffer(3)]],
     uint index [[thread_position_in_grid]]) {
     if (index < count) {
-        output[index] = float2(float(input[index]), 0.0f);
+        uint value = byte_width == 1u ? uint(input[index])
+            : byte_width == 2u ? uint(((device const ushort *)input)[index])
+            : ((device const uint *)input)[index];
+        output[index] = float2(float(value), 0.0f);
     }
 }
 

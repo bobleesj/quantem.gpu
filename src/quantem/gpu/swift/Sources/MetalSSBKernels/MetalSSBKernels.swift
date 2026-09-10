@@ -1,8 +1,17 @@
 import Foundation
 import Metal
 
+/// Unsigned source counts are read at their native width before float32 SSB arithmetic.
+public enum MetalSSBCountType: Int, Codable, Sendable {
+  case uint8 = 1
+  case uint16 = 2
+  case uint32 = 4
+
+  public var byteWidth: Int { rawValue }
+}
+
 /// Aberrations used by the native single-sideband reconstruction.
-public struct MetalSSBAberrations: Equatable, Sendable {
+public struct MetalSSBAberrations: Codable, Equatable, Sendable {
   public var c10Nanometers: Float
   public var c12Nanometers: Float
   public var phi12Radians: Float
@@ -24,7 +33,7 @@ public struct MetalSSBAberrations: Equatable, Sendable {
 /// column. Bright-field arrays remain in their logical source order. The
 /// engine may skip only entries whose aperture is mathematically zero; the
 /// logical count is always retained for normalization.
-public struct MetalSSBGeometry: Sendable {
+public struct MetalSSBGeometry: Codable, Sendable {
   public let brightfieldKX: [Float]
   public let brightfieldKY: [Float]
   public let brightfieldAlphaSquared: [Float]
@@ -76,7 +85,7 @@ public struct MetalSSBGeometry: Sendable {
 }
 
 /// Scientific provenance attached to every native Metal SSB result.
-public struct MetalSSBProvenance: Equatable, Sendable {
+public struct MetalSSBProvenance: Codable, Equatable, Sendable {
   public let scanRows: Int
   public let scanColumns: Int
   public let sourceDType: String
@@ -153,7 +162,7 @@ public enum MetalSSBError: LocalizedError {
 
 /// GPU-resident native 512 by 512 single-sideband reconstruction and fitting.
 ///
-/// The engine consumes lossless plane-major `uint8` bright-field columns. It
+/// The engine consumes plane-major unsigned bright-field counts without narrowing. It
 /// never crops or bins scan positions. It keeps every logical bright-field
 /// term in the normalization and skips only terms proven to have zero aperture.
 public final class MetalSSBEngine {
@@ -221,7 +230,8 @@ public final class MetalSSBEngine {
   private let halfToColumnMajorPipeline: MTLComputePipelineState
   private let halfToRowMajorPipeline: MTLComputePipelineState
 
-  private let rawBuffer: MTLBuffer
+  private var rawBuffer: MTLBuffer
+  private var sourceCountType: MetalSSBCountType = .uint8
   private let fftA: MTLBuffer
   private let fftB: MTLBuffer
   private let accumulator: MTLBuffer
@@ -282,7 +292,7 @@ public final class MetalSSBEngine {
     convertPipeline = try Self.makePipeline(
       device: device,
       library: library,
-      name: "uint8_to_complex"
+      name: "counts_to_complex"
     )
     fftPipeline = try Self.makePipeline(
       device: device,
@@ -459,19 +469,28 @@ public final class MetalSSBEngine {
     geometry.logicalBrightfieldCount
   }
 
-  /// Prepare lossless plane-major `uint8` bright-field columns.
+  /// Prepare plane-major bright-field counts without clipping or integer narrowing.
   ///
   /// The source shape is `[logicalBrightfieldCount, 512, 512]`. Preparation
   /// builds as much of the exact Hermitian `G(k)` cache as the configured
   /// budget admits and keeps the source buffer for any exact streamed tail.
-  public func prepare(brightfield: MTLBuffer) throws {
-    let requiredBytes = geometry.logicalBrightfieldCount * Self.plane
+  public func prepare(
+    brightfield: MTLBuffer, countType: MetalSSBCountType = .uint8
+  ) throws {
+    let requiredBytes = geometry.logicalBrightfieldCount * Self.plane * countType.byteWidth
     guard brightfield.length >= requiredBytes else {
       throw MetalSSBError.inputBufferTooSmall(
         required: requiredBytes,
         actual: brightfield.length
       )
     }
+    let stagingBytes = Self.batchCapacity * Self.plane * countType.byteWidth
+    if rawBuffer.length != stagingBytes {
+      rawBuffer = try Self.allocate(
+        device: device, length: stagingBytes, options: .storageModePrivate,
+        purpose: "source count batch")
+    }
+    sourceCountType = countType
     sourceBrightfield = brightfield
     cacheBuffers.removeAll(keepingCapacity: false)
     cacheCounts.removeAll(keepingCapacity: false)
@@ -552,10 +571,10 @@ public final class MetalSSBEngine {
         let logical = activeBrightfieldIndices[offset + local]
         blit.copy(
           from: brightfield,
-          sourceOffset: logical * Self.plane,
+          sourceOffset: logical * Self.plane * sourceCountType.byteWidth,
           to: rawBuffer,
-          destinationOffset: local * Self.plane,
-          size: Self.plane
+          destinationOffset: local * Self.plane * sourceCountType.byteWidth,
+          size: Self.plane * sourceCountType.byteWidth
         )
       }
       blit.endEncoding()
@@ -643,10 +662,10 @@ public final class MetalSSBEngine {
         let logical = activeBrightfieldIndices[offset + local]
         blit.copy(
           from: sourceBrightfield,
-          sourceOffset: logical * Self.plane,
+          sourceOffset: logical * Self.plane * sourceCountType.byteWidth,
           to: rawBuffer,
-          destinationOffset: local * Self.plane,
-          size: Self.plane
+          destinationOffset: local * Self.plane * sourceCountType.byteWidth,
+          size: Self.plane * sourceCountType.byteWidth
         )
       }
       blit.endEncoding()
@@ -815,10 +834,10 @@ public final class MetalSSBEngine {
         let logical = activeBrightfieldIndices[offset + local]
         blit.copy(
           from: sourceBrightfield,
-          sourceOffset: logical * Self.plane,
+          sourceOffset: logical * Self.plane * sourceCountType.byteWidth,
           to: rawBuffer,
-          destinationOffset: local * Self.plane,
-          size: Self.plane
+          destinationOffset: local * Self.plane * sourceCountType.byteWidth,
+          size: Self.plane * sourceCountType.byteWidth
         )
       }
       blit.endEncoding()
@@ -947,7 +966,7 @@ public final class MetalSSBEngine {
     MetalSSBProvenance(
       scanRows: Self.size,
       scanColumns: Self.size,
-      sourceDType: "uint8",
+      sourceDType: String(describing: sourceCountType),
       computeDType: "float32/complex64",
       logicalBrightfieldCount: geometry.logicalBrightfieldCount,
       executedBrightfieldCount: activeBrightfieldIndices.count,
@@ -1105,6 +1124,8 @@ public final class MetalSSBEngine {
     convert.setBuffer(rawBuffer, offset: 0, index: 0)
     convert.setBuffer(fftA, offset: 0, index: 1)
     convert.setBytes(&count, length: MemoryLayout<UInt32>.stride, index: 2)
+    var byteWidth = UInt32(sourceCountType.byteWidth)
+    convert.setBytes(&byteWidth, length: MemoryLayout<UInt32>.stride, index: 3)
     convert.dispatchThreads(
       MTLSize(width: Int(count), height: 1, depth: 1),
       threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
