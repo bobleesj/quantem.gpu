@@ -29,6 +29,12 @@ dense, packed or ANS-file paths changes when this layout is not requested.
    virtual images and native diffraction patterns, as for the default layout.
 5. `PairedCounts.save` writes the resident arrays once; `PairedCounts.load`
    (or `io.load` on the file) reopens them with direct I/O and no decode.
+6. Reconstruction consumers read native count blocks back from the resident
+   form: `PairedCounts.decode_blocks(first, scans)` decodes whole 512-scan
+   blocks of one chunk, and `PairedFeed(sources, amplitude=True)` iterates the
+   blocks of a series on a prefetch stream (`depth` buffers ahead, events in
+   both directions) so a joint time-series ptychography update never touches a
+   dense copy of the data.
 
 Axes are `(scan_row, scan_col, detector_row, detector_col)`; equations use
 $I[R_r,R_c,k_r,k_c]$ with $\mathbf R=(R_r,R_c)$ and $\mathbf k=(k_r,k_c)$.
@@ -53,8 +59,8 @@ ABI string; any change needs a new ABI.
 
 | piece | location |
 | --- | --- |
-| kernels: tables, encode, compact, decode, frame, plan, residual, polar fields, index pack/sum, offsets, planner weights | `src/quantem/gpu/_compact/kernels/paired.cu` |
-| `PairedCounts`, `PairedSeriesCompute`, planner, saved form | `src/quantem/gpu/_compact/paired.py` |
+| kernels: tables, encode, compact, decode, decode_range, frame, plan, residual, polar fields, index pack/sum, offsets, planner weights | `src/quantem/gpu/_compact/kernels/paired.cu` |
+| `PairedCounts`, `PairedSeriesCompute`, planner, saved form, `decode_blocks`, `PairedFeed` | `src/quantem/gpu/_compact/paired.py` |
 | planner hooks in the streamed base | `src/quantem/gpu/_compact/interaction.py` (`_plan`, `_cost`) |
 | dispatch | `src/quantem/gpu/detector/workflow.py` |
 | H5 streaming loader, saved-form reopen, `io.load` results | `src/quantem/gpu/io/_paired.py` (`PairedLoader`) |
@@ -67,7 +73,9 @@ The contract tests build synthetic sources with a wide literal row, a
 saturated row and an invalid pixel at 17x17, 19x19 and 257x257 detectors,
 compare every mask and frame with direct sums (including `uint64` sums above
 `2**32`), reject a reserved header bit and a shortened stream extent, and
-reopen a saved form byte-identically. The loading tests write four-shard
+reopen a saved form byte-identically, and iterate two sources through
+`PairedFeed` checking every block and amplitude against the raw counts. The
+loading tests write four-shard
 Arina-style masters with `save_compressed_arina_h5`, stream one and two of them
 through `io.load(representation="paired")`, compare every count, a detector
 mask and a frame with direct sums, and reopen a saved form through `io.load`
@@ -110,5 +118,21 @@ boundaries, cache states and the admission rule is
 The last acquisitions of a full device fit only with a smaller loader
 (`PairedLoader(rolling_scans=512, rings=2)`); that tail policy belongs to the
 application.
+
+Feeding a reconstruction from the resident form (three 512x512x192x192 sources,
+`PairedFeed(depth=2)`, consumer idle, same device shared with a desktop):
+
+| measurement | per acquisition |
+| --- | --- |
+| native counts, 512-scan blocks | 76 ms |
+| native counts, 8192-scan blocks | 90 ms |
+| counts plus float32 sqrt amplitude, 512-scan blocks | 119 ms |
+| counts plus float32 sqrt amplitude, 8192-scan blocks | 133 ms |
+
+That is 127 G counts/s decoded into native frames, below the 48 ms per
+262,144-position fused ptychography iteration only by a factor of about two, so
+one decode per iteration hides behind the update when the two overlap on
+separate streams. Record:
+{download}`paired-feed-2026-09-09.json <../performance/data/paired-feed-2026-09-09.json>`.
 
 **Device tested**: RTX PRO 6000 Blackwell (CUDA). **Date tested**: 2026-09-09.

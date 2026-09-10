@@ -13,8 +13,10 @@ new `rcN` heading when that rc is published to TestPyPI.
   arrays without decoding. `io.load(..., representation="paired")` streams complete
   uint16 acquisitions (one path or a list) through a direct-I/O loader whose
   shard reads run ahead across files, and reopens saved paired resident forms
-  from their `QGPUPAIR` magic. The default byte-rANS layout and every existing
-  load path are unchanged.
+  from their `QGPUPAIR` magic. `PairedCounts.decode_blocks` and `PairedFeed`
+  hand whole 512-scan count blocks (optionally as float32 amplitudes) to
+  reconstruction consumers from a prefetch stream. The default byte-rANS layout
+  and every existing load path are unchanged.
 - Add experimental native EMPAD XML/RAW loading into lossless float32-bit
   packed Metal residents, with full-source parity, compensated BF/ABF/ADF,
   CoM and mean diffraction. Cooperative packing and reductions reuse bounded

@@ -42,7 +42,9 @@ class PairedLoader:
         Direct-read threads; each holds one staging slot while its shard is read
         and parsed.
     slots
-        Pinned staging slots; at least ``readers`` plus two copies in flight.
+        Pinned staging slots, at least three. Reads run ``slots - 2`` shards ahead
+        (at most ``readers + 2``): every read in flight holds one slot until its
+        bytes are on the device, and two copies are in flight at any time.
     capacity
         Bytes per staging slot; the largest shard must fit.
     rolling_scans
@@ -65,8 +67,8 @@ class PairedLoader:
 
         from ._memory import _alloc_pinned_fast, _release_pinned
 
-        if slots < readers + 2:
-            raise ValueError(f"slots ({slots}) must be at least readers ({readers}) plus two copies in flight.")
+        if slots < 3 or readers < 1:
+            raise ValueError(f"slots must be at least 3 and readers at least 1; got {slots} and {readers}.")
         if rolling_scans < PairedCounts.interval or rings < 2:
             raise ValueError(f"rolling_scans must be at least {PairedCounts.interval} and rings at least 2; got {rolling_scans} and {rings}.")
         self.rolling_scans, self.rings = int(rolling_scans), int(rings)
@@ -78,7 +80,7 @@ class PairedLoader:
         self.free_slots: Queue = Queue()
         for slot in range(slots):
             self.free_slots.put(slot)
-        self.lookahead = readers + 2
+        self.lookahead = min(readers + 2, slots - 2)  # reads in flight never exhaust the slots the two device copies hold
         self.executor = ThreadPoolExecutor(max_workers=readers)
         self.worker = ThreadPoolExecutor(max_workers=1)
         self.producer_stream = cp.cuda.Stream(non_blocking=True)
@@ -211,7 +213,7 @@ class PairedLoader:
         for source in infos:
             if tuple(source["frame_shape"]) != tuple(info.detector_shape) or np.dtype(source["dtype"]) != dtype:
                 raise ValueError(f"{source['path']} does not match the inspected detector geometry.")
-            shards.append(dict(path=source["path"], n_frames=int(source["n_frames"]), chunk_infos=np.asarray(source["chunk_infos"], np.uint64), blocks=blocks))
+            shards.append(dict(path=source["path"], n_frames=int(source["n_frames"]), chunk_infos=np.asarray(source["chunk_infos"], np.uint64), blocks=blocks, frame_bytes=frame_bytes))
         if sum(shard["n_frames"] for shard in shards) != math.prod(info.scan_shape):
             raise ValueError(f"{path}: shards hold {sum(s['n_frames'] for s in shards)} frames for {math.prod(info.scan_shape)} scan positions.")
         return dict(path=str(path), shape=shape, dtype=dtype, valid=valid, shards=shards, frame_bytes=frame_bytes, blocks=blocks,
@@ -219,23 +221,17 @@ class PairedLoader:
 
     def _read_and_parse(self, shard: dict) -> dict:
         """Reader thread: direct read of one shard plus its LZ4 block header parse."""
-        from .load import _parse_headers
-
         slot = self.free_slots.get()
         try:
             staging = self.staging[slot]
             size, read_seconds = _read_direct(shard["path"], staging)
             offsets = np.ascontiguousarray(shard["chunk_infos"][:, 0], np.uint64)
-            sizes = np.ascontiguousarray(shard["chunk_infos"][:, 1], np.uint32)
+            sizes = np.ascontiguousarray(shard["chunk_infos"][:, 1], np.uint64)
             n = shard["n_frames"]
             if int(offsets[-1] + sizes[-1]) > size:
                 raise ValueError(f"{shard['path']}: chunk table extends past the file end.")
-            starts = np.zeros(n * shard["blocks"], np.uint32)
-            counts = np.zeros(n, np.uint32)
             started = time.perf_counter()
-            _parse_headers(staging, sizes, offsets, starts, counts, n, shard["blocks"])
-            if not np.all(counts == shard["blocks"]):
-                raise ValueError(f"{shard['path']}: every frame chunk must hold {shard['blocks']} LZ4 blocks.")
+            starts = _block_starts(staging, offsets, sizes, shard["blocks"], shard["frame_bytes"], shard["path"])
             return dict(slot=slot, offsets=offsets, starts=starts, frames=n, size=size, read_seconds=read_seconds, header_seconds=time.perf_counter() - started)
         except BaseException:
             self.free_slots.put(slot)
@@ -313,6 +309,7 @@ class PairedLoader:
                     submit_ahead()
                     n, size = current["frames"], current["size"]
                     buffers.reserve(n, stream)
+                    piece = buffers.lz4_frames
                     if copy_events[pair] is not None:
                         copy_events[pair].synchronize()
                         self.free_slots.put(copy_events[pair].slot)
@@ -330,13 +327,14 @@ class PairedLoader:
                         done.slot = current["slot"]
                         copy_events[pair] = done
                         current = None
-                        _h5lz4dc_kernel(((blocks + 1) // 2, 1, n), (32, 2, 1), (buffers.compressed[pair], buffers.offsets[pair], buffers.starts[pair], buffers.counts, buffers.block_offsets, np.uint32(BLOCK_SIZE), np.uint32(frame_bytes), buffers.lz4[pair]), stream=stream)
                         at = 0
                         while at < n:
-                            take = min(rolling_scans - filled, n - at)
+                            take = min(rolling_scans - filled, n - at, piece)
+                            # LZ4 output is staged per piece so a lean loader needs only rolling_scans frames of it.
+                            _h5lz4dc_kernel(((blocks + 1) // 2, 1, take), (32, 2, 1), (buffers.compressed[pair], buffers.offsets[pair][at:], buffers.starts[pair][at * blocks :], buffers.counts, buffers.block_offsets, np.uint32(BLOCK_SIZE), np.uint32(frame_bytes), buffers.lz4[pair]), stream=stream)
                             if filled == 0 and ring_event is not None:
                                 stream.wait_event(ring_event)
-                            decoded = buffers.lz4[pair][at * frame_bytes :]
+                            decoded = buffers.lz4[pair]
                             target = buffers.rolling[ring][filled:]
                             if full_blocks:
                                 _bitshuffle_kernel_u16((full_blocks, 1, take), (256, 1, 1), (decoded, target, np.uint32(frame_bytes)), stream=stream)
@@ -386,11 +384,13 @@ class _DeviceBuffers:
         scans = min(rolling_scans, math.prod(description["shape"][:2])) // PairedCounts.interval * PairedCounts.interval
         self.rolling = [cp.empty((scans, *det_shape), cp.uint16) for _ in range(rings)]
         self.compressed = [cp.empty(capacity, cp.uint8) for _ in range(2)]
+        self.lz4_frames = scans
+        self.lz4 = [cp.empty(scans * self.frame_bytes, cp.uint8) for _ in range(2)]
         self.frames = 0
         self.reserve(max(shard["n_frames"] for shard in description["shards"]), None)
 
     def reserve(self, frames: int, stream) -> None:
-        """Size the per-shard tables for ``frames``; grows only after draining the stream."""
+        """Size the per-shard chunk tables for ``frames``; grows only after draining the stream."""
         import cupy as cp
 
         if frames <= self.frames:
@@ -398,7 +398,6 @@ class _DeviceBuffers:
         if stream is not None:
             stream.synchronize()
         self.frames = frames
-        self.lz4 = [cp.empty(frames * self.frame_bytes, cp.uint8) for _ in range(2)]
         self.offsets = [cp.empty(frames, cp.uint64) for _ in range(2)]
         self.starts = [cp.empty(frames * self.blocks, cp.uint32) for _ in range(2)]
         self.counts = cp.full(frames, self.blocks, cp.uint32)
@@ -410,6 +409,31 @@ class _DeviceBuffers:
     def release(self) -> None:
         self.rolling = self.compressed = self.lz4 = self.offsets = self.starts = self.counts = self.block_offsets = None
         self.host_offsets = self.host_starts = None
+
+
+def _block_starts(staging: np.ndarray, offsets: np.ndarray, sizes: np.ndarray, blocks: int, frame_bytes: int, path: str) -> np.ndarray:
+    """Walk every chunk's bitshuffle+LZ4 block table with vectorized gathers.
+
+    Each chunk starts with the uncompressed byte count (8 bytes) and the block size
+    (4 bytes), then per block a 4-byte compressed length followed by the block. The
+    walk is one gather per block over all frames, so it is thread-safe (reader
+    threads run it concurrently) and needs no compiled helper.
+    """
+    lanes = np.arange(4, dtype=np.uint64)
+    header = staging[offsets[:, None] + np.arange(12, dtype=np.uint64)].astype(np.uint64)
+    uncompressed = (header[:, :8] << (np.arange(8, dtype=np.uint64)[::-1] * 8)).sum(axis=1)
+    block_size = (header[:, 8:12] << (lanes[::-1] * 8)).sum(axis=1)
+    if np.any(uncompressed != frame_bytes) or np.any(block_size < BLOCK_SIZE):
+        raise ValueError(f"{path}: chunk headers do not describe {frame_bytes}-byte frames in {BLOCK_SIZE}-byte LZ4 blocks.")
+    starts = np.empty((len(offsets), blocks), np.uint32)
+    position = np.full(len(offsets), 12, np.uint64)
+    for block in range(blocks):
+        starts[:, block] = position
+        lengths = (staging[(offsets + position)[:, None] + lanes].astype(np.uint64) << (lanes[::-1] * 8)).sum(axis=1)
+        position += 4 + lengths
+    if np.any(position > sizes):
+        raise ValueError(f"{path}: an LZ4 block table runs past its chunk.")
+    return starts.reshape(-1)
 
 
 def _fresh_timings(description: dict) -> dict:

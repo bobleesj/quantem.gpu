@@ -1,0 +1,66 @@
+{
+ "schema_version": 1,
+ "evidence_id": "paired-feed-2026-09-09",
+ "date": "2026-09-09",
+ "qualification": "physical device measurement; single run; not a release gate",
+ "device": "NVIDIA RTX PRO 6000 Blackwell, CUDA, device 0 shared with an interactive desktop",
+ "provenance": {
+  "package": "quantem.gpu",
+  "branch": "main",
+  "loader": "PairedFeed(depth=2)"
+ },
+ "input": {
+  "acquisitions": 3,
+  "shape": [
+   512,
+   512,
+   192,
+   192
+  ],
+  "dtype": "uint16",
+  "scans_total": 786432
+ },
+ "protocol": "iterate every block of three resident sources in scan order with a two-deep prefetch stream; consumer does nothing but wait; block decodes checked against chunk decodes",
+ "rows": [
+  {
+   "measurement": "feed counts, 512-scan blocks",
+   "acquisitions": 3,
+   "value_seconds": 0.2286,
+   "ms_per_acquisition": 76.2,
+   "counts_per_second": 126796169183,
+   "blocks": 1536,
+   "statistic": "single run wall"
+  },
+  {
+   "measurement": "feed counts, 8192-scan blocks",
+   "acquisitions": 3,
+   "value_seconds": 0.27,
+   "ms_per_acquisition": 90.0,
+   "counts_per_second": 107361847699,
+   "blocks": 96,
+   "statistic": "single run wall"
+  },
+  {
+   "measurement": "feed counts+sqrt amplitude, 512-scan blocks",
+   "acquisitions": 3,
+   "value_seconds": 0.3574,
+   "ms_per_acquisition": 119.1,
+   "counts_per_second": 81111958775,
+   "blocks": 1536,
+   "statistic": "single run wall"
+  },
+  {
+   "measurement": "feed counts+sqrt amplitude, 8192-scan blocks",
+   "acquisitions": 3,
+   "value_seconds": 0.399,
+   "ms_per_acquisition": 133.0,
+   "counts_per_second": 72664655904,
+   "blocks": 96,
+   "statistic": "single run wall"
+  },
+  {
+   "measurement": "block decodes equal chunk decodes",
+   "parity": "exact"
+  }
+ ]
+}

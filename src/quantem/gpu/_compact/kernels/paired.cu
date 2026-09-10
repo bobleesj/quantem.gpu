@@ -305,6 +305,33 @@ extern "C" __global__ void pm_decode(const u8* payload, const u32* records, cons
     if (!r.finished()) atomicOr(errors, 1u);
 }
 
+// Same decode for a run of whole blocks: streams first_stream .. first_stream+count, written from scan origin.
+extern "C" __global__ void pm_decode_range(const u8* payload, const u32* records, const u8* models, const u32* decoding,
+                                           u16* raw, u32* errors, u32 scans, u32 pixels, u32 interval,
+                                           u32 first_stream, u32 count) {
+    u32 i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= count) return;
+    u32 s = first_stream + i, first = (s / pixels) * interval, pixel = s % pixels;
+    u32 length = min(interval, scans - first), origin = (first_stream / pixels) * interval, m = models[s];
+    u64 base = u64(first - origin) * pixels + pixel;
+    if (m >= 64 && m < 64 + PM_MODELS) {
+        PairReader r(payload, records, models, decoding, s);
+        bool wide = false;
+        for (u32 j = 0; j < length; j += 2) {
+            u32 a, b;
+            r.next(a, b, wide);
+            raw[base + u64(j) * pixels] = u16(a);
+            if (j + 1 < length) raw[base + u64(j + 1) * pixels] = u16(b);
+            else if (b) r.valid = false;
+        }
+        if (!r.finished()) atomicOr(errors, 1u);
+        return;
+    }
+    SparseReader r(payload, records, models, s);
+    for (u32 j = 0; j < length; ++j) raw[base + u64(j) * pixels] = u16(r.next());
+    if (!r.finished()) atomicOr(errors, 1u);
+}
+
 template<typename Output>
 __device__ void pm_frame(const u64* descriptors, Output* output, u32* errors, u32 index, u32 pixels) {
     const u64* d = descriptors + u64(blockIdx.y) * PM_DESCRIPTOR;

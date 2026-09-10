@@ -54,3 +54,14 @@ def test_saved_form_is_detected_and_reopens_without_decoding(tmp_path):
     assert bool(cp.array_equal(reopened.data.decode_chunk(0), cp.asarray(counts.reshape(1024, 24, 24))).get())
     with pytest.raises(ValueError, match="representation='paired'"):
         io.load(saved, backend="cuda", representation="dense")
+
+
+def test_lean_loader_admits_a_series_with_few_slots(tmp_path):
+    """The tail of a full device streams through two 512-scan buffers and three staging slots."""
+    from quantem.gpu.io import PairedLoader
+
+    masters = [_acquisition(tmp_path, f"lean{i}", 10 + i)[0] for i in range(3)]
+    with PairedLoader(rolling_scans=512, rings=2, slots=3, readers=2, capacity=4 * 1024**2) as loader:
+        names = [str(path) for path, source, timings in loader.load_many(masters, scan_shape=(32, 32)) if source.ready_scans == 1024 and timings["chunks"] == 2]
+    assert names == [str(m) for m in masters]
+
