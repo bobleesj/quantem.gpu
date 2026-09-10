@@ -217,31 +217,27 @@ struct SparseReader {
     __device__ bool finished() const { return valid && cursor == end; }
 };
 
-// Paired tANS stream read from its end: 64-bit reservoir with the next 4 payload
-// bytes kept as two raw aligned words that are combined only when consumed, so the
-// load latency overlaps the following symbol decodes. A short or malformed stream
-// clears `valid`; reads stay inside [begin, end) plus the 8 guard bytes and every
-// table index is bounded by construction, so decoding continues on bounded data and
-// finished() reports the failure.
+// Paired tANS stream read from its end: 64-bit reservoir refilled four bytes at a time
+// from a register-prefetched window, so the load latency overlaps the symbol decodes.
+// A refill may run a few bytes below the stream start (into the previous stream, never
+// below the payload); those bits are never consumed by a well-formed stream and
+// finished() requires exactly them to remain. Callers guarantee bits before decode():
+// ensure() gives at least 32 bits, enough for three coded pairs, and the escape path
+// tops up for itself. A short or malformed stream is reported by finished().
 struct PairReader {
     const u8* bytes;
     const u32* table;
-    u32 begin, cursor, state, available, pending_low, pending_high, pending_shift, pending_count;
+    u32 begin, cursor, state, available, pending_low, pending_high, pending_shift;
     u64 buffer;
     bool valid;
     __device__ __forceinline__ void prime() {
-        pending_count = min(4u, cursor - begin);
-        u32 low = cursor - pending_count, at = low & ~3u;
-        const u32* p = (const u32*)(bytes + at);
+        u32 low = cursor >= 4 ? cursor - 4 : 0;
+        const u32* p = (const u32*)(bytes + (low & ~3u));
         pending_low = p[0]; pending_high = p[1]; pending_shift = (low & 3u) * 8;
-    }
-    __device__ __forceinline__ u32 pending() const {
-        u32 value = __funnelshift_r(pending_low, pending_high, pending_shift);
-        return pending_count == 4 ? value : value & ((1u << (pending_count * 8)) - 1);
     }
     __device__ PairReader(const u8* p, const u32* records, const u8* models, const u32* decoding, u32 stream)
         : bytes(p), begin(pm_begin(records, stream)), cursor(pm_end(records, stream)), state(0), available(0),
-          pending_low(0), pending_high(0), pending_shift(0), pending_count(0), buffer(0), valid(true) {
+          pending_low(0), pending_high(0), pending_shift(0), buffer(0), valid(true) {
         u32 m = models[stream];
         valid = m >= 64 && m < 64 + PM_MODELS && cursor >= begin && cursor - begin >= 2;
         table = decoding + ((m >= 64 && m < 64 + PM_MODELS) ? (m - 64) * PM_STATES : 0);
@@ -255,28 +251,50 @@ struct PairReader {
         if (bits % 8) { available = bits % 8; buffer = bytes[--cursor]; valid = buffer < (1u << available); }
         prime();
     }
-    __device__ __forceinline__ u32 pop(u32 n) {
-        bool need = available < n;
-        u32 count = need ? pending_count : 0;
-        buffer = (buffer << (count * 8)) | (need ? pending() : 0u);
-        available += count * 8;
-        cursor -= count;
-        if (need) prime();
-        valid &= available >= n;
-        u32 take = min(n, available);
-        available -= take;
-        return u32(buffer >> available) & ((1u << take) - 1);
+    // Requires available < 32. Takes the prefetched window below the cursor, then prefetches again.
+    __device__ __forceinline__ void refill() {
+        u32 word = __funnelshift_r(pending_low, pending_high, pending_shift);
+        if (cursor < 4) {
+            // Payload start: only `cursor` bytes remain below; the window began at byte 0.
+            u32 count = cursor;
+            word &= (1u << (count * 8)) - 1u;
+            buffer = (buffer << (count * 8)) | word;
+            available += count * 8;
+            cursor = 0;
+        } else {
+            buffer = (buffer << 32) | word;
+            available += 32;
+            cursor -= 4;
+        }
+        prime();
     }
-    __device__ __forceinline__ void next(u32& a, u32& b, bool& wide) {
+    __device__ __forceinline__ void ensure() { if (available < 32) refill(); }
+    __device__ __forceinline__ u32 pop(u32 n) {
+        available -= n;
+        return u32(buffer >> available) & ((1u << n) - 1u);
+    }
+    // One coded pair; the caller has ensured its bits (ten for the state step).
+    __device__ __forceinline__ void decode(u32& a, u32& b, bool& wide) {
         u32 code = table[state], pair = code & 4095u;
         state = (code >> 16) + pop((code >> 12) & 15u);
         if (pair != 4095u) { a = pair & 63u; b = pair >> 6; return; }
+        if (available < 13) refill();
         u32 word = pop(13);
         if (word < 4096u) { a = word & 63u; b = word >> 6; }
-        else if (word == 4096u) { a = pop(16); b = pop(16); wide = true; }
+        else if (word == 4096u) {
+            if (available < 16) refill();
+            a = pop(16);
+            if (available < 16) refill();
+            b = pop(16);
+            wide = true;
+        }
         else { valid = false; a = 0; b = 0; }
+        if (available < 20) refill();   // the rest of the caller's three-pair group
     }
-    __device__ bool finished() const { return valid && cursor == begin && available == 0 && state == 0; }
+    __device__ __forceinline__ void next(u32& a, u32& b, bool& wide) { ensure(); decode(a, b, wide); }
+    __device__ bool finished() const {
+        return valid && cursor <= begin && available == 8 * (begin - cursor) && state == 0;
+    }
 };
 
 // ---------------------------------------------------------------------------
@@ -436,30 +454,35 @@ __device__ void pm_residual(const u64* descriptors, const u32* selected, const i
     // 16-bit biased pack cannot overflow; the escape literal path and larger
     // coefficients take the full-width reduction.
     bool lane_wide = coefficient < -2 || coefficient > 2;
+    // Per-lane constants of the packed reduction: which of the four reduced words and
+    // which half of it hold this lane's scan, and the group that produces it.
+    u32 which = (lane >> 1) & 3u, half_shift = (lane & 1u) * 16, group = lane & ~7u;
     for (u32 batch = 0; batch < length; batch += 32) {
         int result = 0;
         #pragma unroll
         for (u32 g = 0; g < 32; g += 8) {
-            int v[8];
+            // Biased products: a count times a coefficient of magnitude at most two lies
+            // in [-126, 126], so 1024 keeps every 16-bit field positive across 32 lanes.
+            u32 p[8];
             bool wide = lane_wide;
             #pragma unroll
             for (int j = 0; j < 8; j += 2) {
                 u32 a, b;
-                reader.next(a, b, wide);
-                v[j] = int(a) * coefficient;
-                v[j + 1] = int(b) * coefficient;
+                if (((g + j) / 2) % 3 == 0) reader.ensure();   // 32 bits cover three coded pairs
+                reader.decode(a, b, wide);
+                p[j] = u32(int(a) * coefficient + 1024);
+                p[j + 1] = u32(int(b) * coefficient + 1024);
             }
             if (__any_sync(0xffffffffu, wide)) {
                 #pragma unroll
-                for (int j = 0; j < 8; ++j) { int sum = __reduce_add_sync(0xffffffffu, v[j]); if (lane == g + j) result = sum; }
+                for (int j = 0; j < 8; ++j) { int sum = __reduce_add_sync(0xffffffffu, int(p[j]) - 1024); if (lane == g + j) result = sum; }
             } else {
-                u32 s0 = __reduce_add_sync(0xffffffffu, u32(v[0] + 1024) | (u32(v[1] + 1024) << 16));
-                u32 s1 = __reduce_add_sync(0xffffffffu, u32(v[2] + 1024) | (u32(v[3] + 1024) << 16));
-                u32 s2 = __reduce_add_sync(0xffffffffu, u32(v[4] + 1024) | (u32(v[5] + 1024) << 16));
-                u32 s3 = __reduce_add_sync(0xffffffffu, u32(v[6] + 1024) | (u32(v[7] + 1024) << 16));
-                u32 which = (lane >> 1) & 3u, word = which < 2u ? (which ? s1 : s0) : (which == 2u ? s2 : s3);
-                u32 half = (lane & 1u) ? (word >> 16) : (word & 65535u);
-                if (lane >= g && lane < g + 8) result = int(half) - 32768;
+                u32 s0 = __reduce_add_sync(0xffffffffu, p[0] | (p[1] << 16));
+                u32 s1 = __reduce_add_sync(0xffffffffu, p[2] | (p[3] << 16));
+                u32 s2 = __reduce_add_sync(0xffffffffu, p[4] | (p[5] << 16));
+                u32 s3 = __reduce_add_sync(0xffffffffu, p[6] | (p[7] << 16));
+                u32 word = (which & 2u) ? ((which & 1u) ? s3 : s2) : ((which & 1u) ? s1 : s0);
+                if (group == g) result = int((word >> half_shift) & 65535u) - 32768;
             }
         }
         if (result) atomicAdd(output + d[9] * scans + d[7] + first + batch + lane, Output((long long)result));

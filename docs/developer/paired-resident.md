@@ -25,8 +25,10 @@ dense, packed or ANS-file paths changes when this layout is not requested.
 4. `detector.prepare` selects `PairedSeriesCompute`. A detector mask (or its
    difference from the previous mask) is decomposed into index fields plus
    residual pixels; the residual streams are decoded by one thread per stream
-   with a warp-wide packed reduction per 32 scans. Outputs are exact integer
-   virtual images and native diffraction patterns, as for the default layout.
+   (a 64-bit bit reservoir refilled four bytes at a time from a prefetched
+   window, once per three coded pairs) with a warp-wide packed reduction per 32
+   scans. Outputs are exact integer virtual images and native diffraction
+   patterns, as for the default layout.
 5. `PairedCounts.save` writes the resident arrays once; `PairedCounts.load`
    (or `io.load` on the file) reopens them with direct I/O and no decode.
 6. Reconstruction consumers read native count blocks back from the resident
@@ -92,7 +94,12 @@ paired layout decoded arbitrary-center detector updates at 12.5 ms per batch of
 69 full virtual images versus 23.9 ms for the byte-rANS layout on the same
 counts, with 414 frozen full-array digests exact; resident bytes per source
 1.293 GiB versus 1.307 GiB. Loading from the saved form reached the measured
-drive ceiling.
+drive ceiling. The grouped-refill decoder (2026-09-09, twelve sources, 356
+recorded centre poses) executes 48 instead of 67 warp instructions per coded
+pair and takes 0.72 instead of 1.00 ms per update, byte-identical
+(`docs/performance/data/paired-decoder-2026-09-09.json`); on a viewer's
+device the residual decoder is 88 percent of query time and the plan kernel
+10 percent.
 
 Package loader, single run on the same device with the default
 `PairedLoader` (69 complete 512x512x192x192 uint16 acquisitions offered from

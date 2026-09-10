@@ -6,6 +6,13 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- The paired residual decoder refills its bit reservoir once per three coded
+  pairs from a prefetched window instead of checking before every symbol, and
+  the packed warp reduction biases products as it multiplies: 28 percent fewer
+  instructions and 26 to 28 percent less device time per detector update on
+  recorded centre drags, byte-identical outputs (`docs/performance/data/paired-decoder-2026-09-09.json`).
+  Incremental masks whose change touches no index leaf skip the index pass and
+  copy the previous sums.
 - Add the opt-in paired-count tANS resident layout (`quantem.gpu._compact.paired`):
   `PairedCounts` codes complete 512-scan blocks with 32 Poisson pair models and an
   adaptive polar interaction index, `detector.prepare` selects the paired query

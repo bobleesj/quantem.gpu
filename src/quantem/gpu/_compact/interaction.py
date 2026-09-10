@@ -157,9 +157,19 @@ class StreamedSeriesCompute(CudaSeriesCompute):
             self.kernels = kernels(self.device)
             cp.cuda.get_current_stream().synchronize()
         self.previous_mask = None
-        self._inflight = []   # (begin, end, errors, started, info) for queries launched with wait=False
+        self._inflight = []   # (begin, end, done, errors_slot, started, info) for queries launched with wait=False
         self._launches = 0
         self._tainted_from = None   # launch index of a failed query; later incremental queries built on it
+        import cupy as cp
+
+        with cp.cuda.Device(self.device):
+            # Pinned staging so selection uploads and error readbacks are asynchronous: a
+            # synchronous memcpy waits for every kernel queued ahead of it, which would
+            # serialise queries meant to overlap the host's planning of the next one.
+            self._staging = [cp.cuda.alloc_pinned_memory(n * 4) for n in (self.fields, self.fields, self.pixels, self.pixels)]
+            self._staging_views = [np.frombuffer(m, dtype, n) for m, dtype, n in zip(self._staging, (np.uint32, np.int32, np.uint32, np.int32), (self.fields, self.fields, self.pixels, self.pixels))]
+            self._error_pinned = cp.cuda.alloc_pinned_memory(len(self.error_slots) * 4)
+            self._error_host = np.frombuffer(self._error_pinned, np.uint32, len(self.error_slots))
         self.keepalive.extend(
             (
                 self.descriptors,
@@ -200,6 +210,7 @@ class StreamedSeriesCompute(CudaSeriesCompute):
         slot = self._launches % len(self.error_slots)
         self._launches += 1
         self._current_launch = self._launches
+        self._current_slot = slot
         errors = self.error_slots[slot : slot + 1]
         errors.fill(0)
         begin = cp.cuda.Event()
@@ -212,18 +223,23 @@ class StreamedSeriesCompute(CudaSeriesCompute):
 
         end = cp.cuda.Event()
         end.record()
+        slot = self._current_slot
+        stream = cp.cuda.get_current_stream()
+        errors.data.copy_to_host_async(self._error_pinned.ptr + slot * 4, 4, stream)   # ordered after the kernels
+        done = cp.cuda.Event(disable_timing=True)
+        done.record()
         if not wait:
-            self._inflight.append((begin, end, errors, started, info))
+            self._inflight.append((begin, end, done, slot, started, info))
             return
-        end.synchronize()
-        self._publish(begin, end, errors, started, info)
+        done.synchronize()
+        self._publish(begin, end, slot, started, info)
 
-    def _publish(self, begin, end, errors, started, info):
+    def _publish(self, begin, end, slot, started, info):
         import cupy as cp
 
         launch = info.get("launch", 0)
         built_on_failure = (info.get("incremental") and self._tainted_from is not None and launch > self._tainted_from)
-        if int(errors.get()[0]) or built_on_failure:
+        if int(self._error_host[slot]) or built_on_failure:
             # A failed decode poisons the incremental state: plan the next query in full,
             # and refuse queued queries that were planned as deltas against this result.
             self.previous_mask = None
@@ -250,9 +266,9 @@ class StreamedSeriesCompute(CudaSeriesCompute):
         """
         if not self._inflight:
             return dict(self.last)
-        begin, end, errors, started, info = self._inflight.pop(0)
-        end.synchronize()
-        self._publish(begin, end, errors, started, info)
+        begin, end, done, slot, started, info = self._inflight.pop(0)
+        done.synchronize()   # this query and its error readback only, not anything queued after it
+        self._publish(begin, end, slot, started, info)
         return dict(self.last)
 
     def masked_sum_native(self, mask, *, out=None, wait=True):
@@ -266,44 +282,61 @@ class StreamedSeriesCompute(CudaSeriesCompute):
         values = values.astype(np.int32)
         with self.lock, cp.cuda.Device(self.device):
             started = time.perf_counter()
-            selection, delta = self._plan(values), False
+            selection, delta = None, False
             if self.previous_mask is not None:
                 change = self._plan(values - self.previous_mask)
-                if self._cost(change) < self._cost(selection):
+                # A small change (a nudged detector) is always cheaper than re-planning the
+                # whole mask, so the full plan is not even computed for it.
+                if len(change[2]) <= 1024 and len(change[0]) <= 256:
                     selection, delta = change, True
+                else:
+                    selection = self._plan(values)
+                    if self._cost(change) < self._cost(selection):
+                        selection, delta = change, True
+            if selection is None:
+                selection = self._plan(values)
             fi, _fc, pi, _pc = selection
             result = self._output(
                 out, (*self.series_shape, *self.scan_shape), self.sum_dtype
             )
             begin, errors = self._launch()
-            for target, source in zip(
+            stream = cp.cuda.get_current_stream()
+            for target, staging, source in zip(
                 (
                     self.selected_fields,
                     self.field_coefficients,
                     self.selected_pixels,
                     self.pixel_coefficients,
                 ),
+                self._staging_views,
                 selection,
             ):
-                target[: len(source)].set(source)
+                if len(source):
+                    staging[: len(source)] = source
+                    target[: len(source)].set(staging[: len(source)], stream=stream)
             bits = self.sum_dtype.itemsize * 8
             u32 = np.uint32
-            self.kernels[f"index_u{bits}"](
-                ((self.max_scans + 127) // 128, self.chunk_count),
-                (128,),
-                (
-                    self.descriptors,
-                    self.selected_fields,
-                    self.field_coefficients,
-                    u32(len(fi)),
-                    self.previous,
-                    result,
-                    np.uint64(self.n_frames),
-                    u32(self.fields),
-                    u32(self.interval),
-                    np.int32(delta),
-                ),
-            )
+            if delta and not len(fi):
+                # A thin change ring touches no whole index leaf: the index pass would only
+                # copy the previous sums, which a device memcpy does in a tenth of the time.
+                cp.copyto(result, self.previous)
+            else:
+                self.kernels[f"index_u{bits}"](
+                    ((self.max_scans + 127) // 128, self.chunk_count),
+                    (128,),
+                    (
+                        self.descriptors,
+                        self.selected_fields,
+                        self.field_coefficients,
+                        u32(len(fi)),
+                        self.previous,
+                        result,
+                        np.uint64(self.n_frames),
+                        u32(self.fields),
+                        u32(self.interval),
+                        np.int32(delta),
+                    ),
+                )
             if len(pi):
                 groups = math.ceil(len(pi) / 32) * math.ceil(
                     self.max_scans / self.interval / self.residual_warps
