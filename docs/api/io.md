@@ -97,6 +97,7 @@ series = io.load(masters, backend="cuda", representation="paired",
                  dtype="native", apply_mask=False)
 session = detector.prepare([item.data for item in series])
 images = session.masked_sum(detector_mask, output="native")
+preview = session.masked_sum(detector_mask, output="native", out=images, block_stride=4)   # every 4th scan row, 1/4 of the time
 ```
 
 `representation="paired"` accepts one master or a list. Each acquisition

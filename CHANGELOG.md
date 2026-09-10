@@ -6,6 +6,13 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- `session.masked_sum(..., block_stride=k)` on a paired native series sums every
+  k-th 512-scan block of the mask (every k-th scan row of a 512-wide raster) and
+  leaves the other rows of `out` untouched, at about 1/k of the device time. The
+  rows written are exact; consecutive queries at one stride build on each other
+  incrementally and a change of stride starts from a full plan. A viewer uses it
+  to keep every tile moving with a fast detector drag and follows it with one
+  exact batch when the pointer pauses.
 - The paired residual decoder refills its bit reservoir once per three coded
   pairs from a prefetched window instead of checking before every symbol, and
   the packed warp reduction biases products as it multiplies: 28 percent fewer

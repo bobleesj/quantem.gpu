@@ -28,7 +28,11 @@ dense, packed or ANS-file paths changes when this layout is not requested.
    (a 64-bit bit reservoir refilled four bytes at a time from a prefetched
    window, once per three coded pairs) with a warp-wide packed reduction per 32
    scans. Outputs are exact integer virtual images and native diffraction
-   patterns, as for the default layout.
+   patterns, as for the default layout. `masked_sum(..., block_stride=k)` runs
+   the plan, index and residual kernels over every k-th 512-scan block only
+   (`stride` argument; work items per chunk shrink to `ceil(blocks / k)`), so a
+   viewer can preview a moving mask on all acquisitions at about 1/k of the cost;
+   the baseline for incremental masks is kept per stride.
 5. `PairedCounts.save` writes the resident arrays once; `PairedCounts.load`
    (or `io.load` on the file) reopens them with direct I/O and no decode.
 6. Reconstruction consumers read native count blocks back from the resident
