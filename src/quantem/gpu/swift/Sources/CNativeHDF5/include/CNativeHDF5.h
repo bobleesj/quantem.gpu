@@ -61,6 +61,11 @@ typedef struct {
 
 typedef struct qh5_lossless_pack_v1_writer qh5_lossless_pack_v1_writer;
 
+int qh5_export_scientific_image(const char *path, const char *name,
+  const void *values, uint64_t rows, uint64_t columns, uint32_t scalar_type,
+  const char *metadata_json, int create, char **error_message);
+char *qh5_read_scientific_metadata(const char *path);
+
 typedef struct {
   uint64_t payload_offset;
   uint64_t payload_bytes;

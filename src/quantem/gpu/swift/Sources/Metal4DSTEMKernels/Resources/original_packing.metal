@@ -6,7 +6,8 @@ inline uint original_count(const device uchar *source, uint scan, uint pixel,
                            constant OriginalPackingShape &s) {
     ulong index = ulong(scan) * s.pixels + pixel;
     return s.sourceBytes == 1 ? uint(source[index])
-                             : uint(((const device ushort *)source)[index]);
+        : (s.sourceBytes == 4 ? ((const device uint *)source)[index]
+                             : uint(((const device ushort *)source)[index]));
 }
 
 // Independent checkpoint-sized workers preserve the same exact packed bytes.
@@ -23,7 +24,7 @@ kernel void original_packing_values_verified_checkpoints(
     if (checkpoint) offset += headers[pixel * stride + checkpoint];
     for (uint tile = checkpoint * 32; tile < min(tiles, (checkpoint + 1) * 32); ++tile) {
         uint bits = (headers[pixel * stride + checkpoints + tile / 8] >> ((tile % 8) * 4)) & 15;
-        if (bits == 15) bits = 16;
+        if (bits >= 15) bits = s.sourceBytes == 4 ? 32 : 16;
         uint originals[32];
         uint packed = 0, occupied = 0, outputWord = 0;
         for (uint sample = 0; sample < 32; ++sample) {
@@ -39,7 +40,7 @@ kernel void original_packing_values_verified_checkpoints(
                 }
             }
         }
-        uint mask = (1u << bits) - 1;
+        uint mask = uint((1ul << bits) - 1ul);
         for (uint sample = 0; sample < 32; ++sample) {
             uint bit = sample * bits, shift = bit % 32;
             ulong value = bits ? ulong(payload[offset + bit / 32]) >> shift : 0;
@@ -84,7 +85,7 @@ inline uint originalPackCountsAsPlanes(
     const device uchar *source, const device uint *headers,
     volatile device uint *payload, device atomic_uint *errors,
     constant OriginalPackingShape &s, uint index) {
-    if (!s.pixels || !s.scans || s.scans % 32u || (s.sourceBytes != 1u && s.sourceBytes != 2u)) {
+    if (!s.pixels || !s.scans || s.scans % 32u || (s.sourceBytes != 1u && s.sourceBytes != 2u && s.sourceBytes != 4u)) {
         atomic_fetch_or_explicit(errors, 2u, memory_order_relaxed);
         return 0u;
     }
@@ -97,7 +98,7 @@ inline uint originalPackCountsAsPlanes(
     uint sum = 0u;
     for (uint tile = checkpoint * 32u; tile < min(tiles, (checkpoint + 1u) * 32u); ++tile) {
         uint bits = (headers[pixel * stride + checkpoints + tile / 8u] >> ((tile % 8u) * 4u)) & 15u;
-        if (bits == 15u) bits = 16u;
+        if (bits >= 15u) bits = s.sourceBytes == 4u ? 32u : 16u;
         uint originals[32];
         uint packed = 0u, occupied = 0u, outputWord = 0u;
         for (uint sample = 0u; sample < 32u; ++sample) {
@@ -114,7 +115,7 @@ inline uint originalPackCountsAsPlanes(
                 }
             }
         }
-        uint mask = (1u << bits) - 1u;
+        uint mask = uint((1ul << bits) - 1ul);
         for (uint sample = 0u; sample < 32u; ++sample) {
             uint bit = sample * bits, shift = bit % 32u;
             ulong value = bits ? ulong(payload[offset + bit / 32u]) >> shift : 0u;
@@ -240,7 +241,7 @@ kernel void original_packing_bitshuffle_transpose_verified_summary(
     bool valid = true;
     for (uint tile = checkpoint * 32u; tile < min(tiles, (checkpoint + 1u) * 32u); ++tile) {
         uint bits = (headers[pixel * stride + checkpoints + tile / 8u] >> ((tile % 8u) * 4u)) & 15u;
-        if (bits == 15u) bits = 16u;
+        if (bits >= 15u) bits = s.sourceBytes == 4u ? 32u : 16u;
         uint originals[32];
         uint packed = 0u, occupied = 0u, outputWord = 0u;
         for (uint sample = 0u; sample < 32u; ++sample) {
@@ -258,7 +259,7 @@ kernel void original_packing_bitshuffle_transpose_verified_summary(
                 }
             }
         }
-        uint mask = (1u << bits) - 1u;
+        uint mask = uint((1ul << bits) - 1ul);
         for (uint sample = 0u; sample < 32u; ++sample) {
             uint bit = sample * bits, shift = bit % 32u;
             ulong value = bits ? ulong(payload[offset + bit / 32u]) >> shift : 0u;
@@ -305,7 +306,7 @@ inline void originalPackingBitshufflePlanes(
     bool valid = true;
     for (uint tile = checkpoint * 32u; tile < min(tiles, (checkpoint + 1u) * 32u); ++tile) {
         uint bits = (headers[pixel * stride + checkpoints + tile / 8u] >> ((tile % 8u) * 4u)) & 15u;
-        if (bits == 15u) bits = 16u;
+        if (bits >= 15u) bits = s.sourceBytes == 4u ? 32u : 16u;
         uint candidates = 0xffffffffu, tileMaximum = 0u;
         for (int plane = 15; plane >= 0; --plane) {
             ulong scan = ulong(tile) * 32ul + lane;
@@ -496,7 +497,7 @@ kernel void original_packing_bitshuffle_verified_summary(
     bool valid = true;
     for (uint tile = checkpoint * 32u; tile < min(tiles, (checkpoint + 1u) * 32u); ++tile) {
         uint bits = (headers[pixel * stride + checkpoints + tile / 8u] >> ((tile % 8u) * 4u)) & 15u;
-        if (bits == 15u) bits = 16u;
+        if (bits >= 15u) bits = s.sourceBytes == 4u ? 32u : 16u;
         uint originals[32];
         uint packed = 0u, occupied = 0u, outputWord = 0u;
         for (uint sample = 0u; sample < 32u; ++sample) {
@@ -514,7 +515,7 @@ kernel void original_packing_bitshuffle_verified_summary(
                 }
             }
         }
-        uint mask = (1u << bits) - 1u;
+        uint mask = uint((1ul << bits) - 1ul);
         for (uint sample = 0u; sample < 32u; ++sample) {
             uint bit = sample * bits, shift = bit % 32u;
             ulong value = bits ? ulong(payload[offset + bit / 32u]) >> shift : 0u;
@@ -576,7 +577,7 @@ kernel void original_packing_values_verified_checkpoints_summary(
     volatile device uint *payload [[buffer(2)]], device atomic_uint *errors [[buffer(3)]],
     constant OriginalPackingShape &s [[buffer(4)]], device uint *partialSums [[buffer(5)]],
     uint index [[thread_position_in_grid]]) {
-    if (!s.pixels || !s.scans || s.scans % 32u || (s.sourceBytes != 1u && s.sourceBytes != 2u)) {
+    if (!s.pixels || !s.scans || s.scans % 32u || (s.sourceBytes != 1u && s.sourceBytes != 2u && s.sourceBytes != 4u)) {
         atomic_fetch_add_explicit(errors, 1u, memory_order_relaxed);
         return;
     }
@@ -591,7 +592,7 @@ kernel void original_packing_values_verified_checkpoints_summary(
     bool valid = true;
     for (uint tile = checkpoint * 32u; tile < min(tiles, (checkpoint + 1u) * 32u); ++tile) {
         uint bits = (headers[pixel * stride + checkpoints + tile / 8u] >> ((tile % 8u) * 4u)) & 15u;
-        if (bits == 15u) bits = 16u;
+        if (bits >= 15u) bits = s.sourceBytes == 4u ? 32u : 16u;
         uint originals[32];
         uint packed = 0u, occupied = 0u, outputWord = 0u;
         for (uint sample = 0u; sample < 32u; ++sample) {
@@ -608,7 +609,7 @@ kernel void original_packing_values_verified_checkpoints_summary(
                 }
             }
         }
-        uint mask = (1u << bits) - 1u;
+        uint mask = uint((1ul << bits) - 1ul);
         for (uint sample = 0u; sample < 32u; ++sample) {
             uint bit = sample * bits, shift = bit % 32u;
             ulong value = bits ? ulong(payload[offset + bit / 32u]) >> shift : 0u;
@@ -631,7 +632,7 @@ kernel void original_packing_reduce_verified_summary(
     device atomic_uint *errors [[buffer(4)]], constant OriginalPackingShape &s [[buffer(5)]],
     uint pixel [[thread_position_in_grid]]) {
     if (pixel >= s.pixels || atomic_load_explicit(errors, memory_order_relaxed)) return;
-    if (!s.scans || s.scans % 32u || (s.sourceBytes != 1u && s.sourceBytes != 2u)) {
+    if (!s.scans || s.scans % 32u || (s.sourceBytes != 1u && s.sourceBytes != 2u && s.sourceBytes != 4u)) {
         atomic_fetch_add_explicit(errors, 1u, memory_order_relaxed);
         return;
     }
@@ -673,7 +674,7 @@ kernel void original_packing_headers(
             maximum = max(maximum, value); sum += value;
         }
         uint bits = maximum == 0 ? 0 : 32 - clz(maximum);
-        if (bits == 15) bits = 16;
+        if (bits >= 15) bits = s.sourceBytes == 4 ? 32 : 16;
         maximumWidth = max(maximumWidth, bits);
         uint word = pixel * stride + checkpoints + tile / 8;
         if (tile % 8 == 0) headers[word] = 0;
@@ -695,7 +696,7 @@ kernel void original_packing_values(
     uint offset = headers[pixel * stride];
     for (uint tile = 0; tile < tiles; ++tile) {
         uint bits = (headers[pixel * stride + checkpoints + tile / 8] >> ((tile % 8) * 4)) & 15;
-        if (bits == 15) bits = 16;
+        if (bits >= 15) bits = s.sourceBytes == 4 ? 32 : 16;
         for (uint word = 0; word < bits; ++word) payload[offset + word] = 0;
         for (uint sample = 0; sample < 32 && bits; ++sample) {
             uint value = original_count(source, tile * 32 + sample, pixel, s);
@@ -718,8 +719,8 @@ kernel void original_packing_verify(
     uint offset = headers[pixel * stride];
     for (uint tile = 0; tile < tiles; ++tile) {
         uint bits = (headers[pixel * stride + checkpoints + tile / 8] >> ((tile % 8) * 4)) & 15;
-        if (bits == 15) bits = 16;
-        uint mask = (1u << bits) - 1;
+        if (bits >= 15) bits = s.sourceBytes == 4 ? 32 : 16;
+        uint mask = uint((1ul << bits) - 1ul);
         for (uint sample = 0; sample < 32; ++sample) {
             uint bit = sample * bits, shift = bit % 32;
             ulong value = bits ? ulong(payload[offset + bit / 32]) >> shift : 0;
@@ -825,7 +826,7 @@ kernel void original_packing_validate_ranges(
         if (tile && tile % 32 == 0 && ulong(headers[pixel * stride + tile / 32]) != words)
             invalid = true;
         uint bits = (headers[pixel * stride + checkpoints + tile / 8] >> ((tile % 8) * 4)) & 15;
-        words += bits == 15 ? 16 : bits;
+        words += bits == 15 ? (s.sourceBytes == 4 ? 32 : 16) : bits;
     }
     if (ulong(base) + words != ulong(end)) invalid = true;
     if (invalid) atomic_fetch_add_explicit(errors, 1u, memory_order_relaxed);
@@ -845,7 +846,7 @@ kernel void original_packing_values_verified(
     uint offset = headers[pixel * stride];
     for (uint tile = 0; tile < tiles; ++tile) {
         uint bits = (headers[pixel * stride + checkpoints + tile / 8] >> ((tile % 8) * 4)) & 15;
-        if (bits == 15) bits = 16;
+        if (bits >= 15) bits = s.sourceBytes == 4 ? 32 : 16;
         uint originals[32];
         uint packed = 0, occupied = 0, outputWord = 0;
         for (uint sample = 0; sample < 32; ++sample) {
@@ -861,7 +862,7 @@ kernel void original_packing_values_verified(
                 }
             }
         }
-        uint mask = (1u << bits) - 1;
+        uint mask = uint((1ul << bits) - 1ul);
         for (uint sample = 0; sample < 32; ++sample) {
             uint bit = sample * bits, shift = bit % 32;
             ulong value = bits ? ulong(payload[offset + bit / 32]) >> shift : 0;

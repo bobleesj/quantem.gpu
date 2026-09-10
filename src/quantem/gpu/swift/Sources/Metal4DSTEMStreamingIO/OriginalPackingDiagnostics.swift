@@ -53,6 +53,7 @@ extension OriginalHDF5Packing {
     var privateDense = false
     var fusedDecodeHeaderWindows = 0
     var readAheadEnabled = false
+    var readAheadDepth = 0
     var readWait = 0.0
     var maximumConcurrentInputBytes: UInt64 = 0
     var additionalReadReserveBytes: UInt64 = 0
@@ -107,6 +108,7 @@ extension OriginalHDF5Packing {
         "prepared_dpc_reused": reusedDPC,
         "private_dense_window": privateDense,
         "compressed_read_ahead": readAheadEnabled,
+        "compressed_read_ahead_depth": readAheadDepth,
         "compressed_read_wait_seconds": readWait,
         "maximum_concurrent_compressed_input_bytes": maximumConcurrentInputBytes,
         "additional_compressed_read_reserve_bytes": additionalReadReserveBytes,

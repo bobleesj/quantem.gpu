@@ -1,6 +1,30 @@
 #include <metal_stdlib>
 using namespace metal;
 
+// Sum the exact, masked per-scan totals already prepared for DPC. This reads
+// only the small summary buffer, never the packed 4D payload. The host checks
+// a conservative UInt64 sum bound before dispatching one 256-thread group.
+kernel void compact_h5_total_counts(
+    device const uint *moments [[buffer(0)]],
+    device ulong *output [[buffer(1)]],
+    constant uint &count [[buffer(2)]],
+    uint tid [[thread_index_in_threadgroup]]
+) {
+    threadgroup ulong partial[256];
+    ulong sum = 0;
+    for (ulong scan = tid; scan < count; scan += 256) {
+        ulong base = scan * 8;
+        sum += ulong(moments[base]) | (ulong(moments[base + 1]) << 32);
+    }
+    partial[tid] = sum;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint stride = 128; stride > 0; stride >>= 1) {
+        if (tid < stride) partial[tid] += partial[tid + stride];
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (tid == 0) output[0] = partial[0];
+}
+
 struct CompactLZ4Chunk {
     uint inputOffset;
     uint inputBytes;
@@ -596,10 +620,10 @@ inline uint compactSumWidthNibbles(uint packed, uint count, uint headerEncoding)
     uint bytes = (packed & 0x0f0f0f0fu) + ((packed >> 4u) & 0x0f0f0f0fu);
     uint total = (bytes & 0xffu) + ((bytes >> 8u) & 0xffu)
         + ((bytes >> 16u) & 0xffu) + ((bytes >> 24u) & 0xffu);
-    if (headerEncoding == 2u) {
+    if (headerEncoding == 2u || headerEncoding == 3u) {
         // One additional word for each nibble 15, which represents width 16.
         uint full = packed & (packed >> 1u) & (packed >> 2u) & (packed >> 3u);
-        total += popcount(full & 0x11111111u);
+        total += popcount(full & 0x11111111u) * (headerEncoding == 3u ? 17u : 1u);
     }
     return total;
 }
@@ -631,6 +655,9 @@ inline uint compactDescriptorFor(
     offset += compactSumWidthNibbles(packed, tile & 7u, headerEncoding);
     uint width = (packed >> ((tile & 7u) * 4u)) & 15u;
     if (headerEncoding == 2u && width == 15u) width = 16u;
+    // Descriptor width 31 is reserved for a full 32-bit cell. Its five-bit
+    // width field and existing word offset are otherwise unchanged.
+    if (headerEncoding == 3u && width == 15u) width = 31u;
     return (offset << 5u) | width;
 }
 
@@ -640,6 +667,7 @@ inline uint compactCellValue(
     uint payloadLayout
 ) {
     uint width = descriptor & 31u;
+    if (width == 31u) width = 32u;
     if (width == 0u) return 0u;
     uint offset = descriptor >> 5u;
     if (payloadLayout == 1u) {
@@ -654,7 +682,7 @@ inline uint compactCellValue(
     uint index = offset + bit / 32u;
     uint value = payload[index] >> shift;
     if (shift + width > 32u) value |= payload[index + 1u] << (32u - shift);
-    return value & ((1u << width) - 1u);
+    return value & uint((1ul << width) - 1ul);
 }
 
 inline uint compactSampleValue(
@@ -677,6 +705,33 @@ inline uint compactSampleValue(
         scan / scanTile
     );
     return compactCellValue(payload, descriptor, scan % scanTile, payloadLayout);
+}
+
+// Wide source counts retain exact UInt64 detector sums. Floating-point values
+// are produced only for the independent display snapshot, never the resident.
+kernel void compact_h5_detector_update_u64(
+    const device uint *payload [[buffer(0)]], const device uint *descriptors [[buffer(1)]],
+    const device CompactDetectorEntry *entries [[buffer(2)]],
+    const device ulong *previous [[buffer(3)]], device ulong *output [[buffer(4)]],
+    constant CompactDetectorParameters &p [[buffer(5)]],
+    const device ulong4 *moments [[buffer(6)]],
+    uint scan [[thread_position_in_grid]]) {
+    if (scan >= p.scanCount) return;
+    long delta = 0l;
+    for (uint i = 0u; i < p.entryCount; ++i) {
+        uint value = compactSampleValue(payload, descriptors, p.tileCount, p.scanTile,
+            p.headerWordsPerPixel, p.headerEncoding, entries[i].pixel, scan, p.payloadLayout);
+        delta += long(value) * entries[i].coefficient;
+    }
+    uint index = p.outputOffset + scan;
+    ulong base = p.mode == 2u ? moments[index].x : (p.mode == 1u ? 0ul : previous[index]);
+    output[index] = delta < 0l ? base - ulong(-delta) : base + ulong(delta);
+}
+
+kernel void compact_h5_u64_display(
+    const device ulong *values [[buffer(0)]], device float *display [[buffer(1)]],
+    constant uint &count [[buffer(2)]], uint index [[thread_position_in_grid]]) {
+    if (index < count) display[index] = float(values[index]);
 }
 
 // Experimental auxiliary exact block sums. The original packed evidence remains

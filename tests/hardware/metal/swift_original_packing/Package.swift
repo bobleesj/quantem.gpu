@@ -13,6 +13,20 @@ let package = Package(
   ],
   targets: [
     .executableTarget(
+      name: "UInt32PackingParity",
+      dependencies: [.product(name: "Native4DSTEMIO", package: "quantem.gpu"),
+                     .product(name: "Metal4DSTEMStreamingIO", package: "quantem.gpu")]
+    ),
+    .executableTarget(
+      name: "CountSummaryParity",
+      dependencies: [.product(name: "Metal4DSTEMKernels", package: "quantem.gpu")]
+    ),
+    .executableTarget(
+      name: "ScientificMetadataParity",
+      dependencies: [.product(name: "Native4DSTEMIO", package: "quantem.gpu"),
+                     .product(name: "MetalImageRuntime", package: "quantem.gpu")]
+    ),
+    .executableTarget(
       name: "CatalogCalibrationParity",
       dependencies: [.product(name: "Native4DSTEMIO", package: "quantem.gpu")]
     ),

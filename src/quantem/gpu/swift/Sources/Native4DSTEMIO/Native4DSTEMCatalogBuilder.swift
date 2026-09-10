@@ -75,7 +75,7 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
     let signatureFiles =
       (FileManager.default.fileExists(atPath: source.path) ? [source] : [])
       + dataFiles + [companionMetadata(for: source)].compactMap { $0 }
-    let signature = try nativeDatasetSignature(for: signatureFiles) + "-calibration-v2"
+    let signature = try nativeDatasetSignature(for: signatureFiles) + "-metadata-v3"
     let indexRoot = cacheDirectory.appendingPathComponent(signature, isDirectory: true)
     let datasetCache = indexRoot.appendingPathComponent("dataset.json")
     if let cached = try cachedDataset(
@@ -133,7 +133,7 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
               frameCount: metadata.nFrames,
               detectorRows: metadata.detRows,
               detectorColumns: metadata.detCols,
-              sourceBytes: metadata.srcDtype == "uint8" ? 1 : 2,
+              sourceBytes: metadata.srcDtype == "uint32" ? 4 : (metadata.srcDtype == "uint8" ? 1 : 2),
               chunks: []
             )
           )
@@ -183,6 +183,15 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
       master: master,
       scanShape: scanShape
     )
+    let companion = microscopeMetadata(source: source, scanShape: scanShape)
+    let metadata = master.metadata.merging(companion) { _, new in new }
+      .merging(spatialCalibration.metadata) { _, new in new }
+    let microscope = NativeMicroscopeMetadata(metadata: metadata)
+    let reciprocal: (row: Double, column: Double)? = master.reciprocalSampling
+      ?? {
+        guard let row = microscope.angularRowMrad, let column = microscope.angularColumnMrad else { return nil }
+        return (row, column)
+      }()
     let sourceBytes = try dataFiles.reduce(0) { total, file in
       let bytes = try nativeFileIdentity(for: file).bytes
       guard let exactBytes = Int(exactly: bytes) else {
@@ -209,11 +218,11 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
       badPixelIndices: master.badPixelIndices,
       scanPixelSizeRowNanometer: spatialCalibration.sampling?.row,
       scanPixelSizeColNanometer: spatialCalibration.sampling?.column,
-      kPixelSizeRow: master.reciprocalSampling?.row,
-      kPixelSizeCol: master.reciprocalSampling?.column,
-      kPixelUnit: master.reciprocalSampling == nil ? nil : "mrad",
+      kPixelSizeRow: reciprocal?.row,
+      kPixelSizeCol: reciprocal?.column,
+      kPixelUnit: reciprocal == nil ? nil : "mrad",
       acquisitionDate: master.acquisitionDate,
-      metadata: master.metadata.merging(spatialCalibration.metadata) { _, new in new },
+      metadata: metadata,
       schemaIdentity: "live4dstem.dataset/v0.1",
       sourceIdentitySHA256: hashes?.aggregate,
       masterSHA256: hashes?.master,
@@ -490,6 +499,23 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
     )
   }
 
+  private func microscopeMetadata(
+    source: URL, scanShape: (rows: Int, columns: Int)
+  ) -> [String: String] {
+    guard let url = companionMetadata(for: source) else {
+      return ["sourceFormat": "ARINA HDF5"]
+    }
+    guard let companion = try? NativeHDF5Bridge.inspectMaster(at: url, detectorRows: 0, detectorColumns: 0),
+      let shape = companion.scanShape,
+      shape.rows == scanShape.rows, shape.columns == scanShape.columns else {
+      return ["sourceFormat": "ARINA HDF5", "microscope_metadata_warning": "Paired metadata is unreadable or has mismatched scan dimensions"]
+    }
+    var metadata = companion.metadata
+    metadata["sourceFormat"] = "ARINA HDF5 + NXem metadata"
+    metadata["microscope_metadata_source"] = url.lastPathComponent
+    return metadata
+  }
+
   private func companionMetadata(for source: URL) -> URL? {
     let name = source.lastPathComponent
     guard name.hasSuffix("_master.h5") else { return nil }
@@ -547,7 +573,7 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
             frameCount: metadata.nFrames,
             detectorRows: metadata.detRows,
             detectorColumns: metadata.detCols,
-            sourceBytes: metadata.srcDtype == "uint8" ? 1 : 2,
+            sourceBytes: metadata.srcDtype == "uint32" ? 4 : (metadata.srcDtype == "uint8" ? 1 : 2),
             chunks: []
           )
         }

@@ -9,7 +9,7 @@ struct NativeHDF5Stack {
   let sourceBytes: Int
   let chunks: [NativeHDF5Chunk]
 
-  var sourceDtype: String { sourceBytes == 1 ? "uint8" : "uint16" }
+  var sourceDtype: String { "uint\(sourceBytes * 8)" }
 }
 
 struct NativeHDF5Chunk {

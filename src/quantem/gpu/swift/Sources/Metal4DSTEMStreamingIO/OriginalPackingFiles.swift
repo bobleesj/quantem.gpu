@@ -27,22 +27,30 @@ extension OriginalHDF5Packing {
   /// One owned input in flight. Only the caller touches scientific state/Profile;
   /// the reader owns its file descriptor and writes only its private input buffer.
   final class CompressedReadAhead: @unchecked Sendable {
-    private let queue = DispatchQueue(label: "qgpu.original-packing.input", qos: .userInitiated)
+    // Two independent reads let the SSD and the GPU overlap on the uint32 path.
+    // A single reader leaves the GPU idle while the next compressed shard is read.
+    private let queue = DispatchQueue(
+      label: "qgpu.original-packing.input", qos: .userInitiated, attributes: .concurrent)
     private let completed = DispatchSemaphore(value: 0)
     private let lock = NSLock()
     private let device: MTLDevice
+    private let depth: Int
     private var stopped = false
-    private var pending = false
-    private var result: Result<CompressedReadInput, Error>?
+    private var pendingCount = 0
+    private var results: [Int: Result<CompressedReadInput, Error>] = [:]
 
-    init(device: MTLDevice) { self.device = device }
+    init(device: MTLDevice, depth: Int = 2) {
+      self.device = device
+      self.depth = max(1, depth)
+    }
 
     func submit(_ plan: CompressedReadPlan) throws {
+      let key = plan.frameRange.lowerBound
       try lock.withLock {
-        guard !stopped, !pending else {
+        guard !stopped, pendingCount < depth, results[key] == nil else {
           throw OriginalHDF5Packing.invalid("Compressed read-ahead ownership is invalid")
         }
-        pending = true
+        pendingCount += 1
       }
       queue.async {
         let result = Result {
@@ -52,38 +60,35 @@ extension OriginalHDF5Packing {
               isCancelled: { self.lock.withLock { self.stopped } })
           }
         }
-        self.lock.withLock { self.result = result }
+        self.lock.withLock { self.results[key] = result }
         self.completed.signal()
       }
     }
 
-    func take(shouldCancel: () -> Bool) throws -> CompressedReadInput {
-      while completed.wait(timeout: .now() + .milliseconds(5)) != .success {
+    func take(expectedFrameStart: Int, shouldCancel: () -> Bool) throws -> CompressedReadInput {
+      while true {
+        if let value = lock.withLock({ () -> Result<CompressedReadInput, Error>? in
+          guard let value = results.removeValue(forKey: expectedFrameStart) else { return nil }
+          pendingCount -= 1
+          return value
+        }) {
+          return try value.get()
+        }
+        _ = completed.wait(timeout: .now() + .milliseconds(5))
         // The supplied callback is not Sendable and remains on its owner thread.
         if shouldCancel() {
           lock.withLock { stopped = true }
           throw Metal4DSTEMStreamingIOError.cancelled
         }
       }
-      let value = lock.withLock { () -> Result<CompressedReadInput, Error>? in
-        defer {
-          result = nil
-          pending = false
-        }
-        return result
-      }
-      guard let value else {
-        throw OriginalHDF5Packing.invalid("Compressed read-ahead result is missing")
-      }
-      return try value.get()
     }
 
     func cancelAndDrain() {
       lock.withLock { stopped = true }
-      queue.sync {}
+      queue.sync(flags: .barrier) {}
       lock.withLock {
-        result = nil
-        pending = false
+        results.removeAll(keepingCapacity: false)
+        pendingCount = 0
       }
     }
   }

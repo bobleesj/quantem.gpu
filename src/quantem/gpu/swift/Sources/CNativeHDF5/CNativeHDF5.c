@@ -130,12 +130,18 @@ static int qh5_read_stack_geometry(
   H5T_class_t type_class = H5Tget_class(type);
   H5T_sign_t sign = H5Tget_sign(type);
   size_t source_bytes = H5Tget_size(type);
+  H5T_order_t byte_order = H5Tget_order(type);
   H5Tclose(type);
-  if (type_class != H5T_INTEGER || sign != H5T_SGN_NONE || (source_bytes != 1 && source_bytes != 2)) {
+  if (type_class != H5T_INTEGER || sign != H5T_SGN_NONE || (source_bytes != 1 && source_bytes != 2 && source_bytes != 4)) {
     return qh5_fail(
       error_message,
-      "QuantEM.GPU native HDF5 supports uint8/uint16 detector counts; this stack uses an unsupported dtype"
+      "QuantEM.GPU native HDF5 supports uint8/uint16/uint32 detector counts; this stack uses an unsupported dtype"
     );
+  }
+
+  if (source_bytes > 1 && byte_order != H5T_ORDER_LE) {
+    return qh5_fail(error_message,
+      "Native packed loading requires little-endian integer detector counts; export this stack in little-endian HDF5 before loading");
   }
 
   hid_t creation = H5Dget_create_plist(dataset);
@@ -636,7 +642,7 @@ static char *qh5_format_numeric(hid_t container, int is_attribute) {
       : H5Dread(container, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, values);
     if (status < 0) used = SIZE_MAX;
     for (size_t index = 0; used != SIZE_MAX && index < points; index++) {
-      int count = snprintf(result + used, points * 32 + 1 - used, "%s%.8g", index ? ", " : "", values[index]);
+      int count = snprintf(result + used, points * 32 + 1 - used, "%s%.17g", index ? ", " : "", values[index]);
       if (count < 0) used = SIZE_MAX;
       else used += (size_t)count;
     }
@@ -811,6 +817,66 @@ static int qh5_read_display_metadata(hid_t file, qh5_master_info *info) {
     H5O_INFO_BASIC
   );
   return result < 0 || context.failed ? -1 : 0;
+}
+
+int qh5_export_scientific_image(const char *path, const char *name,
+  const void *values, uint64_t rows, uint64_t columns, uint32_t scalar_type,
+  const char *metadata_json, int create, char **error_message) {
+  if (!path || !name || !name[0] || !values || !rows || !columns || (create && !metadata_json) ||
+      (scalar_type != 1 && scalar_type != 2))
+    return qh5_fail(error_message, "Invalid scientific image export");
+  for (const char *p = name; *p; ++p) {
+    if (!( (*p >= 'a' && *p <= 'z') || (*p >= '0' && *p <= '9') || *p == '_'))
+      return qh5_fail(error_message, "Image names must use lowercase letters, numbers and underscores");
+  }
+  pthread_mutex_lock(&qh5_hdf5_lock);
+  hid_t file = create ? H5Fcreate(path, H5F_ACC_EXCL, H5P_DEFAULT, H5P_DEFAULT)
+    : H5Fopen(path, H5F_ACC_RDWR, H5P_DEFAULT);
+  int status = file < 0 ? -1 : 0;
+  if (status == 0 && create) {
+    hid_t scalar = H5Screate(H5S_SCALAR);
+    hid_t type = H5Tcopy(H5T_C_S1);
+    H5Tset_size(type, strlen(metadata_json) + 1);
+    H5Tset_cset(type, H5T_CSET_UTF8);
+    hid_t dataset = H5Dcreate2(file, "metadata", type, scalar, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    if (dataset < 0 || H5Dwrite(dataset, type, H5S_ALL, H5S_ALL, H5P_DEFAULT, metadata_json) < 0) status = -1;
+    if (dataset >= 0) H5Dclose(dataset);
+    H5Tclose(type); H5Sclose(scalar);
+    hid_t group = H5Gcreate2(file, "images", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    if (group < 0) status = -1;
+    else H5Gclose(group);
+  }
+  if (status == 0) {
+    hsize_t dims[2] = {rows, columns};
+    hid_t space = H5Screate_simple(2, dims, NULL);
+    hid_t type = scalar_type == 1 ? H5T_STD_U32LE : H5T_IEEE_F32LE;
+    hid_t memory_type = scalar_type == 1 ? H5T_NATIVE_UINT32 : H5T_NATIVE_FLOAT;
+    char image_path[256];
+    if (snprintf(image_path, sizeof(image_path), "images/%s", name) >= sizeof(image_path)) status = -1;
+    hid_t dataset = status == 0 ? H5Dcreate2(file, image_path, type, space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT) : -1;
+    if (dataset < 0 || H5Dwrite(dataset, memory_type, H5S_ALL, H5S_ALL, H5P_DEFAULT, values) < 0) status = -1;
+    if (dataset >= 0) H5Dclose(dataset);
+    H5Sclose(space);
+  }
+  if (file >= 0 && H5Fclose(file) < 0) status = -1;
+  pthread_mutex_unlock(&qh5_hdf5_lock);
+  return status == 0 ? 0 : qh5_fail(error_message, "Could not write scientific HDF5 image %s", name);
+}
+
+char *qh5_read_scientific_metadata(const char *path) {
+  if (!path) return NULL;
+  pthread_mutex_lock(&qh5_hdf5_lock);
+  hid_t file = H5Fopen(path, H5F_ACC_RDONLY, H5P_DEFAULT);
+  hid_t dataset = file >= 0 ? H5Dopen2(file, "metadata", H5P_DEFAULT) : -1;
+  hid_t type = dataset >= 0 ? H5Dget_type(dataset) : -1;
+  int bounded = type >= 0 && H5Tget_class(type) == H5T_STRING && !H5Tis_variable_str(type)
+    && H5Tget_size(type) <= 16 * 1024 * 1024;
+  char *value = bounded ? qh5_format_value(dataset, 0) : NULL;
+  if (type >= 0) H5Tclose(type);
+  if (dataset >= 0) H5Dclose(dataset);
+  if (file >= 0) H5Fclose(file);
+  pthread_mutex_unlock(&qh5_hdf5_lock);
+  return value;
 }
 
 static int qh5_inspect_master_unlocked(

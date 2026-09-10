@@ -17,6 +17,83 @@ Native clients compose three products for local 4D-STEM loading:
 
 None of these products imports SwiftUI, AppKit, UIKit, or Python.
 
+## Original uint32 ARINA counts
+
+The original-HDF5 packed-resident entry point also accepts little-endian uint32
+bitshuffle/LZ4 detector stacks with complete 8192-byte blocks. For the standard
+192×192 detector this is 18 blocks of 2048 values per frame. Discovery validates
+all linked files before loading; missing shards remain errors.
+
+Metal decodes all 32 bit planes into bounded staging windows and packs every
+count losslessly. No full dense 4D allocation, crop, bin, clipping, or CPU
+decompression is introduced. The in-memory width-header encoding reserves
+nibble 15 for 32-bit cells; the existing uint8/uint16 encoding is unchanged.
+Source dtype remains uint32 even when the observed values fit a smaller range.
+Explicit detector-mask exclusions still apply; maximum uint32 values are not
+automatically reclassified as hot pixels or discarded.
+
+Selected diffraction remains exact UInt32. Virtual detectors and prepared DPC
+totals use UInt64, including sums above UInt32.max. Read exact detector values
+with `virtualDetectorValues64()`. GPU display snapshots are Float32 for these
+residents: inspect `virtualDetectorUsesFloatDisplay` before binding a texture.
+Display/export surfaces must not be described as exact integer sums when a
+Float32 conversion cannot represent every integer. Raw packed counts and the
+separate UInt64 numerical readback remain exact.
+
+This entry point reads the original files again on reload. Persistent packed-file
+preparation and uint16 packing-plan/product-cache reuse are not enabled for
+uint32. The initial wide detector kernel prioritizes exactness; a successful
+load does not imply parity with the tuned uint16 interaction speed.
+
+`tests/hardware/metal/test_uint32_packing.py` covers sparse, boundary and full-range
+counts, complete diffraction, mean diffraction, DPC, UInt64 integration,
+empty masks, delta/rebase updates, shard boundaries and repeated opening.
+
+## Recorded microscope metadata and numerical export
+
+`NativeMicroscopeMetadata(metadata:)` interprets known NXem paths with explicit
+units. It returns optional beam energy (keV), convergence semi-angle (mrad),
+dwell time (µs), camera length (mm), and row/column angular sampling (mrad/pixel).
+Unknown units, nonpositive values and nonfinite measurements remain absent.
+The catalog reads only the matching `_em_metadata.h5` and validates its scan
+dimensions before importing these fields. Clients must retain `NativeDataset`
+metadata when constructing a packed-resident presentation.
+
+`NativeScientificExport.write(images:metadata:to:)` writes copied scalar planes
+and a caller-owned UTF-8 JSON provenance object to a new HDF5 file. Each
+`NativeScientificImage` specifies a unique lowercase name, shape, scalar type
+(`uint32` or `float32`) and exact row-major `Data` bytes. The writer validates
+byte counts and dimensions, stages the file beside the destination, then moves
+it into place without overwriting an existing file. Values are not normalized,
+colored or compressed with a lossy transform. Image datasets live under
+`/images`; `/metadata` is one UTF-8 string. Metadata must be under 16 MiB.
+`NativeScientificExport.metadata(at:)` reads that record without reading image
+planes. App-specific notes, reset behavior and provenance schemas remain the
+client's responsibility.
+
+Hardware-independent metadata fixtures and hardware histogram/export parity
+are covered by `tests/hardware/metal/test_catalog_calibration.py` and
+`test_scientific_export.py`, with their respective Swift harness executables.
+
+## Exact dataset count summary
+
+For a compact resident with prepared DPC totals, `resident.countSummary()`
+reduces those masked per-scan UInt64 totals on Metal. It returns `totalCounts`,
+`scanCount`, `meanCountsPerPattern`, and first-computation GPU/wall timings.
+There is one 8-byte readback and no source read or packed-volume decode.
+Subsequent calls return the resident's cached scalar. Call from the same
+serialized owner queue as other resident operations, not the UI thread.
+Released residents, missing prepared totals or a potentially overflowing
+UInt64 sum fail with an error. The scalar includes all scan positions and
+unmasked detector pixels, independent of the interactive detector aperture.
+
+The backend does not equate counts with incident electrons. Clients may use
+known native electron-count units and calibrated real-space sampling to show
+`meanCountsPerPattern / (rowStepAngstrom * columnStepAngstrom)` as a **detected**
+dose estimate. Unknown signal units, including uncalibrated EMPAD ADU, must not
+be labeled electrons. `CountSummaryParity` in the native hardware harness
+checks the actual Metal reduction against exact UInt64 sums.
+
 ## Shared representation contract
 
 Native Swift uses the same public representation values as Python and WebGPU:

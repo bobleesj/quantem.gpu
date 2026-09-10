@@ -88,9 +88,9 @@ enum QH5IndexWriter {
       }
       let blockElements = blockBytes / stack.sourceBytes
       let blocksPerFrame = (detectorPixels + blockElements - 1) / blockElements
-      if stack.sourceBytes == 2 && blockElements != 4096 {
+      if stack.sourceBytes > 1 && blockElements != 8192 / stack.sourceBytes {
         throw Native4DSTEMIOError.invalidData(
-          "\(source.lastPathComponent) has \(blockElements) values per bitshuffle block; expected 4096"
+          "\(source.lastPathComponent) has \(blockElements) values per bitshuffle block; expected \(8192 / stack.sourceBytes)"
         )
       }
       // A 192x192 uint8 frame ends with a valid 4096-value tail after four
@@ -98,15 +98,15 @@ enum QH5IndexWriter {
       // its actual bit-plane stride; keep the stricter full-block contract for
       // the unchanged uint16 hot path.
       guard detectorPixels >= blockElements,
-        stack.sourceBytes == 2 || detectorPixels.isMultiple(of: 32)
+        stack.sourceBytes > 1 || detectorPixels.isMultiple(of: 32)
       else {
         throw Native4DSTEMIOError.invalidData(
           "\(source.lastPathComponent) detector size \(stack.detectorRows)x\(stack.detectorColumns) is incompatible with \(blockElements)-value bitshuffle blocks"
         )
       }
-      if stack.sourceBytes == 2 && !detectorPixels.isMultiple(of: blockElements) {
+      if stack.sourceBytes > 1 && !detectorPixels.isMultiple(of: blockElements) {
         throw Native4DSTEMIOError.invalidData(
-          "\(source.lastPathComponent) detector size \(stack.detectorRows)x\(stack.detectorColumns) does not contain complete \(blockElements)-value uint16 bitshuffle blocks"
+          "\(source.lastPathComponent) detector size \(stack.detectorRows)x\(stack.detectorColumns) does not contain complete \(blockElements)-value bitshuffle blocks"
         )
       }
       let decodedFrameBytes = try multiplied(

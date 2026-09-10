@@ -1994,6 +1994,74 @@ kernel void h5lz4dc_full_u16_aligned_fill_copy_qh5idx(
 }
 
 
+// uint32 uses the same checked 8192-byte LZ4 expansion, with 2048 values
+// and 32 bit planes per block. Keep this separate from the tuned uint16 path.
+kernel void h5lz4dc_full_u32_qh5idx(
+    const device uchar *h5File [[buffer(0)]],
+    const device uint2 *blockMetadata [[buffer(1)]],
+    constant ulong &rangeStart [[buffer(2)]],
+    constant uint &blocksPerFrame [[buffer(3)]],
+    constant uint &frameElements [[buffer(4)]],
+    device uchar *scratch [[buffer(5)]],
+    constant uint &metadataFrameOffset [[buffer(6)]],
+    device atomic_uint *errors [[buffer(10)]],
+    constant uint &frameCount [[buffer(11)]],
+    uint linearBlock [[thread_position_in_grid]]) {
+    if (!blocksPerFrame || ulong(blocksPerFrame) * 2048ul != frameElements) {
+        atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+        return;
+    }
+    if (ulong(linearBlock) >= ulong(frameCount) * blocksPerFrame) return;
+    uint frame = linearBlock / blocksPerFrame, block = linearBlock % blocksPerFrame;
+    uint2 metadata = blockMetadata[(ulong(metadataFrameOffset) + frame) * blocksPerFrame + block];
+    if (!bslz4DecompressFullSerialCheckedToDevice<true>(
+        scratch + ulong(frame) * frameElements * 4ul + ulong(block) * 8192ul,
+        h5File + rangeStart + ulong(metadata.x), metadata.y))
+        atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+}
+
+kernel void h5unshuffle_u32_qh5idx(
+    const device uchar *scratch [[buffer(0)]],
+    constant uint &blocksPerFrame [[buffer(3)]],
+    constant uint &frameElements [[buffer(4)]],
+    device uint *output [[buffer(5)]],
+    const device uchar *badPixelMask [[buffer(7)]],
+    device atomic_uint *countAudit [[buffer(8)]],
+    constant uint &globalFrameOffset [[buffer(9)]],
+    device atomic_uint *errors [[buffer(10)]],
+    constant uint &frameCount [[buffer(11)]],
+    uint3 position [[threadgroup_position_in_grid]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint group [[simdgroup_index_in_threadgroup]]) {
+    uint frame = position.x, block = position.z;
+    if (atomic_load_explicit(errors, memory_order_relaxed) || frame >= frameCount
+        || block >= blocksPerFrame) return;
+    const device uint *planes = (const device uint *)(scratch
+        + ulong(frame) * frameElements * 4ul + ulong(block) * 8192ul);
+    uint maximum = 0u, above255 = 0u;
+    // Exactly four SIMD groups are dispatched. Transpose 32 planes in registers.
+    for (uint word = group; word < 64u; word += 4u) {
+        uint value = planes[lane * 64u + word];
+        for (uint shift = 1u; shift <= 16u; shift *= 2u) {
+            uint mask = 0xffffffffu / ((1u << shift) + 1u);
+            uint other = simd_shuffle_xor(value, shift);
+            value = (lane & shift) ? (value & ~mask) | ((other & ~mask) >> shift)
+                                  : (value & mask) | ((other & mask) << shift);
+        }
+        uint pixel = block * 2048u + word * 32u + lane;
+        uint stored = badPixelMask[pixel] ? 0u : value;
+        output[ulong(frame) * frameElements + pixel] = stored;
+        maximum = max(maximum, stored);
+        above255 += stored > 255u;
+    }
+    maximum = simd_max(maximum);
+    above255 = simd_sum(above255);
+    if (lane == 0u) {
+        atomic_fetch_max_explicit(&countAudit[(globalFrameOffset + frame) * 2u], maximum, memory_order_relaxed);
+        atomic_fetch_add_explicit(&countAudit[(globalFrameOffset + frame) * 2u + 1u], above255, memory_order_relaxed);
+    }
+}
+
 kernel void h5unshuffle_u16_scalar_qh5idx(
     const device uchar *scratch [[buffer(0)]],
     constant uint &blocksPerFrame [[buffer(3)]],

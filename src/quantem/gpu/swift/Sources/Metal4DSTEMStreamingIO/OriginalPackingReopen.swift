@@ -116,6 +116,7 @@ extension OriginalHDF5Packing {
     let reader = readAhead ? CompressedReadAhead(device: device) : nil
     defer { reader?.cancelAndDrain() }
     let orderedSlices = windows.flatMap(\.slices)
+    profile.readAheadDepth = readAhead ? 1 : 0
     var sliceOrdinal = 0
     var pendingInputBytes: UInt64 = 0
     if let reader, let first = orderedSlices.first {
@@ -179,7 +180,8 @@ extension OriginalHDF5Packing {
           let input: CompressedReadInput
           if let reader {
             let waitStarted = CFAbsoluteTimeGetCurrent()
-            input = try reader.take(shouldCancel: shouldCancel)
+            input = try reader.take(
+              expectedFrameStart: slice.globalFrameRange.lowerBound, shouldCancel: shouldCancel)
             profile.readWait += CFAbsoluteTimeGetCurrent() - waitStarted
             pendingInputBytes = 0
           } else {

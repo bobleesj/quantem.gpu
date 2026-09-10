@@ -80,7 +80,7 @@ public struct NativeQH5Index: Sendable {
       )
     }
     guard metadata.detRows > 0, metadata.detCols > 0, metadata.nFrames > 0,
-      metadata.srcDtype == "uint8" || metadata.srcDtype == "uint16",
+      ["uint8", "uint16", "uint32"].contains(metadata.srcDtype),
       metadata.blockElems > 0, metadata.nBlocksPerFrame > 0,
       !metadata.chunks.isEmpty
     else { try invalid("shape, dtype, block geometry, and frame count must be positive") }
@@ -93,6 +93,8 @@ public struct NativeQH5Index: Sendable {
       metadata.nBlocksPerFrame == expectedBlocks,
       (metadata.srcDtype == "uint8" && detectorPixels.partialValue.isMultiple(of: 32))
         || (metadata.srcDtype == "uint16" && metadata.blockElems == 4096
+          && detectorPixels.partialValue.isMultiple(of: metadata.blockElems))
+        || (metadata.srcDtype == "uint32" && metadata.blockElems == 2048
           && detectorPixels.partialValue.isMultiple(of: metadata.blockElems))
     else { try invalid("block geometry is incompatible with the detector shape and dtype") }
     var expectedFrame = 0
@@ -170,10 +172,10 @@ public struct Native4DSTEMFrameWindowPlan: Equatable, Sendable {
     alignToScanRows: Bool = true
   ) throws {
     guard scanRows > 0, scanColumns > 0, detectorRows > 0, detectorColumns > 0,
-      sourceBytesPerValue == 1 || sourceBytesPerValue == 2
+      sourceBytesPerValue == 1 || sourceBytesPerValue == 2 || sourceBytesPerValue == 4
     else {
       throw Native4DSTEMIOError.invalidData(
-        "Indexed-source shapes must be positive and source bytes per value must be 1 or 2"
+        "Indexed-source shapes must be positive and source bytes per value must be 1, 2, or 4"
       )
     }
     let detectorPixels = try Self.product(
@@ -310,6 +312,7 @@ public struct Native4DSTEMIndexedSource: Sendable {
     switch dataset.sourceDtype {
     case "uint8": sourceBytesPerValue = 1
     case "uint16": sourceBytesPerValue = 2
+    case "uint32": sourceBytesPerValue = 4
     default:
       throw Native4DSTEMIOError.invalidData(
         "\(dataset.label) source dtype \(dataset.sourceDtype) is not indexed-load compatible"

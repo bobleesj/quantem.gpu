@@ -185,7 +185,7 @@ final class OriginalHDF5Packing {
   }
   let device: MTLDevice
   let queue: MTLCommandQueue
-  let decode8, decode16, headersPipeline, valuesPipeline: MTLComputePipelineState
+  let decode8, decode16, decode32, unshuffle32, headersPipeline, valuesPipeline: MTLComputePipelineState
   let verifyPipeline, momentsPipeline, narrowPipeline: MTLComputePipelineState
   let scalarDecode, scalarUnshuffle: MTLComputePipelineState?
   let standardPlaneValues, standardPlaneSummary: MTLComputePipelineState?
@@ -238,6 +238,8 @@ final class OriginalHDF5Packing {
     }
     decode8 = try pipeline(decode, Metal4DSTEMKernels.decodeU8Function)
     decode16 = try pipeline(decode, Metal4DSTEMKernels.decodeU16Function)
+    decode32 = try pipeline(decode, "h5lz4dc_full_u32_qh5idx")
+    unshuffle32 = try pipeline(decode, "h5unshuffle_u32_qh5idx")
     alignedRepeatFill = OriginalPackingDiagnostics.enabled("ALIGNED_FILL", byDefault: true)
     alignedHistoryCopy = OriginalPackingDiagnostics.enabled("ALIGNED_COPY", byDefault: false)
     transposeUnshuffle = OriginalPackingDiagnostics.enabled("TRANSPOSE_UNSHUFFLE", byDefault: true)
@@ -388,11 +390,14 @@ final class OriginalHDF5Packing {
     let standardPlanes = destination == nil && standardPlaneValues != nil
     guard let identity = dataset.sourceIdentitySHA256,
       source.logicalFrameCount.isMultiple(of: 32),
-      ["uint8", "uint16"].contains(dataset.sourceDtype)
+      ["uint8", "uint16", "uint32"].contains(dataset.sourceDtype)
     else {
       throw Self.invalid(
-        "Original packed loading requires indexed uint8/uint16 counts and a scan count divisible by 32; no crop or bin was applied"
+        "Original packed loading requires indexed uint8/uint16/uint32 counts and a scan count divisible by 32; no crop or bin was applied"
       )
+    }
+    guard destination == nil || source.sourceBytesPerValue != 4 else {
+      throw Self.invalid("uint32 source loading requires direct packed residency; on-disk packed export is not supported yet")
     }
     // Reject master or data changes during loading, even when a writer restores
     // the modification timestamp. These cheap stamps are not content hashes.
@@ -435,7 +440,7 @@ final class OriginalHDF5Packing {
       && frames >= 2048 && pixels.isMultiple(of: 4096)
       && windows.contains { $0.slices.contains { $0.globalFrameRange.count >= 2048 } }
       && source.shards.allSatisfy { Int($0.index.metadata.nBlocksPerFrame) * 4096 == pixels }
-    let scratchBytes = useScalar ? frames * pixels * 2 : 0
+    let scratchBytes = source.sourceBytesPerValue == 4 ? frames * pixels * 4 : (useScalar ? frames * pixels * 2 : 0)
     let cachedDPC = destination == nil ? validatedDPC(preparedDPC, source: source) : nil
     if destination == nil, !ignoreCachedPlan,
       cachedDPC != nil || bitshuffleDPC != nil, let packingPlanURL,
@@ -450,7 +455,9 @@ final class OriginalHDF5Packing {
     let partialBytes =
       useScalar && cachedDPC == nil && dpcUnshuffle?.threadExecutionWidth == 32
       ? frames * (pixels / 4096) * 32 : 0
-    let cachePlans = destination == nil && packingPlanURL != nil
+    // The existing plan summary uses uint32 partial sums. uint32 source data
+    // builds fresh headers until that optional cache has a wide-sum schema.
+    let cachePlans = destination == nil && packingPlanURL != nil && source.sourceBytesPerValue != 4
     // Covers one compressed record, upload, decoded header, codec/hash scratch.
     let planStaging: UInt64 = cachePlans ? 64 << 20 : 0
     let stagingReserve =
@@ -533,7 +540,7 @@ final class OriginalHDF5Packing {
     let mask = try buffer(pixels)
     let errors = try buffer(4)
     let payloadWords = try buffer(4)
-    let scalarScratch = useScalar ? try buffer(scratchBytes, privateStorage: true) : nil
+    let scalarScratch = scratchBytes > 0 ? try buffer(scratchBytes, privateStorage: true) : nil
     let partialDPC = partialBytes > 0 ? try buffer(partialBytes, privateStorage: true) : nil
     let widths = try buffer(pixels * 4)
     memset(widths.contents(), 0, widths.length)
@@ -565,17 +572,22 @@ final class OriginalHDF5Packing {
     var largestInput: UInt64 = 0
     var largestPayload: UInt64 = 0
     var peakStaging = fixedStaging
-    // Prefetch one compressed slice while the current window is on Metal.
-    // File preparation keeps ordered output and uses the sequential reader.
+    // Keep two compressed slices in flight for uint32 sources. Their decode and
+    // packing work is GPU-bound, so a single serialized read leaves Metal idle
+    // between slices while the SSD is still delivering the next input.
     let readAheadEnabled =
       destination == nil
       && OriginalPackingDiagnostics.enabled("READ_AHEAD", byDefault: true)
-    let reader = readAheadEnabled ? CompressedReadAhead(device: device) : nil
+    let readAheadDepth = source.sourceBytesPerValue == 4 ? 2 : 1
+    let reader = readAheadEnabled
+      ? CompressedReadAhead(device: device, depth: readAheadDepth) : nil
     defer { reader?.cancelAndDrain() }
     let orderedSlices = readAheadEnabled ? windows.flatMap(\.slices) : []
     var sliceOrdinal = 0
+    var pendingReadBytes: UInt64 = 0
     var additionalReadReserve: UInt64 = 0
     profile.readAheadEnabled = readAheadEnabled
+    profile.readAheadDepth = readAheadEnabled ? readAheadDepth : 0
     func enqueueRead(_ slice: Native4DSTEMIndexedSlice, currentInputBytes: UInt64) throws {
       guard let reader else { return }
       if shouldCancel() { throw Metal4DSTEMStreamingIOError.cancelled }
@@ -598,8 +610,14 @@ final class OriginalHDF5Packing {
       profile.maximumConcurrentInputBytes = largestInput
       profile.additionalReadReserveBytes = additionalReadReserve
       try reader.submit(plan)
+      pendingReadBytes += plan.reservedBytes
     }
-    if let firstSlice = orderedSlices.first { try enqueueRead(firstSlice, currentInputBytes: 0) }
+    if readAheadEnabled {
+      for slice in orderedSlices.prefix(readAheadDepth) {
+        try enqueueRead(slice, currentInputBytes: pendingReadBytes)
+      }
+      sliceOrdinal = min(readAheadDepth, orderedSlices.count)
+    }
     var shape = Shape(
       scans: UInt32(frames), pixels: UInt32(pixels), columns: UInt32(dataset.detectorCols),
       sourceBytes: UInt32(source.sourceBytesPerValue))
@@ -642,15 +660,17 @@ final class OriginalHDF5Packing {
           let preparedInput: CompressedReadInput?
           if let reader {
             let waitStarted = CFAbsoluteTimeGetCurrent()
-            preparedInput = try reader.take(shouldCancel: shouldCancel)
+            preparedInput = try reader.take(
+              expectedFrameStart: slice.globalFrameRange.lowerBound, shouldCancel: shouldCancel)
             profile.readWait += CFAbsoluteTimeGetCurrent() - waitStarted
             if shouldCancel() { throw Metal4DSTEMStreamingIOError.cancelled }
-            sliceOrdinal += 1
-            if sliceOrdinal < orderedSlices.count, let preparedInput {
+            pendingReadBytes = pendingReadBytes >= preparedInput!.reservedBytes
+              ? pendingReadBytes - preparedInput!.reservedBytes : 0
+            if sliceOrdinal < orderedSlices.count {
               try enqueueRead(
                 orderedSlices[sliceOrdinal],
-                currentInputBytes: UInt64(
-                  preparedInput.compressed.length + preparedInput.metadata.length))
+                currentInputBytes: pendingReadBytes)
+              sliceOrdinal += 1
             }
           } else {
             preparedInput = nil
@@ -898,7 +918,7 @@ final class OriginalHDF5Packing {
           profile.planOutputBytes = size.uint64Value
         }
       }
-      profile.maximumWidthHistogram = maximumWidths.reduce(into: [Int](repeating: 0, count: 17)) {
+      profile.maximumWidthHistogram = maximumWidths.reduce(into: [Int](repeating: 0, count: 33)) {
         $0[Int($1)] += 1
       }
       profile.packedPayloadLayout = standardPlanes ? 1 : 0
@@ -1064,7 +1084,8 @@ final class OriginalHDF5Packing {
     var pixelCount = UInt32(pixels)
     var frameCount = UInt32(slice.globalFrameRange.count)
     var auditOffset = UInt32(slice.globalFrameRange.lowerBound - firstFrame)
-    let scalar = scratch != nil && scalarDecode != nil && frameCount >= 2048
+    let is32 = source.sourceBytesPerValue == 4
+    let scalar = is32 || (scratch != nil && scalarDecode != nil && frameCount >= 2048)
     if scalar, alignedRepeatFill || alignedHistoryCopy, let scratch, scratch.gpuAddress % 16 != 0 {
       throw Self.invalid("Aligned decompression requires a 16-byte-aligned scratch buffer")
     }
@@ -1075,7 +1096,7 @@ final class OriginalHDF5Packing {
       throw Self.invalid("Cannot encode source decode")
     }
     encoder.setComputePipelineState(
-      scalar ? scalarDecode! : (source.sourceBytesPerValue == 1 ? decode8 : decode16))
+      is32 ? decode32 : (scalar ? scalarDecode! : (source.sourceBytesPerValue == 1 ? decode8 : decode16)))
     encoder.setBuffer(compressed, offset: 0, index: 0)
     encoder.setBuffer(metadata, offset: 0, index: 1)
     encoder.setBytes(&zero64, length: 8, index: 2)
@@ -1085,7 +1106,7 @@ final class OriginalHDF5Packing {
     encoder.setBytes(&zero, length: 4, index: 6)
     encoder.setBuffer(mask, offset: 0, index: 7)
     encoder.setBuffer(audit, offset: 0, index: 8)
-    if source.sourceBytesPerValue == 2 { encoder.setBytes(&auditOffset, length: 4, index: 9) }
+    if source.sourceBytesPerValue > 1 { encoder.setBytes(&auditOffset, length: 4, index: 9) }
     if scalar {
       memset(errors.contents(), 0, 4)
       encoder.setBuffer(errors, offset: 0, index: 10)
@@ -1100,11 +1121,11 @@ final class OriginalHDF5Packing {
           width: 32, height: source.sourceBytesPerValue == 1 ? 8 : 4, depth: 1))
     }
     encoder.endEncoding()
-    if scalar, let scalarUnshuffle {
+    if scalar, let selectedUnshuffle = is32 ? unshuffle32 : scalarUnshuffle {
       guard let unshuffle = command.makeComputeCommandEncoder() else {
         throw Self.invalid("Cannot encode exact unshuffle")
       }
-      unshuffle.setComputePipelineState(partialDPC == nil ? scalarUnshuffle : dpcUnshuffle!)
+      unshuffle.setComputePipelineState(partialDPC == nil ? selectedUnshuffle : dpcUnshuffle!)
       unshuffle.setBuffer(scratch, offset: 0, index: 0)
       unshuffle.setBytes(&blocks, length: 4, index: 3)
       unshuffle.setBytes(&pixelCount, length: 4, index: 4)
@@ -1122,7 +1143,7 @@ final class OriginalHDF5Packing {
       unshuffle.dispatchThreadgroups(
         MTLSize(width: Int(frameCount), height: 1, depth: Int(blocks)),
         threadsPerThreadgroup: MTLSize(
-          width: transposeUnshuffle && partialDPC == nil ? 128 : 64, height: 1, depth: 1))
+          width: is32 || (transposeUnshuffle && partialDPC == nil) ? 128 : 64, height: 1, depth: 1))
       unshuffle.endEncoding()
       if let partialDPC, let dpcReduce {
         guard let reduction = command.makeComputeCommandEncoder() else {
@@ -1185,7 +1206,7 @@ final class OriginalHDF5Packing {
       value.total.count == scans, value.detectorRowMoment.count == scans,
       value.detectorColumnMoment.count == scans
     else { return nil }
-    let maximum = UInt64(source.sourceBytesPerValue == 1 ? 255 : 65535)
+    let maximum = (UInt64(1) << (source.sourceBytesPerValue * 8)) - 1
     let totalBound = UInt64(pixels) * maximum
     var words = [UInt64](repeating: 0, count: scans * 4)
     for scan in 0..<scans {

@@ -419,11 +419,11 @@ public struct Metal4DSTEMResidentCapabilities: Codable, Equatable, Sendable {
       (metadata.schema == "quantem.gpu.packed-detector-h5/v1"
         && metadata.sourceDtype == "uint16" && metadata.workingDtype == "uint16")
       || (metadata.schema == "quantem.gpu.packed-detector-h5/v3"
-        && (metadata.sourceDtype == "uint8" || metadata.sourceDtype == "uint16")
-        && (metadata.workingDtype == "uint8" || metadata.workingDtype == "uint16"))
+        && ["uint8", "uint16", "uint32"].contains(metadata.sourceDtype ?? "")
+        && ["uint8", "uint16", "uint32"].contains(metadata.workingDtype))
     guard supportedFormat else {
       throw Metal4DSTEMStreamingIOError.invalidRequest(
-        "Lossless-packed capabilities require a supported exact uint16 or uint8 storage schema."
+        "Lossless-packed capabilities require a supported exact unsigned-count storage schema."
       )
     }
     guard
@@ -440,9 +440,9 @@ public struct Metal4DSTEMResidentCapabilities: Codable, Equatable, Sendable {
       metadata.detectorRows, metadata.detectorColumns,
     ]
     let sourceLogicalTensorBytes = try Metal4DSTEMResidentReceipt.logicalBytes(
-      shape: shape, bytesPerValue: metadata.sourceDtype == "uint8" ? 1 : 2
+      shape: shape, bytesPerValue: metadata.sourceDtype == "uint8" ? 1 : (metadata.sourceDtype == "uint32" ? 4 : 2)
     )
-    let workingBytesPerValue: UInt64 = metadata.workingDtype == "uint8" ? 1 : 2
+    let workingBytesPerValue: UInt64 = metadata.workingDtype == "uint8" ? 1 : (metadata.workingDtype == "uint32" ? 4 : 2)
     let workingLogicalTensorBytes = try Metal4DSTEMResidentReceipt.logicalBytes(
       shape: shape, bytesPerValue: workingBytesPerValue
     )
