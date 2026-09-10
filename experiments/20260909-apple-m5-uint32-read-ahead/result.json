@@ -18,6 +18,7 @@
   "timing_seconds": {
     "single_reader_standalone_pipeline": 8.687,
     "two_reader_standalone_pipeline": 5.992,
+    "two_reader_64mib_read_pipeline": 5.817,
     "two_reader_standalone_source_read_sum": 6.202,
     "native_candidate_presented_range": [6.845, 8.716]
   },
@@ -25,6 +26,6 @@
     "decode": [1.405, 1.560],
     "preparation": [1.374, 1.411]
   },
-  "conclusion": "Read-ahead overlap reduced standalone pipeline wall time by 31.0 percent in this run. The 7.9 GB source read remains about 6.2 seconds, so a 1-2 second cold original-file open is not yet evidenced; persistent packed-cache reuse or faster storage is required for that target.",
+  "conclusion": "Two-deep read-ahead plus 64 MiB pread chunks reduced standalone pipeline wall time from 8.687 to 5.817 seconds (33.0 percent) in this run. The 7.9 GB source read remains about 6.9 seconds in the 64 MiB run, so a 1-2 second cold original-file open is not yet evidenced; persistent packed-cache reuse or faster storage is required for that target.",
   "release_ready": false
 }

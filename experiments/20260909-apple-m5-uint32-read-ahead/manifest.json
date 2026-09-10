@@ -5,7 +5,7 @@
   "question": "Can bounded concurrent compressed reads reduce exact original uint32 packed-resident load time without changing the resident representation?",
   "paper": {"repository": "quantem.gpu", "authoritative_host": "apple-m5-24gb"},
   "code": {
-    "revision": "fc549c9cb2d0a7f574914dbe4435b03fdb9aee4f",
+    "revision": "528593d38bc70ea70ad2ed004f8bfcbd9a1f9f48",
     "dirty": false,
     "diff_scope": "two-deep concurrent compressed read-ahead for direct uint32 residency",
     "entrypoint": "metal-original-hdf5-benchmark and Live4DSTEM native uint32 hooks"
@@ -28,8 +28,8 @@
   "outputs": [{
     "artifact_id": "uint32-read-ahead-profile",
     "path": "experiments/20260909-apple-m5-uint32-read-ahead/result.json",
-    "sha256": "c7e0637f8d9ebc944e7175124d10899a551dfe40116ff606a32be1be282928a5",
-    "size_bytes": 1091,
+    "sha256": "f3d8732eb739ab9f4c74b2597f60eeba2910526bff4c2b7373f20fba70e98d39",
+    "size_bytes": 1207,
     "retention": "durable",
     "consuming_figures": [],
     "result": "Exact synthetic parity 3/3 and native two-cycle parity/reload/recovery pass; end-to-end source read remains the limiting stage"
