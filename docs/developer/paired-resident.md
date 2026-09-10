@@ -100,7 +100,7 @@ one PCIe 4.0 NVMe drive whose direct-read ceiling is 5.5 GB/s; a memory-budget
 
 | measurement | acquisitions | value |
 | --- | --- | --- |
-| series load, original HDF5 to resident, wall | 66 | 29.3 s |
+| series load, original HDF5 to resident, wall (28.8 s once chunk tables are parsed from the staged image) | 66 | 29.3 s |
 | resident-ready wall per acquisition inside the pipeline, median | 66 | 1.50 s |
 | encode per acquisition, median | 66 | 0.197 s |
 | index per acquisition, median | 66 | 0.120 s |
