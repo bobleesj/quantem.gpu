@@ -6,6 +6,25 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- Open original little-endian uint32 bitshuffle/LZ4 Arina acquisitions into the
+  same lossless packed Metal residents as uint8/uint16, decoding all 32 planes
+  in bounded windows with exact UInt64 detector sums and fused uint32 DPC
+  accumulation. Wider compressed reads and read-ahead are registered under
+  `experiments/20260909-*uint32*`; big-endian input is rejected explicitly.
+- Import validated NXem companion metadata (`_em_metadata.h5`) for Arina
+  masters: regular-scan sampling with explicit length units, beam energy,
+  convergence angle, camera length and reciprocal sampling, bound to the
+  companion's identity for catalog invalidation. Mismatched or unitless
+  metadata is reported, not guessed.
+- Add `NativeScientificExport` for writing full-resolution scalar planes and a
+  UTF-8 JSON metadata record into one new HDF5 file, and `countSummary()` that
+  reduces the exact per-scan totals on Metal into one UInt64 without rereading
+  the packed 4D payload.
+- Match the CPU histogram reference to the Metal bins (`floor(fraction * 256)`,
+  maximum in the last bin, constant images in the center bin) and use the
+  shader's signed log1p mapping for logarithmic thresholds. A nonempty UInt32
+  range of only `UInt32.max` is no longer reported as empty.
+
 - Add experimental native EMPAD XML/RAW loading into lossless float32-bit
   packed Metal residents, with full-source parity, compensated BF/ABF/ADF,
   CoM and mean diffraction. Cooperative packing and reductions reuse bounded
