@@ -5,6 +5,32 @@ import XCTest
 @testable import Native4DSTEMIO
 
 final class FileIdentityTests: XCTestCase {
+  func testLinkedAcquisitionTracksTargetContentsAndRetargeting() throws {
+    let files = try fixture()
+    let alias = files.source.deletingLastPathComponent().appendingPathComponent("linked.h5")
+    try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: files.source)
+    let direct = try nativeFileIdentity(for: files.source)
+    let linked = try nativeFileIdentity(for: alias)
+    XCTAssertEqual(linked.path, alias.path)
+    XCTAssertEqual(linked.bytes, direct.bytes)
+    XCTAssertEqual(linked.inode, direct.inode)
+    let original = try nativeSourceHashes(master: nil, dataFiles: [alias], cacheFile: files.cache)
+    XCTAssertEqual(original.members, try nativeSourceHashes(master: nil, dataFiles: [files.source]).members)
+    let signature = try nativeDatasetSignature(for: [alias])
+    try Data("omega".utf8).write(to: files.source)
+    let refreshed = try nativeSourceHashes(master: nil, dataFiles: [alias], cacheFile: files.cache)
+    XCTAssertNotEqual(refreshed.members, original.members)
+    XCTAssertNotEqual(try nativeDatasetSignature(for: [alias]), signature)
+
+    let replacement = files.source.deletingLastPathComponent().appendingPathComponent("replacement.h5")
+    try Data("gamma".utf8).write(to: replacement)
+    try FileManager.default.removeItem(at: alias)
+    try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: replacement)
+    let retargeted = try nativeSourceHashes(master: nil, dataFiles: [alias], cacheFile: files.cache)
+    XCTAssertNotEqual(retargeted.members, refreshed.members)
+    XCTAssertEqual(retargeted.members, try nativeSourceHashes(master: nil, dataFiles: [replacement]).members)
+  }
+
   func testRestoredModificationTimeDoesNotReuseChangedSourceHashes() throws {
     let files = try fixture()
     let first = try nativeSourceHashes(

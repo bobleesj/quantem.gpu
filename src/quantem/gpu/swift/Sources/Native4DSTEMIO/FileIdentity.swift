@@ -18,7 +18,9 @@ func nativeCanonicalURL(_ input: URL) -> URL {
 func nativeFileIdentity(for input: URL) throws -> NativeFileIdentity {
   let url = nativeCanonicalURL(input)
   var status = stat()
-  let result = url.path.withCString { Darwin.lstat($0, &status) }
+  // Match open/read: identity and byte bounds belong to the linked contents,
+  // not the symlink text. Destination inode/ctime also invalidate retargets.
+  let result = url.path.withCString { Darwin.fstatat(AT_FDCWD, $0, &status, 0) }
   guard result == 0, status.st_size >= 0, status.st_mtimespec.tv_sec >= 0,
     status.st_mtimespec.tv_nsec >= 0, status.st_ctimespec.tv_sec >= 0,
     status.st_ctimespec.tv_nsec >= 0
