@@ -203,7 +203,7 @@ extension OriginalHDF5Packing {
         if isCancelled() { throw Metal4DSTEMStreamingIOError.cancelled }
         let bytes = Darwin.pread(
           handle.fileDescriptor, compressed.contents().advanced(by: received),
-          min(plan.count - received, 8 << 20), off_t(plan.offset + UInt64(received)))
+          min(plan.count - received, 64 << 20), off_t(plan.offset + UInt64(received)))
         if bytes < 0 {
           if errno == EINTR { continue }
           throw invalid(
