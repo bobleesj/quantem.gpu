@@ -13,8 +13,12 @@ _PRECISION_ATTRIBUTE = "quantem_precision_v1"
 
 def precision_name(dtype):
     """Recognize explicit approximate storage without changing integer casts."""
-    if isinstance(dtype, str) and dtype == "scaled_uint16":
-        return dtype
+    if isinstance(dtype, str):
+        token = dtype.lower()
+        if token == "scaled_uint16":
+            return token
+        if token in {"float16", "f16"}:
+            return "float16"
     if dtype is None:
         return None
     try:

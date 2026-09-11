@@ -14,7 +14,7 @@ from quantem.gpu import io
 from quantem.gpu.detector import prepare
 
 
-@pytest.mark.parametrize("dtype", ["float16", "scaled_uint16"])
+@pytest.mark.parametrize("dtype", ["float16", "scaled_uint16", "f16"])
 def test_float_archive_loads_selected_packed_intensities(tmp_path, dtype, capsys):
     values = cp.linspace(0, 1716, 12 * 16 * 16 * 16, dtype=cp.float32).reshape(
         12, 16, 16, 16
@@ -27,7 +27,7 @@ def test_float_archive_loads_selected_packed_intensities(tmp_path, dtype, capsys
     )
     report = loaded.metadata["precision"]
     selected = values[1:7, 2:11, 1:15]
-    if dtype == "float16":
+    if dtype in {"float16", "f16"}:
         expected = selected.astype(cp.float16).astype(cp.float32)
     else:
         expected = (
@@ -55,7 +55,7 @@ def test_float_archive_loads_selected_packed_intensities(tmp_path, dtype, capsys
     loaded.close()
 
 
-@pytest.mark.parametrize("dtype", ["float16", "scaled_uint16"])
+@pytest.mark.parametrize("dtype", ["float16", "scaled_uint16", "f16"])
 def test_precision_export_reopens_and_resaves_without_changing_units(
     tmp_path, dtype, capsys
 ):
@@ -68,7 +68,7 @@ def test_precision_export_reopens_and_resaves_without_changing_units(
     report = loaded.metadata["precision"]
     expected = (
         values.astype(cp.float16).astype(cp.float32)
-        if dtype == "float16"
+        if dtype in {"float16", "f16"}
         else cp.rint(values.astype(cp.float64) / report["scale"])
         .astype(cp.uint16)
         .astype(cp.float64)
