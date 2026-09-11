@@ -38,8 +38,8 @@ def test_streamed_ans_decodes_selected_scan_ranges(dtype):
         source.release()
 
 
-def test_maped_ans_regions_match_bitpacked_regions():
-    """MAPED interpolation is unchanged when exact tilts stay in ANS."""
+def test_maped_ans_regions_match_masked_bitpacked_regions():
+    """ANS MAPED applies detector hot-pixel masks without changing raw counts."""
 
     import torch
 
@@ -51,13 +51,21 @@ def test_maped_ans_regions_match_bitpacked_regions():
             (cp.arange(np.prod(shape), dtype=cp.uint64) * (tilt + 3) + tilt * 17)
             % 2000
         ).astype(cp.uint16).reshape(shape)
+        mask = np.zeros(shape[2:], dtype=np.uint8)
+        mask[tilt + 1, tilt + 2] = 1
+        values[:, :, tilt + 1, tilt + 2] = np.uint16(65535)
         ans = StreamedCounts(shape, np.uint16)
         flat = values.reshape(-1, *shape[2:])
         ans.append(cp.ascontiguousarray(flat[:30]))
         ans.append(cp.ascontiguousarray(flat[30:]))
-        ans_sources.append(SimpleNamespace(shape=shape, data=ans, metadata={}))
+        assert int(ans.decode_scan_range_device(0, 1)[0, tilt + 1, tilt + 2]) == 65535
+        ans_sources.append(
+            SimpleNamespace(shape=shape, data=ans, metadata={"pixel_mask": mask})
+        )
+        corrected = values.copy()
+        corrected[:, :, tilt + 1, tilt + 2] = 0
         packed = CudaPackedResidentCounts.from_array(
-            cp.ascontiguousarray(flat), shape
+            cp.ascontiguousarray(corrected.reshape(-1, *shape[2:])), shape
         )
         packed_sources.append(
             SimpleNamespace(shape=shape, data=packed, metadata={})
