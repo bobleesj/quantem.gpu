@@ -36,6 +36,7 @@ def test_h5_opens_encoded_and_mixes_with_original_ans(tmp_path, dtype):
     second = io.load(ans, backend="cuda")
     original_pointers = [a.data.ptr for a in second.data._arrays]
     assert first.representation is io.DataRepresentation.ANS
+    assert first.metadata["source_read_passes"] == 1
     reconstructed = np.concatenate(
         [first.data.decode_chunk(i).get() for i in range(len(first.data.chunks))]
     ).reshape(raw.shape)
@@ -43,6 +44,13 @@ def test_h5_opens_encoded_and_mixes_with_original_ans(tmp_path, dtype):
     session = detector.prepare([first, second])
     assert session.backend_metadata["query_abi"] == "streamed-spatial-counts-v1"
     assert [a.data.ptr for a in second.data._arrays] == original_pointers
+    expected_mean = raw.reshape(513, 11, 7).mean(axis=0, dtype=np.float64).astype(
+        np.float32
+    )
+    np.testing.assert_array_equal(
+        session.mean_dp(output="native").get(),
+        np.broadcast_to(expected_mean, (2, 11, 7)),
+    )
     rr, cc = np.indices(raw.shape[-2:])
     retained = None
     for row, col, inner, outer in [
@@ -71,6 +79,7 @@ def test_h5_opens_encoded_and_mixes_with_original_ans(tmp_path, dtype):
         assert output.dtype == dtype
     single = detector.prepare(first)
     assert single.series_shape == ()
+    np.testing.assert_array_equal(single.mean_dp(output="native").get(), expected_mean)
     np.testing.assert_array_equal(single.frame(512, output="native").get(), raw[0, 512])
     with pytest.raises(ValueError, match="overlap"):
         session.masked_sum(

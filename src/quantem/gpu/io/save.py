@@ -1892,6 +1892,37 @@ class H5Writer:
         if wait:
             wait_for_saves()
 
+    def abort(self) -> None:
+        """Close and remove an incomplete streamed output after a failed producer."""
+        self._closed = True
+        try:
+            self._close_data_file()
+        except BaseException:
+            # wait_for_saves has already drained the queue before surfacing a
+            # writer error, so closing the handle here cannot race queued work.
+            try:
+                if self._current_file is not None:
+                    self._current_file.close()
+            except BaseException:
+                pass
+            self._current_file = None
+            self._current_ds = None
+        if self._metal_compressor is not None:
+            try:
+                self._metal_compressor.close()
+            except BaseException:
+                pass
+            self._metal_compressor = None
+        for path in self._data_files:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        try:
+            self._filepath.unlink(missing_ok=True)
+        except OSError:
+            pass
+
     def __enter__(self):
         return self
 

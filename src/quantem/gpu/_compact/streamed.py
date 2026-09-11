@@ -382,6 +382,39 @@ class StreamedCounts:
                 raise ValueError("An encoded count stream failed reconstruction.")
             return output
 
+    def detector_total_device(self):
+        """Return the exact valid-pixel detector sum without dense expansion."""
+        import cupy as cp
+
+        if self.is_released:
+            raise ValueError("The resident source has been released.")
+        with cp.cuda.Device(self.device):
+            total = cp.zeros(self.shape[2:], cp.uint64)
+            errors = cp.zeros(1, cp.uint32)
+            valid = self.valid.astype(self.dtype, copy=False)
+            if self.native_source is None:
+                blocks = (
+                    self.decode_scan_range_device(
+                        chunk.first,
+                        chunk.first + chunk.scans,
+                        errors=errors,
+                    )
+                    for chunk in self.chunks
+                )
+            else:
+                blocks = (
+                    self.native_source.decode_block_device(index)
+                    for index in range(self.native_source._block_count)
+                )
+            for decoded in blocks:
+                decoded *= valid[None]
+                total += cp.sum(decoded, axis=0, dtype=cp.uint64)
+                del decoded
+            cp.cuda.get_current_stream().synchronize()
+            if int(errors.get()[0]):
+                raise ValueError("An encoded count stream failed reconstruction.")
+            return total
+
     def release(self) -> None:
         """Drop this owner's references without invalidating active borrowed sessions."""
         self.chunks.clear()

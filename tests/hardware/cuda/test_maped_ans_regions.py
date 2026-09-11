@@ -14,7 +14,9 @@ pytestmark = pytest.mark.skipif(
 
 from quantem.gpu._compact.streamed import StreamedCounts
 from quantem.gpu._maped import _merge_regions
+from quantem.gpu.detector import prepare
 from quantem.gpu.io.backends.cuda._ans import CudaPackedResidentCounts
+from quantem.gpu.maped import merge_to_scaled_h5
 
 
 @pytest.mark.parametrize("dtype", [np.uint8, np.uint16])
@@ -102,3 +104,42 @@ def test_maped_ans_regions_match_masked_bitpacked_regions():
     finally:
         for source in ans_sources + packed_sources:
             source.data.release()
+
+
+def test_maped_ans_writes_reopenable_scaled_result(tmp_path):
+    """The backend owns range measurement, encoding, writing, and reopening."""
+
+    import torch
+
+    shape = (5, 6, 4, 6)
+    values = (
+        cp.arange(np.prod(shape), dtype=cp.uint16).reshape(shape) % 173
+    )
+    source = StreamedCounts(shape, np.uint16)
+    source.append(cp.ascontiguousarray(values.reshape(-1, *shape[2:])))
+    loaded = SimpleNamespace(shape=shape, data=source, metadata={})
+    shifts = torch.zeros((1, 2), device="cuda")
+    expected = cp.concatenate(
+        [region for _, region in _merge_regions([loaded], shifts, shifts, 7)]
+    )
+    path = tmp_path / "merged_master.h5"
+    try:
+        result = merge_to_scaled_h5([loaded], shifts, shifts, path)
+        report = result.metadata["precision"]
+        assert report["storage"] == "scaled_uint16"
+        assert report["range_scope"] == "complete merged output"
+        assert report["clipped"] == 0
+        assert result.metadata["maped_merge"]["backend"] == "cuda"
+        assert result.metadata["maped_merge"]["gpu_encode_seconds"] >= 0
+        assert result.metadata["maped_merge"]["reopen_seconds"] >= 0
+        session = prepare(result)
+        for index in (0, 7, shape[0] * shape[1] - 1):
+            np.testing.assert_allclose(
+                session.frame(index),
+                expected[index].get(),
+                rtol=0,
+                atol=report["scale"],
+            )
+        result.close()
+    finally:
+        source.release()

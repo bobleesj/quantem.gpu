@@ -142,10 +142,12 @@ class DetectorSession:
             )
         return _exact_to_numpy(reducer(indices)).reshape(self.detector_shape)
 
-    def mean_dp(self) -> np.ndarray:
-        """Return the float32 mean diffraction pattern."""
+    def mean_dp(self, *, output: str = "numpy"):
+        """Return the float32 mean diffraction pattern on the host or device."""
 
-        return _reduced_to_numpy(self._backend.mean_dp())
+        _check_output(output, None)
+        result = self._backend.mean_dp()
+        return result if output == "native" else _reduced_to_numpy(result)
 
     def finish(self) -> dict:
         """Wait for the oldest query launched with ``wait=False`` and return its timings.

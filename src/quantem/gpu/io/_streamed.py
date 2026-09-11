@@ -122,6 +122,7 @@ def load_h5_ans(path, *, scan_shape, dataset_path, device, verbose):
             working_dtype=dtype.name,
             dtype=dtype.name,
             n_frames=math.prod(shape[:2]),
+            source_read_passes=1,
             source_logical_tensor_bytes=math.prod(shape) * dtype.itemsize,
             working_logical_tensor_bytes=math.prod(shape) * dtype.itemsize,
             physical_resident_bytes=source.nbytes,
