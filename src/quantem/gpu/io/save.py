@@ -984,18 +984,18 @@ class _NativeMPSU16ChunkCompressor:
 
 
 def _compress_batch_mps(data_mps, n_8kb, frame_bytes, output_dtype):
-    """Compress a torch MPS uint8/uint16/float32 batch to HDF5 bslz4 chunks."""
+    """Compress a torch MPS 16-bit/32-bit batch to HDF5 bslz4 chunks."""
     import mlx.core as mx
 
     if not hasattr(data_mps, "device") or data_mps.device.type != "mps":
         raise TypeError("_compress_batch_mps expects a torch tensor on MPS")
     output_dtype = np.dtype(output_dtype)
-    if data_mps.dtype not in (torch.uint8, torch.uint16, torch.float32):
+    if data_mps.dtype not in (torch.uint8, torch.uint16, torch.float16, torch.float32):
         raise TypeError(
             "MPS compressed save supports uint8/uint16/float32 input, "
             f"got {data_mps.dtype}"
         )
-    if output_dtype not in (np.dtype(np.uint8), np.dtype(np.uint16), np.dtype(np.float32)):
+    if output_dtype not in (np.dtype(np.uint8), np.dtype(np.uint16), np.dtype(np.float16), np.dtype(np.float32)):
         raise TypeError(
             "MPS compressed save supports uint8/uint16/float32 output, "
             f"got {output_dtype}"
@@ -1004,6 +1004,8 @@ def _compress_batch_mps(data_mps, n_8kb, frame_bytes, output_dtype):
         raise TypeError("MPS float32 compressed save requires float32 input data")
     if data_mps.dtype == torch.uint8 and output_dtype != np.dtype(np.uint8):
         raise TypeError("MPS uint8 input can only be saved as uint8")
+    if data_mps.dtype == torch.float16:
+        data_mps = data_mps.view(torch.uint16)
     itemsize = int(output_dtype.itemsize)
     tail_bytes = frame_bytes % BLOCK_SIZE
     if tail_bytes:
@@ -1722,6 +1724,7 @@ class H5Writer:
         self._data_files = []
         self._frame_ranges = []
         self._closed = False
+        self._metal_compressor = None
         self._prefix = _master_prefix(self._filepath)
         self._filepath.parent.mkdir(parents=True, exist_ok=True)
 
@@ -1771,14 +1774,25 @@ class H5Writer:
         if self._closed:
             raise RuntimeError("H5Writer is closed")
         _raise_write_error()
-        if not isinstance(data_gpu, cp.ndarray):
+        native_metal = hasattr(data_gpu, "_mtl") and data_gpu.dtype == self._dtype
+        native_mps = (
+            torch is not None and torch.is_tensor(data_gpu)
+            and data_gpu.device.type == "mps" and np.dtype(str(data_gpu.dtype).removeprefix("torch.")) == self._dtype
+        )
+        if (native_metal or native_mps) and (self._dtype.itemsize != 2 or self._compression != "lz4"):
+            raise ValueError("Native Metal precision writing requires 16-bit bitshuffle/LZ4 storage.")
+        if not native_metal and not native_mps and not isinstance(data_gpu, cp.ndarray):
             data_gpu = cp.asarray(np.asarray(data_gpu))
-        if data_gpu.dtype != self._dtype:
+        input_dtype = (
+            np.dtype(str(data_gpu.dtype).removeprefix("torch."))
+            if native_mps else data_gpu.dtype
+        )
+        if input_dtype != self._dtype:
             # Float→integer cast: round to nearest BEFORE casting so bilinear-merged
             # 4D-STEM keeps max-error 0.5 counts (sub-noise-floor) instead of the 1.0
             # max-error you get from truncation. Numpy/CuPy default float->uint cast
             # truncates fractional parts.
-            if (np.issubdtype(data_gpu.dtype, np.floating)
+            if (np.issubdtype(input_dtype, np.floating)
                     and np.issubdtype(self._dtype, np.integer)):
                 lo, hi = (int(np.iinfo(self._dtype).min),
                           int(np.iinfo(self._dtype).max))
@@ -1793,7 +1807,8 @@ class H5Writer:
         if self._frame_offset + int(data_gpu.shape[0]) > self._n_frames:
             raise ValueError("Batch would exceed declared n_frames")
 
-        data_gpu = cp.ascontiguousarray(data_gpu)
+        if not native_metal and not native_mps:
+            data_gpu = cp.ascontiguousarray(data_gpu)
         batch_start = 0
         batch_n = int(data_gpu.shape[0])
         while batch_start < batch_n:
@@ -1801,8 +1816,31 @@ class H5Writer:
                 self._open_data_file()
             room = self._current_file_n - self._current_file_offset
             n_part = min(room, batch_n - batch_start)
-            part = data_gpu[batch_start:batch_start + n_part]
-            if self._compression == "lz4":
+            if native_metal:
+                if self._metal_compressor is None:
+                    self._metal_compressor = _NativeMPSU16ChunkCompressor(
+                        batch_n, self._frame_bytes, self._n_8kb
+                    )
+                packed, starts, sizes = self._metal_compressor.compress(
+                    data_gpu, batch_start, n_part
+                )
+                _write_queue.put((
+                    _write_batch_to_h5,
+                    (self._current_ds, packed, starts, sizes,
+                     self._current_file_offset, n_part),
+                ))
+            elif native_mps:
+                part = data_gpu[batch_start:batch_start + n_part]
+                packed, starts, sizes = _compress_batch_mps(
+                    part, self._n_8kb, self._frame_bytes, self._dtype
+                )
+                _write_queue.put((
+                    _write_batch_to_h5,
+                    (self._current_ds, packed, starts, sizes,
+                     self._current_file_offset, n_part),
+                ))
+            elif self._compression == "lz4":
+                part = data_gpu[batch_start:batch_start + n_part]
                 packed, starts, sizes = _compress_batch(
                     part, self._n_8kb, self._frame_bytes
                 )
@@ -1812,6 +1850,7 @@ class H5Writer:
                      self._current_file_offset, n_part),
                 ))
             else:
+                part = data_gpu[batch_start:batch_start + n_part]
                 # Non-LZ4 codecs run inside HDF5's filter pipeline on CPU.
                 # Pull the batch to host once, queue the filtered write so
                 # GPU work continues while compression happens on a worker.
@@ -1835,6 +1874,9 @@ class H5Writer:
             return
         self._closed = True
         self._close_data_file()
+        if self._metal_compressor is not None:
+            self._metal_compressor.close()
+            self._metal_compressor = None
         if self._frame_offset != self._n_frames:
             raise RuntimeError(f"H5Writer wrote {self._frame_offset} of {self._n_frames} frames")
         _write_master_file(

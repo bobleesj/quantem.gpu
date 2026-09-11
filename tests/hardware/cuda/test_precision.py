@@ -2,6 +2,7 @@
 
 import os
 
+import numpy as np
 import pytest
 
 cp = pytest.importorskip("cupy")
@@ -12,6 +13,32 @@ pytestmark = pytest.mark.skipif(
 
 from quantem.gpu import io
 from quantem.gpu.detector import prepare
+
+
+@pytest.mark.parametrize("dtype", ["float16", "scaled_uint16"])
+def test_cuda_precision_matches_numpy_oracle(tmp_path, dtype):
+    values = cp.linspace(-37, 91, 4 * 4 * 12 * 12, dtype=cp.float32).reshape(
+        4, 4, 12, 12
+    )
+    source = tmp_path / "oracle_master.h5"
+    io.save(source, values, dtype="float32", verbose=False)
+    loaded = io.load(source, dtype=dtype, verbose=False)
+    report = loaded.metadata["precision"]
+    original = cp.asnumpy(values)
+    if dtype == "float16":
+        expected = original.astype(np.float16).astype(np.float32)
+        tolerance = 0.0
+    else:
+        expected = (
+            np.rint((original - report["offset"]) / report["scale"])
+            .clip(0, 65535)
+            * report["scale"]
+            + report["offset"]
+        ).astype(np.float32)
+        tolerance = report["scale"] * 1.1
+    observed = cp.asnumpy(prepare(loaded).frame(0, output="native"))
+    np.testing.assert_allclose(observed, expected[0, 0], rtol=0, atol=tolerance)
+    loaded.close()
 
 
 @pytest.mark.parametrize("dtype", ["float16", "scaled_uint16", "f16"])

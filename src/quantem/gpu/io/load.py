@@ -5178,8 +5178,9 @@ def load(
             raise ValueError("Saved precision includes intensity scaling. Omit dtype to restore its units, or request float16/scaled_uint16 explicitly; raw-code casts are not supported.")
         from .backends import resolve_backend
 
-        if resolve_backend(backend) != "cuda":
-            raise NotImplementedError("Packed precision loading currently requires CUDA; Metal support is not yet qualified.")
+        precision_backend = resolve_backend(backend)
+        if precision_backend not in {"cuda", "mps"}:
+            raise NotImplementedError("Packed precision loading requires CUDA or Metal; no CPU conversion is used.")
         if representation is not None and DataRepresentation.parse(representation) is not DataRepresentation.PACKED:
             raise ValueError("Precision loading keeps encoded values packed; omit representation or use 'packed'.")
         if any(value is not None for value in (target_scan_region, scan_shift_row_col,
@@ -5193,7 +5194,8 @@ def load(
                 for region in regions:
                     loaded.append(load_precision(path, dtype=dtype, device=device,
                         scan_shape=scan_shape, dataset_path=dataset_path,
-                        scan_region=region, detector_region=detector_region, verbose=verbose))
+                        scan_region=region, detector_region=detector_region, verbose=verbose,
+                        backend=precision_backend))
         except BaseException:
             for item in loaded:
                 item.close()

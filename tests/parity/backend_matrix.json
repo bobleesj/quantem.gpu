@@ -49,21 +49,21 @@
           "gates": [
             "docs/maintainer/migration.md"
           ],
-          "qualification": "CUDA save/load, selections and detector queries; Metal and browser-only precision formats are not implemented."
+          "qualification": "Accelerator implementations are required; CPU scientific conversion is intentionally unsupported."
         },
         "cuda": {
           "level": "required-hardware",
           "gates": [
             "tests/hardware/cuda/test_precision.py"
           ],
-          "qualification": "CUDA save/load, selections and detector queries; Metal and browser-only precision formats are not implemented."
+          "qualification": "CUDA save/load, selections and detector queries with packed resident data."
         },
         "mps": {
-          "level": "not-implemented",
+          "level": "required-hardware",
           "gates": [
-            "docs/maintainer/migration.md"
+            "tests/hardware/mps/test_precision.py"
           ],
-          "qualification": "CUDA save/load, selections and detector queries; Metal and browser-only precision formats are not implemented."
+          "qualification": "Metal save/load, selections and detector queries with packed resident data; numerical reports use float32 Metal reductions."
         },
         "swift-metal": {
           "level": "not-implemented",

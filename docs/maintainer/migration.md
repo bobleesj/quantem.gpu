@@ -180,12 +180,14 @@ Code requiring dense tensors, selection, binning, or dtype conversion must reque
 `representation="dense"` explicitly. Packed counts retain detector-mask metadata;
 apply that mask when calculating products rather than changing stored counts.
 
-Ordinary HDF5 packing is currently implemented for CUDA. Unsupported dtypes and
+Ordinary HDF5 packing is implemented for CUDA and Metal. Unsupported dtypes and
 backends raise with corrective guidance; there is no implicit dense or CPU fallback.
-Python MPS can reopen supported prepared packed sources; the native Metal HDF5
-loader remains a separate path. CUDA loading reads the source twice to allocate exact packed storage without
-staging a complete decoded acquisition. Only bounded decode buffers coexist
-with the packed inputs. This is not a complete laptop MAPED qualification.
+CUDA and MPS precision loads keep encoded values resident and run detector queries
+on their owning accelerator. CUDA uses float64 intermediates where available;
+Metal uses deterministic float32/floating-pair reductions because Apple GPUs do
+not expose float64 arithmetic. CUDA loading reads the source twice to allocate
+exact packed storage without staging a complete decoded acquisition. MPS uses the
+same bounded source blocks and reuses its Metal decoder between blocks.
 
 The legacy `dtype='u4'` shortcut is no longer a default-load mode. Use lossless
 packed native counts, or explicit dense `dtype='u8'` when that precision is intended.
@@ -193,8 +195,9 @@ packed native counts, or explicit dense `dtype='u8'` when that precision is inte
 ## Packed precision for fractional intensities
 
 Keep a float32 archive, then explicitly choose a smaller working precision.
-The CUDA loader retains all converted values in packed device storage and
-measures errors across every selected value. Loading does not change the source.
+The CUDA and MPS loaders retain all converted values in packed device storage and
+measure errors across every selected value on the accelerator. Loading does not
+change the source.
 
 ```python
 from quantem.gpu import io
@@ -242,7 +245,9 @@ blocks. A native 4D NPY source is also accepted by the precision loader.
 Unsupported resampling, masks, and source dtypes fail explicitly. Nonfinite
 sources and values outside float16's finite range are rejected before export.
 
-This path currently supports CUDA. Metal precision conversion/packing and
-browser-only precision exports are not implemented; no laptop performance or
-memory qualification is implied. The live widget consumes the loaded source
-without materializing a complete decoded array and exposes saved error details.
+Both CUDA and Metal support precision conversion, packed saving, and reopening.
+For a file-backed source, the elapsed time includes reading the complete source;
+an already-resident MPS tensor uses the direct Metal path and avoids a host copy.
+The live widget consumes the loaded source without materializing a complete
+decoded array and exposes saved error details. The current release matrix still
+requires a dedicated minimum-memory laptop run before claiming a 24 GiB limit.

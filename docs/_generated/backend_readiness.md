@@ -76,7 +76,7 @@ Blocking signoff cells:
 
 | Capability | Implementation | Evidence | Signoff |
 |---|---|---|---|
-| io.packed-display-precision | not-implemented | unsupported | not-scheduled |
+| io.packed-display-precision | implemented | evidence-gap | not-scheduled |
 | io.empad-float-resident | not-implemented | unsupported | not-scheduled |
 | geometry.scan-quarter-turn | implemented | evidence-gap | blocked |
 | io.decode-bin-provenance | implemented | evidence-gap | blocked |
