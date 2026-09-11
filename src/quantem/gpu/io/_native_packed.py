@@ -30,7 +30,10 @@ def load_h5_packed(
 ) -> FourDSTEMData:
     """Measure widths, then write exact packed words using bounded input buffers."""
     path = Path(path)
-    chunk_scans = 2048
+    # Amortize HDF5 preparation and CUDA decompressor launches while keeping
+    # the raw staging buffer bounded for the 24 GiB laptop workflow.
+    chunk_scans = 8192
+    batch_bytes_target = 1024 * 1024**2
     info = inspect(path, scan_shape=scan_shape)
     if not info.ready:
         raise ValueError(f"{info.reason}: {info.action}")
@@ -115,7 +118,7 @@ def load_h5_packed(
                             prepared,
                             auto_narrow=False,
                             output_dtype=dtype,
-                            batch_bytes_target=32 * 1024**2,
+                            batch_bytes_target=batch_bytes_target,
                             prune_device_pool=False,
                         )
                     start_stream = first // block * pixels
