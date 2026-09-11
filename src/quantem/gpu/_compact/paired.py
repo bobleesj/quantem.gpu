@@ -44,9 +44,13 @@ def kernels(device: int) -> dict:
     import cupy as cp
 
     with cp.cuda.Device(device):
+        # PM_KERNEL_OPTIONS passes extra nvrtc flags for experiments; unset in normal use.
+        import os
+        import shlex
+
         module = cp.RawModule(
             code=Path(__file__).with_name("kernels").joinpath("paired.cu").read_text(),
-            options=("--std=c++17",),
+            options=("--std=c++17", *shlex.split(os.environ.get("PM_KERNEL_OPTIONS", ""))),
         )
         names = [
             "pack_offsets", "unpack_offsets", "tables", "encode", "compact", "decode", "decode_range",
