@@ -100,7 +100,7 @@ packed storage by default on CUDA:
 tilts = io.load(files, stack=False)
 ```
 
-Preparation decodes and packs one complete acquisition at a time; all packed
+Preparation measures widths then packs bounded input blocks; all packed
 sources remain resident when the call returns. Original uint8/uint16 counts,
 full geometry, and detector-mask metadata are retained. Masks are applied by
 scientific consumers, not by modifying the packed counts. Each result is
@@ -183,8 +183,9 @@ apply that mask when calculating products rather than changing stored counts.
 Ordinary HDF5 packing is currently implemented for CUDA. Unsupported dtypes and
 backends raise with corrective guidance; there is no implicit dense or CPU fallback.
 Python MPS can reopen supported prepared packed sources; the native Metal HDF5
-loader remains a separate path. CUDA conversion currently stages one complete
-native acquisition, so packed output size alone is not a loading peak-memory bound.
+loader remains a separate path. CUDA loading reads the source twice to allocate exact packed storage without
+staging a complete decoded acquisition. Only bounded decode buffers coexist
+with the packed inputs. This is not a complete laptop MAPED qualification.
 
 The legacy `dtype='u4'` shortcut is no longer a default-load mode. Use lossless
 packed native counts, or explicit dense `dtype='u8'` when that precision is intended.

@@ -5055,7 +5055,7 @@ def load(
 
     Complete native HDF5 acquisitions can be loaded together into lossless
     bit-packed CUDA storage with ``stack=False``. Packed is the default.
-    Preparation decodes one acquisition at a time; all packed sources remain
+    Preparation uses bounded input blocks in two passes; all packed sources remain
     resident when this call returns. No binning, clipping or masking is applied.
 
     All spatial arguments use ``(row, col)`` order. ``representation`` selects
@@ -5259,16 +5259,12 @@ def load(
         results = []
         try:
             for path in paths:
-                with load(path, backend="cuda", device=device, dtype="native",
-                          representation="dense",
-                          auto_narrow=False, apply_mask=False, verbose=verbose,
-                          scan_shape=scan_shape, dataset_path=dataset_path) as dense:
-                    dense.metadata["pixel_mask"] = read_pixel_mask(path)
-                    dense.metadata["detector_mask_policy"] = "preserve-stored-counts"
-                    results.append(dense.to_representation("packed"))
-                del dense
-                # Return unused dense staging before decoding the next acquisition.
-                cp.get_default_memory_pool().free_all_blocks()
+                from ._native_packed import load_h5_packed
+
+                results.append(load_h5_packed(
+                    path, scan_shape=scan_shape, dataset_path=dataset_path,
+                    device=device, verbose=verbose,
+                ))
         except BaseException:
             for result in results:
                 result.close()
