@@ -37,7 +37,7 @@ def test_load_stacked_u8_routes_to_direct_output_dtype(monkeypatch) -> None:
 
     monkeypatch.setattr(load_module, "_load_impl", fake_load_impl)
 
-    load_module.load(["a_master.h5", "b_master.h5"], dtype="u8", verbose=False)
+    load_module.load(["a_master.h5", "b_master.h5"], representation="dense", dtype="u8", verbose=False)
 
     assert calls["filepath"] == ["a_master.h5", "b_master.h5"]
     assert calls["kwargs"]["output_dtype"] is np.uint8
@@ -181,7 +181,7 @@ def test_load_uint32_routes_to_native_uint32_output_dtype(monkeypatch) -> None:
 
     monkeypatch.setattr(load_module, "_load_impl", fake_load_impl)
 
-    load_module.load("a_master.h5", dtype="uint32", verbose=False)
+    load_module.load("a_master.h5", representation="dense", dtype="uint32", verbose=False)
 
     assert calls["kwargs"]["output_dtype"] is np.uint32
 
@@ -202,12 +202,12 @@ def test_load_output_torch_converts_single_and_list_results(monkeypatch) -> None
 
     monkeypatch.setattr(load_module, "_load_impl", fake_load_impl)
 
-    single = load_module.load("scan_master.h5", output="torch", verbose=False)
+    single = load_module.load("scan_master.h5", representation="dense", output="torch", verbose=False)
     assert single.data.__class__.__module__.startswith("torch")
     assert tuple(single.data.shape) == (1, 2)
 
     many = load_module.load(
-        ["a_master.h5", "b_master.h5"],
+        ["a_master.h5", "b_master.h5"], representation="dense",
         output="torch",
         verbose=False,
     )
@@ -219,7 +219,7 @@ def test_load_rejects_unknown_output(monkeypatch) -> None:
 
     load_module = import_module("quantem.gpu.io.load")
     with pytest.raises(ValueError, match="output must be 'native' or 'torch'"):
-        load_module.load("scan_master.h5", output="numpy", verbose=False)
+        load_module.load("scan_master.h5", representation="dense", output="numpy", verbose=False)
 
 
 def test_load_u32_routes_to_parallel_gpu_output_dtype(monkeypatch) -> None:
@@ -240,7 +240,7 @@ def test_load_u32_routes_to_parallel_gpu_output_dtype(monkeypatch) -> None:
     monkeypatch.setattr(load_module, "_load_many_parallel", fake_load_many_parallel)
 
     load_module.load(
-        ["a_master.h5", "b_master.h5"],
+        ["a_master.h5", "b_master.h5"], representation="dense",
         dtype="u32",
         devices=[0, 1],
         stack=False,
@@ -249,30 +249,6 @@ def test_load_u32_routes_to_parallel_gpu_output_dtype(monkeypatch) -> None:
 
     assert calls["paths"] == ["a_master.h5", "b_master.h5"]
     assert calls["kwargs"]["output_dtype"] is np.uint32
-
-
-def test_load_u4_routes_to_packed_four_bit_output_dtype(monkeypatch) -> None:
-    """Public dtype='u4' must not silently mean NumPy's four-byte uint32."""
-    from importlib import import_module
-    load_module = import_module("quantem.gpu.io.load")
-    from quantem.gpu.io.uint4 import pack_uint4_numpy
-
-    calls = {}
-
-    def fake_load_impl(filepath, *args, **kwargs):
-        calls["filepath"] = filepath
-        calls["kwargs"] = kwargs
-        return load_module.LoadResult(
-            pack_uint4_numpy(np.zeros((1, 1, 1), dtype=np.uint8)),
-            {},
-        )
-
-    monkeypatch.setattr(load_module, "_load_impl", fake_load_impl)
-
-    load_module.load("a_master.h5", dtype="u4", verbose=False)
-
-    assert calls["filepath"] == "a_master.h5"
-    assert calls["kwargs"]["output_dtype"] == "uint4"
 
 
 def test_mps_output_dtype_u4_does_not_alias_to_uint32() -> None:
@@ -424,7 +400,7 @@ def test_load_with_scan_region_maps_scan_roi_to_flat_frames(tmp_path, monkeypatc
     )
 
     result = load_module.load(
-        str(master),
+        str(master), representation="dense",
         scan_region=(1, 3, 2, 5),
         backend="mps",
         verbose=False,
@@ -477,7 +453,7 @@ def test_load_with_scan_region_maps_serpentine_roi_to_flat_frames(tmp_path, monk
     )
 
     result = load_module.load(
-        str(master),
+        str(master), representation="dense",
         scan_region=(1, 3, 2, 5),
         backend="mps",
         scan_order="serpentine",
@@ -516,7 +492,7 @@ def test_scan_region_crop_is_private_implementation_behind_load(monkeypatch) -> 
     monkeypatch.setattr("quantem.gpu.io.backends.resolve_backend", fake_resolve_backend)
 
     result = load_module.load(
-        "scan_master.h5",
+        "scan_master.h5", representation="dense",
         scan_region=(1, 3, 2, 5),
         backend="auto",
         detector_bin=2,
@@ -568,7 +544,7 @@ def test_load_with_scan_region_detector_region_options_route_through_load(monkey
     monkeypatch.setattr("quantem.gpu.io.backends.resolve_backend", fake_resolve_backend)
 
     result = load_module.load(
-        "scan_master.h5",
+        "scan_master.h5", representation="dense",
         scan_region=(1, 3, 2, 5),
         detector_region=(4, 6, 0, 4),
         backend="auto",
@@ -706,7 +682,7 @@ def test_load_with_scan_region_resampling_options_route_through_load(monkeypatch
     monkeypatch.setattr("quantem.gpu.io.backends.resolve_backend", fake_resolve_backend)
 
     result = load_module.load(
-        ["a_master.h5", "b_master.h5"],
+        ["a_master.h5", "b_master.h5"], representation="dense",
         scan_region=[(0, 4, 0, 5), (1, 5, 2, 7)],
         target_scan_region=(1, 4, 1, 5),
         scan_shift_row_col=shifts,
@@ -737,7 +713,7 @@ def test_load_with_scan_region_resampling_requires_shift(monkeypatch) -> None:
 
     with pytest.raises(ValueError, match="must be passed together"):
         load_module.load(
-            "scan_master.h5",
+            "scan_master.h5", representation="dense",
             scan_region=(0, 2, 0, 2),
             target_scan_region=(0, 1, 0, 1),
             backend="auto",
@@ -754,7 +730,7 @@ def test_load_with_scan_region_resampling_rejects_mps_backend(monkeypatch) -> No
 
     with pytest.raises(RuntimeError, match="backend='cuda'"):
         load_module.load(
-            "scan_master.h5",
+            "scan_master.h5", representation="dense",
             scan_region=(0, 2, 0, 2),
             target_scan_region=(0, 1, 0, 1),
             scan_shift_row_col=(0.0, 0.0),
@@ -772,7 +748,7 @@ def test_load_series_resampling_rejects_wrong_shift_count(monkeypatch) -> None:
 
     with pytest.raises(TypeError, match=r"\(n_files, 2\)"):
         load_module.load(
-            ["a_master.h5", "b_master.h5"],
+            ["a_master.h5", "b_master.h5"], representation="dense",
             scan_region=[(0, 2, 0, 2), (1, 3, 1, 3)],
             target_scan_region=(0, 2, 0, 2),
             scan_shift_row_col=np.asarray([[0.0, 0.0]], dtype=np.float32),
@@ -818,7 +794,7 @@ def test_load_series_accepts_per_file_scan_regions(
     )
 
     result = load_module.load(
-        [str(path) for path in masters],
+        [str(path) for path in masters], representation="dense",
         scan_region=[(0, 2, 0, 2), (2, 4, 3, 5)],
         backend="mps",
         scan_shape=(5, 6),
@@ -871,7 +847,7 @@ def test_load_series_per_file_scan_regions_support_variable_shapes_with_stack_fa
     )
 
     result = load_module.load(
-        [str(path) for path in masters],
+        [str(path) for path in masters], representation="dense",
         scan_region=[(0, 2, 0, 2), (2, 5, 3, 5)],
         backend="mps",
         scan_shape=(5, 6),
@@ -911,7 +887,7 @@ def test_full_scan_region_routes_to_full_loader(monkeypatch) -> None:
     monkeypatch.setattr("quantem.gpu.io.backends.resolve_backend", fake_resolve_backend)
 
     result = load_module.load(
-        "scan_master.h5",
+        "scan_master.h5", representation="dense",
         scan_region=(0, 4, 0, 5),
         scan_shape=(4, 5),
         backend="auto",
@@ -963,7 +939,7 @@ def test_full_scan_region_with_detector_region_keeps_crop_loader(monkeypatch) ->
     monkeypatch.setattr("quantem.gpu.io.backends.resolve_backend", fake_resolve_backend)
 
     result = load_module.load(
-        "scan_master.h5",
+        "scan_master.h5", representation="dense",
         scan_region=(0, 4, 0, 5),
         detector_region=(1, 3, 2, 5),
         scan_shape=(4, 5),
@@ -1008,7 +984,7 @@ def test_full_scan_region_with_resampling_keeps_crop_loader(monkeypatch) -> None
     monkeypatch.setattr("quantem.gpu.io.backends.resolve_backend", fake_resolve_backend)
 
     result = load_module.load(
-        "scan_master.h5",
+        "scan_master.h5", representation="dense",
         scan_region=(0, 4, 0, 5),
         target_scan_region=(0, 4, 0, 5),
         scan_shift_row_col=(0.25, -0.5),
@@ -1203,7 +1179,7 @@ def test_load_scan_indices_is_available_through_load(monkeypatch) -> None:
     monkeypatch.setattr("quantem.gpu.io.backends.resolve_backend", fake_resolve_backend)
 
     result = load_module.load(
-        "scan_master.h5",
+        "scan_master.h5", representation="dense",
         scan_indices=[8, 4, 8, 2],
         backend="auto",
         detector_bin=2,
@@ -1322,7 +1298,7 @@ def test_load_sparse_batch_attaches_drift_positions(monkeypatch) -> None:
     drift_fields[0, :, :, :] = [1.0, 0.0]
     drift_fields[1, :, :, :] = [0.5, -0.25]
     result = load_module.load(
-        ["frame0.h5", "frame1.h5"],
+        ["frame0.h5", "frame1.h5"], representation="dense",
         random_positions=2,
         same_random_positions=True,
         seed=4,
@@ -1417,7 +1393,7 @@ def test_load_random_positions_is_available_through_load(monkeypatch) -> None:
     monkeypatch.setattr("quantem.gpu.io.backends.resolve_backend", fake_resolve_backend)
 
     result = load_module.load(
-        ["a_master.h5", "b_master.h5"],
+        ["a_master.h5", "b_master.h5"], representation="dense",
         random_positions=4,
         seed=123,
         scan_shape=(4, 4),
@@ -1451,7 +1427,7 @@ def test_load_rejects_mixed_sparse_modes() -> None:
 
     with pytest.raises(ValueError, match="Pass only one"):
         load_module.load(
-            "scan_master.h5",
+            "scan_master.h5", representation="dense",
             scan_indices=[1, 2],
             random_positions=2,
             scan_shape=(4, 4),
@@ -1465,7 +1441,7 @@ def test_load_random_positions_rejects_hdf5_index_mode() -> None:
 
     with pytest.raises(ValueError, match="random_positions generates logical"):
         load_module.load(
-            "scan_master.h5",
+            "scan_master.h5", representation="dense",
             random_positions=2,
             scan_shape=(4, 4),
             index_mode="load_module",
@@ -1505,7 +1481,7 @@ def test_load_with_scan_region_routes_mps_to_sparse_decoder(tmp_path, monkeypatc
     )
 
     result = load_module.load(
-        str(master),
+        str(master), representation="dense",
         scan_region=(1, 3, 1, 3),
         backend="mps",
         scan_order="serpentine",
@@ -1557,7 +1533,7 @@ def test_load_with_scan_and_detector_region_crops_decoded_detector(
     )
 
     result = load_module.load(
-        str(master),
+        str(master), representation="dense",
         scan_region=(1, 3, 1, 3),
         detector_region=(1, 3, 1, 4),
         backend="mps",
@@ -1607,7 +1583,7 @@ def test_mps_multi_dataset_loader_is_owned_by_quantem_gpu(monkeypatch) -> None:
     monkeypatch.setattr(series_module, "load_mps_datasets", fake_load_mps_datasets)
 
     result = load_module.load(
-        ["a_master.h5", "b_master.h5"],
+        ["a_master.h5", "b_master.h5"], representation="dense",
         backend="mps",
         detector_bin=4,
         verbose=False,
@@ -1653,9 +1629,9 @@ def test_load_with_detector_region_rejects_uint4(monkeypatch) -> None:
 
     monkeypatch.setattr("quantem.gpu.io.backends.resolve_backend", lambda _backend: "cuda")
 
-    with pytest.raises(ValueError, match="detector_region=.*dtype='u4'"):
+    with pytest.raises(ValueError, match="representation='dense'.*dtype='u4'"):
         load_module.load(
-            "scan_master.h5",
+            "scan_master.h5", representation="dense",
             scan_region=(0, 1, 0, 1),
             detector_region=(0, 1, 0, 1),
             dtype="u4",
@@ -1681,7 +1657,7 @@ def test_selective_scan_loading_rejects_cpu_backend(monkeypatch, selector) -> No
 
     with pytest.raises(RuntimeError, match="CUDA and MPS"):
         load_module.load(
-            "scan_master.h5",
+            "scan_master.h5", representation="dense",
             backend="cpu",
             scan_shape=(1, 1),
             verbose=False,
@@ -1695,7 +1671,7 @@ def test_load_region_keyword_is_not_supported() -> None:
 
     with pytest.raises(TypeError, match="unexpected keyword"):
         load_module.load(
-            "scan_master.h5",
+            "scan_master.h5", representation="dense",
             region=(0, 1, 0, 1),
             verbose=False,
         )

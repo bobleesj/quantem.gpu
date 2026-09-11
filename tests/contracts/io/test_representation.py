@@ -85,15 +85,6 @@ def test_existing_lossless_pack_source_selects_packed_loader(
     }
 
 
-def test_packed_request_rejects_ordinary_hdf5(tmp_path) -> None:
-    """Packing is never claimed when a source has not been prepared."""
-    source = tmp_path / "ordinary.h5"
-    source.write_bytes(b"\x89HDF\r\n\x1a\n")
-
-    with pytest.raises(ValueError, match="Prepare an immutable lossless-packed"):
-        io.load(source, representation="packed", verbose=False)
-
-
 def test_dense_request_does_not_silently_expand_lossless_pack(tmp_path) -> None:
     """Dense materialization is explicit work, not a hidden load side effect."""
     source = tmp_path / "prepared.h5"

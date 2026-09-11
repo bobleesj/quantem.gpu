@@ -185,3 +185,6 @@ backends raise with corrective guidance; there is no implicit dense or CPU fallb
 Python MPS can reopen supported prepared packed sources; the native Metal HDF5
 loader remains a separate path. CUDA conversion currently stages one complete
 native acquisition, so packed output size alone is not a loading peak-memory bound.
+
+The legacy `dtype='u4'` shortcut is no longer a default-load mode. Use lossless
+packed native counts, or explicit dense `dtype='u8'` when that precision is intended.

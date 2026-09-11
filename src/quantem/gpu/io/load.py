@@ -6175,7 +6175,8 @@ def _load_impl(
                 try:
                     if prepared is None:
                         result = load(
-                            fp, dataset_path=dataset_path, apply_mask=apply_mask,
+                            fp, representation="dense",
+                            dataset_path=dataset_path, apply_mask=apply_mask,
                             scan_shape=effective_shape, scan_order=scan_order,
                             det_bin=det_bin, verbose=False, backend="cuda",
                             auto_narrow=auto_narrow, dtype=output_dtype,
