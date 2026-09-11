@@ -327,6 +327,10 @@ class PrecisionSource:
     def nbytes(self):
         return sum(part.nbytes for part in self.parts)
 
+    def numel(self):
+        """Return the logical float32 element count for array-style consumers."""
+        return math.prod(self.shape)
+
     def _check(self):
         if self.is_released:
             raise RuntimeError("Loaded data was closed; load it again before querying.")
@@ -364,8 +368,13 @@ class PrecisionSource:
 
     def __getitem__(self, position):
         import torch
+        if isinstance(position, (int, np.integer)):
+            return torch.from_numpy(self.frame(int(position))).to("mps")
         if not isinstance(position, tuple) or len(position) != 2:
-            raise TypeError("Select one diffraction pattern with source[row, col].")
+            raise TypeError(
+                "Select one diffraction pattern with source[index] or "
+                "source[row, col]."
+            )
         row, col = position
         if not (0 <= row < self.shape[0] and 0 <= col < self.shape[1]):
             raise IndexError("Scan position lies outside this loaded region.")

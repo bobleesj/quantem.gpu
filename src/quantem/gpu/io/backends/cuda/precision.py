@@ -168,6 +168,10 @@ class PrecisionSource:
     def nbytes(self):
         return sum(part.nbytes for part in self.parts)
 
+    def numel(self):
+        """Return the logical float32 element count for array-style consumers."""
+        return math.prod(self.shape)
+
     def _restore(self, codes):
         if self.precision["storage"] == "float16":
             return codes.view(cp.float16).astype(cp.float32)
@@ -220,12 +224,16 @@ class PrecisionSource:
     def __getitem__(self, position):
         import torch
 
+        if isinstance(position, (int, np.integer)):
+            return torch.from_dlpack(self.frame_native(int(position)))
         if isinstance(position, tuple) and len(position) == 2:
             row, col = position
             if not (0 <= row < self.shape[0] and 0 <= col < self.shape[1]):
                 raise IndexError("Scan position lies outside this loaded region.")
             return torch.from_dlpack(self.frame_native(row * self.shape[1] + col))
-        raise TypeError("Select one diffraction pattern with source[row, col].")
+        raise TypeError(
+            "Select one diffraction pattern with source[index] or source[row, col]."
+        )
 
     def mean_dp(self):
         with cp.cuda.Device(self._device_id):

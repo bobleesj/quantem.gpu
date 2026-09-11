@@ -92,6 +92,14 @@ def test_mps_precision_products_match_shared_numpy_oracle(tmp_path, dtype):
         errors = precision_error_reference(original, expected)
         session = prepare(loaded)
 
+        assert loaded.data.numel() == original.size
+        np.testing.assert_array_equal(
+            loaded.data[17].cpu().numpy(), expected.reshape(-1, 7, 9)[17]
+        )
+        np.testing.assert_array_equal(
+            loaded.data[2, 5].cpu().numpy(), expected[2, 5]
+        )
+
         for index in (0, 17, original.shape[0] * original.shape[1] - 1):
             np.testing.assert_array_equal(
                 session.frame(index), expected.reshape(-1, 7, 9)[index]
