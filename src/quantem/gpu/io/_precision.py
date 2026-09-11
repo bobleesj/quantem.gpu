@@ -31,8 +31,11 @@ def saved_precision(path):
     """Read only persisted precision metadata, never detector values."""
     if Path(path).suffix.lower() not in {".h5", ".hdf5"} or not h5py.is_hdf5(path):
         return None
-    with h5py.File(path, "r") as handle:
-        value = handle.attrs.get(_PRECISION_ATTRIBUTE)
+    try:
+        with h5py.File(path, "r") as handle:
+            value = handle.attrs.get(_PRECISION_ATTRIBUTE)
+    except OSError:
+        return None
     if value is None:
         return None
     report = json.loads(value)
