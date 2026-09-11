@@ -21,6 +21,24 @@ extern "C" __global__ void sample(const unsigned* words,const u64* offsets,const
  }
  out[item]=acc;
 }
+__device__ float dense_count_at(const void* values,int item_bytes,const unsigned char* valid,int r,int c,int d,int rows,int cols,int pixels,int first_row,int decoded_rows){
+ if(r<0||r>=rows||c<0||c>=cols||r<first_row||r>=first_row+decoded_rows||!valid[d])return 0;
+ u64 index=(u64(r-first_row)*cols+c)*pixels+d;
+ return item_bytes==1 ? float(((const unsigned char*)values)[index]) : float(((const unsigned short*)values)[index]);
+}
+extern "C" __global__ void sample_dense(const void* values,int item_bytes,const unsigned char* valid,const float* shifts,float* out,int first,int scans,int rows,int cols,int pixels,int first_row,int decoded_rows){
+ u64 item=(u64)blockIdx.x*blockDim.x+threadIdx.x;if(item>=(u64)scans*pixels)return;
+ int scan=first+item/pixels,d=item%pixels;
+ double rr=-double(shifts[0]),cc=-double(shifts[1]);
+ int r0=int(floor(rr)),c0=int(floor(cc));double rf=rr-r0,cf=cc-c0;
+ float acc=0;
+ for(int dr=0;dr<2;dr++)for(int dc=0;dc<2;dc++){
+  float weight=float((dr?rf:1-rf)*(dc?cf:1-cf));
+  float value=dense_count_at(values,item_bytes,valid,scan/cols+r0+dr,scan%cols+c0+dc,d,rows,cols,pixels,first_row,decoded_rows);
+  acc=__fadd_rn(acc,__fmul_rn(value,weight));
+ }
+ out[item]=acc;
+}
 extern "C" __global__ void accumulate(const float* sample,const float* shift,const float* wi,float* num,int scans,int height,int width){
  int pixels=height*width;u64 item=(u64)blockIdx.x*blockDim.x+threadIdx.x;
  if(item>=(u64)scans*pixels)return;

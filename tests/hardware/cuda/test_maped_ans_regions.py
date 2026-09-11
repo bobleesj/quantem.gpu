@@ -1,0 +1,96 @@
+"""Bounded MAPED merging directly from exact resident ANS counts."""
+
+import os
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
+
+cp = pytest.importorskip("cupy")
+pytestmark = pytest.mark.skipif(
+    os.environ.get("QUANTEM_CUDA_ANS_TEST") != "1",
+    reason="Set QUANTEM_CUDA_ANS_TEST=1 in an owned CUDA test window.",
+)
+
+from quantem.gpu._compact.streamed import StreamedCounts
+from quantem.gpu._maped import _merge_regions
+from quantem.gpu.io.backends.cuda._ans import CudaPackedResidentCounts
+
+
+@pytest.mark.parametrize("dtype", [np.uint8, np.uint16])
+def test_streamed_ans_decodes_selected_scan_ranges(dtype):
+    """Selected ranges remain exact across entropy chunk boundaries."""
+
+    shape = (6, 300, 3, 4)
+    maximum = 251 if dtype == np.uint8 else 4093
+    values = (
+        cp.arange(np.prod(shape), dtype=cp.uint64) % maximum
+    ).astype(dtype).reshape(shape)
+    source = StreamedCounts(shape, dtype)
+    flat = values.reshape(-1, *shape[2:])
+    try:
+        for first, stop in ((0, 700), (700, 1500), (1500, 1800)):
+            source.append(cp.ascontiguousarray(flat[first:stop]))
+        for first, stop in ((510, 515), (695, 705), (1490, 1510)):
+            observed = source.decode_scan_range_device(first, stop)
+            assert bool(cp.all(observed == flat[first:stop]))
+    finally:
+        source.release()
+
+
+def test_maped_ans_regions_match_bitpacked_regions():
+    """MAPED interpolation is unchanged when exact tilts stay in ANS."""
+
+    import torch
+
+    shape = (8, 9, 6, 7)
+    ans_sources = []
+    packed_sources = []
+    for tilt in range(3):
+        values = (
+            (cp.arange(np.prod(shape), dtype=cp.uint64) * (tilt + 3) + tilt * 17)
+            % 2000
+        ).astype(cp.uint16).reshape(shape)
+        ans = StreamedCounts(shape, np.uint16)
+        flat = values.reshape(-1, *shape[2:])
+        ans.append(cp.ascontiguousarray(flat[:30]))
+        ans.append(cp.ascontiguousarray(flat[30:]))
+        ans_sources.append(SimpleNamespace(shape=shape, data=ans, metadata={}))
+        packed = CudaPackedResidentCounts.from_array(
+            cp.ascontiguousarray(flat), shape
+        )
+        packed_sources.append(
+            SimpleNamespace(shape=shape, data=packed, metadata={})
+        )
+
+    real_shifts = torch.tensor(
+        [[0.0, 0.0], [-1.25, 0.6], [0.75, -1.4]], device="cuda"
+    )
+    diffraction_shifts = torch.tensor(
+        [[0.0, 0.0], [0.4, -0.7], [-0.25, 0.5]], device="cuda"
+    )
+    try:
+        expected = list(
+            _merge_regions(
+                packed_sources,
+                real_shifts,
+                diffraction_shifts,
+                scans_per_region=11,
+            )
+        )
+        observed = list(
+            _merge_regions(
+                ans_sources,
+                real_shifts,
+                diffraction_shifts,
+                scans_per_region=11,
+            )
+        )
+        assert [first for first, _ in observed] == [first for first, _ in expected]
+        for (_, observed_region), (_, expected_region) in zip(
+            observed, expected, strict=True
+        ):
+            assert bool(cp.all(observed_region == expected_region))
+    finally:
+        for source in ans_sources + packed_sources:
+            source.data.release()
