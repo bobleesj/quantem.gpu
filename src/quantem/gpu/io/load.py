@@ -15,6 +15,7 @@ Examples
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import pickle
 import re
@@ -990,11 +991,22 @@ def _frame_source_cache_path(
     *,
     apply_mask: bool,
 ) -> str | None:
-    """Return the optional private disk-cache path for source chunk metadata."""
-    cache_dir = os.environ.get(_FRAME_SOURCE_CACHE_ENV)
-    if not cache_dir:
+    """Return the private disk-cache path for source chunk metadata."""
+    configured = os.environ.get(_FRAME_SOURCE_CACHE_ENV)
+    if configured is None:
+        cache_dir = os.path.join(
+            os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")),
+            "quantem-gpu",
+            "frame-sources",
+        )
+    elif not configured.strip():
         return None
-    os.makedirs(cache_dir, exist_ok=True)
+    else:
+        cache_dir = os.path.expanduser(configured)
+    try:
+        os.makedirs(cache_dir, exist_ok=True)
+    except OSError:
+        return None
     payload = repr(
         (
             os.path.abspath(filepath),
@@ -1003,7 +1015,7 @@ def _frame_source_cache_path(
         )
     ).encode("utf-8")
     key = hashlib.sha256(payload).hexdigest()
-    return os.path.join(cache_dir, f"{key}.pkl")
+    return os.path.join(cache_dir, f"{key}.npz")
 
 
 def _master_frame_source_refs(
@@ -1054,27 +1066,32 @@ def _load_frame_source_disk_cache(
 ) -> tuple[list[dict[str, Any]], Any] | None:
     """Load cached frame-source metadata when every file signature still matches."""
     try:
-        with open(cache_path, "rb") as handle:
-            cached = pickle.load(handle)
+        with np.load(cache_path, allow_pickle=False) as cached:
+            metadata = json.loads(cached["metadata"].tobytes())
+            if signature is not None and metadata.get("signature") != signature:
+                return None
+            source_infos = []
+            for index, info in enumerate(metadata.get("source_infos", [])):
+                item = dict(info)
+                item["dtype"] = np.dtype(item["dtype"])
+                item["frame_shape"] = tuple(int(v) for v in item["frame_shape"])
+                chunk_infos = np.asarray(cached[f"chunks_{index}"], dtype=np.uint64)
+                if chunk_infos.ndim != 2 or chunk_infos.shape[1:] != (2,):
+                    return None
+                item["chunk_infos"] = chunk_infos
+                source_infos.append(item)
+            if not source_infos:
+                return None
+            pixel_mask = (
+                np.asarray(cached["pixel_mask"])
+                if metadata.get("pixel_mask_present")
+                else None
+            )
     except FileNotFoundError:
         return None
-    except Exception:  # noqa: BLE001 - a corrupt optional cache must not block loading
+    except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
         return None
-    if signature is not None and cached.get("signature") != signature:
-        return None
-    source_infos = []
-    for info in cached.get("source_infos", []):
-        item = dict(info)
-        item["dtype"] = np.dtype(item["dtype"])
-        item["frame_shape"] = tuple(int(v) for v in item["frame_shape"])
-        chunk_infos = np.asarray(item["chunk_infos"], dtype=np.uint64)
-        if chunk_infos.ndim != 2 or chunk_infos.shape[1:] != (2,):
-            return None
-        item["chunk_infos"] = chunk_infos
-        source_infos.append(item)
-    if not source_infos:
-        return None
-    return source_infos, cached.get("pixel_mask")
+    return source_infos, pixel_mask
 
 
 def _write_frame_source_disk_cache(
@@ -1085,25 +1102,37 @@ def _write_frame_source_disk_cache(
     pixel_mask: Any,
 ) -> None:
     """Write cached frame-source metadata atomically for future worker processes."""
-    serial_infos = []
-    for info in source_infos:
+    serial_infos: list[dict[str, Any]] = []
+    arrays: dict[str, np.ndarray] = {}
+    for index, info in enumerate(source_infos):
         item = dict(info)
         item["dtype"] = np.dtype(item["dtype"]).str
         item["frame_shape"] = [int(v) for v in item["frame_shape"]]
-        item["chunk_infos"] = np.asarray(item["chunk_infos"], dtype=np.uint64)
+        arrays[f"chunks_{index}"] = np.asarray(
+            item.pop("chunk_infos"), dtype=np.uint64
+        )
         serial_infos.append(item)
-    payload = {
+    metadata = {
         "signature": signature,
         "source_infos": serial_infos,
-        "pixel_mask": pixel_mask,
+        "pixel_mask_present": pixel_mask is not None,
     }
+    arrays["metadata"] = np.frombuffer(
+        json.dumps(metadata, sort_keys=True, separators=(",", ":")).encode(),
+        dtype=np.uint8,
+    )
+    arrays["pixel_mask"] = (
+        np.asarray(pixel_mask) if pixel_mask is not None else np.empty(0, np.uint8)
+    )
     cache_dir = os.path.dirname(cache_path)
-    fd, tmp_path = tempfile.mkstemp(prefix=".frame_source_", suffix=".tmp", dir=cache_dir)
+    fd, tmp_path = tempfile.mkstemp(
+        prefix=".frame_source_", suffix=".tmp", dir=cache_dir
+    )
     try:
         with os.fdopen(fd, "wb") as handle:
-            pickle.dump(payload, handle, protocol=pickle.HIGHEST_PROTOCOL)
+            np.savez(handle, **arrays)
         os.replace(tmp_path, cache_path)
-    except Exception:  # noqa: BLE001 - cache persistence is an optional optimization
+    except (OSError, TypeError, ValueError):
         try:
             os.unlink(tmp_path)
         except OSError:
@@ -5298,15 +5327,43 @@ def load(
             raise ValueError("Packed loading preserves raw counts; use dtype='native' and apply_mask=False.")
         if len(paths) > 1 and stack:
             raise ValueError("Use stack=False to keep each packed acquisition independently resident.")
+        from ._native_packed import _packing_plan_ready, load_h5_packed
+
         results = []
         try:
-            for path in paths:
-                from ._native_packed import load_h5_packed
+            plans_ready = len(paths) > 1 and all(
+                _packing_plan_ready(path, dataset_path, scan_shape) for path in paths
+            )
+            if plans_ready:
+                from concurrent.futures import ThreadPoolExecutor
 
-                results.append(load_h5_packed(
-                    path, scan_shape=scan_shape, dataset_path=dataset_path,
-                    device=device, verbose=verbose,
-                ))
+                with ThreadPoolExecutor(max_workers=min(3, len(paths))) as pool:
+                    futures = [
+                        pool.submit(
+                            load_h5_packed,
+                            path,
+                            scan_shape=scan_shape,
+                            dataset_path=dataset_path,
+                            device=device,
+                            verbose=verbose,
+                        )
+                        for path in paths
+                    ]
+                failure = None
+                for future in futures:
+                    try:
+                        results.append(future.result())
+                    except BaseException as error:
+                        if failure is None:
+                            failure = error
+                if failure is not None:
+                    raise failure
+            else:
+                for path in paths:
+                    results.append(load_h5_packed(
+                        path, scan_shape=scan_shape, dataset_path=dataset_path,
+                        device=device, verbose=verbose,
+                    ))
         except BaseException:
             for result in results:
                 result.close()
