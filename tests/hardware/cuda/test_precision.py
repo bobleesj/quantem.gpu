@@ -13,6 +13,12 @@ pytestmark = pytest.mark.skipif(
 
 from quantem.gpu import io
 from quantem.gpu.detector import prepare
+from tests.parity.precision_fixture import (
+    encode_precision_reference,
+    make_precision_fixture,
+    precision_error_reference,
+    restore_precision_reference,
+)
 
 
 @pytest.mark.parametrize("dtype", ["float16", "scaled_uint16"])
@@ -39,6 +45,64 @@ def test_cuda_precision_matches_numpy_oracle(tmp_path, dtype):
     observed = cp.asnumpy(prepare(loaded).frame(0, output="native"))
     np.testing.assert_allclose(observed, expected[0, 0], rtol=0, atol=tolerance)
     loaded.close()
+
+
+@pytest.mark.parametrize("dtype", ["float16", "scaled_uint16"])
+def test_cuda_precision_products_match_shared_numpy_oracle(tmp_path, dtype):
+    """Frames and reductions obey the same public contract as Metal/MPS."""
+
+    original = make_precision_fixture()
+    source = tmp_path / "shared_oracle.npy"
+    np.save(source, original)
+    with io.load(source, dtype=dtype, backend="cuda", verbose=False) as loaded:
+        report = loaded.metadata["precision"]
+        assert report["intensity_min"] == float(original.min())
+        assert report["intensity_max"] == float(original.max())
+        assert report["values"] == original.size
+        assert report["range_scope"] == "complete source"
+        if dtype == "scaled_uint16":
+            assert report["scale"] == (
+                float(original.max()) - float(original.min())
+            ) / 65535
+        blocks = []
+        for block in loaded.data.encoded_blocks():
+            blocks.append(block.get())
+        encoded = np.concatenate(blocks).reshape(original.shape)
+        np.testing.assert_array_equal(
+            encoded, encode_precision_reference(original, report)
+        )
+        expected = restore_precision_reference(original, report)
+        errors = precision_error_reference(original, expected)
+        session = prepare(loaded)
+
+        for index in (0, 17, original.shape[0] * original.shape[1] - 1):
+            np.testing.assert_array_equal(
+                session.frame(index), expected.reshape(-1, 7, 9)[index]
+            )
+
+        indices = [17, 0, 17, 29, 6]
+        np.testing.assert_allclose(
+            session.reduce_frames(indices, "mean"),
+            expected.reshape(-1, 7, 9)[indices].mean(axis=0),
+            rtol=3e-6,
+            atol=2e-5,
+        )
+        np.testing.assert_allclose(
+            session.mean_dp(), expected.mean(axis=(0, 1)), rtol=3e-6, atol=2e-5
+        )
+        mask = ((np.indices((7, 9)).sum(axis=0) % 3) == 0).astype(np.float32)
+        np.testing.assert_allclose(
+            session.masked_sum(mask),
+            (expected * mask).sum(axis=(2, 3)),
+            rtol=3e-6,
+            atol=2e-4,
+        )
+        assert report["rmse"] == pytest.approx(errors["rmse"], rel=3e-6, abs=1e-8)
+        assert report["max_abs_error"] == pytest.approx(
+            errors["max_abs_error"], rel=3e-6, abs=1e-8
+        )
+        for field in ("positive_to_zero", "changed", "overflow"):
+            assert report[field] == errors[field]
 
 
 @pytest.mark.parametrize("dtype", ["float16", "scaled_uint16", "f16"])

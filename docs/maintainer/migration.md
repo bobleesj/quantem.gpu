@@ -100,13 +100,15 @@ packed storage by default on CUDA:
 tilts = io.load(files, stack=False)
 ```
 
-Preparation measures widths then packs bounded input blocks; all packed
-sources remain resident when the call returns. Original uint8/uint16 counts,
-full geometry, and detector-mask metadata are retained. Masks are applied by
-scientific consumers, not by modifying the packed counts. Each result is
-caller-owned and must be closed after its final consumer. The existing dense
-result also supports `to_representation("packed")` on CUDA. This does not create
-a packed file or imply MPS/WebGPU support for this conversion.
+A first-seen source is read once to measure every adaptive stream width and once
+to write its exact packed words. Later loads reuse a source-validated width plan
+and read the detector values once. All packed sources remain resident when the
+call returns. Original uint8/uint16 counts, full geometry, and detector-mask
+metadata are retained. Masks are applied by scientific consumers, not by
+modifying the packed counts. Each result is caller-owned and must be closed
+after its final consumer. The existing dense result also supports
+`to_representation("packed")` on CUDA. This does not create a packed file or
+imply MPS/WebGPU support for this conversion.
 
 ## Next migration steps
 

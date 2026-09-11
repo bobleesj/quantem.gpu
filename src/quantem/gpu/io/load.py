@@ -5083,22 +5083,26 @@ def load(
     """Load one or more 4D-STEM sources through an accelerated backend.
 
     Fractional intensity exports support ``dtype="float16"`` and
-    ``dtype="scaled_uint16"`` on CUDA. They remain packed and print a measured
-    conversion report. Scaled codes restore their saved intensity units for
-    detector queries. ``scan_region`` and ``detector_region`` select values
-    before resident allocation; global scaling uses the complete source range.
+    ``dtype="scaled_uint16"`` on CUDA and Metal/MPS. They remain packed and
+    print a measured conversion report. Scaled codes restore their saved
+    intensity units for detector queries. ``scan_region`` and
+    ``detector_region`` select values before resident allocation; global scaling
+    uses the complete source range.
     ``io.load("display_master.h5", dtype="scaled_uint16")`` is approximate;
     preserve the original float32 file for exact scientific analysis.
 
     Complete native HDF5 acquisitions can be loaded together into lossless
     bit-packed CUDA storage with ``stack=False``. Packed is the default.
-    Preparation uses bounded input blocks in two passes; all packed sources remain
-    resident when this call returns. No binning, clipping or masking is applied.
+    A first-seen source needs one bounded measurement pass and one packing pass;
+    a validated width-plan cache removes the measurement pass on later loads.
+    All packed sources remain resident when this call returns. No binning,
+    clipping or masking is applied.
 
     All spatial arguments use ``(row, col)`` order. ``representation`` selects
     how the complete logical data is retained. Existing Lossless Pack Format
-    sources and ordinary HDF5 select ``"packed"`` automatically. Pass
-    ``representation="dense"`` explicitly when an unpacked array is required.
+    sources select their saved representation. Ordinary HDF5 selects ``"packed"``
+    automatically on CUDA. Pass ``representation="dense"`` explicitly when an
+    unpacked array is required.
 
     Self-contained ANS files default to ``representation="ans"`` and retain
     stored native counts. ``representation="paired"`` streams complete uint16
