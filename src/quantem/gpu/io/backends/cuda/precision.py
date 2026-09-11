@@ -229,6 +229,15 @@ class PrecisionSource:
 
     def mean_dp(self):
         with cp.cuda.Device(self._device_id):
+            if self.precision["storage"] == "scaled_uint16":
+                total = cp.zeros(self.det_shape, cp.uint64)
+                for part in self.parts:
+                    total += part.detector_total_device()
+                return (
+                    total.astype(cp.float64)
+                    * (self.precision["scale"] / self.n_frames)
+                    + self.precision["offset"]
+                ).astype(cp.float32)
             total = cp.zeros(self.det_shape, cp.float64)
             for values in self._blocks():
                 total += cp.sum(values, axis=0, dtype=cp.float64)
@@ -239,6 +248,26 @@ class PrecisionSource:
             weights = cp.asarray(mask, dtype=cp.float32)
             if weights.shape != self.det_shape:
                 raise ValueError(f"Detector mask must have shape {self.det_shape}.")
+            if self.precision["storage"] == "scaled_uint16" and bool(
+                cp.all((weights == 0) | (weights == 1))
+            ):
+                selected = int(cp.count_nonzero(weights).get())
+                result = cp.empty(self.n_frames, cp.float32)
+                first = 0
+                binary = weights.astype(cp.uint8)
+                for part in self.parts:
+                    codes = part.detector_sum_device(binary).reshape(-1)
+                    count = codes.size
+                    result[first : first + count] = (
+                        codes.astype(cp.float64) * self.precision["scale"]
+                        + self.precision["offset"] * selected
+                    ).astype(cp.float32)
+                    first += count
+                result = result.reshape(self.scan_shape)
+                if out is not None:
+                    out[...] = result
+                    return out
+                return result
             result = cp.empty(self.n_frames, cp.float32)
             first = 0
             for values in self._blocks():

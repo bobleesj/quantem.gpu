@@ -59,6 +59,7 @@ def _kernels(device_id: int):
                 "packed_diffraction",
                 "packed_decode_block",
                 "packed_detector_sum",
+                "packed_detector_total",
             )
         }
 
@@ -533,16 +534,18 @@ class CudaPackedResidentCounts:
     def detector_sum_device(self, mask: np.ndarray):
         """Fuse bit extraction and exact uint64 binary-mask accumulation."""
         self._require_resident()
-        values = np.asarray(mask)
-        if (
-            values.shape != self.shape[2:]
-            or values.dtype.kind not in "buif"
-            or np.any((values != 0) & (values != 1))
-        ):
+        import cupy as cp
+
+        if isinstance(mask, cp.ndarray):
+            values = mask
+            invalid = bool(cp.any((values != 0) & (values != 1)))
+        else:
+            values = np.asarray(mask)
+            invalid = bool(np.any((values != 0) & (values != 1)))
+        if values.shape != self.shape[2:] or values.dtype.kind not in "buif" or invalid:
             raise ValueError(
                 f"mask must have detector shape {self.shape[2:]} and contain only zero or one."
             )
-        import cupy as cp
 
         selected = cp.asarray(values.reshape(-1), dtype=cp.uint8)
         output = cp.zeros(self.shape[:2], dtype=cp.uint64)
@@ -552,6 +555,27 @@ class CudaPackedResidentCounts:
             (
                 *self._arrays,
                 selected,
+                output,
+                np.uint64(self._scan_count),
+                np.uint32(self._detector_count),
+                np.uint32(self.block_frames),
+                np.uint64(self._stream_count),
+            ),
+        )
+        cp.cuda.get_current_stream().synchronize()
+        return output
+
+    def detector_total_device(self):
+        """Sum every scan position into one exact uint64 detector image."""
+        self._require_resident()
+        import cupy as cp
+
+        output = cp.zeros(self.shape[2:], dtype=cp.uint64)
+        self._launch(
+            "packed_detector_total",
+            self._stream_count,
+            (
+                *self._arrays,
                 output,
                 np.uint64(self._scan_count),
                 np.uint32(self._detector_count),
