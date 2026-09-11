@@ -195,6 +195,25 @@ class FourDSTEMData(NamedTuple):
         representation returns this same object, not a second ownership lease.
         Unsupported directions fail before hidden materialization or CPU work.
         Conversion readiness is backend-specific during this integration.
+        Native contiguous CUDA uint8/uint16 arrays support exact dense-to-packed
+        conversion, with scan/detector geometry and metadata preserved.
+
+        Parameters
+        ----------
+        representation
+            Requested resident representation, for example ``"packed"``.
+
+        Returns
+        -------
+        FourDSTEMData
+            Independently owned converted counts, or this object if unchanged.
+
+        Examples
+        --------
+        >>> dense = load("acquisition.h5", representation="dense", dtype="native")
+        >>> packed = dense.to_representation("packed")
+        >>> dense.close()
+        >>> packed.close()
         """
         from ._ans_dispatch import _convert_resident
 

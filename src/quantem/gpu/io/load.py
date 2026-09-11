@@ -5053,11 +5053,15 @@ def load(
 ) -> FourDSTEMData | list[FourDSTEMData]:
     """Load one or more 4D-STEM sources through an accelerated backend.
 
+    Complete native HDF5 acquisitions can be loaded together into lossless
+    bit-packed CUDA storage with ``stack=False``. Packed is the default.
+    Preparation decodes one acquisition at a time; all packed sources remain
+    resident when this call returns. No binning, clipping or masking is applied.
+
     All spatial arguments use ``(row, col)`` order. ``representation`` selects
     how the complete logical data is retained. Existing Lossless Pack Format
-    sources select ``"packed"`` automatically; ordinary HDF5 remains
-    dense. Pass ``representation="dense"``
-    explicitly when an unpacked array is required.
+    sources and ordinary HDF5 select ``"packed"`` automatically. Pass
+    ``representation="dense"`` explicitly when an unpacked array is required.
 
     Self-contained ANS files default to ``representation="ans"`` and retain
     stored native counts. ``representation="paired"`` streams complete uint16
@@ -5067,8 +5071,9 @@ def load(
     ANS-to-bitpacked GPU transcode where implemented. CPU reference expansion
     requires ``backend="cpu", representation="dense"``. Unsupported conversions
     raise instead of silently loading HDF5, expanding densely, or using CPU.
-    ``apply_mask=None`` preserves historical HDF5 masking defaults but leaves ANS
-    stored counts unchanged; compute detector masks explicitly on its products.
+    ``apply_mask=None`` retains raw counts in packed/ANS storage and keeps
+    historical masking behavior for explicitly dense loads. Compute detector
+    masks explicitly on compact products.
     File format and compression are detected from contents, independently of
     resident representation. No ``decompression=`` argument is needed.
 
@@ -5102,8 +5107,10 @@ def load(
     representation
         ``"dense"``, ``"packed"``, or ``"ans"``. The authenticated storage
         schema selects the exact decoder within each representation.
-        When omitted, the loader detects the source-native representation;
-        ordinary HDF5 uses the dense path. Unsupported
+        When omitted, ordinary HDF5 uses lossless packed GPU storage;
+        saved compact sources retain their recorded representation. Request
+        ``representation="dense"`` explicitly for dense arrays or transformed
+        selections. Unsupported
         source/representation/backend combinations raise rather than transform
         implicitly. Representation never changes scan coverage,
         detector coverage, binning, calibration, or scientific dtype.
@@ -5216,8 +5223,58 @@ def load(
         if expected_source_sha256 not in {None, source_integrity.whole_file_sha256}:
             raise ValueError("expected_source_sha256 conflicts with source_integrity.")
         expected_source_sha256 = source_integrity.whole_file_sha256
-    selected_representation = _selected_representation(source, representation)
     paths = _source_paths(source)
+    if representation is None and paths and all(
+        DataRepresentation.detect_source(path) is DataRepresentation.DENSE
+        for path in paths
+    ):
+        representation = DataRepresentation.PACKED
+    if (representation is not None
+            and DataRepresentation.parse(representation) is DataRepresentation.PACKED
+            and paths
+            and all(DataRepresentation.detect_source(path) is DataRepresentation.DENSE
+                    for path in paths)):
+        from .backends import resolve_backend
+
+        if resolve_backend(backend) != "cuda":
+            raise NotImplementedError(
+                "Default packed HDF5 loading currently requires CUDA. On MPS, "
+                "use a prepared packed source or the native Metal loader. "
+                "Request representation='dense' explicitly only if dense "
+                "storage is intended."
+            )
+        if any(value is not None for value in (
+            scan_region, detector_region, target_scan_region, scan_shift_row_col,
+            scan_indices, random_positions, drift, devices, expected_source_sha256,
+            source_integrity,
+        )) or detector_bin != 1 or output != "native" or scan_order != "row-major":
+            raise ValueError(
+                "Packed loading retains complete native acquisitions. Request "
+                "representation='dense' for selection or conversion options."
+            )
+        if dtype not in {None, "native"} or apply_mask:
+            raise ValueError("Packed loading preserves raw counts; use dtype='native' and apply_mask=False.")
+        if len(paths) > 1 and stack:
+            raise ValueError("Use stack=False to keep each packed acquisition independently resident.")
+        results = []
+        try:
+            for path in paths:
+                with load(path, backend="cuda", device=device, dtype="native",
+                          representation="dense",
+                          auto_narrow=False, apply_mask=False, verbose=verbose,
+                          scan_shape=scan_shape, dataset_path=dataset_path) as dense:
+                    dense.metadata["pixel_mask"] = read_pixel_mask(path)
+                    dense.metadata["detector_mask_policy"] = "preserve-stored-counts"
+                    results.append(dense.to_representation("packed"))
+                del dense
+                # Return unused dense staging before decoding the next acquisition.
+                cp.get_default_memory_pool().free_all_blocks()
+        except BaseException:
+            for result in results:
+                result.close()
+            raise
+        return results[0] if isinstance(source, (str, os.PathLike)) else results
+    selected_representation = _selected_representation(source, representation)
     if selected_representation is DataRepresentation.PAIRED:
         from .backends import resolve_backend
         from ._paired import load_h5_paired, load_paired_file

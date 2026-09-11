@@ -93,8 +93,20 @@ The remote `storage_kind` field also reports `packed`; its separate
 `storage_schema` continues to identify the decoder. Save calls accept only
 `format="arina"` or `format="quantem"`. Replace `format="ans"` with
 `format="quantem", compression="ans"`, and remove the old HDF5 format aliases.
-File encodings themselves are unchanged. Default loading remains source-native
-until automatic HDF5-to-packed conversion is implemented and qualified.
+File encodings themselves are unchanged. Ordinary native HDF5 now loads into
+packed storage by default on CUDA:
+
+```python
+tilts = io.load(files, stack=False)
+```
+
+Preparation decodes and packs one complete acquisition at a time; all packed
+sources remain resident when the call returns. Original uint8/uint16 counts,
+full geometry, and detector-mask metadata are retained. Masks are applied by
+scientific consumers, not by modifying the packed counts. Each result is
+caller-owned and must be closed after its final consumer. The existing dense
+result also supports `to_representation("packed")` on CUDA. This does not create
+a packed file or imply MPS/WebGPU support for this conversion.
 
 ## Next migration steps
 
@@ -155,3 +167,21 @@ Before publishing an rc:
 - Do not use fast-mode SSB as parity evidence.
 - Do not copy `MetalImageFFT` or `Native4DSTEMIO` source into Live4DSTEM.
 - Do not add a local Python FFT or HDF5 helper to the Mac app.
+
+
+## Python HDF5 loading defaults to packed storage
+
+`io.load(path)` now preserves complete native uint8/uint16 HDF5 counts in
+lossless packed GPU storage. Backend selection remains automatic. For multiple
+acquisitions use `io.load(paths, stack=False)` to retain separate packed owners.
+Saved packed, ANS and paired sources continue to reopen their recorded layouts.
+
+Code requiring dense tensors, selection, binning, or dtype conversion must request
+`representation="dense"` explicitly. Packed counts retain detector-mask metadata;
+apply that mask when calculating products rather than changing stored counts.
+
+Ordinary HDF5 packing is currently implemented for CUDA. Unsupported dtypes and
+backends raise with corrective guidance; there is no implicit dense or CPU fallback.
+Python MPS can reopen supported prepared packed sources; the native Metal HDF5
+loader remains a separate path. CUDA conversion currently stages one complete
+native acquisition, so packed output size alone is not a loading peak-memory bound.

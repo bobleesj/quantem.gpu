@@ -29,6 +29,11 @@ def _convert_resident(loaded, representation):
                 "Direct ANS-to-packed conversion is not qualified for this backend yet."
             )
         output = convert()
+    elif (loaded.representation is DataRepresentation.DENSE
+          and target is DataRepresentation.PACKED):
+        from .backends.cuda._ans import CudaPackedResidentCounts
+
+        output = CudaPackedResidentCounts.from_array(source, loaded.shape)
     else:
         raise NotImplementedError(
             f"{loaded.representation.value}-to-{target.value} resident conversion "

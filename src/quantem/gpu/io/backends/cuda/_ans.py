@@ -48,6 +48,8 @@ def _kernels(device_id: int):
         return {
             name: module.get_function(name)
             for name in (
+                "dense_measure_packed",
+                "dense_write_packed",
                 "ans_validate",
                 "ans_decode_block",
                 "ans_diffraction",
@@ -393,6 +395,52 @@ class CudaPackedResidentCounts:
         self._stream_count = self._block_count * self._detector_count
         self.is_released = False
         self.conversion_owned_buffer_peak_bytes = None
+
+    @classmethod
+    def from_array(cls, values, shape):
+        """Pack complete native counts using the existing exact block layout."""
+        import cupy as cp
+
+        if not isinstance(values, cp.ndarray) or values.dtype not in (
+            np.dtype("uint8"), np.dtype("uint16")
+        ):
+            raise TypeError("Load native uint8/uint16 counts on CUDA before packing.")
+        if len(shape) != 4 or values.size != int(np.prod(shape)):
+            raise ValueError("Provide the complete four-dimensional scan/detector shape.")
+        if not values.flags.c_contiguous:
+            raise ValueError("Use contiguous native counts before packing.")
+        block_frames = 128
+        scan_count = shape[0] * shape[1]
+        detector_count = shape[2] * shape[3]
+        stream_count = ((scan_count + block_frames - 1) // block_frames) * detector_count
+        device_id = values.device.id
+        with cp.cuda.Device(device_id):
+            kernels = _kernels(device_id)
+            widths = cp.empty(stream_count, cp.uint8)
+            lengths = cp.empty(stream_count, cp.uint64)
+            dimensions = (
+                np.uint64(scan_count), np.uint32(detector_count),
+                np.uint32(block_frames), np.uint64(stream_count),
+            )
+            launch = (((stream_count + 127) // 128,), (128,))
+            kernels["dense_measure_packed"](
+                *launch, (values, np.uint32(values.dtype.itemsize),
+                          widths, lengths, *dimensions)
+            )
+            offsets = cp.zeros(stream_count + 1, cp.uint64)
+            cp.cumsum(lengths, dtype=cp.uint64, out=offsets[1:])
+            words = cp.empty(int(offsets[-1].get()), cp.uint32)
+            kernels["dense_write_packed"](
+                *launch, (values, np.uint32(values.dtype.itemsize),
+                          widths, offsets, words, *dimensions)
+            )
+            cp.cuda.get_current_stream().synchronize()
+            result = cls(tuple(shape), block_frames, values.dtype, words,
+                         offsets, widths, device_id, kernels)
+            result.conversion_owned_buffer_peak_bytes = (
+                values.nbytes + result.resident_bytes + lengths.nbytes
+            )
+            return result
 
     @property
     def resident_bytes(self) -> int:
