@@ -189,3 +189,60 @@ with the packed inputs. This is not a complete laptop MAPED qualification.
 
 The legacy `dtype='u4'` shortcut is no longer a default-load mode. Use lossless
 packed native counts, or explicit dense `dtype='u8'` when that precision is intended.
+
+## Packed precision for fractional intensities
+
+Keep a float32 archive, then explicitly choose a smaller working precision.
+The CUDA loader retains all converted values in packed device storage and
+measures errors across every selected value. Loading does not change the source.
+
+```python
+from quantem.gpu import io
+
+io.save("merged_master.h5", merged, dtype="float32")
+half = io.load("merged_master.h5", dtype="float16")
+scaled = io.load("merged_master.h5", dtype="scaled_uint16")
+```
+
+`float16` retains fractional weak intensities with reduced floating-point
+precision. `scaled_uint16` stores `round((intensity - offset) / scale)` using
+one range for the complete source. Returned patterns and reductions restore
+`code * scale + offset`. These codes are not raw detector counts; code 65535
+is a valid intensity. Plain `uint16` keeps its existing whole-count meaning.
+Backend choice and packing are automatic. Lossy precision is always explicit.
+
+The loader reports source/working precision, intensity range, packed bytes,
+RMS and maximum absolute error, positive values becoming zero, overflow,
+clipping, and the number of values measured. Measurements use GPU reductions;
+no CPU codec or numerical fallback is used. Scaled uint16 may erase weak
+intensities despite a small RMS error. Preserve float32 for exact analysis.
+
+```python
+region = io.load(
+    "merged_master.h5", dtype="scaled_uint16",
+    scan_region=(128, 256, 128, 256),
+    detector_region=(0, 192, 0, 192),
+)
+io.save("display_master.h5", region)
+reopened = io.load("display_master.h5")
+```
+
+Bounds use `(row_start, row_stop, col_start, col_stop)`. A list of scan regions
+returns separately owned loaded objects. Global range measurement reads the
+complete source in bounded GPU blocks; error measurement covers the selected
+values. Reopened exports use saved scaling and label the original error report
+as saved, rather than claiming a fresh comparison against the original source.
+Inspect `reopened.metadata["precision"]` for the persisted report. `close()`
+releases storage after the final consumer. Disk compression is GPU
+bitshuffle/LZ4; packed resident size and compressed file size are different.
+
+Export directly with `io.save(..., dtype="float16")` or
+`io.save(..., dtype="scaled_uint16")`. Conversion and writing use bounded GPU
+blocks. A native 4D NPY source is also accepted by the precision loader.
+Unsupported resampling, masks, and source dtypes fail explicitly. Nonfinite
+sources and values outside float16's finite range are rejected before export.
+
+This path currently supports CUDA. Metal precision conversion/packing and
+browser-only precision exports are not implemented; no laptop performance or
+memory qualification is implied. The live widget consumes the loaded source
+without materializing a complete decoded array and exposes saved error details.

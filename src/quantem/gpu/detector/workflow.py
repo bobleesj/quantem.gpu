@@ -709,6 +709,9 @@ def _resolve_backend(data):
         if sources and all(isinstance(source, (StreamedCounts, CudaANSResidentCounts, CudaPackedResidentCounts)) for source in sources):
             return StreamedSeriesCompute(data)
         return CudaSeriesCompute(data)
+    precision_payload = data.data if hasattr(data, "_fields") and "data" in data._fields else data
+    if type(precision_payload).__module__ == "quantem.gpu.io.backends.cuda.precision":
+        return precision_payload
     from .backends.packed import PackedDetectorCompute, is_packed_source
     from .backends.counts import CountDetectorCompute, is_count_source
 

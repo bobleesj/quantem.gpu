@@ -5053,6 +5053,14 @@ def load(
 ) -> FourDSTEMData | list[FourDSTEMData]:
     """Load one or more 4D-STEM sources through an accelerated backend.
 
+    Fractional intensity exports support ``dtype="float16"`` and
+    ``dtype="scaled_uint16"`` on CUDA. They remain packed and print a measured
+    conversion report. Scaled codes restore their saved intensity units for
+    detector queries. ``scan_region`` and ``detector_region`` select values
+    before resident allocation; global scaling uses the complete source range.
+    ``io.load("display_master.h5", dtype="scaled_uint16")`` is approximate;
+    preserve the original float32 file for exact scientific analysis.
+
     Complete native HDF5 acquisitions can be loaded together into lossless
     bit-packed CUDA storage with ``stack=False``. Packed is the default.
     Preparation uses bounded input blocks in two passes; all packed sources remain
@@ -5160,6 +5168,38 @@ def load(
         multi-frame detector object in ``FourDSTEMData.data`` while background
         decoding fills its dataset slots.
     """
+    from ._precision import load_precision, precision_name, saved_precision
+
+    precision = precision_name(dtype)
+    precision_sources = [source] if isinstance(source, (str, os.PathLike)) else list(source)
+    saved = [saved_precision(path) for path in precision_sources if Path(path).is_file()]
+    if precision or any(saved):
+        if any(saved) and dtype not in (None, "native") and precision is None:
+            raise ValueError("Saved precision includes intensity scaling. Omit dtype to restore its units, or request float16/scaled_uint16 explicitly; raw-code casts are not supported.")
+        from .backends import resolve_backend
+
+        if resolve_backend(backend) != "cuda":
+            raise NotImplementedError("Packed precision loading currently requires CUDA; Metal support is not yet qualified.")
+        if representation is not None and DataRepresentation.parse(representation) is not DataRepresentation.PACKED:
+            raise ValueError("Precision loading keeps encoded values packed; omit representation or use 'packed'.")
+        if any(value is not None for value in (target_scan_region, scan_shift_row_col,
+                scan_indices, random_positions, drift, devices, expected_source_sha256, source_integrity)) or detector_bin != 1 or det_bin not in (None, 1) or output != "native" or scan_order != "row-major" or apply_mask:
+            raise NotImplementedError("Precision loading supports scan_region and detector_region; remove resampling, masking and other conversion controls.")
+        multiple_regions = scan_region is not None and len(scan_region) > 0 and isinstance(scan_region[0], (tuple, list))
+        regions = list(scan_region) if multiple_regions else [scan_region]
+        loaded = []
+        try:
+            for path in precision_sources:
+                for region in regions:
+                    loaded.append(load_precision(path, dtype=dtype, device=device,
+                        scan_shape=scan_shape, dataset_path=dataset_path,
+                        scan_region=region, detector_region=detector_region, verbose=verbose))
+        except BaseException:
+            for item in loaded:
+                item.close()
+            raise
+        return loaded[0] if isinstance(source, (str, os.PathLike)) and not multiple_regions else loaded
+
     if isinstance(source, (str, os.PathLike)):
         prepared = Path(source)
         if prepared.is_dir() and (prepared / "checkpoint.json").is_file():

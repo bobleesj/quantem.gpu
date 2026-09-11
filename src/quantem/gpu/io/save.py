@@ -83,11 +83,7 @@ _SAVE_DTYPES = (
     np.dtype(np.uint8),
     np.dtype(np.uint16),
     np.dtype(np.uint32),
-    # float16 intentionally NOT supported: 10-bit mantissa makes the
-    # smallest representable step at value V equal to V / 1024. For typical
-    # detector counts up to ~3000, that's a step of ~3 counts — WORSE than
-    # uint16 round-quantize (max error 0.5). Use uint16 for lossy or
-    # float32 for lossless.
+    np.dtype(np.float16),
     np.dtype(np.float32),
 )
 _DTYPE_ALIASES = {
@@ -1991,13 +1987,13 @@ def save(
     [0, 65535] range; signed wastes a bit on the negative half and risks
     clipping bright Bragg spots > 32767. Use ``np.uint16``.
 
-    ``float16`` is intentionally NOT supported
-    -------------------------------------------
-    10-bit mantissa makes the smallest representable step at value V equal
-    to V / 1024. For typical STEM detector counts up to ~3000, that's a step
-    of ~3 counts — *worse* than uint16's 0.5 max error AND larger than the
-    Poisson noise floor at low signals. float16 saves are pure noise, never
-    use them. Calls with ``dtype=np.float16`` raise ``ValueError``.
+    Approximate precision exports
+    -----------------------------
+    ``dtype="float16"`` preserves fractional weak intensities with reduced
+    floating-point precision. ``dtype="scaled_uint16"`` uses one source-wide
+    intensity scale. Both record GPU-measured conversion errors and reopen
+    through ``io.load`` as packed intensities in their original units.
+    Keep float32 for an unchanged scientific archive.
 
     Drift metadata co-saved with the 4D-STEM
     ----------------------------------------
@@ -2057,6 +2053,18 @@ def save(
         lossless dtypes; near-lossless (≤0.5 count) for uint16-quantized.
     """
     import time
+
+    if torch is not None and isinstance(data, torch.Tensor) and data.is_cuda:
+        data = cp.from_dlpack(data.detach())
+
+    from ._precision import precision_name, save_precision
+    from .models import FourDSTEMData
+
+    if precision_name(dtype) or (isinstance(data, FourDSTEMData) and "precision" in data.metadata):
+        return save_precision(filepath, data, dtype=dtype, scan_shape=scan_shape,
+            metadata=metadata, backend=backend, format=format, compression=compression,
+            frames_per_file=frames_per_file, verbose=verbose, wait=wait,
+            source_master=source_master)
 
     normalized_format = str(format).lower()
     if normalized_format not in {"arina", "quantem"}:

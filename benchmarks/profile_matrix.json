@@ -62,6 +62,7 @@
     }
   },
   "capabilities": {
+    "io.packed-display-precision": {"required_metrics": ["total_wall_ms", "resident_bytes", "float_error_metrics"]},
     "io.empad-float-resident": {
       "required_metrics": ["total_wall_ms", "peak_memory", "resident_bytes", "output_hashes"]
     },
@@ -196,6 +197,13 @@
     "timestamps"
   ],
   "cells": [
+    {"id": "io.packed-display-precision::cpu-reference", "capability": "io.packed-display-precision", "backend": "cpu-reference", "support_level": "not-implemented", "pr_gate": "unsupported-contract", "scheduled_profile": "none", "release_signoff": false, "runner": "portable-ci", "state": "unsupported"},
+    {"id": "io.packed-display-precision::cuda", "capability": "io.packed-display-precision", "backend": "cuda", "support_level": "required-hardware", "pr_gate": "precision-export-selection-and-detector-parity", "scheduled_profile": "none", "release_signoff": false, "runner": "physical-cuda", "state": "evidence-gap", "evidence_note": "Scoped GPU tests and real full-output load/save/reopen executed. Complete release-signoff evidence is not registered; no Metal or minimum-memory qualification is inferred."},
+    {"id": "io.packed-display-precision::mps", "capability": "io.packed-display-precision", "backend": "mps", "support_level": "not-implemented", "pr_gate": "unsupported-contract", "scheduled_profile": "none", "release_signoff": false, "runner": "portable-ci", "state": "unsupported"},
+    {"id": "io.packed-display-precision::swift-metal", "capability": "io.packed-display-precision", "backend": "swift-metal", "support_level": "not-implemented", "pr_gate": "unsupported-contract", "scheduled_profile": "none", "release_signoff": false, "runner": "portable-ci", "state": "unsupported"},
+    {"id": "io.packed-display-precision::webgpu", "capability": "io.packed-display-precision", "backend": "webgpu", "support_level": "not-implemented", "pr_gate": "unsupported-contract", "scheduled_profile": "none", "release_signoff": false, "runner": "portable-ci", "state": "unsupported"},
+    {"id": "io.packed-display-precision::direct3d", "capability": "io.packed-display-precision", "backend": "direct3d", "support_level": "not-implemented", "pr_gate": "unsupported-contract", "scheduled_profile": "none", "release_signoff": false, "runner": "portable-ci", "state": "unsupported"},
+    {"id": "io.packed-display-precision::vulkan", "capability": "io.packed-display-precision", "backend": "vulkan", "support_level": "not-implemented", "pr_gate": "unsupported-contract", "scheduled_profile": "none", "release_signoff": false, "runner": "portable-ci", "state": "unsupported"},
     {"id": "io.empad-float-resident::cpu-reference", "capability": "io.empad-float-resident", "backend": "cpu-reference", "support_level": "reference-fixture", "pr_gate": "original-byte-and-float-reference", "scheduled_profile": "none", "release_signoff": false, "runner": "portable-cpu", "state": "evidence-gap", "evidence_note": "Original-byte oracle and public-file checks exist; complete cell-scoped signoff evidence is not retained yet."},
     {"id": "io.empad-float-resident::swift-metal", "capability": "io.empad-float-resident", "backend": "swift-metal", "support_level": "partial-hardware", "pr_gate": "native-empad-source-and-resident-parity", "scheduled_profile": "none", "release_signoff": true, "runner": "physical-native-swift-metal", "state": "evidence-gap", "evidence_note": "Initial native float packing, selected DP and aperture parity on Apple M5. Full consumer, DPC, cancellation and release qualification remain pending; no FPS or load-time claim."},
     {"id": "io.empad-float-resident::cuda", "capability": "io.empad-float-resident", "backend": "cuda", "support_level": "not-implemented", "pr_gate": "unsupported-contract", "scheduled_profile": "none", "release_signoff": false, "runner": "portable-ci", "state": "unsupported"},

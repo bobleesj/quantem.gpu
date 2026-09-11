@@ -21,6 +21,7 @@ Use `python scripts/backend_status.py json --backend BACKEND` for all records.
 
 | Capability | Implementation | Evidence | Signoff |
 |---|---|---|---|
+| io.packed-display-precision | not-implemented | unsupported | not-scheduled |
 | io.empad-float-resident | implemented | evidence-gap | not-scheduled |
 | geometry.scan-quarter-turn | implemented | evidence-gap | blocked |
 | io.decode-bin-provenance | implemented | evidence-gap | blocked |
@@ -47,6 +48,7 @@ Blocking signoff cells:
 
 | Capability | Implementation | Evidence | Signoff |
 |---|---|---|---|
+| io.packed-display-precision | implemented | evidence-gap | not-scheduled |
 | io.empad-float-resident | not-implemented | unsupported | not-scheduled |
 | geometry.scan-quarter-turn | implemented | evidence-gap | blocked |
 | io.decode-bin-provenance | implemented | evidence-gap | blocked |
@@ -74,6 +76,7 @@ Blocking signoff cells:
 
 | Capability | Implementation | Evidence | Signoff |
 |---|---|---|---|
+| io.packed-display-precision | not-implemented | unsupported | not-scheduled |
 | io.empad-float-resident | not-implemented | unsupported | not-scheduled |
 | geometry.scan-quarter-turn | implemented | evidence-gap | blocked |
 | io.decode-bin-provenance | implemented | evidence-gap | blocked |
@@ -101,6 +104,7 @@ Blocking signoff cells:
 
 | Capability | Implementation | Evidence | Signoff |
 |---|---|---|---|
+| io.packed-display-precision | not-implemented | unsupported | not-scheduled |
 | io.empad-float-resident | partial | evidence-gap | blocked |
 | geometry.scan-quarter-turn | implemented | evidence-gap | blocked |
 | io.decode-bin-provenance | implemented | evidence-gap | blocked |
@@ -127,6 +131,7 @@ Blocking signoff cells:
 
 | Capability | Implementation | Evidence | Signoff |
 |---|---|---|---|
+| io.packed-display-precision | not-implemented | unsupported | not-scheduled |
 | io.empad-float-resident | not-implemented | unsupported | not-scheduled |
 | geometry.scan-quarter-turn | implemented | evidence-gap | blocked |
 | io.decode-bin-provenance | implemented | evidence-gap | blocked |
@@ -152,6 +157,7 @@ Blocking signoff cells:
 
 | Capability | Implementation | Evidence | Signoff |
 |---|---|---|---|
+| io.packed-display-precision | not-implemented | unsupported | not-scheduled |
 | io.empad-float-resident | not-implemented | unsupported | not-scheduled |
 | geometry.scan-quarter-turn | not-implemented | unsupported | not-scheduled |
 | io.decode-bin-provenance | not-implemented | unsupported | not-scheduled |
@@ -171,6 +177,7 @@ No release signoff is scheduled.
 
 | Capability | Implementation | Evidence | Signoff |
 |---|---|---|---|
+| io.packed-display-precision | not-implemented | unsupported | not-scheduled |
 | io.empad-float-resident | not-implemented | unsupported | not-scheduled |
 | geometry.scan-quarter-turn | not-implemented | unsupported | not-scheduled |
 | io.decode-bin-provenance | partial | evidence-gap | not-scheduled |

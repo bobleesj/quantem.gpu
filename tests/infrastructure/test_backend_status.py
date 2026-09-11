@@ -64,7 +64,7 @@ def test_readiness_keeps_missing_features_and_measurements_visible() -> None:
 
     assert set(status["backends"]) == set(BACKENDS)
     for backend, entry in status["backends"].items():
-        assert len(entry["cells"]) == 10
+        assert len(entry["cells"]) == len(_matrices()[0]["capabilities"])
         assert entry["blocking_cells"] == [
             cell["id"]
             for cell in entry["cells"]
@@ -89,7 +89,7 @@ def test_signoff_requires_hashed_retained_output_not_a_test_path(
     capabilities, profile, _ = _matrices()
     for cell in profile["cells"]:
         cell["release_signoff"] = False
-    selected = profile["cells"][0]
+    selected = next(cell for cell in profile["cells"] if cell["support_level"] != "not-implemented")
     selected.update(state="ready", release_signoff=True)
     with pytest.raises(ValueError, match="ready requires retained_evidence"):
         build_status(capabilities, profile, {}, root=tmp_path)
