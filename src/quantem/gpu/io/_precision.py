@@ -262,7 +262,9 @@ def _new_report(source, storage):
     return {
         "version": 1,
         "storage": storage,
-        "source_dtype": str(source.dtype),
+        "source_dtype": "float32"
+        if source.saved and source.saved["storage"] == "scaled_uint16"
+        else str(source.dtype),
         "source_shape": list(source.shape),
         "intensity_min": low,
         "intensity_max": high,

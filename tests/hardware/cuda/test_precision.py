@@ -158,3 +158,16 @@ def test_maped_tensor_exports_and_wide_scaled_intensities(tmp_path):
         result = prepare(loaded).frame(0, output="native")
         assert bool(cp.all(cp.isfinite(result)))
         assert loaded.metadata["precision"]["overflow"] == 0
+
+
+def test_changing_saved_precision_reports_restored_source_units(tmp_path):
+    values = cp.linspace(0, 100, 4 * 4 * 16 * 16, dtype=cp.float32).reshape(
+        4, 4, 16, 16
+    )
+    path = tmp_path / "display_master.h5"
+    io.save(path, values, dtype="scaled_uint16")
+    with io.load(path, dtype="float16", verbose=False) as loaded:
+        report = loaded.metadata["precision"]
+        assert report["source_dtype"] == "float32"
+        assert report["prior_conversion"]["storage"] == "scaled_uint16"
+        assert report["values"] == values.size
