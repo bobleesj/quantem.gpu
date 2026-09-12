@@ -74,7 +74,7 @@ domain's `backends/`; native Android code is owned by `vulkan/`.
 ## Canonical representation names and receipt v3
 
 The resident receipt is now `quantem.gpu.4dstem-resident-receipt/v3`.
-`representation` is `dense`, `packed`, or `ans`; the separate `storage_encoding`
+`representation` is `dense`, `packed`, or `encoded`; the separate `storage_encoding`
 field is removed. `storage_schema`, source/working dtype, geometry, hashes, and
 byte counts retain the detailed scientific meaning. This is an explicit schema
 change, not wire compatibility with v1 or v2. Existing sealed results keep their

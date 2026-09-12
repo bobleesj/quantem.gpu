@@ -89,7 +89,7 @@ export function requireMatchingResidentReceipt(
   }
   for (const receipt of [observed, expected]) {
     if (receipt.schema !== "quantem.gpu.4dstem-resident-receipt/v3"
-        || !["dense", "packed", "ans"].includes(receipt.representation)) {
+        || !["dense", "packed", "encoded"].includes(receipt.representation)) {
       throw new Error("Use a v3 resident receipt schema with a canonical dense, packed, or ans representation.");
     }
   }

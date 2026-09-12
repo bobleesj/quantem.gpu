@@ -59,7 +59,7 @@ def test_source112_archive_native_counts_and_canonical_conversion(tmp_path):
                 block_frames=256, scale=15,
             )
             with cp.cuda.Device(0):
-                migrated = load(path, backend="cuda", representation="ans", device=0).data
+                migrated = load(path, backend="cuda", representation="encoded", device=0).data
                 try:
                     actual = np.concatenate([
                         migrated.decode_block_device(block).get() for block in range(2)

@@ -32,7 +32,7 @@ def test_encoded_inspection_uses_header_and_preserves_validity(tmp_path):
         backend="cpu",
     )
     info = io.inspect(path)
-    assert info.ready and info.source_kind == "ans"
+    assert info.ready and info.source_kind == "encoded"
     assert info.scan_shape == (3, 5) and info.detector_shape == (7, 9)
     assert info.metadata["encoded_bytes"] > 0
     np.testing.assert_array_equal(np.flatnonzero(info.pixel_mask), [3, 20])

@@ -34,7 +34,7 @@
   ],
   "properties": {
     "schema": {"const": "quantem.gpu.4dstem-resident-receipt/v3"},
-    "representation": {"enum": ["dense", "packed", "ans"]},
+    "representation": {"enum": ["dense", "packed", "encoded"]},
     "source_identity_sha256": {"$ref": "#/$defs/sha256"},
     "source_shape": {"$ref": "#/$defs/shape"},
     "working_shape": {"$ref": "#/$defs/shape"},

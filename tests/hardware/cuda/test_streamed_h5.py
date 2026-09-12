@@ -53,10 +53,10 @@ def test_h5_opens_encoded_and_mixes_with_original_ans(tmp_path, dtype):
         handle["entry/data/data"] = raw
     ans = tmp_path / "acquisition.ans"
     io.save(ans, raw, format="quantem", compression="ans", backend="cpu")
-    first = io.load(h5, backend="cuda", representation="ans", apply_mask=False)
+    first = io.load(h5, backend="cuda", representation="encoded", apply_mask=False)
     second = io.load(ans, backend="cuda")
     original_pointers = [a.data.ptr for a in second.data._arrays]
-    assert first.representation is io.DataRepresentation.ANS
+    assert first.representation is io.DataRepresentation.ENCODED
     assert first.metadata["source_read_passes"] == 1
     reconstructed = np.concatenate(
         [first.data.decode_chunk(i).get() for i in range(len(first.data.chunks))]
@@ -117,7 +117,7 @@ def test_index_sum_preserves_uint64_bound(tmp_path):
     path = tmp_path / "high-counts.h5"
     with h5py.File(path, "w") as handle:
         handle["entry/data/data"] = raw
-    loaded = io.load(path, backend="cuda", representation="ans", apply_mask=False)
+    loaded = io.load(path, backend="cuda", representation="encoded", apply_mask=False)
     session = detector.prepare(loaded)
     output = session.masked_sum(np.ones((257, 257), bool), output="native")
     assert output.dtype == np.uint64
@@ -126,7 +126,7 @@ def test_index_sum_preserves_uint64_bound(tmp_path):
 
 @pytest.mark.parametrize("dtype", [np.uint8, np.uint16])
 @pytest.mark.parametrize(
-    "representation", ["ans", None], ids=["ans", "default-packed"]
+    "representation", ["encoded", None], ids=["encoded", "default-encoded"]
 )
 def test_h5_defaults_to_gpu_median_hot_pixel_correction(
     tmp_path, dtype, representation
@@ -150,30 +150,21 @@ def test_h5_defaults_to_gpu_median_hot_pixel_correction(
         verbose=False,
     )
     try:
-        assert loaded.representation is (
-            io.DataRepresentation.ANS
-            if representation == "ans"
-            else io.DataRepresentation.PACKED
-        )
+        assert loaded.representation is io.DataRepresentation.ENCODED
         correction = loaded.metadata["hot_pixel_correction"]
         assert correction["method"] == "median"
         assert correction["pixel_count"] == 2
         assert correction["coordinates_row_column"] == [[0, 0], [2, 3]]
         assert correction["applied"] is True
         session = detector.prepare(loaded)
-        output = "native" if representation == "ans" else "numpy"
+        output = "native"
         for index in (0, 9):
             frame = session.frame(index, output=output)
             np.testing.assert_array_equal(
                 frame.get() if output == "native" else frame,
                 expected.reshape(-1, 5, 5)[index],
             )
-        if representation == "ans":
-            mean_dp = session.mean_dp(output=output).get()
-        else:
-            mean_dp = np.stack(
-                [session.frame(index, output="numpy") for index in range(10)]
-            ).mean(axis=0)
+        mean_dp = session.mean_dp(output=output).get()
         np.testing.assert_allclose(
             mean_dp,
             expected.mean(axis=(0, 1)),
@@ -198,7 +189,7 @@ def test_h5_ans_hot_pixel_correction_overrides(tmp_path, method):
     loaded = io.load(
         path,
         backend="cuda",
-        representation="ans",
+        representation="encoded",
         apply_mask=False,
         hot_pixel_correction=method,
         verbose=False,
@@ -223,7 +214,7 @@ def test_mixed_dense_and_streamed_counts_keep_native_shapes(tmp_path):
     path = tmp_path / "counts.h5"
     with h5py.File(path, "w") as handle:
         handle["entry/data/data"] = raw
-    encoded = io.load(path, backend="cuda", representation="ans", apply_mask=False)
+    encoded = io.load(path, backend="cuda", representation="encoded", apply_mask=False)
     dense = cp.asarray(raw)
     session = detector.prepare([encoded, dense])
     for index in (0, 511, 512):
@@ -262,7 +253,7 @@ def test_prepared_packed_and_streamed_h5_share_a_joint_query(tmp_path):
         backend="cuda",
         expected_source_sha256=hashlib.sha256(packed_path.read_bytes()).hexdigest(),
     )
-    streamed = io.load(ordinary, backend="cuda", representation="ans", apply_mask=False)
+    streamed = io.load(ordinary, backend="cuda", representation="encoded", apply_mask=False)
     session = detector.prepare([packed, streamed])
     for index in (0, 7, 31):
         np.testing.assert_array_equal(
@@ -282,7 +273,7 @@ def test_one_wide_scan_uses_actual_length_encoding_scratch(tmp_path):
     path = tmp_path / "wide.h5"
     with h5py.File(path, "w") as handle:
         handle["entry/data/data"] = raw
-    loaded = io.load(path, backend="cuda", representation="ans", apply_mask=False)
+    loaded = io.load(path, backend="cuda", representation="encoded", apply_mask=False)
     np.testing.assert_array_equal(
         loaded.data.decode_chunk(0).get(), raw.reshape(1, 2048, 2048)
     )
@@ -299,7 +290,7 @@ def test_sparse_events_and_rare_counts_reconstruct_every_scan(tmp_path):
     path = tmp_path / "sparse-rare.h5"
     with h5py.File(path, "w") as handle:
         handle["entry/data/data"] = raw
-    loaded = io.load(path, backend="cuda", representation="ans", apply_mask=False)
+    loaded = io.load(path, backend="cuda", representation="encoded", apply_mask=False)
     decoded = np.concatenate(
         [loaded.data.decode_chunk(i).get() for i in range(len(loaded.data.chunks))]
     )

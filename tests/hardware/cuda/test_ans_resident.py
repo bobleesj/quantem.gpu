@@ -50,7 +50,7 @@ def test_resident_read_matches_numpy_region():
         {
             "working_shape": shape,
             "working_dtype": "uint16",
-            "representation": "ans",
+            "representation": "encoded",
         },
     )
     try:

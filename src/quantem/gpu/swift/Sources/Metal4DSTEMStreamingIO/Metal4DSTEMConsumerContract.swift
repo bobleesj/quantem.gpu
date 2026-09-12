@@ -7,7 +7,7 @@ import os
 public enum Metal4DSTEMResidentRepresentation: String, Codable, Sendable {
   case dense
   case packed
-  case ans
+  case encoded
 }
 
 /// Backend-neutral scientific and memory receipt for one resident generation.

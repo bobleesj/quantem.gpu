@@ -61,7 +61,7 @@ def test_native_series_owns_outputs_and_retains_encoded_storage(tmp_path):
             output="native",
             out=dense.data.ravel().view(cp.uint32)[:108].reshape(3, 4, 9),
         )
-    assert ans.metadata["representation"] == "ans"
+    assert ans.metadata["representation"] == "encoded"
 
 
 def test_uint64_series_sum_never_truncates_high_counts():

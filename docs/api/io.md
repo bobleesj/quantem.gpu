@@ -62,13 +62,13 @@ print(loaded.residency)
 print(loaded.logical_bytes, loaded.resident_bytes)
 ```
 
-(cuda-h5-ans-residency)=
-### Stream complete H5 counts into CUDA ANS residency
+(cuda-h5-encoded-residency)=
+### Stream complete H5 counts into CUDA encoded residency
 
 ```python
 from quantem.gpu import io, detector
 
-loaded = io.load("scan_master.h5", backend="cuda", representation="ans",
+loaded = io.load("scan_master.h5", backend="cuda", representation="encoded",
                  dtype="native", apply_mask=False)
 session = detector.prepare(loaded)
 pattern = session.frame(0, output="native")
@@ -76,13 +76,14 @@ pattern = session.frame(0, output="native")
 
 This opt-in CUDA path streams bounded chunks of a complete uint8/uint16 H5
 acquisition, preserves every stored count, and builds exact spatial sums while
-those chunks are available. The library's default H5 representation remains
-dense. Existing ANS files keep their original encoded buffers. Prepare a list
+those chunks are available. The library's default H5 representation on
+accelerator backends is encoded. Existing encoded files keep their original
+buffers. Prepare a list
 of equally shaped acquisitions for joint native DP and detector queries:
 `detector.prepare([first, second])`.
 
-The runtime H5 resident uses a separate internal ANS profile from the portable
-ANS file format. Its `resident_profile`, `physical_resident_bytes`, `index_bytes`
+The runtime H5 resident uses a separate internal encoded profile from the portable
+encoded file format. Its `resident_profile`, `physical_resident_bytes`, `index_bytes`
 and `load_timings` metadata describe the actual loaded representation. Saving
 or transcoding this new resident is not yet implemented. Complete-series
 120 Hz throughput is not established by the bounded CUDA parity tests.
@@ -134,18 +135,18 @@ the following public selectors on this integration branch:
 |---|---|
 | `"dense"` | Every logical value occupies its ordinary dense array element |
 | `"packed"` | Exact integer counts use compact storage consumed by a matching kernel |
-| `"ans"` | Exact integer counts remain entropy-coded with the tables needed for decoding |
+| `"encoded"` | Exact integer counts remain entropy-coded with the tables needed for decoding |
 | `"paired"` | Exact integer counts in the CUDA paired-count tANS layout with a polar interaction index; explicit for original HDF5, detected for saved paired resident forms |
 
 These are the only representation names. The authenticated `storage_schema`
 selects the precise decoder within a representation; users do not select an
 internal bitpacking or block-compression profile through this argument.
 
-The new ANS-to-packed file workflow is available on Python MPS and CUDA, with
+The new encoded-to-packed file workflow is available on Python MPS and CUDA, with
 bounded physical integer-parity evidence. That evidence does not qualify
 complete-series loading, peak memory, or interactive throughput. The explicit
 CPU reference can
-decode ANS to dense. GPU dense materialization, reverse conversions, and native
+decode encoded data to dense. GPU dense materialization, reverse conversions, and native
 file-reader integration remain pending. Do not infer support for every
 source/representation/backend combination from the selector names.
 
@@ -160,8 +161,8 @@ The shortest call is source-native:
 loaded = io.load("scan-lossless.h5", backend="auto")
 ```
 
-An existing Lossless Pack Format source stays packed. Ordinary HDF5 follows the
-current dense path. A standalone ANS source stays ANS unless a
+An existing Lossless Pack Format source stays packed. Ordinary HDF5 uses encoded
+residency on accelerator backends. A standalone encoded source stays encoded unless a
 supported conversion is requested. Loading never silently creates or evicts a
 cache because those are consumer-policy decisions. Ask for dense explicitly
 when an algorithm truly requires it:
@@ -303,7 +304,7 @@ These are independent decisions, not different names for the same setting:
 |---|---|---|
 | `format` on save | File layout | `"arina"`, `"quantem"` |
 | `compression` on save | Lossless file encoding | `"bitshuffle_lz4"` for Arina; `"ans"` for QuantEM |
-| `representation` on load | In-memory count layout | `"dense"`, `"packed"`, `"ans"` |
+| `representation` on load | In-memory count layout | `"dense"`, `"packed"`, `"encoded"` |
 
 For example, save an ANS-compressed QuantEM file, then use bitpacking in memory:
 
@@ -329,7 +330,7 @@ pairs also raise. ANS is not an implemented HDF5 filter here. This API change
 does not change the bytes of the supported file formats.
 
 The standalone writer is transactional and never overwrites an existing file.
-Source/working shape, dtype, and calibration are preserved. ANS-to-packed does
+Source/working shape, dtype, and calibration are preserved. Encoded-to-packed does
 not materialize a full dense tensor, but both encoded representations coexist
 during conversion. This is not yet incremental file-shard streaming or a
 full-volume memory/performance qualification. `discover` and `inspect` support

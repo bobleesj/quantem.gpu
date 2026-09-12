@@ -99,7 +99,7 @@ def test_representation_values_do_not_encode_dtype() -> None:
     assert {item.value for item in io.DataRepresentation} == {
         "dense",
         "packed",
-        "ans",
+        "encoded",
         "paired",
     }
 
@@ -113,11 +113,13 @@ def test_removed_representation_names_have_no_aliases() -> None:
     assert not hasattr(consumer, "MPSResidentRepresentation")
     with pytest.raises(ValueError, match="representation must be"):
         io.DataRepresentation.parse("lossless_packed")
+    with pytest.raises(ValueError, match="representation must be"):
+        io.DataRepresentation.parse("ans")
 
 
 def test_representation_wire_values_match_swift_and_receipt_schema() -> None:
     """Python, Swift, and JSON receipts use one backend-neutral vocabulary."""
-    expected = {"dense", "packed", "ans"}
+    expected = {"dense", "packed", "encoded"}
     schema = json.loads(
         Path("src/quantem/gpu/io/resident_contract.schema.json").read_text()
     )
@@ -129,7 +131,7 @@ def test_representation_wire_values_match_swift_and_receipt_schema() -> None:
     assert set(schema["properties"]["representation"]["enum"]) == expected
     assert 'case dense' in swift
     assert 'case packed' in swift
-    assert 'case ans' in swift
+    assert 'case encoded' in swift
 
 
 def test_detector_bin_is_the_canonical_public_spelling(monkeypatch) -> None:

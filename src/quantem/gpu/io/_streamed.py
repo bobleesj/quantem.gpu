@@ -21,7 +21,7 @@ def load_h5_ans(
     backend="cuda",
     hot_pixel_correction="median",
 ):
-    """Load bounded native chunks into a backend-owned runtime ANS resident."""
+    """Load bounded native chunks into a backend-owned runtime encoded resident."""
     if backend == "mps":
         return _load_h5_ans_mps(
             path,
@@ -31,7 +31,7 @@ def load_h5_ans(
             hot_pixel_correction=hot_pixel_correction,
         )
     if backend != "cuda":
-        raise NotImplementedError("Runtime HDF5-to-ANS needs CUDA or MPS.")
+        raise NotImplementedError("Runtime HDF5-to-encoded needs CUDA or MPS.")
     import cupy as cp
 
     from quantem.gpu._compact.streamed import StreamedCounts
@@ -140,7 +140,7 @@ def load_h5_ans(
         metadata = dict(info.metadata)
         metadata.update(
             backend="cuda",
-            representation="ans",
+            representation="encoded",
             residency="device",
             source_shape=shape,
             working_shape=shape,
@@ -182,7 +182,7 @@ def load_h5_ans(
         if verbose:
             correction = metadata["hot_pixel_correction"]
             print(
-                f"Loaded resident ANS on CUDA in "
+                f"Loaded resident encoded data on CUDA in "
                 f"{metadata['load_timings']['resident_ready_seconds']:.2f} s: "
                 f"{correction['method']} correction, "
                 f"{correction['pixel_count']} stored detector-mask pixels."
@@ -210,7 +210,7 @@ def _load_h5_ans_mps(
     dtype = np.dtype(info.dtype)
     if dtype not in (np.dtype("uint8"), np.dtype("uint16")):
         raise TypeError(
-            "Count-ANS loading preserves native uint8/uint16 detector counts."
+            "Encoded loading preserves native uint8/uint16 detector counts."
         )
     from .backends.mps.hot_pixels import MPSHotPixelCorrector
 
@@ -278,7 +278,7 @@ def _load_h5_ans_mps(
     metadata = dict(info.metadata)
     metadata.update(
         backend="mps",
-        representation="ans",
+        representation="encoded",
         residency="device",
         source_shape=shape,
         working_shape=shape,
@@ -320,7 +320,7 @@ def _load_h5_ans_mps(
     if verbose:
         correction = metadata["hot_pixel_correction"]
         print(
-            f"Loaded resident ANS on MPS in "
+            f"Loaded resident encoded data on MPS in "
             f"{metadata['load_timings']['resident_ready_seconds']:.2f} s: "
             f"{correction['method']} correction, "
             f"{correction['pixel_count']} stored detector-mask pixels."
