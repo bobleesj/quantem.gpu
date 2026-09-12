@@ -227,6 +227,12 @@ def restore(values, report):
 def source_range(source):
     low, high = math.inf, -math.inf
     for block in source.blocks():
+        if is_mps_tensor(block):
+            block_low, block_high = tensor_range(
+                tensor_restore(block, source.saved)
+            )
+            low, high = min(low, block_low), max(high, block_high)
+            continue
         values = restore(block, source.saved)
         p, f = _parameters(values)
         p[14] = p[15] = min(values.size, 8192)

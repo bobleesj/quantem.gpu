@@ -164,4 +164,12 @@ def read(data, *, scan_region=None, detector_region=None):
         detector_row0:detector_row1,
         detector_column0:detector_column1,
     ]
+    valid_pixels = getattr(payload, "valid_pixels", None)
+    if valid_pixels is not None and not bool(np.asarray(valid_pixels).all()):
+        selected_valid = np.asarray(valid_pixels)[
+            detector_row0:detector_row1,
+            detector_column0:detector_column1,
+        ]
+        for invalid_row, invalid_column in np.argwhere(~selected_valid):
+            tensor[..., int(invalid_row), int(invalid_column)] = 0
     return tensor.reshape(output_shape).contiguous()

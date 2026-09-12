@@ -1960,7 +1960,7 @@ def _prepare_save_data(data, dtype, scan_shape):
 
 def save(
     filepath: str | Path,
-    data: "np.ndarray | cp.ndarray",
+    data: object,
     scan_shape: tuple[int, int] | None = None,
     metadata: dict | None = None,
     dtype: str | type | np.dtype | None = None,
@@ -2088,9 +2088,16 @@ def save(
     filepath : str
         Output file path. For Arina, external data files are written next to
         the master with the same prefix. QuantEM writes a standalone file.
-    data : np.ndarray | cp.ndarray
+    data : object
         4D-STEM data. Shape (N, det_row, det_col) or (scan_row, scan_col,
-        det_row, det_col). CuPy arrays save without a host copy.
+        det_row, det_col). CuPy and Torch accelerator tensors save without a
+        host copy. Algorithm packages may also provide a re-readable 4D block
+        source with ``shape``, ``dtype``, and ``blocks()``. Each call to
+        ``blocks()`` must yield the complete data as ordered accelerator frame
+        blocks; scaled integer export calls it twice to measure one global
+        range and then encode. Optional ``save_metadata`` attributes are copied
+        into the output. This is the public bridge for bounded algorithm output;
+        the I/O package does not own the algorithm that produces the blocks.
     scan_shape : tuple[int, int] | None
         Scan grid shape. Required for 3D inputs; inferred from 4D inputs.
     dtype : str or np.dtype or None

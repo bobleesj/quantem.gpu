@@ -243,7 +243,7 @@ def test_saved_region_retains_geometry_and_prevents_raw_code_casts(tmp_path):
     reopened.close()
 
 
-def test_maped_tensor_exports_and_wide_scaled_intensities(tmp_path):
+def test_torch_tensor_exports_and_wide_scaled_intensities(tmp_path):
     import torch
 
     values = (
@@ -257,6 +257,48 @@ def test_maped_tensor_exports_and_wide_scaled_intensities(tmp_path):
         result = prepare(loaded).frame(0, output="native")
         assert bool(cp.all(cp.isfinite(result)))
         assert loaded.metadata["precision"]["overflow"] == 0
+
+
+def test_rereadable_torch_blocks_use_public_precision_save(tmp_path):
+    import torch
+
+    values = cp.linspace(-12, 44, 3 * 4 * 8 * 8, dtype=cp.float32).reshape(
+        3, 4, 8, 8
+    )
+
+    class Blocks:
+        shape = values.shape
+        dtype = np.dtype("float32")
+        _device_id = 0
+
+        def __init__(self):
+            self.calls = 0
+
+        def blocks(self):
+            self.calls += 1
+            flat = values.reshape(-1, 8, 8)
+            yield torch.from_dlpack(flat[:5])
+            yield torch.from_dlpack(flat[5:])
+
+    source = Blocks()
+    path = tmp_path / "blocks_master.h5"
+    io.save(
+        path,
+        source,
+        dtype="scaled_uint16",
+        backend="cuda",
+        verbose=False,
+    )
+    assert source.calls == 2
+    with io.load(path, verbose=False) as loaded:
+        report = loaded.metadata["precision"]
+        observed = loaded.read(scan_region=(1, 3, 1, 4)).cpu().numpy()
+        np.testing.assert_allclose(
+            observed,
+            values.get()[1:3, 1:4],
+            rtol=0,
+            atol=report["scale"],
+        )
 
 
 def test_changing_saved_precision_reports_restored_source_units(tmp_path):

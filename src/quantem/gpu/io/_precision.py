@@ -264,6 +264,9 @@ def _restore(values, report):
         return restore(values, report)
     import cupy as cp
 
+    if hasattr(values, "device") and str(values.device).startswith("cuda"):
+        values = cp.from_dlpack(values.detach())
+
     if report and report["storage"] == "scaled_uint16":
         return (values.astype(cp.float64) * report["scale"] + report["offset"]).astype(
             cp.float32
