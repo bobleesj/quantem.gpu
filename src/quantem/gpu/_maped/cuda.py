@@ -1,6 +1,7 @@
 """CUDA implementation for bounded MAPED merging from encoded residents."""
 import json
 import math
+from functools import cache
 from pathlib import Path
 import time
 
@@ -38,7 +39,59 @@ def _weights(shape, real_shifts, diffraction_shifts):
     return torch.stack(real_weights), torch.stack(detector_weights)
 
 
-def _merge_regions(sources, real_shifts, diffraction_shifts, scans_per_region=1024):
+@cache
+def _region_kernels(device: int):
+    """Compile and retain MAPED region kernels once per CUDA device."""
+    with cp.cuda.Device(device):
+        module = cp.RawModule(
+            code=Path(__file__).with_name("regions.cu").read_text(),
+            options=("--fmad=false",),
+        )
+        return {
+            name: module.get_function(name)
+            for name in ("sample", "sample_dense", "accumulate", "normalize")
+        }
+
+
+def _merge_plan(sources, real_shifts, diffraction_shifts):
+    """Build interpolation state shared by both bounded merge passes."""
+    shape = sources[0].shape
+    _, _, height, width = shape
+    real = torch.from_dlpack(real_shifts)
+    diffraction = torch.from_dlpack(diffraction_shifts)
+    real_weights, detector_weights = _weights(shape, real, diffraction)
+    detector_edge = 1 - detector_weights.sum(0).clamp(0, 1)
+    torch.cuda.synchronize()
+    return {
+        "real": real,
+        "diffraction": diffraction,
+        "real_weights": real_weights,
+        "detector_weights": detector_weights,
+        "detector_edge": detector_edge,
+        "real_cp": cp.from_dlpack(real),
+        "diffraction_cp": cp.from_dlpack(diffraction),
+        "real_weights_cp": cp.from_dlpack(real_weights).reshape(len(sources), -1),
+        "detector_weights_cp": cp.from_dlpack(detector_weights),
+        "detector_edge_cp": cp.from_dlpack(detector_edge),
+        "real_row_shifts": cp.asnumpy(cp.from_dlpack(real)[:, 0]),
+        "masks": [
+            cp.ones((height, width), cp.uint8)
+            if source.metadata.get("pixel_mask") is None
+            or correction_is_applied(source.metadata)
+            else (cp.asarray(source.metadata["pixel_mask"]) == 0).astype(cp.uint8)
+            for source in sources
+        ],
+    }
+
+
+def _merge_regions(
+    sources,
+    real_shifts,
+    diffraction_shifts,
+    scans_per_region=1024,
+    *,
+    plan=None,
+):
     """Yield GPU float32 regions for fixed bilinear, unpadded MAPED settings.
 
     All packed owners remain resident. Caller writes each region before advancing.
@@ -49,36 +102,27 @@ def _merge_regions(sources, real_shifts, diffraction_shifts, scans_per_region=10
     if any(source.shape != shape for source in sources):
         raise ValueError('All packed tilts must have matching complete geometry.')
     rows, cols, height, width = shape
-    real = torch.from_dlpack(real_shifts)
-    diffraction = torch.from_dlpack(diffraction_shifts)
-    wi, wd = _weights(shape, real, diffraction)
-    edge = 1 - wd.sum(0).clamp(0, 1)
-    module = cp.RawModule(
-        code=Path(__file__).with_name("regions.cu").read_text(),
-        options=("--fmad=false",),
-    )
-    sample_kernel = module.get_function("sample")
-    sample_dense = module.get_function("sample_dense")
-    accumulate = module.get_function("accumulate")
-    masks = [
-        cp.ones((height, width), cp.uint8)
-        if source.metadata.get("pixel_mask") is None
-        or correction_is_applied(source.metadata)
-        else (cp.asarray(source.metadata["pixel_mask"]) == 0).astype(cp.uint8)
-        for source in sources
-    ]
-    torch.cuda.synchronize()
-    real_cp = cp.from_dlpack(real)
-    diffraction_cp = cp.from_dlpack(diffraction)
-    wi_cp = cp.from_dlpack(wi).reshape(len(sources), -1)
-    real_row_shifts = cp.asnumpy(real_cp[:, 0])
+    plan = _merge_plan(sources, real_shifts, diffraction_shifts) if plan is None else plan
+    kernels = _region_kernels(cp.cuda.Device().id)
+    sample_kernel = kernels["sample"]
+    sample_dense = kernels["sample_dense"]
+    accumulate = kernels["accumulate"]
+    normalize = kernels["normalize"]
+    masks = plan["masks"]
+    real_cp = plan["real_cp"]
+    diffraction_cp = plan["diffraction_cp"]
+    wi_cp = plan["real_weights_cp"]
+    wd_cp = plan["detector_weights_cp"]
+    edge_cp = plan["detector_edge_cp"]
+    real_row_shifts = plan["real_row_shifts"]
     decode_errors = cp.zeros(1, cp.uint32)
     for first in range(0, rows * cols, scans_per_region):
         stop = min(first + scans_per_region, rows * cols)
         count = stop - first
-        numerator = cp.zeros((count, height, width), cp.float32)
+        numerator = cp.empty((count, height, width), cp.float32)
         sampled = cp.empty_like(numerator)
-        launch = (((numerator.size + 255) // 256,), (256,))
+        vectors = count * ((height * width + 3) // 4)
+        launch = (((vectors + 255) // 256,), (256,))
         decode_errors.fill(0)
         for i, source in enumerate(sources):
             resident = source.data
@@ -140,23 +184,30 @@ def _merge_regions(sources, real_shifts, diffraction_shifts, scans_per_region=10
                     cp.int32(count),
                     cp.int32(height),
                     cp.int32(width),
+                    cp.int32(i == 0),
                 ),
             )
             del decoded
-        cp.cuda.get_current_stream().synchronize()
+        normalize(
+            *launch,
+            (
+                numerator,
+                wi_cp,
+                wd_cp,
+                edge_cp,
+                cp.int32(first),
+                cp.int32(count),
+                cp.int32(rows * cols),
+                cp.int32(height * width),
+                cp.int32(len(sources)),
+            ),
+        )
         if int(decode_errors.get()[0]):
             raise ValueError(
                 "An ANS count stream failed reconstruction during MAPED merging."
             )
-        denominator = torch.einsum('ns,nhw->shw', wi.reshape(len(sources), -1)[:, first:stop], wd)
-        denominator += edge[None]
-        torch.cuda.synchronize()
-        denominator_cp = cp.from_dlpack(denominator)
-        cp.divide(numerator, denominator_cp, out=numerator)
-        numerator[denominator_cp == 0] = 0
-        cp.cuda.get_current_stream().synchronize()
         yield first, numerator
-        del numerator, sampled, denominator_cp, denominator
+        del numerator, sampled
 
 
 def _automatic_region_frames(shape) -> int:
@@ -167,7 +218,7 @@ def _automatic_region_frames(shape) -> int:
     # write boundary. Leave a fixed reserve for CUDA libraries and alignment data.
     bytes_per_frame = detector_pixels * (4 + 4 + 4 + 2)
     available = max(0, int(free) - 512 * 1024**2)
-    frames = max(1, min(1024, available // max(1, bytes_per_frame * 4)))
+    frames = max(1, min(4096, available // max(1, bytes_per_frame * 4)))
     scan_columns = int(shape[1])
     if frames >= scan_columns:
         frames = max(scan_columns, frames // scan_columns * scan_columns)
@@ -255,12 +306,17 @@ def merge_to_scaled_h5(
     cp.cuda.Device(requested_device).use()
     output_path = Path(output_path)
     region_frames = _automatic_region_frames(shape)
+    plan = _merge_plan(sources, real_shifts, diffraction_shifts)
     started = time.perf_counter()
 
     low = cp.asarray(cp.inf, dtype=cp.float32)
     high = cp.asarray(-cp.inf, dtype=cp.float32)
     for _, region in _merge_regions(
-        sources, real_shifts, diffraction_shifts, region_frames
+        sources,
+        real_shifts,
+        diffraction_shifts,
+        region_frames,
+        plan=plan,
     ):
         cp.minimum(low, cp.min(region), out=low)
         cp.maximum(high, cp.max(region), out=high)
@@ -327,7 +383,11 @@ def merge_to_scaled_h5(
     write_started = time.perf_counter()
     try:
         for _, region in _merge_regions(
-            sources, real_shifts, diffraction_shifts, region_frames
+            sources,
+            real_shifts,
+            diffraction_shifts,
+            region_frames,
+            plan=plan,
         ):
             encode_begin, encode_end = cp.cuda.Event(), cp.cuda.Event()
             encode_begin.record()

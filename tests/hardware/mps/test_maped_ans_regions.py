@@ -9,7 +9,7 @@ pytest.importorskip("Metal")
 torch = pytest.importorskip("torch")
 
 from quantem.gpu import io
-from quantem.gpu._maped.mps import _automatic_region_frames
+from quantem.gpu._maped.mps import _automatic_region_frames, _merge_regions
 from quantem.gpu.io.backends.mps._streamed import MPSStreamedCounts
 from quantem.gpu.io.backends.mps.precision import upload
 from quantem.gpu.maped import merge_to_scaled_h5
@@ -41,6 +41,31 @@ def test_mps_region_planner_uses_bounded_scan_rows():
     large = _automatic_region_frames((512, 512, 512, 512))
     assert 512 <= large <= 4096
     assert large % 512 == 0
+
+
+def test_mps_region_merge_handles_shifted_regions_before_source_rows():
+    """A positive row shift may put a complete early region above the source."""
+    shape = (8, 4, 2, 2)
+    values = np.arange(np.prod(shape), dtype=np.uint16).reshape(shape)
+    source = MPSStreamedCounts(shape, np.uint16)
+    raw = upload(values.reshape(-1, *shape[2:]))
+    try:
+        source.append(raw)
+        regions = list(
+            _merge_regions(
+                [source],
+                np.asarray([[4.0, 0.0]], np.float32),
+                np.zeros((1, 2), np.float32),
+                scans_per_region=4,
+            )
+        )
+        assert len(regions) == 8
+        np.testing.assert_array_equal(regions[0][1].get(), 0)
+    finally:
+        for _, region in locals().get("regions", []):
+            region.release()
+        raw.release()
+        source.release()
 
 
 def test_h5_ans_defaults_to_gpu_median_hot_pixel_correction(tmp_path):

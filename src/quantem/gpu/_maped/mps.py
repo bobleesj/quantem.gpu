@@ -28,6 +28,8 @@ from quantem.gpu.io.backends.mps.precision import (
     encode_measure,
 )
 
+_PIXELS_PER_THREAD = 4
+
 
 @lru_cache(maxsize=1)
 def _runtime():
@@ -196,12 +198,24 @@ def _merge_weights(shape, real_np, diffraction_np):
         _release(diffraction_buffer)
 
 
-def _merge_regions(sources, real_np, diffraction_np, scans_per_region):
+def _merge_regions(
+    sources,
+    real_np,
+    diffraction_np,
+    scans_per_region,
+    *,
+    weights=None,
+):
     shape = tuple(sources[0].shape)
     rows, cols, height, width = shape
     pixels = height * width
     device, metal, queue, pipelines = _runtime()
-    weights = _merge_weights(shape, real_np, diffraction_np)
+    owns_weights = weights is None
+    weights = (
+        _merge_weights(shape, real_np, diffraction_np)
+        if weights is None
+        else weights
+    )
     (
         real_weights,
         real_sampling,
@@ -223,7 +237,9 @@ def _merge_regions(sources, real_np, diffraction_np, scans_per_region):
                 stop_row = (stop - 1) // cols
                 shift_row = math.floor(-float(real_shift[0]))
                 decoded_first_row = max(0, first_row + shift_row)
-                decoded_stop_row = min(rows, stop_row + shift_row + 2)
+                decoded_stop_row = max(
+                    decoded_first_row, min(rows, stop_row + shift_row + 2)
+                )
                 decoded_ranges.append((decoded_first_row, decoded_stop_row))
                 max_decoded = max(
                     max_decoded,
@@ -268,7 +284,7 @@ def _merge_regions(sources, real_np, diffraction_np, scans_per_region):
                             sampled._mtl,
                         ],
                         [(4, parameters)],
-                        count * ((pixels + 3) // 4),
+                        count * ((pixels + _PIXELS_PER_THREAD - 1) // _PIXELS_PER_THREAD),
                         "MPS MAPED real-space sample",
                         command=command,
                     )
@@ -298,7 +314,7 @@ def _merge_regions(sources, real_np, diffraction_np, scans_per_region):
                             detector_sampling._mtl,
                         ],
                         [(5, parameters)],
-                        count * ((pixels + 3) // 4),
+                        count * ((pixels + _PIXELS_PER_THREAD - 1) // _PIXELS_PER_THREAD),
                         "MPS MAPED diffraction sample",
                         command=command,
                     )
@@ -327,7 +343,7 @@ def _merge_regions(sources, real_np, diffraction_np, scans_per_region):
                         detector_edge._mtl,
                     ],
                     [(4, parameters)],
-                    count * ((pixels + 3) // 4),
+                    count * ((pixels + _PIXELS_PER_THREAD - 1) // _PIXELS_PER_THREAD),
                     "MPS MAPED normalize",
                     command=command,
                 )
@@ -342,8 +358,9 @@ def _merge_regions(sources, real_np, diffraction_np, scans_per_region):
                 if numerator is not None:
                     numerator.release()
     finally:
-        for value in weights:
-            value.release()
+        if owns_weights:
+            for value in weights:
+                value.release()
 
 
 def _automatic_region_frames(shape):
@@ -403,14 +420,24 @@ def merge_to_scaled_h5(
     diffraction_np = diffraction_shifts.detach().cpu().numpy()
     output_path = Path(output_path)
     region_frames = _automatic_region_frames(shape)
+    weights = _merge_weights(shape, real_np, diffraction_np)
     started = time.perf_counter()
     low, high = math.inf, -math.inf
-    for _, region in _merge_regions(
-        [source.data for source in sources], real_np, diffraction_np, region_frames
-    ):
-        region_low, region_high = _range(region)
-        low, high = min(low, region_low), max(high, region_high)
-        region.release()
+    try:
+        for _, region in _merge_regions(
+            [source.data for source in sources],
+            real_np,
+            diffraction_np,
+            region_frames,
+            weights=weights,
+        ):
+            region_low, region_high = _range(region)
+            low, high = min(low, region_low), max(high, region_high)
+            region.release()
+    except BaseException:
+        for value in weights:
+            value.release()
+        raise
     if not np.isfinite(low) or not np.isfinite(high) or high <= low:
         raise ValueError("The merged output has no finite intensity range.")
     range_seconds = time.perf_counter() - started
@@ -464,7 +491,11 @@ def merge_to_scaled_h5(
     encode_seconds = 0.0
     try:
         for _, region in _merge_regions(
-            [source.data for source in sources], real_np, diffraction_np, region_frames
+            [source.data for source in sources],
+            real_np,
+            diffraction_np,
+            region_frames,
+            weights=weights,
         ):
             encoded = None
             try:
@@ -481,6 +512,9 @@ def merge_to_scaled_h5(
     except BaseException:
         writer.abort()
         raise
+    finally:
+        for value in weights:
+            value.release()
     report["clipped"] = report["overflow"]
     _finish_report(report)
     report["complete"] = True

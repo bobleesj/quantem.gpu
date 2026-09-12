@@ -222,36 +222,53 @@ def _load_h5_ans_mps(
     names = _discover_chunk_names(str(path)) or ["data"]
     session = _SparseFrameReadSession(str(path), names, apply_mask=False)
     scans = math.prod(info.scan_shape)
-    chunk_scans = min(16384, scans)
+    chunk_scans = min(32768, scans)
     if chunk_scans >= 512:
         chunk_scans = chunk_scans // 512 * 512
     read_decode_seconds = 0.0
     try:
-        for first in range(0, scans, chunk_scans):
-            stop = min(first + chunk_scans, scans)
-            before = time.perf_counter()
-            prepared = _prepare_master_frames(
+        from concurrent.futures import ThreadPoolExecutor
+
+        ranges = [
+            (first, min(first + chunk_scans, scans))
+            for first in range(0, scans, chunk_scans)
+        ]
+
+        def prepare_frames(bounds):
+            first, stop = bounds
+            return _prepare_master_frames(
                 str(path),
                 names,
                 np.arange(first, stop),
                 apply_mask=False,
                 read_session=session,
             )
-            raw = load_prepared_frames(
-                prepared,
-                det_bin=1,
-                pixel_mask=None,
-                verbose=False,
-                output_dtype=dtype,
-            )
-            read_decode_seconds += time.perf_counter() - before
-            try:
-                corrector.apply(raw)
-                source.append(raw)
-            finally:
-                buffer, raw._mtl = raw._mtl, None
-                _release_metal_buffer(buffer)
-                del raw
+
+        # Keep one host-side HDF5 read queued while Metal decodes, corrects,
+        # and ANS-encodes the preceding batch. Scientific array work remains
+        # on Metal; the worker only prepares compressed file bytes.
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(prepare_frames, ranges[0])
+            for index, _ in enumerate(ranges):
+                before = time.perf_counter()
+                prepared = pending.result()
+                if index + 1 < len(ranges):
+                    pending = pool.submit(prepare_frames, ranges[index + 1])
+                raw = load_prepared_frames(
+                    prepared,
+                    det_bin=1,
+                    pixel_mask=None,
+                    verbose=False,
+                    output_dtype=dtype,
+                )
+                read_decode_seconds += time.perf_counter() - before
+                try:
+                    corrector.apply(raw)
+                    source.append(raw)
+                finally:
+                    buffer, raw._mtl = raw._mtl, None
+                    _release_metal_buffer(buffer)
+                    del raw
     except BaseException:
         source.release()
         raise
