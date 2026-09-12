@@ -113,8 +113,10 @@ public struct MetalSSBSavedRun: Codable, Sendable {
     }
     guard rotationDegrees.isFinite, optimizedRotationDegrees?.isFinite ?? true,
       aberrations.c10Nanometers.isFinite, aberrations.c12Nanometers.isFinite,
-      aberrations.phi12Radians.isFinite else {
-      throw SavedRunError.invalid("Saved SSB coefficients must be finite. Recompute or restore a valid result.")
+      aberrations.phi12Radians.isFinite
+    else {
+      throw SavedRunError.invalid(
+        "Saved SSB coefficients must be finite. Recompute or restore a valid result.")
     }
     let bytes = 512 * 512 * MemoryLayout<SIMD2<Float>>.stride
     guard provenance.scanRows == 512, provenance.scanColumns == 512,

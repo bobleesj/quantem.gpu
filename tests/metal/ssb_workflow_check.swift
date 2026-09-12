@@ -2,6 +2,17 @@ import Foundation
 import Metal
 import MetalSSBKernels
 
+private func require(
+  _ condition: @autoclosure () -> Bool,
+  _ message: @autoclosure () -> String = "Scientific parity check failed",
+  line: UInt = #line
+) {
+  guard condition() else {
+    FileHandle.standardError.write(Data("SSB workflow line \(line): \(message())\n".utf8))
+    exit(1)
+  }
+}
+
 @main enum SSBWorkflowCheck {
   static func main() throws {
     guard let device = MTLCreateSystemDefaultDevice() else {
@@ -13,21 +24,21 @@ import MetalSSBKernels
       detectorStepRowMrad: 10, detectorStepColumnMrad: 10, centerRow: 4, centerColumn: 4)
     let calibrated = try calibration.geometry(detectorRows: 9, detectorColumns: 9,
       detectorSum: Array(repeating: 100, count: 81), excludedPixels: [40])
-    precondition(abs(calibrated.geometry.wavelengthAngstroms - 0.01968749) < 1e-7)
-    precondition(!calibrated.pixels.contains(40) && calibrated.pixels == calibrated.pixels.sorted())
-    precondition(abs(calibrated.geometry.qxByRow[1] - 1 / 1024) < 1e-8)
-    precondition(abs(calibrated.geometry.qyByColumn[1] - 1 / 1536) < 1e-8)
+    require(abs(calibrated.geometry.wavelengthAngstroms - 0.01968749) < 1e-7)
+    require(!calibrated.pixels.contains(40) && calibrated.pixels == calibrated.pixels.sorted())
+    require(abs(calibrated.geometry.qxByRow[1] - 1 / 1024) < 1e-8)
+    require(abs(calibrated.geometry.qyByColumn[1] - 1 / 1536) < 1e-8)
     var diskCalibration = calibration
     diskCalibration.brightfieldRadiusPixels = 4
     let disk = try diskCalibration.geometry(detectorRows: 9, detectorColumns: 9,
       detectorSum: Array(repeating: 100, count: 81), excludedPixels: [40])
-    precondition(disk.pixels.count == 48)
-    precondition(disk.geometry.brightfieldAperture.contains(0))
-    precondition(disk.geometry.dcValue.x == 100)
+    require(disk.pixels.count == 48)
+    require(disk.geometry.brightfieldAperture.contains(0))
+    require(disk.geometry.dcValue.x == 100)
     diskCalibration.excludedDetectorPixels = [4]
     let maskedDisk = try diskCalibration.geometry(detectorRows: 9, detectorColumns: 9,
       detectorSum: Array(repeating: 100, count: 81), excludedPixels: [40])
-    precondition(maskedDisk.pixels.count == 47 && !maskedDisk.pixels.contains(4))
+    require(maskedDisk.pixels.count == 47 && !maskedDisk.pixels.contains(4))
     var fullDisk = MetalSSBCalibration(beamEnergyKeV: 300, semiangleMrad: 30,
       scanStepRowAngstroms: 0.264, scanStepColumnAngstroms: 0.264,
       detectorStepRowMrad: 1.090909090909091, detectorStepColumnMrad: 1.090909090909091,
@@ -35,20 +46,20 @@ import MetalSSBKernels
       brightfieldRadiusPixels: 53.35992814757164, excludedDetectorPixels: [78 * 192 + 74])
     let sums = Array(repeating: UInt64(100), count: 192 * 192)
     let historical = try fullDisk.geometry(detectorRows: 192, detectorColumns: 192, detectorSum: sums)
-    precondition(historical.pixels.count == 8937)
-    precondition(historical.geometry.brightfieldAperture.filter { $0 > 0 }.count == 2464)
+    require(historical.pixels.count == 8937)
+    require(historical.geometry.brightfieldAperture.filter { $0 > 0 }.count == 2464)
     try fullDisk.matchApertureToBrightfieldDisk()
-    precondition(abs(fullDisk.detectorStepRowMrad - 0.5622196476170719) < 1e-12)
+    require(abs(fullDisk.detectorStepRowMrad - 0.5622196476170719) < 1e-12)
     let complete = try fullDisk.geometry(detectorRows: 192, detectorColumns: 192, detectorSum: sums)
-    precondition(complete.pixels == historical.pixels)
-    precondition(complete.geometry.brightfieldAperture.allSatisfy { $0 > 0 })
-    precondition(complete.geometry.dcValue == historical.geometry.dcValue)
+    require(complete.pixels == historical.pixels)
+    require(complete.geometry.brightfieldAperture.allSatisfy { $0 > 0 })
+    require(complete.geometry.dcValue == historical.geometry.dcValue)
     // Choosing fewer BF pixels must not silently change angular calibration.
     fullDisk.brightfieldRadiusPixels = 25
     let selected = try fullDisk.geometry(detectorRows: 192, detectorColumns: 192, detectorSum: sums)
-    precondition(selected.pixels.count < complete.pixels.count)
-    precondition(abs(fullDisk.detectorStepRowMrad - 0.5622196476170719) < 1e-12)
-    precondition(selected.geometry.brightfieldAperture.allSatisfy { $0 > 0 })
+    require(selected.pixels.count < complete.pixels.count)
+    require(abs(fullDisk.detectorStepRowMrad - 0.5622196476170719) < 1e-12)
+    require(selected.geometry.brightfieldAperture.allSatisfy { $0 > 0 })
     let q = (0..<n).map { Float($0 < n / 2 ? $0 : $0 - n) * 0.001 }
     func makeGeometry(dc: SIMD2<Float>) -> MetalSSBGeometry {
       MetalSSBGeometry(
@@ -99,11 +110,11 @@ import MetalSSBKernels
     ] {
       try engine.prepare(brightfield: source, countType: type)
       let result = try engine.reconstruct(aberrations: aberrations)
-      precondition(
+      require(
         error(read(result.object), reference) == 0, "Equal counts must give identical output")
       let loss = try engine.phaseVariance(aberrations: aberrations).loss
-      precondition(loss == referenceLoss)
-      precondition(result.provenance.sourceDType == String(describing: type))
+      require(loss == referenceLoss)
+      require(result.provenance.sourceDType == String(describing: type))
     }
     // Powers of two preserve exact float conversion and FFT scaling. These
     // values exceed uint8/uint16 and catch silent narrowing at the source boundary.
@@ -117,7 +128,7 @@ import MetalSSBKernels
         try candidate.prepare(brightfield: source, countType: type)
         let result = try candidate.reconstruct(aberrations: aberrations)
         let relativeError = error(read(result.object), reference, scale: scale)
-        precondition(relativeError < 1e-4, "Source count scaling parity failed: \(relativeError)")
+        require(relativeError < 1e-4, "Source count scaling parity failed: \(relativeError)")
         print(
           "PASS type=\(type) cache=\(budget == nil ? "full" : "streamed") relative_l2=\(relativeError)"
         )
@@ -137,7 +148,7 @@ import MetalSSBKernels
         blit.endEncoding()
       }
       let callbackResult = try callbackEngine.reconstruct(aberrations: aberrations)
-      precondition(error(read(callbackResult.object), reference) < 1e-4)
+      require(error(read(callbackResult.object), reference) < 1e-4)
     }
     let streamedEngine = try MetalSSBEngine(device: device, geometry: geometry, cacheBudgetBytes: 0)
     try streamedEngine.prepare(brightfield: source32, countType: .uint32)
@@ -149,17 +160,17 @@ import MetalSSBKernels
       let cached = try engine.reconstruct(aberrations: adjusted)
       let streamed = try streamedEngine.reconstruct(aberrations: adjusted)
       let difference = error(read(cached.object), read(streamed.object))
-      precondition(difference < 1e-4, "Higher-order cache/stream parity: \(term.name) \(difference)")
-      precondition(error(read(cached.object), reference) > 1e-6, "Control must change the scientific result")
+      require(difference < 1e-4, "Higher-order cache/stream parity: \(term.name) \(difference)")
+      require(error(read(cached.object), reference) > 1e-6, "Control must change the scientific result")
       let phase = try engine.phase(of: cached).contents().assumingMemoryBound(to: Float.self)
       let object = read(cached.object)
       for i in 0..<(n * n) {
-        precondition(abs(phase[i] - atan2(object[i].y, object[i].x)) < 1e-5)
+        require(abs(phase[i] - atan2(object[i].y, object[i].x)) < 1e-5)
       }
       print("PASS live \(term.name) cache/stream relative_l2=\(difference)")
     }
     let reset = try engine.reconstruct(aberrations: aberrations)
-    precondition(error(read(reset.object), reference) == 0,
+    require(error(read(reset.object), reference) == 0,
       "Resetting higher orders must restore the original reconstruction exactly")
     // Fitting needs physical positive DC; zero DC above isolates linear count scaling.
     let fittingGeometry = makeGeometry(dc: SIMD2<Float>(37, 0))
@@ -181,10 +192,10 @@ import MetalSSBKernels
     try run.save(to: url)
     let loaded = try MetalSSBSavedRun.load(from: url, matchingSourceIdentity: run.sourceIdentity)
     let restored = try loaded.reconstruction(device: device)
-    precondition(read(restored.object) == read(fittedResult.object))
-    precondition(read(restored.fourierSum) == read(fittedResult.fourierSum))
-    precondition(loaded.optimization?.trials.map(\.loss) == fit.trials.map(\.loss))
-    precondition(loaded.aberrations == fitted && loaded.provenance == fittedResult.provenance)
+    require(read(restored.object) == read(fittedResult.object))
+    require(read(restored.fourierSum) == read(fittedResult.fourierSum))
+    require(loaded.optimization?.trials.map(\.loss) == fit.trials.map(\.loss))
+    require(loaded.aberrations == fitted && loaded.provenance == fittedResult.provenance)
     var manual = fitted
     manual.higherOrder = [.init(order: 2, symmetry: 1, magnitudeNanometers: 50, angleRadians: 0.3)]
     let manualResult = try fittingEngine.reconstruct(aberrations: manual)
@@ -194,17 +205,17 @@ import MetalSSBKernels
       calibration: calibration, calibrationProvenance: ["semiangle": "Assumed"], optimizedRotationDegrees: 0)
     try manualRun.save(to: url)
     let manualLoaded = try MetalSSBSavedRun.load(from: url, matchingSourceIdentity: run.sourceIdentity)
-    precondition(manualLoaded.calibration == calibration)
-    precondition(manualLoaded.calibrationProvenance == ["semiangle": "Assumed"])
-    precondition(manualLoaded.aberrations == manual && manualLoaded.rotationDegrees == 12)
-    precondition(manualLoaded.optimizedRotationDegrees == 0)
+    require(manualLoaded.calibration == calibration)
+    require(manualLoaded.calibrationProvenance == ["semiangle": "Assumed"])
+    require(manualLoaded.aberrations == manual && manualLoaded.rotationDegrees == 12)
+    require(manualLoaded.optimizedRotationDegrees == 0)
     let manualRestored = try manualLoaded.reconstruction(device: device)
-    precondition(read(manualRestored.object) == read(manualResult.object))
+    require(read(manualRestored.object) == read(manualResult.object))
     var rejected = false
     do {
       _ = try MetalSSBSavedRun.load(from: url, matchingSourceIdentity: "different-acquisition")
     } catch { rejected = true }
-    precondition(rejected, "A saved run must not attach to a different acquisition")
+    require(rejected, "A saved run must not attach to a different acquisition")
     print(
       "PASS 200-trial fit and saved-run exact round trip; refinement_evaluations=\(fit.refinementEvaluations)"
     )

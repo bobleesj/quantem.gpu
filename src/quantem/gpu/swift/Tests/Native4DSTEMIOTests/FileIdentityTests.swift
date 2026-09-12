@@ -15,20 +15,23 @@ final class FileIdentityTests: XCTestCase {
     XCTAssertEqual(linked.bytes, direct.bytes)
     XCTAssertEqual(linked.inode, direct.inode)
     let original = try nativeSourceHashes(master: nil, dataFiles: [alias], cacheFile: files.cache)
-    XCTAssertEqual(original.members, try nativeSourceHashes(master: nil, dataFiles: [files.source]).members)
+    XCTAssertEqual(
+      original.members, try nativeSourceHashes(master: nil, dataFiles: [files.source]).members)
     let signature = try nativeDatasetSignature(for: [alias])
     try Data("omega".utf8).write(to: files.source)
     let refreshed = try nativeSourceHashes(master: nil, dataFiles: [alias], cacheFile: files.cache)
     XCTAssertNotEqual(refreshed.members, original.members)
     XCTAssertNotEqual(try nativeDatasetSignature(for: [alias]), signature)
 
-    let replacement = files.source.deletingLastPathComponent().appendingPathComponent("replacement.h5")
+    let replacement = files.source.deletingLastPathComponent().appendingPathComponent(
+      "replacement.h5")
     try Data("gamma".utf8).write(to: replacement)
     try FileManager.default.removeItem(at: alias)
     try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: replacement)
     let retargeted = try nativeSourceHashes(master: nil, dataFiles: [alias], cacheFile: files.cache)
     XCTAssertNotEqual(retargeted.members, refreshed.members)
-    XCTAssertEqual(retargeted.members, try nativeSourceHashes(master: nil, dataFiles: [replacement]).members)
+    XCTAssertEqual(
+      retargeted.members, try nativeSourceHashes(master: nil, dataFiles: [replacement]).members)
   }
 
   func testRestoredModificationTimeDoesNotReuseChangedSourceHashes() throws {

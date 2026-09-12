@@ -38,6 +38,7 @@ parts:
       - file: platforms/mps
         title: Python MPS
       - file: platforms/swift-metal
+      - file: platforms/swift-metal-additions
         title: Native Swift and Metal
       - file: platforms/webgpu
       - file: platforms/android-vulkan
@@ -110,6 +111,7 @@ parts:
           - file: maintainer/backend-4dstem-load-checklist
             title: Load acceptance evidence
           - file: maintainer/ssb-performance
+          - file: maintainer/ssb-performance-checkpoints
             title: SSB performance evidence
 
   - caption: Contributing
@@ -132,7 +134,7 @@ parts:
             title: Reproducing resident count analysis
           - file: developer/writing
             title: Writing, notation, and units
-          - file: developer/experimental-resident-ans
+          - file: integrations/experimental-resident-ans
             title: Experimental resident ANS
           - file: developer/count-ans
             title: Count-ANS container

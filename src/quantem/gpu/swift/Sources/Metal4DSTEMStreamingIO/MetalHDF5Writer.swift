@@ -43,7 +43,8 @@ public final class MetalHDF5Writer {
     let started = Date.timeIntervalSinceReferenceDate
     let frameBytes = shape[2] * shape[3] * 2
     guard frames <= Int(UInt32.max) / frameBytes else {
-      throw MetalPrecision.invalid("This compression region exceeds 32-bit indexing; append fewer frames at a time.")
+      throw MetalPrecision.invalid(
+        "This compression region exceeds 32-bit indexing; append fewer frames at a time.")
     }
     let blocks = (frameBytes + 8191) / 8192
     let maximum = 9216

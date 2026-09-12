@@ -22,8 +22,8 @@ API contracts, benchmark methodology, and cross-backend parity evidence.
 > the older candidate does not establish support for those changes. Native Swift
 > clients should also pin an exact verified Git revision.
 
-Opt-in [experimental resident ANS](docs/developer/experimental-resident-ans.md)
-connects the package count codec to Show4DSTEM, with explicit format and
+Opt-in [experimental resident ANS](docs/integrations/experimental-resident-ans.md)
+connects the package count codec to downstream viewers, with explicit format and
 performance limits.
 
 Choose your entry point:

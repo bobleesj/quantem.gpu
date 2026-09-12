@@ -15,6 +15,7 @@ EXPECTED_BACKENDS = {
     "vulkan",
 }
 EXPECTED_CAPABILITIES = {
+    "io.packed-display-precision",
     "geometry.scan-quarter-turn",
     "io.decode-bin-provenance",
     "io.selective-scan-loading",

@@ -1,8 +1,8 @@
 # Exact count-ANS codec and retained experiment formats
 
 This is an experimental opt-in API. Start with
-[experimental resident ANS](experimental-resident-ans.md) for current ownership,
-Show4DSTEM usage, supported formats, and qualification limits.
+[experimental resident ANS](../integrations/experimental-resident-ans.md) for current ownership,
+downstream viewer usage, supported formats, and qualification limits.
 
 The canonical count-ANS v1 representation preserves every native uint8/uint16
 count, including hardware sentinels. It uses independent detector-column byte
@@ -66,10 +66,8 @@ finally:
 reference_counts = io.load(saved.path, backend="cpu", representation="dense").data
 ```
 
-Show4DSTEM can export canonical files with
-`export_show4dstem_rans_viewer([saved.path], "ans-viewer")` for browser WebGPU.
-Its direct CUDA resident-owner factory is a separate protocol; this does not
-claim that `Show4DSTEM(io.load(...))` accepts every canonical CUDA owner.
+Downstream browser viewers can consume canonical files through the package WebGPU
+count codec. Direct CUDA resident-owner adapters remain a separate protocol.
 Existing HDF5 loading defaults are unchanged.
 
 Section checksums detect corruption. Supply an independently retained
@@ -215,8 +213,8 @@ Both retained experimental formats can now enter the canonical CUDA codec:
 seven-tilt through table/offset admission, retained source112 through explicit bounded
 migration. The browser loads retained manifests through
 `detector/backends/webgpu/rans.ts` and canonical containers through the package
-`count-ans.ts` adapter. Stock Show4DSTEM exports canonical containers using
-that adapter. Direct CUDA widget-owner compatibility remains a separate gate. An accelerated canonical
+`count-ans.ts` adapter. Downstream viewers can export canonical containers using
+that adapter. Direct CUDA resident-owner compatibility remains a separate gate. An accelerated canonical
 encoder and complete 66-acquisition conversion campaign are not qualified.
 The small validation window encoded to 5,098,522 bytes; its compression does
 not establish that the complete series will fit in the same device memory as

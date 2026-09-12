@@ -121,7 +121,8 @@ public final class MetalEncodedSource {
     }
     let streams = ((frames + interval - 1) / interval) * pixels
     guard streams <= Int(UInt32.max) / (2 * min(frames, interval) + 4) else {
-      throw Self.invalid("This encoding region exceeds 32-bit stream offsets; append smaller frame regions.")
+      throw Self.invalid(
+        "This encoding region exceeds 32-bit stream offsets; append smaller frame regions.")
     }
     let scratch = try Self.buffer(device, (2 * min(frames, interval) + 4) * streams)
     let sizes = try Self.buffer(device, streams * 4)

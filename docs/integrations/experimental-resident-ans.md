@@ -60,7 +60,7 @@ finally:
 before launching Python. Encoding here is the bounded CPU reference encoder,
 not a claim of real-time full-acquisition compression. CUDA residency retains
 encoded buffers and produces device results without constructing a full dense
-acquisition. See [the container contract](count-ans.md) for dtype, checksums,
+acquisition. See [the container contract](../developer/count-ans.md) for dtype, checksums,
 invalid pixels, conversion, and lifetime rules.
 
 ## Show4DSTEM WebGPU

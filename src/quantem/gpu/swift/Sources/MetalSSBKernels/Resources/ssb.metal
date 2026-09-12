@@ -501,6 +501,9 @@ inline float2 load_g_cache_chunk(
 inline float ssb_polar_phase(float kr, float kc, constant SSBParams &p,
     constant float4 *higher) {
     float alpha = length(float2(kr, kc)) * p.wavelength;
+    // Every supported aberration vanishes at the origin. Avoid atan2(0, 0),
+    // whose fast-math result is not finite on every Metal device.
+    if (alpha == 0.0f) return 0.0f;
     float angle = atan2(kc, kr);
     float phase = p.factor * alpha * alpha *
         (p.c10 + p.c12 * (cos(2.0f * angle) * p.cos2phi12 + sin(2.0f * angle) * p.sin2phi12));

@@ -210,7 +210,12 @@ def test_packed_scan_order_is_not_silently_ignored(tmp_path) -> None:
 
 def test_dense_hash_request_is_not_silently_ignored(tmp_path) -> None:
     source = tmp_path / "ordinary.h5"
-    source.write_bytes(b"\x89HDF\r\n\x1a\n")
+    import h5py
+
+    with h5py.File(source, "w") as handle:
+        handle.require_group("entry/data")["data_000001"] = h5py.ExternalLink(
+            "counts.h5", "/entry/data/data"
+        )
     with pytest.raises(ValueError, match="external shards"):
         io.load(source, representation="dense", expected_source_sha256="0" * 64)
 

@@ -101,9 +101,11 @@ let package = Package(
     .target(
       name: "MetalCountResources",
       path: "src/quantem/gpu/io/backends/mps",
-      exclude: ["__pycache__", "__init__.py", "_ans.py", "_streamed.py",
+      exclude: [
+        "__pycache__", "__init__.py", "_ans.py", "_streamed.py",
         "compact_v3.py", "consumer.py", "decoder.py", "dense.py", "hot_pixels.py",
-        "packed.py", "precision.py", "qh5.py", "resident_dpc.py", "series.py"],
+        "packed.py", "precision.py", "qh5.py", "resident_dpc.py", "series.py",
+      ],
       sources: ["MetalCountResources.swift"],
       resources: [.copy("kernels")]
     ),

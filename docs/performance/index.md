@@ -78,3 +78,6 @@ Valid older numbers are not copied through current overview pages. They remain
 once in the owning historical ledger with exact revision and protocol context.
 Measurements that failed parity or repeatability remain named as rejected
 experiments, never as current timing rows.
+
+See [later SSB performance checkpoints](../maintainer/ssb-performance-checkpoints.md)
+for subsequent full-aperture measurements. The original evidence remains frozen.

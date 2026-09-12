@@ -22,16 +22,12 @@ WebGPU paths.
 | `MetalDisplayKernels` | range, histogram, transfer function, colormap | `.../MetalDisplayKernels` |
 | `MetalImageFFT` | FFT operations on resident 2D products | `.../MetalImageFFT` |
 | `MetalImageRuntime` | typed resident surface/statistics state | `.../MetalImageRuntime` |
-| `MetalScientificNumerics` | resident filtering, refined correlation, translation and weighted accumulation | `.../MetalScientificNumerics` |
 | `MetalSSBKernels` | exact native 512×512 SSB reconstruction, phase-variance objective, and deterministic fitting | `.../MetalSSBKernels` |
 
 The native package does not provide the Python `screening.prepare` cache
 contract. It does provide detector, CoM, DPC/iDPC, display, FFT, load, and SSB
 primitives that a native client can compose without changing their scientific
 meaning.
-
-See [native encoded inputs and scaled output](../api/native_resident.md) for
-the reusable resident, precision, and HDF5 APIs used by the native MAPED consumer.
 
 ## Call and resource path
 

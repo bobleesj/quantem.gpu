@@ -74,6 +74,8 @@ public final class MetalImageOperations {
     return result
   }
   /// Window kind: 0 for ones, 1 for Tukey, 2 for the periodic Hann convention.
+  // Parameter labels match the scientific Torch API.
+  // swift-format-ignore: AlwaysUseLowerCamelCase
   public func window(_ image: GPUImage, kind: Int = 0, edge_blend: Double = 0, padding: Int = 0)
     throws -> GPUImage
   {
@@ -217,6 +219,8 @@ public final class MetalImageOperations {
       words: [UInt32(images.count), UInt32(count), UInt32(lanes)], count: count * lanes)
     return result
   }
+  // Parameter labels match the scientific Torch API.
+  // swift-format-ignore: AlwaysUseLowerCamelCase
   public func correlation(_ reference: GPUImage, _ image: GPUImage, upsample_factor: Int = 100)
     throws -> GPUImage
   {

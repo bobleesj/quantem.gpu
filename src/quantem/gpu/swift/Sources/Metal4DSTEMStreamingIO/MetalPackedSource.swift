@@ -44,6 +44,8 @@ public final class MetalPackedSource {
     // JSONSerialization bridges decimal numbers through NSNumber, which can
     // introduce double rounding. Decode scientific coefficients as Double.
     struct Scalars: Decodable {
+      // Retain the existing precision-report JSON keys.
+      // swift-format-ignore: AlwaysUseLowerCamelCase
       let scale, offset, intensity_min, intensity_max, rmse, max_abs_error: Double
     }
     let scalars = try JSONDecoder().decode(Scalars.self, from: bytes)

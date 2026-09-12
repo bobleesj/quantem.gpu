@@ -47,7 +47,8 @@ public struct MetalPercentileRange: Equatable, Sendable {
       }
       return 1
     }
-    let lower = position(low), upper = position(high)
+    let lower = position(low)
+    let upper = position(high)
     if upper - lower >= 0.01 { return MetalHistogramContrast(low: lower, high: upper) }
     let fittedLow = max(0, min(0.99, (lower + upper) / 2 - 0.005))
     return MetalHistogramContrast(low: fittedLow, high: fittedLow + 0.01)

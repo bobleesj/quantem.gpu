@@ -292,7 +292,8 @@ public struct Metal4DSTEMResidentCapabilities: Codable, Equatable, Sendable {
       Metal4DSTEMResidentProductCapability(
         product: product,
         availability: .residentOnDemand,
-        numerics: product == .diffractionPattern && source.background == nil ? .exactFloat32Bits : .frozenFloat32)
+        numerics: product == .diffractionPattern && source.background == nil
+          ? .exactFloat32Bits : .frozenFloat32)
     }
     return Self(
       schema: currentSchema, representation: .packed,
