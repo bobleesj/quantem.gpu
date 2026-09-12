@@ -22,6 +22,9 @@ public enum Metal4DSTEMKernels {
     "h5lz4dc_unshuffle_source_u8_qh5idx"
   public static let decodeU16Function =
     "h5lz4dc_unshuffle_u16_single_block_qh5idx"
+  /// Diagnostic one-workgroup-per-frame uint16 BSLZ4 decoder.
+  public static let decodeU16FrameCooperativeFunction =
+    "h5lz4dc_unshuffle_u16_frame_coop_qh5idx"
   public static let decodeU16IdentityAuditedFunction =
     "h5lz4dc_unshuffle_u16_identity_audited_single_block_qh5idx"
   public static let decodeU16TwoBlockFunction =

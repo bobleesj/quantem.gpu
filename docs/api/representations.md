@@ -29,7 +29,7 @@ the entry-point and implementation map.
 | Complete H5 to runtime encoded with spatial indexes | CUDA | Bounded real and adversarial count parity; full-66 throughput unqualified |
 | Complete uint16 H5 to paired-count tANS resident with polar index (`"paired"`) | CUDA | Synthetic exact sums and frames; frozen full-array digests on one native acquisition; 69-acquisition series load measured on one device |
 | Saved paired resident form to paired resident | CUDA | Byte-identical reopen on synthetic and native sources |
-| Encoded arrays to exact DP and mask sums | Native Swift/Metal | Small physical integer tests; file reader pending |
+| Encoded arrays/files to exact DP and mask sums | Native Swift/Metal | Small physical integer tests; bounded QGANS file-load parity |
 | GPU dense materialization and reverse conversions for the new profile | Pending | Not qualified |
 
 For these new profiles, `detector.prepare(data).frame(...)` and

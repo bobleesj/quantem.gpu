@@ -23,6 +23,9 @@ extension OriginalHDF5Packing {
       moments != nil && frames <= 8192 && alignedRepeatFill && !alignedHistoryCopy
       && bitshufflePayloadLayout == 1 && bitshufflePixelsPerThread == 4
       && zeroTailDecode != nil && zeroTailValues != nil
+    let useWidthBounded =
+      OriginalPackingDiagnostics.enabled("PLAN_WIDTH_BOUNDED", byDefault: false)
+      && bitshuffleValuesWidthBounded != nil
     let checkpoints = (tiles + 31) / 32
     let headerStride = checkpoints + (tiles + 7) / 8
     let headerBytes = pixels * headerStride * 4
@@ -48,7 +51,10 @@ extension OriginalHDF5Packing {
     profile.scalarDecodeThreads = scalarDecodeThreads
     profile.decodePipelineThreadLimit = scalarDecode.maxTotalThreadsPerThreadgroup
     profile.packingPipelineThreadLimit =
-      (useZeroTail ? zeroTailValues! : bitshuffleValues).maxTotalThreadsPerThreadgroup
+      (useZeroTail
+      ? zeroTailValues!
+      : (useWidthBounded ? bitshuffleValuesWidthBounded! : bitshuffleValues))
+      .maxTotalThreadsPerThreadgroup
     profile.bitshufflePackingThreads = bitshufflePackingThreads
     profile.bitshufflePixelsPerThread = bitshufflePixelsPerThread
     profile.decodeWindowFrames = frames
@@ -113,10 +119,25 @@ extension OriginalHDF5Packing {
       OriginalPackingDiagnostics.enabled("DIRECT_READ", byDefault: true)
       && OriginalPackingDiagnostics.enabled("READ_AHEAD", byDefault: true)
     profile.readAheadEnabled = readAhead
-    let reader = readAhead ? CompressedReadAhead(device: device) : nil
+    var readAheadDepth = 1
+    #if QGPU_PACKING_DIAGNOSTICS
+      if let text = ProcessInfo.processInfo.environment["QGPU_ORIGINAL_READ_AHEAD_DEPTH"],
+        let value = Int(text)
+      {
+        guard (1...4).contains(value) else {
+          throw Self.invalid(
+            "Unsupported READ_AHEAD_DEPTH; select an integer from 1 through 4")
+        }
+        readAheadDepth = value
+      }
+    #endif
+    let reader =
+      readAhead
+      ? CompressedReadAhead(device: device, depth: readAheadDepth)
+      : nil
     defer { reader?.cancelAndDrain() }
     let orderedSlices = windows.flatMap(\.slices)
-    profile.readAheadDepth = readAhead ? 1 : 0
+    profile.readAheadDepth = readAhead ? readAheadDepth : 0
     var sliceOrdinal = 0
     var pendingInputBytes: UInt64 = 0
     if let reader, let first = orderedSlices.first {
@@ -271,7 +292,10 @@ extension OriginalHDF5Packing {
           })
             ?? command.makeComputeCommandEncoder()
         else { throw Self.invalid("Cannot encode verified bitshuffle packing") }
-        packing.setComputePipelineState(useZeroTail ? zeroTailValues! : bitshuffleValues)
+        packing.setComputePipelineState(
+          useZeroTail
+            ? zeroTailValues!
+            : (useWidthBounded ? bitshuffleValuesWidthBounded! : bitshuffleValues))
         for (index, value) in [scratch, headers, payload, errors].enumerated() {
           packing.setBuffer(value, offset: 0, index: index)
         }

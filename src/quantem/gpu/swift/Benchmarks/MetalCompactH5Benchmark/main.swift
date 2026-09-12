@@ -59,6 +59,7 @@ private struct Options {
   let sourceAuditURL: URL?
   let dpcOracleManifestURL: URL?
   let authenticationPolicy: MetalCompactH5AuthenticationPolicy
+  let verifyChecksums: Bool
   let loadRepeats: Int
   let trajectoryRuns: Int
   let trajectoryStatesPerRun: Int
@@ -75,7 +76,8 @@ enum MetalCompactH5Benchmark {
     let source = try MetalCompactH5Loader.load(
       sourceURL: options.sourceURL,
       device: device,
-      authenticationPolicy: options.authenticationPolicy
+      authenticationPolicy: options.authenticationPolicy,
+      verifyChecksums: options.verifyChecksums
     )
     if let suite, suite.sourceIdentitySHA256 != source.metadata.sourceIdentitySHA256 {
       throw benchmarkError(
@@ -240,7 +242,8 @@ enum MetalCompactH5Benchmark {
         let repeated = try MetalCompactH5Loader.load(
           sourceURL: options.sourceURL,
           device: device,
-          authenticationPolicy: options.authenticationPolicy
+          authenticationPolicy: options.authenticationPolicy,
+          verifyChecksums: options.verifyChecksums
         )
         let productStart = ContinuousClock.now
         _ = try repeated.extractDiffraction(
@@ -343,6 +346,14 @@ enum MetalCompactH5Benchmark {
         "cache_state": "uncontrolled",
         "cold_claim": false,
         "authentication_policy": authenticationPolicyName(options.authenticationPolicy),
+        "verify_checksums": options.verifyChecksums,
+        "structural_validation": true,
+        "payload_integrity": options.verifyChecksums
+          ? "sha256_per_shard_and_prepared_products"
+          : "trusted_local_payload",
+        "resident_payload_mode": options.authenticationPolicy == .trustedMappedDirect
+          ? "file_backed_shared_zero_copy"
+          : "private_metal_buffers",
         "metadata_ms": load.metadataMilliseconds,
         "source_read_ms": load.sourceReadMilliseconds,
         "descriptor_preparation_ms": load.descriptorPreparationMilliseconds,
@@ -1255,7 +1266,8 @@ private func parseOptions() throws -> Options {
     throw benchmarkError(
       "Usage: metal-compact-h5-benchmark SOURCE [--oracle-manifest PATH] "
         + "[--source-audit PATH] [--output PATH] [--interaction-repeats N] "
-        + "[--load-repeats N] [--logical-hash] "
+        + "[--load-repeats N] [--logical-hash] [--trust-local-payload] "
+        + "[--trusted-local-mapped-cache] "
         + "[--dpc-oracle-manifest PATH] "
         + "[--resident-switch-source PATH] "
         + "[--parallel-mapped-authentication | --bounded-concurrent-authentication] [--trajectory-runs N] "
@@ -1272,6 +1284,7 @@ private func parseOptions() throws -> Options {
   var sourceAudit: URL?
   var dpcOracleManifest: URL?
   var authenticationPolicy: MetalCompactH5AuthenticationPolicy = .boundedSequential
+  var verifyChecksums = true
   var loadRepeats = 1
   var trajectoryRuns = 3
   var trajectoryStatesPerRun = 0
@@ -1279,6 +1292,18 @@ private func parseOptions() throws -> Options {
     let flag = arguments.removeFirst()
     if flag == "--logical-hash" {
       logicalHash = true
+      continue
+    }
+    if flag == "--trust-local-payload" {
+      verifyChecksums = false
+      continue
+    }
+    if flag == "--trusted-local-mapped-cache" {
+      guard authenticationPolicy == .boundedSequential else {
+        throw benchmarkError("Choose only one authentication policy.")
+      }
+      authenticationPolicy = .trustedMappedDirect
+      verifyChecksums = false
       continue
     }
     if flag == "--parallel-mapped-authentication" || flag == "--bounded-concurrent-authentication" {
@@ -1335,6 +1360,7 @@ private func parseOptions() throws -> Options {
     sourceAuditURL: sourceAudit,
     dpcOracleManifestURL: dpcOracleManifest,
     authenticationPolicy: authenticationPolicy,
+    verifyChecksums: verifyChecksums,
     loadRepeats: loadRepeats,
     trajectoryRuns: trajectoryRuns,
     trajectoryStatesPerRun: trajectoryStatesPerRun
@@ -1350,7 +1376,16 @@ private func loadSample(
     "sample_index": sampleIndex,
     "resident_ready_ms": load.totalMilliseconds,
     "source_read_policy": load.sourceReadPolicy,
-    "source_page_state": "source_pages_unspecified",
+    "source_page_state": load.privateUploadMilliseconds == 0
+      ? "uncontrolled_file_backed_mapping"
+      : "source_pages_unspecified",
+    "source_read_semantics": load.privateUploadMilliseconds == 0
+      ? "mmap_page_faults_in_pipeline_wall"
+      : "pread_work_only",
+    "checksums_verified": load.checksumsVerified,
+    "resident_payload_mode": load.privateUploadMilliseconds == 0
+      ? "file_backed_shared_zero_copy"
+      : "private_metal_buffers",
     "native_cache_status": load.nativeCacheStatus,
     "maximum_in_flight_shards": load.maximumInFlightShards,
     "shard_pipeline_wall_ms": load.shardPipelineMilliseconds,
@@ -1386,6 +1421,7 @@ private func authenticationPolicyName(
   case .boundedSequential: "bounded_sequential"
   case .boundedConcurrent: "bounded_concurrent_three_shards"
   case .parallelMapped: "parallel_mapped_full_file"
+  case .trustedMappedDirect: "trusted_mapped_direct_zero_copy"
   }
 }
 

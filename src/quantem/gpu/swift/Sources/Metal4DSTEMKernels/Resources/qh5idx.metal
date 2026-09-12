@@ -809,6 +809,192 @@ kernel void h5lz4dc_unshuffle_u16_single_block_qh5idx(
     }
 }
 
+// Diagnostic fused decoder variant. It retains the direct, dependency-safe
+// threadgroup LZ4 expansion above, but performs the 16-bit bitshuffle inverse
+// with four SIMD groups and the same butterfly transpose as the accepted
+// device-scratch path. The older single-block probe reconstructed one value
+// at a time and therefore scaled poorly across a complete acquisition.
+kernel void h5lz4dc_unshuffle_u16_single_block_vector_qh5idx(
+    const device uchar *h5File [[buffer(0)]],
+    const device uint2 *blockMetadata [[buffer(1)]],
+    constant ulong &rangeStart [[buffer(2)]],
+    constant uint &blocksPerFrame [[buffer(3)]],
+    constant uint &frameElements [[buffer(4)]],
+    device ushort *output [[buffer(5)]],
+    constant uint &metadataFrameOffset [[buffer(6)]],
+    const device uchar *badPixelMask [[buffer(7)]],
+    device atomic_uint *countAudit [[buffer(8)]],
+    constant uint &globalFrameOffset [[buffer(9)]],
+    uint3 threadgroupPosition [[threadgroup_position_in_grid]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint simdgroup [[simdgroup_index_in_threadgroup]]
+) {
+    uint frame = threadgroupPosition.x;
+    uint block = threadgroupPosition.z;
+    threadgroup uchar shuffledBlock[kBslz4BlockBytes];
+    threadgroup atomic_uint blockMaximum;
+    threadgroup atomic_uint blockAbove255;
+    if (simdgroup == 0u && lane == 0u) {
+        atomic_store_explicit(&blockMaximum, 0u, memory_order_relaxed);
+        atomic_store_explicit(&blockAbove255, 0u, memory_order_relaxed);
+    }
+    if (simdgroup == 0u && block < blocksPerFrame) {
+        uint2 metadata = blockMetadata[
+            ulong(metadataFrameOffset + frame) * blocksPerFrame + block
+        ];
+        bslz4DecompressStreamDirectToThreadgroup(
+            shuffledBlock,
+            h5File + rangeStart + ulong(metadata.x),
+            metadata.y,
+            lane
+        );
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    uint localMaximum = 0u;
+    uint localAbove255 = 0u;
+    if (block < blocksPerFrame) {
+        const threadgroup uint *planes =
+            (const threadgroup uint *)shuffledBlock;
+        // Four SIMD groups cover the 128 word columns. Lanes 0...15 load the
+        // sixteen bit planes and lanes 16...31 supply zero rows; the same
+        // five-stage butterfly used by the uint32 path then transposes the
+        // 32x32 bit tile in registers. The low sixteen bits are the exact
+        // uint16 detector value for each lane.
+        for (uint word = simdgroup; word < 128u; word += 4u) {
+            uint value = lane < 16u ? planes[lane * 128u + word] : 0u;
+            for (uint shift = 1u; shift <= 16u; shift *= 2u) {
+                uint mask = 0xffffffffu / ((1u << shift) + 1u);
+                uint other = simd_shuffle_xor(value, shift);
+                value = (lane & shift) ? (value & ~mask) | ((other & ~mask) >> shift)
+                                      : (value & mask) | ((other & mask) << shift);
+            }
+            uint detectorIndex = block * 4096u + word * 32u + lane;
+            if (detectorIndex < frameElements) {
+                ushort stored = badPixelMask[detectorIndex] ? ushort(0) : ushort(value);
+                output[ulong(frame) * frameElements + detectorIndex] = stored;
+                localMaximum = max(localMaximum, uint(stored));
+                localAbove255 += stored > ushort(255) ? 1u : 0u;
+            }
+        }
+    }
+    localMaximum = simd_max(localMaximum);
+    localAbove255 = simd_sum(localAbove255);
+    if (lane == 0u) {
+        atomic_fetch_max_explicit(&blockMaximum, localMaximum, memory_order_relaxed);
+        atomic_fetch_add_explicit(&blockAbove255, localAbove255, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (simdgroup == 0u && lane == 0u && block < blocksPerFrame) {
+        uint frameAudit = 2u * (globalFrameOffset + frame);
+        atomic_fetch_max_explicit(
+            &countAudit[frameAudit],
+            atomic_load_explicit(&blockMaximum, memory_order_relaxed),
+            memory_order_relaxed
+        );
+        atomic_fetch_add_explicit(
+            &countAudit[frameAudit + 1u],
+            atomic_load_explicit(&blockAbove255, memory_order_relaxed),
+            memory_order_relaxed
+        );
+    }
+}
+
+// Diagnostic frame-cooperative candidate, ported from the historical
+// FUSED_FRAME_U16_WGSL topology. One 128-thread workgroup owns one complete
+// detector frame and walks its independent 8192-byte BSLZ4 blocks in order.
+// The block expansion remains owned by SIMD group zero; the other three SIMD
+// groups perform the exact uint16 plane inverse while that group is idle.
+// This intentionally preserves the native Metal resident contract (ushort
+// output, one value per detector pixel) rather than WebGPU's packed u32 stack.
+// It is disabled by default because the native path may benefit more from
+// independent block workgroups than from reducing dispatch count.
+kernel void h5lz4dc_unshuffle_u16_frame_coop_qh5idx(
+    const device uchar *h5File [[buffer(0)]],
+    const device uint2 *blockMetadata [[buffer(1)]],
+    constant ulong &rangeStart [[buffer(2)]],
+    constant uint &blocksPerFrame [[buffer(3)]],
+    constant uint &frameElements [[buffer(4)]],
+    device ushort *output [[buffer(5)]],
+    constant uint &metadataFrameOffset [[buffer(6)]],
+    const device uchar *badPixelMask [[buffer(7)]],
+    device atomic_uint *countAudit [[buffer(8)]],
+    constant uint &globalFrameOffset [[buffer(9)]],
+    uint3 threadgroupPosition [[threadgroup_position_in_grid]],
+    uint threadIndex [[thread_index_in_threadgroup]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint simdgroup [[simdgroup_index_in_threadgroup]]
+) {
+    uint frame = threadgroupPosition.x;
+    if (blocksPerFrame == 0u || ulong(blocksPerFrame) * 4096ul != frameElements) return;
+
+    threadgroup uchar shuffledBlock[kBslz4BlockBytes];
+    threadgroup uint blockMaximum[4];
+    threadgroup uint blockAbove255[4];
+
+    for (uint block = 0u; block < blocksPerFrame; ++block) {
+        if (simdgroup == 0u) {
+            uint2 metadata = blockMetadata[
+                ulong(metadataFrameOffset + frame) * blocksPerFrame + block
+            ];
+            bslz4DecompressStreamDirectToThreadgroup(
+                shuffledBlock,
+                h5File + rangeStart + ulong(metadata.x),
+                metadata.y,
+                lane
+            );
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        uint localMaximum = 0u;
+        uint localAbove255 = 0u;
+        const threadgroup uint *planes = (const threadgroup uint *)shuffledBlock;
+        for (uint group = simdgroup; group < 128u; group += 4u) {
+            ushort value = 0;
+            for (uint bit = 0u; bit < 16u; ++bit) {
+                if (planes[bit * 128u + group] & (1u << lane)) {
+                    value |= ushort(1u << bit);
+                }
+            }
+            uint detectorIndex = block * 4096u + group * 32u + lane;
+            if (detectorIndex < frameElements) {
+                ushort stored = badPixelMask[detectorIndex] ? ushort(0) : value;
+                output[ulong(frame) * frameElements + detectorIndex] = stored;
+                localMaximum = max(localMaximum, uint(stored));
+                localAbove255 += stored > ushort(255) ? 1u : 0u;
+            }
+        }
+        localMaximum = simd_max(localMaximum);
+        localAbove255 = simd_sum(localAbove255);
+        if (lane == 0u) {
+            blockMaximum[simdgroup] = localMaximum;
+            blockAbove255[simdgroup] = localAbove255;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        if (threadIndex == 0u) {
+            uint maximum = 0u;
+            uint above255 = 0u;
+            for (uint group = 0u; group < 4u; ++group) {
+                maximum = max(maximum, blockMaximum[group]);
+                above255 += blockAbove255[group];
+            }
+            uint frameAudit = 2u * (globalFrameOffset + frame);
+            atomic_fetch_max_explicit(
+                &countAudit[frameAudit], maximum, memory_order_relaxed
+            );
+            atomic_fetch_add_explicit(
+                &countAudit[frameAudit + 1u], above255, memory_order_relaxed
+            );
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+}
+
+// Diagnostic fused decoder using the cooperative token parser above. The
+// output and audit contract is identical to the vector fused kernel; only the
+// LZ4 control-flow ownership changes. One SIMD group expands the block and all
+// four groups perform the exact bitshuffle butterfly.
 // Reload specialization for a source whose complete contents and value range
 // were already sealed by SHA-256. The first encounter uses the audited kernel
 // above. Later exact reloads can omit millions of redundant range atomics
@@ -1696,7 +1882,10 @@ inline void bslz4DecompressPrefixSerialToDevice(
 // Exact full-stream scalar decode with bounded scratch and explicit failure.
 // Every independent LZ4 block is decoded completely by one thread. The output
 // is only bounded transient bitshuffle scratch; it is not a reduced resident.
-template <bool alignedRepeatFill = false, bool alignedHistoryCopy = false, bool skipZeroTail = false>
+template <bool alignedRepeatFill = false, bool alignedHistoryCopy = false,
+          bool skipZeroTail = false, bool shortRepeatFill = false,
+          bool shortTokenFastPath = false, bool distance3Vector = false,
+          bool distance8Vector = false, bool distance512Vector = false>
 inline bool bslz4DecompressFullSerialCheckedToDevice(
     device uchar *destination, const device uchar *compressed, uint compressedLength,
     thread uint *zeroTail = nullptr
@@ -1704,6 +1893,53 @@ inline bool bslz4DecompressFullSerialCheckedToDevice(
     uint inputIndex = 0u, outputIndex = 0u;
     while (inputIndex < compressedLength) {
         uchar token = compressed[inputIndex++];
+        // BTO contains a large common case with no literals and a non-extended
+        // short match. Keep this branch in a diagnostic template so the
+        // retained checked kernel has its original code shape. The fast path
+        // still validates every boundary and distance before writing output.
+        if (shortTokenFastPath && (token & 0xf0u) == 0u
+            && (token & 0x0fu) != 15u
+            && compressedLength - inputIndex >= 2u
+            && outputIndex < 8192u) {
+            uint distance = uint(bslz4ReadWordDevice(compressed + inputIndex));
+            inputIndex += 2u;
+            uint matchLength = 4u + uint(token & 0x0fu);
+            if (distance == 0u || distance > outputIndex
+                || matchLength > 8192u - outputIndex) return false;
+            uint words = matchLength / 4u;
+            device packed_uchar4 *destinationWords =
+                (device packed_uchar4 *)(destination + outputIndex);
+            if (distance <= 2u) {
+                uchar first = destination[outputIndex - distance];
+                uchar second = destination[outputIndex - 1u];
+                packed_uchar4 pattern(first, second, first, second);
+                for (uint index = 0u; index < words; ++index) {
+                    destinationWords[index] = pattern;
+                }
+                for (uint index = words * 4u; index < matchLength; ++index) {
+                    destination[outputIndex + index] =
+                        (index & 1u) ? second : first;
+                }
+            } else if (distance >= 4u) {
+                const device packed_uchar4 *sourceWords =
+                    (const device packed_uchar4 *)(
+                        destination + outputIndex - distance);
+                for (uint index = 0u; index < words; ++index) {
+                    destinationWords[index] = sourceWords[index];
+                }
+                for (uint index = words * 4u; index < matchLength; ++index) {
+                    destination[outputIndex + index] =
+                        destination[outputIndex + index - distance];
+                }
+            } else {
+                for (uint index = 0u; index < matchLength; ++index) {
+                    destination[outputIndex + index] =
+                        destination[outputIndex + index - distance];
+                }
+            }
+            outputIndex += matchLength;
+            continue;
+        }
         uint literalCount = uint(token >> 4u);
         if (literalCount == 15u) {
             uchar next;
@@ -1771,7 +2007,10 @@ inline bool bslz4DecompressFullSerialCheckedToDevice(
                     }
                 }
             }
-            if (alignedRepeatFill && matchLength >= 64u) {
+            // The diagnostic short variant tests the crossover on the real
+            // BTO distribution without changing parsing, bounds checks, or
+            // byte order. The default remains the retained 64-byte gate.
+            if (alignedRepeatFill && matchLength >= (shortRepeatFill ? 32u : 64u)) {
                 // Blocks are 8192-byte aligned. Preserve the two-byte phase
                 // while peeling the prefix before aligned 16-byte writes.
                 uint copied = 0u;
@@ -1811,6 +2050,56 @@ inline bool bslz4DecompressFullSerialCheckedToDevice(
             for (uint index = words * 4u; index < matchLength; ++index) {
                 destination[outputIndex + index] = (index & 1u) ? second : first;
             }
+        } else if (distance3Vector && distance == 3u && matchLength >= 64u) {
+            uchar first = destination[outputIndex - 3u];
+            uchar second = destination[outputIndex - 2u];
+            uchar third = destination[outputIndex - 1u];
+            uint copied = 0u;
+            for (; copied < matchLength && ((outputIndex + copied) & 15u); ++copied) {
+                uint phase = copied % 3u;
+                destination[outputIndex + copied] = phase == 0u ? first : (phase == 1u ? second : third);
+            }
+            uint phase = copied % 3u;
+            uint4 widePattern;
+            for (uint word = 0u; word < 4u; ++word) {
+                uint value = 0u;
+                for (uint byte = 0u; byte < 4u; ++byte) {
+                    uint index = phase + word * 4u + byte;
+                    uchar valueByte = index % 3u == 0u ? first : (index % 3u == 1u ? second : third);
+                    value |= uint(valueByte) << (byte * 8u);
+                }
+                widePattern[word] = value;
+            }
+            uint vectors = (matchLength - copied) / 16u;
+            device uint4 *wideDestination = (device uint4 *)(destination + outputIndex + copied);
+            for (uint vector = 0u; vector < vectors; ++vector) wideDestination[vector] = widePattern;
+            copied += vectors * 16u;
+            for (; copied < matchLength; ++copied) {
+                uint tailPhase = copied % 3u;
+                destination[outputIndex + copied] = tailPhase == 0u ? first : (tailPhase == 1u ? second : third);
+            }
+        } else if (distance512Vector && distance == 512u && matchLength >= 512u
+                   && (outputIndex & 15u) == 0u) {
+            uint copied = 0u;
+            for (; copied < matchLength && ((outputIndex + copied) & 15u); ++copied) {
+                destination[outputIndex + copied] = destination[outputIndex + copied - distance];
+            }
+            uint vectors = (matchLength - copied) / 16u;
+            device uint4 *wideDestination = (device uint4 *)(destination + outputIndex + copied);
+            const device uint4 *wideSource =
+                (const device uint4 *)(destination + outputIndex + copied - distance);
+            uint vector = 0u;
+            for (; vector + 3u < vectors; vector += 4u) {
+                wideDestination[vector] = wideSource[vector];
+                wideDestination[vector + 1u] = wideSource[vector + 1u];
+                wideDestination[vector + 2u] = wideSource[vector + 2u];
+                wideDestination[vector + 3u] = wideSource[vector + 3u];
+            }
+            for (; vector < vectors; ++vector) wideDestination[vector] = wideSource[vector];
+            copied += vectors * 16u;
+            for (; copied < matchLength; ++copied) {
+                destination[outputIndex + copied] = destination[outputIndex + copied - distance];
+            }
         } else if (alignedHistoryCopy && distance >= 16u && (distance & 15u) == 0u && matchLength >= 64u) {
             uint copied = 0u;
             // The validated 16-byte-multiple distance aligns both ends.
@@ -1843,11 +2132,33 @@ inline bool bslz4DecompressFullSerialCheckedToDevice(
                 destination[outputIndex + index] = destination[outputIndex + index - distance];
             }
         } else if (distance >= 4u) {
-            const device packed_uchar4 *wordSource =
-                (const device packed_uchar4 *)(destination + outputIndex - distance);
-            for (uint index = 0u; index < words; ++index) wordDestination[index] = wordSource[index];
-            for (uint index = words * 4u; index < matchLength; ++index) {
-                destination[outputIndex + index] = destination[outputIndex + index - distance];
+            if (distance8Vector && distance == 8u && matchLength >= 32u) {
+                uint copied = 0u;
+                for (; copied < matchLength && ((outputIndex + copied) & 7u); ++copied) {
+                    destination[outputIndex + copied] =
+                        destination[outputIndex + copied - distance];
+                }
+                uint vectors = (matchLength - copied) / 8u;
+                device uint2 *wideDestination =
+                    (device uint2 *)(destination + outputIndex + copied);
+                const device uint2 *wideSource =
+                    (const device uint2 *)(destination + outputIndex + copied - distance);
+                for (uint vector = 0u; vector < vectors; ++vector)
+                    wideDestination[vector] = wideSource[vector];
+                copied += vectors * 8u;
+                for (; copied < matchLength; ++copied) {
+                    destination[outputIndex + copied] =
+                        destination[outputIndex + copied - distance];
+                }
+            } else {
+                const device packed_uchar4 *wordSource =
+                    (const device packed_uchar4 *)(destination + outputIndex - distance);
+                for (uint index = 0u; index < words; ++index)
+                    wordDestination[index] = wordSource[index];
+                for (uint index = words * 4u; index < matchLength; ++index) {
+                    destination[outputIndex + index] =
+                        destination[outputIndex + index - distance];
+                }
             }
         } else {
             for (uint index = 0u; index < matchLength; ++index) {
@@ -1857,6 +2168,100 @@ inline bool bslz4DecompressFullSerialCheckedToDevice(
         outputIndex += matchLength;
     }
     return false;
+}
+
+// Diagnostic fast path for an already validated BSLZ4 stream. The indexed
+// BTO source has fixed 8192-byte expanded blocks and independently validated
+// metadata, so this variant removes the per-token bounds/error branches from
+// the hot decoder loop. It is never selected by the release defaults; the
+// caller must still run the independent full-count oracle before retaining it.
+template <bool alignedRepeatFill = false>
+inline void bslz4DecompressFullSerialFastToDevice(
+    device uchar *destination, const device uchar *compressed, uint compressedLength
+) {
+    (void)compressedLength;
+    uint inputIndex = 0u, outputIndex = 0u;
+    while (outputIndex < 8192u) {
+        uchar token = compressed[inputIndex++];
+        uint literalCount = uint(token >> 4u);
+        if (literalCount == 15u) {
+            uchar next;
+            do {
+                next = compressed[inputIndex++];
+                literalCount += uint(next);
+            } while (next == 255u);
+        }
+        uint words = literalCount / 4u;
+        device packed_uchar4 *literalDestination =
+            (device packed_uchar4 *)(destination + outputIndex);
+        const device packed_uchar4 *literalSource =
+            (const device packed_uchar4 *)(compressed + inputIndex);
+        for (uint index = 0u; index < words; ++index)
+            literalDestination[index] = literalSource[index];
+        for (uint index = words * 4u; index < literalCount; ++index)
+            destination[outputIndex + index] = compressed[inputIndex + index];
+        inputIndex += literalCount;
+        outputIndex += literalCount;
+        if (outputIndex == 8192u) break;
+
+        uint distance = uint(bslz4ReadWordDevice(compressed + inputIndex));
+        inputIndex += 2u;
+        uint matchLength = 4u + uint(token & 15u);
+        if ((token & 15u) == 15u) {
+            uchar next;
+            do {
+                next = compressed[inputIndex++];
+                matchLength += uint(next);
+            } while (next == 255u);
+        }
+        uint matchWords = matchLength / 4u;
+        device packed_uchar4 *wordDestination =
+            (device packed_uchar4 *)(destination + outputIndex);
+        if (distance <= 2u) {
+            uchar first = destination[outputIndex - distance];
+            uchar second = destination[outputIndex - 1u];
+            if (alignedRepeatFill && matchLength >= 64u) {
+                uint copied = 0u;
+                for (; copied < matchLength && ((outputIndex + copied) & 15u); ++copied)
+                    destination[outputIndex + copied] = (copied & 1u) ? second : first;
+                uint a = uint((copied & 1u) ? second : first);
+                uint b = uint((copied & 1u) ? first : second);
+                uint4 widePattern(a | (b << 8u) | (a << 16u) | (b << 24u));
+                uint vectors = (matchLength - copied) / 16u;
+                device uint4 *wideDestination =
+                    (device uint4 *)(destination + outputIndex + copied);
+                for (uint vector = 0u; vector < vectors; ++vector)
+                    wideDestination[vector] = widePattern;
+                copied += vectors * 16u;
+                for (; copied < matchLength; ++copied)
+                    destination[outputIndex + copied] = (copied & 1u) ? second : first;
+            } else {
+                packed_uchar4 pattern(first, second, first, second);
+                for (uint index = 0u; index < matchWords; ++index)
+                    wordDestination[index] = pattern;
+                for (uint index = matchWords * 4u; index < matchLength; ++index)
+                    destination[outputIndex + index] = (index & 1u) ? second : first;
+            }
+        } else if (distance >= 16u) {
+            const device packed_uchar4 *wordSource =
+                (const device packed_uchar4 *)(destination + outputIndex - distance);
+            for (uint index = 0u; index < matchWords; ++index)
+                wordDestination[index] = wordSource[index];
+            for (uint index = matchWords * 4u; index < matchLength; ++index)
+                destination[outputIndex + index] = destination[outputIndex + index - distance];
+        } else if (distance >= 4u) {
+            const device packed_uchar4 *wordSource =
+                (const device packed_uchar4 *)(destination + outputIndex - distance);
+            for (uint index = 0u; index < matchWords; ++index)
+                wordDestination[index] = wordSource[index];
+            for (uint index = matchWords * 4u; index < matchLength; ++index)
+                destination[outputIndex + index] = destination[outputIndex + index - distance];
+        } else {
+            for (uint index = 0u; index < matchLength; ++index)
+                destination[outputIndex + index] = destination[outputIndex + index - distance];
+        }
+        outputIndex += matchLength;
+    }
 }
 
 kernel void h5lz4dc_full_u16_scalar_qh5idx(
@@ -1887,6 +2292,31 @@ kernel void h5lz4dc_full_u16_scalar_qh5idx(
     )) atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
 }
 
+kernel void h5lz4dc_full_u16_fast_qh5idx(
+    const device uchar *h5File [[buffer(0)]],
+    const device uint2 *blockMetadata [[buffer(1)]],
+    constant ulong &rangeStart [[buffer(2)]],
+    constant uint &blocksPerFrame [[buffer(3)]],
+    constant uint &frameElements [[buffer(4)]],
+    device uchar *scratch [[buffer(5)]],
+    constant uint &metadataFrameOffset [[buffer(6)]],
+    device atomic_uint *errors [[buffer(10)]],
+    constant uint &frameCount [[buffer(11)]],
+    uint linearBlock [[thread_position_in_grid]]
+) {
+    (void)errors;
+    if (ulong(linearBlock) >= ulong(frameCount) * blocksPerFrame) return;
+    uint frame = linearBlock / blocksPerFrame;
+    uint block = linearBlock % blocksPerFrame;
+    uint2 metadata = blockMetadata[
+        (ulong(metadataFrameOffset) + frame) * blocksPerFrame + block
+    ];
+    bslz4DecompressFullSerialFastToDevice<true>(
+        scratch + ulong(frame) * frameElements * 2ul + ulong(block) * 8192ul,
+        h5File + rangeStart + ulong(metadata.x), metadata.y
+    );
+}
+
 kernel void h5lz4dc_full_u16_aligned_fill_qh5idx(
     const device uchar *h5File [[buffer(0)]],
     const device uint2 *blockMetadata [[buffer(1)]],
@@ -1911,6 +2341,316 @@ kernel void h5lz4dc_full_u16_aligned_fill_qh5idx(
         scratch + ulong(frame) * frameElements * 2ul + ulong(block) * 8192ul,
         h5File + rangeStart + ulong(metadata.x), metadata.y
     )) atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+}
+
+// Diagnostic-only fixed-shape dispatch. The retained 512x512 fixtures have
+// nine 4096-value blocks per frame; hard-code that divisor so the hot grid mapping
+// does not carry a runtime divide/modulo by blocksPerFrame. The kernel still
+// fails closed if it is accidentally used for another indexed shape.
+kernel void h5lz4dc_full_u16_aligned_fill_fixed9_qh5idx(
+    const device uchar *h5File [[buffer(0)]],
+    const device uint2 *blockMetadata [[buffer(1)]],
+    constant ulong &rangeStart [[buffer(2)]],
+    constant uint &blocksPerFrame [[buffer(3)]],
+    constant uint &frameElements [[buffer(4)]],
+    device uchar *scratch [[buffer(5)]],
+    constant uint &metadataFrameOffset [[buffer(6)]],
+    device atomic_uint *errors [[buffer(10)]],
+    constant uint &frameCount [[buffer(11)]],
+    uint linearBlock [[thread_position_in_grid]]
+) {
+    if (blocksPerFrame != 9u || frameElements != 36864u) {
+        atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+        return;
+    }
+    if (ulong(linearBlock) >= ulong(frameCount) * 9ul) return;
+    uint frame = linearBlock / 9u;
+    uint block = linearBlock - frame * 9u;
+    uint2 metadata = blockMetadata[(ulong(metadataFrameOffset) + frame) * 9ul + block];
+    if (!bslz4DecompressFullSerialCheckedToDevice<true>(
+        scratch + ulong(frame) * 73728ul + ulong(block) * 8192ul,
+        h5File + rangeStart + ulong(metadata.x), metadata.y
+    )) atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+}
+
+// Diagnostic-only distance-3 vector fill. The repeated three-byte sequence is
+// materialized in aligned 16-byte stores after a scalar alignment peel.
+kernel void h5lz4dc_full_u16_aligned_fill_distance3_qh5idx(
+    const device uchar *h5File [[buffer(0)]],
+    const device uint2 *blockMetadata [[buffer(1)]],
+    constant ulong &rangeStart [[buffer(2)]],
+    constant uint &blocksPerFrame [[buffer(3)]],
+    constant uint &frameElements [[buffer(4)]],
+    device uchar *scratch [[buffer(5)]],
+    constant uint &metadataFrameOffset [[buffer(6)]],
+    device atomic_uint *errors [[buffer(10)]],
+    constant uint &frameCount [[buffer(11)]],
+    uint linearBlock [[thread_position_in_grid]]
+) {
+    if (blocksPerFrame == 0u || ulong(blocksPerFrame) * 4096ul != frameElements) {
+        atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+        return;
+    }
+    if (ulong(linearBlock) >= ulong(frameCount) * blocksPerFrame) return;
+    uint frame = linearBlock / blocksPerFrame;
+    uint block = linearBlock % blocksPerFrame;
+    uint2 metadata = blockMetadata[(ulong(metadataFrameOffset) + frame) * blocksPerFrame + block];
+    if (!bslz4DecompressFullSerialCheckedToDevice<true, false, false, false, false, true>(
+        scratch + ulong(frame) * frameElements * 2ul + ulong(block) * 8192ul,
+        h5File + rangeStart + ulong(metadata.x), metadata.y
+    )) atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+}
+
+// Diagnostic-only common-token specialization. It keeps the exact checked
+// serial decoder but skips the generic literal/match setup for the dominant
+// zero-literal, non-extended short-match records.
+kernel void h5lz4dc_full_u16_aligned_fill_short_tokens_qh5idx(
+    const device uchar *h5File [[buffer(0)]],
+    const device uint2 *blockMetadata [[buffer(1)]],
+    constant ulong &rangeStart [[buffer(2)]],
+    constant uint &blocksPerFrame [[buffer(3)]],
+    constant uint &frameElements [[buffer(4)]],
+    device uchar *scratch [[buffer(5)]],
+    constant uint &metadataFrameOffset [[buffer(6)]],
+    device atomic_uint *errors [[buffer(10)]],
+    constant uint &frameCount [[buffer(11)]],
+    uint linearBlock [[thread_position_in_grid]]
+) {
+    if (blocksPerFrame == 0u || ulong(blocksPerFrame) * 4096ul != frameElements) {
+        atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+        return;
+    }
+    if (ulong(linearBlock) >= ulong(frameCount) * blocksPerFrame) return;
+    uint frame = linearBlock / blocksPerFrame;
+    uint block = linearBlock % blocksPerFrame;
+    uint2 metadata = blockMetadata[(ulong(metadataFrameOffset) + frame) * blocksPerFrame + block];
+    if (!bslz4DecompressFullSerialCheckedToDevice<true, false, false, false, true>(
+        scratch + ulong(frame) * frameElements * 2ul + ulong(block) * 8192ul,
+        h5File + rangeStart + ulong(metadata.x), metadata.y
+    )) atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+}
+
+// Diagnostic-only scheduling specialization. The 32 consecutive blocks in
+// each SIMD group are dispatched in compressed-length order, reducing LZ4
+// control-flow divergence while leaving each block's frame/block destination
+// unchanged. The order buffer is host-built from the indexed metadata.
+kernel void h5lz4dc_full_u16_aligned_fill_ordered_qh5idx(
+    const device uchar *h5File [[buffer(0)]],
+    const device uint2 *blockMetadata [[buffer(1)]],
+    constant ulong &rangeStart [[buffer(2)]],
+    constant uint &blocksPerFrame [[buffer(3)]],
+    constant uint &frameElements [[buffer(4)]],
+    device uchar *scratch [[buffer(5)]],
+    constant uint &metadataFrameOffset [[buffer(6)]],
+    device atomic_uint *errors [[buffer(10)]],
+    constant uint &frameCount [[buffer(11)]],
+    const device uint *dispatchOrder [[buffer(12)]],
+    uint linearBlock [[thread_position_in_grid]]
+) {
+    uint totalBlocks = frameCount * blocksPerFrame;
+    if (linearBlock >= totalBlocks) return;
+    uint record = dispatchOrder[linearBlock];
+    if (record >= totalBlocks) {
+        atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+        return;
+    }
+    uint frame = record / blocksPerFrame;
+    uint block = record % blocksPerFrame;
+    uint2 metadata = blockMetadata[(ulong(metadataFrameOffset) + frame) * blocksPerFrame + block];
+    if (!bslz4DecompressFullSerialCheckedToDevice<true>(
+        scratch + ulong(frame) * frameElements * 2ul + ulong(block) * 8192ul,
+        h5File + rangeStart + ulong(metadata.x), metadata.y
+    )) atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+}
+
+// Diagnostic-only crossover probe. It is selected by the Swift orchestration
+// only when QGPU_ORIGINAL_DECODE_REPEAT32=1 in an instrumented build.
+kernel void h5lz4dc_full_u16_aligned_fill_repeat32_qh5idx(
+    const device uchar *h5File [[buffer(0)]],
+    const device uint2 *blockMetadata [[buffer(1)]],
+    constant ulong &rangeStart [[buffer(2)]],
+    constant uint &blocksPerFrame [[buffer(3)]],
+    constant uint &frameElements [[buffer(4)]],
+    device uchar *scratch [[buffer(5)]],
+    constant uint &metadataFrameOffset [[buffer(6)]],
+    device atomic_uint *errors [[buffer(10)]],
+    constant uint &frameCount [[buffer(11)]],
+    uint linearBlock [[thread_position_in_grid]]
+) {
+    if (blocksPerFrame == 0u || ulong(blocksPerFrame) * 4096ul != frameElements) {
+        atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+        return;
+    }
+    if (ulong(linearBlock) >= ulong(frameCount) * blocksPerFrame) return;
+    uint frame = linearBlock / blocksPerFrame;
+    uint block = linearBlock % blocksPerFrame;
+    uint2 metadata = blockMetadata[(ulong(metadataFrameOffset) + frame) * blocksPerFrame + block];
+    if (!bslz4DecompressFullSerialCheckedToDevice<true, false, false, true>(
+        scratch + ulong(frame) * frameElements * 2ul + ulong(block) * 8192ul,
+        h5File + rangeStart + ulong(metadata.x), metadata.y
+    )) atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+}
+
+// Diagnostic GPU-resident token-plan path. A fixed 256-record slab per block
+// keeps operation addresses predictable and avoids the global indirection used
+// by the rejected CPU replay plan. The builder is checked and source-bound;
+// the expander preserves token order but lets each SIMD lane materialize the
+// literal/match bytes of one record.
+kernel void h5lz4_build_token_plan_u16_qh5idx(
+    const device uchar *h5File [[buffer(0)]],
+    const device uint2 *blockMetadata [[buffer(1)]],
+    constant ulong &rangeStart [[buffer(2)]],
+    constant uint &blocksPerFrame [[buffer(3)]],
+    constant uint &frameElements [[buffer(4)]],
+    device uint4 *planHeaders [[buffer(5)]],
+    device uint4 *planOps [[buffer(6)]],
+    constant uint &metadataFrameOffset [[buffer(7)]],
+    device atomic_uint *errors [[buffer(10)]],
+    constant uint &frameCount [[buffer(11)]],
+    constant uint &planBlockOffset [[buffer(12)]],
+    uint linearBlock [[thread_position_in_grid]]
+) {
+    constexpr uint kPlanCapacity = 256u;
+    uint planBlock = planBlockOffset + linearBlock;
+    uint2 header = uint2(0u, 0u);
+    if (blocksPerFrame == 0u || ulong(blocksPerFrame) * 4096ul != frameElements
+        || ulong(linearBlock) >= ulong(frameCount) * blocksPerFrame) {
+        if (ulong(linearBlock) < ulong(frameCount) * blocksPerFrame) {
+            atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+        }
+        planHeaders[planBlock] = uint4(0u, 1u, 0u, 0u);
+        return;
+    }
+    uint frame = linearBlock / blocksPerFrame;
+    uint block = linearBlock - frame * blocksPerFrame;
+    uint2 metadata = blockMetadata[
+        (ulong(metadataFrameOffset) + frame) * blocksPerFrame + block
+    ];
+    const device uchar *compressed = h5File + rangeStart + ulong(metadata.x);
+    uint inputIndex = 0u;
+    uint outputIndex = 0u;
+    uint opCount = 0u;
+    bool valid = metadata.y > 0u;
+    while (valid && inputIndex < metadata.y) {
+        uchar token = compressed[inputIndex++];
+        uint literalCount = uint(token >> 4u);
+        if (literalCount == 15u) {
+            uchar next = 255u;
+            while (valid && next == 255u) {
+                if (inputIndex >= metadata.y) { valid = false; break; }
+                next = compressed[inputIndex++];
+                if (literalCount > 8192u - uint(next)) { valid = false; break; }
+                literalCount += uint(next);
+            }
+        }
+        if (!valid || literalCount > metadata.y - inputIndex
+            || literalCount > 8192u - outputIndex
+            || opCount >= kPlanCapacity) { valid = false; break; }
+        uint literalInput = inputIndex;
+        uint literalOutput = outputIndex;
+        inputIndex += literalCount;
+        outputIndex += literalCount;
+        uint matchInfo = 0u;
+        if (inputIndex < metadata.y) {
+            if (metadata.y - inputIndex < 2u) { valid = false; break; }
+            uint distance = uint(compressed[inputIndex])
+                | (uint(compressed[inputIndex + 1u]) << 8u);
+            inputIndex += 2u;
+            uint matchLength = 4u + uint(token & 15u);
+            if ((token & 15u) == 15u) {
+                uchar next = 255u;
+                while (valid && next == 255u) {
+                    if (inputIndex >= metadata.y) { valid = false; break; }
+                    next = compressed[inputIndex++];
+                    if (matchLength > 8192u - uint(next)) { valid = false; break; }
+                    matchLength += uint(next);
+                }
+            }
+            if (!valid || distance == 0u || distance > outputIndex
+                || matchLength > 8192u - outputIndex
+                || distance > 16383u || matchLength > 16383u) {
+                valid = false; break;
+            }
+            matchInfo = matchLength | (distance << 14u);
+            outputIndex += matchLength;
+        } else if (outputIndex != 8192u) {
+            valid = false; break;
+        }
+        planOps[planBlock * kPlanCapacity + opCount] = uint4(
+            literalInput, literalOutput, literalCount, matchInfo
+        );
+        opCount += 1u;
+    }
+    valid = valid && inputIndex == metadata.y && outputIndex == 8192u;
+    planHeaders[planBlock] = uint4(
+        opCount, valid ? 0u : 1u, metadata.x, metadata.y
+    );
+    if (!valid) atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+}
+
+kernel void h5lz4_expand_token_plan_u16_qh5idx(
+    const device uchar *compressed [[buffer(0)]],
+    constant uint &blocksPerFrame [[buffer(1)]],
+    constant uint &frameElements [[buffer(2)]],
+    device uchar *scratch [[buffer(3)]],
+    const device uint4 *planHeaders [[buffer(4)]],
+    const device uint4 *planOps [[buffer(5)]],
+    constant uint &planBlockOffset [[buffer(6)]],
+    constant ulong &rangeStart [[buffer(7)]],
+    device atomic_uint *errors [[buffer(10)]],
+    constant uint &frameCount [[buffer(11)]],
+    uint threadgroupIndex [[threadgroup_position_in_grid]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint simdgroup [[simdgroup_index_in_threadgroup]]
+) {
+    constexpr uint kPlanCapacity = 256u;
+    if (simdgroup >= 4u || blocksPerFrame == 0u
+        || ulong(blocksPerFrame) * 4096ul != frameElements) return;
+    uint linearBlock = threadgroupIndex * 4u + simdgroup;
+    uint totalBlocks = frameCount * blocksPerFrame;
+    if (linearBlock >= totalBlocks) return;
+    uint planBlock = planBlockOffset + linearBlock;
+    uint4 header = planHeaders[planBlock];
+    if (header.y != 0u || header.x == 0u || header.x > kPlanCapacity) {
+        if (lane == 0u) atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+        return;
+    }
+    uint frame = linearBlock / blocksPerFrame;
+    uint block = linearBlock - frame * blocksPerFrame;
+    device uchar *destination = scratch
+        + ulong(frame) * frameElements * 2ul + ulong(block) * kBslz4BlockBytes;
+    const device uchar *blockInput = compressed + rangeStart + header.z;
+    for (uint op = 0u; op < header.x; ++op) {
+        uint4 record = planOps[planBlock * kPlanCapacity + op];
+        uint literalInput = record.x;
+        uint literalOutput = record.y;
+        uint literalLength = record.z;
+        uint matchInfo = record.w;
+        for (uint index = lane; index < literalLength; index += kLZ4Threads) {
+            destination[literalOutput + index] = blockInput[literalInput + index];
+        }
+        if (matchInfo != 0u) {
+            uint matchLength = matchInfo & 16383u;
+            uint distance = (matchInfo >> 14u) & 16383u;
+            uint matchOutput = literalOutput + literalLength;
+            if (distance > literalLength) {
+                simdgroup_barrier(mem_flags::mem_device);
+            }
+            for (uint index = lane; index < matchLength; index += kLZ4Threads) {
+                uint sourceIndex = distance < matchLength
+                    ? index % distance : index;
+                if (distance <= literalLength) {
+                    destination[matchOutput + index] = blockInput[
+                        literalInput + literalLength - distance + sourceIndex
+                    ];
+                } else {
+                    destination[matchOutput + index] = destination[
+                        matchOutput - distance + sourceIndex
+                    ];
+                }
+            }
+        }
+    }
 }
 
 kernel void h5lz4dc_full_u16_zero_tail_qh5idx(
@@ -1989,6 +2729,97 @@ kernel void h5lz4dc_full_u16_aligned_fill_copy_qh5idx(
     uint2 metadata = blockMetadata[(ulong(metadataFrameOffset) + frame) * blocksPerFrame + block];
     if (!bslz4DecompressFullSerialCheckedToDevice<true, true>(
         scratch + ulong(frame) * frameElements * 2ul + ulong(block) * 8192ul,
+        h5File + rangeStart + ulong(metadata.x), metadata.y
+    )) atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+}
+
+// Diagnostic-only vector crossover for the common distance-8 match. The
+// scalar parser, bounds checks, overlap order, and output bytes are unchanged;
+// only aligned 8-byte history copies are widened after a byte peel.
+kernel void h5lz4dc_full_u16_aligned_fill_distance8_qh5idx(
+    const device uchar *h5File [[buffer(0)]],
+    const device uint2 *blockMetadata [[buffer(1)]],
+    constant ulong &rangeStart [[buffer(2)]],
+    constant uint &blocksPerFrame [[buffer(3)]],
+    constant uint &frameElements [[buffer(4)]],
+    device uchar *scratch [[buffer(5)]],
+    constant uint &metadataFrameOffset [[buffer(6)]],
+    device atomic_uint *errors [[buffer(10)]],
+    constant uint &frameCount [[buffer(11)]],
+    uint linearBlock [[thread_position_in_grid]]
+) {
+    if (blocksPerFrame == 0u || ulong(blocksPerFrame) * 4096ul != frameElements) {
+        atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+        return;
+    }
+    if (ulong(linearBlock) >= ulong(frameCount) * blocksPerFrame) return;
+    uint frame = linearBlock / blocksPerFrame;
+    uint block = linearBlock - frame * blocksPerFrame;
+    uint2 metadata = blockMetadata[(ulong(metadataFrameOffset) + frame) * blocksPerFrame + block];
+    if (!bslz4DecompressFullSerialCheckedToDevice<true, false, false, false, false, false, true>(
+        scratch + ulong(frame) * frameElements * 2ul + ulong(block) * 8192ul,
+        h5File + rangeStart + ulong(metadata.x), metadata.y
+    )) atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+}
+
+// Diagnostic-only distance-512 history copy. The retained real fixtures have a
+// large distance-512 match population; this removes the generic distance tests and
+// unrolls aligned uint4 history loads/stores four ways. It is never selected
+// by the release host defaults.
+kernel void h5lz4dc_full_u16_aligned_fill_distance512_qh5idx(
+    const device uchar *h5File [[buffer(0)]],
+    const device uint2 *blockMetadata [[buffer(1)]],
+    constant ulong &rangeStart [[buffer(2)]],
+    constant uint &blocksPerFrame [[buffer(3)]],
+    constant uint &frameElements [[buffer(4)]],
+    device uchar *scratch [[buffer(5)]],
+    constant uint &metadataFrameOffset [[buffer(6)]],
+    device atomic_uint *errors [[buffer(10)]],
+    constant uint &frameCount [[buffer(11)]],
+    uint linearBlock [[thread_position_in_grid]]
+) {
+    if (blocksPerFrame == 0u || ulong(blocksPerFrame) * 4096ul != frameElements) {
+        atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+        return;
+    }
+    if (ulong(linearBlock) >= ulong(frameCount) * blocksPerFrame) return;
+    uint frame = linearBlock / blocksPerFrame;
+    uint block = linearBlock % blocksPerFrame;
+    uint2 metadata = blockMetadata[(ulong(metadataFrameOffset) + frame) * blocksPerFrame + block];
+    if (!bslz4DecompressFullSerialCheckedToDevice<true, false, false, false, false, false, false, true>(
+        scratch + ulong(frame) * frameElements * 2ul + ulong(block) * 8192ul,
+        h5File + rangeStart + ulong(metadata.x), metadata.y
+    )) atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+}
+
+// Diagnostic-only dispatch wrapper for the exact BTO window geometry. Each
+// 128-thread group owns 128 independent blocks, so ownership comes directly
+// from group/lane builtins rather than a global linear-index bounds wrapper.
+// The decoder and scratch layout are otherwise identical to aligned-fill.
+kernel void h5lz4dc_full_u16_aligned_fill_grouped128_qh5idx(
+    const device uchar *h5File [[buffer(0)]],
+    const device uint2 *blockMetadata [[buffer(1)]],
+    constant ulong &rangeStart [[buffer(2)]],
+    constant uint &blocksPerFrame [[buffer(3)]],
+    constant uint &frameElements [[buffer(4)]],
+    device uchar *scratch [[buffer(5)]],
+    constant uint &metadataFrameOffset [[buffer(6)]],
+    device atomic_uint *errors [[buffer(10)]],
+    constant uint &frameCount [[buffer(11)]],
+    uint group [[threadgroup_position_in_grid]],
+    uint lane [[thread_index_in_threadgroup]]
+) {
+    if (blocksPerFrame != 9u || frameElements != 36864u) {
+        atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+        return;
+    }
+    uint linearBlock = group * 128u + lane;
+    if (ulong(linearBlock) >= ulong(frameCount) * 9ul) return;
+    uint frame = linearBlock / 9u;
+    uint block = linearBlock - frame * 9u;
+    uint2 metadata = blockMetadata[(ulong(metadataFrameOffset) + frame) * 9ul + block];
+    if (!bslz4DecompressFullSerialCheckedToDevice<true>(
+        scratch + ulong(frame) * 73728ul + ulong(block) * 8192ul,
         h5File + rangeStart + ulong(metadata.x), metadata.y
     )) atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
 }
@@ -3241,5 +4072,80 @@ kernel void h5lz4dc_bin_u16_audited_low8_scalar_u16_word_major_frame_owned_row8_
             atomic_load_explicit(&groupColumnMoment, memory_order_relaxed),
             memory_order_relaxed
         );
+    }
+}
+
+// Diagnostic four-block decode topology. Four SIMD groups independently
+// expand four compressed blocks in one 128-thread group, then each group
+// performs the exact uint16 bitshuffle inverse for its own block. This keeps
+// the LZ4 streams independent while removing the idle SIMD groups present in
+// the single-block fused probe during token expansion. It is intentionally
+// diagnostic-only until matched real-data A/B/A screens prove both exact
+// parity and a consistent wall-time win.
+kernel void h5lz4dc_unshuffle_u16_quad_block_qh5idx(
+    const device uchar *h5File [[buffer(0)]],
+    const device uint2 *blockMetadata [[buffer(1)]],
+    constant ulong &rangeStart [[buffer(2)]],
+    constant uint &blocksPerFrame [[buffer(3)]],
+    constant uint &frameElements [[buffer(4)]],
+    device ushort *output [[buffer(5)]],
+    constant uint &metadataFrameOffset [[buffer(6)]],
+    const device uchar *badPixelMask [[buffer(7)]],
+    device atomic_uint *countAudit [[buffer(8)]],
+    constant uint &globalFrameOffset [[buffer(9)]],
+    uint3 threadgroupPosition [[threadgroup_position_in_grid]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint simdgroup [[simdgroup_index_in_threadgroup]]
+) {
+    uint frame = threadgroupPosition.x;
+    uint block = threadgroupPosition.z * 4u + simdgroup;
+    threadgroup uchar shuffledBlocks[4][kBslz4BlockBytes];
+
+    if (simdgroup < 4u && block < blocksPerFrame) {
+        uint2 metadata = blockMetadata[
+            ulong(metadataFrameOffset + frame) * blocksPerFrame + block
+        ];
+        bslz4DecompressStreamDirectToThreadgroup(
+            shuffledBlocks[simdgroup],
+            h5File + rangeStart + ulong(metadata.x),
+            metadata.y,
+            lane
+        );
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    uint localMaximum = 0u;
+    uint localAbove255 = 0u;
+    if (simdgroup < 4u && block < blocksPerFrame) {
+        const threadgroup uint *planes =
+            (const threadgroup uint *)shuffledBlocks[simdgroup];
+        // One SIMD group owns one block. Every lane participates in each word
+        // column so its lane bit selects the corresponding detector pixel.
+        for (uint group = 0u; group < 128u; ++group) {
+            ushort value = 0u;
+            for (uint bit = 0u; bit < 16u; ++bit) {
+                if (planes[bit * 128u + group] & (1u << lane)) {
+                    value |= ushort(1u << bit);
+                }
+            }
+            uint detectorIndex = block * 4096u + group * 32u + lane;
+            if (detectorIndex < frameElements) {
+                ushort stored = badPixelMask[detectorIndex] ? ushort(0) : value;
+                output[ulong(frame) * frameElements + detectorIndex] = stored;
+                localMaximum = max(localMaximum, uint(stored));
+                localAbove255 += stored > ushort(255) ? 1u : 0u;
+            }
+        }
+        localMaximum = simd_max(localMaximum);
+        localAbove255 = simd_sum(localAbove255);
+        if (lane == 0u) {
+            uint frameAudit = 2u * (globalFrameOffset + frame);
+            atomic_fetch_max_explicit(
+                &countAudit[frameAudit], localMaximum, memory_order_relaxed
+            );
+            atomic_fetch_add_explicit(
+                &countAudit[frameAudit + 1u], localAbove255, memory_order_relaxed
+            );
+        }
     }
 }

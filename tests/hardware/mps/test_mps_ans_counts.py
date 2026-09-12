@@ -14,6 +14,36 @@ def _read(output):
         output.release()
 
 
+def _literal_geometry(shape, *, block_frames=512, value=7):
+    """Build a small exact literal source for physical geometry coverage."""
+    scans = shape[0] * shape[1]
+    pixels = shape[2] * shape[3]
+    blocks = (scans + block_frames - 1) // block_frames
+    streams = []
+    for block in range(blocks):
+        frames = min(block_frames, scans - block * block_frames)
+        stream = np.full((frames,), value, dtype="<u2").tobytes()
+        streams.extend([stream] * pixels)
+    payload = np.frombuffer(b"".join(streams), dtype=np.uint8).copy()
+    sizes = np.asarray([len(stream) for stream in streams], dtype=np.uint64)
+    offsets = np.empty(len(streams) + 1, dtype=np.uint64)
+    offsets[0] = 0
+    offsets[1:] = np.cumsum(sizes, dtype=np.uint64)
+    return {
+        "shape": shape,
+        "block_frames": block_frames,
+        "scale": 1,
+        "payload": payload,
+        "offsets": offsets,
+        "model_ids": np.zeros(len(streams), dtype=np.uint32),
+        "context_offsets": np.asarray([0, 0], dtype=np.uint32),
+        "symbols": np.empty(0, dtype=np.uint16),
+        "cumulative": np.empty(0, dtype=np.uint16),
+        "frequencies": np.empty(0, dtype=np.uint16),
+        "literal": np.ones(1, dtype=np.uint8),
+    }
+
+
 @pytest.mark.parametrize("dtype", ["uint8", "uint16"])
 def test_ans_native_counts_selected_patterns_and_detector_masks(dtype, monkeypatch):
     """Rare counts, ordered repeated DPs and mask sums equal the independent source."""
@@ -69,6 +99,22 @@ def test_ans_native_counts_selected_patterns_and_detector_masks(dtype, monkeypat
             source.extract_diffraction_device(0, 0)
     finally:
         source.release()
+
+
+def test_ans_geometry_is_not_fixed_to_512_square_scans():
+    """Physical MPS accepts both requested square scan sizes on one generic path."""
+    pytest.importorskip("Metal")
+    for shape in ((512, 512, 1, 1), (1024, 1024, 1, 1)):
+        source = mps.MPSANSResidentCounts(**_literal_geometry(shape))
+        try:
+            columns = shape[1]
+            for scan in (0, 1, columns - 1, columns, shape[0] * columns - 1):
+                output = _read(
+                    source.extract_diffraction_device(scan // columns, scan % columns)
+                )
+                np.testing.assert_array_equal(output, np.asarray([[7]], np.uint16))
+        finally:
+            source.release()
 
 
 def test_ans_invalid_stream_and_native_dtype_do_not_publish_counts():

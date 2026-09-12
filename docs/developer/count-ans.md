@@ -34,8 +34,19 @@ mask sum retain integer exactness; mask sums are uint64. No full dense source
 is constructed. A direct packed conversion is also retained and tested.
 
 The container contract is shared with the existing CUDA and MPS implementations.
-This integration adds the WebGPU adapters and retains those native backends;
-it does not constitute a new Metal hardware qualification.
+The native Swift/Metal `MetalANSResidentSource(sourceURL:device:)` reader now
+accepts the same QGANS v1 file directly. It validates the manifest and typed
+section bounds, streams bounded `pread` chunks into private Metal buffers, and
+validates every encoded stream before publication. It is geometry-general and
+does not allocate the logical dense cube. This is a file-load and parity
+qualification; it is not a claim that a cold HDF5 source has already been
+transcoded to ANS.
+
+The bounded real-data handoff is retained in the local experiment ledger:
+64-frame slices from two externally chunked HDF5 acquisitions were encoded
+exactly, authenticated, and reopened by native Metal. The complete logical
+volume was not materialized. This validates the workflow boundary, not a
+full-acquisition or first-load performance claim.
 
 The public loader supports exact CUDA residency and explicitly requested CPU
 reference materialization. The returned resident owner keeps encoded buffers
@@ -159,6 +170,44 @@ PYTHONPATH=src python -m pytest -q \
 On GPU0 Blackwell this selection passed 5 tests with 1 optional seven-tilt
 skip in 6.55 seconds. Public `io.load` CPU/CUDA paths are included in these
 workflow tests.
+
+## Native Metal file loading and geometry
+
+The native reader uses the same dimension order as the Python contract:
+`(scan_row, scan_column, detector_row, detector_column)`. It accepts any
+positive four-dimensional uint8/uint16 geometry that fits the count-ANS stream
+index range; 512×512 and 1024×1024 square scans and non-square scans use the
+same code path. The fixed-geometry 66-acquisition tANS archive is unrelated.
+
+```swift
+let source = try MetalANSResidentSource(
+  sourceURL: ansURL,
+  device: device,
+  expectedSHA256: sealedSHA256,
+  verifyChecksums: true
+)
+let pattern = try source.extractRawDiffraction(scanRow: 0, scanColumn: 0)
+source.releaseResidentStorage()
+```
+
+The native Metal smoke harness is `metal-ans-file-benchmark`. The current
+physical gate covers 512×512×1×1 uint16, 1024×1024×1×1 uint16, and a non-square
+63×512×2×3 uint8 file. Full BTO-sized QGANS generation and cold HDF5→ANS
+encoding remain separate work: the canonical writer is still a bounded CPU
+reference, and the macOS original HDF5 path remains the exact bitshuffle/LZ4
+decoder for first load.
+
+For production, select the path by source state rather than by detector size:
+
+```text
+HDF5 first open  → exact indexed BSLZ4 decode → packed Metal resident
+sidecar build    → bounded exact encoder → authenticated QGANS file
+QGANS reopen     → bounded pread/upload → private Metal ANS resident
+```
+
+The same metadata-driven contract covers 512×512, 1024×1024, and non-square
+scan geometries. Fixed-geometry diagnostic kernels are not part of this ANS
+workflow.
 
 ## Remaining unification work
 
