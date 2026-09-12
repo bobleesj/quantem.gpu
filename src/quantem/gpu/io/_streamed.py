@@ -222,7 +222,9 @@ def _load_h5_ans_mps(
     names = _discover_chunk_names(str(path)) or ["data"]
     session = _SparseFrameReadSession(str(path), names, apply_mask=False)
     scans = math.prod(info.scan_shape)
-    chunk_scans = min(32768, scans)
+    # Bound simultaneous decoded counts and ANS encoding scratch on smaller Macs.
+    # Keep batches aligned to the codec interval so exact stored counts are unchanged.
+    chunk_scans = min(8192, scans)
     if chunk_scans >= 512:
         chunk_scans = chunk_scans // 512 * 512
     read_decode_seconds = 0.0

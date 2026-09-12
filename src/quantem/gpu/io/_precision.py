@@ -651,6 +651,7 @@ def save_precision(
                         reports.append(region)
                         first += frames
                         yield encoded
+                        del encoded, block
                     if first != math.prod(shape[:2]):
                         raise ValueError("The source did not produce its complete scan; repeat the export.")
                     report.update(_regional_report(shape, reports))
