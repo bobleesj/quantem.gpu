@@ -177,6 +177,7 @@ def merge_to_scaled_h5(
     diffraction_shifts,
     output_path,
     *,
+    release_sources_before_reopen: bool = False,
     verbose: bool = False,
 ):
     """Merge aligned residents into a packed globally scaled uint16 archive.
@@ -192,6 +193,11 @@ def merge_to_scaled_h5(
         CUDA Torch arrays shaped ``(n_sources, 2)`` in row/column order.
     output_path
         Destination master HDF5 path. External data files are placed beside it.
+    release_sources_before_reopen
+        Release the encoded inputs after the saved merge is complete and before
+        reopening its packed result. Use only when the caller owns the sources
+        and no longer needs them. This prevents the packed loader's temporary
+        buffers from overlapping the input residents.
     verbose
         Print one completion line with measured precision.
 
@@ -359,6 +365,7 @@ def merge_to_scaled_h5(
         "range_seconds": range_seconds,
         "gpu_encode_seconds": encode_seconds,
         "merge_encode_write_seconds": write_seconds,
+        "released_sources_before_reopen": bool(release_sources_before_reopen),
     }
     with h5py.File(output_path, "r+") as handle:
         handle.attrs["quantem_precision_v1"] = json.dumps(report)
@@ -369,6 +376,11 @@ def merge_to_scaled_h5(
             f"as scaled uint16 (RMSE {report['rmse']:.4g}, "
             f"max error {report['max_abs_error']:.4g})."
         )
+    if release_sources_before_reopen:
+        for source in sources:
+            source.close()
+        cp.get_default_memory_pool().free_all_blocks()
+        torch.cuda.empty_cache()
     reopen_started = time.perf_counter()
     result = load(
         output_path,
@@ -377,6 +389,10 @@ def merge_to_scaled_h5(
         verbose=False,
     )
     cp.cuda.get_current_stream().synchronize()
+    release_unused = getattr(result.data, "release_unused_blocks", None)
+    if callable(release_unused):
+        release_unused()
+    cp.get_default_memory_pool().free_all_blocks()
     merge_record["reopen_seconds"] = time.perf_counter() - reopen_started
     merge_record["total_seconds"] = time.perf_counter() - started
     with h5py.File(output_path, "r+") as handle:

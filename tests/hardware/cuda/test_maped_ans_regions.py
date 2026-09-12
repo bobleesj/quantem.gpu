@@ -143,3 +143,35 @@ def test_maped_ans_writes_reopenable_scaled_result(tmp_path):
         result.close()
     finally:
         source.release()
+
+
+def test_maped_releases_owned_sources_before_packed_reopen(tmp_path):
+    """Owned ANS storage does not overlap the packed result loader."""
+
+    import torch
+
+    shape = (5, 6, 4, 6)
+    values = cp.arange(np.prod(shape), dtype=cp.uint16).reshape(shape) % 173
+    source = StreamedCounts(shape, np.uint16)
+    source.append(cp.ascontiguousarray(values.reshape(-1, *shape[2:])))
+    loaded = SimpleNamespace(
+        shape=shape,
+        data=source,
+        metadata={"representation": "ans"},
+        close=source.release,
+    )
+    shifts = torch.zeros((1, 2), device="cuda")
+    result = merge_to_scaled_h5(
+        [loaded],
+        shifts,
+        shifts,
+        tmp_path / "merged_master.h5",
+        release_sources_before_reopen=True,
+    )
+    try:
+        assert source.is_released
+        assert result.metadata["maped_merge"][
+            "released_sources_before_reopen"
+        ]
+    finally:
+        result.close()
