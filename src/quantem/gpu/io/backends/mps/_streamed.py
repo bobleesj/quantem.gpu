@@ -331,6 +331,41 @@ class MPSStreamedCounts:
             output.release()
             raise
 
+    def _decode_scan_range_torch(self, first: int, stop: int):
+        """Decode directly into independently owned Torch accelerator storage."""
+        import ctypes
+
+        import objc
+        import torch
+
+        self._check_resident()
+        first, stop = int(first), int(stop)
+        scan_count = math.prod(self.shape[:2])
+        if not 0 <= first < stop <= scan_count:
+            raise ValueError(f"Scan range must be nonempty and inside [0, {scan_count}).")
+        output = torch.empty(
+            (stop - first, *self.shape[2:]),
+            dtype=getattr(torch, self.dtype.name), device="mps",
+        )
+        # Torch storage holds the MTLBuffer object, as in ATen's
+        # getMTLBufferStorage. This wrapper borrows it; never release it here.
+        # Finish prior Torch work before the native queue writes recycled
+        # allocator storage. The native command finishes before returning.
+        torch.mps.synchronize()
+        buffer = objc.objc_object(
+            c_void_p=ctypes.c_void_p(output.untyped_storage().data_ptr())
+        )
+        if (
+            int(buffer.length()) < output.numel() * output.element_size()
+            or int(buffer.device().registryID()) != int(self._device.registryID())
+        ):
+            raise RuntimeError("Torch storage must belong to the same Metal device as the resident.")
+        command = self._queue.commandBuffer()
+        self._encode_scan_range_into(command, first, stop, buffer)
+        _complete(command, "ANS Torch range read")
+        self._check_errors()
+        return output
+
     def _encode_scan_range_into(self, command, first: int, stop: int, output):
         """Append an exact range decode to an existing Metal command buffer."""
         self._check_resident()

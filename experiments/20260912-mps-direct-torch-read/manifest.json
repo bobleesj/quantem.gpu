@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260912-mps-direct-torch-read",
+  "status": "succeeded",
+  "question": "Can native count-ANS read directly into Torch-owned MPS buffers remove a decoded-count copy while preserving every merged float32 value and bounded memory?",
+  "paper": {
+    "authoritative_host": "apple-m5-max",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260912-mps-direct-torch-read/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "af7e4988946a0683a1420e8ba1409eab1ff7da3f",
+    "dirty": true,
+    "diff_sha256": "3209f1106256720e37d5b8276de030b2e8d51c11a3b7fce38586c46c32135fd3",
+    "entrypoint": "QuantEM tests/diffraction/benchmark_maped_mps.py --mode parity --reference ORIGINAL_MAPED --reference-read ORIGINAL_READ"
+  },
+  "inputs": [
+    {
+      "dataset_id": "frozen-control-report-not-raw-data",
+      "sha256": "d1a7e91272f4b37118d2ab0a85f423a1f54726a66f7aade8b71f26e16fe082f4"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "sources": 7,
+    "representation": "encoded",
+    "hot_pixel_correction": "median",
+    "allocation_cap_bytes": 25769803776,
+    "source_read_passes": 1,
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "parity_gate": "exact float32 equality for every merged value, original read and original merge as reference",
+    "timing_boundary": "synchronized adjacent original and optimized regions, plus complete save/reopen workflow",
+    "cpu_scientific_fallback": false,
+    "native_ui_integration": false,
+    "initial_probe": "4096-frame original read 14\u201316 ms versus direct Torch destination 2\u20133 ms; full qualification retained."
+  },
+  "execution": {
+    "host": "apple-m5-max",
+    "backend": "torch-mps",
+    "gpu_ids": [
+      "integrated-gpu-0"
+    ],
+    "gpu_model": "Apple M5 Max 128 GB"
+  },
+  "outputs": [
+    {
+      "artifact_id": "qualification",
+      "path": "experiments/20260912-mps-direct-torch-read/qualification.json",
+      "sha256": "dbe7e7006d36530a97c8eecd8345205f11cc61b56f7785f72fdaf5e8a0e1abe5",
+      "size_bytes": 44508,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "All 9,663,676,416 float32 values exact; full Torch MAPED workflow 75.44 to 44.19\u201347.53 s, peak Metal allocation at most 13.78 GiB. Includes algorithm compilation in downstream QuantEM; not a codec-only speedup."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-12T18:03:14.087833+00:00",
+    "started": "2026-09-12T18:03:14.087833+00:00",
+    "finished": "2026-09-12T18:14:05.501689+00:00"
+  }
+}

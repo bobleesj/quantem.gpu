@@ -128,7 +128,9 @@ def read(data, *, scan_region=None, detector_region=None):
         positions = np.stack((rows.ravel(), columns.ravel()), axis=1)
         tensor = _torch_value(gather(positions))
     else:
-        decode = getattr(payload, "decode_scan_range_device", None)
+        decode = getattr(payload, "_decode_scan_range_torch", None)
+        if not callable(decode):
+            decode = getattr(payload, "decode_scan_range_device", None)
         frame_native = getattr(payload, "frame_native", None)
         if not callable(decode) and callable(frame_native):
             indices = [

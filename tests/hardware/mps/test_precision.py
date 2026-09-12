@@ -210,3 +210,19 @@ def test_scaled_uint16_rounds_near_half_steps_like_numpy():
         if encoded is not None:
             encoded.release()
         source.release()
+
+
+def test_tensor_range_preserves_extrema_and_rejects_nonfinite_values():
+    """Saving a strided scientific tensor preserves extrema and rejects invalid data."""
+    import torch
+
+    from quantem.gpu.io.backends.mps.precision import tensor_range
+
+    values = torch.linspace(-123.75, 997.25, 33 * 37, device="mps").reshape(33, 37)
+    for selected in (values, values[:, ::2], values.T):
+        assert tensor_range(selected) == (float(selected.amin()), float(selected.amax()))
+    for nonfinite in (float("nan"), float("inf"), float("-inf")):
+        invalid = values.clone()
+        invalid[16, 18] = nonfinite
+        with pytest.raises(ValueError, match="finite intensities"):
+            tensor_range(invalid)

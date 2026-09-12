@@ -104,12 +104,10 @@ def tensor_range(values):
     """Return a float32 tensor range using MPS reductions."""
     import torch
 
-    # Submit all reductions before reading their three scalar results. Reading
-    # each scalar separately would drain the command queue three times.
-    low, high, finite = torch.stack(
-        (values.amin(), values.amax(), torch.isfinite(values).all())
-    ).cpu().tolist()
-    if not finite:
+    # aminmax propagates NaN and includes infinities. Checking these two
+    # endpoints also validates finiteness without another full tensor scan.
+    low, high = torch.stack(torch.aminmax(values)).cpu().tolist()
+    if not math.isfinite(low) or not math.isfinite(high):
         raise ValueError("Precision conversion requires finite intensities; preserve this source as float32.")
     return float(low), float(high)
 
