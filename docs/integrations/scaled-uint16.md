@@ -15,6 +15,37 @@ io.save("scaled_master.h5", loaded)
 reopened = io.load("scaled_master.h5")
 ```
 
+## What `dtype` means
+
+`dtype` selects the stored numerical representation at the IO boundary. It does
+not select the MAPED calculation precision, GPU backend, or compression codec.
+`scaled_uint16` is the only scaled-storage spelling; `uint16_scaled` is not an alias.
+
+| Choice | Stored values | Values returned by precision reads | Scientific consequence |
+|---|---|---|---|
+| `float32` export | Original float32 intensities | Float32 intensities | No additional precision reduction |
+| `float16` | Half-precision floating-point intensities | Float32 reconstruction of the stored float16 values | Reduced precision; spacing grows with magnitude; no intensity scale/offset |
+| `scaled_uint16` | Unsigned 16-bit codes with saved scale and offset per region | Float32 calibrated intensities | Uniform intensity step within each region; rounding introduces measured storage error |
+
+Both float16 and scaled uint16 storage are supported by CUDA and Python MPS IO.
+Packing preserves the selected stored values exactly; it does not recover
+precision removed by conversion. Physical resident size depends on the packed
+codes and metadata, not only the nominal two bytes per stored value.
+Plain `uint16` is an ordinary integer conversion, not calibrated scaled storage.
+Do not substitute it for `scaled_uint16` when preserving fractional intensities.
+
+On loading an existing precision file, omit `dtype` to reuse its saved values
+and calibration. This does not redo the original conversion. Explicitly choosing
+a different reduced precision can add rounding; prefer converting from the
+original float32 archive. Reloading with `dtype="float32"` is not a way to undo
+precision loss and is rejected for these calibrated files; use ordinary reads
+to obtain their float32 reconstructed intensities.
+
+For scaled storage, reconstruction is `intensity = code * scale + offset`,
+rounded to float32. RMSE and maximum error compare that reconstruction with the
+pre-conversion source. They are storage error, not a measure of MAPED's physical
+accuracy. The precision report and calibration are saved with the data.
+
 A GPU tensor or generated source with `shape`, `dtype`, and ordered `blocks()`
 can use the same load call. All logical frames must be yielded exactly once.
 Generated sources retain their scientific algorithm; IO owns conversion,

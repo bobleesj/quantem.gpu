@@ -5096,6 +5096,14 @@ def load(
     ``io.load("display_master.h5", dtype="scaled_uint16")`` is approximate;
     preserve the original float32 file for exact scientific analysis.
 
+    Here ``dtype`` selects stored precision, not calculation precision or a
+    compression codec. ``"float16"`` stores half-precision intensities;
+    ``"scaled_uint16"`` stores calibrated integer codes. Both precision readers
+    reconstruct float32 intensities on the GPU; neither recovers discarded
+    precision. Plain ``"uint16"`` is not calibrated scaled storage.
+    Omit ``dtype`` when reopening a precision file to retain its recorded
+    values and calibration. ``"uint16_scaled"`` is not a supported alias.
+
     Complete native HDF5 acquisitions can be loaded together into compact
     encoded accelerator storage with ``stack=False``. Encoded is the default
     on CUDA and MPS; request ``representation="packed"`` for bit-packed storage.

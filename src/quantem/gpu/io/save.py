@@ -1931,7 +1931,17 @@ def save(
     floating-point precision. ``dtype="scaled_uint16"`` automatically calibrates
     bounded scan regions in one pass. Both record GPU-measured conversion errors and reopen
     through ``io.load`` as packed intensities in their original units.
-    Keep float32 for an unchanged scientific archive.
+    Keep float32 for an unchanged scientific archive. ``dtype`` changes storage
+    precision at this boundary, not the precision of the upstream algorithm.
+    Float16 uses magnitude-dependent floating-point spacing without calibration;
+    scaled uint16 uses a uniform step within each automatically selected region.
+    Plain uint16 conversion does not provide this calibration. The supported
+    spelling is ``"scaled_uint16"``, not ``"uint16_scaled"``.
+    Packing is lossless relative to the converted stored values. Reopening
+    either precision returns float32 reconstructed intensities, not the original
+    pre-conversion float32 values. RMSE and maximum error describe this storage
+    difference. Omit ``dtype`` when saving an already-loaded precision resident
+    to preserve its codes and calibration without another conversion.
 
     Drift metadata co-saved with the 4D-STEM
     ----------------------------------------
