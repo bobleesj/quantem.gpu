@@ -6,6 +6,7 @@ from pathlib import Path
 import time
 
 import cupy as cp
+import numpy as np
 import torch
 import torch.nn.functional as functional
 
@@ -225,249 +226,163 @@ def _automatic_region_frames(shape) -> int:
     return int(frames)
 
 
-def merge_to_scaled_h5(
-    sources,
-    real_shifts,
-    diffraction_shifts,
-    output_path,
-    *,
-    release_sources_before_reopen: bool = False,
-    verbose: bool = False,
-):
-    """Merge aligned residents into a packed globally scaled uint16 archive.
+class _ResidentMerge:
+    """Re-readable bounded MAPED output consumed by :func:`quantem.gpu.io.save`.
 
-    The sources remain caller-owned. Both MAPED passes reuse the same resident
-    buffers; only bounded float32 regions and one encoded output region coexist.
-
-    Parameters
-    ----------
-    sources
-        Exact CUDA ANS or packed 4D-STEM acquisitions with identical shapes.
-    real_shifts, diffraction_shifts
-        CUDA Torch arrays shaped ``(n_sources, 2)`` in row/column order.
-    output_path
-        Destination master HDF5 path. External data files are placed beside it.
-    release_sources_before_reopen
-        Release the encoded inputs after the saved merge is complete and before
-        reopening its packed result. Use only when the caller owns the sources
-        and no longer needs them. This prevents the packed loader's temporary
-        buffers from overlapping the input residents.
-    verbose
-        Print one completion line with measured precision.
-
-    Returns
-    -------
-    FourDSTEMData
-        Reopened device-resident packed result. ``metadata["precision"]`` holds
-        the complete scaled-uint16 error report.
+    This is an internal data source, not a second MAPED API.  It exposes the
+    same shape/dtype/blocks contract used by generic bounded precision saving,
+    while retaining the fused CUDA implementation and its measured timings.
     """
-    import h5py
-    import numpy as np
 
-    from quantem.gpu.io import load
-    from quantem.gpu.io.backends.cuda.precision import (
-        encode_measure_scaled_uint16,
-    )
-    from quantem.gpu.io.save import H5Writer
-
-    sources = list(sources)
-    if not sources:
-        raise ValueError("Provide at least one aligned resident acquisition.")
-    shape = tuple(sources[0].shape)
-    if len(shape) != 4 or any(tuple(source.shape) != shape for source in sources):
-        raise ValueError("Aligned resident acquisitions must share one 4D shape.")
-    for name, shifts in (
-        ("real_shifts", real_shifts),
-        ("diffraction_shifts", diffraction_shifts),
-    ):
-        if (
-            not torch.is_tensor(shifts)
-            or shifts.device.type != "cuda"
-            or shifts.device.index is None
-            or shifts.dtype != torch.float32
-            or tuple(shifts.shape) != (len(sources), 2)
-        ):
-            raise ValueError(
-                f"{name} must be a CUDA float32 tensor shaped "
-                f"({len(sources)}, 2) in row/column order."
-            )
-    requested_device = real_shifts.device.index
-    for source in sources:
-        resident = source.data
-        source_device = getattr(
-            resident, "device", getattr(resident, "_device_id", None)
-        )
-        if source_device != requested_device:
-            raise ValueError(
-                "Every encoded source and both shift arrays must share one CUDA device."
-            )
-    # Backend code owns CuPy device state. MAPED callers provide only the Torch
-    # device and encoded source contract.
-    cp.cuda.Device(requested_device).use()
-    output_path = Path(output_path)
-    region_frames = _automatic_region_frames(shape)
-    plan = _merge_plan(sources, real_shifts, diffraction_shifts)
-    started = time.perf_counter()
-
-    low = cp.asarray(cp.inf, dtype=cp.float32)
-    high = cp.asarray(-cp.inf, dtype=cp.float32)
-    for _, region in _merge_regions(
-        sources,
-        real_shifts,
-        diffraction_shifts,
-        region_frames,
-        plan=plan,
-    ):
-        cp.minimum(low, cp.min(region), out=low)
-        cp.maximum(high, cp.max(region), out=high)
-        del region
-    cp.cuda.get_current_stream().synchronize()
-    intensity_min, intensity_max = float(low.get()), float(high.get())
-    if (
-        not np.isfinite(intensity_min)
-        or not np.isfinite(intensity_max)
-        or intensity_max <= intensity_min
-    ):
-        raise ValueError("The merged output has no finite intensity range.")
-    range_seconds = time.perf_counter() - started
-    scale = (intensity_max - intensity_min) / 65535.0
-    values = math.prod(shape)
-    summaries = summary_record(shape, sources)
-    report = {
-        "version": 1,
-        "storage": "scaled_uint16",
-        "source_dtype": "float32",
-        "source_shape": list(shape),
-        "intensity_min": intensity_min,
-        "intensity_max": intensity_max,
-        "scale": scale,
-        "offset": intensity_min,
-        "values": values,
+    dtype = np.dtype("float32")
+    report_context = {
         "scope": "all merged values",
         "range_scope": "complete merged output",
         "measurement": "GPU comparison against merged float32 regions",
-        "selection": {"scan_region": None, "detector_region": None},
     }
-    metadata = {
-        "quantem_precision_v1": json.dumps({**report, "complete": False}),
-        "source_dtype": "float32",
-        "storage_dtype": "uint16",
-        "working_dtype": "float32",
-        "working_shape": np.asarray(shape, dtype=np.int64),
-        "source_shape": np.asarray(shape, dtype=np.int64),
-        "scan_shape": np.asarray(shape[:2], dtype=np.int64),
-        "detector_shape": np.asarray(shape[2:], dtype=np.int64),
-        "representation": "packed",
-        "residency": "device",
-        "lossless_exact": False,
-        "quantem_maped_summary_v1": json.dumps(summaries),
-    }
-    writer = H5Writer(
-        output_path,
-        shape[0] * shape[1],
-        shape[2:],
-        scan_shape=shape[:2],
-        metadata=metadata,
-        dtype=np.uint16,
-        frames_per_file=32768,
-        compression="lz4",
-    )
-    stats = [
-        cp.zeros((), dtype=cp.float64),
-        cp.zeros((), dtype=cp.float64),
-        cp.zeros((), dtype=cp.uint64),
-        cp.zeros((), dtype=cp.uint64),
-        cp.zeros((), dtype=cp.uint64),
-    ]
-    encode_events = []
-    write_started = time.perf_counter()
-    try:
-        for _, region in _merge_regions(
-            sources,
-            real_shifts,
-            diffraction_shifts,
-            region_frames,
-            plan=plan,
+
+    def __init__(self, sources, real_shifts, diffraction_shifts):
+        sources = list(sources)
+        if not sources:
+            raise ValueError("Provide at least one aligned resident acquisition.")
+        shape = tuple(sources[0].shape)
+        if len(shape) != 4 or any(tuple(source.shape) != shape for source in sources):
+            raise ValueError("Aligned resident acquisitions must share one 4D shape.")
+        for name, shifts in (
+            ("real_shifts", real_shifts),
+            ("diffraction_shifts", diffraction_shifts),
         ):
-            encode_begin, encode_end = cp.cuda.Event(), cp.cuda.Event()
-            encode_begin.record()
-            encoded = encode_measure_scaled_uint16(
-                region,
-                {"scale": scale, "offset": intensity_min},
-                stats,
-            )
-            encode_end.record()
-            encode_events.append((encode_begin, encode_end))
-            writer.write(encoded)
-            del region, encoded
-        writer.close(wait=True)
-    except BaseException:
-        writer.abort()
-        raise
-    cp.cuda.get_current_stream().synchronize()
-    write_seconds = time.perf_counter() - write_started
-    encode_seconds = sum(
-        cp.cuda.get_elapsed_time(begin, end) for begin, end in encode_events
-    ) / 1000.0
-    report.update(
-        rmse=float(cp.sqrt(stats[0] / values).get()),
-        max_abs_error=float(stats[1].get()),
-        positive_to_zero=int(stats[2].get()),
-        changed=int(stats[3].get()),
-        overflow=int(stats[4].get()),
-        clipped=int(stats[4].get()),
-        complete=True,
-    )
-    source_representations = {
-        str(source.metadata.get("representation", "unknown")) for source in sources
-    }
-    merge_record = {
-        "version": 1,
-        "backend": "cuda",
-        "source_representation": (
-            source_representations.pop()
-            if len(source_representations) == 1
-            else "mixed"
-        ),
-        "region_frames": region_frames,
-        "range_seconds": range_seconds,
-        "gpu_encode_seconds": encode_seconds,
-        "merge_encode_write_seconds": write_seconds,
-        "released_sources_before_reopen": bool(release_sources_before_reopen),
-        "real_space_shifts_row_column": real_shifts.detach().cpu().tolist(),
-        "diffraction_shifts_row_column": diffraction_shifts.detach().cpu().tolist(),
-    }
-    with h5py.File(output_path, "r+") as handle:
-        handle.attrs["quantem_precision_v1"] = json.dumps(report)
-        handle.attrs["quantem_maped_merge_v1"] = json.dumps(merge_record)
-        handle.attrs["quantem_maped_summary_v1"] = json.dumps(summaries)
-    if verbose:
-        print(
-            f"Merged {len(sources)} resident tilts to {output_path} "
-            f"as scaled uint16 (RMSE {report['rmse']:.4g}, "
-            f"max error {report['max_abs_error']:.4g})."
-        )
-    if release_sources_before_reopen:
+            if (
+                not torch.is_tensor(shifts)
+                or shifts.device.type != "cuda"
+                or shifts.device.index is None
+                or shifts.dtype != torch.float32
+                or tuple(shifts.shape) != (len(sources), 2)
+            ):
+                raise ValueError(
+                    f"{name} must be a CUDA float32 tensor shaped "
+                    f"({len(sources)}, 2) in row/column order."
+                )
+        device_id = int(real_shifts.device.index)
         for source in sources:
-            source.close()
-        cp.get_default_memory_pool().free_all_blocks()
-        torch.cuda.empty_cache()
-    reopen_started = time.perf_counter()
-    result = load(
-        output_path,
-        backend="cuda",
-        representation="packed",
-        verbose=False,
-    )
-    cp.cuda.get_current_stream().synchronize()
-    release_unused = getattr(result.data, "release_unused_blocks", None)
-    if callable(release_unused):
-        release_unused()
-    cp.get_default_memory_pool().free_all_blocks()
-    merge_record["reopen_seconds"] = time.perf_counter() - reopen_started
-    merge_record["total_seconds"] = time.perf_counter() - started
-    with h5py.File(output_path, "r+") as handle:
-        handle.attrs["quantem_maped_merge_v1"] = json.dumps(merge_record)
-    result.metadata["maped_merge"] = merge_record
-    result.metadata["maped_summary"] = summaries
-    return result
+            resident = source.data
+            source_device = getattr(
+                resident, "device", getattr(resident, "_device_id", None)
+            )
+            if source_device != device_id:
+                raise ValueError(
+                    "Every encoded source and both shift arrays must share one CUDA device."
+                )
+        cp.cuda.Device(device_id).use()
+        self.sources = sources
+        self.shape = shape
+        self.real_shifts = real_shifts
+        self.diffraction_shifts = diffraction_shifts
+        self._device_id = device_id
+        self.region_frames = _automatic_region_frames(shape)
+        self.plan = _merge_plan(sources, real_shifts, diffraction_shifts)
+        self.started = time.perf_counter()
+        self.range_seconds = 0.0
+        self.encode_seconds = 0.0
+        self.write_pass_seconds = 0.0
+        self.release_sources_before_reopen = False
+        self.save_metadata = {
+            "quantem_maped_summary_v1": json.dumps(summary_record(shape, sources))
+        }
+
+    def blocks(self):
+        """Yield one bounded float32 output pass."""
+        for _, region in _merge_regions(
+            self.sources,
+            self.real_shifts,
+            self.diffraction_shifts,
+            self.region_frames,
+            plan=self.plan,
+        ):
+            yield region
+
+    def range(self):
+        """Measure the global output range without materializing the result."""
+        started = time.perf_counter()
+        low = cp.asarray(cp.inf, dtype=cp.float32)
+        high = cp.asarray(-cp.inf, dtype=cp.float32)
+        for region in self.blocks():
+            cp.minimum(low, cp.min(region), out=low)
+            cp.maximum(high, cp.max(region), out=high)
+        cp.cuda.get_current_stream().synchronize()
+        result = float(low.get()), float(high.get())
+        if not all(np.isfinite(value) for value in result):
+            raise ValueError("The merged output contains non-finite intensities.")
+        self.range_seconds = time.perf_counter() - started
+        return result
+
+    def encode_blocks(self, report):
+        """Yield scaled uint16 blocks while accumulating error on CUDA."""
+        if report["storage"] != "scaled_uint16":
+            raise ValueError(
+                "Resident MAPED saving currently supports dtype='scaled_uint16'."
+            )
+        from quantem.gpu.io.backends.cuda.precision import (
+            encode_measure_scaled_uint16,
+        )
+
+        stats = [
+            cp.zeros((), dtype=cp.float64),
+            cp.zeros((), dtype=cp.float64),
+            cp.zeros((), dtype=cp.uint64),
+            cp.zeros((), dtype=cp.uint64),
+            cp.zeros((), dtype=cp.uint64),
+        ]
+        events = []
+        started = time.perf_counter()
+        for region in self.blocks():
+            begin, end = cp.cuda.Event(), cp.cuda.Event()
+            begin.record()
+            encoded = encode_measure_scaled_uint16(region, report, stats)
+            end.record()
+            events.append((begin, end))
+            yield encoded
+        cp.cuda.get_current_stream().synchronize()
+        self.write_pass_seconds = time.perf_counter() - started
+        self.encode_seconds = sum(
+            cp.cuda.get_elapsed_time(begin, end) for begin, end in events
+        ) / 1000.0
+        report["values"] = math.prod(self.shape)
+        report["squared_error"] = float(stats[0].get())
+        report["max_abs_error"] = float(stats[1].get())
+        report["positive_to_zero"] = int(stats[2].get())
+        report["changed"] = int(stats[3].get())
+        report["overflow"] = int(stats[4].get())
+        report["clipped"] = report["overflow"]
+        representations = {
+            str(source.metadata.get("representation", "unknown"))
+            for source in self.sources
+        }
+        record = {
+            "version": 1,
+            "backend": "cuda",
+            "source_representation": (
+                representations.pop() if len(representations) == 1 else "mixed"
+            ),
+            "region_frames": self.region_frames,
+            "range_seconds": self.range_seconds,
+            "gpu_encode_seconds": self.encode_seconds,
+            "merge_encode_write_seconds": self.write_pass_seconds,
+            "released_sources_before_reopen": bool(
+                self.release_sources_before_reopen
+            ),
+            "real_space_shifts_row_column": self.real_shifts.detach().cpu().tolist(),
+            "diffraction_shifts_row_column": (
+                self.diffraction_shifts.detach().cpu().tolist()
+            ),
+        }
+        self.save_metadata["quantem_maped_merge_v1"] = json.dumps(record)
+
+    def close(self):
+        """Release merge planning buffers while retaining caller-owned inputs."""
+        self.plan = None
+
+
+def resident_merge(sources, real_shifts, diffraction_shifts):
+    """Return an internal bounded source for generic GPU saving."""
+    return _ResidentMerge(sources, real_shifts, diffraction_shifts)

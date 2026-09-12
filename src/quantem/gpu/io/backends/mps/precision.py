@@ -54,6 +54,17 @@ class MetalArray:
             raise RuntimeError("This GPU result was released; request it again.")
         return np.frombuffer(_buffer_view(self._mtl), self.dtype, count=self.size).reshape(self.shape).copy()
 
+    def to_torch(self):
+        """Copy this bounded shared Metal result into a Torch MPS tensor."""
+        if self._mtl is None:
+            raise RuntimeError("This GPU result was released; request it again.")
+        import torch
+
+        view = np.frombuffer(
+            _buffer_view(self._mtl), self.dtype, count=self.size
+        ).reshape(self.shape)
+        return torch.from_numpy(view).to("mps")
+
     def __array__(self, dtype=None, copy=None):
         return np.asarray(self.get(), dtype=dtype)
 

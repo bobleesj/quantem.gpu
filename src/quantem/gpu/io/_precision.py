@@ -65,6 +65,7 @@ class _Source:
         self.saved = None
         self.signatures = {}
         self.array = None
+        self.generated = False
         self.session = None
         if not isinstance(source, (str, Path)):
             self.array = source
@@ -72,6 +73,7 @@ class _Source:
             if len(self.shape) == 3 and scan_shape is not None:
                 self.shape = (*scan_shape, *self.shape[-2:])
             self.dtype = np.dtype(str(source.dtype).removeprefix("torch."))
+            self.generated = callable(getattr(source, "blocks", None))
         elif Path(source).suffix.lower() == ".npy":
             self.array = np.load(source, mmap_mode="r", allow_pickle=False)
             self.shape, self.dtype = self.array.shape, self.array.dtype
@@ -152,6 +154,13 @@ class _Source:
             )
 
     def blocks(self, region=None, detector_region=None):
+        if self.generated:
+            if region is not None or detector_region is not None:
+                raise ValueError(
+                    "Generated 4D-STEM sources are saved at their declared complete geometry."
+                )
+            yield from self.array.blocks()
+            return
         if self.backend == "cuda":
             import cupy as cp
         else:
@@ -235,6 +244,9 @@ class _Source:
 
     def close(self):
         self.stack.close()
+        close = getattr(self.array, "close", None)
+        if self.generated and callable(close):
+            close()
         self.array = None
         if self.decoder is not None:
             self.decoder = None
@@ -261,6 +273,9 @@ def _restore(values, report):
 
 def _range(source):
     """Measure the entire source range with bounded accelerator reductions."""
+    generated_range = getattr(getattr(source, "array", None), "range", None)
+    if callable(generated_range):
+        return generated_range()
     if hasattr(source, "device") and str(source.device).startswith("mps"):
         from .backends.mps.precision import tensor_range
 
@@ -308,7 +323,7 @@ def _new_report(source, storage):
         raise ValueError(
             "Values exceed float16's finite range; use scaled_uint16 or preserve float32."
         )
-    return {
+    report = {
         "version": 1,
         "storage": storage,
         "source_dtype": "float32"
@@ -331,7 +346,12 @@ def _new_report(source, storage):
         "scope": "all loaded values",
         "range_scope": "complete source",
         "measurement": "GPU comparison against source",
+        "selection": {"scan_region": None, "detector_region": None},
     }
+    context = getattr(getattr(source, "array", None), "report_context", None)
+    if context is not None:
+        report.update(dict(context))
+    return report
 
 
 def _measure(original, restored, report, *, encoded=None):
@@ -567,7 +587,9 @@ def save_precision(
         context = nullcontext()
     else:
         device_id = payload._device_id if same_precision else (
-            payload.device.id if isinstance(payload, cp.ndarray) else cp.cuda.Device().id
+            payload.device.id
+            if isinstance(payload, cp.ndarray)
+            else int(getattr(payload, "_device_id", cp.cuda.Device().id))
         )
         context = cp.cuda.Device(device_id)
     with context:
@@ -613,25 +635,29 @@ def save_precision(
                 shape = source.shape
                 report = _new_report(source, precision_name(dtype))
 
-                def convert_blocks():
-                    for block in source.blocks():
-                        original = _restore(block, source.saved)
-                        encoded = _encode(original, report)
-                        restored = (
-                            None
-                            if backend == "cuda"
-                            and report["storage"] == "scaled_uint16"
-                            else _restore(encoded, report)
-                        )
-                        _measure(
-                            original,
-                            restored,
-                            report,
-                            encoded=encoded,
-                        )
-                        yield encoded
+                generated_encode = getattr(payload, "encode_blocks", None)
+                if callable(generated_encode):
+                    encoded_blocks = generated_encode(report)
+                else:
+                    def convert_blocks():
+                        for block in source.blocks():
+                            original = _restore(block, source.saved)
+                            encoded = _encode(original, report)
+                            restored = (
+                                None
+                                if backend == "cuda"
+                                and report["storage"] == "scaled_uint16"
+                                else _restore(encoded, report)
+                            )
+                            _measure(
+                                original,
+                                restored,
+                                report,
+                                encoded=encoded,
+                            )
+                            yield encoded
 
-                encoded_blocks = convert_blocks()
+                    encoded_blocks = convert_blocks()
             storage_dtype = np.float16 if report["storage"] == "float16" else np.uint16
             metadata.update(
                 scan_shape=shape[:2],
@@ -652,13 +678,20 @@ def save_precision(
                 frames_per_file=frames_per_file,
                 compression="lz4",
             )
+            generated_blocks = callable(getattr(payload, "encode_blocks", None))
             for index, encoded in enumerate(encoded_blocks):
                 writer.write(encoded)
-                if (index + 1) % 4 == 0:
+                # H5Writer already drains at every output-file boundary. Generated
+                # accelerator sources use large bounded regions, so an extra drain
+                # every four regions serializes Metal/CUDA work with host writes.
+                if not generated_blocks and (index + 1) % 4 == 0:
                     wait_for_saves()
             wait_for_saves()
             if not same_precision:
                 _finish_report(report)
+            generated_metadata = getattr(payload, "save_metadata", None)
+            if generated_metadata is not None:
+                metadata.update(dict(generated_metadata))
             # One JSON attribute survives HDF5 round trips without Python repr parsing.
             metadata[_PRECISION_ATTRIBUTE] = json.dumps(report, allow_nan=False)
             metadata.pop("precision", None)

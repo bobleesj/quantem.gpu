@@ -8,7 +8,6 @@ from functools import lru_cache
 from pathlib import Path
 import time
 
-import h5py
 import numpy as np
 import torch
 
@@ -374,197 +373,138 @@ def _automatic_region_frames(shape):
     return int(frames)
 
 
-def merge_to_scaled_h5(
-    sources,
-    real_shifts,
-    diffraction_shifts,
-    output_path,
-    *,
-    release_sources_before_reopen: bool = False,
-    verbose: bool = False,
-):
-    """Merge exact MPS ANS sources with a bounded Metal working set."""
-    from quantem.gpu.io import load
-    from quantem.gpu.io._precision import _finish_report
-    from quantem.gpu.io.save import H5Writer
+class _ResidentMerge:
+    """Re-readable bounded MAPED output consumed by generic GPU saving."""
 
-    sources = list(sources)
-    if not sources:
-        raise ValueError("Provide at least one aligned resident acquisition.")
-    shape = tuple(sources[0].shape)
-    if len(shape) != 4 or any(tuple(source.shape) != shape for source in sources):
-        raise ValueError("Aligned resident acquisitions must share one 4D shape.")
-    for source in sources:
-        if not isinstance(source.data, MPSStreamedCounts):
-            raise ValueError(
-                "MPS bounded MAPED currently requires exact ANS residents."
-            )
-    for name, shifts in (
-        ("real_shifts", real_shifts),
-        ("diffraction_shifts", diffraction_shifts),
-    ):
-        if (
-            not torch.is_tensor(shifts)
-            or shifts.device.type != "mps"
-            or shifts.dtype != torch.float32
-            or tuple(shifts.shape) != (len(sources), 2)
-        ):
-            raise ValueError(
-                f"{name} must be an MPS float32 tensor shaped "
-                f"({len(sources)}, 2) in row/column order."
-            )
-    # Shift vectors are 28 float32 values for seven tilts. They cross only as
-    # launch metadata; all detector and scan arithmetic remains on Metal.
-    torch.mps.synchronize()
-    real_np = real_shifts.detach().cpu().numpy()
-    diffraction_np = diffraction_shifts.detach().cpu().numpy()
-    output_path = Path(output_path)
-    region_frames = _automatic_region_frames(shape)
-    weights = _merge_weights(shape, real_np, diffraction_np)
-    started = time.perf_counter()
-    low, high = math.inf, -math.inf
-    try:
-        for _, region in _merge_regions(
-            [source.data for source in sources],
-            real_np,
-            diffraction_np,
-            region_frames,
-            weights=weights,
-        ):
-            region_low, region_high = _range(region)
-            low, high = min(low, region_low), max(high, region_high)
-            region.release()
-    except BaseException:
-        for value in weights:
-            value.release()
-        raise
-    if not np.isfinite(low) or not np.isfinite(high) or high <= low:
-        raise ValueError("The merged output has no finite intensity range.")
-    range_seconds = time.perf_counter() - started
-    report = {
-        "version": 1,
-        "storage": "scaled_uint16",
-        "source_dtype": "float32",
-        "source_shape": list(shape),
-        "intensity_min": low,
-        "intensity_max": high,
-        "scale": (high - low) / 65535.0,
-        "offset": low,
-        "values": 0,
-        "squared_error": 0.0,
-        "max_abs_error": 0.0,
-        "positive_to_zero": 0,
-        "changed": 0,
-        "overflow": 0,
-        "clipped": 0,
+    dtype = np.dtype("float32")
+    report_context = {
         "scope": "all merged values",
         "range_scope": "complete merged output",
         "measurement": "GPU comparison against merged float32 regions",
-        "selection": {"scan_region": None, "detector_region": None},
     }
-    summaries = summary_record(shape, sources)
-    metadata = {
-        "quantem_precision_v1": json.dumps({**report, "complete": False}),
-        "source_dtype": "float32",
-        "storage_dtype": "uint16",
-        "working_dtype": "float32",
-        "working_shape": np.asarray(shape, dtype=np.int64),
-        "source_shape": np.asarray(shape, dtype=np.int64),
-        "scan_shape": np.asarray(shape[:2], dtype=np.int64),
-        "detector_shape": np.asarray(shape[2:], dtype=np.int64),
-        "representation": "packed",
-        "residency": "device",
-        "lossless_exact": False,
-        "quantem_maped_summary_v1": json.dumps(summaries),
-    }
-    writer = H5Writer(
-        output_path,
-        shape[0] * shape[1],
-        shape[2:],
-        scan_shape=shape[:2],
-        metadata=metadata,
-        dtype=np.uint16,
-        frames_per_file=32768,
-        compression="lz4",
-    )
-    write_started = time.perf_counter()
-    encode_seconds = 0.0
-    try:
-        for _, region in _merge_regions(
-            [source.data for source in sources],
-            real_np,
-            diffraction_np,
-            region_frames,
-            weights=weights,
+
+    def __init__(self, sources, real_shifts, diffraction_shifts):
+        sources = list(sources)
+        if not sources:
+            raise ValueError("Provide at least one aligned resident acquisition.")
+        shape = tuple(sources[0].shape)
+        if len(shape) != 4 or any(tuple(source.shape) != shape for source in sources):
+            raise ValueError("Aligned resident acquisitions must share one 4D shape.")
+        for source in sources:
+            if not isinstance(source.data, MPSStreamedCounts):
+                raise ValueError(
+                    "MPS bounded MAPED currently requires exact ANS residents."
+                )
+        for name, shifts in (
+            ("real_shifts", real_shifts),
+            ("diffraction_shifts", diffraction_shifts),
         ):
+            if (
+                not torch.is_tensor(shifts)
+                or shifts.device.type != "mps"
+                or shifts.dtype != torch.float32
+                or tuple(shifts.shape) != (len(sources), 2)
+            ):
+                raise ValueError(
+                    f"{name} must be an MPS float32 tensor shaped "
+                    f"({len(sources)}, 2) in row/column order."
+                )
+        torch.mps.synchronize()
+        self.sources = sources
+        self.shape = shape
+        self.real_shifts = real_shifts
+        self.diffraction_shifts = diffraction_shifts
+        self.real_np = real_shifts.detach().cpu().numpy()
+        self.diffraction_np = diffraction_shifts.detach().cpu().numpy()
+        self.region_frames = _automatic_region_frames(shape)
+        self.weights = _merge_weights(shape, self.real_np, self.diffraction_np)
+        self.range_seconds = 0.0
+        self.encode_seconds = 0.0
+        self.write_pass_seconds = 0.0
+        self.release_sources_before_reopen = False
+        self.save_metadata = {
+            "quantem_maped_summary_v1": json.dumps(summary_record(shape, sources))
+        }
+
+    def blocks(self):
+        """Yield one bounded float32 output pass."""
+        yield from (
+            region
+            for _, region in _merge_regions(
+                [source.data for source in self.sources],
+                self.real_np,
+                self.diffraction_np,
+                self.region_frames,
+                weights=self.weights,
+            )
+        )
+
+    def range(self):
+        """Measure the complete merged intensity range on Metal."""
+        started = time.perf_counter()
+        low, high = math.inf, -math.inf
+        for region in self.blocks():
+            try:
+                region_low, region_high = _range(region)
+                low, high = min(low, region_low), max(high, region_high)
+            finally:
+                region.release()
+        if not np.isfinite(low) or not np.isfinite(high):
+            raise ValueError("The merged output contains non-finite intensities.")
+        self.range_seconds = time.perf_counter() - started
+        return low, high
+
+    def encode_blocks(self, report):
+        """Yield scaled uint16 blocks while measuring restored-unit error."""
+        if report["storage"] != "scaled_uint16":
+            raise ValueError(
+                "Resident MAPED saving currently supports dtype='scaled_uint16'."
+            )
+        started = time.perf_counter()
+        self.encode_seconds = 0.0
+        for region in self.blocks():
             encoded = None
             try:
                 encode_started = time.perf_counter()
                 encoded = encode_measure(region, report)
                 torch.mps.synchronize()
-                encode_seconds += time.perf_counter() - encode_started
-                writer.write(encoded)
+                self.encode_seconds += time.perf_counter() - encode_started
+                yield encoded
             finally:
                 if encoded is not None:
                     encoded.release()
                 region.release()
-        writer.close(wait=True)
-    except BaseException:
-        writer.abort()
-        raise
-    finally:
+        self.write_pass_seconds = time.perf_counter() - started
+        report["clipped"] = report["overflow"]
+        representations = {
+            str(source.metadata.get("representation", "unknown"))
+            for source in self.sources
+        }
+        record = {
+            "version": 1,
+            "backend": "mps",
+            "source_representation": (
+                representations.pop() if len(representations) == 1 else "mixed"
+            ),
+            "region_frames": self.region_frames,
+            "range_seconds": self.range_seconds,
+            "gpu_encode_seconds": self.encode_seconds,
+            "merge_encode_write_seconds": self.write_pass_seconds,
+            "released_sources_before_reopen": bool(
+                self.release_sources_before_reopen
+            ),
+            "real_space_shifts_row_column": self.real_np.tolist(),
+            "diffraction_shifts_row_column": self.diffraction_np.tolist(),
+        }
+        self.save_metadata["quantem_maped_merge_v1"] = json.dumps(record)
+
+    def close(self):
+        """Release merge planning buffers while retaining caller-owned inputs."""
+        weights, self.weights = self.weights, ()
         for value in weights:
             value.release()
-    report["clipped"] = report["overflow"]
-    _finish_report(report)
-    report["complete"] = True
-    write_seconds = time.perf_counter() - write_started
-    source_representations = {
-        str(source.metadata.get("representation", "unknown")) for source in sources
-    }
-    merge_record = {
-        "version": 1,
-        "backend": "mps",
-        "source_representation": (
-            source_representations.pop()
-            if len(source_representations) == 1
-            else "mixed"
-        ),
-        "region_frames": region_frames,
-        "range_seconds": range_seconds,
-        "gpu_encode_seconds": encode_seconds,
-        "merge_encode_write_seconds": write_seconds,
-        "released_sources_before_reopen": bool(release_sources_before_reopen),
-        "real_space_shifts_row_column": real_np.tolist(),
-        "diffraction_shifts_row_column": diffraction_np.tolist(),
-    }
-    with h5py.File(output_path, "r+") as handle:
-        handle.attrs["quantem_precision_v1"] = json.dumps(report)
-        handle.attrs["quantem_maped_merge_v1"] = json.dumps(merge_record)
-        handle.attrs["quantem_maped_summary_v1"] = json.dumps(summaries)
-    if verbose:
-        print(
-            f"Merged {len(sources)} resident tilts to {output_path} "
-            f"as scaled uint16 (RMSE {report['rmse']:.4g}, "
-            f"max error {report['max_abs_error']:.4g})."
-        )
-    if release_sources_before_reopen:
-        for source in sources:
-            source.close()
-        torch.mps.empty_cache()
-    reopen_started = time.perf_counter()
-    result = load(
-        output_path, backend="mps", representation="packed", verbose=False
-    )
-    torch.mps.synchronize()
-    release_unused = getattr(result.data, "release_unused_blocks", None)
-    if callable(release_unused):
-        release_unused()
-    torch.mps.empty_cache()
-    merge_record["reopen_seconds"] = time.perf_counter() - reopen_started
-    merge_record["total_seconds"] = time.perf_counter() - started
-    with h5py.File(output_path, "r+") as handle:
-        handle.attrs["quantem_maped_merge_v1"] = json.dumps(merge_record)
-    result.metadata["maped_merge"] = merge_record
-    result.metadata["maped_summary"] = summaries
-    return result
+
+
+def resident_merge(sources, real_shifts, diffraction_shifts):
+    """Return an internal bounded source for generic GPU saving."""
+    return _ResidentMerge(sources, real_shifts, diffraction_shifts)

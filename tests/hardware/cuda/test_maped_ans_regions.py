@@ -17,7 +17,7 @@ from quantem.gpu._compact.streamed import StreamedCounts
 from quantem.gpu._maped.cuda import _merge_regions
 from quantem.gpu.detector import prepare
 from quantem.gpu.io.backends.cuda._ans import CudaPackedResidentCounts
-from quantem.gpu.maped import merge_to_scaled_h5
+from quantem.gpu._maped import merge_to_scaled_h5
 
 
 @pytest.mark.parametrize("dtype", [np.uint8, np.uint16])
@@ -107,6 +107,38 @@ def test_maped_ans_regions_match_masked_bitpacked_regions():
             source.data.release()
 
 
+def test_resident_read_matches_numpy_region():
+    """The generic read contract restores the requested rows and columns on CUDA."""
+    import torch
+
+    shape = (5, 6, 4, 7)
+    values = (
+        cp.arange(np.prod(shape), dtype=cp.uint16).reshape(shape) % 251
+    )
+    source = StreamedCounts(shape, np.uint16)
+    source.append(cp.ascontiguousarray(values.reshape(-1, *shape[2:])))
+    loaded = io.FourDSTEMData(
+        source,
+        {
+            "working_shape": shape,
+            "working_dtype": "uint16",
+            "representation": "ans",
+        },
+    )
+    try:
+        observed = loaded.read(
+            scan_region=(1, 4, 2, 6),
+            detector_region=(1, 4, 3, 7),
+        )
+        assert observed.device.type == "cuda"
+        assert observed.dtype == torch.uint16
+        np.testing.assert_array_equal(
+            observed.cpu().numpy(), values.get()[1:4, 2:6, 1:4, 3:7]
+        )
+    finally:
+        loaded.close()
+
+
 def test_maped_ans_writes_reopenable_scaled_result(tmp_path):
     """The backend owns range measurement, encoding, writing, and reopening."""
 
@@ -148,6 +180,12 @@ def test_maped_ans_writes_reopenable_scaled_result(tmp_path):
                 rtol=0,
                 atol=report["scale"],
             )
+        np.testing.assert_allclose(
+            result.read(scan_region=(1, 4, 2, 5)).cpu().numpy(),
+            expected.reshape(shape)[1:4, 2:5].get(),
+            rtol=0,
+            atol=report["scale"],
+        )
         result.close()
         reopened = io.load(path, backend="cuda", representation="packed", verbose=False)
         try:

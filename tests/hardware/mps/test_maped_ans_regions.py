@@ -12,7 +12,7 @@ from quantem.gpu import io
 from quantem.gpu._maped.mps import _automatic_region_frames, _merge_regions
 from quantem.gpu.io.backends.mps._streamed import MPSStreamedCounts
 from quantem.gpu.io.backends.mps.precision import upload
-from quantem.gpu.maped import merge_to_scaled_h5
+from quantem.gpu._maped import merge_to_scaled_h5
 
 
 def _median_corrected(raw, pixel_mask):
@@ -197,8 +197,43 @@ def test_mps_ans_bounded_merge_preserves_counts_mask_and_late_regions(
                 rtol=0,
                 atol=report["scale"],
             )
+        np.testing.assert_allclose(
+            result.read(scan_region=(1, 3, 150, 154)).cpu().numpy(),
+            expected[1:3, 150:154],
+            rtol=0,
+            atol=report["scale"],
+        )
     finally:
         raw.release()
         source.release()
         if result is not None:
             result.close()
+
+
+def test_resident_read_matches_numpy_region():
+    """The same bounded read contract restores an MPS Torch tensor."""
+    shape = (5, 6, 4, 7)
+    values = np.arange(np.prod(shape), dtype=np.uint16).reshape(shape) % 251
+    source = MPSStreamedCounts(shape, np.uint16)
+    raw = upload(values.reshape(-1, *shape[2:]))
+    try:
+        source.append(raw)
+        loaded = io.FourDSTEMData(
+            source,
+            {
+                "working_shape": shape,
+                "working_dtype": "uint16",
+                "representation": "ans",
+            },
+        )
+        observed = loaded.read(
+            scan_region=(1, 4, 2, 6),
+            detector_region=(1, 4, 3, 7),
+        )
+        assert observed.device.type == "mps"
+        np.testing.assert_array_equal(
+            observed.cpu().numpy(), values[1:4, 2:6, 1:4, 3:7]
+        )
+    finally:
+        raw.release()
+        source.release()
