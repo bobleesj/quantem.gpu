@@ -36,6 +36,12 @@ public final class MetalImageOperations {
     let input, output: MPSGraphTensor
   }
   private var fftPlans: [String: FFTPlan] = [:]
+  private struct MatrixPlan {
+    let graph: MPSGraph
+    let left, right, output: MPSGraphTensor
+  }
+  private var matrixPlans: [String: MatrixPlan] = [:]
+  var convolutionPlans: [String: ImageConvolutionPlan] = [:]
   public init() throws {
     guard let device = MTLCreateSystemDefaultDevice() else {
       throw Self.invalid("A Metal device is required.")
@@ -67,48 +73,25 @@ public final class MetalImageOperations {
     values.withUnsafeBytes { _ = memcpy(result.buffer.contents(), $0.baseAddress!, $0.count) }
     return result
   }
-  public func gaussian(_ image: GPUImage, sigma: Float) throws -> GPUImage {
-    if sigma <= 0 { return image }
-    let radius = Int(2 * sigma)
-    guard image.rows > radius, image.columns > radius else {
-      throw Self.invalid("Gaussian reflection padding must be smaller than the image.")
-    }
-    let a = try allocate(image.rows, image.columns)
-    let b = try allocate(image.rows, image.columns)
-    for (axis, pair) in [(image, a), (a, b)].enumerated() {
-      try run(
-        "gaussian", [pair.0.buffer, pair.1.buffer],
-        words: [UInt32(image.rows), UInt32(image.columns), UInt32(radius), UInt32(axis)],
-        floats: [sigma], count: image.rows * image.columns)
-    }
-    return b
-  }
-  public func gradientMagnitude(_ image: GPUImage, sigma: Float) throws -> GPUImage {
-    let row = try allocate(image.rows, image.columns)
-    let column = try allocate(image.rows, image.columns)
-    try run(
-      "sobel", [image.buffer, row.buffer, column.buffer],
-      words: [UInt32(image.rows), UInt32(image.columns)], count: image.rows * image.columns)
-    let a = try gaussian(row, sigma: sigma)
-    let b = try gaussian(column, sigma: sigma)
-    let result = try allocate(image.rows, image.columns)
-    try run(
-      "magnitude", [a.buffer, b.buffer, result.buffer], words: [UInt32(image.rows * image.columns)],
-      count: image.rows * image.columns)
-    return result
-  }
   /// Window kind: 0 for ones, 1 for Tukey, 2 for the periodic Hann convention.
-  public func window(_ image: GPUImage, kind: Int = 0, edge_blend: Float = 0, padding: Int = 0)
+  public func window(_ image: GPUImage, kind: Int = 0, edge_blend: Double = 0, padding: Int = 0)
     throws -> GPUImage
   {
     guard padding >= 0, (0...2).contains(kind) else {
       throw Self.invalid("Use nonnegative padding and a supported window.")
     }
     let result = try allocate(image.rows + 2 * padding, image.columns + 2 * padding)
+    let coefficients = [image.rows, image.columns].flatMap { length -> [Float] in
+      let alpha = 2 * Double(edge_blend) / Double(length)
+      return [
+        alpha <= 0 ? 0 : (alpha >= 1 ? 2 : 1), Float(alpha * Double(length - 1)),
+        alpha == 0 ? 0 : Float(2 / alpha), Float(2 * Double.pi / Double(length)),
+      ]
+    }
     try run(
       "image_window", [image.buffer, result.buffer],
       words: [UInt32(image.rows), UInt32(image.columns), UInt32(padding), UInt32(kind)],
-      floats: [edge_blend], count: result.rows * result.columns)
+      floats: coefficients, count: result.rows * result.columns)
     return result
   }
   public func shifted(_ image: GPUImage, shifts: GPUImage, index: Int) throws -> GPUImage {
@@ -121,13 +104,31 @@ public final class MetalImageOperations {
   }
   public func centered(_ image: GPUImage, window: GPUImage) throws -> GPUImage {
     let result = try allocate(image.rows, image.columns)
-    let mean = try buffer(8)
+    let total = try sum(window)
+    let mean = try buffer(4)
     try run(
-      "window_mean", [image.buffer, window.buffer, mean],
-      words: [UInt32(image.rows * image.columns)], count: 256, grouped: true)
+      "window_mean", [image.buffer, window.buffer, total, mean],
+      words: [UInt32(image.rows * image.columns)], count: 1024, grouped: true,
+      groupSize: 1024)
     try run(
       "window_center", [image.buffer, window.buffer, mean, result.buffer],
       words: [UInt32(image.rows * image.columns)], count: image.rows * image.columns)
+    return result
+  }
+  func sum(_ image: GPUImage) throws -> MTLBuffer {
+    let count = image.rows * image.columns
+    var groups = min(512, (count + 8191) / 8192)
+    while groups > 1 && count % groups != 0 { groups -= 1 }
+    let partials = try buffer(groups * 4)
+    let width = min(1024, ((count / groups + 31) / 32) * 32)
+    try run(
+      "sum_pixels", [image.buffer, partials], words: [UInt32(count / groups)],
+      count: groups * width, groupSize: width)
+    if groups == 1 { return partials }
+    let result = try buffer(4)
+    try run(
+      "sum_pixels", [partials, result], words: [UInt32(groups)],
+      count: 32 * ((groups + 31) / 32), groupSize: 32 * ((groups + 31) / 32))
     return result
   }
   public func fourier(_ image: GPUImage, inverse: Bool = false) throws -> GPUImage {
@@ -137,7 +138,7 @@ public final class MetalImageOperations {
       graph.options = .none
       let input = graph.placeholder(
         shape: [NSNumber(value: image.rows), NSNumber(value: image.columns)],
-        dataType: inverse ? .complexFloat32 : .float32, name: "input")
+        dataType: .complexFloat32, name: "input")
       let descriptor = MPSGraphFFTDescriptor()
       descriptor.inverse = inverse
       descriptor.scalingMode = inverse ? .size : .none
@@ -148,12 +149,21 @@ public final class MetalImageOperations {
     }
     let plan = fftPlans[key]!
     let result = try allocate(image.rows, image.columns, complex: !inverse)
+    let inputBuffer: MTLBuffer
+    if image.isComplex {
+      inputBuffer = image.buffer
+    } else {
+      inputBuffer = try buffer(image.rows * image.columns * 8)
+      try run(
+        "complex_image", [image.buffer, inputBuffer],
+        words: [UInt32(image.rows * image.columns)], count: image.rows * image.columns)
+    }
     let shape = [NSNumber(value: image.rows), NSNumber(value: image.columns)]
     plan.graph.run(
       with: queue,
       feeds: [
         plan.input: MPSGraphTensorData(
-          image.buffer, shape: shape, dataType: inverse ? .complexFloat32 : .float32)
+          inputBuffer, shape: shape, dataType: .complexFloat32)
       ],
       targetOperations: nil,
       resultsDictionary: [
@@ -171,17 +181,57 @@ public final class MetalImageOperations {
       [reference.buffer, next.buffer, shift?.buffer ?? reference.buffer, result.buffer],
       words: [
         UInt32(reference.rows), UInt32(reference.columns), UInt32(count), shift == nil ? 0 : 1,
-      ], count: reference.rows * reference.columns)
+      ],
+      floats: [
+        Float(1 / Double(reference.rows)), Float(1 / Double(reference.columns)),
+        Float(Double(count) / Double(count + 1)), Float(1 / Double(count + 1)),
+      ],
+      count: reference.rows * reference.columns)
+    return result
+  }
+  /// Average matching images or spectra with one reduction across inputs.
+  public func mean(_ images: [GPUImage]) throws -> GPUImage {
+    guard let first = images.first,
+      images.allSatisfy({
+        $0.rows == first.rows && $0.columns == first.columns && $0.isComplex == first.isComplex
+      })
+    else { throw Self.invalid("Average at least one image with matching shapes and dtypes.") }
+    let elementBytes = first.isComplex ? 8 : 4
+    let imageBytes = first.rows * first.columns * elementBytes
+    let stacked = try buffer(images.count * imageBytes)
+    let command = try makeCommand()
+    let copy = command.makeBlitCommandEncoder()!
+    for (index, image) in images.enumerated() {
+      copy.copy(
+        from: image.buffer, sourceOffset: 0, to: stacked,
+        destinationOffset: index * imageBytes, size: imageBytes)
+    }
+    copy.endEncoding()
+    try complete(command)
+    let result = try allocate(first.rows, first.columns, complex: first.isComplex)
+    var lanes = 1
+    while lanes < min(32, images.count) { lanes *= 2 }
+    let count = imageBytes / 4
+    try run(
+      "mean_images", [stacked, result.buffer],
+      words: [UInt32(images.count), UInt32(count), UInt32(lanes)], count: count * lanes)
     return result
   }
   public func correlation(_ reference: GPUImage, _ image: GPUImage, upsample_factor: Int = 100)
     throws -> GPUImage
   {
-    guard upsample_factor >= 1, upsample_factor <= 1024, reference.isComplex, image.isComplex,
+    guard upsample_factor >= 1, reference.isComplex, image.isComplex,
       reference.rows == image.rows, reference.columns == image.columns
     else {
       throw Self.invalid(
-        "Correlation needs same-shaped complex spectra and upsample_factor from 1 through 1024.")
+        "Correlation needs same-shaped complex spectra and a positive upsample_factor.")
+    }
+    let refinedWidth = ceil(1.5 * Double(upsample_factor))
+    guard refinedWidth * refinedWidth * 4 <= Double(device.maxBufferLength),
+      refinedWidth * Double(max(image.rows, image.columns)) * 8 <= Double(device.maxBufferLength)
+    else {
+      throw Self.invalid(
+        "The requested upsample_factor exceeds the device buffer limit; reduce it.")
     }
     let rows = image.rows
     let cols = image.columns
@@ -199,16 +249,16 @@ public final class MetalImageOperations {
       let width = Int(ceil(1.5 * Double(upsample_factor)))
       let row = try allocate(width, rows, complex: true)
       let col = try allocate(cols, width, complex: true)
-      let partial = try allocate(width, cols, complex: true)
-      let refined = try allocate(width, width)
       let p = [UInt32(rows), UInt32(cols), UInt32(upsample_factor), UInt32(width)]
       try run(
         "dft_kernels", [shift.buffer, row.buffer, col.buffer], words: p,
+        floats: [
+          Float(-2 * Double.pi / (Double(rows) * Double(upsample_factor))),
+          Float(-2 * Double.pi / (Double(cols) * Double(upsample_factor))),
+        ],
         count: max(width * rows, cols * width))
-      try run(
-        "dft_rows", [product.buffer, row.buffer, partial.buffer], words: p, count: width * cols)
-      try run(
-        "dft_cols", [partial.buffer, col.buffer, refined.buffer], words: p, count: width * width)
+      let partial = try matrixProduct(row, product, conjugateRight: true)
+      let refined = try matrixProduct(partial, col, realOutput: true)
       try run(
         "peak_fit", [refined.buffer, shift.buffer],
         words: [UInt32(width), UInt32(width), UInt32(upsample_factor), 0], count: 256, grouped: true
@@ -217,6 +267,52 @@ public final class MetalImageOperations {
     let wrapped = try self.image(rows: 1, columns: 2)
     try addShift(wrapped, shift, index: 0, wrapRows: rows, wrapColumns: cols)
     return wrapped
+  }
+  private func matrixProduct(
+    _ left: GPUImage, _ right: GPUImage, conjugateRight: Bool = false, realOutput: Bool = false
+  ) throws -> GPUImage {
+    let key = "\(left.rows),\(left.columns),\(right.columns),\(conjugateRight),\(realOutput)"
+    if matrixPlans[key] == nil {
+      let graph = MPSGraph()
+      graph.options = .none
+      let a = graph.placeholder(
+        shape: [NSNumber(value: left.rows), NSNumber(value: left.columns)],
+        dataType: .complexFloat32, name: "left")
+      let b = graph.placeholder(
+        shape: [NSNumber(value: right.rows), NSNumber(value: right.columns)],
+        dataType: .complexFloat32, name: "right")
+      let result = graph.matrixMultiplication(
+        primary: a, secondary: conjugateRight ? graph.conjugate(tensor: b, name: nil) : b,
+        name: nil)
+      let output = realOutput ? graph.realPartOfTensor(tensor: result, name: nil) : result
+      matrixPlans[key] = MatrixPlan(graph: graph, left: a, right: b, output: output)
+    }
+    let plan = matrixPlans[key]!
+    let result = try allocate(left.rows, right.columns, complex: !realOutput)
+    plan.graph.run(
+      with: queue,
+      feeds: [
+        plan.left: MPSGraphTensorData(
+          left.buffer,
+          shape: [
+            NSNumber(value: left.rows), NSNumber(value: left.columns),
+          ], dataType: .complexFloat32),
+        plan.right: MPSGraphTensorData(
+          right.buffer,
+          shape: [
+            NSNumber(value: right.rows), NSNumber(value: right.columns),
+          ], dataType: .complexFloat32),
+      ],
+      targetOperations: nil,
+      resultsDictionary: [
+        plan.output: MPSGraphTensorData(
+          result.buffer,
+          shape: [
+            NSNumber(value: result.rows), NSNumber(value: result.columns),
+          ],
+          dataType: realOutput ? .float32 : .complexFloat32)
+      ])
+    return result
   }
   public func addShift(
     _ shifts: GPUImage, _ value: GPUImage, index: Int, wrapRows: Int = 0, wrapColumns: Int = 0
@@ -279,7 +375,7 @@ public final class MetalImageOperations {
   }
   func run(
     _ name: String, _ buffers: [MTLBuffer], words: [UInt32], floats: [Float] = [], count: Int,
-    grouped: Bool = false
+    grouped: Bool = false, groupSize: Int = 256
   ) throws {
     let command = try makeCommand()
     let enc = try encoder(command, name, buffers)
@@ -292,11 +388,11 @@ public final class MetalImageOperations {
     if grouped {
       enc.dispatchThreadgroups(
         MTLSize(width: 1, height: 1, depth: 1),
-        threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+        threadsPerThreadgroup: MTLSize(width: groupSize, height: 1, depth: 1))
     } else {
       enc.dispatchThreads(
         MTLSize(width: count, height: 1, depth: 1),
-        threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+        threadsPerThreadgroup: MTLSize(width: groupSize, height: 1, depth: 1))
     }
     enc.endEncoding()
     try complete(command)

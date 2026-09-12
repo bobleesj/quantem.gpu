@@ -58,3 +58,25 @@ against the existing Torch MPS workflow and the Python file loader. QuantEM.GPU'
 shared kernels and compare their outputs with independent NumPy references.
 These scoped tests do not constitute a minimum-memory Mac or application release
 qualification.
+
+## Image arithmetic and parameter changes
+
+`MetalImageOperations.mean` reduces matching `GPUImage` images or complex64
+spectra on the GPU. Gaussian filtering uses a normalized two-dimensional
+kernel with reflection padding. Fourier transforms use complex64 buffers and
+MPSGraph; refined correlation uses complex matrix multiplication. Scalar sigma
+and window choices use `Double` so kernel-radius and padding decisions preserve
+Python's scalar precision before creating float32 numerical arrays.
+
+Float32 parity depends on reduction and rounding order, as well as the formula.
+Window generation, weighted centering, image averaging, complex phase blending,
+and bilinear interpolation retain the qualified Torch MPS order. This does not
+promise bitwise equality across arbitrary GPU architectures or Torch versions.
+
+The consumer keeps the shared parameter manifest and sensitivity evidence in
+QuantEM's `native/Tests/parameter_cases.json` and `native/Tests/compare_parameters.py`.
+Its frozen Torch fixture covers filtering widths, window transitions, weighted
+centering, and a mixed-radix FFT. Its real-data tests compare selected output
+patterns at scan edges and centers, inactive controls, coupled parameters, and
+returning to defaults on the same resident inputs. Existing scientific error
+gates are retained; storage error is measured separately.

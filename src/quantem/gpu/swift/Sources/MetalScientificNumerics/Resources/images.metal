@@ -1,6 +1,21 @@
 #include <metal_stdlib>
 using namespace metal;
 constant float PI = 3.14159265358979323846f;
+kernel void complex_image(device const float *a [[buffer(0)]],device float2 *out [[buffer(1)]],
+    constant uint &n [[buffer(2)]],uint i [[thread_position_in_grid]]) {if(i<n)out[i]=float2(a[i],0);}
+kernel void normalize_pdf(device float *a [[buffer(0)]],device const float *total [[buffer(1)]],
+    constant uint &n [[buffer(2)]],uint i [[thread_position_in_grid]]) {if(i<n)a[i]/=total[0];}
+kernel void gaussian_pdf(device float *out [[buffer(0)]],constant uint &n [[buffer(1)]],
+    constant float &sigma [[buffer(2)]],uint i [[thread_position_in_grid]]) {
+    #pragma clang fp contract(off)
+    if(i>=n)return;float value=(float(i)-float(n-1)*.5f)/sigma;
+    value=value*value;out[i]=exp(-.5f*value);
+}
+kernel void sobel_weights(device float *out [[buffer(0)]],constant uint &axis [[buffer(1)]],
+    uint i [[thread_position_in_grid]]) {
+    if(i>=9)return;int row=int(i/3)-1,col=int(i%3)-1;
+    out[i]=axis==0?float(row*(col==0?2:1)):float(col*(row==0?2:1));
+}
 inline float normalized_translation(uint index, uint length, float shift) {
     // Match the separately rounded linspace, multiply and subtract operations
     // used to build the reference normalized grid. Contracting the first pair
@@ -11,45 +26,49 @@ inline float normalized_translation(uint index, uint length, float shift) {
     return base - 2.0f * shift / float(length);
 }
 inline float2 cmul(float2 a, float2 b) { return float2(a.x*b.x-a.y*b.y, a.x*b.y+a.y*b.x); }
-inline int reflected(int i, int n) { while (i < 0 || i >= n) i = i < 0 ? -i : 2*n-2-i; return i; }
 inline float at(device const float *a,int r,int c,int h,int w) { return r>=0&&r<h&&c>=0&&c<w?a[r*w+c]:0; }
 inline float bilinear(device const float *a,float r,float c,int h,int w) {
+    #pragma clang fp contract(off)
     int rr=int(floor(r)),cc=int(floor(c)); float fr=r-rr,fc=c-cc;
-    return at(a,rr,cc,h,w)*((1-fr)*(1-fc))+at(a,rr,cc+1,h,w)*((1-fr)*fc)
-        +at(a,rr+1,cc,h,w)*(fr*(1-fc))+at(a,rr+1,cc+1,h,w)*(fr*fc);
+    float result=at(a,rr,cc,h,w)*((1-fr)*(1-fc));
+    result=fma(at(a,rr,cc+1,h,w),(1-fr)*fc,result);
+    result=fma(at(a,rr+1,cc,h,w),fr*(1-fc),result);
+    return fma(at(a,rr+1,cc+1,h,w),fr*fc,result);
 }
-kernel void gaussian(device const float *a [[buffer(0)]],device float *b [[buffer(1)]],
-    constant uint4 &p [[buffer(2)]],constant float &sigma [[buffer(3)]],uint i [[thread_position_in_grid]]) {
-    if(i>=p.x*p.y)return; int r=i/p.y,c=i%p.y,rad=int(p.z); float sum=0,weight=0;
-    for(int d=-rad;d<=rad;d++){float v=exp(-float(d*d)/(2*sigma*sigma));
-        int rr=reflected(r+(p.w==0?d:0),p.x),cc=reflected(c+(p.w==1?d:0),p.y);
-        sum+=a[rr*p.y+cc]*v;weight+=v;} b[i]=sum/weight;
-}
-kernel void sobel(device const float *a [[buffer(0)]],device float *rout [[buffer(1)]],device float *cout [[buffer(2)]],
-    constant uint2 &p [[buffer(3)]],uint i [[thread_position_in_grid]]) {
-    if(i>=p.x*p.y)return; int r=i/p.y,c=i%p.y;float row=0,col=0;
-    for(int dr=-1;dr<=1;dr++)for(int dc=-1;dc<=1;dc++){
-        float v=a[reflected(r+dr,p.x)*p.y+reflected(c+dc,p.y)];
-        row+=v*float(dr*(dc==0?2:1));col+=v*float(dc*(dr==0?2:1));}rout[i]=row;cout[i]=col;
+kernel void mean_images(device const float *a [[buffer(0)]],device float *out [[buffer(1)]],
+    constant uint3 &p [[buffer(2)]],uint i [[thread_position_in_grid]]) {
+    uint lane=i%p.z,pixel=i/p.z;if(pixel>=p.y)return;float value=0;
+    for(uint j=lane;j<p.x;j+=p.z)value+=a[j*p.y+pixel];
+    for(uint stride=p.z/2;stride;stride/=2)value+=simd_shuffle_down(value,stride);
+    if(lane==0)out[pixel]=value/float(p.x);
 }
 kernel void magnitude(device const float *a [[buffer(0)]],device const float *b [[buffer(1)]],device float *out [[buffer(2)]],
-    constant uint &n [[buffer(3)]],uint i [[thread_position_in_grid]]) {if(i<n)out[i]=sqrt(a[i]*a[i]+b[i]*b[i]);}
-inline float tukey(uint i,uint n,float alpha) {
-    if(alpha<=0)return 1; if(alpha>=1)return .5f*(1-cos(2*PI*float(i)/float(n)));
-    float edge=alpha*float(n-1)*.5f;
-    if(i<edge)return .5f*(1+cos(PI*(2*float(i)/(alpha*float(n-1))-1)));
-    if(i>=float(n-1)-edge)return .5f*(1+cos(PI*(2*float(i)/(alpha*float(n-1))-2/alpha+1)));
+    constant uint &n [[buffer(3)]],uint i [[thread_position_in_grid]]) {
+    #pragma clang fp contract(off)
+    if(i<n)out[i]=sqrt(a[i]*a[i]+b[i]*b[i]);
+}
+inline float hann(uint index,float factor) {
+    #pragma clang fp contract(off)
+    return cos(float(index)*factor)*(-.5f)+.5f;
+}
+inline float tukey(uint i,uint n,float4 v) {
+    #pragma clang fp contract(off)
+    if(v.x==0)return 1;if(v.x==2)return hann(i,v.w);
+    float edge=v.y*.5f;
+    if(i<edge)return .5f*(1+cos(PI*(2*float(i)/v.y-1)));
+    if(i>=float(n-1)-edge)return .5f*(1+cos(PI*(2*float(i)/v.y-v.z+1)));
     return 1;
 }
 kernel void image_window(device const float *a [[buffer(0)]],device float *out [[buffer(1)]],
-    constant uint4 &p [[buffer(2)]],constant float &edge [[buffer(3)]],uint i [[thread_position_in_grid]]) {
-    uint h=p.x,w=p.y,pad=p.z,ww=w+2*pad; if(i>=(h+2*pad)*ww)return;
+    constant uint4 &p [[buffer(2)]],constant float4 *coefficients [[buffer(3)]],uint i [[thread_position_in_grid]]) {
+    #pragma clang fp contract(off)
+    uint h=p.x,w=p.y,pad=p.z,ww=w+2*pad;if(i>=(h+2*pad)*ww)return;
     int r=int(i/ww)-int(pad),c=int(i%ww)-int(pad);float value=0;
     if(r>=0&&r<int(h)&&c>=0&&c<int(w)){
         float wr=1,wc=1;
-        if(p.w==1){wr=tukey(r,h,2*edge/h);wc=tukey(c,w,2*edge/w);}
-        if(p.w==2){wr=.5f*(1-cos(2*PI*float(r)/h));wc=.5f*(1-cos(2*PI*float(c)/w));}
-        value=a[r*w+c]*wr*wc;}out[i]=value;
+        if(p.w==1){wr=tukey(r,h,coefficients[0]);wc=tukey(c,w,coefficients[1]);}
+        if(p.w==2){wr=hann(r,coefficients[0].w);wc=hann(c,coefficients[1].w);}
+        value=a[r*w+c]*(wr*wc);}out[i]=value;
 }
 kernel void shift_image(device const float *a [[buffer(0)]],device const float2 *shifts [[buffer(1)]],
     device float *out [[buffer(2)]],constant uint4 &p [[buffer(3)]],uint i [[thread_position_in_grid]]) {
@@ -59,34 +78,67 @@ kernel void shift_image(device const float *a [[buffer(0)]],device const float2 
     float nc=normalized_translation(i%p.y,p.y,s.y);
     out[i]=bilinear(a,(nr+1)*.5f*float(p.x-1),(nc+1)*.5f*float(p.y-1),p.x,p.y);
 }
-kernel void window_mean(device const float *a [[buffer(0)]],device const float *w [[buffer(1)]],
-    device float2 *mean [[buffer(2)]],constant uint &n [[buffer(3)]],uint lane [[thread_index_in_threadgroup]]) {
-    threadgroup float2 sums[256];float2 sum=0;
-    for(uint i=lane;i<n;i+=256)sum+=float2(a[i]*w[i],w[i]);sums[lane]=sum;
+// Eight independent accumulation chains and two SIMD reductions preserve
+// float32 rounding for batched image sums while exposing parallel work.
+inline float chain_sum(device const float *a,device const float *w,uint n,
+    uint lane,uint width,bool weighted) {
+    #pragma clang fp contract(off)
+    float accumulators[8]={0,0,0,0,0,0,0,0};
+    for(uint base=lane*8;base<n;base+=width*8)
+        for(uint j=0;j<8&&base+j<n;j++)
+            accumulators[j]+=weighted?a[base+j]*w[base+j]:a[base+j];
+    float result=accumulators[0];
+    for(uint j=1;j<8;j++)result+=accumulators[j];
+    return result;
+}
+inline float group_sum(float value,uint lane,uint width,threadgroup float *partial) {
+    value=simd_sum(value);
+    if(lane%32==0)partial[lane/32]=value;
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    for(uint d=128;d;d/=2){if(lane<d)sums[lane]+=sums[lane+d];threadgroup_barrier(mem_flags::mem_threadgroup);}
-    if(!lane)mean[0]=float2(sums[0].x/sums[0].y,0);
+    value=lane<width/32?partial[lane]:0;
+    return simd_sum(value);
+}
+kernel void sum_pixels(device const float *a [[buffer(0)]],device float *out [[buffer(1)]],
+    constant uint &n [[buffer(2)]],uint lane [[thread_index_in_threadgroup]],
+    uint group [[threadgroup_position_in_grid]],uint width [[threads_per_threadgroup]]) {
+    threadgroup float partial[32];
+    float value=chain_sum(a+group*n,a,n,lane,width,false);
+    value=group_sum(value,lane,width,partial);
+    if(lane==0)out[group]=value;
+}
+kernel void window_mean(device const float *a [[buffer(0)]],device const float *w [[buffer(1)]],
+    device const float *total [[buffer(2)]],device float *mean [[buffer(3)]],
+    constant uint &n [[buffer(4)]],uint lane [[thread_index_in_threadgroup]],
+    uint width [[threads_per_threadgroup]]) {
+    threadgroup float partial[32];
+    float value=chain_sum(a,w,n,lane,width,true);
+    value=group_sum(value,lane,width,partial);
+    if(lane==0)mean[0]=value/total[0];
 }
 kernel void window_center(device const float *a [[buffer(0)]],device const float *w [[buffer(1)]],
-    device const float2 *mean [[buffer(2)]],device float *out [[buffer(3)]],constant uint &n [[buffer(4)]],
-    uint i [[thread_position_in_grid]]) {if(i<n)out[i]=(a[i]-mean[0].x)*w[i];}
+    device const float *mean [[buffer(2)]],device float *out [[buffer(3)]],constant uint &n [[buffer(4)]],
+    uint i [[thread_position_in_grid]]) {if(i<n)out[i]=(a[i]-mean[0])*w[i];}
 kernel void fill_value(device float *a [[buffer(0)]],constant uint &n [[buffer(1)]],constant float &value [[buffer(2)]],
     uint i [[thread_position_in_grid]]) {if(i<n)a[i]=value;}
 kernel void spectrum_product(device const float2 *a [[buffer(0)]],device const float2 *b [[buffer(1)]],
     device float2 *out [[buffer(2)]],constant uint &n [[buffer(3)]],uint i [[thread_position_in_grid]]) {
     if(i<n)out[i]=cmul(a[i],float2(b[i].x,-b[i].y));
 }
-inline float frequency(uint i,uint n){return float(i<(n+1)/2?int(i):int(i)-int(n))/float(n);}
+inline float frequency(uint i,uint n){return float(i<(n+1)/2?int(i):int(i)-int(n));}
 kernel void spectrum_blend(device const float2 *a [[buffer(0)]],device const float2 *b [[buffer(1)]],
     device const float2 *shift [[buffer(2)]],device float2 *out [[buffer(3)]],constant uint4 &p [[buffer(4)]],
-    uint i [[thread_position_in_grid]]) {
+    constant float4 &coefficients [[buffer(5)]],uint i [[thread_position_in_grid]]) {
+    #pragma clang fp contract(off)
     if(i>=p.x*p.y)return;float2 s=p.w?shift[0]:float2(0);
-    float angle=-2*PI*(frequency(i/p.y,p.x)*s.x+frequency(i%p.y,p.y)*s.y);
+    float row=frequency(i/p.y,p.x)*coefficients.x;
+    float col=frequency(i%p.y,p.y)*coefficients.y;
+    float angle=(-2*PI)*(row*s.x+col*s.y);
     float2 translated=cmul(b[i],float2(cos(angle),sin(angle)));
-    out[i]=a[i]*(float(p.z)/float(p.z+1))+translated/float(p.z+1);
+    out[i]=a[i]*coefficients.z+translated/float(p.z+1);
 }
 kernel void peak_fit(device const float *a [[buffer(0)]],device float2 *shift [[buffer(1)]],
     constant uint4 &p [[buffer(2)]],uint lane [[thread_index_in_threadgroup]]) {
+    #pragma clang fp contract(off)
     threadgroup float values[256];threadgroup uint positions[256];float best=-INFINITY;uint at=0;
     for(uint i=lane;i<p.x*p.y;i+=256){if(a[i]>best||(a[i]==best&&i<at)){best=a[i];at=i;}}
     values[lane]=best;positions[lane]=at;threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -103,23 +155,19 @@ kernel void peak_fit(device const float *a [[buffer(0)]],device float2 *shift [[
         shift[0]=rint(shift[0]*float(p.z))/float(p.z)+(float2(r,c)-center+delta)/float(p.z);}
 }
 kernel void dft_kernels(device const float2 *shift [[buffer(0)]],device float2 *rows [[buffer(1)]],
-    device float2 *cols [[buffer(2)]],constant uint4 &p [[buffer(3)]],uint i [[thread_position_in_grid]]) {
+    device float2 *cols [[buffer(2)]],constant uint4 &p [[buffer(3)]],
+    constant float2 &factors [[buffer(4)]],uint i [[thread_position_in_grid]]) {
+    #pragma clang fp contract(off)
     float2 rounded=rint(shift[0]*float(p.z))/float(p.z);
     float2 center=floor(float(p.w)*.5f)-float(p.z)*rounded;
-    if(i<p.w*p.x){uint r=i/p.x,k=i%p.x;float angle=-2*PI*frequency(k,p.x)*(float(r)-center.x)/float(p.z);
+    // Preserve the reference's integer frequency times coordinate, followed
+    // by one multiplication by the rounded complex exponential coefficient.
+    if(i<p.w*p.x){uint r=i/p.x,k=i%p.x;int frequency=k<(p.x+1)/2?int(k):int(k)-int(p.x);
+        float angle=(float(frequency)*(float(r)-center.x))*factors.x;
         rows[i]=float2(cos(angle),sin(angle));}
-    if(i<p.y*p.w){uint k=i/p.w,c=i%p.w;float angle=-2*PI*frequency(k,p.y)*(float(c)-center.y)/float(p.z);
+    if(i<p.y*p.w){uint k=i/p.w,c=i%p.w;int frequency=k<(p.y+1)/2?int(k):int(k)-int(p.y);
+        float angle=(float(frequency)*(float(c)-center.y))*factors.y;
         cols[i]=float2(cos(angle),sin(angle));}
-}
-kernel void dft_rows(device const float2 *a [[buffer(0)]],device const float2 *row [[buffer(1)]],
-    device float2 *out [[buffer(2)]],constant uint4 &p [[buffer(3)]],uint i [[thread_position_in_grid]]) {
-    if(i>=p.w*p.y)return;uint r=i/p.y,c=i%p.y;float2 sum=0;
-    for(uint k=0;k<p.x;k++){float2 v=a[k*p.y+c];sum+=cmul(row[r*p.x+k],float2(v.x,-v.y));}out[i]=sum;
-}
-kernel void dft_cols(device const float2 *a [[buffer(0)]],device const float2 *col [[buffer(1)]],
-    device float *out [[buffer(2)]],constant uint4 &p [[buffer(3)]],uint i [[thread_position_in_grid]]) {
-    if(i>=p.w*p.w)return;uint r=i/p.w,c=i%p.w;float sum=0;
-    for(uint k=0;k<p.y;k++){float2 a0=a[r*p.y+k],b=col[k*p.w+c];sum+=a0.x*b.x-a0.y*b.y;}out[i]=sum;
 }
 kernel void shift_record(device float2 *shifts [[buffer(0)]],device const float2 *value [[buffer(1)]],
     constant uint4 &p [[buffer(2)]],uint i [[thread_position_in_grid]]) {
@@ -129,7 +177,14 @@ kernel void shift_record(device float2 *shifts [[buffer(0)]],device const float2
     shifts[p.z]+=v;
 }
 kernel void shift_center(device float2 *shifts [[buffer(0)]],constant uint &n [[buffer(1)]],uint i [[thread_position_in_grid]]) {
-    if(i)return;float2 sum=0;for(uint j=0;j<n;j++)sum+=shifts[j];sum/=float(n);for(uint j=0;j<n;j++)shifts[j]-=sum;
+    if(i)return;float2 lanes[32];uint per=(n+31)/32;
+    for(uint lane=0;lane<32;lane++){
+        float2 chain[8]={};uint end=min((lane+1)*per,n);
+        for(uint j=lane*per;j<end;j++)chain[j%8]+=shifts[j];
+        lanes[lane]=chain[0];for(uint j=1;j<8;j++)lanes[lane]+=chain[j];
+    }
+    for(uint step=16;step;step/=2)for(uint lane=0;lane<step;lane++)lanes[lane]+=lanes[lane+step];
+    float2 mean=lanes[0]/float(n);for(uint j=0;j<n;j++)shifts[j]-=mean;
 }
 kernel void origin(device const float *a [[buffer(0)]],device uint2 *out [[buffer(1)]],constant uint2 &p [[buffer(2)]],uint lane [[thread_index_in_threadgroup]]) {
     threadgroup float vals[256];threadgroup uint ids[256];float v=-INFINITY;uint id=0;
