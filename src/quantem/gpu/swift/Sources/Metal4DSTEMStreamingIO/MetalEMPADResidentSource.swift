@@ -21,9 +21,13 @@ public final class MetalEMPADResidentSource {
   public let logicalSHA256: String
   /// Tensor identity binding shape and dtype to `logicalSHA256`, not a file checksum.
   public let sourceIdentitySHA256: String
+  /// Uncorrected tensor identity, suitable for source-bound notes and metadata.
+  public let originalSourceIdentitySHA256: String
   /// True only when a checksum-protected source hash matched the file snapshot.
   /// The complete original measurements are still reread and packed.
   public let reusedSourceHash: Bool
+  /// Optional calibrated product transform; original packed measurements remain intact.
+  public private(set) var background: MetalEMPADBackground?
   public private(set) var isReleased = false
   private let device: MTLDevice
   private let diffractionPipeline: MTLComputePipelineState
@@ -85,7 +89,8 @@ public final class MetalEMPADResidentSource {
     diffraction: MTLComputePipelineState, detector: MTLComputePipelineState, chunks: [Chunk],
     logicalSHA256: String, centerOfMass: MTLComputePipelineState, mean: MTLComputePipelineState,
     serialDetector: Bool, detectorThreads: Int, serialCenterOfMass: Bool,
-    incremental: MTLComputePipelineState?, memoryBudgetBytes: UInt64, reusedSourceHash: Bool
+    incremental: MTLComputePipelineState?, memoryBudgetBytes: UInt64, reusedSourceHash: Bool,
+    background: MetalEMPADBackground?
   ) {
     self.source = source
     self.device = device
@@ -99,6 +104,7 @@ public final class MetalEMPADResidentSource {
     incrementalPipeline = incremental
     self.memoryBudgetBytes = memoryBudgetBytes
     self.reusedSourceHash = reusedSourceHash
+    self.background = background
     self.chunks = chunks
     self.logicalSHA256 = logicalSHA256
     var identity = SHA256()
@@ -108,8 +114,13 @@ public final class MetalEMPADResidentSource {
       withUnsafeBytes(of: &word) { identity.update(bufferPointer: $0) }
     }
     identity.update(data: Data(logicalSHA256.utf8))
+    originalSourceIdentitySHA256 = identity.finalize().map { String(format: "%02x", $0) }.joined()
+    if let background {
+      identity.update(data: Data((MetalEMPADBackground.schema + "\0" + background.identitySHA256).utf8))
+    }
     sourceIdentitySHA256 = identity.finalize().map { String(format: "%02x", $0) }.joined()
     residentBytes = chunks.reduce(0) { $0 + UInt64($1.payload.length + $1.descriptors.length) }
+      + (background == nil ? 0 : 65536)
   }
 
   /// Read every original detector pixel and finish packing before returning.
@@ -123,6 +134,7 @@ public final class MetalEMPADResidentSource {
   public static func load(
     _ source: NativeEMPADSource, device: MTLDevice, memoryBudgetBytes: UInt64,
     sourceHashCacheURL: URL? = nil,
+    subtracting background: MetalEMPADBackground? = nil,
     shouldCancel: () -> Bool = { false }
   ) throws -> MetalEMPADResidentSource {
     let started = CFAbsoluteTimeGetCurrent()
@@ -136,6 +148,20 @@ public final class MetalEMPADResidentSource {
     }
     try checkCancellation(shouldCancel)
     try source.validateUnchanged()
+    if let background {
+      guard background.values.device.registryID == device.registryID,
+        background.source.rawURL.resolvingSymlinksInPath() != source.rawURL.resolvingSymlinksInPath(),
+        background.source.formatIdentifier == source.formatIdentifier else {
+        throw failure("Choose a different dark acquisition with the same reader format and Metal device.")
+      }
+      try background.source.validateUnchanged()
+      let sampleMetadata = NativeMicroscopeMetadata(metadata: source.microscopeMetadata)
+      let darkMetadata = NativeMicroscopeMetadata(metadata: background.source.microscopeMetadata)
+      if let sample = sampleMetadata.dwellTimeMicroseconds, let dark = darkMetadata.dwellTimeMicroseconds,
+        abs(sample - dark) > max(sample, dark) * 1e-6 {
+        throw failure("Sample and dark exposure times differ. Choose a matching dark; automatic exposure scaling is not supported.")
+      }
+    }
     let snapshot = try source.sourceSnapshot()
     let hashCacheURL = EMPADSourceHashCache.safeURL(sourceHashCacheURL, source: source)
     let cachedHash = EMPADSourceHashCache.read(hashCacheURL, snapshot: snapshot)
@@ -334,6 +360,7 @@ public final class MetalEMPADResidentSource {
     let logicalHash =
       cachedHash ?? completedHash?.hash
       ?? logicalDigest.finalize().map { String(format: "%02x", $0) }.joined()
+    try background?.source.validateUnchanged()
     if profile {
       fputs(
         String(
@@ -354,7 +381,7 @@ public final class MetalEMPADResidentSource {
       centerOfMass: centerOfMass, mean: mean, serialDetector: serialDetector,
       detectorThreads: detectorThreads, serialCenterOfMass: serialCenterOfMass,
       incremental: incremental, memoryBudgetBytes: memoryBudgetBytes,
-      reusedSourceHash: cachedHash != nil)
+      reusedSourceHash: cachedHash != nil, background: background)
   }
 
   /// Encode a complete selected float32 DP without reading it back to the CPU.
@@ -381,6 +408,7 @@ public final class MetalEMPADResidentSource {
     else { throw Self.failure("EMPAD selected-frame encoding failed.") }
     var local = UInt32(frame - chunk.firstFrame)
     encoder.setComputePipelineState(diffractionPipeline)
+    bindBackground(encoder, fallback: chunk.payload)
     encoder.setBuffer(chunk.payload, offset: 0, index: 0)
     encoder.setBuffer(chunk.descriptors, offset: 0, index: 1)
     encoder.setBuffer(output, offset: 0, index: 2)
@@ -415,6 +443,7 @@ public final class MetalEMPADResidentSource {
       throw Self.failure("EMPAD detector encoding failed.")
     }
     encoder.setComputePipelineState(detectorPipeline)
+    bindBackground(encoder, fallback: output)
     encoder.setBuffer(mask, offset: 0, index: 2)
     encoder.setBuffer(output, offset: 0, index: 3)
     for chunk in chunks {
@@ -449,6 +478,7 @@ public final class MetalEMPADResidentSource {
         "EMPAD CoM needs a resident and two separate same-device full-scan float32 outputs.")
     }
     encoder.setComputePipelineState(centerOfMassPipeline)
+    bindBackground(encoder, fallback: row)
     encoder.setBuffer(row, offset: 0, index: 2)
     encoder.setBuffer(column, offset: 0, index: 3)
     for chunk in chunks {
@@ -480,6 +510,7 @@ public final class MetalEMPADResidentSource {
       throw Self.failure("EMPAD mean DP needs a resident and a same-device 128×128 float32 output.")
     }
     encoder.setComputePipelineState(meanPipeline)
+    bindBackground(encoder, fallback: output)
     encoder.setBuffer(accumulator, offset: 0, index: 2)
     encoder.setBuffer(output, offset: 0, index: 3)
     for chunk in chunks {
@@ -497,6 +528,7 @@ public final class MetalEMPADResidentSource {
   /// Release after outstanding commands finish. Encoding after release fails.
   public func releaseResidentStorage() {
     chunks.removeAll()
+    background = nil
     detectorAccumulation = nil
     priorDetectorMask = nil
     priorDetectorCommand = nil
@@ -545,6 +577,7 @@ public final class MetalEMPADResidentSource {
       throw Self.failure("EMPAD aperture change encoding failed.")
     }
     encoder.setComputePipelineState(pipeline)
+    bindBackground(encoder, fallback: output)
     encoder.setBuffer(list, offset: 0, index: 2)
     encoder.setBuffer(output, offset: 0, index: 3)
     encoder.setBuffer(accumulated, offset: 0, index: 5)
@@ -565,6 +598,12 @@ public final class MetalEMPADResidentSource {
     priorDetectorCommand = command
     incrementalUpdates = reset ? 0 : incrementalUpdates + 1
     return true
+  }
+
+  private func bindBackground(_ encoder: MTLComputeCommandEncoder, fallback: MTLBuffer) {
+    var corrected: UInt32 = background == nil ? 0 : 1
+    encoder.setBuffer(background?.values ?? fallback, offset: 0, index: 8)
+    encoder.setBytes(&corrected, length: 4, index: 9)
   }
 
   private static func dispatch(

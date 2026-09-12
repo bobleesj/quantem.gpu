@@ -281,6 +281,66 @@ class EMPADSourceTests(unittest.TestCase):
         )
         self.read(xml)
 
+    def test_generation2_unpadded_records_and_sibling_xml(self):
+        self.raw.write_bytes(b"".join(self.frames))
+        xml = self.root / "acquisition.xml"
+        xml.write_text('<root><scan><type>scan</type><shape>(2, 3)</shape>'
+                       '<exposure_time>0.0001</exposure_time></scan>'
+                       '<sensor><type>EMPAD2</type><shape>(128,128)</shape></sensor>'
+                       '<rawfile><datatype>float32</datatype><filename>scan_x3_y2.raw</filename>'
+                       '<framecount>10</framecount></rawfile></root>')
+        # Acquisition framecount may include flyback; raster shape and exact
+        # exported byte count govern the actual stored records.
+        self.read(xml, metal=True)
+        metadata = json.loads((self.root / 'selected.bin.metadata.json').read_text())
+        self.assertEqual(metadata['formatIdentifier'], 'empad-g2-float32-xml/v1')
+        self.assertEqual(metadata['recordBytes'], 65536)
+        self.read(self.raw)
+        xml.write_text(xml.read_text().replace('float32', 'uint32'))
+        self.read(xml, succeeds=False)
+
+    def test_emd_contiguous_float32_preserves_bits(self):
+        import h5py
+        import numpy as np
+        path = self.root / 'acquisition.h5'
+        with h5py.File(path, 'w') as f:
+            f.attrs['authoring_program'] = 'emdfile'
+            f.attrs['version_major'] = 1
+            values = np.frombuffer(b''.join(self.frames), dtype='<f4').reshape(2, 3, 128, 128)
+            f.create_dataset('datacube_root/datacube/data', data=values)
+            cal = f.create_group('datacube_root/metadatabundle/calibration')
+            cal['R_pixel_size'] = 0.5
+            cal['R_pixel_units'] = 'A'
+            cal['Q_pixel_size'] = 2.0
+            cal['Q_pixel_units'] = 'mrad'
+        self.read(path, metal=True)
+        metadata = json.loads((self.root / 'selected.bin.metadata.json').read_text())
+        self.assertEqual(metadata['formatIdentifier'], 'emd1-contiguous-float32/v1')
+        self.assertEqual(metadata['scanRowAngstrom'], 0.5)
+        self.assertIsNone(metadata['diffractionInverseNanometers'])
+        with h5py.File(path, 'r+') as f:
+            f.attrs['version_major'] = 2
+        self.read(path, succeeds=False)
+
+    def test_emd_incompatible_storage_and_external_links_are_rejected(self):
+        import h5py
+        import numpy as np
+        path = self.root / 'acquisition.h5'
+        for dtype, options in [('<f8', {}), ('>f4', {}), ('<f4', {'compression': 'gzip'})]:
+            with h5py.File(path, 'w') as f:
+                f.attrs['authoring_program'] = 'emdfile'
+                f.attrs['version_major'] = 1
+                f.create_dataset('datacube_root/datacube/data',
+                                 data=np.zeros((2, 3, 128, 128), dtype=dtype), **options)
+            self.read(path, succeeds=False)
+        with h5py.File(self.root / 'external.h5', 'w') as f:
+            f.create_dataset('data', data=np.zeros((2, 3, 128, 128), dtype='<f4'))
+        with h5py.File(path, 'w') as f:
+            f.attrs['authoring_program'] = 'emdfile'
+            f.attrs['version_major'] = 1
+            f['datacube_root/datacube/data'] = h5py.ExternalLink('external.h5', '/data')
+        self.read(path, succeeds=False)
+
     def test_xml_conflicts_and_unsafe_entities_are_rejected(self):
         xml = self.root / "acquisition.xml"
         prefix = '<root><raw_file filename="scan_x3_y2.raw"/>'

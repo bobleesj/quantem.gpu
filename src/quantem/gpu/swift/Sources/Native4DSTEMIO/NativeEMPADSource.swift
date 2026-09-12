@@ -1,12 +1,14 @@
 import Darwin
+import CNativeHDF5
 import Foundation
+import CryptoKit
 
-/// Original EMPAD float32 frames, with their 256-word frame footer kept separate.
+/// Recorded float32 frames from EMPAD-G1, EMPAD-G2 XML/RAW, or EMD 1 datacubes.
 ///
 /// Open an XML acquisition directly, or supply the measured scan shape for a
 /// headerless RAW file. Reading a frame preserves its IEEE-754 bits, including
 /// signed, fractional and non-finite measurements. No detector correction,
-/// transpose, integer conversion or physical calibration is applied.
+/// transpose or integer conversion is applied. Calibration is parsed separately.
 ///
 /// Example: `try NativeEMPADSource.open(URL(fileURLWithPath: "scan.xml"))`.
 public struct NativeEMPADSource: Sendable {
@@ -22,22 +24,32 @@ public struct NativeEMPADSource: Sendable {
   /// Legacy EMPAD XML diffraction sampling, in inverse nanometers per pixel.
   public let diffractionSamplingInverseNanometers: Double?
   public let acquisitionDate: String?
+  /// Identified on-disk schema, independent of packed resident encoding.
+  public let formatIdentifier: String
+  public let formatName: String
+  public let microscopeMetadata: [String: String]
+  public let recordBytes: Int
+  private var dataOffset: UInt64 = 0
   private let rawIdentity: NativeFileIdentity
   private let metadataIdentity: NativeFileIdentity?
   public var frameCount: Int { scanRows * scanColumns }
-  public var sourceBytes: Int { frameCount * Self.frameBytes }
+  public var sourceBytes: Int { frameCount * recordBytes }
 
   /// Resolve XML/RAW input and verify the complete acquisition length.
   ///
   /// An explicit `(row, col)` shape is required for a RAW file without XML or
   /// an unambiguous `scan_xN_yN.raw` filename. Never infer a square scan from
   /// the file length. Conflicting shape metadata fails rather than reordering
-  /// measurements. Only conventional EMPAD float32 exports are supported;
-  /// uncalibrated EMPAD-G2 acquisition words are a different format.
+  /// measurements. G1 stores a 256-word footer; G2 must explicitly declare
+  /// 128×128 float32 records in XML. Encoded integer acquisition words are not
+  /// float exports. EMD supports contiguous little-endian float32 storage.
   public static func open(
     _ input: URL, scanShape: (row: Int, col: Int)? = nil
   ) throws -> NativeEMPADSource {
     let source = input.standardizedFileURL
+    if ["h5", "hdf5", "emd"].contains(source.pathExtension.lowercased()) {
+      return try openEMD(source, scanShape: scanShape)
+    }
     guard ["xml", "raw"].contains(source.pathExtension.lowercased()) else {
       throw EMPADError("Open an EMPAD .xml or .raw file; got \(source.lastPathComponent).")
     }
@@ -46,9 +58,26 @@ public struct NativeEMPADSource: Sendable {
     var metadataShape: (row: Int, col: Int)?
     var metadataIdentity: NativeFileIdentity?
     var metadata: EMPADXML?
-    let xml =
+    var xml =
       source.pathExtension.lowercased() == "xml"
       ? source : source.deletingPathExtension().appendingPathExtension("xml")
+    if source.pathExtension.lowercased() == "raw",
+      !FileManager.default.fileExists(atPath: xml.path) {
+      // Scope software names XML after the acquisition and RAW after its shape.
+      // Only metadata explicitly naming this sibling may supply its layout.
+      let siblings = try FileManager.default.contentsOfDirectory(
+        at: source.deletingLastPathComponent(), includingPropertiesForKeys: nil)
+      let matches = siblings.filter { candidate in
+        guard candidate.pathExtension.lowercased() == "xml",
+          let parsed = try? EMPADXML.read(candidate) else { return false }
+        return parsed.filename.replacingOccurrences(of: "\\", with: "/")
+          .split(separator: "/").last.map(String.init) == source.lastPathComponent
+      }
+      guard matches.count <= 1 else {
+        throw EMPADError("Multiple XML files name this RAW acquisition. Open the intended XML file.")
+      }
+      if let match = matches.first { xml = match }
+    }
     if FileManager.default.fileExists(atPath: xml.path) {
       metadataIdentity = try nativeFileIdentity(for: xml)
       let parsed = try EMPADXML.read(xml)
@@ -65,7 +94,8 @@ public struct NativeEMPADSource: Sendable {
         URL(fileURLWithPath: basename).pathExtension.lowercased() == "raw"
       else { throw EMPADError("EMPAD XML must name a sibling .raw file.") }
       raw = xml.deletingLastPathComponent().appendingPathComponent(basename)
-      if source.pathExtension.lowercased() == "raw", raw != source {
+      if source.pathExtension.lowercased() == "raw",
+        raw.resolvingSymlinksInPath() != source.resolvingSymlinksInPath() {
         throw EMPADError(
           "\(xml.lastPathComponent) names a different RAW file. Open the XML acquisition instead.")
       }
@@ -94,7 +124,8 @@ public struct NativeEMPADSource: Sendable {
       throw NativeEMPADSourceError.missingScanShape(rawURL: raw)
     }
     let (frames, frameOverflow) = shape.row.multipliedReportingOverflow(by: shape.col)
-    let (bytes, byteOverflow) = frames.multipliedReportingOverflow(by: frameBytes)
+    let recordBytes = metadata?.isGeneration2 == true ? 128 * 128 * 4 : frameBytes
+    let (bytes, byteOverflow) = frames.multipliedReportingOverflow(by: recordBytes)
     guard !frameOverflow, !byteOverflow else {
       throw EMPADError("EMPAD scan shape exceeds addressable file size.")
     }
@@ -103,7 +134,7 @@ public struct NativeEMPADSource: Sendable {
       let size = attributes[.size] as? NSNumber, size.uint64Value == UInt64(bytes)
     else {
       throw EMPADError(
-        "EMPAD RAW length does not match \(shape.row)×\(shape.col) frames of 130×128 float32 words. Restore the complete RAW file or correct its scan shape."
+        "EMPAD RAW length does not match \(shape.row)×\(shape.col) records of \(recordBytes) bytes. Restore the matching XML/RAW acquisition; detector layout is never inferred from file length."
       )
     }
     let rawIdentity = try nativeFileIdentity(for: raw)
@@ -116,7 +147,53 @@ public struct NativeEMPADSource: Sendable {
       scanCalibration: metadata?.scanCalibration(rows: shape.row, columns: shape.col),
       diffractionSamplingInverseNanometers: metadata?.diffractionSampling,
       acquisitionDate: metadata?.acquisitionDate,
+      formatIdentifier: metadata?.isGeneration2 == true ? "empad-g2-float32-xml/v1" : "empad-g1-float32-xml/v1",
+      formatName: metadata?.isGeneration2 == true ? "EMPAD-G2 · XML/RAW float32" : "EMPAD-G1 · XML/RAW float32",
+      microscopeMetadata: metadata?.microscopeMetadata ?? [:], recordBytes: recordBytes,
       rawIdentity: rawIdentity, metadataIdentity: metadataIdentity)
+  }
+
+  /// Recognize the supported EMD schema from metadata rather than filenames.
+  public static func isEMDFloatAcquisition(_ url: URL) -> Bool {
+    guard ["h5", "hdf5", "emd"].contains(url.pathExtension.lowercased()) else { return false }
+    return (try? openEMD(url, scanShape: nil)) != nil
+  }
+
+  private static func openEMD(_ url: URL, scanShape: (row: Int, col: Int)?) throws -> NativeEMPADSource {
+    let identity = try nativeFileIdentity(for: url)
+    var info = qh5_emd_float_info()
+    var error: UnsafeMutablePointer<CChar>?
+    let status = url.path.withCString { qh5_inspect_emd_float($0, &info, &error) }
+    defer { qh5_free_error(error) }
+    guard status == 0 else { throw EMPADError(error.map { String(cString: $0) } ?? "Unsupported EMD datacube.") }
+    guard let rows = Int(exactly: info.rows), let columns = Int(exactly: info.columns),
+      Int(exactly: info.bytes) != nil, info.offset <= identity.bytes,
+      info.bytes <= identity.bytes - info.offset,
+      identity == (try nativeFileIdentity(for: url)) else {
+      throw EMPADError("EMD storage is incomplete or changed during inspection. Restore the complete file.")
+    }
+    if let scanShape, scanShape.row != rows || scanShape.col != columns {
+      throw EMPADError("Requested scan shape disagrees with the recorded EMD dimensions.")
+    }
+    var metadata: [String: String] = [:]
+    for (key, value, unit) in [
+      ("electron_source/accelerating_voltage", info.voltage, "V"),
+      ("illumination_system/semi_convergence_angle", info.semiangle_mrad, "mrad"),
+      ("imaging_system/camera_length", info.camera_meters, "m"),
+      ("imaging_system/reciprocal_pixel_size_y", info.angle_mrad, "mrad"),
+      ("imaging_system/reciprocal_pixel_size_x", info.angle_mrad, "mrad")
+    ] where value > 0 { metadata["electron_microscope/" + key] = "\(value) \(unit)" }
+    metadata["sourceDataset"] = "/datacube_root/datacube/data"
+    metadata["sourceAxisOrder"] = "Recorded EMD axes 0,1,2,3; no transpose"
+    let calibration: Native4DSTEMScanCalibration? = info.scan_angstrom > 0
+      ? Native4DSTEMScanCalibration(rowSamplingAngstrom: info.scan_angstrom,
+          columnSamplingAngstrom: info.scan_angstrom, origin: .sourceMetadata,
+          evidence: "EMD calibration R_pixel_size with R_pixel_units=A") : nil
+    return NativeEMPADSource(rawURL: url, metadataURL: url, scanRows: rows, scanColumns: columns,
+      scanCalibration: calibration, diffractionSamplingInverseNanometers: nil, acquisitionDate: nil,
+      formatIdentifier: "emd1-contiguous-float32/v1", formatName: "EMD 1 · HDF5 float32",
+      microscopeMetadata: metadata, recordBytes: 65536, dataOffset: info.offset,
+      rawIdentity: identity, metadataIdentity: identity)
   }
 
   /// Reject source replacement or modification since opening this acquisition.
@@ -158,6 +235,20 @@ public struct NativeEMPADSource: Sendable {
     return try encoder.encode(rawIdentity)
   }
 
+  /// Fingerprint the file identities captured at open, including XML metadata.
+  /// Used to invalidate local correction choices when either file changes.
+  /// This is a file-snapshot fingerprint, not a content checksum.
+  /// Example: `try source.snapshotFingerprint()`.
+  public func snapshotFingerprint() throws -> String {
+    try validateUnchanged()
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    var digest = SHA256()
+    digest.update(data: try encoder.encode(rawIdentity))
+    if let metadataIdentity { digest.update(data: try encoder.encode(metadataIdentity)) }
+    return digest.finalize().map { String(format: "%02x", $0) }.joined()
+  }
+
   // Backend-only destination form avoids a second staging allocation/copy.
   // It has the same ordered selection and source snapshot checks as readFrames.
   package func readFrames(_ indices: [Int], into output: UnsafeMutableRawBufferPointer) throws {
@@ -183,7 +274,7 @@ public struct NativeEMPADSource: Sendable {
       while frames < 64, first + frames < indices.count,
         indices[first + frames] == indices[first] + frames
       { frames += 1 }
-      try handle.seek(toOffset: UInt64(indices[first] * Self.frameBytes))
+      try handle.seek(toOffset: dataOffset + UInt64(indices[first] * recordBytes))
       // Scatter the original record directly into the destination. Footer
       // slots may share scratch because their contents are never consumed.
       // This avoids allocating and copying a second RAW-sized staging window.
@@ -194,7 +285,9 @@ public struct NativeEMPADSource: Sendable {
           iovec(
             iov_base: output.baseAddress!.advanced(by: (first + frame) * pixels * 4),
             iov_len: pixels * 4))
-        vectors.append(iovec(iov_base: footer, iov_len: 1024))
+        if recordBytes > pixels * 4 {
+          vectors.append(iovec(iov_base: footer, iov_len: recordBytes - pixels * 4))
+        }
       }
       var next = 0
       while next < vectors.count {
@@ -263,7 +356,24 @@ private struct EMPADError: LocalizedError {
 private final class EMPADXML: NSObject, XMLParserDelegate {
   var filename = ""
   var acquisitionDate: String?
+  var isGeneration2: Bool { fields["sensor/type"] == "EMPAD2" }
+  var microscopeMetadata: [String: String] {
+    var result: [String: String] = [:]
+    let root = "electron_microscope/"
+    for (source, target, unit) in [
+      (isGeneration2 ? "iom_measurements/ColumnSourceHighVoltage" : "iom_measurements/high_voltage", "electron_source/accelerating_voltage", "V"),
+      (isGeneration2 ? "iom_measurements/ColumnOpticsGetCameraLengthNominalCameraLength" : "iom_measurements/nominal_camera_length", "imaging_system/camera_length", "m"),
+      (isGeneration2 ? "scan/exposure_time" : "exposure_time", "scan_controller/regular_scan/dwell_time", isGeneration2 ? "s" : "ms")
+    ] {
+      if let value = positive(source) { result[root + target] = "\(value) \(unit)" }
+    }
+    if isGeneration2, let angle = positive("iom_measurements/calibrated_diffraction_angle") {
+      for axis in ["y", "x"] { result[root + "imaging_system/reciprocal_pixel_size_" + axis] = "\(angle) rad" }
+    }
+    return result
+  }
   var diffractionSampling: Double? {
+    guard !isGeneration2 else { return nil }
     guard let value = positive("iom_measurements/calibrated_pixelsize") else { return nil }
     let sampling = value * 1e9
     return sampling.isFinite ? sampling : nil
@@ -305,6 +415,7 @@ private final class EMPADXML: NSObject, XMLParserDelegate {
     return value
   }
   var shape: (row: Int, col: Int)? {
+    if isGeneration2 { return Self.pair(fields["scan/shape"]) }
     if let row = Int(fields["pix_y"] ?? ""), let col = Int(fields["pix_x"] ?? "") {
       return (row, col)
     }
@@ -314,6 +425,13 @@ private final class EMPADXML: NSObject, XMLParserDelegate {
       return (row, col)
     }
     return nil
+  }
+  private static func pair(_ value: String?) -> (row: Int, col: Int)? {
+    guard let value else { return nil }
+    let parts = value.trimmingCharacters(in: CharacterSet(charactersIn: "() "))
+      .split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+    guard parts.count == 2, let row = Int(parts[0]), let col = Int(parts[1]), row > 0, col > 0 else { return nil }
+    return (row, col)
   }
   private var fields: [String: String] = [:]
   private var stack: [String] = []
@@ -338,6 +456,12 @@ private final class EMPADXML: NSObject, XMLParserDelegate {
     guard parser.parse(), !result.filename.isEmpty else {
       throw EMPADError(
         "Could not read EMPAD XML raw_file metadata. Open the original acquisition XML.")
+    }
+    if result.fields["sensor/type"] != nil || result.fields["rawfile/filename"] != nil {
+      guard result.isGeneration2, result.fields["rawfile/datatype"] == "float32",
+        result.fields["scan/type"] == "scan", result.shape != nil,
+        let detector = pair(result.fields["sensor/shape"]), detector.row == 128, detector.col == 128
+      else { throw EMPADError("Unsupported EMPAD-G2 record layout. Open a raster XML/RAW export declaring 128×128 float32 detector data.") }
     }
     for keys in [("pix_y", "pix_x"), ("acquire/scan_resolution_y", "acquire/scan_resolution_x")] {
       if result.fields[keys.0] != nil || result.fields[keys.1] != nil {
@@ -394,6 +518,10 @@ private final class EMPADXML: NSObject, XMLParserDelegate {
     if stack.count >= 3, stack[1] == "iom_measurements" {
       setField(stack.dropFirst().joined(separator: "/"), value: value, parser: parser)
     }
+    if stack.count == 3, ["scan", "sensor", "rawfile"].contains(stack[1]) {
+      setField(stack[1] + "/" + name, value: value, parser: parser)
+      if stack[1] == "rawfile", name == "filename" { filename = value }
+    }
     if name == "scan_parameters" { scanMode = "" }
     _ = stack.popLast()
     content = ""
@@ -403,6 +531,11 @@ private final class EMPADXML: NSObject, XMLParserDelegate {
     guard
       [
         "pix_x", "pix_y", "type", "acquire/scan_resolution_x", "acquire/scan_resolution_y",
+        "exposure_time", "scan/type", "scan/shape", "scan/exposure_time", "sensor/type", "sensor/shape",
+        "rawfile/filename", "rawfile/datatype",
+        "iom_measurements/high_voltage", "iom_measurements/nominal_camera_length",
+        "iom_measurements/ColumnSourceHighVoltage", "iom_measurements/ColumnOpticsGetCameraLengthNominalCameraLength",
+        "iom_measurements/calibrated_diffraction_angle",
         "iom_measurements/calibrated_pixelsize",
         "iom_measurements/optics.get_full_scan_field_of_view",
         "iom_measurements/full_scan_field_of_view/x",

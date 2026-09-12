@@ -281,7 +281,8 @@ public struct Metal4DSTEMResidentCapabilities: Codable, Equatable, Sendable {
       containerBytes: UInt64(source.source.sourceBytes),
       storageSchema: storageSchema, losslessExact: true, scanBin: 1, detectorBin: 1, crop: nil,
       detectorMaskCount: 0, detectorMaskSHA256: nil, detectorMaskSchema: nil,
-      calibrationSchema: nil, calibrationSHA256: nil,
+      calibrationSchema: source.background == nil ? nil : MetalEMPADBackground.schema,
+      calibrationSHA256: source.background?.identitySHA256,
       provenanceSchema: "quantem.gpu.empad-tensor/v1",
       provenanceSHA256: source.sourceIdentitySHA256,
       sourceRawLogicalSHA256: source.logicalSHA256, workingLogicalSHA256: source.logicalSHA256,
@@ -291,7 +292,7 @@ public struct Metal4DSTEMResidentCapabilities: Codable, Equatable, Sendable {
       Metal4DSTEMResidentProductCapability(
         product: product,
         availability: .residentOnDemand,
-        numerics: product == .diffractionPattern ? .exactFloat32Bits : .frozenFloat32)
+        numerics: product == .diffractionPattern && source.background == nil ? .exactFloat32Bits : .frozenFloat32)
     }
     return Self(
       schema: currentSchema, representation: .packed,
