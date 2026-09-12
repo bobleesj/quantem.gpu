@@ -199,11 +199,13 @@ enum MetalOriginalHDF5Benchmark {
             scanRow: frames[0] / metadata.scanColumns,
             scanColumn: frames[0] % metadata.scanColumns)
           let firstConsumerSeconds = CFAbsoluteTimeGetCurrent() - firstConsumerStarted
-          let observed = try [digest(firstValues)] + frames.dropFirst().map { frame in
-            try digest(
-              resident.extractDiffraction(
-                scanRow: frame / metadata.scanColumns, scanColumn: frame % metadata.scanColumns))
-          }
+          let observed =
+            try [digest(firstValues)]
+            + frames.dropFirst().map { frame in
+              try digest(
+                resident.extractDiffraction(
+                  scanRow: frame / metadata.scanColumns, scanColumn: frame % metadata.scanColumns))
+            }
           try emit([
             "phase": "first_consumer", "cycle": cycle, "source_identity": identity,
             "seconds": firstConsumerSeconds, "frame": frames[0],

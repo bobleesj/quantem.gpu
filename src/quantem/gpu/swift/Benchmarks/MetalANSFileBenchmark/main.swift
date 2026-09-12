@@ -46,9 +46,11 @@ enum MetalANSFileBenchmark {
       }
     }
     guard let device = MTLCreateSystemDefaultDevice() else {
-      throw NSError(domain: "MetalANSFileBenchmark", code: 1, userInfo: [
-        NSLocalizedDescriptionKey: "No physical Metal device is available."
-      ])
+      throw NSError(
+        domain: "MetalANSFileBenchmark", code: 1,
+        userInfo: [
+          NSLocalizedDescriptionKey: "No physical Metal device is available."
+        ])
     }
     let started = ContinuousClock.now
     let source = try MetalANSResidentSource(

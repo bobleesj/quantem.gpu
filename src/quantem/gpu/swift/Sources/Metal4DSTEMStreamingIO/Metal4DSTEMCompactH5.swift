@@ -464,12 +464,14 @@ private final class CompactMappedFile: @unchecked Sendable {
     }
     let pointer = address.advanced(by: integerOffset)
     let owner = self
-    guard let result = device.makeBuffer(
-      bytesNoCopy: pointer,
-      length: length,
-      options: .storageModeShared,
-      deallocator: { _, _ in _ = owner }
-    ) else {
+    guard
+      let result = device.makeBuffer(
+        bytesNoCopy: pointer,
+        length: length,
+        options: .storageModeShared,
+        deallocator: { _, _ in _ = owner }
+      )
+    else {
       throw Metal4DSTEMStreamingIOError.allocationFailed(
         label: "mapped compact " + label, bytes: UInt64(length)
       )
@@ -859,7 +861,8 @@ public final class MetalCompactH5ResidentSource {
       commands.commandQueue.device.registryID == device.registryID
     else {
       throw Metal4DSTEMStreamingIOError.invalidRequest(
-        "Detector-column extraction requires 1...32 valid pixels and a same-device uint32 output covering the full scan. Reload a released source first.")
+        "Detector-column extraction requires 1...32 valid pixels and a same-device uint32 output covering the full scan. Reload a released source first."
+      )
     }
     if detectorColumnsPipeline == nil {
       let library = try Metal4DSTEMKernels.makeCompactH5Library(device: device)
@@ -879,13 +882,17 @@ public final class MetalCompactH5ResidentSource {
     for (ordinal, shard) in shards.enumerated() {
       let offset = ordinal * metadata.scansPerShard
       let count = min(metadata.scansPerShard, metadata.scanCount - offset)
-      let parameters: [UInt32] = [UInt32(count), UInt32(metadata.scanCount), UInt32(offset),
-        UInt32(pixels.count), UInt32((metadata.scansPerShard + metadata.scanTile - 1) / metadata.scanTile),
-        UInt32(metadata.scanTile), headerWordsPerPixel, headerEncoding, payloadLayout]
+      let parameters: [UInt32] = [
+        UInt32(count), UInt32(metadata.scanCount), UInt32(offset),
+        UInt32(pixels.count),
+        UInt32((metadata.scansPerShard + metadata.scanTile - 1) / metadata.scanTile),
+        UInt32(metadata.scanTile), headerWordsPerPixel, headerEncoding, payloadLayout,
+      ]
       encoder.setBuffer(shard.payload, offset: 0, index: 0)
       encoder.setBuffer(shard.descriptors, offset: 0, index: 1)
       encoder.setBytes(parameters, length: parameters.count * 4, index: 4)
-      encoder.dispatchThreads(MTLSize(width: count, height: pixels.count, depth: 1),
+      encoder.dispatchThreads(
+        MTLSize(width: count, height: pixels.count, depth: 1),
         threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
     }
     encoder.endEncoding()
@@ -2287,7 +2294,8 @@ public enum MetalCompactH5Loader {
           momentBuffer, dpc.row, dpc.column, excluded, entries,
           outputA, outputB, diffraction, detectorSum,
         ]
-        let stable = compactKernelOption("RESIDENCY_PAYLOAD_ONLY", byDefault: false)
+        let stable =
+          compactKernelOption("RESIDENCY_PAYLOAD_ONLY", byDefault: false)
           ? residentAllocations : residentAllocations + auxiliaryAllocations
         let lease = try CompactResidencyLease(
           device: device, buffers: stable,

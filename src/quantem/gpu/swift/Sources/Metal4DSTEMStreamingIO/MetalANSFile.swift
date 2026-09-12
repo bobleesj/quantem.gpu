@@ -223,7 +223,8 @@ struct MetalANSFileIndex {
   static func read(
     into destination: UnsafeMutableRawPointer, descriptor: Int32, offset: UInt64, count: Int
   ) throws {
-    guard count >= 0, offset <= UInt64(Int64.max), UInt64(count) <= UInt64(Int64.max) - offset else {
+    guard count >= 0, offset <= UInt64(Int64.max), UInt64(count) <= UInt64(Int64.max) - offset
+    else {
       throw MetalANSFileError.io("QGANS read range overflows")
     }
     var position = 0
@@ -262,13 +263,15 @@ final class MetalANSFileReader {
         var offset: UInt64 = 0
         while offset < index.fileBytes {
           let count = Int(min(UInt64(chunkBytes), index.fileBytes - offset))
-          let data = try MetalANSFileIndex.read(descriptor: descriptor, offset: offset, count: count)
+          let data = try MetalANSFileIndex.read(
+            descriptor: descriptor, offset: offset, count: count)
           digest.update(data: data)
           offset += UInt64(count)
         }
         let actual = digest.finalize().map { String(format: "%02x", $0) }.joined()
         guard actual == expectedSHA256.lowercased() else {
-          throw MetalANSFileError.invalid("QGANS whole-file SHA-256 does not match the expected identity")
+          throw MetalANSFileError.invalid(
+            "QGANS whole-file SHA-256 does not match the expected identity")
         }
       }
     } catch {
@@ -288,8 +291,9 @@ final class MetalANSFileReader {
     section: MetalANSFileSection, device: MTLDevice, queue: MTLCommandQueue,
     stagingBytes: Int
   ) throws -> MTLBuffer {
-    guard let resident = device.makeBuffer(
-      length: max(4, section.byteCount), options: .storageModePrivate),
+    guard
+      let resident = device.makeBuffer(
+        length: max(4, section.byteCount), options: .storageModePrivate),
       let staging = device.makeBuffer(
         length: max(4, min(stagingBytes, max(4, section.byteCount))), options: .storageModeShared)
     else {
@@ -308,7 +312,8 @@ final class MetalANSFileReader {
       }
       guard let command = queue.makeCommandBuffer(), let blit = command.makeBlitCommandEncoder()
       else { throw MetalANSFileError.io("Metal could not stage QGANS section \(section.name)") }
-      blit.copy(from: staging, sourceOffset: 0, to: resident, destinationOffset: offset, size: count)
+      blit.copy(
+        from: staging, sourceOffset: 0, to: resident, destinationOffset: offset, size: count)
       blit.endEncoding()
       command.commit()
       command.waitUntilCompleted()

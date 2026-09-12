@@ -55,8 +55,9 @@ extension OriginalHDF5Packing {
         Darwin.close(descriptor)
         throw invalid("Original compressed mapping range is outside the readable file range")
       }
-      guard let mapped = Darwin.mmap(
-        nil, mapLength, PROT_READ, MAP_PRIVATE, descriptor, off_t(alignedOffset)),
+      guard
+        let mapped = Darwin.mmap(
+          nil, mapLength, PROT_READ, MAP_PRIVATE, descriptor, off_t(alignedOffset)),
         mapped != MAP_FAILED
       else {
         Darwin.close(descriptor)
@@ -420,8 +421,9 @@ extension OriginalHDF5Packing {
     }
     let started = CFAbsoluteTimeGetCurrent()
     guard !isCancelled() else { throw Metal4DSTEMStreamingIOError.cancelled }
-    guard let compressed = device.makeBuffer(
-      length: Int(span), options: .storageModeShared)
+    guard
+      let compressed = device.makeBuffer(
+        length: Int(span), options: .storageModeShared)
     else { throw invalid("Cannot allocate coalesced compressed read-ahead input") }
     try withExtendedLifetime(compressed) {
       var received = 0
@@ -479,10 +481,12 @@ extension OriginalHDF5Packing {
       let mapped = try MappedCompressedRange(plan: plan)
       let page = max(4_096, Int(getpagesize()))
       let delta = Int(plan.offset % UInt64(page))
-      guard let compressed = device.makeBuffer(
-        bytesNoCopy: mapped.address.advanced(by: delta), length: plan.count,
-        options: .storageModeShared, deallocator: { _, _ in _ = mapped }
-      ) else { throw invalid("Cannot create mapped compressed Metal input") }
+      guard
+        let compressed = device.makeBuffer(
+          bytesNoCopy: mapped.address.advanced(by: delta), length: plan.count,
+          options: .storageModeShared, deallocator: { _, _ in _ = mapped }
+        )
+      else { throw invalid("Cannot create mapped compressed Metal input") }
       guard !isCancelled() else { throw Metal4DSTEMStreamingIOError.cancelled }
       let metadata = try plan.words.withUnsafeBytes { bytes -> MTLBuffer in
         guard bytes.count <= device.maxBufferLength,

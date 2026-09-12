@@ -52,9 +52,9 @@ extension OriginalHDF5Packing {
     profile.decodePipelineThreadLimit = scalarDecode.maxTotalThreadsPerThreadgroup
     profile.packingPipelineThreadLimit =
       (useZeroTail
-        ? zeroTailValues!
-        : (useWidthBounded ? bitshuffleValuesWidthBounded! : bitshuffleValues))
-        .maxTotalThreadsPerThreadgroup
+      ? zeroTailValues!
+      : (useWidthBounded ? bitshuffleValuesWidthBounded! : bitshuffleValues))
+      .maxTotalThreadsPerThreadgroup
     profile.bitshufflePackingThreads = bitshufflePackingThreads
     profile.bitshufflePixelsPerThread = bitshufflePixelsPerThread
     profile.decodeWindowFrames = frames
@@ -131,7 +131,8 @@ extension OriginalHDF5Packing {
         readAheadDepth = value
       }
     #endif
-    let reader = readAhead
+    let reader =
+      readAhead
       ? CompressedReadAhead(device: device, depth: readAheadDepth)
       : nil
     defer { reader?.cancelAndDrain() }
