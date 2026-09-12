@@ -17,7 +17,7 @@ from quantem.gpu._compact.streamed import StreamedCounts
 from quantem.gpu._maped.cuda import _merge_regions
 from quantem.gpu.detector import prepare
 from quantem.gpu.io.backends.cuda._ans import CudaPackedResidentCounts
-from quantem.gpu._maped import merge_to_scaled_h5
+from quantem.gpu.maped import merge
 
 
 @pytest.mark.parametrize("dtype", [np.uint8, np.uint16])
@@ -157,7 +157,7 @@ def test_maped_ans_writes_reopenable_scaled_result(tmp_path):
     )
     path = tmp_path / "merged_master.h5"
     try:
-        result = merge_to_scaled_h5([loaded], shifts, shifts, path)
+        result = merge([loaded], shifts, shifts, save_to=path)
         report = result.metadata["precision"]
         assert report["storage"] == "scaled_uint16"
         assert report["range_scope"] == "complete merged output"
@@ -213,12 +213,12 @@ def test_maped_releases_owned_sources_before_packed_reopen(tmp_path):
         close=source.release,
     )
     shifts = torch.zeros((1, 2), device="cuda")
-    result = merge_to_scaled_h5(
+    result = merge(
         [loaded],
         shifts,
         shifts,
-        tmp_path / "merged_master.h5",
-        release_sources_before_reopen=True,
+        save_to=tmp_path / "merged_master.h5",
+        close_sources=True,
     )
     try:
         assert source.is_released

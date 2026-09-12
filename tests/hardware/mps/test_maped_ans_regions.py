@@ -12,7 +12,7 @@ from quantem.gpu import io
 from quantem.gpu._maped.mps import _automatic_region_frames, _merge_regions
 from quantem.gpu.io.backends.mps._streamed import MPSStreamedCounts
 from quantem.gpu.io.backends.mps.precision import upload
-from quantem.gpu._maped import merge_to_scaled_h5
+from quantem.gpu.maped import merge
 
 
 def _median_corrected(raw, pixel_mask):
@@ -167,8 +167,8 @@ def test_mps_ans_bounded_merge_preserves_counts_mask_and_late_regions(
             },
         )
         shifts = torch.zeros((1, 2), dtype=torch.float32, device="mps")
-        result = merge_to_scaled_h5(
-            [loaded], shifts, shifts, tmp_path / "merged_master.h5"
+        result = merge(
+            [loaded], shifts, shifts, save_to=tmp_path / "merged_master.h5"
         )
         expected = values.copy()
         expected[:, :, ~valid] = 0
