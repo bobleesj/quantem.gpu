@@ -1928,8 +1928,8 @@ def save(
     Approximate precision exports
     -----------------------------
     ``dtype="float16"`` preserves fractional weak intensities with reduced
-    floating-point precision. ``dtype="scaled_uint16"`` uses one source-wide
-    intensity scale. Both record GPU-measured conversion errors and reopen
+    floating-point precision. ``dtype="scaled_uint16"`` automatically calibrates
+    bounded scan regions in one pass. Both record GPU-measured conversion errors and reopen
     through ``io.load`` as packed intensities in their original units.
     Keep float32 for an unchanged scientific archive.
 

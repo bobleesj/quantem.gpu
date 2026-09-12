@@ -1,6 +1,7 @@
 """Metal precision conversion and direct queries over resident packed streams."""
 
 import bisect
+import ctypes
 import math
 import struct
 from functools import lru_cache
@@ -28,6 +29,7 @@ def _runtime():
     for name in (
         "copy", "restore", "encode", "encode_measure", "range", "measure",
         "widths", "pack", "frame", "unpacked", "detector", "mean", "reduce",
+        "range_read", "divide",
     ):
         function = library.newFunctionWithName_(f"precision_{name}")
         pipeline, error = device.newComputePipelineStateWithFunction_error_(function, None)
@@ -60,10 +62,21 @@ class MetalArray:
             raise RuntimeError("This GPU result was released; request it again.")
         import torch
 
-        view = np.frombuffer(
-            _buffer_view(self._mtl), self.dtype, count=self.size
-        ).reshape(self.shape)
-        return torch.from_numpy(view).to("mps")
+        import objc
+
+        output = torch.empty(self.shape, dtype=getattr(torch, self.dtype.name), device="mps")
+        torch.mps.synchronize()
+        buffer = objc.objc_object(
+            c_void_p=ctypes.c_void_p(output.untyped_storage().data_ptr())
+        )
+        command = _runtime()[2].commandBuffer()
+        encoder = command.blitCommandEncoder()
+        encoder.copyFromBuffer_sourceOffset_toBuffer_destinationOffset_size_(
+            self._mtl, 0, buffer, 0, self.nbytes
+        )
+        encoder.endEncoding()
+        _complete(command, "precision Torch transfer")
+        return output
 
     def __array__(self, dtype=None, copy=None):
         return np.asarray(self.get(), dtype=dtype)
@@ -109,6 +122,10 @@ def tensor_range(values):
     low, high = torch.stack(torch.aminmax(values)).cpu().tolist()
     if not math.isfinite(low) or not math.isfinite(high):
         raise ValueError("Precision conversion requires finite intensities; preserve this source as float32.")
+    if values.dtype == torch.float32:
+        bits = values.contiguous().view(torch.int32).bitwise_and(0x7fffffff)
+        if bool(((bits > 0) & (bits < 0x800000)).any()):
+            raise ValueError("Metal precision conversion cannot preserve float32 subnormal intensities; keep the original float32 file or use CUDA.")
     return float(low), float(high)
 
 
@@ -153,8 +170,8 @@ def _parameters(values=None, report=None):
     p = [0] * 16
     f = [1.0, 0.0, 0.0, 0.0]
     if values is not None:
-        p[0] = values.size
-        p[3] = {"float32": 0, "float16": 1, "uint16": 2, "uint8": 3, "bool": 3, "uint32": 4}[str(values.dtype)]
+        p[0] = values.numel() if is_mps_tensor(values) else values.size
+        p[3] = {"float32": 0, "float16": 1, "uint16": 2, "uint8": 3, "bool": 3, "uint32": 4}[str(values.dtype).removeprefix("torch.")]
     if report:
         p[4] = int(report["storage"] == "scaled_uint16")
         maximum = max(abs(report["intensity_min"]), abs(report["intensity_max"]))
@@ -176,7 +193,21 @@ def _dispatch(name, buffers, p, f=None, *, groups=None, command=None):
     encoder = command.computeCommandEncoder()
     encoder.setComputePipelineState_(pipelines[name])
     for index, value in enumerate(buffers):
-        encoder.setBuffer_offset_atIndex_(getattr(value, "_mtl", value), 0, index)
+        if is_mps_tensor(value):
+            import objc
+            import torch
+
+            if not value.is_contiguous():
+                raise ValueError("Native precision requires contiguous MPS storage.")
+            torch.mps.synchronize()
+            buffer = objc.objc_object(
+                c_void_p=ctypes.c_void_p(value.untyped_storage().data_ptr())
+            )
+            encoder.setBuffer_offset_atIndex_(
+                buffer, value.storage_offset() * value.element_size(), index
+            )
+        else:
+            encoder.setBuffer_offset_atIndex_(getattr(value, "_mtl", value), 0, index)
     params = struct.pack("16Q", *p)
     floats = struct.pack("4f", *(f or [1, 0, 0, 0]))
     encoder.setBytes_length_atIndex_(params, len(params), 6)
@@ -236,15 +267,20 @@ def restore(values, report):
 def source_range(source):
     low, high = math.inf, -math.inf
     for block in source.blocks():
+        calibration = source.saved
+        if calibration and calibration.get("regions"):
+            if str(block.dtype).removeprefix("torch.") != "float32":
+                raise ValueError("Restore regional calibration before measuring intensity range.")
+            calibration = None
         if is_mps_tensor(block):
             block_low, block_high = tensor_range(
-                tensor_restore(block, source.saved)
+                tensor_restore(block, calibration)
             )
             low, high = min(low, block_low), max(high, block_high)
             continue
-        values = restore(block, source.saved)
+        values = restore(block, calibration)
         p, f = _parameters(values)
-        p[14] = p[15] = min(values.size, 8192)
+        p[14] = p[15] = min(p[0], 8192)
         stats = MetalArray((p[14], 4), np.float32)
         _dispatch("range", [values, stats], p, f)
         # These are small GPU-reduced statistics, never input intensities.
@@ -260,7 +296,7 @@ def source_range(source):
 def has_invalid_pixels(mask):
     values = restore(upload(mask), None)
     p, f = _parameters(values)
-    p[14] = p[15] = min(values.size, 8192)
+    p[14] = p[15] = min(p[0], 8192)
     stats = MetalArray((p[14], 4), np.float32)
     _dispatch("range", [values, stats], p, f)
     return any(row[1] != 0 for row in stats.get().tolist())
@@ -310,13 +346,13 @@ def encode_measure(values, report):
         np.float16 if report["storage"] == "float16" else np.uint16,
     )
     p, f = _parameters(values, report)
-    p[14] = p[15] = min(values.size, 8192)
+    p[14] = p[15] = min(p[0], 8192)
     errors = MetalArray((p[14], 4), np.float32)
     counts = MetalArray((p[14], 4), np.uint32)
     try:
         _dispatch("encode_measure", [values, result, errors, counts], p, f)
         exponent = struct.unpack("q", struct.pack("Q", p[5]))[0]
-        _accumulate_measurement(errors, counts, exponent, report, values.size)
+        _accumulate_measurement(errors, counts, exponent, report, p[0])
         return result
     except BaseException:
         result.release()
@@ -378,6 +414,9 @@ class PrecisionSource:
         for part in chunks:
             count += part.shape[1]
             self._ends.append(count)
+        from ..._precision import part_reports
+
+        self._reports = dict(zip(map(id, chunks), part_reports(precision, self._ends)))
         self.is_released = False
 
     @property
@@ -398,7 +437,7 @@ class PrecisionSource:
             raise RuntimeError("Loaded data was closed; load it again before querying.")
 
     def _params(self, part):
-        p, f = _parameters(report=self.precision)
+        p, f = _parameters(report=self._reports[id(part)])
         p[1:3] = [math.prod(self.det_shape), part.shape[1]]
         return p, f
 
@@ -425,13 +464,32 @@ class PrecisionSource:
         _dispatch("frame", [*part.buffers, result], p, f)
         return result
 
+    def _decode_scan_range_torch(self, first, stop):
+        """Restore a range directly into independently owned Torch MPS storage."""
+        import torch
+
+        self._check()
+        if not 0 <= first < stop <= self.n_frames:
+            raise ValueError("Read a nonempty range within the scan.")
+        output = torch.empty((stop - first, *self.det_shape), device="mps", dtype=torch.float32)
+        start = 0
+        for part, end in zip(self.parts, self._ends):
+            low, high = max(first, start), min(stop, end)
+            if low < high:
+                p, f = self._params(part)
+                p[0], p[8] = (high - low) * p[1], low - start
+                _dispatch("range_read", [*part.buffers, output[low - first:high - first]], p, f)
+            start = end
+            if start >= stop:
+                break
+        return output
+
     def frame(self, index):
         return self.frame_native(index).get()
 
     def __getitem__(self, position):
-        import torch
         if isinstance(position, (int, np.integer)):
-            return torch.from_numpy(self.frame(int(position))).to("mps")
+            return self.frame_native(int(position)).to_torch()
         if not isinstance(position, tuple) or len(position) != 2:
             raise TypeError(
                 "Select one diffraction pattern with source[index] or "
@@ -440,7 +498,7 @@ class PrecisionSource:
         row, col = position
         if not (0 <= row < self.shape[0] and 0 <= col < self.shape[1]):
             raise IndexError("Scan position lies outside this loaded region.")
-        return torch.from_numpy(self.frame(row * self.shape[1] + col)).to("mps")
+        return self.frame_native(row * self.shape[1] + col).to_torch()
 
     def mean_dp(self):
         self._check()
@@ -456,7 +514,7 @@ class PrecisionSource:
     def masked_sum_native(self, mask, *, out=None):
         self._check()
         weights = upload(mask)
-        if weights.shape != self.det_shape or weights.dtype not in (np.float32, np.uint8, np.bool_):
+        if weights.shape != self.det_shape or str(weights.dtype).removeprefix("torch.") not in ("float32", "uint8", "bool"):
             raise ValueError(f"Detector mask must have shape {self.det_shape} and float32/bool weights.")
         weights = restore(weights, None)
         result = out if out is not None else MetalArray(self.scan_shape, np.float32)
@@ -493,10 +551,15 @@ class PrecisionSource:
         return result.get()
 
     def center_of_mass(self, mask=None):
-        weights = np.ones(self.det_shape, np.float32) if mask is None else np.asarray(mask, np.float32)
+        import torch
+
+        weights = torch.ones(self.det_shape, device="mps") if mask is None else torch.as_tensor(mask, device="mps", dtype=torch.float32)
         denominator = self.masked_sum_native(weights)
-        row = self.masked_sum_native(weights * np.arange(self.det_shape[0], dtype=np.float32)[:, None])
-        col = self.masked_sum_native(weights * np.arange(self.det_shape[1], dtype=np.float32)[None, :])
+        row = self.masked_sum_native(weights * torch.arange(self.det_shape[0], device="mps")[:, None])
+        col = self.masked_sum_native(weights * torch.arange(self.det_shape[1], device="mps")[None, :])
+        p, f = _parameters(denominator)
+        for value in (row, col):
+            _dispatch("divide", [value, denominator], p, f)
         return col, row
 
     def release(self):

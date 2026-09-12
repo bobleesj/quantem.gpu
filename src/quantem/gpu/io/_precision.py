@@ -2,6 +2,7 @@
 
 import json
 import math
+import sys
 from contextlib import ExitStack, nullcontext
 from pathlib import Path
 
@@ -43,13 +44,15 @@ def saved_precision(path):
         raise ValueError(
             "This precision export did not complete; repeat the export from its source."
         )
-    if report.get("version") != 1 or report.get("storage") not in {
+    if report.get("version") not in {1, 2} or report.get("storage") not in {
         "float16",
         "scaled_uint16",
     }:
         raise ValueError(
             "Unsupported saved precision metadata; use a compatible QuantEM version."
         )
+    if report["version"] == 2:
+        validate_regions(report)
     return report
 
 
@@ -219,6 +222,14 @@ class _Source:
                 values = self.array.reshape(-1, det_rows, det_cols)[
                     cp.asarray(selected)
                 ]
+            elif hasattr(self.array, "device") and str(self.array.device).startswith(("cuda", "mps")):
+                import torch
+
+                flat = self.array.reshape(-1, det_rows, det_cols)
+                indices = torch.as_tensor(selected, device=self.array.device)
+                values = flat[indices].contiguous()
+                if self.backend == "cuda":
+                    values = cp.from_dlpack(values.detach())
             else:
                 host = np.empty((stop - first, det_rows, det_cols), self.dtype)
                 cursor = 0
@@ -254,6 +265,10 @@ class _Source:
 
 def _restore(values, report):
     """Restore scientific units without exposing encoded integers as counts."""
+    if report and report.get("version") == 2 and "regions" in report:
+        if str(values.dtype).removeprefix("torch.") != "float32":
+            raise ValueError("Regional codes require their per-frame calibration; use the regional reader.")
+        report = None  # The regional reader has already restored this block.
     if hasattr(values, "device") and str(values.device).startswith("mps"):
         from .backends.mps.precision import tensor_restore
 
@@ -320,8 +335,8 @@ def _encode(values, report):
     return encode_scaled_uint16(values, report)
 
 
-def _new_report(source, storage):
-    low, high = _range(source)
+def _new_report(source, storage, limits=None):
+    low, high = _range(source) if limits is None else limits
     if storage == "float16" and max(abs(low), abs(high)) > 65504:
         raise ValueError(
             "Values exceed float16's finite range; use scaled_uint16 or preserve float32."
@@ -397,6 +412,12 @@ def _finish_report(report):
 
 def print_report(report, shape, resident_bytes, *, saved=False):
     """Print measured precision and residency without leaking source paths."""
+    if report.get("version") == 2:
+        origin = "Saved conversion report (not remeasured)" if saved else "GPU measured across all loaded values"
+        print(f"{report['source_dtype']} → scaled_uint16 | {resident_bytes / 2**30:.3f} GiB packed | "
+              f"RMSE {report['rmse']:.7g}, max {report['max_abs_error']:.7g}, "
+              f"overflow {report['overflow']} | {origin}")
+        return
     print(
         f"Loaded {shape[0]}×{shape[1]} scan, {shape[2]}×{shape[3]} detector | "
         f"{report['source_dtype']} → {report['storage']} | "
@@ -437,7 +458,10 @@ def load_precision(
         from .backends.cuda._ans import CudaPackedResidentCounts
         from .backends.cuda.precision import PrecisionSource
 
-        selected = cp.cuda.Device().id if device is None else int(str(device).removeprefix("cuda:"))
+        source_device = getattr(path, "_device_id", None)
+        if source_device is None:
+            source_device = getattr(getattr(path, "device", None), "index", None)
+        selected = (cp.cuda.Device().id if source_device is None else source_device) if device is None else int(str(device).removeprefix("cuda:"))
         context = cp.cuda.Device(selected)
 
         def pack(encoded, shape):
@@ -445,6 +469,14 @@ def load_precision(
 
     with context:
         source = _Source(path, scan_shape=scan_shape, dataset_path=dataset_path, backend=backend)
+        storage = precision_name(dtype) or (source.saved or {}).get("storage")
+        if storage == "scaled_uint16" and (source.saved is None or source.saved.get("version") == 2):
+            try:
+                return _load_regional(source, scan_region, detector_region, verbose, pack, PrecisionSource)
+            finally:
+                source.close()
+        if source.saved and source.saved.get("version") == 2:
+            _restore_source_regions(source)
         chunks = []
         try:
             storage = precision_name(dtype) or (source.saved or {}).get("storage")
@@ -601,6 +633,28 @@ def save_precision(
                 report = dict(payload.precision)
                 shape = payload.shape
                 encoded_blocks = payload.encoded_blocks()
+            elif precision_name(dtype) == "scaled_uint16":
+                source = _Source(payload, scan_shape=scan_shape, backend=backend)
+                shape = source.shape
+                report = {"version": 2, "storage": "scaled_uint16"}
+
+                def convert_regional_blocks():
+                    reports = []
+                    first = 0
+                    for block in source.blocks():
+                        frames = math.prod(block.shape[:-2])
+                        if hasattr(block, "reshape"):
+                            block = block.reshape(frames, *shape[2:])
+                        encoded, region = _convert_region(source, block)
+                        region.update(first_frame=first, stop_frame=first + frames)
+                        reports.append(region)
+                        first += frames
+                        yield encoded
+                    if first != math.prod(shape[:2]):
+                        raise ValueError("The source did not produce its complete scan; repeat the export.")
+                    report.update(_regional_report(shape, reports))
+
+                encoded_blocks = convert_regional_blocks()
             elif backend == "mps" and hasattr(payload, "device") and str(payload.device).startswith("mps"):
                 if len(payload.shape) == 3:
                     if scan_shape is None:
@@ -636,6 +690,8 @@ def save_precision(
             else:
                 source = _Source(payload, scan_shape=scan_shape, backend=backend)
                 shape = source.shape
+                if source.saved and source.saved.get("version") == 2:
+                    _restore_source_regions(source)
                 report = _new_report(source, precision_name(dtype))
 
                 generated_encode = getattr(payload, "encode_blocks", None)
@@ -686,7 +742,7 @@ def save_precision(
                 # The bounded writer queue applies backpressure while preserving
                 # overlap with the next region. File boundaries drain separately.
             wait_for_saves()
-            if not same_precision:
+            if not same_precision and report.get("version") != 2:
                 _finish_report(report)
             generated_metadata = getattr(payload, "save_metadata", None)
             if generated_metadata is not None:
@@ -703,6 +759,239 @@ def save_precision(
             return SaveResult(str(filepath), backend, complete=True)
         finally:
             if writer is not None:
-                writer.close(wait=True)
+                failure = sys.exception()
+                try:
+                    writer.close(wait=True)
+                except Exception as cleanup_error:
+                    if failure is None:
+                        raise
+                    failure.add_note(f"Incomplete writer cleanup: {cleanup_error}")
             if source is not None:
                 source.close()
+
+
+def validate_regions(report):
+    """Reject incomplete or ambiguous per-frame calibration metadata."""
+    regions = report.get("regions", [])
+    first = 0
+    for region in regions:
+        if (
+            region.get("first_frame") != first
+            or not isinstance(region.get("stop_frame"), int)
+            or region["stop_frame"] <= first
+            or not math.isfinite(region.get("scale", math.nan))
+            or region["scale"] <= 0
+            or not math.isfinite(region.get("offset", math.nan))
+        ):
+            raise ValueError(
+                "Invalid regional intensity calibration; repeat the export from its source."
+            )
+        first = region["stop_frame"]
+    if not regions or first != math.prod(report["source_shape"][:2]):
+        raise ValueError(
+            "Regional calibration does not cover the saved scan; repeat the export."
+        )
+
+
+def part_reports(report, ends):
+    """Associate each packed part with its authoritative calibration."""
+    if report.get("version") != 2:
+        return [report] * len(ends)
+    validate_regions(report)
+    result = []
+    index, first = 0, 0
+    for stop in ends:
+        while first >= report["regions"][index]["stop_frame"]:
+            index += 1
+        region = report["regions"][index]
+        if stop > region["stop_frame"]:
+            raise ValueError(
+                "A packed part crosses calibration boundaries; reload using a compatible reader."
+            )
+        result.append(region)
+        first = stop
+    return result
+
+
+def _slice_frames(block, first, stop):
+    if first == 0 and stop == block.shape[0]:
+        return block
+    if type(block).__module__ == "quantem.gpu.io.backends.mps.precision":
+        from .backends.mps.precision import MetalArray, _runtime, _complete
+
+        result = MetalArray((stop - first, *block.shape[1:]), block.dtype)
+        command = _runtime()[2].commandBuffer()
+        encoder = command.blitCommandEncoder()
+        frame_bytes = math.prod(block.shape[1:]) * block.dtype.itemsize
+        encoder.copyFromBuffer_sourceOffset_toBuffer_destinationOffset_size_(
+            block._mtl, first * frame_bytes, result._mtl, 0, result.nbytes
+        )
+        encoder.endEncoding()
+        _complete(command, "precision frame selection")
+        return result
+    return block[first:stop]
+
+
+def _calibrated_blocks(source, scan_region, detector_region):
+    """Split selected encoded frames at saved calibration boundaries."""
+    if not source.saved or source.saved.get("version") != 2:
+        for block in source.blocks(scan_region, detector_region):
+            yield block, source.saved
+        return
+    rows, cols = source.shape[:2]
+    r0, r1, c0, c1 = scan_region or (0, rows, 0, cols)
+    selected = [row * cols + col for row in range(r0, r1) for col in range(c0, c1)]
+    import bisect
+
+    regions = source.saved["regions"]
+    ends = [item["stop_frame"] for item in regions]
+    cursor = 0
+    for block in source.blocks(scan_region, detector_region):
+        first = 0
+        while first < block.shape[0]:
+            index = bisect.bisect_right(ends, selected[cursor + first])
+            stop = first + 1
+            while stop < block.shape[0] and selected[cursor + stop] < ends[index]:
+                stop += 1
+            yield _slice_frames(block, first, stop), regions[index]
+            first = stop
+        cursor += block.shape[0]
+
+
+def _load_regional(source, scan_region, detector_region, verbose, pack, resident_type):
+    """Convert each generated or loaded region once and retain calibrated codes."""
+    from .models import FourDSTEMData
+
+    r0, r1, c0, c1 = scan_region or (0, source.shape[0], 0, source.shape[1])
+    d0, d1, e0, e1 = detector_region or (0, source.shape[2], 0, source.shape[3])
+    shape = (r1 - r0, c1 - c0, d1 - d0, e1 - e0)
+    chunks, reports = [], []
+    first = 0
+    previous_saved = None
+    try:
+        for block, saved in _calibrated_blocks(source, scan_region, detector_region):
+            frames = math.prod(block.shape[:-2])
+            if hasattr(block, "reshape"):
+                block = block.reshape(frames, *shape[2:])
+            if saved:
+                encoded = block
+                report = dict(saved)
+            else:
+                encoded, report = _convert_region(source, block)
+            report.update(first_frame=first, stop_frame=first + frames)
+            if saved is not None and saved is previous_saved:
+                reports[-1]["stop_frame"] = first + frames
+            else:
+                reports.append(report)
+            previous_saved = saved
+            chunks.append(pack(encoded, (1, frames, *shape[2:])))
+            first += frames
+        if first != math.prod(shape[:2]):
+            raise ValueError(
+                "The source did not produce the complete declared scan; repeat the merge."
+            )
+        report = _regional_report(shape, reports)
+        resident = resident_type(chunks, shape, report)
+        metadata = dict(source.metadata)
+        generated = getattr(source.array, "save_metadata", {})
+        for key, value in generated.items():
+            if key.startswith("quantem_") and key.endswith("_v1"):
+                metadata[key.removeprefix("quantem_").removesuffix("_v1")] = json.loads(
+                    value
+                )
+            metadata[key] = value
+        metadata.update(
+            precision=report,
+            working_shape=shape,
+            scan_shape=shape[:2],
+            detector_shape=shape[2:],
+            n_frames=first,
+            working_dtype="float32",
+            source_dtype=report["source_dtype"],
+            storage_dtype="uint16",
+            representation="packed",
+            residency="device",
+            physical_resident_bytes=resident.nbytes,
+            lossless_exact=report["changed"] == 0,
+            conversion_report_origin="saved" if source.saved else "measured",
+            selection={"scan_region": scan_region, "detector_region": detector_region},
+        )
+        if verbose:
+            print_report(report, shape, resident.nbytes, saved=bool(source.saved))
+        return FourDSTEMData(resident, metadata)
+    except BaseException:
+        for chunk in chunks:
+            chunk.release()
+        raise
+
+
+def _convert_region(source, block):
+    """Measure and encode one region on its source accelerator."""
+    original = _restore(block, None)
+    if source.backend == "mps":
+        from .backends.mps.precision import source_range, encode_measure
+        from types import SimpleNamespace
+
+        limits = source_range(
+            SimpleNamespace(blocks=lambda: iter([original]), saved=None)
+        )
+    else:
+        low, high = float(original.min().get()), float(original.max().get())
+        if not math.isfinite(low) or not math.isfinite(high):
+            raise ValueError(
+                "Precision conversion requires finite intensities; preserve float32."
+            )
+        limits = low, high
+    report = _new_report(source, "scaled_uint16", limits)
+    report.update(version=2, range_scope="region")
+    if source.backend == "mps":
+        encoded = encode_measure(original, report)
+    else:
+        encoded = _encode(original, report)
+        _measure(original, None, report, encoded=encoded)
+    _finish_report(report)
+    return encoded, report
+
+
+def _regional_report(shape, reports):
+    """Combine only GPU-produced scalar error reports."""
+    count = sum(item["values"] for item in reports)
+    report = {
+        "version": 2,
+        "storage": "scaled_uint16",
+        "source_dtype": reports[0]["source_dtype"],
+        "source_shape": list(shape),
+        "regions": reports,
+        "complete": True,
+        "range_scope": "automatic regions",
+        "values": count,
+        "rmse": math.sqrt(
+            sum(item["rmse"] ** 2 * item["values"] for item in reports) / count
+        ),
+        "max_abs_error": max(item["max_abs_error"] for item in reports),
+        "intensity_min": min(item["intensity_min"] for item in reports),
+        "intensity_max": max(item["intensity_max"] for item in reports),
+        **{
+            key: sum(item[key] for item in reports)
+            for key in ("changed", "positive_to_zero", "overflow", "clipped")
+        },
+    }
+    return report
+
+
+def _restore_source_regions(source):
+    """Restore regional units before a subsequent explicit precision change."""
+    from types import SimpleNamespace
+
+    encoded_source = SimpleNamespace(
+        shape=source.shape, saved=source.saved, blocks=source.blocks
+    )
+
+    def restored_blocks(region=None, detector_region=None):
+        for block, report in _calibrated_blocks(
+            encoded_source, region, detector_region
+        ):
+            yield _restore(block, report)
+
+    source.blocks = restored_blocks
+    source.dtype = np.dtype("float32")

@@ -201,3 +201,13 @@ kernel void precision_reduce(device const float *src [[buffer(0)]], device float
     COMMON, uint i [[thread_position_in_grid]]) {
     if (i < p[0]) dst[i] = p[8] == 2 ? max(dst[i], src[i]) : dst[i] + src[i] / float(p[9]);
 }
+
+kernel void precision_range_read(PACKED, device float *dst [[buffer(3)]], COMMON,
+    uint i [[thread_position_in_grid]]) {
+    if (i < p[0]) dst[i] = restored(
+        code_at(words, offsets, widths, p[8] + i / p[1], i % p[1], p[1]), p, f);
+}
+kernel void precision_divide(device float *value [[buffer(0)]],
+    device const float *denominator [[buffer(1)]], COMMON, uint i [[thread_position_in_grid]]) {
+    if (i < p[0]) value[i] /= max(denominator[i], 1e-10f);
+}

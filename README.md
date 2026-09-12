@@ -26,6 +26,9 @@ Opt-in [experimental resident ANS](docs/integrations/experimental-resident-ans.m
 connects the package count codec to downstream viewers, with explicit format and
 performance limits.
 
+[Scaled uint16 storage](docs/integrations/scaled-uint16.md) provides automatic
+calibration, packed residency and calibrated reads on CUDA and Python MPS.
+
 Choose your entry point:
 
 - [Implementation overview](docs/dashboard.md): the dense one-page map

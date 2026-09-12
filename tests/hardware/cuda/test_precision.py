@@ -30,18 +30,19 @@ def test_cuda_precision_matches_numpy_oracle(tmp_path, dtype):
     io.save(source, values, dtype="float32", verbose=False)
     loaded = io.load(source, dtype=dtype, verbose=False)
     report = loaded.metadata["precision"]
+    calibration = report["regions"][0] if report.get("version") == 2 else report
     original = cp.asnumpy(values)
     if dtype == "float16":
         expected = original.astype(np.float16).astype(np.float32)
         tolerance = 0.0
     else:
         expected = (
-            np.rint((original - report["offset"]) / report["scale"])
+            np.rint((original - calibration["offset"]) / calibration["scale"])
             .clip(0, 65535)
-            * report["scale"]
-            + report["offset"]
+            * calibration["scale"]
+            + calibration["offset"]
         ).astype(np.float32)
-        tolerance = report["scale"] * 1.1
+        tolerance = calibration["scale"] * 1.1
     observed = cp.asnumpy(prepare(loaded).frame(0, output="native"))
     np.testing.assert_allclose(observed, expected[0, 0], rtol=0, atol=tolerance)
     loaded.close()
@@ -56,12 +57,13 @@ def test_cuda_precision_products_match_shared_numpy_oracle(tmp_path, dtype):
     np.save(source, original)
     with io.load(source, dtype=dtype, backend="cuda", verbose=False) as loaded:
         report = loaded.metadata["precision"]
+        calibration = report["regions"][0] if report.get("version") == 2 else report
         assert report["intensity_min"] == float(original.min())
         assert report["intensity_max"] == float(original.max())
         assert report["values"] == original.size
-        assert report["range_scope"] == "complete source"
+        assert report["range_scope"] == ("automatic regions" if report.get("version") == 2 else "complete source")
         if dtype == "scaled_uint16":
-            assert report["scale"] == (
+            assert calibration["scale"] == (
                 float(original.max()) - float(original.min())
             ) / 65535
         blocks = []
@@ -125,15 +127,16 @@ def test_float_archive_loads_selected_packed_intensities(tmp_path, dtype, capsys
         path, dtype=dtype, scan_region=(1, 7, 2, 11), detector_region=(1, 15, 0, 16)
     )
     report = loaded.metadata["precision"]
+    calibration = report["regions"][0] if report.get("version") == 2 else report
     selected = values[1:7, 2:11, 1:15]
     if dtype in {"float16", "f16"}:
         expected = selected.astype(cp.float16).astype(cp.float32)
     else:
         expected = (
-            cp.rint(selected.astype(cp.float64) / report["scale"])
+            cp.rint((selected.astype(cp.float64) - calibration["offset"]) / calibration["scale"])
             .astype(cp.uint16)
             .astype(cp.float64)
-            * report["scale"]
+            * calibration["scale"] + calibration["offset"]
         )
     expected = expected.astype(cp.float32)
     session = prepare(loaded)
@@ -149,7 +152,7 @@ def test_float_archive_loads_selected_packed_intensities(tmp_path, dtype, capsys
     error = expected.astype(cp.float64) - selected.astype(cp.float64)
     assert report["rmse"] == pytest.approx(float(cp.sqrt(cp.mean(error**2))), rel=1e-12)
     assert report["values"] == selected.size
-    assert report["range_scope"] == "complete source"
+    assert report["range_scope"] == ("automatic regions" if report.get("version") == 2 else "complete source")
     assert "GPU measured across all loaded values" in capsys.readouterr().out
     loaded.close()
 
@@ -165,13 +168,14 @@ def test_precision_export_reopens_and_resaves_without_changing_units(
     io.save(path, values, dtype=dtype)
     loaded = io.load(path)
     report = loaded.metadata["precision"]
+    calibration = report["regions"][0] if report.get("version") == 2 else report
     expected = (
         values.astype(cp.float16).astype(cp.float32)
         if dtype in {"float16", "f16"}
-        else cp.rint(values.astype(cp.float64) / report["scale"])
+        else cp.rint(values.astype(cp.float64) / calibration["scale"])
         .astype(cp.uint16)
         .astype(cp.float64)
-        * report["scale"]
+        * calibration["scale"]
     )
     expected = expected.astype(cp.float32)
     session = prepare(loaded)
@@ -192,25 +196,21 @@ def test_precision_export_reopens_and_resaves_without_changing_units(
     reopened.close()
 
 
-def test_separate_regions_share_global_scale(tmp_path):
-    values = cp.linspace(-10, 10, 8 * 8 * 16 * 16, dtype=cp.float32).reshape(
-        8, 8, 16, 16
-    )
+def test_separate_regions_keep_calibrated_intensities(tmp_path):
+    values = cp.linspace(-10, 10, 8 * 8 * 16 * 16, dtype=cp.float32).reshape(8, 8, 16, 16)
     path = tmp_path / "signed_master.h5"
     io.save(path, values, dtype="float32")
-    regions = io.load(
-        path,
-        dtype="scaled_uint16",
-        scan_region=[(0, 2, 0, 2), (6, 8, 6, 8)],
-        verbose=False,
-    )
-    assert (
-        regions[0].metadata["precision"]["scale"]
-        == regions[1].metadata["precision"]["scale"]
-    )
-    assert regions[0].metadata["precision"]["offset"] == -10
-    for region in regions:
-        region.close()
+    bounds = [(0, 2, 0, 2), (6, 8, 6, 8)]
+    regions = io.load(path, dtype="scaled_uint16", scan_region=bounds, verbose=False)
+    try:
+        for loaded, (r0, r1, c0, c1) in zip(regions, bounds):
+            report = loaded.metadata["precision"]["regions"][0]
+            assert report["offset"] == float(values[r0:r1, c0:c1].min())
+            cp.testing.assert_allclose(cp.from_dlpack(loaded.read()), values[r0:r1, c0:c1],
+                                      rtol=0, atol=report["scale"] / 2 + 1e-6)
+    finally:
+        for loaded in regions:
+            loaded.close()
 
 
 def test_saved_region_retains_geometry_and_prevents_raw_code_casts(tmp_path):
@@ -289,15 +289,16 @@ def test_rereadable_torch_blocks_use_public_precision_save(tmp_path):
         backend="cuda",
         verbose=False,
     )
-    assert source.calls == 2
+    assert source.calls == 1
     with io.load(path, verbose=False) as loaded:
         report = loaded.metadata["precision"]
+        calibration = report["regions"][0] if report.get("version") == 2 else report
         observed = loaded.read(scan_region=(1, 3, 1, 4)).cpu().numpy()
         np.testing.assert_allclose(
             observed,
             values.get()[1:3, 1:4],
             rtol=0,
-            atol=report["scale"],
+            atol=calibration["scale"],
         )
 
 
@@ -309,6 +310,7 @@ def test_changing_saved_precision_reports_restored_source_units(tmp_path):
     io.save(path, values, dtype="scaled_uint16")
     with io.load(path, dtype="float16", verbose=False) as loaded:
         report = loaded.metadata["precision"]
+        calibration = report["regions"][0] if report.get("version") == 2 else report
         assert report["source_dtype"] == "float32"
         assert report["prior_conversion"]["storage"] == "scaled_uint16"
         assert report["values"] == values.size

@@ -25,6 +25,14 @@ def make_precision_fixture() -> np.ndarray:
 def encode_precision_reference(values: np.ndarray, report: dict) -> np.ndarray:
     """Encode one archive using only the documented NumPy operations."""
 
+    if report.get("regions"):
+        flat = values.reshape(-1, *values.shape[-2:])
+        result = np.empty(flat.shape, dtype=np.uint16)
+        for region in report["regions"]:
+            first, stop = region["first_frame"], region["stop_frame"]
+            result[first:stop] = encode_precision_reference(flat[first:stop], region)
+        return result.reshape(values.shape)
+
     if report["storage"] == "float16":
         return values.astype(np.float16)
     return np.rint(
@@ -36,6 +44,14 @@ def restore_precision_reference(values: np.ndarray, report: dict) -> np.ndarray:
     """Apply the documented archive conversion with NumPy only."""
 
     codes = encode_precision_reference(values, report)
+    if report.get("regions"):
+        flat = values.reshape(-1, *values.shape[-2:])
+        result = np.empty(flat.shape, dtype=np.float32)
+        for region in report["regions"]:
+            first, stop = region["first_frame"], region["stop_frame"]
+            result[first:stop] = restore_precision_reference(flat[first:stop], region)
+        return result.reshape(values.shape)
+
     if report["storage"] == "float16":
         return codes.astype(np.float32)
     return (

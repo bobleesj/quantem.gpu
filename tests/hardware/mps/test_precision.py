@@ -31,21 +31,22 @@ def test_mps_precision_matches_numpy_oracle(tmp_path, dtype):
     np.save(source, values)
     loaded = io.load(source, dtype=dtype, backend="mps", verbose=False)
     report = loaded.metadata["precision"]
+    calibration = report["regions"][0] if report.get("version") == 2 else report
     if dtype == "float16":
         expected = values.astype(np.float16).astype(np.float32)
         tolerance = np.finfo(np.float16).eps * np.maximum(1, np.abs(values))
     else:
         expected = (
-            np.rint((values - report["offset"]) / report["scale"])
+            np.rint((values - calibration["offset"]) / calibration["scale"])
             .clip(0, 65535)
-            * report["scale"]
-            + report["offset"]
+            * calibration["scale"]
+            + calibration["offset"]
         ).astype(np.float32)
-        tolerance = np.full(values.shape, report["scale"] * 1.1, np.float32)
+        tolerance = np.full(values.shape, calibration["scale"] * 1.1, np.float32)
     observed = prepare(loaded).reduce_frames([0], "mean")
     np.testing.assert_allclose(observed, expected[0, 0], rtol=0, atol=float(np.max(tolerance[0, 0])))
     assert report["values"] == values.size
-    assert report["range_scope"] == "complete source"
+    assert report["range_scope"] == ("automatic regions" if report.get("version") == 2 else "complete source")
     copied = tmp_path / "copy_master.h5"
     io.save(copied, loaded, backend="mps", verbose=False, wait=True)
     reopened = io.load(copied, backend="mps", verbose=False)
@@ -71,12 +72,13 @@ def test_mps_precision_products_match_shared_numpy_oracle(tmp_path, dtype):
     np.save(source, original)
     with io.load(source, dtype=dtype, backend="mps", verbose=False) as loaded:
         report = loaded.metadata["precision"]
+        calibration = report["regions"][0] if report.get("version") == 2 else report
         assert report["intensity_min"] == float(original.min())
         assert report["intensity_max"] == float(original.max())
         assert report["values"] == original.size
-        assert report["range_scope"] == "complete source"
+        assert report["range_scope"] == ("automatic regions" if report.get("version") == 2 else "complete source")
         if dtype == "scaled_uint16":
-            assert report["scale"] == (
+            assert calibration["scale"] == (
                 float(original.max()) - float(original.min())
             ) / 65535
         blocks = []

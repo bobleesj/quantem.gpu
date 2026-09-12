@@ -21,6 +21,7 @@ def _precision_kernels(device_id: int):
             name: module.get_function(name)
             for name in (
                 "precision_encode",
+                "precision_encode_regional",
                 "precision_encode_measure",
                 "precision_measure",
             )
@@ -35,7 +36,11 @@ def encode_scaled_uint16(values, report):
     output = cp.empty(values.shape, dtype=cp.uint16)
     count = int(values.size)
     if count:
-        kernel = _precision_kernels(cp.cuda.Device().id)["precision_encode"]
+        regional = report.get("version") == 2
+        kernel = _precision_kernels(cp.cuda.Device().id)[
+            "precision_encode_regional" if regional else "precision_encode"
+        ]
+        scalar = np.float64 if regional else np.float32
         threads = 256
         blocks = min(4096, max(1, (count + threads - 1) // threads))
         kernel(
@@ -45,8 +50,8 @@ def encode_scaled_uint16(values, report):
                 values,
                 output,
                 np.uint64(count),
-                np.float32(report["scale"]),
-                np.float32(report["offset"]),
+                scalar(report["scale"]),
+                scalar(report["offset"]),
             ),
         )
     return output
@@ -156,6 +161,9 @@ class PrecisionSource:
         for part in chunks:
             count += part.shape[1]
             self._ends.append(count)
+        from ..._precision import part_reports
+
+        self._reports = part_reports(precision, self._ends)
         self.is_released = False
 
     @property
@@ -172,12 +180,13 @@ class PrecisionSource:
         """Return the logical float32 element count for array-style consumers."""
         return math.prod(self.shape)
 
-    def _restore(self, codes):
+    def _restore(self, codes, report=None):
+        report = self.precision if report is None else report
         if self.precision["storage"] == "float16":
             return codes.view(cp.float16).astype(cp.float32)
         return (
-            codes.astype(cp.float64) * self.precision["scale"]
-            + self.precision["offset"]
+            codes.astype(cp.float64) * report["scale"]
+            + report["offset"]
         ).astype(cp.float32)
 
     def encoded_blocks(self):
@@ -194,11 +203,11 @@ class PrecisionSource:
                     )
 
     def _blocks(self):
+        first = 0
         for encoded in self.encoded_blocks():
-            if self.precision["storage"] == "float16":
-                yield encoded.astype(cp.float32)
-            else:
-                yield self._restore(encoded)
+            part = bisect.bisect_right(self._ends, first)
+            yield self._restore(encoded, self._reports[part])
+            first += encoded.shape[0]
 
     def frame_native(self, index, *, out=None):
         if self.is_released:
@@ -211,12 +220,38 @@ class PrecisionSource:
             part = bisect.bisect_right(self._ends, index)
             start = self._ends[part - 1] if part else 0
             value = self._restore(
-                self.parts[part].extract_diffraction_device(0, index - start)
+                self.parts[part].extract_diffraction_device(0, index - start),
+                self._reports[part],
             )
             if out is not None:
                 out[...] = value
                 return out
             return value
+
+    def _decode_scan_range_torch(self, first, stop):
+        """Read a bounded calibrated range into independently owned Torch storage."""
+        import torch
+
+        if self.is_released or not 0 <= first < stop <= self.n_frames:
+            raise ValueError("Read a nonempty scan range from an open source.")
+        with cp.cuda.Device(self._device_id):
+            output = cp.empty((stop - first, *self.det_shape), cp.float32)
+            start = 0
+            for part, end, report in zip(self.parts, self._ends, self._reports):
+                low, high = max(first, start), min(stop, end)
+                if low < high:
+                    for block in range((low - start) // part.block_frames,
+                                       (high - start - 1) // part.block_frames + 1):
+                        base = start + block * part.block_frames
+                        codes = part.decode_block_device(block)
+                        left, right = max(low, base), min(high, base + len(codes))
+                        output[left - first:right - first] = self._restore(
+                            codes[left - base:right - base], report
+                        )
+                start = end
+                if start >= stop:
+                    break
+            return torch.from_dlpack(output)
 
     def frame(self, index):
         return self.frame_native(index).get()
@@ -238,14 +273,13 @@ class PrecisionSource:
     def mean_dp(self):
         with cp.cuda.Device(self._device_id):
             if self.precision["storage"] == "scaled_uint16":
-                total = cp.zeros(self.det_shape, cp.uint64)
-                for part in self.parts:
-                    total += part.detector_total_device()
-                return (
-                    total.astype(cp.float64)
-                    * (self.precision["scale"] / self.n_frames)
-                    + self.precision["offset"]
-                ).astype(cp.float32)
+                total = cp.zeros(self.det_shape, cp.float64)
+                for part, report in zip(self.parts, self._reports):
+                    total += (
+                        part.detector_total_device().astype(cp.float64) * report["scale"]
+                        + report["offset"] * part.shape[1]
+                    )
+                return (total / self.n_frames).astype(cp.float32)
             total = cp.zeros(self.det_shape, cp.float64)
             for values in self._blocks():
                 total += cp.sum(values, axis=0, dtype=cp.float64)
@@ -263,12 +297,12 @@ class PrecisionSource:
                 result = cp.empty(self.n_frames, cp.float32)
                 first = 0
                 binary = weights.astype(cp.uint8)
-                for part in self.parts:
+                for part, report in zip(self.parts, self._reports):
                     codes = part.detector_sum_device(binary).reshape(-1)
                     count = codes.size
                     result[first : first + count] = (
-                        codes.astype(cp.float64) * self.precision["scale"]
-                        + self.precision["offset"] * selected
+                        codes.astype(cp.float64) * report["scale"]
+                        + report["offset"] * selected
                     ).astype(cp.float32)
                     first += count
                 result = result.reshape(self.scan_shape)

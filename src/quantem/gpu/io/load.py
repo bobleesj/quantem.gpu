@@ -5087,8 +5087,12 @@ def load(
     ``dtype="scaled_uint16"`` on CUDA and Metal/MPS. They remain packed and
     print a measured conversion report. Scaled codes restore their saved
     intensity units for detector queries. ``scan_region`` and
-    ``detector_region`` select values before resident allocation; global scaling
-    uses the complete source range.
+    ``detector_region`` select values before resident allocation. New scaled
+    storage automatically calibrates bounded regions in one pass; saved files
+    retain their recorded calibration, including legacy global scales.
+    With explicit precision, ``source`` can also be a GPU array or an object
+    providing ``shape``, ``dtype``, and ``blocks()`` of ordered GPU frames.
+    Each generated frame must appear once in row-major order.
     ``io.load("display_master.h5", dtype="scaled_uint16")`` is approximate;
     preserve the original float32 file for exact scientific analysis.
 
@@ -5216,8 +5220,8 @@ def load(
     hot_pixel_correction = normalize_hot_pixel_correction(hot_pixel_correction)
 
     precision = precision_name(dtype)
-    precision_sources = [source] if isinstance(source, (str, os.PathLike)) else list(source)
-    saved = [saved_precision(path) for path in precision_sources if Path(path).is_file()]
+    precision_sources = [source] if isinstance(source, (str, os.PathLike)) or (precision and hasattr(source, "shape")) else list(source)
+    saved = [saved_precision(path) for path in precision_sources if isinstance(path, (str, os.PathLike)) and Path(path).is_file()]
     if precision or any(saved):
         if any(saved) and dtype not in (None, "native") and precision is None:
             raise ValueError("Saved precision includes intensity scaling. Omit dtype to restore its units, or request float16/scaled_uint16 explicitly; raw-code casts are not supported.")
@@ -5245,7 +5249,7 @@ def load(
             for item in loaded:
                 item.close()
             raise
-        return loaded[0] if isinstance(source, (str, os.PathLike)) and not multiple_regions else loaded
+        return loaded[0] if (isinstance(source, (str, os.PathLike)) or hasattr(source, "shape")) and not multiple_regions else loaded
 
     if isinstance(source, (str, os.PathLike)):
         prepared = Path(source)

@@ -157,7 +157,7 @@ extern "C" __global__ void precision_measure(
         double delta = static_cast<double>(restored) - static_cast<double>(values[index]);
         local_sum += delta * delta;
         local_maximum = fmax(local_maximum, fabs(delta));
-        if (values[index] > 0.0f && codes[index] == 0) {
+        if (values[index] > 0.0f && restored == 0.0f) {
             ++local_positive;
         }
         if (delta != 0.0) {
@@ -192,5 +192,18 @@ extern "C" __global__ void precision_measure(
         atomicAdd(positive_to_zero, positive[0]);
         atomicAdd(changed, changed_local[0]);
         atomicAdd(overflow, overflow_local[0]);
+    }
+}
+
+// Version 2 uses the same double-precision calibration oracle as Metal.
+extern "C" __global__ void precision_encode_regional(
+    const float* values, unsigned short* codes, unsigned long long count,
+    double scale, double offset
+) {
+    for (unsigned long long i = static_cast<unsigned long long>(blockIdx.x)
+         * blockDim.x + threadIdx.x; i < count;
+         i += static_cast<unsigned long long>(gridDim.x) * blockDim.x) {
+        double code = nearbyint((static_cast<double>(values[i]) - offset) / scale);
+        codes[i] = static_cast<unsigned short>(fmin(fmax(code, 0.0), 65535.0));
     }
 }
