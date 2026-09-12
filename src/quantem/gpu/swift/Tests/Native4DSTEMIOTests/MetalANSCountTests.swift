@@ -194,6 +194,51 @@ final class MetalANSCountTests: XCTestCase {
     XCTAssertThrowsError(try changed.admitted(.uint16))
   }
 
+  func testResidentFrameReadsAndMeansCrossANSBlocksExactly() throws {
+    let device = try device()
+    for record in try fixture().cases {
+      let source = try MetalANSResidentSource(
+        arrays: record.arrays.admitted(record.dtype), device: device)
+      defer { source.releaseResidentStorage() }
+      for frames in [0..<15, 1..<14, 3..<9, 14..<15] {
+        let read = try source.read(frames)
+        let expected = record.expectedCounts[frames].flatMap { $0 }
+        let actual: [UInt32]
+        if source.itemBytes == 1 {
+          actual = Array(
+            UnsafeBufferPointer(
+              start: read.contents().assumingMemoryBound(to: UInt8.self), count: expected.count)
+          ).map(UInt32.init)
+        } else {
+          actual = Array(
+            UnsafeBufferPointer(
+              start: read.contents().assumingMemoryBound(to: UInt16.self), count: expected.count)
+          ).map(UInt32.init)
+        }
+        XCTAssertEqual(actual, expected)
+      }
+      let means = try source.countMeans()
+      let dp = Array(
+        UnsafeBufferPointer(
+          start: means.diffraction.contents().assumingMemoryBound(to: Float.self), count: 6))
+      let bf = Array(
+        UnsafeBufferPointer(
+          start: means.brightField.contents().assumingMemoryBound(to: Float.self), count: 15))
+      XCTAssertEqual(
+        dp,
+        (0..<6).map { pixel in
+          Float(record.expectedCounts.reduce(UInt64(0)) { $0 + UInt64($1[pixel]) }) / 15
+        })
+      XCTAssertEqual(
+        bf, record.expectedCounts.map { Float($0.reduce(UInt64(0)) { $0 + UInt64($1) }) / 6 })
+      XCTAssertThrowsError(try source.read(-1..<1))
+      XCTAssertThrowsError(try source.read(14..<16))
+      source.releaseResidentStorage()
+      XCTAssertThrowsError(try source.countMeans())
+      XCTAssertThrowsError(try source.read(0..<1))
+    }
+  }
+
   func testRawDPAndBoundedMaskSumsMatchIndependentUInt8AndUInt16Oracle() throws {
     let device = try device()
     for record in try fixture().cases {

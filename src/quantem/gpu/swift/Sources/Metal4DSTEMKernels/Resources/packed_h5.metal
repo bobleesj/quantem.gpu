@@ -1554,3 +1554,15 @@ kernel void compact_h5_detector_sum_u64(
     }
     detectorSum[pixel] += total;
 }
+
+
+// Exact bounded frame reads for scientific consumers. p: pixels, local first,
+// count, output first, tile count, scan tile, header words, encoding, layout.
+kernel void compact_h5_read_region(device const uint *payload [[buffer(0)]],
+    device const uint *descriptors [[buffer(1)]],device const uint *excluded [[buffer(2)]],
+    device uint *output [[buffer(3)]],constant uint *p [[buffer(4)]],uint i [[thread_position_in_grid]]) {
+    if(i>=p[0]*p[2])return;
+    uint frame=i/p[0],pixel=i%p[0];
+    output[ulong(p[3])*p[0]+i]=excluded[pixel]!=0u?0u:
+        compactSampleValue(payload,descriptors,p[4],p[5],p[6],p[7],pixel,p[1]+frame,p[8]);
+}

@@ -11,6 +11,56 @@ public final class MetalHDF5Writer {
   private let runtime: MetalPrecision
   private var writer: OpaquePointer?
   private var nextFrame = 0
+  private let writeQueue = DispatchQueue(label: "quantem.hdf5.write")
+  private var pendingWrite: (task: PendingWrite, item: DispatchWorkItem)?
+  // The queue writes result once; the serialized owner reads it only after
+  // DispatchWorkItem.wait(). Buffers remain retained until that join completes.
+  private final class PendingWrite: @unchecked Sendable {
+    let writer: OpaquePointer
+    let firstFrame: Int
+    let frames: Int
+    let stride: Int
+    let packed: MTLBuffer
+    let sizes: MTLBuffer
+    var result: Result<Double, Error>?
+    init(
+      writer: OpaquePointer, firstFrame: Int, frames: Int, stride: Int,
+      packed: MTLBuffer, sizes: MTLBuffer
+    ) {
+      self.writer = writer
+      self.firstFrame = firstFrame
+      self.frames = frames
+      self.stride = stride
+      self.packed = packed
+      self.sizes = sizes
+    }
+    func perform() {
+      result = Result {
+        let started = Date.timeIntervalSinceReferenceDate
+        var error: UnsafeMutablePointer<CChar>?
+        let status = qh5_chunk_writer_append(
+          writer, UInt64(firstFrame), UInt64(frames),
+          packed.contents().assumingMemoryBound(to: UInt8.self), UInt64(stride),
+          sizes.contents().assumingMemoryBound(to: UInt32.self), &error)
+        try MetalHDF5Writer.check(status, error)
+        return Date.timeIntervalSinceReferenceDate - started
+      }
+    }
+  }
+  private func finishPendingWrite() throws {
+    if let pendingWrite {
+      pendingWrite.item.wait()
+      // Keep a failed task so subsequent append/finish calls cannot publish a
+      // file with a missing region after the caller catches the first error.
+      writeSeconds += try pendingWrite.task.result!.get()
+      self.pendingWrite = nil
+    }
+  }
+  private var compressionWorkspace:
+    (
+      frames: Int, shuffled: MTLBuffer, compressed: MTLBuffer,
+      sizes: MTLBuffer, frameSizes: MTLBuffer, packed: MTLBuffer
+    )?
   public private(set) var compressionSeconds = 0.0
   public private(set) var writeSeconds = 0.0
   public private(set) var peakAllocatedBytes = 0
@@ -35,11 +85,14 @@ public final class MetalHDF5Writer {
     }
     try Self.check(status, error)
   }
-  /// Append native uint16 codes in consecutive frame order; data never stages as a host array.
+  /// Compress native uint16 codes on Metal and queue one bounded byte write.
+  /// Disk errors are reported by the next append or finish. Finish drains the
+  /// pending write before publishing the destination; no host count array is used.
   public func append(_ values: MTLBuffer, frames: Int) throws {
     guard writer != nil, frames > 0, nextFrame + frames <= shape[0] * shape[1] else {
       throw MetalPrecision.invalid("Append an in-bounds consecutive region to an open writer.")
     }
+    try finishPendingWrite()
     let started = Date.timeIntervalSinceReferenceDate
     let frameBytes = shape[2] * shape[3] * 2
     guard frames <= Int(UInt32.max) / frameBytes else {
@@ -49,12 +102,15 @@ public final class MetalHDF5Writer {
     let blocks = (frameBytes + 8191) / 8192
     let maximum = 9216
     try runtime.validate(values, count: frames * shape[2] * shape[3], bytes: 2)
-    let shuffled = try runtime.buffer(frames * frameBytes)
-    let compressed = try runtime.buffer(frames * blocks * maximum)
-    let sizes = try runtime.buffer(frames * blocks * 4)
-    let frameSizes = try runtime.buffer(frames * 4)
     let stride = 12 + blocks * (4 + maximum)
-    let packed = try runtime.buffer(frames * stride)
+    if compressionWorkspace == nil || compressionWorkspace!.frames < frames {
+      compressionWorkspace = (
+        frames, try runtime.buffer(frames * frameBytes),
+        try runtime.buffer(frames * blocks * maximum), try runtime.buffer(frames * blocks * 4),
+        try runtime.buffer(frames * 4), try runtime.buffer(frames * stride)
+      )
+    }
+    let (_, shuffled, compressed, sizes, frameSizes, packed) = compressionWorkspace!
     peakAllocatedBytes = max(peakAllocatedBytes, runtime.device.currentAllocatedSize)
     let command = try runtime.command()
     let shuffle = try runtime.encoder(command, "bshuf_u16_save", [values, shuffled])
@@ -76,18 +132,17 @@ public final class MetalHDF5Writer {
     runtime.dispatch(pack, count: frames * 32, groupSize: 32, groups: true)
     try runtime.complete(command)
     compressionSeconds += Date.timeIntervalSinceReferenceDate - started
-    let writing = Date.timeIntervalSinceReferenceDate
-    var error: UnsafeMutablePointer<CChar>?
-    let status = qh5_chunk_writer_append(
-      writer, UInt64(nextFrame), UInt64(frames),
-      packed.contents().assumingMemoryBound(to: UInt8.self), UInt64(stride),
-      frameSizes.contents().assumingMemoryBound(to: UInt32.self), &error)
-    try Self.check(status, error)
+    let task = PendingWrite(
+      writer: writer!, firstFrame: nextFrame, frames: frames,
+      stride: stride, packed: packed, sizes: frameSizes)
+    let item = DispatchWorkItem { task.perform() }
+    pendingWrite = (task, item)
+    writeQueue.async(execute: item)
     nextFrame += frames
-    writeSeconds += Date.timeIntervalSinceReferenceDate - writing
   }
   public func finish(metadata: [String: String]) throws {
     guard writer != nil else { throw MetalPrecision.invalid("The writer is already closed.") }
+    try finishPendingWrite()
     let started = Date.timeIntervalSinceReferenceDate
     for (name, value) in metadata {
       var error: UnsafeMutablePointer<CChar>?
@@ -100,9 +155,13 @@ public final class MetalHDF5Writer {
     try Self.check(status, error)
     // moveItem fails if another writer created the destination while we ran.
     try FileManager.default.moveItem(at: temporary, to: path)
+    compressionWorkspace = nil
     writeSeconds += Date.timeIntervalSinceReferenceDate - started
   }
   public func cancel() {
+    pendingWrite?.item.wait()
+    pendingWrite = nil
+    compressionWorkspace = nil
     if let writer {
       qh5_chunk_writer_abort(writer)
       self.writer = nil

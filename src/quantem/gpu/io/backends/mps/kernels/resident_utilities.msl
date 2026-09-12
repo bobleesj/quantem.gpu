@@ -42,7 +42,7 @@ kernel void count_summary(device const uchar *raw [[buffer(0)]],
         ulong sum = 0;
         for (uint scan = 0; scan < p.x; ++scan) {
             ulong at = ulong(scan) * p.y + index;
-            sum += p.z == 1 ? raw[at] : reinterpret_cast<device const ushort *>(raw)[at];
+            sum += p.z == 1 ? uint(raw[at]) : (p.z == 2 ? uint(reinterpret_cast<device const ushort *>(raw)[at]) : reinterpret_cast<device const uint *>(raw)[at]);
         }
         detector[index] += sum;
     }
@@ -54,7 +54,7 @@ kernel void count_bright(device const uchar *raw [[buffer(0)]],
     ulong sum = 0;
     for (uint pixel = lane; pixel < p.y; pixel += 128) {
         ulong at = ulong(scan) * p.y + pixel;
-        sum += p.z == 1 ? raw[at] : reinterpret_cast<device const ushort *>(raw)[at];
+        sum += p.z == 1 ? uint(raw[at]) : (p.z == 2 ? uint(reinterpret_cast<device const ushort *>(raw)[at]) : reinterpret_cast<device const uint *>(raw)[at]);
     }
     sums[lane] = sum;
     threadgroup_barrier(mem_flags::mem_threadgroup);

@@ -25,11 +25,16 @@ public final class MetalEncodedSource {
     let payload, offsets, models: MTLBuffer
   }
   private var chunks: [Chunk] = []
+  private var encodingWorkspace:
+    (scratch: MTLBuffer, sizes: MTLBuffer, states: MTLBuffer, totals: MTLBuffer)?
   private let interval = 512
   public var residentBytes: Int {
     chunks.reduce(0) { $0 + $1.payload.length + $1.offsets.length + $1.models.length }
       + [encoding, decoding, error, detectorSum, meanDiffraction, meanBrightField, valid, bad]
       .reduce(0) { $0 + $1.length }
+      + (encodingWorkspace.map {
+        $0.scratch.length + $0.sizes.length + $0.states.length + $0.totals.length
+      } ?? 0)
   }
 
   /// Allocate an empty source; append consecutive native count regions to fill it.
@@ -103,9 +108,10 @@ public final class MetalEncodedSource {
     let result = try MetalEncodedSource(
       shape: [d.scanRows, d.scanCols, d.detectorRows, d.detectorCols],
       itemBytes: source.sourceBytesPerValue, hotPixelIndices: d.badPixelIndices, device: device)
+    let verifyCounts = ProcessInfo.processInfo.environment["QUANTEM_GPU_VALIDATE_COUNTS"] == "1"
     try MetalHDF5Reader.read(source: source, device: device, shouldCancel: shouldCancel) {
       raw, frames in
-      try result.append(raw, frames: frames.count)
+      try result.append(raw, frames: frames.count, verify: verifyCounts)
     }
     result.sourceReadPasses = 1
     return result
@@ -124,12 +130,19 @@ public final class MetalEncodedSource {
       throw Self.invalid(
         "This encoding region exceeds 32-bit stream offsets; append smaller frame regions.")
     }
-    let scratch = try Self.buffer(device, (2 * min(frames, interval) + 4) * streams)
-    let sizes = try Self.buffer(device, streams * 4)
-    let states = try Self.buffer(device, streams * 4)
+    let scratchBytes = (2 * min(frames, interval) + 4) * streams
+    if encodingWorkspace == nil || encodingWorkspace!.scratch.length < scratchBytes
+      || encodingWorkspace!.sizes.length < streams * 4
+    {
+      encodingWorkspace = (
+        try Self.buffer(device, scratchBytes),
+        try Self.buffer(device, streams * 4), try Self.buffer(device, streams * 4),
+        try Self.buffer(device, ((streams + 255) / 256) * 4)
+      )
+    }
+    let (scratch, sizes, states, totals) = encodingWorkspace!
     let models = try Self.buffer(device, streams)
     let offsets = try Self.buffer(device, (streams + 1) * 4)
-    let totals = try Self.buffer(device, ((streams + 255) / 256) * 4)
     let p = [UInt64(frames), UInt64(pixels), UInt64(interval), UInt64(streams), UInt64(itemBytes)]
     let command = try command()
     if !hotPixelIndices.isEmpty {
@@ -184,6 +197,7 @@ public final class MetalEncodedSource {
     let first = readyFrames
     readyFrames += frames
     peakAllocatedBytes = max(peakAllocatedBytes, device.currentAllocatedSize)
+    if readyFrames == shape[0] * shape[1] { encodingWorkspace = nil }
     if verify {
       let decoded = try read(first..<(first + frames))
       let command = try self.command()
@@ -245,6 +259,7 @@ public final class MetalEncodedSource {
   }
   public func releaseResidentStorage() {
     chunks.removeAll()
+    encodingWorkspace = nil
     isReleased = true
   }
 

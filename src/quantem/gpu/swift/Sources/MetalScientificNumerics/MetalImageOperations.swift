@@ -42,6 +42,11 @@ public final class MetalImageOperations {
   }
   private var matrixPlans: [String: MatrixPlan] = [:]
   var convolutionPlans: [String: ImageConvolutionPlan] = [:]
+  var translatedPlans: [Int: TranslatedSamplingPlan] = [:]
+  var translatedReadBuffer: MTLBuffer?
+  let referenceSampling =
+    ProcessInfo.processInfo.environment["QUANTEM_GPU_SAMPLING_REFERENCE"] == "1"
+  let profileSampling = ProcessInfo.processInfo.environment["QUANTEM_GPU_SAMPLING_PROFILE"] == "1"
   public init() throws {
     guard let device = MTLCreateSystemDefaultDevice() else {
       throw Self.invalid("A Metal device is required.")
@@ -60,10 +65,17 @@ public final class MetalImageOperations {
   }
   public func image(rows: Int, columns: Int, value: Float = 0) throws -> GPUImage {
     let result = try allocate(rows, columns)
-    try run(
-      "fill_value", [result.buffer], words: [UInt32(rows * columns)], floats: [value],
-      count: rows * columns)
+    try fill(result, value: value)
     return result
+  }
+  /// Fill an existing real float32 image without replacing its owned storage.
+  public func fill(_ image: GPUImage, value: Float = 0) throws {
+    guard !image.isComplex, image.buffer.device.registryID == device.registryID,
+      image.buffer.length >= image.rows * image.columns * 4
+    else { throw Self.invalid("Fill a real float32 image with sufficient storage on this device.") }
+    try run(
+      "fill_value", [image.buffer], words: [UInt32(image.rows * image.columns)], floats: [value],
+      count: image.rows * image.columns)
   }
   public func image(values: [Float], rows: Int, columns: Int) throws -> GPUImage {
     guard values.count == rows * columns else {
@@ -379,9 +391,9 @@ public final class MetalImageOperations {
   }
   func run(
     _ name: String, _ buffers: [MTLBuffer], words: [UInt32], floats: [Float] = [], count: Int,
-    grouped: Bool = false, groupSize: Int = 256
+    grouped: Bool = false, groupSize: Int = 256, command supplied: MTLCommandBuffer? = nil
   ) throws {
-    let command = try makeCommand()
+    let command = try supplied ?? makeCommand()
     let enc = try encoder(command, name, buffers)
     words.withUnsafeBytes { enc.setBytes($0.baseAddress!, length: $0.count, index: buffers.count) }
     if !floats.isEmpty {
@@ -399,7 +411,7 @@ public final class MetalImageOperations {
         threadsPerThreadgroup: MTLSize(width: groupSize, height: 1, depth: 1))
     }
     enc.endEncoding()
-    try complete(command)
+    if supplied == nil { try complete(command) }
   }
   func complete(_ command: MTLCommandBuffer) throws {
     command.commit()

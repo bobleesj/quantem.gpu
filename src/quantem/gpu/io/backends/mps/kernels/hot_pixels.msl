@@ -46,7 +46,7 @@ inline void correct_one(
     }
     uint result = 0;
     if (count & 1) result = values[count / 2];
-    else if (count) result = (values[count / 2 - 1] + values[count / 2]) / 2;
+    else if (count) result = uint((ulong(values[count / 2 - 1]) + ulong(values[count / 2])) / 2);
     frames[frame * ulong(height * width) + ulong(pixel)] = T(result);
 }
 
@@ -60,8 +60,10 @@ kernel void hot_median(
     if (item >= p[3]) return;
     if (p[4] == 1)
         correct_one(frames, valid, bad, p, item, true);
-    else
+    else if (p[4] == 2)
         correct_one(reinterpret_cast<device ushort *>(frames), valid, bad, p, item, true);
+    else
+        correct_one(reinterpret_cast<device uint *>(frames), valid, bad, p, item, true);
 }
 
 kernel void hot_zero(

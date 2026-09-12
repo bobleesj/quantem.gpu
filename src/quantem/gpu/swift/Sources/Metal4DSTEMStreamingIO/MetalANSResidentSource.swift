@@ -19,7 +19,8 @@ public final class MetalANSResidentSource {
   /// This is a buffer-length sum, not measured process or driver peak memory.
   public private(set) var lastOperationScratchBytes = 0
 
-  private let device: MTLDevice
+  public let device: MTLDevice
+  private var residentCountMeans: (diffraction: MTLBuffer, brightField: MTLBuffer)?
   private let queue: MTLCommandQueue
   private let decodePipeline: MTLComputePipelineState
   private let gatherPipeline: MTLComputePipelineState
@@ -36,6 +37,8 @@ public final class MetalANSResidentSource {
   public var residentBytes: Int {
     tables.reduce(0) { $0 + $1.length }
       + (failure?.length ?? 0) + (diffraction?.length ?? 0) + (request?.length ?? 0)
+      + (residentCountMeans?.diffraction.length ?? 0)
+      + (residentCountMeans?.brightField.length ?? 0)
   }
 
   public init(
@@ -311,6 +314,7 @@ public final class MetalANSResidentSource {
   }
 
   public func releaseResidentStorage() {
+    residentCountMeans = nil
     tables.removeAll(keepingCapacity: false)
     failure = nil
     diffraction = nil
@@ -360,6 +364,10 @@ public final class MetalANSResidentSource {
       throw Self.invalid(
         "ANS GPU command failed: \(command.error?.localizedDescription ?? "unknown error")")
     }
+    try checkErrors()
+  }
+
+  public func checkErrors() throws {
     guard let failure, failure.contents().load(as: UInt32.self) == 0 else {
       throw Self.invalid(
         "ANS stream termination or native count range is invalid; no result was published.")
@@ -399,5 +407,49 @@ public final class MetalANSResidentSource {
 
   private static func invalid(_ message: String) -> Metal4DSTEMStreamingIOError {
     .invalidRequest(message)
+  }
+}
+
+extension MetalANSResidentSource: MetalResidentCounts {
+  public var hotPixelIndices: [Int] { [] }
+  public var hotPixelCorrection: String { "none" }
+  public var itemBytes: Int { bytesPerValue }
+  public var readyFrames: Int { isReleased ? 0 : scanCount }
+  public var representation: Metal4DSTEMResidentRepresentation { .encoded }
+  public func countMeans() throws -> (diffraction: MTLBuffer, brightField: MTLBuffer) {
+    try requireLive()
+    if let residentCountMeans { return residentCountMeans }
+    let result = try ResidentCountMeans.calculate(self)
+    residentCountMeans = result
+    return result
+  }
+  /// Decode an owned native-count region across entropy-block boundaries.
+  public func encodeRead(_ frames: Range<Int>, into output: MTLBuffer, command: MTLCommandBuffer)
+    throws
+  {
+    try requireLive()
+    guard !frames.isEmpty, frames.lowerBound >= 0, frames.upperBound <= scanCount,
+      frames.count <= 8192
+    else { throw Self.invalid("Read 1...8192 available frames from an open encoded acquisition.") }
+    guard output.length >= frames.count * pixels * bytesPerValue,
+      output.device.registryID == device.registryID,
+      command.commandQueue.device.registryID == device.registryID
+    else { throw Self.invalid("Use a same-device destination large enough for the count region.") }
+    for block in (frames.lowerBound / blockFrames)...((frames.upperBound - 1) / blockFrames) {
+      let first = max(frames.lowerBound, block * blockFrames)
+      let stop = min(frames.upperBound, (block + 1) * blockFrames)
+      var values = parameters()
+      values[5] = UInt64(block)
+      values[6] = UInt64(first - block * blockFrames)
+      values[7] = UInt64(stop - first)
+      let decoder = try bind(command, pipeline: decodePipeline, parameters: values)
+      decoder.setBuffer(
+        output, offset: (first - frames.lowerBound) * pixels * bytesPerValue, index: 10)
+      decoder.dispatchThreads(
+        MTLSize(width: pixels, height: 1, depth: 1),
+        threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
+      decoder.endEncoding()
+    }
+    lastOperationScratchBytes = output.length
   }
 }

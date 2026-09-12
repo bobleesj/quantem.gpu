@@ -611,8 +611,10 @@ public final class MetalCompactH5ResidentSource {
   public let metadata: MetalCompactH5Metadata
   public let loadMetrics: MetalCompactH5LoadMetrics
 
-  private let device: MTLDevice
+  public let device: MTLDevice
   private let queue: MTLCommandQueue
+  private var regionPipeline: MTLComputePipelineState?
+  private var residentCountMeans: (diffraction: MTLBuffer, brightField: MTLBuffer)?
   private let selectedPipeline: MTLComputePipelineState
   private var detectorColumnsPipeline: MTLComputePipelineState?
   private let detectorPipeline: MTLComputePipelineState
@@ -2039,6 +2041,7 @@ public final class MetalCompactH5ResidentSource {
   /// remain readable so a file-switch receipt can retain the completed source's
   /// provenance without retaining its Metal allocation.
   public func releaseResidentStorage() {
+    residentCountMeans = nil
     guard !isReleased else { return }
     residencyLease?.end()
     residencyLease = nil
@@ -5155,5 +5158,85 @@ public enum MetalCompactH5Loader {
 
   private static func milliseconds(from start: ContinuousClock.Instant) -> Double {
     MetalCompactH5ResidentSource.milliseconds(from: start)
+  }
+}
+
+extension MetalCompactH5ResidentSource: MetalResidentCounts {
+  public var hotPixelIndices: [Int] {
+    guard let excluded, !isReleased else { return [] }
+    let mask = excluded.contents().assumingMemoryBound(to: UInt32.self)
+    return (0..<metadata.detectorPixelCount).filter { mask[$0] != 0 }
+  }
+  public var hotPixelCorrection: String { hotPixelIndices.isEmpty ? "none" : "exclude" }
+
+  public var shape: [Int] {
+    [metadata.scanRows, metadata.scanColumns, metadata.detectorRows, metadata.detectorColumns]
+  }
+  public var itemBytes: Int { 4 }
+  public var readyFrames: Int { isReleased ? 0 : metadata.scanCount }
+  public var representation: Metal4DSTEMResidentRepresentation { .packed }
+  public var residentBytes: Int {
+    isReleased
+      ? 0
+      : Int(loadMetrics.totalResidentBytes)
+        + (residentCountMeans?.diffraction.length ?? 0)
+        + (residentCountMeans?.brightField.length ?? 0)
+  }
+  public func countMeans() throws -> (diffraction: MTLBuffer, brightField: MTLBuffer) {
+    guard !isReleased else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "Reload released counts before requesting means.")
+    }
+    if let residentCountMeans { return residentCountMeans }
+    let result = try ResidentCountMeans.calculate(self)
+    residentCountMeans = result
+    return result
+  }
+  /// Return an owned uint32 frame region with the same exact counts and stored
+  /// exclusion mask as snapshotDiffraction. No host array or full volume is made.
+  public func encodeRead(_ frames: Range<Int>, into output: MTLBuffer, command: MTLCommandBuffer)
+    throws
+  {
+    guard !isReleased, let excluded, !frames.isEmpty, frames.lowerBound >= 0,
+      frames.upperBound <= metadata.scanCount, frames.count <= 8192
+    else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "Read 1...8192 available frames from an open packed acquisition.")
+    }
+    let bytes = frames.count * metadata.detectorPixelCount * 4
+    guard output.length >= bytes, output.device.registryID == device.registryID,
+      command.commandQueue.device.registryID == device.registryID,
+      let encoder = command.makeComputeCommandEncoder()
+    else {
+      throw Metal4DSTEMStreamingIOError.allocationFailed(
+        label: "packed count region", bytes: UInt64(bytes))
+    }
+    if regionPipeline == nil {
+      let library = try Metal4DSTEMKernels.makeCompactH5Library(device: device)
+      regionPipeline = try device.makeComputePipelineState(
+        function: library.makeFunction(name: "compact_h5_read_region")!)
+    }
+    encoder.setComputePipelineState(regionPipeline!)
+    encoder.setBuffer(excluded, offset: 0, index: 2)
+    encoder.setBuffer(output, offset: 0, index: 3)
+    for (ordinal, shard) in shards.enumerated() {
+      let base = ordinal * metadata.scansPerShard
+      let first = max(frames.lowerBound, base)
+      let stop = min(frames.upperBound, base + metadata.scansPerShard)
+      if first >= stop { continue }
+      let parameters: [UInt32] = [
+        UInt32(metadata.detectorPixelCount), UInt32(first - base), UInt32(stop - first),
+        UInt32(first - frames.lowerBound),
+        UInt32((metadata.scansPerShard + metadata.scanTile - 1) / metadata.scanTile),
+        UInt32(metadata.scanTile), headerWordsPerPixel, headerEncoding, payloadLayout,
+      ]
+      encoder.setBuffer(shard.payload, offset: 0, index: 0)
+      encoder.setBuffer(shard.descriptors, offset: 0, index: 1)
+      encoder.setBytes(parameters, length: parameters.count * 4, index: 4)
+      encoder.dispatchThreads(
+        MTLSize(width: (stop - first) * metadata.detectorPixelCount, height: 1, depth: 1),
+        threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+    }
+    encoder.endEncoding()
   }
 }

@@ -207,7 +207,7 @@ kernel void complement_clamp(device float *out [[buffer(0)]],constant uint &n [[
 inline float raw_at(device const uchar *a,int r,int c,int dr,int dc,constant int *p) {
     if(r<p[5]||r>=p[6]||c<0||c>=p[1]||dr<0||dr>=p[2]||dc<0||dc>=p[3])return 0;
     ulong at=((ulong(r-p[5])*p[1]+c)*p[2]+dr)*p[3]+dc;
-    return p[7]==1?float(a[at]):float(reinterpret_cast<device const ushort *>(a)[at]);
+    return p[7]==1?float(a[at]):(p[7]==2?float(reinterpret_cast<device const ushort *>(a)[at]):float(reinterpret_cast<device const uint *>(a)[at]));
 }
 inline float scan_sample(device const uchar *a,int r,int c,int dr,int dc,float2 fraction,int2 delta,constant int *p) {
     float value=0;
@@ -220,7 +220,8 @@ inline float scan_sample(device const uchar *a,int r,int c,int dr,int dc,float2 
 kernel void sample_accumulate(device const uchar *raw [[buffer(0)]],device const float *scan_weight [[buffer(1)]],
     device const float *det_weight [[buffer(2)]],device const float2 *scan_shifts [[buffer(3)]],
     device const float2 *det_shifts [[buffer(4)]],device float *numerator [[buffer(5)]],
-    device float *denominator [[buffer(6)]],constant int *p [[buffer(7)]],uint i [[thread_position_in_grid]]) {
+    device float *denominator [[buffer(6)]],constant int *p [[buffer(7)]],uint i [[thread_position_in_grid]],
+    uint lane [[thread_index_in_simdgroup]],uint width [[threads_per_simdgroup]]) {
     // p: scan rows/columns, detector rows/columns, first output row,
     // decoded first/stop row, native bytes, output rows, source index.
     uint pixels=p[2]*p[3];if(i>=uint(p[8]*p[1])*pixels)return;
@@ -231,10 +232,22 @@ kernel void sample_accumulate(device const uchar *raw [[buffer(0)]],device const
     float nc=normalized_translation(pixel%p[3],p[3],ds.y);
     float rr=(nr+1)*.5f*float(p[2]-1),cc=(nc+1)*.5f*float(p[3]-1);
     int dr=int(floor(rr)),dc=int(floor(cc));float fr=rr-dr,fc=cc-dc;
-    float value=scan_sample(raw,r,c,dr,dc,fraction,delta,p)*((1-fr)*(1-fc))
-        +scan_sample(raw,r,c,dr,dc+1,fraction,delta,p)*((1-fr)*fc)
-        +scan_sample(raw,r,c,dr+1,dc,fraction,delta,p)*(fr*(1-fc))
-        +scan_sample(raw,r,c,dr+1,dc+1,fraction,delta,p)*(fr*fc);
+    // Neighboring lanes usually need the same interpolated detector column.
+    // Reuse only after checking the exact integer coordinates and scan frame;
+    // subgroup/row boundaries retain the original four-gather calculation.
+    float upper=scan_sample(raw,r,c,dr,dc,fraction,delta,p);
+    float lower=scan_sample(raw,r,c,dr+1,dc,fraction,delta,p);
+    float upperNext=simd_shuffle_down(upper,1);
+    float lowerNext=simd_shuffle_down(lower,1);
+    int scanNext=simd_shuffle_down(scan,1),drNext=simd_shuffle_down(dr,1),dcNext=simd_shuffle_down(dc,1);
+    bool reuse=lane+1<width && i+1<uint(p[8]*p[1])*pixels
+        && scanNext==scan && drNext==dr && dcNext==dc+1;
+    if(!reuse) {
+        upperNext=scan_sample(raw,r,c,dr,dc+1,fraction,delta,p);
+        lowerNext=scan_sample(raw,r,c,dr+1,dc+1,fraction,delta,p);
+    }
+    float value=upper*((1-fr)*(1-fc)) +upperNext*((1-fr)*fc)
+        +lower*(fr*(1-fc)) +lowerNext*(fr*fc);
     float weight=scan_weight[r*p[1]+c];
     numerator[i]+=value*weight;denominator[i]+=weight*det_weight[pixel];
 }
@@ -242,3 +255,70 @@ kernel void weighted_finish(device float *num [[buffer(0)]],device const float *
     device const float *edge [[buffer(2)]],constant uint2 &p [[buffer(3)]],uint i [[thread_position_in_grid]]) {
     if(i<p.x){float d=den[i]+edge[i%p.y];num[i]=d==0?0:num[i]/d;}
 }
+
+// Invariant sampling geometry is prepared once per shape and displacement.
+// Coordinates and arithmetic match sample_accumulate, including its normalized grid.
+kernel void translated_detector_plan(device const float2 *shifts [[buffer(0)]],
+    device int4 *indices [[buffer(1)]], device float4 *weights [[buffer(2)]],
+    constant uint4 &p [[buffer(3)]], uint i [[thread_position_in_grid]]) {
+    if(i>=p.x*p.y)return;
+    float2 s=shifts[p.z];
+    float nr=normalized_translation(i/p.y,p.x,s.x),nc=normalized_translation(i%p.y,p.y,s.y);
+    float rr=(nr+1)*.5f*float(p.x-1),cc=(nc+1)*.5f*float(p.y-1);
+    int r=int(floor(rr)),c=int(floor(cc));float fr=rr-r,fc=cc-c;
+    int4 rows=int4(r,r,r+1,r+1),cols=int4(c,c+1,c,c+1);
+    indices[i]=select(rows*int(p.y)+cols,int4(-1),rows<0||rows>=int(p.x)||cols<0||cols>=int(p.y));
+    weights[i]=float4((1-fr)*(1-fc),(1-fr)*fc,fr*(1-fc),fr*fc);
+}
+kernel void translated_scan_plan(device const float2 *shifts [[buffer(0)]],
+    device int4 *indices [[buffer(1)]],device float4 *weights [[buffer(2)]],
+    constant uint4 &p [[buffer(3)]],uint i [[thread_position_in_grid]]) {
+    if(i>=p.x*p.y)return;
+    float2 off=-shifts[p.z],f=off-floor(off);int2 d=int2(floor(off));
+    int r=int(i/p.y)+d.x,c=int(i%p.y)+d.y;
+    int4 rows=int4(r,r,r+1,r+1),cols=int4(c,c+1,c,c+1);
+    indices[i]=select(rows*int(p.y)+cols,int4(-1),rows<0||rows>=int(p.x)||cols<0||cols>=int(p.y));
+    if(i==0)weights[0]=float4((1-f.x)*(1-f.y),(1-f.x)*f.y,f.x*(1-f.y),f.x*f.y);
+}
+template<typename T>
+inline float prepared_raw(device const T *raw,int scan,int pixel,constant uint4 &p) {
+    return scan<0||pixel<0?0:float(raw[ulong(uint(scan-int(p.y)))*p.x+uint(pixel)]);
+}
+template<typename T>
+inline float prepared_scan(device const T *raw,int4 scan,int pixel,float4 w,constant uint4 &p) {
+    float value=0;
+    value+=prepared_raw(raw,scan.x,pixel,p)*w.x;
+    value+=prepared_raw(raw,scan.y,pixel,p)*w.y;
+    value+=prepared_raw(raw,scan.z,pixel,p)*w.z;
+    value+=prepared_raw(raw,scan.w,pixel,p)*w.w;
+    return value;
+}
+template<typename T>
+inline void prepared_accumulate(device const T *raw,device const int4 *scans,
+    device const int4 *pixels,device const float4 *scanCoefficients,device const float4 *detectorCoefficients,
+    device const float *scanWeight,device const float *detectorWeight,device float *numerator,
+    device float *denominator,constant uint4 &p,uint2 at,uint lane,uint width) {
+    if(at.x>=p.x||at.y>=p.w)return;
+    uint scan=at.y+p.z,i=at.y*p.x+at.x;
+    int4 s=scans[scan],d=pixels[at.x];float4 sw=scanCoefficients[0],dw=detectorCoefficients[at.x];
+    float upper=prepared_scan(raw,s,d.x,sw,p),lower=prepared_scan(raw,s,d.z,sw,p);
+    float upperNext=simd_shuffle_down(upper,1),lowerNext=simd_shuffle_down(lower,1);
+    int nextUpper=simd_shuffle_down(d.x,1),nextLower=simd_shuffle_down(d.z,1);
+    bool reuse=lane+1<width&&at.x+1<p.x&&nextUpper==d.y&&nextLower==d.w;
+    if(!reuse){upperNext=prepared_scan(raw,s,d.y,sw,p);lowerNext=prepared_scan(raw,s,d.w,sw,p);}
+    float value=upper*dw.x+upperNext*dw.y+lower*dw.z+lowerNext*dw.w;
+    float weight=scanWeight[scan];
+    numerator[i]+=value*weight;denominator[i]+=weight*detectorWeight[at.x];
+}
+#define PREPARED_KERNEL(NAME,TYPE) \
+kernel void NAME(device const TYPE *raw [[buffer(0)]],device const int4 *scans [[buffer(1)]], \
+    device const int4 *pixels [[buffer(2)]],device const float4 *sw [[buffer(3)]], \
+    device const float4 *dw [[buffer(4)]],device const float *scanWeight [[buffer(5)]], \
+    device const float *detectorWeight [[buffer(6)]],device float *numerator [[buffer(7)]], \
+    device float *denominator [[buffer(8)]],constant uint4 &p [[buffer(9)]], \
+    uint2 at [[thread_position_in_grid]],uint lane [[thread_index_in_simdgroup]],uint width [[threads_per_simdgroup]]) { \
+    prepared_accumulate(raw,scans,pixels,sw,dw,scanWeight,detectorWeight,numerator,denominator,p,at,lane,width); \
+}
+PREPARED_KERNEL(sample_prepared_u8,uchar)
+PREPARED_KERNEL(sample_prepared_u16,ushort)
+PREPARED_KERNEL(sample_prepared_u32,uint)
