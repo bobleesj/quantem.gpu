@@ -805,6 +805,10 @@ class SSB:
             loaded = load(
                 source,
                 backend=selected,
+                # SSB builds FFT-ready floating-point arrays and therefore
+                # consumes a dense detector stack. The general HDF5 default
+                # remains native encoded residency for direct reductions.
+                representation="dense",
                 detector_bin=1,
                 dtype=dtype,
                 verbose=verbose,
