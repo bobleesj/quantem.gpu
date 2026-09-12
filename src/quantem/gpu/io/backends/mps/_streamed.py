@@ -355,11 +355,11 @@ class MPSStreamedCounts:
         _buffer_view(sums.buffer)[:] = b"\0" * sums.nbytes
         self._clear_errors()
         try:
+            command = self._queue.commandBuffer()
             for chunk in self.chunks:
                 parameters = np.asarray(
                     [chunk.scans, pixels, self.interval], dtype=np.uint64
                 ).tobytes()
-                command = self._queue.commandBuffer()
                 encoder = command.computeCommandEncoder()
                 encoder.setComputePipelineState_(self._pipelines["detector_total"])
                 for index, buffer in enumerate(
@@ -370,7 +370,7 @@ class MPSStreamedCounts:
                 encoder.setBuffer_offset_atIndex_(self._valid, 0, 7)
                 self._dispatch_threads(encoder, pixels)
                 encoder.endEncoding()
-                _complete(command, "ANS detector total")
+            _complete(command, "ANS detector total")
             self._check_errors()
             command = self._queue.commandBuffer()
             encoder = command.computeCommandEncoder()
@@ -407,36 +407,46 @@ class MPSStreamedCounts:
         output = MPSANSArray(
             self._device, self._metal, self.shape[:2], np.uint64
         )
+        decoded = MPSANSArray(
+            self._device,
+            self._metal,
+            (max((chunk.scans for chunk in self.chunks), default=1), *self.shape[2:]),
+            self.dtype,
+        )
+        self._clear_errors()
         try:
+            command = self._queue.commandBuffer()
             for chunk in self.chunks:
-                decoded = self.decode_scan_range_device(
-                    chunk.first, chunk.first + chunk.scans
+                self._encode_decode(
+                    command,
+                    chunk,
+                    0,
+                    chunk.scans,
+                    decoded.buffer,
                 )
-                try:
-                    parameters = np.asarray(
-                        [pixels, self.dtype.itemsize, chunk.first, 0], np.uint64
-                    ).tobytes()
-                    command = self._queue.commandBuffer()
-                    encoder = command.computeCommandEncoder()
-                    encoder.setComputePipelineState_(self._pipelines["reduce"])
-                    for index, buffer in enumerate(
-                        (decoded.buffer, mask_buffer, output.buffer)
-                    ):
-                        encoder.setBuffer_offset_atIndex_(buffer, 0, index)
-                    encoder.setBytes_length_atIndex_(parameters, len(parameters), 3)
-                    encoder.dispatchThreadgroups_threadsPerThreadgroup_(
-                        self._metal.MTLSizeMake(chunk.scans, 1, 1),
-                        self._metal.MTLSizeMake(128, 1, 1),
-                    )
-                    encoder.endEncoding()
-                    _complete(command, "ANS detector reduction")
-                finally:
-                    decoded.release()
+                parameters = np.asarray(
+                    [pixels, self.dtype.itemsize, chunk.first, 0], np.uint64
+                ).tobytes()
+                encoder = command.computeCommandEncoder()
+                encoder.setComputePipelineState_(self._pipelines["reduce"])
+                for index, buffer in enumerate(
+                    (decoded.buffer, mask_buffer, output.buffer)
+                ):
+                    encoder.setBuffer_offset_atIndex_(buffer, 0, index)
+                encoder.setBytes_length_atIndex_(parameters, len(parameters), 3)
+                encoder.dispatchThreadgroups_threadsPerThreadgroup_(
+                    self._metal.MTLSizeMake(chunk.scans, 1, 1),
+                    self._metal.MTLSizeMake(128, 1, 1),
+                )
+                encoder.endEncoding()
+            _complete(command, "ANS detector reduction")
+            self._check_errors()
             return output
         except BaseException:
             output.release()
             raise
         finally:
+            decoded.release()
             _release(mask_buffer)
 
     def detector_mean_device(self):
