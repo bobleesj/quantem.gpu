@@ -73,6 +73,15 @@ def test_mps_ans_bounded_merge_preserves_counts_mask_and_late_regions(
         assert report["range_scope"] == "complete merged output"
         assert result.metadata["maped_merge"]["backend"] == "mps"
         assert result.metadata["maped_merge"]["region_frames"] == 1024
+        summary = result.metadata["maped_summary"]
+        assert summary["mean_bright_field"]["divisor"] == np.prod(shape[2:])
+        assert summary["mean_bright_field"]["alignment_role"] == "real_space"
+        assert summary["intensity_normalization"] == "none"
+        assert result.metadata["maped_merge"]["real_space_shifts_row_column"] == [
+            [0.0, 0.0]
+        ]
+        reopened_metadata = io.inspect(tmp_path / "merged_master.h5").metadata
+        assert reopened_metadata["maped_summary"] == summary
         for index in (0, 401, 1100, np.prod(shape[:2]) - 1):
             np.testing.assert_allclose(
                 result.data.frame(index),

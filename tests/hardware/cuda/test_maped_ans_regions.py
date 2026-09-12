@@ -12,6 +12,7 @@ pytestmark = pytest.mark.skipif(
     reason="Set QUANTEM_CUDA_ANS_TEST=1 in an owned CUDA test window.",
 )
 
+from quantem.gpu import io
 from quantem.gpu._compact.streamed import StreamedCounts
 from quantem.gpu._maped.cuda import _merge_regions
 from quantem.gpu.detector import prepare
@@ -132,6 +133,13 @@ def test_maped_ans_writes_reopenable_scaled_result(tmp_path):
         assert result.metadata["maped_merge"]["backend"] == "cuda"
         assert result.metadata["maped_merge"]["gpu_encode_seconds"] >= 0
         assert result.metadata["maped_merge"]["reopen_seconds"] >= 0
+        summary = result.metadata["maped_summary"]
+        assert summary["mean_bright_field"]["divisor"] == 24
+        assert summary["mean_bright_field"]["alignment_role"] == "real_space"
+        assert summary["intensity_normalization"] == "none"
+        assert result.metadata["maped_merge"]["real_space_shifts_row_column"] == [
+            [0.0, 0.0]
+        ]
         session = prepare(result)
         for index in (0, 7, shape[0] * shape[1] - 1):
             np.testing.assert_allclose(
@@ -141,6 +149,12 @@ def test_maped_ans_writes_reopenable_scaled_result(tmp_path):
                 atol=report["scale"],
             )
         result.close()
+        reopened = io.load(path, backend="cuda", representation="packed", verbose=False)
+        try:
+            assert reopened.metadata["maped_summary"] == summary
+            assert reopened.metadata["maped_merge"]["backend"] == "cuda"
+        finally:
+            reopened.close()
     finally:
         source.release()
 

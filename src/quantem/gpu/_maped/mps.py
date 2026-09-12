@@ -12,6 +12,7 @@ import h5py
 import numpy as np
 import torch
 
+from quantem.gpu._maped._provenance import summary_record
 from quantem.gpu.io.backends.mps._streamed import MPSStreamedCounts
 from quantem.gpu.io.backends.mps.packed import (
     _allocate_shared,
@@ -434,6 +435,7 @@ def merge_to_scaled_h5(
         "measurement": "GPU comparison against merged float32 regions",
         "selection": {"scan_region": None, "detector_region": None},
     }
+    summaries = summary_record(shape, len(sources))
     metadata = {
         "quantem_precision_v1": json.dumps({**report, "complete": False}),
         "source_dtype": "float32",
@@ -446,6 +448,7 @@ def merge_to_scaled_h5(
         "representation": "packed",
         "residency": "device",
         "lossless_exact": False,
+        "quantem_maped_summary_v1": json.dumps(summaries),
     }
     writer = H5Writer(
         output_path,
@@ -498,10 +501,13 @@ def merge_to_scaled_h5(
         "gpu_encode_seconds": encode_seconds,
         "merge_encode_write_seconds": write_seconds,
         "released_sources_before_reopen": bool(release_sources_before_reopen),
+        "real_space_shifts_row_column": real_np.tolist(),
+        "diffraction_shifts_row_column": diffraction_np.tolist(),
     }
     with h5py.File(output_path, "r+") as handle:
         handle.attrs["quantem_precision_v1"] = json.dumps(report)
         handle.attrs["quantem_maped_merge_v1"] = json.dumps(merge_record)
+        handle.attrs["quantem_maped_summary_v1"] = json.dumps(summaries)
     if verbose:
         print(
             f"Merged {len(sources)} resident tilts to {output_path} "
@@ -526,4 +532,5 @@ def merge_to_scaled_h5(
     with h5py.File(output_path, "r+") as handle:
         handle.attrs["quantem_maped_merge_v1"] = json.dumps(merge_record)
     result.metadata["maped_merge"] = merge_record
+    result.metadata["maped_summary"] = summaries
     return result
