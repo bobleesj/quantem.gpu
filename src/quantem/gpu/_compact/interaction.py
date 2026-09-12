@@ -286,6 +286,112 @@ class StreamedSeriesCompute(CudaSeriesCompute):
                 result[index] = (total / self.n_frames).astype(cp.float32)
             return result[0] if not self.series_shape else result
 
+    def _weighted_sum_native(self, weights):
+        """Return exact per-scan sums for nonnegative integer pixel weights."""
+        import cupy as cp
+
+        values = np.asarray(weights)
+        if values.shape != self.det_shape or values.dtype.kind not in "uib":
+            raise ValueError(
+                f"Detector weights must be nonnegative integers with shape {self.det_shape}."
+            )
+        if np.any(values < 0) or np.any(values > np.iinfo(np.int32).max):
+            raise ValueError("Detector weights must fit nonnegative int32 values.")
+        values = values.astype(np.int32, copy=False)
+        selection = self._plan(values)
+        fi, _fc, pi, _pc = selection
+        with self.lock, cp.cuda.Device(self.device):
+            started = time.perf_counter()
+            result = self._output(
+                None, (*self.series_shape, *self.scan_shape), np.dtype(np.uint64)
+            )
+            begin, errors = self._launch()
+            stream = cp.cuda.get_current_stream()
+            for target, staging, source in zip(
+                (
+                    self.selected_fields,
+                    self.field_coefficients,
+                    self.selected_pixels,
+                    self.pixel_coefficients,
+                ),
+                self._staging_views,
+                selection,
+            ):
+                if len(source):
+                    staging[: len(source)] = source
+                    target[: len(source)].set(staging[: len(source)], stream=stream)
+            self.kernels["index_u64"](
+                ((self.max_scans + 127) // 128, self.chunk_count),
+                (128,),
+                (
+                    self.descriptors,
+                    self.selected_fields,
+                    self.field_coefficients,
+                    np.uint32(len(fi)),
+                    result,
+                    result,
+                    np.uint64(self.n_frames),
+                    np.uint32(self.fields),
+                    np.uint32(self.interval),
+                    np.int32(0),
+                ),
+            )
+            if len(pi):
+                groups = math.ceil(len(pi) / 32) * math.ceil(
+                    self.max_scans / self.interval / self.residual_warps
+                )
+                self.kernels["residual_u64"](
+                    (groups, self.chunk_count),
+                    (32 * self.residual_warps,),
+                    (
+                        self.descriptors,
+                        self.selected_pixels,
+                        self.pixel_coefficients,
+                        np.uint32(len(pi)),
+                        result,
+                        errors,
+                        np.uint64(self.n_frames),
+                        np.uint32(self.pixels),
+                        np.uint32(self.interval),
+                    ),
+                )
+            self._finish(
+                begin,
+                errors,
+                started,
+                dict(
+                    query_launches=1 + bool(len(pi)),
+                    residual_pixels=len(pi),
+                    spatial_fields=len(fi),
+                    incremental=False,
+                    launch=self._current_launch,
+                    weighted=True,
+                ),
+                True,
+            )
+            return result
+
+    def center_of_mass(self, mask=None):
+        """Return exact count-weighted detector centers without dense expansion."""
+        import cupy as cp
+
+        valid = np.ones(self.det_shape, dtype=np.uint32)
+        if mask is not None:
+            selected = np.asarray(mask, dtype=bool)
+            if selected.shape != self.det_shape:
+                raise ValueError(
+                    f"Detector mask shape {selected.shape} does not match {self.det_shape}."
+                )
+            valid *= selected
+        rows, cols = np.indices(self.det_shape, dtype=np.uint32)
+        total = self._weighted_sum_native(valid)
+        row_moment = self._weighted_sum_native(valid * rows)
+        col_moment = self._weighted_sum_native(valid * cols)
+        denominator = cp.maximum(total.astype(cp.float64), 1.0)
+        com_row = (row_moment.astype(cp.float64) / denominator).astype(cp.float32)
+        com_col = (col_moment.astype(cp.float64) / denominator).astype(cp.float32)
+        return com_col, com_row
+
     def masked_sum_native(self, mask, *, out=None, wait=True, block_stride=1):
         import cupy as cp
 
