@@ -5096,15 +5096,15 @@ def load(
     bit-packed CUDA storage with ``stack=False``. Packed is the default.
     A first-seen source needs one bounded measurement pass and one packing pass;
     a validated width-plan cache removes the measurement pass on later loads.
-    All packed sources remain resident when this call returns. No binning,
+    All packed sources remain resident when this call returns. No binning or
     clipping is applied. Stored detector-mask pixels use GPU median replacement
     by default before packing.
 
     All spatial arguments use ``(row, col)`` order. ``representation`` selects
     how the complete logical data is retained. Existing Lossless Pack Format
     sources select their saved representation. Ordinary HDF5 selects ``"packed"``
-    automatically on CUDA. Pass ``representation="dense"`` explicitly when an
-    unpacked array is required.
+    automatically on CUDA and ``"ans"`` on MPS. Pass
+    ``representation="dense"`` explicitly when an unpacked array is required.
 
     Self-contained ANS files default to ``representation="ans"`` and retain
     stored native counts. ``representation="paired"`` streams complete uint16
@@ -5156,8 +5156,8 @@ def load(
     representation
         ``"dense"``, ``"packed"``, or ``"ans"``. The authenticated storage
         schema selects the exact decoder within each representation.
-        When omitted, ordinary HDF5 uses lossless packed GPU storage;
-        saved compact sources retain their recorded representation. Request
+        When omitted, ordinary HDF5 uses packed CUDA or ANS MPS storage; saved
+        compact sources retain their recorded representation. Request
         ``representation="dense"`` explicitly for dense arrays or transformed
         selections. Unsupported
         source/representation/backend combinations raise rather than transform
@@ -5314,7 +5314,13 @@ def load(
         DataRepresentation.detect_source(path) is DataRepresentation.DENSE
         for path in paths
     ):
-        representation = DataRepresentation.PACKED
+        from .backends import resolve_backend
+
+        representation = (
+            DataRepresentation.ANS
+            if resolve_backend(backend) == "mps"
+            else DataRepresentation.PACKED
+        )
     if (representation is not None
             and DataRepresentation.parse(representation) is DataRepresentation.PACKED
             and paths

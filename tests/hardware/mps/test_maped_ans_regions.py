@@ -70,7 +70,6 @@ def test_h5_ans_defaults_to_gpu_median_hot_pixel_correction(tmp_path):
     loaded = io.load(
         path,
         backend="mps",
-        representation="ans",
         scan_shape=(2, 5),
         apply_mask=False,
         verbose=False,
