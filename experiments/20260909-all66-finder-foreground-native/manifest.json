@@ -1,0 +1,179 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-finder-foreground-native",
+  "status": "succeeded",
+  "question": "Does a public Finder Open that leaves the exact QA app genuinely active improve complete native presentation evidence versus prior background-launched observations?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-finder-foreground-native/manifest.json"
+  },
+  "code": {
+    "repository": "Live4DSTEM",
+    "revision": "689c4b71b7651e1ff175d19cfae2c6c8f472091a",
+    "dirty": true,
+    "entrypoint": "Public Finder Open + Series encoded-folder UI + CUA gestures",
+    "diff_sha256": "361750a2048bb46c91c3fe5965efafb4768485da5d5298edc5ab973ab446bad3",
+    "snapshot_path": "local-evidence/mixedtails0909b-app.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "representation": "lossless entropy only",
+    "source_bytes": 84681338880,
+    "index_bytes": 2108620800,
+    "app_executable_sha256": "60c52d38b786f782b12cc66a66305c23695cdee76610d4f5b77a0cd8a176810a",
+    "qgpu_base": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "qgpu_packaged_patch": "8834392350ce4b213e2580c67593849e6a92288ffaf85b325f1010709be37c43",
+    "pid": 86600,
+    "route": "Official native CUA. getApp initially launches in background; Finder GoTo exactapp then Open Finder item made NSWorkspace frontmost exactbundle and isActive=true. No source/kernel/power/security/display setting change. Existing XCTest authorization remainsblocked; no retry.",
+    "input_limit": "Two-endpoint CUA drags, not sustained arbitrary-velocity input. Capture complete native query publications/presents honestly. Correctedforeground state is not itself an FPS pass.",
+    "display": "Builtin1 independently120Hz; Studio3=60Hz notmeasurementtarget.",
+    "timing": "Prepared archive/source pages unspecified; native load and complete query publication/presentation, no coldoriginalHDF5 claim.",
+    "lifecycle": "Exactzero ->onePID86600 ->zero viaCmd-Q; samePID afterFinderOpen. Nootherappclosed.",
+    "result": "FAIL120scientificFPS and10/20milestones. Same exact app trulyforeground,22requests/22full66publications/21distinct198-value probe hashes. BF p50/p95/max522.761/659.120/659.120ms N7;ADF580.757/642.583/642.583 N9;ABF577.863/659.546/659.546 N6. Only4/22complete66positivepresentsets. Missingtimestamps not blank/dropcounts. Foreground alone did not solve native latency.",
+    "memory_result": "90samples12:05:51-12:11:48UTC;RSSmax812777472B(excludes80.83GiBMetal);compressor1352040448B;swap5583.06MiB unchanged. Sampling endedbeforelaterADF/controls; notcompletejourneypeak.",
+    "loaded": "Prepared archive/sourcepagesunspecified:source14.70s,index4.76s,panels19.89s,firstpositiveVI20.275977s. NotcoldHDF5.",
+    "artifact_results": {
+      "finder-native-analysis-json": "FAIL120scientificFPS and10/20milestones. Same exact app trulyforeground,22requests/22full66publications/21distinct198-value probe hashes. BF p50/p95/max522.761/659.120/659.120ms N7;ADF580.757/642.583/642.583 N9;ABF577.863/659.546/659.546 N6. Only4/22complete66positivepresentsets. Missingtimestamps not blank/dropcounts. Foreground alone did not solve native latency.",
+      "finder-native-journey-json": "FAIL120scientificFPS and10/20milestones. Same exact app trulyforeground,22requests/22full66publications/21distinct198-value probe hashes. BF p50/p95/max522.761/659.120/659.120ms N7;ADF580.757/642.583/642.583 N9;ABF577.863/659.546/659.546 N6. Only4/22complete66positivepresentsets. Missingtimestamps not blank/dropcounts. Foreground alone did not solve native latency.",
+      "finder-native-memory-txt": "FAIL120scientificFPS and10/20milestones. Same exact app trulyforeground,22requests/22full66publications/21distinct198-value probe hashes. BF p50/p95/max522.761/659.120/659.120ms N7;ADF580.757/642.583/642.583 N9;ABF577.863/659.546/659.546 N6. Only4/22complete66positivepresentsets. Missingtimestamps not blank/dropcounts. Foreground alone did not solve native latency.",
+      "finder-native-memory-summary-json": "FAIL120scientificFPS and10/20milestones. Same exact app trulyforeground,22requests/22full66publications/21distinct198-value probe hashes. BF p50/p95/max522.761/659.120/659.120ms N7;ADF580.757/642.583/642.583 N9;ABF577.863/659.546/659.546 N6. Only4/22complete66positivepresentsets. Missingtimestamps not blank/dropcounts. Foreground alone did not solve native latency.",
+      "finder-foreground-preflight-txt": "FAIL120scientificFPS and10/20milestones. Same exact app trulyforeground,22requests/22full66publications/21distinct198-value probe hashes. BF p50/p95/max522.761/659.120/659.120ms N7;ADF580.757/642.583/642.583 N9;ABF577.863/659.546/659.546 N6. Only4/22complete66positivepresentsets. Missingtimestamps not blank/dropcounts. Foreground alone did not solve native latency.",
+      "finder-foreground-loaded-check-txt": "FAIL120scientificFPS and10/20milestones. Same exact app trulyforeground,22requests/22full66publications/21distinct198-value probe hashes. BF p50/p95/max522.761/659.120/659.120ms N7;ADF580.757/642.583/642.583 N9;ABF577.863/659.546/659.546 N6. Only4/22complete66positivepresentsets. Missingtimestamps not blank/dropcounts. Foreground alone did not solve native latency.",
+      "finder-native-bf-png": "FAIL120scientificFPS and10/20milestones. Same exact app trulyforeground,22requests/22full66publications/21distinct198-value probe hashes. BF p50/p95/max522.761/659.120/659.120ms N7;ADF580.757/642.583/642.583 N9;ABF577.863/659.546/659.546 N6. Only4/22complete66positivepresentsets. Missingtimestamps not blank/dropcounts. Foreground alone did not solve native latency.",
+      "finder-native-abf-png": "FAIL120scientificFPS and10/20milestones. Same exact app trulyforeground,22requests/22full66publications/21distinct198-value probe hashes. BF p50/p95/max522.761/659.120/659.120ms N7;ADF580.757/642.583/642.583 N9;ABF577.863/659.546/659.546 N6. Only4/22complete66positivepresentsets. Missingtimestamps not blank/dropcounts. Foreground alone did not solve native latency.",
+      "finder-native-adf-png": "FAIL120scientificFPS and10/20milestones. Same exact app trulyforeground,22requests/22full66publications/21distinct198-value probe hashes. BF p50/p95/max522.761/659.120/659.120ms N7;ADF580.757/642.583/642.583 N9;ABF577.863/659.546/659.546 N6. Only4/22complete66positivepresentsets. Missingtimestamps not blank/dropcounts. Foreground alone did not solve native latency.",
+      "finder-native-shared-controls-png": "FAIL120scientificFPS and10/20milestones. Same exact app trulyforeground,22requests/22full66publications/21distinct198-value probe hashes. BF p50/p95/max522.761/659.120/659.120ms N7;ADF580.757/642.583/642.583 N9;ABF577.863/659.546/659.546 N6. Only4/22complete66positivepresentsets. Missingtimestamps not blank/dropcounts. Foreground alone did not solve native latency.",
+      "mixedtails0909b-frame-pacing-launch-4e25bc16-690b-4fc0-8ca4-4cde865fe72b-jsonl": "FAIL120scientificFPS and10/20milestones. Same exact app trulyforeground,22requests/22full66publications/21distinct198-value probe hashes. BF p50/p95/max522.761/659.120/659.120ms N7;ADF580.757/642.583/642.583 N9;ABF577.863/659.546/659.546 N6. Only4/22complete66positivepresentsets. Missingtimestamps not blank/dropcounts. Foreground alone did not solve native latency.",
+      "mixedtails0909b-app-patch": "FAIL120scientificFPS and10/20milestones. Same exact app trulyforeground,22requests/22full66publications/21distinct198-value probe hashes. BF p50/p95/max522.761/659.120/659.120ms N7;ADF580.757/642.583/642.583 N9;ABF577.863/659.546/659.546 N6. Only4/22complete66positivepresentsets. Missingtimestamps not blank/dropcounts. Foreground alone did not solve native latency."
+    }
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "finder-native-analysis-json",
+      "path": "local-evidence/finder-native-analysis.json",
+      "sha256": "9b413d6ce49fe47b14dec72b39e59f1e7ed3b732c9d75f4e14cdd27d8fe09fd5",
+      "size_bytes": 18496,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "finder-native-journey-json",
+      "path": "local-evidence/finder-native-journey.json",
+      "sha256": "f42752d598b6aa7e845a7b7a92562175eb17f64f08150db659d476de674f7d87",
+      "size_bytes": 3824,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "finder-native-memory-txt",
+      "path": "local-evidence/finder-native-memory.txt",
+      "sha256": "bcd6eca08e61a08e1f75dc35d14a414b779a59f81872926bb0c8468f9f03d32f",
+      "size_bytes": 113490,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "finder-native-memory-summary-json",
+      "path": "local-evidence/finder-native-memory-summary.json",
+      "sha256": "73ccab2478362447360f9af6be3ca26e4d3d0bf953fee7c59a779f1331b16048",
+      "size_bytes": 739,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "finder-foreground-preflight-txt",
+      "path": "local-evidence/finder-foreground-preflight.txt",
+      "sha256": "57a16857d5508384fda9cfecd7e69618073b3591d934c54e3e0e291db3329730",
+      "size_bytes": 361,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "finder-foreground-loaded-check-txt",
+      "path": "local-evidence/finder-foreground-loaded-check.txt",
+      "sha256": "ac11506869a66afe7001d54f3522d072d0292cc53cd335c54a95564b3a419b3a",
+      "size_bytes": 843,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "finder-native-bf-png",
+      "path": "local-evidence/finder-native-bf.png",
+      "sha256": "b983c25afbe5c625900331b4a3b3f52b7f016820d2a73f4506b5ef8c49f25ad3",
+      "size_bytes": 2578200,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "finder-native-abf-png",
+      "path": "local-evidence/finder-native-abf.png",
+      "sha256": "bdfafa915176029ec6fc2630f0ca70c93977de9d97874843424fcd48b509ecb5",
+      "size_bytes": 2604886,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "finder-native-adf-png",
+      "path": "local-evidence/finder-native-adf.png",
+      "sha256": "ac7de0314aa6559b1a4421ec7871da5e663565e2a055af11f4b3c98f6a80befa",
+      "size_bytes": 2651245,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "finder-native-shared-controls-png",
+      "path": "local-evidence/finder-native-shared-controls.png",
+      "sha256": "47c49433461ecf3f6e1d50a4e26b67617f18d490c8b3e1e4d5210ca6375481ea",
+      "size_bytes": 4482759,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "mixedtails0909b-frame-pacing-launch-4e25bc16-690b-4fc0-8ca4-4cde865fe72b-jsonl",
+      "path": "local-evidence/mixedtails0909b-frame-pacing.launch-4E25BC16-690B-4FC0-8CA4-4CDE865FE72B.jsonl",
+      "sha256": "633cb501217a8f6d77f5f10cae6121278ac3542590708ffe52063494434d5211",
+      "size_bytes": 6113091,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "mixedtails0909b-app-patch",
+      "path": "local-evidence/mixedtails0909b-app.patch",
+      "sha256": "361750a2048bb46c91c3fe5965efafb4768485da5d5298edc5ab973ab446bad3",
+      "size_bytes": 21293,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T12:05:52Z",
+    "started": "2026-09-09T12:05:52Z",
+    "finished": "2026-09-09T12:17:20Z"
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-shared-packet-ilp",
+  "status": "refuted",
+  "question": "Can two or four independent scan packets per lane overlap tANS state dependencies within the shared model decoder without changing resident bytes, preparation, or counts?",
+  "paper": {"repository":"quantem.gpu", "authoritative_host":"phil"},
+  "code": {"revision":"abff4e0cac5329fd83391a11dcfa8a6849ed1589", "dirty":true,
+    "entrypoint":"TANSSharedPacketILPExperimentTests.testAll66SharedPacketILPABBAWhenConfigured",
+    "diff_sha256":"4c741a5cd5f2586975c34d50f552b6897b5e520f5c3574b70a66f6130dcf1fb0",
+    "snapshot_path":"local-evidence/packet-ilp-source.patch",
+    "test_source_sha256":"a0a5cf8282eaa541fbd4d01ebc0ccbc903fdc93786ecbb1a15a61d65677c8a9b",
+    "kernel_source_sha256":"a55d2d0e773f23c9575c0ecb2deff5d5ed5fd3b5d8d5afb10389ebdc2f92253d",
+    "test_binary_sha256":"4081629c8814bbb4a48ad329ce29c7c84c7f269adacb7b3d2df0de26e11b70b2"},
+  "inputs": [
+    {"dataset_id":"all66-entropy-checkpoint", "path":"local-fixture/checkpoint.json", "sha256":"2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"},
+    {"dataset_id":"all66-independent-linux-products", "path":"local-fixture/series-products/shared-resident-images.npy", "sha256":"06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"}
+  ],
+  "parameters": {
+    "shape":[66,512,512,192,192], "dtype":"uint16", "representation":"lossless entropy",
+    "scan_bin":1,"detector_bin":1,"crop":null,"source_bytes":84681338880,"index_bytes":2108620800,
+    "arms":["A1 one packet baseline","B2 two independent packets","B4 four independent packets","A2 one packet baseline"],
+    "samples_per_case_per_arm":5,"cases":7,"expected_memory_effect":"No new resident/scratch arrays; more thread-local decoder registers only; unchanged source/index preparation.",
+    "cache_state":"prepared archive; source pages unspecified; same loaded source for query comparison",
+    "decision_gate":"All66 exact complete-output hashes and immutable priors; high uint16 literal/escape/signed tests; useful improvement versus both controls before considering integration. No native/cold claim from package timing.",
+    "decision":"Refuted as useful optimization: two packets improve large-case medians only about1-3 percent; four packets generally regress. Small-delta control drift also present. Keep default one-packet baseline; no app integration.",
+    "memory":"Measured Metal allocation86,935,453,696B in all140 samples, same source/index bytes; global swap6087.25MiB before and6079.25MiB after. Registers not measured as occupancy counters.",
+    "not_claimed":["native FPS improvement","sustained human-like gesture acceptance","cold HDF5","loading speedup or candidate load non-regression","independent all66 original-count full-volume audit","default adoption"]
+  },
+  "execution":{"host":"phil","gpu_model":"Apple M5 Max","backend":"swift-metal","route":"package_not_headed","command":"QUANTEM_TANS_PACKET_ILP_FIXTURE=<complete-fixture> swift test -c release --filter TANSSharedPacketILPExperimentTests",
+    "verification":"140/140 timed queries exact, frozen Linux BF/ADF/ABF complete images exact, immutable priors;2 literal/escape/signed tests pass. Full suite215executed/22opt-in skips/0fail. Strict swift-format and git diff checks pass."},
+  "outputs":[
+    {"artifact_id":"raw-packet-trials","path":"local-evidence/packet-ilp.log","sha256":"94f72f7948dd8424ef96cd8d6b68256a4ad7c8f37db4068a06414ee8c538107f","size_bytes":31146,"retention":"durable","consuming_figures":[],"result":"140 exact all66 queries. ADF jump control241.714/245.090ms versus2-packet237.075ms and4-packet243.360ms. Prepared load14.448s/index4.216s, not cold or speedup."},
+    {"artifact_id":"distribution-analysis","path":"local-evidence/packet-ilp-analysis.json","sha256":"619fe59ad2875cf66cdb02805b3e3b4f55b46606a3f85af6c336d29ab44f20cd","size_bytes":58663,"retention":"durable","consuming_figures":[],"result":"N5p50/p95/max percase/perarm; modest gains fail usefulness gate, no native result."}
+  ],
+  "timestamps":{"created":"2026-09-09T06:04:00Z","started":"2026-09-09T06:06:09Z","finished":"2026-09-09T06:07:20Z"}
+}

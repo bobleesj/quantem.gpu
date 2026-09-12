@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-native-byte-replay",
+  "status": "completed",
+  "question": "Do exact encoded-stream bytes and matched native-mask replay explain the gap between warm package and first native gesture timings?",
+  "paper": {
+    "repository": "quantem.gpu",
+    "authoritative_host": "phil"
+  },
+  "code": {
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "dirty": true,
+    "diff_sha256": "c886c2487b56fa13ac13733af2dfb701c9005ac6052b585bad99a65b8382182a",
+    "snapshot_path": "local-evidence/refill16-source.patch",
+    "entrypoint": "TANSNativeReplayExperimentTests.testAll66NativeMasksActiveIdleActiveWhenConfigured"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "native-unprofiled-first9",
+      "path": "local-native/baseline0908b-frame-pacing.launch-8F2BD530-294A-4213-B56B-33E3E2C661C3.jsonl",
+      "sha256": "3770321aa1268aa23f3e3fc0d8ef86c5bd8072136ef5fdec727585bac5e35f07"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "index_bytes": 2108620800,
+    "initial_stage": "CPU geometry/seek metadata only, no source count decode;9/9native residual columns/delta choices match. Dense logical encoded bytes5.21-16.13GiB/query,10.38-31.12billion entropy pair transitions. Sparse offsets count events notwords; failed initial assertion preserved. All1056dense length totals match component bytes; sparse event totals match sentinel.1,401,426,048seek bytes read, SHAb7c4133bd307385b4ccf03f3e200758f7a3b71936b9e45ec6ad45b3e70d94914. Not hardware DRAM counters.",
+    "cache_state": "Source pages unspecified; seek metadata read by audit; not cold load.",
+    "replay_stage": "Metadata passed.3arms active/4secondpause/active,3cycles of9native masks each=81all66queries; frozen Linux products, full hashes and native198scalar probes perrequest; unchanged mode32/defaults/source/index. This is package diagnostic, not native FPS."
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal plus CPU metadata diagnostic",
+    "gpu_ids": ["default Metal device"],
+    "gpu_model": "Apple M5 Max"
+  },
+  "results": {"conclusion": "Identical masks and buffers show roughly 0.53 second idle penalty after four seconds, reproduced outside app UI and reversible on warm replay. Mechanism unproven; no kernel/default change or native FPS claim.", "exact_queries": 81, "samples_per_case_per_arm": 3, "metal_allocated_bytes": 86866247680, "sampled_process_rss_max_bytes": 467075072, "swap_before_after_MiB": 5839.19, "loading": "One prepared archive load14.1732905s/index4.0905909s, source pages unspecified. Not a cold or load improvement qualification.", "test_binary_sha256": "dd9fdc9c1181ac48d350c967bbd1d2ef0a02eafab06a43f93cd58211e7e64c2f"},
+  "outputs": [
+    {"artifact_id":"raw-all66-replay","result":"81exact all66 queries, active/idle/active","path":"local-evidence/native-replay-all66.log","sha256":"3d71a038713fbbb2b4af99d8fd40a68dd75ea7410ab102dbc2a6b4c3da88517c","size_bytes":20766,"retention":"durable","consuming_figures":[]},
+    {"artifact_id":"analysis","result":"N3/case/arm p50/p95/max with raw samples","path":"local-evidence/native-replay-analysis.json","sha256":"3a7688975e897810ce7d0576c9c2a82ca3c957e60586a8c3bf5c2ceb85937377","size_bytes":44658,"retention":"durable","consuming_figures":[]},
+    {"artifact_id":"memory-samples","result":"31samples starting after load; no load peak claim; private Metal separate","path":"local-evidence/native-replay-memory.txt","sha256":"11f6a98bffd59c8c0da432ae4c7a61c9474c7b92c9559a59c542dafdbf4792ee","size_bytes":39091,"retention":"durable","consuming_figures":[]}
+  ],
+  "timestamps": {
+    "created": "2026-09-09T07:05:04Z",
+    "started": "2026-09-09T07:11:21.891Z",
+    "finished": "2026-09-09T07:14:02.412Z"
+  }
+}

@@ -1,0 +1,162 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-invocation-owned-idle",
+  "status": "succeeded",
+  "question": "Can invocation-owned resources remove redundant command reference bookkeeping and idle latency?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-invocation-owned-idle/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "entrypoint": "TANSResidencyHoldExperimentTests.testAll66ResidencyHoldIdleABAWhenConfigured",
+    "dirty": true,
+    "snapshot_path": "local-evidence/source-v7.patch",
+    "diff_sha256": "c35df9bd876f4627c3ac4415ad11f47886767cbf69561e1fd8b2e6b61044a2af"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-linux-products",
+      "path": "local-fixture/series-products/shared-resident-images.npy",
+      "sha256": "06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "index_ceiling_bytes": 2108620800,
+    "one_factor": "Retained / first-retained plus later-unretained / retained command ownership only. Whole self and first retained command kept alive through final wait including failure paths. Same original index, exact kernels, submission64; 9masks x2cycles x3arms with4s idle. Failure injection before commit, after1, after2 required.",
+    "default": "Off; existing app unchanged",
+    "executable_sha256": "da558e1dc0d034a9cf198e2860ba4ef2b0c8589c9c20d6c06779fbc82d45edf3",
+    "untracked_source_sha256": "283d9befc3d3be1d1d0c09821115c35d1d3f5c504c730a3727de12137f4b5b73",
+    "cache_state": "Complete prepared entropy archive, source pages unspecified. Not cold original source or headed UI/presentation.",
+    "run_root": "local-output",
+    "preflight": "Immutable planner restored and105 full66 matrix outputs exact; all new planning/arena flags off for this one-factor test. First run injected-failure gates then idle A/B/A if passed.",
+    "result": "54/54 full66 outputs exact; injected failures before commit/after1/after2 preserve prior images, allocation and recovery. Sixteen later commands actually unretained. A1/B/A2 wall p50 476.135/458.113/460.206ms; p95 506.511/502.949/489.205ms. No robust practical gain; candidate tails worse than second control; idle gap remains. Default off, no app adoption.",
+    "path_mapping": "Exact local paths and unmodified pre-normalization manifests are retained in the private output checkpoint.",
+    "artifact_results": {
+      "architecture-unit-v7.log": "54/54 full66 outputs exact; injected failures before commit/after1/after2 preserve prior images, allocation and recovery. Sixteen later commands actually unretained. A1/B/A2 wall p50 476.135/458.113/460.206ms; p95 506.511/502.949/489.205ms. No robust practical gain; candidate tails worse than second control; idle gap remains. Default off, no app adoption.",
+      "invocation-owned-analysis.json": "54/54 full66 outputs exact; injected failures before commit/after1/after2 preserve prior images, allocation and recovery. Sixteen later commands actually unretained. A1/B/A2 wall p50 476.135/458.113/460.206ms; p95 506.511/502.949/489.205ms. No robust practical gain; candidate tails worse than second control; idle gap remains. Default off, no app adoption.",
+      "invocation-owned-failures.log": "54/54 full66 outputs exact; injected failures before commit/after1/after2 preserve prior images, allocation and recovery. Sixteen later commands actually unretained. A1/B/A2 wall p50 476.135/458.113/460.206ms; p95 506.511/502.949/489.205ms. No robust practical gain; candidate tails worse than second control; idle gap remains. Default off, no app adoption.",
+      "invocation-owned-idle.log": "54/54 full66 outputs exact; injected failures before commit/after1/after2 preserve prior images, allocation and recovery. Sixteen later commands actually unretained. A1/B/A2 wall p50 476.135/458.113/460.206ms; p95 506.511/502.949/489.205ms. No robust practical gain; candidate tails worse than second control; idle gap remains. Default off, no app adoption.",
+      "invocation-owned-memory-summary.json": "54/54 full66 outputs exact; injected failures before commit/after1/after2 preserve prior images, allocation and recovery. Sixteen later commands actually unretained. A1/B/A2 wall p50 476.135/458.113/460.206ms; p95 506.511/502.949/489.205ms. No robust practical gain; candidate tails worse than second control; idle gap remains. Default off, no app adoption.",
+      "invocation-owned-memory.txt": "54/54 full66 outputs exact; injected failures before commit/after1/after2 preserve prior images, allocation and recovery. Sixteen later commands actually unretained. A1/B/A2 wall p50 476.135/458.113/460.206ms; p95 506.511/502.949/489.205ms. No robust practical gain; candidate tails worse than second control; idle gap remains. Default off, no app adoption.",
+      "source-v7.patch": "54/54 full66 outputs exact; injected failures before commit/after1/after2 preserve prior images, allocation and recovery. Sixteen later commands actually unretained. A1/B/A2 wall p50 476.135/458.113/460.206ms; p95 506.511/502.949/489.205ms. No robust practical gain; candidate tails worse than second control; idle gap remains. Default off, no app adoption.",
+      "source.patch": "54/54 full66 outputs exact; injected failures before commit/after1/after2 preserve prior images, allocation and recovery. Sixteen later commands actually unretained. A1/B/A2 wall p50 476.135/458.113/460.206ms; p95 506.511/502.949/489.205ms. No robust practical gain; candidate tails worse than second control; idle gap remains. Default off, no app adoption.",
+      "untracked-source-v7.tar.gz": "54/54 full66 outputs exact; injected failures before commit/after1/after2 preserve prior images, allocation and recovery. Sixteen later commands actually unretained. A1/B/A2 wall p50 476.135/458.113/460.206ms; p95 506.511/502.949/489.205ms. No robust practical gain; candidate tails worse than second control; idle gap remains. Default off, no app adoption.",
+      "untracked-source.tar.gz": "54/54 full66 outputs exact; injected failures before commit/after1/after2 preserve prior images, allocation and recovery. Sixteen later commands actually unretained. A1/B/A2 wall p50 476.135/458.113/460.206ms; p95 506.511/502.949/489.205ms. No robust practical gain; candidate tails worse than second control; idle gap remains. Default off, no app adoption."
+    }
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "architecture-unit-v7.log",
+      "path": "local-evidence/architecture-unit-v7.log",
+      "sha256": "13a83f19f8bab83cbfc9e5e55231705296a9d08765da66d6c6a1bb3e47e827b4",
+      "size_bytes": 10732,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "invocation-owned-analysis.json",
+      "path": "local-evidence/invocation-owned-analysis.json",
+      "sha256": "d93af5862424f3a19a050083b2cecd114ea1ff0a1223f74850723b840abe7887",
+      "size_bytes": 86105,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "invocation-owned-failures.log",
+      "path": "local-evidence/invocation-owned-failures.log",
+      "sha256": "c55db0be993db5473e4a750a1ae81e8cd85f3d93adefdf945781543099b411c8",
+      "size_bytes": 2463,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "invocation-owned-idle.log",
+      "path": "local-evidence/invocation-owned-idle.log",
+      "sha256": "8dbf2f148339798c5abd146eb6e415121d7219ab2766097dc420fdc338d09be2",
+      "size_bytes": 46004,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "invocation-owned-memory-summary.json",
+      "path": "local-evidence/invocation-owned-memory-summary.json",
+      "sha256": "12f8e5a6e13e1b505f1aba0842359ed75daf3bfe22f060916517053c0c234303",
+      "size_bytes": 702,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "invocation-owned-memory.txt",
+      "path": "local-evidence/invocation-owned-memory.txt",
+      "sha256": "da78f45192f1710a12b920b30dfd4c349371a1d1936faa476b097b2463d5fc82",
+      "size_bytes": 143640,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "source-v7.patch",
+      "path": "local-evidence/source-v7.patch",
+      "sha256": "c35df9bd876f4627c3ac4415ad11f47886767cbf69561e1fd8b2e6b61044a2af",
+      "size_bytes": 103255,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "source.patch",
+      "path": "local-evidence/source.patch",
+      "sha256": "6c942de86bb5797fa0f209be2da0017fa3ef39735c9dcfab8f6c70d370a37f40",
+      "size_bytes": 117619,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "untracked-source-v7.tar.gz",
+      "path": "local-evidence/untracked-source-v7.tar.gz",
+      "sha256": "283d9befc3d3be1d1d0c09821115c35d1d3f5c504c730a3727de12137f4b5b73",
+      "size_bytes": 12851,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "untracked-source.tar.gz",
+      "path": "local-evidence/untracked-source.tar.gz",
+      "sha256": "9fc13e057e408cbe0b0cd962005b44f637bbdb705da970e6a3e349dca9b8092a",
+      "size_bytes": 12753,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T16:34:50.321Z",
+    "started": "2026-09-09T16:52:55.306Z",
+    "finished": "2026-09-09T16:58:00.745Z"
+  }
+}

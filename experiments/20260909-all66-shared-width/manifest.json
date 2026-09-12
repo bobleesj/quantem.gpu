@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-shared-width",
+  "status": "refuted",
+  "question": "Does changing only shared tANS table threadgroup width from 128 to 64 or 256 meaningfully improve exact all-66 query latency without extra residents or loading work?",
+  "paper": {"repository": "quantem.gpu", "authoritative_host": "phil"},
+  "code": {
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "dirty": true,
+    "diff_sha256": "cb91b0194109dc4547bf63230f7aa222cb0bc77a1e2a052cbd52f2c736da9db2",
+    "snapshot_path": "local-evidence/shared-width-tracked.patch",
+    "entrypoint": "TANSSharedWidthExperimentTests.testAll66SharedWidthABBAWhenConfigured",
+    "test_source_sha256": "747dd392ec5b922bac293adf6f78866f2386465914dcd15f6c8719652b8973fc",
+    "resident_source_sha256": "ddbe8b1bb1463d88ed3aa911fb19feced536576c858d19c2e01d55ca97021e6b",
+    "test_binary_sha256": "2fd3ec69a8bfe1fbdbfc7097c2920c9b9edf17ad7630be6c075987416c3f523e"
+  },
+  "inputs": [
+    {"dataset_id":"all66-entropy-checkpoint", "path":"local-fixture/checkpoint.json", "sha256":"2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"},
+    {"dataset_id":"all66-independent-linux-products", "path":"local-fixture/series-products/shared-resident-images.npy", "sha256":"06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"}
+  ],
+  "parameters": {
+    "shape": [66,512,512,192,192], "dtype":"uint16", "representation":"lossless entropy",
+    "scan_bin":1, "detector_bin":1, "crop":null, "index_max_bytes":2147483648,
+    "resident_source_bytes":84681338880, "index_bytes":2108620800,
+    "arms":["128 control A1","64 candidate","256 candidate","128 control A2"],
+    "samples_per_case_per_arm":5, "case_count":7, "exact_timed_queries":140,
+    "source_page_state":"unspecified", "parity":"Frozen Linux BF/ADF/ABF full-image bytes, then full-series masks against baseline rebase; immutable prior publication; no tolerance changes",
+    "decision":"Do not adopt: 64-thread medians about0.2-2.1 percent lower than controls; insufficient useful gain. 256-thread mode regresses most cases. Defaults remain unchanged.",
+    "not_claimed":["native FPS","cold original-HDF5 load","independent all-66 full-original-count audit","default adoption","loading speedup"]
+  },
+  "execution": {
+    "host":"phil", "gpu_model":"Apple M5 Max", "backend":"swift-metal", "route":"package_not_headed",
+    "command":"QUANTEM_TANS_WIDTH_FIXTURE=<complete-fixture> swift test -c release --filter TANSSharedWidthExperimentTests",
+    "verification":"140 exact timed all66 queries pass; complete suite214 tests/21 opt-in skips/0 failures; strict swift-format pass; unchanged observed swap"
+  },
+  "outputs": [
+    {"artifact_id":"raw-width-trials", "path":"local-evidence/shared-width.log", "sha256":"21525ae132f92901c71d10c576a1e51b6105409bb5f5e1651687d063d1803259", "size_bytes":33547, "retention":"durable", "consuming_figures":[], "result":"All140 timed queries exact. Source14.167s/index4.053s prepared archive, not cold. ADF jump control235.77/236.45ms;64-thread235.13ms;256-thread241.95ms."},
+    {"artifact_id":"distribution-analysis", "path":"local-evidence/shared-width-analysis.json", "sha256":"33f3edb1e66a44aa6f7327e3e9fe1c43d3848ae379ffc78b16303b50be80ea82", "size_bytes":59063, "retention":"durable", "consuming_figures":[], "result":"Per-case five-sample p50/p95/max and both-control comparisons retained; no useful winner or native FPS claim."}
+  ],
+  "timestamps":{"created":"2026-09-09T05:25:00Z","started":"2026-09-09T05:25:00Z","finished":"2026-09-09T05:30:00Z"}
+}

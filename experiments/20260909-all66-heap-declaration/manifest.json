@@ -1,0 +1,136 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-heap-declaration",
+  "status": "succeeded",
+  "question": "Does declaring tracked immutable encoded heaps instead of individual record resources reduce idle driver gaps without changing computation?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-heap-declaration/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "dirty": true,
+    "entrypoint": "TANSResidencyHoldExperimentTests.testAll66ResidencyHoldIdleABAWhenConfigured",
+    "diff_sha256": "604c57b3c145f6daab887223fae9a951cad8c34e10c7dbd50596044a9c64ea2c",
+    "snapshot_path": "local-evidence/heap-declaration-source.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-linux-products",
+      "path": "local-fixture/series-products/shared-resident-images.npy",
+      "sha256": "06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "representation": "lossless entropy only",
+    "source_bytes": 84681338880,
+    "index_bytes": 2108620800,
+    "one_factor": "On the same retained tracked placement heaps, A1/A2 declare individual source resources; B declares their unique source heaps read-only. All output/index hazard tracking, exact kernels,64record submission,mixed-tail settings unchanged.",
+    "planned_matrix": "Full66 frozen Linux products and nine recorded native masks. Warm135 and4s idle54 complete queries, A/B/A; prior output hashes and release; no app adoption without load nonregression.",
+    "safety": "No aliasing, raw4Dresident, source/index growth, changed hashing, source reads or hidden reduced outputs. useHeaps only for immutable tracked encoded backing per Apple Metal API; absent heap fails closed.",
+    "basis": "Prior heap-only experiment exact189 but warm neutral, idle mixed and0.2-0.3s loading regression, so not adopted. This isolates argument-resource declaration, not allocation policy.",
+    "timing": "Prepared entropy/source pages unspecified; package query wall primary, not native FPS. Driver metric is last command only; sum GPU command intervals is not shader-active time.",
+    "preflight": "8/8 tests pass, no compiler warnings: heap exact readback/failure/retry and fulluint16/escape/zero/mixed/signed decoder fixtures. The full66 runtime-declaration arm is the scientific API test of useHeaps.",
+    "test_binary_sha256": "5cb1f12d2b1ac141699c144d688977762248744736259ed3400ed69ac6ceeb47",
+    "result": "REFUTED: 135 warm and 54 four-second-idle full66 comparisons exact. Warm timing neutral: case7 p50 A/B/A 263.830/263.358/263.771ms. Idle remains variable: case7 418.733/410.131/455.247ms; case1 410.882/408.339/392.014ms. No consistent gain versus both controls and last-command driver intervals remain about10ms. Raw analysis is authoritative.",
+    "decision": "No app adoption; defaultoff. Same source/index/heaps and no extra scientific resident. Results do not qualify 10/20/120FPS or loading nonregression.",
+    "artifact_results": {
+      "heap-declaration-warm-log": "Exact comparisons passed; optimization refuted, not adopted. See raw evidence and result summary.",
+      "heap-declaration-idle-log": "Exact comparisons passed; optimization refuted, not adopted. See raw evidence and result summary.",
+      "heap-declaration-warm-analysis-json": "Exact comparisons passed; optimization refuted, not adopted. See raw evidence and result summary.",
+      "heap-declaration-idle-analysis-json": "Exact comparisons passed; optimization refuted, not adopted. See raw evidence and result summary.",
+      "heap-declaration-warm-memory-txt": "Exact comparisons passed; optimization refuted, not adopted. See raw evidence and result summary.",
+      "heap-declaration-idle-memory-txt": "Exact comparisons passed; optimization refuted, not adopted. See raw evidence and result summary.",
+      "heap-declaration-preflight-log": "Exact comparisons passed; optimization refuted, not adopted. See raw evidence and result summary."
+    }
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "heap-declaration-warm-log",
+      "path": "local-evidence/heap-declaration-warm.log",
+      "sha256": "88968aecba7a9d78ecf19d082fe247255e9c7757d25d2b1338600a7c565d55e0",
+      "size_bytes": 79749,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "heap-declaration-idle-log",
+      "path": "local-evidence/heap-declaration-idle.log",
+      "sha256": "825911767ea0c0b3445f5b71d05d38288fc0706b728b8578f00d4fe23e0e777f",
+      "size_bytes": 34125,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "heap-declaration-warm-analysis-json",
+      "path": "local-evidence/heap-declaration-warm-analysis.json",
+      "sha256": "ba6eea6ecc5fc2b8c9a7eb74b715c55c1aeb0d4eec4bf9840543efd08e13ad52",
+      "size_bytes": 124621,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "heap-declaration-idle-analysis-json",
+      "path": "local-evidence/heap-declaration-idle-analysis.json",
+      "sha256": "75657b90685b609a6d29d99e2be510ae5c534192108a4b58244f402f32473896",
+      "size_bytes": 59193,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "heap-declaration-warm-memory-txt",
+      "path": "local-evidence/heap-declaration-warm-memory.txt",
+      "sha256": "eb512b72fc7f5c19016016a147bf4b5007c1a48d3e215ba41ec9dbfc7c4fdc71",
+      "size_bytes": 15132,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "heap-declaration-idle-memory-txt",
+      "path": "local-evidence/heap-declaration-idle-memory.txt",
+      "sha256": "ddf1cf1d1afb3605f3d53f8259a36627560bb1e76e3811a5697ccd7ab4ddf353",
+      "size_bytes": 81965,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "heap-declaration-preflight-log",
+      "path": "local-evidence/heap-declaration-preflight.log",
+      "sha256": "5c0125123df9b2324b41c63cb7890589a13e97437716ef167e3cb0d1c128e086",
+      "size_bytes": 4831,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T11:31:00Z",
+    "started": "2026-09-09T11:31:00Z",
+    "finished": "2026-09-09T11:41:07Z"
+  }
+}

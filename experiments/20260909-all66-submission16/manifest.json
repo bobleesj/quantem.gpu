@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-submission16",
+  "status": "succeeded",
+  "question": "Does 16-record submission reduce the idle driver interval more than the retained 64-record candidate, while preserving exact all66 and the original single-command controls?",
+  "paper": {"repository":"quantem.gpu", "authoritative_host":"phil", "manifest_path":"experiments/20260909-all66-submission16/manifest.json"},
+  "code": {"repository":"quantem.gpu", "revision":"abff4e0cac5329fd83391a11dcfa8a6849ed1589", "dirty":true, "entrypoint":"TANSResidencyHoldExperimentTests.testAll66ResidencyHoldIdleABAWhenConfigured", "diff_sha256":"816c4de73e0109b8cd3f5cc6cd0cab30fe4bc18e81a623b57e68cdea9c028bde", "snapshot_path":"local-evidence/submission16.patch"},
+  "inputs": [
+    {"dataset_id":"all66-entropy-checkpoint", "path":"local-fixture/checkpoint.json", "sha256":"2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"},
+    {"dataset_id":"native-matched-masks", "path":"local-fixture/native-stream-bytes-r2.json", "sha256":"1c896b4f3ad0ff2a40b88377915be356bbf6b1c3ed7a2596898f60a9f3db1296"}
+  ],
+  "parameters": {
+    "test_binary_sha256":"774493cdf782e9fa71704f368053107b3d4b31a7a0fd2f15f462264597f976d2",
+    "test_source_sha256":"9121bd6e264bc24933366c06676b9c4b88f7f2eb883d76a5cb5e65107c580e5e",
+    "regression":"218 tests / 25 explicit opt-in skips / 0 failures; release build",
+    "shape":[66,512,512,192,192], "dtype":"uint16", "scan_bin":1, "detector_bin":1, "crop":null,
+    "representation":"lossless entropy only", "source_bytes":84681338880, "index_bytes":2108620800,
+    "cache_state":"same prepared archive; source pages unspecified; no reloading between arms",
+    "one_factor":"records per submitted command: single control / 16 / single return control; all commands complete before publication, same queue, kernel, masks, exact arithmetic and buffers",
+    "environment":"QUANTEM_TANS_SPLIT_COMMANDS=1; QUANTEM_TANS_RECORDS_PER_COMMAND=16; QUANTEM_TANS_HOLD_IDLE_SECONDS=4; QUANTEM_TANS_HOLD_CYCLES=2; full66 fixture and native-mask replay paths",
+    "matrix":"9 matched real-native masks, 2 cycles per arm, A/B/A = 54 queries; frozen independent Linux BF/ADF/ABF image comparisons plus full66 output hashes and 198 native probes per mask",
+    "decision":"Require both controls beaten without altered counts/memory/loading; then separate warm, safety and native qualification. No direct 16-versus64 causal claim from different processes.",
+    "timing":"Full query wall is primary. GPU first-to-last span includes scheduling; not shader-active or native FPS. Per-command driver metric refers only to last command.",
+    "memory":"No new resident/index/scratch scientific data; bounded additional command objects only. Record process samples, system compressor/swap and Metal currentAllocatedSize. No fake keepalive or power change.",
+    "result":"54/54 full66 queries exact. Idle case2 A1/B/A2 p50 671.008/443.304/667.560ms; case7 873.801/443.162/873.613ms. All9 case medians beat both single-command controls, but 16 does not establish superiority over64 across separate runs. Extra encode span approximately40-50ms versus earlier64 approximately10ms. No warm/native/default adoption. No120FPS claim.",
+    "memory_result":"Metal allocated86866247680B on all54 rows;65 samples, peak sampled RSS480149504B, system compressor1393917952B, swap5735.19MiB unchanged and swapouts unchanged. Started12s afterload began; not an unsampled full peak. Prepared source load14.183675s/index4.282270s, not cold-source or loading improvement.",
+    "artifact_results":{"raw":"Exact54-query A/B/A samples and stage timing", "analysis":"All raw samples and p50/p95/max per arm/case", "memory":"Read-only process/system sampled counters"}
+  },
+  "execution":{"host":"phil", "backend":"swift-metal", "gpu_ids":["default Metal device"], "gpu_model":"Apple M5 Max"},
+  "outputs":[
+    {"artifact_id":"raw", "path":"local-evidence/submission16-all66.log", "sha256":"a52614d2f8382bcf870858ad109ec0c8c1957f6c94a8b5c9b5914d58e30ba4d4", "size_bytes":32301, "retention":"durable", "consuming_figures":[]},
+    {"artifact_id":"analysis", "path":"local-evidence/submission16-analysis.json", "sha256":"83ff265bde173c56a8a637decc3001851ec1f7c846a1eae0eaabd3ecc6d9fcb8", "size_bytes":58888, "retention":"durable", "consuming_figures":[]},
+    {"artifact_id":"memory", "path":"local-evidence/submission16-memory.txt", "sha256":"7bf4f4c4aa3ff429fd52c95f645d6aba6e595bc732b39f262b27d7962a04f37e", "size_bytes":81965, "retention":"durable", "consuming_figures":[]}
+  ],
+  "timestamps":{"created":"2026-09-09T08:49:00Z", "started":"2026-09-09T08:50:13.569Z", "finished":"2026-09-09T08:54:46.369Z"}
+}

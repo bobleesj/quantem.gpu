@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-residency-source-tracking",
+  "status": "refuted",
+  "question": "Can a residency-set-only declaration for immutable encoded source records remove duplicate per-encoder residency work and the idle wall-time penalty?",
+  "paper": {
+    "repository": "quantem.gpu",
+    "authoritative_host": "phil"
+  },
+  "code": {
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "dirty": true,
+    "diff_sha256": "3c41da25a7b0a3164d3a8e8527a26ea3c10a637a5dcb8ddbf367986310c751f0",
+    "snapshot_path": "local-evidence/source-tracking.patch",
+    "entrypoint": "TANSResidencyHoldExperimentTests.testAll66ResidencyHoldIdleABAWhenConfigured"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "native-matched-masks",
+      "path": "local-fixture/native-stream-bytes-r2.json",
+      "sha256": "1c896b4f3ad0ff2a40b88377915be356bbf6b1c3ed7a2596898f60a9f3db1296"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "representation": "lossless entropy",
+    "source_bytes": 84681338880,
+    "index_bytes": 2108620800,
+    "arms": [
+      "A1 original",
+      "B_hold plus source-set-only",
+      "A2 original"
+    ],
+    "samples_per_case_per_arm": 2,
+    "cases": 9,
+    "idle_seconds": 4,
+    "cache_state": "prepared archive/source pages unspecified; same buffers and masks",
+    "env": "QUANTEM_TANS_HOLD_SOURCE_SET=1 plus explicit fixture and replay paths",
+    "scientific": "No kernel/math/layout change. Exact full66 outputs/frozen Linux BF/ABF/ADF/probes required.",
+    "synchronization": "Source uploads completed before hold; source records immutable through release. Skip only source-record read declarations with a live set; keep all output and index useResources hazard tracking. Query completion awaited before changing set. No omitted output synchronization.",
+    "prior": "Hold alone refuted: GPU time improves but wall does not. Added CPU encode/commit/wait and driver-schedule counters to locate remaining cost.",
+    "test_binary_sha256": "cce83188390390f3277318ff839d566b8f2c5662124b244615c194749babf015",
+    "test_source_sha256": "1c5561c5520722af32b743240e4aab67a4917dd92eab089222ef832c61269c6f",
+    "qualification": "Pilot N2/case; no default/native/loading claims without full repeated gates."
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "results": {
+    "decision": "54exact full66 queries; removing repeated immutable-source useResources with a live set does not remove wall penalty. Refuted; source flag false and no app adoption.",
+    "timing": "Case2 wall A1/B/A2 p50 659.135/667.505/658.488ms; case4 705.350/711.073/700.666ms. One case7 lower sample not replicated by tail and most cases regress; retain all N2 pilot observations.",
+    "command_stages": "N18 mixed queries per arm: driver scheduling interval p50 A1/B/A2 517.068/529.562/516.272ms; encode10.174/10.735/9.710ms; commit0.0114/0.0165/0.0107ms. With hold, driver scheduling precedes reported GPU start; without hold it overlaps GPU interval. Thus GPU interval is not isolated shader-active time. Exact driver submechanism/hardware counters unproven.",
+    "memory": "All54 Metal allocated86,866,247,680B; source/index unchanged; set86,791,454,720B/1160allocations.58readonly samples after load, max processRSS465,190,912B, max compressor1,444,315,136B, swap5807.19MiB and swapout11254896 unchanged. RSS does not measure privateMetal.",
+    "loading": "One prepared archive load14.117752s/index4.029693s; source pages unspecified; not cold or accepted load nonregression."
+  },
+  "outputs": [
+    {"artifact_id":"raw-all66-trials","result":"54exact all66 queries plus CPU command-stage telemetry","path":"local-evidence/residency-source-tracking-all66.log","sha256":"a6c64df697fc32d249cb2e77ceec60ff2925d32739a73d088f96de2d751eb22e","size_bytes":26231,"retention":"durable","consuming_figures":[]},
+    {"artifact_id":"distribution-analysis","result":"N2/case/arm with every raw query and stage; no qualified gain","path":"local-evidence/residency-source-tracking-analysis.json","sha256":"0bf18de4694b4e8b598baa3b97a18508f1ca19d23a8de0874995f464ef2535a0","size_bytes":50563,"retention":"durable","consuming_figures":[]},
+    {"artifact_id":"memory-samples","result":"58read-only snapshots; unchanged swap and separate processRSS","path":"local-evidence/residency-source-tracking-memory.txt","sha256":"645870b88480215847a57e8f34d7b184d7f253d0ee59195ba37ee73fd66f93c3","size_bytes":73138,"retention":"durable","consuming_figures":[]}
+  ],
+  "timestamps": {
+    "created": "2026-09-09T07:31:00Z",
+    "started": "2026-09-09T07:31:15.184Z",
+    "finished": "2026-09-09T07:35:51.882Z"
+  }
+}

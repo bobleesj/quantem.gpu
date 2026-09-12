@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-pair-loop-unroll",
+  "status": "succeeded",
+  "question": "Can bounded compiler unrolling overlap exact state decode and SIMD reductions without changing packet topology, arithmetic, storage or source loading?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-pair-loop-unroll/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "dirty": true,
+    "entrypoint": "TANSSharedRefill16ExperimentTests.testAll66SharedRefill16ABAWhenConfigured",
+    "diff_sha256": "d0a890a408fd4a6f7c6e2c0f53542572c3a0a4fac2256470332c916cf6b61371",
+    "snapshot_path": "local-evidence/pair-unroll-source.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-linux-products",
+      "path": "local-fixture/series-products/shared-resident-images.npy",
+      "sha256": "06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "representation": "lossless entropy only",
+    "source_bytes": 84681338880,
+    "index_bytes": 2108620800,
+    "one_factor": "Compile-time pair-loop unroll factor1versus4. Same sequential ANS states/bitstream, two full-width signed sums per pair, same128threads/model groups/output atomics. Unlike packetILP, no extra simultaneous independent packet state. No changed grouping, table, output or resident layout.",
+    "gate": "Independent fulluint16 literal/escape/zero-chain/mixed-model/signed/inactive tests, then105all66 A/B/A on frozen mixed-tail baseline; no app adoption until repeated/native/load gates.",
+    "memory": "No extra source/index/metadata/scratch/resident allocation. Register/compiler spill effects measured via elapsed time; no occupancy counter claim.",
+    "timing": "Prepared source/source pages unspecified; full completed query, not native FPS or original-source cold.",
+    "defaults": "Internal factor1 ordinary; no API or app default change. Zero/heap/refill experiments alloff.",
+    "preflight": "5 tests pass including fulluint16, escaped pairs, deterministic zero chains, mixed models, signed/inactive lanes for unroll2/4/8; homogeneous4 separately checked.",
+    "test_binary_sha256": "27e6929dac27b0cd9b5845e73e2189ec25c7922bd97e641f8baf8bf48a8f33b1",
+    "metal_resource_sha256": "4ec87e782721f3354763907f082877a60515f6663d88f272074af0dc4094ace3",
+    "untracked_source_sha256": "41af83a84e4d305f7477cadb03328448bf545d9515eeec0f0b67fd7e9c7062e5",
+    "result": "REFUTED as a meaningful optimization:105/105 all66 comparisons exact, but factor4 warm timing essentially neutral. A/B/A p50ms BF98.508/98.157/98.453;ABF102.163/101.691/102.179;ADF179.966/179.604/180.512;edge123.558/123.484/123.751. Factor2/8 only small adversarial correctness tested, not full66 performance. No app adoption.",
+    "memory_result": "13samples, RSSmax455278592B excluding privateMetal, compressor1367785472Bmax,swap5623.06MiB unchanged,swapouts11254896 unchanged. Samefullsource/index/Metalallocation86935453696B.",
+    "artifact_results": {
+      "pair-unroll-4-all66-log": "Exact but neutral; no adoption.",
+      "pair-unroll-4-analysis-json": "Exact but neutral; no adoption.",
+      "pair-unroll-4-memory-txt": "Exact but neutral; no adoption.",
+      "pair-unroll-preflight-log": "Exact but neutral; no adoption."
+    }
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "pair-unroll-4-all66-log",
+      "path": "local-evidence/pair-unroll-4-all66.log",
+      "sha256": "2f87e1b27d0dd704c69087a30ee4edc0ade28de4e98f14caf6b4f624cdd99cc8",
+      "size_bytes": 37988,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "pair-unroll-4-analysis-json",
+      "path": "local-evidence/pair-unroll-4-analysis.json",
+      "sha256": "961c4f3ea5ed53b66608372683db0c1ca7853c20dadec78176bdec5782efa891",
+      "size_bytes": 67198,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "pair-unroll-4-memory-txt",
+      "path": "local-evidence/pair-unroll-4-memory.txt",
+      "sha256": "833158a24d254d102003434251280b584e64920949040cfb1f22d28bc3f62f67",
+      "size_bytes": 16393,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "pair-unroll-preflight-log",
+      "path": "local-evidence/pair-unroll-preflight.log",
+      "sha256": "8d0e73e784662953b452d38da22d363608b1d1f3dcd6141e2d7460b3a94459b2",
+      "size_bytes": 5313,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T11:53:15Z",
+    "started": "2026-09-09T11:53:15Z",
+    "finished": "2026-09-09T11:56:40Z"
+  }
+}

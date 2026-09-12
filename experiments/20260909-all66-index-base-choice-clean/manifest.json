@@ -1,0 +1,137 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-index-base-choice-clean",
+  "status": "failed",
+  "question": "Does a fresh scratch build restore the all66 controls and allow a post-index base-choice comparison?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-index-base-choice-clean/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "entrypoint": "TANSTileArchitectureExperimentTests.testAll66UniformIndexABAWhenConfigured",
+    "dirty": true,
+    "snapshot_path": "local-evidence/source.patch",
+    "diff_sha256": "0570ea2c74b00ab31a92b955b406ada97f12c23e8e313a8ffed1fe1fc9098eb5"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-linux-products",
+      "path": "local-fixture/series-products/shared-resident-images.npy",
+      "sha256": "06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "index_ceiling_bytes": 2108620800,
+    "one_factor": "Uniform16 blockwise index in all arms; legacy base selection / post-index cost selection / legacy. 7cases x5 each. No source, kernel, geometry or byte policy change.",
+    "default": "Off; existing app unchanged",
+    "executable_sha256": "297f0e05805c9c1c5cbb033b60917abde8fabd8554387598bbae374c6c16a64a",
+    "untracked_source_sha256": "9fc13e057e408cbe0b0cd962005b44f637bbdb705da970e6a3e349dca9b8092a",
+    "cache_state": "Complete prepared entropy archive, source pages unspecified. Not cold original source or headed UI/presentation.",
+    "run_root": "local-output",
+    "prior_failure": "20260909-all66-index-base-choice-r2",
+    "build_boundary": "Fresh isolated scratch directory; no source change from failed v4",
+    "diagnostic": "Fresh clean build also failed before first timing. Launch same fixture under LLDB at swift_willThrow; no performance claim from debugger run.",
+    "result": "Fresh build reproduced exit139 before first timing. Debugger confirms failure at Swift-to-NSError bridge before any swift_willThrow after first query entry. No speed samples; stale scratch state refuted. Preserve v5 binary and debugger/crash evidence. Follow-up source bisection reverts mutable base-selection branch, retaining loader changes.",
+    "path_mapping": "Exact local paths and unmodified pre-normalization manifests are retained in the private output checkpoint.",
+    "artifact_results": {
+      "clean-build-v5.log": "Fresh build reproduced exit139 before first timing. Debugger confirms failure at Swift-to-NSError bridge before any swift_willThrow after first query entry. No speed samples; stale scratch state refuted. Preserve v5 binary and debugger/crash evidence. Follow-up source bisection reverts mutable base-selection branch, retaining loader changes.",
+      "base-choice-clean-all66.log": "Fresh build reproduced exit139 before first timing. Debugger confirms failure at Swift-to-NSError bridge before any swift_willThrow after first query entry. No speed samples; stale scratch state refuted. Preserve v5 binary and debugger/crash evidence. Follow-up source bisection reverts mutable base-selection branch, retaining loader changes.",
+      "base-choice-clean-memory.txt": "Fresh build reproduced exit139 before first timing. Debugger confirms failure at Swift-to-NSError bridge before any swift_willThrow after first query entry. No speed samples; stale scratch state refuted. Preserve v5 binary and debugger/crash evidence. Follow-up source bisection reverts mutable base-selection branch, retaining loader changes.",
+      "base-choice-v5-crash.ips": "Fresh build reproduced exit139 before first timing. Debugger confirms failure at Swift-to-NSError bridge before any swift_willThrow after first query entry. No speed samples; stale scratch state refuted. Preserve v5 binary and debugger/crash evidence. Follow-up source bisection reverts mutable base-selection branch, retaining loader changes.",
+      "debugger-v5.log": "Fresh build reproduced exit139 before first timing. Debugger confirms failure at Swift-to-NSError bridge before any swift_willThrow after first query entry. No speed samples; stale scratch state refuted. Preserve v5 binary and debugger/crash evidence. Follow-up source bisection reverts mutable base-selection branch, retaining loader changes.",
+      "debugger-query-v5.log": "Fresh build reproduced exit139 before first timing. Debugger confirms failure at Swift-to-NSError bridge before any swift_willThrow after first query entry. No speed samples; stale scratch state refuted. Preserve v5 binary and debugger/crash evidence. Follow-up source bisection reverts mutable base-selection branch, retaining loader changes.",
+      "debugger-crash-v5.log": "Fresh build reproduced exit139 before first timing. Debugger confirms failure at Swift-to-NSError bridge before any swift_willThrow after first query entry. No speed samples; stale scratch state refuted. Preserve v5 binary and debugger/crash evidence. Follow-up source bisection reverts mutable base-selection branch, retaining loader changes."
+    }
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "clean-build-v5.log",
+      "path": "local-evidence/clean-build-v5.log",
+      "sha256": "0e2680199c7c1c3197f911220ef78eb0fee8426aae5630617f4f248b8a336b33",
+      "size_bytes": 12788,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "base-choice-clean-all66.log",
+      "path": "local-evidence/base-choice-clean-all66.log",
+      "sha256": "c76c3a52217cfb9a6f29a5788e02f79e4a38a949831082a487fa75e624e041a1",
+      "size_bytes": 450,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "base-choice-clean-memory.txt",
+      "path": "local-evidence/base-choice-clean-memory.txt",
+      "sha256": "9a54f33524ddfcbd1fe2981431ff22ffd570e8df3f7e5169e36d947743b47b44",
+      "size_bytes": 2520,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "base-choice-v5-crash.ips",
+      "path": "local-evidence/base-choice-v5-crash.ips",
+      "sha256": "adecdeb6b23b9842571c593c6440637c5a4f6893459692622a48ea730e9067af",
+      "size_bytes": 31800,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "debugger-v5.log",
+      "path": "local-evidence/debugger-v5.log",
+      "sha256": "c382a804b52c8d7e07eb35cbbfc129d62b6eb746a3fc055d9fcc097c81a2a532",
+      "size_bytes": 2962,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "debugger-query-v5.log",
+      "path": "local-evidence/debugger-query-v5.log",
+      "sha256": "27dfa1e413f9ad231a1b11a6fd5318b6e6b17807c1ad2880e3ff29d58f598697",
+      "size_bytes": 25889,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "debugger-crash-v5.log",
+      "path": "local-evidence/debugger-crash-v5.log",
+      "sha256": "30db9c0c0b77d2d39cbdbffbedcb60e000edc3629c5c70ddbb1f77ea0338eff4",
+      "size_bytes": 5513,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T16:42:20.393Z",
+    "started": "2026-09-09T16:42:20.393Z",
+    "finished": "2026-09-09T16:47:30Z"
+  }
+}

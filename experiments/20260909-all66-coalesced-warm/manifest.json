@@ -1,0 +1,189 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-coalesced-warm",
+  "status": "succeeded",
+  "question": "Does coalescing unchanged source allocations improve continuous exact all66 queries as well as paused ones?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-coalesced-warm/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "entrypoint": "TANSResidencyHoldExperimentTests.testAll66ResidencyHoldIdleABAWhenConfigured",
+    "dirty": true,
+    "snapshot_path": "local-evidence/source.patch",
+    "diff_sha256": "5a4bad36f60285bd086c23e115a4d5d07af90cf96729e848c9180586efd8d7c6"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-linux-products",
+      "path": "local-fixture/series-products/shared-resident-images.npy",
+      "sha256": "06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "index_ceiling_bytes": 2108620800,
+    "one_factor": "Fresh1056/66/1056 encoded allocations. Same v12 executable/source/index/nine frozen masks x2cycles; zero idle. Full outputs,6DP frozen hashes and720896B release remain gates. Not native sustained gestures.",
+    "default": "Off; existing app unchanged",
+    "untracked_source_sha256": "b936c639c56d78fdf3cacc922fda3d942949f54e205208710fa142111f2d4bf0",
+    "cache_state": "Complete prepared entropy archive, source pages unspecified. Not cold original source or headed UI/presentation.",
+    "run_root": "local-output",
+    "path_mapping": "Exact local paths and unmodified pre-normalization manifests are retained in the private output checkpoint.",
+    "artifact_results": {
+      "audit-coalesced-warm.cjs": "54/54 complete66 outputs exact;6 frozen complete66 DP hashes and strict source0/Metal720896B teardown pass across3 arms. Zero-idle p50A1/B/A2=135.465/132.953/145.791ms; p95=max264.491/260.333/284.814ms. Same original index. Candidate1.9percent belowfirst control but control drift7.6percent cautions against a robust continuous-speed claim. Inter-command gap p50=0.110/0.033/0.188ms versus~196-235ms after4s pauses. Not hardware-counter proof of cause and not native FPS. Prepared load14.184/14.426/14.418s; no cold claim;100ms unmet.",
+      "coalesced-warm-A1-memory-summary.json": "54/54 complete66 outputs exact;6 frozen complete66 DP hashes and strict source0/Metal720896B teardown pass across3 arms. Zero-idle p50A1/B/A2=135.465/132.953/145.791ms; p95=max264.491/260.333/284.814ms. Same original index. Candidate1.9percent belowfirst control but control drift7.6percent cautions against a robust continuous-speed claim. Inter-command gap p50=0.110/0.033/0.188ms versus~196-235ms after4s pauses. Not hardware-counter proof of cause and not native FPS. Prepared load14.184/14.426/14.418s; no cold claim;100ms unmet.",
+      "coalesced-warm-A1-memory.txt": "54/54 complete66 outputs exact;6 frozen complete66 DP hashes and strict source0/Metal720896B teardown pass across3 arms. Zero-idle p50A1/B/A2=135.465/132.953/145.791ms; p95=max264.491/260.333/284.814ms. Same original index. Candidate1.9percent belowfirst control but control drift7.6percent cautions against a robust continuous-speed claim. Inter-command gap p50=0.110/0.033/0.188ms versus~196-235ms after4s pauses. Not hardware-counter proof of cause and not native FPS. Prepared load14.184/14.426/14.418s; no cold claim;100ms unmet.",
+      "coalesced-warm-A2-memory-summary.json": "54/54 complete66 outputs exact;6 frozen complete66 DP hashes and strict source0/Metal720896B teardown pass across3 arms. Zero-idle p50A1/B/A2=135.465/132.953/145.791ms; p95=max264.491/260.333/284.814ms. Same original index. Candidate1.9percent belowfirst control but control drift7.6percent cautions against a robust continuous-speed claim. Inter-command gap p50=0.110/0.033/0.188ms versus~196-235ms after4s pauses. Not hardware-counter proof of cause and not native FPS. Prepared load14.184/14.426/14.418s; no cold claim;100ms unmet.",
+      "coalesced-warm-A2-memory.txt": "54/54 complete66 outputs exact;6 frozen complete66 DP hashes and strict source0/Metal720896B teardown pass across3 arms. Zero-idle p50A1/B/A2=135.465/132.953/145.791ms; p95=max264.491/260.333/284.814ms. Same original index. Candidate1.9percent belowfirst control but control drift7.6percent cautions against a robust continuous-speed claim. Inter-command gap p50=0.110/0.033/0.188ms versus~196-235ms after4s pauses. Not hardware-counter proof of cause and not native FPS. Prepared load14.184/14.426/14.418s; no cold claim;100ms unmet.",
+      "coalesced-warm-B_coalesced-memory-summary.json": "54/54 complete66 outputs exact;6 frozen complete66 DP hashes and strict source0/Metal720896B teardown pass across3 arms. Zero-idle p50A1/B/A2=135.465/132.953/145.791ms; p95=max264.491/260.333/284.814ms. Same original index. Candidate1.9percent belowfirst control but control drift7.6percent cautions against a robust continuous-speed claim. Inter-command gap p50=0.110/0.033/0.188ms versus~196-235ms after4s pauses. Not hardware-counter proof of cause and not native FPS. Prepared load14.184/14.426/14.418s; no cold claim;100ms unmet.",
+      "coalesced-warm-B_coalesced-memory.txt": "54/54 complete66 outputs exact;6 frozen complete66 DP hashes and strict source0/Metal720896B teardown pass across3 arms. Zero-idle p50A1/B/A2=135.465/132.953/145.791ms; p95=max264.491/260.333/284.814ms. Same original index. Candidate1.9percent belowfirst control but control drift7.6percent cautions against a robust continuous-speed claim. Inter-command gap p50=0.110/0.033/0.188ms versus~196-235ms after4s pauses. Not hardware-counter proof of cause and not native FPS. Prepared load14.184/14.426/14.418s; no cold claim;100ms unmet.",
+      "coalesced-warm-all66.log": "54/54 complete66 outputs exact;6 frozen complete66 DP hashes and strict source0/Metal720896B teardown pass across3 arms. Zero-idle p50A1/B/A2=135.465/132.953/145.791ms; p95=max264.491/260.333/284.814ms. Same original index. Candidate1.9percent belowfirst control but control drift7.6percent cautions against a robust continuous-speed claim. Inter-command gap p50=0.110/0.033/0.188ms versus~196-235ms after4s pauses. Not hardware-counter proof of cause and not native FPS. Prepared load14.184/14.426/14.418s; no cold claim;100ms unmet.",
+      "coalesced-warm-analysis.json": "54/54 complete66 outputs exact;6 frozen complete66 DP hashes and strict source0/Metal720896B teardown pass across3 arms. Zero-idle p50A1/B/A2=135.465/132.953/145.791ms; p95=max264.491/260.333/284.814ms. Same original index. Candidate1.9percent belowfirst control but control drift7.6percent cautions against a robust continuous-speed claim. Inter-command gap p50=0.110/0.033/0.188ms versus~196-235ms after4s pauses. Not hardware-counter proof of cause and not native FPS. Prepared load14.184/14.426/14.418s; no cold claim;100ms unmet.",
+      "coalesced-warm-diffraction-audit.json": "54/54 complete66 outputs exact;6 frozen complete66 DP hashes and strict source0/Metal720896B teardown pass across3 arms. Zero-idle p50A1/B/A2=135.465/132.953/145.791ms; p95=max264.491/260.333/284.814ms. Same original index. Candidate1.9percent belowfirst control but control drift7.6percent cautions against a robust continuous-speed claim. Inter-command gap p50=0.110/0.033/0.188ms versus~196-235ms after4s pauses. Not hardware-counter proof of cause and not native FPS. Prepared load14.184/14.426/14.418s; no cold claim;100ms unmet.",
+      "run-coalesced-warm-aba.zsh": "54/54 complete66 outputs exact;6 frozen complete66 DP hashes and strict source0/Metal720896B teardown pass across3 arms. Zero-idle p50A1/B/A2=135.465/132.953/145.791ms; p95=max264.491/260.333/284.814ms. Same original index. Candidate1.9percent belowfirst control but control drift7.6percent cautions against a robust continuous-speed claim. Inter-command gap p50=0.110/0.033/0.188ms versus~196-235ms after4s pauses. Not hardware-counter proof of cause and not native FPS. Prepared load14.184/14.426/14.418s; no cold claim;100ms unmet.",
+      "source.patch": "54/54 complete66 outputs exact;6 frozen complete66 DP hashes and strict source0/Metal720896B teardown pass across3 arms. Zero-idle p50A1/B/A2=135.465/132.953/145.791ms; p95=max264.491/260.333/284.814ms. Same original index. Candidate1.9percent belowfirst control but control drift7.6percent cautions against a robust continuous-speed claim. Inter-command gap p50=0.110/0.033/0.188ms versus~196-235ms after4s pauses. Not hardware-counter proof of cause and not native FPS. Prepared load14.184/14.426/14.418s; no cold claim;100ms unmet.",
+      "untracked-source.tar.gz": "54/54 complete66 outputs exact;6 frozen complete66 DP hashes and strict source0/Metal720896B teardown pass across3 arms. Zero-idle p50A1/B/A2=135.465/132.953/145.791ms; p95=max264.491/260.333/284.814ms. Same original index. Candidate1.9percent belowfirst control but control drift7.6percent cautions against a robust continuous-speed claim. Inter-command gap p50=0.110/0.033/0.188ms versus~196-235ms after4s pauses. Not hardware-counter proof of cause and not native FPS. Prepared load14.184/14.426/14.418s; no cold claim;100ms unmet."
+    },
+    "preflight": "239 release tests /27 explicit opt-in skips /0 failures. v11 teardown failed in all arms at5,586,944B, equal to expected720,896B plus one full66 DP buffer. v12 changes only test DP extraction autorelease scopes. Original failure retained; require original720,896B gate without relaxation.",
+    "executable_sha256": "38cb156a71ba52550d2136b3671c77838d496acece949e31bd95e5d6d6de8b75",
+    "result": "54/54 complete66 outputs exact;6 frozen complete66 DP hashes and strict source0/Metal720896B teardown pass across3 arms. Zero-idle p50A1/B/A2=135.465/132.953/145.791ms; p95=max264.491/260.333/284.814ms. Same original index. Candidate1.9percent belowfirst control but control drift7.6percent cautions against a robust continuous-speed claim. Inter-command gap p50=0.110/0.033/0.188ms versus~196-235ms after4s pauses. Not hardware-counter proof of cause and not native FPS. Prepared load14.184/14.426/14.418s; no cold claim;100ms unmet."
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "audit-coalesced-warm.cjs",
+      "path": "local-evidence/audit-coalesced-warm.cjs",
+      "sha256": "1de88ad12e98b8a362c9a2aba40be0999975545b3ade067cbfde363968c06c20",
+      "size_bytes": 2144,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-warm-A1-memory-summary.json",
+      "path": "local-evidence/coalesced-warm-A1-memory-summary.json",
+      "sha256": "f7c77145bfc297aac68080116ccea9b4fd5e399050b1312b450e2b5b53615c6d",
+      "size_bytes": 694,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-warm-A1-memory.txt",
+      "path": "local-evidence/coalesced-warm-A1-memory.txt",
+      "sha256": "39c31c4f84e4fb45644d75aa3e6b12f8fdedf984b48cfcb5bf35e550940b5e42",
+      "size_bytes": 15120,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-warm-A2-memory-summary.json",
+      "path": "local-evidence/coalesced-warm-A2-memory-summary.json",
+      "sha256": "5cc3eb96b26c0a51805eea9bec3e9b7a8ed1e1aaadfd1191f233271a22f9f5a5",
+      "size_bytes": 699,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-warm-A2-memory.txt",
+      "path": "local-evidence/coalesced-warm-A2-memory.txt",
+      "sha256": "f2e4f5b4e171c1941466edd6a4d32d16a61338d0f97438867e3000da3c44ad26",
+      "size_bytes": 16380,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-warm-B_coalesced-memory-summary.json",
+      "path": "local-evidence/coalesced-warm-B_coalesced-memory-summary.json",
+      "sha256": "ed7dcf75caed3a3edd6ebe8a76aac7b7c56966e660e4a99e14845e3bb004a1df",
+      "size_bytes": 699,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-warm-B_coalesced-memory.txt",
+      "path": "local-evidence/coalesced-warm-B_coalesced-memory.txt",
+      "sha256": "80e76decaa31ead7af93b919ed37c520494f02c3468fe5db1054a9fa0878f815",
+      "size_bytes": 15120,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-warm-all66.log",
+      "path": "local-evidence/coalesced-warm-all66.log",
+      "sha256": "d8a17aa011106689b9e1099a967d4196c21e0dcdb24f75faf0f8822eb243b376",
+      "size_bytes": 56471,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-warm-analysis.json",
+      "path": "local-evidence/coalesced-warm-analysis.json",
+      "sha256": "8af1f101266a92ab06a48c8e0966e946b915cb6618f2b560fac5983188ded27d",
+      "size_bytes": 91885,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-warm-diffraction-audit.json",
+      "path": "local-evidence/coalesced-warm-diffraction-audit.json",
+      "sha256": "363c0bd60cf4deaf2d4f98fa59a893b77fdf0194cb260772e24feb4f199d2fd3",
+      "size_bytes": 4204,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "run-coalesced-warm-aba.zsh",
+      "path": "local-evidence/run-coalesced-warm-aba.zsh",
+      "sha256": "6f0c7b0633e4cdf61e9da78d33ddc216828befb192664f6c3a96b21cd2a42cc2",
+      "size_bytes": 1457,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "source.patch",
+      "path": "local-evidence/source.patch",
+      "sha256": "5a4bad36f60285bd086c23e115a4d5d07af90cf96729e848c9180586efd8d7c6",
+      "size_bytes": 117782,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "untracked-source.tar.gz",
+      "path": "local-evidence/untracked-source.tar.gz",
+      "sha256": "b936c639c56d78fdf3cacc922fda3d942949f54e205208710fa142111f2d4bf0",
+      "size_bytes": 16242,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T21:08:30Z",
+    "started": "2026-09-09T21:08:30Z",
+    "finished": "2026-09-09T21:10:01.919Z"
+  }
+}

@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260910-all66-submission-floor-r2",
+  "status": "succeeded",
+  "question": "Does resource-only submission already consume most of the all66 paused wall-time budget, independently of entropy decoding?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260910-all66-submission-floor-r2/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "entrypoint": "TANSResidencyHoldExperimentTests isolated submission-floor matrix",
+    "dirty": true,
+    "diff_sha256": "86f823c1bb471eab1c5756f0de3762430e911745c1ca7410772aec81918150d9",
+    "snapshot_path": "local-output/source-v22.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "native9",
+      "path": "experiments/20260909-all66-separated-native-replay/local-evidence/native-stream-bytes-r2.json",
+      "sha256": "1c896b4f3ad0ff2a40b88377915be356bbf6b1c3ed7a2596898f60a9f3db1296"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "index_bytes": 2108620800,
+    "representation": "unchanged lossless entropy; no raw resident",
+    "matrix": "9 frozen native masks x2 cycles x3 modes, counterbalanced order. Seed identical prior valid image before each mode;4s idle.18 samples/mode; full source retained across all probes.",
+    "modes": "resource bindings with tiny diagnostic dispatch / selected dense compressed-word scan plus checksum / ordinary exact detector query",
+    "scope": "DIAGNOSTIC ONLY: no-op/raw-word scan do not compute or publish scientific images. Full mode hashes all66. A probe always exits before replacing prior detector mask/images.",
+    "timing": "Complete wrapper wall. Same ordinary metadata/init/index and17commands/declared encoded sources; probe has one reduced dispatch per encoder and does not emulate dense/sparse full-kernel launch topology. Dense scan does not decode sparse events or ANS and does not measure hardware DRAM/cache bandwidth.",
+    "memory": "1056x16-byte transient checksum buffer bounded and reported; original source/index/output unchanged. Probe completion awaited; prior outputs verified unchanged.",
+    "cache_state": "Prepared entropy archive; source pages unspecified; fresh process matrix, not cold loading or native FPS.",
+    "qualified_for_adoption": false,
+    "preflight": "release build and 242 tests,27 opt-in skips,0 failures; independent diagnostic checksum/length/marker/canary test passes",
+    "untracked_source_sha256": "7f96e4044800f9b30195e5d296c4c747131e83f41bef3be5ce740b53fdff3feb",
+    "test_executable_sha256": "0aed691b197d1b1569f755ca1ccd1a2c79a301c04a2b098c50540adfea4c2c3a",
+    "bundled_shader_sha256": "d8e5d39efd9262f0d346fff3c457933d48f04fda5b8b8933c0d0620b85260322",
+    "probe_pipeline_first_use": "lazy compile remains included in first probe wall sample; no exclusion or correction",
+    "untimed_checks": "seed prior and hash before every4s idle; after mode hash prior; after probe recover exact requested images before next mode",
+    "command": "zsh local-output/run-floor.zsh",
+    "run_root": "local-output",
+    "rerun": "Same v21 kernel/matrix; correct residentBytes invariant to compare total retained bytes before/after each query (source+index+previous output+DP), and verify zero new source reads. Preserves failed v21.",
+    "result": "54diagnostics complete:18/mode. binding wall505.5505/544.9143ms median/p95;dense-word518.0/549.2;full exact515.3/557.2. Strong submission/encoder-path floor,not a scientific acceleration and not a cache-hit-rate diagnosis. All66parity,probe recovery and prior preservation pass;6DPsets match frozen prior control;zero extra source reads;finalsource0/Metal720896.",
+    "artifact_results": {
+      "summary.json": "Passed diagnostic; no native or performance-adoption claim",
+      "samples.json": "Passed diagnostic; no native or performance-adoption claim",
+      "floor.log": "Passed diagnostic; no native or performance-adoption claim",
+      "floor-memory.txt": "Passed diagnostic; no native or performance-adoption claim"
+    }
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "4294969023"
+    ],
+    "gpu_model": "Apple M5 Max 40GPU 128GiB"
+  },
+  "outputs": [
+    {
+      "artifact_id": "summary.json",
+      "path": "local-output/summary.json",
+      "sha256": "1a155b2eff0acb0432f209f300557b2892d6bed69d827f0c10f68df1b0f2770f",
+      "size_bytes": 10736,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "samples.json",
+      "path": "local-output/samples.json",
+      "sha256": "326aba3e8b90d31633de34ad421ace22beb98a6defd1fc37ac060c9184c6e1c6",
+      "size_bytes": 77976,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "floor.log",
+      "path": "local-output/floor.log",
+      "sha256": "7ee27c9ca200705567025c22a10cbeaa3f43893cc6dbbe054d1f92f7da94eaa9",
+      "size_bytes": 61363,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "floor-memory.txt",
+      "path": "local-output/floor-memory.txt",
+      "sha256": "3d5e850c9e770dfd03029092631a471b71bd2550cca59df145a367485be79867",
+      "size_bytes": 176540,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-10T00:16:26Z",
+    "started": "2026-09-10T00:16:44.437Z",
+    "finished": "2026-09-10T00:21:26.396Z"
+  }
+}

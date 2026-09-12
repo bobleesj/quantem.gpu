@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-joint-tile-planner",
+  "status": "succeeded",
+  "question": "Can joint parent-child selection reduce residual entropy decoding using the unchanged 100 exact tile fields and zero additional resident memory?",
+  "paper": {"repository":"quantem.gpu", "authoritative_host":"phil", "manifest_path":"experiments/20260909-all66-joint-tile-planner/manifest.json"},
+  "code": {"repository":"quantem.gpu", "revision":"abff4e0cac5329fd83391a11dcfa8a6849ed1589", "dirty":true, "entrypoint":"local-evidence/audit-joint-tile-plan.py", "diff_sha256":"24e7a3b250758703e9ff382793eab8ae985f5eb8eacf61191cb5721a27e4349b", "snapshot_path":"local-evidence/audit-joint-tile-plan.py"},
+  "inputs": [
+    {"dataset_id":"all66-entropy-checkpoint", "path":"local-fixture/checkpoint.json", "sha256":"2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"},
+    {"dataset_id":"authenticated-global-planner", "path":"local-fixture/global-state.npz", "sha256":"c499fa252b142a1a9d000c873646e6d3f43b9cd05dbcc7e801db08f29d83b99f"},
+    {"dataset_id":"native-matched-masks", "path":"local-fixture/native-stream-bytes-r2.json", "sha256":"1c896b4f3ad0ff2a40b88377915be356bbf6b1c3ed7a2596898f60a9f3db1296"}
+  ],
+  "parameters": {
+    "shape":[66,512,512,192,192], "dtype":"uint16", "scan_bin":1, "detector_bin":1, "crop":null,
+    "one_factor":"geometry-only joint parent/child optimization versus frozen coarse-first greedy; same parent36/fine64 tile bank, cost weights, masks and prior-selection rule",
+    "scope":"Metadata-only falsification, no scientific CPU decode, no resident upload or timing/FPS claim",
+    "matrix":"9 authenticated native masks plus45 BF/ABF/ADF center/edge/corner/radius cases; exact coefficient identity and signed residual bounds",
+    "admission":"Reject without GPU run if decoding work reduction is negligible; meaningful candidates still require full real66 numerical and native gates",
+    "source_bytes":84681338880, "index_bytes":2108620800, "additional_resident_bytes":0,
+    "source_page_state":"unspecified; only checkpoint and global planner metadata read",
+    "outcome":"REFUTED: all54 residual arrays byte identical. Zero dense/sparse column savings; five fewer tile additions across54 cases only. No GPU run or production change justified.",
+    "verification":"54 exact coefficient reconstructions, signed residual bounds, non-increasing modeled cost; all9 native masks/prior choices/frozen greedy residual hashes reproduced. Not scientific full-count parity or FPS.",
+    "failure":"Initial system python had no numpy; retained stderr, no compute. Rerun with existing miniforge python and numpy2.4.6 succeeded without package installation.",
+    "artifact_results":{"analysis":"54 full geometry/cost/coefficient comparisons"}
+  },
+  "execution":{"host":"phil", "backend":"numpy-geometry-metadata-only", "gpu_ids":[], "gpu_model":null},
+  "outputs":[{"artifact_id":"analysis", "path":"local-evidence/joint-tile-plan-r2.json", "sha256":"5780c140abc9e841a3e1415658b910bf8d15b15858da057b9222abe206fa310b", "size_bytes":47768, "retention":"durable", "consuming_figures":[]}],
+  "timestamps":{"created":"2026-09-09T09:19:00Z", "started":"2026-09-09T09:19:00Z", "finished":"2026-09-09T09:20:15Z"}
+}

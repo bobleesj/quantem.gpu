@@ -1,0 +1,198 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-coalesced-source-idle-r2",
+  "status": "succeeded",
+  "question": "Can one unchanged encoded allocation per acquisition reduce idle driver gaps without changing bytes, counts, index or geometry?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-coalesced-source-idle-r2/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "entrypoint": "TANSResidencyHoldExperimentTests.testAll66ResidencyHoldIdleABAWhenConfigured",
+    "dirty": true,
+    "snapshot_path": "local-evidence/source.patch",
+    "diff_sha256": "5a4bad36f60285bd086c23e115a4d5d07af90cf96729e848c9180586efd8d7c6"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-linux-products",
+      "path": "local-fixture/series-products/shared-resident-images.npy",
+      "sha256": "06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "index_ceiling_bytes": 2108620800,
+    "one_factor": "Fresh processes:1056 record allocations /66 acquisition-sized allocations /1056 record allocations. All original record bytes concatenated at explicit aligned offsets with no padding/reencoding/raw copy. Joined uploads write disjoint tracked slices; source declarations deduplicate identity. Same original index, decoder, source bytes and9held-out masks x2cycles with4s idle. Six full66 diffraction fingerprints across chunk boundaries must match across arms. R2 holds the production code identical to v11; only harness drains each selected-DP extraction autoreleasepool before final teardown.",
+    "default": "Off; existing app unchanged",
+    "untracked_source_sha256": "b936c639c56d78fdf3cacc922fda3d942949f54e205208710fa142111f2d4bf0",
+    "cache_state": "Complete prepared entropy archive, source pages unspecified. Not cold original source or headed UI/presentation.",
+    "run_root": "local-output",
+    "path_mapping": "Exact local paths and unmodified pre-normalization manifests are retained in the private output checkpoint.",
+    "artifact_results": {
+      "audit-coalesced-r2.cjs": "54/54 full66 detector outputs exact; all6 selected-DP positions match frozen hashes in all3 arms; source bytes unchanged; source released to0 and Metal residual720896B in all arms. Same production v11 code; test DP autorelease scope resolves v11 residual without relaxing gate. Paused wall p50 A1/B/A2=452.061/405.228/435.478ms; p95=max499.109/449.127/495.473ms; command interval-sum p50=184.952/181.260/175.916ms, inter-command gap p50=235.238/195.950/223.303ms. Coalescing saves7-10percent median but misses100ms and prepared archive load remains14.113/14.368/14.221s. No default adoption; native gate pending.",
+      "coalesced-r2-A1-memory-summary.json": "54/54 full66 detector outputs exact; all6 selected-DP positions match frozen hashes in all3 arms; source bytes unchanged; source released to0 and Metal residual720896B in all arms. Same production v11 code; test DP autorelease scope resolves v11 residual without relaxing gate. Paused wall p50 A1/B/A2=452.061/405.228/435.478ms; p95=max499.109/449.127/495.473ms; command interval-sum p50=184.952/181.260/175.916ms, inter-command gap p50=235.238/195.950/223.303ms. Coalescing saves7-10percent median but misses100ms and prepared archive load remains14.113/14.368/14.221s. No default adoption; native gate pending.",
+      "coalesced-r2-A1-memory.txt": "54/54 full66 detector outputs exact; all6 selected-DP positions match frozen hashes in all3 arms; source bytes unchanged; source released to0 and Metal residual720896B in all arms. Same production v11 code; test DP autorelease scope resolves v11 residual without relaxing gate. Paused wall p50 A1/B/A2=452.061/405.228/435.478ms; p95=max499.109/449.127/495.473ms; command interval-sum p50=184.952/181.260/175.916ms, inter-command gap p50=235.238/195.950/223.303ms. Coalescing saves7-10percent median but misses100ms and prepared archive load remains14.113/14.368/14.221s. No default adoption; native gate pending.",
+      "coalesced-r2-A2-memory-summary.json": "54/54 full66 detector outputs exact; all6 selected-DP positions match frozen hashes in all3 arms; source bytes unchanged; source released to0 and Metal residual720896B in all arms. Same production v11 code; test DP autorelease scope resolves v11 residual without relaxing gate. Paused wall p50 A1/B/A2=452.061/405.228/435.478ms; p95=max499.109/449.127/495.473ms; command interval-sum p50=184.952/181.260/175.916ms, inter-command gap p50=235.238/195.950/223.303ms. Coalescing saves7-10percent median but misses100ms and prepared archive load remains14.113/14.368/14.221s. No default adoption; native gate pending.",
+      "coalesced-r2-A2-memory.txt": "54/54 full66 detector outputs exact; all6 selected-DP positions match frozen hashes in all3 arms; source bytes unchanged; source released to0 and Metal residual720896B in all arms. Same production v11 code; test DP autorelease scope resolves v11 residual without relaxing gate. Paused wall p50 A1/B/A2=452.061/405.228/435.478ms; p95=max499.109/449.127/495.473ms; command interval-sum p50=184.952/181.260/175.916ms, inter-command gap p50=235.238/195.950/223.303ms. Coalescing saves7-10percent median but misses100ms and prepared archive load remains14.113/14.368/14.221s. No default adoption; native gate pending.",
+      "coalesced-r2-B_coalesced-memory-summary.json": "54/54 full66 detector outputs exact; all6 selected-DP positions match frozen hashes in all3 arms; source bytes unchanged; source released to0 and Metal residual720896B in all arms. Same production v11 code; test DP autorelease scope resolves v11 residual without relaxing gate. Paused wall p50 A1/B/A2=452.061/405.228/435.478ms; p95=max499.109/449.127/495.473ms; command interval-sum p50=184.952/181.260/175.916ms, inter-command gap p50=235.238/195.950/223.303ms. Coalescing saves7-10percent median but misses100ms and prepared archive load remains14.113/14.368/14.221s. No default adoption; native gate pending.",
+      "coalesced-r2-B_coalesced-memory.txt": "54/54 full66 detector outputs exact; all6 selected-DP positions match frozen hashes in all3 arms; source bytes unchanged; source released to0 and Metal residual720896B in all arms. Same production v11 code; test DP autorelease scope resolves v11 residual without relaxing gate. Paused wall p50 A1/B/A2=452.061/405.228/435.478ms; p95=max499.109/449.127/495.473ms; command interval-sum p50=184.952/181.260/175.916ms, inter-command gap p50=235.238/195.950/223.303ms. Coalescing saves7-10percent median but misses100ms and prepared archive load remains14.113/14.368/14.221s. No default adoption; native gate pending.",
+      "coalesced-r2-all66.log": "54/54 full66 detector outputs exact; all6 selected-DP positions match frozen hashes in all3 arms; source bytes unchanged; source released to0 and Metal residual720896B in all arms. Same production v11 code; test DP autorelease scope resolves v11 residual without relaxing gate. Paused wall p50 A1/B/A2=452.061/405.228/435.478ms; p95=max499.109/449.127/495.473ms; command interval-sum p50=184.952/181.260/175.916ms, inter-command gap p50=235.238/195.950/223.303ms. Coalescing saves7-10percent median but misses100ms and prepared archive load remains14.113/14.368/14.221s. No default adoption; native gate pending.",
+      "coalesced-r2-analysis.json": "54/54 full66 detector outputs exact; all6 selected-DP positions match frozen hashes in all3 arms; source bytes unchanged; source released to0 and Metal residual720896B in all arms. Same production v11 code; test DP autorelease scope resolves v11 residual without relaxing gate. Paused wall p50 A1/B/A2=452.061/405.228/435.478ms; p95=max499.109/449.127/495.473ms; command interval-sum p50=184.952/181.260/175.916ms, inter-command gap p50=235.238/195.950/223.303ms. Coalescing saves7-10percent median but misses100ms and prepared archive load remains14.113/14.368/14.221s. No default adoption; native gate pending.",
+      "coalesced-r2-diffraction-audit.json": "54/54 full66 detector outputs exact; all6 selected-DP positions match frozen hashes in all3 arms; source bytes unchanged; source released to0 and Metal residual720896B in all arms. Same production v11 code; test DP autorelease scope resolves v11 residual without relaxing gate. Paused wall p50 A1/B/A2=452.061/405.228/435.478ms; p95=max499.109/449.127/495.473ms; command interval-sum p50=184.952/181.260/175.916ms, inter-command gap p50=235.238/195.950/223.303ms. Coalescing saves7-10percent median but misses100ms and prepared archive load remains14.113/14.368/14.221s. No default adoption; native gate pending.",
+      "full-suite-v12.log": "54/54 full66 detector outputs exact; all6 selected-DP positions match frozen hashes in all3 arms; source bytes unchanged; source released to0 and Metal residual720896B in all arms. Same production v11 code; test DP autorelease scope resolves v11 residual without relaxing gate. Paused wall p50 A1/B/A2=452.061/405.228/435.478ms; p95=max499.109/449.127/495.473ms; command interval-sum p50=184.952/181.260/175.916ms, inter-command gap p50=235.238/195.950/223.303ms. Coalescing saves7-10percent median but misses100ms and prepared archive load remains14.113/14.368/14.221s. No default adoption; native gate pending.",
+      "run-coalesced-aba-r2.zsh": "54/54 full66 detector outputs exact; all6 selected-DP positions match frozen hashes in all3 arms; source bytes unchanged; source released to0 and Metal residual720896B in all arms. Same production v11 code; test DP autorelease scope resolves v11 residual without relaxing gate. Paused wall p50 A1/B/A2=452.061/405.228/435.478ms; p95=max499.109/449.127/495.473ms; command interval-sum p50=184.952/181.260/175.916ms, inter-command gap p50=235.238/195.950/223.303ms. Coalescing saves7-10percent median but misses100ms and prepared archive load remains14.113/14.368/14.221s. No default adoption; native gate pending.",
+      "source.patch": "54/54 full66 detector outputs exact; all6 selected-DP positions match frozen hashes in all3 arms; source bytes unchanged; source released to0 and Metal residual720896B in all arms. Same production v11 code; test DP autorelease scope resolves v11 residual without relaxing gate. Paused wall p50 A1/B/A2=452.061/405.228/435.478ms; p95=max499.109/449.127/495.473ms; command interval-sum p50=184.952/181.260/175.916ms, inter-command gap p50=235.238/195.950/223.303ms. Coalescing saves7-10percent median but misses100ms and prepared archive load remains14.113/14.368/14.221s. No default adoption; native gate pending.",
+      "untracked-source.tar.gz": "54/54 full66 detector outputs exact; all6 selected-DP positions match frozen hashes in all3 arms; source bytes unchanged; source released to0 and Metal residual720896B in all arms. Same production v11 code; test DP autorelease scope resolves v11 residual without relaxing gate. Paused wall p50 A1/B/A2=452.061/405.228/435.478ms; p95=max499.109/449.127/495.473ms; command interval-sum p50=184.952/181.260/175.916ms, inter-command gap p50=235.238/195.950/223.303ms. Coalescing saves7-10percent median but misses100ms and prepared archive load remains14.113/14.368/14.221s. No default adoption; native gate pending."
+    },
+    "preflight": "239 release tests /27 explicit opt-in skips /0 failures. v11 teardown failed in all arms at5,586,944B, equal to expected720,896B plus one full66 DP buffer. v12 changes only test DP extraction autorelease scopes. Original failure retained; require original720,896B gate without relaxation.",
+    "executable_sha256": "38cb156a71ba52550d2136b3671c77838d496acece949e31bd95e5d6d6de8b75",
+    "result": "54/54 full66 detector outputs exact; all6 selected-DP positions match frozen hashes in all3 arms; source bytes unchanged; source released to0 and Metal residual720896B in all arms. Same production v11 code; test DP autorelease scope resolves v11 residual without relaxing gate. Paused wall p50 A1/B/A2=452.061/405.228/435.478ms; p95=max499.109/449.127/495.473ms; command interval-sum p50=184.952/181.260/175.916ms, inter-command gap p50=235.238/195.950/223.303ms. Coalescing saves7-10percent median but misses100ms and prepared archive load remains14.113/14.368/14.221s. No default adoption; native gate pending."
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "audit-coalesced-r2.cjs",
+      "path": "local-evidence/audit-coalesced-r2.cjs",
+      "sha256": "7f45f80139f106e5412586dbf222e7e6df1dd8bef82753741ce9846386471276",
+      "size_bytes": 2142,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-r2-A1-memory-summary.json",
+      "path": "local-evidence/coalesced-r2-A1-memory-summary.json",
+      "sha256": "d1e7d2c2572ca1bc8a16277b3fdcd3a82ee55343d1d0de2e4b46d4492a7b3e0d",
+      "size_bytes": 699,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-r2-A1-memory.txt",
+      "path": "local-evidence/coalesced-r2-A1-memory.txt",
+      "sha256": "fc2549f4bd55321dcc64a726a96219ad1335b1e236bfad57e20a3067f761a2f2",
+      "size_bytes": 64260,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-r2-A2-memory-summary.json",
+      "path": "local-evidence/coalesced-r2-A2-memory-summary.json",
+      "sha256": "ae0fc01082d1e4d377165e15f7f9f4d9006e11f63661cd3482f89fc9b54b6f56",
+      "size_bytes": 698,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-r2-A2-memory.txt",
+      "path": "local-evidence/coalesced-r2-A2-memory.txt",
+      "sha256": "d03c834083d89efcd2988ee867c30145877fd8345cec868cba14ad008c94204f",
+      "size_bytes": 64260,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-r2-B_coalesced-memory-summary.json",
+      "path": "local-evidence/coalesced-r2-B_coalesced-memory-summary.json",
+      "sha256": "5bbafd3777990c94ee3b7a3320159d8d19602dd3ae8e23aa193ac31c5d17f8e4",
+      "size_bytes": 700,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-r2-B_coalesced-memory.txt",
+      "path": "local-evidence/coalesced-r2-B_coalesced-memory.txt",
+      "sha256": "71cdcd8235c28c184450f6d2472693b4cf7833d00aaa2f4053f3c27362afea48",
+      "size_bytes": 63000,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-r2-all66.log",
+      "path": "local-evidence/coalesced-r2-all66.log",
+      "sha256": "9375b1a9611e634819b9eafba348c1d06ed4a24868e6245adfc9a31eba464884",
+      "size_bytes": 56366,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-r2-analysis.json",
+      "path": "local-evidence/coalesced-r2-analysis.json",
+      "sha256": "29f7cc8ac21bb32352423f083e13814b9b331151593c82debc16ca6f053d0934",
+      "size_bytes": 91617,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-r2-diffraction-audit.json",
+      "path": "local-evidence/coalesced-r2-diffraction-audit.json",
+      "sha256": "eb91e59fc618fc0eef2f3ce757bedd165fd3e93b7cf25756c2b24213b0f9cad5",
+      "size_bytes": 4205,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "full-suite-v12.log",
+      "path": "local-evidence/full-suite-v12.log",
+      "sha256": "961117895ba6f5fdf1d42b34c33a367304575e93798359b60787a4d4aef8d3de",
+      "size_bytes": 89371,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "run-coalesced-aba-r2.zsh",
+      "path": "local-evidence/run-coalesced-aba-r2.zsh",
+      "sha256": "d5c75f843ba14811ef514d39fa02a906a7069b717ca5ea67a48eb0656895e7dd",
+      "size_bytes": 1453,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "source.patch",
+      "path": "local-evidence/source.patch",
+      "sha256": "5a4bad36f60285bd086c23e115a4d5d07af90cf96729e848c9180586efd8d7c6",
+      "size_bytes": 117782,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "untracked-source.tar.gz",
+      "path": "local-evidence/untracked-source.tar.gz",
+      "sha256": "b936c639c56d78fdf3cacc922fda3d942949f54e205208710fa142111f2d4bf0",
+      "size_bytes": 16242,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T21:02:21Z",
+    "started": "2026-09-09T21:02:21Z",
+    "finished": "2026-09-09T21:07:37.485Z"
+  }
+}

@@ -1,0 +1,293 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-metal4-explicit",
+  "status": "succeeded",
+  "question": "Does explicit Metal4 resource residency and argument-table submission remove the paused all66 legacy-driver cost without changing any integer kernel, encoded bytes or selection?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-metal4-explicit/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "entrypoint": "TANSResidencyHoldExperimentTests with explicit Metal4 submission",
+    "dirty": true,
+    "diff_sha256": "79498159c86a00588d8462bfad03a09ffd6a1ee1dcc724ca5000f33f9ee7a4ca",
+    "snapshot_path": "local-output/source-v20.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "native-masks",
+      "path": "experiments/20260909-all66-separated-native-replay/local-evidence/native-stream-bytes-r2.json",
+      "sha256": "1c896b4f3ad0ff2a40b88377915be356bbf6b1c3ed7a2596898f60a9f3db1296"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "index_bytes": 2108620800,
+    "one_factor": "Legacy17commands / explicitMetal4 / legacy17commands. Same3integer kernels, identical17record-shard grids, unchanged encoded records, no sparse-prefix optimization. M4 initializer uses one legacy fill/index completion then one explicit M4 query; all initialization and submission waits included in package wall.",
+    "cache_state": "Prepared entropy archive, source pages unspecified, fresh process each arm.9retained masks x2cycles,4-second idle.",
+    "setup": "Explicit M4 pipeline compilation and persistent source residency registration logged separately in arm setup before query timer; no load-time/cold or first-ever setup claim.",
+    "acceptance": "Exact54all66 dynamic outputs, all3staticLinuxproducts and6frozenDPfingerprints per arm; preserve prior output/release source. Bothcontrols and criticalp95/max must improve.",
+    "qualified_for_adoption": false,
+    "untracked_sha256": "d1000534f0120f97e627700f5a3b0657d817d63a6423f0eb8e7308001f43a5b6",
+    "executable_sha256": "0a2834efc5b871b7bac062f7a65f59ab9409fa0d8371803323758bba955dedfd",
+    "metal_sha256": "536cac11f2c8535d16d71d8f836504f3a79e2466dc27b6f358e928506341bc90",
+    "ordinary_tests": "241 executed / 27 explicit opt-in skips / 0 failures",
+    "contention": "Desktop graphics activity preserved; no uncontended or hardware cache-counter claim.",
+    "run_root": "local-output",
+    "command": "zsh local-output/run-metal4.zsh",
+    "result": "Refuted: exact all66 A/B/A wall p50 410.246/638.585/406.691ms; p95=max463.799/801.919/451.324ms. Candidate55.7-57.0%slower.54complete query sets exact; same source/index/Metal allocations, source0/Metal720896B teardown, swap unchanged. No app adoption.",
+    "metal4_scheduling": "Metal4 compute passes are concurrent by default; identical shader source, constants, grids and exact atomic reductions, but compiler/submission/scheduling differ. This does not isolate residency alone.",
+    "artifact_results": {
+      "metal4-comparison.json": "Refuted: exact all66 A/B/A wall p50 410.246/638.585/406.691ms; p95=max463.799/801.919/451.324ms. Candidate55.7-57.0%slower.54complete query sets exact; same source/index/Metal allocations, source0/Metal720896B teardown, swap unchanged. No app adoption.",
+      "metal4-parity.json": "Refuted: exact all66 A/B/A wall p50 410.246/638.585/406.691ms; p95=max463.799/801.919/451.324ms. Candidate55.7-57.0%slower.54complete query sets exact; same source/index/Metal allocations, source0/Metal720896B teardown, swap unchanged. No app adoption.",
+      "metal4-A1.log": "Refuted: exact all66 A/B/A wall p50 410.246/638.585/406.691ms; p95=max463.799/801.919/451.324ms. Candidate55.7-57.0%slower.54complete query sets exact; same source/index/Metal allocations, source0/Metal720896B teardown, swap unchanged. No app adoption.",
+      "metal4-B.log": "Refuted: exact all66 A/B/A wall p50 410.246/638.585/406.691ms; p95=max463.799/801.919/451.324ms. Candidate55.7-57.0%slower.54complete query sets exact; same source/index/Metal allocations, source0/Metal720896B teardown, swap unchanged. No app adoption.",
+      "metal4-A2.log": "Refuted: exact all66 A/B/A wall p50 410.246/638.585/406.691ms; p95=max463.799/801.919/451.324ms. Candidate55.7-57.0%slower.54complete query sets exact; same source/index/Metal allocations, source0/Metal720896B teardown, swap unchanged. No app adoption.",
+      "metal4-A1-memory.txt": "Refuted: exact all66 A/B/A wall p50 410.246/638.585/406.691ms; p95=max463.799/801.919/451.324ms. Candidate55.7-57.0%slower.54complete query sets exact; same source/index/Metal allocations, source0/Metal720896B teardown, swap unchanged. No app adoption.",
+      "metal4-B-memory.txt": "Refuted: exact all66 A/B/A wall p50 410.246/638.585/406.691ms; p95=max463.799/801.919/451.324ms. Candidate55.7-57.0%slower.54complete query sets exact; same source/index/Metal allocations, source0/Metal720896B teardown, swap unchanged. No app adoption.",
+      "metal4-A2-memory.txt": "Refuted: exact all66 A/B/A wall p50 410.246/638.585/406.691ms; p95=max463.799/801.919/451.324ms. Candidate55.7-57.0%slower.54complete query sets exact; same source/index/Metal allocations, source0/Metal720896B teardown, swap unchanged. No app adoption.",
+      "run-metal4.zsh": "Refuted: exact all66 A/B/A wall p50 410.246/638.585/406.691ms; p95=max463.799/801.919/451.324ms. Candidate55.7-57.0%slower.54complete query sets exact; same source/index/Metal allocations, source0/Metal720896B teardown, swap unchanged. No app adoption.",
+      "full-suite-v20.log": "Refuted: exact all66 A/B/A wall p50 410.246/638.585/406.691ms; p95=max463.799/801.919/451.324ms. Candidate55.7-57.0%slower.54complete query sets exact; same source/index/Metal allocations, source0/Metal720896B teardown, swap unchanged. No app adoption.",
+      "build-metal4.log": "Preserved initial compile failure; fixed API labels before qualified full66 test.",
+      "build-metal4-r2.log": "Refuted: exact all66 A/B/A wall p50 410.246/638.585/406.691ms; p95=max463.799/801.919/451.324ms. Candidate55.7-57.0%slower.54complete query sets exact; same source/index/Metal allocations, source0/Metal720896B teardown, swap unchanged. No app adoption.",
+      "source-v20.patch": "Refuted: exact all66 A/B/A wall p50 410.246/638.585/406.691ms; p95=max463.799/801.919/451.324ms. Candidate55.7-57.0%slower.54complete query sets exact; same source/index/Metal allocations, source0/Metal720896B teardown, swap unchanged. No app adoption.",
+      "source-v20-untracked.tar.gz": "Refuted: exact all66 A/B/A wall p50 410.246/638.585/406.691ms; p95=max463.799/801.919/451.324ms. Candidate55.7-57.0%slower.54complete query sets exact; same source/index/Metal allocations, source0/Metal720896B teardown, swap unchanged. No app adoption.",
+      "bin-MetalKernelsPackageTests-v20": "Refuted: exact all66 A/B/A wall p50 410.246/638.585/406.691ms; p95=max463.799/801.919/451.324ms. Candidate55.7-57.0%slower.54complete query sets exact; same source/index/Metal allocations, source0/Metal720896B teardown, swap unchanged. No app adoption.",
+      "bin-tans-v20.metal": "Refuted: exact all66 A/B/A wall p50 410.246/638.585/406.691ms; p95=max463.799/801.919/451.324ms. Candidate55.7-57.0%slower.54complete query sets exact; same source/index/Metal allocations, source0/Metal720896B teardown, swap unchanged. No app adoption.",
+      "report.html": "Numerical report only; browser visual review blocked by Terminal Browser graphics capability.",
+      "report.json": "Numerical report only; browser visual review blocked by Terminal Browser graphics capability.",
+      "timings.svg": "Refuted: exact all66 A/B/A wall p50 410.246/638.585/406.691ms; p95=max463.799/801.919/451.324ms. Candidate55.7-57.0%slower.54complete query sets exact; same source/index/Metal allocations, source0/Metal720896B teardown, swap unchanged. No app adoption.",
+      "memory-summary.json": "Refuted: exact all66 A/B/A wall p50 410.246/638.585/406.691ms; p95=max463.799/801.919/451.324ms. Candidate55.7-57.0%slower.54complete query sets exact; same source/index/Metal allocations, source0/Metal720896B teardown, swap unchanged. No app adoption.",
+      "CHECKPOINT.md": "Refuted: exact all66 A/B/A wall p50 410.246/638.585/406.691ms; p95=max463.799/801.919/451.324ms. Candidate55.7-57.0%slower.54complete query sets exact; same source/index/Metal allocations, source0/Metal720896B teardown, swap unchanged. No app adoption.",
+      "compare.cjs": "Refuted: exact all66 A/B/A wall p50 410.246/638.585/406.691ms; p95=max463.799/801.919/451.324ms. Candidate55.7-57.0%slower.54complete query sets exact; same source/index/Metal allocations, source0/Metal720896B teardown, swap unchanged. No app adoption.",
+      "audit-residency-variants.cjs": "Refuted: exact all66 A/B/A wall p50 410.246/638.585/406.691ms; p95=max463.799/801.919/451.324ms. Candidate55.7-57.0%slower.54complete query sets exact; same source/index/Metal allocations, source0/Metal720896B teardown, swap unchanged. No app adoption.",
+      "build-evidence.cjs": "Refuted: exact all66 A/B/A wall p50 410.246/638.585/406.691ms; p95=max463.799/801.919/451.324ms. Candidate55.7-57.0%slower.54complete query sets exact; same source/index/Metal allocations, source0/Metal720896B teardown, swap unchanged. No app adoption."
+    }
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "4294969023"
+    ],
+    "gpu_model": "Apple M5 Max40cores128GiB"
+  },
+  "outputs": [
+    {
+      "artifact_id": "metal4-comparison.json",
+      "path": "local-output/metal4-comparison.json",
+      "sha256": "7abb14d9268b3eb56eab4fac999e076e5172419d13a2dd84287972e599b31eab",
+      "size_bytes": 79910,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "metal4-parity.json",
+      "path": "local-output/metal4-parity.json",
+      "sha256": "06c850c05c0b25d8f487f2d576316075c603882885033b2bbc0486106d3fb11a",
+      "size_bytes": 4384,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "metal4-A1.log",
+      "path": "local-output/metal4-A1.log",
+      "sha256": "8058249f0c72928eb3974194c8b2ac80afafe714f41ddd70e1c4f1d264cc21b3",
+      "size_bytes": 20076,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "metal4-B.log",
+      "path": "local-output/metal4-B.log",
+      "sha256": "52ed123c4824fd1b8b5a6cb08412eaeda2d6166a97ad63e52b0190d93688c66f",
+      "size_bytes": 13451,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "metal4-A2.log",
+      "path": "local-output/metal4-A2.log",
+      "sha256": "13f963cb6592d4f0da561fe2d24e18b7ea6e3509ba98de559d959b0b4f00644f",
+      "size_bytes": 20078,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "metal4-A1-memory.txt",
+      "path": "local-output/metal4-A1-memory.txt",
+      "sha256": "955a05122c047b224df39959bb1d3c741362f0f622faea4647e586c675bedcd4",
+      "size_bytes": 64311,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "metal4-B-memory.txt",
+      "path": "local-output/metal4-B-memory.txt",
+      "sha256": "c5f33b61d9a61b9e4a89b66dc318cc540ef9225c9ffe1a4f9f9015f952bcca02",
+      "size_bytes": 66833,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "metal4-A2-memory.txt",
+      "path": "local-output/metal4-A2-memory.txt",
+      "sha256": "a7744a2b0e6a5ebef23681b51e8a861ccb0b1862d0a6de9ae24d24add00d10d3",
+      "size_bytes": 64311,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "run-metal4.zsh",
+      "path": "local-output/run-metal4.zsh",
+      "sha256": "4476783e0171bec84b1cc00f7b99f25d075b7d7fa094678ed632c63011b2118e",
+      "size_bytes": 1728,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "full-suite-v20.log",
+      "path": "local-output/full-suite-v20.log",
+      "sha256": "176ae2c6724de0e60a55b060706e9514e63678b19d5eb23d5c26c83d74eba2fb",
+      "size_bytes": 90285,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "build-metal4.log",
+      "path": "local-output/build-metal4.log",
+      "sha256": "6b17e270660de369fba0f660dcc8b62548c58544e5db2b29b376c8d9b4abdaf8",
+      "size_bytes": 2520,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "build-metal4-r2.log",
+      "path": "local-output/build-metal4-r2.log",
+      "sha256": "e6ef9787658e05a71bd3f28d5416764607eedb48df9302275be223822bc86be1",
+      "size_bytes": 2181,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "source-v20.patch",
+      "path": "local-output/source-v20.patch",
+      "sha256": "79498159c86a00588d8462bfad03a09ffd6a1ee1dcc724ca5000f33f9ee7a4ca",
+      "size_bytes": 161267,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "source-v20-untracked.tar.gz",
+      "path": "local-output/source-v20-untracked.tar.gz",
+      "sha256": "d1000534f0120f97e627700f5a3b0657d817d63a6423f0eb8e7308001f43a5b6",
+      "size_bytes": 21924,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "bin-MetalKernelsPackageTests-v20",
+      "path": "local-output/bin/MetalKernelsPackageTests-v20",
+      "sha256": "0a2834efc5b871b7bac062f7a65f59ab9409fa0d8371803323758bba955dedfd",
+      "size_bytes": 11312616,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "bin-tans-v20.metal",
+      "path": "local-output/bin/tans-v20.metal",
+      "sha256": "536cac11f2c8535d16d71d8f836504f3a79e2466dc27b6f358e928506341bc90",
+      "size_bytes": 53936,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "report.html",
+      "path": "local-output/report.html",
+      "sha256": "02714e751b1266f7b74031169b275b561eac1b7c499909241cf02c704c7cbbe2",
+      "size_bytes": 13014,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "report.json",
+      "path": "local-output/report.json",
+      "sha256": "171546cefac64c2cf05976c98353a57291d972ff3be24a11d59b2abf6e755381",
+      "size_bytes": 8960,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "timings.svg",
+      "path": "local-output/timings.svg",
+      "sha256": "60143087d90db2d8fd4114476ede571d892ee059f8fb8d94cd880601a87b7304",
+      "size_bytes": 3239,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "memory-summary.json",
+      "path": "local-output/memory-summary.json",
+      "sha256": "61dddae1a42edd7957d1c827cfb200ca6bfc8ae19f71224fec7a4305a61a3c19",
+      "size_bytes": 2769,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "CHECKPOINT.md",
+      "path": "local-output/CHECKPOINT.md",
+      "sha256": "576da888a72e351c4d0488f26e72c5ea616e2633ed7d64b23dddc441837c2e65",
+      "size_bytes": 5304,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "compare.cjs",
+      "path": "local-output/compare.cjs",
+      "sha256": "89da10d507493b2501f97de81753828bcd3d5697e713e500cd60764f367fc3ea",
+      "size_bytes": 2827,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "audit-residency-variants.cjs",
+      "path": "local-output/audit-residency-variants.cjs",
+      "sha256": "e7aebbb212c93fa4980c02b708a2f217ce151e5c454089273fb193af68998d35",
+      "size_bytes": 2223,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "build-evidence.cjs",
+      "path": "local-output/build-evidence.cjs",
+      "sha256": "e0de442b944ada84501aac70269e9e892c26927da5ccf4fd7cb72ee409572d69",
+      "size_bytes": 9335,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T23:17:06.668Z",
+    "started": "2026-09-09T23:21:11.411Z",
+    "finished": "2026-09-09T23:26:22.335Z"
+  }
+}

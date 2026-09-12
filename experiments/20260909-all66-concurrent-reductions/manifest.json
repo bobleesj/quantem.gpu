@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-concurrent-reductions",
+  "status": "succeeded",
+  "question": "Does concurrent execution of independent exact atomic detector dispatches reduce all66 latency at unchanged source/index memory and loading?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-concurrent-reductions/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "entrypoint": "TANSSharedRefill16ExperimentTests.testAll66SharedRefill16ABAWhenConfigured",
+    "dirty": true,
+    "diff_sha256": "57cbe6aecea3baa1824c0335fa4afe3bfc694958f4ba5433cc796d176e227245",
+    "snapshot_path": "local-evidence/source.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-linux-products",
+      "path": "local-fixture/series-products/shared-resident-images.npy",
+      "sha256": "06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "index_bytes": 2108620800,
+    "representation": "lossless entropy only",
+    "one_factor": "MTLComputeCommandEncoder dispatchType concurrent versus serial; exact atomic contributions independent, seed/index initialization in preceding ordered encoders; same mixed-tail/saving8/separated/mixed-only/submission64 in all arms.",
+    "gate": "Independent uint16 literal/escape/mixed/signed/inactive contributions first. Full66 A/B/A, seven large/edge/resize/small cases, N5 each. Complete image hashes and immutable prior/reference checks.",
+    "memory": "No new source/index/scratch/metadata or persistent outputs. Reuse original allocations; report actual Metal allocation, RSS/compressor/swap.",
+    "timing": "Prepared archive source pages unspecified. Warm completed queries; command execution spans and inter-command gaps separate. Not native FPS or cold HDF5.",
+    "untracked_source_sha256": "4da6ad1c2180b12cdfcba69a2b3599bee7da7843e14d9104a5ae215a1676f528",
+    "default": "Internal flag false; no app API/default change.",
+    "command": "QUANTEM_TANS_REFILL16_FIXTURE=$ALL66_FIXTURE QUANTEM_TANS_CONCURRENT_DISPATCH=1 QUANTEM_TANS_MIXED_TAILS=1 QUANTEM_TANS_SEPARATE_MIXED=1 QUANTEM_TANS_MIXED_ONLY=1 QUANTEM_TANS_MIXED_SAVINGS_DIVISOR=8 swift test -c release --skip-build --filter TANSSharedRefill16ExperimentTests.testAll66SharedRefill16ABAWhenConfigured",
+    "result": "105/105 all66 exact; largeADF182.571/180.551/182.576ms, only1.1percent. Insufficient gain; no app adoption. Six independent tests passed. Metal allocation86935453696B unchanged; sampled swap delta0, RSSmax524992512B excludes private Metal.",
+    "artifact_results": {
+      "concurrent-unit-log": "105/105 all66 exact; largeADF182.571/180.551/182.576ms, only1.1percent. Insufficient gain; no app adoption. Six independent tests passed. Metal allocation86935453696B unchanged; sampled swap delta0, RSSmax524992512B excludes private Metal.",
+      "concurrent-all66-log": "105/105 all66 exact; largeADF182.571/180.551/182.576ms, only1.1percent. Insufficient gain; no app adoption. Six independent tests passed. Metal allocation86935453696B unchanged; sampled swap delta0, RSSmax524992512B excludes private Metal.",
+      "concurrent-analysis-json": "105/105 all66 exact; largeADF182.571/180.551/182.576ms, only1.1percent. Insufficient gain; no app adoption. Six independent tests passed. Metal allocation86935453696B unchanged; sampled swap delta0, RSSmax524992512B excludes private Metal.",
+      "concurrent-memory-txt": "105/105 all66 exact; largeADF182.571/180.551/182.576ms, only1.1percent. Insufficient gain; no app adoption. Six independent tests passed. Metal allocation86935453696B unchanged; sampled swap delta0, RSSmax524992512B excludes private Metal.",
+      "concurrent-memory-summary-json": "105/105 all66 exact; largeADF182.571/180.551/182.576ms, only1.1percent. Insufficient gain; no app adoption. Six independent tests passed. Metal allocation86935453696B unchanged; sampled swap delta0, RSSmax524992512B excludes private Metal."
+    }
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "concurrent-unit-log",
+      "path": "local-evidence/concurrent-unit.log",
+      "sha256": "386d9a691d792fbc6dd015f9c7005b263f93d91019b25a560c36f76ce887d25c",
+      "size_bytes": 6514,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "concurrent-all66-log",
+      "path": "local-evidence/concurrent-all66.log",
+      "sha256": "a1feb765a798ebb2d0e6f0d9307f8bccc406690950c039f3949b95ae7cdc46a0",
+      "size_bytes": 75797,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "concurrent-analysis-json",
+      "path": "local-evidence/concurrent-analysis.json",
+      "sha256": "0626db7d6640ff6c97102c047dabf6fc26bac282c2ac91fcdd182de64714d94c",
+      "size_bytes": 120063,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "concurrent-memory-txt",
+      "path": "local-evidence/concurrent-memory.txt",
+      "sha256": "1abd7b3184ef61f8d14055c15cbf0e093c90fcf346ac56a15b9bb2b09da18428",
+      "size_bytes": 12610,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "concurrent-memory-summary-json",
+      "path": "local-evidence/concurrent-memory-summary.json",
+      "sha256": "8d224c60945be8d598133d18cc0cdc8bf2386c07234480fdb1c843100fcdc687",
+      "size_bytes": 739,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T12:54:00Z",
+    "started": "2026-09-09T12:55:00Z",
+    "finished": "2026-09-09T13:02:24.377Z"
+  }
+}

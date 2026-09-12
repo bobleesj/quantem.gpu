@@ -1,0 +1,246 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-coalesced-queues",
+  "status": "succeeded",
+  "question": "Can four explicitly synchronized acquisition-shard queues overlap repeated large-source setup enough to break300ms exact all66 wall after idle?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-coalesced-queues/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "dirty": true,
+    "diff_sha256": "e9a34bdd6661d940eb4751d07990dde09fbe703a4b467cf2cab025643deae70f",
+    "snapshot_path": "local-output/source-v15.patch",
+    "entrypoint": "TANSResidencyHoldExperimentTests.testAll66ResidencyHoldIdleABAWhenConfigured"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-native-masks",
+      "path": "local-worktree/experiments/20260909-all66-separated-native-replay/local-evidence/native-stream-bytes-r2.json",
+      "sha256": "1c896b4f3ad0ff2a40b88377915be356bbf6b1c3ed7a2596898f60a9f3db1296"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "index_ceiling_bytes": 2108620800,
+    "one_factor": "One/four/one submission queues; all arms private coalesced encoded source and narrow output declarations. Same17commands,64records=4complete acquisitions per shard. First queue signals event only after exact output initialization+tile index; other queues wait before disjoint writes. All submitted commands complete and succeed before return, including failure cleanup. No decoder changes, extra dense4D resident, hold, or background keepalive. Extra queues created lazily inside first timed query.",
+    "cache_state": "Prepared entropy archive; source pages unspecified.4-second idle before every timed query;9 masks x2cycles per arm. Complete package-return wall, not native publication.",
+    "default": "Off; canonical sources and installed app untouched",
+    "untracked_source_sha256": "daeb1a45bc9afe7f1e19926d8d376e5445482227c56b3e0c7b6ed48da3a62986",
+    "run_root": "local-output",
+    "command": "zsh local-output/run-coalesced-queues-aba.zsh",
+    "memory_gate": "Same source/index bytes; source0/Metal720896B after release. No new dense/raw resident. Inspect pressure/swap; no full System Trace.",
+    "acceptance": "54complete exact all66 queries;6full66 selected-DP hashes; p50/p95/max below300ms reported separately; no speedup claim from GPU interval alone.",
+    "artifact_results": {
+      "audit-residency-variants.cjs": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. One/four/one queues wall p50 428.380/417.601/422.318ms;p95=max515.071/474.302/479.108ms. Tiny difference with desktop activity/control drift, no qualified gain or300ms pass. Same source/index and86,860,316,672B allocation. No adoption.",
+      "analyze-queues.cjs": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. One/four/one queues wall p50 428.380/417.601/422.318ms;p95=max515.071/474.302/479.108ms. Tiny difference with desktop activity/control drift, no qualified gain or300ms pass. Same source/index and86,860,316,672B allocation. No adoption.",
+      "run-coalesced-queues-aba.zsh": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. One/four/one queues wall p50 428.380/417.601/422.318ms;p95=max515.071/474.302/479.108ms. Tiny difference with desktop activity/control drift, no qualified gain or300ms pass. Same source/index and86,860,316,672B allocation. No adoption.",
+      "full-suite-v15.log": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. One/four/one queues wall p50 428.380/417.601/422.318ms;p95=max515.071/474.302/479.108ms. Tiny difference with desktop activity/control drift, no qualified gain or300ms pass. Same source/index and86,860,316,672B allocation. No adoption.",
+      "source-v15.patch": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. One/four/one queues wall p50 428.380/417.601/422.318ms;p95=max515.071/474.302/479.108ms. Tiny difference with desktop activity/control drift, no qualified gain or300ms pass. Same source/index and86,860,316,672B allocation. No adoption.",
+      "source-v15-untracked.tar.gz": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. One/four/one queues wall p50 428.380/417.601/422.318ms;p95=max515.071/474.302/479.108ms. Tiny difference with desktop activity/control drift, no qualified gain or300ms pass. Same source/index and86,860,316,672B allocation. No adoption.",
+      "coalesced-queues-audit.json": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. One/four/one queues wall p50 428.380/417.601/422.318ms;p95=max515.071/474.302/479.108ms. Tiny difference with desktop activity/control drift, no qualified gain or300ms pass. Same source/index and86,860,316,672B allocation. No adoption.",
+      "coalesced-queues-A1.log": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. One/four/one queues wall p50 428.380/417.601/422.318ms;p95=max515.071/474.302/479.108ms. Tiny difference with desktop activity/control drift, no qualified gain or300ms pass. Same source/index and86,860,316,672B allocation. No adoption.",
+      "coalesced-queues-A1-analysis.json": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. One/four/one queues wall p50 428.380/417.601/422.318ms;p95=max515.071/474.302/479.108ms. Tiny difference with desktop activity/control drift, no qualified gain or300ms pass. Same source/index and86,860,316,672B allocation. No adoption.",
+      "coalesced-queues-A1-memory.txt": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. One/four/one queues wall p50 428.380/417.601/422.318ms;p95=max515.071/474.302/479.108ms. Tiny difference with desktop activity/control drift, no qualified gain or300ms pass. Same source/index and86,860,316,672B allocation. No adoption.",
+      "coalesced-queues-A1-memory-summary.json": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. One/four/one queues wall p50 428.380/417.601/422.318ms;p95=max515.071/474.302/479.108ms. Tiny difference with desktop activity/control drift, no qualified gain or300ms pass. Same source/index and86,860,316,672B allocation. No adoption.",
+      "coalesced-queues-B_queues.log": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. One/four/one queues wall p50 428.380/417.601/422.318ms;p95=max515.071/474.302/479.108ms. Tiny difference with desktop activity/control drift, no qualified gain or300ms pass. Same source/index and86,860,316,672B allocation. No adoption.",
+      "coalesced-queues-B_queues-analysis.json": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. One/four/one queues wall p50 428.380/417.601/422.318ms;p95=max515.071/474.302/479.108ms. Tiny difference with desktop activity/control drift, no qualified gain or300ms pass. Same source/index and86,860,316,672B allocation. No adoption.",
+      "coalesced-queues-B_queues-memory.txt": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. One/four/one queues wall p50 428.380/417.601/422.318ms;p95=max515.071/474.302/479.108ms. Tiny difference with desktop activity/control drift, no qualified gain or300ms pass. Same source/index and86,860,316,672B allocation. No adoption.",
+      "coalesced-queues-B_queues-memory-summary.json": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. One/four/one queues wall p50 428.380/417.601/422.318ms;p95=max515.071/474.302/479.108ms. Tiny difference with desktop activity/control drift, no qualified gain or300ms pass. Same source/index and86,860,316,672B allocation. No adoption.",
+      "coalesced-queues-A2.log": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. One/four/one queues wall p50 428.380/417.601/422.318ms;p95=max515.071/474.302/479.108ms. Tiny difference with desktop activity/control drift, no qualified gain or300ms pass. Same source/index and86,860,316,672B allocation. No adoption.",
+      "coalesced-queues-A2-analysis.json": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. One/four/one queues wall p50 428.380/417.601/422.318ms;p95=max515.071/474.302/479.108ms. Tiny difference with desktop activity/control drift, no qualified gain or300ms pass. Same source/index and86,860,316,672B allocation. No adoption.",
+      "coalesced-queues-A2-memory.txt": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. One/four/one queues wall p50 428.380/417.601/422.318ms;p95=max515.071/474.302/479.108ms. Tiny difference with desktop activity/control drift, no qualified gain or300ms pass. Same source/index and86,860,316,672B allocation. No adoption.",
+      "coalesced-queues-A2-memory-summary.json": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. One/four/one queues wall p50 428.380/417.601/422.318ms;p95=max515.071/474.302/479.108ms. Tiny difference with desktop activity/control drift, no qualified gain or300ms pass. Same source/index and86,860,316,672B allocation. No adoption."
+    },
+    "timing_limit": "GPU interval sum can overlap across queues and includes event waits; not kernel-active time. Wall complete return is primary; GPU span uses minimum start/maximum end.",
+    "executable_sha256": "d52c31a0086470acbd36ccc3d4d827ef82435332df901d42bff60049f89e3e24",
+    "result": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. One/four/one queues wall p50 428.380/417.601/422.318ms;p95=max515.071/474.302/479.108ms. Tiny difference with desktop activity/control drift, no qualified gain or300ms pass. Same source/index and86,860,316,672B allocation. No adoption.",
+    "desktop_activity": "Read-only process preflight during comparison observed WindowServer45.2percent CPU and active ScreenSharingAgent35.8percent CPU. Operator apps untouched. AC,no recorded thermal/performance warning. Not an uncontended benchmark claim."
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "audit-residency-variants.cjs",
+      "path": "local-evidence/audit-residency-variants.cjs",
+      "sha256": "e7aebbb212c93fa4980c02b708a2f217ce151e5c454089273fb193af68998d35",
+      "size_bytes": 2223,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "analyze-queues.cjs",
+      "path": "local-evidence/analyze-queues.cjs",
+      "sha256": "4a407cf9f738a6eac4ccf5f2cedcd837fc39607eac78c1a21926e4a6d3e6faaa",
+      "size_bytes": 2406,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "run-coalesced-queues-aba.zsh",
+      "path": "local-evidence/run-coalesced-queues-aba.zsh",
+      "sha256": "d75021c708653272fa6e14a995babe8570014cfada05eec5156ca9b311b9c6ed",
+      "size_bytes": 1524,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "full-suite-v15.log",
+      "path": "local-evidence/full-suite-v15.log",
+      "sha256": "6febf33f7266fa5106d8ebced153294e9987ec2fdf9f6b71f8b8c92e647bf065",
+      "size_bytes": 89866,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "source-v15.patch",
+      "path": "local-evidence/source-v15.patch",
+      "sha256": "e9a34bdd6661d940eb4751d07990dde09fbe703a4b467cf2cab025643deae70f",
+      "size_bytes": 121633,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "source-v15-untracked.tar.gz",
+      "path": "local-evidence/source-v15-untracked.tar.gz",
+      "sha256": "daeb1a45bc9afe7f1e19926d8d376e5445482227c56b3e0c7b6ed48da3a62986",
+      "size_bytes": 16544,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-queues-audit.json",
+      "path": "local-evidence/coalesced-queues-audit.json",
+      "sha256": "22302d2364b45a179f85a0ef3ca91b68620e67db707e4debb6b77c6b0359a829",
+      "size_bytes": 4391,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-queues-A1.log",
+      "path": "local-evidence/coalesced-queues-A1.log",
+      "sha256": "493fdc9c3a59844fb15e9407751b2db437f6f4322c8cba43aa9b2af0898d11bc",
+      "size_bytes": 19079,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-queues-A1-analysis.json",
+      "path": "local-evidence/coalesced-queues-A1-analysis.json",
+      "sha256": "34766f3aa1a5d5470a28a268deb6e1739db24bcf0055227a812257418bafa3b1",
+      "size_bytes": 31316,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-queues-A1-memory.txt",
+      "path": "local-evidence/coalesced-queues-A1-memory.txt",
+      "sha256": "df30bb0c020b3cfd2a8c1fa4210d9ec823126a21e38ff0fe2b7b16a8f939e68e",
+      "size_bytes": 64311,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-queues-A1-memory-summary.json",
+      "path": "local-evidence/coalesced-queues-A1-memory-summary.json",
+      "sha256": "0a43c1ed7720317c71ab51cd134da3ebf6d8b9d3a2478d738f9fd397d3c19702",
+      "size_bytes": 701,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-queues-B_queues.log",
+      "path": "local-evidence/coalesced-queues-B_queues.log",
+      "sha256": "5d10947ad598b1b9cb3c9d449a80a0351cb02a1222a31331f67ac8d10295d449",
+      "size_bytes": 19335,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-queues-B_queues-analysis.json",
+      "path": "local-evidence/coalesced-queues-B_queues-analysis.json",
+      "sha256": "1abc54369eb5cd154efaa5e1b20a8164c2dd1745cf90f5c8b801e0652c982cd8",
+      "size_bytes": 30344,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-queues-B_queues-memory.txt",
+      "path": "local-evidence/coalesced-queues-B_queues-memory.txt",
+      "sha256": "27bf19e6c090396dfbf78eccb93d38c46d9fddfb4de16affe4f70f534c694a13",
+      "size_bytes": 64311,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-queues-B_queues-memory-summary.json",
+      "path": "local-evidence/coalesced-queues-B_queues-memory-summary.json",
+      "sha256": "20f2218c198617508e66b58263f5ebf69f2fff6c0f8646b32447e99c7b0fa571",
+      "size_bytes": 700,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-queues-A2.log",
+      "path": "local-evidence/coalesced-queues-A2.log",
+      "sha256": "b8e51f0317bd5e72268f295959f4eb0c4bc899139c7f8b0bc61bc354007d7996",
+      "size_bytes": 19078,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-queues-A2-analysis.json",
+      "path": "local-evidence/coalesced-queues-A2-analysis.json",
+      "sha256": "49a2d37a9e1c599ffee2b82c34ca9e0fe088d87ee6baf0445a2793e869ee6085",
+      "size_bytes": 31319,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-queues-A2-memory.txt",
+      "path": "local-evidence/coalesced-queues-A2-memory.txt",
+      "sha256": "fcd0e27ca0f4ce0f66873c1e267c0da02a9a225f12a207e64c04540266fe7539",
+      "size_bytes": 64311,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-queues-A2-memory-summary.json",
+      "path": "local-evidence/coalesced-queues-A2-memory-summary.json",
+      "sha256": "05b3d875565450db5e85c4b6e46d3d3e22114c0b7511ed1ea8946af75f677d2d",
+      "size_bytes": 701,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T22:13:37.459Z",
+    "started": "2026-09-09T22:13:49.562Z",
+    "finished": "2026-09-09T22:18:57.195Z"
+  }
+}

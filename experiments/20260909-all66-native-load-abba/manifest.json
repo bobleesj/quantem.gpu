@@ -1,0 +1,325 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-native-load-abba",
+  "status": "succeeded",
+  "question": "Does the exact mixed-tail native QA candidate regress complete prepared-archive folder loading versus the preserved baseline in a foreground A/B/B/A sequence?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-native-load-abba/manifest.json"
+  },
+  "code": {
+    "repository": "Live4DSTEM",
+    "revision": "689c4b71b7651e1ff175d19cfae2c6c8f472091a",
+    "dirty": true,
+    "entrypoint": "Public Finder Open and native Series folder chooser",
+    "diff_sha256": "361750a2048bb46c91c3fe5965efafb4768485da5d5298edc5ab973ab446bad3",
+    "snapshot_path": "../20260909-all66-finder-foreground-native/local-evidence/mixedtails0909b-app.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "representation": "lossless entropy only",
+    "source_bytes": 84681338880,
+    "index_bytes": 2108620800,
+    "baseline_executable_sha256": "703f73f7a27f38706c915be0ffe8323a5f34c28908e9fa766088a2b8c73a94fe",
+    "candidate_executable_sha256": "60c52d38b786f782b12cc66a66305c23695cdee76610d4f5b77a0cd8a176810a",
+    "qgpu_base": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "baseline_qgpu_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "candidate_qgpu_patch_sha256": "8834392350ce4b213e2580c67593849e6a92288ffaf85b325f1010709be37c43",
+    "plan": "A/B/B/A, fresh app processes and same complete real prepared folder. Source pages unspecified, not cold original HDF5 or encoding. Small N2/arm, no strong statistical equivalence claim. Zero-one-zero each run; Finder activation; built-in120Hz; no input gestures or concurrent compute during load. Stop before fixed12:51:34UTC deadline if any blocker.",
+    "result": "All four fresh native processes loaded all66; all four initial generations have66positiveVIpresentation receipts. A1/B1/B2/A2 panel-ready19.60/19.68/19.62/19.93s; all66presented20.003835/20.076088/20.032774/20.349198s. No clear loading regression in this small prepared-archive sample; not statistical equivalence, cold-source or encoding acceptance.",
+    "observed_statistics": {
+      "A": {
+        "ui_source_seconds_rounded": {
+          "n": 2,
+          "p50": 14.6,
+          "p95": 14.78,
+          "max": 14.78
+        },
+        "index_seconds": {
+          "n": 2,
+          "p50": 4.63577066664584,
+          "p95": 4.723721250076778,
+          "max": 4.723721250076778
+        },
+        "ui_panel_ready_seconds_rounded": {
+          "n": 2,
+          "p50": 19.6,
+          "p95": 19.93,
+          "max": 19.93
+        },
+        "first_vi_present_seconds": {
+          "n": 2,
+          "p50": 19.98716891661752,
+          "p95": 20.324197750072926,
+          "max": 20.324197750072926
+        },
+        "all66_vi_present_seconds": {
+          "n": 2,
+          "p50": 20.00383545830846,
+          "p95": 20.34919758338947,
+          "max": 20.34919758338947
+        }
+      },
+      "B": {
+        "ui_source_seconds_rounded": {
+          "n": 2,
+          "p50": 14.58,
+          "p95": 14.6,
+          "max": 14.6
+        },
+        "index_seconds": {
+          "n": 2,
+          "p50": 4.690563333337195,
+          "p95": 4.706295874901116,
+          "max": 4.706295874901116
+        },
+        "ui_panel_ready_seconds_rounded": {
+          "n": 2,
+          "p50": 19.62,
+          "p95": 19.68,
+          "max": 19.68
+        },
+        "first_vi_present_seconds": {
+          "n": 2,
+          "p50": 20.032774333260022,
+          "p95": 20.076087500085123,
+          "max": 20.076087500085123
+        },
+        "all66_vi_present_seconds": {
+          "n": 2,
+          "p50": 20.032774333260022,
+          "p95": 20.076087500085123,
+          "max": 20.076087500085123
+        }
+      }
+    },
+    "lifecycles": [
+      {
+        "arm": "A1",
+        "pid": 21544,
+        "window": 186714,
+        "launch_id": "05E63B08-D7B5-40A5-BBF9-D8BC63916475",
+        "verified": "Zero before launch; Finder named Open; one exact active process on builtin120Hz; all66 loaded; normalCmd-Q; zero PID afterward."
+      },
+      {
+        "arm": "B1",
+        "pid": 24692,
+        "window": 186756,
+        "launch_id": "4A2E5FD9-5189-4B74-8C30-D47FD1C64CA5",
+        "verified": "Zero before launch; Finder named Open; one exact active process on builtin120Hz; all66 loaded; normalCmd-Q; zero PID afterward."
+      },
+      {
+        "arm": "B2",
+        "pid": 27125,
+        "window": 186791,
+        "launch_id": "FA594282-C195-45F6-B584-D23029987E4A",
+        "verified": "Zero before launch; Finder named Open; one exact active process on builtin120Hz; all66 loaded; normalCmd-Q; zero PID afterward."
+      },
+      {
+        "arm": "A2",
+        "pid": 29764,
+        "window": 186833,
+        "launch_id": "9F9D43D5-849A-48C4-AF1B-F727B4CFFD8E",
+        "verified": "Zero before launch; Finder named Open; one exact active process on builtin120Hz; all66 loaded; normalCmd-Q; zero PID afterward."
+      }
+    ],
+    "memory_result": "Four sampled windows N17/15/16/15, respective RSSmax802553856/804618240/803078144/804274176B, excluding80.83GiBMetal. Each swapdelta0; allswapoutcounters11254896unchanged. Source84681338880B andindex2108620800B unchanged.",
+    "artifact_results": {
+      "load-abba-analysis-json": "All66 prepared native load only; no cold/FPS claim. See measured A/B/B/A result and sample coverage.",
+      "analyze-load-abba-cjs": "All66 prepared native load only; no cold/FPS claim. See measured A/B/B/A result and sample coverage.",
+      "baseline0908b-frame-pacing-launch-05e63b08-d7b5-40a5-bbf9-d8bc63916475-jsonl": "All66 prepared native load only; no cold/FPS claim. See measured A/B/B/A result and sample coverage.",
+      "load-abba-a1-preflight-txt": "All66 prepared native load only; no cold/FPS claim. See measured A/B/B/A result and sample coverage.",
+      "load-abba-a1-memory-txt": "All66 prepared native load only; no cold/FPS claim. See measured A/B/B/A result and sample coverage.",
+      "load-abba-a1-png": "All66 prepared native load only; no cold/FPS claim. See measured A/B/B/A result and sample coverage.",
+      "mixedtails0909b-frame-pacing-launch-4a2e5fd9-5189-4b74-8c30-d47fd1c64ca5-jsonl": "All66 prepared native load only; no cold/FPS claim. See measured A/B/B/A result and sample coverage.",
+      "load-abba-b1-preflight-txt": "All66 prepared native load only; no cold/FPS claim. See measured A/B/B/A result and sample coverage.",
+      "load-abba-b1-memory-txt": "All66 prepared native load only; no cold/FPS claim. See measured A/B/B/A result and sample coverage.",
+      "load-abba-b1-png": "All66 prepared native load only; no cold/FPS claim. See measured A/B/B/A result and sample coverage.",
+      "mixedtails0909b-frame-pacing-launch-fa594282-c195-45f6-b584-d23029987e4a-jsonl": "All66 prepared native load only; no cold/FPS claim. See measured A/B/B/A result and sample coverage.",
+      "load-abba-b2-preflight-txt": "All66 prepared native load only; no cold/FPS claim. See measured A/B/B/A result and sample coverage.",
+      "load-abba-b2-memory-txt": "All66 prepared native load only; no cold/FPS claim. See measured A/B/B/A result and sample coverage.",
+      "load-abba-b2-png": "All66 prepared native load only; no cold/FPS claim. See measured A/B/B/A result and sample coverage.",
+      "baseline0908b-frame-pacing-launch-9f9d43d5-849a-48c4-af1b-f727b4cffd8e-jsonl": "All66 prepared native load only; no cold/FPS claim. See measured A/B/B/A result and sample coverage.",
+      "load-abba-a2-preflight-txt": "All66 prepared native load only; no cold/FPS claim. See measured A/B/B/A result and sample coverage.",
+      "load-abba-a2-memory-txt": "All66 prepared native load only; no cold/FPS claim. See measured A/B/B/A result and sample coverage.",
+      "load-abba-a2-png": "All66 prepared native load only; no cold/FPS claim. See measured A/B/B/A result and sample coverage."
+    }
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "load-abba-analysis-json",
+      "path": "local-evidence/load-abba-analysis.json",
+      "sha256": "7df993c2ee60bd420b8bc439d9e5a55091ef4c0c0d5a54d1d805a0c3cb10ce5b",
+      "size_bytes": 8274,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "analyze-load-abba-cjs",
+      "path": "local-evidence/analyze-load-abba.cjs",
+      "sha256": "2158196287af6a075dfebb8885676474ca645ac6459e6485ecc3e4b1a08fc99e",
+      "size_bytes": 2945,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "baseline0908b-frame-pacing-launch-05e63b08-d7b5-40a5-bbf9-d8bc63916475-jsonl",
+      "path": "local-evidence/baseline0908b-frame-pacing.launch-05E63B08-D7B5-40A5-BBF9-D8BC63916475.jsonl",
+      "sha256": "04c4c0f32a4317dad88356e07ecc0d46cdf690cdf732618efa54fba73ff1e26c",
+      "size_bytes": 282864,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "load-abba-a1-preflight-txt",
+      "path": "local-evidence/load-abba-A1-preflight.txt",
+      "sha256": "40b5fa3d20632f6b7f6b4d9659e66ab82cd1895042b67df95946a3ffa59eb03c",
+      "size_bytes": 204,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "load-abba-a1-memory-txt",
+      "path": "local-evidence/load-abba-A1-memory.txt",
+      "sha256": "989d9bee129b36a2c5bf3957d6fc29f243d3ac049066e5e892d88da60918201e",
+      "size_bytes": 21437,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "load-abba-a1-png",
+      "path": "local-evidence/load-abba-A1.png",
+      "sha256": "0d938c679b976303ba6577eff05e2c646ea525b45a9593e5fcb9dcf41d643155",
+      "size_bytes": 2667431,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "mixedtails0909b-frame-pacing-launch-4a2e5fd9-5189-4b74-8c30-d47fd1c64ca5-jsonl",
+      "path": "local-evidence/mixedtails0909b-frame-pacing.launch-4A2E5FD9-5189-4B74-8C30-D47FD1C64CA5.jsonl",
+      "sha256": "774745038a5e969f87f6d370101b1ad6c3a8d6cda490beb070eb08501cd19564",
+      "size_bytes": 282854,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "load-abba-b1-preflight-txt",
+      "path": "local-evidence/load-abba-B1-preflight.txt",
+      "sha256": "007fc4a42a9bb67825a641dfd065a7fdf1c13b615543fd4a30a5934bec13c866",
+      "size_bytes": 208,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "load-abba-b1-memory-txt",
+      "path": "local-evidence/load-abba-B1-memory.txt",
+      "sha256": "18206d673074d9ec72fdd9f92a9ea037956ca630ad906b6c7d539abb86a33ebf",
+      "size_bytes": 18915,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "load-abba-b1-png",
+      "path": "local-evidence/load-abba-B1.png",
+      "sha256": "97dc79722eb9abf9b6108134f16bc2429e046051918878c4f6f66a427eab9763",
+      "size_bytes": 2667366,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "mixedtails0909b-frame-pacing-launch-fa594282-c195-45f6-b584-d23029987e4a-jsonl",
+      "path": "local-evidence/mixedtails0909b-frame-pacing.launch-FA594282-C195-45F6-B584-D23029987E4A.jsonl",
+      "sha256": "71638a42505af7c336e1e6156f5dc0ae123911422c8dcf512c36db834b0b90fe",
+      "size_bytes": 282869,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "load-abba-b2-preflight-txt",
+      "path": "local-evidence/load-abba-B2-preflight.txt",
+      "sha256": "ebb66ac21ab305975dff832e3b9d7438a22fc5c621af94e9425367c390a448fb",
+      "size_bytes": 208,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "load-abba-b2-memory-txt",
+      "path": "local-evidence/load-abba-B2-memory.txt",
+      "sha256": "71ffb532897fc87f181a08336b0b57c6ffda3412edc54bd78d376a88cd7ef186",
+      "size_bytes": 20176,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "load-abba-b2-png",
+      "path": "local-evidence/load-abba-B2.png",
+      "sha256": "959b6301c07bb0a98ff1cc0892d858813db2791604e7a9a4f250f710e913a7a2",
+      "size_bytes": 2666721,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "baseline0908b-frame-pacing-launch-9f9d43d5-849a-48c4-af1b-f727b4cffd8e-jsonl",
+      "path": "local-evidence/baseline0908b-frame-pacing.launch-9F9D43D5-849A-48C4-AF1B-F727B4CFFD8E.jsonl",
+      "sha256": "75b8b5cd200c28f9f716a16db22fafd88fd0ac483685d7020c4854de48031da1",
+      "size_bytes": 282891,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "load-abba-a2-preflight-txt",
+      "path": "local-evidence/load-abba-A2-preflight.txt",
+      "sha256": "dbdca00658fc4677108c54f84d7f7a3d195d2e4b40d43780021fa8ac8729c81e",
+      "size_bytes": 204,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "load-abba-a2-memory-txt",
+      "path": "local-evidence/load-abba-A2-memory.txt",
+      "sha256": "8386cb22f0844be266751340a53ab8f578e14711cf71ae35b34358d6817ed07b",
+      "size_bytes": 18915,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "load-abba-a2-png",
+      "path": "local-evidence/load-abba-A2.png",
+      "sha256": "04f27db66bbf922e738491e7d4c6626441f5ddbfa14de0078184f971c471e87c",
+      "size_bytes": 2666599,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T12:31:15Z",
+    "started": "2026-09-09T12:31:15Z",
+    "finished": "2026-09-09T12:40:06Z"
+  }
+}

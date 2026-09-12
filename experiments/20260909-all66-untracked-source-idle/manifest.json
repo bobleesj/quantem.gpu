@@ -1,0 +1,171 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-untracked-source-idle",
+  "status": "succeeded",
+  "question": "Can explicit immutable-source upload completion replace automatic hazard tracking and remove idle driver gaps?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-untracked-source-idle/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "entrypoint": "TANSResidencyHoldExperimentTests.testAll66ResidencyHoldIdleABAWhenConfigured",
+    "dirty": true,
+    "snapshot_path": "local-evidence/source.patch",
+    "diff_sha256": "06be695563f70bbedeae9f06a8520d3cffd1d980e1da7281852cee6faa962eb0"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-linux-products",
+      "path": "local-fixture/series-products/shared-resident-images.npy",
+      "sha256": "06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "index_ceiling_bytes": 2108620800,
+    "one_factor": "Fresh source tracked / untracked / tracked, same executable and original index. One fresh process per arm;9masks x2cycles,4s idle. Each immutable source published only after upload wait; all query reads drain before release; outputs/index stay tracked. No resource-set omission or heap change.",
+    "default": "Off; existing app unchanged",
+    "executable_sha256": "7144da8ee62e9da7ae561c15d821cc41cdc4e8ac4cc591a210de812e57c9ee76",
+    "untracked_source_sha256": "2921e6cb6d9f332cfcc2f1a35d2d3e7fd62216aadb26b61641218b3ec51eb7de",
+    "cache_state": "Complete prepared entropy archive, source pages unspecified. Not cold original source or headed UI/presentation.",
+    "run_root": "local-output",
+    "path_mapping": "Exact local paths and unmodified pre-normalization manifests are retained in the private output checkpoint.",
+    "artifact_results": {
+      "run-untracked-aba.zsh": "Refuted as an idle-latency fix: 54/54 complete all66 outputs exact across three fresh processes. Wall p50 tracked/untracked/tracked442.372/445.842/455.590ms, p95=max499.796/503.976/496.371ms. Candidate does not beat both controls and has worse tail. Same original index2108620800B and Metal allocation86866247680B; each source release0/Metal720896B. Untracked mode remains off; no app adoption.",
+      "source.patch": "Refuted as an idle-latency fix: 54/54 complete all66 outputs exact across three fresh processes. Wall p50 tracked/untracked/tracked442.372/445.842/455.590ms, p95=max499.796/503.976/496.371ms. Candidate does not beat both controls and has worse tail. Same original index2108620800B and Metal allocation86866247680B; each source release0/Metal720896B. Untracked mode remains off; no app adoption.",
+      "untracked-A1-memory-summary.json": "Refuted as an idle-latency fix: 54/54 complete all66 outputs exact across three fresh processes. Wall p50 tracked/untracked/tracked442.372/445.842/455.590ms, p95=max499.796/503.976/496.371ms. Candidate does not beat both controls and has worse tail. Same original index2108620800B and Metal allocation86866247680B; each source release0/Metal720896B. Untracked mode remains off; no app adoption.",
+      "untracked-A1-memory.txt": "Refuted as an idle-latency fix: 54/54 complete all66 outputs exact across three fresh processes. Wall p50 tracked/untracked/tracked442.372/445.842/455.590ms, p95=max499.796/503.976/496.371ms. Candidate does not beat both controls and has worse tail. Same original index2108620800B and Metal allocation86866247680B; each source release0/Metal720896B. Untracked mode remains off; no app adoption.",
+      "untracked-A2-memory-summary.json": "Refuted as an idle-latency fix: 54/54 complete all66 outputs exact across three fresh processes. Wall p50 tracked/untracked/tracked442.372/445.842/455.590ms, p95=max499.796/503.976/496.371ms. Candidate does not beat both controls and has worse tail. Same original index2108620800B and Metal allocation86866247680B; each source release0/Metal720896B. Untracked mode remains off; no app adoption.",
+      "untracked-A2-memory.txt": "Refuted as an idle-latency fix: 54/54 complete all66 outputs exact across three fresh processes. Wall p50 tracked/untracked/tracked442.372/445.842/455.590ms, p95=max499.796/503.976/496.371ms. Candidate does not beat both controls and has worse tail. Same original index2108620800B and Metal allocation86866247680B; each source release0/Metal720896B. Untracked mode remains off; no app adoption.",
+      "untracked-B_untracked-memory-summary.json": "Refuted as an idle-latency fix: 54/54 complete all66 outputs exact across three fresh processes. Wall p50 tracked/untracked/tracked442.372/445.842/455.590ms, p95=max499.796/503.976/496.371ms. Candidate does not beat both controls and has worse tail. Same original index2108620800B and Metal allocation86866247680B; each source release0/Metal720896B. Untracked mode remains off; no app adoption.",
+      "untracked-B_untracked-memory.txt": "Refuted as an idle-latency fix: 54/54 complete all66 outputs exact across three fresh processes. Wall p50 tracked/untracked/tracked442.372/445.842/455.590ms, p95=max499.796/503.976/496.371ms. Candidate does not beat both controls and has worse tail. Same original index2108620800B and Metal allocation86866247680B; each source release0/Metal720896B. Untracked mode remains off; no app adoption.",
+      "untracked-all66.log": "Refuted as an idle-latency fix: 54/54 complete all66 outputs exact across three fresh processes. Wall p50 tracked/untracked/tracked442.372/445.842/455.590ms, p95=max499.796/503.976/496.371ms. Candidate does not beat both controls and has worse tail. Same original index2108620800B and Metal allocation86866247680B; each source release0/Metal720896B. Untracked mode remains off; no app adoption.",
+      "untracked-analysis.json": "Refuted as an idle-latency fix: 54/54 complete all66 outputs exact across three fresh processes. Wall p50 tracked/untracked/tracked442.372/445.842/455.590ms, p95=max499.796/503.976/496.371ms. Candidate does not beat both controls and has worse tail. Same original index2108620800B and Metal allocation86866247680B; each source release0/Metal720896B. Untracked mode remains off; no app adoption.",
+      "untracked-source.tar.gz": "Refuted as an idle-latency fix: 54/54 complete all66 outputs exact across three fresh processes. Wall p50 tracked/untracked/tracked442.372/445.842/455.590ms, p95=max499.796/503.976/496.371ms. Candidate does not beat both controls and has worse tail. Same original index2108620800B and Metal allocation86866247680B; each source release0/Metal720896B. Untracked mode remains off; no app adoption."
+    },
+    "preflight": "Release suite 236 tests /27 explicit skips /0fail. v9 source including error-path cleanup; experimental pair lookup and uniform index and new base planner all off. Original centerFine index in all arms; encoded resource hazard mode is the single factor.",
+    "result": "Refuted as an idle-latency fix: 54/54 complete all66 outputs exact across three fresh processes. Wall p50 tracked/untracked/tracked442.372/445.842/455.590ms, p95=max499.796/503.976/496.371ms. Candidate does not beat both controls and has worse tail. Same original index2108620800B and Metal allocation86866247680B; each source release0/Metal720896B. Untracked mode remains off; no app adoption."
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "run-untracked-aba.zsh",
+      "path": "local-evidence/run-untracked-aba.zsh",
+      "sha256": "ef9fa4c54f06036ef2322be51b2f2b022c3099472b3bbe87f49474f92923ca52",
+      "size_bytes": 1447,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "source.patch",
+      "path": "local-evidence/source.patch",
+      "sha256": "06be695563f70bbedeae9f06a8520d3cffd1d980e1da7281852cee6faa962eb0",
+      "size_bytes": 111274,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "untracked-A1-memory-summary.json",
+      "path": "local-evidence/untracked-A1-memory-summary.json",
+      "sha256": "4fb45b230a3d442c17723602a4995b754dff531ac755f26074f48a26274d761b",
+      "size_bytes": 698,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "untracked-A1-memory.txt",
+      "path": "local-evidence/untracked-A1-memory.txt",
+      "sha256": "1bdbea41d56e9c205bb05b9e97b61c0e93e701e936088e7ce4b936347e7e04c3",
+      "size_bytes": 64260,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "untracked-A2-memory-summary.json",
+      "path": "local-evidence/untracked-A2-memory-summary.json",
+      "sha256": "0e4509ef0e164d077044f188a8f38a7f30cbfeaca852be531fd0f10e0081916d",
+      "size_bytes": 700,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "untracked-A2-memory.txt",
+      "path": "local-evidence/untracked-A2-memory.txt",
+      "sha256": "a3fbe6c23a3cde25c83ebfe49d48d5357e16e54ef29188e713496360cc221f13",
+      "size_bytes": 64260,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "untracked-B_untracked-memory-summary.json",
+      "path": "local-evidence/untracked-B_untracked-memory-summary.json",
+      "sha256": "14ec3b4bb204f676fcd2dda7c1fb9beee66049adc87dae672ece5ccfbb7a025b",
+      "size_bytes": 699,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "untracked-B_untracked-memory.txt",
+      "path": "local-evidence/untracked-B_untracked-memory.txt",
+      "sha256": "15d4203d652cc89ba963c2797ba26181f53dc2a0a8731458fec25a72b050c291",
+      "size_bytes": 64260,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "untracked-all66.log",
+      "path": "local-evidence/untracked-all66.log",
+      "sha256": "d6144d2a42df2330979a0b60c93e372d79cf529aa8bf520b913151f93036c568",
+      "size_bytes": 52617,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "untracked-analysis.json",
+      "path": "local-evidence/untracked-analysis.json",
+      "sha256": "25555dfb9f57ebed4ba13b3168c6b22b175481f546c1ec9061ff374ea1ec05a4",
+      "size_bytes": 89663,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "untracked-source.tar.gz",
+      "path": "local-evidence/untracked-source.tar.gz",
+      "sha256": "2921e6cb6d9f332cfcc2f1a35d2d3e7fd62216aadb26b61641218b3ec51eb7de",
+      "size_bytes": 15005,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T16:34:50.401Z",
+    "started": "2026-09-09T17:07:10Z",
+    "finished": "2026-09-09T17:12:17.978Z"
+  }
+}

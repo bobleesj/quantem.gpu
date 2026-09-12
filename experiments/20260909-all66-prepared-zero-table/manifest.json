@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-prepared-zero-table",
+  "status": "succeeded",
+  "question": "Can preparing an exact zero-transition jump table once per complete query avoid repeated per-threadgroup table construction and improve all66 decoding?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-prepared-zero-table/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "dirty": true,
+    "entrypoint": "TANSSharedRefill16ExperimentTests.testAll66SharedRefill16ABAWhenConfigured",
+    "diff_sha256": "b427c7348d725c27727fb837a539564d324c7a6a86099726692e451229c45727",
+    "snapshot_path": "local-evidence/prepared-zero-source.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-linux-products",
+      "path": "local-fixture/series-products/shared-resident-images.npy",
+      "sha256": "06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "representation": "lossless entropy only",
+    "source_bytes": 84681338880,
+    "index_bytes": 2108620800,
+    "one_factor": "Exact zero-bit/zero-symbol chain folding with one GPU table-preparation dispatch per query, instead of repeating folding for every shared-model threadgroup. A1/A2 are frozen adaptive mixed-tail kernels; B additionally uses the bounded prepared jump table. Heaps are disabled in all arms.",
+    "difference_from_refuted": "Earlier per-threadgroup zero folding was exact but slower. This tests whether repeated preparation caused that regression; no claim until A/B/A.",
+    "memory": "One transient table with exactly the original decoder-table byte count,331776B on this fixture, explicitly charged to query metadata budget. It is released after the query; no extra persistent source, full4Dcounts, masks, index or products. Existing source/index unchanged.",
+    "loading": "No preparation hidden in load. Table allocation, preparation dispatch and ordered consumption are included in complete query wall/GPU intervals. Loading must be rechecked before app adoption.",
+    "gate": "Independent CPU jump-table equality; fulluint16 literal, escape, long zero chains crossing batch boundaries, signed removals/inactive lanes and mixed models. Then105 real full66 frozen-product/prior-lifetime comparisons and held-out native9 replay if faster.",
+    "defaults": "Internal flags false; no app/public API/default change; no power change or fake keepalive.",
+    "timing": "Prepared archive/source pages unspecified; warm complete query latency, not native FPS or original HDF5 cold.",
+    "preflight": "Release build and 5 independent decoder tests pass. Full uint16, mixed-model literal/escape/signed/zero chains, CPU prepared-table equality and tail canaries checked.",
+    "test_binary_sha256": "4bd2cb7a3f8c8e9d7516d8e11426fff07c29e4421842080ddb17e6d325036f21",
+    "metal_resource_sha256": "3bf6e87b7bb6d660e421f6c3559ac24ee753e8a16103ec3657065a8bc9637707",
+    "untracked_source_sha256": "4938219892033011dec92377f64c72f0c0ae0b673d25ce6162ad06cea4d5302b",
+    "result": "REFUTED:105/105 full66 comparisons exact, but prepared-table zero folding regressed all7 cases. p50 A/B/A ms: BF97.806/119.558/98.181; ABF102.115/122.732/102.723; ADF180.622/220.165/180.446; edge123.808/150.984/124.046. No app adoption. Source14.219594s/index4.046023s, prepared archive/source pages unspecified.",
+    "memory_result": "14 samples, RSS max453378048B excluding privateMetal, compressor1368309760B, swap5623.06MiB unchanged andswapouts11254896 unchanged. Source/index84681338880/2108620800B unchanged.331776B extra transient table charged; released before sampled allocated bytes86935453696B.",
+    "artifact_results": {
+      "prepared-zero-all66-log": "Exact but slower; refuted.",
+      "prepared-zero-analysis-json": "Exact but slower; refuted.",
+      "prepared-zero-memory-txt": "Exact but slower; refuted.",
+      "prepared-zero-preflight-log": "Exact but slower; refuted."
+    }
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "prepared-zero-all66-log",
+      "path": "local-evidence/prepared-zero-all66.log",
+      "sha256": "a3555c6658cc36fd4e2b304c5044ea891f19ed9ed71a9f4caca136c2a26ef499",
+      "size_bytes": 37887,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "prepared-zero-analysis-json",
+      "path": "local-evidence/prepared-zero-analysis.json",
+      "sha256": "9a1be5b0721f9f00dd5b421637b655010e43c6db90fbb5af8087e825ea0f74fe",
+      "size_bytes": 67200,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "prepared-zero-memory-txt",
+      "path": "local-evidence/prepared-zero-memory.txt",
+      "sha256": "c4cd5768e9f881a66d1574b27cf876d9b35d8d233d9e6b52bcb892930be6646c",
+      "size_bytes": 17654,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "prepared-zero-preflight-log",
+      "path": "local-evidence/prepared-zero-preflight.log",
+      "sha256": "e8d79d7fbfd9dc63255f72992c2407c811e9e381ce4569532bc0330a4fd08005",
+      "size_bytes": 4320,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T11:41:00Z",
+    "started": "2026-09-09T11:41:00Z",
+    "finished": "2026-09-09T11:51:20Z"
+  }
+}

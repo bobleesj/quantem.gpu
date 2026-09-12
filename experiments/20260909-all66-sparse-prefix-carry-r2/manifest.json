@@ -1,0 +1,193 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-sparse-prefix-carry-r2",
+  "status": "succeeded",
+  "question": "Does retaining the sparse flagged-count prefix rank reduce exact all66 ADF wall time without new resident bytes?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-sparse-prefix-carry-r2/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "entrypoint": "TANSResidencyHoldExperimentTests.testAll66ResidencyHoldIdleABAWhenConfigured",
+    "dirty": true,
+    "diff_sha256": "632810597588acaf63781321bdacfae753ab933293d7e148742b448181309fcd",
+    "snapshot_path": "local-output/source-v19.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "native-masks",
+      "path": "experiments/20260909-all66-separated-native-replay/local-evidence/native-stream-bytes-r2.json",
+      "sha256": "1c896b4f3ad0ff2a40b88377915be356bbf6b1c3ed7a2596898f60a9f3db1296"
+    }
+  ],
+  "parameters": {
+    "one_factor": "Sparse function constant22 disabled/enabled/disabled; same source, dense kernel, commands, index, nine masks and idle.",
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "index_bytes": 2108620800,
+    "run_root": "local-output",
+    "source_page_state": "unspecified; prepared entropy archive. Fresh process each arm.4s idle before each of9masks x2cycles.",
+    "timing_boundary": "Complete detectorImages package return, exact hash verification after timer. No memory-audit JSON instrumentation or native FPS claim.",
+    "acceptance": "54/54 all66 complete maps,198 frozen Linux BF/ABF/ADF images per arm,6frozen selected-DP arrays per arm; source0 and Metal720896B teardown. Candidate must beat both controls without worsening critical tail.",
+    "contention": "Desktop WindowServer/Moonlight active; no operator input or unrelated process changes. Preserve temporal drift; no uncontended claim.",
+    "qualified_for_adoption": false,
+    "untracked_sha256": "34a5fab81899cce43456f96040214f5ecbcb8701d3fa6fc7b35999afb1a59d92",
+    "executable_sha256": "b6da9a3fe4bf1ba30f483412c978089de73a7b9335258e977259d2ccaa115b15",
+    "metal_sha256": "536cac11f2c8535d16d71d8f836504f3a79e2466dc27b6f358e928506341bc90",
+    "retry_change": "Explicitly specialize the unchanged baseline sparse kernel constant22=false; fixes v18 startup assertion, no numerical change.",
+    "ordinary_tests": "240executed/27skips/0fail",
+    "result": "Hypothesis refuted: A1/B/A2 wall p50 411.720/416.086/416.776ms; p95=max455.576/461.389/468.674ms. Candidate fails to beat both controls.54exact all66 dynamic queries,3frozen Linux products per source per arm,6frozen DP arrays per arm; byte-identical source/index and source0/Metal720896B teardown. Default remains off. No app/native FPS claim.",
+    "artifact_results": {
+      "prefix-comparison.json": "Hypothesis refuted: A1/B/A2 wall p50 411.720/416.086/416.776ms; p95=max455.576/461.389/468.674ms. Candidate fails to beat both controls.54exact all66 dynamic queries,3frozen Linux products per source per arm,6frozen DP arrays per arm; byte-identical source/index and source0/Metal720896B teardown. Default remains off. No app/native FPS claim.",
+      "prefix-parity.json": "Hypothesis refuted: A1/B/A2 wall p50 411.720/416.086/416.776ms; p95=max455.576/461.389/468.674ms. Candidate fails to beat both controls.54exact all66 dynamic queries,3frozen Linux products per source per arm,6frozen DP arrays per arm; byte-identical source/index and source0/Metal720896B teardown. Default remains off. No app/native FPS claim.",
+      "prefix-A1.log": "Hypothesis refuted: A1/B/A2 wall p50 411.720/416.086/416.776ms; p95=max455.576/461.389/468.674ms. Candidate fails to beat both controls.54exact all66 dynamic queries,3frozen Linux products per source per arm,6frozen DP arrays per arm; byte-identical source/index and source0/Metal720896B teardown. Default remains off. No app/native FPS claim.",
+      "prefix-B.log": "Hypothesis refuted: A1/B/A2 wall p50 411.720/416.086/416.776ms; p95=max455.576/461.389/468.674ms. Candidate fails to beat both controls.54exact all66 dynamic queries,3frozen Linux products per source per arm,6frozen DP arrays per arm; byte-identical source/index and source0/Metal720896B teardown. Default remains off. No app/native FPS claim.",
+      "prefix-A2.log": "Hypothesis refuted: A1/B/A2 wall p50 411.720/416.086/416.776ms; p95=max455.576/461.389/468.674ms. Candidate fails to beat both controls.54exact all66 dynamic queries,3frozen Linux products per source per arm,6frozen DP arrays per arm; byte-identical source/index and source0/Metal720896B teardown. Default remains off. No app/native FPS claim.",
+      "prefix-A1-memory.txt": "Hypothesis refuted: A1/B/A2 wall p50 411.720/416.086/416.776ms; p95=max455.576/461.389/468.674ms. Candidate fails to beat both controls.54exact all66 dynamic queries,3frozen Linux products per source per arm,6frozen DP arrays per arm; byte-identical source/index and source0/Metal720896B teardown. Default remains off. No app/native FPS claim.",
+      "prefix-B-memory.txt": "Hypothesis refuted: A1/B/A2 wall p50 411.720/416.086/416.776ms; p95=max455.576/461.389/468.674ms. Candidate fails to beat both controls.54exact all66 dynamic queries,3frozen Linux products per source per arm,6frozen DP arrays per arm; byte-identical source/index and source0/Metal720896B teardown. Default remains off. No app/native FPS claim.",
+      "prefix-A2-memory.txt": "Hypothesis refuted: A1/B/A2 wall p50 411.720/416.086/416.776ms; p95=max455.576/461.389/468.674ms. Candidate fails to beat both controls.54exact all66 dynamic queries,3frozen Linux products per source per arm,6frozen DP arrays per arm; byte-identical source/index and source0/Metal720896B teardown. Default remains off. No app/native FPS claim.",
+      "full-suite-v19.log": "Hypothesis refuted: A1/B/A2 wall p50 411.720/416.086/416.776ms; p95=max455.576/461.389/468.674ms. Candidate fails to beat both controls.54exact all66 dynamic queries,3frozen Linux products per source per arm,6frozen DP arrays per arm; byte-identical source/index and source0/Metal720896B teardown. Default remains off. No app/native FPS claim.",
+      "source-v19.patch": "Hypothesis refuted: A1/B/A2 wall p50 411.720/416.086/416.776ms; p95=max455.576/461.389/468.674ms. Candidate fails to beat both controls.54exact all66 dynamic queries,3frozen Linux products per source per arm,6frozen DP arrays per arm; byte-identical source/index and source0/Metal720896B teardown. Default remains off. No app/native FPS claim.",
+      "source-v19-untracked.tar.gz": "Hypothesis refuted: A1/B/A2 wall p50 411.720/416.086/416.776ms; p95=max455.576/461.389/468.674ms. Candidate fails to beat both controls.54exact all66 dynamic queries,3frozen Linux products per source per arm,6frozen DP arrays per arm; byte-identical source/index and source0/Metal720896B teardown. Default remains off. No app/native FPS claim.",
+      "run-aba.zsh": "Hypothesis refuted: A1/B/A2 wall p50 411.720/416.086/416.776ms; p95=max455.576/461.389/468.674ms. Candidate fails to beat both controls.54exact all66 dynamic queries,3frozen Linux products per source per arm,6frozen DP arrays per arm; byte-identical source/index and source0/Metal720896B teardown. Default remains off. No app/native FPS claim.",
+      "compare.cjs": "Hypothesis refuted: A1/B/A2 wall p50 411.720/416.086/416.776ms; p95=max455.576/461.389/468.674ms. Candidate fails to beat both controls.54exact all66 dynamic queries,3frozen Linux products per source per arm,6frozen DP arrays per arm; byte-identical source/index and source0/Metal720896B teardown. Default remains off. No app/native FPS claim."
+    }
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "4294969023"
+    ],
+    "gpu_model": "Apple M5 Max40GPU cores128GiB"
+  },
+  "outputs": [
+    {
+      "artifact_id": "prefix-comparison.json",
+      "path": "local-output/prefix-comparison.json",
+      "sha256": "437e96d3e3b18ad0b930af49725feacc25fb5edee0c0cde7feade645a0fb2b60",
+      "size_bytes": 90152,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "prefix-parity.json",
+      "path": "local-output/prefix-parity.json",
+      "sha256": "c3721f7569b4e0940049f44f0aea9500e75158dc57a21f28a01d52f502f19346",
+      "size_bytes": 4383,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "prefix-A1.log",
+      "path": "local-output/prefix-A1.log",
+      "sha256": "3e78dc3c8a58cac55a8034d292a584dc37dff33d159799026351267e4e24e0ba",
+      "size_bytes": 20080,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "prefix-B.log",
+      "path": "local-output/prefix-B.log",
+      "sha256": "b3c455e20640cf91dd98b0afab58fce5d0ad99e0cad298dced9ac359933d21e0",
+      "size_bytes": 20033,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "prefix-A2.log",
+      "path": "local-output/prefix-A2.log",
+      "sha256": "6e1eab28ffe4e23ed9c73381dfca6d61788de6be34735c50f01ff2be08148828",
+      "size_bytes": 20079,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "prefix-A1-memory.txt",
+      "path": "local-output/prefix-A1-memory.txt",
+      "sha256": "acdda7cdb8fe318a6c4d7a957d73564c14d0ae1ea479054d340ad9e03aeeedc3",
+      "size_bytes": 64311,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "prefix-B-memory.txt",
+      "path": "local-output/prefix-B-memory.txt",
+      "sha256": "d474bb3d42da0b44d9ba0c8292adf4471344f4513f092d8b721d3813511464df",
+      "size_bytes": 64311,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "prefix-A2-memory.txt",
+      "path": "local-output/prefix-A2-memory.txt",
+      "sha256": "a490a1aeef221db5d78e38474a7e80b8e1ed9d09013fdf28a07dd3fbc73c4a15",
+      "size_bytes": 64311,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "full-suite-v19.log",
+      "path": "local-output/full-suite-v19.log",
+      "sha256": "b445731a47ade4e390ee94ca78d6d885e1430d14f102c1fb2f15989004879a12",
+      "size_bytes": 90026,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "source-v19.patch",
+      "path": "local-output/source-v19.patch",
+      "sha256": "632810597588acaf63781321bdacfae753ab933293d7e148742b448181309fcd",
+      "size_bytes": 157604,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "source-v19-untracked.tar.gz",
+      "path": "local-output/source-v19-untracked.tar.gz",
+      "sha256": "34a5fab81899cce43456f96040214f5ecbcb8701d3fa6fc7b35999afb1a59d92",
+      "size_bytes": 19382,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "run-aba.zsh",
+      "path": "local-output/run-aba.zsh",
+      "sha256": "1b1a7159686b7b7571068b190917d396bf8e0dcc8aac64976f1eca7abf732874",
+      "size_bytes": 1880,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "compare.cjs",
+      "path": "local-output/compare.cjs",
+      "sha256": "102b446a0e5d81bb5251817de4b2489884781f9ae58c698dd1c439d5145a222c",
+      "size_bytes": 2744,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T23:07:29.891Z",
+    "started": "2026-09-09T23:07:56.262Z",
+    "finished": "2026-09-09T23:13:03.739Z"
+  }
+}

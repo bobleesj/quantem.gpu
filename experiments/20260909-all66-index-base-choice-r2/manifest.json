@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-index-base-choice-r2",
+  "status": "failed",
+  "question": "Retry post-index base choice with explicitly bounded record-table construction after preserved pre-query Swift trap",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-index-base-choice-r2/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "entrypoint": "TANSTileArchitectureExperimentTests.testAll66UniformIndexABAWhenConfigured",
+    "dirty": true,
+    "snapshot_path": "local-evidence/source.patch",
+    "diff_sha256": "0570ea2c74b00ab31a92b955b406ada97f12c23e8e313a8ffed1fe1fc9098eb5"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-linux-products",
+      "path": "local-fixture/series-products/shared-resident-images.npy",
+      "sha256": "06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "index_ceiling_bytes": 2108620800,
+    "one_factor": "Uniform16 blockwise index in all arms; legacy base selection / post-index cost selection / legacy. 7cases x5 each. No source, kernel, geometry or byte policy change.",
+    "default": "Off; existing app unchanged",
+    "executable_sha256": "88c5b1129a83ad112441f7f6ae2b7708ebeb23a6d5a1d43e4455130f67d9b440",
+    "untracked_source_sha256": "9fc13e057e408cbe0b0cd962005b44f637bbdb705da970e6a3e349dca9b8092a",
+    "cache_state": "Complete prepared entropy archive, source pages unspecified. Not cold original source or headed UI/presentation.",
+    "run_root": "local-output",
+    "prior_failure": "20260909-all66-index-base-choice",
+    "result": "Exit139 before timed samples after14.320s upload; objc_retain/_convertErrorToNSError crash. Explicit record builder did not resolve failure. Preserved binary/crash. Next discriminant is fresh scratch build, no further source optimization before usable controls.",
+    "artifact_results": {
+      "architecture-unit-v4.log": "Second failed pre-query attempt, zero timing samples; all evidence preserved",
+      "base-choice-r2-all66.log": "Second failed pre-query attempt, zero timing samples; all evidence preserved",
+      "base-choice-r2-memory.txt": "Second failed pre-query attempt, zero timing samples; all evidence preserved",
+      "base-choice-v4-crash.ips": "Second failed pre-query attempt, zero timing samples; all evidence preserved",
+      "source.patch": "Second failed pre-query attempt, zero timing samples; all evidence preserved",
+      "untracked-source.tar.gz": "Second failed pre-query attempt, zero timing samples; all evidence preserved"
+    },
+    "path_mapping": "Exact local paths and unmodified pre-normalization manifests are retained in the private output checkpoint."
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "architecture-unit-v4.log",
+      "path": "local-evidence/architecture-unit-v4.log",
+      "sha256": "e47b65768013d45f0a290aadb153a79cb82bed202499aac5f2f8e03a8db9da87",
+      "size_bytes": 10363,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "base-choice-r2-all66.log",
+      "path": "local-evidence/base-choice-r2-all66.log",
+      "sha256": "a182d2f6d583942e5ce3e7322f2fe3d1abb988614738726eccb97ed874c269b9",
+      "size_bytes": 451,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "base-choice-r2-memory.txt",
+      "path": "local-evidence/base-choice-r2-memory.txt",
+      "sha256": "a0fca19bf93f166001c92280a39f469d004f6c1a88b429e50cfee352b194848e",
+      "size_bytes": 5040,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "base-choice-v4-crash.ips",
+      "path": "local-evidence/base-choice-v4-crash.ips",
+      "sha256": "3fe6701f0def61f0d1fcd603ad0de92bdcf7a40f3c1be6af6b0b75f5e8f1d559",
+      "size_bytes": 31787,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "source.patch",
+      "path": "local-evidence/source.patch",
+      "sha256": "0570ea2c74b00ab31a92b955b406ada97f12c23e8e313a8ffed1fe1fc9098eb5",
+      "size_bytes": 119946,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "untracked-source.tar.gz",
+      "path": "local-evidence/untracked-source.tar.gz",
+      "sha256": "9fc13e057e408cbe0b0cd962005b44f637bbdb705da970e6a3e349dca9b8092a",
+      "size_bytes": 12753,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T16:38:12.084Z",
+    "started": "2026-09-09T16:38:12.084Z",
+    "finished": "2026-09-09T16:38:26.991Z"
+  }
+}

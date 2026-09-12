@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-residency-hold",
+  "status": "refuted",
+  "question": "Does explicit Metal residency for existing exact entropy/index buffers remove the matched four-second-idle penalty without a scientific copy or memory/loading regression?",
+  "paper": {
+    "repository": "quantem.gpu",
+    "authoritative_host": "phil"
+  },
+  "code": {
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "dirty": true,
+    "diff_sha256": "6aaac40d8381b2090c1176f99aa8e6a29a212483c0bf48ed3f1cfefa9669c55e",
+    "snapshot_path": "local-evidence/residency-hold-source.patch",
+    "entrypoint": "TANSResidencyHoldExperimentTests.testAll66ResidencyHoldIdleABAWhenConfigured"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "native-matched-masks",
+      "path": "local-evidence/native-stream-bytes-r2.json",
+      "sha256": "1c896b4f3ad0ff2a40b88377915be356bbf6b1c3ed7a2596898f60a9f3db1296"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "representation": "lossless entropy",
+    "source_bytes": 84681338880,
+    "index_bytes": 2108620800,
+    "arms": [
+      "A1 hold off",
+      "B_hold on",
+      "A2 hold off"
+    ],
+    "test_binary_sha256": "842b5785be335d11401d5610b5fe8b84a6b3b213f8c50903e44ee060d520e354",
+    "samples_per_case_per_arm": 2,
+    "cases": 9,
+    "idle_seconds": 4,
+    "cache_state": "prepared archive/source pages unspecified, same buffers for all arms",
+    "parity": "Frozen Linux BF/ADF/ABF images, complete66 per-mask output hashes, native scalar probes, exact columns and previous-state choice",
+    "memory": "Existing buffers only; set accounting, Metal allocation, process RSS, compressor and swap must remain separate. Hold is admission-guarded and may affect actual physical residency.",
+    "qualification": "Pilot only. N2/case not an accepted distribution. No default/app adoption without repeated full loading, parity, memory and native presentation gates.",
+    "reference": "Apple Metal MTLResidencySet requestResidency plus MTLCommandQueue addResidencySet; no artificial busy work or power-setting changes."
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "results": {
+    "decision": "54/54 full66 queries exact; explicit hold alone moves latency out of GPU interval, not out of query wall time. Refuted as a useful end-to-end optimization; default/app unchanged.",
+    "samples_per_case_per_arm": 2,
+    "timing": "Case2 wall A1/B/A2 663.079/682.388/660.435ms while GPU649.354/129.205/644.678ms. Other cases similarly no wall gain. N2 pilot only.",
+    "memory": "Metal allocated86,866,247,680B unchanged all54; hold set86,791,454,720B across1160 existing allocations, setup0.391ms. Swap5807.19MiB unchanged; low processRSS is not private Metal memory.",
+    "load": "One prepared archive/source-pages-unspecified load14.193363s plus index4.088624s; not cold or loading qualification."
+  },
+  "outputs": [
+    {"artifact_id":"raw-all66-trials","result":"54exact all66 queries; no wall-time win","path":"local-evidence/residency-hold-all66.log","sha256":"b64de1e3438cb995799d4a3ec902306763c28b65aa024c934c00c23ee0b8ba53","size_bytes":14864,"retention":"durable","consuming_figures":[]},
+    {"artifact_id":"distribution-analysis","result":"N2/case/arm; wall and GPU endpoints disagree on apparent gain","path":"local-evidence/residency-hold-analysis.json","sha256":"361957ec68618fafb7ab2be4328572d277e894ae5a6b3c72aa06f516aeeaa88e","size_bytes":34527,"retention":"durable","consuming_figures":[]},
+    {"artifact_id":"memory-samples","result":"Read-only samples, RSS/Metal allocation separate","path":"local-evidence/residency-hold-memory.txt","sha256":"d666d59f35d63a64b688df81e671e72a730d9e404c27730be1d8df70eb55bb0e","size_bytes":75660,"retention":"durable","consuming_figures":[]}
+  ],
+  "timestamps": {
+    "created": "2026-09-09T07:24:00Z",
+    "started": "2026-09-09T07:23:45.521Z",
+    "finished": "2026-09-09T07:28:22.978Z"
+  }
+}

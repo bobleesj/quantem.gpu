@@ -1,0 +1,236 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-coalesced-request-only",
+  "status": "succeeded",
+  "question": "Does requestResidency without queue attachment hold existing encoded allocations without re-registering the full set per command and break300ms paused all66 wall?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-coalesced-request-only/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "dirty": true,
+    "diff_sha256": "f7fb31bb5c28f08d5033d1479d884e2ae711fb16a52afc719b9f0a6fc64f9e64",
+    "snapshot_path": "local-output/source-v16.patch",
+    "entrypoint": "TANSResidencyHoldExperimentTests.testAll66ResidencyHoldIdleABAWhenConfigured"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-native-masks",
+      "path": "local-worktree/experiments/20260909-all66-separated-native-replay/local-evidence/native-stream-bytes-r2.json",
+      "sha256": "1c896b4f3ad0ff2a40b88377915be356bbf6b1c3ed7a2596898f60a9f3db1296"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "index_ceiling_bytes": 2108620800,
+    "one_factor": "No hold / request-only residency / no hold. All arms coalesced private source, single queue, original resource declarations and17commands. B commits/requests the existing unique set once but does NOT attach it to the command queue. Source useResources remains mandatory; set-only source declarations fail closed unless actually attached. Distinct from previous hold+queue attachment failure. Same buffers, byte ceiling, decoder and masks; no background keepalive or scientific precompute.",
+    "cache_state": "Prepared entropy archive; source pages unspecified.4-second idle before every timed query;9 masks x2cycles per arm. Complete package-return wall, not native publication.",
+    "default": "Off; canonical sources and installed app untouched",
+    "untracked_source_sha256": "9a7e5c1131f3e56ee2f8a2c81d12a092be88b980b1eedac17268e55aa743c090",
+    "run_root": "local-output",
+    "command": "zsh local-output/run-coalesced-request-only-aba.zsh",
+    "memory_gate": "Same source/index bytes; source0/Metal720896B after release. No new dense/raw resident. Inspect pressure/swap; no full System Trace.",
+    "acceptance": "54complete exact all66 queries;6full66 selected-DP hashes; p50/p95/max below300ms reported separately; no speedup claim from GPU interval alone.",
+    "artifact_results": {
+      "audit-residency-variants.cjs": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Off/request-only/off wall p50 420.259/414.927/428.242ms;p95=max476.853/478.509/476.049ms. No300ms acceptance or qualified improvement beyond desktop variation. Explicit attached=false/request_only=true and set170unique allocations. Per-command resource tracking preserved. No adoption.",
+      "run-coalesced-request-only-aba.zsh": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Off/request-only/off wall p50 420.259/414.927/428.242ms;p95=max476.853/478.509/476.049ms. No300ms acceptance or qualified improvement beyond desktop variation. Explicit attached=false/request_only=true and set170unique allocations. Per-command resource tracking preserved. No adoption.",
+      "full-suite-v16.log": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Off/request-only/off wall p50 420.259/414.927/428.242ms;p95=max476.853/478.509/476.049ms. No300ms acceptance or qualified improvement beyond desktop variation. Explicit attached=false/request_only=true and set170unique allocations. Per-command resource tracking preserved. No adoption.",
+      "source-v16.patch": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Off/request-only/off wall p50 420.259/414.927/428.242ms;p95=max476.853/478.509/476.049ms. No300ms acceptance or qualified improvement beyond desktop variation. Explicit attached=false/request_only=true and set170unique allocations. Per-command resource tracking preserved. No adoption.",
+      "source-v16-untracked.tar.gz": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Off/request-only/off wall p50 420.259/414.927/428.242ms;p95=max476.853/478.509/476.049ms. No300ms acceptance or qualified improvement beyond desktop variation. Explicit attached=false/request_only=true and set170unique allocations. Per-command resource tracking preserved. No adoption.",
+      "coalesced-request-only-audit.json": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Off/request-only/off wall p50 420.259/414.927/428.242ms;p95=max476.853/478.509/476.049ms. No300ms acceptance or qualified improvement beyond desktop variation. Explicit attached=false/request_only=true and set170unique allocations. Per-command resource tracking preserved. No adoption.",
+      "coalesced-request-only-A1.log": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Off/request-only/off wall p50 420.259/414.927/428.242ms;p95=max476.853/478.509/476.049ms. No300ms acceptance or qualified improvement beyond desktop variation. Explicit attached=false/request_only=true and set170unique allocations. Per-command resource tracking preserved. No adoption.",
+      "coalesced-request-only-A1-analysis.json": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Off/request-only/off wall p50 420.259/414.927/428.242ms;p95=max476.853/478.509/476.049ms. No300ms acceptance or qualified improvement beyond desktop variation. Explicit attached=false/request_only=true and set170unique allocations. Per-command resource tracking preserved. No adoption.",
+      "coalesced-request-only-A1-memory.txt": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Off/request-only/off wall p50 420.259/414.927/428.242ms;p95=max476.853/478.509/476.049ms. No300ms acceptance or qualified improvement beyond desktop variation. Explicit attached=false/request_only=true and set170unique allocations. Per-command resource tracking preserved. No adoption.",
+      "coalesced-request-only-A1-memory-summary.json": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Off/request-only/off wall p50 420.259/414.927/428.242ms;p95=max476.853/478.509/476.049ms. No300ms acceptance or qualified improvement beyond desktop variation. Explicit attached=false/request_only=true and set170unique allocations. Per-command resource tracking preserved. No adoption.",
+      "coalesced-request-only-B_request.log": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Off/request-only/off wall p50 420.259/414.927/428.242ms;p95=max476.853/478.509/476.049ms. No300ms acceptance or qualified improvement beyond desktop variation. Explicit attached=false/request_only=true and set170unique allocations. Per-command resource tracking preserved. No adoption.",
+      "coalesced-request-only-B_request-analysis.json": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Off/request-only/off wall p50 420.259/414.927/428.242ms;p95=max476.853/478.509/476.049ms. No300ms acceptance or qualified improvement beyond desktop variation. Explicit attached=false/request_only=true and set170unique allocations. Per-command resource tracking preserved. No adoption.",
+      "coalesced-request-only-B_request-memory.txt": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Off/request-only/off wall p50 420.259/414.927/428.242ms;p95=max476.853/478.509/476.049ms. No300ms acceptance or qualified improvement beyond desktop variation. Explicit attached=false/request_only=true and set170unique allocations. Per-command resource tracking preserved. No adoption.",
+      "coalesced-request-only-B_request-memory-summary.json": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Off/request-only/off wall p50 420.259/414.927/428.242ms;p95=max476.853/478.509/476.049ms. No300ms acceptance or qualified improvement beyond desktop variation. Explicit attached=false/request_only=true and set170unique allocations. Per-command resource tracking preserved. No adoption.",
+      "coalesced-request-only-A2.log": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Off/request-only/off wall p50 420.259/414.927/428.242ms;p95=max476.853/478.509/476.049ms. No300ms acceptance or qualified improvement beyond desktop variation. Explicit attached=false/request_only=true and set170unique allocations. Per-command resource tracking preserved. No adoption.",
+      "coalesced-request-only-A2-analysis.json": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Off/request-only/off wall p50 420.259/414.927/428.242ms;p95=max476.853/478.509/476.049ms. No300ms acceptance or qualified improvement beyond desktop variation. Explicit attached=false/request_only=true and set170unique allocations. Per-command resource tracking preserved. No adoption.",
+      "coalesced-request-only-A2-memory.txt": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Off/request-only/off wall p50 420.259/414.927/428.242ms;p95=max476.853/478.509/476.049ms. No300ms acceptance or qualified improvement beyond desktop variation. Explicit attached=false/request_only=true and set170unique allocations. Per-command resource tracking preserved. No adoption.",
+      "coalesced-request-only-A2-memory-summary.json": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Off/request-only/off wall p50 420.259/414.927/428.242ms;p95=max476.853/478.509/476.049ms. No300ms acceptance or qualified improvement beyond desktop variation. Explicit attached=false/request_only=true and set170unique allocations. Per-command resource tracking preserved. No adoption."
+    },
+    "executable_sha256": "650c1914fb3c7da9fea66c18a7e65fa896234c8b71ccd312a9018a365c234769",
+    "result": "Insufficient.54/54 dynamic all66 outputs and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Off/request-only/off wall p50 420.259/414.927/428.242ms;p95=max476.853/478.509/476.049ms. No300ms acceptance or qualified improvement beyond desktop variation. Explicit attached=false/request_only=true and set170unique allocations. Per-command resource tracking preserved. No adoption.",
+    "qualified_for_adoption": false
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "audit-residency-variants.cjs",
+      "path": "local-evidence/audit-residency-variants.cjs",
+      "sha256": "e7aebbb212c93fa4980c02b708a2f217ce151e5c454089273fb193af68998d35",
+      "size_bytes": 2223,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "run-coalesced-request-only-aba.zsh",
+      "path": "local-evidence/run-coalesced-request-only-aba.zsh",
+      "sha256": "dae402c207d9906c2d7fd5fdc14b71f32aec89608185643051b18d8637010ba4",
+      "size_bytes": 1587,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "full-suite-v16.log",
+      "path": "local-evidence/full-suite-v16.log",
+      "sha256": "916c83b42b23e03a2cbfd993f0775f3b0c40084ba8941ab6ba762fcb291b0a53",
+      "size_bytes": 89866,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "source-v16.patch",
+      "path": "local-evidence/source-v16.patch",
+      "sha256": "f7fb31bb5c28f08d5033d1479d884e2ae711fb16a52afc719b9f0a6fc64f9e64",
+      "size_bytes": 121952,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "source-v16-untracked.tar.gz",
+      "path": "local-evidence/source-v16-untracked.tar.gz",
+      "sha256": "9a7e5c1131f3e56ee2f8a2c81d12a092be88b980b1eedac17268e55aa743c090",
+      "size_bytes": 16637,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-request-only-audit.json",
+      "path": "local-evidence/coalesced-request-only-audit.json",
+      "sha256": "235daa1da8b9579611663e36b2f4fc2c591b2254aaeaf127c6e7b9cf56e237a7",
+      "size_bytes": 4391,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-request-only-A1.log",
+      "path": "local-evidence/coalesced-request-only-A1.log",
+      "sha256": "d1059015e2710bc32550a682bbd492fefc4deef492d100ac0c5885fdb91bd9b8",
+      "size_bytes": 19138,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-request-only-A1-analysis.json",
+      "path": "local-evidence/coalesced-request-only-A1-analysis.json",
+      "sha256": "6623f7d7c209a3a1845ae8a86da3c6368d7d39bcd377f8c48e332ebbf07293a6",
+      "size_bytes": 31110,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-request-only-A1-memory.txt",
+      "path": "local-evidence/coalesced-request-only-A1-memory.txt",
+      "sha256": "a02ebdd3ce2bbfd3e412d335ccc370072c4bed97992f723b382a842123770e32",
+      "size_bytes": 64311,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-request-only-A1-memory-summary.json",
+      "path": "local-evidence/coalesced-request-only-A1-memory-summary.json",
+      "sha256": "e002c2b4114750c9ec9f60000cb5cc1afa7be6bd8b8fc8f0eb09b4533f2d7a36",
+      "size_bytes": 701,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-request-only-B_request.log",
+      "path": "local-evidence/coalesced-request-only-B_request.log",
+      "sha256": "73e7116379368661ff58948b243b96cfe76f15132810d5604d630e1b462a5369",
+      "size_bytes": 19483,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-request-only-B_request-analysis.json",
+      "path": "local-evidence/coalesced-request-only-B_request-analysis.json",
+      "sha256": "1a018877e836b94aec39d7890383921424658cf516a19f7804e10de9a7b6b06b",
+      "size_bytes": 31460,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-request-only-B_request-memory.txt",
+      "path": "local-evidence/coalesced-request-only-B_request-memory.txt",
+      "sha256": "ed2bbae8e9b0529e384b48a768511d3bfd955ad9fa6ab68a930a292dd6f23561",
+      "size_bytes": 64311,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-request-only-B_request-memory-summary.json",
+      "path": "local-evidence/coalesced-request-only-B_request-memory-summary.json",
+      "sha256": "297337d8dc46df3aab533ca97a928dac22dde963d5ce40d905e30aeb9dd269b3",
+      "size_bytes": 702,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-request-only-A2.log",
+      "path": "local-evidence/coalesced-request-only-A2.log",
+      "sha256": "a214c451204e922de1c15b565a22a3b262f8424ab140a1a437f3d36f5fa1b9d2",
+      "size_bytes": 19145,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-request-only-A2-analysis.json",
+      "path": "local-evidence/coalesced-request-only-A2-analysis.json",
+      "sha256": "96f3fb7f1267f92eb805518ba654d3c39c10e86553264e6e658af73d8c89853e",
+      "size_bytes": 31121,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-request-only-A2-memory.txt",
+      "path": "local-evidence/coalesced-request-only-A2-memory.txt",
+      "sha256": "84403aa64bc0ff1aa4bdccd74e1d0988d843f2919394129185660d888316a8d2",
+      "size_bytes": 64311,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-request-only-A2-memory-summary.json",
+      "path": "local-evidence/coalesced-request-only-A2-memory-summary.json",
+      "sha256": "83f06035d456c8d6dbfa79d104f43eea7a297b37ba1b968d4fa6d4b6def85c05",
+      "size_bytes": 701,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T22:20:04.731Z",
+    "started": "2026-09-09T22:20:14.181Z",
+    "finished": "2026-09-09T22:25:21.645Z"
+  }
+}

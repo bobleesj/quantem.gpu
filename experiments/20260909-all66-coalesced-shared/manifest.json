@@ -1,0 +1,235 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-coalesced-shared",
+  "status": "succeeded",
+  "question": "Can shared Metal storage for unchanged coalesced encoded source buffers remove the paused all66 wiring penalty without added resident bytes?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-coalesced-shared/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "dirty": true,
+    "diff_sha256": "3b9316027d477c494fee61236338adf7c701c4ebebbdf75abd3f743f46c2a7ab",
+    "snapshot_path": "local-output/source-v14.patch",
+    "entrypoint": "TANSResidencyHoldExperimentTests.testAll66ResidencyHoldIdleABAWhenConfigured"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-native-masks",
+      "path": "local-worktree/experiments/20260909-all66-separated-native-replay/local-evidence/native-stream-bytes-r2.json",
+      "sha256": "1c896b4f3ad0ff2a40b88377915be356bbf6b1c3ed7a2596898f60a9f3db1296"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "index_ceiling_bytes": 2108620800,
+    "one_factor": "Private/shared/private storage for coalesced tracked encoded buffers; hold off. Same staging+authenticated read+blit to destination, exact bytes, index, decoder, masks,64-record submissions. Shared allowed only explicitly on unified memory. No CPU scientific path or raw/duplicate4D residency.",
+    "cache_state": "Prepared entropy archive; source pages unspecified.4-second idle before every timed query;9 masks x2cycles per arm. Complete package-return wall, not native publication.",
+    "default": "Off; canonical sources and installed app untouched",
+    "untracked_source_sha256": "3558fa80d334d2cd8384e8e038ce4ecffa40f5dace0397e552c5a9dc4b6d2bcf",
+    "run_root": "local-output",
+    "command": "zsh local-output/run-coalesced-shared-aba.zsh",
+    "memory_gate": "Same source/index bytes; source0/Metal720896B after release. No new dense/raw resident. Inspect pressure/swap; no full System Trace.",
+    "acceptance": "54complete exact all66 queries;6full66 selected-DP hashes; p50/p95/max below300ms reported separately; no speedup claim from GPU interval alone.",
+    "artifact_results": {
+      "audit-residency-variants.cjs": "Refuted.54/54 dynamic all66 queries and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Private/shared/private wall p50 399.133/400.320/401.052ms;p95=max430.988/429.087/425.932ms. Same86,860,316,672B Metal allocation and5579.62MiB swap with0delta/0swapouts. Shared storage did not remove paused penalty. No adoption.",
+      "run-coalesced-shared-aba.zsh": "Refuted.54/54 dynamic all66 queries and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Private/shared/private wall p50 399.133/400.320/401.052ms;p95=max430.988/429.087/425.932ms. Same86,860,316,672B Metal allocation and5579.62MiB swap with0delta/0swapouts. Shared storage did not remove paused penalty. No adoption.",
+      "full-suite-v14.log": "Refuted.54/54 dynamic all66 queries and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Private/shared/private wall p50 399.133/400.320/401.052ms;p95=max430.988/429.087/425.932ms. Same86,860,316,672B Metal allocation and5579.62MiB swap with0delta/0swapouts. Shared storage did not remove paused penalty. No adoption.",
+      "source-v14.patch": "Refuted.54/54 dynamic all66 queries and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Private/shared/private wall p50 399.133/400.320/401.052ms;p95=max430.988/429.087/425.932ms. Same86,860,316,672B Metal allocation and5579.62MiB swap with0delta/0swapouts. Shared storage did not remove paused penalty. No adoption.",
+      "source-v14-untracked.tar.gz": "Refuted.54/54 dynamic all66 queries and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Private/shared/private wall p50 399.133/400.320/401.052ms;p95=max430.988/429.087/425.932ms. Same86,860,316,672B Metal allocation and5579.62MiB swap with0delta/0swapouts. Shared storage did not remove paused penalty. No adoption.",
+      "coalesced-shared-audit.json": "Refuted.54/54 dynamic all66 queries and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Private/shared/private wall p50 399.133/400.320/401.052ms;p95=max430.988/429.087/425.932ms. Same86,860,316,672B Metal allocation and5579.62MiB swap with0delta/0swapouts. Shared storage did not remove paused penalty. No adoption.",
+      "coalesced-shared-A1.log": "Refuted.54/54 dynamic all66 queries and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Private/shared/private wall p50 399.133/400.320/401.052ms;p95=max430.988/429.087/425.932ms. Same86,860,316,672B Metal allocation and5579.62MiB swap with0delta/0swapouts. Shared storage did not remove paused penalty. No adoption.",
+      "coalesced-shared-A1-analysis.json": "Refuted.54/54 dynamic all66 queries and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Private/shared/private wall p50 399.133/400.320/401.052ms;p95=max430.988/429.087/425.932ms. Same86,860,316,672B Metal allocation and5579.62MiB swap with0delta/0swapouts. Shared storage did not remove paused penalty. No adoption.",
+      "coalesced-shared-A1-memory.txt": "Refuted.54/54 dynamic all66 queries and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Private/shared/private wall p50 399.133/400.320/401.052ms;p95=max430.988/429.087/425.932ms. Same86,860,316,672B Metal allocation and5579.62MiB swap with0delta/0swapouts. Shared storage did not remove paused penalty. No adoption.",
+      "coalesced-shared-A1-memory-summary.json": "Refuted.54/54 dynamic all66 queries and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Private/shared/private wall p50 399.133/400.320/401.052ms;p95=max430.988/429.087/425.932ms. Same86,860,316,672B Metal allocation and5579.62MiB swap with0delta/0swapouts. Shared storage did not remove paused penalty. No adoption.",
+      "coalesced-shared-B_shared.log": "Refuted.54/54 dynamic all66 queries and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Private/shared/private wall p50 399.133/400.320/401.052ms;p95=max430.988/429.087/425.932ms. Same86,860,316,672B Metal allocation and5579.62MiB swap with0delta/0swapouts. Shared storage did not remove paused penalty. No adoption.",
+      "coalesced-shared-B_shared-analysis.json": "Refuted.54/54 dynamic all66 queries and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Private/shared/private wall p50 399.133/400.320/401.052ms;p95=max430.988/429.087/425.932ms. Same86,860,316,672B Metal allocation and5579.62MiB swap with0delta/0swapouts. Shared storage did not remove paused penalty. No adoption.",
+      "coalesced-shared-B_shared-memory.txt": "Refuted.54/54 dynamic all66 queries and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Private/shared/private wall p50 399.133/400.320/401.052ms;p95=max430.988/429.087/425.932ms. Same86,860,316,672B Metal allocation and5579.62MiB swap with0delta/0swapouts. Shared storage did not remove paused penalty. No adoption.",
+      "coalesced-shared-B_shared-memory-summary.json": "Refuted.54/54 dynamic all66 queries and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Private/shared/private wall p50 399.133/400.320/401.052ms;p95=max430.988/429.087/425.932ms. Same86,860,316,672B Metal allocation and5579.62MiB swap with0delta/0swapouts. Shared storage did not remove paused penalty. No adoption.",
+      "coalesced-shared-A2.log": "Refuted.54/54 dynamic all66 queries and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Private/shared/private wall p50 399.133/400.320/401.052ms;p95=max430.988/429.087/425.932ms. Same86,860,316,672B Metal allocation and5579.62MiB swap with0delta/0swapouts. Shared storage did not remove paused penalty. No adoption.",
+      "coalesced-shared-A2-analysis.json": "Refuted.54/54 dynamic all66 queries and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Private/shared/private wall p50 399.133/400.320/401.052ms;p95=max430.988/429.087/425.932ms. Same86,860,316,672B Metal allocation and5579.62MiB swap with0delta/0swapouts. Shared storage did not remove paused penalty. No adoption.",
+      "coalesced-shared-A2-memory.txt": "Refuted.54/54 dynamic all66 queries and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Private/shared/private wall p50 399.133/400.320/401.052ms;p95=max430.988/429.087/425.932ms. Same86,860,316,672B Metal allocation and5579.62MiB swap with0delta/0swapouts. Shared storage did not remove paused penalty. No adoption.",
+      "coalesced-shared-A2-memory-summary.json": "Refuted.54/54 dynamic all66 queries and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Private/shared/private wall p50 399.133/400.320/401.052ms;p95=max430.988/429.087/425.932ms. Same86,860,316,672B Metal allocation and5579.62MiB swap with0delta/0swapouts. Shared storage did not remove paused penalty. No adoption."
+    },
+    "executable_sha256": "3fc0079fbb44c0b0b7f8818b401722e602b90e52e5636f91cdc81b7643c12326",
+    "result": "Refuted.54/54 dynamic all66 queries and6frozen full66 DP arrays per arm exact; source0/Metal720896B after release. Private/shared/private wall p50 399.133/400.320/401.052ms;p95=max430.988/429.087/425.932ms. Same86,860,316,672B Metal allocation and5579.62MiB swap with0delta/0swapouts. Shared storage did not remove paused penalty. No adoption."
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "audit-residency-variants.cjs",
+      "path": "local-evidence/audit-residency-variants.cjs",
+      "sha256": "e7aebbb212c93fa4980c02b708a2f217ce151e5c454089273fb193af68998d35",
+      "size_bytes": 2223,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "run-coalesced-shared-aba.zsh",
+      "path": "local-evidence/run-coalesced-shared-aba.zsh",
+      "sha256": "74cbee293e7ef149725cd770ddd8c499d15ec25778ed09b61fabe6d0a240f1f5",
+      "size_bytes": 1488,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "full-suite-v14.log",
+      "path": "local-evidence/full-suite-v14.log",
+      "sha256": "d674420e34f7b21f66db82d0608a3b59426245a851638826127b1f3f71a61ba8",
+      "size_bytes": 89865,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "source-v14.patch",
+      "path": "local-evidence/source-v14.patch",
+      "sha256": "3b9316027d477c494fee61236338adf7c701c4ebebbdf75abd3f743f46c2a7ab",
+      "size_bytes": 119110,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "source-v14-untracked.tar.gz",
+      "path": "local-evidence/source-v14-untracked.tar.gz",
+      "sha256": "3558fa80d334d2cd8384e8e038ce4ecffa40f5dace0397e552c5a9dc4b6d2bcf",
+      "size_bytes": 16414,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-shared-audit.json",
+      "path": "local-evidence/coalesced-shared-audit.json",
+      "sha256": "6549600b8a8c9b219f153079f0434c7c6625ca401fcca9b68791740a807e6998",
+      "size_bytes": 4391,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-shared-A1.log",
+      "path": "local-evidence/coalesced-shared-A1.log",
+      "sha256": "cdbb4a2a93d74f3afa574eee701242a19e2bb1c2d9618f19f72621b292afd2ef",
+      "size_bytes": 18680,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-shared-A1-analysis.json",
+      "path": "local-evidence/coalesced-shared-A1-analysis.json",
+      "sha256": "8b167384e01bb3a603618ea0edac36563ac0b4ab8f633bf7c1f1b99d771240f2",
+      "size_bytes": 30528,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-shared-A1-memory.txt",
+      "path": "local-evidence/coalesced-shared-A1-memory.txt",
+      "sha256": "30c0dbb692566d4459cd9dbcda5694200d3f77e20228183916b7e91d2969de06",
+      "size_bytes": 63050,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-shared-A1-memory-summary.json",
+      "path": "local-evidence/coalesced-shared-A1-memory-summary.json",
+      "sha256": "129123b76c42b4ac490b5e589a78f237278c35dce7206019ebcc463e0257e056",
+      "size_bytes": 701,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-shared-B_shared.log",
+      "path": "local-evidence/coalesced-shared-B_shared.log",
+      "sha256": "f5a186f12ef9e0ba9cd18daf70f27edddde2b250160ac78064d8275517836f43",
+      "size_bytes": 18943,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-shared-B_shared-analysis.json",
+      "path": "local-evidence/coalesced-shared-B_shared-analysis.json",
+      "sha256": "ee712f52724b22930d23f76f423c182014116f61bcdc0b9613e209eb7258ff3c",
+      "size_bytes": 30802,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-shared-B_shared-memory.txt",
+      "path": "local-evidence/coalesced-shared-B_shared-memory.txt",
+      "sha256": "a3c63c41de2ecd971c3868b1f06509697917c818835baf67ac42cdc179a5ba4b",
+      "size_bytes": 63050,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-shared-B_shared-memory-summary.json",
+      "path": "local-evidence/coalesced-shared-B_shared-memory-summary.json",
+      "sha256": "27e4eb51c57e5291d039d784ea74a8a055821a363062ca1b118fb002d49f0dc3",
+      "size_bytes": 701,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-shared-A2.log",
+      "path": "local-evidence/coalesced-shared-A2.log",
+      "sha256": "ea0d3fc5606f45e6134f54ccb135494a623c1c2ccf8d733d06a5f02544ed6276",
+      "size_bytes": 18686,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-shared-A2-analysis.json",
+      "path": "local-evidence/coalesced-shared-A2-analysis.json",
+      "sha256": "4fa76494096ed0de8ede9e0e33749fdfc0c8ea41ecb0187f62626ce8315a8087",
+      "size_bytes": 30555,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-shared-A2-memory.txt",
+      "path": "local-evidence/coalesced-shared-A2-memory.txt",
+      "sha256": "0f69727885c938dd9c2fb0086fdad809914d260cc870dc83d41f330ab8a5b79a",
+      "size_bytes": 63050,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-shared-A2-memory-summary.json",
+      "path": "local-evidence/coalesced-shared-A2-memory-summary.json",
+      "sha256": "c7a7b941e81cbccbec8c15ccf26daabcddcbea9c5a53696cac788204013fa7aa",
+      "size_bytes": 701,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T22:06:59.740Z",
+    "started": "2026-09-09T22:07:07.021Z",
+    "finished": "2026-09-09T22:12:09.298Z"
+  }
+}

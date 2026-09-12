@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-halfword-refill",
+  "status": "refuted",
+  "question": "Can exact16-bit source refills eliminate64-bit reservoir operations and materially accelerate full66 queries without changing any residency/loading bytes?",
+  "paper": {
+    "repository": "quantem.gpu",
+    "authoritative_host": "phil",
+    "manifest_path": "experiments/20260909-all66-halfword-refill/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "dirty": true,
+    "entrypoint": "TANSSharedRefill16ExperimentTests.testAll66SharedRefill16ABAWhenConfigured",
+    "diff_sha256": "c886c2487b56fa13ac13733af2dfb701c9005ac6052b585bad99a65b8382182a",
+    "snapshot_path": "local-evidence/refill16-source.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "independent-linux-products",
+      "path": "local-fixture/series-products/shared-resident-images.npy",
+      "sha256": "06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "representation": "lossless entropy",
+    "source_bytes": 84681338880,
+    "index_bytes": 2108620800,
+    "arms": [
+      "A1 refill32/ulong baseline",
+      "B16 refill16/uint",
+      "A2 baseline"
+    ],
+    "samples_per_case_per_arm": 5,
+    "cases": 7,
+    "cache_state": "prepared archive/source pages unspecified; same residency for matched queries",
+    "decision_gate": "Exact complete66 hashes plus independent frozen products, high uint16/escape/signed oracle, immutable prior; materially better than both controls. No default adoption without native/load gates.",
+    "prior_result": "Packet ILP and threadwidth refuted; boundary-layout metadata has not justified finer coverage within frozen index budget.",
+    "not_claimed": [
+      "native FPS",
+      "cold HDF5",
+      "loading improvement",
+      "independent all66 original-count full audit"
+    ],
+    "decision": "No material gain: ADF jump p50 237.284ms versus controls237.835/239.094; BF150.715 versus151.142/150.567. Other cases neutral or~1-2percent. Keep default false; no app integration.",
+    "memory": "All105 samples report Metal allocation86,935,453,696B; source84,681,338,880B/index2,108,620,800B unchanged. Global swap5871.19MiB before/after and swapouts11254896 unchanged. Sampled compressor occupied pages93708 before/93691 after (16KiB pages); no continuous peak claim.",
+    "verification": "Independent high uint16/escape/signed oracle2/2;105/105 complete all66 output hashes exact; frozen Linux BF/ADF/ABF byte-exact and prior images immutable. Full suite216tests/23opt-in skips/0fail. Strict swift-format/diff-check pass.",
+    "test_binary_sha256": "d52fc73d904b3bb83f59b2ed64256fa3d3251a1a2d99b8628ccdc615a5a3b5ce",
+    "test_source_sha256": "cd481593c25dc6901bfd88df95bf065b810b64247cfe9c3089854de0986c50a3",
+    "kernel_source_sha256": "9254f5c9c63c8b0bb507c74840503a8b87b487c000c2a9bda4d16f43f502e87f",
+    "resident_source_sha256": "a1dcf2a0c9927c7803f38e2be77c0549ae2826b991983f811934f80093d6e8f6",
+    "loading": "One prepared archive load14.209958s and index4.167144s; source pages unspecified. Not a loading improvement or native/cold nonregression gate."
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "raw-all66-trials",
+      "result": "105complete all66 queries exact; no material halfword-refill speedup.",
+      "path": "local-evidence/refill16-all66.log",
+      "sha256": "34d6aeea19f1ccc76df1fae5a3db404b2919f81c3e81feb60d0deaaf1dcc6829",
+      "size_bytes": 24185,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "distribution-analysis",
+      "result": "N5p50/p95/max across7cases and3arms; ADF237.284ms versus237.835/239.094controls; not native FPS.",
+      "path": "local-evidence/refill16-analysis.json",
+      "sha256": "aa0af5e873686f1e75f0a8b7dd72b444a0c71570341e1916597cf155a2c1fd92",
+      "size_bytes": 44749,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T06:36:00Z",
+    "started": "2026-09-09T06:37:51.297Z",
+    "finished": "2026-09-09T06:38:47.781Z"
+  }
+}

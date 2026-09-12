@@ -234,6 +234,74 @@ kernel void metal_histogram_u32_from_range(
     atomic_fetch_add_explicit(&bins[bin], 1u, memory_order_relaxed);
 }
 
+// Copy one exact u32 image and reduce its [minimum, maximum] in the same pass,
+// so the image is read once. Same range contract as metal_range_u32_simd:
+// initialize the range to [0xffffffff, 0] before encoding.
+kernel void metal_copy_range_u32_simd(
+    device const uint *source [[buffer(0)]],
+    device uint *destination [[buffer(1)]],
+    device atomic_uint *valueRange [[buffer(2)]],
+    constant uint &count [[buffer(3)]],
+    uint index [[thread_position_in_grid]],
+    uint lane [[thread_index_in_simdgroup]]
+) {
+    bool active = index < count;
+    uint value = active ? source[index] : 0u;
+    if (active) destination[index] = value;
+    uint minimum = simd_min(active ? value : 0xffffffffu);
+    uint maximum = simd_max(active ? value : 0u);
+    if (lane == 0u) {
+        atomic_fetch_min_explicit(&valueRange[0], minimum, memory_order_relaxed);
+        atomic_fetch_max_explicit(&valueRange[1], maximum, memory_order_relaxed);
+    }
+}
+
+// Up to two display histograms of one image from its completed range. Every
+// value gets the same bin as metal_histogram_u32_from_range; counts gather in
+// threadgroup memory and merge into the global bins once per threadgroup, so a
+// 512x512 image needs thousands of global atomics instead of 262,144 per scale.
+// Any grid works: each thread strides over the image. layout = (count, first
+// scale mode, second scale mode, scale count 1 or 2). Clear bins before encoding.
+kernel void metal_histogram_u32_pair_from_range(
+    device const uint *values [[buffer(0)]],
+    device atomic_uint *firstBins [[buffer(1)]],
+    device atomic_uint *secondBins [[buffer(2)]],
+    device const uint *valueRange [[buffer(3)]],
+    constant uint4 &layout [[buffer(4)]],
+    uint index [[thread_position_in_grid]],
+    uint grid [[threads_per_grid]],
+    uint local [[thread_index_in_threadgroup]],
+    uint width [[threads_per_threadgroup]]
+) {
+    threadgroup atomic_uint first[256];
+    threadgroup atomic_uint second[256];
+    for (uint bin = local; bin < 256u; bin += width) {
+        atomic_store_explicit(&first[bin], 0u, memory_order_relaxed);
+        atomic_store_explicit(&second[bin], 0u, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    uint minimum = valueRange[0];
+    uint maximum = valueRange[1];
+    for (uint i = index; i < layout.x; i += grid) {
+        uint value = values[i];
+        float a = metal_normalize_u32_range(value, minimum, maximum, layout.y);
+        atomic_fetch_add_explicit(&first[min(255u, uint(a * 256.0f))], 1u, memory_order_relaxed);
+        if (layout.w > 1u) {
+            float b = metal_normalize_u32_range(value, minimum, maximum, layout.z);
+            atomic_fetch_add_explicit(&second[min(255u, uint(b * 256.0f))], 1u, memory_order_relaxed);
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint bin = local; bin < 256u; bin += width) {
+        uint a = atomic_load_explicit(&first[bin], memory_order_relaxed);
+        if (a != 0u) atomic_fetch_add_explicit(&firstBins[bin], a, memory_order_relaxed);
+        if (layout.w > 1u) {
+            uint b = atomic_load_explicit(&second[bin], memory_order_relaxed);
+            if (b != 0u) atomic_fetch_add_explicit(&secondBins[bin], b, memory_order_relaxed);
+        }
+    }
+}
+
 kernel void metal_histogram_f32(
     device const float *values [[buffer(0)]],
     device atomic_uint *bins [[buffer(1)]],

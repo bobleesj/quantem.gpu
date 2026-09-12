@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-index-base-choice",
+  "status": "failed",
+  "question": "Can choosing full versus prior-delta after exact tile substitution reduce residual entropy work?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-index-base-choice/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "entrypoint": "TANSTileArchitectureExperimentTests.testAll66UniformIndexABAWhenConfigured",
+    "dirty": true,
+    "snapshot_path": "local-evidence/source.patch",
+    "diff_sha256": "6c942de86bb5797fa0f209be2da0017fa3ef39735c9dcfab8f6c70d370a37f40"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-linux-products",
+      "path": "local-fixture/series-products/shared-resident-images.npy",
+      "sha256": "06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "index_ceiling_bytes": 2108620800,
+    "one_factor": "Uniform16 blockwise index in all arms; legacy base selection / post-index cost selection / legacy. 7cases x5 each. No source, kernel, geometry or byte policy change.",
+    "default": "Off; existing app unchanged",
+    "executable_sha256": "2f297293b4c07cf220520a259d5b5d49232812dc2daf9edfa99b25eb2199aa01",
+    "untracked_source_sha256": "9fc13e057e408cbe0b0cd962005b44f637bbdb705da970e6a3e349dca9b8092a",
+    "cache_state": "Complete prepared entropy archive, source pages unspecified. Not cold original source or headed UI/presentation.",
+    "run_root": "local-output",
+    "result": "Exit133/SIGTRAP before any timed sample, after14.372s prepared entropy upload. Crash frame specialized Sequence.flatMap in detectorBatch record-table construction. Not a GPU allocation diagnosis. Binary retained; warm index qualification from earlier executable unaffected. Retry uses bounded explicit record-table construction; root cause not yet proven.",
+    "artifact_results": {
+      "architecture-unit-v3.log": "Failed experiment retained; zero timed samples, CPU SIGTRAP in record-table construction before candidate",
+      "base-choice-all66.log": "Failed experiment retained; zero timed samples, CPU SIGTRAP in record-table construction before candidate",
+      "base-choice-memory.txt": "Failed experiment retained; zero timed samples, CPU SIGTRAP in record-table construction before candidate",
+      "base-choice-v3-crash.ips": "Failed experiment retained; zero timed samples, CPU SIGTRAP in record-table construction before candidate",
+      "source.patch": "Failed experiment retained; zero timed samples, CPU SIGTRAP in record-table construction before candidate",
+      "untracked-source.tar.gz": "Failed experiment retained; zero timed samples, CPU SIGTRAP in record-table construction before candidate"
+    },
+    "path_mapping": "Exact local paths and unmodified pre-normalization manifests are retained in the private output checkpoint."
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "architecture-unit-v3.log",
+      "path": "local-evidence/architecture-unit-v3.log",
+      "sha256": "f929f9504126c4a964ca62a771f8180a62571f626e0c8f9a23251a97721d491a",
+      "size_bytes": 10711,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "base-choice-all66.log",
+      "path": "local-evidence/base-choice-all66.log",
+      "sha256": "8bdc4bc5db7379ed7362d565ee2504a0320972c1f8626a2f0a24ed8bb74826d6",
+      "size_bytes": 451,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "base-choice-memory.txt",
+      "path": "local-evidence/base-choice-memory.txt",
+      "sha256": "88aa58078481a8e0d10312c1d4f2453982d509734621dfc31fcad04faacebe38",
+      "size_bytes": 5040,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "base-choice-v3-crash.ips",
+      "path": "local-evidence/base-choice-v3-crash.ips",
+      "sha256": "143ef52bb0e7e74141502d5fec84ba01908d827839ea0f7e3d0715198cb5143c",
+      "size_bytes": 32843,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "source.patch",
+      "path": "local-evidence/source.patch",
+      "sha256": "6c942de86bb5797fa0f209be2da0017fa3ef39735c9dcfab8f6c70d370a37f40",
+      "size_bytes": 117619,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "untracked-source.tar.gz",
+      "path": "local-evidence/untracked-source.tar.gz",
+      "sha256": "9fc13e057e408cbe0b0cd962005b44f637bbdb705da970e6a3e349dca9b8092a",
+      "size_bytes": 12753,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T16:34:50.225Z",
+    "started": "2026-09-09T16:34:59.949Z",
+    "finished": "2026-09-09T16:35:14.611Z"
+  }
+}

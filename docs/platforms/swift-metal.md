@@ -18,7 +18,7 @@ WebGPU paths.
 |---|---|---|
 | `Native4DSTEMIO` | discovery, QH5 indexing, HDF5 access, identities, caches, audits | `src/quantem/gpu/swift/Sources/Native4DSTEMIO` |
 | `Metal4DSTEMKernels` | load plans, decode, binning, BF/DF/ADF, CoM, DPC, iDPC primitives | `.../Metal4DSTEMKernels` |
-| `Metal4DSTEMStreamingIO` | bounded QH5 decode, exact `uint64` products, source audit, on-demand native frames | `.../Metal4DSTEMStreamingIO` |
+| `Metal4DSTEMStreamingIO` | bounded QH5 decode, exact `uint64` products, source audit, on-demand native frames; opt-in `@_spi(EntropySeriesPrototype)` exact tANS entropy series ([experimental](../api/experimental_metal_entropy_series.md)) | `.../Metal4DSTEMStreamingIO` |
 | `MetalDisplayKernels` | range, histogram, transfer function, colormap | `.../MetalDisplayKernels` |
 | `MetalImageFFT` | FFT operations on resident 2D products | `.../MetalImageFFT` |
 | `MetalImageRuntime` | typed resident surface/statistics state | `.../MetalImageRuntime` |

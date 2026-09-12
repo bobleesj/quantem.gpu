@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-narrow-output-tracking",
+  "status": "failed",
+  "question": "Does narrowing tracked output-resource declarations to actually written acquisition images reduce idle all66 command gaps without changing kernels, data, source/index or allocations?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-narrow-output-tracking/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "entrypoint": "TANSResidencyHoldExperimentTests.testAll66ResidencyHoldIdleABAWhenConfigured",
+    "dirty": true,
+    "diff_sha256": "4a414d9e45204eca51ba7237f598d65c720bd4925cd0668a2ff578f1bb55bcb0",
+    "snapshot_path": "local-evidence/source.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "native-nine-masks",
+      "path": "../20260909-all66-separated-native-replay/local-evidence/native-stream-bytes-r2.json",
+      "sha256": "1c896b4f3ad0ff2a40b88377915be356bbf6b1c3ed7a2596898f60a9f3db1296"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "index_bytes": 2108620800,
+    "representation": "lossless entropy only",
+    "untracked_source_sha256": "01b78039a2c836c91f92149eaa0b64019c3b04157d59f77185dfc1b4c68edb1b",
+    "one_factor": "all66 output buffers declared per command versus actual4image batch; identical17submission64commands. Init/index retain complete ordered destination dependencies. Mixed/separated/mixedonly/savings8 allarms; staged and concurrent off.",
+    "gate": "Fresh full66 native-nine mask replays A/B/A;2cycles/case with4s idle; exact hashes/probes, same columns/previous, unchanged allocation. Warm replay required before any app adoption.",
+    "timing": "Prepared archive, source-page state unspecified; no nativeFPS/coldsource claim.",
+    "default": "false",
+    "result": "Stopped task-owned xctest after4 exact baseline queries because an unrelated app release build overlapped setup/timing. No candidate query completed. Entire run excluded from performance; source/artifact preserved.",
+    "artifact_results": {
+      "interrupted-log": "Stopped task-owned xctest after4 exact baseline queries because an unrelated app release build overlapped setup/timing. No candidate query completed. Entire run excluded from performance; source/artifact preserved."
+    }
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "interrupted-log",
+      "path": "local-evidence/narrow-idle.log",
+      "sha256": "1d8fc094304551cd6fcee01e3f67e97045884ee4a2b82fe2911f951beb1a320b",
+      "size_bytes": 4356,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T13:12:10Z",
+    "started": "2026-09-09T13:14:25Z",
+    "finished": "2026-09-09T13:15:21Z"
+  }
+}

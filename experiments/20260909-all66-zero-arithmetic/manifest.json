@@ -1,0 +1,33 @@
+{
+  "schema_version":1, "experiment_id":"20260909-all66-zero-arithmetic", "status":"succeeded",
+  "question":"Can an exact zero-symbol zero-bit fast path skip useless reservoir operations without zero-run table construction?",
+  "paper":{"authoritative_host":"phil", "repository":"quantem.gpu", "manifest_path":"experiments/20260909-all66-zero-arithmetic/manifest.json"},
+  "code":{"repository":"quantem.gpu", "revision":"abff4e0cac5329fd83391a11dcfa8a6849ed1589", "dirty":true, "entrypoint":"TANSSharedRefill16ExperimentTests.testAll66SharedRefill16ABAWhenConfigured", "diff_sha256":"8eb2803318cf97ae697d084bd51fb032956a462357a729c80b8b5fc268fdddaa", "snapshot_path":"local-evidence/zero-arithmetic.patch"},
+  "inputs":[{"dataset_id":"all66-entropy-checkpoint", "path":"local-fixture/checkpoint.json", "sha256":"2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"}, {"dataset_id":"frozen-linux-products", "path":"local-fixture/series-products/shared-resident-images.npy", "sha256":"06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"}],
+  "parameters":{
+    "shape":[66,512,512,192,192], "dtype":"uint16", "scan_bin":1, "detector_bin":1, "crop":null,
+    "representation":"lossless entropy only", "source_bytes":84681338880, "index_bytes":2108620800,
+    "one_factor":"Read table entry first; for exact zero-symbol zero-bit code advance only its unchanged nextstate, otherwise execute frozen arithmetic. No run table, added memory or pixel/count omission.",
+    "default":"false; isolated internal flag only; no app/public API change",
+    "test_source_sha256":"7d05784d85801f5d7479d762217a21e5ad3cbfee74211c68ccb5f6625171b489",
+    "environment":"QUANTEM_TANS_ZERO_ARITHMETIC=1; QUANTEM_TANS_REFILL16_FIXTURE=full66 fixture. LegacyB16arm meanszero-arithmetic; refill16/direct_table/zero_runsfalse everywhere.",
+    "matrix":"7 BF/ABF/ADF largecenter/radius/edge/smalldelta cases,5queries/case/arm,A/B/A=105full66queries with warmup percase",
+    "preflight":"Independent fulluint16 highcount/escape/signedremoval/91zero-pair scanpositions3/3pass over19topologies",
+    "gate":"FrozenLinuxBF/ADF/ABFfullimages, full66 hashes againstdefault, priorimmutability and memory; independentfulloriginalcountaudit remains pending",
+    "timing":"Whole query with completion wait; preparation separate; preparedarchive/sourcepagesunspecified; not nativeFPS or originalcold",
+    "memory":"Same source/index/scratch/table bytes; collect Metalallocation and sampledRSS/compressor/swap",
+    "decision":"REFUTED: majorBF/ABF/ADFcases4-6percent slower; no appadoption. The zero-chain prototype regression alone does not isolate table-setup versus branching cost; simpler fastpath also regresses.",
+    "test_binary_sha256":"f921d5775b5a3cad9bc9c7d3ebb25a483aef6f7b2daac6b2e1091e0b82c9697c",
+    "result":"105/105full66queriesexact, frozenLinuxBF/ADF/ABF and priorimmutability pass. ADFjump wallp50 A1/B/A2=235.890/247.779/235.917ms; BF149.346/157.990/149.652ms. N5/case/arm; tails retained.",
+    "loading_result":"Preparedarchive/sourcepagesunspecified load14.042261s/index4.054452s; notcoldoriginal or nativeFPS",
+    "memory_result":"Metal86935453696B everyquery;9afterloadsamples maxRSS518995968B (notprivateMetal),systemcompressor1400127488B,swap5711.19MiB/swapouts11254896unchanged",
+    "artifact_results":{"raw":"105exact completequeries", "analysis":"All samples andp50/p95/max; B16iszeroarithmeticonly", "memory":"9sampled process/system observations"}
+  },
+  "execution":{"host":"phil", "backend":"swift-metal", "gpu_ids":["default Metal device"], "gpu_model":"Apple M5 Max"},
+  "outputs":[
+    {"artifact_id":"raw", "path":"local-evidence/zero-arithmetic-all66.log", "sha256":"33f27ede4da7ed725479bedae7b582b67a1cd6171d1a3c7a79a98264ed17bd4e", "size_bytes":29970, "retention":"durable", "consuming_figures":[]},
+    {"artifact_id":"analysis", "path":"local-evidence/zero-arithmetic-analysis.json", "sha256":"631eb1d0b064ae1c19e81f7893f7fb3cc8bd4a7b66041827396cdbfddd4145e3", "size_bytes":54495, "retention":"durable", "consuming_figures":[]},
+    {"artifact_id":"memory", "path":"local-evidence/zero-arithmetic-memory.txt", "sha256":"ceff9b76dfdb75fe8ef93bcbce494443eeb3232fea1309438887933bfeff089b", "size_bytes":11349, "retention":"durable", "consuming_figures":[]}
+  ],
+  "timestamps":{"created":"2026-09-09T09:36:00Z", "started":"2026-09-09T09:36:48.396Z", "finished":"2026-09-09T09:37:44.613Z"}
+}

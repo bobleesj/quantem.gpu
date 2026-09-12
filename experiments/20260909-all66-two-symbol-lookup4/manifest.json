@@ -1,0 +1,129 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-two-symbol-lookup4",
+  "status": "succeeded",
+  "question": "Can two exact tANS transitions per codebook lookup shorten the dependent decoder chain within the existing metadata ceiling?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-two-symbol-lookup4/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "entrypoint": "TANSTileArchitectureExperimentTests.testAll66UniformIndexABAWhenConfigured",
+    "dirty": true,
+    "snapshot_path": "local-evidence/source.patch",
+    "diff_sha256": "06be695563f70bbedeae9f06a8520d3cffd1d980e1da7281852cee6faa962eb0"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-linux-products",
+      "path": "local-fixture/series-products/shared-resident-images.npy",
+      "sha256": "06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "index_bytes": 2027531616,
+    "lookup_bytes": 10616832,
+    "combined_metadata_ceiling": 2108620800,
+    "one_factor": "Original decoder / exact two-symbol4bit lookup / original; same uniform16 index and prepared lookup resident in all arms. Exact escapes retain original path. All66,7cases,5repeats per arm. B_plan is the reused harness candidate label, not planner enablement.",
+    "executable_sha256": "a0fba170341288a082069533fcc27d4b169711acb129031c5171d532841fd3b3",
+    "metal_source_sha256": "4bcf96a4c81d5bea22b746977dc21a57eb31418505924129940223bb241f96bd",
+    "untracked_source_sha256": "609c99eddc545af70f5bddf90d6bbd09925aa6a2c27aeb194308a435b95c74ee",
+    "cache_state": "Already-prepared entropy archive; source pages unspecified; warm query benchmark, not cold original load or headed publication",
+    "preflight": "16 focused tests passed, including independent GPU table audit with canaries and exact literal/escape/zero-chain/nonzero-pair/signed-output tests.",
+    "path_mapping": "Exact local paths and unmodified pre-normalization manifests are retained in the private output checkpoint.",
+    "artifact_results": {
+      "pair-lookup4-all66.log": "Refuted for performance: 105/105 all-66 queries exact, three independent frozen Linux full-series products exact, previous outputs immutable, source release zero. Lookup4 p50 ADF jump 232.225ms versus 132.585/132.976ms controls; all seven cases slower. Warm package experiment only; default remains off, no app adoption or native FPS claim.",
+      "pair-lookup4-analysis.json": "Refuted for performance: 105/105 all-66 queries exact, three independent frozen Linux full-series products exact, previous outputs immutable, source release zero. Lookup4 p50 ADF jump 232.225ms versus 132.585/132.976ms controls; all seven cases slower. Warm package experiment only; default remains off, no app adoption or native FPS claim.",
+      "pair-lookup4-memory-summary.json": "Refuted for performance: 105/105 all-66 queries exact, three independent frozen Linux full-series products exact, previous outputs immutable, source release zero. Lookup4 p50 ADF jump 232.225ms versus 132.585/132.976ms controls; all seven cases slower. Warm package experiment only; default remains off, no app adoption or native FPS claim.",
+      "pair-lookup4-memory.txt": "Refuted for performance: 105/105 all-66 queries exact, three independent frozen Linux full-series products exact, previous outputs immutable, source release zero. Lookup4 p50 ADF jump 232.225ms versus 132.585/132.976ms controls; all seven cases slower. Warm package experiment only; default remains off, no app adoption or native FPS claim.",
+      "source.patch": "Refuted for performance: 105/105 all-66 queries exact, three independent frozen Linux full-series products exact, previous outputs immutable, source release zero. Lookup4 p50 ADF jump 232.225ms versus 132.585/132.976ms controls; all seven cases slower. Warm package experiment only; default remains off, no app adoption or native FPS claim.",
+      "untracked-source.tar.gz": "Refuted for performance: 105/105 all-66 queries exact, three independent frozen Linux full-series products exact, previous outputs immutable, source release zero. Lookup4 p50 ADF jump 232.225ms versus 132.585/132.976ms controls; all seven cases slower. Warm package experiment only; default remains off, no app adoption or native FPS claim."
+    },
+    "result": "Refuted for performance: 105/105 all-66 queries exact, three independent frozen Linux full-series products exact, previous outputs immutable, source release zero. Lookup4 p50 ADF jump 232.225ms versus 132.585/132.976ms controls; all seven cases slower. Warm package experiment only; default remains off, no app adoption or native FPS claim.",
+    "memory_result": "Combined index+lookup=2038148448B below frozen ceiling2108620800B; measured Metal allocation86866067456B. Sampled RSSmax594755584B, compressor max1091338240B, swap4257.44MiB unchanged and zero swapout delta. Process RSS does not account for full private Metal allocations.",
+    "future": "No 6-bit real experiment launched; four-bit lookup regresses strongly. Unweighted codebook eligibility is not measured runtime hit rate. More table memory is not an evidence-backed fix."
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "pair-lookup4-all66.log",
+      "path": "local-evidence/pair-lookup4-all66.log",
+      "sha256": "0b88575a1c973b8e29f625ea5605a54603a79964bdb564b696b39a93969452ce",
+      "size_bytes": 96864,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "pair-lookup4-analysis.json",
+      "path": "local-evidence/pair-lookup4-analysis.json",
+      "sha256": "1e6b38247532f38cb6ebb8522054e6f617e09ca9f2232f28426fdb3e1f776991",
+      "size_bytes": 152026,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "pair-lookup4-memory-summary.json",
+      "path": "local-evidence/pair-lookup4-memory-summary.json",
+      "sha256": "81ee54f9f74b55b7c814b185c66855094b9cb2437e27d5ada736e9e316767610",
+      "size_bytes": 697,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "pair-lookup4-memory.txt",
+      "path": "local-evidence/pair-lookup4-memory.txt",
+      "sha256": "58f8db23728b48200c025be77d5b190fd4ace52bde9e267dfc491e46670df6af",
+      "size_bytes": 30240,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "source.patch",
+      "path": "local-evidence/source.patch",
+      "sha256": "06be695563f70bbedeae9f06a8520d3cffd1d980e1da7281852cee6faa962eb0",
+      "size_bytes": 111274,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "untracked-source.tar.gz",
+      "path": "local-evidence/untracked-source.tar.gz",
+      "sha256": "609c99eddc545af70f5bddf90d6bbd09925aa6a2c27aeb194308a435b95c74ee",
+      "size_bytes": 14942,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T17:02:02.627Z",
+    "started": "2026-09-09T17:02:02.627Z",
+    "finished": "2026-09-09T17:03:08.829Z"
+  }
+}

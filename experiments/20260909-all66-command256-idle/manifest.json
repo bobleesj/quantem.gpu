@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-command256-idle",
+  "status": "failed",
+  "question": "Do five submission256 commands reduce measured inter-command gaps against seventeen submission64 commands for identical native masks after idle?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-command256-idle/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "entrypoint": "TANSResidencyHoldExperimentTests.testAll66ResidencyHoldIdleABAWhenConfigured",
+    "dirty": true,
+    "diff_sha256": "2aa44472bd0ee29db414ec22fff99b2648a03c49536b8a29f87964e6ec9c9b1d",
+    "snapshot_path": "local-evidence/source.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-linux-products",
+      "path": "local-fixture/series-products/shared-resident-images.npy",
+      "sha256": "06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"
+    },
+    {
+      "dataset_id": "native-nine-masks",
+      "path": "../20260909-all66-separated-native-replay/local-evidence/native-stream-bytes-r2.json",
+      "sha256": "1c896b4f3ad0ff2a40b88377915be356bbf6b1c3ed7a2596898f60a9f3db1296"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "index_bytes": 2108620800,
+    "representation": "lossless entropy",
+    "one_factor": "Submission64/256/64, 4-second idle, native nine masks, two cycles per arm. Same mixed-tail specialization; concurrent dispatch disabled all arms.",
+    "timing": "Prepared/source pages unspecified; package completion, not native FPS or hardware active counters.",
+    "test_binary_sha256": "a9fb442b837b23d36a07ca36316da75202c2e24948eb6837e6b72feb55cf9e1e",
+    "test_source_sha256": "961f9a1016c3716cbe54dbe98d36142d38bc22f52e4fb6df79ae7903589511b9",
+    "source_inventory": "Prior untracked source sealed in ../20260909-all66-concurrent-reductions/local-evidence/untracked-source.tar.gz; only TANSResidencyHoldExperimentTests.swift replaced by the local snapshot. No default/public API change.",
+    "result": "Validation/setup failure after18 baseline queries, before any candidate query: package guard supported only16/64, not256. No candidate timing or speed claim. Failed raw evidence retained; retry explicitly extends experimental guard, changes nothing scientific.",
+    "artifact_results": {
+      "batch256-idle-log": "Validation/setup failure after18 baseline queries, before any candidate query: package guard supported only16/64, not256. No candidate timing or speed claim. Failed raw evidence retained; retry explicitly extends experimental guard, changes nothing scientific.",
+      "batch256-memory-txt": "Validation/setup failure after18 baseline queries, before any candidate query: package guard supported only16/64, not256. No candidate timing or speed claim. Failed raw evidence retained; retry explicitly extends experimental guard, changes nothing scientific."
+    }
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "batch256-idle-log",
+      "path": "local-evidence/batch256-idle.log",
+      "sha256": "9567b52b75489a85e6cc8a9960ddfd715a3991c26aba91876488acd7acd388f6",
+      "size_bytes": 13696,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "batch256-memory-txt",
+      "path": "local-evidence/batch256-memory.txt",
+      "sha256": "219bac96d1d2d4bbc5ed31693f30f22b1629f6971d9966b8c5c83f4df35fac1d",
+      "size_bytes": 49179,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T12:58:20Z",
+    "started": "2026-09-09T12:58:20Z",
+    "finished": "2026-09-09T13:02:24.458Z"
+  }
+}

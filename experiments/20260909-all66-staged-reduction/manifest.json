@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-staged-reduction",
+  "status": "succeeded",
+  "question": "Does separating entropy decode from SIMD reduction using padded threadgroup scratch accelerate complete all66 ADF without persistent memory growth?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-staged-reduction/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "entrypoint": "TANSSharedRefill16ExperimentTests.testAll66SharedRefill16ABAWhenConfigured",
+    "dirty": true,
+    "diff_sha256": "abc6bbdb003dd4d224c7793d9b05a5ac93be28071aedd16b4050650adc8c539b",
+    "snapshot_path": "local-evidence/source.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-linux-products",
+      "path": "local-fixture/series-products/shared-resident-images.npy",
+      "sha256": "06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "index_bytes": 2108620800,
+    "representation": "lossless entropy only; no raw resident",
+    "timing": "Prepared archive source pages unspecified; package completion not native FPS or cold source.",
+    "untracked_source_sha256": "5bf0be26438ae1505967991764c6f5fe8f2f8d15137afd43a5186129e41763f7",
+    "one_factor": "A1/B/A2 inline versus exact staged pair reduction. Same mixed-only/separated/savings8/submission64, serial. Per group 8704B additional scratch, no global index or persistent resident growth.",
+    "gate": "Independent7 uint16/escape/signed/inactive tests pass; full66 7cases x5 repeats x3 arms, frozen Linux products and immutable prior/full-output hashes.",
+    "result": "105/105 complete all66 query comparisons exact. LargeADF p50 183.073/201.928/183.204ms: staged scratch is about10percent slower; rejected and default off. Extra8704B threadgroup scratch only. Global Metal allocation86935453696B unchanged, sampled swap delta0. Seven independent tests passed.",
+    "artifact_results": {
+      "staged-padded-instrumented-unit-log": "105/105 complete all66 query comparisons exact. LargeADF p50 183.073/201.928/183.204ms: staged scratch is about10percent slower; rejected and default off. Extra8704B threadgroup scratch only. Global Metal allocation86935453696B unchanged, sampled swap delta0. Seven independent tests passed.",
+      "staged-all66-log": "105/105 complete all66 query comparisons exact. LargeADF p50 183.073/201.928/183.204ms: staged scratch is about10percent slower; rejected and default off. Extra8704B threadgroup scratch only. Global Metal allocation86935453696B unchanged, sampled swap delta0. Seven independent tests passed.",
+      "staged-analysis-json": "105/105 complete all66 query comparisons exact. LargeADF p50 183.073/201.928/183.204ms: staged scratch is about10percent slower; rejected and default off. Extra8704B threadgroup scratch only. Global Metal allocation86935453696B unchanged, sampled swap delta0. Seven independent tests passed.",
+      "staged-memory-txt": "105/105 complete all66 query comparisons exact. LargeADF p50 183.073/201.928/183.204ms: staged scratch is about10percent slower; rejected and default off. Extra8704B threadgroup scratch only. Global Metal allocation86935453696B unchanged, sampled swap delta0. Seven independent tests passed.",
+      "staged-memory-summary-json": "105/105 complete all66 query comparisons exact. LargeADF p50 183.073/201.928/183.204ms: staged scratch is about10percent slower; rejected and default off. Extra8704B threadgroup scratch only. Global Metal allocation86935453696B unchanged, sampled swap delta0. Seven independent tests passed."
+    },
+    "test_binary_sha256": "f9e43eaa1c5d1acc3f9454583e539cd17fb0c69718d209af98207558a7b4eaba"
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "staged-padded-instrumented-unit-log",
+      "path": "local-evidence/staged-padded-instrumented-unit.log",
+      "sha256": "7b9f146f18aa974b0184e3e7e1f591d158f1ed639dbda6e93d116ebef279ea74",
+      "size_bytes": 6498,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "staged-all66-log",
+      "path": "local-evidence/staged-all66.log",
+      "sha256": "aa970b29417da154d4389d94c5a2d1f34e6cce46ce917beb657b1b60815b6ec5",
+      "size_bytes": 78004,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "staged-analysis-json",
+      "path": "local-evidence/staged-analysis.json",
+      "sha256": "ca22edf79408a66967fdf2f5319ee2ec2d266c99f74824667e8be45816f3e82e",
+      "size_bytes": 123583,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "staged-memory-txt",
+      "path": "local-evidence/staged-memory.txt",
+      "sha256": "b2cfe671e404285d442cbddbc2d94a5cc801060e91fc335496bc15a4b401453d",
+      "size_bytes": 22698,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "staged-memory-summary-json",
+      "path": "local-evidence/staged-memory-summary.json",
+      "sha256": "70f9cd7b401e7cf881954bdd4a6e256db384f438ed9419c488cf81a52ec81b58",
+      "size_bytes": 739,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T13:06:02Z",
+    "started": "2026-09-09T13:06:24Z",
+    "finished": "2026-09-09T13:07:17Z"
+  }
+}

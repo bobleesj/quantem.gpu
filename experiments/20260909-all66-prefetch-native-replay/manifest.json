@@ -1,0 +1,204 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-prefetch-native-replay",
+  "status": "succeeded",
+  "question": "Does exact transition prefetch improve the held-out nine native drag geometries after four-second idle, with unchanged entropy residency and submission64?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-prefetch-native-replay/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "entrypoint": "TANSResidencyHoldExperimentTests.testAll66ResidencyHoldIdleABAWhenConfigured",
+    "dirty": true,
+    "diff_sha256": "ce74851568faa47de001b40dfd64f3d6bd16567143b8f460289165d5a61d01cb",
+    "snapshot_path": "local-evidence/source.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-linux-products",
+      "path": "local-fixture/series-products/shared-resident-images.npy",
+      "sha256": "06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"
+    },
+    {
+      "dataset_id": "frozen-native-nine-masks",
+      "path": "local-evidence/native-stream-bytes-r2.json",
+      "sha256": "1c896b4f3ad0ff2a40b88377915be356bbf6b1c3ed7a2596898f60a9f3db1296"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "index_bytes": 2108620800,
+    "representation": "lossless entropy only",
+    "one_factor": "Next state entry prefetch OFF/ON/OFF; all arms mixed-separated, mixed-only, savings8, submission64; deferred pairs1.",
+    "default": "false",
+    "untracked_source_sha256": "88734c5968739978546556899416cef15c080d7942f07f604250c0d793bc549e",
+    "environment": "QUANTEM_TANS_PREFETCH_REPLAY=1 QUANTEM_TANS_REPLAY_MIXED_TAILS=1 QUANTEM_TANS_SEPARATE_MIXED=1 QUANTEM_TANS_MIXED_ONLY=1 QUANTEM_TANS_MIXED_SAVINGS_DIVISOR=8 QUANTEM_TANS_REPLAY_BASE_SPLIT=64 QUANTEM_TANS_HOLD_IDLE_SECONDS=4 QUANTEM_TANS_HOLD_CYCLES=2; paths supplied as HOLD_FIXTURE and REPLAY_MASKS",
+    "matrix": "A1/B_mixed/A2;9 fixed native masks;2 cycles per arm;4s idle before each query;54 exact full66 comparisons. This is package replay, not headed UI.",
+    "gate": "Frozen full Linux outputs then dynamic full66 exact image hashes, immutable priors, fixed source/index/metadata footprint; independent high-count/escape/zero/mixed/signed fixtures. No native/cold claim.",
+    "cache_state": "One prepared full archive resident; source pages unspecified;4s idle before each query; cold pipelines may occur",
+    "artifact_results": {
+      "native-stream-bytes-r2.json": "Exact held-out native-geometry package replay; no consistent idle gain; no headed or cold claim",
+      "prefetch-idle-all66.log": "Exact held-out native-geometry package replay; no consistent idle gain; no headed or cold claim",
+      "prefetch-idle-analysis.json": "Exact held-out native-geometry package replay; no consistent idle gain; no headed or cold claim",
+      "prefetch-idle-memory-summary.json": "Exact held-out native-geometry package replay; no consistent idle gain; no headed or cold claim",
+      "prefetch-idle-memory.txt": "Exact held-out native-geometry package replay; no consistent idle gain; no headed or cold claim",
+      "qgpu-full-tests.log": "Exact held-out native-geometry package replay; no consistent idle gain; no headed or cold claim",
+      "source.patch": "Exact held-out native-geometry package replay; no consistent idle gain; no headed or cold claim",
+      "untracked-source.tar.gz": "Exact held-out native-geometry package replay; no consistent idle gain; no headed or cold claim"
+    },
+    "result": "Not consumer-qualified: all54 full66 outputs exact. Pooled idle wall p50 A1/B/A2 449.132/446.609/445.465 ms, no consistent gain. Candidate command-interval sum p50 186.635ms and inter-command gap p50 225.732ms; these separate medians are not additive and interval sum is not hardware active cycles. Default off; no new headed artifact.",
+    "executable_sha256": "50ac5a59700f16bc87f610921f9691cb2c437a0897911c8c568d930f0fb178a5",
+    "timing": {
+      "n_per_arm": 18,
+      "n_per_case_arm": 2,
+      "pooled_wall_ms": {
+        "A1": {
+          "p50": 449.132041656,
+          "p95": 492.525874986,
+          "max": 492.525874986
+        },
+        "B_mixed": {
+          "p50": 446.60854165,
+          "p95": 495.417541708,
+          "max": 495.417541708
+        },
+        "A2": {
+          "p50": 445.465166704,
+          "p95": 505.558291683,
+          "max": 505.558291683
+        }
+      },
+      "candidate_command_intervals_sum_p50_ms": 186.634624959,
+      "candidate_intercommand_gap_p50_ms": 225.731708226
+    },
+    "memory": {
+      "sha256": "0a54f23e85803b32148088d21ea57d4f7da01905af927ba71aaab394c5ac581e",
+      "n": 117,
+      "first": "2026-09-09T16:03:46Z",
+      "last": "2026-09-09T16:07:41Z",
+      "scope": "Read-only sampled system counters and process RSS; not private Metal resident accounting or an unsampled load peak.",
+      "swap_MiB": {
+        "first": 4321.44,
+        "last": 4321.44,
+        "max": 4321.44,
+        "delta": 0
+      },
+      "rss_bytes": {
+        "first": 449757184,
+        "last": 462815232,
+        "max": 464732160,
+        "delta": 13058048
+      },
+      "compressor_occupied_bytes": {
+        "first": 1164410880,
+        "last": 1164132352,
+        "max": 1164525568,
+        "delta": -278528
+      },
+      "swapouts": {
+        "first": 11273935,
+        "last": 11273935,
+        "max": 11273935,
+        "delta": 0
+      }
+    }
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "native-stream-bytes-r2.json",
+      "path": "local-evidence/native-stream-bytes-r2.json",
+      "sha256": "1c896b4f3ad0ff2a40b88377915be356bbf6b1c3ed7a2596898f60a9f3db1296",
+      "size_bytes": 20552,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "prefetch-idle-all66.log",
+      "path": "local-evidence/prefetch-idle-all66.log",
+      "sha256": "9baf1e76f9c39c213cac5d876c28308315e93fa31a9e52ebcc59862803423840",
+      "size_bytes": 40511,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "prefetch-idle-analysis.json",
+      "path": "local-evidence/prefetch-idle-analysis.json",
+      "sha256": "07feda655f19655bf27a2d6c18d23b86e864e1481876c8a5544075b3257ce04c",
+      "size_bytes": 69723,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "prefetch-idle-memory-summary.json",
+      "path": "local-evidence/prefetch-idle-memory-summary.json",
+      "sha256": "6c180002722e211a0c5282320b9563c9b9e1c5c1e67ababb60a85cbc8bd335cd",
+      "size_bytes": 739,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "prefetch-idle-memory.txt",
+      "path": "local-evidence/prefetch-idle-memory.txt",
+      "sha256": "0a54f23e85803b32148088d21ea57d4f7da01905af927ba71aaab394c5ac581e",
+      "size_bytes": 147420,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "qgpu-full-tests.log",
+      "path": "local-evidence/qgpu-full-tests.log",
+      "sha256": "886fe991a69ed9ac451445373e5201f84807dbb7f3f10e621315d6ad67cc7c16",
+      "size_bytes": 83340,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "source.patch",
+      "path": "local-evidence/source.patch",
+      "sha256": "ce74851568faa47de001b40dfd64f3d6bd16567143b8f460289165d5a61d01cb",
+      "size_bytes": 103163,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "untracked-source.tar.gz",
+      "path": "local-evidence/untracked-source.tar.gz",
+      "sha256": "88734c5968739978546556899416cef15c080d7942f07f604250c0d793bc549e",
+      "size_bytes": 9905,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T16:03:00Z",
+    "started": "2026-09-09T16:03:00Z",
+    "finished": "2026-09-09T16:07:42.416Z"
+  }
+}

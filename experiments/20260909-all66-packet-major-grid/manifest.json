@@ -1,0 +1,557 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-packet-major-grid",
+  "status": "failed",
+  "question": "Can packet-major workgroup ordering improve exact decoder-table/source locality without changing work or memory?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-packet-major-grid/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "entrypoint": "TANSSharedRefill16ExperimentTests.testAll66SharedRefill16ABAWhenConfigured",
+    "dirty": true,
+    "diff_sha256": "65be77b474501a1e55d22f520d7c57c0c6abb6a441d40a6008feb1fd98321980",
+    "snapshot_path": "local-evidence/source.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-linux-products",
+      "path": "local-fixture/series-products/shared-resident-images.npy",
+      "sha256": "06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "index_bytes": 2108620800,
+    "representation": "lossless entropy only",
+    "one_factor": "Transpose only workgroup X/Y from model-major to packet-major, matching shader indices and host grid; same groups, counts,17commands,source/index, exact arithmetic. Bit extraction/prefetch/deferred OFF.",
+    "default": "false",
+    "untracked_source_sha256": "f747c675fd9ebc59971f2252d55e9d3c0f66350f953180e515e7b3dd183bfde5",
+    "environment": "QUANTEM_TANS_PACKET_MAJOR=1 QUANTEM_TANS_MIXED_TAILS=1 QUANTEM_TANS_SEPARATE_MIXED=1 QUANTEM_TANS_MIXED_ONLY=1 QUANTEM_TANS_MIXED_SAVINGS_DIVISOR=8; fixture via QUANTEM_TANS_REFILL16_FIXTURE",
+    "matrix": "A1/B16/A2;7geometries;5cycles per arm after complete untimed warmup",
+    "gate": "Frozen full Linux outputs then dynamic full66 exact image hashes, immutable priors, fixed source/index/metadata footprint; independent high-count/escape/zero/mixed/signed fixtures. No native/cold claim.",
+    "cache_state": "One prepared archive resident; source pages unspecified; kernel pipeline warmed per arm/case",
+    "artifact_results": {
+      "grid-measurement-warning.md": "Exact parity retained; abnormal controls and possible desktop contention invalidate performance qualification",
+      "intrinsic-grid-unit.log": "Exact parity retained; abnormal controls and possible desktop contention invalidate performance qualification",
+      "packet-grid-all66.log": "Exact parity retained; abnormal controls and possible desktop contention invalidate performance qualification",
+      "packet-grid-analysis.json": "Exact parity retained; abnormal controls and possible desktop contention invalidate performance qualification",
+      "packet-grid-memory-summary.json": "Exact parity retained; abnormal controls and possible desktop contention invalidate performance qualification",
+      "packet-grid-memory.txt": "Exact parity retained; abnormal controls and possible desktop contention invalidate performance qualification",
+      "source.patch": "Exact parity retained; abnormal controls and possible desktop contention invalidate performance qualification",
+      "untracked-source.tar.gz": "Exact parity retained; abnormal controls and possible desktop contention invalidate performance qualification"
+    },
+    "result": "Performance qualification failed:105/105 exact but unchanged control doubled versus preceding same-executable run. ADF A1/B/A2 p50 409.582/411.292/401.162ms. Streaming desktop processes active; cause unproven. No reliable speed claim; defaultoff; preserve parity.",
+    "executable_sha256": "bddbaf3e4d64c00cc9551dafc00c315d7c3d98672cabcd63d62eeba601072839",
+    "timing_summary": {
+      "A1/BF_jump": {
+        "wall_ms": {
+          "n": 5,
+          "p50": 226.28687496762723,
+          "p95": 243.26387490145862,
+          "max": 243.26387490145862
+        },
+        "gpu_span_ms": {
+          "n": 5,
+          "p50": 218.24279171414673,
+          "p95": 235.23895838297904,
+          "max": 235.23895838297904
+        },
+        "allocation_bytes": [
+          86935453696
+        ],
+        "all66": true
+      },
+      "A1/ABF_jump": {
+        "wall_ms": {
+          "n": 5,
+          "p50": 233.34245826117694,
+          "p95": 243.13404166605324,
+          "max": 243.13404166605324
+        },
+        "gpu_span_ms": {
+          "n": 5,
+          "p50": 226.4031250961125,
+          "p95": 236.20112508069724,
+          "max": 236.20112508069724
+        },
+        "allocation_bytes": [
+          86935453696
+        ],
+        "all66": true
+      },
+      "A1/ADF_jump": {
+        "wall_ms": {
+          "n": 5,
+          "p50": 409.58166669588536,
+          "p95": 430.96529168542475,
+          "max": 430.96529168542475
+        },
+        "gpu_span_ms": {
+          "n": 5,
+          "p50": 399.89920833613724,
+          "p95": 421.36104172095656,
+          "max": 421.36104172095656
+        },
+        "allocation_bytes": [
+          86935453696
+        ],
+        "all66": true
+      },
+      "A1/ADF_edge": {
+        "wall_ms": {
+          "n": 5,
+          "p50": 293.6805000063032,
+          "p95": 299.99391664750874,
+          "max": 299.99391664750874
+        },
+        "gpu_span_ms": {
+          "n": 5,
+          "p50": 284.78304168675095,
+          "p95": 291.1097500473261,
+          "max": 291.1097500473261
+        },
+        "allocation_bytes": [
+          86935453696
+        ],
+        "all66": true
+      },
+      "A1/BF_resize": {
+        "wall_ms": {
+          "n": 5,
+          "p50": 282.53258334007114,
+          "p95": 297.5583333754912,
+          "max": 297.5583333754912
+        },
+        "gpu_span_ms": {
+          "n": 5,
+          "p50": 275.52020840812474,
+          "p95": 290.6214166432619,
+          "max": 290.6214166432619
+        },
+        "allocation_bytes": [
+          86935453696
+        ],
+        "all66": true
+      },
+      "A1/ADF_resize": {
+        "wall_ms": {
+          "n": 5,
+          "p50": 125.75000000651926,
+          "p95": 134.12562489975244,
+          "max": 134.12562489975244
+        },
+        "gpu_span_ms": {
+          "n": 5,
+          "p50": 121.3017082773149,
+          "p95": 129.6803749864921,
+          "max": 129.6803749864921
+        },
+        "allocation_bytes": [
+          86935453696
+        ],
+        "all66": true
+      },
+      "A1/ADF_small": {
+        "wall_ms": {
+          "n": 5,
+          "p50": 59.57704165484756,
+          "p95": 63.043000060133636,
+          "max": 63.043000060133636
+        },
+        "gpu_span_ms": {
+          "n": 5,
+          "p50": 55.13458338100463,
+          "p95": 58.70341672562063,
+          "max": 58.70341672562063
+        },
+        "allocation_bytes": [
+          86935453696
+        ],
+        "all66": true
+      },
+      "B16/BF_jump": {
+        "wall_ms": {
+          "n": 5,
+          "p50": 211.37949998956174,
+          "p95": 239.33512496296316,
+          "max": 239.33512496296316
+        },
+        "gpu_span_ms": {
+          "n": 5,
+          "p50": 203.21662502828985,
+          "p95": 231.2651666579768,
+          "max": 231.2651666579768
+        },
+        "allocation_bytes": [
+          86935453696
+        ],
+        "all66": true
+      },
+      "B16/ABF_jump": {
+        "wall_ms": {
+          "n": 5,
+          "p50": 226.45633341744542,
+          "p95": 264.86716663930565,
+          "max": 264.86716663930565
+        },
+        "gpu_span_ms": {
+          "n": 5,
+          "p50": 218.31962501164526,
+          "p95": 257.696625078097,
+          "max": 257.696625078097
+        },
+        "allocation_bytes": [
+          86935453696
+        ],
+        "all66": true
+      },
+      "B16/ADF_jump": {
+        "wall_ms": {
+          "n": 5,
+          "p50": 411.29154164809734,
+          "p95": 426.644750055857,
+          "max": 426.644750055857
+        },
+        "gpu_span_ms": {
+          "n": 5,
+          "p50": 401.7152499873191,
+          "p95": 416.432874975726,
+          "max": 416.432874975726
+        },
+        "allocation_bytes": [
+          86935453696
+        ],
+        "all66": true
+      },
+      "B16/ADF_edge": {
+        "wall_ms": {
+          "n": 5,
+          "p50": 257.7032083645463,
+          "p95": 270.1906249858439,
+          "max": 270.1906249858439
+        },
+        "gpu_span_ms": {
+          "n": 5,
+          "p50": 248.87112504802644,
+          "p95": 261.4314166130498,
+          "max": 261.4314166130498
+        },
+        "allocation_bytes": [
+          86935453696
+        ],
+        "all66": true
+      },
+      "B16/BF_resize": {
+        "wall_ms": {
+          "n": 5,
+          "p50": 260.44879166875035,
+          "p95": 279.8576250206679,
+          "max": 279.8576250206679
+        },
+        "gpu_span_ms": {
+          "n": 5,
+          "p50": 253.28108330722898,
+          "p95": 272.7759584086016,
+          "max": 272.7759584086016
+        },
+        "allocation_bytes": [
+          86935453696
+        ],
+        "all66": true
+      },
+      "B16/ADF_resize": {
+        "wall_ms": {
+          "n": 5,
+          "p50": 106.96404159534723,
+          "p95": 118.17216663621366,
+          "max": 118.17216663621366
+        },
+        "gpu_span_ms": {
+          "n": 5,
+          "p50": 102.1349165821448,
+          "p95": 113.45754156354815,
+          "max": 113.45754156354815
+        },
+        "allocation_bytes": [
+          86935453696
+        ],
+        "all66": true
+      },
+      "B16/ADF_small": {
+        "wall_ms": {
+          "n": 5,
+          "p50": 49.79983333032578,
+          "p95": 54.775916738435626,
+          "max": 54.775916738435626
+        },
+        "gpu_span_ms": {
+          "n": 5,
+          "p50": 44.584249961189926,
+          "p95": 49.32754160836339,
+          "max": 49.32754160836339
+        },
+        "allocation_bytes": [
+          86935453696
+        ],
+        "all66": true
+      },
+      "A2/BF_jump": {
+        "wall_ms": {
+          "n": 5,
+          "p50": 189.53762506134808,
+          "p95": 204.0365416323766,
+          "max": 204.0365416323766
+        },
+        "gpu_span_ms": {
+          "n": 5,
+          "p50": 180.48216658644378,
+          "p95": 194.73416660912335,
+          "max": 194.73416660912335
+        },
+        "allocation_bytes": [
+          86935453696
+        ],
+        "all66": true
+      },
+      "A2/ABF_jump": {
+        "wall_ms": {
+          "n": 5,
+          "p50": 209.71579162869602,
+          "p95": 241.98058329056948,
+          "max": 241.98058329056948
+        },
+        "gpu_span_ms": {
+          "n": 5,
+          "p50": 202.3964999243617,
+          "p95": 234.50566665269434,
+          "max": 234.50566665269434
+        },
+        "allocation_bytes": [
+          86935453696
+        ],
+        "all66": true
+      },
+      "A2/ADF_jump": {
+        "wall_ms": {
+          "n": 5,
+          "p50": 401.1620415840298,
+          "p95": 424.0531666437164,
+          "max": 424.0531666437164
+        },
+        "gpu_span_ms": {
+          "n": 5,
+          "p50": 390.0580416666344,
+          "p95": 413.30983326770365,
+          "max": 413.30983326770365
+        },
+        "allocation_bytes": [
+          86935453696
+        ],
+        "all66": true
+      },
+      "A2/ADF_edge": {
+        "wall_ms": {
+          "n": 5,
+          "p50": 246.71933334320784,
+          "p95": 249.77441667579114,
+          "max": 249.77441667579114
+        },
+        "gpu_span_ms": {
+          "n": 5,
+          "p50": 237.3499165987596,
+          "p95": 240.18662492744625,
+          "max": 240.18662492744625
+        },
+        "allocation_bytes": [
+          86935453696
+        ],
+        "all66": true
+      },
+      "A2/BF_resize": {
+        "wall_ms": {
+          "n": 5,
+          "p50": 234.83220837078989,
+          "p95": 242.3922916641459,
+          "max": 242.3922916641459
+        },
+        "gpu_span_ms": {
+          "n": 5,
+          "p50": 227.3328750161454,
+          "p95": 234.91012502927333,
+          "max": 234.91012502927333
+        },
+        "allocation_bytes": [
+          86935453696
+        ],
+        "all66": true
+      },
+      "A2/ADF_resize": {
+        "wall_ms": {
+          "n": 5,
+          "p50": 100.4054582444951,
+          "p95": 112.09525004960597,
+          "max": 112.09525004960597
+        },
+        "gpu_span_ms": {
+          "n": 5,
+          "p50": 95.53299995604903,
+          "p95": 107.17316658701748,
+          "max": 107.17316658701748
+        },
+        "allocation_bytes": [
+          86935453696
+        ],
+        "all66": true
+      },
+      "A2/ADF_small": {
+        "wall_ms": {
+          "n": 5,
+          "p50": 49.49179175309837,
+          "p95": 51.334333256818354,
+          "max": 51.334333256818354
+        },
+        "gpu_span_ms": {
+          "n": 5,
+          "p50": 44.6287082741037,
+          "p95": 46.71995830722153,
+          "max": 46.71995830722153
+        },
+        "allocation_bytes": [
+          86935453696
+        ],
+        "all66": true
+      }
+    },
+    "resource_sha256": "5ee7c1c740aeeac2c4f520dbc859aaedd606f56e2b6375a2faf789778afc680c",
+    "memory": {
+      "sha256": "0a59d91b9526c0692108d21d4c5d50a672851c5d4e5e3cd8d7e70f8646c35065",
+      "n": 26,
+      "first": "2026-09-09T16:11:20Z",
+      "last": "2026-09-09T16:12:11Z",
+      "scope": "Read-only sampled system counters and process RSS; not private Metal resident accounting or an unsampled load peak.",
+      "swap_MiB": {
+        "first": 4321.44,
+        "last": 4321.44,
+        "max": 4321.44,
+        "delta": 0
+      },
+      "rss_bytes": {
+        "first": 456065024,
+        "last": 453640192,
+        "max": 518979584,
+        "delta": -2424832
+      },
+      "compressor_occupied_bytes": {
+        "first": 1163280384,
+        "last": 1163280384,
+        "max": 1163280384,
+        "delta": 0
+      },
+      "swapouts": {
+        "first": 11273935,
+        "last": 11273935,
+        "max": 11273935,
+        "delta": 0
+      }
+    }
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "grid-measurement-warning.md",
+      "path": "local-evidence/grid-measurement-warning.md",
+      "sha256": "69b87fb32865fbc4c05ec09196d7a5254fa0624191db9a97329a3d19666e2bcc",
+      "size_bytes": 1253,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "intrinsic-grid-unit.log",
+      "path": "local-evidence/intrinsic-grid-unit.log",
+      "sha256": "2c100de70f383600e508da50e86b6989e5acf5ffb1ddb52958cb0b17eb28ad32",
+      "size_bytes": 9854,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "packet-grid-all66.log",
+      "path": "local-evidence/packet-grid-all66.log",
+      "sha256": "b20793561242cec8fa9c38ff128b3582d8f8937ee8a49828a49a9e8d4049bec9",
+      "size_bytes": 92000,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "packet-grid-analysis.json",
+      "path": "local-evidence/packet-grid-analysis.json",
+      "sha256": "ec3c76f72e7a662fcb6f471ecdbb9622a74a870956e80357b74b3255ac9f7fab",
+      "size_bytes": 143817,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "packet-grid-memory-summary.json",
+      "path": "local-evidence/packet-grid-memory-summary.json",
+      "sha256": "5a0c34d2761bad6b3ada96689ad68b79aa2684f0a6d1f34a4d6a79a9bafe5f02",
+      "size_bytes": 732,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "packet-grid-memory.txt",
+      "path": "local-evidence/packet-grid-memory.txt",
+      "sha256": "0a59d91b9526c0692108d21d4c5d50a672851c5d4e5e3cd8d7e70f8646c35065",
+      "size_bytes": 32760,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "source.patch",
+      "path": "local-evidence/source.patch",
+      "sha256": "65be77b474501a1e55d22f520d7c57c0c6abb6a441d40a6008feb1fd98321980",
+      "size_bytes": 107718,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "untracked-source.tar.gz",
+      "path": "local-evidence/untracked-source.tar.gz",
+      "sha256": "f747c675fd9ebc59971f2252d55e9d3c0f66350f953180e515e7b3dd183bfde5",
+      "size_bytes": 9994,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T16:09:45Z",
+    "started": "2026-09-09T16:10:37Z",
+    "finished": "2026-09-09T16:12:12Z"
+  }
+}

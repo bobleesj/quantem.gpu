@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-index-base-choice-immutable",
+  "status": "succeeded",
+  "question": "Can immutable post-index full-vs-delta planning reduce exact residual work without the mutable-planner regression?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-index-base-choice-immutable/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "entrypoint": "TANSTileArchitectureExperimentTests.testAll66UniformIndexABAWhenConfigured",
+    "dirty": true,
+    "snapshot_path": "local-evidence/source.patch",
+    "diff_sha256": "c35df9bd876f4627c3ac4415ad11f47886767cbf69561e1fd8b2e6b61044a2af"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-linux-products",
+      "path": "local-fixture/series-products/shared-resident-images.npy",
+      "sha256": "06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "executable_sha256": "da558e1dc0d034a9cf198e2860ba4ef2b0c8589c9c20d6c06779fbc82d45edf3",
+    "untracked_source_sha256": "283d9befc3d3be1d1d0c09821115c35d1d3f5c504c730a3727de12137f4b5b73",
+    "prior_failure": "20260909-all66-index-base-choice-clean",
+    "cache_state": "Prepared entropy archive, source pages unspecified; no app E2E",
+    "one_factor": "Uniform16 block index all arms; legacy base selection / immutable post-index cost choice / legacy;7cases5each",
+    "index_ceiling_bytes": 2108620800,
+    "recovered_controls": "20260909-all66-base-choice-bisection",
+    "result": "105/105 complete66 hashes and prior-buffer checks exact; independent3Linux products pass. BF resize p50 149.781/93.880/150.632ms. Other six masks select same residuals and add about0.5ms CPU planning; largeADF132.099/132.762/132.325ms remains over100ms. Mutable-branch crash no longer occurs with immutable helper; compiler/root cause not proven.",
+    "path_mapping": "Exact local paths and unmodified pre-normalization manifests are retained in the private output checkpoint.",
+    "artifact_results": {
+      "architecture-unit-v7.log": "105/105 complete66 hashes and prior-buffer checks exact; independent3Linux products pass. BF resize p50 149.781/93.880/150.632ms. Other six masks select same residuals and add about0.5ms CPU planning; largeADF132.099/132.762/132.325ms remains over100ms. Mutable-branch crash no longer occurs with immutable helper; compiler/root cause not proven.",
+      "base-choice-immutable-all66.log": "105/105 complete66 hashes and prior-buffer checks exact; independent3Linux products pass. BF resize p50 149.781/93.880/150.632ms. Other six masks select same residuals and add about0.5ms CPU planning; largeADF132.099/132.762/132.325ms remains over100ms. Mutable-branch crash no longer occurs with immutable helper; compiler/root cause not proven.",
+      "base-choice-immutable-analysis.json": "105/105 complete66 hashes and prior-buffer checks exact; independent3Linux products pass. BF resize p50 149.781/93.880/150.632ms. Other six masks select same residuals and add about0.5ms CPU planning; largeADF132.099/132.762/132.325ms remains over100ms. Mutable-branch crash no longer occurs with immutable helper; compiler/root cause not proven.",
+      "base-choice-immutable-memory-summary.json": "105/105 complete66 hashes and prior-buffer checks exact; independent3Linux products pass. BF resize p50 149.781/93.880/150.632ms. Other six masks select same residuals and add about0.5ms CPU planning; largeADF132.099/132.762/132.325ms remains over100ms. Mutable-branch crash no longer occurs with immutable helper; compiler/root cause not proven.",
+      "base-choice-immutable-memory.txt": "105/105 complete66 hashes and prior-buffer checks exact; independent3Linux products pass. BF resize p50 149.781/93.880/150.632ms. Other six masks select same residuals and add about0.5ms CPU planning; largeADF132.099/132.762/132.325ms remains over100ms. Mutable-branch crash no longer occurs with immutable helper; compiler/root cause not proven.",
+      "source.patch": "105/105 complete66 hashes and prior-buffer checks exact; independent3Linux products pass. BF resize p50 149.781/93.880/150.632ms. Other six masks select same residuals and add about0.5ms CPU planning; largeADF132.099/132.762/132.325ms remains over100ms. Mutable-branch crash no longer occurs with immutable helper; compiler/root cause not proven.",
+      "untracked-source.tar.gz": "105/105 complete66 hashes and prior-buffer checks exact; independent3Linux products pass. BF resize p50 149.781/93.880/150.632ms. Other six masks select same residuals and add about0.5ms CPU planning; largeADF132.099/132.762/132.325ms remains over100ms. Mutable-branch crash no longer occurs with immutable helper; compiler/root cause not proven."
+    }
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "architecture-unit-v7.log",
+      "path": "local-evidence/architecture-unit-v7.log",
+      "sha256": "13a83f19f8bab83cbfc9e5e55231705296a9d08765da66d6c6a1bb3e47e827b4",
+      "size_bytes": 10732,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "base-choice-immutable-all66.log",
+      "path": "local-evidence/base-choice-immutable-all66.log",
+      "sha256": "1052e8af0752d6b332d895196a72d50ad70fe078edf1cd8eaaa5296e60dc1648",
+      "size_bytes": 91441,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "base-choice-immutable-analysis.json",
+      "path": "local-evidence/base-choice-immutable-analysis.json",
+      "sha256": "d5650b206cc435bee4b60d0419531394fed87e6d91faa3b011b7a95f08ce6402",
+      "size_bytes": 144548,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "base-choice-immutable-memory-summary.json",
+      "path": "local-evidence/base-choice-immutable-memory-summary.json",
+      "sha256": "19f07ffced704ccde2438ae6f4b63c55f41bbaa1393b190cfe01ffdcb70759c8",
+      "size_bytes": 696,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "base-choice-immutable-memory.txt",
+      "path": "local-evidence/base-choice-immutable-memory.txt",
+      "sha256": "eaa85a595a290694d2269995dcf18fded3c08470a311eceffccb7034a5fb7778",
+      "size_bytes": 28980,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "source.patch",
+      "path": "local-evidence/source.patch",
+      "sha256": "c35df9bd876f4627c3ac4415ad11f47886767cbf69561e1fd8b2e6b61044a2af",
+      "size_bytes": 103255,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "untracked-source.tar.gz",
+      "path": "local-evidence/untracked-source.tar.gz",
+      "sha256": "283d9befc3d3be1d1d0c09821115c35d1d3f5c504c730a3727de12137f4b5b73",
+      "size_bytes": 12851,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T16:51:08.488Z",
+    "started": "2026-09-09T16:51:08.488Z",
+    "finished": "2026-09-09T16:52:10.194Z"
+  }
+}

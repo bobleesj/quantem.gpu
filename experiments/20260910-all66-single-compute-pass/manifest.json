@@ -1,0 +1,152 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260910-all66-single-compute-pass",
+  "status": "succeeded",
+  "question": "Does one serial compute pass declaring each encoded allocation once remove the all66 no-decode resource floor, with unchanged 64-record grids and exact full outputs?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260910-all66-single-compute-pass/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "entrypoint": "TANSResidencyHoldExperimentTests one-pass A/B/A",
+    "dirty": true,
+    "diff_sha256": "325f18b07fc876bf0e201ec9750c17ba2adfbffe6b351c466128cf9b2afe0522",
+    "snapshot_path": "local-output/source-v23.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "native9",
+      "path": "experiments/20260909-all66-separated-native-replay/local-evidence/native-stream-bytes-r2.json",
+      "sha256": "1c896b4f3ad0ff2a40b88377915be356bbf6b1c3ed7a2596898f60a9f3db1296"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "index_bytes": 2108620800,
+    "representation": "unchanged one-copy encoded source, no full raw resident",
+    "matrix": "fresh-process A/B/A,18queries each (9frozen native ADF masks x2cycles),4second idle,ordinary sequential previous-mask state",
+    "candidate": "one serial compute encoder with17unchanged grouped64-record batch grids; unchanged dense/mixed/sparse kernels, metadata,index,source/output precision; one union declaration for the66source allocations and66destination images",
+    "control": "17ordinary compute encoders/commands; candidate is distinct from prior one-command/17encoder refuted trial",
+    "scope": "full exact66image return,not native publication or cold load; keep off unless measured exact parity and improvement",
+    "motivation": "v22 passed54checks:binding-only p50=505.55ms;full=515.33ms. Distinct from previously refuted one-command/17encoder path.",
+    "command": "zsh local-output/run-one-pass.zsh",
+    "run_root": "local-output",
+    "cache_state": "prepared entropy,source pages unspecified,not cold loading",
+    "qualified_for_adoption": false,
+    "untracked_source_sha256": "ca1b6902374e358e9cd96a572b02829c1fe345faee0f523f13287d5b327d3935",
+    "test_executable_sha256": "73810c6acb668fc7aa80938ef9fc8b4c3ada74ff5568e2fc22eba8b0abf1e55c",
+    "shader_sha256": "d8e5d39efd9262f0d346fff3c457933d48f04fda5b8b8933c0d0620b85260322",
+    "preflight": "v23 release build;242tests,27opt-in skips,0fail;shader byte-identical to v22;singlePass remains off-by-default.",
+    "result": "Experiment complete, hypothesis refuted:54exact full66queries. A1/B/A2 median415.5358/588.6996/422.3908ms; p95=max456.7965/728.0760/468.7326. Candidate39.37–41.67%slower; off-by-default,not integrated.",
+    "memory": "Metal86860316672B in every timed arm;source0/Metal720896 at each teardown;swap4876.19MiB delta0 in all3arms. RSS not totalGPU allocation.",
+    "runtime": "All3test processes inherited nice5;WindowServer/Moonlight preserved;no priority/power/security changes;final app/test process zero.",
+    "artifact_results": {
+      "one-pass-comparison.json": "Exactness passes; performance hypothesis refuted; native app unchanged",
+      "one-pass-A1.log": "Exactness passes; performance hypothesis refuted; native app unchanged",
+      "one-pass-B.log": "Exactness passes; performance hypothesis refuted; native app unchanged",
+      "one-pass-A2.log": "Exactness passes; performance hypothesis refuted; native app unchanged",
+      "memory-summary.json": "Exactness passes; performance hypothesis refuted; native app unchanged",
+      "full-suite-v23.log": "Exactness passes; performance hypothesis refuted; native app unchanged",
+      "CHECKPOINT.md": "Exactness passes; performance hypothesis refuted; native app unchanged",
+      "report.html": "Exactness passes; performance hypothesis refuted; native app unchanged"
+    }
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "4294969023"
+    ],
+    "gpu_model": "Apple M5 Max 40GPU 128GiB"
+  },
+  "outputs": [
+    {
+      "artifact_id": "one-pass-comparison.json",
+      "path": "local-output/one-pass-comparison.json",
+      "sha256": "84e2b67f98d7e93a999edb3be56b16c3bdbecee4b5ab9bce051a50d404e047dd",
+      "size_bytes": 88663,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "one-pass-A1.log",
+      "path": "local-output/one-pass-A1.log",
+      "sha256": "753dbd56ea091fba699d2d656067adc0a3f890ac1fba5a606d21b22a35da1fed",
+      "size_bytes": 20493,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "one-pass-B.log",
+      "path": "local-output/one-pass-B.log",
+      "sha256": "38a1fde4cc80dbf162c74b3b76a80c4f6dda76d17b53e3996f5ace6a217da51c",
+      "size_bytes": 20370,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "one-pass-A2.log",
+      "path": "local-output/one-pass-A2.log",
+      "sha256": "21c48484d2c42681832d4b3007732cff0306269918ce8885a9c0a25660ae8912",
+      "size_bytes": 20488,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "memory-summary.json",
+      "path": "local-output/memory-summary.json",
+      "sha256": "e252b14f47f1cbb60140e9d490982a8d92dfe4fd06c734c462344f598e230621",
+      "size_bytes": 1031,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "full-suite-v23.log",
+      "path": "local-output/full-suite-v23.log",
+      "sha256": "567dc46a3cb1a20ae1c65e99353dce1f054523de1e0cba695fece0528c35165e",
+      "size_bytes": 91132,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "CHECKPOINT.md",
+      "path": "local-output/CHECKPOINT.md",
+      "sha256": "076151da27128d230b14f187710d4f2cae0a2fb51d82092d429fadcf6022243a",
+      "size_bytes": 5438,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "report.html",
+      "path": "local-output/report.html",
+      "sha256": "078ffec5a6d11e69b3190b1540800603d079321884fb916c4b52e08864c4089a",
+      "size_bytes": 12726,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-10T00:19:15Z",
+    "started": "2026-09-10T00:22:43.625Z",
+    "finished": "2026-09-10T00:27:53.518Z"
+  }
+}

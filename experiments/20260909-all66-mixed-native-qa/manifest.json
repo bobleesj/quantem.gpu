@@ -1,0 +1,175 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-mixed-native-qa",
+  "status": "succeeded",
+  "question": "Does the exact mixed-tail QA artifact pass the all66 native UI and scientific120FPS gate on Phil built-in display?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-mixed-native-qa/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "dirty": true,
+    "entrypoint": "Local Live4DSTEM mixedtails0909b public native Series workspace",
+    "diff_sha256": "8834392350ce4b213e2580c67593849e6a92288ffaf85b325f1010709be37c43",
+    "snapshot_path": "local-evidence/mixedtails0909b-qgpu.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-linux-products",
+      "path": "local-fixture/series-products/shared-resident-images.npy",
+      "sha256": "06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "representation": "lossless entropy only",
+    "source_bytes": 84681338880,
+    "index_bytes": 2108620800,
+    "artifact_executable_sha256": "60c52d38b786f782b12cc66a66305c23695cdee76610d4f5b77a0cd8a176810a",
+    "app_base": "689c4b71b7651e1ff175d19cfae2c6c8f472091a",
+    "app_patch_sha256": "361750a2048bb46c91c3fe5965efafb4768485da5d5298edc5ab973ab446bad3",
+    "kernel_resource_sha256": "7095d16d86b2446372417923a9f653bbd1d350a72ed0f7297f26e82b7b8215e1",
+    "route": "Phil local Computer Use, public Series folder chooser. PID90243 window186349 built-in120Hz, Studio60Hz not target. Announced pointer window; no contention warning. zero-one-zero normalCmdQ; no other user apps closed.",
+    "native_inputs": "BF large5center drags andradius; ABF3centerdrags plusbothradii; ADF5centerdrags plusbothradii. Two-endpoint CUA, not sustained input. Sharedhistogram,colormap,scan,zoom/double-reset,122-155-191-122,divider.",
+    "result": "22requests/22complete66publications/22distinct198probehashes. BF N8 publicationp50/p95/max501.657/977.459/977.459ms; ADF N7 569.382/612.860/612.860; ABF N7 571.870/1040.696/1040.696. Four of22 generations complete66positivepresentedTime sets; missing receipts not blank/drop counts.",
+    "loading": "Prepared archive/source pages unspecified, one observation: source14.60s,index4.43s,panels19.45s,firstVIpositive19.821209s. No cold originalHDF5 claim or repeated loading nonregression proof.",
+    "memory": "85samples,maxprocessRSS813301760B excludingprivateMetal;maxsystemcompressor1408204800B;swap5679.19MiB unchanged;swapouts unchanged.",
+    "verification": "QGPU220tests25explicit skips0fail;app203tests11skips0fail;release50.95s exit0. Packagedkernelhashmatches source. Ad-hoc localQA only.",
+    "decision": "FAIL120/20/10 scientificFPS. Warm kernel gain does not establish native gain. Sustained input, complete intermediate-frame evidence, originalfull66count audit and reportbrowserlayout remainpending. No defaultadoption/push/release.",
+    "registration": "Durable ledger and exact package recorded before native action; this compact registry consolidation written after run at11:02UTC. Do not interpret created timestamp as runstart.",
+    "artifact_results": {
+      "mixedtails0909b-frame-pacing-jsonl": "Retained native evidence; not successful scientificFPS acceptance",
+      "mixedtails0909b-native-analysis-json": "Retained native evidence; not successful scientificFPS acceptance",
+      "mixedtails0909b-native-memory-txt": "Retained native evidence; not successful scientificFPS acceptance",
+      "mixedtails0909b-bf-resized-png": "Retained native evidence; not successful scientificFPS acceptance",
+      "mixedtails0909b-abf-resized-png": "Retained native evidence; not successful scientificFPS acceptance",
+      "mixedtails0909b-adf-resized-png": "Retained native evidence; not successful scientificFPS acceptance",
+      "mixedtails0909b-shared-controls-png": "Retained native evidence; not successful scientificFPS acceptance",
+      "mixedtails0909b-app-patch": "Retained native evidence; not successful scientificFPS acceptance",
+      "mixedtails0909b-qgpu-patch": "Retained native evidence; not successful scientificFPS acceptance",
+      "mixed-qa-release-build-log": "Retained native evidence; not successful scientificFPS acceptance",
+      "mixedtails0909b-package-log": "Retained native evidence; not successful scientificFPS acceptance"
+    }
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "mixedtails0909b-frame-pacing-jsonl",
+      "path": "local-evidence/mixedtails0909b-frame-pacing.jsonl",
+      "sha256": "f1615e6f015261b9a467712607b0328659ccbafbb5afb01c1f2b8b1f184b91c0",
+      "size_bytes": 6170173,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "mixedtails0909b-native-analysis-json",
+      "path": "local-evidence/mixedtails0909b-native-analysis.json",
+      "sha256": "434d06871def0d2ebb2cdaf5a8cb4b688b257715ea8704bbe55fb539c7582cfe",
+      "size_bytes": 18522,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "mixedtails0909b-native-memory-txt",
+      "path": "local-evidence/mixedtails0909b-native-memory.txt",
+      "sha256": "5c9318edc6d8c9ec846a9c2d92d4685227fdc3cff4609698cca0f6a33aa7983c",
+      "size_bytes": 107185,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "mixedtails0909b-bf-resized-png",
+      "path": "local-evidence/mixedtails0909b-bf-resized.png",
+      "sha256": "5c311427d0cc37467cbedbfdc024cb293f41b79e69d564dc24c121c637fe7b8e",
+      "size_bytes": 2586530,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "mixedtails0909b-abf-resized-png",
+      "path": "local-evidence/mixedtails0909b-abf-resized.png",
+      "sha256": "b8bf5bc3a4a0ec8746aa1afdbb3907edae2109ddff4cbf2d6aa4797b3a2f2dd5",
+      "size_bytes": 2619189,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "mixedtails0909b-adf-resized-png",
+      "path": "local-evidence/mixedtails0909b-adf-resized.png",
+      "sha256": "d3d252a11834c4b046712b0eb36cab1e5647f263b0d4616f35defdb84cb40ff0",
+      "size_bytes": 2672613,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "mixedtails0909b-shared-controls-png",
+      "path": "local-evidence/mixedtails0909b-shared-controls.png",
+      "sha256": "6b01ea5df900174b7c0b596e3cbc3094164d8386f1f244b0fa57598d261aca8e",
+      "size_bytes": 3809045,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "mixedtails0909b-app-patch",
+      "path": "local-evidence/mixedtails0909b-app.patch",
+      "sha256": "361750a2048bb46c91c3fe5965efafb4768485da5d5298edc5ab973ab446bad3",
+      "size_bytes": 21293,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "mixedtails0909b-qgpu-patch",
+      "path": "local-evidence/mixedtails0909b-qgpu.patch",
+      "sha256": "8834392350ce4b213e2580c67593849e6a92288ffaf85b325f1010709be37c43",
+      "size_bytes": 63054,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "mixed-qa-release-build-log",
+      "path": "local-evidence/mixed-qa-release-build.log",
+      "sha256": "b2102ebe69f8f68ea70dc5a6f871d7fb9f3d5937320ed446c4755dcf193b4e93",
+      "size_bytes": 715,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "mixedtails0909b-package-log",
+      "path": "local-evidence/mixedtails0909b-package.log",
+      "sha256": "be3d6c8273869afd559712d3bd6fef0e42bed8bb5a88918bfba5938e63477bf4",
+      "size_bytes": 387,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T11:02:00Z",
+    "started": "2026-09-09T10:41:06Z",
+    "finished": "2026-09-09T10:52:00Z"
+  }
+}

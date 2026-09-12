@@ -1,0 +1,32 @@
+{
+  "schema_version":1, "experiment_id":"20260909-all66-direct-table", "status":"succeeded",
+  "question":"Does eliminating per-group table staging and threadgroup lookup improve all66 exact entropy decoding with unchanged model grouping and source/index memory?",
+  "paper":{"authoritative_host":"phil", "repository":"quantem.gpu", "manifest_path":"experiments/20260909-all66-direct-table/manifest.json"},
+  "code":{"repository":"quantem.gpu", "revision":"abff4e0cac5329fd83391a11dcfa8a6849ed1589", "dirty":true, "entrypoint":"TANSSharedRefill16ExperimentTests.testAll66SharedRefill16ABAWhenConfigured", "diff_sha256":"d36fd8ced47b2919e307de44d2e93905c4a3e01fd1f0434188800b78106c5cef", "snapshot_path":"local-evidence/direct-table.patch"},
+  "inputs":[{"dataset_id":"all66-entropy-checkpoint", "path":"local-fixture/checkpoint.json", "sha256":"2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"}, {"dataset_id":"frozen-linux-products", "path":"local-fixture/series-products/shared-resident-images.npy", "sha256":"06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"}],
+  "parameters":{
+    "shape":[66,512,512,192,192], "dtype":"uint16", "scan_bin":1, "detector_bin":1, "crop":null,
+    "representation":"lossless entropy only", "source_bytes":84681338880, "index_bytes":2108620800,
+    "one_factor":"direct immutable device table lookups instead of threadgroup staging/barrier/lookups; same group model,128threads,one packet per lane,one command,decoder transitions,exact outputs",
+    "default":"false; only internal experimental flag, no public API or app change",
+    "test_source_sha256":"2a0fa8ea7ec40b91d280eb2e4ff5a97bb481a845ac840166f9c741e93db03a49",
+    "environment":"QUANTEM_TANS_DIRECT_TABLE=1; QUANTEM_TANS_REFILL16_FIXTURE=full66 fixture. Legacy harness B16 label means direct-table B arm; refill16 false on every arm.",
+    "matrix":"7 BF/ABF/ADF large center/radius/edge and small delta cases,5queries/case/arm,A1/B16/A2=105full66 queries; one untimed warmup per arm/case",
+    "gate":"Independent full Linux BF/ADF/ABF images; full66 target hashes versus frozen default path, prior immutability, exact memory. Full original count audit remains pending.",
+    "timing":"whole package query including final wait; source/index preparation separately, prepared archive with source pages unspecified, not original cold or native FPS",
+    "memory":"same encoded/index/output allocation, no new scientific data; sample RSS/compressor/swap and Metal allocation",
+    "decision":"REFUTED: BF/ABF/ADF large cases about1-2percent slower against both controls; no app adoption or repeated native run justified",
+    "test_binary_sha256":"8941552d4ba61581393bbf692a6c34006d5925847dc55fddd5511052d3ee91ec",
+    "result":"105/105 full66 exact, prior immutable, frozen Linux BF/ADF/ABF pass. ADF jump wall p50 A1/B/A2=236.936/240.800/236.407ms; BF jump150.203/152.135/149.943ms. N5 per case/arm; all raw tails retained.",
+    "loading_result":"Prepared archive/source pages unspecified, source14.093903s/index4.110407s; not original-source cold or loading qualification",
+    "memory_result":"Metal allocated86935453696B everyquery, no added scientific residency.9samplerowsafterload, maxRSS518242304B/systemcompressor1408040960B; swap5719.19MiB/swapouts11254896unchanged. Not privateMetal or full-load peak.",
+    "artifact_results":{"raw":"105complete matched exact samples", "analysis":"Full p50/p95/max and individual samples; legacy B16 label is direct-table B arm, refill16false", "memory":"9read-only samples afterload"}
+  },
+  "execution":{"host":"phil", "backend":"swift-metal", "gpu_ids":["default Metal device"], "gpu_model":"Apple M5 Max"},
+  "outputs":[
+    {"artifact_id":"raw", "path":"local-evidence/direct-table-all66.log", "sha256":"c296524b5dd4b42fd1f7ebd8f41b4e22a759513aee7e9dafbc43641898436f4f", "size_bytes":25986, "retention":"durable", "consuming_figures":[]},
+    {"artifact_id":"analysis", "path":"local-evidence/direct-table-analysis.json", "sha256":"7a27766379afdfaa3cd699f85c930382b964e24f953988176a08baa03af0c095", "size_bytes":47986, "retention":"durable", "consuming_figures":[]},
+    {"artifact_id":"memory", "path":"local-evidence/direct-table-memory.txt", "sha256":"3d76e6a99f1b2e8bcf53f6bddb628e8191fe25859872fb305610ca1ae663ced9", "size_bytes":11349, "retention":"durable", "consuming_figures":[]}
+  ],
+  "timestamps":{"created":"2026-09-09T09:23:00Z", "started":"2026-09-09T09:23:50.006Z", "finished":"2026-09-09T09:24:45.984Z"}
+}

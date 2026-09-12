@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-submission-failures",
+  "status": "succeeded",
+  "question": "Do before-commit and after-first-commit injected failures drain in-flight work, preserve prior exact all66 output and allocation baseline, and permit exact subsequent recovery?",
+  "paper": {
+    "repository": "quantem.gpu",
+    "authoritative_host": "phil",
+    "manifest_path": "experiments/20260909-all66-submission-failures/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "dirty": true,
+    "diff_sha256": "a8ab46f2f6647b0f1395f51fea10575f5f810408d41bed78a4fcfea3dac9c48c",
+    "snapshot_path": "local-evidence/submission-failures.patch",
+    "entrypoint": "TANSResidencyHoldExperimentTests.testAll66ResidencyHoldIdleABAWhenConfigured"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "native-matched-masks",
+      "path": "local-fixture/native-stream-bytes-r2.json",
+      "sha256": "1c896b4f3ad0ff2a40b88377915be356bbf6b1c3ed7a2596898f60a9f3db1296"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "representation": "lossless entropy",
+    "source_bytes": 84681338880,
+    "index_bytes": 2108620800,
+    "cache_state": "same prepared archive/source pages unspecified; no source reloading between arms",
+    "env": "QUANTEM_TANS_SUBMISSION_FAILURES=1 with frozen fixture/native-mask paths",
+    "scientific": "All complete66 output hashes, frozen independent Linux BF/ADF/ABF images and198native probes per request must remain exact. No kernel math/layout change, no raw copies, no intermediate publication.",
+    "synchronization": "Same queue orders seed/index and all groups. Wait for completion of all submitted commands before return or error cleanup. Default zero. Failure injection gates remain pending before any adoption.",
+    "telemetry": "For split commands encode overlaps early submission; driver_schedule_ms and commit_to_gpu_start_ms refer to final command only. GPU span and interval sum separately logged; total query wall is primary.",
+    "test_binary_sha256": "bcd7387fb1c4334ea4d56d008d16f8df5547e24cb747c7fb7ff9a80f078c82e1",
+    "test_source_sha256": "9117fc74dcf28dc958a6d7c0c9f0cd348dd21149a638df0d28a0a8dde47a581d",
+    "qualification": "Failure-path full66 numerical/allocation regression, not a performance or native acceptance run. Full218tests/25explicit skips/0fail passed before run. Error assertions and allocation equality are strict.",
+    "result": "Both injected failure points passed exact all66 prior immutability, strict Metal allocation equality before/after86866247680B and subsequent full66 exact recovery. Frozen independent BF/ADF/ABF image gates and native probes also passed. No FPS/performance claim.",
+    "artifact_results": {
+      "failure-log": "Full66 beforecommit and afterfirstcommit failure/recovery, unchanged allocation and prior output"
+    }
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "failure-log",
+      "path": "local-evidence/submission-failures-all66.log",
+      "sha256": "b33d1bc923f9b85341127c18b1541bce519aabec4de093b9fa583d8eb2614abc",
+      "size_bytes": 2036,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T08:25:00Z",
+    "started": "2026-09-09T08:26:26.297Z",
+    "finished": "2026-09-09T08:26:48.121Z"
+  }
+}

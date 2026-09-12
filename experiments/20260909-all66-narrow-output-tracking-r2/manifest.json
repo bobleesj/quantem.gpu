@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-narrow-output-tracking-r2",
+  "status": "succeeded",
+  "question": "Does narrowing tracked output-resource declarations to actually written acquisition images reduce idle all66 command gaps without changing kernels, data, source/index or allocations?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-narrow-output-tracking-r2/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "entrypoint": "TANSResidencyHoldExperimentTests.testAll66ResidencyHoldIdleABAWhenConfigured",
+    "dirty": true,
+    "diff_sha256": "4a414d9e45204eca51ba7237f598d65c720bd4925cd0668a2ff578f1bb55bcb0",
+    "snapshot_path": "local-evidence/source.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "native-nine-masks",
+      "path": "../20260909-all66-separated-native-replay/local-evidence/native-stream-bytes-r2.json",
+      "sha256": "1c896b4f3ad0ff2a40b88377915be356bbf6b1c3ed7a2596898f60a9f3db1296"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "index_bytes": 2108620800,
+    "representation": "lossless entropy only",
+    "untracked_source_sha256": "01b78039a2c836c91f92149eaa0b64019c3b04157d59f77185dfc1b4c68edb1b",
+    "one_factor": "all66 output buffers declared per command versus actual4image batch; identical17submission64commands. Init/index retain complete ordered destination dependencies. Mixed/separated/mixedonly/savings8 allarms; staged and concurrent off.",
+    "gate": "Fresh full66 native-nine mask replays A/B/A;2cycles/case with4s idle; exact hashes/probes, same columns/previous, unchanged allocation. Warm replay required before any app adoption.",
+    "timing": "Prepared archive, source-page state unspecified; no nativeFPS/coldsource claim.",
+    "default": "false",
+    "result": "NEUTRAL; do not adopt. 54/54 full66 native-mask exact hashes/probes passed. A1/B/A2 pooled n18 each wall p50 434.1786/434.8011/432.9898 ms; p95=max 477.374/501.265/473.657 ms. Source/index and allocation unchanged. Zero sampled swap delta. No native FPS claim.",
+    "artifact_results": {
+      "narrow-r2-0": "Retained exact neutral A/B/A experiment; not an accepted speedup.",
+      "narrow-r2-1": "Retained exact neutral A/B/A experiment; not an accepted speedup.",
+      "narrow-r2-2": "Retained exact neutral A/B/A experiment; not an accepted speedup.",
+      "narrow-r2-3": "Retained exact neutral A/B/A experiment; not an accepted speedup.",
+      "narrow-r2-4": "Retained exact neutral A/B/A experiment; not an accepted speedup.",
+      "narrow-r2-5": "Retained exact neutral A/B/A experiment; not an accepted speedup."
+    },
+    "test_binary_sha256": "48f1640a3e72ccc5a3094626477b04c9b51b431d9657d55d3c182e51b2029cef"
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "narrow-r2-0",
+      "path": "local-evidence/narrow-idle-r2.log",
+      "sha256": "15d0c227cb311c31d168771cbab3f4ccdff92b17d2457e34a039a5df8c828008",
+      "size_bytes": 37445,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "narrow-r2-1",
+      "path": "local-evidence/narrow-r2-analysis.json",
+      "sha256": "e6d196fc4cba2778866932f358ded50df9d6479736369a94f69d2bb941117e7f",
+      "size_bytes": 62031,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "narrow-r2-2",
+      "path": "local-evidence/narrow-r2-memory-summary.json",
+      "sha256": "ec06b34bdb763d44bac70b25eeaf82dc1c64fe07f17b2be372720b09f3103537",
+      "size_bytes": 738,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "narrow-r2-3",
+      "path": "local-evidence/narrow-r2-memory.txt",
+      "sha256": "7d525e5da5b196c0b7b674f412ea0a2feeed0f4f0ecf9ceb6acfc6e80a82ab2e",
+      "size_bytes": 150059,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "narrow-r2-4",
+      "path": "local-evidence/source.patch",
+      "sha256": "4a414d9e45204eca51ba7237f598d65c720bd4925cd0668a2ff578f1bb55bcb0",
+      "size_bytes": 83276,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "narrow-r2-5",
+      "path": "local-evidence/untracked-source.tar.gz",
+      "sha256": "01b78039a2c836c91f92149eaa0b64019c3b04157d59f77185dfc1b4c68edb1b",
+      "size_bytes": 9778,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T13:16:03Z",
+    "started": "2026-09-09T13:16:03Z",
+    "finished": "2026-09-09T13:20:25Z"
+  }
+}

@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-sparse-prefix-carry",
+  "status": "failed",
+  "question": "Does retaining the sparse flagged-count prefix rank reduce exact all66 ADF wall time without new resident bytes?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-sparse-prefix-carry/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "entrypoint": "TANSResidencyHoldExperimentTests.testAll66ResidencyHoldIdleABAWhenConfigured",
+    "dirty": true,
+    "diff_sha256": "ff7eb9a4f18b5f2aa3eeb5035c4fc6bec165c1530dbe626d0d342d01be137723",
+    "snapshot_path": "local-output/source-v18.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "native-masks",
+      "path": "experiments/20260909-all66-separated-native-replay/local-evidence/native-stream-bytes-r2.json",
+      "sha256": "1c896b4f3ad0ff2a40b88377915be356bbf6b1c3ed7a2596898f60a9f3db1296"
+    }
+  ],
+  "parameters": {
+    "one_factor": "Sparse function constant22 disabled/enabled/disabled; same source, dense kernel, commands, index, nine masks and idle.",
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "index_bytes": 2108620800,
+    "run_root": "local-output",
+    "source_page_state": "unspecified; prepared entropy archive. Fresh process each arm.4s idle before each of9masks x2cycles.",
+    "timing_boundary": "Complete detectorImages package return, exact hash verification after timer. No memory-audit JSON instrumentation or native FPS claim.",
+    "acceptance": "54/54 all66 complete maps,198 frozen Linux BF/ABF/ADF images per arm,6frozen selected-DP arrays per arm; source0 and Metal720896B teardown. Candidate must beat both controls without worsening critical tail.",
+    "contention": "Desktop WindowServer/Moonlight active; no operator input or unrelated process changes. Preserve temporal drift; no uncontended claim.",
+    "qualified_for_adoption": false,
+    "untracked_sha256": "9a8c149319866f6979316c5c2cc5150f8c8aa8281531abd0e6c1a48ed500b02d",
+    "executable_sha256": "e521b603c4dcf2cd78f7451ac6d18fd1ef9a4f3b340b2dca729ab7b5a43d366d",
+    "metal_sha256": "536cac11f2c8535d16d71d8f836504f3a79e2466dc27b6f358e928506341bc90",
+    "result": "Failed before source load/samples: unspecialized sparse baseline pipeline asserted. Ordinary tests did not instantiate the opt-in real archive loader. Preserve failure; retry explicitly specializes constant22=false.",
+    "artifact_results": {
+      "prefix-v18-failed-A1.log": "Failed before source load/samples: unspecialized sparse baseline pipeline asserted. Ordinary tests did not instantiate the opt-in real archive loader. Preserve failure; retry explicitly specializes constant22=false."
+    }
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "4294969023"
+    ],
+    "gpu_model": "Apple M5 Max40GPU cores128GiB"
+  },
+  "outputs": [
+    {
+      "artifact_id": "prefix-v18-failed-A1.log",
+      "path": "local-output/prefix-v18-failed-A1.log",
+      "sha256": "9fa7bacde1613215e6265f92b550817d79c9ccb69b51845eb9618ffc71a3fedc",
+      "size_bytes": 585,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T23:06:06.542Z",
+    "started": "2026-09-09T23:06:56.406Z",
+    "finished": "2026-09-09T23:07:29.891Z"
+  }
+}

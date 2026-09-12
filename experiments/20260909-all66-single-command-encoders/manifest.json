@@ -1,0 +1,158 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-single-command-encoders",
+  "status": "succeeded",
+  "question": "Does retaining seventeen identical64-record encoders in one command reduce paused all66 driver gaps?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-single-command-encoders/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "entrypoint": "TANSResidencyHoldExperimentTests.testAll66ResidencyHoldIdleABAWhenConfigured",
+    "dirty": true,
+    "diff_sha256": "632810597588acaf63781321bdacfae753ab933293d7e148742b448181309fcd",
+    "snapshot_path": "local-output/source-v19.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "native-masks",
+      "path": "experiments/20260909-all66-separated-native-replay/local-evidence/native-stream-bytes-r2.json",
+      "sha256": "1c896b4f3ad0ff2a40b88377915be356bbf6b1c3ed7a2596898f60a9f3db1296"
+    }
+  ],
+  "parameters": {
+    "one_factor": "Identical sparse/dense kernels, seventeen encoder grids and resources;17commands/1command/17commands. No shared precision or residency change.",
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "index_bytes": 2108620800,
+    "run_root": "local-output",
+    "source_page_state": "unspecified; prepared entropy archive. Fresh process each arm.4s idle before each of9masks x2cycles.",
+    "timing_boundary": "Complete detectorImages package return, exact hash verification after timer. No memory-audit JSON instrumentation or native FPS claim.",
+    "acceptance": "54/54 all66 complete maps,198 frozen Linux BF/ABF/ADF images per arm,6frozen selected-DP arrays per arm; source0 and Metal720896B teardown. Candidate must beat both controls without worsening critical tail.",
+    "contention": "Desktop WindowServer/Moonlight active; no operator input or unrelated process changes. Preserve temporal drift; no uncontended claim.",
+    "qualified_for_adoption": false,
+    "untracked_sha256": "34a5fab81899cce43456f96040214f5ecbcb8701d3fa6fc7b35999afb1a59d92",
+    "executable_sha256": "b6da9a3fe4bf1ba30f483412c978089de73a7b9335258e977259d2ccaa115b15",
+    "metal_sha256": "536cac11f2c8535d16d71d8f836504f3a79e2466dc27b6f358e928506341bc90",
+    "ordinary_tests": "240executed/27skips/0fail",
+    "control_reuse": "Immediately preceding prefix-r2 A2 is copied byte-identically as single A1. Same executable, all experiment flags off, fresh source per process, same9masks x2/four-second idle. Overall sequence A/Bprefix/A/Bsingle/A:90unique all66 updates, not108.",
+    "command": "zsh local-output/run-single-reuse.zsh",
+    "result": "Refuted: A/B/A wallp50 416.776/442.594/405.205ms,p95=max468.674/488.149/452.380ms. One command6.2-9.2%slower. Intercommand gaps vanish by definition but driver/GPU time remains inside singlecommand.54exactcomparisons(18sharedwithprefix),sameallocation/release;no app adoption.",
+    "artifact_results": {
+      "single-comparison.json": "Refuted: A/B/A wallp50 416.776/442.594/405.205ms,p95=max468.674/488.149/452.380ms. One command6.2-9.2%slower. Intercommand gaps vanish by definition but driver/GPU time remains inside singlecommand.54exactcomparisons(18sharedwithprefix),sameallocation/release;no app adoption.",
+      "single-parity.json": "Refuted: A/B/A wallp50 416.776/442.594/405.205ms,p95=max468.674/488.149/452.380ms. One command6.2-9.2%slower. Intercommand gaps vanish by definition but driver/GPU time remains inside singlecommand.54exactcomparisons(18sharedwithprefix),sameallocation/release;no app adoption.",
+      "single-A1.log": "Refuted: A/B/A wallp50 416.776/442.594/405.205ms,p95=max468.674/488.149/452.380ms. One command6.2-9.2%slower. Intercommand gaps vanish by definition but driver/GPU time remains inside singlecommand.54exactcomparisons(18sharedwithprefix),sameallocation/release;no app adoption.",
+      "single-B.log": "Refuted: A/B/A wallp50 416.776/442.594/405.205ms,p95=max468.674/488.149/452.380ms. One command6.2-9.2%slower. Intercommand gaps vanish by definition but driver/GPU time remains inside singlecommand.54exactcomparisons(18sharedwithprefix),sameallocation/release;no app adoption.",
+      "single-A2.log": "Refuted: A/B/A wallp50 416.776/442.594/405.205ms,p95=max468.674/488.149/452.380ms. One command6.2-9.2%slower. Intercommand gaps vanish by definition but driver/GPU time remains inside singlecommand.54exactcomparisons(18sharedwithprefix),sameallocation/release;no app adoption.",
+      "single-A1-memory.txt": "Refuted: A/B/A wallp50 416.776/442.594/405.205ms,p95=max468.674/488.149/452.380ms. One command6.2-9.2%slower. Intercommand gaps vanish by definition but driver/GPU time remains inside singlecommand.54exactcomparisons(18sharedwithprefix),sameallocation/release;no app adoption.",
+      "single-B-memory.txt": "Refuted: A/B/A wallp50 416.776/442.594/405.205ms,p95=max468.674/488.149/452.380ms. One command6.2-9.2%slower. Intercommand gaps vanish by definition but driver/GPU time remains inside singlecommand.54exactcomparisons(18sharedwithprefix),sameallocation/release;no app adoption.",
+      "single-A2-memory.txt": "Refuted: A/B/A wallp50 416.776/442.594/405.205ms,p95=max468.674/488.149/452.380ms. One command6.2-9.2%slower. Intercommand gaps vanish by definition but driver/GPU time remains inside singlecommand.54exactcomparisons(18sharedwithprefix),sameallocation/release;no app adoption.",
+      "run-single-reuse.zsh": "Refuted: A/B/A wallp50 416.776/442.594/405.205ms,p95=max468.674/488.149/452.380ms. One command6.2-9.2%slower. Intercommand gaps vanish by definition but driver/GPU time remains inside singlecommand.54exactcomparisons(18sharedwithprefix),sameallocation/release;no app adoption."
+    }
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "4294969023"
+    ],
+    "gpu_model": "Apple M5 Max40GPU cores128GiB"
+  },
+  "outputs": [
+    {
+      "artifact_id": "single-comparison.json",
+      "path": "local-output/single-comparison.json",
+      "sha256": "0e4514d93582aeafd863a9d0c6948428c656f85b73bf878ee7329c8df5343f4d",
+      "size_bytes": 90038,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "single-parity.json",
+      "path": "local-output/single-parity.json",
+      "sha256": "1098fba0ca505e9b60dacc503237eee20972b54bf7bace0e3b07902985990f47",
+      "size_bytes": 4383,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "single-A1.log",
+      "path": "local-output/single-A1.log",
+      "sha256": "6e1eab28ffe4e23ed9c73381dfca6d61788de6be34735c50f01ff2be08148828",
+      "size_bytes": 20079,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "single-B.log",
+      "path": "local-output/single-B.log",
+      "sha256": "fde4b37a84de01c4a78e24c334e4acc6485ad5fd38c4dcb9e14b974c3f2b6438",
+      "size_bytes": 19983,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "single-A2.log",
+      "path": "local-output/single-A2.log",
+      "sha256": "3eef38abd5c738ecce5cb8fc2ad0099a5d32ae01bdd7030fc6975520ad940b2a",
+      "size_bytes": 20072,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "single-A1-memory.txt",
+      "path": "local-output/single-A1-memory.txt",
+      "sha256": "a490a1aeef221db5d78e38474a7e80b8e1ed9d09013fdf28a07dd3fbc73c4a15",
+      "size_bytes": 64311,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "single-B-memory.txt",
+      "path": "local-output/single-B-memory.txt",
+      "sha256": "f78a5356c55a460c01307482f554ec05696a1de0e92105cb831c6d6ac19c22a5",
+      "size_bytes": 64311,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "single-A2-memory.txt",
+      "path": "local-output/single-A2-memory.txt",
+      "sha256": "fcd2b9024e21d44e78e3c829fa7934d959e4e94e26adfaa8ba4fc8cb09d27381",
+      "size_bytes": 64311,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "run-single-reuse.zsh",
+      "path": "local-output/run-single-reuse.zsh",
+      "sha256": "ffcc9c1df3c9775a1ad5afee76712cfe61667a0e78e60487d069a6c728d34492",
+      "size_bytes": 2099,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T23:06:06.542Z",
+    "started": "2026-09-09T23:13:39.164Z",
+    "finished": "2026-09-09T23:17:03.244Z"
+  }
+}

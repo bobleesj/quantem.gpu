@@ -1,0 +1,137 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-two-symbol-compact4",
+  "status": "succeeded",
+  "question": "Can removing the duplicated first symbol halve exact two-transition lookup traffic enough to beat the original decoder?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-two-symbol-compact4/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "entrypoint": "TANSTileArchitectureExperimentTests.testAll66UniformIndexABAWhenConfigured",
+    "dirty": true,
+    "snapshot_path": "local-evidence/source.patch",
+    "diff_sha256": "7df606fdaccc3c91bc59ff681a0dbd7c585a8168385d3265e4f89309a5eac6d3"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-linux-products",
+      "path": "local-fixture/series-products/shared-resident-images.npy",
+      "sha256": "06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "index_bytes": 2027531616,
+    "lookup_bytes": 5308416,
+    "combined_metadata_ceiling": 2108620800,
+    "one_factor": "Original decoder / compact32-bit exact two-symbol4bit lookup / original. Same uniform16 index and compact lookup allocated in all arms. First pair is recovered exactly from original state table; second pair/state/consumed bits/validity occupy one uint32. No original count/geometry/oracle changes. B_plan is a reused label, not planner enablement.",
+    "executable_sha256": "ba5165e06371908c134bc8a51b4ea44224ccd91d00940f01d1a8abaa0fa635fe",
+    "metal_source_sha256": "a85160e58f6e57126ebd9e40bb028267be4d88c5b343c208132c64c1abdd2a38",
+    "untracked_source_sha256": "e248a4b4a9cad9a7f6fd16c92803e2e18b8215c5c036cbea29689459bf2f91bf",
+    "cache_state": "Already-prepared entropy archive; source pages unspecified; warm query benchmark, not cold original load or headed publication",
+    "preflight": "16 focused tests pass. Independent GPU compact table audit, canaries, malformed budget and all previous decoded-value assertions unchanged. Only metadata expected representation changes.",
+    "path_mapping": "Exact local paths and unmodified pre-normalization manifests are retained in the private output checkpoint.",
+    "artifact_results": {
+      "architecture-unit-v10.log": "Refuted for performance: compact table is5308416B, exact metadata and full uint16/literal/escape fixtures pass;105/105 all66 dynamic outputs exact with immutable previous images and three independent Linux references. ADF jump p50 original/compact/original131.006/217.768/130.955ms. Compact transition lookup remains slower; stop lookup family, leave disabled, no app adoption.",
+      "compact4-all66.log": "Refuted for performance: compact table is5308416B, exact metadata and full uint16/literal/escape fixtures pass;105/105 all66 dynamic outputs exact with immutable previous images and three independent Linux references. ADF jump p50 original/compact/original131.006/217.768/130.955ms. Compact transition lookup remains slower; stop lookup family, leave disabled, no app adoption.",
+      "compact4-analysis.json": "Refuted for performance: compact table is5308416B, exact metadata and full uint16/literal/escape fixtures pass;105/105 all66 dynamic outputs exact with immutable previous images and three independent Linux references. ADF jump p50 original/compact/original131.006/217.768/130.955ms. Compact transition lookup remains slower; stop lookup family, leave disabled, no app adoption.",
+      "compact4-memory-summary.json": "Refuted for performance: compact table is5308416B, exact metadata and full uint16/literal/escape fixtures pass;105/105 all66 dynamic outputs exact with immutable previous images and three independent Linux references. ADF jump p50 original/compact/original131.006/217.768/130.955ms. Compact transition lookup remains slower; stop lookup family, leave disabled, no app adoption.",
+      "compact4-memory.txt": "Refuted for performance: compact table is5308416B, exact metadata and full uint16/literal/escape fixtures pass;105/105 all66 dynamic outputs exact with immutable previous images and three independent Linux references. ADF jump p50 original/compact/original131.006/217.768/130.955ms. Compact transition lookup remains slower; stop lookup family, leave disabled, no app adoption.",
+      "source.patch": "Refuted for performance: compact table is5308416B, exact metadata and full uint16/literal/escape fixtures pass;105/105 all66 dynamic outputs exact with immutable previous images and three independent Linux references. ADF jump p50 original/compact/original131.006/217.768/130.955ms. Compact transition lookup remains slower; stop lookup family, leave disabled, no app adoption.",
+      "untracked-source.tar.gz": "Refuted for performance: compact table is5308416B, exact metadata and full uint16/literal/escape fixtures pass;105/105 all66 dynamic outputs exact with immutable previous images and three independent Linux references. ADF jump p50 original/compact/original131.006/217.768/130.955ms. Compact transition lookup remains slower; stop lookup family, leave disabled, no app adoption."
+    },
+    "result": "Refuted for performance: compact table is5308416B, exact metadata and full uint16/literal/escape fixtures pass;105/105 all66 dynamic outputs exact with immutable previous images and three independent Linux references. ADF jump p50 original/compact/original131.006/217.768/130.955ms. Compact transition lookup remains slower; stop lookup family, leave disabled, no app adoption.",
+    "metadata_total_bytes": 2032840032
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "architecture-unit-v10.log",
+      "path": "local-evidence/architecture-unit-v10.log",
+      "sha256": "55c4e960235b3bb6e0ab86f0586d65a0bc79f901e4e753fcda8e6a1b4d32e6f9",
+      "size_bytes": 12516,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "compact4-all66.log",
+      "path": "local-evidence/compact4-all66.log",
+      "sha256": "ddaffb6604317d82e0e32b3099978bcf7447df5782087fd29a73c81ebf5bc8a4",
+      "size_bytes": 96712,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "compact4-analysis.json",
+      "path": "local-evidence/compact4-analysis.json",
+      "sha256": "1716df4ed0c53d615d1b37a9896120b05cc91404b06f9a8117434f80b5d5bc8a",
+      "size_bytes": 151881,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "compact4-memory-summary.json",
+      "path": "local-evidence/compact4-memory-summary.json",
+      "sha256": "f0ee440e5aa35aa43d22dc0535776a7432661a6e037c304cc57b551c00bf65c4",
+      "size_bytes": 699,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "compact4-memory.txt",
+      "path": "local-evidence/compact4-memory.txt",
+      "sha256": "c7b852e2fd21319c1483cf968f193843300ded4d1ca2fa96e6b0e12a81d133ee",
+      "size_bytes": 41580,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "source.patch",
+      "path": "local-evidence/source.patch",
+      "sha256": "7df606fdaccc3c91bc59ff681a0dbd7c585a8168385d3265e4f89309a5eac6d3",
+      "size_bytes": 111337,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "untracked-source.tar.gz",
+      "path": "local-evidence/untracked-source.tar.gz",
+      "sha256": "e248a4b4a9cad9a7f6fd16c92803e2e18b8215c5c036cbea29689459bf2f91bf",
+      "size_bytes": 14975,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T20:46:19Z",
+    "started": "2026-09-09T20:46:19Z",
+    "finished": "2026-09-09T20:47:39.594Z"
+  }
+}

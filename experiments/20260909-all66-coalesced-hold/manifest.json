@@ -1,0 +1,235 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-coalesced-hold",
+  "status": "succeeded",
+  "question": "Does explicitly holding the 66 unique coalesced encoded allocations plus unchanged exact index remove the four-second-idle all66 query penalty below300ms?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-coalesced-hold/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "dirty": true,
+    "diff_sha256": "48c753731fc27c05f2eca21ea7cc04e93ae74cc5fd905fd0fb6a94f89140b648",
+    "snapshot_path": "local-output/source-v13.patch",
+    "entrypoint": "TANSResidencyHoldExperimentTests.testAll66ResidencyHoldIdleABAWhenConfigured"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-native-masks",
+      "path": "local-worktree/experiments/20260909-all66-separated-native-replay/local-evidence/native-stream-bytes-r2.json",
+      "sha256": "1c896b4f3ad0ff2a40b88377915be356bbf6b1c3ed7a2596898f60a9f3db1296"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "index_ceiling_bytes": 2108620800,
+    "one_factor": "Coalesced allocations all arms; hold off/on/off. Hold correctly counts unique acquisition buffers, commits set, attaches to same queue and requests residency. Original old-layout hold and source-set-only runs failed; this tests a different allocation topology plus existing64-record split, not missing queue attachment.",
+    "cache_state": "Prepared entropy archive; source pages unspecified.4-second idle before every timed query;9 masks x2cycles per arm. Complete package-return wall, not native publication.",
+    "default": "Off; canonical sources and installed app untouched",
+    "untracked_source_sha256": "e1ffc2fe2354eccb7134466f310ac967104ac20d17a18187c09fd3aa2f902e11",
+    "run_root": "local-output",
+    "command": "zsh local-output/run-coalesced-hold-aba.zsh",
+    "memory_gate": "Same source/index bytes; source0/Metal720896B after release. No new dense/raw resident. Inspect pressure/swap; no full System Trace.",
+    "acceptance": "54complete exact all66 queries;6full66 selected-DP hashes; p50/p95/max below300ms reported separately; no speedup claim from GPU interval alone.",
+    "artifact_results": {
+      "audit-residency-variants.cjs": "Refuted. Exact54/54 full66 dynamic queries and6frozen full66 DP arrays per arm; source0 and Metal720896B after release. Wall p50 A1/B/A2 400.240/623.866/400.905ms; p95=max423.537/761.283/421.134ms. Hold moves wait before GPU instead of removing it. Source/index/Metal allocation unchanged; sampled swap5579.62MiB delta0 and swapout delta0. Prepared archive loads14.637/14.233/14.307s; not original-source cold. No adoption.",
+      "run-coalesced-hold-aba.zsh": "Refuted. Exact54/54 full66 dynamic queries and6frozen full66 DP arrays per arm; source0 and Metal720896B after release. Wall p50 A1/B/A2 400.240/623.866/400.905ms; p95=max423.537/761.283/421.134ms. Hold moves wait before GPU instead of removing it. Source/index/Metal allocation unchanged; sampled swap5579.62MiB delta0 and swapout delta0. Prepared archive loads14.637/14.233/14.307s; not original-source cold. No adoption.",
+      "full-suite-v13.log": "Refuted. Exact54/54 full66 dynamic queries and6frozen full66 DP arrays per arm; source0 and Metal720896B after release. Wall p50 A1/B/A2 400.240/623.866/400.905ms; p95=max423.537/761.283/421.134ms. Hold moves wait before GPU instead of removing it. Source/index/Metal allocation unchanged; sampled swap5579.62MiB delta0 and swapout delta0. Prepared archive loads14.637/14.233/14.307s; not original-source cold. No adoption.",
+      "source-v13.patch": "Refuted. Exact54/54 full66 dynamic queries and6frozen full66 DP arrays per arm; source0 and Metal720896B after release. Wall p50 A1/B/A2 400.240/623.866/400.905ms; p95=max423.537/761.283/421.134ms. Hold moves wait before GPU instead of removing it. Source/index/Metal allocation unchanged; sampled swap5579.62MiB delta0 and swapout delta0. Prepared archive loads14.637/14.233/14.307s; not original-source cold. No adoption.",
+      "source-v13-untracked.tar.gz": "Refuted. Exact54/54 full66 dynamic queries and6frozen full66 DP arrays per arm; source0 and Metal720896B after release. Wall p50 A1/B/A2 400.240/623.866/400.905ms; p95=max423.537/761.283/421.134ms. Hold moves wait before GPU instead of removing it. Source/index/Metal allocation unchanged; sampled swap5579.62MiB delta0 and swapout delta0. Prepared archive loads14.637/14.233/14.307s; not original-source cold. No adoption.",
+      "coalesced-hold-audit.json": "Refuted. Exact54/54 full66 dynamic queries and6frozen full66 DP arrays per arm; source0 and Metal720896B after release. Wall p50 A1/B/A2 400.240/623.866/400.905ms; p95=max423.537/761.283/421.134ms. Hold moves wait before GPU instead of removing it. Source/index/Metal allocation unchanged; sampled swap5579.62MiB delta0 and swapout delta0. Prepared archive loads14.637/14.233/14.307s; not original-source cold. No adoption.",
+      "coalesced-hold-A1.log": "Refuted. Exact54/54 full66 dynamic queries and6frozen full66 DP arrays per arm; source0 and Metal720896B after release. Wall p50 A1/B/A2 400.240/623.866/400.905ms; p95=max423.537/761.283/421.134ms. Hold moves wait before GPU instead of removing it. Source/index/Metal allocation unchanged; sampled swap5579.62MiB delta0 and swapout delta0. Prepared archive loads14.637/14.233/14.307s; not original-source cold. No adoption.",
+      "coalesced-hold-A1-analysis.json": "Refuted. Exact54/54 full66 dynamic queries and6frozen full66 DP arrays per arm; source0 and Metal720896B after release. Wall p50 A1/B/A2 400.240/623.866/400.905ms; p95=max423.537/761.283/421.134ms. Hold moves wait before GPU instead of removing it. Source/index/Metal allocation unchanged; sampled swap5579.62MiB delta0 and swapout delta0. Prepared archive loads14.637/14.233/14.307s; not original-source cold. No adoption.",
+      "coalesced-hold-A1-memory.txt": "Refuted. Exact54/54 full66 dynamic queries and6frozen full66 DP arrays per arm; source0 and Metal720896B after release. Wall p50 A1/B/A2 400.240/623.866/400.905ms; p95=max423.537/761.283/421.134ms. Hold moves wait before GPU instead of removing it. Source/index/Metal allocation unchanged; sampled swap5579.62MiB delta0 and swapout delta0. Prepared archive loads14.637/14.233/14.307s; not original-source cold. No adoption.",
+      "coalesced-hold-A1-memory-summary.json": "Refuted. Exact54/54 full66 dynamic queries and6frozen full66 DP arrays per arm; source0 and Metal720896B after release. Wall p50 A1/B/A2 400.240/623.866/400.905ms; p95=max423.537/761.283/421.134ms. Hold moves wait before GPU instead of removing it. Source/index/Metal allocation unchanged; sampled swap5579.62MiB delta0 and swapout delta0. Prepared archive loads14.637/14.233/14.307s; not original-source cold. No adoption.",
+      "coalesced-hold-B_hold.log": "Refuted. Exact54/54 full66 dynamic queries and6frozen full66 DP arrays per arm; source0 and Metal720896B after release. Wall p50 A1/B/A2 400.240/623.866/400.905ms; p95=max423.537/761.283/421.134ms. Hold moves wait before GPU instead of removing it. Source/index/Metal allocation unchanged; sampled swap5579.62MiB delta0 and swapout delta0. Prepared archive loads14.637/14.233/14.307s; not original-source cold. No adoption.",
+      "coalesced-hold-B_hold-analysis.json": "Refuted. Exact54/54 full66 dynamic queries and6frozen full66 DP arrays per arm; source0 and Metal720896B after release. Wall p50 A1/B/A2 400.240/623.866/400.905ms; p95=max423.537/761.283/421.134ms. Hold moves wait before GPU instead of removing it. Source/index/Metal allocation unchanged; sampled swap5579.62MiB delta0 and swapout delta0. Prepared archive loads14.637/14.233/14.307s; not original-source cold. No adoption.",
+      "coalesced-hold-B_hold-memory.txt": "Refuted. Exact54/54 full66 dynamic queries and6frozen full66 DP arrays per arm; source0 and Metal720896B after release. Wall p50 A1/B/A2 400.240/623.866/400.905ms; p95=max423.537/761.283/421.134ms. Hold moves wait before GPU instead of removing it. Source/index/Metal allocation unchanged; sampled swap5579.62MiB delta0 and swapout delta0. Prepared archive loads14.637/14.233/14.307s; not original-source cold. No adoption.",
+      "coalesced-hold-B_hold-memory-summary.json": "Refuted. Exact54/54 full66 dynamic queries and6frozen full66 DP arrays per arm; source0 and Metal720896B after release. Wall p50 A1/B/A2 400.240/623.866/400.905ms; p95=max423.537/761.283/421.134ms. Hold moves wait before GPU instead of removing it. Source/index/Metal allocation unchanged; sampled swap5579.62MiB delta0 and swapout delta0. Prepared archive loads14.637/14.233/14.307s; not original-source cold. No adoption.",
+      "coalesced-hold-A2.log": "Refuted. Exact54/54 full66 dynamic queries and6frozen full66 DP arrays per arm; source0 and Metal720896B after release. Wall p50 A1/B/A2 400.240/623.866/400.905ms; p95=max423.537/761.283/421.134ms. Hold moves wait before GPU instead of removing it. Source/index/Metal allocation unchanged; sampled swap5579.62MiB delta0 and swapout delta0. Prepared archive loads14.637/14.233/14.307s; not original-source cold. No adoption.",
+      "coalesced-hold-A2-analysis.json": "Refuted. Exact54/54 full66 dynamic queries and6frozen full66 DP arrays per arm; source0 and Metal720896B after release. Wall p50 A1/B/A2 400.240/623.866/400.905ms; p95=max423.537/761.283/421.134ms. Hold moves wait before GPU instead of removing it. Source/index/Metal allocation unchanged; sampled swap5579.62MiB delta0 and swapout delta0. Prepared archive loads14.637/14.233/14.307s; not original-source cold. No adoption.",
+      "coalesced-hold-A2-memory.txt": "Refuted. Exact54/54 full66 dynamic queries and6frozen full66 DP arrays per arm; source0 and Metal720896B after release. Wall p50 A1/B/A2 400.240/623.866/400.905ms; p95=max423.537/761.283/421.134ms. Hold moves wait before GPU instead of removing it. Source/index/Metal allocation unchanged; sampled swap5579.62MiB delta0 and swapout delta0. Prepared archive loads14.637/14.233/14.307s; not original-source cold. No adoption.",
+      "coalesced-hold-A2-memory-summary.json": "Refuted. Exact54/54 full66 dynamic queries and6frozen full66 DP arrays per arm; source0 and Metal720896B after release. Wall p50 A1/B/A2 400.240/623.866/400.905ms; p95=max423.537/761.283/421.134ms. Hold moves wait before GPU instead of removing it. Source/index/Metal allocation unchanged; sampled swap5579.62MiB delta0 and swapout delta0. Prepared archive loads14.637/14.233/14.307s; not original-source cold. No adoption."
+    },
+    "result": "Refuted. Exact54/54 full66 dynamic queries and6frozen full66 DP arrays per arm; source0 and Metal720896B after release. Wall p50 A1/B/A2 400.240/623.866/400.905ms; p95=max423.537/761.283/421.134ms. Hold moves wait before GPU instead of removing it. Source/index/Metal allocation unchanged; sampled swap5579.62MiB delta0 and swapout delta0. Prepared archive loads14.637/14.233/14.307s; not original-source cold. No adoption.",
+    "executable_sha256": "ed5a11b75d4f77e0590490baa7ad187bdcfc451a38e9229363faf95a9533cf9d"
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "audit-residency-variants.cjs",
+      "path": "local-evidence/audit-residency-variants.cjs",
+      "sha256": "e7aebbb212c93fa4980c02b708a2f217ce151e5c454089273fb193af68998d35",
+      "size_bytes": 2223,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "run-coalesced-hold-aba.zsh",
+      "path": "local-evidence/run-coalesced-hold-aba.zsh",
+      "sha256": "6c544f308b03fc9d18ec5b7fb99754ab83efae2c004d91a7f3801f11f81316c5",
+      "size_bytes": 1482,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "full-suite-v13.log",
+      "path": "local-evidence/full-suite-v13.log",
+      "sha256": "c12cd94b160cbf4e0703ccea8c79a9fbee94437ba18068ce067910d5c375675a",
+      "size_bytes": 89638,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "source-v13.patch",
+      "path": "local-evidence/source-v13.patch",
+      "sha256": "48c753731fc27c05f2eca21ea7cc04e93ae74cc5fd905fd0fb6a94f89140b648",
+      "size_bytes": 117996,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "source-v13-untracked.tar.gz",
+      "path": "local-evidence/source-v13-untracked.tar.gz",
+      "sha256": "e1ffc2fe2354eccb7134466f310ac967104ac20d17a18187c09fd3aa2f902e11",
+      "size_bytes": 16285,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-hold-audit.json",
+      "path": "local-evidence/coalesced-hold-audit.json",
+      "sha256": "0fecbc464ab84b4f9a2e95f6fa9215e31eabe9d3d92a48409411eb871882b616",
+      "size_bytes": 4389,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-hold-A1.log",
+      "path": "local-evidence/coalesced-hold-A1.log",
+      "sha256": "d4245da8754f15e43b4a549772752f2a5d8bb12027d87511811003b4c03dcd3c",
+      "size_bytes": 18616,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-hold-A1-analysis.json",
+      "path": "local-evidence/coalesced-hold-A1-analysis.json",
+      "sha256": "b867e4d09bb2604fdb67dc424d2aff85b40f37e2397e3f7cf850b6484f206469",
+      "size_bytes": 30515,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-hold-A1-memory.txt",
+      "path": "local-evidence/coalesced-hold-A1-memory.txt",
+      "sha256": "3ea0dfe0a417f2265444452d959f8cf6a09efd938bdc9145670331824951c474",
+      "size_bytes": 64311,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-hold-A1-memory-summary.json",
+      "path": "local-evidence/coalesced-hold-A1-memory-summary.json",
+      "sha256": "8d6d9be4a11de7ef0e2b9d3b8f93ae6146544aca48f9cd63340600b39ff2c7a6",
+      "size_bytes": 700,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-hold-B_hold.log",
+      "path": "local-evidence/coalesced-hold-B_hold.log",
+      "sha256": "91d2ac55d0e2e3592bd3a7fe5e05da51d221d5e7d46fee6156f1d0874ccaa3de",
+      "size_bytes": 18826,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-hold-B_hold-analysis.json",
+      "path": "local-evidence/coalesced-hold-B_hold-analysis.json",
+      "sha256": "8d1d6dc412507f56ae211b9f13905160d74419c9adaf136eb0ab060c50db3c89",
+      "size_bytes": 30776,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-hold-B_hold-memory.txt",
+      "path": "local-evidence/coalesced-hold-B_hold-memory.txt",
+      "sha256": "f4aef0a3f93510f6b1cdb0f6734a05741672669f4479844c038400ebf52a3ccf",
+      "size_bytes": 65572,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-hold-B_hold-memory-summary.json",
+      "path": "local-evidence/coalesced-hold-B_hold-memory-summary.json",
+      "sha256": "ba31f00eb0918117ed10b02c6e2cca2d289775f1df8940d27801c9da9391306d",
+      "size_bytes": 700,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-hold-A2.log",
+      "path": "local-evidence/coalesced-hold-A2.log",
+      "sha256": "d84e3cc6c5149021907d79f049eff31db1e070bc0f45ec5adbe70d401d2edff2",
+      "size_bytes": 18630,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-hold-A2-analysis.json",
+      "path": "local-evidence/coalesced-hold-A2-analysis.json",
+      "sha256": "4a8ac704c853d05cd5d7acd6b1d469bfa36be6e4fb8812e941eed82a3846853e",
+      "size_bytes": 30543,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-hold-A2-memory.txt",
+      "path": "local-evidence/coalesced-hold-A2-memory.txt",
+      "sha256": "03ce79aafa47209c41fc15308af900282de604e16b81b313ffc3247263176457",
+      "size_bytes": 63050,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-hold-A2-memory-summary.json",
+      "path": "local-evidence/coalesced-hold-A2-memory-summary.json",
+      "sha256": "72bdbaa863e187a24881887b955a38768cc9400ad8371890e25a38ce55a7f49e",
+      "size_bytes": 702,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T22:00:05.444Z",
+    "started": "2026-09-09T22:00:20.945Z",
+    "finished": "2026-09-09T22:05:29.234Z"
+  }
+}

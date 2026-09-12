@@ -1,0 +1,177 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-coalesced-system-trace",
+  "status": "succeeded",
+  "question": "Can a process-scoped Metal System Trace attribute inter-command gaps of exact paused all66 queries?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-coalesced-system-trace/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "entrypoint": "TANSResidencyHoldExperimentTests.testAll66ResidencyHoldIdleABAWhenConfigured",
+    "dirty": true,
+    "snapshot_path": "local-evidence/source.patch",
+    "diff_sha256": "5a4bad36f60285bd086c23e115a4d5d07af90cf96729e848c9180586efd8d7c6"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-linux-products",
+      "path": "local-fixture/series-products/shared-resident-images.npy",
+      "sha256": "06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "index_ceiling_bytes": 2108620800,
+    "one_factor": "Diagnostic Metal System Trace attached only to owned xctest after full66 prepared encoded load/reference setup. 45-second trace; exact same v12 coalesced query and four-second pauses. Instrumented time is not an acceptance benchmark. Stop at any real authentication/TCC prompt; do not change security settings.",
+    "default": "Off; existing app unchanged",
+    "untracked_source_sha256": "b936c639c56d78fdf3cacc922fda3d942949f54e205208710fa142111f2d4bf0",
+    "cache_state": "Complete prepared entropy archive, source pages unspecified. Not cold original source or headed UI/presentation.",
+    "run_root": "local-output",
+    "path_mapping": "Exact local paths and unmodified pre-normalization manifests are retained in the private output checkpoint.",
+    "artifact_results": {
+      "coalesced-r2-driver-summary.json": "Capture attached and completed;18/18 instrumented all66 outputs exact;source0/Metal720896B. Performance DISQUALIFIED: max47.908s stall,profiler sample peak footprint24.8G,system swap4145.38->6837.31MiB. Filtered PID16872 has3968 Wire Memory events (aggregate2.514s), including660 GiB-sized events (2.350s), consistent with repeated encoded-acquisition wiring. Not causal uninstrumented attribution; countersnull,shader timeline disabled. Raw final trace882037942B/608files is private, sealed by file-hash inventory. No further GPU load after trace. Narrower/controlled diagnosis remains pending.",
+      "coalesced-r2-trace-driver.log": "Capture attached and completed;18/18 instrumented all66 outputs exact;source0/Metal720896B. Performance DISQUALIFIED: max47.908s stall,profiler sample peak footprint24.8G,system swap4145.38->6837.31MiB. Filtered PID16872 has3968 Wire Memory events (aggregate2.514s), including660 GiB-sized events (2.350s), consistent with repeated encoded-acquisition wiring. Not causal uninstrumented attribution; countersnull,shader timeline disabled. Raw final trace882037942B/608files is private, sealed by file-hash inventory. No further GPU load after trace. Narrower/controlled diagnosis remains pending.",
+      "coalesced-r2-trace-files.json": "Capture attached and completed;18/18 instrumented all66 outputs exact;source0/Metal720896B. Performance DISQUALIFIED: max47.908s stall,profiler sample peak footprint24.8G,system swap4145.38->6837.31MiB. Filtered PID16872 has3968 Wire Memory events (aggregate2.514s), including660 GiB-sized events (2.350s), consistent with repeated encoded-acquisition wiring. Not causal uninstrumented attribution; countersnull,shader timeline disabled. Raw final trace882037942B/608files is private, sealed by file-hash inventory. No further GPU load after trace. Narrower/controlled diagnosis remains pending.",
+      "coalesced-r2-trace-query-analysis.json": "Capture attached and completed;18/18 instrumented all66 outputs exact;source0/Metal720896B. Performance DISQUALIFIED: max47.908s stall,profiler sample peak footprint24.8G,system swap4145.38->6837.31MiB. Filtered PID16872 has3968 Wire Memory events (aggregate2.514s), including660 GiB-sized events (2.350s), consistent with repeated encoded-acquisition wiring. Not causal uninstrumented attribution; countersnull,shader timeline disabled. Raw final trace882037942B/608files is private, sealed by file-hash inventory. No further GPU load after trace. Narrower/controlled diagnosis remains pending.",
+      "coalesced-r2-trace-query.log": "Capture attached and completed;18/18 instrumented all66 outputs exact;source0/Metal720896B. Performance DISQUALIFIED: max47.908s stall,profiler sample peak footprint24.8G,system swap4145.38->6837.31MiB. Filtered PID16872 has3968 Wire Memory events (aggregate2.514s), including660 GiB-sized events (2.350s), consistent with repeated encoded-acquisition wiring. Not causal uninstrumented attribution; countersnull,shader timeline disabled. Raw final trace882037942B/608files is private, sealed by file-hash inventory. No further GPU load after trace. Narrower/controlled diagnosis remains pending.",
+      "coalesced-r2-trace-summary.json": "Capture attached and completed;18/18 instrumented all66 outputs exact;source0/Metal720896B. Performance DISQUALIFIED: max47.908s stall,profiler sample peak footprint24.8G,system swap4145.38->6837.31MiB. Filtered PID16872 has3968 Wire Memory events (aggregate2.514s), including660 GiB-sized events (2.350s), consistent with repeated encoded-acquisition wiring. Not causal uninstrumented attribution; countersnull,shader timeline disabled. Raw final trace882037942B/608files is private, sealed by file-hash inventory. No further GPU load after trace. Narrower/controlled diagnosis remains pending.",
+      "hash-trace.cjs": "Capture attached and completed;18/18 instrumented all66 outputs exact;source0/Metal720896B. Performance DISQUALIFIED: max47.908s stall,profiler sample peak footprint24.8G,system swap4145.38->6837.31MiB. Filtered PID16872 has3968 Wire Memory events (aggregate2.514s), including660 GiB-sized events (2.350s), consistent with repeated encoded-acquisition wiring. Not causal uninstrumented attribution; countersnull,shader timeline disabled. Raw final trace882037942B/608files is private, sealed by file-hash inventory. No further GPU load after trace. Narrower/controlled diagnosis remains pending.",
+      "run-coalesced-trace-r2.zsh": "Capture attached and completed;18/18 instrumented all66 outputs exact;source0/Metal720896B. Performance DISQUALIFIED: max47.908s stall,profiler sample peak footprint24.8G,system swap4145.38->6837.31MiB. Filtered PID16872 has3968 Wire Memory events (aggregate2.514s), including660 GiB-sized events (2.350s), consistent with repeated encoded-acquisition wiring. Not causal uninstrumented attribution; countersnull,shader timeline disabled. Raw final trace882037942B/608files is private, sealed by file-hash inventory. No further GPU load after trace. Narrower/controlled diagnosis remains pending.",
+      "source.patch": "Capture attached and completed;18/18 instrumented all66 outputs exact;source0/Metal720896B. Performance DISQUALIFIED: max47.908s stall,profiler sample peak footprint24.8G,system swap4145.38->6837.31MiB. Filtered PID16872 has3968 Wire Memory events (aggregate2.514s), including660 GiB-sized events (2.350s), consistent with repeated encoded-acquisition wiring. Not causal uninstrumented attribution; countersnull,shader timeline disabled. Raw final trace882037942B/608files is private, sealed by file-hash inventory. No further GPU load after trace. Narrower/controlled diagnosis remains pending.",
+      "summarize-driver-trace.cjs": "Capture attached and completed;18/18 instrumented all66 outputs exact;source0/Metal720896B. Performance DISQUALIFIED: max47.908s stall,profiler sample peak footprint24.8G,system swap4145.38->6837.31MiB. Filtered PID16872 has3968 Wire Memory events (aggregate2.514s), including660 GiB-sized events (2.350s), consistent with repeated encoded-acquisition wiring. Not causal uninstrumented attribution; countersnull,shader timeline disabled. Raw final trace882037942B/608files is private, sealed by file-hash inventory. No further GPU load after trace. Narrower/controlled diagnosis remains pending.",
+      "untracked-source.tar.gz": "Capture attached and completed;18/18 instrumented all66 outputs exact;source0/Metal720896B. Performance DISQUALIFIED: max47.908s stall,profiler sample peak footprint24.8G,system swap4145.38->6837.31MiB. Filtered PID16872 has3968 Wire Memory events (aggregate2.514s), including660 GiB-sized events (2.350s), consistent with repeated encoded-acquisition wiring. Not causal uninstrumented attribution; countersnull,shader timeline disabled. Raw final trace882037942B/608files is private, sealed by file-hash inventory. No further GPU load after trace. Narrower/controlled diagnosis remains pending."
+    },
+    "preflight": "239 release tests /27 explicit opt-in skips /0 failures. v11 teardown failed in all arms at5,586,944B, equal to expected720,896B plus one full66 DP buffer. v12 changes only test DP extraction autorelease scopes. Original failure retained; require original720,896B gate without relaxation.",
+    "executable_sha256": "38cb156a71ba52550d2136b3671c77838d496acece949e31bd95e5d6d6de8b75",
+    "result": "Capture attached and completed;18/18 instrumented all66 outputs exact;source0/Metal720896B. Performance DISQUALIFIED: max47.908s stall,profiler sample peak footprint24.8G,system swap4145.38->6837.31MiB. Filtered PID16872 has3968 Wire Memory events (aggregate2.514s), including660 GiB-sized events (2.350s), consistent with repeated encoded-acquisition wiring. Not causal uninstrumented attribution; countersnull,shader timeline disabled. Raw final trace882037942B/608files is private, sealed by file-hash inventory. No further GPU load after trace. Narrower/controlled diagnosis remains pending.",
+    "private_raw_artifacts": {
+      "trace_path": "local-output/coalesced-r2-metal-system.trace",
+      "final_bytes": 882037942,
+      "files": 608,
+      "privacy": "Raw trace/TOC include environment and system events; retain privately, do not publish without review."
+    }
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "coalesced-r2-driver-summary.json",
+      "path": "local-evidence/coalesced-r2-driver-summary.json",
+      "sha256": "a26e68be98239d0b8e4cdd1336ea046d7b1b4d11d87162c0005735323c652fee",
+      "size_bytes": 5208,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-r2-trace-driver.log",
+      "path": "local-evidence/coalesced-r2-trace-driver.log",
+      "sha256": "21c853c3eeddf535616d6f516afde855313177b8968ab0749f44c34303bcd0f3",
+      "size_bytes": 343,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-r2-trace-files.json",
+      "path": "local-evidence/coalesced-r2-trace-files.json",
+      "sha256": "5d085b85508b463b48e7cb16ecfd6a166f7a0ee9603a83a5eefdbac7cdfffdfd",
+      "size_bytes": 116222,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-r2-trace-query-analysis.json",
+      "path": "local-evidence/coalesced-r2-trace-query-analysis.json",
+      "sha256": "e5e92b1653002ab575f41e9b0ed05a0eddbc833395de14956c3fcce6f792e143",
+      "size_bytes": 31172,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-r2-trace-query.log",
+      "path": "local-evidence/coalesced-r2-trace-query.log",
+      "sha256": "30e4a66c22fa895264879eac63f1ce541d410b952f20384fdf14c17d3c692a89",
+      "size_bytes": 19277,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-r2-trace-summary.json",
+      "path": "local-evidence/coalesced-r2-trace-summary.json",
+      "sha256": "6016606da6f1b29978d73a404e9663fd5ed1153516613b04a98e65f63da50801",
+      "size_bytes": 1178,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "hash-trace.cjs",
+      "path": "local-evidence/hash-trace.cjs",
+      "sha256": "4d15228011f0f9c74d91f0c658c832e1126b09908139fdbee879ff8457444ed1",
+      "size_bytes": 907,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "run-coalesced-trace-r2.zsh",
+      "path": "local-evidence/run-coalesced-trace-r2.zsh",
+      "sha256": "973be3786a2e27e6cbaa641c672f30fe087d0b01aec9cde19147b8e9a9e2bb18",
+      "size_bytes": 1697,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "source.patch",
+      "path": "local-evidence/source.patch",
+      "sha256": "5a4bad36f60285bd086c23e115a4d5d07af90cf96729e848c9180586efd8d7c6",
+      "size_bytes": 117782,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "summarize-driver-trace.cjs",
+      "path": "local-evidence/summarize-driver-trace.cjs",
+      "sha256": "6de51eae7d9d1ff7fc4b61e3aeb7861013b61c693d5149e8a10f6f11106ba407",
+      "size_bytes": 4128,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "untracked-source.tar.gz",
+      "path": "local-evidence/untracked-source.tar.gz",
+      "sha256": "b936c639c56d78fdf3cacc922fda3d942949f54e205208710fa142111f2d4bf0",
+      "size_bytes": 16242,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T21:10:15Z",
+    "started": "2026-09-09T21:10:15Z",
+    "finished": "2026-09-09T21:13:03.599Z"
+  }
+}

@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-queue-recovery",
+  "status": "succeeded",
+  "question": "Do injected submission failures on four exact acquisition queues preserve prior images, drain in-flight work, release allocations and recover exactly?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-queue-recovery/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "dirty": true,
+    "diff_sha256": "f7fb31bb5c28f08d5033d1479d884e2ae711fb16a52afc719b9f0a6fc64f9e64",
+    "snapshot_path": "local-output/source-v16.patch",
+    "entrypoint": "TANSResidencyHoldExperimentTests.testAll66ResidencyHoldIdleABAWhenConfigured"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-native-masks",
+      "path": "local-worktree/experiments/20260909-all66-separated-native-replay/local-evidence/native-stream-bytes-r2.json",
+      "sha256": "1c896b4f3ad0ff2a40b88377915be356bbf6b1c3ed7a2596898f60a9f3db1296"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "index_ceiling_bytes": 2108620800,
+    "one_factor": "v16 private coalesced source,4queues,narrow declarations. Inject before0/after1/after2 submissions; compare prior full66 hash set and recovered full66 output to frozen reference. No timing qualification. Request-only hold is off.",
+    "cache_state": "Prepared entropy archive, source pages unspecified; full references before three injected failures. No timed-query distribution or cold-load claim.",
+    "default": "Off; canonical sources and installed app untouched",
+    "untracked_source_sha256": "9a7e5c1131f3e56ee2f8a2c81d12a092be88b980b1eedac17268e55aa743c090",
+    "run_root": "local-output",
+    "command": "zsh local-output/run-coalesced-queues-faults.zsh",
+    "memory_gate": "Same source/index bytes; source0/Metal720896B after release. No new dense/raw resident. Inspect pressure/swap; no full System Trace.",
+    "acceptance": "All3injected failures throw, previous full66 output stays exact, allocation before/after unchanged, subsequent all66 load exact,source0/Metal720896B afterrelease. Does not inject a real GPU hardware fault or unsignaled-event failure.",
+    "artifact_results": {
+      "run-coalesced-queues-faults.zsh": "All3injected failures pass: prior/recovered full66 exact, allocation86,860,316,672B unchanged, finalsource0/Metal720896B. No native or speed qualification; actual GPU failure/event-liveness not injected.",
+      "full-suite-v16.log": "All3injected failures pass: prior/recovered full66 exact, allocation86,860,316,672B unchanged, finalsource0/Metal720896B. No native or speed qualification; actual GPU failure/event-liveness not injected.",
+      "source-v16.patch": "All3injected failures pass: prior/recovered full66 exact, allocation86,860,316,672B unchanged, finalsource0/Metal720896B. No native or speed qualification; actual GPU failure/event-liveness not injected.",
+      "source-v16-untracked.tar.gz": "All3injected failures pass: prior/recovered full66 exact, allocation86,860,316,672B unchanged, finalsource0/Metal720896B. No native or speed qualification; actual GPU failure/event-liveness not injected.",
+      "coalesced-queues-faults.log": "All3injected failures pass: prior/recovered full66 exact, allocation86,860,316,672B unchanged, finalsource0/Metal720896B. No native or speed qualification; actual GPU failure/event-liveness not injected.",
+      "coalesced-queues-faults-memory.txt": "All3injected failures pass: prior/recovered full66 exact, allocation86,860,316,672B unchanged, finalsource0/Metal720896B. No native or speed qualification; actual GPU failure/event-liveness not injected.",
+      "coalesced-queues-faults-memory-summary.json": "All3injected failures pass: prior/recovered full66 exact, allocation86,860,316,672B unchanged, finalsource0/Metal720896B. No native or speed qualification; actual GPU failure/event-liveness not injected.",
+      "coalesced-queues-faults-audit.json": "All3injected failures pass: prior/recovered full66 exact, allocation86,860,316,672B unchanged, finalsource0/Metal720896B. No native or speed qualification; actual GPU failure/event-liveness not injected."
+    },
+    "executable_sha256": "650c1914fb3c7da9fea66c18a7e65fa896234c8b71ccd312a9018a365c234769",
+    "result": "All3injected failures pass: prior/recovered full66 exact, allocation86,860,316,672B unchanged, finalsource0/Metal720896B. No native or speed qualification; actual GPU failure/event-liveness not injected."
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "run-coalesced-queues-faults.zsh",
+      "path": "local-evidence/run-coalesced-queues-faults.zsh",
+      "sha256": "3d23413476bf64a1e833d1c7203399c02a46151469edc4a4686bd1ecdae10964",
+      "size_bytes": 1456,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "full-suite-v16.log",
+      "path": "local-evidence/full-suite-v16.log",
+      "sha256": "916c83b42b23e03a2cbfd993f0775f3b0c40084ba8941ab6ba762fcb291b0a53",
+      "size_bytes": 89866,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "source-v16.patch",
+      "path": "local-evidence/source-v16.patch",
+      "sha256": "f7fb31bb5c28f08d5033d1479d884e2ae711fb16a52afc719b9f0a6fc64f9e64",
+      "size_bytes": 121952,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "source-v16-untracked.tar.gz",
+      "path": "local-evidence/source-v16-untracked.tar.gz",
+      "sha256": "9a7e5c1131f3e56ee2f8a2c81d12a092be88b980b1eedac17268e55aa743c090",
+      "size_bytes": 16637,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-queues-faults.log",
+      "path": "local-evidence/coalesced-queues-faults.log",
+      "sha256": "72bd1bb287e6b5afaf6fbe5791eaa896dc76ef9a57a56a5750dc36d97ef14a8f",
+      "size_bytes": 3364,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-queues-faults-memory.txt",
+      "path": "local-evidence/coalesced-queues-faults-memory.txt",
+      "sha256": "db2079d3c49d1b768ca87dc9201b0ffbe45a43dc16cfc3cf36df8a90195aceab",
+      "size_bytes": 15132,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-queues-faults-memory-summary.json",
+      "path": "local-evidence/coalesced-queues-faults-memory-summary.json",
+      "sha256": "e3b582ae9b94ac39f434024b6f54f61fa2898341a4af6130110b969941a4a133",
+      "size_bytes": 700,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-queues-faults-audit.json",
+      "path": "local-evidence/coalesced-queues-faults-audit.json",
+      "sha256": "b4ff3fcad02d65fcfaebd13ea18782c1f1c3e70944f0cc5c44ab103b4473b1f3",
+      "size_bytes": 708,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T22:22:06.662Z",
+    "started": "2026-09-09T22:25:34.605Z",
+    "finished": "2026-09-09T22:25:57.416Z"
+  }
+}

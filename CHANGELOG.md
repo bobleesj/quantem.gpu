@@ -6,6 +6,26 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- Experimental Metal entropy series (`@_spi(EntropySeriesPrototype)`): exact
+  detector queries now start from the cheapest of three exact bases, the
+  previous image, a bounded packed tile index (`prepareDetectorIndex`, with a
+  digest-verified on-disk cache and a `.centerFine` or `.uniform8` layout) or
+  an exact annulus atlas of caller-chosen masks (`beginDetectorAtlas`,
+  `appendDetectorAtlasField`); `configureInteractiveGrouping` sets the
+  all-acquisition launch geometry and selects a packet-owner tANS kernel that
+  writes each output scan once with no device atomics, bit-identical to the
+  shared-model kernel that remains for index builds and as the cross-check
+  oracle; `submitDetectorImages` / `finishDetectorImages` pipeline up to two
+  queries with seed rollback. One toggle, `QUANTEM_TANS_PACKET_OWNER` (unset:
+  owner kernel after `configureInteractiveGrouping`; `1`: everywhere; `0`:
+  shared-model kernel everywhere). On the 66-acquisition sealed archive on one
+  Apple M5 Max with a GPU shared with other applications (30-65% busy), the
+  all-66 ADF annulus lockstep walk went from about 17-18 to about 9.6 ms GPU
+  per frame (about 1.8x, paired runs, every frame and probe exact) and the
+  consuming app's pointer-exact all-66 drag from 63 to 107 fps at 100 px/s
+  and 80 to 119 fps at 50 px/s. One dataset, one gesture family, a loaded GPU:
+  not a universal 120 Hz claim. See
+  `docs/api/experimental_metal_entropy_series.md`.
 - Share percentile selection, display-limit conversion, and reusable-buffer
   Metal range/histogram encoding through `MetalImageRuntime`. Mixed integer
   and float batches use one caller-owned command buffer; synchronous helpers

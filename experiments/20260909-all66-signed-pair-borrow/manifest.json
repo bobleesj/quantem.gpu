@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-signed-pair-borrow",
+  "status": "succeeded",
+  "question": "Can an exact signed-borrow correction combine two six-bit SIMD reductions without sign regrouping and improve full66 wall time?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-signed-pair-borrow/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "dirty": true,
+    "entrypoint": "TANSSharedRefill16ExperimentTests.testAll66SharedRefill16ABAWhenConfigured",
+    "diff_sha256": "89ad7be5dde4f6d5fbceeaef9bfa5f7ba8109bbd35575fc65c4086254ad518d9",
+    "snapshot_path": "local-evidence/signed-pair-source.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-linux-products",
+      "path": "local-fixture/series-products/shared-resident-images.npy",
+      "sha256": "06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "representation": "lossless entropy only",
+    "source_bytes": 84681338880,
+    "index_bytes": 2108620800,
+    "one_factor": "One exact packed signed pair sum plus low-half borrow correction; unchanged mixed-tail baseline topology, sign grouping, encoded source and index. Literal uint16 groups uniformly retain two wide reductions.",
+    "default": "false; isolated internal flag only; no app/public API change",
+    "environment": "QUANTEM_TANS_SIGNED_PAIR=1 plus MIXED_TAILS=1/MIXED_SAVINGS_DIVISOR=8/SEPARATE_MIXED=1/MIXED_ONLY=1. A1/A2 frozen mixed-only baseline; B16 additionally signed-pair reduction. No refill16.",
+    "matrix": "7 BF/ABF/ADF large center/radius/edge/small delta cases, 5 queries/case/arm, A/B/A=105 full66 queries with warmup per case",
+    "preflight": "5/5 tests passed, full uint16 literal escape, zero chain, mixed models, signed/inactive lanes;7signed patterns for newmode79 and independent49reduction-bound combinations.",
+    "gate": "Frozen Linux BF/ADF/ABF full images, full66 hashes against default, immutable prior, group/lane counters and memory. Independent full original-count audit remains pending.",
+    "timing": "Whole query through completion wait; preparation separate; prepared archive/source pages unspecified; not native FPS or original cold load",
+    "memory": "Same source/index/table/scientific scratch; collect Metal allocation and sampled RSS/compressor/swap",
+    "artifact_results": {
+      "signed-pair-all66-log": "Exact but slower; refuted",
+      "signed-pair-analysis-json": "Exact but slower; refuted",
+      "signed-pair-memory-txt": "Exact but slower; refuted",
+      "signed-pair-preflight-log": "Exact but slower; refuted"
+    },
+    "result": "REFUTED:105/105 full66 exact and immutable/frozen references pass, but BF wallp50A1/B/A2=98.033/102.901/98.507ms,ABF102.459/106.901/103.403,ADF180.664/188.499/180.880,edge124.036/129.021/124.743,BFresize118.674/123.170/118.491. Additional arithmetic costs outweigh one fewer SIMD reduction.",
+    "decision": "Defaultoff; no app adoption. Same topology/source/index; retain slower exact experiment.",
+    "test_binary_sha256": "209d77f4b2612bf9a6a9838c18c8a23a6be1b8090d2c07261ecdf6cbd73977ff",
+    "test_source_sha256": "6fd8568375653957dbd58ebfb5ff070276ecc0d0258615bf3a5e2618986eacc5",
+    "memory_result": {
+      "sha256": "665f8b6b3bf887e6dffdbaacd5281bc223975e3e5f5ccae559bdf4c40c9e7ac9",
+      "n": 11,
+      "first": "2026-09-09T11:02:05Z",
+      "last": "2026-09-09T11:02:45Z",
+      "scope": "Read-only sampled system counters and process RSS; not private Metal resident accounting or an unsampled load peak.",
+      "swap_MiB": {
+        "first": 5679.19,
+        "last": 5679.19,
+        "max": 5679.19,
+        "delta": 0
+      },
+      "rss_bytes": {
+        "first": 446136320,
+        "last": 452427776,
+        "max": 523730944,
+        "delta": 6291456
+      },
+      "compressor_occupied_bytes": {
+        "first": 1406337024,
+        "last": 1406369792,
+        "max": 1406402560,
+        "delta": 32768
+      },
+      "swapouts": {
+        "first": 11254896,
+        "last": 11254896,
+        "max": 11254896,
+        "delta": 0
+      }
+    }
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "signed-pair-all66-log",
+      "path": "local-evidence/signed-pair-all66.log",
+      "sha256": "1638bc55e27d611fc78a6db63f361913d1645a6ab22b5824fdc6c218b9219590",
+      "size_bytes": 37787,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "signed-pair-analysis-json",
+      "path": "local-evidence/signed-pair-analysis.json",
+      "sha256": "852e559fb65da92848911d0ca1fa56febe78e73fd7ddf5b1420433f4c02ac0a9",
+      "size_bytes": 67177,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "signed-pair-memory-txt",
+      "path": "local-evidence/signed-pair-memory.txt",
+      "sha256": "665f8b6b3bf887e6dffdbaacd5281bc223975e3e5f5ccae559bdf4c40c9e7ac9",
+      "size_bytes": 13871,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "signed-pair-preflight-log",
+      "path": "local-evidence/signed-pair-preflight.log",
+      "sha256": "806f6a8db5d3c1ae7e6ff8f59a44aba8908d95b431998e4aa83d5d44b8d48bc1",
+      "size_bytes": 5260,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T10:59:46Z",
+    "started": "2026-09-09T10:59:46Z",
+    "finished": "2026-09-09T11:03:25Z"
+  }
+}

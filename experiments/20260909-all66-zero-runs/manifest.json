@@ -1,0 +1,33 @@
+{
+  "schema_version":1, "experiment_id":"20260909-all66-zero-runs", "status":"succeeded",
+  "question":"Can exact zero-symbol zero-bit state chains reduce sequential entropy transitions without changing source representation, counts, or resident/index bytes?",
+  "paper":{"authoritative_host":"phil", "repository":"quantem.gpu", "manifest_path":"experiments/20260909-all66-zero-runs/manifest.json"},
+  "code":{"repository":"quantem.gpu", "revision":"abff4e0cac5329fd83391a11dcfa8a6849ed1589", "dirty":true, "entrypoint":"TANSSharedRefill16ExperimentTests.testAll66SharedRefill16ABAWhenConfigured", "diff_sha256":"64955863738a5d59263cad135906a399f1aef6237ea5bcb4a03527645287ac9f", "snapshot_path":"local-evidence/zero-run.patch"},
+  "inputs":[{"dataset_id":"all66-entropy-checkpoint", "path":"local-fixture/checkpoint.json", "sha256":"2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"}, {"dataset_id":"frozen-linux-products", "path":"local-fixture/series-products/shared-resident-images.npy", "sha256":"06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"}],
+  "parameters":{
+    "shape":[66,512,512,192,192], "dtype":"uint16", "scan_bin":1, "detector_bin":1, "crop":null,
+    "representation":"lossless entropy only", "source_bytes":84681338880, "index_bytes":2108620800,
+    "one_factor":"At group initialization, fold up to63deterministic zero-symbol/zero-bit transitions into unused high bits of the existing4KiB shared table. Every scan output remains represented; nonzero/literal/escape paths exact and unchanged. Source/device table unchanged.",
+    "default":"false; only internal experimental flag, no public API or app change",
+    "test_source_sha256":"299f78a9f644fffb13d495641dd00b21e632714e9bdce1500eb639ddf883ead0",
+    "environment":"QUANTEM_TANS_ZERO_RUNS=1; QUANTEM_TANS_REFILL16_FIXTURE=full66 fixture. Legacy B16 label means zero-run B arm; refill16/direct_table false throughout.",
+    "matrix":"7BF/ABF/ADF largecenter/radius/edge/smalldelta cases,5queries/case/arm,A1/B16/A2=105queries; warmup perarm/case",
+    "preflight":"Independent fulluint16 highcount,escape,signed-removal and 91zero-pair cycles with varied startingpositions3/3pass over18kernel topologies. No CPU science fallback.",
+    "gate":"Frozen independent Linux fullBF/ADF/ABF images, all66 target hashes against unchangeddefault,prior immutability and memory; full original-count audit remains pending",
+    "timing":"Whole query including pergroup shortcut generation and final wait. Preparedarchive/sourcepagesunspecified load/indexseparate; notcoldoriginal or nativeFPS",
+    "memory":"Same source/index/output buffers and existing4KiBthreadgroup table, no new persistent or scientific scratch arrays",
+    "decision":"REFUTED: grouped zero-chain folding slower on all7cases; no app/native adoption",
+    "test_binary_sha256":"ec7f4f51d5e7a1018515dad8a42503dec9577e747d491b14a2d106af894b1582",
+    "result":"105/105all66queriesexact; frozenLinuxBF/ADF/ABF and prior immutability pass. ADFjump wallp50 A1/B/A2=236.410/288.251/236.253ms; BF149.925/181.668/149.869ms. N5/case/arm, allraw retained.",
+    "loading_result":"Preparedarchive/sourcepagesunspecified load14.046072s/index4.085380s; not coldoriginal or nativeFPS",
+    "memory_result":"Metal86935453696B everyquery,11samples beginning16safterloadstart, maxRSS521945088B (notprivateMetal), systemcompressor1408008192B, swap5719.19MiB/swapouts11254896unchanged",
+    "artifact_results":{"raw":"105complete exact query samples", "analysis":"All raw and p50/p95/max, legacyB16meanszeroruns", "memory":"11sampled system/process observations"}
+  },
+  "execution":{"host":"phil", "backend":"swift-metal", "gpu_ids":["default Metal device"], "gpu_model":"Apple M5 Max"},
+  "outputs":[
+    {"artifact_id":"raw", "path":"local-evidence/zero-run-all66.log", "sha256":"534845a7781a963be599ebdb72aca5c86ac0660c8220fe80d15c6370a9347ce4", "size_bytes":27658, "retention":"durable", "consuming_figures":[]},
+    {"artifact_id":"analysis", "path":"local-evidence/zero-run-analysis.json", "sha256":"e9843828546f805aede05acd6a71e10858bfdb2d0805b05866a2fd4ff8a780ef", "size_bytes":50918, "retention":"durable", "consuming_figures":[]},
+    {"artifact_id":"memory", "path":"local-evidence/zero-run-memory.txt", "sha256":"dfeb53c2dc5a47ae51557d726c73d6bcae1e97fbcc7011396cb97bb03dcf5338", "size_bytes":13871, "retention":"durable", "consuming_figures":[]}
+  ],
+  "timestamps":{"created":"2026-09-09T09:32:00Z", "started":"2026-09-09T09:32:02.872Z", "finished":"2026-09-09T09:33:00.386Z"}
+}

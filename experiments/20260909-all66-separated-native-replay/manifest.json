@@ -1,0 +1,136 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-separated-native-replay",
+  "status": "succeeded",
+  "question": "Does separated mixed-tail specialization improve held-out native masks without resize or idle regressions at the same64record submission?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-separated-native-replay/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "dirty": true,
+    "entrypoint": "TANSResidencyHoldExperimentTests.testAll66ResidencyHoldIdleABAWhenConfigured",
+    "diff_sha256": "222d1d9e41da2f4864b91c9756cc044e2962ceafb732296d4e0ff2143c6bb878",
+    "snapshot_path": "local-evidence/mixed-separate.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-linux-products",
+      "path": "local-fixture/series-products/shared-resident-images.npy",
+      "sha256": "06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"
+    },
+    {
+      "dataset_id": "frozen-native-nine-mask-replay",
+      "path": "local-evidence/native-stream-bytes-r2.json",
+      "sha256": "1c896b4f3ad0ff2a40b88377915be356bbf6b1c3ed7a2596898f60a9f3db1296"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "representation": "lossless entropy only",
+    "source_bytes": 84681338880,
+    "index_bytes": 2108620800,
+    "one_factor": "Combined qualified grouping/specialization candidate versus ordinary baseline. Same frozen9 geometries/history; 64record submission in every arm; no resident-set/no extra index;12672B dispatch metadata only.",
+    "default": "false; isolated internal flag only; no app/public API change",
+    "test_source_sha256": "650190cd51d59004731de453745d70e359a0efeb74e7121dcc85b6bbeaa59591",
+    "test_binary_sha256": "d784e30c7216fecd1b9290eb65b7bdbdcdacbd84111df1770eeccb67d07b211e",
+    "environment": "QUANTEM_TANS_REPLAY_MIXED_TAILS=1 QUANTEM_TANS_MIXED_SAVINGS_DIVISOR=8 QUANTEM_TANS_REPLAY_BASE_SPLIT=64; HOLD_IDLE_SECONDS0or4; HOLD_CYCLES3or2. B_mixed only changes grouping, not submission/residency. QUANTEM_TANS_SEPARATE_MIXED=1; all baseline arms remain ordinary original shader.",
+    "matrix": "Nine held-out frozen native geometries/histories and 198 probes per query; warm N3/case/arm81queries and4-second-idle N2/case/arm54queries; A/B/A; separate processes. All arms64records/command to match current QA app. Repeat loading on each process, sourcepage state unspecified.",
+    "preflight": "4/4 independent focused tests pass, including full uint16 literal, escaped symbols, 91-zero-pair chains, mixed model IDs, inactive lanes and signed removal. Initial compiler type-check timeout retained and fixed with explicit UInt32 closure type.",
+    "gate": "Frozen Linux BF/ADF/ABF full images, full66 hashes against default, immutable prior, group/lane counters and memory. Independent full original-count audit remains pending.",
+    "timing": "Whole query through completion wait; preparation separate; prepared archive/source pages unspecified; not native FPS or original cold load",
+    "memory": "Same source/index/table/scientific scratch; collect Metal allocation and sampled RSS/compressor/swap",
+    "artifact_results": {
+      "separated-replay-warm-log": "Retained actual warm/idle parity and timing; not headed UI",
+      "separated-replay-warm-analysis-json": "Retained actual warm/idle parity and timing; not headed UI",
+      "separated-replay-warm-memory-txt": "Retained actual warm/idle parity and timing; not headed UI",
+      "separated-replay-idle-log": "Retained actual warm/idle parity and timing; not headed UI",
+      "separated-replay-idle-analysis-json": "Retained actual warm/idle parity and timing; not headed UI",
+      "separated-replay-idle-memory-txt": "Retained actual warm/idle parity and timing; not headed UI"
+    },
+    "decision": "Warm complete66 gains replicated on held-out geometries without meaningful efficient-case regression. Idle results are variable and do not establish improvement or non-regression; retain as pending native acceptance. No production/default adoption.",
+    "result": "Warm81/81 and idle54/54 exact full66 images, frozenLinux full products,198 native probes and delta histories pass. Warmcase7 wall A1/B/A2=322.129/264.149/322.411ms;case3=157.514/97.232/157.874ms;case2=134.701/134.323/134.518ms. Idle p50 remains roughly0.4s and some candidate cases exceed controls; N2 small, no idle speedup claim.",
+    "memory_result": "Warm9 samples maxRSS460423168B/compressor1408450560B;swap5679.19MiB unchanged. ProcessRSS not privateMetal. Separate idle raw samples retained. Every queryMetal86866247680B and source/index frozen."
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "separated-replay-warm-log",
+      "path": "local-evidence/separated-replay-warm.log",
+      "sha256": "75bb0c7653b990fbe19df8f3dadaff034bf90f9b4b338e479a9c5ec5f3d170e0",
+      "size_bytes": 48144,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "separated-replay-warm-analysis-json",
+      "path": "local-evidence/separated-replay-warm-analysis.json",
+      "sha256": "36c71408c1c133fdfd67c8aad65988a4d91b3ae87ddca6b6b15e1cc945fe4986",
+      "size_bytes": 81262,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "separated-replay-warm-memory-txt",
+      "path": "local-evidence/separated-replay-warm-memory.txt",
+      "sha256": "3c6eb6b4f3db4ad4437e889fc3612ba8a3f6eff0c5348f7e644c5ea5a698a4ef",
+      "size_bytes": 11349,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "separated-replay-idle-log",
+      "path": "local-evidence/separated-replay-idle.log",
+      "sha256": "dd9ffb50384fb4d75205d157d24352947481ef5485d62d09edc121a2f2b9ed4e",
+      "size_bytes": 32784,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "separated-replay-idle-analysis-json",
+      "path": "local-evidence/separated-replay-idle-analysis.json",
+      "sha256": "b6137b8b15b50241e136baf0654ade7fec90f95bcbd8d59e475ea9d2cd3ac0b8",
+      "size_bytes": 59243,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "separated-replay-idle-memory-txt",
+      "path": "local-evidence/separated-replay-idle-memory.txt",
+      "sha256": "da844c5ef49a42525eb9e1045cbe57446ccbc0384138887d2ba809a9905495b9",
+      "size_bytes": 81965,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T10:20:40Z",
+    "started": "2026-09-09T10:21:02.778Z",
+    "finished": "2026-09-09T10:26:45.066Z"
+  }
+}

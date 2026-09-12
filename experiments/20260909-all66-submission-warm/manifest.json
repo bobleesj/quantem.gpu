@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-submission-warm",
+  "status": "succeeded",
+  "question": "Does 64-record submission grouping preserve active all66 repeated-query speed, or does the idle win trade away warm GPU throughput?",
+  "paper": {
+    "repository": "quantem.gpu",
+    "authoritative_host": "phil",
+    "manifest_path": "experiments/20260909-all66-submission-warm/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "dirty": true,
+    "diff_sha256": "87aa30bb06f9bc2687a39c065f583d06d3ef112187b41eff70de2ea064e8694e",
+    "snapshot_path": "local-evidence/submission-warm.patch",
+    "entrypoint": "TANSResidencyHoldExperimentTests.testAll66ResidencyHoldIdleABAWhenConfigured"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "native-matched-masks",
+      "path": "local-fixture/native-stream-bytes-r2.json",
+      "sha256": "1c896b4f3ad0ff2a40b88377915be356bbf6b1c3ed7a2596898f60a9f3db1296"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "representation": "lossless entropy",
+    "source_bytes": 84681338880,
+    "index_bytes": 2108620800,
+    "arms": [
+      "A1 one command",
+      "B_split 64records per command",
+      "A2 one command"
+    ],
+    "samples_per_case_per_arm": 3,
+    "cases": 9,
+    "idle_seconds": 0,
+    "cache_state": "same prepared archive/source pages unspecified; no source reloading between arms",
+    "env": "QUANTEM_TANS_SPLIT_COMMANDS=1 QUANTEM_TANS_HOLD_IDLE_SECONDS=0 QUANTEM_TANS_HOLD_CYCLES=3 plus exact fixture and replay paths",
+    "scientific": "All complete66 output hashes, frozen independent Linux BF/ADF/ABF images and198native probes per request must remain exact. No kernel math/layout change, no raw copies, no intermediate publication.",
+    "synchronization": "Same queue orders seed/index and all groups. Wait for completion of all submitted commands before return or error cleanup. Default zero. Failure injection gates remain pending before any adoption.",
+    "telemetry": "For split commands encode overlaps early submission; driver_schedule_ms and commit_to_gpu_start_ms refer to final command only. GPU span and interval sum separately logged; total query wall is primary.",
+    "test_binary_sha256": "f61aa0142e76f1bea2f853f625f363986789b378b0d4fd10aa162c55bc737065",
+    "test_source_sha256": "5001ee58425b8b1937c38254aa4e43d30beec4b87d8ee9d4f0aae18335dc7699",
+    "qualification": "N3/case active replay after idle win. Full66 output hashes and native frozen probes exact. Reject unconditional use if warm critical paths regress. No native/loading qualification.",
+    "result": "81/81 all66 exact timed queries. Warm paths essentially neutral: case2 A1/B/A2 median140.334/141.047/140.265ms; case7 338.617/337.600/339.023ms. Variations below1percent are not claimed as gains; a few small regressions retained. Idle improvement remains separate; no native/default qualification.",
+    "loading": "Prepared one load14.282901s/index4.243399s; no cold or loading speedup.",
+    "memory": "81Metalallocation samples86866247680B unchanged. System/processsampler late,onlyone08:21:54UTC sample; no measured warm processpeak. Swap5783.19MiB before/nearend; no peakclaim.",
+    "artifact_results": {
+      "raw-trials": "81 all66 exact warm A/B/A queries",
+      "analysis": "N3/case raw and p50/p95/max, no warm gain claimed",
+      "memory": "One late snapshot only; not representative peak or phase matrix"
+    }
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "path": "local-evidence/submission-warm-all66.log",
+      "sha256": "f477bbf2bccce6ae419b6d6aa428d96673d96c08235ebf8e1ba2d4838c8d0108",
+      "size_bytes": 47707,
+      "artifact_id": "raw-trials",
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "path": "local-evidence/submission-warm-analysis.json",
+      "sha256": "159d2ae81a7d7850d1a59e15a51657a9dfa5789dac1b5db8a0f8aa28c1d84007",
+      "size_bytes": 80951,
+      "artifact_id": "analysis",
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "path": "local-evidence/submission-warm-memory.txt",
+      "sha256": "e3a12ac43504b684e13fed6cd4302946598cb15183a1d3467043660c7ecca093",
+      "size_bytes": 1261,
+      "artifact_id": "memory",
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T08:20:40Z",
+    "started": "2026-09-09T08:21:17.641Z",
+    "finished": "2026-09-09T08:21:56.474Z"
+  }
+}

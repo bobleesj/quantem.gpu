@@ -1,0 +1,213 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-record-heaps",
+  "status": "succeeded",
+  "question": "Can tracked nonoverlapping private Metal heap backing for unchanged encoded records reduce load or idle query delay without larger scientific residency?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-record-heaps/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "dirty": true,
+    "entrypoint": "TANSRecordHeapExperimentTests",
+    "diff_sha256": "6b3e31056918e21c055b0a19624bb4620f3f081a04f0a1f43d9566115404e31a",
+    "snapshot_path": "local-evidence/heap-candidate-source.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-linux-products",
+      "path": "local-fixture/series-products/shared-resident-images.npy",
+      "sha256": "06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "representation": "lossless entropy only",
+    "source_bytes": 84681338880,
+    "index_bytes": 2108620800,
+    "one_factor": "Tracked placement-heap backing for unchanged immutable encoded record buffers; same kernel, 64-record submissions, mixed-tail options, source/read/authentication/staging and exact index.",
+    "defaults": "Off, package-internal option only; app/public API unchanged.",
+    "planned_matrix": "Fresh-process A1 standalone / B16 heap / A2 standalone, full66 load/index, frozen products, nine native replay masks, warm plus 4s idle, repeated cycles; retain every load and parity result.",
+    "memory": "Freeze scientific bytes; explicitly admit and log Metal alignment and heap allocation bytes. No raw 4D duplicate or aliasing.",
+    "gate": "Small nonoverlap/readback/budget/failure tests before all66. Any incorrect count, leaked allocation, loading regression or unreplicated wall improvement rejects promotion.",
+    "timing": "Prepared archive/source pages unspecified. Not arbitrary-source cold HDF5 or native FPS.",
+    "baseline_patch": "heap-baseline-source.patch preserves pre-experiment state.",
+    "candidate_binary_sha256": "6d0b82a86a7824548463ba8207d0c4bf48a44a5155d34d73be741ce817ef65fc",
+    "new_plan_source_sha256": "503dd1efd31eff7353bb2837b3823cb49327b98bdc1443478427a49ac5f4e12f",
+    "new_test_source_sha256": "9fc6a8c187106d4ab71f871195bb9ee8d19ebda79069c81476a2de6ec224be7b",
+    "preflight_result": "3/3 pass: exact disjoint readback, invalid plan rejection, real encoded hash failure/join/retry and allocation release. Initial Sendable warnings fixed with caller-serialized per-slot owned state; original log retained.",
+    "decision": "NOT ADOPTED:135warm+54idle exact full66 comparisons and nine cross-arm full66 hashes pass. Warm timing neutral. Idle improvements mixed; case0 regresses and case5/6 do not beat both controls. Heap loads14.417/14.428s are slower than standalone14.119-14.211s, so no load nonregression acceptance.",
+    "memory_result": "Source84681338880B/index2108620800B unchanged;66tracked heaps hold exact record payload84666114048B with417792B alignment. Heap Metal allocation86791110656B versus86797041664B after load/index; all six releases720896B and zero source/heap bytes. Staging352600064B unchanged.",
+    "actual_matrix_utc": "warm11:21:51-11:23:27; idle11:23:52-11:29:05, with sampler join included in orchestration endpoints. Raw XCTest timestamps retain actual compute duration.",
+    "artifact_results": {
+      "heap-warm-A1-log": "Exact comparisons passed; optimization refuted, not adopted. See raw evidence and result summary.",
+      "heap-warm-B16-log": "Exact comparisons passed; optimization refuted, not adopted. See raw evidence and result summary.",
+      "heap-warm-A2-log": "Exact comparisons passed; optimization refuted, not adopted. See raw evidence and result summary.",
+      "heap-idle-A1-log": "Exact comparisons passed; optimization refuted, not adopted. See raw evidence and result summary.",
+      "heap-idle-B16-log": "Exact comparisons passed; optimization refuted, not adopted. See raw evidence and result summary.",
+      "heap-idle-A2-log": "Exact comparisons passed; optimization refuted, not adopted. See raw evidence and result summary.",
+      "heap-warm-analysis-json": "Exact comparisons passed; optimization refuted, not adopted. See raw evidence and result summary.",
+      "heap-idle-analysis-json": "Exact comparisons passed; optimization refuted, not adopted. See raw evidence and result summary.",
+      "heap-preflight-final-log": "Exact comparisons passed; optimization refuted, not adopted. See raw evidence and result summary.",
+      "heap-warm-A1-memory-txt": "Exact comparisons passed; optimization refuted, not adopted. See raw evidence and result summary.",
+      "heap-warm-B16-memory-txt": "Exact comparisons passed; optimization refuted, not adopted. See raw evidence and result summary.",
+      "heap-warm-A2-memory-txt": "Exact comparisons passed; optimization refuted, not adopted. See raw evidence and result summary.",
+      "heap-idle-A1-memory-txt": "Exact comparisons passed; optimization refuted, not adopted. See raw evidence and result summary.",
+      "heap-idle-B16-memory-txt": "Exact comparisons passed; optimization refuted, not adopted. See raw evidence and result summary.",
+      "heap-idle-A2-memory-txt": "Exact comparisons passed; optimization refuted, not adopted. See raw evidence and result summary."
+    }
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "heap-warm-A1-log",
+      "path": "local-evidence/heap-warm-A1.log",
+      "sha256": "f1db5b0669d17b78a6ad728e80282a2e77ea1c0debfa03c294bfc6257b483b47",
+      "size_bytes": 28814,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "heap-warm-B16-log",
+      "path": "local-evidence/heap-warm-B16.log",
+      "sha256": "706a985c98d3c57ccbfc22323f38506a3deb3b00f1a85ae3ce5d83042572b0fe",
+      "size_bytes": 28894,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "heap-warm-A2-log",
+      "path": "local-evidence/heap-warm-A2.log",
+      "sha256": "30e358d27e5ceea6919f59c6a57c5a6996ece15751f15380755395ad7e5229a3",
+      "size_bytes": 28812,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "heap-idle-A1-log",
+      "path": "local-evidence/heap-idle-A1.log",
+      "sha256": "d8c5b369363cfc5d254cdef7a060540894b29d0d4eaf67fd1279e45bab62dd0e",
+      "size_bytes": 13471,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "heap-idle-B16-log",
+      "path": "local-evidence/heap-idle-B16.log",
+      "sha256": "dec910f6cab4949dd2076b90bdebef0a0042c8359ff7c6216ee7796f7171cedd",
+      "size_bytes": 13517,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "heap-idle-A2-log",
+      "path": "local-evidence/heap-idle-A2.log",
+      "sha256": "b2eaa4cdbf2d66eb71d0d6cfac6608f5e5fd255dd5da1f94183c4320db4a832f",
+      "size_bytes": 13464,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "heap-warm-analysis-json",
+      "path": "local-evidence/heap-warm-analysis.json",
+      "sha256": "05b578e3323fe3b6f64984bb9a8ce58867cdaa1f9d52ba99cd72e8ef5333f69c",
+      "size_bytes": 166020,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "heap-idle-analysis-json",
+      "path": "local-evidence/heap-idle-analysis.json",
+      "sha256": "7a6aa217cc88580a1f5ff6bddb55745a462e948743470c48e491a0fb1816cbd7",
+      "size_bytes": 89179,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "heap-preflight-final-log",
+      "path": "local-evidence/heap-preflight-final.log",
+      "sha256": "697834a53340c7277416d94d46a6b446518c4a93e0cec473a4c72cefa4486e27",
+      "size_bytes": 1899,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "heap-warm-A1-memory-txt",
+      "path": "local-evidence/heap-warm-A1-memory.txt",
+      "sha256": "d59e8cadc3a56bd1cd63f10173d88897e227c616f2309f7daf5d6b70fb82d35f",
+      "size_bytes": 10088,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "heap-warm-B16-memory-txt",
+      "path": "local-evidence/heap-warm-B16-memory.txt",
+      "sha256": "5ee3985dfefb1d0e7cfe53b59db0124f86a6b1e1ce90b22abaf792c5a37249ae",
+      "size_bytes": 10088,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "heap-warm-A2-memory-txt",
+      "path": "local-evidence/heap-warm-A2-memory.txt",
+      "sha256": "5a072e6dbabaf339447c47bd6d67fa9040280b968f64c63823e4344482b4dda6",
+      "size_bytes": 10088,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "heap-idle-A1-memory-txt",
+      "path": "local-evidence/heap-idle-A1-memory.txt",
+      "sha256": "1f9392c0a6cb57b7b920c7614dc0122c62cf184b33ee0826f6a93582c923d45f",
+      "size_bytes": 32786,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "heap-idle-B16-memory-txt",
+      "path": "local-evidence/heap-idle-B16-memory.txt",
+      "sha256": "961ba55a96d2283f0a8ba9e94e41b07826da68b156a829cc30dd8a852c0e6390",
+      "size_bytes": 32786,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "heap-idle-A2-memory-txt",
+      "path": "local-evidence/heap-idle-A2-memory.txt",
+      "sha256": "6967bdee264dc8f9f6bd54b9af1f8aa2d8e2a8a3b21ada2da48e70915d991475",
+      "size_bytes": 32786,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T11:15:11Z",
+    "started": "2026-09-09T11:15:11Z",
+    "finished": "2026-09-09T11:29:05Z"
+  }
+}

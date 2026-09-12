@@ -1,0 +1,135 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-coalesced-recovery",
+  "status": "succeeded",
+  "question": "Does coalesced source preserve prior output and exact recovery after partial command submission failures?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-coalesced-recovery/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "entrypoint": "TANSResidencyHoldExperimentTests.testAll66ResidencyHoldIdleABAWhenConfigured",
+    "dirty": true,
+    "snapshot_path": "local-evidence/source.patch",
+    "diff_sha256": "5a4bad36f60285bd086c23e115a4d5d07af90cf96729e848c9180586efd8d7c6"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-linux-products",
+      "path": "local-fixture/series-products/shared-resident-images.npy",
+      "sha256": "06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "index_ceiling_bytes": 2108620800,
+    "one_factor": "Same exact v12 coalesced full66 resident; inject failure before command0,after1,after2. Prior complete images unchanged, allocations restored, next query exact. No speed measurement.",
+    "default": "Off; existing app unchanged",
+    "untracked_source_sha256": "b936c639c56d78fdf3cacc922fda3d942949f54e205208710fa142111f2d4bf0",
+    "cache_state": "Complete prepared entropy archive, source pages unspecified. Not cold original source or headed UI/presentation.",
+    "run_root": "local-output",
+    "path_mapping": "Exact local paths and unmodified pre-normalization manifests are retained in the private output checkpoint.",
+    "artifact_results": {
+      "coalesced-r2-faults-audit.json": "All3 injected failure positions0/1/2 preserve prior full66 outputs and recover exact on next query. Allocation before/after86860316672B for each. Final source0,Metal720896B. No timing claim.",
+      "coalesced-r2-faults-memory-summary.json": "All3 injected failure positions0/1/2 preserve prior full66 outputs and recover exact on next query. Allocation before/after86860316672B for each. Final source0,Metal720896B. No timing claim.",
+      "coalesced-r2-faults-memory.txt": "All3 injected failure positions0/1/2 preserve prior full66 outputs and recover exact on next query. Allocation before/after86860316672B for each. Final source0,Metal720896B. No timing claim.",
+      "coalesced-r2-faults.log": "All3 injected failure positions0/1/2 preserve prior full66 outputs and recover exact on next query. Allocation before/after86860316672B for each. Final source0,Metal720896B. No timing claim.",
+      "run-coalesced-faults-r2.zsh": "All3 injected failure positions0/1/2 preserve prior full66 outputs and recover exact on next query. Allocation before/after86860316672B for each. Final source0,Metal720896B. No timing claim.",
+      "source.patch": "All3 injected failure positions0/1/2 preserve prior full66 outputs and recover exact on next query. Allocation before/after86860316672B for each. Final source0,Metal720896B. No timing claim.",
+      "untracked-source.tar.gz": "All3 injected failure positions0/1/2 preserve prior full66 outputs and recover exact on next query. Allocation before/after86860316672B for each. Final source0,Metal720896B. No timing claim."
+    },
+    "preflight": "239 release tests /27 explicit opt-in skips /0 failures. v11 teardown failed in all arms at5,586,944B, equal to expected720,896B plus one full66 DP buffer. v12 changes only test DP extraction autorelease scopes. Original failure retained; require original720,896B gate without relaxation.",
+    "executable_sha256": "38cb156a71ba52550d2136b3671c77838d496acece949e31bd95e5d6d6de8b75",
+    "result": "All3 injected failure positions0/1/2 preserve prior full66 outputs and recover exact on next query. Allocation before/after86860316672B for each. Final source0,Metal720896B. No timing claim."
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "coalesced-r2-faults-audit.json",
+      "path": "local-evidence/coalesced-r2-faults-audit.json",
+      "sha256": "14a97b501dd3679daad2347249005db61340c085f92b74f14b57047bccb35903",
+      "size_bytes": 561,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-r2-faults-memory-summary.json",
+      "path": "local-evidence/coalesced-r2-faults-memory-summary.json",
+      "sha256": "584d2962788b7e1592d76d769be3bf2cf9dc88b4abf59078f0bf0afb692eb3cc",
+      "size_bytes": 697,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-r2-faults-memory.txt",
+      "path": "local-evidence/coalesced-r2-faults-memory.txt",
+      "sha256": "7ac541996905e0fd9a9780f0a149a390327f46f6b72dc5d541e79f058c46b822",
+      "size_bytes": 13860,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-r2-faults.log",
+      "path": "local-evidence/coalesced-r2-faults.log",
+      "sha256": "1c083aa944324325526aa9b596a9024747bf6ea9f40b14dabb4185397b57b84b",
+      "size_bytes": 3314,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "run-coalesced-faults-r2.zsh",
+      "path": "local-evidence/run-coalesced-faults-r2.zsh",
+      "sha256": "904697fc65a78ab4cac384f0f2b7b2b79c24098c5f310e5a4767c26255e7bb73",
+      "size_bytes": 1375,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "source.patch",
+      "path": "local-evidence/source.patch",
+      "sha256": "5a4bad36f60285bd086c23e115a4d5d07af90cf96729e848c9180586efd8d7c6",
+      "size_bytes": 117782,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "untracked-source.tar.gz",
+      "path": "local-evidence/untracked-source.tar.gz",
+      "sha256": "b936c639c56d78fdf3cacc922fda3d942949f54e205208710fa142111f2d4bf0",
+      "size_bytes": 16242,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T21:08:00Z",
+    "started": "2026-09-09T21:08:00Z",
+    "finished": "2026-09-09T21:08:22.513Z"
+  }
+}

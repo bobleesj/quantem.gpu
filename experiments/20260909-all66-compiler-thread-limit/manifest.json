@@ -1,0 +1,138 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-compiler-thread-limit",
+  "status": "succeeded",
+  "question": "Can an explicit compiler maximum of128threads improve the unchanged128thread entropy decoder over the default compiler maximum?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-compiler-thread-limit/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "dirty": true,
+    "entrypoint": "TANSSharedRefill16ExperimentTests.testAll66SharedRefill16ABAWhenConfigured",
+    "diff_sha256": "cbd6ce31f5a99473101b56f6f54d6453f670ed667eba5dc16c08a855b56051ae",
+    "snapshot_path": "local-evidence/compiler-limit-source.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-linux-products",
+      "path": "local-fixture/series-products/shared-resident-images.npy",
+      "sha256": "06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "representation": "lossless entropy only",
+    "source_bytes": 84681338880,
+    "index_bytes": 2108620800,
+    "one_factor": "MTLComputePipelineDescriptor.maxTotalThreadsPerThreadgroup128 versus ordinary default. Actual launch128threads unchanged. No threadExecutionWidth hint, loop unrolling, packetILP, heap, zero folding or layout changes. Frozen mixed-tail baseline allarms.",
+    "gate": "Fulluint16/mixedmodel/escape/zero/signed/inactive adversarial parity then105exact all66 A/B/A. Log actual compiled limit; static memory not hardware occupancy.",
+    "memory": "No new source/index/scratch/metadata. Compiler register/spill changes inferred only if measured; no hardware counters claim.",
+    "timing": "Full query wall completion; prepared archive/source pages unspecified. Not native FPS or coldoriginalsource.",
+    "defaults": "0 keeps ordinary makeComputePipelineState(function:); internalexperiment only. No publicAPI/appdefault change.",
+    "test_binary_sha256": "f3bd02f90e01e0227de5fb1a7324715c33f347e76c8e3744f9493ad724ccc60a",
+    "metal_resource_sha256": "e2591bc1edad76c8c7d5423172d0f7eae3484a3ace11312596019ad9d5f45e93",
+    "untracked_source_sha256": "c486c067093c560d4ca7ac84b193f09666d229cf1a86c1f6b3e734b270df90ef",
+    "preflight": "5independent decoder tests pass; actualcompiled limits128/256 verified versusdefault1024. Allunroll1 and zero/heap experiments off for newonefactor run.",
+    "result": "REFUTED as a meaningful speedup. Actual compiled maximum128 confirmed;105/105 all66 comparisons exact. A/B/A p50ms BF98.073/98.321/98.758;ABF102.450/102.127/102.099;ADF180.265/180.245/180.505;edge123.855/123.922/124.077. No app adoption; internal default0 retained.",
+    "memory_result": "13sample window:RSSmax491962368B excludesprivateMetal;compressor1368014848B;swap5623.06MiB andswapouts11254896unchanged. Same source/index allocation.",
+    "artifact_results": {
+      "compiler-limit-128-all66-log": "REFUTED as a meaningful speedup. Actual compiled maximum128 confirmed;105/105 all66 comparisons exact. A/B/A p50ms BF98.073/98.321/98.758;ABF102.450/102.127/102.099;ADF180.265/180.245/180.505;edge123.855/123.922/124.077. No app adoption; internal default0 retained.",
+      "compiler-limit-128-analysis-json": "REFUTED as a meaningful speedup. Actual compiled maximum128 confirmed;105/105 all66 comparisons exact. A/B/A p50ms BF98.073/98.321/98.758;ABF102.450/102.127/102.099;ADF180.265/180.245/180.505;edge123.855/123.922/124.077. No app adoption; internal default0 retained.",
+      "compiler-limit-128-memory-txt": "REFUTED as a meaningful speedup. Actual compiled maximum128 confirmed;105/105 all66 comparisons exact. A/B/A p50ms BF98.073/98.321/98.758;ABF102.450/102.127/102.099;ADF180.265/180.245/180.505;edge123.855/123.922/124.077. No app adoption; internal default0 retained.",
+      "compiler-limit-128-memory-summary-json": "REFUTED as a meaningful speedup. Actual compiled maximum128 confirmed;105/105 all66 comparisons exact. A/B/A p50ms BF98.073/98.321/98.758;ABF102.450/102.127/102.099;ADF180.265/180.245/180.505;edge123.855/123.922/124.077. No app adoption; internal default0 retained.",
+      "compiler-limit-preflight-log": "REFUTED as a meaningful speedup. Actual compiled maximum128 confirmed;105/105 all66 comparisons exact. A/B/A p50ms BF98.073/98.321/98.758;ABF102.450/102.127/102.099;ADF180.265/180.245/180.505;edge123.855/123.922/124.077. No app adoption; internal default0 retained.",
+      "compiler-limit-source-patch": "REFUTED as a meaningful speedup. Actual compiled maximum128 confirmed;105/105 all66 comparisons exact. A/B/A p50ms BF98.073/98.321/98.758;ABF102.450/102.127/102.099;ADF180.265/180.245/180.505;edge123.855/123.922/124.077. No app adoption; internal default0 retained.",
+      "compiler-limit-untracked-source-tar-gz": "REFUTED as a meaningful speedup. Actual compiled maximum128 confirmed;105/105 all66 comparisons exact. A/B/A p50ms BF98.073/98.321/98.758;ABF102.450/102.127/102.099;ADF180.265/180.245/180.505;edge123.855/123.922/124.077. No app adoption; internal default0 retained."
+    }
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "compiler-limit-128-all66-log",
+      "path": "local-evidence/compiler-limit-128-all66.log",
+      "sha256": "d44a9448054a9a89c42c70ab7fc61191138d25d7cf2139ec46906b738fdff358",
+      "size_bytes": 38238,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "compiler-limit-128-analysis-json",
+      "path": "local-evidence/compiler-limit-128-analysis.json",
+      "sha256": "d69df50e49d9232722f528c57ceb022d37c62be44f0051be3c69a1516364a28d",
+      "size_bytes": 67210,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "compiler-limit-128-memory-txt",
+      "path": "local-evidence/compiler-limit-128-memory.txt",
+      "sha256": "10573223f00ec78d60d7052247c6b8188eab76bbc2b916b36fc60f28fbec68f0",
+      "size_bytes": 16393,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "compiler-limit-128-memory-summary-json",
+      "path": "local-evidence/compiler-limit-128-memory-summary.json",
+      "sha256": "e2d89483e5902ade7a2551b99bb8fd9a205c8216b0582ce55c25ebb5feec0eb6",
+      "size_bytes": 730,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "compiler-limit-preflight-log",
+      "path": "local-evidence/compiler-limit-preflight.log",
+      "sha256": "0fc6cf0d60196e3e32ab9d09c448f35c6287281cef2596a2ada1020d1ef36eea",
+      "size_bytes": 6104,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "compiler-limit-source-patch",
+      "path": "local-evidence/compiler-limit-source.patch",
+      "sha256": "cbd6ce31f5a99473101b56f6f54d6453f670ed667eba5dc16c08a855b56051ae",
+      "size_bytes": 90086,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "compiler-limit-untracked-source-tar-gz",
+      "path": "local-evidence/compiler-limit-untracked-source.tar.gz",
+      "sha256": "c486c067093c560d4ca7ac84b193f09666d229cf1a86c1f6b3e734b270df90ef",
+      "size_bytes": 9419,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T11:58:17Z",
+    "started": "2026-09-09T12:02:19Z",
+    "finished": "2026-09-09T12:03:11Z"
+  }
+}

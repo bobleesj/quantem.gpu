@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-mixed-only-specialization",
+  "status": "succeeded",
+  "question": "Does compile-time mixed-only specialization remove unused shared table storage and reduce exact all66 query wall time?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-mixed-only-specialization/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "dirty": true,
+    "entrypoint": "TANSSharedRefill16ExperimentTests.testAll66SharedRefill16ABAWhenConfigured",
+    "diff_sha256": "9be08db068e0d49adb5a4e06c48b4f1ee1849dc32113ce06e237411e38846ab7",
+    "snapshot_path": "local-evidence/mixed-only.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-linux-products",
+      "path": "local-fixture/series-products/shared-resident-images.npy",
+      "sha256": "06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "representation": "lossless entropy only",
+    "source_bytes": 84681338880,
+    "index_bytes": 2108620800,
+    "one_factor": "Function constant12 makes separated mixed-tail dispatch mixed-only; ordinary full groups keep original specialization. Static threadgroup allocation4096->0 bytes verified by pipeline property; no claim of measured occupancy from that property. Same32lane/128thread topology, source/index/grouping and integer operations.",
+    "default": "false; isolated internal flag only; no app/public API change",
+    "test_source_sha256": "613841bb65de5a4b499b5592029c984745145e8d57b9c2fba540072637bc92b6",
+    "test_binary_sha256": "27acd1894db550f01b48c30163b9f65bd96009abae7e492ee184e6974c8aa1ff",
+    "environment": "QUANTEM_TANS_MIXED_TAILS=1 QUANTEM_TANS_MIXED_SAVINGS_DIVISOR=8 QUANTEM_TANS_SEPARATE_MIXED=1 QUANTEM_TANS_MIXED_ONLY=1. A1/A2 ordinary baseline, B16 combined exact mixed-only candidate; split-only causal effect not isolated by this baseline comparison.",
+    "matrix": "7 BF/ABF/ADF large center/radius/edge/small delta cases, 5 queries/case/arm, A/B/A=105 full66 queries with warmup per case",
+    "preflight": "4/4 literal/escape/zero-chain/signed/mixed exact tests pass, including newmode78. Static threadgroup storage asserted0; prior runtime-mixedmode77reports4096.",
+    "gate": "Frozen Linux BF/ADF/ABF full images, full66 hashes against default, immutable prior, group/lane counters and memory. Independent full original-count audit remains pending.",
+    "timing": "Whole query through completion wait; preparation separate; prepared archive/source pages unspecified; not native FPS or original cold load",
+    "memory": "Same source/index/table/scientific scratch; collect Metal allocation and sampled RSS/compressor/swap",
+    "artifact_results": {
+      "raw": "Exact retained evidence, not nativeFPS",
+      "analysis": "Exact retained evidence, not nativeFPS",
+      "memory": "Exact retained evidence, not nativeFPS",
+      "pipeline": "Exact retained evidence, not nativeFPS"
+    },
+    "result": "105/105 all66 exact, frozenLinux products and prior immutable pass. Wallp50 A1/B/A2ms BF149.418/99.038/149.366; ABF141.957/102.314/141.555; ADF236.239/180.777/235.331; edge185.783/124.124/186.374; BFresize118.165/118.598/119.359; ADFresize58.355/52.870/58.309; small28.486/26.996/28.203.",
+    "decision": "No clear incremental speed gain over separated-runtime mixed, but static table storage drops4096to0 exactly; overall warm candidate improvement replicated against ordinary controls. Freeze for local QA public-SPI/native evaluation, not production acceptance.",
+    "memory_result": "Source/index/Metalallocation unchanged;14 process/system samples, maxRSS451690496B excludingprivateMetal,compressor1408679936B,swap5679.19MiB unchanged."
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "raw",
+      "path": "local-evidence/mixed-only-all66.log",
+      "sha256": "552aeae2c0afd3ceb730021c600c814292370a538b846d37b88cba4394c26f92",
+      "size_bytes": 37777,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "analysis",
+      "path": "local-evidence/mixed-only-analysis.json",
+      "sha256": "580420d4bebe866cbf4042693f64b525e2db57a9374877724fa2c39d4814e2fb",
+      "size_bytes": 67217,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "memory",
+      "path": "local-evidence/mixed-only-memory.txt",
+      "sha256": "93fdbc11fc9b9f0c56d4a25719d52f3c0877fdda231208799a87295144f1dbf0",
+      "size_bytes": 17654,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "pipeline",
+      "path": "local-evidence/mixed-only-build.log",
+      "sha256": "0c8ad813573d2ce11405a0f3c152edbecb463b9a9c2a36333c51183ab7f5461d",
+      "size_bytes": 3286,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T10:29:10Z",
+    "started": "2026-09-09T10:29:39.272Z",
+    "finished": "2026-09-09T10:30:33.568Z"
+  }
+}

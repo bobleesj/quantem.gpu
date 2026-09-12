@@ -1,0 +1,140 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-uniform16-idle",
+  "status": "succeeded",
+  "question": "Does the smaller uniform16 exact index improve nine held-out native drag geometries after idle?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-uniform16-idle/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "entrypoint": "TANSResidencyHoldExperimentTests.testAll66ResidencyHoldIdleABAWhenConfigured",
+    "dirty": true,
+    "snapshot_path": "local-evidence/source.patch",
+    "diff_sha256": "186950650bccf997d57cd44a544af8b54ac04578c65f3eda8512cbea6615e9ce"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-linux-products",
+      "path": "local-fixture/series-products/shared-resident-images.npy",
+      "sha256": "06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"
+    },
+    {
+      "dataset_id": "frozen-native-nine-masks",
+      "path": "local-worktree/experiments/20260909-all66-separated-native-replay/local-evidence/native-stream-bytes-r2.json",
+      "sha256": "1c896b4f3ad0ff2a40b88377915be356bbf6b1c3ed7a2596898f60a9f3db1296"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "index_ceiling_bytes": 2108620800,
+    "matrix": "3 arms x9 fixed native masks x2cycles, 4s idle before every query; complete66 hashes and198frozen pixel values per geometry",
+    "one_factor": "centerFine/global vs uniform16/blockwise index; fixed submission64,mixed-separated,mixed-only,savings8",
+    "oracle": "Reference hashes and probes stay fixed; decoded-column count and usePrevious are permitted to change because exact algebraic decomposition differs, never output",
+    "timing": "Package native-geometry replay, not headed UI or cold load. Prepared entropy archive, source-page state unspecified.",
+    "untracked_source_sha256": "ae698df8d71b6272d4c7c76c3b48caf6effb7244a84a84e3680e50ca5ab67ae7",
+    "executable_sha256": "c4b8efadd3b7c4e92c39de871dcffda437caea99c12877c5bf09e63ddea22a30",
+    "run_root": "local-output",
+    "result": "Held-out paused benefit refuted: all54 complete66 outputs exact; pooled wall p50 A1/B/A2 456.564/456.331/460.807ms. GPU command interval sums193.028/165.165/193.963ms but inter-command gaps226.212/274.541/224.394ms. Separate medians are not additive; not hardware-active counters. No app adoption; swap unchanged.",
+    "artifact_results": {
+      "architecture-unit-v2.log": "54 exact full66 paused replays; lower decode work but no reliable wall improvement; no native claim",
+      "source.patch": "54 exact full66 paused replays; lower decode work but no reliable wall improvement; no native claim",
+      "uniform16-idle-analysis.json": "54 exact full66 paused replays; lower decode work but no reliable wall improvement; no native claim",
+      "uniform16-idle-memory-summary.json": "54 exact full66 paused replays; lower decode work but no reliable wall improvement; no native claim",
+      "uniform16-idle-memory.txt": "54 exact full66 paused replays; lower decode work but no reliable wall improvement; no native claim",
+      "uniform16-idle.log": "54 exact full66 paused replays; lower decode work but no reliable wall improvement; no native claim",
+      "untracked-source.tar.gz": "54 exact full66 paused replays; lower decode work but no reliable wall improvement; no native claim"
+    },
+    "path_mapping": "Exact local paths and unmodified pre-normalization manifests are retained in the private output checkpoint."
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "architecture-unit-v2.log",
+      "path": "local-evidence/architecture-unit-v2.log",
+      "sha256": "ff816836c3a00034dcb50b04eb26f1660302d67062e158cde26b7671fcbcad78",
+      "size_bytes": 10767,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "source.patch",
+      "path": "local-evidence/source.patch",
+      "sha256": "186950650bccf997d57cd44a544af8b54ac04578c65f3eda8512cbea6615e9ce",
+      "size_bytes": 112211,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "uniform16-idle-analysis.json",
+      "path": "local-evidence/uniform16-idle-analysis.json",
+      "sha256": "d4092dce454336a6ad5687386631c85a5027bac1995cf5bb3931457fe7363b81",
+      "size_bytes": 86449,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "uniform16-idle-memory-summary.json",
+      "path": "local-evidence/uniform16-idle-memory-summary.json",
+      "sha256": "d15e390a9a4c6aa8a9d7c0f0d99c077948d50c45208cc5c963af11f7f664b143",
+      "size_bytes": 701,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "uniform16-idle-memory.txt",
+      "path": "local-evidence/uniform16-idle-memory.txt",
+      "sha256": "2da558ebb4a994d3c649c5b527c334991129151275a6fb8400075a1fdc58d87b",
+      "size_bytes": 161280,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "uniform16-idle.log",
+      "path": "local-evidence/uniform16-idle.log",
+      "sha256": "cf07e0c6591745cda3fad5e12d40f12926db4d9e1e8a8597649c1c9274a7da44",
+      "size_bytes": 47663,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "untracked-source.tar.gz",
+      "path": "local-evidence/untracked-source.tar.gz",
+      "sha256": "ae698df8d71b6272d4c7c76c3b48caf6effb7244a84a84e3680e50ca5ab67ae7",
+      "size_bytes": 12166,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T16:28:55.997Z",
+    "started": "2026-09-09T16:28:55.997Z",
+    "finished": "2026-09-09T16:33:26.033Z"
+  }
+}

@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-command256-idle-r2",
+  "status": "succeeded",
+  "question": "Does batching 256 rather than 64 chunks reduce all66 inter-command gaps after idle without changing exact counts or memory?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-command256-idle-r2/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "entrypoint": "TANSResidencyHoldExperimentTests.testAll66ResidencyHoldIdleABAWhenConfigured",
+    "dirty": true,
+    "diff_sha256": "abc6bbdb003dd4d224c7793d9b05a5ac93be28071aedd16b4050650adc8c539b",
+    "snapshot_path": "local-evidence/source.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-linux-products",
+      "path": "local-fixture/series-products/shared-resident-images.npy",
+      "sha256": "06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "index_bytes": 2108620800,
+    "representation": "lossless entropy only; no raw resident",
+    "timing": "Prepared archive source pages unspecified; package completion not native FPS or cold source.",
+    "untracked_source_sha256": "5bf0be26438ae1505967991764c6f5fe8f2f8d15137afd43a5186129e41763f7",
+    "one_factor": "64/256/64 command submission, native-nine masks, two cycles, 4s idle. Staged and concurrent dispatch false. Same separated mixed-only savings8.",
+    "prior_failure": "20260909-all66-command256-idle rejected 256 at validation before candidate dispatch; guard now explicitly permits256 for experiment.",
+    "result": "54/54 full66 native-mask comparisons exact. Pooled nine-mask package wall nearest-rank p50 A1/B/A2=453.148/470.235/442.544ms; N18 per arm. No consistent gain, candidate worse in most cases. Gap persists; not adopted. Source/index and86866247680B Metal allocation unchanged, sampled swap delta0.",
+    "artifact_results": {
+      "batch256-idle-r2-log": "54/54 full66 native-mask comparisons exact. Pooled nine-mask package wall nearest-rank p50 A1/B/A2=453.148/470.235/442.544ms; N18 per arm. No consistent gain, candidate worse in most cases. Gap persists; not adopted. Source/index and86866247680B Metal allocation unchanged, sampled swap delta0.",
+      "batch256-r2-analysis-json": "54/54 full66 native-mask comparisons exact. Pooled nine-mask package wall nearest-rank p50 A1/B/A2=453.148/470.235/442.544ms; N18 per arm. No consistent gain, candidate worse in most cases. Gap persists; not adopted. Source/index and86866247680B Metal allocation unchanged, sampled swap delta0.",
+      "batch256-r2-memory-txt": "54/54 full66 native-mask comparisons exact. Pooled nine-mask package wall nearest-rank p50 A1/B/A2=453.148/470.235/442.544ms; N18 per arm. No consistent gain, candidate worse in most cases. Gap persists; not adopted. Source/index and86866247680B Metal allocation unchanged, sampled swap delta0.",
+      "batch256-r2-memory-summary-json": "54/54 full66 native-mask comparisons exact. Pooled nine-mask package wall nearest-rank p50 A1/B/A2=453.148/470.235/442.544ms; N18 per arm. No consistent gain, candidate worse in most cases. Gap persists; not adopted. Source/index and86866247680B Metal allocation unchanged, sampled swap delta0."
+    },
+    "test_binary_sha256": "f9e43eaa1c5d1acc3f9454583e539cd17fb0c69718d209af98207558a7b4eaba"
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "batch256-idle-r2-log",
+      "path": "local-evidence/batch256-idle-r2.log",
+      "sha256": "03432923ccf114ec9c789e4fa281e36d87f6b2d0fa15db0e816c9bdf3f335c12",
+      "size_bytes": 35801,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "batch256-r2-analysis-json",
+      "path": "local-evidence/batch256-r2-analysis.json",
+      "sha256": "94fadb71e2a77b2d7810b586d5af9617eff5c58e568ad9929fcff7f23d999de7",
+      "size_bytes": 59725,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "batch256-r2-memory-txt",
+      "path": "local-evidence/batch256-r2-memory.txt",
+      "sha256": "55fd5c6ff2dd36747dc6e6f05918feca91e3181f56ddb095de3cd58489dc0d6f",
+      "size_bytes": 155103,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "batch256-r2-memory-summary-json",
+      "path": "local-evidence/batch256-r2-memory-summary.json",
+      "sha256": "bd336ff0234072d8e25486b0e7eb395324c0c8831958bcc0430e717ec2e4c74e",
+      "size_bytes": 740,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T13:06:02Z",
+    "started": "2026-09-09T13:07:37Z",
+    "finished": "2026-09-09T13:11:59Z"
+  }
+}

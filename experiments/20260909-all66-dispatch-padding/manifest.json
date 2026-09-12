@@ -1,0 +1,21 @@
+{
+  "schema_version":1, "experiment_id":"20260909-all66-dispatch-padding", "status":"succeeded",
+  "question":"How many launched shared-model groups exit immediately because the global rectangular launch exceeds each context group count?",
+  "paper":{"authoritative_host":"phil", "repository":"quantem.gpu", "manifest_path":"experiments/20260909-all66-dispatch-padding/manifest.json"},
+  "code":{"repository":"quantem.gpu", "revision":"abff4e0cac5329fd83391a11dcfa8a6849ed1589", "dirty":true, "entrypoint":"local-evidence/audit-dispatch-padding.py", "diff_sha256":"089499b6c3a58689f43236ad9686344a06582db1670750c8f98b280490c1ad24", "snapshot_path":"local-evidence/audit-dispatch-padding.py"},
+  "inputs":[{"dataset_id":"authenticated-global-planner", "path":"local-fixture/global-state.npz", "sha256":"c499fa252b142a1a9d000c873646e6d3f43b9cd05dbcc7e801db08f29d83b99f"}, {"dataset_id":"native-matched-masks", "path":"local-fixture/native-stream-bytes-r2.json", "sha256":"1c896b4f3ad0ff2a40b88377915be356bbf6b1c3ed7a2596898f60a9f3db1296"}],
+  "parameters":{
+    "shape":[66,512,512,192,192], "dtype":"uint16", "scan_bin":1, "detector_bin":1, "crop":null,
+    "scope":"Metadata-only launch accounting, no scientific CPU decode or GPU run",
+    "geometry_source_sha256":"24e7a3b250758703e9ff382793eab8ae985f5eb8eacf61191cb5721a27e4349b",
+    "matrix":"9frozen native masks and45 BF/ABF/ADF center/radius/edge cases,264modelcontexts,4records/context,8packetgroups/record/modelgroup",
+    "gates":"Reproduce frozen9 masks/prior/residual hashes first, then count dense modelgroupceil32 and emptylaunchgroups. Distinguish idle groups from inactive lanes in valid groups. Not GPUtime or FPS.",
+    "decision":"No compact-dispatch adoption: native9 immediate-exitgroups only4.51-10.75percent. Next hypothesis is packing small model tails into mixed-model groups; native inactive lanes11.4-50.0percent, not measured time saved.",
+    "result":"54geometrycases verified exact coefficient identity, frozen9masks/prior/residualhashes reproduced. Native groupdispatch439296-1317888packetgroups; valid400832-1258368. Earlyexitgroupfraction4.5066-10.7487percent; inactive laneswithinactivegroups10.4684-50.0050percent. All54maximumemptygroupfraction58.9773percent is a different geometry, not representative nativegain.",
+    "limitation":"Logical launch/lanewaste accounting only, not hardwareoccupancy or GPUcounters. No scientific countdecode, newGPUload, measuredruntime or nativeFPS.",
+    "artifact_results":{"analysis":"All54geometry rows, bothplanner outputs and264context counts perrow"}
+  },
+  "execution":{"host":"phil", "backend":"numpy-geometry-metadata-only", "gpu_ids":[], "gpu_model":null},
+  "outputs":[{"artifact_id":"analysis", "path":"local-evidence/dispatch-padding.json", "sha256":"35995dbdabee0ba39f62423b4b0999e191836773099e0040e622fecc99602aeb", "size_bytes":538266, "retention":"durable", "consuming_figures":[]}],
+  "timestamps":{"created":"2026-09-09T09:40:00Z", "started":"2026-09-09T09:40:00Z", "finished":"2026-09-09T09:41:03Z"}
+}

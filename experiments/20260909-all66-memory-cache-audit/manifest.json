@@ -1,0 +1,276 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-memory-cache-audit",
+  "status": "succeeded",
+  "question": "How much distinct encoded storage and query traffic exists, and do sampled compute stages explain the paused all66 wall versus inter-command latency? Cache hit rates require actual counters; timestamps alone are not cache counters.",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-memory-cache-audit/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "entrypoint": "TANSResidencyHoldExperimentTests with bounded memory/stage audit",
+    "dirty": true,
+    "diff_sha256": "1ae36db02bdc5046c0568f8a42efeb9a2cd1ce576b1ee2119702627f35e743d6",
+    "snapshot_path": "local-output/source-v17.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    }
+  ],
+  "parameters": {
+    "run_root": "local-output",
+    "scope": "All66 exact 512x512x192x192 uint16 scan1/det1/crop none; no raw resident; diagnostic not performance qualification",
+    "one_factor": "Diagnostic-only public timestamp stage sampling and metadata export; no decoder change",
+    "limits": "No intrusive full trace, no hardware cache rate claim, no source/app promotion. Freeze new patch/executable before launch.",
+    "source_bytes": 84681338880,
+    "index_bytes": 2108620800,
+    "untracked_sha256": "0ae28e67dbf2707b6f7da8f73094a8c10146cfadae2d750497fc3239eeca9167",
+    "executable_sha256": "73b1191860fa654a8bd4e47d8c7c37c54a912074703968f3cbc4dbdcf9738fde",
+    "ordinary_tests": "239 executed /27 explicit opt-in skips/0 failures",
+    "contention": "ScreenSharingAgent/WindowServer desktop activity observed. Diagnostic-only not uncontended performance.",
+    "result": "Diagnostic only: 9 exact all66 maps/6 frozen DP arrays/1056 authenticated records. 103–239 ms compute stages; 103–300 ms command gaps;98.5083% gap-driver overlap. 84.666GB encoded once,2.109GB index,no raw resident. Cache hit/miss rates unavailable; no speed/app claim.",
+    "failure_evidence": "Preserved initial missing-try build error; metadata-v1-invalid-sparse-units.json/log invalid and excluded. Sparse offsets count events, not uint32 words. Terminal Browser cannot render from this terminal; report visual gate pending.",
+    "preservation": "Canonical app and dependency binary diffs unchanged. Final pgrep returned no task-owned Live4DSTEM/test/analysis process. No UI input, remote action, push or release.",
+    "path_aliases": "local-output and local-fixture are private absolute paths recorded in the durable output CHECKPOINT.md; no fixture/source file is relocated.",
+    "qualified_for_adoption": false,
+    "artifact_results": {
+      "report-html": "Diagnostic presentation only; numerical checks complete, browser visual review blocked.",
+      "report-json": "Diagnostic presentation only; numerical checks complete, browser visual review blocked.",
+      "command-breakdown-svg": "Diagnostic only: 9 exact all66 maps/6 frozen DP arrays/1056 authenticated records. 103–239 ms compute stages; 103–300 ms command gaps;98.5083% gap-driver overlap. 84.666GB encoded once,2.109GB index,no raw resident. Cache hit/miss rates unavailable; no speed/app claim.",
+      "memory-cache-audit-json": "Diagnostic only: 9 exact all66 maps/6 frozen DP arrays/1056 authenticated records. 103–239 ms compute stages; 103–300 ms command gaps;98.5083% gap-driver overlap. 84.666GB encoded once,2.109GB index,no raw resident. Cache hit/miss rates unavailable; no speed/app claim.",
+      "verification-json": "Diagnostic only: 9 exact all66 maps/6 frozen DP arrays/1056 authenticated records. 103–239 ms compute stages; 103–300 ms command gaps;98.5083% gap-driver overlap. 84.666GB encoded once,2.109GB index,no raw resident. Cache hit/miss rates unavailable; no speed/app claim.",
+      "metal-capabilities-json": "Diagnostic only: 9 exact all66 maps/6 frozen DP arrays/1056 authenticated records. 103–239 ms compute stages; 103–300 ms command gaps;98.5083% gap-driver overlap. 84.666GB encoded once,2.109GB index,no raw resident. Cache hit/miss rates unavailable; no speed/app claim.",
+      "pipeline-compiler-json": "Diagnostic only: 9 exact all66 maps/6 frozen DP arrays/1056 authenticated records. 103–239 ms compute stages; 103–300 ms command gaps;98.5083% gap-driver overlap. 84.666GB encoded once,2.109GB index,no raw resident. Cache hit/miss rates unavailable; no speed/app claim.",
+      "sparse-rank-audit-json": "Diagnostic only: 9 exact all66 maps/6 frozen DP arrays/1056 authenticated records. 103–239 ms compute stages; 103–300 ms command gaps;98.5083% gap-driver overlap. 84.666GB encoded once,2.109GB index,no raw resident. Cache hit/miss rates unavailable; no speed/app claim.",
+      "audit-log": "Diagnostic only: 9 exact all66 maps/6 frozen DP arrays/1056 authenticated records. 103–239 ms compute stages; 103–300 ms command gaps;98.5083% gap-driver overlap. 84.666GB encoded once,2.109GB index,no raw resident. Cache hit/miss rates unavailable; no speed/app claim.",
+      "memory-txt": "Diagnostic only: 9 exact all66 maps/6 frozen DP arrays/1056 authenticated records. 103–239 ms compute stages; 103–300 ms command gaps;98.5083% gap-driver overlap. 84.666GB encoded once,2.109GB index,no raw resident. Cache hit/miss rates unavailable; no speed/app claim.",
+      "build-suite-r2-log": "Diagnostic only: 9 exact all66 maps/6 frozen DP arrays/1056 authenticated records. 103–239 ms compute stages; 103–300 ms command gaps;98.5083% gap-driver overlap. 84.666GB encoded once,2.109GB index,no raw resident. Cache hit/miss rates unavailable; no speed/app claim.",
+      "source-v17-patch": "Frozen v17 dirty experimental diagnostic identity; not app integration.",
+      "source-v17-untracked-tar-gz": "Frozen v17 dirty experimental diagnostic identity; not app integration.",
+      "bin-MetalKernelsPackageTests": "Frozen v17 dirty experimental diagnostic identity; not app integration.",
+      "CHECKPOINT-md": "Diagnostic only: 9 exact all66 maps/6 frozen DP arrays/1056 authenticated records. 103–239 ms compute stages; 103–300 ms command gaps;98.5083% gap-driver overlap. 84.666GB encoded once,2.109GB index,no raw resident. Cache hit/miss rates unavailable; no speed/app claim.",
+      "case-0-cycle-0-json": "One retained exact all66 ADF diagnostic; bounded counter instrumentation, not speed qualification.",
+      "case-1-cycle-0-json": "One retained exact all66 ADF diagnostic; bounded counter instrumentation, not speed qualification.",
+      "case-2-cycle-0-json": "One retained exact all66 ADF diagnostic; bounded counter instrumentation, not speed qualification.",
+      "case-3-cycle-0-json": "One retained exact all66 ADF diagnostic; bounded counter instrumentation, not speed qualification.",
+      "case-4-cycle-0-json": "One retained exact all66 ADF diagnostic; bounded counter instrumentation, not speed qualification.",
+      "case-5-cycle-0-json": "One retained exact all66 ADF diagnostic; bounded counter instrumentation, not speed qualification.",
+      "case-6-cycle-0-json": "One retained exact all66 ADF diagnostic; bounded counter instrumentation, not speed qualification.",
+      "case-7-cycle-0-json": "One retained exact all66 ADF diagnostic; bounded counter instrumentation, not speed qualification.",
+      "case-8-cycle-0-json": "One retained exact all66 ADF diagnostic; bounded counter instrumentation, not speed qualification."
+    }
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "Metal",
+    "gpu_ids": [
+      "4294969023"
+    ],
+    "gpu_model": "Apple M5 Max 40-core 128GiB"
+  },
+  "outputs": [
+    {
+      "artifact_id": "report-html",
+      "path": "local-output/report.html",
+      "sha256": "f4e425d225c0e9f6e4eebe9c3d0fd757d0472f053be506b45eb4a59cc6e61ce8",
+      "size_bytes": 19938,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "report-json",
+      "path": "local-output/report.json",
+      "sha256": "f72fe4401abd7014eeb5eefb8ea3e21bb2dd12e5fb351106876e23e90b8bb673",
+      "size_bytes": 17107,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "command-breakdown-svg",
+      "path": "local-output/command-breakdown.svg",
+      "sha256": "93e99708e1bedf89debc88af1f904d46c15598857261a4205b543d99a27d3813",
+      "size_bytes": 5009,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "memory-cache-audit-json",
+      "path": "local-output/memory-cache-audit.json",
+      "sha256": "97c00b30472f68531c4167da1c2b5e0dfdde6ee2d07d0145e4d3cf91202cc9a9",
+      "size_bytes": 25253,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "verification-json",
+      "path": "local-output/verification.json",
+      "sha256": "fe0a72a2700deba2f685ac8f5d23e94b17b4b2aa98b06416be08c85fd0638f3c",
+      "size_bytes": 451,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "metal-capabilities-json",
+      "path": "local-output/metal-capabilities.json",
+      "sha256": "cb8bf811aaab96825820192dd7e29131e440545ca31421674d04dc614fba5dd9",
+      "size_bytes": 596,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "pipeline-compiler-json",
+      "path": "local-output/pipeline-compiler.json",
+      "sha256": "ce389e8be6ab95ad841f93d09dbe9ffb8308f17cb8b2f23bbbf776d4bf9bd22b",
+      "size_bytes": 492,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "sparse-rank-audit-json",
+      "path": "local-output/sparse-rank-audit.json",
+      "sha256": "fb26a3e0d26dc94a5a8d4224bf3ee4dbeaabb0a5eaece74906ce7588325d7ffa",
+      "size_bytes": 2314,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "audit-log",
+      "path": "local-output/audit.log",
+      "sha256": "4e94cdfc198168f8dd35b767b9dd36f7c6896aee44f52b5b01496b19e65357db",
+      "size_bytes": 11255,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "memory-txt",
+      "path": "local-output/memory.txt",
+      "sha256": "060ef251fa049a58262a0b30950b9738bf54f7db8c8e05d5f0a3af5784fd1825",
+      "size_bytes": 39060,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "build-suite-r2-log",
+      "path": "local-output/build-suite-r2.log",
+      "sha256": "86ff2c708c738a87ae1cb340840726ac9354928c73fa9dd89d2b947ae0513553",
+      "size_bytes": 89990,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "source-v17-patch",
+      "path": "local-output/source-v17.patch",
+      "sha256": "1ae36db02bdc5046c0568f8a42efeb9a2cd1ce576b1ee2119702627f35e743d6",
+      "size_bytes": 150950,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "source-v17-untracked-tar-gz",
+      "path": "local-output/source-v17-untracked.tar.gz",
+      "sha256": "0ae28e67dbf2707b6f7da8f73094a8c10146cfadae2d750497fc3239eeca9167",
+      "size_bytes": 16711,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "bin-MetalKernelsPackageTests",
+      "path": "local-output/bin/MetalKernelsPackageTests",
+      "sha256": "73b1191860fa654a8bd4e47d8c7c37c54a912074703968f3cbc4dbdcf9738fde",
+      "size_bytes": 11233704,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "CHECKPOINT-md",
+      "path": "local-output/CHECKPOINT.md",
+      "sha256": "55ea1478a82ae61245cf885ccb11c8b84b3efe75fec6fe834c22c073332a62de",
+      "size_bytes": 5994,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "case-0-cycle-0-json",
+      "path": "local-output/case-0-cycle-0.json",
+      "sha256": "24411c0e4ee7521af536c9005a9fb1c479870b293ac0d7e9268f02360058509a",
+      "size_bytes": 8965272,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "case-1-cycle-0-json",
+      "path": "local-output/case-1-cycle-0.json",
+      "sha256": "905fa5077b0a752fe9f29f7404285ffb8b54b74b1178819e587b4a47c3ead86e",
+      "size_bytes": 4681778,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "case-2-cycle-0-json",
+      "path": "local-output/case-2-cycle-0.json",
+      "sha256": "d652cbc1cb240fe111006bc3ab305ff4a5fac709237c32f3524ba61a3f21002d",
+      "size_bytes": 6345654,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "case-3-cycle-0-json",
+      "path": "local-output/case-3-cycle-0.json",
+      "sha256": "d4c1c4a67679446f9577cfdb3fa880f4cf9bb0fb5f8873c5a113b16c1963f0be",
+      "size_bytes": 3509667,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "case-4-cycle-0-json",
+      "path": "local-output/case-4-cycle-0.json",
+      "sha256": "079f6bb4de95c7008b0f977a237e5b400888f9d18d0098c5ddec13da04244ee6",
+      "size_bytes": 9755004,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "case-5-cycle-0-json",
+      "path": "local-output/case-5-cycle-0.json",
+      "sha256": "d25004ae115787986047843a6a581b1388d1300076ed3d13aafbcb151545a7e0",
+      "size_bytes": 8054723,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "case-6-cycle-0-json",
+      "path": "local-output/case-6-cycle-0.json",
+      "sha256": "5e2580cc2f390149533db313e710002dad124688739f3b62c22efe779c94ee11",
+      "size_bytes": 3467404,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "case-7-cycle-0-json",
+      "path": "local-output/case-7-cycle-0.json",
+      "sha256": "281a9e8159adb1bc067c724bf1c5842dc361c7bfcf35dc233adcb6e7d494547c",
+      "size_bytes": 13197587,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "case-8-cycle-0-json",
+      "path": "local-output/case-8-cycle-0.json",
+      "sha256": "b7a4c8c6082802ac2cfc33833e396f5a8e18af0cc4cabb1c80b6305f9c72fec7",
+      "size_bytes": 5867523,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T22:39:39.989Z",
+    "started": "2026-09-09T22:42:32.435Z",
+    "finished": "2026-09-09T22:43:34.576Z"
+  }
+}

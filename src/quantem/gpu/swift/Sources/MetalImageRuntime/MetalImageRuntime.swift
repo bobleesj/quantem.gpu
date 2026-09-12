@@ -222,7 +222,15 @@ public final class MetalDisplayStatistics: @unchecked Sendable {
   private let histogramUInt32FromRange: MTLComputePipelineState
   private let histogramFloat32FromRange: MTLComputePipelineState
   private let finishRangeFloat32: MTLComputePipelineState
+  private let copyRangeUInt32: MTLComputePipelineState
+  private let histogramPairFromRange: MTLComputePipelineState
   private let lock = NSLock()
+  /// Reused statistics buffers for `copyAndAnalyzeUInt32Batch`, keyed by image
+  /// and scale count, rotating through `statisticsPoolDepth` sets.
+  private var statisticsPool:
+    [[Int]: (sets: [[(range: MTLBuffer, histograms: [MTLBuffer])]], next: Int)] = [:]
+  /// Results of a batch stay valid for this many later batches of the same shape.
+  public static let statisticsPoolDepth = 4
 
   public init(device: MTLDevice, commandQueue: MTLCommandQueue? = nil) throws {
     self.device = device
@@ -242,6 +250,113 @@ public final class MetalDisplayStatistics: @unchecked Sendable {
     histogramUInt32FromRange = try pipeline(MetalDisplayKernels.histogramFromRangeFunction)
     histogramFloat32FromRange = try pipeline(MetalDisplayKernels.floatHistogramFromRangeFunction)
     finishRangeFloat32 = try pipeline(MetalDisplayKernels.floatFinishRangeFunction)
+    copyRangeUInt32 = try pipeline(MetalDisplayKernels.copyRangeFunction)
+    histogramPairFromRange = try pipeline(MetalDisplayKernels.histogramPairFromRangeFunction)
+  }
+
+  /// Copy each source image into its destination, then analyze the copies, in
+  /// one command buffer with one synchronization point: a pass that copies each
+  /// image and reduces its range (one read per image), then one pass per image
+  /// that counts up to two histograms in threadgroup memory from the
+  /// device-resident range. Ranges and bins equal `analyzeUInt32Batch` on the
+  /// destinations: every value gets the same bin; only where counts accumulate
+  /// changes. Statistics buffers come from a pool reused every
+  /// `statisticsPoolDepth` batches of the same shape, so callers copy a result's
+  /// range, histogram and bins before that many further batches (the display
+  /// surfaces copy them at publication). The copy runs on this object's queue,
+  /// ordered after work committed there earlier, such as renders of a
+  /// destination's previous use.
+  public func copyAndAnalyzeUInt32Batch(
+    sources: [MTLBuffer], destinations: [MTLBuffer], rows: Int, columns: Int,
+    scales: [MetalDisplayScale] = [.linear, .logarithmic]
+  ) throws -> [[MetalUInt32Statistics]] {
+    guard sources.count == destinations.count else {
+      throw MetalImageRuntimeError.allocation("one destination per copied image")
+    }
+    guard !sources.isEmpty else { return [] }
+    guard !scales.isEmpty else { return sources.map { _ in [] } }
+    guard scales.count <= 2 else {
+      throw MetalImageRuntimeError.allocation("at most two histogram scales per batch")
+    }
+    let counts = try destinations.map {
+      try validate(values: $0, rows: rows, columns: columns, stride: 4)
+    }
+    for (source, destination) in zip(sources, destinations) {
+      guard source.length >= rows * columns * 4, source !== destination else {
+        throw MetalImageRuntimeError.allocation("distinct copy source of the exact image shape")
+      }
+    }
+    lock.lock()
+    defer { lock.unlock() }
+    let key = [sources.count, scales.count]
+    var pool = statisticsPool[key] ?? (sets: [], next: 0)
+    if pool.sets.count < Self.statisticsPoolDepth {
+      pool.sets.append(
+        try sources.map { _ in
+          (
+            range: try makeBuffer(length: 8, purpose: "batch UInt32 range"),
+            histograms: try scales.map { _ in try makeHistogramBuffer() }
+          )
+        })
+      pool.next = pool.sets.count - 1
+    }
+    let set = pool.sets[pool.next]
+    pool.next = (pool.next + 1) % Self.statisticsPoolDepth
+    statisticsPool[key] = pool
+    for entry in set {
+      let pointer = entry.range.contents().assumingMemoryBound(to: UInt32.self)
+      pointer[0] = .max
+      pointer[1] = 0
+      for histogram in entry.histograms { memset(histogram.contents(), 0, histogram.length) }
+    }
+    guard let command = queue.makeCommandBuffer(),
+      let copyEncoder = command.makeComputeCommandEncoder()
+    else {
+      throw MetalImageRuntimeError.allocation("copy and statistics command")
+    }
+    copyEncoder.setComputePipelineState(copyRangeUInt32)
+    for index in destinations.indices {
+      copyEncoder.setBuffer(sources[index], offset: 0, index: 0)
+      copyEncoder.setBuffer(destinations[index], offset: 0, index: 1)
+      copyEncoder.setBuffer(set[index].range, offset: 0, index: 2)
+      var count = UInt32(counts[index])
+      copyEncoder.setBytes(&count, length: 4, index: 3)
+      dispatch(copyEncoder, pipeline: copyRangeUInt32, count: counts[index])
+    }
+    copyEncoder.endEncoding()
+    // The encoder boundary orders the copies and ranges before the histograms.
+    guard let encoder = command.makeComputeCommandEncoder() else {
+      throw MetalImageRuntimeError.allocation("batch histogram encoder")
+    }
+    encoder.setComputePipelineState(histogramPairFromRange)
+    let width = max(1, min(histogramPairFromRange.maxTotalThreadsPerThreadgroup, 256))
+    for index in destinations.indices {
+      let histograms = set[index].histograms
+      var layout = SIMD4<UInt32>(
+        UInt32(counts[index]), scales[0].rawValue, scales[scales.count - 1].rawValue,
+        UInt32(scales.count))
+      encoder.setBuffer(destinations[index], offset: 0, index: 0)
+      encoder.setBuffer(histograms[0], offset: 0, index: 1)
+      encoder.setBuffer(histograms[histograms.count - 1], offset: 0, index: 2)
+      encoder.setBuffer(set[index].range, offset: 0, index: 3)
+      encoder.setBytes(&layout, length: MemoryLayout<SIMD4<UInt32>>.stride, index: 4)
+      // 64 threadgroups per image; each thread strides over the rest.
+      encoder.dispatchThreads(
+        MTLSize(width: min(counts[index], width * 64), height: 1, depth: 1),
+        threadsPerThreadgroup: MTLSize(width: width, height: 1, depth: 1))
+    }
+    encoder.endEncoding()
+    try commitAndWait(command)
+    return set.map { entry in
+      let pointer = entry.range.contents().assumingMemoryBound(to: UInt32.self)
+      let minimum = pointer[0] == .max ? 0 : pointer[0]
+      let maximum = pointer[0] == .max ? 0 : pointer[1]
+      return entry.histograms.map { histogram in
+        MetalUInt32Statistics(
+          valueRange: entry.range, histogram: histogram,
+          minimum: minimum, maximum: maximum, bins: bins(from: histogram))
+      }
+    }
   }
 
   /// Encode mixed-shape integer/float statistics without committing, waiting,

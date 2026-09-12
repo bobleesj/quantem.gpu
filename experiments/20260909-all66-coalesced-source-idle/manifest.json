@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-coalesced-source-idle",
+  "status": "failed",
+  "question": "Can one unchanged encoded allocation per acquisition reduce idle driver gaps without changing bytes, counts, index or geometry?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-coalesced-source-idle/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "entrypoint": "TANSResidencyHoldExperimentTests.testAll66ResidencyHoldIdleABAWhenConfigured",
+    "dirty": true,
+    "snapshot_path": "local-evidence/source.patch",
+    "diff_sha256": "5a4bad36f60285bd086c23e115a4d5d07af90cf96729e848c9180586efd8d7c6"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-linux-products",
+      "path": "local-fixture/series-products/shared-resident-images.npy",
+      "sha256": "06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "index_ceiling_bytes": 2108620800,
+    "one_factor": "Fresh processes:1056 record allocations /66 acquisition-sized allocations /1056 record allocations. All original record bytes concatenated at explicit aligned offsets with no padding/reencoding/raw copy. Joined uploads write disjoint tracked slices; source declarations deduplicate identity. Same original index, decoder, source bytes and9held-out masks x2cycles with4s idle. Six full66 diffraction fingerprints across chunk boundaries must match across arms.",
+    "default": "Off; existing app unchanged",
+    "untracked_source_sha256": "26431465f425d48b97cef87ab228933b05063a9bb6c9a4f5a1937c37b4970dce",
+    "cache_state": "Complete prepared entropy archive, source pages unspecified. Not cold original source or headed UI/presentation.",
+    "run_root": "local-output",
+    "path_mapping": "Exact local paths and unmodified pre-normalization manifests are retained in the private output checkpoint.",
+    "artifact_results": {
+      "coalesced-all66.log": "54/54 full66 detector query sets exact;6 full66 selected-DP hashes match across A/B/A. Wall median439.921/413.804/463.472ms, p95/max496.606/464.823/500.232ms. Load14.265/14.578/14.272s is prepared archive, not cold source. Strict teardown FAILED in all3 arms: source_bytes0 but Metal allocated5586944 versus unchanged expected720896. Difference4866048 equals a full66 selected-DP buffer; test autorelease lifetime is a hypothesis requiring separate r2. No adoption or native FPS claim.",
+      "coalesced-analysis.json": "54/54 full66 detector query sets exact;6 full66 selected-DP hashes match across A/B/A. Wall median439.921/413.804/463.472ms, p95/max496.606/464.823/500.232ms. Load14.265/14.578/14.272s is prepared archive, not cold source. Strict teardown FAILED in all3 arms: source_bytes0 but Metal allocated5586944 versus unchanged expected720896. Difference4866048 equals a full66 selected-DP buffer; test autorelease lifetime is a hypothesis requiring separate r2. No adoption or native FPS claim.",
+      "coalesced-v11-failed-teardown-audit.json": "54/54 full66 detector query sets exact;6 full66 selected-DP hashes match across A/B/A. Wall median439.921/413.804/463.472ms, p95/max496.606/464.823/500.232ms. Load14.265/14.578/14.272s is prepared archive, not cold source. Strict teardown FAILED in all3 arms: source_bytes0 but Metal allocated5586944 versus unchanged expected720896. Difference4866048 equals a full66 selected-DP buffer; test autorelease lifetime is a hypothesis requiring separate r2. No adoption or native FPS claim.",
+      "source.patch": "54/54 full66 detector query sets exact;6 full66 selected-DP hashes match across A/B/A. Wall median439.921/413.804/463.472ms, p95/max496.606/464.823/500.232ms. Load14.265/14.578/14.272s is prepared archive, not cold source. Strict teardown FAILED in all3 arms: source_bytes0 but Metal allocated5586944 versus unchanged expected720896. Difference4866048 equals a full66 selected-DP buffer; test autorelease lifetime is a hypothesis requiring separate r2. No adoption or native FPS claim.",
+      "untracked-source.tar.gz": "54/54 full66 detector query sets exact;6 full66 selected-DP hashes match across A/B/A. Wall median439.921/413.804/463.472ms, p95/max496.606/464.823/500.232ms. Load14.265/14.578/14.272s is prepared archive, not cold source. Strict teardown FAILED in all3 arms: source_bytes0 but Metal allocated5586944 versus unchanged expected720896. Difference4866048 equals a full66 selected-DP buffer; test autorelease lifetime is a hypothesis requiring separate r2. No adoption or native FPS claim."
+    },
+    "preflight": "19 focused tests pass, including plan byte partition, overflow/admission and tracked upload-slice bounds/overlap, exact literal/escape and index tests. No active test or app process at launch.",
+    "executable_sha256": "fe33bebf33fba3fe271d0230abb73d730f2f2419cbd1934f4706d9e603071d16",
+    "result": "54/54 full66 detector query sets exact;6 full66 selected-DP hashes match across A/B/A. Wall median439.921/413.804/463.472ms, p95/max496.606/464.823/500.232ms. Load14.265/14.578/14.272s is prepared archive, not cold source. Strict teardown FAILED in all3 arms: source_bytes0 but Metal allocated5586944 versus unchanged expected720896. Difference4866048 equals a full66 selected-DP buffer; test autorelease lifetime is a hypothesis requiring separate r2. No adoption or native FPS claim.",
+    "scientific_parity": true,
+    "strict_teardown": false
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "coalesced-all66.log",
+      "path": "local-evidence/coalesced-all66.log",
+      "sha256": "0de166b4260db4ca0466fff1b97a46a2d0e558efb46ae15a18454c1d0d51462f",
+      "size_bytes": 56390,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-analysis.json",
+      "path": "local-evidence/coalesced-analysis.json",
+      "sha256": "aad74fa8dca77c71c30a65a10a13eb5ec8ccd5284e28c398fb599d0f2ce29d2f",
+      "size_bytes": 91649,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "coalesced-v11-failed-teardown-audit.json",
+      "path": "local-evidence/coalesced-v11-failed-teardown-audit.json",
+      "sha256": "d5a089c343e3b0792ab2a4c2a25c27fced2d78d9a34f49923e1bbf406a1ccb35",
+      "size_bytes": 4208,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "source.patch",
+      "path": "local-evidence/source.patch",
+      "sha256": "5a4bad36f60285bd086c23e115a4d5d07af90cf96729e848c9180586efd8d7c6",
+      "size_bytes": 117782,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "untracked-source.tar.gz",
+      "path": "local-evidence/untracked-source.tar.gz",
+      "sha256": "26431465f425d48b97cef87ab228933b05063a9bb6c9a4f5a1937c37b4970dce",
+      "size_bytes": 16230,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T20:53:04Z",
+    "started": "2026-09-09T20:53:25Z",
+    "finished": "2026-09-09T20:58:32.830Z"
+  }
+}

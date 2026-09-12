@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-mixed-qa-contract",
+  "status": "succeeded",
+  "question": "Does the QA-only public SPI preserve exact all66/full/subset/delta/lifetime and partial-submission failure recovery with the mixed candidate?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-mixed-qa-contract/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "dirty": true,
+    "entrypoint": "ExperimentalMetalEntropySeriesTests.testRealSPIIndexDeltaSelectionAndReleaseWhenConfigured and TANSResidencyHoldExperimentTests failure injection",
+    "diff_sha256": "a4947972fe9015bcd76495de10fc9cf64b3885ad79704adb33638246c6a8303a",
+    "snapshot_path": "local-evidence/mixed-qa-qgpu.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-linux-products",
+      "path": "local-fixture/series-products/shared-resident-images.npy",
+      "sha256": "06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "representation": "lossless entropy only",
+    "source_bytes": 84681338880,
+    "index_bytes": 2108620800,
+    "one_factor": "Local QA integration only through existing ExperimentalMetalEntropySeries package boundary. No new public tuning API, source/loading/geometry changes or app-owned kernel copy. All experiment flags remain off in ordinary builds.",
+    "default": "false; isolated internal flag only; no app/public API change",
+    "test_source_sha256": "613841bb65de5a4b499b5592029c984745145e8d57b9c2fba540072637bc92b6",
+    "test_binary_sha256": "96b5c33fc8b1261fbe901d1b55f0edbed9ac9988a724d92ed93d67192749de18",
+    "environment": "QA compile defines QUANTEM_ENTROPY_SUBMISSION_OVERLAP and QUANTEM_ENTROPY_MIXED_TAILS; public SPI enables64record/adaptive-separated-mixed-only after exact index preparation. Failure harness explicitly sets same internal flags.",
+    "matrix": "Public SPI six full66 masks and corners, unordered/reversed/single subsets, subset/full restoration, invalid selection/budget, released handle; separate real66 before/after-first-commit failure with prior hash, allocation and exact recovery. QA full220 tests25 explicit opt-in skips0fail for QA build.",
+    "preflight": "4/4 literal/escape/zero-chain/signed/mixed exact tests pass, including newmode78. Static threadgroup storage asserted0; prior runtime-mixedmode77reports4096.",
+    "gate": "Frozen Linux BF/ADF/ABF full images, full66 hashes against default, immutable prior, group/lane counters and memory. Independent full original-count audit remains pending.",
+    "timing": "Whole query through completion wait; preparation separate; prepared archive/source pages unspecified; not native FPS or original cold load",
+    "memory": "Same source/index/table/scientific scratch; collect Metal allocation and sampled RSS/compressor/swap",
+    "artifact_results": {
+      "mixed-qa-qgpu-full-tests-log": "Functional numerical/lifecycle evidence; not performance acceptance",
+      "mixed-qa-spi-all66-log": "Functional numerical/lifecycle evidence; not performance acceptance",
+      "mixed-qa-spi-memory-txt": "Functional numerical/lifecycle evidence; not performance acceptance",
+      "mixed-qa-failures-log": "Functional numerical/lifecycle evidence; not performance acceptance",
+      "mixed-qa-failures-memory-txt": "Functional numerical/lifecycle evidence; not performance acceptance"
+    },
+    "result": "QA suite220 executed/25explicit opt-in skips/0fail. Real public SPI full66/six masks/subsets/reversed/full restore/invalid budgets/release passed22.446s. Real failure injection before commit and after first submitted64-record command preserved all66 prior hashes, identical allocation86866247680B before/after, and exact subsequent recovery; passed21.376s.",
+    "decision": "Functional public-boundary and failure gates pass; local native QA may proceed. No production/default/push/release acceptance; no120FPS claim."
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "mixed-qa-qgpu-full-tests-log",
+      "path": "local-evidence/mixed-qa-qgpu-full-tests.log",
+      "sha256": "d18981aae3afd902560180ddbb8071473a304c0eeb4f7f6cb66c5407deec6b21",
+      "size_bytes": 78656,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "mixed-qa-spi-all66-log",
+      "path": "local-evidence/mixed-qa-spi-all66.log",
+      "sha256": "9c2437f4ddc923adfec7afcefbee3541606dab3582443fbe9b1fcef5fce6c1d8",
+      "size_bytes": 1621,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "mixed-qa-spi-memory-txt",
+      "path": "local-evidence/mixed-qa-spi-memory.txt",
+      "sha256": "d9fd1d8140c936a424f5b94a5fcefdc029110b36110ced11e2b004557b77160d",
+      "size_bytes": 7566,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "mixed-qa-failures-log",
+      "path": "local-evidence/mixed-qa-failures.log",
+      "sha256": "c64342105069247deabf186c9c315b95588c5820efd244fcd8c0f95e915a748c",
+      "size_bytes": 2036,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "mixed-qa-failures-memory-txt",
+      "path": "local-evidence/mixed-qa-failures-memory.txt",
+      "sha256": "ea2ae3d0c5e18f53aa8df7cc11149cc100e344d015af9d574498b76f39ae9007",
+      "size_bytes": 7566,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T10:34:00Z",
+    "started": "2026-09-09T10:33:47.385Z",
+    "finished": "2026-09-09T10:35:16.613Z"
+  }
+}

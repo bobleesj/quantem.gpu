@@ -1,0 +1,33 @@
+{
+  "schema_version":1, "experiment_id":"20260909-all66-mixed-model-tails", "status":"succeeded",
+  "question":"Can packing only per-model remainder columns into mixed 32-lane groups remove padded decoder lanes without increasing resident memory?",
+  "paper":{"authoritative_host":"phil", "repository":"quantem.gpu", "manifest_path":"experiments/20260909-all66-mixed-model-tails/manifest.json"},
+  "code":{"repository":"quantem.gpu", "revision":"abff4e0cac5329fd83391a11dcfa8a6849ed1589", "dirty":true, "entrypoint":"TANSSharedRefill16ExperimentTests.testAll66SharedRefill16ABAWhenConfigured", "diff_sha256":"88ddab8d85456fc73a94f6afb8d2c88a063c75254c3643eed922c263932bc6e5", "snapshot_path":"local-evidence/mixed-tails.patch"},
+  "inputs":[{"dataset_id":"all66-entropy-checkpoint", "path":"local-fixture/checkpoint.json", "sha256":"2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"}, {"dataset_id":"frozen-linux-products", "path":"local-fixture/series-products/shared-resident-images.npy", "sha256":"06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"}],
+  "parameters":{
+    "shape":[66,512,512,192,192], "dtype":"uint16", "scan_bin":1, "detector_bin":1, "crop":null,
+    "representation":"lossless entropy only", "source_bytes":84681338880, "index_bytes":2108620800,
+    "one_factor":"Keep full homogeneous 32-column groups and their shared table; pack only model tails into mixed-model groups using per-lane immutable table lookup. Descriptor sentinel 256 selects mixed metadata, never a scientific decoder ID. Same exact arithmetic, source/index and scratch; grouping metadata may shrink.",
+    "default":"false; isolated internal flag only; no app/public API change",
+    "test_source_sha256":"37365e15b40887dfbad3c2b8bd530e238795ca38136a6df105d654a5d5ebb2df",
+    "test_binary_sha256":"1c78ba34142f213b0802054cca500bd32b031d8a6bf5f57a93f1223b0274ac7a",
+    "environment":"QUANTEM_TANS_MIXED_TAILS=1; QUANTEM_TANS_REFILL16_FIXTURE=full66 fixture. Legacy B16 arm means mixed-model tails; refill16/direct_table/zero_runs/zero_arithmetic false everywhere.",
+    "matrix":"7 BF/ABF/ADF large center/radius/edge/small delta cases, 5 queries/case/arm, A/B/A=105 full66 queries with warmup per case",
+    "preflight":"4/4 independent focused tests pass, including full uint16 literal, escaped symbols, 91-zero-pair chains, mixed model IDs, inactive lanes and signed removal. Initial compiler type-check timeout retained and fixed with explicit UInt32 closure type.",
+    "gate":"Frozen Linux BF/ADF/ABF full images, full66 hashes against default, immutable prior, group/lane counters and memory. Independent full original-count audit remains pending.",
+    "timing":"Whole query through completion wait; preparation separate; prepared archive/source pages unspecified; not native FPS or original cold load",
+    "memory":"Same source/index/table/scientific scratch; collect Metal allocation and sampled RSS/compressor/swap",
+    "decision":"Promising but unqualified for app adoption: all66 large BF/ABF/ADF jumps improve 20-32 percent, BF resize regresses about 1.3 percent. Replication and native replay needed. No default change.",
+    "result":"105/105 full66 outputs exact; frozen Linux BF/ADF/ABF images and immutable prior pass. Wall p50 A1/B/A2 ms: BF jump148.281/100.712/148.446; ABF141.290/105.483/141.045; ADF234.324/185.782/234.808; ADF edge185.638/127.544/185.411; BF resize118.043/119.518/117.926; ADF resize58.239/52.818/57.644; ADF small28.044/26.394/28.200. N5 each; p95/max retained.",
+    "loading_result":"Prepared archive/source pages unspecified13.943348s source +4.046866s index; loading code unchanged, one sample not non-regression proof or cold HDF5.",
+    "memory_result":"Metal86935453696B all queries.11 sampled observations max RSS523108352B, compressor1408040960B, swap5687.19MiB unchanged and swapout count unchanged; RSS excludes private Metal.",
+    "artifact_results":{"raw":"105 exact complete queries", "analysis":"Raw counters and distributions; B16 means mixed tails", "memory":"11 sampled system/process observations"}
+  },
+  "execution":{"host":"phil", "backend":"swift-metal", "gpu_ids":["default Metal device"], "gpu_model":"Apple M5 Max"},
+  "outputs":[
+    {"artifact_id":"raw", "path":"local-evidence/mixed-tails-all66.log", "sha256":"9bda54164b91f7fdf5098223a1c514961a5b14000926ea95200974ecf632d09e", "size_bytes":37618, "retention":"durable", "consuming_figures":[]},
+    {"artifact_id":"analysis", "path":"local-evidence/mixed-tails-analysis.json", "sha256":"02dc53b36b09a4ba199db5722176a4d9c82823e737dadc10c8763ecd8c0bac16", "size_bytes":67166, "retention":"durable", "consuming_figures":[]},
+    {"artifact_id":"memory", "path":"local-evidence/mixed-tails-memory.txt", "sha256":"e983fd37675b9a5d4f80743ef263cc4b476cedd81c52126662c4e0709bd8ca27", "size_bytes":13871, "retention":"durable", "consuming_figures":[]}
+  ],
+  "timestamps":{"created":"2026-09-09T10:08:00Z", "started":"2026-09-09T10:08:19.848Z", "finished":"2026-09-09T10:09:13.887Z"}
+}

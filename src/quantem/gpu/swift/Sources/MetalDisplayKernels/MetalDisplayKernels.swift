@@ -152,6 +152,13 @@ public enum MetalDisplayKernels {
   /// Order the range producer before this dispatch with an encoder boundary
   /// or a buffer barrier. Clear histogram bins before encoding.
   public static let histogramFromRangeFunction = "metal_histogram_u32_from_range"
+  /// Copy one u32 image and reduce its range in one pass: source 0, destination
+  /// 1, range 2 (initialized to [UInt32.max, 0]), count 3.
+  public static let copyRangeFunction = "metal_copy_range_u32_simd"
+  /// One or two display histograms of one image from a completed range, counted
+  /// per threadgroup: values 0, first bins 1, second bins 2, range 3, layout 4
+  /// (count, first scale mode, second scale mode, scale count). Clear bins first.
+  public static let histogramPairFromRangeFunction = "metal_histogram_u32_pair_from_range"
   public static let floatFragmentFunction = "metal_display_fragment_f32"
   public static let floatHistogramFunction = "metal_histogram_f32"
   public static let floatHistogramFromRangeFunction = "metal_histogram_f32_from_range"

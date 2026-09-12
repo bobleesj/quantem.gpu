@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-mixed-native-replay",
+  "status": "succeeded",
+  "question": "Does exact adaptive mixed-tail grouping improve the nine frozen native large-gesture masks with unchanged 64-record submission in warm and idle A/B/A?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-mixed-native-replay/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "dirty": true,
+    "entrypoint": "TANSResidencyHoldExperimentTests.testAll66ResidencyHoldIdleABAWhenConfigured",
+    "diff_sha256": "a72dbe82de20c4514670cca367f1e7a4947fa5e282493fa528834ff0423f3d98",
+    "snapshot_path": "local-evidence/mixed-adaptive.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-linux-products",
+      "path": "local-fixture/series-products/shared-resident-images.npy",
+      "sha256": "06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"
+    },
+    {
+      "dataset_id": "frozen-native-nine-mask-replay",
+      "path": "local-evidence/native-stream-bytes-r2.json",
+      "sha256": "1c896b4f3ad0ff2a40b88377915be356bbf6b1c3ed7a2596898f60a9f3db1296"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "representation": "lossless entropy only",
+    "source_bytes": 84681338880,
+    "index_bytes": 2108620800,
+    "one_factor": "Mixed-model tails only when the immutable context metadata saves at least one eighth of original groups. Geometry/product labels and scientific values are not used. All other kernel/submission/loading policies unchanged.",
+    "default": "false; isolated internal flag only; no app/public API change",
+    "test_source_sha256": "e805eb2c4753e6cf49563b3b1277eea3c1106fefdf4a6e5c6c222466d7fcb960",
+    "test_binary_sha256": "9921aa5769564f2c610e79c8b8dab0013dda3c801751a203316b159608daf6e0",
+    "environment": "QUANTEM_TANS_REPLAY_MIXED_TAILS=1 QUANTEM_TANS_MIXED_SAVINGS_DIVISOR=8 QUANTEM_TANS_REPLAY_BASE_SPLIT=64; HOLD_IDLE_SECONDS0or4; HOLD_CYCLES3or2. B_mixed only changes grouping, not submission/residency.",
+    "matrix": "Nine held-out frozen native geometries/histories and 198 probes per query; warm N3/case/arm81queries and4-second-idle N2/case/arm54queries; A/B/A; separate processes. All arms64records/command to match current QA app. Repeat loading on each process, sourcepage state unspecified.",
+    "preflight": "4/4 independent focused tests pass, including full uint16 literal, escaped symbols, 91-zero-pair chains, mixed model IDs, inactive lanes and signed removal. Initial compiler type-check timeout retained and fixed with explicit UInt32 closure type.",
+    "gate": "Frozen Linux BF/ADF/ABF full images, full66 hashes against default, immutable prior, group/lane counters and memory. Independent full original-count audit remains pending.",
+    "timing": "Whole query through completion wait; preparation separate; prepared archive/source pages unspecified; not native FPS or original cold load",
+    "memory": "Same source/index/table/scientific scratch; collect Metal allocation and sampled RSS/compressor/swap",
+    "artifact_results": {
+      "raw": "All exact query records; not native FPS",
+      "analysis": "Preserved full evidence",
+      "memory": "Preserved full evidence"
+    },
+    "result": "81/81 held-out native-mask queries exact, frozen Linux full products and native198 probes match. Warm wall A1/B/A2 ms: case0 230.032/183.885/230.344,1 159.178/108.398/159.715,2 134.401/137.904/134.080,3 157.869/97.795/157.674,4 179.579/184.722/179.704,5 212.658/156.192/212.580,6 156.852/98.773/156.929,7 321.013/268.494/321.989,8 131.647/130.721/131.458. Idle portion not run: two efficient native geometries regress. No native app adoption.",
+    "decision": "Promising gains but refuted as blanket app default due efficient-case regression; preserve and isolate dispatch specialization.",
+    "loading_result": {
+      "acquisitions": "66",
+      "source_bytes": "84681338880",
+      "index_bytes": "2108620800",
+      "load_s": "14.092778541729786",
+      "index_s": "4.076089666690677",
+      "source_pages": "unspecified",
+      "route": "package_not_headed"
+    }
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "raw",
+      "path": "local-evidence/mixed-replay-warm.log",
+      "sha256": "72f06caec8b65fc8059c041786030f0343a008d8fb66c5bbd4c6130f517c4c47",
+      "size_bytes": 48160,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "analysis",
+      "path": "local-evidence/mixed-replay-warm-analysis.json",
+      "sha256": "1a2d674fd2fd9c54f8321d30becd39c8ca73450364a66e5b6c1805b1f52817b3",
+      "size_bytes": 81254,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "memory",
+      "path": "local-evidence/mixed-replay-warm-memory.txt",
+      "sha256": "3d1e6a8886a4fbfdb4c4afd0352e02eb852efbd8f0496b4a46c3ce7993f1a7b6",
+      "size_bytes": 8827,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T10:14:00Z",
+    "started": "2026-09-09T10:15:11.295Z",
+    "finished": "2026-09-09T10:15:47.973Z"
+  }
+}

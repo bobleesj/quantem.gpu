@@ -1,0 +1,129 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-uniform16-block-index",
+  "status": "succeeded",
+  "question": "Can a uniform16 blockwise lossless tile-sum index reduce all66 ADF decoding within the unchanged 2108620800-byte index ceiling?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-uniform16-block-index/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "entrypoint": "TANSTileArchitectureExperimentTests.testAll66UniformIndexABAWhenConfigured",
+    "dirty": true,
+    "snapshot_path": "local-evidence/source.patch",
+    "diff_sha256": "cb346d7a5283f7c42bfc0f63c652e834d812d94791ec760c70160c67581b12a4"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-linux-products",
+      "path": "local-fixture/series-products/shared-resident-images.npy",
+      "sha256": "06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "index_ceiling_bytes": 2108620800,
+    "one_factor": "Tile dictionary representation: centerFine global width / uniform16 blockwise lossless / centerFine global width. Source untouched, all source entropy records resident; never two retained indices.",
+    "frozen": "Submission64, mixed-separated, mixed-only, savings8; no kernel flags from last turn enabled.",
+    "matrix": "7 fixed jump/edge/resize cases x5 samples x3 arms=105 complete66 outputs; full independent Linux BF/ADF/ABF and no-index dynamic reference before trials.",
+    "cache_state": "Prepared complete archive, source pages unspecified, index preparation measured separately. Not cold source, native gesture or presented FPS.",
+    "failure_policy": "Reject at exact index byte budget and retain failure; no approximate fallback.",
+    "default": "Original centerFine unchanged",
+    "run_root": "local-output",
+    "untracked_source_sha256": "e3d25e914130e5c4a1eae24d93290e405749108f53ac794be0474925faa7f97a",
+    "executable_sha256": "0f32b2a27d5cb351dd9f91cec8016b7f2fc4c55412324115917621fa7f2c99fc",
+    "metal_resource_sha256": "5ee7c1c740aeeac2c4f520dbc859aaedd606f56e2b6375a2faf789778afc680c",
+    "result": "105/105 complete66 outputs exact. Warm ADF jump A1/B/A2 p50 198.115/136.655/202.486ms; BF jump109.290/44.085/109.812ms. BF resize regressed130.373/153.019/129.976ms. New index2027531616B versus2108620800B; no raw source change. Index preparation3.203/3.503/3.231s. Promising architecture, not universal or native/10FPS qualification.",
+    "artifact_results": {
+      "architecture-unit.log": "Exact all66 warm architecture A/B/A; all105 pass, BF resize regression retained; no native claim",
+      "source.patch": "Exact all66 warm architecture A/B/A; all105 pass, BF resize regression retained; no native claim",
+      "uniform16-all66.log": "Exact all66 warm architecture A/B/A; all105 pass, BF resize regression retained; no native claim",
+      "uniform16-analysis.json": "Exact all66 warm architecture A/B/A; all105 pass, BF resize regression retained; no native claim",
+      "uniform16-memory.txt": "Exact all66 warm architecture A/B/A; all105 pass, BF resize regression retained; no native claim",
+      "untracked-source.tar.gz": "Exact all66 warm architecture A/B/A; all105 pass, BF resize regression retained; no native claim"
+    },
+    "path_mapping": "Exact local paths and unmodified pre-normalization manifests are retained in the private output checkpoint."
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "architecture-unit.log",
+      "path": "local-evidence/architecture-unit.log",
+      "sha256": "87805632ada7f6b2913f52002f32a238b974dc96b2f081db38729d408c259637",
+      "size_bytes": 12115,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "source.patch",
+      "path": "local-evidence/source.patch",
+      "sha256": "cb346d7a5283f7c42bfc0f63c652e834d812d94791ec760c70160c67581b12a4",
+      "size_bytes": 111482,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "uniform16-all66.log",
+      "path": "local-evidence/uniform16-all66.log",
+      "sha256": "7ecad370dd95f1f2ea80fa8c0b73a578714f61b158ca5fcd9b155f919e328401",
+      "size_bytes": 84994,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "uniform16-analysis.json",
+      "path": "local-evidence/uniform16-analysis.json",
+      "sha256": "8e5fbe88535bc9407129bc2ecea606a0df86140dbe0fcf99ccfe7693d0ad9470",
+      "size_bytes": 136736,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "uniform16-memory.txt",
+      "path": "local-evidence/uniform16-memory.txt",
+      "sha256": "d3b02e405b85bb15150d5d727b0b5c96b3c278f71e6e51bf950271dae93a06f9",
+      "size_bytes": 34020,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "untracked-source.tar.gz",
+      "path": "local-evidence/untracked-source.tar.gz",
+      "sha256": "e3d25e914130e5c4a1eae24d93290e405749108f53ac794be0474925faa7f97a",
+      "size_bytes": 11410,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T16:24:55.217Z",
+    "started": "2026-09-09T16:25:31.029Z",
+    "finished": "2026-09-09T16:26:36.434Z"
+  }
+}

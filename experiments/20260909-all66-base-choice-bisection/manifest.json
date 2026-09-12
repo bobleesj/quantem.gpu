@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-base-choice-bisection",
+  "status": "succeeded",
+  "question": "Does restoring immutable baseline selection remove the pre-query crash while preserving loader changes?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-base-choice-bisection/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "entrypoint": "TANSTileArchitectureExperimentTests.testAll66UniformIndexABAWhenConfigured",
+    "dirty": true,
+    "snapshot_path": "local-evidence/source.patch",
+    "diff_sha256": "6560dd189b117990e2a8ee542a3f4f59193f0344768d5209ec65c86dfe54bf43"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-linux-products",
+      "path": "local-fixture/series-products/shared-resident-images.npy",
+      "sha256": "06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "source_bytes": 84681338880,
+    "diagnostic": "Immutable legacy base choice only; three independent Linux full66 product controls; no timing claim.",
+    "executable_sha256": "25bdc346346d0be6547af00ac47c55d43363a05a36fe4eee168cffedd222dd23",
+    "untracked_source_sha256": "0e47eaea0be88d721ffc3afa3fe22d20096f2f539fd036e3ea4a83b568fdd6ab",
+    "prior_failure": "20260909-all66-index-base-choice-clean",
+    "cache_state": "Prepared entropy archive, source pages unspecified; no app E2E",
+    "result": "Three independent frozen Linux products exactly matched across all66; source release=0. Removing mutable post-index base-choice branch restores first reference queries with new loader unchanged. No timings qualified; exact compiler/root cause not proven.",
+    "path_mapping": "Exact local paths and unmodified pre-normalization manifests are retained in the private output checkpoint.",
+    "artifact_results": {
+      "architecture-unit-v6.log": "Three independent frozen Linux products exactly matched across all66; source release=0. Removing mutable post-index base-choice branch restores first reference queries with new loader unchanged. No timings qualified; exact compiler/root cause not proven.",
+      "base-choice-bisection.log": "Three independent frozen Linux products exactly matched across all66; source release=0. Removing mutable post-index base-choice branch restores first reference queries with new loader unchanged. No timings qualified; exact compiler/root cause not proven.",
+      "source.patch": "Three independent frozen Linux products exactly matched across all66; source release=0. Removing mutable post-index base-choice branch restores first reference queries with new loader unchanged. No timings qualified; exact compiler/root cause not proven.",
+      "untracked-source.tar.gz": "Three independent frozen Linux products exactly matched across all66; source release=0. Removing mutable post-index base-choice branch restores first reference queries with new loader unchanged. No timings qualified; exact compiler/root cause not proven."
+    }
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "architecture-unit-v6.log",
+      "path": "local-evidence/architecture-unit-v6.log",
+      "sha256": "4cdddabfc821d132800ef51d9b0b014d3b5227988a50e9450d5746dea4f96a80",
+      "size_bytes": 10732,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "base-choice-bisection.log",
+      "path": "local-evidence/base-choice-bisection.log",
+      "sha256": "7f6fbd6b657804da05c37c946b430c336417771fd560bd296f399c1740573cdb",
+      "size_bytes": 1263,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "source.patch",
+      "path": "local-evidence/source.patch",
+      "sha256": "6560dd189b117990e2a8ee542a3f4f59193f0344768d5209ec65c86dfe54bf43",
+      "size_bytes": 100933,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "untracked-source.tar.gz",
+      "path": "local-evidence/untracked-source.tar.gz",
+      "sha256": "0e47eaea0be88d721ffc3afa3fe22d20096f2f539fd036e3ea4a83b568fdd6ab",
+      "size_bytes": 12904,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T16:48:58.662Z",
+    "started": "2026-09-09T16:48:58.662Z",
+    "finished": "2026-09-09T16:49:14.722Z"
+  }
+}

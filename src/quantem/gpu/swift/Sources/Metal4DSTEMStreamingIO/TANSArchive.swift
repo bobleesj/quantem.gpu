@@ -93,6 +93,8 @@ struct TANSArchive {
     let globalState: [String: ArrayDescriptor]
   }
   let root: URL
+  /// SHA-256 of the archive manifest bytes: the identity every derived cache is keyed by.
+  let checkpointSHA256: String
   let metadata: Metadata
   let acquisitions: [Int]
   let chunks: [Chunk]
@@ -104,6 +106,7 @@ struct TANSArchive {
     decoder.keyDecodingStrategy = .convertFromSnakeCase
     let checkpoint = try Self.readBounded(
       try Self.child("checkpoint.json", under: directory), maximumBytes: 64 * 1024 * 1024)
+    checkpointSHA256 = SHA256.hash(data: checkpoint).map { String(format: "%02x", $0) }.joined()
     let metadata = try decoder.decode(Metadata.self, from: checkpoint)
     self.metadata = metadata
     if let semantics = metadata.semantics {

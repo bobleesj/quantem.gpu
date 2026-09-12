@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260909-all66-separated-mixed-dispatch",
+  "status": "succeeded",
+  "question": "Can original-specialized homogeneous dispatch plus a separate mixed-tail dispatch remove the efficient-case regression?",
+  "paper": {
+    "authoritative_host": "phil",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260909-all66-separated-mixed-dispatch/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "abff4e0cac5329fd83391a11dcfa8a6849ed1589",
+    "dirty": true,
+    "entrypoint": "TANSSharedRefill16ExperimentTests.testAll66SharedRefill16ABAWhenConfigured",
+    "diff_sha256": "222d1d9e41da2f4864b91c9756cc044e2962ceafb732296d4e0ff2143c6bb878",
+    "snapshot_path": "local-evidence/mixed-separate.patch"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all66-entropy-checkpoint",
+      "path": "local-fixture/checkpoint.json",
+      "sha256": "2039c67dc6a511da9ff8fc4488da21450941a983e138183699dee32711af3582"
+    },
+    {
+      "dataset_id": "frozen-linux-products",
+      "path": "local-fixture/series-products/shared-resident-images.npy",
+      "sha256": "06b96168b62d89ba5a893416dcf7b0000d34647310da91db243ceab945cf89ac"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      66,
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "representation": "lossless entropy only",
+    "source_bytes": 84681338880,
+    "index_bytes": 2108620800,
+    "one_factor": "Relative to adaptive mixed-tail candidate, dispatch full groups through the frozen ordinary specialization and mixed tails through the mixed specialization. Same group plan, source/index and exact atomic outputs. Adds12672bytes bounded dispatch metadata for1056records, no scientific resident.",
+    "default": "false; isolated internal flag only; no app/public API change",
+    "test_source_sha256": "1eb93db40a77e7ca69db7962c59435f1360f69218570f2d23332d743de468305",
+    "test_binary_sha256": "d784e30c7216fecd1b9290eb65b7bdbdcdacbd84111df1770eeccb67d07b211e",
+    "environment": "QUANTEM_TANS_MIXED_TAILS=1 QUANTEM_TANS_MIXED_SAVINGS_DIVISOR=8 QUANTEM_TANS_SEPARATE_MIXED=1; A1/A2 ordinary baseline, B16 combined adaptive grouping plus separate dispatch. Prior unsplit candidate retained separately; no causal split-only speedup claim from separate processes.",
+    "matrix": "7 BF/ABF/ADF large center/radius/edge/small delta cases, 5 queries/case/arm, A/B/A=105 full66 queries with warmup per case",
+    "preflight": "4/4 independent focused tests pass, including full uint16 literal, escaped symbols, 91-zero-pair chains, mixed model IDs, inactive lanes and signed removal. Initial compiler type-check timeout retained and fixed with explicit UInt32 closure type.",
+    "gate": "Frozen Linux BF/ADF/ABF full images, full66 hashes against default, immutable prior, group/lane counters and memory. Independent full original-count audit remains pending.",
+    "timing": "Whole query through completion wait; preparation separate; prepared archive/source pages unspecified; not native FPS or original cold load",
+    "memory": "Same source/index/table/scientific scratch; collect Metal allocation and sampled RSS/compressor/swap",
+    "artifact_results": {
+      "raw": "Exact full raw record",
+      "analysis": "Exact full raw record",
+      "missed_memory": "Sampler missed process; no samples"
+    },
+    "result": "105/105 full66 hashes exact, frozenLinuxBF/ADF/ABF and prior immutable. A1/B/A2 wallp50ms BF148.680/99.305/148.616;ABF141.626/102.555/141.538;ADF234.729/180.705/234.858;edge185.820/124.376/185.604;BFresize117.820/118.673/119.256;ADFresize58.259/52.676/57.991;small28.008/26.903/28.171. BFresize candidate falls between controls.",
+    "decision": "Promising combined candidate; native held-out warm replay and idle/failure/loading/SPI/native gates required. Default remains off.",
+    "memory_result": "Source/index unchanged; Metal allocated86935453696B every query. Sampler started after the process had exited; zero-byte log is missing memory evidence, not zero memory/swap. Full repeat/replay memory required."
+  },
+  "execution": {
+    "host": "phil",
+    "backend": "swift-metal",
+    "gpu_ids": [
+      "default Metal device"
+    ],
+    "gpu_model": "Apple M5 Max"
+  },
+  "outputs": [
+    {
+      "artifact_id": "raw",
+      "path": "local-evidence/mixed-separate-all66.log",
+      "sha256": "a7fda9f5bec9e11b7462e2974e1c65291eff40d98a432bfc111a5230e6ef9e74",
+      "size_bytes": 37757,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "analysis",
+      "path": "local-evidence/mixed-separate-analysis.json",
+      "sha256": "aea37a87fc2d8982e2f5c6eb8d61f94b95859b8fbf33ef7bd337efee06bdd8c1",
+      "size_bytes": 67203,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "missed_memory",
+      "path": "local-evidence/mixed-separate-memory.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-09T10:19:00Z",
+    "started": "2026-09-09T10:19:09.320Z",
+    "finished": "2026-09-09T10:20:03.503Z"
+  }
+}
