@@ -161,7 +161,8 @@ kernel void precision_pack(device const ushort *src [[buffer(0)]], device const 
     if (used) words[cursor] = uint(accumulator);
 }
 inline ushort code_at(device const uint *words, device const ulong *offsets, device const uchar *widths,
-    ulong scan, ulong pixel, ulong pixels) {
+    ulong scan, ulong pixel, ulong pixels, bool dense) {
+    if (dense) return reinterpret_cast<device const ushort *>(words)[scan * pixels + pixel];
     ulong stream = (scan / 128) * pixels + pixel; uint width = widths[stream];
     if (!width) return 0;
     ulong bit = (scan % 128) * width, word = offsets[stream] + bit / 32;
@@ -171,16 +172,16 @@ inline ushort code_at(device const uint *words, device const ulong *offsets, dev
 }
 #define PACKED device const uint *words [[buffer(0)]], device const ulong *offsets [[buffer(1)]], device const uchar *widths [[buffer(2)]]
 kernel void precision_frame(PACKED, device float *dst [[buffer(3)]], COMMON, uint pixel [[thread_position_in_grid]]) {
-    if (pixel < p[1]) dst[pixel] = restored(code_at(words, offsets, widths, p[8], pixel, p[1]), p, f);
+    if (pixel < p[1]) dst[pixel] = restored(code_at(words, offsets, widths, p[8], pixel, p[1], p[12]), p, f);
 }
 kernel void precision_unpacked(PACKED, device ushort *dst [[buffer(3)]], COMMON, uint i [[thread_position_in_grid]]) {
-    if (i < p[0]) dst[i] = code_at(words, offsets, widths, i / p[1], i % p[1], p[1]);
+    if (i < p[0]) dst[i] = code_at(words, offsets, widths, i / p[1], i % p[1], p[1], p[12]);
 }
 kernel void precision_detector(PACKED, device float *dst [[buffer(3)]], device const float *mask [[buffer(4)]],
     COMMON, uint scan [[threadgroup_position_in_grid]], uint lane [[thread_index_in_threadgroup]]) {
     threadgroup float partial[256]; float sum = 0;
     for (ulong pixel = lane; pixel < p[1]; pixel += 256)
-        sum += restored(code_at(words, offsets, widths, scan, pixel, p[1]), p, f) * mask[pixel];
+        sum += restored(code_at(words, offsets, widths, scan, pixel, p[1], p[12]), p, f) * mask[pixel];
     partial[lane] = sum; threadgroup_barrier(mem_flags::mem_threadgroup);
     for (uint step = 128; step; step /= 2) {
         if (lane < step) partial[lane] += partial[lane + step];
@@ -192,7 +193,7 @@ kernel void precision_mean(PACKED, device float *dst [[buffer(3)]], COMMON, uint
     if (pixel >= p[1]) return;
     float sum = 0, compensation = 0;
     for (ulong scan = 0; scan < p[2]; ++scan) {
-        float term = restored(code_at(words, offsets, widths, scan, pixel, p[1]), p, f) / float(p[9]) - compensation;
+        float term = restored(code_at(words, offsets, widths, scan, pixel, p[1], p[12]), p, f) / float(p[9]) - compensation;
         float next = sum + term; compensation = (next - sum) - term; sum = next;
     }
     dst[pixel] = p[8] ? dst[pixel] + sum : sum;
@@ -205,7 +206,7 @@ kernel void precision_reduce(device const float *src [[buffer(0)]], device float
 kernel void precision_range_read(PACKED, device float *dst [[buffer(3)]], COMMON,
     uint i [[thread_position_in_grid]]) {
     if (i < p[0]) dst[i] = restored(
-        code_at(words, offsets, widths, p[8] + i / p[1], i % p[1], p[1]), p, f);
+        code_at(words, offsets, widths, p[8] + i / p[1], i % p[1], p[1], p[12]), p, f);
 }
 kernel void precision_divide(device float *value [[buffer(0)]],
     device const float *denominator [[buffer(1)]], COMMON, uint i [[thread_position_in_grid]]) {

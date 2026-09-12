@@ -3,7 +3,7 @@
 On CUDA and Python MPS, `dtype="scaled_uint16"` now calibrates bounded regions
 automatically. There is no scaling-mode keyword. Algorithms keep computing in
 float32; the GPU converts each finished region once, measures its storage error,
-and packs its uint16 codes. Ordinary reads and detector products restore the
+and retains its uint16 codes in lossless ANS storage. Ordinary reads and detector products restore the
 region's physical intensity calibration.
 
 ```python
@@ -14,6 +14,14 @@ patch = loaded.read(scan_region=(0, 8, 0, 8))
 io.save("scaled_master.h5", loaded)
 reopened = io.load("scaled_master.h5")
 ```
+
+Scaled results report `representation="encoded"` and
+`metadata["resident_codec"] == "ans"`. Omit `representation` for the default;
+explicit `representation="encoded"` is also accepted for scaled precision.
+Existing globally scaled files also reopen into ANS residency. The HDF5 file
+writer still uses GPU bitshuffle/LZ4 for disk compression; reopening encodes
+the saved uint16 codes into ANS without recalibration. ANS residency is not a
+claim that the file itself is an ANS archive. Float16 residency remains bit-packed.
 
 ## What `dtype` means
 
@@ -28,8 +36,9 @@ not select the MAPED calculation precision, GPU backend, or compression codec.
 | `scaled_uint16` | Unsigned 16-bit codes with saved scale and offset per region | Float32 calibrated intensities | Uniform intensity step within each region; rounding introduces measured storage error |
 
 Both float16 and scaled uint16 storage are supported by CUDA and Python MPS IO.
-Packing preserves the selected stored values exactly; it does not recover
-precision removed by conversion. Physical resident size depends on the packed
+ANS preserves scaled uint16 codes exactly; float16 currently uses bit packing,
+which also preserves its stored bit patterns exactly. Compression does not recover
+precision removed by conversion. Physical resident size depends on the encoded
 codes and metadata, not only the nominal two bytes per stored value.
 Plain `uint16` is an ordinary integer conversion, not calibrated scaled storage.
 Do not substitute it for `scaled_uint16` when preserving fractional intensities.
@@ -49,8 +58,8 @@ accuracy. The precision report and calibration are saved with the data.
 A GPU tensor or generated source with `shape`, `dtype`, and ordered `blocks()`
 can use the same load call. All logical frames must be yielded exactly once.
 Generated sources retain their scientific algorithm; IO owns conversion,
-calibration, packing, reductions and persistence. `io.save(path, source,
-dtype="scaled_uint16")` streams regions without keeping the full packed output.
+calibration, encoding, reductions and persistence. `io.save(path, source,
+dtype="scaled_uint16")` streams regions without keeping the full encoded output.
 The caller must close loaded residents when done.
 
 The version-2 precision record stores contiguous frame bounds, scale/offset,
@@ -61,7 +70,7 @@ Old globally scaled files retain their original version-1 behavior. Older
 readers reject version 2, and the native Swift global file reader does not yet
 support regional files. This change does not claim Live4DSTEM UI integration.
 
-The brief message gives packed size, RMSE, maximum error and overflow. Detailed
+The brief message gives ANS resident size, RMSE, maximum error and overflow. Detailed
 region reports are in `loaded.metadata["precision"]`. Error is relative to the
 float32 source, not experimental ground truth. A cropped reload reports saved
 source-region metrics, not newly measured crop error. Float32 remains the choice

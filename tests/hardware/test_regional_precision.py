@@ -52,6 +52,8 @@ def test_generated_scan_roundtrip_and_calibrated_products(tmp_path):
     with io.load(
         source, dtype="scaled_uint16", backend=BACKEND, verbose=False
     ) as loaded:
+        assert loaded.representation.value == "encoded"
+        assert loaded.metadata["resident_codec"] == "ans"
         report = loaded.metadata["precision"]
         expected = np.empty_like(original).reshape(-1, 8, 8)
         raw = original.reshape(-1, 8, 8)
@@ -83,7 +85,7 @@ def test_generated_scan_roundtrip_and_calibrated_products(tmp_path):
         )
         path = tmp_path / "scaled_master.h5"
         io.save(path, loaded, backend=BACKEND, verbose=False)
-        with io.load(path, backend=BACKEND, verbose=False) as reopened:
+        with io.load(path, backend=BACKEND, representation="encoded", verbose=False) as reopened:
             np.testing.assert_array_equal(reopened.read().cpu(), expected)
             assert reopened.metadata["precision"] == report
         with io.load(

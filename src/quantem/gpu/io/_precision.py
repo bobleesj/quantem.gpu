@@ -415,14 +415,15 @@ def print_report(report, shape, resident_bytes, *, saved=False):
     """Print measured precision and residency without leaking source paths."""
     if report.get("version") == 2:
         origin = "Saved conversion report (not remeasured)" if saved else "GPU measured across all loaded values"
-        print(f"{report['source_dtype']} → scaled_uint16 | {resident_bytes / 2**30:.3f} GiB packed | "
+        print(f"{report['source_dtype']} → scaled_uint16 | {resident_bytes / 2**30:.3f} GiB ANS | "
               f"RMSE {report['rmse']:.7g}, max {report['max_abs_error']:.7g}, "
               f"overflow {report['overflow']} | {origin}")
         return
     print(
         f"Loaded {shape[0]}×{shape[1]} scan, {shape[2]}×{shape[3]} detector | "
         f"{report['source_dtype']} → {report['storage']} | "
-        f"{resident_bytes / 2**30:.3f} GiB packed on GPU"
+        f"{resident_bytes / 2**30:.3f} GiB "
+        f"{'ANS' if report['storage'] == 'scaled_uint16' else 'packed'} on GPU"
     )
     if report["storage"] == "scaled_uint16":
         print(f"  scale {report['scale']:.7g}, offset {report['offset']:.7g}")
@@ -466,11 +467,17 @@ def load_precision(
         context = cp.cuda.Device(selected)
 
         def pack(encoded, shape):
+            if storage == "scaled_uint16":
+                from .backends.cuda.precision import encode_ans
+
+                return encode_ans(encoded, shape)
             return CudaPackedResidentCounts.from_array(encoded.view(cp.uint16), shape)
 
     with context:
         source = _Source(path, scan_shape=scan_shape, dataset_path=dataset_path, backend=backend)
         storage = precision_name(dtype) or (source.saved or {}).get("storage")
+        if backend == "mps" and storage == "scaled_uint16":
+            from .backends.mps.precision import encode_ans as pack
         if storage == "scaled_uint16" and (source.saved is None or source.saved.get("version") == 2):
             try:
                 return _load_regional(source, scan_region, detector_region, verbose, pack, PrecisionSource)
@@ -541,7 +548,8 @@ def load_precision(
                 conversion_report_origin="saved" if reuse else "measured",
                 working_shape=shape,
                 working_dtype="float16" if storage == "float16" else "float32",
-                representation="packed",
+                representation="encoded" if storage == "scaled_uint16" else "packed",
+                resident_codec="ans" if storage == "scaled_uint16" else "bitpacked",
                 residency="device",
                 physical_resident_bytes=resident.nbytes,
                 lossless_exact=report["changed"] == 0,
@@ -915,7 +923,8 @@ def _load_regional(source, scan_region, detector_region, verbose, pack, resident
             working_dtype="float32",
             source_dtype=report["source_dtype"],
             storage_dtype="uint16",
-            representation="packed",
+            representation="encoded",
+            resident_codec="ans",
             residency="device",
             physical_resident_bytes=resident.nbytes,
             lossless_exact=report["changed"] == 0,

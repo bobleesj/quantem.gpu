@@ -1,5 +1,7 @@
 """Metal precision conversion and direct queries over resident packed streams."""
 
+from contextlib import contextmanager
+
 import bisect
 import ctypes
 import math
@@ -396,6 +398,46 @@ def pack(encoded, shape):
     return _PackedPart(words, offsets, widths, shape)
 
 
+class _ANSPart:
+    def __init__(self, owner, shape):
+        self.owner, self.shape = owner, shape
+
+    @property
+    def nbytes(self):
+        return self.owner.nbytes
+
+    def release(self):
+        self.owner.release()
+
+
+def encode_ans(encoded, shape):
+    """Retain scaled uint16 codes exactly in native Metal ANS storage."""
+    from ._streamed import MPSStreamedCounts
+
+    owner = MPSStreamedCounts(shape, np.uint16)
+    try:
+        owner.append(encoded)
+        return _ANSPart(owner, shape)
+    except BaseException:
+        owner.release()
+        raise
+
+
+@contextmanager
+def _part_buffers(part, first=0, stop=None):
+    """Borrow packed buffers or decode only the requested ANS range."""
+    if not isinstance(part, _ANSPart):
+        yield part.buffers
+        return
+    codes = part.owner.decode_scan_range_device(
+        first, part.shape[1] if stop is None else stop
+    )
+    try:
+        yield [codes.buffer, codes.buffer, codes.buffer]
+    finally:
+        codes.release()
+
+
 class PrecisionSource:
     """Keep every encoded intensity resident and restore units inside queries."""
 
@@ -439,6 +481,7 @@ class PrecisionSource:
     def _params(self, part):
         p, f = _parameters(report=self._reports[id(part)])
         p[1:3] = [math.prod(self.det_shape), part.shape[1]]
+        p[12] = int(isinstance(part, _ANSPart))
         return p, f
 
     def encoded_blocks(self):
@@ -447,7 +490,8 @@ class PrecisionSource:
             result = MetalArray((part.shape[1], *self.det_shape), np.float16 if self.precision["storage"] == "float16" else np.uint16)
             p, f = self._params(part)
             p[0] = result.size
-            _dispatch("unpacked", [*part.buffers, result], p, f)
+            with _part_buffers(part) as buffers:
+                _dispatch("unpacked", [*buffers, result], p, f)
             yield result
 
     def frame_native(self, index, *, out=None):
@@ -461,7 +505,11 @@ class PrecisionSource:
         p, f = self._params(part)
         p[0], p[8] = p[1], index - (self._ends[part_index - 1] if part_index else 0)
         result = out if out is not None else MetalArray(self.det_shape, np.float32)
-        _dispatch("frame", [*part.buffers, result], p, f)
+        first = p[8]
+        if isinstance(part, _ANSPart):
+            p[8] = 0
+        with _part_buffers(part, first, first + 1) as buffers:
+            _dispatch("frame", [*buffers, result], p, f)
         return result
 
     def _decode_scan_range_torch(self, first, stop):
@@ -478,7 +526,11 @@ class PrecisionSource:
             if low < high:
                 p, f = self._params(part)
                 p[0], p[8] = (high - low) * p[1], low - start
-                _dispatch("range_read", [*part.buffers, output[low - first:high - first]], p, f)
+                offset = p[8]
+                if isinstance(part, _ANSPart):
+                    p[8] = 0
+                with _part_buffers(part, offset, high - start) as buffers:
+                    _dispatch("range_read", [*buffers, output[low - first:high - first]], p, f)
             start = end
             if start >= stop:
                 break
@@ -503,12 +555,11 @@ class PrecisionSource:
     def mean_dp(self):
         self._check()
         result = MetalArray(self.det_shape, np.float32)
-        command = _runtime()[2].commandBuffer()
         for index, part in enumerate(self.parts):
             p, f = self._params(part)
             p[0], p[8], p[9] = p[1], int(index > 0), self.n_frames
-            _dispatch("mean", [*part.buffers, result], p, f, command=command)
-        _complete(command, "precision mean")
+            with _part_buffers(part) as buffers:
+                _dispatch("mean", [*buffers, result], p, f)
         return result
 
     def masked_sum_native(self, mask, *, out=None):
@@ -520,14 +571,13 @@ class PrecisionSource:
         result = out if out is not None else MetalArray(self.scan_shape, np.float32)
         if not isinstance(result, MetalArray) or result.shape != self.scan_shape or result.dtype != self.dtype:
             raise ValueError("out must be a native float32 Metal scan result with matching shape.")
-        command = _runtime()[2].commandBuffer()
         first = 0
         for part in self.parts:
             p, f = self._params(part)
             p[8] = first
-            _dispatch("detector", [*part.buffers, result, weights], p, f, groups=part.shape[1], command=command)
+            with _part_buffers(part) as buffers:
+                _dispatch("detector", [*buffers, result, weights], p, f, groups=part.shape[1])
             first += part.shape[1]
-        _complete(command, "precision detector")
         return result
 
     def masked_sum(self, mask):

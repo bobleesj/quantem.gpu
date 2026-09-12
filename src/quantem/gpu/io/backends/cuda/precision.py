@@ -8,6 +8,8 @@ from pathlib import Path
 import cupy as cp
 import numpy as np
 
+from quantem.gpu._compact.streamed import StreamedCounts
+
 
 @cache
 def _precision_kernels(device_id: int):
@@ -139,6 +141,43 @@ def encode_measure_scaled_uint16(values, report, stats):
         shared_mem=shared,
     )
     return output
+
+
+class _ANSIntensityCodes(StreamedCounts):
+    """Adapt exact ANS ranges to calibrated intensity queries."""
+
+    block_frames = 4096
+
+    @property
+    def _block_count(self):
+        return math.ceil(math.prod(self.shape[:2]) / self.block_frames)
+
+    def decode_block_device(self, index):
+        first = index * self.block_frames
+        return self.decode_scan_range_device(
+            first, min(first + self.block_frames, math.prod(self.shape[:2]))
+        )
+
+    def extract_diffraction_device(self, acquisition, index):
+        return self.decode_scan_range_device(index, index + 1)[0]
+
+    def detector_sum_device(self, mask):
+        return cp.concatenate([
+            cp.sum(self.decode_block_device(index) * mask,
+                   axis=(1, 2), dtype=cp.uint64)
+            for index in range(self._block_count)
+        ]).reshape(self.shape[:2])
+
+
+def encode_ans(codes, shape):
+    """Retain scaled uint16 codes exactly in the native ANS codec."""
+    result = _ANSIntensityCodes(shape, cp.uint16)
+    try:
+        result.append(codes.view(cp.uint16))
+        return result
+    except BaseException:
+        result.release()
+        raise
 
 
 class PrecisionSource:

@@ -5084,8 +5084,9 @@ def load(
     """Load one or more 4D-STEM sources through an accelerated backend.
 
     Fractional intensity exports support ``dtype="float16"`` and
-    ``dtype="scaled_uint16"`` on CUDA and Metal/MPS. They remain packed and
-    print a measured conversion report. Scaled codes restore their saved
+    ``dtype="scaled_uint16"`` on CUDA and Metal/MPS. They remain compressed and
+    print a measured conversion report. Scaled uint16 defaults to ANS residency
+    (representation="encoded"); float16 remains bit-packed. Scaled codes restore their saved
     intensity units for detector queries. ``scan_region`` and
     ``detector_region`` select values before resident allocation. New scaled
     storage automatically calibrates bounded regions in one pass; saved files
@@ -5237,9 +5238,18 @@ def load(
 
         precision_backend = resolve_backend(backend)
         if precision_backend not in {"cuda", "mps"}:
-            raise NotImplementedError("Packed precision loading requires CUDA or Metal; no CPU conversion is used.")
-        if representation is not None and DataRepresentation.parse(representation) is not DataRepresentation.PACKED:
-            raise ValueError("Precision loading keeps encoded values packed; omit representation or use 'packed'.")
+            raise NotImplementedError("Precision loading requires CUDA or Metal; no CPU conversion is used.")
+        storage_types = {precision} if precision else {item["storage"] for item in saved if item}
+        expected_representation = (
+            DataRepresentation.ENCODED
+            if storage_types == {"scaled_uint16"}
+            else DataRepresentation.PACKED
+        )
+        if representation is not None and DataRepresentation.parse(representation) is not expected_representation:
+            raise ValueError(
+                f"This precision uses representation='{expected_representation.value}'; "
+                "omit representation to select its default storage."
+            )
         if any(value is not None for value in (target_scan_region, scan_shift_row_col,
                 scan_indices, random_positions, drift, devices, expected_source_sha256, source_integrity)) or detector_bin != 1 or det_bin not in (None, 1) or output != "native" or scan_order != "row-major" or apply_mask:
             raise NotImplementedError("Precision loading supports scan_region and detector_region; remove resampling, masking and other conversion controls.")
