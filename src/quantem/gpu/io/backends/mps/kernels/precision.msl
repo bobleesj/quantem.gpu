@@ -91,6 +91,28 @@ kernel void precision_range(device const float *src [[buffer(0)]], device float4
     }
     dst[i] = float4(low, high, invalid, subnormal);
 }
+kernel void precision_range_reduce(
+    device const float4 *src [[buffer(0)]], device float4 *dst [[buffer(1)]],
+    COMMON, uint lane [[thread_index_in_threadgroup]]) {
+    threadgroup float4 partial[256];
+    float4 value = float4(INFINITY, -INFINITY, 0, 0);
+    for (ulong i = lane; i < p[14]; i += 256) {
+        float4 item = src[i];
+        value.x = min(value.x, item.x);
+        value.yzw = max(value.yzw, item.yzw);
+    }
+    partial[lane] = value;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint step = 128; step; step >>= 1) {
+        if (lane < step) {
+            partial[lane].x = min(partial[lane].x, partial[lane + step].x);
+            partial[lane].yzw = max(partial[lane].yzw, partial[lane + step].yzw);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (!lane) dst[0] = partial[0];
+}
+
 kernel void precision_measure(device const float *src [[buffer(0)]], device const float *dst [[buffer(1)]],
     device float4 *errors [[buffer(2)]], device uint4 *counts [[buffer(3)]],
     COMMON, uint i [[thread_position_in_grid]]) {
@@ -212,3 +234,29 @@ kernel void precision_divide(device float *value [[buffer(0)]],
     device const float *denominator [[buffer(1)]], COMMON, uint i [[thread_position_in_grid]]) {
     if (i < p[0]) value[i] /= max(denominator[i], 1e-10f);
 }
+
+#ifdef QUANTEM_PRECISION_ANS_MEAN
+kernel void precision_ans_mean(
+    device const uchar *payload [[buffer(0)]],
+    device const uint *offsets [[buffer(1)]],
+    device const uchar *models [[buffer(2)]],
+    device const uint *decoding [[buffer(3)]],
+    device atomic_uint *errors [[buffer(4)]],
+    device float *dst [[buffer(5)]], COMMON,
+    uint pixel [[thread_position_in_grid]]) {
+    if (pixel >= p[1]) return;
+    float sum = 0, compensation = 0;
+    for (ulong first = 0; first < p[2]; first += p[10]) {
+        uint stream = uint((first / p[10]) * p[1] + pixel);
+        StreamReader reader(payload, offsets, models, decoding, stream);
+        for (ulong scan = first; scan < min(first + p[10], p[2]); ++scan) {
+            float term = restored(ushort(reader.next()), p, f) / float(p[9]) - compensation;
+            float next = sum + term;
+            compensation = (next - sum) - term;
+            sum = next;
+        }
+        if (!reader.finished()) atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+    }
+    dst[pixel] = p[8] ? dst[pixel] + sum : sum;
+}
+#endif

@@ -95,3 +95,15 @@ for old behavior; version-2 CUDA encoding uses double-precision calibration,
 matching the NumPy contract and Metal's compensated arithmetic on the tested
 fixtures. Backend MAPED float32 rounding and storage-conversion parity are
 separate claims.
+
+
+### MPS implementation
+
+Scaled-code mean diffraction queries accumulate directly from ANS using the
+existing compensated summation order and calibration. Regions share one
+ordered command submission without allocating full decoded intermediates.
+Other calibrated queries retain bounded reads. Tensor range, finiteness and
+subnormal checks use a fused native scan with a small final reduction. These
+optimizations are automatic and do not change the public API, rounding, error
+report, or subnormal policy. Exact mean parity is tested against the previous
+decoded GPU reduction in addition to the independent NumPy conversion tests.

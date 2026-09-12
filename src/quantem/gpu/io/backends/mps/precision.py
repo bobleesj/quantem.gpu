@@ -1,4 +1,4 @@
-"""Metal precision conversion and direct queries over resident packed streams."""
+"""Metal precision conversion and direct queries over resident encoded streams."""
 
 from contextlib import contextmanager
 
@@ -22,16 +22,18 @@ def _runtime():
         raise RuntimeError("Precision conversion needs an available Metal GPU.")
     options = metal.MTLCompileOptions.alloc().init()
     options.setFastMathEnabled_(False)
-    library, error = device.newLibraryWithSource_options_error_(
-        (Path(__file__).parent / "kernels" / "precision.msl").read_text(), options, None
+    root = Path(__file__).parent / "kernels"
+    source = "#define QUANTEM_PRECISION_ANS_MEAN 1\n" + "\n".join(
+        (root / name).read_text() for name in ("streamed_counts.msl", "precision.msl")
     )
+    library, error = device.newLibraryWithSource_options_error_(source, options, None)
     if library is None:
         raise RuntimeError(f"Could not compile Metal precision kernels: {error}")
     pipelines = {}
     for name in (
-        "copy", "restore", "encode", "encode_measure", "range", "measure",
+        "copy", "restore", "encode", "encode_measure", "range", "range_reduce", "measure",
         "widths", "pack", "frame", "unpacked", "detector", "mean", "reduce",
-        "range_read", "divide",
+        "range_read", "divide", "ans_mean",
     ):
         function = library.newFunctionWithName_(f"precision_{name}")
         pipeline, error = device.newComputePipelineStateWithFunction_error_(function, None)
@@ -116,19 +118,28 @@ def is_mps_tensor(value):
 
 
 def tensor_range(values):
-    """Return a float32 tensor range using MPS reductions."""
+    """Measure range and invalid/subnormal flags in one bounded Metal pass."""
     import torch
 
-    # aminmax propagates NaN and includes infinities. Checking these two
-    # endpoints also validates finiteness without another full tensor scan.
-    low, high = torch.stack(torch.aminmax(values)).cpu().tolist()
-    if not math.isfinite(low) or not math.isfinite(high):
-        raise ValueError("Precision conversion requires finite intensities; preserve this source as float32.")
-    if values.dtype == torch.float32:
-        bits = values.contiguous().view(torch.int32).bitwise_and(0x7fffffff)
-        if bool(((bits > 0) & (bits < 0x800000)).any()):
+    values = values.to(torch.float32).contiguous()
+    p, f = _parameters(values)
+    p[14] = p[15] = min(p[0], 8192)
+    partial = MetalArray((p[14], 4), np.float32)
+    result = MetalArray((1, 4), np.float32)
+    try:
+        command = _runtime()[2].commandBuffer()
+        _dispatch("range", [values, partial], p, f, command=command)
+        _dispatch("range_reduce", [partial, result], p, f, groups=1, command=command)
+        _complete(command, "precision tensor range")
+        low, high, invalid, subnormal = result.get()[0].tolist()
+        if invalid:
+            raise ValueError("Precision conversion requires finite intensities; preserve this source as float32.")
+        if subnormal:
             raise ValueError("Metal precision conversion cannot preserve float32 subnormal intensities; keep the original float32 file or use CUDA.")
-    return float(low), float(high)
+        return float(low), float(high)
+    finally:
+        partial.release()
+        result.release()
 
 
 def tensor_restore(values, report):
@@ -555,11 +566,28 @@ class PrecisionSource:
     def mean_dp(self):
         self._check()
         result = MetalArray(self.det_shape, np.float32)
+        # Parts retain their buffers until this ordered submission finishes.
+        command = _runtime()[2].commandBuffer()
         for index, part in enumerate(self.parts):
             p, f = self._params(part)
             p[0], p[8], p[9] = p[1], int(index > 0), self.n_frames
-            with _part_buffers(part) as buffers:
-                _dispatch("mean", [*buffers, result], p, f)
+            if isinstance(part, _ANSPart):
+                owner = part.owner
+                owner._clear_errors()
+                p[10] = owner.interval
+                chunk = owner.chunks[0]
+                _dispatch(
+                    "ans_mean",
+                    [*chunk.buffers, owner._decoding, owner._errors, result],
+                    p, f, command=command,
+                )
+            else:
+                with _part_buffers(part) as buffers:
+                    _dispatch("mean", [*buffers, result], p, f, command=command)
+        _complete(command, "precision mean diffraction")
+        for part in self.parts:
+            if isinstance(part, _ANSPart):
+                part.owner._check_errors()
         return result
 
     def masked_sum_native(self, mask, *, out=None):

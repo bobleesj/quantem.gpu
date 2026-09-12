@@ -228,3 +228,46 @@ def test_tensor_range_preserves_extrema_and_rejects_nonfinite_values():
         invalid[16, 18] = nonfinite
         with pytest.raises(ValueError, match="finite intensities"):
             tensor_range(invalid)
+
+
+def test_tensor_range_rejects_subnormal_bit_patterns():
+    """The fused range check retains the saved-precision subnormal policy."""
+    import torch
+
+    from quantem.gpu.io.backends.mps.precision import tensor_range
+
+    for bits in (1, 0x7fffff, -2147483647):
+        values = torch.tensor([0, bits, 0x3f800000], device="mps", dtype=torch.int32)
+        with pytest.raises(ValueError, match="subnormal"):
+            tensor_range(values.view(torch.float32))
+
+
+def test_direct_ans_mean_matches_prior_decoded_reduction_exactly():
+    """Direct encoded means retain the old compensated order across ANS intervals."""
+    import torch
+
+    from quantem.gpu import io
+    from quantem.gpu.io.backends.mps.precision import (
+        MetalArray,
+        _dispatch,
+        _part_buffers,
+    )
+
+    values = torch.arange(17 * 513 * 4 * 8, device="mps").reshape(17, 513, 4, 8)
+    values = ((values * 17) % 787).float() / 13 - 7
+    with io.load(values, backend="mps", dtype="scaled_uint16", verbose=False) as loaded:
+        source = loaded.data
+        reference = MetalArray(source.det_shape, np.float32)
+        actual = source.mean_dp()
+        try:
+            for index, part in enumerate(source.parts):
+                parameters, calibration = source._params(part)
+                parameters[0] = parameters[1]
+                parameters[8] = int(index > 0)
+                parameters[9] = source.n_frames
+                with _part_buffers(part) as buffers:
+                    _dispatch("mean", [*buffers, reference], parameters, calibration)
+            np.testing.assert_array_equal(actual.get(), reference.get())
+        finally:
+            reference.release()
+            actual.release()
