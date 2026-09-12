@@ -247,6 +247,9 @@ def merge_to_scaled_h5(
             raise ValueError(
                 "Every encoded source and both shift arrays must share one CUDA device."
             )
+    # Backend code owns CuPy device state. MAPED callers provide only the Torch
+    # device and encoded source contract.
+    cp.cuda.Device(requested_device).use()
     output_path = Path(output_path)
     region_frames = _automatic_region_frames(shape)
     started = time.perf_counter()

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import sys
+from types import SimpleNamespace
+
 import pytest
 
 from quantem.gpu import device
@@ -72,3 +75,30 @@ def test_no_cpu_scientific_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
         device.detect()
     with pytest.raises(ValueError, match="Unknown GPU backend"):
         device.resolve("cpu")
+
+
+def test_least_busy_cuda_device_falls_back_to_torch_memory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import torch
+
+    free = [3, 9, 5]
+    monkeypatch.setattr(torch.cuda, "mem_get_info", lambda index: (free[index], 10))
+    monkeypatch.setitem(sys.modules, "pynvml", None)
+
+    assert device.least_busy_cuda_device(3) == 1
+
+
+def test_release_cached_memory_uses_backend_allocator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from quantem.gpu.device import _cupy
+
+    released = []
+    pool = SimpleNamespace(free_all_blocks=lambda: released.append(True))
+    fake_cupy = SimpleNamespace(get_default_memory_pool=lambda: pool)
+    monkeypatch.setattr(_cupy, "cp", fake_cupy)
+
+    device.release_cached_memory()
+
+    assert released == [True]
