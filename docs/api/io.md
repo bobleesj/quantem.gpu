@@ -88,10 +88,10 @@ and `load_timings` metadata describe the actual loaded representation. Saving
 or transcoding this new resident is not yet implemented. Complete-series
 120 Hz throughput is not established by the bounded CUDA parity tests.
 
-### Load an existing ANS file directly into native Metal
+### Load an existing encoded file directly into native Metal
 
 The native Swift reader accepts the same canonical QGANS v1 files used by the
-Python MPS/CUDA adapters:
+Python MPS/CUDA encoded adapters:
 
 ```swift
 let source = try MetalANSResidentSource(
@@ -103,12 +103,12 @@ let pattern = try source.extractRawDiffraction(scanRow: 0, scanColumn: 0)
 It validates typed section bounds and checksums, streams bounded file ranges
 into private Metal buffers, and preserves native uint8/uint16 counts without a
 dense allocation. The path is independent of scan shape, including 512×512,
-1024×1024, and non-square scans. This is an ANS-file reopen path; the macOS
+1024×1024, and non-square scans. This is an encoded-file reopen path; the macOS
 original HDF5 loader still performs bitshuffle/LZ4 decode on cold HDF5 input.
 The same handoff has been checked on bounded real 4D-STEM HDF5 slices; see the
 local experiment record for the retained parity evidence.
-An accelerated HDF5→canonical-ANS encoder is not yet qualified, so the first
-interactive load still uses the exact HDF5-to-packed path and sidecar ANS
+An accelerated HDF5→canonical-encoded encoder is not yet qualified, so the first
+interactive load still uses the exact HDF5-to-packed path and sidecar encoding
 preparation must remain asynchronous or an explicit offline step.
 
 (cuda-h5-paired-residency)=
@@ -165,13 +165,13 @@ These are the only representation names. The authenticated `storage_schema`
 selects the precise decoder within a representation; users do not select an
 internal bitpacking or block-compression profile through this argument.
 
-The encoded-to-packed file workflow is available on Python MPS and CUDA, with
-bounded physical integer-parity evidence. Native Swift/Metal can reopen a
+The new encoded-to-packed file workflow is available on Python MPS and CUDA, with
+bounded physical integer-parity evidence. Native Swift/Metal can now reopen a
 canonical QGANS file directly, with the same bounded physical geometry gate.
 These results do not qualify complete-series loading, peak memory, or
-interactive throughput. The explicit CPU reference can decode encoded data
-to dense. GPU dense materialization, reverse conversions, and accelerated
-cold HDF5-to-ANS encoding remain pending. Do not infer support for every
+interactive throughput. The explicit CPU reference can decode encoded data to dense.
+GPU dense materialization, reverse conversions, and accelerated cold
+HDF5-to-encoded preparation remain pending. Do not infer support for every
 source/representation/backend combination from the selector names.
 
 Representation is independent of dtype and residency. A lossless-packed
