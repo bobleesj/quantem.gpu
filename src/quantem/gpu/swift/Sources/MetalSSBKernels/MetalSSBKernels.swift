@@ -1,20 +1,32 @@
 import Foundation
 import Metal
 
+/// Unsigned source counts are read at their native width before float32 SSB arithmetic.
+public enum MetalSSBCountType: Int, Codable, Sendable {
+  case uint8 = 1
+  case uint16 = 2
+  case uint32 = 4
+
+  public var byteWidth: Int { rawValue }
+}
+
 /// Aberrations used by the native single-sideband reconstruction.
-public struct MetalSSBAberrations: Equatable, Sendable {
+public struct MetalSSBAberrations: Codable, Equatable, Sendable {
   public var c10Nanometers: Float
   public var c12Nanometers: Float
   public var phi12Radians: Float
+  public var higherOrder: [MetalSSBHigherOrder]?
 
   public init(
     c10Nanometers: Float,
     c12Nanometers: Float,
-    phi12Radians: Float
+    phi12Radians: Float,
+    higherOrder: [MetalSSBHigherOrder]? = nil
   ) {
     self.c10Nanometers = c10Nanometers
     self.c12Nanometers = c12Nanometers
     self.phi12Radians = phi12Radians
+    self.higherOrder = higherOrder
   }
 }
 
@@ -24,7 +36,7 @@ public struct MetalSSBAberrations: Equatable, Sendable {
 /// column. Bright-field arrays remain in their logical source order. The
 /// engine may skip only entries whose aperture is mathematically zero; the
 /// logical count is always retained for normalization.
-public struct MetalSSBGeometry: Sendable {
+public struct MetalSSBGeometry: Codable, Sendable {
   public let brightfieldKX: [Float]
   public let brightfieldKY: [Float]
   public let brightfieldAlphaSquared: [Float]
@@ -76,7 +88,7 @@ public struct MetalSSBGeometry: Sendable {
 }
 
 /// Scientific provenance attached to every native Metal SSB result.
-public struct MetalSSBProvenance: Equatable, Sendable {
+public struct MetalSSBProvenance: Codable, Equatable, Sendable {
   public let scanRows: Int
   public let scanColumns: Int
   public let sourceDType: String
@@ -153,7 +165,7 @@ public enum MetalSSBError: LocalizedError {
 
 /// GPU-resident native 512 by 512 single-sideband reconstruction and fitting.
 ///
-/// The engine consumes lossless plane-major `uint8` bright-field columns. It
+/// The engine consumes plane-major unsigned bright-field counts without narrowing. It
 /// never crops or bins scan positions. It keeps every logical bright-field
 /// term in the normalization and skips only terms proven to have zero aperture.
 public final class MetalSSBEngine {
@@ -162,9 +174,12 @@ public final class MetalSSBEngine {
   private static let halfColumns = size / 2 + 1
   private static let halfPlane = size * halfColumns
   private static let batchCapacity = 32
-  private static let cacheChunkCapacity = 512
+  private static let phaseBatchCapacity = 8
+  private var cacheChunkCapacity = 512
+  private var cacheChunkShift: UInt32 = 9
   private static let maximumCacheChunks = 12
   private static let fftThreads = 64
+  private static let intermediateBlockRows = 4
 
   private struct FFTParams {
     var n: UInt32
@@ -191,6 +206,7 @@ public final class MetalSSBEngine {
     var dcImaginary: Float
     var apertureInnerK2: Float
     var apertureOuterK2: Float
+    var cacheChunkShift: UInt32
   }
 
   private struct HalfExtractParams {
@@ -199,6 +215,10 @@ public final class MetalSSBEngine {
   }
 
   private let device: MTLDevice
+  private var objectPhasePipeline: MTLComputePipelineState?
+  private var higherOrderHalfPipeline: MTLComputePipelineState?
+  private var higherOrderFullPipeline: MTLComputePipelineState?
+  private var liveHigherOrder: [SIMD4<Float>] = []
   private let queue: MTLCommandQueue
   private let geometry: MetalSSBGeometry
   private let cacheBudgetBytes: Int?
@@ -221,7 +241,8 @@ public final class MetalSSBEngine {
   private let halfToColumnMajorPipeline: MTLComputePipelineState
   private let halfToRowMajorPipeline: MTLComputePipelineState
 
-  private let rawBuffer: MTLBuffer
+  private var rawBuffer: MTLBuffer
+  private var sourceCountType: MetalSSBCountType = .uint8
   private let fftA: MTLBuffer
   private let fftB: MTLBuffer
   private let accumulator: MTLBuffer
@@ -235,7 +256,7 @@ public final class MetalSSBEngine {
   private var activeTrigBuffer: MTLBuffer
   private var activeGeometryRotation: Float?
 
-  private var sourceBrightfield: MTLBuffer?
+  private var encodeBrightfield: (([Int], MTLBuffer, MTLCommandBuffer) throws -> Void)?
   private var cacheBuffers: [MTLBuffer] = []
   private var cacheCounts: [Int] = []
   private var cachedBrightfieldCount = 0
@@ -282,7 +303,7 @@ public final class MetalSSBEngine {
     convertPipeline = try Self.makePipeline(
       device: device,
       library: library,
-      name: "uint8_to_complex"
+      name: "counts_to_complex"
     )
     fftPipeline = try Self.makePipeline(
       device: device,
@@ -459,20 +480,54 @@ public final class MetalSSBEngine {
     geometry.logicalBrightfieldCount
   }
 
-  /// Prepare lossless plane-major `uint8` bright-field columns.
+  /// Prepare plane-major bright-field counts without clipping or integer narrowing.
   ///
   /// The source shape is `[logicalBrightfieldCount, 512, 512]`. Preparation
   /// builds as much of the exact Hermitian `G(k)` cache as the configured
   /// budget admits and keeps the source buffer for any exact streamed tail.
-  public func prepare(brightfield: MTLBuffer) throws {
-    let requiredBytes = geometry.logicalBrightfieldCount * Self.plane
+  public func prepare(
+    brightfield: MTLBuffer, countType: MetalSSBCountType = .uint8
+  ) throws {
+    let requiredBytes = geometry.logicalBrightfieldCount * Self.plane * countType.byteWidth
     guard brightfield.length >= requiredBytes else {
       throw MetalSSBError.inputBufferTooSmall(
         required: requiredBytes,
         actual: brightfield.length
       )
     }
-    sourceBrightfield = brightfield
+    try prepare(countType: countType) { indices, destination, commands in
+      guard let blit = commands.makeBlitCommandEncoder() else {
+        throw MetalSSBError.commandQueue
+      }
+      for (local, logical) in indices.enumerated() {
+        blit.copy(from: brightfield,
+          sourceOffset: logical * Self.plane * countType.byteWidth,
+          to: destination, destinationOffset: local * Self.plane * countType.byteWidth,
+          size: Self.plane * countType.byteWidth)
+      }
+      blit.endEncoding()
+    }
+  }
+
+  /// Prepare directly from a resident source, without a dense bright-field copy.
+  ///
+  /// The encoder writes the requested logical detector columns in plane-major
+  /// order into the bounded destination on the supplied command buffer. It
+  /// must not commit that buffer. Source and engine calls must be serialized.
+  /// The closure is retained for exact streaming when the Fourier cache is full.
+  public func prepare(
+    countType: MetalSSBCountType,
+    progress: (Int, Int) -> Void = { _, _ in },
+    encodeBrightfield: @escaping ([Int], MTLBuffer, MTLCommandBuffer) throws -> Void
+  ) throws {
+    self.encodeBrightfield = encodeBrightfield
+    let stagingBytes = Self.batchCapacity * Self.plane * countType.byteWidth
+    if rawBuffer.length != stagingBytes {
+      rawBuffer = try Self.allocate(
+        device: device, length: stagingBytes, options: .storageModePrivate,
+        purpose: "source count batch")
+    }
+    sourceCountType = countType
     cacheBuffers.removeAll(keepingCapacity: false)
     cacheCounts.removeAll(keepingCapacity: false)
     cachedBrightfieldCount = 0
@@ -496,11 +551,15 @@ public final class MetalSSBEngine {
       requestedCount == activeCount
       ? activeCount
       : (requestedCount / Self.batchCapacity) * Self.batchCapacity
+    cacheChunkCapacity = 512; cacheChunkShift = 9
+    while cachedCount > cacheChunkCapacity * Self.maximumCacheChunks {
+      cacheChunkCapacity *= 2; cacheChunkShift += 1
+    }
     let chunks =
       cachedCount == 0
       ? 0
-      : (cachedCount + Self.cacheChunkCapacity - 1)
-        / Self.cacheChunkCapacity
+      : (cachedCount + cacheChunkCapacity - 1)
+        / cacheChunkCapacity
     guard chunks <= Self.maximumCacheChunks else {
       throw MetalSSBError.tooManyCacheChunks(
         required: chunks,
@@ -526,8 +585,8 @@ public final class MetalSSBEngine {
     let halfBytes = Self.halfPlane * MemoryLayout<SIMD2<Float>>.stride
     for chunk in 0..<chunks {
       let count = min(
-        Self.cacheChunkCapacity,
-        cachedCount - chunk * Self.cacheChunkCapacity
+        cacheChunkCapacity,
+        cachedCount - chunk * cacheChunkCapacity
       )
       cacheBuffers.append(
         try Self.allocate(
@@ -539,30 +598,19 @@ public final class MetalSSBEngine {
       cacheCounts.append(count)
     }
 
+    progress(0, cachedCount)
     for offset in stride(
       from: 0,
       to: cachedCount,
       by: Self.batchCapacity
     ) {
       let batch = min(Self.batchCapacity, cachedCount - offset)
-      guard let commands = queue.makeCommandBuffer(),
-        let blit = commands.makeBlitCommandEncoder()
-      else { throw MetalSSBError.commandQueue }
-      for local in 0..<batch {
-        let logical = activeBrightfieldIndices[offset + local]
-        blit.copy(
-          from: brightfield,
-          sourceOffset: logical * Self.plane,
-          to: rawBuffer,
-          destinationOffset: local * Self.plane,
-          size: Self.plane
-        )
-      }
-      blit.endEncoding()
+      guard let commands = queue.makeCommandBuffer() else { throw MetalSSBError.commandQueue }
+      try encodeBrightfield(Array(activeBrightfieldIndices[offset..<(offset + batch)]), rawBuffer, commands)
       encodeForwardFFT(commands, batch: batch)
 
-      let cacheIndex = offset / Self.cacheChunkCapacity
-      let cacheOffset = offset - cacheIndex * Self.cacheChunkCapacity
+      let cacheIndex = offset / cacheChunkCapacity
+      let cacheOffset = offset - cacheIndex * cacheChunkCapacity
       var extract = HalfExtractParams(
         sourceN: UInt32(Self.size),
         batch: UInt32(batch)
@@ -588,6 +636,7 @@ public final class MetalSSBEngine {
       )
       encoder.endEncoding()
       try commitAndWait(commands)
+      progress(offset + batch, cachedCount)
     }
     cachedBrightfieldCount = cachedCount
     prepared = true
@@ -598,9 +647,10 @@ public final class MetalSSBEngine {
     aberrations: MetalSSBAberrations,
     rotationDegrees: Float? = nil
   ) throws -> MetalSSBResult {
-    guard prepared, let sourceBrightfield else {
+    guard prepared, let encodeBrightfield else {
       throw MetalSSBError.notPrepared
     }
+    try configureHigherOrder(aberrations)
     try setCacheColumnMajor(false)
     let rotation = rotationDegrees ?? geometry.referenceRotationDegrees
     try rebuildGeometry(rotationDegrees: rotation)
@@ -613,16 +663,24 @@ public final class MetalSSBEngine {
     clear.fill(buffer: accumulator, range: 0..<accumulator.length, value: 0)
     clear.endEncoding()
     if cachedBrightfieldCount > 0 {
-      let cachedParams = parameters(
-        batch: cachedBrightfieldCount,
-        offset: 0,
-        aberrations: aberrations
-      )
-      try encodeCachedAccumulator(
-        clearCommands,
-        sources: cacheBuffers,
-        params: cachedParams
-      )
+      if liveHigherOrder.isEmpty, let crossTrigBuffer {
+        encodeCrossTrig(clearCommands,
+          params: parameters(batch: activeBrightfieldIndices.count, offset: 0, aberrations: aberrations),
+          output: crossTrigBuffer)
+      }
+      // Bound the working set without changing BF order or adding partial planes.
+      for offset in stride(from: 0, to: cachedBrightfieldCount, by: 256) {
+        let cachedParams = parameters(
+          batch: min(256, cachedBrightfieldCount - offset),
+          offset: offset,
+          aberrations: aberrations
+        )
+        try encodeCachedAccumulator(
+          clearCommands,
+          sources: cacheBuffers,
+          params: cachedParams
+        )
+      }
     }
     try commitAndWait(clearCommands)
     gpuSeconds += gpuDuration(clearCommands)
@@ -636,20 +694,8 @@ public final class MetalSSBEngine {
         Self.batchCapacity,
         activeBrightfieldIndices.count - offset
       )
-      guard let commands = queue.makeCommandBuffer(),
-        let blit = commands.makeBlitCommandEncoder()
-      else { throw MetalSSBError.commandQueue }
-      for local in 0..<batch {
-        let logical = activeBrightfieldIndices[offset + local]
-        blit.copy(
-          from: sourceBrightfield,
-          sourceOffset: logical * Self.plane,
-          to: rawBuffer,
-          destinationOffset: local * Self.plane,
-          size: Self.plane
-        )
-      }
-      blit.endEncoding()
+      guard let commands = queue.makeCommandBuffer() else { throw MetalSSBError.commandQueue }
+      try encodeBrightfield(Array(activeBrightfieldIndices[offset..<(offset + batch)]), rawBuffer, commands)
       encodeForwardFFT(commands, batch: batch)
       encodeFullAccumulator(
         commands,
@@ -718,13 +764,36 @@ public final class MetalSSBEngine {
     )
   }
 
+  /// Convert an owned complex object to its scalar phase, in radians, on Metal.
+  public func phase(of result: MetalSSBResult) throws -> MTLBuffer {
+    if objectPhasePipeline == nil {
+      objectPhasePipeline = try Self.makePipeline(device: device,
+        library: Self.makeLibrary(device: device), name: "ssb_object_phase")
+    }
+    let output = try Self.allocate(device: device, length: Self.plane * 4,
+      options: .storageModeShared, purpose: "object phase")
+    guard let command = queue.makeCommandBuffer(), let encoder = command.makeComputeCommandEncoder(),
+      let objectPhasePipeline else { throw MetalSSBError.commandQueue }
+    encoder.setComputePipelineState(objectPhasePipeline)
+    encoder.setBuffer(result.object, offset: 0, index: 0)
+    encoder.setBuffer(output, offset: 0, index: 1)
+    encoder.dispatchThreads(MTLSize(width: Self.plane, height: 1, depth: 1),
+      threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+    encoder.endEncoding()
+    try commitAndWait(command)
+    return output
+  }
+
   /// Evaluate the exact full-BF native phase-variance objective.
   public func phaseVariance(
     aberrations: MetalSSBAberrations,
     rotationDegrees: Float? = nil
   ) throws -> MetalSSBPhaseVarianceResult {
-    guard prepared, let sourceBrightfield else {
+    guard prepared, let encodeBrightfield else {
       throw MetalSSBError.notPrepared
+    }
+    guard !(aberrations.higherOrder ?? []).contains(where: { $0.magnitudeNanometers != 0 }) else {
+      throw MetalSSBError.invalidGeometry("The optimizer currently fits lower-order aberrations only. Reset higher-order terms before fitting; manual reconstruction supports orders 2 through 5.")
     }
     try setCacheColumnMajor(true)
     let rotation = rotationDegrees ?? geometry.referenceRotationDegrees
@@ -770,34 +839,41 @@ public final class MetalSSBEngine {
     gpuSeconds += gpuDuration(clearCommands)
 
     let halfBytes = Self.halfPlane * MemoryLayout<SIMD2<Float>>.stride
+    // Encode every cached BF tile for this objective into one command buffer.
+    // The fused row/column encoders are already ordered within the command
+    // buffer, so a per-cache-chunk commit only adds CPU/GPU synchronization
+    // without changing the exact accumulation order.  Keeping the wait at the
+    // end also leaves the phase sums observable only after every tile has
+    // completed, exactly as in the previous one-command-buffer-per-chunk path.
     var globalOffset = 0
+    guard let cacheCommands = queue.makeCommandBuffer() else {
+      throw MetalSSBError.commandQueue
+    }
     for (cache, cacheCount) in zip(cacheBuffers, cacheCounts) {
-      guard let commands = queue.makeCommandBuffer() else {
-        throw MetalSSBError.commandQueue
-      }
+      // Eight-plane batches preserve the tested float32 accumulation order.
       for localOffset in stride(
         from: 0,
         to: cacheCount,
-        by: Self.batchCapacity
+        by: Self.phaseBatchCapacity
       ) {
-        let batch = min(Self.batchCapacity, cacheCount - localOffset)
+        let batch = min(Self.phaseBatchCapacity, cacheCount - localOffset)
         let params = parameters(
           batch: batch,
           offset: globalOffset + localOffset,
           aberrations: aberrations
         )
         try encodeFusedCachedPhaseLoss(
-          commands,
+          cacheCommands,
           source: cache,
           sourceOffset: localOffset * halfBytes,
           batch: batch,
           params: params
         )
       }
-      try commitAndWait(commands)
-      gpuSeconds += gpuDuration(commands)
       globalOffset += cacheCount
     }
+    try commitAndWait(cacheCommands)
+    gpuSeconds += gpuDuration(cacheCommands)
 
     for offset in stride(
       from: globalOffset,
@@ -808,20 +884,8 @@ public final class MetalSSBEngine {
         Self.batchCapacity,
         activeBrightfieldIndices.count - offset
       )
-      guard let commands = queue.makeCommandBuffer(),
-        let blit = commands.makeBlitCommandEncoder()
-      else { throw MetalSSBError.commandQueue }
-      for local in 0..<batch {
-        let logical = activeBrightfieldIndices[offset + local]
-        blit.copy(
-          from: sourceBrightfield,
-          sourceOffset: logical * Self.plane,
-          to: rawBuffer,
-          destinationOffset: local * Self.plane,
-          size: Self.plane
-        )
-      }
-      blit.endEncoding()
+      guard let commands = queue.makeCommandBuffer() else { throw MetalSSBError.commandQueue }
+      try encodeBrightfield(Array(activeBrightfieldIndices[offset..<(offset + batch)]), rawBuffer, commands)
       encodeForwardFFT(commands, batch: batch)
       let params = parameters(
         batch: batch,
@@ -910,6 +974,29 @@ public final class MetalSSBEngine {
     )
   }
 
+  private func configureHigherOrder(_ aberrations: MetalSSBAberrations) throws {
+    let terms = aberrations.higherOrder ?? []
+    guard Set(terms.map(\.name)).count == terms.count,
+      terms.allSatisfy({ term in
+        MetalSSBHigherOrder.supported.contains { $0.order == term.order && $0.symmetry == term.symmetry }
+          && term.magnitudeNanometers.isFinite && term.angleRadians.isFinite
+      }) else { throw MetalSSBError.invalidGeometry("Use distinct finite polar aberrations from orders 2 through 5.") }
+    guard terms.contains(where: { $0.magnitudeNanometers != 0 }) else {
+      liveHigherOrder = []; return
+    }
+    liveHigherOrder = MetalSSBHigherOrder.supported.map { expected in
+      let term = terms.first { $0.name == expected.name } ?? expected
+      return SIMD4(term.magnitudeNanometers, Float(term.order), Float(term.symmetry), term.angleRadians)
+    }
+    if higherOrderHalfPipeline == nil {
+      let library = try Self.makeLibrary(device: device)
+      higherOrderHalfPipeline = try Self.makePipeline(device: device, library: library,
+        name: "ssb_gamma_accumulate_half_aberrations")
+      higherOrderFullPipeline = try Self.makePipeline(device: device, library: library,
+        name: "ssb_gamma_accumulate_full_aberrations")
+    }
+  }
+
   private func parameters(
     batch: Int,
     offset: Int,
@@ -939,7 +1026,8 @@ public final class MetalSSBEngine {
       dcReal: geometry.dcValue.x,
       dcImaginary: geometry.dcValue.y,
       apertureInnerK2: innerK * innerK,
-      apertureOuterK2: outerK * outerK
+      apertureOuterK2: outerK * outerK,
+      cacheChunkShift: cacheChunkShift
     )
   }
 
@@ -947,7 +1035,7 @@ public final class MetalSSBEngine {
     MetalSSBProvenance(
       scanRows: Self.size,
       scanColumns: Self.size,
-      sourceDType: "uint8",
+      sourceDType: String(describing: sourceCountType),
       computeDType: "float32/complex64",
       logicalBrightfieldCount: geometry.logicalBrightfieldCount,
       executedBrightfieldCount: activeBrightfieldIndices.count,
@@ -1105,6 +1193,8 @@ public final class MetalSSBEngine {
     convert.setBuffer(rawBuffer, offset: 0, index: 0)
     convert.setBuffer(fftA, offset: 0, index: 1)
     convert.setBytes(&count, length: MemoryLayout<UInt32>.stride, index: 2)
+    var byteWidth = UInt32(sourceCountType.byteWidth)
+    convert.setBytes(&byteWidth, length: MemoryLayout<UInt32>.stride, index: 3)
     convert.dispatchThreads(
       MTLSize(width: Int(count), height: 1, depth: 1),
       threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
@@ -1222,7 +1312,10 @@ public final class MetalSSBEngine {
   ) {
     var mutable = params
     let encoder = commands.makeComputeCommandEncoder()!
-    encoder.setComputePipelineState(fullAccumulatePipeline)
+    encoder.setComputePipelineState(liveHigherOrder.isEmpty ? fullAccumulatePipeline : higherOrderFullPipeline!)
+    if !liveHigherOrder.isEmpty {
+      encoder.setBytes(liveHigherOrder, length: liveHigherOrder.count * 16, index: 7)
+    }
     encoder.setBuffer(source, offset: 0, index: 0)
     encoder.setBuffer(activeGeometryBuffer, offset: 0, index: 1)
     encoder.setBuffer(activeTrigBuffer, offset: 0, index: 2)
@@ -1255,7 +1348,13 @@ public final class MetalSSBEngine {
     }
     var mutable = params
     let encoder = commands.makeComputeCommandEncoder()!
-    encoder.setComputePipelineState(halfAccumulatePipeline)
+    encoder.setComputePipelineState(liveHigherOrder.isEmpty ? halfAccumulatePipeline : higherOrderHalfPipeline!)
+    if liveHigherOrder.isEmpty {
+      encoder.setBuffer(crossTrigBuffer, offset: 0, index: 17)
+    }
+    if !liveHigherOrder.isEmpty {
+      encoder.setBytes(liveHigherOrder, length: liveHigherOrder.count * 16, index: 17)
+    }
     for index in 0..<Self.maximumCacheChunks {
       encoder.setBuffer(
         index < sources.count ? sources[index] : fallback,
@@ -1273,7 +1372,7 @@ public final class MetalSSBEngine {
       index: 16
     )
     encoder.dispatchThreads(
-      MTLSize(width: Self.halfPlane, height: 1, depth: 1),
+      MTLSize(width: liveHigherOrder.isEmpty ? Self.halfPlane : Self.plane, height: 1, depth: 1),
       threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
     )
     encoder.endEncoding()
@@ -1400,9 +1499,11 @@ public final class MetalSSBEngine {
       length: MemoryLayout<SIMD2<Float>>.stride,
       index: 5
     )
+    // One threadgroup per four-row block of the blocked intermediate.
     columns.dispatchThreadgroups(
-      MTLSize(width: Self.size, height: 1, depth: 1),
-      threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1)
+      MTLSize(width: Self.size / Self.intermediateBlockRows, height: 1, depth: 1),
+      threadsPerThreadgroup: MTLSize(
+        width: Self.fftThreads * Self.intermediateBlockRows, height: 1, depth: 1)
     )
     columns.endEncoding()
   }

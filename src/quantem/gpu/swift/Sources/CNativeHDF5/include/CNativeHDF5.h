@@ -61,6 +61,13 @@ typedef struct {
 
 typedef struct qh5_lossless_pack_v1_writer qh5_lossless_pack_v1_writer;
 
+/* EMD 1.0 float32 datacube: physical contiguous storage, in recorded axis order. */
+typedef struct {
+  uint64_t rows, columns, offset, bytes;
+  double scan_angstrom, angle_mrad, voltage, semiangle_mrad, camera_meters;
+} qh5_emd_float_info;
+int qh5_inspect_emd_float(const char *path, qh5_emd_float_info *info, char **error_message);
+
 int qh5_export_scientific_image(const char *path, const char *name,
   const void *values, uint64_t rows, uint64_t columns, uint32_t scalar_type,
   const char *metadata_json, int create, char **error_message);

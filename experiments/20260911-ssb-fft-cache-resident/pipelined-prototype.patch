@@ -1,0 +1,2918 @@
+diff --git a/src/quantem/gpu/swift/Sources/MetalSSBKernels/MetalSSBKernels.swift b/src/quantem/gpu/swift/Sources/MetalSSBKernels/MetalSSBKernels.swift
+--- a/src/quantem/gpu/swift/Sources/MetalSSBKernels/MetalSSBKernels.swift
++++ b/src/quantem/gpu/swift/Sources/MetalSSBKernels/MetalSSBKernels.swift
+@@ -238,1215 +238,1370 @@
+-  private let crossTrigPipeline: MTLComputePipelineState
+-  private let fusedLossRowPipeline: MTLComputePipelineState
+-  private let fusedLossMomentPipeline: MTLComputePipelineState
+-  private let halfToColumnMajorPipeline: MTLComputePipelineState
+-  private let halfToRowMajorPipeline: MTLComputePipelineState
+-
+-  private var rawBuffer: MTLBuffer
+-  private var sourceCountType: MetalSSBCountType = .uint8
+-  private let fftA: MTLBuffer
+-  private let fftB: MTLBuffer
+-  private let accumulator: MTLBuffer
+-  private let finalTemporary: MTLBuffer
+-  private let twiddleBuffer: MTLBuffer
+-  private let qxBuffer: MTLBuffer
+-  private let qyBuffer: MTLBuffer
+-  private let phaseSumBuffer: MTLBuffer
+-  private let phaseSumSquaredBuffer: MTLBuffer
+-  private var activeGeometryBuffer: MTLBuffer
+-  private var activeTrigBuffer: MTLBuffer
+-  private var activeGeometryRotation: Float?
+-
+-  private var encodeBrightfield: (([Int], MTLBuffer, MTLCommandBuffer) throws -> Void)?
+-  private var cacheBuffers: [MTLBuffer] = []
+-  private var cacheCounts: [Int] = []
+-  private var cachedBrightfieldCount = 0
+-  private var cacheIsColumnMajor = false
+-  private var chiTrigBuffer: MTLBuffer?
+-  private var crossTrigBuffer: MTLBuffer?
+-  private var prepared = false
+-
+-  /// Create a reusable SSB engine.
+-  ///
+-  /// - Parameters:
+-  ///   - device: Apple Metal device that owns all source and result buffers.
+-  ///   - geometry: Exact full-BF calibration in logical source order.
+-  ///   - cacheBudgetBytes: Maximum bytes retained for the Hermitian `G(k)`
+-  ///     cache. `nil` requests a complete cache. A smaller budget preserves
+-  ///     exactness by streaming the uncached tail from the source buffer.
+-  public init(
+-    device: MTLDevice,
+-    geometry: MetalSSBGeometry,
+-    cacheBudgetBytes: Int? = nil
+-  ) throws {
+-    try Self.validate(geometry)
+-    if let cacheBudgetBytes, cacheBudgetBytes < 0 {
+-      throw MetalSSBError.invalidGeometry(
+-        "cacheBudgetBytes must be nonnegative"
+-      )
+-    }
+-    self.device = device
+-    self.geometry = geometry
+-    self.cacheBudgetBytes = cacheBudgetBytes
+-    guard let queue = device.makeCommandQueue() else {
+-      throw MetalSSBError.commandQueue
+-    }
+-    self.queue = queue
+-
+-    let activeIndices = Self.activeIndices(geometry)
+-    guard !activeIndices.isEmpty else {
+-      throw MetalSSBError.invalidGeometry(
+-        "no bright-field term has nonzero aperture"
+-      )
+-    }
+-    activeBrightfieldIndices = activeIndices
+-    let library = try Self.makeLibrary(device: device)
+-    convertPipeline = try Self.makePipeline(
+-      device: device,
+-      library: library,
+-      name: "counts_to_complex"
+-    )
+-    fftPipeline = try Self.makePipeline(
+-      device: device,
+-      library: library,
+-      name: "fft_rows_radix8"
+-    )
+-    transposePipeline = try Self.makePipeline(
+-      device: device,
+-      library: library,
+-      name: "transpose_complex32"
+-    )
+-    fullAccumulatePipeline = try Self.makePipeline(
+-      device: device,
+-      library: library,
+-      name: "ssb_gamma_accumulate"
+-    )
+-    halfAccumulatePipeline = try Self.makePipeline(
+-      device: device,
+-      library: library,
+-      name: "ssb_gamma_accumulate_half"
+-    )
+-    finalizePipeline = try Self.makePipeline(
+-      device: device,
+-      library: library,
+-      name: "ssb_finalize_fourier_sum"
+-    )
+-    halfExtractPipeline = try Self.makePipeline(
+-      device: device,
+-      library: library,
+-      name: "extract_hermitian_half"
+-    )
+-    halfLossCorrectionPipeline = try Self.makePipeline(
+-      device: device,
+-      library: library,
+-      name: "ssb_correct_half_for_phase_loss"
+-    )
+-    fullLossCorrectionPipeline = try Self.makePipeline(
+-      device: device,
+-      library: library,
+-      name: "ssb_correct_full_for_phase_loss"
+-    )
+-    phaseMomentPipeline = try Self.makePipeline(
+-      device: device,
+-      library: library,
+-      name: "ssb_accumulate_phase_moments"
+-    )
+-    chiTrigPipeline = try Self.makePipeline(
+-      device: device,
+-      library: library,
+-      name: "ssb_precompute_chi_trig512"
+-    )
+-    crossTrigPipeline = try Self.makePipeline(
+-      device: device,
+-      library: library,
+-      name: "ssb_precompute_cross_trig512"
+-    )
+-    fusedLossRowPipeline = try Self.makePipeline(
+-      device: device,
+-      library: library,
+-      name: "ssb_correct_half_column_ifft512_hermitian"
+-    )
+-    fusedLossMomentPipeline = try Self.makePipeline(
+-      device: device,
+-      library: library,
+-      name: "ssb_ifft512_rows_hermitian_phase_moments"
+-    )
+-    halfToColumnMajorPipeline = try Self.makePipeline(
+-      device: device,
+-      library: library,
+-      name: "ssb_transpose_half_to_column_major"
+-    )
+-    halfToRowMajorPipeline = try Self.makePipeline(
+-      device: device,
+-      library: library,
+-      name: "ssb_transpose_half_to_row_major"
+-    )
+-
+-    let rawBytes = Self.batchCapacity * Self.plane
+-    let complexBytes = rawBytes * MemoryLayout<SIMD2<Float>>.stride
+-    rawBuffer = try Self.allocate(
+-      device: device,
+-      length: rawBytes,
+-      options: .storageModePrivate,
+-      purpose: "uint8 batch"
+-    )
+-    fftA = try Self.allocate(
+-      device: device,
+-      length: complexBytes,
+-      options: .storageModePrivate,
+-      purpose: "FFT workspace A"
+-    )
+-    fftB = try Self.allocate(
+-      device: device,
+-      length: complexBytes,
+-      options: .storageModePrivate,
+-      purpose: "FFT workspace B"
+-    )
+-    let planeBytes = Self.plane * MemoryLayout<SIMD2<Float>>.stride
+-    accumulator = try Self.allocate(
+-      device: device,
+-      length: planeBytes,
+-      options: .storageModePrivate,
+-      purpose: "Fourier accumulator"
+-    )
+-    finalTemporary = try Self.allocate(
+-      device: device,
+-      length: planeBytes,
+-      options: .storageModePrivate,
+-      purpose: "inverse FFT workspace"
+-    )
+-    phaseSumBuffer = try Self.allocate(
+-      device: device,
+-      length: Self.plane * MemoryLayout<Float>.stride,
+-      options: .storageModeShared,
+-      purpose: "phase sum"
+-    )
+-    phaseSumSquaredBuffer = try Self.allocate(
+-      device: device,
+-      length: Self.plane * MemoryLayout<Float>.stride,
+-      options: .storageModeShared,
+-      purpose: "phase squared sum"
+-    )
+-
+-    var twiddle: [SIMD2<Float>] = []
+-    twiddle.reserveCapacity(Self.size)
+-    for index in 0..<Self.size {
+-      let angle = -2 * Float.pi * Float(index) / Float(Self.size)
+-      twiddle.append(SIMD2<Float>(cos(angle), sin(angle)))
+-    }
+-    twiddleBuffer = try Self.makeBuffer(
+-      device: device,
+-      values: twiddle,
+-      purpose: "FFT twiddle table"
+-    )
+-    qxBuffer = try Self.makeBuffer(
+-      device: device,
+-      values: geometry.qxByRow,
+-      purpose: "scan-row reciprocal coordinates"
+-    )
+-    qyBuffer = try Self.makeBuffer(
+-      device: device,
+-      values: geometry.qyByColumn,
+-      purpose: "scan-column reciprocal coordinates"
+-    )
+-
+-    let placeholderGeometry = [SIMD4<Float>](
+-      repeating: .zero,
+-      count: activeIndices.count
+-    )
+-    let placeholderTrig = [SIMD2<Float>](
+-      repeating: .zero,
+-      count: activeIndices.count
+-    )
+-    activeGeometryBuffer = try Self.makeBuffer(
+-      device: device,
+-      values: placeholderGeometry,
+-      purpose: "active BF geometry"
+-    )
+-    activeTrigBuffer = try Self.makeBuffer(
+-      device: device,
+-      values: placeholderTrig,
+-      purpose: "active BF angle table"
+-    )
+-    try rebuildGeometry(rotationDegrees: geometry.referenceRotationDegrees)
+-  }
+-
+-  /// Number of exact nonzero-aperture terms executed by this session.
+-  public var executedBrightfieldCount: Int {
+-    activeBrightfieldIndices.count
+-  }
+-
+-  /// Number of logical bright-field terms retained in normalization.
+-  public var logicalBrightfieldCount: Int {
+-    geometry.logicalBrightfieldCount
+-  }
+-
+-  /// Prepare plane-major bright-field counts without clipping or integer narrowing.
+-  ///
+-  /// The source shape is `[logicalBrightfieldCount, 512, 512]`. Preparation
+-  /// builds as much of the exact Hermitian `G(k)` cache as the configured
+-  /// budget admits and keeps the source buffer for any exact streamed tail.
+-  public func prepare(
+-    brightfield: MTLBuffer, countType: MetalSSBCountType = .uint8
+-  ) throws {
+-    let requiredBytes = geometry.logicalBrightfieldCount * Self.plane * countType.byteWidth
+-    guard brightfield.length >= requiredBytes else {
+-      throw MetalSSBError.inputBufferTooSmall(
+-        required: requiredBytes,
+-        actual: brightfield.length
+-      )
+-    }
+-    try prepare(countType: countType) { indices, destination, commands in
+-      guard let blit = commands.makeBlitCommandEncoder() else {
+-        throw MetalSSBError.commandQueue
+-      }
+-      for (local, logical) in indices.enumerated() {
+-        blit.copy(from: brightfield,
+-          sourceOffset: logical * Self.plane * countType.byteWidth,
+-          to: destination, destinationOffset: local * Self.plane * countType.byteWidth,
+-          size: Self.plane * countType.byteWidth)
+-      }
+-      blit.endEncoding()
+-    }
+-  }
+-
+-  /// Prepare directly from a resident source, without a dense bright-field copy.
+-  ///
+-  /// The encoder writes the requested logical detector columns in plane-major
+-  /// order into the bounded destination on the supplied command buffer. It
+-  /// must not commit that buffer. Source and engine calls must be serialized.
+-  /// The closure is retained for exact streaming when the Fourier cache is full.
+-  public func prepare(
+-    countType: MetalSSBCountType,
+-    progress: (Int, Int) -> Void = { _, _ in },
+-    encodeBrightfield: @escaping ([Int], MTLBuffer, MTLCommandBuffer) throws -> Void
+-  ) throws {
+-    self.encodeBrightfield = encodeBrightfield
+-    let stagingBytes = Self.batchCapacity * Self.plane * countType.byteWidth
+-    if rawBuffer.length != stagingBytes {
+-      rawBuffer = try Self.allocate(
+-        device: device, length: stagingBytes, options: .storageModePrivate,
+-        purpose: "source count batch")
+-    }
+-    sourceCountType = countType
+-    cacheBuffers.removeAll(keepingCapacity: false)
+-    cacheCounts.removeAll(keepingCapacity: false)
+-    cachedBrightfieldCount = 0
+-    cacheIsColumnMajor = false
+-    chiTrigBuffer = nil
+-    crossTrigBuffer = nil
+-    prepared = false
+-
+-    let bytesPerBrightfield =
+-      Self.halfPlane
+-      * MemoryLayout<SIMD2<Float>>.stride
+-    let activeCount = activeBrightfieldIndices.count
+-    let requestedCount: Int
+-    if let cacheBudgetBytes {
+-      let admitted = max(0, cacheBudgetBytes / bytesPerBrightfield)
+-      requestedCount = min(activeCount, admitted)
+-    } else {
+-      requestedCount = activeCount
+-    }
+-    let cachedCount =
+-      requestedCount == activeCount
+-      ? activeCount
+-      : (requestedCount / Self.batchCapacity) * Self.batchCapacity
+-    cacheChunkCapacity = 512; cacheChunkShift = 9
+-    while cachedCount > cacheChunkCapacity * Self.maximumCacheChunks {
+-      cacheChunkCapacity *= 2; cacheChunkShift += 1
+-    }
+-    let chunks =
+-      cachedCount == 0
+-      ? 0
+-      : (cachedCount + cacheChunkCapacity - 1)
+-        / cacheChunkCapacity
+-    guard chunks <= Self.maximumCacheChunks else {
+-      throw MetalSSBError.tooManyCacheChunks(
+-        required: chunks,
+-        supported: Self.maximumCacheChunks
+-      )
+-    }
+-    if cachedCount > 0 {
+-      chiTrigBuffer = try Self.allocate(
+-        device: device,
+-        length: Self.plane * MemoryLayout<SIMD2<Float>>.stride,
+-        options: .storageModePrivate,
+-        purpose: "exact phase-loss chi table"
+-      )
+-      crossTrigBuffer = try Self.allocate(
+-        device: device,
+-        length: activeCount * 2 * Self.size
+-          * MemoryLayout<SIMD2<Float>>.stride,
+-        options: .storageModePrivate,
+-        purpose: "exact phase-loss cross table"
+-      )
+-    }
+-
+-    let halfBytes = Self.halfPlane * MemoryLayout<SIMD2<Float>>.stride
+-    for chunk in 0..<chunks {
+-      let count = min(
+-        cacheChunkCapacity,
+-        cachedCount - chunk * cacheChunkCapacity
+-      )
+-      cacheBuffers.append(
+-        try Self.allocate(
+-          device: device,
+-          length: count * halfBytes,
+-          options: .storageModePrivate,
+-          purpose: "Hermitian G(k) cache chunk \(chunk)"
+-        ))
+-      cacheCounts.append(count)
+-    }
+-
+-    progress(0, cachedCount)
+-    for offset in stride(
+-      from: 0,
+-      to: cachedCount,
+-      by: Self.batchCapacity
+-    ) {
+-      let batch = min(Self.batchCapacity, cachedCount - offset)
+-      guard let commands = queue.makeCommandBuffer() else { throw MetalSSBError.commandQueue }
+-      try encodeBrightfield(Array(activeBrightfieldIndices[offset..<(offset + batch)]), rawBuffer, commands)
+-      encodeForwardFFT(commands, batch: batch)
+-
+-      let cacheIndex = offset / cacheChunkCapacity
+-      let cacheOffset = offset - cacheIndex * cacheChunkCapacity
+-      var extract = HalfExtractParams(
+-        sourceN: UInt32(Self.size),
+-        batch: UInt32(batch)
+-      )
+-      guard let encoder = commands.makeComputeCommandEncoder() else {
+-        throw MetalSSBError.commandQueue
+-      }
+-      encoder.setComputePipelineState(halfExtractPipeline)
+-      encoder.setBuffer(fftA, offset: 0, index: 0)
+-      encoder.setBuffer(
+-        cacheBuffers[cacheIndex],
+-        offset: cacheOffset * halfBytes,
+-        index: 1
+-      )
+-      encoder.setBytes(
+-        &extract,
+-        length: MemoryLayout<HalfExtractParams>.stride,
+-        index: 2
+-      )
+-      encoder.dispatchThreads(
+-        MTLSize(width: batch * Self.halfPlane, height: 1, depth: 1),
+-        threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
+-      )
+-      encoder.endEncoding()
+-      try commitAndWait(commands)
+-      progress(offset + batch, cachedCount)
+-    }
+-    cachedBrightfieldCount = cachedCount
+-    prepared = true
+-  }
+-
+-  /// Reconstruct one exact SSB object from the prepared full-BF session.
+-  public func reconstruct(
+-    aberrations: MetalSSBAberrations,
+-    rotationDegrees: Float? = nil
+-  ) throws -> MetalSSBResult {
+-    guard prepared, let encodeBrightfield else {
+-      throw MetalSSBError.notPrepared
+-    }
+-    try configureHigherOrder(aberrations)
+-    try setCacheColumnMajor(false)
+-    let rotation = rotationDegrees ?? geometry.referenceRotationDegrees
+-    try rebuildGeometry(rotationDegrees: rotation)
+-    let started = Date()
+-    var gpuSeconds = 0.0
+-
+-    guard let clearCommands = queue.makeCommandBuffer(),
+-      let clear = clearCommands.makeBlitCommandEncoder()
+-    else { throw MetalSSBError.commandQueue }
+-    clear.fill(buffer: accumulator, range: 0..<accumulator.length, value: 0)
+-    clear.endEncoding()
+-    if cachedBrightfieldCount > 0 {
+-      if liveHigherOrder.isEmpty, let crossTrigBuffer {
+-        encodeCrossTrig(clearCommands,
+-          params: parameters(batch: activeBrightfieldIndices.count, offset: 0, aberrations: aberrations),
+-          output: crossTrigBuffer)
+-      }
+-      // Bound the working set without changing BF order or adding partial planes.
+-      for offset in stride(from: 0, to: cachedBrightfieldCount, by: 256) {
+-        let cachedParams = parameters(
+-          batch: min(256, cachedBrightfieldCount - offset),
+-          offset: offset,
+-          aberrations: aberrations
+-        )
+-        try encodeCachedAccumulator(
+-          clearCommands,
+-          sources: cacheBuffers,
+-          params: cachedParams
+-        )
+-      }
+-    }
+-    try commitAndWait(clearCommands)
+-    gpuSeconds += gpuDuration(clearCommands)
+-
+-    for offset in stride(
+-      from: cachedBrightfieldCount,
+-      to: activeBrightfieldIndices.count,
+-      by: Self.batchCapacity
+-    ) {
+-      let batch = min(
+-        Self.batchCapacity,
+-        activeBrightfieldIndices.count - offset
+-      )
+-      guard let commands = queue.makeCommandBuffer() else { throw MetalSSBError.commandQueue }
+-      try encodeBrightfield(Array(activeBrightfieldIndices[offset..<(offset + batch)]), rawBuffer, commands)
+-      encodeForwardFFT(commands, batch: batch)
+-      encodeFullAccumulator(
+-        commands,
+-        source: fftA,
+-        params: parameters(
+-          batch: batch,
+-          offset: offset,
+-          aberrations: aberrations
+-        )
+-      )
+-      try commitAndWait(commands)
+-      gpuSeconds += gpuDuration(commands)
+-    }
+-
+-    let resultBytes = Self.plane * MemoryLayout<SIMD2<Float>>.stride
+-    let object = try Self.allocate(
+-      device: device,
+-      length: resultBytes,
+-      options: .storageModeShared,
+-      purpose: "object result"
+-    )
+-    let fourier = try Self.allocate(
+-      device: device,
+-      length: resultBytes,
+-      options: .storageModeShared,
+-      purpose: "Fourier result"
+-    )
+-    guard let finalCommands = queue.makeCommandBuffer() else {
+-      throw MetalSSBError.commandQueue
+-    }
+-    encodeFinalize(
+-      finalCommands,
+-      params: parameters(batch: 1, offset: 0, aberrations: aberrations)
+-    )
+-    guard let preserve = finalCommands.makeBlitCommandEncoder() else {
+-      throw MetalSSBError.commandQueue
+-    }
+-    preserve.copy(
+-      from: accumulator,
+-      sourceOffset: 0,
+-      to: fourier,
+-      destinationOffset: 0,
+-      size: resultBytes
+-    )
+-    preserve.endEncoding()
+-    encodeFFT(
+-      finalCommands,
+-      input: accumulator,
+-      temporary: finalTemporary,
+-      output: object,
+-      params: FFTParams(
+-        n: UInt32(Self.size),
+-        log2n: 9,
+-        batch: 1,
+-        inverse: 1
+-      )
+-    )
+-    try commitAndWait(finalCommands)
+-    gpuSeconds += gpuDuration(finalCommands)
+-    return MetalSSBResult(
+-      object: object,
+-      fourierSum: fourier,
+-      wallSeconds: Date().timeIntervalSince(started),
+-      gpuSeconds: gpuSeconds,
+-      provenance: currentProvenance()
+-    )
+-  }
+-
+-  /// Convert an owned complex object to its scalar phase, in radians, on Metal.
+-  public func phase(of result: MetalSSBResult) throws -> MTLBuffer {
+-    if objectPhasePipeline == nil {
+-      objectPhasePipeline = try Self.makePipeline(device: device,
+-        library: Self.makeLibrary(device: device), name: "ssb_object_phase")
+-    }
+-    let output = try Self.allocate(device: device, length: Self.plane * 4,
+-      options: .storageModeShared, purpose: "object phase")
+-    guard let command = queue.makeCommandBuffer(), let encoder = command.makeComputeCommandEncoder(),
+-      let objectPhasePipeline else { throw MetalSSBError.commandQueue }
+-    encoder.setComputePipelineState(objectPhasePipeline)
+-    encoder.setBuffer(result.object, offset: 0, index: 0)
+-    encoder.setBuffer(output, offset: 0, index: 1)
+-    encoder.dispatchThreads(MTLSize(width: Self.plane, height: 1, depth: 1),
+-      threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+-    encoder.endEncoding()
+-    try commitAndWait(command)
+-    return output
+-  }
+-
+-  /// Evaluate the exact full-BF native phase-variance objective.
+-  public func phaseVariance(
+-    aberrations: MetalSSBAberrations,
+-    rotationDegrees: Float? = nil
+-  ) throws -> MetalSSBPhaseVarianceResult {
+-    guard prepared, let encodeBrightfield else {
+-      throw MetalSSBError.notPrepared
+-    }
+-    guard !(aberrations.higherOrder ?? []).contains(where: { $0.magnitudeNanometers != 0 }) else {
+-      throw MetalSSBError.invalidGeometry("The optimizer currently fits lower-order aberrations only. Reset higher-order terms before fitting; manual reconstruction supports orders 2 through 5.")
+-    }
+-    try setCacheColumnMajor(true)
+-    let rotation = rotationDegrees ?? geometry.referenceRotationDegrees
+-    try rebuildGeometry(rotationDegrees: rotation)
+-    let started = Date()
+-    var gpuSeconds = 0.0
+-
+-    guard let clearCommands = queue.makeCommandBuffer(),
+-      let clear = clearCommands.makeBlitCommandEncoder()
+-    else { throw MetalSSBError.commandQueue }
+-    clear.fill(
+-      buffer: phaseSumBuffer,
+-      range: 0..<phaseSumBuffer.length,
+-      value: 0
+-    )
+-    clear.fill(
+-      buffer: phaseSumSquaredBuffer,
+-      range: 0..<phaseSumSquaredBuffer.length,
+-      value: 0
+-    )
+-    clear.endEncoding()
+-    if cachedBrightfieldCount > 0 {
+-      guard let chiTrigBuffer, let crossTrigBuffer else {
+-        throw MetalSSBError.allocation("exact phase-loss tables")
+-      }
+-      let baseParams = parameters(
+-        batch: activeBrightfieldIndices.count,
+-        offset: 0,
+-        aberrations: aberrations
+-      )
+-      encodeChiTrig(
+-        clearCommands,
+-        params: baseParams,
+-        output: chiTrigBuffer
+-      )
+-      encodeCrossTrig(
+-        clearCommands,
+-        params: baseParams,
+-        output: crossTrigBuffer
+-      )
+-    }
+-    try commitAndWait(clearCommands)
+-    gpuSeconds += gpuDuration(clearCommands)
+-
+-    let halfBytes = Self.halfPlane * MemoryLayout<SIMD2<Float>>.stride
+-    // Encode every cached BF tile for this objective into one command buffer.
+-    // The fused row/column encoders are already ordered within the command
+-    // buffer, so a per-cache-chunk commit only adds CPU/GPU synchronization
+-    // without changing the exact accumulation order.  Keeping the wait at the
+-    // end also leaves the phase sums observable only after every tile has
+-    // completed, exactly as in the previous one-command-buffer-per-chunk path.
+-    var globalOffset = 0
+-    guard let cacheCommands = queue.makeCommandBuffer() else {
+-      throw MetalSSBError.commandQueue
+-    }
+-    for (cache, cacheCount) in zip(cacheBuffers, cacheCounts) {
+-      // Eight-plane batches preserve the tested float32 accumulation order.
+-      for localOffset in stride(
+-        from: 0,
+-        to: cacheCount,
+-        by: Self.phaseBatchCapacity
+-      ) {
+-        let batch = min(Self.phaseBatchCapacity, cacheCount - localOffset)
+-        let params = parameters(
+-          batch: batch,
+-          offset: globalOffset + localOffset,
+-          aberrations: aberrations
+-        )
+-        try encodeFusedCachedPhaseLoss(
+-          cacheCommands,
+-          source: cache,
+-          sourceOffset: localOffset * halfBytes,
+-          batch: batch,
+-          params: params
+-        )
+-      }
+-      globalOffset += cacheCount
+-    }
+-    try commitAndWait(cacheCommands)
+-    gpuSeconds += gpuDuration(cacheCommands)
+-
+-    for offset in stride(
+-      from: globalOffset,
+-      to: activeBrightfieldIndices.count,
+-      by: Self.batchCapacity
+-    ) {
+-      let batch = min(
+-        Self.batchCapacity,
+-        activeBrightfieldIndices.count - offset
+-      )
+-      guard let commands = queue.makeCommandBuffer() else { throw MetalSSBError.commandQueue }
+-      try encodeBrightfield(Array(activeBrightfieldIndices[offset..<(offset + batch)]), rawBuffer, commands)
+-      encodeForwardFFT(commands, batch: batch)
+-      let params = parameters(
+-        batch: batch,
+-        offset: offset,
+-        aberrations: aberrations
+-      )
+-      encodeLossCorrection(
+-        commands,
+-        source: fftA,
+-        sourceOffset: 0,
+-        sourceIsHermitianHalf: false,
+-        params: params
+-      )
+-      encodeFFT(
+-        commands,
+-        input: fftB,
+-        temporary: fftA,
+-        output: fftB,
+-        params: FFTParams(
+-          n: UInt32(Self.size),
+-          log2n: 9,
+-          batch: UInt32(batch),
+-          inverse: 1
+-        )
+-      )
+-      encodePhaseMoments(commands, batch: batch)
+-      try commitAndWait(commands)
+-      gpuSeconds += gpuDuration(commands)
+-    }
+-
+-    let sums = phaseSumBuffer.contents().bindMemory(
+-      to: Float.self,
+-      capacity: Self.plane
+-    )
+-    let squared = phaseSumSquaredBuffer.contents().bindMemory(
+-      to: Float.self,
+-      capacity: Self.plane
+-    )
+-    let logical = Double(geometry.logicalBrightfieldCount)
+-    let pixels = Double(Self.plane)
+-    var sumOfSquares = 0.0
+-    var squareOfMeans = 0.0
+-    for pixel in 0..<Self.plane {
+-      sumOfSquares += Double(squared[pixel])
+-      let mean = Double(sums[pixel]) / logical
+-      squareOfMeans += mean * mean
+-    }
+-    let loss = sumOfSquares / (logical * pixels) - squareOfMeans / pixels
+-    return MetalSSBPhaseVarianceResult(
+-      loss: Float(loss),
+-      wallSeconds: Date().timeIntervalSince(started),
+-      gpuSeconds: gpuSeconds,
+-      provenance: currentProvenance()
+-    )
+-  }
+-
+-  /// Run the native deterministic 200-trial search and Nelder-Mead refinement.
+-  public func optimize(
+-    start: MetalSSBAberrations,
+-    rotationDegrees: Float? = nil,
+-    globalTrials: Int = 200,
+-    seed: UInt64 = 42,
+-    progress: (SSBOptimizationProgress) -> Void = { _ in },
+-    isCancelled: () -> Bool = { false }
+-  ) throws -> SSBOptimizationResult {
+-    let rotation = rotationDegrees ?? geometry.referenceRotationDegrees
+-    return try SSBOptimizer(globalTrials: globalTrials, seed: seed).run(
+-      start: SSBOptimizationPoint(
+-        c10Nanometers: Double(start.c10Nanometers),
+-        c12Nanometers: Double(start.c12Nanometers),
+-        phi12Radians: Double(start.phi12Radians)
+-      ),
+-      evaluate: { point in
+-        Double(
+-          try self.phaseVariance(
+-            aberrations: MetalSSBAberrations(
+-              c10Nanometers: Float(point.c10Nanometers),
+-              c12Nanometers: Float(point.c12Nanometers),
+-              phi12Radians: Float(point.phi12Radians)
+-            ),
+-            rotationDegrees: rotation
+-          ).loss)
+-      },
+-      progress: progress,
+-      isCancelled: isCancelled
+-    )
+-  }
+-
+-  private func configureHigherOrder(_ aberrations: MetalSSBAberrations) throws {
+-    let terms = aberrations.higherOrder ?? []
+-    guard Set(terms.map(\.name)).count == terms.count,
+-      terms.allSatisfy({ term in
+-        MetalSSBHigherOrder.supported.contains { $0.order == term.order && $0.symmetry == term.symmetry }
+-          && term.magnitudeNanometers.isFinite && term.angleRadians.isFinite
+-      }) else { throw MetalSSBError.invalidGeometry("Use distinct finite polar aberrations from orders 2 through 5.") }
+-    guard terms.contains(where: { $0.magnitudeNanometers != 0 }) else {
+-      liveHigherOrder = []; return
+-    }
+-    liveHigherOrder = MetalSSBHigherOrder.supported.map { expected in
+-      let term = terms.first { $0.name == expected.name } ?? expected
+-      return SIMD4(term.magnitudeNanometers, Float(term.order), Float(term.symmetry), term.angleRadians)
+-    }
+-    if higherOrderHalfPipeline == nil {
+-      let library = try Self.makeLibrary(device: device)
+-      higherOrderHalfPipeline = try Self.makePipeline(device: device, library: library,
+-        name: "ssb_gamma_accumulate_half_aberrations")
+-      higherOrderFullPipeline = try Self.makePipeline(device: device, library: library,
+-        name: "ssb_gamma_accumulate_full_aberrations")
+-    }
+-  }
+-
+-  private func parameters(
+-    batch: Int,
+-    offset: Int,
+-    aberrations: MetalSSBAberrations
+-  ) -> SSBParams {
+-    let isotropicEdge = 0.5 * geometry.angularSamplingXRadians
+-    let innerK =
+-      max(0, geometry.semiangleRadians - isotropicEdge)
+-      / geometry.wavelengthAngstroms
+-    let outerK =
+-      (geometry.semiangleRadians + isotropicEdge)
+-      / geometry.wavelengthAngstroms
+-    return SSBParams(
+-      n: UInt32(Self.size),
+-      batch: UInt32(batch),
+-      logicalBF: UInt32(geometry.logicalBrightfieldCount),
+-      bfOffset: UInt32(offset),
+-      wavelength: geometry.wavelengthAngstroms,
+-      semiangle: geometry.semiangleRadians,
+-      angularY: geometry.angularSamplingYRadians,
+-      angularX: geometry.angularSamplingXRadians,
+-      c10: aberrations.c10Nanometers,
+-      c12: aberrations.c12Nanometers,
+-      cos2Phi12: cos(2 * aberrations.phi12Radians),
+-      sin2Phi12: sin(2 * aberrations.phi12Radians),
+-      factor: Float.pi / geometry.wavelengthAngstroms,
+-      dcReal: geometry.dcValue.x,
+-      dcImaginary: geometry.dcValue.y,
+-      apertureInnerK2: innerK * innerK,
+-      apertureOuterK2: outerK * outerK,
+-      cacheChunkShift: cacheChunkShift
+-    )
+-  }
+-
+-  private func currentProvenance() -> MetalSSBProvenance {
+-    MetalSSBProvenance(
+-      scanRows: Self.size,
+-      scanColumns: Self.size,
+-      sourceDType: String(describing: sourceCountType),
+-      computeDType: "float32/complex64",
+-      logicalBrightfieldCount: geometry.logicalBrightfieldCount,
+-      executedBrightfieldCount: activeBrightfieldIndices.count,
+-      zeroApertureBrightfieldCount:
+-        geometry.logicalBrightfieldCount - activeBrightfieldIndices.count,
+-      cachedBrightfieldCount: cachedBrightfieldCount,
+-      streamedBrightfieldCount:
+-        activeBrightfieldIndices.count - cachedBrightfieldCount,
+-      cacheBytes: cacheBuffers.reduce(0) { $0 + $1.length },
+-      scanBin: 1,
+-      scanCrop: "none",
+-      brightfieldSelection: "exact-zero-aperture-pruning"
+-    )
+-  }
+-
+-  private func setCacheColumnMajor(_ columnMajor: Bool) throws {
+-    guard !cacheBuffers.isEmpty, cacheIsColumnMajor != columnMajor else {
+-      return
+-    }
+-    let pipeline =
+-      columnMajor
+-      ? halfToColumnMajorPipeline : halfToRowMajorPipeline
+-    let halfBytes = Self.halfPlane * MemoryLayout<SIMD2<Float>>.stride
+-    for (cache, cacheCount) in zip(cacheBuffers, cacheCounts) {
+-      guard let commands = queue.makeCommandBuffer() else {
+-        throw MetalSSBError.commandQueue
+-      }
+-      for offset in stride(
+-        from: 0,
+-        to: cacheCount,
+-        by: Self.batchCapacity
+-      ) {
+-        let batch = min(Self.batchCapacity, cacheCount - offset)
+-        var mutableBatch = UInt32(batch)
+-        guard let encoder = commands.makeComputeCommandEncoder() else {
+-          throw MetalSSBError.commandQueue
+-        }
+-        encoder.setComputePipelineState(pipeline)
+-        encoder.setBuffer(
+-          cache,
+-          offset: offset * halfBytes,
+-          index: 0
+-        )
+-        encoder.setBuffer(fftA, offset: 0, index: 1)
+-        encoder.setBytes(
+-          &mutableBatch,
+-          length: MemoryLayout<UInt32>.stride,
+-          index: 2
+-        )
+-        encoder.dispatchThreads(
+-          MTLSize(width: batch * Self.halfPlane, height: 1, depth: 1),
+-          threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
+-        )
+-        encoder.endEncoding()
+-        guard let blit = commands.makeBlitCommandEncoder() else {
+-          throw MetalSSBError.commandQueue
+-        }
+-        blit.copy(
+-          from: fftA,
+-          sourceOffset: 0,
+-          to: cache,
+-          destinationOffset: offset * halfBytes,
+-          size: batch * halfBytes
+-        )
+-        blit.endEncoding()
+-      }
+-      try commitAndWait(commands)
+-    }
+-    cacheIsColumnMajor = columnMajor
+-  }
+-
+-  private func rebuildGeometry(rotationDegrees: Float) throws {
+-    if activeGeometryRotation?.bitPattern == rotationDegrees.bitPattern {
+-      return
+-    }
+-    var geometryValues: [SIMD4<Float>] = []
+-    var trigValues: [SIMD2<Float>] = []
+-    geometryValues.reserveCapacity(activeBrightfieldIndices.count)
+-    trigValues.reserveCapacity(activeBrightfieldIndices.count)
+-    let delta =
+-      (rotationDegrees - geometry.referenceRotationDegrees)
+-      * Float.pi / 180
+-    let cosine = cos(-delta)
+-    let sine = sin(-delta)
+-    for logical in activeBrightfieldIndices {
+-      if abs(delta) < 1e-7 {
+-        geometryValues.append(
+-          SIMD4<Float>(
+-            geometry.brightfieldKX[logical],
+-            geometry.brightfieldKY[logical],
+-            geometry.brightfieldAlphaSquared[logical],
+-            geometry.brightfieldAperture[logical]
+-          ))
+-        trigValues.append(
+-          SIMD2<Float>(
+-            geometry.brightfieldCos2Phi[logical],
+-            geometry.brightfieldSin2Phi[logical]
+-          ))
+-        continue
+-      }
+-      let baseX = geometry.brightfieldKX[logical]
+-      let baseY = geometry.brightfieldKY[logical]
+-      let x = baseX * cosine + baseY * sine
+-      let y = -baseX * sine + baseY * cosine
+-      let x2 = x * x
+-      let y2 = y * y
+-      let radiusSquared = x2 + y2
+-      let radius = sqrt(radiusSquared)
+-      let alpha = radius * geometry.wavelengthAngstroms
+-      let alphaSquared = alpha * alpha
+-      let inverseRadiusSquared: Float =
+-        radiusSquared > 1e-30
+-        ? 1 / radiusSquared : 0
+-      let cos2 = (x2 - y2) * inverseRadiusSquared
+-      let sin2 = 2 * x * y * inverseRadiusSquared
+-      let denominatorNumerator =
+-        pow(x * geometry.angularSamplingYRadians, 2)
+-        + pow(y * geometry.angularSamplingXRadians, 2)
+-      let denominator: Float =
+-        radius > 1e-15
+-        ? sqrt(denominatorNumerator) / radius : 0
+-      let edge: Float =
+-        denominator > 1e-15
+-        ? (geometry.semiangleRadians - alpha) / denominator + 0.5
+-        : 1
+-      geometryValues.append(
+-        SIMD4<Float>(
+-          x,
+-          y,
+-          alphaSquared,
+-          min(max(edge, 0), 1)
+-        ))
+-      trigValues.append(SIMD2<Float>(cos2, sin2))
+-    }
+-    activeGeometryBuffer = try Self.makeBuffer(
+-      device: device,
+-      values: geometryValues,
+-      purpose: "active BF geometry"
+-    )
+-    activeTrigBuffer = try Self.makeBuffer(
+-      device: device,
+-      values: trigValues,
+-      purpose: "active BF angle table"
+-    )
+-    activeGeometryRotation = rotationDegrees
+-  }
+-
+-  private func encodeForwardFFT(
+-    _ commands: MTLCommandBuffer,
+-    batch: Int
+-  ) {
+-    var count = UInt32(batch * Self.plane)
+-    let convert = commands.makeComputeCommandEncoder()!
+-    convert.setComputePipelineState(convertPipeline)
+-    convert.setBuffer(rawBuffer, offset: 0, index: 0)
+-    convert.setBuffer(fftA, offset: 0, index: 1)
+-    convert.setBytes(&count, length: MemoryLayout<UInt32>.stride, index: 2)
+-    var byteWidth = UInt32(sourceCountType.byteWidth)
+-    convert.setBytes(&byteWidth, length: MemoryLayout<UInt32>.stride, index: 3)
+-    convert.dispatchThreads(
+-      MTLSize(width: Int(count), height: 1, depth: 1),
+-      threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
+-    )
+-    convert.endEncoding()
+-    encodeFFT(
+-      commands,
+-      input: fftA,
+-      temporary: fftB,
+-      output: fftA,
+-      params: FFTParams(
+-        n: UInt32(Self.size),
+-        log2n: 9,
+-        batch: UInt32(batch),
+-        inverse: 0
+-      )
+-    )
+-  }
+-
+-  private func encodeFFT(
+-    _ commands: MTLCommandBuffer,
+-    input: MTLBuffer,
+-    temporary: MTLBuffer,
+-    output: MTLBuffer,
+-    params: FFTParams
+-  ) {
+-    let n = Int(params.n)
+-    let batch = Int(params.batch)
+-    let rowGroups = MTLSize(width: n * batch, height: 1, depth: 1)
+-    let rowThreads = MTLSize(width: Self.fftThreads, height: 1, depth: 1)
+-    let transposeCount = (n + 31) / 32
+-    let transposeGroups = MTLSize(
+-      width: transposeCount,
+-      height: transposeCount,
+-      depth: batch
+-    )
+-    let transposeThreads = MTLSize(width: 32, height: 8, depth: 1)
+-    var mutable = params
+-
+-    let firstRows = commands.makeComputeCommandEncoder()!
+-    firstRows.setComputePipelineState(fftPipeline)
+-    firstRows.setBuffer(input, offset: 0, index: 0)
+-    firstRows.setBuffer(temporary, offset: 0, index: 1)
+-    firstRows.setBuffer(twiddleBuffer, offset: 0, index: 2)
+-    firstRows.setBytes(
+-      &mutable,
+-      length: MemoryLayout<FFTParams>.stride,
+-      index: 3
+-    )
+-    firstRows.setThreadgroupMemoryLength(
+-      n * MemoryLayout<SIMD2<Float>>.stride,
+-      index: 0
+-    )
+-    firstRows.dispatchThreadgroups(
+-      rowGroups,
+-      threadsPerThreadgroup: rowThreads
+-    )
+-    firstRows.endEncoding()
+-
+-    let firstTranspose = commands.makeComputeCommandEncoder()!
+-    firstTranspose.setComputePipelineState(transposePipeline)
+-    firstTranspose.setBuffer(temporary, offset: 0, index: 0)
+-    firstTranspose.setBuffer(output, offset: 0, index: 1)
+-    firstTranspose.setBytes(
+-      &mutable,
+-      length: MemoryLayout<FFTParams>.stride,
+-      index: 2
+-    )
+-    firstTranspose.dispatchThreadgroups(
+-      transposeGroups,
+-      threadsPerThreadgroup: transposeThreads
+-    )
+-    firstTranspose.endEncoding()
+-
+-    let secondRows = commands.makeComputeCommandEncoder()!
+-    secondRows.setComputePipelineState(fftPipeline)
+-    secondRows.setBuffer(output, offset: 0, index: 0)
+-    secondRows.setBuffer(temporary, offset: 0, index: 1)
+-    secondRows.setBuffer(twiddleBuffer, offset: 0, index: 2)
+-    secondRows.setBytes(
+-      &mutable,
+-      length: MemoryLayout<FFTParams>.stride,
+-      index: 3
+-    )
+-    secondRows.setThreadgroupMemoryLength(
+-      n * MemoryLayout<SIMD2<Float>>.stride,
+-      index: 0
+-    )
+-    secondRows.dispatchThreadgroups(
+-      rowGroups,
+-      threadsPerThreadgroup: rowThreads
+-    )
+-    secondRows.endEncoding()
+-
+-    let secondTranspose = commands.makeComputeCommandEncoder()!
+-    secondTranspose.setComputePipelineState(transposePipeline)
+-    secondTranspose.setBuffer(temporary, offset: 0, index: 0)
+-    secondTranspose.setBuffer(output, offset: 0, index: 1)
+-    secondTranspose.setBytes(
+-      &mutable,
+-      length: MemoryLayout<FFTParams>.stride,
+-      index: 2
+-    )
+-    secondTranspose.dispatchThreadgroups(
+-      transposeGroups,
+-      threadsPerThreadgroup: transposeThreads
+-    )
+-    secondTranspose.endEncoding()
+-  }
+-
+-  private func encodeFullAccumulator(
+-    _ commands: MTLCommandBuffer,
+-    source: MTLBuffer,
+-    params: SSBParams
+-  ) {
+-    var mutable = params
+-    let encoder = commands.makeComputeCommandEncoder()!
+-    encoder.setComputePipelineState(liveHigherOrder.isEmpty ? fullAccumulatePipeline : higherOrderFullPipeline!)
+-    if !liveHigherOrder.isEmpty {
+-      encoder.setBytes(liveHigherOrder, length: liveHigherOrder.count * 16, index: 7)
+-    }
+-    encoder.setBuffer(source, offset: 0, index: 0)
+-    encoder.setBuffer(activeGeometryBuffer, offset: 0, index: 1)
+-    encoder.setBuffer(activeTrigBuffer, offset: 0, index: 2)
+-    encoder.setBuffer(qxBuffer, offset: 0, index: 3)
+-    encoder.setBuffer(qyBuffer, offset: 0, index: 4)
+-    encoder.setBuffer(accumulator, offset: 0, index: 5)
+-    encoder.setBytes(
+-      &mutable,
+-      length: MemoryLayout<SSBParams>.stride,
+-      index: 6
+-    )
+-    encoder.dispatchThreads(
+-      MTLSize(width: Self.plane, height: 1, depth: 1),
+-      threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
+-    )
+-    encoder.endEncoding()
+-  }
+-
+-  private func encodeCachedAccumulator(
+-    _ commands: MTLCommandBuffer,
+-    sources: [MTLBuffer],
+-    params: SSBParams
+-  ) throws {
+-    guard let fallback = sources.first else { return }
+-    guard sources.count <= Self.maximumCacheChunks else {
+-      throw MetalSSBError.tooManyCacheChunks(
+-        required: sources.count,
+-        supported: Self.maximumCacheChunks
+-      )
+-    }
+-    var mutable = params
+-    let encoder = commands.makeComputeCommandEncoder()!
+-    encoder.setComputePipelineState(liveHigherOrder.isEmpty ? halfAccumulatePipeline : higherOrderHalfPipeline!)
+-    if liveHigherOrder.isEmpty {
+-      encoder.setBuffer(crossTrigBuffer, offset: 0, index: 17)
+-    }
+-    if !liveHigherOrder.isEmpty {
+-      encoder.setBytes(liveHigherOrder, length: liveHigherOrder.count * 16, index: 17)
+-    }
+-    for index in 0..<Self.maximumCacheChunks {
+-      encoder.setBuffer(
+-        index < sources.count ? sources[index] : fallback,
+-        offset: 0,
+-        index: index
+-      )
+-    }
+-    encoder.setBuffer(activeGeometryBuffer, offset: 0, index: 12)
+-    encoder.setBuffer(qxBuffer, offset: 0, index: 13)
+-    encoder.setBuffer(qyBuffer, offset: 0, index: 14)
+-    encoder.setBuffer(accumulator, offset: 0, index: 15)
+-    encoder.setBytes(
+-      &mutable,
+-      length: MemoryLayout<SSBParams>.stride,
+-      index: 16
+-    )
+-    encoder.dispatchThreads(
+-      MTLSize(width: liveHigherOrder.isEmpty ? Self.halfPlane : Self.plane, height: 1, depth: 1),
+-      threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
+-    )
+-    encoder.endEncoding()
+-  }
+-
+-  private func encodeFinalize(
+-    _ commands: MTLCommandBuffer,
+-    params: SSBParams
+-  ) {
+-    var mutable = params
+-    let encoder = commands.makeComputeCommandEncoder()!
+-    encoder.setComputePipelineState(finalizePipeline)
+-    encoder.setBuffer(accumulator, offset: 0, index: 0)
+-    encoder.setBytes(
+-      &mutable,
+-      length: MemoryLayout<SSBParams>.stride,
+-      index: 1
+-    )
+-    encoder.dispatchThreads(
+-      MTLSize(width: Self.plane, height: 1, depth: 1),
+-      threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
+-    )
+-    encoder.endEncoding()
+-  }
+-
+-  private func encodeChiTrig(
+-    _ commands: MTLCommandBuffer,
+-    params: SSBParams,
+-    output: MTLBuffer
+-  ) {
+-    var mutable = params
+-    let encoder = commands.makeComputeCommandEncoder()!
+-    encoder.setComputePipelineState(chiTrigPipeline)
+-    encoder.setBuffer(qxBuffer, offset: 0, index: 0)
+-    encoder.setBuffer(qyBuffer, offset: 0, index: 1)
+-    encoder.setBuffer(output, offset: 0, index: 2)
+-    encoder.setBytes(
+-      &mutable,
+-      length: MemoryLayout<SSBParams>.stride,
+-      index: 3
+-    )
+-    encoder.dispatchThreads(
+-      MTLSize(width: Self.plane, height: 1, depth: 1),
+-      threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
+-    )
+-    encoder.endEncoding()
+-  }
+-
+-  private func encodeCrossTrig(
+-    _ commands: MTLCommandBuffer,
+-    params: SSBParams,
+-    output: MTLBuffer
+-  ) {
+-    var mutable = params
+-    let encoder = commands.makeComputeCommandEncoder()!
+-    encoder.setComputePipelineState(crossTrigPipeline)
+-    encoder.setBuffer(activeGeometryBuffer, offset: 0, index: 0)
+-    encoder.setBuffer(qxBuffer, offset: 0, index: 1)
+-    encoder.setBuffer(qyBuffer, offset: 0, index: 2)
+-    encoder.setBuffer(output, offset: 0, index: 3)
+-    encoder.setBytes(
+-      &mutable,
+-      length: MemoryLayout<SSBParams>.stride,
+-      index: 4
+-    )
+-    encoder.dispatchThreads(
+-      MTLSize(
+-        width: activeBrightfieldIndices.count * 2 * Self.size,
+-        height: 1,
+-        depth: 1
+-      ),
+-      threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
+-    )
+-    encoder.endEncoding()
+-  }
+-
+-  private func encodeFusedCachedPhaseLoss(
++  private let crossTrigPipeline: MTLComputePipelineState
++  private let fusedLossRowPipeline: MTLComputePipelineState
++  private let fusedLossMomentPipeline: MTLComputePipelineState
++  private let pipelinedLossPipeline: MTLComputePipelineState
++  private let halfToColumnMajorPipeline: MTLComputePipelineState
++  private let halfToRowMajorPipeline: MTLComputePipelineState
++
++  private var rawBuffer: MTLBuffer
++  private var sourceCountType: MetalSSBCountType = .uint8
++  private let fftA: MTLBuffer
++  private let fftB: MTLBuffer
++  private let accumulator: MTLBuffer
++  private let finalTemporary: MTLBuffer
++  private let twiddleBuffer: MTLBuffer
++  private let qxBuffer: MTLBuffer
++  private let qyBuffer: MTLBuffer
++  private let phaseSumBuffer: MTLBuffer
++  private let phaseSumSquaredBuffer: MTLBuffer
++  private var activeGeometryBuffer: MTLBuffer
++  private var activeTrigBuffer: MTLBuffer
++  private var activeGeometryRotation: Float?
++
++  private var encodeBrightfield: (([Int], MTLBuffer, MTLCommandBuffer) throws -> Void)?
++  private var cacheBuffers: [MTLBuffer] = []
++  private var cacheCounts: [Int] = []
++  private var cachedBrightfieldCount = 0
++  private var cacheIsColumnMajor = false
++  private var chiTrigBuffer: MTLBuffer?
++  private var crossTrigBuffer: MTLBuffer?
++  private var pipelineSyncBuffer: MTLBuffer?
++  private var prepared = false
++
++  /// Prototype switch for the persistent pipelined phase/loss schedule:
++  /// `QUANTEM_SSB_PIPELINED=<workers>,<ring>`; unset or `0` keeps the
++  /// retained two-pass schedule.
++  private static let pipelinedSchedule: (workers: Int, ring: Int)? = {
++    guard let raw = ProcessInfo.processInfo.environment["QUANTEM_SSB_PIPELINED"],
++      raw != "0"
++    else { return nil }
++    let parts = raw.split(separator: ",").compactMap { Int($0) }
++    let workers = parts.first ?? 100
++    let ring = parts.count > 1 ? parts[1] : 4
++    return (max(65, workers), max(2, min(ring, MetalSSBEngine.batchCapacity)))
++  }()
++
++  private struct SSBPipelineParams {
++    var chunkCount: UInt32
++    var ring: UInt32
++    var items: UInt32
++    var spinLimit: UInt32
++    var workers: UInt32
++  }
++
++  /// Prototype diagnostic: largest worker count whose whole dispatch of the
++  /// pipelined kernel is simultaneously resident (all workers observe all
++  /// arrivals). Deadlock freedom of the pipelined schedule needs more resident
++  /// workers than ROW items per batch.
++  public func pipelinedResidentWorkers(candidates: [Int]) throws -> [Int: Bool] {
++    guard let pipelineSyncBuffer else { throw MetalSSBError.notPrepared }
++    var results: [Int: Bool] = [:]
++    for workers in candidates {
++      guard let commands = queue.makeCommandBuffer() else { throw MetalSSBError.commandQueue }
++      let clear = commands.makeBlitCommandEncoder()!
++      clear.fill(buffer: pipelineSyncBuffer, range: 0..<pipelineSyncBuffer.length, value: 0)
++      clear.endEncoding()
++      var params = parameters(batch: 1, offset: 0, aberrations: MetalSSBAberrations(c10Nanometers: 0, c12Nanometers: 0, phi12Radians: 0))
++      var pipeline = SSBPipelineParams(chunkCount: 1, ring: 2, items: 0, spinLimit: 1 << 20, workers: UInt32(workers))
++      let encoder = commands.makeComputeCommandEncoder()!
++      encoder.setComputePipelineState(pipelinedLossPipeline)
++      for index in [0, 1, 2, 3, 4, 5, 7, 8, 9, 10] { encoder.setBuffer(fftA, offset: 0, index: index) }
++      encoder.setBytes(&params, length: MemoryLayout<SSBParams>.stride, index: 6)
++      encoder.setBuffer(pipelineSyncBuffer, offset: 0, index: 11)
++      encoder.setBytes(&pipeline, length: MemoryLayout<SSBPipelineParams>.stride, index: 12)
++      encoder.dispatchThreadgroups(MTLSize(width: workers, height: 1, depth: 1),
++        threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
++      encoder.endEncoding()
++      try commitAndWait(commands)
++      let flags = pipelineSyncBuffer.contents().bindMemory(to: UInt32.self, capacity: 128)
++      results[workers] = flags[64] == 0
++    }
++    return results
++  }
++
++  /// Create a reusable SSB engine.
++  ///
++  /// - Parameters:
++  ///   - device: Apple Metal device that owns all source and result buffers.
++  ///   - geometry: Exact full-BF calibration in logical source order.
++  ///   - cacheBudgetBytes: Maximum bytes retained for the Hermitian `G(k)`
++  ///     cache. `nil` requests a complete cache. A smaller budget preserves
++  ///     exactness by streaming the uncached tail from the source buffer.
++  public init(
++    device: MTLDevice,
++    geometry: MetalSSBGeometry,
++    cacheBudgetBytes: Int? = nil
++  ) throws {
++    try Self.validate(geometry)
++    if let cacheBudgetBytes, cacheBudgetBytes < 0 {
++      throw MetalSSBError.invalidGeometry(
++        "cacheBudgetBytes must be nonnegative"
++      )
++    }
++    self.device = device
++    self.geometry = geometry
++    self.cacheBudgetBytes = cacheBudgetBytes
++    guard let queue = device.makeCommandQueue() else {
++      throw MetalSSBError.commandQueue
++    }
++    self.queue = queue
++
++    let activeIndices = Self.activeIndices(geometry)
++    guard !activeIndices.isEmpty else {
++      throw MetalSSBError.invalidGeometry(
++        "no bright-field term has nonzero aperture"
++      )
++    }
++    activeBrightfieldIndices = activeIndices
++    let library = try Self.makeLibrary(device: device)
++    convertPipeline = try Self.makePipeline(
++      device: device,
++      library: library,
++      name: "counts_to_complex"
++    )
++    fftPipeline = try Self.makePipeline(
++      device: device,
++      library: library,
++      name: "fft_rows_radix8"
++    )
++    transposePipeline = try Self.makePipeline(
++      device: device,
++      library: library,
++      name: "transpose_complex32"
++    )
++    fullAccumulatePipeline = try Self.makePipeline(
++      device: device,
++      library: library,
++      name: "ssb_gamma_accumulate"
++    )
++    halfAccumulatePipeline = try Self.makePipeline(
++      device: device,
++      library: library,
++      name: "ssb_gamma_accumulate_half"
++    )
++    finalizePipeline = try Self.makePipeline(
++      device: device,
++      library: library,
++      name: "ssb_finalize_fourier_sum"
++    )
++    halfExtractPipeline = try Self.makePipeline(
++      device: device,
++      library: library,
++      name: "extract_hermitian_half"
++    )
++    halfLossCorrectionPipeline = try Self.makePipeline(
++      device: device,
++      library: library,
++      name: "ssb_correct_half_for_phase_loss"
++    )
++    fullLossCorrectionPipeline = try Self.makePipeline(
++      device: device,
++      library: library,
++      name: "ssb_correct_full_for_phase_loss"
++    )
++    phaseMomentPipeline = try Self.makePipeline(
++      device: device,
++      library: library,
++      name: "ssb_accumulate_phase_moments"
++    )
++    chiTrigPipeline = try Self.makePipeline(
++      device: device,
++      library: library,
++      name: "ssb_precompute_chi_trig512"
++    )
++    crossTrigPipeline = try Self.makePipeline(
++      device: device,
++      library: library,
++      name: "ssb_precompute_cross_trig512"
++    )
++    fusedLossRowPipeline = try Self.makePipeline(
++      device: device,
++      library: library,
++      name: "ssb_correct_half_column_ifft512_hermitian"
++    )
++    fusedLossMomentPipeline = try Self.makePipeline(
++      device: device,
++      library: library,
++      name: "ssb_ifft512_rows_hermitian_phase_moments"
++    )
++    pipelinedLossPipeline = try Self.makePipeline(
++      device: device,
++      library: library,
++      name: "ssb_pipelined_phase_moments"
++    )
++    halfToColumnMajorPipeline = try Self.makePipeline(
++      device: device,
++      library: library,
++      name: "ssb_transpose_half_to_column_major"
++    )
++    halfToRowMajorPipeline = try Self.makePipeline(
++      device: device,
++      library: library,
++      name: "ssb_transpose_half_to_row_major"
++    )
++
++    let rawBytes = Self.batchCapacity * Self.plane
++    let complexBytes = rawBytes * MemoryLayout<SIMD2<Float>>.stride
++    rawBuffer = try Self.allocate(
++      device: device,
++      length: rawBytes,
++      options: .storageModePrivate,
++      purpose: "uint8 batch"
++    )
++    fftA = try Self.allocate(
++      device: device,
++      length: complexBytes,
++      options: .storageModePrivate,
++      purpose: "FFT workspace A"
++    )
++    fftB = try Self.allocate(
++      device: device,
++      length: complexBytes,
++      options: .storageModePrivate,
++      purpose: "FFT workspace B"
++    )
++    let planeBytes = Self.plane * MemoryLayout<SIMD2<Float>>.stride
++    accumulator = try Self.allocate(
++      device: device,
++      length: planeBytes,
++      options: .storageModePrivate,
++      purpose: "Fourier accumulator"
++    )
++    finalTemporary = try Self.allocate(
++      device: device,
++      length: planeBytes,
++      options: .storageModePrivate,
++      purpose: "inverse FFT workspace"
++    )
++    phaseSumBuffer = try Self.allocate(
++      device: device,
++      length: Self.plane * MemoryLayout<Float>.stride,
++      options: .storageModeShared,
++      purpose: "phase sum"
++    )
++    phaseSumSquaredBuffer = try Self.allocate(
++      device: device,
++      length: Self.plane * MemoryLayout<Float>.stride,
++      options: .storageModeShared,
++      purpose: "phase squared sum"
++    )
++
++    var twiddle: [SIMD2<Float>] = []
++    twiddle.reserveCapacity(Self.size)
++    for index in 0..<Self.size {
++      let angle = -2 * Float.pi * Float(index) / Float(Self.size)
++      twiddle.append(SIMD2<Float>(cos(angle), sin(angle)))
++    }
++    twiddleBuffer = try Self.makeBuffer(
++      device: device,
++      values: twiddle,
++      purpose: "FFT twiddle table"
++    )
++    qxBuffer = try Self.makeBuffer(
++      device: device,
++      values: geometry.qxByRow,
++      purpose: "scan-row reciprocal coordinates"
++    )
++    qyBuffer = try Self.makeBuffer(
++      device: device,
++      values: geometry.qyByColumn,
++      purpose: "scan-column reciprocal coordinates"
++    )
++
++    let placeholderGeometry = [SIMD4<Float>](
++      repeating: .zero,
++      count: activeIndices.count
++    )
++    let placeholderTrig = [SIMD2<Float>](
++      repeating: .zero,
++      count: activeIndices.count
++    )
++    activeGeometryBuffer = try Self.makeBuffer(
++      device: device,
++      values: placeholderGeometry,
++      purpose: "active BF geometry"
++    )
++    activeTrigBuffer = try Self.makeBuffer(
++      device: device,
++      values: placeholderTrig,
++      purpose: "active BF angle table"
++    )
++    try rebuildGeometry(rotationDegrees: geometry.referenceRotationDegrees)
++  }
++
++  /// Number of exact nonzero-aperture terms executed by this session.
++  public var executedBrightfieldCount: Int {
++    activeBrightfieldIndices.count
++  }
++
++  /// Number of logical bright-field terms retained in normalization.
++  public var logicalBrightfieldCount: Int {
++    geometry.logicalBrightfieldCount
++  }
++
++  /// Prepare plane-major bright-field counts without clipping or integer narrowing.
++  ///
++  /// The source shape is `[logicalBrightfieldCount, 512, 512]`. Preparation
++  /// builds as much of the exact Hermitian `G(k)` cache as the configured
++  /// budget admits and keeps the source buffer for any exact streamed tail.
++  public func prepare(
++    brightfield: MTLBuffer, countType: MetalSSBCountType = .uint8
++  ) throws {
++    let requiredBytes = geometry.logicalBrightfieldCount * Self.plane * countType.byteWidth
++    guard brightfield.length >= requiredBytes else {
++      throw MetalSSBError.inputBufferTooSmall(
++        required: requiredBytes,
++        actual: brightfield.length
++      )
++    }
++    try prepare(countType: countType) { indices, destination, commands in
++      guard let blit = commands.makeBlitCommandEncoder() else {
++        throw MetalSSBError.commandQueue
++      }
++      for (local, logical) in indices.enumerated() {
++        blit.copy(from: brightfield,
++          sourceOffset: logical * Self.plane * countType.byteWidth,
++          to: destination, destinationOffset: local * Self.plane * countType.byteWidth,
++          size: Self.plane * countType.byteWidth)
++      }
++      blit.endEncoding()
++    }
++  }
++
++  /// Prepare directly from a resident source, without a dense bright-field copy.
++  ///
++  /// The encoder writes the requested logical detector columns in plane-major
++  /// order into the bounded destination on the supplied command buffer. It
++  /// must not commit that buffer. Source and engine calls must be serialized.
++  /// The closure is retained for exact streaming when the Fourier cache is full.
++  public func prepare(
++    countType: MetalSSBCountType,
++    progress: (Int, Int) -> Void = { _, _ in },
++    encodeBrightfield: @escaping ([Int], MTLBuffer, MTLCommandBuffer) throws -> Void
++  ) throws {
++    self.encodeBrightfield = encodeBrightfield
++    let stagingBytes = Self.batchCapacity * Self.plane * countType.byteWidth
++    if rawBuffer.length != stagingBytes {
++      rawBuffer = try Self.allocate(
++        device: device, length: stagingBytes, options: .storageModePrivate,
++        purpose: "source count batch")
++    }
++    sourceCountType = countType
++    cacheBuffers.removeAll(keepingCapacity: false)
++    cacheCounts.removeAll(keepingCapacity: false)
++    cachedBrightfieldCount = 0
++    cacheIsColumnMajor = false
++    chiTrigBuffer = nil
++    crossTrigBuffer = nil
++    prepared = false
++
++    let bytesPerBrightfield =
++      Self.halfPlane
++      * MemoryLayout<SIMD2<Float>>.stride
++    let activeCount = activeBrightfieldIndices.count
++    let requestedCount: Int
++    if let cacheBudgetBytes {
++      let admitted = max(0, cacheBudgetBytes / bytesPerBrightfield)
++      requestedCount = min(activeCount, admitted)
++    } else {
++      requestedCount = activeCount
++    }
++    let cachedCount =
++      requestedCount == activeCount
++      ? activeCount
++      : (requestedCount / Self.batchCapacity) * Self.batchCapacity
++    cacheChunkCapacity = 512; cacheChunkShift = 9
++    while cachedCount > cacheChunkCapacity * Self.maximumCacheChunks {
++      cacheChunkCapacity *= 2; cacheChunkShift += 1
++    }
++    let chunks =
++      cachedCount == 0
++      ? 0
++      : (cachedCount + cacheChunkCapacity - 1)
++        / cacheChunkCapacity
++    guard chunks <= Self.maximumCacheChunks else {
++      throw MetalSSBError.tooManyCacheChunks(
++        required: chunks,
++        supported: Self.maximumCacheChunks
++      )
++    }
++    if cachedCount > 0 {
++      chiTrigBuffer = try Self.allocate(
++        device: device,
++        length: Self.plane * MemoryLayout<SIMD2<Float>>.stride,
++        options: .storageModePrivate,
++        purpose: "exact phase-loss chi table"
++      )
++      crossTrigBuffer = try Self.allocate(
++        device: device,
++        length: activeCount * 2 * Self.size
++          * MemoryLayout<SIMD2<Float>>.stride,
++        options: .storageModePrivate,
++        purpose: "exact phase-loss cross table"
++      )
++      pipelineSyncBuffer = try Self.allocate(
++        device: device,
++        length: (128 + 2 * cacheChunkCapacity + 64) * MemoryLayout<UInt32>.stride,
++        options: .storageModeShared,
++        purpose: "pipelined phase-loss counters"
++      )
++    }
++
++    let halfBytes = Self.halfPlane * MemoryLayout<SIMD2<Float>>.stride
++    for chunk in 0..<chunks {
++      let count = min(
++        cacheChunkCapacity,
++        cachedCount - chunk * cacheChunkCapacity
++      )
++      cacheBuffers.append(
++        try Self.allocate(
++          device: device,
++          length: count * halfBytes,
++          options: .storageModePrivate,
++          purpose: "Hermitian G(k) cache chunk \(chunk)"
++        ))
++      cacheCounts.append(count)
++    }
++
++    progress(0, cachedCount)
++    for offset in stride(
++      from: 0,
++      to: cachedCount,
++      by: Self.batchCapacity
++    ) {
++      let batch = min(Self.batchCapacity, cachedCount - offset)
++      guard let commands = queue.makeCommandBuffer() else { throw MetalSSBError.commandQueue }
++      try encodeBrightfield(Array(activeBrightfieldIndices[offset..<(offset + batch)]), rawBuffer, commands)
++      encodeForwardFFT(commands, batch: batch)
++
++      let cacheIndex = offset / cacheChunkCapacity
++      let cacheOffset = offset - cacheIndex * cacheChunkCapacity
++      var extract = HalfExtractParams(
++        sourceN: UInt32(Self.size),
++        batch: UInt32(batch)
++      )
++      guard let encoder = commands.makeComputeCommandEncoder() else {
++        throw MetalSSBError.commandQueue
++      }
++      encoder.setComputePipelineState(halfExtractPipeline)
++      encoder.setBuffer(fftA, offset: 0, index: 0)
++      encoder.setBuffer(
++        cacheBuffers[cacheIndex],
++        offset: cacheOffset * halfBytes,
++        index: 1
++      )
++      encoder.setBytes(
++        &extract,
++        length: MemoryLayout<HalfExtractParams>.stride,
++        index: 2
++      )
++      encoder.dispatchThreads(
++        MTLSize(width: batch * Self.halfPlane, height: 1, depth: 1),
++        threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
++      )
++      encoder.endEncoding()
++      try commitAndWait(commands)
++      progress(offset + batch, cachedCount)
++    }
++    cachedBrightfieldCount = cachedCount
++    prepared = true
++  }
++
++  /// Reconstruct one exact SSB object from the prepared full-BF session.
++  public func reconstruct(
++    aberrations: MetalSSBAberrations,
++    rotationDegrees: Float? = nil
++  ) throws -> MetalSSBResult {
++    guard prepared, let encodeBrightfield else {
++      throw MetalSSBError.notPrepared
++    }
++    try configureHigherOrder(aberrations)
++    try setCacheColumnMajor(false)
++    let rotation = rotationDegrees ?? geometry.referenceRotationDegrees
++    try rebuildGeometry(rotationDegrees: rotation)
++    let started = Date()
++    var gpuSeconds = 0.0
++
++    guard let clearCommands = queue.makeCommandBuffer(),
++      let clear = clearCommands.makeBlitCommandEncoder()
++    else { throw MetalSSBError.commandQueue }
++    clear.fill(buffer: accumulator, range: 0..<accumulator.length, value: 0)
++    clear.endEncoding()
++    if cachedBrightfieldCount > 0 {
++      if liveHigherOrder.isEmpty, let crossTrigBuffer {
++        encodeCrossTrig(clearCommands,
++          params: parameters(batch: activeBrightfieldIndices.count, offset: 0, aberrations: aberrations),
++          output: crossTrigBuffer)
++      }
++      // Bound the working set without changing BF order or adding partial planes.
++      for offset in stride(from: 0, to: cachedBrightfieldCount, by: 256) {
++        let cachedParams = parameters(
++          batch: min(256, cachedBrightfieldCount - offset),
++          offset: offset,
++          aberrations: aberrations
++        )
++        try encodeCachedAccumulator(
++          clearCommands,
++          sources: cacheBuffers,
++          params: cachedParams
++        )
++      }
++    }
++    try commitAndWait(clearCommands)
++    gpuSeconds += gpuDuration(clearCommands)
++
++    for offset in stride(
++      from: cachedBrightfieldCount,
++      to: activeBrightfieldIndices.count,
++      by: Self.batchCapacity
++    ) {
++      let batch = min(
++        Self.batchCapacity,
++        activeBrightfieldIndices.count - offset
++      )
++      guard let commands = queue.makeCommandBuffer() else { throw MetalSSBError.commandQueue }
++      try encodeBrightfield(Array(activeBrightfieldIndices[offset..<(offset + batch)]), rawBuffer, commands)
++      encodeForwardFFT(commands, batch: batch)
++      encodeFullAccumulator(
++        commands,
++        source: fftA,
++        params: parameters(
++          batch: batch,
++          offset: offset,
++          aberrations: aberrations
++        )
++      )
++      try commitAndWait(commands)
++      gpuSeconds += gpuDuration(commands)
++    }
++
++    let resultBytes = Self.plane * MemoryLayout<SIMD2<Float>>.stride
++    let object = try Self.allocate(
++      device: device,
++      length: resultBytes,
++      options: .storageModeShared,
++      purpose: "object result"
++    )
++    let fourier = try Self.allocate(
++      device: device,
++      length: resultBytes,
++      options: .storageModeShared,
++      purpose: "Fourier result"
++    )
++    guard let finalCommands = queue.makeCommandBuffer() else {
++      throw MetalSSBError.commandQueue
++    }
++    encodeFinalize(
++      finalCommands,
++      params: parameters(batch: 1, offset: 0, aberrations: aberrations)
++    )
++    guard let preserve = finalCommands.makeBlitCommandEncoder() else {
++      throw MetalSSBError.commandQueue
++    }
++    preserve.copy(
++      from: accumulator,
++      sourceOffset: 0,
++      to: fourier,
++      destinationOffset: 0,
++      size: resultBytes
++    )
++    preserve.endEncoding()
++    encodeFFT(
++      finalCommands,
++      input: accumulator,
++      temporary: finalTemporary,
++      output: object,
++      params: FFTParams(
++        n: UInt32(Self.size),
++        log2n: 9,
++        batch: 1,
++        inverse: 1
++      )
++    )
++    try commitAndWait(finalCommands)
++    gpuSeconds += gpuDuration(finalCommands)
++    return MetalSSBResult(
++      object: object,
++      fourierSum: fourier,
++      wallSeconds: Date().timeIntervalSince(started),
++      gpuSeconds: gpuSeconds,
++      provenance: currentProvenance()
++    )
++  }
++
++  /// Evaluate the exact full-BF native phase-variance objective.
++  /// Convert an owned complex object to its scalar phase, in radians, on Metal.
++  public func phase(of result: MetalSSBResult) throws -> MTLBuffer {
++    if objectPhasePipeline == nil {
++      objectPhasePipeline = try Self.makePipeline(device: device,
++        library: Self.makeLibrary(device: device), name: "ssb_object_phase")
++    }
++    let output = try Self.allocate(device: device, length: Self.plane * 4,
++      options: .storageModeShared, purpose: "object phase")
++    guard let command = queue.makeCommandBuffer(), let encoder = command.makeComputeCommandEncoder(),
++      let objectPhasePipeline else { throw MetalSSBError.commandQueue }
++    encoder.setComputePipelineState(objectPhasePipeline)
++    encoder.setBuffer(result.object, offset: 0, index: 0)
++    encoder.setBuffer(output, offset: 0, index: 1)
++    encoder.dispatchThreads(MTLSize(width: Self.plane, height: 1, depth: 1),
++      threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
++    encoder.endEncoding()
++    try commitAndWait(command)
++    return output
++  }
++
++  public func phaseVariance(
++    aberrations: MetalSSBAberrations,
++    rotationDegrees: Float? = nil
++  ) throws -> MetalSSBPhaseVarianceResult {
++    guard prepared, let encodeBrightfield else {
++      throw MetalSSBError.notPrepared
++    }
++    guard !(aberrations.higherOrder ?? []).contains(where: { $0.magnitudeNanometers != 0 }) else {
++      throw MetalSSBError.invalidGeometry("The optimizer currently fits lower-order aberrations only. Reset higher-order terms before fitting; manual reconstruction supports orders 2 through 5.")
++    }
++    try setCacheColumnMajor(true)
++    let rotation = rotationDegrees ?? geometry.referenceRotationDegrees
++    try rebuildGeometry(rotationDegrees: rotation)
++    let started = Date()
++    var gpuSeconds = 0.0
++
++    guard let clearCommands = queue.makeCommandBuffer(),
++      let clear = clearCommands.makeBlitCommandEncoder()
++    else { throw MetalSSBError.commandQueue }
++    clear.fill(
++      buffer: phaseSumBuffer,
++      range: 0..<phaseSumBuffer.length,
++      value: 0
++    )
++    clear.fill(
++      buffer: phaseSumSquaredBuffer,
++      range: 0..<phaseSumSquaredBuffer.length,
++      value: 0
++    )
++    clear.endEncoding()
++    if cachedBrightfieldCount > 0 {
++      guard let chiTrigBuffer, let crossTrigBuffer else {
++        throw MetalSSBError.allocation("exact phase-loss tables")
++      }
++      let baseParams = parameters(
++        batch: activeBrightfieldIndices.count,
++        offset: 0,
++        aberrations: aberrations
++      )
++      encodeChiTrig(
++        clearCommands,
++        params: baseParams,
++        output: chiTrigBuffer
++      )
++      encodeCrossTrig(
++        clearCommands,
++        params: baseParams,
++        output: crossTrigBuffer
++      )
++    }
++    try commitAndWait(clearCommands)
++    gpuSeconds += gpuDuration(clearCommands)
++
++    let halfBytes = Self.halfPlane * MemoryLayout<SIMD2<Float>>.stride
++    // Encode every cached BF tile for this objective into one command buffer.
++    // The fused row/column encoders are already ordered within the command
++    // buffer, so a per-cache-chunk commit only adds CPU/GPU synchronization
++    // without changing the exact accumulation order.  Keeping the wait at the
++    // end also leaves the phase sums observable only after every tile has
++    // completed, exactly as in the previous one-command-buffer-per-chunk path.
++    var globalOffset = cachedBrightfieldCount
++    var pipelined = false
++    if let schedule = Self.pipelinedSchedule, cachedBrightfieldCount > 0 {
++      pipelined = try runPipelinedCachedPhaseLoss(
++        aberrations: aberrations,
++        workers: schedule.workers,
++        ring: schedule.ring,
++        gpuSeconds: &gpuSeconds
++      )
++    }
++    if !pipelined {
++      guard let cacheCommands = queue.makeCommandBuffer() else {
++        throw MetalSSBError.commandQueue
++      }
++      globalOffset = 0
++      for (cache, cacheCount) in zip(cacheBuffers, cacheCounts) {
++        // The fused loss path writes one complete 512x512 plane per resident
++        // BF term into the reusable FFT workspace.  That workspace is sized for
++        // `batchCapacity` planes, so keeping this at eight needlessly creates
++        // four times as many command buffers and queue synchronizations for a
++        // full aperture.  Process the largest resident batch that fits while
++        // preserving BF order and the exact float32/complex64 arithmetic.
++        for localOffset in stride(
++          from: 0,
++          to: cacheCount,
++          by: Self.phaseBatchCapacity
++        ) {
++          let batch = min(Self.phaseBatchCapacity, cacheCount - localOffset)
++          let params = parameters(
++            batch: batch,
++            offset: globalOffset + localOffset,
++            aberrations: aberrations
++          )
++          try encodeFusedCachedPhaseLoss(
++            cacheCommands,
++            source: cache,
++            sourceOffset: localOffset * halfBytes,
++            batch: batch,
++            params: params
++          )
++        }
++        globalOffset += cacheCount
++      }
++      try commitAndWait(cacheCommands)
++      gpuSeconds += gpuDuration(cacheCommands)
++    }
++
++    for offset in stride(
++      from: globalOffset,
++      to: activeBrightfieldIndices.count,
++      by: Self.batchCapacity
++    ) {
++      let batch = min(
++        Self.batchCapacity,
++        activeBrightfieldIndices.count - offset
++      )
++      guard let commands = queue.makeCommandBuffer() else { throw MetalSSBError.commandQueue }
++      try encodeBrightfield(Array(activeBrightfieldIndices[offset..<(offset + batch)]), rawBuffer, commands)
++      encodeForwardFFT(commands, batch: batch)
++      let params = parameters(
++        batch: batch,
++        offset: offset,
++        aberrations: aberrations
++      )
++      encodeLossCorrection(
++        commands,
++        source: fftA,
++        sourceOffset: 0,
++        sourceIsHermitianHalf: false,
++        params: params
++      )
++      encodeFFT(
++        commands,
++        input: fftB,
++        temporary: fftA,
++        output: fftB,
++        params: FFTParams(
++          n: UInt32(Self.size),
++          log2n: 9,
++          batch: UInt32(batch),
++          inverse: 1
++        )
++      )
++      encodePhaseMoments(commands, batch: batch)
++      try commitAndWait(commands)
++      gpuSeconds += gpuDuration(commands)
++    }
++
++    let sums = phaseSumBuffer.contents().bindMemory(
++      to: Float.self,
++      capacity: Self.plane
++    )
++    let squared = phaseSumSquaredBuffer.contents().bindMemory(
++      to: Float.self,
++      capacity: Self.plane
++    )
++    let logical = Double(geometry.logicalBrightfieldCount)
++    let pixels = Double(Self.plane)
++    var sumOfSquares = 0.0
++    var squareOfMeans = 0.0
++    for pixel in 0..<Self.plane {
++      sumOfSquares += Double(squared[pixel])
++      let mean = Double(sums[pixel]) / logical
++      squareOfMeans += mean * mean
++    }
++    let loss = sumOfSquares / (logical * pixels) - squareOfMeans / pixels
++    return MetalSSBPhaseVarianceResult(
++      loss: Float(loss),
++      wallSeconds: Date().timeIntervalSince(started),
++      gpuSeconds: gpuSeconds,
++      provenance: currentProvenance()
++    )
++  }
++
++  /// Run the native deterministic 200-trial search and Nelder-Mead refinement.
++  public func optimize(
++    start: MetalSSBAberrations,
++    rotationDegrees: Float? = nil,
++    globalTrials: Int = 200,
++    seed: UInt64 = 42,
++    progress: (SSBOptimizationProgress) -> Void = { _ in },
++    isCancelled: () -> Bool = { false }
++  ) throws -> SSBOptimizationResult {
++    let rotation = rotationDegrees ?? geometry.referenceRotationDegrees
++    return try SSBOptimizer(globalTrials: globalTrials, seed: seed).run(
++      start: SSBOptimizationPoint(
++        c10Nanometers: Double(start.c10Nanometers),
++        c12Nanometers: Double(start.c12Nanometers),
++        phi12Radians: Double(start.phi12Radians)
++      ),
++      evaluate: { point in
++        Double(
++          try self.phaseVariance(
++            aberrations: MetalSSBAberrations(
++              c10Nanometers: Float(point.c10Nanometers),
++              c12Nanometers: Float(point.c12Nanometers),
++              phi12Radians: Float(point.phi12Radians)
++            ),
++            rotationDegrees: rotation
++          ).loss)
++      },
++      progress: progress,
++      isCancelled: isCancelled
++    )
++  }
++
++  private func configureHigherOrder(_ aberrations: MetalSSBAberrations) throws {
++    let terms = aberrations.higherOrder ?? []
++    guard Set(terms.map(\.name)).count == terms.count,
++      terms.allSatisfy({ term in
++        MetalSSBHigherOrder.supported.contains { $0.order == term.order && $0.symmetry == term.symmetry }
++          && term.magnitudeNanometers.isFinite && term.angleRadians.isFinite
++      }) else { throw MetalSSBError.invalidGeometry("Use distinct finite polar aberrations from orders 2 through 5.") }
++    guard terms.contains(where: { $0.magnitudeNanometers != 0 }) else {
++      liveHigherOrder = []; return
++    }
++    liveHigherOrder = MetalSSBHigherOrder.supported.map { expected in
++      let term = terms.first { $0.name == expected.name } ?? expected
++      return SIMD4(term.magnitudeNanometers, Float(term.order), Float(term.symmetry), term.angleRadians)
++    }
++    if higherOrderHalfPipeline == nil {
++      let library = try Self.makeLibrary(device: device)
++      higherOrderHalfPipeline = try Self.makePipeline(device: device, library: library,
++        name: "ssb_gamma_accumulate_half_aberrations")
++      higherOrderFullPipeline = try Self.makePipeline(device: device, library: library,
++        name: "ssb_gamma_accumulate_full_aberrations")
++    }
++  }
++
++  private func parameters(
++    batch: Int,
++    offset: Int,
++    aberrations: MetalSSBAberrations
++  ) -> SSBParams {
++    let isotropicEdge = 0.5 * geometry.angularSamplingXRadians
++    let innerK =
++      max(0, geometry.semiangleRadians - isotropicEdge)
++      / geometry.wavelengthAngstroms
++    let outerK =
++      (geometry.semiangleRadians + isotropicEdge)
++      / geometry.wavelengthAngstroms
++    return SSBParams(
++      n: UInt32(Self.size),
++      batch: UInt32(batch),
++      logicalBF: UInt32(geometry.logicalBrightfieldCount),
++      bfOffset: UInt32(offset),
++      wavelength: geometry.wavelengthAngstroms,
++      semiangle: geometry.semiangleRadians,
++      angularY: geometry.angularSamplingYRadians,
++      angularX: geometry.angularSamplingXRadians,
++      c10: aberrations.c10Nanometers,
++      c12: aberrations.c12Nanometers,
++      cos2Phi12: cos(2 * aberrations.phi12Radians),
++      sin2Phi12: sin(2 * aberrations.phi12Radians),
++      factor: Float.pi / geometry.wavelengthAngstroms,
++      dcReal: geometry.dcValue.x,
++      dcImaginary: geometry.dcValue.y,
++      apertureInnerK2: innerK * innerK,
++      apertureOuterK2: outerK * outerK,
++      cacheChunkShift: cacheChunkShift
++    )
++  }
++
++  private func currentProvenance() -> MetalSSBProvenance {
++    MetalSSBProvenance(
++      scanRows: Self.size,
++      scanColumns: Self.size,
++      sourceDType: String(describing: sourceCountType),
++      computeDType: "float32/complex64",
++      logicalBrightfieldCount: geometry.logicalBrightfieldCount,
++      executedBrightfieldCount: activeBrightfieldIndices.count,
++      zeroApertureBrightfieldCount:
++        geometry.logicalBrightfieldCount - activeBrightfieldIndices.count,
++      cachedBrightfieldCount: cachedBrightfieldCount,
++      streamedBrightfieldCount:
++        activeBrightfieldIndices.count - cachedBrightfieldCount,
++      cacheBytes: cacheBuffers.reduce(0) { $0 + $1.length },
++      scanBin: 1,
++      scanCrop: "none",
++      brightfieldSelection: "exact-zero-aperture-pruning"
++    )
++  }
++
++  private func setCacheColumnMajor(_ columnMajor: Bool) throws {
++    guard !cacheBuffers.isEmpty, cacheIsColumnMajor != columnMajor else {
++      return
++    }
++    let pipeline =
++      columnMajor
++      ? halfToColumnMajorPipeline : halfToRowMajorPipeline
++    let halfBytes = Self.halfPlane * MemoryLayout<SIMD2<Float>>.stride
++    for (cache, cacheCount) in zip(cacheBuffers, cacheCounts) {
++      guard let commands = queue.makeCommandBuffer() else {
++        throw MetalSSBError.commandQueue
++      }
++      for offset in stride(
++        from: 0,
++        to: cacheCount,
++        by: Self.batchCapacity
++      ) {
++        let batch = min(Self.batchCapacity, cacheCount - offset)
++        var mutableBatch = UInt32(batch)
++        guard let encoder = commands.makeComputeCommandEncoder() else {
++          throw MetalSSBError.commandQueue
++        }
++        encoder.setComputePipelineState(pipeline)
++        encoder.setBuffer(
++          cache,
++          offset: offset * halfBytes,
++          index: 0
++        )
++        encoder.setBuffer(fftA, offset: 0, index: 1)
++        encoder.setBytes(
++          &mutableBatch,
++          length: MemoryLayout<UInt32>.stride,
++          index: 2
++        )
++        encoder.dispatchThreads(
++          MTLSize(width: batch * Self.halfPlane, height: 1, depth: 1),
++          threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
++        )
++        encoder.endEncoding()
++        guard let blit = commands.makeBlitCommandEncoder() else {
++          throw MetalSSBError.commandQueue
++        }
++        blit.copy(
++          from: fftA,
++          sourceOffset: 0,
++          to: cache,
++          destinationOffset: offset * halfBytes,
++          size: batch * halfBytes
++        )
++        blit.endEncoding()
++      }
++      try commitAndWait(commands)
++    }
++    cacheIsColumnMajor = columnMajor
++  }
++
++  private func rebuildGeometry(rotationDegrees: Float) throws {
++    if activeGeometryRotation?.bitPattern == rotationDegrees.bitPattern {
++      return
++    }
++    var geometryValues: [SIMD4<Float>] = []
++    var trigValues: [SIMD2<Float>] = []
++    geometryValues.reserveCapacity(activeBrightfieldIndices.count)
++    trigValues.reserveCapacity(activeBrightfieldIndices.count)
++    let delta =
++      (rotationDegrees - geometry.referenceRotationDegrees)
++      * Float.pi / 180
++    let cosine = cos(-delta)
++    let sine = sin(-delta)
++    for logical in activeBrightfieldIndices {
++      if abs(delta) < 1e-7 {
++        geometryValues.append(
++          SIMD4<Float>(
++            geometry.brightfieldKX[logical],
++            geometry.brightfieldKY[logical],
++            geometry.brightfieldAlphaSquared[logical],
++            geometry.brightfieldAperture[logical]
++          ))
++        trigValues.append(
++          SIMD2<Float>(
++            geometry.brightfieldCos2Phi[logical],
++            geometry.brightfieldSin2Phi[logical]
++          ))
++        continue
++      }
++      let baseX = geometry.brightfieldKX[logical]
++      let baseY = geometry.brightfieldKY[logical]
++      let x = baseX * cosine + baseY * sine
++      let y = -baseX * sine + baseY * cosine
++      let x2 = x * x
++      let y2 = y * y
++      let radiusSquared = x2 + y2
++      let radius = sqrt(radiusSquared)
++      let alpha = radius * geometry.wavelengthAngstroms
++      let alphaSquared = alpha * alpha
++      let inverseRadiusSquared: Float =
++        radiusSquared > 1e-30
++        ? 1 / radiusSquared : 0
++      let cos2 = (x2 - y2) * inverseRadiusSquared
++      let sin2 = 2 * x * y * inverseRadiusSquared
++      let denominatorNumerator =
++        pow(x * geometry.angularSamplingYRadians, 2)
++        + pow(y * geometry.angularSamplingXRadians, 2)
++      let denominator: Float =
++        radius > 1e-15
++        ? sqrt(denominatorNumerator) / radius : 0
++      let edge: Float =
++        denominator > 1e-15
++        ? (geometry.semiangleRadians - alpha) / denominator + 0.5
++        : 1
++      geometryValues.append(
++        SIMD4<Float>(
++          x,
++          y,
++          alphaSquared,
++          min(max(edge, 0), 1)
++        ))
++      trigValues.append(SIMD2<Float>(cos2, sin2))
++    }
++    activeGeometryBuffer = try Self.makeBuffer(
++      device: device,
++      values: geometryValues,
++      purpose: "active BF geometry"
++    )
++    activeTrigBuffer = try Self.makeBuffer(
++      device: device,
++      values: trigValues,
++      purpose: "active BF angle table"
++    )
++    activeGeometryRotation = rotationDegrees
++  }
++
++  private func encodeForwardFFT(
++    _ commands: MTLCommandBuffer,
++    batch: Int
++  ) {
++    var count = UInt32(batch * Self.plane)
++    let convert = commands.makeComputeCommandEncoder()!
++    convert.setComputePipelineState(convertPipeline)
++    convert.setBuffer(rawBuffer, offset: 0, index: 0)
++    convert.setBuffer(fftA, offset: 0, index: 1)
++    convert.setBytes(&count, length: MemoryLayout<UInt32>.stride, index: 2)
++    var byteWidth = UInt32(sourceCountType.byteWidth)
++    convert.setBytes(&byteWidth, length: MemoryLayout<UInt32>.stride, index: 3)
++    convert.dispatchThreads(
++      MTLSize(width: Int(count), height: 1, depth: 1),
++      threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
++    )
++    convert.endEncoding()
++    encodeFFT(
++      commands,
++      input: fftA,
++      temporary: fftB,
++      output: fftA,
++      params: FFTParams(
++        n: UInt32(Self.size),
++        log2n: 9,
++        batch: UInt32(batch),
++        inverse: 0
++      )
++    )
++  }
++
++  private func encodeFFT(
++    _ commands: MTLCommandBuffer,
++    input: MTLBuffer,
++    temporary: MTLBuffer,
++    output: MTLBuffer,
++    params: FFTParams
++  ) {
++    let n = Int(params.n)
++    let batch = Int(params.batch)
++    let rowGroups = MTLSize(width: n * batch, height: 1, depth: 1)
++    let rowThreads = MTLSize(width: Self.fftThreads, height: 1, depth: 1)
++    let transposeCount = (n + 31) / 32
++    let transposeGroups = MTLSize(
++      width: transposeCount,
++      height: transposeCount,
++      depth: batch
++    )
++    let transposeThreads = MTLSize(width: 32, height: 8, depth: 1)
++    var mutable = params
++
++    let firstRows = commands.makeComputeCommandEncoder()!
++    firstRows.setComputePipelineState(fftPipeline)
++    firstRows.setBuffer(input, offset: 0, index: 0)
++    firstRows.setBuffer(temporary, offset: 0, index: 1)
++    firstRows.setBuffer(twiddleBuffer, offset: 0, index: 2)
++    firstRows.setBytes(
++      &mutable,
++      length: MemoryLayout<FFTParams>.stride,
++      index: 3
++    )
++    firstRows.setThreadgroupMemoryLength(
++      n * MemoryLayout<SIMD2<Float>>.stride,
++      index: 0
++    )
++    firstRows.dispatchThreadgroups(
++      rowGroups,
++      threadsPerThreadgroup: rowThreads
++    )
++    firstRows.endEncoding()
++
++    let firstTranspose = commands.makeComputeCommandEncoder()!
++    firstTranspose.setComputePipelineState(transposePipeline)
++    firstTranspose.setBuffer(temporary, offset: 0, index: 0)
++    firstTranspose.setBuffer(output, offset: 0, index: 1)
++    firstTranspose.setBytes(
++      &mutable,
++      length: MemoryLayout<FFTParams>.stride,
++      index: 2
++    )
++    firstTranspose.dispatchThreadgroups(
++      transposeGroups,
++      threadsPerThreadgroup: transposeThreads
++    )
++    firstTranspose.endEncoding()
++
++    let secondRows = commands.makeComputeCommandEncoder()!
++    secondRows.setComputePipelineState(fftPipeline)
++    secondRows.setBuffer(output, offset: 0, index: 0)
++    secondRows.setBuffer(temporary, offset: 0, index: 1)
++    secondRows.setBuffer(twiddleBuffer, offset: 0, index: 2)
++    secondRows.setBytes(
++      &mutable,
++      length: MemoryLayout<FFTParams>.stride,
++      index: 3
++    )
++    secondRows.setThreadgroupMemoryLength(
++      n * MemoryLayout<SIMD2<Float>>.stride,
++      index: 0
++    )
++    secondRows.dispatchThreadgroups(
++      rowGroups,
++      threadsPerThreadgroup: rowThreads
++    )
++    secondRows.endEncoding()
++
++    let secondTranspose = commands.makeComputeCommandEncoder()!
++    secondTranspose.setComputePipelineState(transposePipeline)
++    secondTranspose.setBuffer(temporary, offset: 0, index: 0)
++    secondTranspose.setBuffer(output, offset: 0, index: 1)
++    secondTranspose.setBytes(
++      &mutable,
++      length: MemoryLayout<FFTParams>.stride,
++      index: 2
++    )
++    secondTranspose.dispatchThreadgroups(
++      transposeGroups,
++      threadsPerThreadgroup: transposeThreads
++    )
++    secondTranspose.endEncoding()
++  }
++
++  private func encodeFullAccumulator(
++    _ commands: MTLCommandBuffer,
++    source: MTLBuffer,
++    params: SSBParams
++  ) {
++    var mutable = params
++    let encoder = commands.makeComputeCommandEncoder()!
++    encoder.setComputePipelineState(liveHigherOrder.isEmpty ? fullAccumulatePipeline : higherOrderFullPipeline!)
++    if !liveHigherOrder.isEmpty {
++      encoder.setBytes(liveHigherOrder, length: liveHigherOrder.count * 16, index: 7)
++    }
++    encoder.setBuffer(source, offset: 0, index: 0)
++    encoder.setBuffer(activeGeometryBuffer, offset: 0, index: 1)
++    encoder.setBuffer(activeTrigBuffer, offset: 0, index: 2)
++    encoder.setBuffer(qxBuffer, offset: 0, index: 3)
++    encoder.setBuffer(qyBuffer, offset: 0, index: 4)
++    encoder.setBuffer(accumulator, offset: 0, index: 5)
++    encoder.setBytes(
++      &mutable,
++      length: MemoryLayout<SSBParams>.stride,
++      index: 6
++    )
++    encoder.dispatchThreads(
++      MTLSize(width: Self.plane, height: 1, depth: 1),
++      threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
++    )
++    encoder.endEncoding()
++  }
++
++  private func encodeCachedAccumulator(
++    _ commands: MTLCommandBuffer,
++    sources: [MTLBuffer],
++    params: SSBParams
++  ) throws {
++    guard let fallback = sources.first else { return }
++    guard sources.count <= Self.maximumCacheChunks else {
++      throw MetalSSBError.tooManyCacheChunks(
++        required: sources.count,
++        supported: Self.maximumCacheChunks
++      )
++    }
++    var mutable = params
++    let encoder = commands.makeComputeCommandEncoder()!
++    encoder.setComputePipelineState(liveHigherOrder.isEmpty ? halfAccumulatePipeline : higherOrderHalfPipeline!)
++    if liveHigherOrder.isEmpty {
++      encoder.setBuffer(crossTrigBuffer, offset: 0, index: 17)
++    }
++    if !liveHigherOrder.isEmpty {
++      encoder.setBytes(liveHigherOrder, length: liveHigherOrder.count * 16, index: 17)
++    }
++    for index in 0..<Self.maximumCacheChunks {
++      encoder.setBuffer(
++        index < sources.count ? sources[index] : fallback,
++        offset: 0,
++        index: index
++      )
++    }
++    encoder.setBuffer(activeGeometryBuffer, offset: 0, index: 12)
++    encoder.setBuffer(qxBuffer, offset: 0, index: 13)
++    encoder.setBuffer(qyBuffer, offset: 0, index: 14)
++    encoder.setBuffer(accumulator, offset: 0, index: 15)
++    encoder.setBytes(
++      &mutable,
++      length: MemoryLayout<SSBParams>.stride,
++      index: 16
++    )
++    encoder.dispatchThreads(
++      MTLSize(width: liveHigherOrder.isEmpty ? Self.halfPlane : Self.plane, height: 1, depth: 1),
++      threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
++    )
++    encoder.endEncoding()
++  }
++
++  private func encodeFinalize(
++    _ commands: MTLCommandBuffer,
++    params: SSBParams
++  ) {
++    var mutable = params
++    let encoder = commands.makeComputeCommandEncoder()!
++    encoder.setComputePipelineState(finalizePipeline)
++    encoder.setBuffer(accumulator, offset: 0, index: 0)
++    encoder.setBytes(
++      &mutable,
++      length: MemoryLayout<SSBParams>.stride,
++      index: 1
++    )
++    encoder.dispatchThreads(
++      MTLSize(width: Self.plane, height: 1, depth: 1),
++      threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
++    )
++    encoder.endEncoding()
++  }
++
++  private func encodeChiTrig(
++    _ commands: MTLCommandBuffer,
++    params: SSBParams,
++    output: MTLBuffer
++  ) {
++    var mutable = params
++    let encoder = commands.makeComputeCommandEncoder()!
++    encoder.setComputePipelineState(chiTrigPipeline)
++    encoder.setBuffer(qxBuffer, offset: 0, index: 0)
++    encoder.setBuffer(qyBuffer, offset: 0, index: 1)
++    encoder.setBuffer(output, offset: 0, index: 2)
++    encoder.setBytes(
++      &mutable,
++      length: MemoryLayout<SSBParams>.stride,
++      index: 3
++    )
++    encoder.dispatchThreads(
++      MTLSize(width: Self.plane, height: 1, depth: 1),
++      threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
++    )
++    encoder.endEncoding()
++  }
++
++  private func encodeCrossTrig(
++    _ commands: MTLCommandBuffer,
++    params: SSBParams,
++    output: MTLBuffer
++  ) {
++    var mutable = params
++    let encoder = commands.makeComputeCommandEncoder()!
++    encoder.setComputePipelineState(crossTrigPipeline)
++    encoder.setBuffer(activeGeometryBuffer, offset: 0, index: 0)
++    encoder.setBuffer(qxBuffer, offset: 0, index: 1)
++    encoder.setBuffer(qyBuffer, offset: 0, index: 2)
++    encoder.setBuffer(output, offset: 0, index: 3)
++    encoder.setBytes(
++      &mutable,
++      length: MemoryLayout<SSBParams>.stride,
++      index: 4
++    )
++    encoder.dispatchThreads(
++      MTLSize(
++        width: activeBrightfieldIndices.count * 2 * Self.size,
++        height: 1,
++        depth: 1
++      ),
++      threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
++    )
++    encoder.endEncoding()
++  }
++
++  /// Persistent pipelined schedule over every cache chunk. Returns false if
++  /// any dispatch reported a bounded-spin timeout; the caller then clears the
++  /// moments and repeats the objective on the two-pass schedule.
++  private func runPipelinedCachedPhaseLoss(
++    aberrations: MetalSSBAberrations,
++    workers: Int,
++    ring: Int,
++    gpuSeconds: inout Double
++  ) throws -> Bool {
++    guard let chiTrigBuffer, let crossTrigBuffer, let pipelineSyncBuffer else {
++      throw MetalSSBError.allocation("exact phase-loss tables")
++    }
++    guard let commands = queue.makeCommandBuffer() else {
++      throw MetalSSBError.commandQueue
++    }
++    var globalOffset = 0
++    for (cache, cacheCount) in zip(cacheBuffers, cacheCounts) {
++      let clear = commands.makeBlitCommandEncoder()!
++      clear.fill(buffer: pipelineSyncBuffer, range: 0..<pipelineSyncBuffer.length, value: 0)
++      clear.endEncoding()
++      var params = parameters(batch: cacheCount, offset: globalOffset, aberrations: aberrations)
++      let fullBatches = cacheCount / Self.phaseBatchCapacity
++      let partial = cacheCount - fullBatches * Self.phaseBatchCapacity
++      let items = fullBatches * (65 * Self.phaseBatchCapacity + 64)
++        + (partial > 0 ? 65 * partial + 64 : 0)
++      var pipeline = SSBPipelineParams(
++        chunkCount: UInt32(cacheCount),
++        ring: UInt32(ring),
++        items: UInt32(items),
++        spinLimit: 1 << 20,
++        workers: UInt32(workers)
++      )
++      let encoder = commands.makeComputeCommandEncoder()!
++      encoder.setComputePipelineState(pipelinedLossPipeline)
++      encoder.setBuffer(cache, offset: 0, index: 0)
++      encoder.setBuffer(activeGeometryBuffer, offset: 0, index: 1)
++      encoder.setBuffer(qxBuffer, offset: 0, index: 2)
++      encoder.setBuffer(qyBuffer, offset: 0, index: 3)
++      encoder.setBuffer(twiddleBuffer, offset: 0, index: 4)
++      encoder.setBuffer(fftA, offset: 0, index: 5)
++      encoder.setBytes(&params, length: MemoryLayout<SSBParams>.stride, index: 6)
++      encoder.setBuffer(chiTrigBuffer, offset: 0, index: 7)
++      encoder.setBuffer(crossTrigBuffer, offset: 0, index: 8)
++      encoder.setBuffer(phaseSumBuffer, offset: 0, index: 9)
++      encoder.setBuffer(phaseSumSquaredBuffer, offset: 0, index: 10)
++      encoder.setBuffer(pipelineSyncBuffer, offset: 0, index: 11)
++      encoder.setBytes(&pipeline, length: MemoryLayout<SSBPipelineParams>.stride, index: 12)
++      encoder.dispatchThreadgroups(
++        MTLSize(width: workers, height: 1, depth: 1),
++        threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
++      )
++      encoder.endEncoding()
++      globalOffset += cacheCount
++    }
++    try commitAndWait(commands)
++    gpuSeconds += gpuDuration(commands)
++    let flags = pipelineSyncBuffer.contents().bindMemory(to: UInt32.self, capacity: 128)
++    if flags[64] != 0 {
++      FileHandle.standardError.write(Data("MetalSSBEngine: pipelined timeout kind=\(flags[65]) seen=\(flags[66]) target=\(flags[67]) item=\(flags[68]) timeouts=\(flags[64]) colStart=\(flags[72]) colEnd=\(flags[73]) perBF=\(flags[74]),\(flags[75]),\(flags[76]),\(flags[77]) claims=\(flags[0]) colDone0=\(flags[128])\n".utf8))
++      // Timed out: discard partial moments and let the caller rerun the
++      // retained schedule from cleared sums.
++      guard let reset = queue.makeCommandBuffer(), let blit = reset.makeBlitCommandEncoder() else {
++        throw MetalSSBError.commandQueue
++      }
++      blit.fill(buffer: phaseSumBuffer, range: 0..<phaseSumBuffer.length, value: 0)
++      blit.fill(buffer: phaseSumSquaredBuffer, range: 0..<phaseSumSquaredBuffer.length, value: 0)
++      blit.endEncoding()
++      try commitAndWait(reset)
++      FileHandle.standardError.write(Data("MetalSSBEngine: pipelined phase/loss timed out; repeating on the two-pass schedule\n".utf8))
++      return false
++    }
++    return true
++  }
++
++  private func encodeFusedCachedPhaseLoss(
+diff --git a/src/quantem/gpu/swift/Sources/MetalSSBKernels/Resources/ssb.metal b/src/quantem/gpu/swift/Sources/MetalSSBKernels/Resources/ssb.metal
+--- a/src/quantem/gpu/swift/Sources/MetalSSBKernels/Resources/ssb.metal
++++ b/src/quantem/gpu/swift/Sources/MetalSSBKernels/Resources/ssb.metal
+@@ -1211,3 +1211,322 @@
+-        phase_sumsq[pixel] += sumsq[lane];
+-    }
+-}
++        phase_sumsq[pixel] += sumsq[lane];
++    }
++}
++
++// Persistent pipelined phase/loss: the column pass for BF b and the row pass
++// for earlier BFs run inside one dispatch, so the blocked intermediate lives
++// in a small ring of `ring` planes that stays in the GPU cache instead of
++// making a device memory round trip per BF. Worker threadgroups claim items from one
++// counter in a fixed order per batch of up to eight BFs:
++//   [COL(bf0) x 65][COL(bf1) x 65][ROW x 64][COL(bf2) x 65] ... [COL(bf7) x 65]
++// A COL item transforms four half-plane columns of one BF with the exact
++// pass-1 code and writes ring slot bf % ring; a ROW item owns two four-row
++// blocks for every BF of the batch with the exact pass-2 code, keeps the
++// eight-BF register sums, and adds them to phase_sum in batch order. Every
++// value therefore sees the same arithmetic in the same order as the two-pass
++// schedule; only which threadgroup performs it differs.
++//
++// Dependencies use relaxed device atomics plus device-scope fences:
++//   col_done[bf]  >= 65   before any ROW item reads bf
++//   row_done[bf]  >= 64   before a COL item overwrites slot bf % ring
++//   flush_done[pair] >= k before batch k adds its sums for that row pair
++// Only one batch's 64 ROW items can wait on COL items claimed after them, so
++// any dispatch of at least 65 resident workers cannot deadlock. Every spin is
++// bounded; on timeout the group raises the error flag and the host repeats the
++// objective on the two-pass schedule.
++struct SSBPipelineParams {
++    uint chunk_count;
++    uint ring;
++    uint items;
++    uint spin_limit;
++    uint workers;
++};
++
++constant constexpr uint ssb_pipeline_col_items = 65u;
++constant constexpr uint ssb_pipeline_row_items = 64u;
++constant constexpr uint ssb_pipeline_batch = 8u;
++constant constexpr uint ssb_pipeline_row_after = 2u;
++constant constexpr uint ssb_pipeline_full_items =
++    ssb_pipeline_col_items * ssb_pipeline_batch + ssb_pipeline_row_items;
++
++inline bool ssb_pipeline_wait(
++    device atomic_uint *counter, uint target, device atomic_uint *error_flag,
++    uint spin_limit, uint kind, uint item) {
++    uint seen = 0u;
++    uint noise = 0x9e3779b9u ^ item;
++    for (uint i = 0u; i < spin_limit; ++i) {
++        // Poll with a read-modify-write so the value comes from the coherence
++        // point; a relaxed load may be served from a stale per-core line.
++        seen = atomic_fetch_or_explicit(counter, 0u, memory_order_relaxed);
++        if (seen >= target) return true;
++        if ((i & 63u) == 63u &&
++            atomic_fetch_or_explicit(error_flag, 0u, memory_order_relaxed) != 0u) {
++            return false;
++        }
++        // Back off between polls so dozens of waiting groups do not saturate
++        // the atomic unit and starve the producers' ordinary memory traffic.
++        const uint delay = min(i + 1u, 64u) * 32u;
++        for (uint d = 0u; d < delay; ++d) {
++            noise ^= noise << 13u; noise ^= noise >> 17u; noise ^= noise << 5u;
++        }
++        if (noise == 0u) return false;  // unreachable; keeps the delay loop live
++    }
++    // Prototype diagnostic: first timeout records its wait kind, observed
++    // value, target and item in error_flag[1..4].
++    if (atomic_fetch_add_explicit(error_flag, 1u, memory_order_relaxed) == 0u) {
++        atomic_store_explicit(error_flag + 1u, kind, memory_order_relaxed);
++        atomic_store_explicit(error_flag + 2u, seen, memory_order_relaxed);
++        atomic_store_explicit(error_flag + 3u, target, memory_order_relaxed);
++        atomic_store_explicit(error_flag + 4u, item, memory_order_relaxed);
++    }
++    return false;
++}
++
++[[max_total_threads_per_threadgroup(256)]]
++kernel void ssb_pipelined_phase_moments(
++    device const float2 *half_g [[buffer(0)]],
++    device const float4 *bf_geometry [[buffer(1)]],
++    device const float *q_row [[buffer(2)]],
++    device const float *q_col [[buffer(3)]],
++    device const float2 *twiddle [[buffer(4)]],
++    device float2 *ring_planes [[buffer(5)]],
++    constant SSBParams &params [[buffer(6)]],
++    device const float2 *chi_trig [[buffer(7)]],
++    device const float2 *cross_trig [[buffer(8)]],
++    device float *phase_sum [[buffer(9)]],
++    device float *phase_sumsq [[buffer(10)]],
++    device atomic_uint *sync [[buffer(11)]],
++    constant SSBPipelineParams &pipeline [[buffer(12)]],
++    uint thread_index [[thread_index_in_threadgroup]],
++    uint threads_per_group [[threads_per_threadgroup]]) {
++    constexpr uint n = 512u;
++    constexpr uint half_cols = 257u;
++    constexpr uint block_rows = ssb_intermediate_block_rows;
++    constexpr uint block_float2 = half_cols * block_rows;
++    constexpr uint plane = n * half_cols;
++    constexpr float scale = 1.0f / 512.0f;
++    if (threads_per_group != 256u) return;
++
++    threadgroup float2 pool[4u * 512u + block_rows * ssb_row_tile_pitch];
++    threadgroup uint control[2];
++    threadgroup float2 *scratch = pool;
++    threadgroup float2 *tile = pool + 4u * 512u;
++
++    // Each counter class starts on its own 256-byte line.
++    device atomic_uint *claim = sync;
++    device atomic_uint *error_flag = sync + 64u;
++    device atomic_uint *col_done = sync + 128u;
++    device atomic_uint *row_done = col_done + pipeline.chunk_count;
++    device atomic_uint *flush_done = row_done + pipeline.chunk_count;
++
++    const uint g = thread_index >> 6u;
++    const uint tid = thread_index & 63u;
++    const uint src[8] = {
++        octal_reverse_512(tid * 8u + 0u), octal_reverse_512(tid * 8u + 1u),
++        octal_reverse_512(tid * 8u + 2u), octal_reverse_512(tid * 8u + 3u),
++        octal_reverse_512(tid * 8u + 4u), octal_reverse_512(tid * 8u + 5u),
++        octal_reverse_512(tid * 8u + 6u), octal_reverse_512(tid * 8u + 7u)
++    };
++    const float2 dc = float2(params.dc_r, params.dc_i);
++    const float2 dc_spatial = dc * (scale * scale);
++    const bool positive_dc = dc_spatial.x > 0.0f;
++    const float inverse_dc_real = positive_dc
++        ? 1.0f / dc_spatial.x : 0.0f;
++    const uint full_batches = pipeline.chunk_count / ssb_pipeline_batch;
++
++    if (pipeline.items == 0u) {
++        // Residency probe: every worker must observe all `workers` arrivals,
++        // which is only possible when the whole dispatch is resident at once.
++        if (thread_index == 0u) {
++            atomic_fetch_add_explicit(claim, 1u, memory_order_relaxed);
++            ssb_pipeline_wait(claim, pipeline.workers, error_flag, pipeline.spin_limit, 0u, 0u);
++        }
++        threadgroup_barrier(mem_flags::mem_device);
++        return;
++    }
++
++    while (true) {
++        if (thread_index == 0u) {
++            control[0] = atomic_fetch_add_explicit(claim, 1u, memory_order_relaxed);
++        }
++        threadgroup_barrier(mem_flags::mem_threadgroup);
++        const uint item = control[0];
++        if (item >= pipeline.items) return;
++
++        // Decode the item. Full batches have a fixed stride; the final partial
++        // batch (fewer than eight BFs) follows the same order with its own size.
++        uint k = item / ssb_pipeline_full_items;
++        uint r = item - k * ssb_pipeline_full_items;
++        if (k > full_batches) { k = full_batches; r = item - full_batches * ssb_pipeline_full_items; }
++        const uint batch_size = min(ssb_pipeline_batch, pipeline.chunk_count - k * ssb_pipeline_batch);
++        const uint row_at = ssb_pipeline_col_items * min(batch_size, ssb_pipeline_row_after);
++        bool is_row = false;
++        uint j = 0u, cg = 0u, pair = 0u;
++        if (r < row_at) {
++            j = r / ssb_pipeline_col_items; cg = r - j * ssb_pipeline_col_items;
++        } else if (r < row_at + ssb_pipeline_row_items) {
++            is_row = true; pair = r - row_at;
++        } else {
++            const uint r2 = r - row_at - ssb_pipeline_row_items;
++            j = ssb_pipeline_row_after + r2 / ssb_pipeline_col_items;
++            cg = r2 - (j - ssb_pipeline_row_after) * ssb_pipeline_col_items;
++        }
++
++        if (!is_row) {
++            // ---- Column pass for local BF b, columns 4*cg .. 4*cg+3 ----
++            const uint local_bf = k * ssb_pipeline_batch + j;
++            if (thread_index == 0u) {
++                atomic_fetch_add_explicit(error_flag + 8u, 1u, memory_order_relaxed);
++                bool ok = true;
++                if (local_bf >= pipeline.ring) {
++                    ok = ssb_pipeline_wait(row_done + (local_bf - pipeline.ring),
++                        ssb_pipeline_row_items, error_flag, pipeline.spin_limit, 1u, item);
++                }
++                // One device-scope fence per group; the mem_device barrier
++                // orders the other threads' accesses after it.
++                atomic_thread_fence(mem_flags::mem_device, memory_order_seq_cst, thread_scope_device);
++                control[1] = ok ? 1u : 0u;
++            }
++            threadgroup_barrier(mem_flags::mem_device);
++            if (control[1] == 0u) return;
++
++            const uint col_requested = cg * 4u + g;
++            const bool store = col_requested < half_cols;
++            const uint col = min(col_requested, half_cols - 1u);
++            const size_t half_base = (size_t)local_bf * plane;
++            const uint bf = params.bf_offset + local_bf;
++            threadgroup float2 *fft_scratch = scratch + g * 512u;
++            float2 r0, r1, r2, r3, r4, r5, r6, r7;
++#define LOAD_HERMITIAN_P(slot) \
++            if (src[slot] == 0u && col == 0u) { \
++                r##slot = float2(0.0f); \
++            } else { \
++                const float2 corrected = ssb_corrected_value_precomputed_chi( \
++                    half_g[half_base + (size_t)col * n + src[slot]], \
++                    src[slot], col, bf, bf_geometry, q_row, q_col, \
++                    chi_trig, cross_trig, params); \
++                r##slot = float2(corrected.y, -corrected.x); \
++            }
++            LOAD_HERMITIAN_P(0); LOAD_HERMITIAN_P(1);
++            LOAD_HERMITIAN_P(2); LOAD_HERMITIAN_P(3);
++            LOAD_HERMITIAN_P(4); LOAD_HERMITIAN_P(5);
++            LOAD_HERMITIAN_P(6); LOAD_HERMITIAN_P(7);
++#undef LOAD_HERMITIAN_P
++            ifft512_radix8_registers(
++                r0, r1, r2, r3, r4, r5, r6, r7, tid, twiddle, fft_scratch
++            );
++            if (store) {
++                const size_t slot_base = (size_t)(local_bf % pipeline.ring) * plane;
++                const size_t store_base = slot_base + (size_t)col * block_rows +
++                    (tid % block_rows);
++                constexpr size_t block_stride = (size_t)half_cols * block_rows;
++#define STORE_BLOCKED_P(slot) \
++                ring_planes[store_base + \
++                    (size_t)((tid + 64u * slot##u) / block_rows) * block_stride] = \
++                    r##slot * scale
++                STORE_BLOCKED_P(0); STORE_BLOCKED_P(1);
++                STORE_BLOCKED_P(2); STORE_BLOCKED_P(3);
++                STORE_BLOCKED_P(4); STORE_BLOCKED_P(5);
++                STORE_BLOCKED_P(6); STORE_BLOCKED_P(7);
++#undef STORE_BLOCKED_P
++            }
++            threadgroup_barrier(mem_flags::mem_device);
++            if (thread_index == 0u) {
++                atomic_thread_fence(mem_flags::mem_device, memory_order_seq_cst, thread_scope_device);
++                atomic_fetch_add_explicit(col_done + local_bf, 1u, memory_order_relaxed);
++                atomic_fetch_add_explicit(error_flag + 9u, 1u, memory_order_relaxed);
++                atomic_fetch_add_explicit(error_flag + 10u + local_bf % 4u, 1u, memory_order_relaxed);
++            }
++            continue;
++        }
++
++        // ---- Row pass: row blocks 2*pair and 2*pair+1 for every BF of batch k ----
++        float sum[2][8];
++        float sumsq[2][8];
++        for (uint h = 0u; h < 2u; ++h) {
++            for (uint lane = 0u; lane < 8u; ++lane) { sum[h][lane] = 0.0f; sumsq[h][lane] = 0.0f; }
++        }
++        threadgroup float2 *fft_scratch = scratch + g * 512u;
++        const threadgroup float2 *tile_row = tile + g * ssb_row_tile_pitch;
++        bool ok = true;
++        for (uint jj = 0u; jj < batch_size && ok; ++jj) {
++            const uint local_bf = k * ssb_pipeline_batch + jj;
++            if (thread_index == 0u) {
++                control[1] = ssb_pipeline_wait(col_done + local_bf,
++                    ssb_pipeline_col_items, error_flag, pipeline.spin_limit, 2u, item) ? 1u : 0u;
++                atomic_thread_fence(mem_flags::mem_device, memory_order_seq_cst, thread_scope_device);
++            }
++            threadgroup_barrier(mem_flags::mem_device);
++            if (control[1] == 0u) { ok = false; break; }
++
++            device const float2 *slot_plane =
++                ring_planes + (size_t)(local_bf % pipeline.ring) * plane;
++            float2 staged[2][ssb_row_block_loads];
++            ssb_fetch_row_block(slot_plane + (size_t)(2u * pair) * block_float2,
++                thread_index, staged[0]);
++            ssb_fetch_row_block(slot_plane + (size_t)(2u * pair + 1u) * block_float2,
++                thread_index, staged[1]);
++            for (uint h = 0u; h < 2u; ++h) {
++                // Previous tile reads finished before the FFT barrier.
++                for (uint jl = 0u; jl < ssb_row_block_loads; ++jl) {
++                    const uint e = thread_index + jl * 64u * block_rows;
++                    if (e < block_float2) {
++                        tile[(e % block_rows) * ssb_row_tile_pitch +
++                            ssb_row_tile_column(e / block_rows)] = staged[h][jl];
++                    }
++                }
++                threadgroup_barrier(mem_flags::mem_threadgroup);
++                if (h == 1u && thread_index == 0u) {
++                    // Both blocks of this BF have been consumed from the ring.
++                    atomic_thread_fence(mem_flags::mem_device, memory_order_seq_cst, thread_scope_device);
++                    atomic_fetch_add_explicit(row_done + local_bf, 1u, memory_order_relaxed);
++                }
++                float2 rr[8];
++                for (uint lane = 0u; lane < 8u; ++lane) {
++                    const uint col = src[lane];
++                    if (col < half_cols) {
++                        rr[lane] = tile_row[ssb_row_tile_column(col)];
++                    } else {
++                        const float2 mirrored = tile_row[ssb_row_tile_column(n - col)];
++                        rr[lane] = float2(mirrored.x, -mirrored.y);
++                    }
++                }
++                ifft512_radix8_registers(
++                    rr[0], rr[1], rr[2], rr[3], rr[4], rr[5], rr[6], rr[7],
++                    tid, twiddle, fft_scratch
++                );
++                for (uint lane = 0u; lane < 8u; ++lane) {
++                    const float hh = rr[lane].x * scale;
++                    const float imaginary = dc_spatial.y + hh;
++                    const float phase = positive_dc
++                        ? metal::atan(imaginary * inverse_dc_real)
++                        : metal::atan2(imaginary, dc_spatial.x);
++                    sum[h][lane] += phase;
++                    sumsq[h][lane] += phase * phase;
++                }
++            }
++        }
++        if (!ok) return;
++        // Add this batch's sums after the previous batch for the same rows.
++        if (thread_index == 0u) {
++            control[1] = ssb_pipeline_wait(flush_done + pair, k, error_flag,
++                pipeline.spin_limit, 3u, item) ? 1u : 0u;
++            atomic_thread_fence(mem_flags::mem_device, memory_order_seq_cst, thread_scope_device);
++        }
++        threadgroup_barrier(mem_flags::mem_device);
++        if (control[1] == 0u) return;
++        for (uint h = 0u; h < 2u; ++h) {
++            const uint row = (2u * pair + h) * block_rows + g;
++            for (uint lane = 0u; lane < 8u; ++lane) {
++                const uint col = tid + lane * 64u;
++                const uint pixel = row * n + col;
++                phase_sum[pixel] += sum[h][lane];
++                phase_sumsq[pixel] += sumsq[h][lane];
++            }
++        }
++        threadgroup_barrier(mem_flags::mem_device);
++        if (thread_index == 0u) {
++            atomic_thread_fence(mem_flags::mem_device, memory_order_seq_cst, thread_scope_device);
++            atomic_fetch_add_explicit(flush_done + pair, 1u, memory_order_relaxed);
++        }
++    }
++}

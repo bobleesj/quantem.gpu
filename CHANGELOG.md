@@ -6,6 +6,16 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- Recognize EMPAD-G1/G2 float32 exports and supported EMD 1 datacubes with
+  versioned metadata provenance; optionally apply a confirmed mean-dark reference
+  on Metal without changing original packed measurements.
+- Prepare native SSB directly from packed detector columns, report preparation
+  progress, preserve calibration and manual higher-order controls in saved runs,
+  and use the measured blocked four-row FFT schedule for full-aperture fitting.
+  Unqualified persistent-scheduler experiments remain outside production code.
+- Native Metal SSB accepts uint8, uint16, and uint32 BF columns without integer
+  narrowing, and saves complete versioned reconstructions with calibration,
+  optimization history, source identity and image checksums for local reopening.
 - Share percentile selection, display-limit conversion, and reusable-buffer
   Metal range/histogram encoding through `MetalImageRuntime`. Mixed integer
   and float batches use one caller-owned command buffer; synchronous helpers

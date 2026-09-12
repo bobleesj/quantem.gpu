@@ -7,6 +7,10 @@ admission or eviction, or application state.
 
 ## Products and dependencies
 
+See [Native acquisition formats and metadata](native-acquisition-formats.md)
+for ARINA/NXem, EMPAD-G1/G2 and EMD layout detection, reader versions, exact
+metadata paths, units, missing-field behavior and native-client integration.
+
 Native clients compose three products for local 4D-STEM loading:
 
 | Product | Owns | Dependencies |
@@ -16,6 +20,49 @@ Native clients compose three products for local 4D-STEM loading:
 | `Metal4DSTEMStreamingIO` | Bounded native QH5 mapping and decode, overflow-safe exact products, source audit, and on-demand native diffraction frames | `Native4DSTEMIO`, `Metal4DSTEMKernels` |
 
 None of these products imports SwiftUI, AppKit, UIKit, or Python.
+
+## Confirmed EMPAD mean-dark correction
+
+`MetalEMPADBackground` implements `empad-mean-dark/v1`: the arithmetic mean of
+all dark frames, subtracted from each selected sample detector pixel. Both
+inputs are decoded float32 acquisitions with detector shape `(128, 128)`;
+their scan shapes may differ. Corrected pixels round to float32 before mask
+integration, mean diffraction or center-of-mass reduction. Negative values are
+retained; there is no clipping, exposure scaling, gain adjustment or binning.
+
+```swift
+let dark = try NativeEMPADSource.open(darkURL)
+let background = try MetalEMPADBackground.load(
+  dark, device: device, memoryBudgetBytes: budget)
+let resident = try MetalEMPADResidentSource.load(
+  sample, device: device, memoryBudgetBytes: budget,
+  subtracting: background)
+```
+
+The caller must confirm that the sample is not already corrected and that the
+dark uses compatible detector settings, signal units and preprocessing. Matching
+formats and recorded exposure times are checked; missing metadata does not prove
+compatibility. Filename patterns and nearby offset files never authorize
+subtraction. Encoded EMPAD2 even/odd offset calibration is not this operation.
+Non-finite dark means, changed sources, a self-reference, incompatible format
+or recorded exposure mismatch fail without publishing a corrected resident.
+
+The original tensor remains losslessly packed. A 64 KiB mean-dark image is
+retained separately and applied in the Metal product kernels, including
+incremental masks, selected/mean diffraction, and center of mass. Receipt raw
+and working hashes still describe the stored original tensor. Calibration
+schema/hash and effective source identity distinguish corrected products;
+corrected diffraction is declared float32 arithmetic, not original-bit parity.
+The mean uses bounded 16 MiB windows and GPU compensated accumulation. Only
+small calibration validation and hashing occur on the CPU.
+
+Source: `Metal4DSTEMStreamingIO/MetalEMPADBackground.swift`,
+`MetalEMPADResidentSource.swift`, and `Metal4DSTEMKernels/Resources/empad_float.metal`.
+Independent NumPy parity: `tests/hardware/metal/test_empad_background.py`, covering
+DP selection, means, BF/ABF/ADF, center of mass, moving masks and negative values.
+This correction API is implemented for native Metal only; no CUDA or WebGPU
+correction parity is claimed here. Clients own confirmation, local persistence,
+reset and checking saved reference fingerprints on reopen.
 
 ## Original uint32 ARINA counts
 

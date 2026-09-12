@@ -863,6 +863,85 @@ int qh5_export_scientific_image(const char *path, const char *name,
   return status == 0 ? 0 : qh5_fail(error_message, "Could not write scientific HDF5 image %s", name);
 }
 
+static double qh5_positive_scalar(hid_t file, const char *path) {
+  hid_t ds = H5Dopen2(file, path, H5P_DEFAULT);
+  if (ds < 0) return 0;
+  hid_t sp = H5Dget_space(ds);
+  double value = 0;
+  if (sp < 0 || H5Sget_simple_extent_npoints(sp) != 1 ||
+      H5Dread(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, &value) < 0 ||
+      !isfinite(value) || value <= 0) value = 0;
+  if (sp >= 0) H5Sclose(sp);
+  H5Dclose(ds);
+  return value;
+}
+
+int qh5_inspect_emd_float(const char *path, qh5_emd_float_info *info, char **error_message) {
+  if (!path || !info) return qh5_fail(error_message, "Invalid EMD request");
+  memset(info, 0, sizeof(*info));
+  pthread_mutex_lock(&qh5_hdf5_lock);
+  H5Eset_auto2(H5E_DEFAULT, NULL, NULL);
+  hid_t file = H5Fopen(path, H5F_ACC_RDONLY, H5P_DEFAULT);
+  int local = file >= 0;
+  const char *components[] = {"/datacube_root", "/datacube_root/datacube", "/datacube_root/datacube/data"};
+  for (int i = 0; local && i < 3; ++i) {
+    H5L_info2_t link;
+    local = H5Lget_info2(file, components[i], &link, H5P_DEFAULT) >= 0 && link.type == H5L_TYPE_HARD;
+  }
+  hid_t ds = local ? H5Dopen2(file, "/datacube_root/datacube/data", H5P_DEFAULT) : -1;
+  hid_t sp = ds >= 0 ? H5Dget_space(ds) : -1;
+  hid_t ty = ds >= 0 ? H5Dget_type(ds) : -1;
+  hid_t pl = ds >= 0 ? H5Dget_create_plist(ds) : -1;
+  char *program = file >= 0 ? qh5_read_attribute_string(file, "authoring_program") : NULL;
+  hsize_t dims[4] = {0};
+  int major = -1;
+  hid_t attr = file >= 0 ? H5Aopen(file, "version_major", H5P_DEFAULT) : -1;
+  hid_t asp = attr >= 0 ? H5Aget_space(attr) : -1;
+  if (asp >= 0 && H5Sget_simple_extent_npoints(asp) == 1) H5Aread(attr, H5T_NATIVE_INT, &major);
+  if (asp >= 0) H5Sclose(asp);
+  if (attr >= 0) H5Aclose(attr);
+  int valid = program && !strcmp(program, "emdfile") && major == 1 &&
+    sp >= 0 && H5Sget_simple_extent_ndims(sp) == 4 && ty >= 0 &&
+    H5Tequal(ty, H5T_IEEE_F32LE) > 0 && pl >= 0 && H5Pget_layout(pl) == H5D_CONTIGUOUS &&
+    H5Pget_external_count(pl) == 0;
+  if (valid) {
+    H5Sget_simple_extent_dims(sp, dims, NULL);
+    haddr_t offset = H5Dget_offset(ds);
+    valid = dims[0] > 0 && dims[1] > 0 && dims[2] == 128 && dims[3] == 128 &&
+      dims[0] <= UINT64_MAX / 65536 / dims[1] && offset != HADDR_UNDEF;
+    if (valid) {
+      info->rows = dims[0]; info->columns = dims[1]; info->offset = offset;
+      info->bytes = dims[0] * dims[1] * 65536;
+      valid = H5Dget_storage_size(ds) == info->bytes;
+    }
+  }
+  if (valid) {
+    const char *cal = "/datacube_root/metadatabundle/calibration/";
+    char path_buffer[256];
+    snprintf(path_buffer, sizeof(path_buffer), "%sR_pixel_units", cal);
+    char *ru = qh5_read_dataset_string(file, path_buffer);
+    snprintf(path_buffer, sizeof(path_buffer), "%sQ_pixel_units", cal);
+    char *qu = qh5_read_dataset_string(file, path_buffer);
+    if (ru && (!strcmp(ru, "A") || !strcmp(ru, "Å")))
+      info->scan_angstrom = qh5_positive_scalar(file, "/datacube_root/metadatabundle/calibration/R_pixel_size");
+    if (qu && !strcmp(qu, "mrad"))
+      info->angle_mrad = qh5_positive_scalar(file, "/datacube_root/metadatabundle/calibration/Q_pixel_size");
+    free(ru); free(qu);
+    info->semiangle_mrad = qh5_positive_scalar(file, "/datacube_root/metadatabundle/calibration/convergence_semiangle_mrad");
+    info->voltage = qh5_positive_scalar(file, "/datacube_root/datacube/metadatabundle/SoM2k/high tension");
+    info->camera_meters = qh5_positive_scalar(file, "/datacube_root/datacube/metadatabundle/SoM2k/camera length");
+  }
+  free(program);
+  if (pl >= 0) H5Pclose(pl);
+  if (ty >= 0) H5Tclose(ty);
+  if (sp >= 0) H5Sclose(sp);
+  if (ds >= 0) H5Dclose(ds);
+  if (file >= 0) H5Fclose(file);
+  pthread_mutex_unlock(&qh5_hdf5_lock);
+  return valid ? 0 : qh5_fail(error_message,
+    "This EMD reader requires an EMD 1.x contiguous little-endian float32 datacube with a 128×128 detector. Open the original supported export.");
+}
+
 char *qh5_read_scientific_metadata(const char *path) {
   if (!path) return NULL;
   pthread_mutex_lock(&qh5_hdf5_lock);

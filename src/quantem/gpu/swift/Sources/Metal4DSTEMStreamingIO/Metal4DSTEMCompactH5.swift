@@ -533,6 +533,7 @@ public final class MetalCompactH5ResidentSource {
   private let device: MTLDevice
   private let queue: MTLCommandQueue
   private let selectedPipeline: MTLComputePipelineState
+  private var detectorColumnsPipeline: MTLComputePipelineState?
   private let detectorPipeline: MTLComputePipelineState
   private let pixelLaneDetectorPipeline: MTLComputePipelineState
   private let planarILPDetectorPipeline: MTLComputePipelineState?
@@ -759,6 +760,53 @@ public final class MetalCompactH5ResidentSource {
       throw CompactNativeCache.invalid(
         "atomic publication failed; existing destination was preserved.")
     }
+  }
+
+  /// Encode up to 32 detector columns into plane-major uint32 GPU storage.
+  ///
+  /// Column order and duplicates are preserved. Excluded detector pixels become
+  /// zero, as in selected diffraction. The caller commits the command buffer
+  /// and serializes encoding with resident release. No dense 4D data is made.
+  public func encodeDetectorColumns(
+    pixels: [Int], into output: MTLBuffer, commands: MTLCommandBuffer
+  ) throws {
+    guard !isReleased, let excluded, !pixels.isEmpty, pixels.count <= 32,
+      pixels.allSatisfy({ 0..<metadata.detectorPixelCount ~= $0 }),
+      output.length >= pixels.count * metadata.scanCount * MemoryLayout<UInt32>.stride,
+      output.device.registryID == device.registryID,
+      commands.commandQueue.device.registryID == device.registryID
+    else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "Detector-column extraction requires 1...32 valid pixels and a same-device uint32 output covering the full scan. Reload a released source first.")
+    }
+    if detectorColumnsPipeline == nil {
+      let library = try Metal4DSTEMKernels.makeCompactH5Library(device: device)
+      guard let function = library.makeFunction(name: "compact_h5_detector_columns") else {
+        throw Metal4DSTEMStreamingIOError.metalUnavailable("Missing detector-column kernel")
+      }
+      detectorColumnsPipeline = try device.makeComputePipelineState(function: function)
+    }
+    let indices = pixels.map(UInt32.init)
+    guard let encoder = commands.makeComputeCommandEncoder(), let detectorColumnsPipeline else {
+      throw Metal4DSTEMStreamingIOError.metalUnavailable("Could not encode detector columns")
+    }
+    encoder.setComputePipelineState(detectorColumnsPipeline)
+    encoder.setBuffer(excluded, offset: 0, index: 2)
+    encoder.setBuffer(output, offset: 0, index: 3)
+    encoder.setBytes(indices, length: indices.count * 4, index: 5)
+    for (ordinal, shard) in shards.enumerated() {
+      let offset = ordinal * metadata.scansPerShard
+      let count = min(metadata.scansPerShard, metadata.scanCount - offset)
+      let parameters: [UInt32] = [UInt32(count), UInt32(metadata.scanCount), UInt32(offset),
+        UInt32(pixels.count), UInt32((metadata.scansPerShard + metadata.scanTile - 1) / metadata.scanTile),
+        UInt32(metadata.scanTile), headerWordsPerPixel, headerEncoding, payloadLayout]
+      encoder.setBuffer(shard.payload, offset: 0, index: 0)
+      encoder.setBuffer(shard.descriptors, offset: 0, index: 1)
+      encoder.setBytes(parameters, length: parameters.count * 4, index: 4)
+      encoder.dispatchThreads(MTLSize(width: count, height: pixels.count, depth: 1),
+        threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+    }
+    encoder.endEncoding()
   }
 
   /// Return one complete exact mask-applied diffraction pattern as row-major u32.

@@ -1,6 +1,6 @@
 import Foundation
 
-public struct SSBOptimizationPoint: Equatable, Sendable {
+public struct SSBOptimizationPoint: Codable, Equatable, Sendable {
   public var c10Nanometers: Double
   public var c12Nanometers: Double
   public var phi12Radians: Double
@@ -18,7 +18,7 @@ public struct SSBOptimizationPoint: Equatable, Sendable {
   }
 }
 
-public struct SSBOptimizationTrial: Sendable {
+public struct SSBOptimizationTrial: Codable, Sendable {
   public let point: SSBOptimizationPoint
   public let loss: Double
   public let stage: String
@@ -32,7 +32,7 @@ public struct SSBOptimizationProgress: Sendable {
   public let bestLoss: Double
 }
 
-public struct SSBOptimizationResult: Sendable {
+public struct SSBOptimizationResult: Codable, Sendable {
   public let best: SSBOptimizationPoint
   public let loss: Double
   public let trials: [SSBOptimizationTrial]

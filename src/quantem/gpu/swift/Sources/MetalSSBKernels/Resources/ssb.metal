@@ -1,6 +1,11 @@
 #include <metal_stdlib>
 using namespace metal;
 
+kernel void ssb_object_phase(device const float2 *object [[buffer(0)]],
+    device float *phase [[buffer(1)]], uint index [[thread_position_in_grid]]) {
+    phase[index] = atan2(object[index].y, object[index].x);
+}
+
 struct FFTParams {
     uint n;
     uint log2n;
@@ -26,6 +31,7 @@ struct SSBParams {
     float dc_i;
     float aperture_inner_k2;
     float aperture_outer_k2;
+    uint cache_chunk_shift;
 };
 
 struct HalfExtractParams {
@@ -216,13 +222,17 @@ inline void ifft512_radix8_registers(
     r4 = y4; r5 = y5; r6 = y6; r7 = y7;
 }
 
-kernel void uint8_to_complex(
+kernel void counts_to_complex(
     device const uchar *input [[buffer(0)]],
     device float2 *output [[buffer(1)]],
     constant uint &count [[buffer(2)]],
+    constant uint &byte_width [[buffer(3)]],
     uint index [[thread_position_in_grid]]) {
     if (index < count) {
-        output[index] = float2(float(input[index]), 0.0f);
+        uint value = byte_width == 1u ? uint(input[index])
+            : byte_width == 2u ? uint(((device const ushort *)input)[index])
+            : ((device const uint *)input)[index];
+        output[index] = float2(float(value), 0.0f);
     }
 }
 
@@ -488,6 +498,88 @@ inline float2 load_g_cache_chunk(
     }
 }
 
+inline float ssb_polar_phase(float kr, float kc, constant SSBParams &p,
+    constant float4 *higher) {
+    float alpha = length(float2(kr, kc)) * p.wavelength;
+    float angle = atan2(kc, kr);
+    float phase = p.factor * alpha * alpha *
+        (p.c10 + p.c12 * (cos(2.0f * angle) * p.cos2phi12 + sin(2.0f * angle) * p.sin2phi12));
+    for (uint j = 0; j < 12; ++j) {
+        float4 term = higher[j];
+        if (term.x != 0.0f) phase += 2.0f * p.factor * term.x / (term.y + 1.0f)
+            * pow(alpha, term.y + 1.0f) * cos(term.z * (angle - term.w));
+    }
+    return phase;
+}
+
+inline float2 ssb_polar_correction(float qr, float qc, float4 beam,
+    constant SSBParams &p, constant float4 *higher) {
+    float2 probe = exp_neg_i(ssb_polar_phase(beam.x, beam.y, p, higher), beam.w);
+    float2 minus = exp_neg_i(ssb_polar_phase(qr - beam.x, qc - beam.y, p, higher),
+        aperture_at(qr - beam.x, qc - beam.y, p));
+    float2 plus = exp_neg_i(ssb_polar_phase(qr + beam.x, qc + beam.y, p, higher),
+        aperture_at(qr + beam.x, qc + beam.y, p));
+    float2 gamma = complex_mul(minus, float2(probe.x, -probe.y))
+        - complex_mul(float2(plus.x, -plus.y), probe);
+    return float2(gamma.x, -gamma.y) / max(length(gamma), 1.0e-8f);
+}
+
+// Odd-order aberrations break the even-phase mirror-pair shortcut. Evaluate
+// every Fourier pixel independently while retaining exact Hermitian storage.
+kernel void ssb_gamma_accumulate_half_aberrations(
+    device const float2 *g0 [[buffer(0)]],
+    device const float2 *g1 [[buffer(1)]],
+    device const float2 *g2 [[buffer(2)]],
+    device const float2 *g3 [[buffer(3)]],
+    device const float2 *g4 [[buffer(4)]],
+    device const float2 *g5 [[buffer(5)]],
+    device const float2 *g6 [[buffer(6)]],
+    device const float2 *g7 [[buffer(7)]],
+    device const float2 *g8 [[buffer(8)]],
+    device const float2 *g9 [[buffer(9)]],
+    device const float2 *g10 [[buffer(10)]],
+    device const float2 *g11 [[buffer(11)]],
+    device const float4 *beam [[buffer(12)]],
+    device const float *qrow [[buffer(13)]],
+    device const float *qcol [[buffer(14)]],
+    device float2 *output [[buffer(15)]],
+    constant SSBParams &p [[buffer(16)]],
+    constant float4 *higher [[buffer(17)]],
+    uint index [[thread_position_in_grid]]) {
+    uint row = index / p.n, col = index % p.n;
+    uint halfcols = p.n / 2u + 1u;
+    bool mirror = col > p.n / 2u;
+    uint readrow = mirror ? (p.n - row) % p.n : row;
+    uint readcol = mirror ? p.n - col : col;
+    float2 sum = output[index];
+    for (uint local = 0; local < p.batch; ++local) {
+        uint bf = p.bf_offset + local;
+        size_t address = size_t(bf & ((1u << p.cache_chunk_shift) - 1u)) * p.n * halfcols + readrow * halfcols + readcol;
+        float2 value = load_g_cache_chunk(bf >> p.cache_chunk_shift, address, g0, g1, g2, g3, g4, g5, g6, g7, g8, g9, g10, g11);
+        if (mirror) value.y = -value.y;
+        sum += complex_mul(value, ssb_polar_correction(qrow[row], qcol[col], beam[bf], p, higher));
+    }
+    output[index] = sum;
+}
+
+kernel void ssb_gamma_accumulate_full_aberrations(
+    device const float2 *g [[buffer(0)]],
+    device const float4 *beam [[buffer(1)]],
+    device const float2 *unused [[buffer(2)]],
+    device const float *qrow [[buffer(3)]],
+    device const float *qcol [[buffer(4)]],
+    device float2 *output [[buffer(5)]],
+    constant SSBParams &p [[buffer(6)]],
+    constant float4 *higher [[buffer(7)]],
+    uint index [[thread_position_in_grid]]) {
+    float2 sum = output[index];
+    for (uint local = 0; local < p.batch; ++local) {
+        sum += complex_mul(g[size_t(local) * p.n * p.n + index],
+            ssb_polar_correction(qrow[index / p.n], qcol[index % p.n], beam[p.bf_offset + local], p, higher));
+    }
+    output[index] = sum;
+}
+
 kernel void ssb_gamma_accumulate_half(
     device const float2 *g0 [[buffer(0)]],
     device const float2 *g1 [[buffer(1)]],
@@ -506,6 +598,7 @@ kernel void ssb_gamma_accumulate_half(
     device const float *q_col [[buffer(14)]],
     device float2 *accumulator [[buffer(15)]],
     constant SSBParams &params [[buffer(16)]],
+    device const float2 *cross_trig [[buffer(17)]],
     uint pair_index [[thread_position_in_grid]]) {
     const uint interior_cols = params.n / 2u - 1u;
     const uint interior_pair_count = (params.n - 1u) * interior_cols;
@@ -567,11 +660,11 @@ kernel void ssb_gamma_accumulate_half(
         const float aperture_m = bg.w * aperture_at(qx - bg.x, qy - bg.y, params);
         const float aperture_p = bg.w * aperture_at(qx + bg.x, qy + bg.y, params);
         if (aperture_m <= 0.0f && aperture_p <= 0.0f) continue;
-        const float cross_phase = 2.0f * quadratic_factor *
-            (xx * qx * bg.x + xy * (qx * bg.y + qy * bg.x) +
-             yy * qy * bg.y);
-        float cosine_cross;
-        const float sine_cross = metal::sincos(cross_phase, cosine_cross);
+        const size_t cross_base = (size_t)bf * 1024u;
+        const float2 row_cross = cross_trig[cross_base + row];
+        const float2 col_cross = cross_trig[cross_base + 512u + col];
+        const float cosine_cross = row_cross.x * col_cross.x - row_cross.y * col_cross.y;
+        const float sine_cross = row_cross.y * col_cross.x + row_cross.x * col_cross.y;
         const float bracket_r = (aperture_m - aperture_p) * cosine_q;
         const float bracket_i = -(aperture_m + aperture_p) * sine_q;
         const float gamma_r =
@@ -584,8 +677,8 @@ kernel void ssb_gamma_accumulate_half(
         const float conjugate_i = -gamma_i * inverse_magnitude;
 
         const uint global_bf = params.bf_offset + local;
-        const uint cache_chunk = global_bf / 512u;
-        const uint cache_local = global_bf - cache_chunk * 512u;
+        const uint cache_chunk = global_bf >> params.cache_chunk_shift;
+        const uint cache_local = global_bf & ((1u << params.cache_chunk_shift) - 1u);
         const size_t source_offset = (size_t)cache_local * half_plane;
         float2 value;
         if (col <= params.n / 2u) {
@@ -918,6 +1011,15 @@ kernel void ssb_accumulate_phase_moments(
 // -i makes it Hermitian, so only the native 512x257 half-plane is transformed
 // along the first dimension. The real/complex DC value is restored after the
 // second transform. This is an exact symmetry reduction, not BF subsampling.
+//
+// The intermediate between the two transforms is stored in four-row blocks,
+// [bf][row / 4][col 0..256][row % 4], so this pass writes contiguous 32-byte
+// segments instead of one scattered float2 per 2,056-byte row, and the row pass
+// reads each (BF, row block) as one contiguous 257*4 float2 run. Only data
+// movement differs from a row-major intermediate; every value sees the same
+// arithmetic.
+constant constexpr uint ssb_intermediate_block_rows = 4u;
+
 kernel void ssb_correct_half_column_ifft512_hermitian(
     device const float2 *half_g [[buffer(0)]],
     device const float4 *bf_geometry [[buffer(1)]],
@@ -932,6 +1034,7 @@ kernel void ssb_correct_half_column_ifft512_hermitian(
     uint2 group [[threadgroup_position_in_grid]]) {
     constexpr uint n = 512u;
     constexpr uint half_cols = 257u;
+    constexpr uint block_rows = ssb_intermediate_block_rows;
     const uint col = group.x;
     const uint local_bf = group.y;
     if (tid >= 64u || col >= half_cols || local_bf >= params.batch) return;
@@ -967,22 +1070,52 @@ kernel void ssb_correct_half_column_ifft512_hermitian(
         r0, r1, r2, r3, r4, r5, r6, r7, tid, twiddle, scratch
     );
 
+    // Thread tid owns rows tid + 64 * slot. The block height divides 64, so
+    // row / 4 = tid / 4 + 16 * slot and row % 4 = tid % 4.
     constexpr float scale = 1.0f / 512.0f;
-#define STORE_HALF(slot, row) \
-    column_ifft_half[half_base + (size_t)(row) * half_cols + col] = \
+    const size_t store_base = half_base + (size_t)col * block_rows +
+        (tid % block_rows);
+    constexpr size_t block_stride = (size_t)half_cols * block_rows;
+#define STORE_BLOCKED(slot) \
+    column_ifft_half[store_base + \
+        (size_t)((tid + 64u * slot##u) / block_rows) * block_stride] = \
         r##slot * scale
-    STORE_HALF(0, tid + 0u); STORE_HALF(1, tid + 64u);
-    STORE_HALF(2, tid + 128u); STORE_HALF(3, tid + 192u);
-    STORE_HALF(4, tid + 256u); STORE_HALF(5, tid + 320u);
-    STORE_HALF(6, tid + 384u); STORE_HALF(7, tid + 448u);
-#undef STORE_HALF
+    STORE_BLOCKED(0); STORE_BLOCKED(1);
+    STORE_BLOCKED(2); STORE_BLOCKED(3);
+    STORE_BLOCKED(4); STORE_BLOCKED(5);
+    STORE_BLOCKED(6); STORE_BLOCKED(7);
+#undef STORE_BLOCKED
 }
 
+// Row-pass threadgroup tile: row-in-block g lives at g * 324, half-plane
+// column c at c + 2 * (c >> 3). The padding keeps both the cooperative block
+// writes and the octal-reversed FFT operand reads free of bank conflicts.
+constant constexpr uint ssb_row_tile_pitch = 324u;
+
+inline uint ssb_row_tile_column(uint col) {
+    return col + 2u * (col >> 3u);
+}
+
+// One contiguous (BF, row block) run is 257 * 4 = 1028 float2; each of the
+// 256 threads moves at most five of them.
+constant constexpr uint ssb_row_block_loads = 5u;
+
+inline void ssb_fetch_row_block(
+    device const float2 *block, uint thread_index, thread float2 *staged) {
+    constexpr uint threads = 64u * ssb_intermediate_block_rows;
+    constexpr uint block_float2 = 257u * ssb_intermediate_block_rows;
+    for (uint j = 0u; j < ssb_row_block_loads; ++j) {
+        const uint e = thread_index + j * threads;
+        if (e < block_float2) staged[j] = block[e];
+    }
+}
 
 // Complete the Hermitian inverse transform along x and accumulate the phase
 // of DC/(512^2) + i*h. h is real by construction; its tiny numerical imaginary
 // residue is intentionally ignored because the exact Hermitian transform is
-// real-valued.
+// real-valued. One threadgroup owns four consecutive rows: FFT group
+// g = thread_index / 64 (two whole SIMD groups) transforms row 4 * block + g.
+[[max_total_threads_per_threadgroup(256)]]
 kernel void ssb_ifft512_rows_hermitian_phase_moments(
     device const float2 *column_ifft_half [[buffer(0)]],
     device const float2 *twiddle [[buffer(1)]],
@@ -990,13 +1123,27 @@ kernel void ssb_ifft512_rows_hermitian_phase_moments(
     device float *phase_sumsq [[buffer(3)]],
     constant uint &batch [[buffer(4)]],
     constant float2 &dc [[buffer(5)]],
-    uint tid [[thread_index_in_threadgroup]],
-    uint row [[threadgroup_position_in_grid]]) {
+    uint thread_index [[thread_index_in_threadgroup]],
+    uint threads_per_group [[threads_per_threadgroup]],
+    uint row_block [[threadgroup_position_in_grid]]) {
     constexpr uint n = 512u;
     constexpr uint half_cols = 257u;
-    if (tid >= 64u || row >= n) return;
+    constexpr uint plane = n * half_cols;
+    constexpr uint block_rows = ssb_intermediate_block_rows;
+    constexpr uint block_float2 = half_cols * block_rows;
+    // Threadgroup-uniform, so no thread skips a barrier another one reaches.
+    if (threads_per_group != 64u * block_rows || row_block >= n / block_rows) {
+        return;
+    }
 
-    threadgroup float2 shared_rows[2][512];
+    threadgroup float2 scratch[block_rows * 512u];
+    threadgroup float2 tile[block_rows * ssb_row_tile_pitch];
+    const uint g = thread_index >> 6u;
+    const uint tid = thread_index & 63u;
+    const uint row = row_block * block_rows + g;
+    threadgroup float2 *fft_scratch = scratch + g * 512u;
+    const threadgroup float2 *tile_row = tile + g * ssb_row_tile_pitch;
+
     const uint src[8] = {
         octal_reverse_512(tid * 8u + 0u), octal_reverse_512(tid * 8u + 1u),
         octal_reverse_512(tid * 8u + 2u), octal_reverse_512(tid * 8u + 3u),
@@ -1012,23 +1159,40 @@ kernel void ssb_ifft512_rows_hermitian_phase_moments(
     const bool positive_dc = dc_spatial.x > 0.0f;
     const float inverse_dc_real = positive_dc
         ? 1.0f / dc_spatial.x : 0.0f;
+
+    device const float2 *block0 =
+        column_ifft_half + (size_t)row_block * block_float2;
+    float2 staged[ssb_row_block_loads];
+    if (batch > 0u) ssb_fetch_row_block(block0, thread_index, staged);
     for (uint local_bf = 0u; local_bf < batch; ++local_bf) {
-        const size_t half_base = (size_t)local_bf * n * half_cols +
-            (size_t)row * half_cols;
+        // The previous BF's tile reads finished before its FFT barrier.
+        for (uint j = 0u; j < ssb_row_block_loads; ++j) {
+            const uint e = thread_index + j * 64u * block_rows;
+            if (e < block_float2) {
+                tile[(e % block_rows) * ssb_row_tile_pitch +
+                    ssb_row_tile_column(e / block_rows)] = staged[j];
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
         float2 r[8];
         for (uint lane = 0u; lane < 8u; ++lane) {
             const uint col = src[lane];
             if (col < half_cols) {
-                r[lane] = column_ifft_half[half_base + col];
+                r[lane] = tile_row[ssb_row_tile_column(col)];
             } else {
-                const float2 mirrored = column_ifft_half[half_base + (n - col)];
+                const float2 mirrored = tile_row[ssb_row_tile_column(n - col)];
                 r[lane] = float2(mirrored.x, -mirrored.y);
             }
         }
-        threadgroup float2 *scratch = &shared_rows[local_bf & 1u][0];
+        // Overlap the next BF's global load with this BF's transform.
+        if (local_bf + 1u < batch) {
+            ssb_fetch_row_block(
+                block0 + (size_t)(local_bf + 1u) * plane, thread_index, staged
+            );
+        }
         ifft512_radix8_registers(
             r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7],
-            tid, twiddle, scratch
+            tid, twiddle, fft_scratch
         );
         for (uint lane = 0u; lane < 8u; ++lane) {
             const float h = r[lane].x * scale;

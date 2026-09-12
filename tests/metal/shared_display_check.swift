@@ -113,6 +113,22 @@ import MetalImageRuntime
     precondition(selected.window(bins: [1, 8, 1]) == MetalHistogramContrast(low: 0, high: 0.5))
     precondition(MetalPercentileRange.percentile(at: 0.5, bins: [90, 0, 10]) == 0.9)
     precondition(MetalPercentileRange.percentile(at: 0.5, bins: [10, 0, 90]) == 0.1)
+    // Slow drags invert the same CDF without snapping to bin boundaries.
+    let populated = (0..<256).map { UInt32(1 + $0 % 17) }
+    for step in 1..<800 {
+      let position = Double(step) / 1000
+      let rank = MetalPercentileRange.percentile(at: position, bins: populated)
+      let window = MetalPercentileRange(low: rank, high: 1).interpolatedWindow(bins: populated)
+      precondition(abs(window.low - position) < 1e-12)
+    }
+    let uniformBins = [UInt32](repeating: 10, count: 256)
+    let continuous = selected.interpolatedWindow(bins: uniformBins)
+    precondition(abs(continuous.low - 0.05 * 256 / 255) < 1e-12)
+    precondition(abs(continuous.high - 0.95 * 256 / 255) < 1e-12)
+    precondition(MetalPercentileRange(low: 0, high: 1).interpolatedWindow(bins: [0, 1, 0])
+      == MetalHistogramContrast(low: 0, high: 1))
+    precondition(selected.interpolatedWindow(bins: [0, 0, 0])
+      == MetalHistogramContrast(low: 0, high: 1))
     for logarithmic in [false, true] {
       for value in [-8.0, -2, 0, 1, 8] {
         let bounds = SIMD2<Double>(-8, 8)

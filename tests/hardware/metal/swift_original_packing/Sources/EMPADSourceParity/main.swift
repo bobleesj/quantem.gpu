@@ -13,6 +13,9 @@ let shape: (row: Int, col: Int)? =
   ? (Int(arguments[3])!, Int(arguments[4])!) : nil
 let source = try NativeEMPADSource.open(URL(fileURLWithPath: arguments[0]), scanShape: shape)
 let metadata: [String: Any] = [
+  "formatIdentifier": source.formatIdentifier,
+  "recordBytes": source.recordBytes,
+  "microscope": source.microscopeMetadata,
   "scanRowAngstrom": source.scanCalibration?.rowSamplingAngstrom as Any? ?? NSNull(),
   "scanColumnAngstrom": source.scanCalibration?.columnSamplingAngstrom as Any? ?? NSNull(),
   "diffractionInverseNanometers": source.diffractionSamplingInverseNanometers as Any? ?? NSNull(),
@@ -57,9 +60,14 @@ if ProcessInfo.processInfo.environment["EMPAD_TEST_METAL"] == "1" {
     }
     // Complete the same load and parity checks immediately after cancellation.
   }
+  let background = try ProcessInfo.processInfo.environment["EMPAD_TEST_BACKGROUND"].map {
+    try MetalEMPADBackground.load(NativeEMPADSource.open(URL(fileURLWithPath: $0)),
+      device: device, memoryBudgetBytes: budget)
+  }
   let resident = try MetalEMPADResidentSource.load(
     source, device: device, memoryBudgetBytes: budget,
-    sourceHashCacheURL: ProcessInfo.processInfo.environment["EMPAD_TEST_HASH_CACHE"].map { URL(fileURLWithPath: $0) })
+    sourceHashCacheURL: ProcessInfo.processInfo.environment["EMPAD_TEST_HASH_CACHE"].map { URL(fileURLWithPath: $0) },
+    subtracting: background)
   print("EMPAD_SOURCE_HASH cached=\(resident.reusedSourceHash ? 1 : 0)")
   let capabilities = try Metal4DSTEMResidentCapabilities.empad(resident)
   try capabilities.residentReceipt.validate()
