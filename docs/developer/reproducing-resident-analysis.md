@@ -123,7 +123,9 @@ accepted result bundle; it must not silently rerun loading or scientific
 computation. Changing a codec, model, layout or query policy creates a new
 study result, not an updated label on an old measurement.
 
-The package owns reusable algorithms and their tests. The private study owns
+The scientific owner package owns reusable algorithms and their tests.
+QuantEM.GPU owns reusable accelerator infrastructure and its tests. The private
+study owns
 manuscript text, exact publication protocols, failed investigations and figure
 layout. Large inputs and outputs belong in durable data storage. Do not copy
 private manuscript sources, raw data or workstation credentials into the
