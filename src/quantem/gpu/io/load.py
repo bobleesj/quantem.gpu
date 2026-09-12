@@ -5417,8 +5417,9 @@ def load(
         from .backends import resolve_backend
         from ._streamed import load_h5_ans
 
-        if resolve_backend(backend) != "cuda":
-            raise NotImplementedError("H5-to-ANS loading requires backend='cuda'.")
+        ans_backend = resolve_backend(backend)
+        if ans_backend not in {"cuda", "mps"}:
+            raise NotImplementedError("H5-to-ANS loading requires CUDA or MPS.")
         if len(paths) != 1:
             raise ValueError("Load each complete H5 acquisition separately, then use detector.prepare(list).")
         if any(value is not None for value in (
@@ -5429,8 +5430,16 @@ def load(
             raise ValueError("H5-to-ANS preserves complete native acquisitions; remove selection, conversion and multi-device options.")
         if dtype not in {None, "native"} or apply_mask:
             raise ValueError("H5-to-ANS preserves raw native counts; use dtype='native' and apply_mask=False.")
-        return load_h5_ans(paths[0], scan_shape=scan_shape, dataset_path=dataset_path,
-                           device=device, verbose=verbose)
+        if ans_backend == "mps" and device is not None:
+            raise ValueError("Metal ANS uses device='mps'; omit device selection.")
+        return load_h5_ans(
+            paths[0],
+            scan_shape=scan_shape,
+            dataset_path=dataset_path,
+            device=device,
+            verbose=verbose,
+            backend=ans_backend,
+        )
     # HDF5/prepared-packed loads use their declared working-mask contract. ANS files
     # retain original counts by default; detector masks are product controls.
     if apply_mask is None:

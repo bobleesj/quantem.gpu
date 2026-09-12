@@ -13,7 +13,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 from quantem.gpu._compact.streamed import StreamedCounts
-from quantem.gpu._maped import _merge_regions
+from quantem.gpu._maped.cuda import _merge_regions
 from quantem.gpu.detector import prepare
 from quantem.gpu.io.backends.cuda._ans import CudaPackedResidentCounts
 from quantem.gpu.maped import merge_to_scaled_h5
