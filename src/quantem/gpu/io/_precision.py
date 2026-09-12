@@ -681,14 +681,10 @@ def save_precision(
                 frames_per_file=frames_per_file,
                 compression="lz4",
             )
-            generated_blocks = callable(getattr(payload, "encode_blocks", None))
-            for index, encoded in enumerate(encoded_blocks):
+            for encoded in encoded_blocks:
                 writer.write(encoded)
-                # H5Writer already drains at every output-file boundary. Generated
-                # accelerator sources use large bounded regions, so an extra drain
-                # every four regions serializes Metal/CUDA work with host writes.
-                if not generated_blocks and (index + 1) % 4 == 0:
-                    wait_for_saves()
+                # The bounded writer queue applies backpressure while preserving
+                # overlap with the next region. File boundaries drain separately.
             wait_for_saves()
             if not same_precision:
                 _finish_report(report)

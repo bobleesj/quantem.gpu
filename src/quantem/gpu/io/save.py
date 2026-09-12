@@ -98,7 +98,9 @@ _DTYPE_ALIASES = {
     "f16": np.float16,
     "float16": np.float16,
 }
-_write_queue = queue.Queue()
+# Backpressure bounds completed byte batches without stopping the GPU whenever
+# an arbitrary batch count is reached. The writer drains while compute proceeds.
+_write_queue = queue.Queue(maxsize=2)
 _write_thread = None
 _write_thread_lock = threading.Lock()
 _write_error = None

@@ -102,17 +102,16 @@ def is_mps_tensor(value):
 
 def tensor_range(values):
     """Return a float32 tensor range using MPS reductions."""
-    low = values.amin().item()
-    high = values.amax().item()
-    finite = bool(torch_isfinite(values).all().item())
+    import torch
+
+    # Submit all reductions before reading their three scalar results. Reading
+    # each scalar separately would drain the command queue three times.
+    low, high, finite = torch.stack(
+        (values.amin(), values.amax(), torch.isfinite(values).all())
+    ).cpu().tolist()
     if not finite:
         raise ValueError("Precision conversion requires finite intensities; preserve this source as float32.")
     return float(low), float(high)
-
-
-def torch_isfinite(values):
-    import torch
-    return torch.isfinite(values)
 
 
 def tensor_restore(values, report):
@@ -132,12 +131,24 @@ def tensor_encode(values, report):
 def tensor_measure(original, restored, report):
     import torch
     difference = restored.to(torch.float32) - original.to(torch.float32)
+    errors = torch.stack(
+        (torch.sum(difference * difference), torch.max(torch.abs(difference)))
+    )
+    counts = torch.stack(
+        (
+            torch.count_nonzero((original > 0) & (restored == 0)),
+            torch.count_nonzero(original != restored),
+            torch.count_nonzero(~torch.isfinite(restored)),
+        )
+    )
+    squared_error, maximum = errors.cpu().tolist()
+    positive_to_zero, changed, overflow = counts.cpu().tolist()
     report["values"] += original.numel()
-    report["squared_error"] += float(torch.sum(difference * difference).item())
-    report["max_abs_error"] = max(report["max_abs_error"], float(torch.max(torch.abs(difference)).item()))
-    report["positive_to_zero"] += int(torch.count_nonzero((original > 0) & (restored == 0)).item())
-    report["changed"] += int(torch.count_nonzero(original != restored).item())
-    report["overflow"] += int(torch.count_nonzero(~torch.isfinite(restored)).item())
+    report["squared_error"] += squared_error
+    report["max_abs_error"] = max(report["max_abs_error"], maximum)
+    report["positive_to_zero"] += positive_to_zero
+    report["changed"] += changed
+    report["overflow"] += overflow
 
 
 def _parameters(values=None, report=None):
