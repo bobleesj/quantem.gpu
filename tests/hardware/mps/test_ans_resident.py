@@ -112,3 +112,23 @@ def test_resident_read_matches_numpy_region():
     finally:
         raw.release()
         source.release()
+
+
+def test_native_gpu_probability_tables_match_numpy():
+    """The shared native constants preserve the existing count-codec model."""
+    from quantem.gpu.io.backends.mps._streamed import _tables_numpy
+    from quantem.gpu.io.backends.mps.packed import _buffer_view
+
+    source = MPSStreamedCounts((1, 1, 4, 7), np.uint16)
+    try:
+        encoding, decoding = _tables_numpy()
+        np.testing.assert_array_equal(
+            np.frombuffer(_buffer_view(source._encoding), np.uint32).reshape(64, 33),
+            encoding,
+        )
+        np.testing.assert_array_equal(
+            np.frombuffer(_buffer_view(source._decoding), np.uint32).reshape(64, 1024),
+            decoding,
+        )
+    finally:
+        source.release()

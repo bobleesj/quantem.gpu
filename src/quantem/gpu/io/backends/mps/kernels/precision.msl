@@ -51,9 +51,14 @@ inline ushort encoded(float source, constant ulong *p, constant float *f) {
     float2 residual = add_pair(numerator, -mul_pair(q, float2(f[0], f[1])));
     q += (residual.x + residual.y) / f[0];
     float lower_q = floor(q);
-    float fraction = q - lower_q;
-    bool half_way = abs(fraction - 0.5f) < 1.0e-6f;
-    float candidate = lower_q + ((fraction > 0.5f ||
+    // The rounded float quotient can land on .5 while the true quotient is
+    // either side of it. Compare against the midpoint in float-float source
+    // units so that large codes retain their rounding direction.
+    float2 midpoint_error = add_pair(numerator,
+        -mul_pair(lower_q + 0.5f, float2(f[0], f[1])));
+    bool above = midpoint_error.x > 0 || (midpoint_error.x == 0 && midpoint_error.y > 0);
+    bool half_way = midpoint_error.x == 0 && midpoint_error.y == 0;
+    float candidate = lower_q + ((above ||
         (half_way && (uint(lower_q) & 1u))) ? 1.0f : 0.0f);
     return ushort(clamp(candidate, 0.0f, 65535.0f));
 }

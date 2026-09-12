@@ -26,6 +26,11 @@ qgpu.device.detect()
 
 Native Swift/Metal products for macOS and iOS clients:
 
+- `MetalEncodedSource`, `MetalPrecision`, `MetalHDF5Writer`, and
+  `MetalPackedSource` for encoded counts and bounded scaled-output storage;
+  `MetalScientificNumerics` for reusable image and sampling operations. See
+  [native encoded inputs and scaled output](native_resident.md).
+
 - `MetalImageFFT.logMagnitude` for Browser FFT of an already-transferred 2D
   product. See [Native Metal image endpoints](metal_image.md).
 - `MetalImageRuntime` for histogram, range, and display contracts.

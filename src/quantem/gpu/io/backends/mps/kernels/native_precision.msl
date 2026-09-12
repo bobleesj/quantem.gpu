@@ -1,0 +1,85 @@
+#include <metal_stdlib>
+using namespace metal;
+
+kernel void native_packed_read(device const uint* words [[buffer(0)]],
+    device const ulong* offsets [[buffer(1)]], device const uchar* widths [[buffer(2)]],
+    device float* output [[buffer(3)]], constant ulong* p [[buffer(6)]],
+    constant float* f [[buffer(7)]], uint i [[thread_position_in_grid]]) {
+    if (i < p[0]) output[p[9] * p[1] + i] = restored(code_at(words, offsets, widths,
+      p[8] + i / p[1], i % p[1], p[1]), p, f);
+}
+
+kernel void native_range_reduce(device const float4* partial [[buffer(0)]],
+    device float4* state [[buffer(1)]], constant uint& count [[buffer(2)]],
+    uint lane [[thread_index_in_threadgroup]]) {
+    threadgroup float4 values[256];
+    float4 value(INFINITY, -INFINITY, 0, 0);
+    for (uint i = lane; i < count; i += 256) {
+        float4 next = partial[i]; value = float4(min(value.x, next.x), max(value.y, next.y), value.zw + next.zw);
+    }
+    values[lane] = value; threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint step = 128; step; step /= 2) {
+        if (lane < step) {
+            float4 a = values[lane], b = values[lane + step];
+            values[lane] = float4(min(a.x, b.x), max(a.y, b.y), a.zw + b.zw);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (!lane) { float4 a = state[0], b = values[0]; state[0] = float4(min(a.x, b.x), max(a.y, b.y), a.zw + b.zw); }
+}
+
+kernel void native_measure_reduce(device const float4* errors [[buffer(0)]],
+    device const uint4* counts [[buffer(1)]], device float4* state [[buffer(2)]],
+    device ulong4* totals [[buffer(3)]], constant ulong2& p [[buffer(4)]],
+    uint lane [[thread_index_in_threadgroup]]) {
+    threadgroup float4 values[256]; threadgroup ulong4 integers[256];
+    float2 sum(0); float maximum = 0; ulong4 total(0);
+    for (uint i = lane; i < p.x; i += 256) {
+        sum = add_pair(sum, float2(errors[i].x, 0)); maximum = max(maximum, errors[i].y);
+        total += ulong4(counts[i]);
+    }
+    values[lane] = float4(sum, maximum, 0); integers[lane] = total;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint step = 128; step; step /= 2) {
+        if (lane < step) {
+            values[lane] = float4(add_pair(values[lane].xy, values[lane + step].xy), max(values[lane].z, values[lane + step].z), 0);
+            integers[lane] += integers[lane + step];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (!lane) {
+        state[0] = float4(add_pair(state[0].xy, values[0].xy), max(state[0].z, values[0].z), 0);
+        totals[0] += integers[0]; totals[0].w += p.y;
+    }
+}
+kernel void native_measure_finish(device const float4* state [[buffer(0)]],
+    device const ulong4* totals [[buffer(1)]], device float2* result [[buffer(2)]],
+    constant int& exponent [[buffer(3)]], uint i [[thread_position_in_grid]]) {
+    if (!i) result[0] = ldexp(float2(sqrt((state[0].x + state[0].y) / float(totals[0].w)), state[0].z), -exponent);
+}
+
+kernel void native_prefix64(device const ulong* sizes [[buffer(0)]],
+    device ulong* offsets [[buffer(1)]], device ulong* totals [[buffer(2)]],
+    constant uint& count [[buffer(3)]], uint i [[thread_position_in_grid]],
+    uint lane [[thread_index_in_threadgroup]], uint group [[threadgroup_position_in_grid]]) {
+    threadgroup ulong values[256]; ulong value = i < count ? sizes[i] : 0;
+    values[lane] = value; threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint delta = 1; delta < 256; delta *= 2) {
+        ulong add = lane >= delta ? values[lane - delta] : 0;
+        threadgroup_barrier(mem_flags::mem_threadgroup); values[lane] += add;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (i < count) offsets[i] = values[lane] - value;
+    if (lane == 255) totals[group] = values[lane];
+}
+kernel void native_prefix64_totals(device ulong* totals [[buffer(0)]],
+    device ulong* offsets [[buffer(1)]], constant uint2& p [[buffer(2)]], uint i [[thread_position_in_grid]]) {
+    if (i) return;
+    ulong total = 0;
+    for (uint group = 0; group < p.x; ++group) { ulong value = totals[group]; totals[group] = total; total += value; }
+    offsets[p.y] = total;
+}
+kernel void native_prefix64_add(device ulong* offsets [[buffer(0)]],
+    device const ulong* totals [[buffer(1)]], constant uint& count [[buffer(2)]], uint i [[thread_position_in_grid]]) {
+    if (i < count) offsets[i] += totals[i / 256];
+}

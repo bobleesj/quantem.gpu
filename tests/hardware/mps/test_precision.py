@@ -185,3 +185,28 @@ def test_fused_scaled_uint16_measurement_matches_separate_metal_passes():
         for value in (fused, restored, encoded, source):
             if value is not None:
                 value.release()
+
+
+def test_scaled_uint16_rounds_near_half_steps_like_numpy():
+    """Large codes retain the true rounding direction near a half step."""
+    from quantem.gpu.io.backends.mps.precision import encode, upload
+
+    values = np.arange(1024, dtype=np.float32) * 0.125 - 10.75
+    report = {
+        "storage": "scaled_uint16",
+        "intensity_min": float(values.min()),
+        "intensity_max": float(values.max()),
+        "scale": (float(values.max()) - float(values.min())) / 65535,
+        "offset": float(values.min()),
+    }
+    source = upload(values)
+    encoded = None
+    try:
+        encoded = encode(source, report)
+        np.testing.assert_array_equal(
+            encoded.get(), encode_precision_reference(values, report)
+        )
+    finally:
+        if encoded is not None:
+            encoded.release()
+        source.release()

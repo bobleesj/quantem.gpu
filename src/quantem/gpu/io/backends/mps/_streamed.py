@@ -15,7 +15,7 @@ from .packed import _allocate_shared, _buffer_view, _complete, _metal_module, _r
 
 @lru_cache(maxsize=1)
 def _tables_numpy() -> tuple[np.ndarray, np.ndarray]:
-    """Return the fixed probability tables shared with the CUDA resident codec."""
+    """Independent oracle for tests and immutable codec-constant generation."""
     encoding = np.empty((64, 33), np.uint32)
     decoding = np.empty((64, 1024), np.uint32)
     for model, mean in enumerate(np.geomspace(0.002, 32, 64)):
@@ -47,7 +47,11 @@ def _runtime():
         raise RuntimeError("Runtime count-ANS needs an available Metal GPU.")
     options = metal.MTLCompileOptions.alloc().init()
     options.setFastMathEnabled_(False)
-    source = (Path(__file__).parent / "kernels" / "streamed_counts.msl").read_text()
+    root = Path(__file__).parent / "kernels"
+    source = "\n".join(
+        (root / name).read_text()
+        for name in ("streamed_counts.msl", "count_tables.msl")
+    )
     library, error = device.newLibraryWithSource_options_error_(source, options, None)
     if library is None:
         raise RuntimeError(f"Runtime count-ANS Metal compilation failed: {error}")
@@ -59,8 +63,11 @@ def _runtime():
         "detector_total",
         "normalize",
         "reduce",
+        "tables",
     ):
-        function = library.newFunctionWithName_(f"streamed_counts_{name}")
+        function = library.newFunctionWithName_(
+            "count_tables" if name == "tables" else f"streamed_counts_{name}"
+        )
         pipeline, error = device.newComputePipelineStateWithFunction_error_(
             function, None
         )
@@ -114,9 +121,20 @@ class MPSStreamedCounts:
         if self.valid_pixels.shape != self.shape[2:]:
             raise ValueError("Detector validity must match the native detector shape.")
         self._device, self._metal, self._queue, self._pipelines = _runtime()
-        encoding, decoding = _tables_numpy()
-        self._encoding = _upload(self._device, self._metal, encoding, "ANS encoding")
-        self._decoding = _upload(self._device, self._metal, decoding, "ANS decoding")
+        self._encoding = _allocate_shared(
+            self._device, self._metal, 64 * 33 * 4, "ANS encoding"
+        )
+        self._decoding = _allocate_shared(
+            self._device, self._metal, 64 * 1024 * 4, "ANS decoding"
+        )
+        command = self._queue.commandBuffer()
+        encoder = command.computeCommandEncoder()
+        encoder.setComputePipelineState_(self._pipelines["tables"])
+        encoder.setBuffer_offset_atIndex_(self._encoding, 0, 0)
+        encoder.setBuffer_offset_atIndex_(self._decoding, 0, 1)
+        self._dispatch_threads(encoder, 64)
+        encoder.endEncoding()
+        _complete(command, "count probability table initialization")
         self._valid = _upload(
             self._device,
             self._metal,

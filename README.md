@@ -274,6 +274,7 @@ The repository-root Swift package exposes reusable, UI-independent products:
 - `MetalDisplayKernels`
 - `MetalImageFFT`
 - `MetalImageRuntime`
+- `MetalScientificNumerics`
 - `MetalSSBKernels`
 
 ```bash
