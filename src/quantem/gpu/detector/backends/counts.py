@@ -13,6 +13,7 @@ def is_count_source(data):
         MPSANSResidentCounts,
         MPSPackedResidentCounts,
     )
+    from quantem.gpu.io.backends.mps._streamed import MPSStreamedCounts
 
     return isinstance(
         data,
@@ -21,6 +22,7 @@ def is_count_source(data):
             CudaPackedResidentCounts,
             MPSANSResidentCounts,
             MPSPackedResidentCounts,
+            MPSStreamedCounts,
         ),
     )
 
@@ -75,7 +77,10 @@ class CountDetectorCompute:
         )
 
     def mean_dp(self):
-        raise self._unsupported("Mean diffraction")
+        operation = getattr(self.source, "mean_dp_device", None)
+        if operation is None:
+            raise self._unsupported("Mean diffraction")
+        return operation()
 
     def center_of_mass(self, mask=None):
         raise self._unsupported("Center of mass")

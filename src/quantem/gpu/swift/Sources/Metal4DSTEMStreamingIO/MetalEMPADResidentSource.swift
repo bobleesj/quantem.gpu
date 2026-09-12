@@ -116,10 +116,12 @@ public final class MetalEMPADResidentSource {
     identity.update(data: Data(logicalSHA256.utf8))
     originalSourceIdentitySHA256 = identity.finalize().map { String(format: "%02x", $0) }.joined()
     if let background {
-      identity.update(data: Data((MetalEMPADBackground.schema + "\0" + background.identitySHA256).utf8))
+      identity.update(
+        data: Data((MetalEMPADBackground.schema + "\0" + background.identitySHA256).utf8))
     }
     sourceIdentitySHA256 = identity.finalize().map { String(format: "%02x", $0) }.joined()
-    residentBytes = chunks.reduce(0) { $0 + UInt64($1.payload.length + $1.descriptors.length) }
+    residentBytes =
+      chunks.reduce(0) { $0 + UInt64($1.payload.length + $1.descriptors.length) }
       + (background == nil ? 0 : 65536)
   }
 
@@ -150,16 +152,23 @@ public final class MetalEMPADResidentSource {
     try source.validateUnchanged()
     if let background {
       guard background.values.device.registryID == device.registryID,
-        background.source.rawURL.resolvingSymlinksInPath() != source.rawURL.resolvingSymlinksInPath(),
-        background.source.formatIdentifier == source.formatIdentifier else {
-        throw failure("Choose a different dark acquisition with the same reader format and Metal device.")
+        background.source.rawURL.resolvingSymlinksInPath()
+          != source.rawURL.resolvingSymlinksInPath(),
+        background.source.formatIdentifier == source.formatIdentifier
+      else {
+        throw failure(
+          "Choose a different dark acquisition with the same reader format and Metal device.")
       }
       try background.source.validateUnchanged()
       let sampleMetadata = NativeMicroscopeMetadata(metadata: source.microscopeMetadata)
       let darkMetadata = NativeMicroscopeMetadata(metadata: background.source.microscopeMetadata)
-      if let sample = sampleMetadata.dwellTimeMicroseconds, let dark = darkMetadata.dwellTimeMicroseconds,
-        abs(sample - dark) > max(sample, dark) * 1e-6 {
-        throw failure("Sample and dark exposure times differ. Choose a matching dark; automatic exposure scaling is not supported.")
+      if let sample = sampleMetadata.dwellTimeMicroseconds,
+        let dark = darkMetadata.dwellTimeMicroseconds,
+        abs(sample - dark) > max(sample, dark) * 1e-6
+      {
+        throw failure(
+          "Sample and dark exposure times differ. Choose a matching dark; automatic exposure scaling is not supported."
+        )
       }
     }
     let snapshot = try source.sourceSnapshot()

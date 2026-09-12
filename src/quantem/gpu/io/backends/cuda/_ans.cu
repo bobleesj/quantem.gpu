@@ -240,6 +240,20 @@ extern "C" __global__ void packed_detector_sum(
                   (u64)packed_count(words, word_offsets, widths, stream, scan));
 }
 
+extern "C" __global__ void packed_detector_total(
+    PACKED_INPUTS, u64* output, u64 scan_count,
+    u32 detector_count, u32 block_frames, u64 stream_count
+) {
+    u64 stream = (u64)blockIdx.x * blockDim.x + threadIdx.x;
+    if (stream >= stream_count) return;
+    u64 start = (stream / detector_count) * block_frames;
+    u32 count = (u32)min((u64)block_frames, scan_count - start);
+    u64 total = 0;
+    for (u32 scan = 0; scan < count; ++scan)
+        total += packed_count(words, word_offsets, widths, stream, scan);
+    atomicAdd(output + stream % detector_count, total);
+}
+
 // Dense native counts share the existing word-aligned packed layout.
 extern "C" __global__ void dense_measure_packed(
     const void* source, u32 item_bytes, u8* widths, u64* lengths,

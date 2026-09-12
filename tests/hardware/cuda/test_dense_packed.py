@@ -58,3 +58,47 @@ def test_load_all_tilts_then_remove_files(tmp_path):
     finally:
         for tilt in loaded:
             tilt.close()
+
+
+def test_cached_width_plan_skips_measurement_and_preserves_every_count(
+    tmp_path, monkeypatch
+):
+    cp = pytest.importorskip("cupy")
+    monkeypatch.setenv("QUANTEM_GPU_PACKING_PLAN_CACHE_DIR", str(tmp_path / "cache"))
+    counts = np.random.default_rng(5).integers(
+        0, 4096, (3, 91, 4, 7), dtype=np.uint16
+    )
+    path = tmp_path / "source.h5"
+    with h5py.File(path, "w") as handle:
+        handle.create_dataset("entry/data/data", data=counts)
+
+    arguments = {
+        "backend": "cuda",
+        "representation": "packed",
+        "dataset_path": "entry/data/data",
+        "scan_shape": (3, 91),
+        "dtype": "native",
+        "apply_mask": False,
+        "verbose": False,
+    }
+    with io.load(path, **arguments) as measured:
+        assert measured.metadata["source_read_passes"] == 2
+        measured_arrays = tuple(array.copy() for array in measured.data._arrays)
+    with io.load(path, **arguments) as reused:
+        assert reused.metadata["source_read_passes"] == 1
+        for actual, expected in zip(reused.data._arrays, measured_arrays, strict=True):
+            assert bool(cp.array_equal(actual, expected))
+        blocks = [
+            reused.data.decode_block_device(block)
+            for block in range(reused.data._block_count)
+        ]
+        assert bool(
+            cp.array_equal(
+                cp.concatenate(blocks).reshape(counts.shape), cp.asarray(counts)
+            )
+        )
+
+    with h5py.File(path, "r+") as handle:
+        handle["entry/data/data"][0, 0, 0, 0] += 1
+    with io.load(path, **arguments) as changed:
+        assert changed.metadata["source_read_passes"] == 2

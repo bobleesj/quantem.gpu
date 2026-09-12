@@ -1,4 +1,4 @@
-# Count representations: dense, packed, and ANS
+# Count representations: dense, packed, and encoded
 
 Dense and lossless-packed representations remain supported parts of the library.
 Dense arrays remain
@@ -7,14 +7,14 @@ compatible kernels address exact integer counts without expanding the complete
 4D array. Choosing packed storage must not silently choose another dtype,
 mask, scan selection, detector bin, or calibration.
 
-The four selectors are `"dense"`, `"packed"`, `"ans"`, and `"paired"`. They
+The four selectors are `"dense"`, `"packed"`, `"encoded"`, and `"paired"`. They
 describe in-memory layout, separately from file `format` and `compression`. There are no
 representation-name aliases. Within `packed`, the authenticated storage schema
 selects the matching decoder; different profiles do not share a decoder merely
 because they share this public name.
 See {ref}`file format and compression <io-file-format-compression>`
 for the canonical save/load workflow and its current limits.
-Prepared CUDA series also report `representation="ans"`, with the fixed
+Prepared CUDA series also report `representation="encoded"`, with the fixed
 `resident_profile` and `resident_codec="tans"` distinguishing their paired-tANS
 dense component and sparse-count layout from portable or runtime rANS sources.
 See the [reproduction guide](../developer/reproducing-resident-analysis.md) for
@@ -22,35 +22,35 @@ the entry-point and implementation map.
 
 | New count workflow | Implementation | Qualification |
 |---|---|---|
-| QuantEM/ANS file to dense counts | Explicit CPU reference | Bounded exact integer tests |
-| QuantEM/ANS file to ANS resident | Python MPS | Physical small-file integer parity |
-| QuantEM/ANS file to packed resident | Python MPS | Physical small-file integer parity |
-| QuantEM/ANS file to ANS or packed resident | CUDA | Bounded physical GPU integer parity |
-| Complete H5 to runtime ANS with spatial indexes | CUDA | Bounded real and adversarial count parity; full-66 throughput unqualified |
+| QuantEM encoded file to dense counts | Explicit CPU reference | Bounded exact integer tests |
+| QuantEM encoded file to encoded resident | Python MPS | Physical small-file integer parity |
+| QuantEM encoded file to packed resident | Python MPS | Physical small-file integer parity |
+| QuantEM encoded file to encoded or packed resident | CUDA | Bounded physical GPU integer parity |
+| Complete H5 to runtime encoded with spatial indexes | CUDA | Bounded real and adversarial count parity; full-66 throughput unqualified |
 | Complete uint16 H5 to paired-count tANS resident with polar index (`"paired"`) | CUDA | Synthetic exact sums and frames; frozen full-array digests on one native acquisition; 69-acquisition series load measured on one device |
 | Saved paired resident form to paired resident | CUDA | Byte-identical reopen on synthetic and native sources |
-| ANS arrays/files to exact DP and mask sums | Native Swift/Metal | Small physical integer tests; bounded QGANS file-load parity |
+| Encoded arrays/files to exact DP and mask sums | Native Swift/Metal | Small physical integer tests; bounded QGANS file-load parity |
 | GPU dense materialization and reverse conversions for the new profile | Pending | Not qualified |
 
 For these new profiles, `detector.prepare(data).frame(...)` and
 `masked_sum_exact(...)` consume resident counts. Mean DP, moments, and SSB are
 not qualified by those tests. Same-representation conversion returns the same
-owner; ANS-to-packed creates an independent owner without closing the source.
-Both encoded forms coexist at conversion peak, without full dense expansion.
+owner; encoded-to-packed creates an independent owner without closing the source.
+Both compact forms coexist at conversion peak, without full dense expansion.
 For measured codec tradeoffs and the distinction between payload, scratch and
 complete-process peak, see the
 [CUDA count-codec investigation](../performance/cuda-count-codecs.md). Its
 experimental kernels do not change the qualification table above.
 The following sections document the retained dense/`packed` baseline,
-not a promise that its operations automatically work on the new ANS profile.
+not a promise that its operations automatically work on every encoded profile.
 
 ## Choose the representation
 
 ```python
 from quantem.gpu import io
 
-# Step 1. Retain an original HDF5 source as ordinary dense counts.
-dense = io.load("scan_master.h5", representation="dense", dtype="native")
+# Step 1. Retain an original HDF5 source as compact encoded counts.
+encoded = io.load("scan_master.h5", representation="encoded", dtype="native")
 
 # Step 2. Load an already prepared Lossless Pack Format source directly.
 packed = io.load("scan-lossless.h5", representation="packed")
@@ -61,12 +61,12 @@ print(packed.logical_bytes, packed.resident_bytes)
 ```
 
 The default is currently **source-native**, not automatic transcoding. An
-ordinary HDF5 source follows the existing dense path; a prepared Lossless Pack
-Format source stays packed; a standalone ANS source stays ANS. ANS-to-packed is
+ordinary HDF5 source uses encoded residency on CUDA and MPS; a prepared Lossless
+Pack Format source stays packed; a standalone encoded source stays encoded. Encoded-to-packed is
 an explicit implemented conversion on Python MPS/CUDA, while unsupported
 conversions raise with a corrective next step. Explicit
-`io.load(..., backend="cuda", representation="ans", apply_mask=False)` now
-streams complete uint8/uint16 H5 acquisitions into a runtime ANS resident with
+`io.load(..., backend="cuda", representation="encoded", apply_mask=False)` now
+streams complete uint8/uint16 H5 acquisitions into a runtime encoded resident with
 exact spatial indexes. This profile has no qualified save or conversion path.
 `representation="paired"` is the second opt-in CUDA layout for complete uint16
 acquisitions; it streams whole shards with direct I/O, keeps every count, saves
@@ -89,7 +89,7 @@ producer evidence. Header-only `io.inspect` reports
 
 | Field | Meaning |
 |---|---|
-| `representation` | `dense`, `packed`, or `ans` |
+| `representation` | `dense`, `packed`, or `encoded` |
 | `source_dtype` | Original detector-count type |
 | `working_dtype` | Exact type exposed to scientific operations after the declared mask policy |
 | `source_shape` | Original scan and detector geometry |

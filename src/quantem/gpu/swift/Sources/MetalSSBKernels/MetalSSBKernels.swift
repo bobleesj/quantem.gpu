@@ -500,7 +500,8 @@ public final class MetalSSBEngine {
         throw MetalSSBError.commandQueue
       }
       for (local, logical) in indices.enumerated() {
-        blit.copy(from: brightfield,
+        blit.copy(
+          from: brightfield,
           sourceOffset: logical * Self.plane * countType.byteWidth,
           to: destination, destinationOffset: local * Self.plane * countType.byteWidth,
           size: Self.plane * countType.byteWidth)
@@ -551,9 +552,11 @@ public final class MetalSSBEngine {
       requestedCount == activeCount
       ? activeCount
       : (requestedCount / Self.batchCapacity) * Self.batchCapacity
-    cacheChunkCapacity = 512; cacheChunkShift = 9
+    cacheChunkCapacity = 512
+    cacheChunkShift = 9
     while cachedCount > cacheChunkCapacity * Self.maximumCacheChunks {
-      cacheChunkCapacity *= 2; cacheChunkShift += 1
+      cacheChunkCapacity *= 2
+      cacheChunkShift += 1
     }
     let chunks =
       cachedCount == 0
@@ -606,7 +609,8 @@ public final class MetalSSBEngine {
     ) {
       let batch = min(Self.batchCapacity, cachedCount - offset)
       guard let commands = queue.makeCommandBuffer() else { throw MetalSSBError.commandQueue }
-      try encodeBrightfield(Array(activeBrightfieldIndices[offset..<(offset + batch)]), rawBuffer, commands)
+      try encodeBrightfield(
+        Array(activeBrightfieldIndices[offset..<(offset + batch)]), rawBuffer, commands)
       encodeForwardFFT(commands, batch: batch)
 
       let cacheIndex = offset / cacheChunkCapacity
@@ -664,8 +668,10 @@ public final class MetalSSBEngine {
     clear.endEncoding()
     if cachedBrightfieldCount > 0 {
       if liveHigherOrder.isEmpty, let crossTrigBuffer {
-        encodeCrossTrig(clearCommands,
-          params: parameters(batch: activeBrightfieldIndices.count, offset: 0, aberrations: aberrations),
+        encodeCrossTrig(
+          clearCommands,
+          params: parameters(
+            batch: activeBrightfieldIndices.count, offset: 0, aberrations: aberrations),
           output: crossTrigBuffer)
       }
       // Bound the working set without changing BF order or adding partial planes.
@@ -695,7 +701,8 @@ public final class MetalSSBEngine {
         activeBrightfieldIndices.count - offset
       )
       guard let commands = queue.makeCommandBuffer() else { throw MetalSSBError.commandQueue }
-      try encodeBrightfield(Array(activeBrightfieldIndices[offset..<(offset + batch)]), rawBuffer, commands)
+      try encodeBrightfield(
+        Array(activeBrightfieldIndices[offset..<(offset + batch)]), rawBuffer, commands)
       encodeForwardFFT(commands, batch: batch)
       encodeFullAccumulator(
         commands,
@@ -767,17 +774,22 @@ public final class MetalSSBEngine {
   /// Convert an owned complex object to its scalar phase, in radians, on Metal.
   public func phase(of result: MetalSSBResult) throws -> MTLBuffer {
     if objectPhasePipeline == nil {
-      objectPhasePipeline = try Self.makePipeline(device: device,
+      objectPhasePipeline = try Self.makePipeline(
+        device: device,
         library: Self.makeLibrary(device: device), name: "ssb_object_phase")
     }
-    let output = try Self.allocate(device: device, length: Self.plane * 4,
+    let output = try Self.allocate(
+      device: device, length: Self.plane * 4,
       options: .storageModeShared, purpose: "object phase")
-    guard let command = queue.makeCommandBuffer(), let encoder = command.makeComputeCommandEncoder(),
-      let objectPhasePipeline else { throw MetalSSBError.commandQueue }
+    guard let command = queue.makeCommandBuffer(),
+      let encoder = command.makeComputeCommandEncoder(),
+      let objectPhasePipeline
+    else { throw MetalSSBError.commandQueue }
     encoder.setComputePipelineState(objectPhasePipeline)
     encoder.setBuffer(result.object, offset: 0, index: 0)
     encoder.setBuffer(output, offset: 0, index: 1)
-    encoder.dispatchThreads(MTLSize(width: Self.plane, height: 1, depth: 1),
+    encoder.dispatchThreads(
+      MTLSize(width: Self.plane, height: 1, depth: 1),
       threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
     encoder.endEncoding()
     try commitAndWait(command)
@@ -793,7 +805,9 @@ public final class MetalSSBEngine {
       throw MetalSSBError.notPrepared
     }
     guard !(aberrations.higherOrder ?? []).contains(where: { $0.magnitudeNanometers != 0 }) else {
-      throw MetalSSBError.invalidGeometry("The optimizer currently fits lower-order aberrations only. Reset higher-order terms before fitting; manual reconstruction supports orders 2 through 5.")
+      throw MetalSSBError.invalidGeometry(
+        "The optimizer currently fits lower-order aberrations only. Reset higher-order terms before fitting; manual reconstruction supports orders 2 through 5."
+      )
     }
     try setCacheColumnMajor(true)
     let rotation = rotationDegrees ?? geometry.referenceRotationDegrees
@@ -885,7 +899,8 @@ public final class MetalSSBEngine {
         activeBrightfieldIndices.count - offset
       )
       guard let commands = queue.makeCommandBuffer() else { throw MetalSSBError.commandQueue }
-      try encodeBrightfield(Array(activeBrightfieldIndices[offset..<(offset + batch)]), rawBuffer, commands)
+      try encodeBrightfield(
+        Array(activeBrightfieldIndices[offset..<(offset + batch)]), rawBuffer, commands)
       encodeForwardFFT(commands, batch: batch)
       let params = parameters(
         batch: batch,
@@ -978,21 +993,31 @@ public final class MetalSSBEngine {
     let terms = aberrations.higherOrder ?? []
     guard Set(terms.map(\.name)).count == terms.count,
       terms.allSatisfy({ term in
-        MetalSSBHigherOrder.supported.contains { $0.order == term.order && $0.symmetry == term.symmetry }
+        MetalSSBHigherOrder.supported.contains {
+          $0.order == term.order && $0.symmetry == term.symmetry
+        }
           && term.magnitudeNanometers.isFinite && term.angleRadians.isFinite
-      }) else { throw MetalSSBError.invalidGeometry("Use distinct finite polar aberrations from orders 2 through 5.") }
+      })
+    else {
+      throw MetalSSBError.invalidGeometry(
+        "Use distinct finite polar aberrations from orders 2 through 5.")
+    }
     guard terms.contains(where: { $0.magnitudeNanometers != 0 }) else {
-      liveHigherOrder = []; return
+      liveHigherOrder = []
+      return
     }
     liveHigherOrder = MetalSSBHigherOrder.supported.map { expected in
       let term = terms.first { $0.name == expected.name } ?? expected
-      return SIMD4(term.magnitudeNanometers, Float(term.order), Float(term.symmetry), term.angleRadians)
+      return SIMD4(
+        term.magnitudeNanometers, Float(term.order), Float(term.symmetry), term.angleRadians)
     }
     if higherOrderHalfPipeline == nil {
       let library = try Self.makeLibrary(device: device)
-      higherOrderHalfPipeline = try Self.makePipeline(device: device, library: library,
+      higherOrderHalfPipeline = try Self.makePipeline(
+        device: device, library: library,
         name: "ssb_gamma_accumulate_half_aberrations")
-      higherOrderFullPipeline = try Self.makePipeline(device: device, library: library,
+      higherOrderFullPipeline = try Self.makePipeline(
+        device: device, library: library,
         name: "ssb_gamma_accumulate_full_aberrations")
     }
   }
@@ -1312,7 +1337,8 @@ public final class MetalSSBEngine {
   ) {
     var mutable = params
     let encoder = commands.makeComputeCommandEncoder()!
-    encoder.setComputePipelineState(liveHigherOrder.isEmpty ? fullAccumulatePipeline : higherOrderFullPipeline!)
+    encoder.setComputePipelineState(
+      liveHigherOrder.isEmpty ? fullAccumulatePipeline : higherOrderFullPipeline!)
     if !liveHigherOrder.isEmpty {
       encoder.setBytes(liveHigherOrder, length: liveHigherOrder.count * 16, index: 7)
     }
@@ -1348,7 +1374,8 @@ public final class MetalSSBEngine {
     }
     var mutable = params
     let encoder = commands.makeComputeCommandEncoder()!
-    encoder.setComputePipelineState(liveHigherOrder.isEmpty ? halfAccumulatePipeline : higherOrderHalfPipeline!)
+    encoder.setComputePipelineState(
+      liveHigherOrder.isEmpty ? halfAccumulatePipeline : higherOrderHalfPipeline!)
     if liveHigherOrder.isEmpty {
       encoder.setBuffer(crossTrigBuffer, offset: 0, index: 17)
     }

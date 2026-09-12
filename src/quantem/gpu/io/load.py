@@ -15,6 +15,7 @@ Examples
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import pickle
 import re
@@ -990,11 +991,22 @@ def _frame_source_cache_path(
     *,
     apply_mask: bool,
 ) -> str | None:
-    """Return the optional private disk-cache path for source chunk metadata."""
-    cache_dir = os.environ.get(_FRAME_SOURCE_CACHE_ENV)
-    if not cache_dir:
+    """Return the private disk-cache path for source chunk metadata."""
+    configured = os.environ.get(_FRAME_SOURCE_CACHE_ENV)
+    if configured is None:
+        cache_dir = os.path.join(
+            os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")),
+            "quantem-gpu",
+            "frame-sources",
+        )
+    elif not configured.strip():
         return None
-    os.makedirs(cache_dir, exist_ok=True)
+    else:
+        cache_dir = os.path.expanduser(configured)
+    try:
+        os.makedirs(cache_dir, exist_ok=True)
+    except OSError:
+        return None
     payload = repr(
         (
             os.path.abspath(filepath),
@@ -1003,7 +1015,7 @@ def _frame_source_cache_path(
         )
     ).encode("utf-8")
     key = hashlib.sha256(payload).hexdigest()
-    return os.path.join(cache_dir, f"{key}.pkl")
+    return os.path.join(cache_dir, f"{key}.npz")
 
 
 def _master_frame_source_refs(
@@ -1054,27 +1066,32 @@ def _load_frame_source_disk_cache(
 ) -> tuple[list[dict[str, Any]], Any] | None:
     """Load cached frame-source metadata when every file signature still matches."""
     try:
-        with open(cache_path, "rb") as handle:
-            cached = pickle.load(handle)
+        with np.load(cache_path, allow_pickle=False) as cached:
+            metadata = json.loads(cached["metadata"].tobytes())
+            if signature is not None and metadata.get("signature") != signature:
+                return None
+            source_infos = []
+            for index, info in enumerate(metadata.get("source_infos", [])):
+                item = dict(info)
+                item["dtype"] = np.dtype(item["dtype"])
+                item["frame_shape"] = tuple(int(v) for v in item["frame_shape"])
+                chunk_infos = np.asarray(cached[f"chunks_{index}"], dtype=np.uint64)
+                if chunk_infos.ndim != 2 or chunk_infos.shape[1:] != (2,):
+                    return None
+                item["chunk_infos"] = chunk_infos
+                source_infos.append(item)
+            if not source_infos:
+                return None
+            pixel_mask = (
+                np.asarray(cached["pixel_mask"])
+                if metadata.get("pixel_mask_present")
+                else None
+            )
     except FileNotFoundError:
         return None
-    except Exception:  # noqa: BLE001 - a corrupt optional cache must not block loading
+    except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
         return None
-    if signature is not None and cached.get("signature") != signature:
-        return None
-    source_infos = []
-    for info in cached.get("source_infos", []):
-        item = dict(info)
-        item["dtype"] = np.dtype(item["dtype"])
-        item["frame_shape"] = tuple(int(v) for v in item["frame_shape"])
-        chunk_infos = np.asarray(item["chunk_infos"], dtype=np.uint64)
-        if chunk_infos.ndim != 2 or chunk_infos.shape[1:] != (2,):
-            return None
-        item["chunk_infos"] = chunk_infos
-        source_infos.append(item)
-    if not source_infos:
-        return None
-    return source_infos, cached.get("pixel_mask")
+    return source_infos, pixel_mask
 
 
 def _write_frame_source_disk_cache(
@@ -1085,25 +1102,37 @@ def _write_frame_source_disk_cache(
     pixel_mask: Any,
 ) -> None:
     """Write cached frame-source metadata atomically for future worker processes."""
-    serial_infos = []
-    for info in source_infos:
+    serial_infos: list[dict[str, Any]] = []
+    arrays: dict[str, np.ndarray] = {}
+    for index, info in enumerate(source_infos):
         item = dict(info)
         item["dtype"] = np.dtype(item["dtype"]).str
         item["frame_shape"] = [int(v) for v in item["frame_shape"]]
-        item["chunk_infos"] = np.asarray(item["chunk_infos"], dtype=np.uint64)
+        arrays[f"chunks_{index}"] = np.asarray(
+            item.pop("chunk_infos"), dtype=np.uint64
+        )
         serial_infos.append(item)
-    payload = {
+    metadata = {
         "signature": signature,
         "source_infos": serial_infos,
-        "pixel_mask": pixel_mask,
+        "pixel_mask_present": pixel_mask is not None,
     }
+    arrays["metadata"] = np.frombuffer(
+        json.dumps(metadata, sort_keys=True, separators=(",", ":")).encode(),
+        dtype=np.uint8,
+    )
+    arrays["pixel_mask"] = (
+        np.asarray(pixel_mask) if pixel_mask is not None else np.empty(0, np.uint8)
+    )
     cache_dir = os.path.dirname(cache_path)
-    fd, tmp_path = tempfile.mkstemp(prefix=".frame_source_", suffix=".tmp", dir=cache_dir)
+    fd, tmp_path = tempfile.mkstemp(
+        prefix=".frame_source_", suffix=".tmp", dir=cache_dir
+    )
     try:
         with os.fdopen(fd, "wb") as handle:
-            pickle.dump(payload, handle, protocol=pickle.HIGHEST_PROTOCOL)
+            np.savez(handle, **arrays)
         os.replace(tmp_path, cache_path)
-    except Exception:  # noqa: BLE001 - cache persistence is an optional optimization
+    except (OSError, TypeError, ValueError):
         try:
             os.unlink(tmp_path)
         except OSError:
@@ -5044,6 +5073,7 @@ def load(
     detector_bin: int = 1,
     det_bin: int | None = None,
     apply_mask: bool | None = None,
+    hot_pixel_correction: str = "median",
     auto_narrow: bool = True,
     output: str = "native",
     stack: bool = True,
@@ -5054,34 +5084,40 @@ def load(
     """Load one or more 4D-STEM sources through an accelerated backend.
 
     Fractional intensity exports support ``dtype="float16"`` and
-    ``dtype="scaled_uint16"`` on CUDA. They remain packed and print a measured
-    conversion report. Scaled codes restore their saved intensity units for
-    detector queries. ``scan_region`` and ``detector_region`` select values
-    before resident allocation; global scaling uses the complete source range.
+    ``dtype="scaled_uint16"`` on CUDA and Metal/MPS. They remain packed and
+    print a measured conversion report. Scaled codes restore their saved
+    intensity units for detector queries. ``scan_region`` and
+    ``detector_region`` select values before resident allocation; global scaling
+    uses the complete source range.
     ``io.load("display_master.h5", dtype="scaled_uint16")`` is approximate;
     preserve the original float32 file for exact scientific analysis.
 
-    Complete native HDF5 acquisitions can be loaded together into lossless
-    bit-packed CUDA storage with ``stack=False``. Packed is the default.
-    Preparation uses bounded input blocks in two passes; all packed sources remain
-    resident when this call returns. No binning, clipping or masking is applied.
+    Complete native HDF5 acquisitions can be loaded together into compact
+    encoded accelerator storage with ``stack=False``. Encoded is the default
+    on CUDA and MPS; request ``representation="packed"`` for bit-packed storage.
+    A first-seen source needs one bounded measurement pass and one packing pass;
+    a validated width-plan cache removes the measurement pass on later loads.
+    All packed sources remain resident when this call returns. No binning or
+    clipping is applied. Stored detector-mask pixels use GPU median replacement
+    by default before packing.
 
     All spatial arguments use ``(row, col)`` order. ``representation`` selects
     how the complete logical data is retained. Existing Lossless Pack Format
-    sources and ordinary HDF5 select ``"packed"`` automatically. Pass
+    sources select their saved representation. Ordinary HDF5 selects
+    ``"encoded"`` automatically on CUDA and MPS. Pass
     ``representation="dense"`` explicitly when an unpacked array is required.
 
-    Self-contained ANS files default to ``representation="ans"`` and retain
+    Self-contained encoded files default to ``representation="encoded"`` and retain
     stored native counts. ``representation="paired"`` streams complete uint16
     acquisitions (one path or a list, each returned as its own source) into
     the CUDA paired-count tANS resident layout, and a saved paired resident
     form reopens under the same name without decoding. ``representation="packed"`` requests an explicit
-    ANS-to-bitpacked GPU transcode where implemented. CPU reference expansion
+    encoded-to-bitpacked GPU transcode where implemented. CPU reference expansion
     requires ``backend="cpu", representation="dense"``. Unsupported conversions
     raise instead of silently loading HDF5, expanding densely, or using CPU.
-    ``apply_mask=None`` retains raw counts in packed/ANS storage and keeps
-    historical masking behavior for explicitly dense loads. Compute detector
-    masks explicitly on compact products.
+    ``apply_mask=None`` keeps historical masking behavior for explicitly dense
+    loads. Compact HDF5 loads use ``hot_pixel_correction``; saved compact sources
+    retain the correction already recorded in their metadata.
     File format and compression are detected from contents, independently of
     resident representation. No ``decompression=`` argument is needed.
 
@@ -5094,16 +5130,22 @@ def load(
     ``output="native"`` preserves the backend-native payload; use
     ``output="torch"`` when the consumer expects a Torch tensor.
 
+    ``hot_pixel_correction="median"`` is the default for an ordinary HDF5
+    acquisition loaded into resident packed or encoded storage. Stored detector-mask
+    pixels are replaced on the selected GPU by the integer local 3x3 median
+    before encoding. Use ``"zero"`` for zero replacement or ``"none"`` to
+    retain raw masked-pixel counts.
+
     Parameters
     ----------
     source
         One master/data HDF5 path, a folder, a list of master paths, or a
-        standalone QuantEM/ANS file.
+        standalone QuantEM encoded file.
         A completed prepared compact-series folder is recognized through its
         ``checkpoint.json``. The initial CUDA format supports the complete
         66-acquisition native shape and query-ready indexes. It preserves raw
         uint16 counts and original validity metadata without expanding data.
-        Omit representation or pass ``representation="ans"`` for this path;
+        Omit representation or pass ``representation="encoded"`` for this path;
         its recorded profile selects the paired-tANS/sparse decoder.
         Source-only archives and H5-to-compact encoding are not yet supported
         through this prepared-folder path.
@@ -5113,10 +5155,10 @@ def load(
         ``"u8"`` saturates values above 255; ``"auto"`` is an advisory
         compact-dtype choice and is not a complete-source losslessness audit.
     representation
-        ``"dense"``, ``"packed"``, or ``"ans"``. The authenticated storage
+        ``"dense"``, ``"packed"``, or ``"encoded"``. The authenticated storage
         schema selects the exact decoder within each representation.
-        When omitted, ordinary HDF5 uses lossless packed GPU storage;
-        saved compact sources retain their recorded representation. Request
+        When omitted, ordinary HDF5 uses encoded CUDA/MPS storage; saved
+        compact sources retain their recorded representation. Request
         ``representation="dense"`` explicitly for dense arrays or transformed
         selections. Unsupported
         source/representation/backend combinations raise rather than transform
@@ -5169,6 +5211,9 @@ def load(
         decoding fills its dataset slots.
     """
     from ._precision import load_precision, precision_name, saved_precision
+    from ._hot_pixels import normalize_hot_pixel_correction
+
+    hot_pixel_correction = normalize_hot_pixel_correction(hot_pixel_correction)
 
     precision = precision_name(dtype)
     precision_sources = [source] if isinstance(source, (str, os.PathLike)) else list(source)
@@ -5178,8 +5223,9 @@ def load(
             raise ValueError("Saved precision includes intensity scaling. Omit dtype to restore its units, or request float16/scaled_uint16 explicitly; raw-code casts are not supported.")
         from .backends import resolve_backend
 
-        if resolve_backend(backend) != "cuda":
-            raise NotImplementedError("Packed precision loading currently requires CUDA; Metal support is not yet qualified.")
+        precision_backend = resolve_backend(backend)
+        if precision_backend not in {"cuda", "mps"}:
+            raise NotImplementedError("Packed precision loading requires CUDA or Metal; no CPU conversion is used.")
         if representation is not None and DataRepresentation.parse(representation) is not DataRepresentation.PACKED:
             raise ValueError("Precision loading keeps encoded values packed; omit representation or use 'packed'.")
         if any(value is not None for value in (target_scan_region, scan_shift_row_col,
@@ -5193,7 +5239,8 @@ def load(
                 for region in regions:
                     loaded.append(load_precision(path, dtype=dtype, device=device,
                         scan_shape=scan_shape, dataset_path=dataset_path,
-                        scan_region=region, detector_region=detector_region, verbose=verbose))
+                        scan_region=region, detector_region=detector_region, verbose=verbose,
+                        backend=precision_backend))
         except BaseException:
             for item in loaded:
                 item.close()
@@ -5205,11 +5252,11 @@ def load(
         if prepared.is_dir() and (prepared / "checkpoint.json").is_file():
             if (
                 representation is not None
-                and DataRepresentation.parse(representation) is not DataRepresentation.ANS
+                and DataRepresentation.parse(representation) is not DataRepresentation.ENCODED
             ):
                 raise NotImplementedError(
-                    "Prepared series retain their ANS representation; use "
-                    "representation='ans' or omit it. Conversion is not implemented."
+                    "Prepared series retain their encoded representation; use "
+                    "representation='encoded' or omit it. Conversion is not implemented."
                 )
             unsupported = {
                 "dataset_path": dataset_path, "scan_shape": scan_shape,
@@ -5268,7 +5315,14 @@ def load(
         DataRepresentation.detect_source(path) is DataRepresentation.DENSE
         for path in paths
     ):
-        representation = DataRepresentation.PACKED
+        from .backends import resolve_backend
+
+        resolved_backend = resolve_backend(backend)
+        representation = (
+            DataRepresentation.ENCODED
+            if resolved_backend in {"cuda", "mps"}
+            else DataRepresentation.DENSE
+        )
     if (representation is not None
             and DataRepresentation.parse(representation) is DataRepresentation.PACKED
             and paths
@@ -5293,18 +5347,55 @@ def load(
                 "representation='dense' for selection or conversion options."
             )
         if dtype not in {None, "native"} or apply_mask:
-            raise ValueError("Packed loading preserves raw counts; use dtype='native' and apply_mask=False.")
+            raise ValueError(
+                "Packed loading preserves native count dtype; use "
+                "dtype='native' and apply_mask=False. Control stored detector-mask "
+                "pixels with hot_pixel_correction."
+            )
         if len(paths) > 1 and stack:
             raise ValueError("Use stack=False to keep each packed acquisition independently resident.")
+        from ._native_packed import _packing_plan_ready, load_h5_packed
+
         results = []
         try:
-            for path in paths:
-                from ._native_packed import load_h5_packed
+            plans_ready = len(paths) > 1 and all(
+                _packing_plan_ready(
+                    path, dataset_path, scan_shape, hot_pixel_correction
+                )
+                for path in paths
+            )
+            if plans_ready:
+                from concurrent.futures import ThreadPoolExecutor
 
-                results.append(load_h5_packed(
-                    path, scan_shape=scan_shape, dataset_path=dataset_path,
-                    device=device, verbose=verbose,
-                ))
+                with ThreadPoolExecutor(max_workers=min(3, len(paths))) as pool:
+                    futures = [
+                        pool.submit(
+                            load_h5_packed,
+                            path,
+                            scan_shape=scan_shape,
+                            dataset_path=dataset_path,
+                            device=device,
+                            verbose=verbose,
+                            hot_pixel_correction=hot_pixel_correction,
+                        )
+                        for path in paths
+                    ]
+                failure = None
+                for future in futures:
+                    try:
+                        results.append(future.result())
+                    except BaseException as error:
+                        if failure is None:
+                            failure = error
+                if failure is not None:
+                    raise failure
+            else:
+                for path in paths:
+                    results.append(load_h5_packed(
+                        path, scan_shape=scan_shape, dataset_path=dataset_path,
+                        device=device, verbose=verbose,
+                        hot_pixel_correction=hot_pixel_correction,
+                    ))
         except BaseException:
             for result in results:
                 result.close()
@@ -5332,30 +5423,31 @@ def load(
         else:
             loaded = load_h5_paired(paths, scan_shape=scan_shape, device=device, verbose=verbose)
         return loaded[0] if isinstance(source, (str, os.PathLike)) else loaded
-    if any(DataRepresentation.detect_source(path) is DataRepresentation.ANS for path in paths):
+    if any(DataRepresentation.detect_source(path) is DataRepresentation.ENCODED for path in paths):
         from ._ans_dispatch import _load_ans
 
         if len(paths) != 1:
-            raise ValueError("Load one ANS source at a time; mixed-source stacking is not implemented.")
+            raise ValueError("Load one encoded source at a time; mixed-source stacking is not implemented.")
         if any(value is not None for value in (
             dataset_path, scan_shape, scan_region, detector_region, target_scan_region,
             scan_shift_row_col, scan_indices, random_positions, drift, devices,
         )) or detector_bin != 1 or output != "native" or not stack or scan_order != "row-major":
-            raise NotImplementedError("ANS loading preserves its full declared geometry; selection/binning/reordering controls are not implemented yet.")
+            raise NotImplementedError("Encoded loading preserves its full declared geometry; selection/binning/reordering controls are not implemented yet.")
         if dtype not in {None, "native"}:
-            raise ValueError("ANS loading preserves its native integer dtype; remove dtype=.")
+            raise ValueError("Encoded loading preserves its native integer dtype; remove dtype=.")
         if source_integrity is not None:
-            raise NotImplementedError("ANS uses expected_source_sha256 for whole-file authentication; the existing chunked integrity receipt describes another format.")
+            raise NotImplementedError("Encoded loading uses expected_source_sha256 for whole-file authentication; the existing chunked integrity receipt describes another format.")
         if apply_mask:
-            raise ValueError("ANS retains original counts. Pass apply_mask=False and apply detector masks explicitly when computing products.")
+            raise ValueError("Encoded loading retains original counts. Pass apply_mask=False and apply detector masks explicitly when computing products.")
         return _load_ans(paths[0], backend=backend, representation=selected_representation,
                          expected_sha256=expected_source_sha256, device=device)
-    if selected_representation is DataRepresentation.ANS:
+    if selected_representation is DataRepresentation.ENCODED:
         from .backends import resolve_backend
         from ._streamed import load_h5_ans
 
-        if resolve_backend(backend) != "cuda":
-            raise NotImplementedError("H5-to-ANS loading requires backend='cuda'.")
+        ans_backend = resolve_backend(backend)
+        if ans_backend not in {"cuda", "mps"}:
+            raise NotImplementedError("H5-to-encoded loading requires CUDA or MPS.")
         if len(paths) != 1:
             raise ValueError("Load each complete H5 acquisition separately, then use detector.prepare(list).")
         if any(value is not None for value in (
@@ -5363,12 +5455,25 @@ def load(
             scan_indices, random_positions, drift, devices, expected_source_sha256,
             source_integrity,
         )) or detector_bin != 1 or output != "native" or not stack or scan_order != "row-major":
-            raise ValueError("H5-to-ANS preserves complete native acquisitions; remove selection, conversion and multi-device options.")
+            raise ValueError("H5-to-encoded preserves complete native acquisitions; remove selection, conversion and multi-device options.")
         if dtype not in {None, "native"} or apply_mask:
-            raise ValueError("H5-to-ANS preserves raw native counts; use dtype='native' and apply_mask=False.")
-        return load_h5_ans(paths[0], scan_shape=scan_shape, dataset_path=dataset_path,
-                           device=device, verbose=verbose)
-    # HDF5/prepared-packed loads use their declared working-mask contract. ANS files
+            raise ValueError(
+                "H5-to-encoded preserves native count dtype; use dtype='native' and "
+                "apply_mask=False. Control stored detector-mask pixels with "
+                "hot_pixel_correction."
+            )
+        if ans_backend == "mps" and device is not None:
+            raise ValueError("Metal encoded loading uses device='mps'; omit device selection.")
+        return load_h5_ans(
+            paths[0],
+            scan_shape=scan_shape,
+            dataset_path=dataset_path,
+            device=device,
+            verbose=verbose,
+            backend=ans_backend,
+            hot_pixel_correction=hot_pixel_correction,
+        )
+    # HDF5/prepared-packed loads use their declared working-mask contract. Encoded files
     # retain original counts by default; detector masks are product controls.
     if apply_mask is None:
         apply_mask = True

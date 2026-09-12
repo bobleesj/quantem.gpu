@@ -7,7 +7,7 @@ import os
 public enum Metal4DSTEMResidentRepresentation: String, Codable, Sendable {
   case dense
   case packed
-  case ans
+  case encoded
 }
 
 /// Backend-neutral scientific and memory receipt for one resident generation.
@@ -292,7 +292,8 @@ public struct Metal4DSTEMResidentCapabilities: Codable, Equatable, Sendable {
       Metal4DSTEMResidentProductCapability(
         product: product,
         availability: .residentOnDemand,
-        numerics: product == .diffractionPattern && source.background == nil ? .exactFloat32Bits : .frozenFloat32)
+        numerics: product == .diffractionPattern && source.background == nil
+          ? .exactFloat32Bits : .frozenFloat32)
     }
     return Self(
       schema: currentSchema, representation: .packed,

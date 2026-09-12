@@ -39,7 +39,7 @@ def _selected_representation(
         ):
             raise NotImplementedError(
                 "representation='paired' streams ordinary HDF5 acquisitions or reopens "
-                "saved paired resident forms; transcoding packed or ANS sources into the "
+                "saved paired resident forms; transcoding packed or encoded sources into the "
                 "paired layout is not implemented."
             )
         if selected is not DataRepresentation.PAIRED and any(item is DataRepresentation.PAIRED for item in detected):
@@ -47,14 +47,14 @@ def _selected_representation(
                 "A saved paired resident form reopens only as representation='paired'; "
                 "omit representation= or request 'paired'."
             )
-        if selected is DataRepresentation.ANS and any(item is DataRepresentation.PACKED for item in detected):
-            raise NotImplementedError("Conversion from prepared packed H5 requires an ANS source or ordinary H5; load prepared packed sources natively.")
+        if selected is DataRepresentation.ENCODED and any(item is DataRepresentation.PACKED for item in detected):
+            raise NotImplementedError("Conversion from prepared packed H5 requires an encoded source or ordinary H5; load prepared packed sources natively.")
         if selected is DataRepresentation.PACKED and any(
-            item not in {DataRepresentation.PACKED, DataRepresentation.ANS}
+            item not in {DataRepresentation.PACKED, DataRepresentation.ENCODED}
             for item in detected
         ):
             raise ValueError(
-                "representation='packed' requires a packed or ANS source. "
+                "representation='packed' requires a packed or encoded source. "
                 "The supplied source is ordinary HDF5. Prepare an immutable "
                 "lossless-packed source first or request representation='dense'."
             )

@@ -1,7 +1,7 @@
-import Darwin
 import CNativeHDF5
-import Foundation
 import CryptoKit
+import Darwin
+import Foundation
 
 /// Recorded float32 frames from EMPAD-G1, EMPAD-G2 XML/RAW, or EMD 1 datacubes.
 ///
@@ -62,19 +62,22 @@ public struct NativeEMPADSource: Sendable {
       source.pathExtension.lowercased() == "xml"
       ? source : source.deletingPathExtension().appendingPathExtension("xml")
     if source.pathExtension.lowercased() == "raw",
-      !FileManager.default.fileExists(atPath: xml.path) {
+      !FileManager.default.fileExists(atPath: xml.path)
+    {
       // Scope software names XML after the acquisition and RAW after its shape.
       // Only metadata explicitly naming this sibling may supply its layout.
       let siblings = try FileManager.default.contentsOfDirectory(
         at: source.deletingLastPathComponent(), includingPropertiesForKeys: nil)
       let matches = siblings.filter { candidate in
         guard candidate.pathExtension.lowercased() == "xml",
-          let parsed = try? EMPADXML.read(candidate) else { return false }
+          let parsed = try? EMPADXML.read(candidate)
+        else { return false }
         return parsed.filename.replacingOccurrences(of: "\\", with: "/")
           .split(separator: "/").last.map(String.init) == source.lastPathComponent
       }
       guard matches.count <= 1 else {
-        throw EMPADError("Multiple XML files name this RAW acquisition. Open the intended XML file.")
+        throw EMPADError(
+          "Multiple XML files name this RAW acquisition. Open the intended XML file.")
       }
       if let match = matches.first { xml = match }
     }
@@ -95,7 +98,8 @@ public struct NativeEMPADSource: Sendable {
       else { throw EMPADError("EMPAD XML must name a sibling .raw file.") }
       raw = xml.deletingLastPathComponent().appendingPathComponent(basename)
       if source.pathExtension.lowercased() == "raw",
-        raw.resolvingSymlinksInPath() != source.resolvingSymlinksInPath() {
+        raw.resolvingSymlinksInPath() != source.resolvingSymlinksInPath()
+      {
         throw EMPADError(
           "\(xml.lastPathComponent) names a different RAW file. Open the XML acquisition instead.")
       }
@@ -147,8 +151,10 @@ public struct NativeEMPADSource: Sendable {
       scanCalibration: metadata?.scanCalibration(rows: shape.row, columns: shape.col),
       diffractionSamplingInverseNanometers: metadata?.diffractionSampling,
       acquisitionDate: metadata?.acquisitionDate,
-      formatIdentifier: metadata?.isGeneration2 == true ? "empad-g2-float32-xml/v1" : "empad-g1-float32-xml/v1",
-      formatName: metadata?.isGeneration2 == true ? "EMPAD-G2 · XML/RAW float32" : "EMPAD-G1 · XML/RAW float32",
+      formatIdentifier: metadata?.isGeneration2 == true
+        ? "empad-g2-float32-xml/v1" : "empad-g1-float32-xml/v1",
+      formatName: metadata?.isGeneration2 == true
+        ? "EMPAD-G2 · XML/RAW float32" : "EMPAD-G1 · XML/RAW float32",
       microscopeMetadata: metadata?.microscopeMetadata ?? [:], recordBytes: recordBytes,
       rawIdentity: rawIdentity, metadataIdentity: metadataIdentity)
   }
@@ -159,18 +165,24 @@ public struct NativeEMPADSource: Sendable {
     return (try? openEMD(url, scanShape: nil)) != nil
   }
 
-  private static func openEMD(_ url: URL, scanShape: (row: Int, col: Int)?) throws -> NativeEMPADSource {
+  private static func openEMD(_ url: URL, scanShape: (row: Int, col: Int)?) throws
+    -> NativeEMPADSource
+  {
     let identity = try nativeFileIdentity(for: url)
     var info = qh5_emd_float_info()
     var error: UnsafeMutablePointer<CChar>?
     let status = url.path.withCString { qh5_inspect_emd_float($0, &info, &error) }
     defer { qh5_free_error(error) }
-    guard status == 0 else { throw EMPADError(error.map { String(cString: $0) } ?? "Unsupported EMD datacube.") }
+    guard status == 0 else {
+      throw EMPADError(error.map { String(cString: $0) } ?? "Unsupported EMD datacube.")
+    }
     guard let rows = Int(exactly: info.rows), let columns = Int(exactly: info.columns),
       Int(exactly: info.bytes) != nil, info.offset <= identity.bytes,
       info.bytes <= identity.bytes - info.offset,
-      identity == (try nativeFileIdentity(for: url)) else {
-      throw EMPADError("EMD storage is incomplete or changed during inspection. Restore the complete file.")
+      identity == (try nativeFileIdentity(for: url))
+    else {
+      throw EMPADError(
+        "EMD storage is incomplete or changed during inspection. Restore the complete file.")
     }
     if let scanShape, scanShape.row != rows || scanShape.col != columns {
       throw EMPADError("Requested scan shape disagrees with the recorded EMD dimensions.")
@@ -181,15 +193,18 @@ public struct NativeEMPADSource: Sendable {
       ("illumination_system/semi_convergence_angle", info.semiangle_mrad, "mrad"),
       ("imaging_system/camera_length", info.camera_meters, "m"),
       ("imaging_system/reciprocal_pixel_size_y", info.angle_mrad, "mrad"),
-      ("imaging_system/reciprocal_pixel_size_x", info.angle_mrad, "mrad")
+      ("imaging_system/reciprocal_pixel_size_x", info.angle_mrad, "mrad"),
     ] where value > 0 { metadata["electron_microscope/" + key] = "\(value) \(unit)" }
     metadata["sourceDataset"] = "/datacube_root/datacube/data"
     metadata["sourceAxisOrder"] = "Recorded EMD axes 0,1,2,3; no transpose"
-    let calibration: Native4DSTEMScanCalibration? = info.scan_angstrom > 0
-      ? Native4DSTEMScanCalibration(rowSamplingAngstrom: info.scan_angstrom,
-          columnSamplingAngstrom: info.scan_angstrom, origin: .sourceMetadata,
-          evidence: "EMD calibration R_pixel_size with R_pixel_units=A") : nil
-    return NativeEMPADSource(rawURL: url, metadataURL: url, scanRows: rows, scanColumns: columns,
+    let calibration: Native4DSTEMScanCalibration? =
+      info.scan_angstrom > 0
+      ? Native4DSTEMScanCalibration(
+        rowSamplingAngstrom: info.scan_angstrom,
+        columnSamplingAngstrom: info.scan_angstrom, origin: .sourceMetadata,
+        evidence: "EMD calibration R_pixel_size with R_pixel_units=A") : nil
+    return NativeEMPADSource(
+      rawURL: url, metadataURL: url, scanRows: rows, scanColumns: columns,
       scanCalibration: calibration, diffractionSamplingInverseNanometers: nil, acquisitionDate: nil,
       formatIdentifier: "emd1-contiguous-float32/v1", formatName: "EMD 1 · HDF5 float32",
       microscopeMetadata: metadata, recordBytes: 65536, dataOffset: info.offset,
@@ -361,14 +376,27 @@ private final class EMPADXML: NSObject, XMLParserDelegate {
     var result: [String: String] = [:]
     let root = "electron_microscope/"
     for (source, target, unit) in [
-      (isGeneration2 ? "iom_measurements/ColumnSourceHighVoltage" : "iom_measurements/high_voltage", "electron_source/accelerating_voltage", "V"),
-      (isGeneration2 ? "iom_measurements/ColumnOpticsGetCameraLengthNominalCameraLength" : "iom_measurements/nominal_camera_length", "imaging_system/camera_length", "m"),
-      (isGeneration2 ? "scan/exposure_time" : "exposure_time", "scan_controller/regular_scan/dwell_time", isGeneration2 ? "s" : "ms")
+      (
+        isGeneration2
+          ? "iom_measurements/ColumnSourceHighVoltage" : "iom_measurements/high_voltage",
+        "electron_source/accelerating_voltage", "V"
+      ),
+      (
+        isGeneration2
+          ? "iom_measurements/ColumnOpticsGetCameraLengthNominalCameraLength"
+          : "iom_measurements/nominal_camera_length", "imaging_system/camera_length", "m"
+      ),
+      (
+        isGeneration2 ? "scan/exposure_time" : "exposure_time",
+        "scan_controller/regular_scan/dwell_time", isGeneration2 ? "s" : "ms"
+      ),
     ] {
       if let value = positive(source) { result[root + target] = "\(value) \(unit)" }
     }
     if isGeneration2, let angle = positive("iom_measurements/calibrated_diffraction_angle") {
-      for axis in ["y", "x"] { result[root + "imaging_system/reciprocal_pixel_size_" + axis] = "\(angle) rad" }
+      for axis in ["y", "x"] {
+        result[root + "imaging_system/reciprocal_pixel_size_" + axis] = "\(angle) rad"
+      }
     }
     return result
   }
@@ -430,7 +458,8 @@ private final class EMPADXML: NSObject, XMLParserDelegate {
     guard let value else { return nil }
     let parts = value.trimmingCharacters(in: CharacterSet(charactersIn: "() "))
       .split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
-    guard parts.count == 2, let row = Int(parts[0]), let col = Int(parts[1]), row > 0, col > 0 else { return nil }
+    guard parts.count == 2, let row = Int(parts[0]), let col = Int(parts[1]), row > 0, col > 0
+    else { return nil }
     return (row, col)
   }
   private var fields: [String: String] = [:]
@@ -461,7 +490,11 @@ private final class EMPADXML: NSObject, XMLParserDelegate {
       guard result.isGeneration2, result.fields["rawfile/datatype"] == "float32",
         result.fields["scan/type"] == "scan", result.shape != nil,
         let detector = pair(result.fields["sensor/shape"]), detector.row == 128, detector.col == 128
-      else { throw EMPADError("Unsupported EMPAD-G2 record layout. Open a raster XML/RAW export declaring 128×128 float32 detector data.") }
+      else {
+        throw EMPADError(
+          "Unsupported EMPAD-G2 record layout. Open a raster XML/RAW export declaring 128×128 float32 detector data."
+        )
+      }
     }
     for keys in [("pix_y", "pix_x"), ("acquire/scan_resolution_y", "acquire/scan_resolution_x")] {
       if result.fields[keys.0] != nil || result.fields[keys.1] != nil {
@@ -531,10 +564,12 @@ private final class EMPADXML: NSObject, XMLParserDelegate {
     guard
       [
         "pix_x", "pix_y", "type", "acquire/scan_resolution_x", "acquire/scan_resolution_y",
-        "exposure_time", "scan/type", "scan/shape", "scan/exposure_time", "sensor/type", "sensor/shape",
+        "exposure_time", "scan/type", "scan/shape", "scan/exposure_time", "sensor/type",
+        "sensor/shape",
         "rawfile/filename", "rawfile/datatype",
         "iom_measurements/high_voltage", "iom_measurements/nominal_camera_length",
-        "iom_measurements/ColumnSourceHighVoltage", "iom_measurements/ColumnOpticsGetCameraLengthNominalCameraLength",
+        "iom_measurements/ColumnSourceHighVoltage",
+        "iom_measurements/ColumnOpticsGetCameraLengthNominalCameraLength",
         "iom_measurements/calibrated_diffraction_angle",
         "iom_measurements/calibrated_pixelsize",
         "iom_measurements/optics.get_full_scan_field_of_view",

@@ -28,7 +28,7 @@ def test_public_ans_file_packed_conversion_and_detector_parity(tmp_path, dtype):
     mask = np.array([[0, 1, 1], [1, 0, 1]], dtype=np.uint8)
     expected_image = (counts * mask).sum(axis=(2, 3), dtype=np.uint64)
     with io.load(path, backend="mps", expected_source_sha256=digest) as source:
-        assert source.representation.value == "ans"
+        assert source.representation.value == "encoded"
         with source.to_representation("packed") as packed:
             for loaded in (source, packed):
                 assert loaded.dtype == counts.dtype

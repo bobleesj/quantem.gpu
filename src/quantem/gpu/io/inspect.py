@@ -46,7 +46,7 @@ def inspect(
     Parameters
     ----------
     filepath
-        HDF5/ANS file or complete prepared-series folder.
+        HDF5/encoded file or complete prepared-series folder.
     scan_shape
         Optional expected ``(scan_row, scan_col)`` shape.
 
@@ -69,7 +69,7 @@ def inspect(
         shape = tuple(layout["shape"])
         if len(shape) != 5 or any(type(size) is not int or size < 1 for size in shape):
             raise ValueError("Prepared series must declare five positive dimensions.")
-        metadata = dict(layout, representation="ans", series_shape=shape[:1],
+        metadata = dict(layout, representation="encoded", series_shape=shape[:1],
                         source_kind="prepared", acquisitions=document.get("original_acquisitions", []))
         matches = scan_shape is None or tuple(scan_shape) == shape[1:3]
         ready = matches and document.get("complete") is True and layout.get("complete") is True
@@ -82,7 +82,7 @@ def inspect(
                           shape[1:3], shape[3:], np.dtype(layout["source_dtype"]).name,
                           {"path": str(path.resolve())})
     representation = DataRepresentation.detect_source(filepath)
-    if representation is DataRepresentation.ANS:
+    if representation is DataRepresentation.ENCODED:
         return _inspect_ans(path, scan_shape)
     if representation is DataRepresentation.PAIRED:
         return _inspect_paired(path, scan_shape)
@@ -164,19 +164,19 @@ def _inspect_ans(path: Path, scan_shape) -> Inspection:
     with path.open("rb") as stream:
         header = stream.read(_HEADER.size)
         if len(header) != _HEADER.size:
-            raise ValueError("Truncated ANS header; choose a complete encoded file.")
+            raise ValueError("Truncated encoded header; choose a complete encoded file.")
         magic, length, start = _HEADER.unpack(header)
         if magic != MAGIC or start != _DATA_START or not 0 < length <= start - _HEADER.size:
-            raise ValueError("Invalid ANS header; choose a supported encoded file.")
+            raise ValueError("Invalid encoded header; choose a supported encoded file.")
         document = json.loads(stream.read(length), object_pairs_hook=_no_duplicate_keys,
                               parse_constant=_reject_constant)
     shape = document.get("shape", ())
     if (len(shape) != 4 or any(type(size) is not int or size < 1 for size in shape)
             or document.get("dtype") not in ("uint8", "uint16")):
-        raise ValueError("ANS header must declare four positive dimensions and native integer counts.")
+        raise ValueError("Encoded header must declare four positive dimensions and native integer counts.")
     shape = tuple(shape)
     matches = scan_shape is None or tuple(scan_shape) == shape[:2]
-    metadata = dict(document.get("metadata", {}), representation="ans", working_shape=shape,
+    metadata = dict(document.get("metadata", {}), representation="encoded", working_shape=shape,
                     scan_shape=shape[:2], detector_shape=shape[2:], dtype=document["dtype"],
                     encoded_bytes=sum(section["count"] * np.dtype(section["dtype"]).itemsize
                                       for section in document["sections"].values()))
@@ -185,7 +185,7 @@ def _inspect_ans(path: Path, scan_shape) -> Inspection:
     if len(excluded):
         mask.reshape(-1)[np.asarray(excluded, dtype=np.intp)] = 1
     return Inspection(matches, "header_complete_payload_unverified" if matches else "scan_shape_mismatch",
-                      "Load to validate all encoded streams.", metadata, mask, "ans",
+                      "Load to validate all encoded streams.", metadata, mask, "encoded",
                       shape[0] * shape[1],
                       int(np.prod(scan_shape)) if scan_shape is not None else shape[0] * shape[1],
                       shape[:2], shape[2:], document["dtype"],

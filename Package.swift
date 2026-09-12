@@ -8,6 +8,7 @@ let package = Package(
     .library(name: "MetalDisplayKernels", targets: ["MetalDisplayKernels"]),
     .library(name: "Metal4DSTEMKernels", targets: ["Metal4DSTEMKernels"]),
     .library(name: "MetalImageFFT", targets: ["MetalImageFFT"]),
+    .library(name: "MetalScientificNumerics", targets: ["MetalScientificNumerics"]),
     .library(name: "MetalImageRuntime", targets: ["MetalImageRuntime"]),
     .library(name: "MetalSSBKernels", targets: ["MetalSSBKernels"]),
     .library(name: "Native4DSTEMIO", targets: ["Native4DSTEMIO"]),
@@ -93,8 +94,27 @@ let package = Package(
         "CMetal4DSTEMInteractions",
         "Metal4DSTEMKernels",
         "Native4DSTEMIO",
+        "MetalCountResources",
       ],
       path: "src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO"
+    ),
+    .target(
+      name: "MetalCountResources",
+      path: "src/quantem/gpu/io/backends/mps",
+      exclude: [
+        "__pycache__", "__init__.py", "_ans.py", "_streamed.py",
+        "compact_v3.py", "consumer.py", "decoder.py", "dense.py", "hot_pixels.py",
+        "packed.py", "precision.py", "qh5.py", "resident_dpc.py", "series.py",
+      ],
+      sources: ["MetalCountResources.swift"],
+      resources: [.copy("kernels")]
+    ),
+    .target(
+      name: "MetalScientificNumerics",
+      dependencies: ["Metal4DSTEMStreamingIO", "MetalCountResources"],
+      path: "src/quantem/gpu/swift/Sources/MetalScientificNumerics",
+      resources: [.copy("Resources")],
+      linkerSettings: [.linkedFramework("MetalPerformanceShadersGraph")]
     ),
     .target(
       name: "CMetal4DSTEMInteractions",

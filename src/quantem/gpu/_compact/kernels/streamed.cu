@@ -169,6 +169,43 @@ extern "C" __global__ void sc_decode(
     if (!reader.finished()) atomicOr(errors,1u);
 }
 
+template<typename Output>
+__device__ void sc_decode_range(
+    const u8* payload, const u32* offsets, const u8* models,
+    const u32* decoding, Output* raw, u32* errors, u32 scans, u32 pixels,
+    u32 interval, u32 first, u32 count, u32 first_stream, u32 stop_stream
+) {
+    u32 stream=first_stream+blockIdx.x*blockDim.x+threadIdx.x;
+    if (stream>=stop_stream) return;
+    u32 block_first=(stream/pixels)*interval,pixel=stream%pixels;
+    u32 block_count=min(interval,scans-block_first),stop=first+count;
+    StreamReader reader(payload,offsets,models,decoding,stream);
+    for (u32 i=0;i<block_count;++i) {
+        u32 value=reader.next(),scan=block_first+i;
+        if (scan>=first && scan<stop)
+            raw[u64(scan-first)*pixels+pixel]=Output(value);
+    }
+    if (!reader.finished()) atomicOr(errors,1u);
+}
+
+extern "C" __global__ void sc_decode_range_u8(
+    const u8* payload, const u32* offsets, const u8* models,
+    const u32* decoding, u8* raw, u32* errors, u32 scans, u32 pixels,
+    u32 interval, u32 first, u32 count, u32 first_stream, u32 stop_stream
+) {
+    sc_decode_range(payload,offsets,models,decoding,raw,errors,scans,pixels,
+                    interval,first,count,first_stream,stop_stream);
+}
+
+extern "C" __global__ void sc_decode_range_u16(
+    const u8* payload, const u32* offsets, const u8* models,
+    const u32* decoding, u16* raw, u32* errors, u32 scans, u32 pixels,
+    u32 interval, u32 first, u32 count, u32 first_stream, u32 stop_stream
+) {
+    sc_decode_range(payload,offsets,models,decoding,raw,errors,scans,pixels,
+                    interval,first,count,first_stream,stop_stream);
+}
+
 extern "C" __global__ void sc_fields(
     const void* raw, int itemsize, const u8* valid, u32* fields,
     u32 scans, u32 rows, u32 cols, u32 field_count

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import h5py
@@ -149,7 +150,27 @@ def get_metadata(filepath: str) -> dict:
             if data_ds.ndim >= 3:
                 metadata.setdefault("n_frames", int(np.prod(data_ds.shape[:-2])))
     _derive_fields(metadata)
+    _decode_quantem_records(metadata)
     return metadata
+
+
+def _decode_quantem_records(metadata: dict) -> None:
+    """Expose versioned QuantEM JSON attributes under stable public keys."""
+    for attribute, key in (
+        ("quantem_maped_merge_v1", "maped_merge"),
+        ("quantem_maped_summary_v1", "maped_summary"),
+    ):
+        value = metadata.get(attribute)
+        if isinstance(value, bytes):
+            value = value.decode()
+        if not isinstance(value, str):
+            continue
+        try:
+            record = json.loads(value)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(record, dict) and record.get("version") == 1:
+            metadata[key] = record
 
 
 def _derive_fields(metadata: dict) -> None:

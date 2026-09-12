@@ -45,7 +45,7 @@ def test_cuda_saved_counts_patterns_masks_and_packed_roundtrip(tmp_path, dtype):
     counts = _counts(dtype)
     path = write_ans_reference(tmp_path / "counts.ans", counts, block_frames=128)
     with cp.cuda.Device(0):
-        source = load(path, backend="cuda", representation="ans", device=0).data
+        source = load(path, backend="cuda", representation="encoded", device=0).data
         try:
             blocks = [source.decode_block_device(i).get() for i in range(3)]
             np.testing.assert_array_equal(

@@ -26,7 +26,16 @@ def kernels(device: int):
             + Path(__file__).with_name("kernels").joinpath("streamed.cu").read_text(),
             options=("--std=c++17",),
         )
-        names = ["encode", "compact", "decode", "fields", "field_sizes", "pack_fields"]
+        names = [
+            "encode",
+            "compact",
+            "decode",
+            "decode_range_u8",
+            "decode_range_u16",
+            "fields",
+            "field_sizes",
+            "pack_fields",
+        ]
         names += [f"{op}_u{bits}" for op in ("index", "residual") for bits in (32, 64)]
         names += ["frame_u8", "frame_u16"]
         return {name: module.get_function(f"sc_{name}") for name in names}
@@ -313,6 +322,98 @@ class StreamedCounts:
             if int(errors.get()[0]):
                 raise ValueError("An encoded count stream failed reconstruction.")
             return raw.astype(self.dtype, copy=False)
+
+    def decode_scan_range_device(self, first: int, stop: int, *, errors=None):
+        """Decode a contiguous scan range without expanding the acquisition."""
+        import cupy as cp
+
+        if self.is_released:
+            raise ValueError("The resident source has been released.")
+        scan_count = math.prod(self.shape[:2])
+        first, stop = int(first), int(stop)
+        if not 0 <= first < stop <= scan_count:
+            raise ValueError(
+                f"Scan range must be nonempty and inside [0, {scan_count}); "
+                f"got ({first}, {stop})."
+            )
+        owns_errors = errors is None
+        with cp.cuda.Device(self.device):
+            if errors is None:
+                errors = cp.zeros(1, cp.uint32)
+            elif (
+                not isinstance(errors, cp.ndarray)
+                or errors.shape != (1,)
+                or errors.dtype != cp.uint32
+                or errors.device.id != self.device
+            ):
+                raise ValueError(
+                    "errors must be one uint32 value on the source CUDA device."
+                )
+            pixels = math.prod(self.shape[2:])
+            output = cp.empty((stop - first, *self.shape[2:]), self.dtype)
+            for chunk in self.chunks:
+                overlap_first = max(first, chunk.first)
+                overlap_stop = min(stop, chunk.first + chunk.scans)
+                if overlap_first >= overlap_stop:
+                    continue
+                local_first = overlap_first - chunk.first
+                local_stop = overlap_stop - chunk.first
+                first_stream = (local_first // self.interval) * pixels
+                stop_stream = math.ceil(local_stop / self.interval) * pixels
+                result = output[overlap_first - first : overlap_stop - first]
+                self.kernels[f"decode_range_u{self.dtype.itemsize * 8}"](
+                    ((stop_stream - first_stream + 127) // 128,),
+                    (128,),
+                    (
+                        *chunk.arrays[:3],
+                        self.decoding,
+                        result,
+                        errors,
+                        np.uint32(chunk.scans),
+                        np.uint32(pixels),
+                        np.uint32(self.interval),
+                        np.uint32(local_first),
+                        np.uint32(local_stop - local_first),
+                        np.uint32(first_stream),
+                        np.uint32(stop_stream),
+                    ),
+                )
+            if owns_errors and int(errors.get()[0]):
+                raise ValueError("An encoded count stream failed reconstruction.")
+            return output
+
+    def detector_total_device(self):
+        """Return the exact valid-pixel detector sum without dense expansion."""
+        import cupy as cp
+
+        if self.is_released:
+            raise ValueError("The resident source has been released.")
+        with cp.cuda.Device(self.device):
+            total = cp.zeros(self.shape[2:], cp.uint64)
+            errors = cp.zeros(1, cp.uint32)
+            valid = self.valid.astype(self.dtype, copy=False)
+            if self.native_source is None:
+                blocks = (
+                    self.decode_scan_range_device(
+                        chunk.first,
+                        chunk.first + chunk.scans,
+                        errors=errors,
+                    )
+                    for chunk in self.chunks
+                )
+            else:
+                blocks = (
+                    self.native_source.decode_block_device(index)
+                    for index in range(self.native_source._block_count)
+                )
+            for decoded in blocks:
+                decoded *= valid[None]
+                total += cp.sum(decoded, axis=0, dtype=cp.uint64)
+                del decoded
+            cp.cuda.get_current_stream().synchronize()
+            if int(errors.get()[0]):
+                raise ValueError("An encoded count stream failed reconstruction.")
+            return total
 
     def release(self) -> None:
         """Drop this owner's references without invalidating active borrowed sessions."""

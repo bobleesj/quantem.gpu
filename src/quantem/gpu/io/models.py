@@ -188,6 +188,27 @@ class FourDSTEMData(NamedTuple):
         """
         _release_owned_storage(self.data)
 
+    def read(
+        self,
+        *,
+        scan_region: tuple[int, int, int, int] | None = None,
+        detector_region: tuple[int, int, int, int] | None = None,
+    ):
+        """Read one bounded logical region as a Torch tensor on the source GPU.
+
+        Regions use ``(row_start, row_stop, column_start, column_stop)`` with
+        exclusive stops. The resident representation, decoding, and transfer
+        scheduling remain automatic. A complete read is allowed only when its
+        dense tensor fits the accelerator's current working memory.
+        """
+        from ._read import read
+
+        return read(
+            self,
+            scan_region=scan_region,
+            detector_region=detector_region,
+        )
+
     def to_representation(self, representation: DataRepresentation | str) -> FourDSTEMData:
         """Return an exact independently owned conversion when supported.
 

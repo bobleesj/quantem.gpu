@@ -2,6 +2,7 @@
 
 import os
 
+import numpy as np
 import pytest
 
 cp = pytest.importorskip("cupy")
@@ -12,6 +13,104 @@ pytestmark = pytest.mark.skipif(
 
 from quantem.gpu import io
 from quantem.gpu.detector import prepare
+from tests.parity.precision_fixture import (
+    encode_precision_reference,
+    make_precision_fixture,
+    precision_error_reference,
+    restore_precision_reference,
+)
+
+
+@pytest.mark.parametrize("dtype", ["float16", "scaled_uint16"])
+def test_cuda_precision_matches_numpy_oracle(tmp_path, dtype):
+    values = cp.linspace(-37, 91, 4 * 4 * 12 * 12, dtype=cp.float32).reshape(
+        4, 4, 12, 12
+    )
+    source = tmp_path / "oracle_master.h5"
+    io.save(source, values, dtype="float32", verbose=False)
+    loaded = io.load(source, dtype=dtype, verbose=False)
+    report = loaded.metadata["precision"]
+    original = cp.asnumpy(values)
+    if dtype == "float16":
+        expected = original.astype(np.float16).astype(np.float32)
+        tolerance = 0.0
+    else:
+        expected = (
+            np.rint((original - report["offset"]) / report["scale"])
+            .clip(0, 65535)
+            * report["scale"]
+            + report["offset"]
+        ).astype(np.float32)
+        tolerance = report["scale"] * 1.1
+    observed = cp.asnumpy(prepare(loaded).frame(0, output="native"))
+    np.testing.assert_allclose(observed, expected[0, 0], rtol=0, atol=tolerance)
+    loaded.close()
+
+
+@pytest.mark.parametrize("dtype", ["float16", "scaled_uint16"])
+def test_cuda_precision_products_match_shared_numpy_oracle(tmp_path, dtype):
+    """Frames and reductions obey the same public contract as Metal/MPS."""
+
+    original = make_precision_fixture()
+    source = tmp_path / "shared_oracle.npy"
+    np.save(source, original)
+    with io.load(source, dtype=dtype, backend="cuda", verbose=False) as loaded:
+        report = loaded.metadata["precision"]
+        assert report["intensity_min"] == float(original.min())
+        assert report["intensity_max"] == float(original.max())
+        assert report["values"] == original.size
+        assert report["range_scope"] == "complete source"
+        if dtype == "scaled_uint16":
+            assert report["scale"] == (
+                float(original.max()) - float(original.min())
+            ) / 65535
+        blocks = []
+        for block in loaded.data.encoded_blocks():
+            blocks.append(block.get())
+        encoded = np.concatenate(blocks).reshape(original.shape)
+        np.testing.assert_array_equal(
+            encoded, encode_precision_reference(original, report)
+        )
+        expected = restore_precision_reference(original, report)
+        errors = precision_error_reference(original, expected)
+        session = prepare(loaded)
+
+        assert loaded.data.numel() == original.size
+        np.testing.assert_array_equal(
+            cp.asnumpy(loaded.data[17]), expected.reshape(-1, 7, 9)[17]
+        )
+        np.testing.assert_array_equal(
+            cp.asnumpy(loaded.data[2, 5]), expected[2, 5]
+        )
+
+        for index in (0, 17, original.shape[0] * original.shape[1] - 1):
+            np.testing.assert_array_equal(
+                session.frame(index), expected.reshape(-1, 7, 9)[index]
+            )
+
+        indices = [17, 0, 17, 29, 6]
+        np.testing.assert_allclose(
+            session.reduce_frames(indices, "mean"),
+            expected.reshape(-1, 7, 9)[indices].mean(axis=0),
+            rtol=3e-6,
+            atol=2e-5,
+        )
+        np.testing.assert_allclose(
+            session.mean_dp(), expected.mean(axis=(0, 1)), rtol=3e-6, atol=2e-5
+        )
+        mask = ((np.indices((7, 9)).sum(axis=0) % 3) == 0).astype(np.float32)
+        np.testing.assert_allclose(
+            session.masked_sum(mask),
+            (expected * mask).sum(axis=(2, 3)),
+            rtol=3e-6,
+            atol=2e-4,
+        )
+        assert report["rmse"] == pytest.approx(errors["rmse"], rel=3e-6, abs=1e-8)
+        assert report["max_abs_error"] == pytest.approx(
+            errors["max_abs_error"], rel=3e-6, abs=1e-8
+        )
+        for field in ("positive_to_zero", "changed", "overflow"):
+            assert report[field] == errors[field]
 
 
 @pytest.mark.parametrize("dtype", ["float16", "scaled_uint16", "f16"])
@@ -144,7 +243,7 @@ def test_saved_region_retains_geometry_and_prevents_raw_code_casts(tmp_path):
     reopened.close()
 
 
-def test_maped_tensor_exports_and_wide_scaled_intensities(tmp_path):
+def test_torch_tensor_exports_and_wide_scaled_intensities(tmp_path):
     import torch
 
     values = (
@@ -158,6 +257,48 @@ def test_maped_tensor_exports_and_wide_scaled_intensities(tmp_path):
         result = prepare(loaded).frame(0, output="native")
         assert bool(cp.all(cp.isfinite(result)))
         assert loaded.metadata["precision"]["overflow"] == 0
+
+
+def test_rereadable_torch_blocks_use_public_precision_save(tmp_path):
+    import torch
+
+    values = cp.linspace(-12, 44, 3 * 4 * 8 * 8, dtype=cp.float32).reshape(
+        3, 4, 8, 8
+    )
+
+    class Blocks:
+        shape = values.shape
+        dtype = np.dtype("float32")
+        _device_id = 0
+
+        def __init__(self):
+            self.calls = 0
+
+        def blocks(self):
+            self.calls += 1
+            flat = values.reshape(-1, 8, 8)
+            yield torch.from_dlpack(flat[:5])
+            yield torch.from_dlpack(flat[5:])
+
+    source = Blocks()
+    path = tmp_path / "blocks_master.h5"
+    io.save(
+        path,
+        source,
+        dtype="scaled_uint16",
+        backend="cuda",
+        verbose=False,
+    )
+    assert source.calls == 2
+    with io.load(path, verbose=False) as loaded:
+        report = loaded.metadata["precision"]
+        observed = loaded.read(scan_region=(1, 3, 1, 4)).cpu().numpy()
+        np.testing.assert_allclose(
+            observed,
+            values.get()[1:3, 1:4],
+            rtol=0,
+            atol=report["scale"],
+        )
 
 
 def test_changing_saved_precision_reports_restored_source_units(tmp_path):

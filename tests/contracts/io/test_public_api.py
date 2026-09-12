@@ -18,6 +18,8 @@ def test_io_exports_only_scientist_workflows() -> None:
     assert all(callable(getattr(gpu.io, name)) for name in gpu.io.__all__)
     assert not hasattr(gpu, "load")
     assert not hasattr(gpu, "save")
+    assert "maped" not in gpu.__all__
+    assert find_spec("quantem.gpu.maped") is None
 
     load_parameters = python_inspect.signature(gpu.io.load).parameters
     assert "dtype" in load_parameters

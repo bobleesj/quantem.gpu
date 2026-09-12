@@ -1,0 +1,76 @@
+#include <metal_stdlib>
+using namespace metal;
+
+// GPU exclusive scan. First scan each 256-entry group, then its group totals,
+// then add each group prefix. No payload-dependent prefix is computed on host.
+kernel void count_prefix(device const uint *sizes [[buffer(0)]],
+    device uint *offsets [[buffer(1)]], device uint *totals [[buffer(2)]],
+    constant uint &count [[buffer(3)]], uint i [[thread_position_in_grid]],
+    uint lane [[thread_index_in_threadgroup]], uint group [[threadgroup_position_in_grid]]) {
+    threadgroup uint values[256];
+    uint value = i < count ? sizes[i] : 0;
+    values[lane] = value;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint delta = 1; delta < 256; delta *= 2) {
+        uint add = lane >= delta ? values[lane - delta] : 0;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        values[lane] += add;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (i < count) offsets[i] = values[lane] - value;
+    if (lane == 255) totals[group] = values[lane];
+}
+kernel void count_prefix_totals(device uint *totals [[buffer(0)]],
+    device uint *offsets [[buffer(1)]], constant uint2 &p [[buffer(2)]],
+    uint i [[thread_position_in_grid]]) {
+    if (i) return;
+    uint total = 0;
+    for (uint group = 0; group < p.x; ++group) {
+        uint value = totals[group]; totals[group] = total; total += value;
+    }
+    offsets[p.y] = total;
+}
+kernel void count_prefix_add(device uint *offsets [[buffer(0)]],
+    device const uint *totals [[buffer(1)]], constant uint &count [[buffer(2)]],
+    uint i [[thread_position_in_grid]]) {
+    if (i < count) offsets[i] += totals[i / 256];
+}
+kernel void count_summary(device const uchar *raw [[buffer(0)]],
+    device ulong *detector [[buffer(1)]], device float *bright [[buffer(2)]],
+    constant ulong4 &p [[buffer(3)]], uint index [[thread_position_in_grid]]) {
+    if (index < p.y) {
+        ulong sum = 0;
+        for (uint scan = 0; scan < p.x; ++scan) {
+            ulong at = ulong(scan) * p.y + index;
+            sum += p.z == 1 ? raw[at] : reinterpret_cast<device const ushort *>(raw)[at];
+        }
+        detector[index] += sum;
+    }
+}
+kernel void count_bright(device const uchar *raw [[buffer(0)]],
+    device float *bright [[buffer(1)]], constant ulong4 &p [[buffer(2)]],
+    uint scan [[threadgroup_position_in_grid]], uint lane [[thread_index_in_threadgroup]]) {
+    threadgroup ulong sums[128];
+    ulong sum = 0;
+    for (uint pixel = lane; pixel < p.y; pixel += 128) {
+        ulong at = ulong(scan) * p.y + pixel;
+        sum += p.z == 1 ? raw[at] : reinterpret_cast<device const ushort *>(raw)[at];
+    }
+    sums[lane] = sum;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint step = 64; step; step /= 2) {
+        if (lane < step) sums[lane] += sums[lane + step];
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (!lane) bright[p.w + scan] = float(sums[0]) / float(p.y);
+}
+kernel void count_normalize(device const ulong *sums [[buffer(0)]],
+    device float *means [[buffer(1)]], constant uint2 &p [[buffer(2)]],
+    uint i [[thread_position_in_grid]]) {
+    if (i < p.x) means[i] = float(sums[i]) / float(p.y);
+}
+kernel void count_verify(device const uchar *raw [[buffer(0)]],
+    device const uchar *restored [[buffer(1)]], device atomic_uint *error [[buffer(2)]],
+    constant uint &bytes [[buffer(3)]], uint i [[thread_position_in_grid]]) {
+    if (i < bytes && raw[i] != restored[i]) atomic_fetch_or_explicit(error, 2u, memory_order_relaxed);
+}

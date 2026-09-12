@@ -49,28 +49,31 @@
           "gates": [
             "docs/maintainer/migration.md"
           ],
-          "qualification": "CUDA save/load, selections and detector queries; Metal and browser-only precision formats are not implemented."
+          "qualification": "Accelerator implementations are required; CPU scientific conversion is intentionally unsupported."
         },
         "cuda": {
           "level": "required-hardware",
           "gates": [
-            "tests/hardware/cuda/test_precision.py"
+            "tests/hardware/cuda/test_precision.py",
+            "tests/parity/precision_fixture.py"
           ],
-          "qualification": "CUDA save/load, selections and detector queries; Metal and browser-only precision formats are not implemented."
+          "qualification": "CUDA save/load, exact restored frames, repeated and out-of-order selections, mean diffraction, binary detector sums, and persisted error reports against the shared independent NumPy oracle."
         },
         "mps": {
-          "level": "not-implemented",
+          "level": "required-hardware",
           "gates": [
-            "docs/maintainer/migration.md"
+            "tests/hardware/mps/test_precision.py",
+            "tests/parity/precision_fixture.py"
           ],
-          "qualification": "CUDA save/load, selections and detector queries; Metal and browser-only precision formats are not implemented."
+          "qualification": "Python Metal/MPS save/load, exact restored frames, repeated and out-of-order selections, mean diffraction, binary detector sums, and persisted error reports against the shared independent NumPy oracle; numerical reports use float32 Metal reductions."
         },
         "swift-metal": {
-          "level": "not-implemented",
+          "level": "partial-hardware",
           "gates": [
-            "docs/maintainer/migration.md"
+            "docs/api/native_resident.md",
+            "tests/hardware/mps/test_precision.py"
           ],
-          "qualification": "CUDA save/load, selections and detector queries; Metal and browser-only precision formats are not implemented."
+          "qualification": "Native scaled uint16 conversion, exact packed reads, GPU error accounting and standard HDF5 save/reopen are implemented and checked in the QuantEM native MAPED consumer on Phil. Float16 native export, arbitrary detector geometry, detector-query coverage and minimum-memory release signoff remain incomplete."
         },
         "webgpu": {
           "level": "not-implemented",

@@ -99,7 +99,7 @@ def test_representation_values_do_not_encode_dtype() -> None:
     assert {item.value for item in io.DataRepresentation} == {
         "dense",
         "packed",
-        "ans",
+        "encoded",
         "paired",
     }
 
@@ -113,11 +113,13 @@ def test_removed_representation_names_have_no_aliases() -> None:
     assert not hasattr(consumer, "MPSResidentRepresentation")
     with pytest.raises(ValueError, match="representation must be"):
         io.DataRepresentation.parse("lossless_packed")
+    with pytest.raises(ValueError, match="representation must be"):
+        io.DataRepresentation.parse("ans")
 
 
 def test_representation_wire_values_match_swift_and_receipt_schema() -> None:
     """Python, Swift, and JSON receipts use one backend-neutral vocabulary."""
-    expected = {"dense", "packed", "ans"}
+    expected = {"dense", "packed", "encoded"}
     schema = json.loads(
         Path("src/quantem/gpu/io/resident_contract.schema.json").read_text()
     )
@@ -129,7 +131,7 @@ def test_representation_wire_values_match_swift_and_receipt_schema() -> None:
     assert set(schema["properties"]["representation"]["enum"]) == expected
     assert 'case dense' in swift
     assert 'case packed' in swift
-    assert 'case ans' in swift
+    assert 'case encoded' in swift
 
 
 def test_detector_bin_is_the_canonical_public_spelling(monkeypatch) -> None:
@@ -208,7 +210,12 @@ def test_packed_scan_order_is_not_silently_ignored(tmp_path) -> None:
 
 def test_dense_hash_request_is_not_silently_ignored(tmp_path) -> None:
     source = tmp_path / "ordinary.h5"
-    source.write_bytes(b"\x89HDF\r\n\x1a\n")
+    import h5py
+
+    with h5py.File(source, "w") as handle:
+        handle.require_group("entry/data")["data_000001"] = h5py.ExternalLink(
+            "counts.h5", "/entry/data/data"
+        )
     with pytest.raises(ValueError, match="external shards"):
         io.load(source, representation="dense", expected_source_sha256="0" * 64)
 

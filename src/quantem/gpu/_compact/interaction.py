@@ -273,6 +273,19 @@ class StreamedSeriesCompute(CudaSeriesCompute):
         self._publish(begin, end, slot, started, info)
         return dict(self.last)
 
+    def mean_dp(self):
+        """Return one valid-pixel mean diffraction pattern per acquisition."""
+        import cupy as cp
+
+        with self.lock, cp.cuda.Device(self.device):
+            result = cp.empty(
+                (len(self.index_owners), *self.det_shape), cp.float32
+            )
+            for index, source in enumerate(self.index_owners):
+                total = source.detector_total_device()
+                result[index] = (total / self.n_frames).astype(cp.float32)
+            return result[0] if not self.series_shape else result
+
     def masked_sum_native(self, mask, *, out=None, wait=True, block_stride=1):
         import cupy as cp
 

@@ -98,7 +98,9 @@ _DTYPE_ALIASES = {
     "f16": np.float16,
     "float16": np.float16,
 }
-_write_queue = queue.Queue()
+# Backpressure bounds completed byte batches without stopping the GPU whenever
+# an arbitrary batch count is reached. The writer drains while compute proceeds.
+_write_queue = queue.Queue(maxsize=2)
 _write_thread = None
 _write_thread_lock = threading.Lock()
 _write_error = None
@@ -716,144 +718,7 @@ def _native_mps_u16_save_pipelines():
     import Metal
     from .backends.mps import dense as mps_backend
 
-    source = r"""
-        #include <metal_stdlib>
-        using namespace metal;
-
-        kernel void bshuf_u16_save(
-            const device ushort* src [[buffer(0)]],
-            device uchar* out [[buffer(1)]],
-            constant uint& src_frame_offset [[buffer(2)]],
-            constant uint& n_frames [[buffer(3)]],
-            constant uint& frame_bytes [[buffer(4)]],
-            uint gid [[thread_position_in_grid]]
-        ) {
-            uint total = n_frames * frame_bytes;
-            if (gid >= total) return;
-
-            uint byte_in_frame = gid % frame_bytes;
-            uint frame = gid / frame_bytes;
-            uint block = byte_in_frame / 8192u;
-            uint block_start = block * 8192u;
-            uint block_bytes = frame_bytes - block_start;
-            if (block_bytes > 8192u) block_bytes = 8192u;
-
-            uint byte_in_block = byte_in_frame - block_start;
-            uint bitplane_bytes = block_bytes / 16u;
-            uint bit = byte_in_block / bitplane_bytes;
-            uint byte_in_plane = byte_in_block - bit * bitplane_bytes;
-            uint input_base = block_start / 2u + byte_in_plane * 8u;
-            ulong frame_base = ulong(src_frame_offset + frame) * ulong(frame_bytes / 2u);
-
-            uchar packed = 0;
-            for (uint k = 0; k < 8; k++) {
-                ushort val = src[frame_base + input_base + k];
-                if ((uint(val) & (1u << bit)) != 0u) {
-                    packed |= uchar(1u << k);
-                }
-            }
-            out[gid] = packed;
-        }
-
-        kernel void lz4_rle_save(
-            const device uchar* shuffled [[buffer(0)]],
-            device uchar* out [[buffer(1)]],
-            device uint* sizes [[buffer(2)]],
-            constant uint& n_chunks [[buffer(3)]],
-            constant uint& frame_bytes [[buffer(4)]],
-            constant uint& blocks_per_frame [[buffer(5)]],
-            constant uint& max_out [[buffer(6)]],
-            uint chunk [[threadgroup_position_in_grid]],
-            uint tid [[thread_position_in_threadgroup]]
-        ) {
-            if (chunk >= n_chunks || tid != 0) return;
-
-            uint frame = chunk / blocks_per_frame;
-            uint block = chunk - frame * blocks_per_frame;
-            uint block_start = block * 8192u;
-            uint chunk_size = frame_bytes - block_start;
-            if (chunk_size > 8192u) chunk_size = 8192u;
-
-            const device uchar* in = shuffled + ulong(frame) * ulong(frame_bytes) + block_start;
-            device uchar* outp = out + ulong(chunk) * ulong(max_out);
-            uint in_pos = 0;
-            uint out_pos = 0;
-            uint anchor = 0;
-
-            while (chunk_size > 12u && in_pos < chunk_size - 12u) {
-                uchar run_value = in[in_pos];
-                if (in[in_pos + 1] == run_value
-                        && in[in_pos + 2] == run_value
-                        && in[in_pos + 3] == run_value
-                        && in_pos + 6u < chunk_size) {
-                    uint run_len = 4;
-                    while (in_pos + run_len < chunk_size
-                           && in[in_pos + run_len] == run_value) {
-                        run_len++;
-                    }
-                    uint match_start = in_pos + 1u;
-                    uint max_match = chunk_size - match_start - 5u;
-                    uint mlen = run_len - 1u;
-                    if (mlen > max_match) mlen = max_match;
-                    if (mlen >= 4u) {
-                        uint literal_len = match_start - anchor;
-                        uint ml = mlen - 4u;
-                        uchar token = uchar((literal_len >= 15u ? 15u : literal_len) << 4)
-                                    | uchar(ml >= 15u ? 15u : ml);
-                        outp[out_pos++] = token;
-
-                        if (literal_len >= 15u) {
-                            uint rem = literal_len - 15u;
-                            while (rem >= 255u) {
-                                outp[out_pos++] = uchar(255);
-                                rem -= 255u;
-                            }
-                            outp[out_pos++] = uchar(rem);
-                        }
-
-                        for (uint i = 0; i < literal_len; i++) {
-                            outp[out_pos++] = in[anchor + i];
-                        }
-
-                        outp[out_pos++] = uchar(1);
-                        outp[out_pos++] = uchar(0);
-
-                        if (ml >= 15u) {
-                            uint rem = ml - 15u;
-                            while (rem >= 255u) {
-                                outp[out_pos++] = uchar(255);
-                                rem -= 255u;
-                            }
-                            outp[out_pos++] = uchar(rem);
-                        }
-
-                        in_pos = match_start + mlen;
-                        anchor = in_pos;
-                        continue;
-                    }
-                }
-                in_pos++;
-            }
-
-            uint literal_len = chunk_size - anchor;
-            if (literal_len > 0u) {
-                uchar token = uchar((literal_len >= 15u ? 15u : literal_len) << 4);
-                outp[out_pos++] = token;
-                if (literal_len >= 15u) {
-                    uint rem = literal_len - 15u;
-                    while (rem >= 255u) {
-                        outp[out_pos++] = uchar(255);
-                        rem -= 255u;
-                    }
-                    outp[out_pos++] = uchar(rem);
-                }
-                for (uint i = 0; i < literal_len; i++) {
-                    outp[out_pos++] = in[anchor + i];
-                }
-            }
-            sizes[chunk] = out_pos;
-        }
-    """
+    source = (Path(__file__).parent / "backends/mps/kernels/save_uint16.msl").read_text()
     library, err = mps_backend._device.newLibraryWithSource_options_error_(
         source, Metal.MTLCompileOptions.alloc().init(), None
     )
@@ -984,18 +849,18 @@ class _NativeMPSU16ChunkCompressor:
 
 
 def _compress_batch_mps(data_mps, n_8kb, frame_bytes, output_dtype):
-    """Compress a torch MPS uint8/uint16/float32 batch to HDF5 bslz4 chunks."""
+    """Compress a torch MPS 16-bit/32-bit batch to HDF5 bslz4 chunks."""
     import mlx.core as mx
 
     if not hasattr(data_mps, "device") or data_mps.device.type != "mps":
         raise TypeError("_compress_batch_mps expects a torch tensor on MPS")
     output_dtype = np.dtype(output_dtype)
-    if data_mps.dtype not in (torch.uint8, torch.uint16, torch.float32):
+    if data_mps.dtype not in (torch.uint8, torch.uint16, torch.float16, torch.float32):
         raise TypeError(
             "MPS compressed save supports uint8/uint16/float32 input, "
             f"got {data_mps.dtype}"
         )
-    if output_dtype not in (np.dtype(np.uint8), np.dtype(np.uint16), np.dtype(np.float32)):
+    if output_dtype not in (np.dtype(np.uint8), np.dtype(np.uint16), np.dtype(np.float16), np.dtype(np.float32)):
         raise TypeError(
             "MPS compressed save supports uint8/uint16/float32 output, "
             f"got {output_dtype}"
@@ -1004,6 +869,8 @@ def _compress_batch_mps(data_mps, n_8kb, frame_bytes, output_dtype):
         raise TypeError("MPS float32 compressed save requires float32 input data")
     if data_mps.dtype == torch.uint8 and output_dtype != np.dtype(np.uint8):
         raise TypeError("MPS uint8 input can only be saved as uint8")
+    if data_mps.dtype == torch.float16:
+        data_mps = data_mps.view(torch.uint16)
     itemsize = int(output_dtype.itemsize)
     tail_bytes = frame_bytes % BLOCK_SIZE
     if tail_bytes:
@@ -1722,6 +1589,7 @@ class H5Writer:
         self._data_files = []
         self._frame_ranges = []
         self._closed = False
+        self._metal_compressor = None
         self._prefix = _master_prefix(self._filepath)
         self._filepath.parent.mkdir(parents=True, exist_ok=True)
 
@@ -1771,14 +1639,25 @@ class H5Writer:
         if self._closed:
             raise RuntimeError("H5Writer is closed")
         _raise_write_error()
-        if not isinstance(data_gpu, cp.ndarray):
+        native_metal = hasattr(data_gpu, "_mtl") and data_gpu.dtype == self._dtype
+        native_mps = (
+            torch is not None and torch.is_tensor(data_gpu)
+            and data_gpu.device.type == "mps" and np.dtype(str(data_gpu.dtype).removeprefix("torch.")) == self._dtype
+        )
+        if (native_metal or native_mps) and (self._dtype.itemsize != 2 or self._compression != "lz4"):
+            raise ValueError("Native Metal precision writing requires 16-bit bitshuffle/LZ4 storage.")
+        if not native_metal and not native_mps and not isinstance(data_gpu, cp.ndarray):
             data_gpu = cp.asarray(np.asarray(data_gpu))
-        if data_gpu.dtype != self._dtype:
+        input_dtype = (
+            np.dtype(str(data_gpu.dtype).removeprefix("torch."))
+            if native_mps else data_gpu.dtype
+        )
+        if input_dtype != self._dtype:
             # Float→integer cast: round to nearest BEFORE casting so bilinear-merged
             # 4D-STEM keeps max-error 0.5 counts (sub-noise-floor) instead of the 1.0
             # max-error you get from truncation. Numpy/CuPy default float->uint cast
             # truncates fractional parts.
-            if (np.issubdtype(data_gpu.dtype, np.floating)
+            if (np.issubdtype(input_dtype, np.floating)
                     and np.issubdtype(self._dtype, np.integer)):
                 lo, hi = (int(np.iinfo(self._dtype).min),
                           int(np.iinfo(self._dtype).max))
@@ -1793,7 +1672,8 @@ class H5Writer:
         if self._frame_offset + int(data_gpu.shape[0]) > self._n_frames:
             raise ValueError("Batch would exceed declared n_frames")
 
-        data_gpu = cp.ascontiguousarray(data_gpu)
+        if not native_metal and not native_mps:
+            data_gpu = cp.ascontiguousarray(data_gpu)
         batch_start = 0
         batch_n = int(data_gpu.shape[0])
         while batch_start < batch_n:
@@ -1801,8 +1681,31 @@ class H5Writer:
                 self._open_data_file()
             room = self._current_file_n - self._current_file_offset
             n_part = min(room, batch_n - batch_start)
-            part = data_gpu[batch_start:batch_start + n_part]
-            if self._compression == "lz4":
+            if native_metal:
+                if self._metal_compressor is None:
+                    self._metal_compressor = _NativeMPSU16ChunkCompressor(
+                        batch_n, self._frame_bytes, self._n_8kb
+                    )
+                packed, starts, sizes = self._metal_compressor.compress(
+                    data_gpu, batch_start, n_part
+                )
+                _write_queue.put((
+                    _write_batch_to_h5,
+                    (self._current_ds, packed, starts, sizes,
+                     self._current_file_offset, n_part),
+                ))
+            elif native_mps:
+                part = data_gpu[batch_start:batch_start + n_part]
+                packed, starts, sizes = _compress_batch_mps(
+                    part, self._n_8kb, self._frame_bytes, self._dtype
+                )
+                _write_queue.put((
+                    _write_batch_to_h5,
+                    (self._current_ds, packed, starts, sizes,
+                     self._current_file_offset, n_part),
+                ))
+            elif self._compression == "lz4":
+                part = data_gpu[batch_start:batch_start + n_part]
                 packed, starts, sizes = _compress_batch(
                     part, self._n_8kb, self._frame_bytes
                 )
@@ -1812,6 +1715,7 @@ class H5Writer:
                      self._current_file_offset, n_part),
                 ))
             else:
+                part = data_gpu[batch_start:batch_start + n_part]
                 # Non-LZ4 codecs run inside HDF5's filter pipeline on CPU.
                 # Pull the batch to host once, queue the filtered write so
                 # GPU work continues while compression happens on a worker.
@@ -1835,6 +1739,9 @@ class H5Writer:
             return
         self._closed = True
         self._close_data_file()
+        if self._metal_compressor is not None:
+            self._metal_compressor.close()
+            self._metal_compressor = None
         if self._frame_offset != self._n_frames:
             raise RuntimeError(f"H5Writer wrote {self._frame_offset} of {self._n_frames} frames")
         _write_master_file(
@@ -1849,6 +1756,37 @@ class H5Writer:
         )
         if wait:
             wait_for_saves()
+
+    def abort(self) -> None:
+        """Close and remove an incomplete streamed output after a failed producer."""
+        self._closed = True
+        try:
+            self._close_data_file()
+        except BaseException:
+            # wait_for_saves has already drained the queue before surfacing a
+            # writer error, so closing the handle here cannot race queued work.
+            try:
+                if self._current_file is not None:
+                    self._current_file.close()
+            except BaseException:
+                pass
+            self._current_file = None
+            self._current_ds = None
+        if self._metal_compressor is not None:
+            try:
+                self._metal_compressor.close()
+            except BaseException:
+                pass
+            self._metal_compressor = None
+        for path in self._data_files:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        try:
+            self._filepath.unlink(missing_ok=True)
+        except OSError:
+            pass
 
     def __enter__(self):
         return self
@@ -1887,7 +1825,7 @@ def _prepare_save_data(data, dtype, scan_shape):
 
 def save(
     filepath: str | Path,
-    data: "np.ndarray | cp.ndarray",
+    data: object,
     scan_shape: tuple[int, int] | None = None,
     metadata: dict | None = None,
     dtype: str | type | np.dtype | None = None,
@@ -2015,9 +1953,16 @@ def save(
     filepath : str
         Output file path. For Arina, external data files are written next to
         the master with the same prefix. QuantEM writes a standalone file.
-    data : np.ndarray | cp.ndarray
+    data : object
         4D-STEM data. Shape (N, det_row, det_col) or (scan_row, scan_col,
-        det_row, det_col). CuPy arrays save without a host copy.
+        det_row, det_col). CuPy and Torch accelerator tensors save without a
+        host copy. Algorithm packages may also provide a re-readable 4D block
+        source with ``shape``, ``dtype``, and ``blocks()``. Each call to
+        ``blocks()`` must yield the complete data as ordered accelerator frame
+        blocks; scaled integer export calls it twice to measure one global
+        range and then encode. Optional ``save_metadata`` attributes are copied
+        into the output. This is the public bridge for bounded algorithm output;
+        the I/O package does not own the algorithm that produces the blocks.
     scan_shape : tuple[int, int] | None
         Scan grid shape. Required for 3D inputs; inferred from 4D inputs.
     dtype : str or np.dtype or None

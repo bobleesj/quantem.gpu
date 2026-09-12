@@ -208,7 +208,7 @@ class PairedLoader:
             raise ValueError(f"{info.reason}: {info.action}")
         dtype = np.dtype(info.dtype)
         if dtype != np.dtype("uint16"):
-            raise NotImplementedError("The paired loader streams native uint16 detectors; use representation='ans' for uint8.")
+            raise NotImplementedError("The paired loader streams native uint16 detectors; use representation='encoded' for uint8.")
         shape = (*info.scan_shape, *info.detector_shape)
         if math.prod(info.scan_shape) % PairedCounts.interval:
             raise ValueError(f"The paired layout needs a scan with a multiple of {PairedCounts.interval} positions; got {info.scan_shape}.")

@@ -11,6 +11,12 @@
 
 #define QH5_METADATA_LIMIT 100
 
+struct qh5_chunk_writer {
+  hid_t file, dataset;
+  uint64_t frames, next_frame;
+  char *path;
+};
+
 struct qh5_lossless_pack_v1_writer {
   hid_t file;
   hid_t shards;
@@ -1483,4 +1489,133 @@ void qh5_free_velox_image_info(qh5_velox_image_info *info) {
 
 void qh5_free_error(char *error_message) {
   free(error_message);
+}
+
+int qh5_chunk_writer_open(const char *path, const uint64_t shape[4],
+  qh5_chunk_writer **output, char **error_message) {
+  if (!path || !shape || !output || !shape[0] || !shape[1] || !shape[2] || !shape[3])
+    return qh5_fail(error_message, "Provide a path and a positive 4D shape.");
+  *output = NULL;
+  pthread_mutex_lock(&qh5_hdf5_lock);
+  qh5_chunk_writer *writer = calloc(1, sizeof(*writer));
+  if (!writer) { pthread_mutex_unlock(&qh5_hdf5_lock); return qh5_fail(error_message, "Cannot allocate an HDF5 writer."); }
+  writer->file = H5Fcreate(path, H5F_ACC_EXCL, H5P_DEFAULT, H5P_DEFAULT);
+  writer->dataset = -1;
+  hid_t links = H5Pcreate(H5P_LINK_CREATE);
+  H5Pset_create_intermediate_group(links, 1);
+  hsize_t dimensions[3] = {shape[0] * shape[1], shape[2], shape[3]};
+  hsize_t chunk[3] = {1, shape[2], shape[3]};
+  hid_t space = H5Screate_simple(3, dimensions, NULL);
+  hid_t properties = H5Pcreate(H5P_DATASET_CREATE);
+  unsigned int codec[5] = {0, 4, 2, 0, 2};
+  H5Pset_chunk(properties, 3, chunk);
+  H5Pset_filter(properties, 32008, H5Z_FLAG_OPTIONAL, 5, codec);
+  H5Pset_fill_time(properties, H5D_FILL_TIME_NEVER);
+  if (writer->file >= 0) writer->dataset = H5Dcreate2(writer->file, "/entry/data/data",
+    H5T_STD_U16LE, space, links, properties, H5P_DEFAULT);
+  H5Pclose(properties); H5Pclose(links); H5Sclose(space);
+  int status = 0;
+  if (writer->dataset < 0) status = qh5_fail(error_message, "Cannot create a new compressed HDF5 file at %s.", path);
+  if (!status) {
+    hsize_t two = 2;
+    space = H5Screate_simple(1, &two, NULL);
+    hid_t attribute = H5Acreate2(writer->dataset, "scan_shape", H5T_STD_U64LE, space, H5P_DEFAULT, H5P_DEFAULT);
+    if (attribute < 0 || H5Awrite(attribute, H5T_NATIVE_UINT64, shape) < 0)
+      status = qh5_fail(error_message, "Cannot write the scan shape.");
+    if (attribute >= 0) H5Aclose(attribute);
+    H5Sclose(space);
+  }
+  writer->frames = dimensions[0];
+  writer->path = qh5_copy_string(path);
+  if (status) {
+    if (writer->dataset >= 0) H5Dclose(writer->dataset);
+    if (writer->file >= 0) { H5Fclose(writer->file); remove(path); }
+    free(writer->path); free(writer);
+  } else *output = writer;
+  pthread_mutex_unlock(&qh5_hdf5_lock);
+  return status;
+}
+
+int qh5_chunk_writer_append(qh5_chunk_writer *writer, uint64_t first_frame,
+  uint64_t frame_count, const uint8_t *chunks, uint64_t stride,
+  const uint32_t *sizes, char **error_message) {
+  if (!writer || !chunks || !sizes || first_frame != writer->next_frame ||
+      !frame_count || frame_count > writer->frames - first_frame)
+    return qh5_fail(error_message, "Write consecutive nonempty frame regions within the declared shape.");
+  pthread_mutex_lock(&qh5_hdf5_lock);
+  int status = 0;
+  for (uint64_t i = 0; i < frame_count; ++i) {
+    hsize_t offset[3] = {first_frame + i, 0, 0};
+    if (!sizes[i] || sizes[i] > stride || H5Dwrite_chunk(writer->dataset, H5P_DEFAULT,
+        0, offset, sizes[i], chunks + i * stride) < 0) {
+      status = qh5_fail(error_message, "Cannot write compressed frame %llu.", (unsigned long long)(first_frame + i));
+      break;
+    }
+  }
+  if (!status) writer->next_frame += frame_count;
+  pthread_mutex_unlock(&qh5_hdf5_lock);
+  return status;
+}
+
+int qh5_chunk_writer_attribute(qh5_chunk_writer *writer, const char *name,
+  const char *value, char **error_message) {
+  if (!writer || !name || !value) return qh5_fail(error_message, "Provide an open writer and text metadata.");
+  pthread_mutex_lock(&qh5_hdf5_lock);
+  hid_t type = H5Tcopy(H5T_C_S1), space = H5Screate(H5S_SCALAR);
+  H5Tset_size(type, strlen(value) + 1);
+  H5Tset_cset(type, H5T_CSET_UTF8);
+  hid_t attribute = H5Acreate2(writer->file, name, type, space, H5P_DEFAULT, H5P_DEFAULT);
+  int status = attribute < 0 || H5Awrite(attribute, type, value) < 0
+    ? qh5_fail(error_message, "Cannot write metadata attribute %s.", name) : 0;
+  if (attribute >= 0) H5Aclose(attribute);
+  H5Tclose(type); H5Sclose(space);
+  pthread_mutex_unlock(&qh5_hdf5_lock);
+  return status;
+}
+
+int qh5_chunk_writer_close(qh5_chunk_writer *writer, char **error_message) {
+  if (!writer) return qh5_fail(error_message, "The writer is already closed.");
+  pthread_mutex_lock(&qh5_hdf5_lock);
+  int complete = writer->next_frame == writer->frames;
+  int data_status = H5Dclose(writer->dataset), file_status = H5Fclose(writer->file);
+  int status = complete && data_status >= 0 && file_status >= 0 ? 0
+    : qh5_fail(error_message, "The HDF5 export is incomplete; repeat the export.");
+  if (status) remove(writer->path);
+  free(writer->path); free(writer);
+  pthread_mutex_unlock(&qh5_hdf5_lock);
+  return status;
+}
+
+void qh5_chunk_writer_abort(qh5_chunk_writer *writer) {
+  if (!writer) return;
+  pthread_mutex_lock(&qh5_hdf5_lock);
+  H5Dclose(writer->dataset); H5Fclose(writer->file); remove(writer->path);
+  free(writer->path); free(writer);
+  pthread_mutex_unlock(&qh5_hdf5_lock);
+}
+
+char *qh5_read_root_attribute(const char *path, const char *name) {
+  pthread_mutex_lock(&qh5_hdf5_lock);
+  hid_t file = H5Fopen(path, H5F_ACC_RDONLY, H5P_DEFAULT);
+  hid_t attribute = file >= 0 ? H5Aopen(file, name, H5P_DEFAULT) : -1;
+  hid_t type = attribute >= 0 ? H5Aget_type(attribute) : -1;
+  char *result = NULL;
+  if (type >= 0 && H5Tget_class(type) == H5T_STRING) {
+    if (H5Tis_variable_str(type)) {
+      char *value = NULL;
+      if (H5Aread(attribute, type, &value) >= 0 && value) result = qh5_copy_string(value);
+      if (value) H5free_memory(value);
+    } else {
+      size_t size = H5Tget_size(type);
+      if (size < 1024 * 1024) {
+        result = calloc(size + 1, 1);
+        if (result && H5Aread(attribute, type, result) < 0) { free(result); result = NULL; }
+      }
+    }
+  }
+  if (type >= 0) H5Tclose(type);
+  if (attribute >= 0) H5Aclose(attribute);
+  if (file >= 0) H5Fclose(file);
+  pthread_mutex_unlock(&qh5_hdf5_lock);
+  return result;
 }
