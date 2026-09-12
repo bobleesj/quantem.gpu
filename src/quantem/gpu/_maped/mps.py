@@ -24,9 +24,7 @@ from quantem.gpu.io.backends.mps.precision import (
     MetalArray,
     _dispatch as precision_dispatch,
     _parameters as precision_parameters,
-    encode,
-    measure,
-    restore,
+    encode_measure,
 )
 
 
@@ -43,7 +41,14 @@ def _runtime():
     if library is None:
         raise RuntimeError(f"MPS MAPED Metal compilation failed: {error}")
     pipelines = {}
-    for name in ("sample_dense", "accumulate", "normalize"):
+    for name in (
+        "real_weights",
+        "detector_weights",
+        "detector_edge",
+        "sample_dense",
+        "accumulate",
+        "normalize",
+    ):
         function = library.newFunctionWithName_(f"maped_{name}")
         pipeline, error = device.newComputePipelineStateWithFunction_error_(
             function, None
@@ -62,8 +67,19 @@ def _upload(device, metal, values, label):
     return buffer
 
 
-def _dispatch(queue, metal, pipeline, buffers, byte_values, count, label):
-    command = queue.commandBuffer()
+def _dispatch(
+    queue,
+    metal,
+    pipeline,
+    buffers,
+    byte_values,
+    count,
+    label,
+    *,
+    command=None,
+):
+    owned = command is None
+    command = queue.commandBuffer() if owned else command
     encoder = command.computeCommandEncoder()
     encoder.setComputePipelineState_(pipeline)
     for index, value in enumerate(buffers):
@@ -74,7 +90,8 @@ def _dispatch(queue, metal, pipeline, buffers, byte_values, count, label):
         metal.MTLSizeMake(int(count), 1, 1), metal.MTLSizeMake(256, 1, 1)
     )
     encoder.endEncoding()
-    _complete(command, label)
+    if owned:
+        _complete(command, label)
 
 
 def _range(region):
@@ -87,10 +104,95 @@ def _range(region):
         if np.any(rows[:, 2]):
             raise ValueError("The merged output contains non-finite intensities.")
         if np.any(rows[:, 3]):
-            raise ValueError("The merged output contains float32 subnormal intensities.")
+            raise ValueError(
+                "The merged output contains float32 subnormal intensities."
+            )
         return float(rows[:, 0].min()), float(rows[:, 1].max())
     finally:
         stats.release()
+
+
+def _merge_weights(shape, real_np, diffraction_np):
+    rows, cols, height, width = shape
+    scans = rows * cols
+    pixels = height * width
+    source_count = len(real_np)
+    device, metal, queue, pipelines = _runtime()
+    real_buffer = _upload(
+        device, metal, real_np.astype(np.float32), "MAPED real shifts"
+    )
+    diffraction_buffer = _upload(
+        device, metal, diffraction_np.astype(np.float32), "MAPED diffraction shifts"
+    )
+    real_weights = MetalArray((source_count, scans), np.float32)
+    real_sampling = MetalArray((source_count, scans, 4), np.float32)
+    detector_weights = MetalArray((source_count, pixels), np.float32)
+    detector_indices = MetalArray((source_count, pixels, 4), np.int32)
+    detector_sampling = MetalArray((source_count, pixels, 4), np.float32)
+    detector_edge = MetalArray((pixels,), np.float32)
+    try:
+        command = queue.commandBuffer()
+        parameters = np.asarray(
+            [source_count, scans, rows, cols], np.uint64
+        ).tobytes()
+        _dispatch(
+            queue,
+            metal,
+            pipelines["real_weights"],
+            [real_buffer, real_weights._mtl, real_sampling._mtl],
+            [(3, parameters)],
+            source_count * scans,
+            "MPS MAPED real weights",
+            command=command,
+        )
+        parameters = np.asarray(
+            [source_count, pixels, height, width], np.uint64
+        ).tobytes()
+        _dispatch(
+            queue,
+            metal,
+            pipelines["detector_weights"],
+            [
+                diffraction_buffer,
+                detector_weights._mtl,
+                detector_indices._mtl,
+                detector_sampling._mtl,
+            ],
+            [(4, parameters)],
+            source_count * pixels,
+            "MPS MAPED detector weights",
+            command=command,
+        )
+        _dispatch(
+            queue,
+            metal,
+            pipelines["detector_edge"],
+            [detector_weights._mtl, detector_edge._mtl],
+            [(2, parameters)],
+            pixels,
+            "MPS MAPED detector edge",
+            command=command,
+        )
+        _complete(command, "MPS MAPED weights")
+        return (
+            real_weights,
+            real_sampling,
+            detector_weights,
+            detector_indices,
+            detector_sampling,
+            detector_edge,
+        )
+    except BaseException:
+        real_weights.release()
+        real_sampling.release()
+        detector_weights.release()
+        detector_indices.release()
+        detector_sampling.release()
+        detector_edge.release()
+        raise
+    finally:
+        _release(real_buffer)
+        _release(diffraction_buffer)
 
 
 def _merge_regions(sources, real_np, diffraction_np, scans_per_region):
@@ -98,96 +200,160 @@ def _merge_regions(sources, real_np, diffraction_np, scans_per_region):
     rows, cols, height, width = shape
     pixels = height * width
     device, metal, queue, pipelines = _runtime()
-    real_buffer = _upload(device, metal, real_np.astype(np.float32), "MAPED real shifts")
-    diffraction_buffer = _upload(
-        device, metal, diffraction_np.astype(np.float32), "MAPED diffraction shifts"
-    )
+    weights = _merge_weights(shape, real_np, diffraction_np)
+    (
+        real_weights,
+        real_sampling,
+        detector_weights,
+        detector_indices,
+        detector_sampling,
+        detector_edge,
+    ) = weights
     try:
         for first in range(0, rows * cols, scans_per_region):
             stop = min(first + scans_per_region, rows * cols)
             count = stop - first
             numerator = MetalArray((count, height, width), np.float32)
             sampled = MetalArray((count, height, width), np.float32)
-            _buffer_view(numerator._mtl)[:] = b"\0" * numerator.nbytes
+            decoded_ranges = []
+            max_decoded = 1
+            for real_shift in real_np:
+                first_row = first // cols
+                stop_row = (stop - 1) // cols
+                shift_row = math.floor(-float(real_shift[0]))
+                decoded_first_row = max(0, first_row + shift_row)
+                decoded_stop_row = min(rows, stop_row + shift_row + 2)
+                decoded_ranges.append((decoded_first_row, decoded_stop_row))
+                max_decoded = max(
+                    max_decoded,
+                    max(0, decoded_stop_row - decoded_first_row) * cols,
+                )
+            decoded = MetalArray((max_decoded, height, width), np.uint16)
             try:
-                for source, real_shift, diffraction_shift in zip(
-                    sources, real_np, diffraction_np
-                ):
-                    first_row = first // cols
-                    stop_row = (stop - 1) // cols
-                    shift_row = math.floor(-float(real_shift[0]))
-                    decoded_first_row = max(0, first_row + shift_row)
-                    decoded_stop_row = min(rows, stop_row + shift_row + 2)
-                    if decoded_first_row >= decoded_stop_row:
-                        _buffer_view(sampled._mtl)[:] = b"\0" * sampled.nbytes
-                    else:
-                        decoded = source.decode_scan_range_device(
-                            decoded_first_row * cols, decoded_stop_row * cols
+                command = queue.commandBuffer()
+                for source_index, source in enumerate(sources):
+                    decoded_first_row, decoded_stop_row = decoded_ranges[source_index]
+                    if decoded_first_row < decoded_stop_row:
+                        source._encode_scan_range_into(
+                            command,
+                            decoded_first_row * cols,
+                            decoded_stop_row * cols,
+                            decoded._mtl,
                         )
-                        try:
-                            parameters = np.asarray(
-                                [
-                                    first,
-                                    count,
-                                    rows,
-                                    cols,
-                                    pixels,
-                                    pixels,
-                                    source.dtype.itemsize,
-                                    decoded_first_row,
-                                    decoded_stop_row - decoded_first_row,
-                                ],
-                                np.uint64,
-                            ).tobytes()
-                            shift = np.asarray(real_shift, np.float32).tobytes()
-                            _dispatch(
-                                queue,
-                                metal,
-                                pipelines["sample_dense"],
-                                [decoded.buffer, source._valid, sampled._mtl],
-                                [(3, parameters), (4, shift)],
-                                count * pixels,
-                                "MPS MAPED real-space sample",
-                            )
-                        finally:
-                            decoded.release()
                     parameters = np.asarray(
-                        [first, count, rows, cols, height, width], np.uint64
+                        [
+                            first,
+                            count,
+                            rows,
+                            cols,
+                            pixels,
+                            pixels,
+                            source.dtype.itemsize,
+                            decoded_first_row,
+                            decoded_stop_row - decoded_first_row,
+                            source_index,
+                            rows * cols,
+                        ],
+                        np.uint64,
                     ).tobytes()
-                    real_bytes = np.asarray(real_shift, np.float32).tobytes()
-                    diffraction_bytes = np.asarray(
-                        diffraction_shift, np.float32
+                    _dispatch(
+                        queue,
+                        metal,
+                        pipelines["sample_dense"],
+                        [
+                            decoded._mtl,
+                            source._valid,
+                            real_sampling._mtl,
+                            sampled._mtl,
+                        ],
+                        [(4, parameters)],
+                        count * ((pixels + 3) // 4),
+                        "MPS MAPED real-space sample",
+                        command=command,
+                    )
+                    parameters = np.asarray(
+                        [
+                            first,
+                            count,
+                            rows,
+                            cols,
+                            height,
+                            width,
+                            source_index,
+                            rows * cols,
+                            pixels,
+                        ],
+                        np.uint64,
                     ).tobytes()
                     _dispatch(
                         queue,
                         metal,
                         pipelines["accumulate"],
-                        [sampled._mtl, numerator._mtl],
-                        [(2, parameters), (3, real_bytes), (4, diffraction_bytes)],
-                        count * pixels,
+                        [
+                            sampled._mtl,
+                            numerator._mtl,
+                            real_weights._mtl,
+                            detector_indices._mtl,
+                            detector_sampling._mtl,
+                        ],
+                        [(5, parameters)],
+                        count * ((pixels + 3) // 4),
                         "MPS MAPED diffraction sample",
+                        command=command,
                     )
                 parameters = np.asarray(
-                    [first, count, rows, cols, height, width, len(sources)], np.uint64
+                    [
+                        first,
+                        count,
+                        rows,
+                        cols,
+                        height,
+                        width,
+                        len(sources),
+                        rows * cols,
+                        pixels,
+                    ],
+                    np.uint64,
                 ).tobytes()
                 _dispatch(
                     queue,
                     metal,
                     pipelines["normalize"],
-                    [numerator._mtl, real_buffer, diffraction_buffer],
-                    [(3, parameters)],
-                    count * pixels,
+                    [
+                        numerator._mtl,
+                        real_weights._mtl,
+                        detector_weights._mtl,
+                        detector_edge._mtl,
+                    ],
+                    [(4, parameters)],
+                    count * ((pixels + 3) // 4),
                     "MPS MAPED normalize",
+                    command=command,
                 )
+                _complete(command, "MPS MAPED region")
+                for source in sources:
+                    source._check_errors()
                 yield first, numerator
                 numerator = None
             finally:
+                decoded.release()
                 sampled.release()
                 if numerator is not None:
                     numerator.release()
     finally:
-        _release(real_buffer)
-        _release(diffraction_buffer)
+        for value in weights:
+            value.release()
+
+
+def _automatic_region_frames(shape):
+    """Use large row-aligned regions while bounding MAPED temporaries."""
+    detector_pixels = math.prod(shape[2:])
+    working_bytes_per_frame = detector_pixels * 16
+    frames = max(1, min(4096, (5 * 1024**3 // 2) // working_bytes_per_frame))
+    scan_columns = int(shape[1])
+    if frames >= scan_columns:
+        frames = max(scan_columns, frames // scan_columns * scan_columns)
+    return int(frames)
 
 
 def merge_to_scaled_h5(
@@ -212,7 +378,9 @@ def merge_to_scaled_h5(
         raise ValueError("Aligned resident acquisitions must share one 4D shape.")
     for source in sources:
         if not isinstance(source.data, MPSStreamedCounts):
-            raise ValueError("MPS bounded MAPED currently requires exact ANS residents.")
+            raise ValueError(
+                "MPS bounded MAPED currently requires exact ANS residents."
+            )
     for name, shifts in (
         ("real_shifts", real_shifts),
         ("diffraction_shifts", diffraction_shifts),
@@ -233,7 +401,7 @@ def merge_to_scaled_h5(
     real_np = real_shifts.detach().cpu().numpy()
     diffraction_np = diffraction_shifts.detach().cpu().numpy()
     output_path = Path(output_path)
-    region_frames = 1024
+    region_frames = _automatic_region_frames(shape)
     started = time.perf_counter()
     low, high = math.inf, -math.inf
     for _, region in _merge_regions(
@@ -295,18 +463,14 @@ def merge_to_scaled_h5(
         for _, region in _merge_regions(
             [source.data for source in sources], real_np, diffraction_np, region_frames
         ):
-            encoded = restored = None
+            encoded = None
             try:
                 encode_started = time.perf_counter()
-                encoded = encode(region, report)
-                restored = restore(encoded, report)
-                measure(region, restored, report)
+                encoded = encode_measure(region, report)
                 torch.mps.synchronize()
                 encode_seconds += time.perf_counter() - encode_started
                 writer.write(encoded)
             finally:
-                if restored is not None:
-                    restored.release()
                 if encoded is not None:
                     encoded.release()
                 region.release()

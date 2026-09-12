@@ -303,30 +303,41 @@ class MPSStreamedCounts:
             (stop - first, *self.shape[2:]),
             self.dtype,
         )
-        self._clear_errors()
         try:
             command = self._queue.commandBuffer()
-            for chunk in self.chunks:
-                overlap_first = max(first, chunk.first)
-                overlap_stop = min(stop, chunk.first + chunk.scans)
-                if overlap_first >= overlap_stop:
-                    continue
-                self._encode_decode(
-                    command,
-                    chunk,
-                    overlap_first - chunk.first,
-                    overlap_stop - overlap_first,
-                    output.buffer,
-                    (overlap_first - first)
-                    * math.prod(self.shape[2:])
-                    * self.dtype.itemsize,
-                )
+            self._encode_scan_range_into(command, first, stop, output.buffer)
             _complete(command, "ANS range decode")
             self._check_errors()
             return output
         except BaseException:
             output.release()
             raise
+
+    def _encode_scan_range_into(self, command, first: int, stop: int, output):
+        """Append an exact range decode to an existing Metal command buffer."""
+        self._check_resident()
+        first, stop = int(first), int(stop)
+        scan_count = math.prod(self.shape[:2])
+        if not 0 <= first < stop <= scan_count:
+            raise ValueError(
+                f"Scan range must be nonempty and inside [0, {scan_count})."
+            )
+        self._clear_errors()
+        for chunk in self.chunks:
+            overlap_first = max(first, chunk.first)
+            overlap_stop = min(stop, chunk.first + chunk.scans)
+            if overlap_first >= overlap_stop:
+                continue
+            self._encode_decode(
+                command,
+                chunk,
+                overlap_first - chunk.first,
+                overlap_stop - overlap_first,
+                output,
+                (overlap_first - first)
+                * math.prod(self.shape[2:])
+                * self.dtype.itemsize,
+            )
 
     def decode_block_device(self, block_index: int):
         """Decode one retained input chunk for exact parity testing."""

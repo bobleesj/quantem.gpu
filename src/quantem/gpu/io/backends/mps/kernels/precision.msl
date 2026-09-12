@@ -43,6 +43,20 @@ inline float restored(ushort code, constant ulong *p, constant float *f) {
     float2 v = add_pair(mul_pair(float(code), float2(f[0], f[1])), float2(f[2], f[3]));
     return ldexp(v.x + v.y, -int(p[5]));
 }
+inline ushort encoded(float source, constant ulong *p, constant float *f) {
+    if (!p[4]) return to_half(source);
+    float x = ldexp(source, int(p[5]));
+    float2 numerator = add_pair(float2(x, 0), -float2(f[2], f[3]));
+    float q = numerator.x / f[0];
+    float2 residual = add_pair(numerator, -mul_pair(q, float2(f[0], f[1])));
+    q += (residual.x + residual.y) / f[0];
+    float lower_q = floor(q);
+    float fraction = q - lower_q;
+    bool half_way = abs(fraction - 0.5f) < 1.0e-6f;
+    float candidate = lower_q + ((fraction > 0.5f ||
+        (half_way && (uint(lower_q) & 1u))) ? 1.0f : 0.0f);
+    return ushort(clamp(candidate, 0.0f, 65535.0f));
+}
 #define COMMON constant ulong *p [[buffer(6)]], constant float *f [[buffer(7)]]
 
 kernel void precision_copy(device const uchar *src [[buffer(0)]], device uchar *dst [[buffer(1)]],
@@ -59,22 +73,7 @@ kernel void precision_restore(device const uchar *src [[buffer(0)]], device floa
 kernel void precision_encode(device const float *src [[buffer(0)]], device ushort *dst [[buffer(1)]],
     COMMON, uint i [[thread_position_in_grid]]) {
     if (i >= p[0]) return;
-    if (!p[4]) { dst[i] = to_half(src[i]); return; }
-    float x = ldexp(src[i], int(p[5]));
-    float2 numerator = add_pair(float2(x, 0), -float2(f[2], f[3]));
-    float q = numerator.x / f[0];
-    float2 residual = add_pair(numerator, -mul_pair(q, float2(f[0], f[1])));
-    // Recover low quotient bits before resolving a half-way case.
-    q += (residual.x + residual.y) / f[0];
-    float lower_q = floor(q);
-    float fraction = q - lower_q;
-    // The pair residual makes this small tolerance cover only the arithmetic
-    // uncertainty around an exact half-way value, while preserving ordinary
-    // nearest-even behavior for values away from the boundary.
-    bool half_way = abs(fraction - 0.5f) < 1.0e-6f;
-    float candidate = lower_q + ((fraction > 0.5f ||
-        (half_way && (uint(lower_q) & 1u))) ? 1.0f : 0.0f);
-    dst[i] = ushort(clamp(candidate, 0.0f, 65535.0f));
+    dst[i] = encoded(src[i], p, f);
 }
 kernel void precision_range(device const float *src [[buffer(0)]], device float4 *dst [[buffer(1)]],
     COMMON, uint i [[thread_position_in_grid]]) {
@@ -102,6 +101,35 @@ kernel void precision_measure(device const float *src [[buffer(0)]], device cons
         zero += a > 0 && b == 0; overflow += !isfinite(b);
     }
     errors[i] = float4(sum, maximum, 0, 0); counts[i] = uint4(changed, zero, overflow, 0);
+}
+kernel void precision_encode_measure(
+    device const float *src [[buffer(0)]],
+    device ushort *dst [[buffer(1)]],
+    device float4 *errors [[buffer(2)]],
+    device uint4 *counts [[buffer(3)]],
+    COMMON,
+    uint i [[thread_position_in_grid]]
+) {
+    if (i >= p[14]) return;
+    float sum = 0, compensation = 0, maximum = 0;
+    uint changed = 0, zero = 0, overflow = 0;
+    for (ulong j = i; j < p[0]; j += p[14]) {
+        float a = src[j];
+        ushort code = encoded(a, p, f);
+        dst[j] = code;
+        float b = restored(code, p, f);
+        float difference = ldexp(b, int(p[5])) - ldexp(a, int(p[5]));
+        float term = difference * difference - compensation;
+        float next = sum + term;
+        compensation = (next - sum) - term;
+        sum = next;
+        maximum = max(maximum, abs(difference));
+        changed += as_type<uint>(a) != as_type<uint>(b) && !(a == 0 && b == 0);
+        zero += a > 0 && b == 0;
+        overflow += !isfinite(b);
+    }
+    errors[i] = float4(sum, maximum, 0, 0);
+    counts[i] = uint4(changed, zero, overflow, 0);
 }
 // Per-detector streams span at most 128 scan positions, as in native counts.
 kernel void precision_widths(device const ushort *src [[buffer(0)]], device uchar *widths [[buffer(1)]],

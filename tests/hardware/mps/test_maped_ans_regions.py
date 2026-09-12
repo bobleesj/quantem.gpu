@@ -7,12 +7,22 @@ pytest.importorskip("Metal")
 torch = pytest.importorskip("torch")
 
 from quantem.gpu import io
+from quantem.gpu._maped.mps import _automatic_region_frames
 from quantem.gpu.io.backends.mps._streamed import MPSStreamedCounts
 from quantem.gpu.io.backends.mps.precision import upload
 from quantem.gpu.maped import merge_to_scaled_h5
 
 
-def test_mps_ans_bounded_merge_preserves_counts_mask_and_late_regions(tmp_path):
+def test_mps_region_planner_uses_bounded_scan_rows():
+    assert _automatic_region_frames((512, 512, 192, 192)) == 4096
+    large = _automatic_region_frames((512, 512, 512, 512))
+    assert 512 <= large <= 4096
+    assert large % 512 == 0
+
+
+def test_mps_ans_bounded_merge_preserves_counts_mask_and_late_regions(
+    tmp_path, monkeypatch
+):
     """Exact ANS input and scaled output agree past the first merge region."""
     shape = (4, 400, 2, 4)
     values = (
@@ -25,6 +35,10 @@ def test_mps_ans_bounded_merge_preserves_counts_mask_and_late_regions(tmp_path):
     raw = upload(values.reshape(-1, *shape[2:]))
     result = None
     try:
+        monkeypatch.setattr(
+            "quantem.gpu._maped.mps._automatic_region_frames",
+            lambda shape: 1024,
+        )
         source.append(raw)
         decoded = source.decode_scan_range_device(1019, 1031)
         try:

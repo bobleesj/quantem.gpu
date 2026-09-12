@@ -1,5 +1,6 @@
 """Metal precision parity against a small NumPy scientific oracle."""
 
+from copy import deepcopy
 import os
 
 import numpy as np
@@ -144,3 +145,43 @@ def test_mps_direct_tensor_conversion_stays_on_device(tmp_path):
     with io.load(output, backend="mps", verbose=False) as loaded:
         assert loaded.metadata["precision"]["values"] == values.numel()
         assert loaded.data.device.type == "mps"
+
+
+def test_fused_scaled_uint16_measurement_matches_separate_metal_passes():
+    from quantem.gpu.io.backends.mps.precision import (
+        encode,
+        encode_measure,
+        measure,
+        restore,
+        upload,
+    )
+
+    values = np.linspace(-123.25, 987.75, 32771, dtype=np.float32)
+    source = upload(values)
+    report = {
+        "storage": "scaled_uint16",
+        "intensity_min": float(values.min()),
+        "intensity_max": float(values.max()),
+        "scale": float(values.max() - values.min()) / 65535,
+        "offset": float(values.min()),
+        "values": 0,
+        "squared_error": 0.0,
+        "max_abs_error": 0.0,
+        "positive_to_zero": 0,
+        "changed": 0,
+        "overflow": 0,
+    }
+    separate_report = deepcopy(report)
+    fused_report = deepcopy(report)
+    encoded = restored = fused = None
+    try:
+        encoded = encode(source, separate_report)
+        restored = restore(encoded, separate_report)
+        measure(source, restored, separate_report)
+        fused = encode_measure(source, fused_report)
+        np.testing.assert_array_equal(fused.get(), encoded.get())
+        assert fused_report == separate_report
+    finally:
+        for value in (fused, restored, encoded, source):
+            if value is not None:
+                value.release()

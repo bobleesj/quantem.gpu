@@ -25,8 +25,10 @@ def _runtime():
     if library is None:
         raise RuntimeError(f"Could not compile Metal precision kernels: {error}")
     pipelines = {}
-    for name in ("copy", "restore", "encode", "range", "measure", "widths", "pack",
-                 "frame", "unpacked", "detector", "mean", "reduce"):
+    for name in (
+        "copy", "restore", "encode", "encode_measure", "range", "measure",
+        "widths", "pack", "frame", "unpacked", "detector", "mean", "reduce",
+    ):
         function = library.newFunctionWithName_(f"precision_{name}")
         pipeline, error = device.newComputePipelineStateWithFunction_error_(function, None)
         if pipeline is None:
@@ -239,10 +241,26 @@ def has_invalid_pixels(mask):
 
 
 def encode(values, report):
-    result = MetalArray(values.shape, np.float16 if report["storage"] == "float16" else np.uint16)
+    dtype = np.float16 if report["storage"] == "float16" else np.uint16
+    result = MetalArray(values.shape, dtype)
     p, f = _parameters(values, report)
     _dispatch("encode", [values, result], p, f)
     return result
+
+
+def _accumulate_measurement(errors, counts, exponent, report, values):
+    squared = 0.0
+    for row in errors.get().tolist():
+        squared += math.ldexp(row[0], -2 * exponent)
+        report["max_abs_error"] = max(
+            report["max_abs_error"], math.ldexp(row[1], -exponent)
+        )
+    report["squared_error"] += squared
+    for changed, zero, overflow, _ in counts.get().tolist():
+        report["changed"] += changed
+        report["positive_to_zero"] += zero
+        report["overflow"] += overflow
+    report["values"] += values
 
 
 def measure(original, restored, report):
@@ -250,18 +268,36 @@ def measure(original, restored, report):
     p[14] = p[15] = min(original.size, 8192)
     errors = MetalArray((p[14], 4), np.float32)
     counts = MetalArray((p[14], 4), np.uint32)
-    _dispatch("measure", [original, restored, errors, counts], p, f)
-    exponent = struct.unpack("q", struct.pack("Q", p[5]))[0]
-    squared = 0.0
-    for row in errors.get().tolist():
-        squared += math.ldexp(row[0], -2 * exponent)
-        report["max_abs_error"] = max(report["max_abs_error"], math.ldexp(row[1], -exponent))
-    report["squared_error"] += squared
-    for changed, zero, overflow, _ in counts.get().tolist():
-        report["changed"] += changed
-        report["positive_to_zero"] += zero
-        report["overflow"] += overflow
-    report["values"] += original.size
+    try:
+        _dispatch("measure", [original, restored, errors, counts], p, f)
+        exponent = struct.unpack("q", struct.pack("Q", p[5]))[0]
+        _accumulate_measurement(errors, counts, exponent, report, original.size)
+    finally:
+        errors.release()
+        counts.release()
+
+
+def encode_measure(values, report):
+    """Encode values and measure restored-unit error in one Metal pass."""
+    result = MetalArray(
+        values.shape,
+        np.float16 if report["storage"] == "float16" else np.uint16,
+    )
+    p, f = _parameters(values, report)
+    p[14] = p[15] = min(values.size, 8192)
+    errors = MetalArray((p[14], 4), np.float32)
+    counts = MetalArray((p[14], 4), np.uint32)
+    try:
+        _dispatch("encode_measure", [values, result, errors, counts], p, f)
+        exponent = struct.unpack("q", struct.pack("Q", p[5]))[0]
+        _accumulate_measurement(errors, counts, exponent, report, values.size)
+        return result
+    except BaseException:
+        result.release()
+        raise
+    finally:
+        errors.release()
+        counts.release()
 
 
 class _PackedPart:
