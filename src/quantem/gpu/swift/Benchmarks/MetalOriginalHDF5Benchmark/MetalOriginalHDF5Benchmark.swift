@@ -17,6 +17,7 @@ enum MetalOriginalHDF5Benchmark {
     let oracle: [String: String]
     let detectorTrials: Int
     let series: Bool
+    let prepareCache: URL?
 
     init() throws {
       var args = Array(CommandLine.arguments.dropFirst())
@@ -24,7 +25,8 @@ enum MetalOriginalHDF5Benchmark {
         throw failure(
           "Usage: metal-original-hdf5-benchmark INPUT INDEX_DIRECTORY "
             + "[--repeats N] [--budget-bytes N] [--plan-directory DIR] "
-            + "[--reuse-products] [--oracle JSON] [--detector-trials N] [--series]"
+            + "[--reuse-products] [--oracle JSON] [--detector-trials N] [--series] "
+            + "[--prepare-cache PATH]"
         )
       }
       input = URL(fileURLWithPath: args.removeFirst())
@@ -36,6 +38,7 @@ enum MetalOriginalHDF5Benchmark {
       var reuse = false
       var detectorTrials = 0
       var series = false
+      var prepareCache: URL?
       while !args.isEmpty {
         let flag = args.removeFirst()
         if flag == "--series" {
@@ -44,6 +47,11 @@ enum MetalOriginalHDF5Benchmark {
         }
         if flag == "--reuse-products" {
           reuse = true
+          continue
+        }
+        if flag == "--prepare-cache" {
+          guard !args.isEmpty else { throw failure("Missing value for \(flag)") }
+          prepareCache = URL(fileURLWithPath: args.removeFirst())
           continue
         }
         guard !args.isEmpty else { throw failure("Missing value for \(flag)") }
@@ -81,6 +89,7 @@ enum MetalOriginalHDF5Benchmark {
       self.oracle = oracle
       self.detectorTrials = detectorTrials
       self.series = series
+      self.prepareCache = prepareCache
     }
   }
 
@@ -125,7 +134,32 @@ enum MetalOriginalHDF5Benchmark {
         "index/layout metadata may be reused; OS pages uncontrolled; no 4D count cache",
       "full_count_hash_encoding":
         "scan-row/scan-column/detector-row/detector-column uint32 little-endian",
+      "prepare_cache": options.prepareCache?.path as Any? ?? NSNull(),
     ])
+    if let prepareURL = options.prepareCache {
+      guard catalog.datasets.count == 1 else {
+        throw failure("--prepare-cache requires an input containing exactly one acquisition")
+      }
+      guard !FileManager.default.fileExists(atPath: prepareURL.path) else {
+        throw failure("Prepared cache already exists; choose a new path")
+      }
+      let dataset = catalog.datasets[0]
+      let identity = dataset.sourceIdentitySHA256!
+      let indexed = try Native4DSTEMIndexedSource.open(dataset: dataset)
+      let prepareStarted = CFAbsoluteTimeGetCurrent()
+      _ = try MetalCompactH5Loader.prepare(
+        source: indexed, destinationURL: prepareURL, device: device)
+      let elapsed = CFAbsoluteTimeGetCurrent() - prepareStarted
+      let attributes = try FileManager.default.attributesOfItem(atPath: prepareURL.path)
+      let bytes = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
+      try emit([
+        "phase": "prepared_cache", "source_identity": identity,
+        "path": prepareURL.path, "seconds": elapsed, "bytes": bytes,
+        "timing_boundary": "indexed source open through durable packed cache write",
+        "exact_roundtrip_verified": true,
+      ])
+      return
+    }
     var products: [String: MetalCompactH5ExactDPCMoments] = [:]
     if options.series {
       try benchmarkSeries(catalog.datasets, options: options, device: device)
@@ -160,11 +194,20 @@ enum MetalOriginalHDF5Benchmark {
           else { throw failure("Resident did not preserve the full unmodified acquisition") }
           let metadata = resident.metadata
           let frames = [0, metadata.scanCount / 2, metadata.scanCount - 1]
-          let observed = try frames.map { frame in
+          let firstConsumerStarted = CFAbsoluteTimeGetCurrent()
+          let firstValues = try resident.extractDiffraction(
+            scanRow: frames[0] / metadata.scanColumns,
+            scanColumn: frames[0] % metadata.scanColumns)
+          let firstConsumerSeconds = CFAbsoluteTimeGetCurrent() - firstConsumerStarted
+          let observed = try [digest(firstValues)] + frames.dropFirst().map { frame in
             try digest(
               resident.extractDiffraction(
                 scanRow: frame / metadata.scanColumns, scanColumn: frame % metadata.scanColumns))
           }
+          try emit([
+            "phase": "first_consumer", "cycle": cycle, "source_identity": identity,
+            "seconds": firstConsumerSeconds, "frame": frames[0],
+          ])
           if let prior = fingerprints[identity], prior != observed {
             throw failure("Return visit changed diffraction counts")
           }
@@ -253,6 +296,7 @@ enum MetalOriginalHDF5Benchmark {
               $0 / 1000 as Any
             } ?? NSNull(),
             "gpu_preparation_seconds": metrics.gpuPreparationMilliseconds / 1000,
+            "first_consumer_seconds": firstConsumerSeconds,
             "reused_dpc": metrics.reusedPreparedDPC, "sample_hashes": observed,
             "independent_full_count_parity": audited.contains(identity), "resident_count": 1,
           ])

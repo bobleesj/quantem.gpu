@@ -27,6 +27,8 @@ extension OriginalHDF5Packing {
     var headersGPU = 0.0, dpcGPU = 0.0, valuesGPU = 0.0, verifyGPU = 0.0
     var prefixWall = 0.0
     var scalarSlices = 0
+    var orderedDecodeSlices = 0
+    var distance3DecodeSlices = 0
     var scalarDecodeThreads = 128, bitshufflePackingThreads = 128
     var decodePipelineThreadLimit = 0
     var packingPipelineThreadLimit = 0
@@ -54,6 +56,9 @@ extension OriginalHDF5Packing {
     var fusedDecodeHeaderWindows = 0
     var readAheadEnabled = false
     var readAheadDepth = 0
+    var coalescedReadBatches = 0
+    var coalescedReadSlices = 0
+    var coalescedReadGapBytes: UInt64 = 0
     var readWait = 0.0
     var maximumConcurrentInputBytes: UInt64 = 0
     var additionalReadReserveBytes: UInt64 = 0
@@ -74,6 +79,8 @@ extension OriginalHDF5Packing {
         "isolated_verify_and_retention_gpu_seconds": verifyGPU,
         "prefix_wall_seconds": prefixWall,
         "scalar_decode_slices": scalarSlices,
+        "ordered_decode_slices": orderedDecodeSlices,
+        "distance3_decode_slices": distance3DecodeSlices,
         "scalar_decode_threads": scalarDecodeThreads,
         "decode_pipeline_thread_limit": decodePipelineThreadLimit,
         "packing_pipeline_thread_limit": packingPipelineThreadLimit,
@@ -109,6 +116,9 @@ extension OriginalHDF5Packing {
         "private_dense_window": privateDense,
         "compressed_read_ahead": readAheadEnabled,
         "compressed_read_ahead_depth": readAheadDepth,
+        "coalesced_read_batches": coalescedReadBatches,
+        "coalesced_read_slices": coalescedReadSlices,
+        "coalesced_read_gap_bytes": coalescedReadGapBytes,
         "compressed_read_wait_seconds": readWait,
         "maximum_concurrent_compressed_input_bytes": maximumConcurrentInputBytes,
         "additional_compressed_read_reserve_bytes": additionalReadReserveBytes,

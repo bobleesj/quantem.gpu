@@ -54,7 +54,7 @@ extension MetalCompactH5Loader {
     let allocatedBefore = UInt64(device.currentAllocatedSize)
     let initialInputs = try OriginalHDF5Packing.inputStamps(source)
     let planURL = OriginalHDF5Packing.safePlanURL(packingPlanURL, source: source)
-    let packing = try OriginalHDF5Packing(device: device, cachePlans: planURL != nil)
+    let packing = try OriginalHDF5Packing.forLoad(device: device, cachePlans: planURL != nil)
     let result: OriginalPackedBuffers?
     do {
       result = try packing.pack(
@@ -123,6 +123,13 @@ struct OriginalPackedBuffers {
 }
 
 final class OriginalHDF5Packing {
+  #if QGPU_PACKING_DIAGNOSTICS
+    private final class ReusablePackingBox: @unchecked Sendable {
+      var value: OriginalHDF5Packing?
+    }
+    private static let reusablePackingLock = NSLock()
+    private static let reusablePacking = ReusablePackingBox()
+  #endif
   /// A cache hint must never become an output destination for source or index data.
   static func safePlanURL(_ candidate: URL?, source: Native4DSTEMIndexedSource) -> URL? {
     guard let candidate, candidate.isFileURL else { return nil }
@@ -147,6 +154,27 @@ final class OriginalHDF5Packing {
     let profile: Profile
     var retryWithoutPlan = false
   }
+
+  /// Reuse immutable Metal queues and pipeline state only in an instrumented
+  /// diagnostic process. Production/UI loads keep their existing ownership
+  /// semantics; the opt-in probe isolates driver setup churn from resident
+  /// allocation churn during repeated source switches.
+  static func forLoad(device: MTLDevice, cachePlans: Bool) throws -> OriginalHDF5Packing {
+    #if QGPU_PACKING_DIAGNOSTICS
+      if !cachePlans && OriginalPackingDiagnostics.enabled("REUSE_PACKER", byDefault: false) {
+        return try reusablePackingLock.withLock {
+          if let value = reusablePacking.value, value.device.registryID == device.registryID {
+            return value
+          }
+          let created = try OriginalHDF5Packing(device: device, cachePlans: cachePlans)
+          reusablePacking.value = created
+          return created
+        }
+      }
+    #endif
+    return try OriginalHDF5Packing(device: device, cachePlans: cachePlans)
+  }
+
   struct Shape { var scans, pixels, columns, sourceBytes: UInt32 }
   struct InputStamp: Equatable {
     let device: dev_t
@@ -185,11 +213,16 @@ final class OriginalHDF5Packing {
   }
   let device: MTLDevice
   let queue: MTLCommandQueue
+  let decodeQueue: MTLCommandQueue
   let decode8, decode16, decode32, unshuffle32, headersPipeline,
     valuesPipeline: MTLComputePipelineState
+  let fusedDecodeUnshuffle, fusedDecodeUnshuffleVector, fusedDecodeUnshuffleFrameCoop:
+    MTLComputePipelineState?
   let verifyPipeline, momentsPipeline, narrowPipeline: MTLComputePipelineState
-  let scalarDecode, scalarUnshuffle: MTLComputePipelineState?
-  let standardPlaneValues, standardPlaneSummary: MTLComputePipelineState?
+  let scalarDecode, scalarUnshuffle, orderedScalarDecode, distance3ScalarDecode,
+    distance8ScalarDecode:
+    MTLComputePipelineState?
+  let standardPlaneValues, standardPlaneValuesU16, standardPlaneSummary: MTLComputePipelineState?
   let rangesPipeline, verifiedValuesPipeline: MTLComputePipelineState?
   let checkpointPacking: Bool
   let alignedRepeatFill: Bool
@@ -197,15 +230,22 @@ final class OriginalHDF5Packing {
   let transposeUnshuffle: Bool
   let dpcUnshuffle, dpcUnshuffle32, dpcReduce: MTLComputePipelineState?
   let planDecode, summaryValues, summaryReduce: MTLComputePipelineState?
+  let tokenPlanBuild, tokenPlanExpand: MTLComputePipelineState?
   let cpuPlanDecode: Bool
-  let bitshuffleValues, bitshuffleReduce: MTLComputePipelineState?
-  let bitshuffleDPC: MTLComputePipelineState?
+  let bitshuffleHeaders, bitshuffleHeadersVector4: MTLComputePipelineState?
+  let bitshuffleValues, bitshuffleValuesDPC, bitshuffleValuesWidthBounded,
+    bitshuffleValuesWidthBoundedDPC, bitshuffleValuesZeroTailDPC, bitshuffleReduce:
+    MTLComputePipelineState?
+  let bitshuffleDPCFusedReduce: MTLComputePipelineState?
+  let bitshuffleDirectCombined, compactFixedPlanes: MTLComputePipelineState?
+  let bitshuffleDPC, bitshuffleDPCPruned, bitshuffleDPCWide: MTLComputePipelineState?
   let zeroTailDecode, zeroTailValues: MTLComputePipelineState?
   var bitshufflePayloadLayout: UInt32 = 0
   var bitshufflePixelsPerThread = 1
   let bitshuffleSIMDGather: Bool
   let scalarDecodeThreads: Int
   let bitshufflePackingThreads: Int
+  let standardPackingThreads: Int
 
   init(device: MTLDevice, cachePlans: Bool = false) throws {
     self.device = device
@@ -213,7 +253,11 @@ final class OriginalHDF5Packing {
     guard let queue = device.makeCommandQueue() else {
       throw Self.invalid("No Metal command queue")
     }
+    guard let decodeQueue = device.makeCommandQueue() else {
+      throw Self.invalid("No Metal decode command queue")
+    }
     self.queue = queue
+    self.decodeQueue = decodeQueue
     let decode = try Metal4DSTEMKernels.makeHDF5Library(device: device)
     let packing = try Metal4DSTEMKernels.makeOriginalPackingLibrary(device: device)
     func pipeline(
@@ -228,9 +272,16 @@ final class OriginalHDF5Packing {
         || (boundedPacking
           && OriginalPackingDiagnostics.enabled("FIXED_PACK_PIPELINE", byDefault: false))
       {
+        let fixedThreads = Int(
+          ProcessInfo.processInfo.environment[
+            boundedDecode ? "QGPU_ORIGINAL_FIXED_DECODE_THREADS" : "QGPU_ORIGINAL_FIXED_PACK_THREADS"
+          ] ?? "32") ?? 32
+        guard [32, 64, 128, 256, 512, 1024].contains(fixedThreads) else {
+          throw Self.invalid("Fixed Metal pipeline threads must be one of 32, 64, 128, 256, 512, or 1024")
+        }
         let descriptor = MTLComputePipelineDescriptor()
         descriptor.computeFunction = function
-        descriptor.maxTotalThreadsPerThreadgroup = 32
+        descriptor.maxTotalThreadsPerThreadgroup = fixedThreads
         descriptor.threadGroupSizeIsMultipleOfThreadExecutionWidth = true
         return try device.makeComputePipelineState(
           descriptor: descriptor, options: [], reflection: nil)
@@ -241,14 +292,42 @@ final class OriginalHDF5Packing {
     decode16 = try pipeline(decode, Metal4DSTEMKernels.decodeU16Function)
     decode32 = try pipeline(decode, "h5lz4dc_full_u32_qh5idx")
     unshuffle32 = try pipeline(decode, "h5unshuffle_u32_qh5idx")
+    let fusedDecode = OriginalPackingDiagnostics.enabled("FUSED_DECODE", byDefault: false)
+    fusedDecodeUnshuffle = fusedDecode
+      ? try pipeline(decode, "h5lz4dc_unshuffle_u16_single_block_qh5idx") : nil
+    fusedDecodeUnshuffleVector = fusedDecode
+      && OriginalPackingDiagnostics.enabled("FUSED_DECODE_VECTOR", byDefault: false)
+      ? try pipeline(decode, "h5lz4dc_unshuffle_u16_single_block_vector_qh5idx") : nil
+    fusedDecodeUnshuffleFrameCoop = fusedDecode
+      && OriginalPackingDiagnostics.enabled("FUSED_DECODE_FRAME_COOP", byDefault: false)
+      ? try pipeline(decode, Metal4DSTEMKernels.decodeU16FrameCooperativeFunction) : nil
     alignedRepeatFill = OriginalPackingDiagnostics.enabled("ALIGNED_FILL", byDefault: true)
     alignedHistoryCopy = OriginalPackingDiagnostics.enabled("ALIGNED_COPY", byDefault: false)
+    let fastDecode =
+      OriginalPackingDiagnostics.enabled("FAST_DECODE", byDefault: false)
+    let fixedNineBlockDecode =
+      OriginalPackingDiagnostics.enabled("DECODE_FIXED_BLOCKS9", byDefault: false)
+    let shortTokenDecode =
+      OriginalPackingDiagnostics.enabled("DECODE_SHORT_TOKENS", byDefault: false)
+    let shortRepeatFill =
+      OriginalPackingDiagnostics.enabled("DECODE_REPEAT32", byDefault: false)
     transposeUnshuffle = OriginalPackingDiagnostics.enabled("TRANSPOSE_UNSHUFFLE", byDefault: true)
     if OriginalPackingDiagnostics.enabled("SCALAR_DECODE", byDefault: true) {
       let function: String
       switch (alignedRepeatFill, alignedHistoryCopy) {
       case (true, true): function = "h5lz4dc_full_u16_aligned_fill_copy_qh5idx"
-      case (true, false): function = "h5lz4dc_full_u16_aligned_fill_qh5idx"
+      case (true, false):
+        if fastDecode {
+          function = "h5lz4dc_full_u16_fast_qh5idx"
+        } else if fixedNineBlockDecode {
+          function = "h5lz4dc_full_u16_aligned_fill_fixed9_qh5idx"
+        } else if shortTokenDecode {
+          function = "h5lz4dc_full_u16_aligned_fill_short_tokens_qh5idx"
+        } else {
+          function = shortRepeatFill
+            ? "h5lz4dc_full_u16_aligned_fill_repeat32_qh5idx"
+            : "h5lz4dc_full_u16_aligned_fill_qh5idx"
+        }
       case (false, true): function = "h5lz4dc_full_u16_aligned_copy_qh5idx"
       case (false, false): function = "h5lz4dc_full_u16_scalar_qh5idx"
       }
@@ -261,6 +340,19 @@ final class OriginalHDF5Packing {
       scalarDecode = nil
       scalarUnshuffle = nil
     }
+    orderedScalarDecode = OriginalPackingDiagnostics.enabled("DECODE_ORDERED", byDefault: false)
+      ? try pipeline(decode, "h5lz4dc_full_u16_aligned_fill_ordered_qh5idx", boundedDecode: true)
+      : nil
+    distance3ScalarDecode = alignedRepeatFill && !alignedHistoryCopy && !fastDecode
+      && !shortTokenDecode
+      && OriginalPackingDiagnostics.enabled("DECODE_DISTANCE3", byDefault: false)
+      ? try pipeline(decode, "h5lz4dc_full_u16_aligned_fill_distance3_qh5idx", boundedDecode: true)
+      : nil
+    distance8ScalarDecode = alignedRepeatFill && !alignedHistoryCopy && !fastDecode
+      && !shortTokenDecode
+      && OriginalPackingDiagnostics.enabled("DECODE_DISTANCE8", byDefault: false)
+      ? try pipeline(decode, "h5lz4dc_full_u16_aligned_fill_distance8_qh5idx", boundedDecode: true)
+      : nil
     if OriginalPackingDiagnostics.enabled("FUSED_DPC", byDefault: true) {
       dpcUnshuffle = try pipeline(decode, "h5unshuffle_u16_dpc_qh5idx")
       dpcUnshuffle32 = try pipeline(decode, "h5unshuffle_u32_dpc_qh5idx")
@@ -292,26 +384,68 @@ final class OriginalHDF5Packing {
       summaryValues = nil
       summaryReduce = nil
     }
+    let gpuTokenPlan = OriginalPackingDiagnostics.enabled("GPU_TOKEN_PLAN", byDefault: false)
+    tokenPlanBuild = gpuTokenPlan
+      ? try pipeline(decode, "h5lz4_build_token_plan_u16_qh5idx", boundedDecode: true)
+      : nil
+    tokenPlanExpand = gpuTokenPlan
+      ? try pipeline(
+        decode,
+        "h5lz4_expand_token_plan_u16_qh5idx",
+        boundedDecode: true)
+      : nil
     if checkpointPacking, rangesPipeline != nil, verifiedValuesPipeline != nil,
       OriginalPackingDiagnostics.enabled("STANDARD_PLANES", byDefault: true)
     {
-      standardPlaneValues = try pipeline(packing, "original_packing_values_planes_checkpoints")
+      let skipStoreVerification =
+        OriginalPackingDiagnostics.enabled("SKIP_STANDARD_STORE_VERIFY", byDefault: false)
+      standardPlaneValues = try pipeline(
+        packing,
+        skipStoreVerification
+          ? "original_packing_values_planes_checkpoints_unchecked"
+          : "original_packing_values_planes_checkpoints")
+      standardPlaneValuesU16 = skipStoreVerification
+        ? nil
+        : try pipeline(
+          packing,
+          OriginalPackingDiagnostics.enabled("WIDTH56_LUT", byDefault: false)
+            ? "original_packing_values_planes_checkpoints_u16_width56_diagnostic"
+            : "original_packing_values_planes_checkpoints_u16")
       standardPlaneSummary = try pipeline(
         packing, "original_packing_values_planes_checkpoints_summary")
     } else {
       standardPlaneValues = nil
+      standardPlaneValuesU16 = nil
       standardPlaneSummary = nil
     }
-    if cpuPlanDecode && OriginalPackingDiagnostics.enabled("DIRECT_BITSHUFFLE", byDefault: true) {
+    let directScratchEnabled =
+      OriginalPackingDiagnostics.enabled("DIRECT_SCRATCH", byDefault: false)
+    if (cpuPlanDecode || directScratchEnabled)
+      && OriginalPackingDiagnostics.enabled("DIRECT_BITSHUFFLE", byDefault: true) {
+      bitshuffleHeaders = try pipeline(packing, "original_packing_bitshuffle_headers")
       let usePlanes =
         OriginalPackingDiagnostics.enabled("PLANES", byDefault: true)
         && OriginalPackingDiagnostics.enabled("SIMD_GATHER", byDefault: true)
       let vectorPlanes =
         usePlanes && OriginalPackingDiagnostics.enabled("PLANE_VECTOR4", byDefault: true)
       let vectorColumns = vectorPlanes ? 4 : 1
+      bitshuffleHeadersVector4 = vectorPlanes
+        ? try pipeline(packing, "original_packing_bitshuffle_headers_vector4", boundedPacking: true)
+        : nil
+      let skipDirectStoreVerify =
+        OriginalPackingDiagnostics.enabled("SKIP_DIRECT_STORE_VERIFY", byDefault: false)
+      let widthAwareHighPlanes =
+        OriginalPackingDiagnostics.enabled("WIDTH_AWARE_HIGH_PLANES", byDefault: false)
+      let low8Only = OriginalPackingDiagnostics.enabled("LOW8_ONLY", byDefault: false)
       let planeFunction =
         vectorPlanes
-        ? "original_packing_bitshuffle_planes_vector4_summary"
+        ? (low8Only
+          ? "original_packing_bitshuffle_planes_vector4_low8_summary"
+          : (widthAwareHighPlanes
+          ? "original_packing_bitshuffle_planes_vector4_widthaware_summary"
+          : (skipDirectStoreVerify
+            ? "original_packing_bitshuffle_planes_vector4_unchecked_summary"
+            : "original_packing_bitshuffle_planes_vector4_summary")))
         : "original_packing_bitshuffle_planes_verified_summary"
       let cooperative =
         OriginalPackingDiagnostics.enabled("SIMD_GATHER", byDefault: true)
@@ -340,9 +474,45 @@ final class OriginalHDF5Packing {
         bitshuffleSIMDGather = false
       }
       bitshuffleReduce = try pipeline(packing, "original_packing_reduce_bitshuffle_summary")
+      if vectorPlanes {
+        bitshuffleValuesDPC = try pipeline(
+          packing, "original_packing_bitshuffle_planes_vector4_dpc_summary", boundedPacking: true)
+        bitshuffleValuesWidthBounded = try pipeline(
+          packing, "original_packing_bitshuffle_planes_vector4_widthbounded_summary",
+          boundedPacking: true)
+        bitshuffleValuesWidthBoundedDPC = try pipeline(
+          packing, "original_packing_bitshuffle_planes_vector4_widthbounded_dpc_summary",
+          boundedPacking: true)
+        bitshuffleValuesZeroTailDPC = try pipeline(
+          packing, "original_packing_bitshuffle_planes_vector4_zero_tail_dpc_summary",
+          boundedPacking: true)
+        bitshuffleDPCFusedReduce = try pipeline(
+          packing, "original_packing_reduce_bitshuffle_dpc_fused", boundedPacking: true)
+        bitshuffleDirectCombined = try pipeline(
+          packing, "original_packing_bitshuffle_direct_combined", boundedPacking: true)
+        compactFixedPlanes = try pipeline(
+          packing, "original_packing_compact_fixed_planes", boundedPacking: true)
+      } else {
+        bitshuffleValuesDPC = nil
+        bitshuffleValuesWidthBounded = nil
+        bitshuffleValuesWidthBoundedDPC = nil
+        bitshuffleValuesZeroTailDPC = nil
+        bitshuffleDPCFusedReduce = nil
+        bitshuffleDirectCombined = nil
+        compactFixedPlanes = nil
+      }
     } else {
+      bitshuffleHeaders = nil
+      bitshuffleHeadersVector4 = nil
       bitshuffleValues = nil
+      bitshuffleValuesDPC = nil
+      bitshuffleValuesWidthBounded = nil
+      bitshuffleValuesWidthBoundedDPC = nil
+      bitshuffleValuesZeroTailDPC = nil
       bitshuffleReduce = nil
+      bitshuffleDPCFusedReduce = nil
+      bitshuffleDirectCombined = nil
+      compactFixedPlanes = nil
       bitshuffleSIMDGather = false
     }
     headersPipeline = try pipeline(packing, "original_packing_headers")
@@ -352,6 +522,12 @@ final class OriginalHDF5Packing {
     bitshuffleDPC =
       OriginalPackingDiagnostics.enabled("DIRECT_DPC", byDefault: true)
       ? try pipeline(packing, "original_packing_bitshuffle_dpc") : nil
+    bitshuffleDPCPruned =
+      OriginalPackingDiagnostics.enabled("DPC_PRUNE_HIGH_PLANES", byDefault: false)
+      ? try pipeline(packing, "original_packing_bitshuffle_dpc_pruned_high_planes") : nil
+    bitshuffleDPCWide =
+      OriginalPackingDiagnostics.enabled("DPC_WIDE_GROUPS", byDefault: false)
+      ? try pipeline(packing, "original_packing_bitshuffle_dpc_wide_groups") : nil
     if OriginalPackingDiagnostics.enabled("ZERO_TAIL", byDefault: true) {
       zeroTailDecode = try pipeline(
         decode, "h5lz4dc_full_u16_zero_tail_qh5idx", boundedDecode: true)
@@ -362,25 +538,31 @@ final class OriginalHDF5Packing {
       zeroTailValues = nil
     }
     narrowPipeline = try pipeline(packing, "original_packing_u8")
-    func diagnosticThreads(_ name: String, maximum: Int) throws -> Int {
+    func diagnosticThreads(_ name: String, maximum: Int, defaultValue: Int = 32) throws -> Int {
       #if QGPU_PACKING_DIAGNOSTICS
         if let text = ProcessInfo.processInfo.environment["QGPU_ORIGINAL_" + name] {
-          guard let value = Int(text), [32, 64, 128, 256, 512].contains(value), value <= maximum
+          guard let value = Int(text), [32, 64, 96, 128, 256, 512].contains(value), value <= maximum
           else {
             throw Self.invalid(
-              "Unsupported \(name); select a supported multiple of32 from32,64,128,256,512")
+              "Unsupported \(name); select a supported multiple of32 from32,64,96,128,256,512")
           }
           return value
         }
       #endif
-      return 32
+      return defaultValue
     }
     scalarDecodeThreads = try diagnosticThreads(
       "DECODE_THREADS",
-      maximum: scalarDecode?.maxTotalThreadsPerThreadgroup ?? 128)
+      maximum: scalarDecode?.maxTotalThreadsPerThreadgroup ?? 128,
+      defaultValue: min(128, scalarDecode?.maxTotalThreadsPerThreadgroup ?? 128))
     bitshufflePackingThreads = try diagnosticThreads(
       "PACK_THREADS",
-      maximum: bitshuffleValues?.maxTotalThreadsPerThreadgroup ?? 128)
+      maximum: bitshuffleValues?.maxTotalThreadsPerThreadgroup ?? 128,
+      defaultValue: 32)
+    standardPackingThreads = try diagnosticThreads(
+      "STANDARD_PACK_THREADS",
+      maximum: standardPlaneValues?.maxTotalThreadsPerThreadgroup ?? 128,
+      defaultValue: 128)
   }
 
   func pack(
@@ -390,7 +572,9 @@ final class OriginalHDF5Packing {
     shouldCancel: () -> Bool, progress: (Int, Int) -> Void
   ) throws -> OriginalPackedBuffers? {
     let dataset = source.dataset
-    let standardPlanes = destination == nil && standardPlaneValues != nil
+    let selectedStandardPlaneValues =
+      source.sourceBytesPerValue == 2 ? standardPlaneValuesU16 : standardPlaneValues
+    let standardPlanes = destination == nil && selectedStandardPlaneValues != nil
     guard let identity = dataset.sourceIdentitySHA256,
       source.logicalFrameCount.isMultiple(of: 32),
       ["uint8", "uint16", "uint32"].contains(dataset.sourceDtype)
@@ -427,7 +611,15 @@ final class OriginalHDF5Packing {
     // Smaller detector geometries retain the existing 4096-frame window.
     // Only processing windows change, never the requested scan coverage.
     var frames = min(4096, source.logicalFrameCount)
-    while frames > 32 && UInt64(frames) * source.decodedBytesPerFrame > (UInt64(160) << 20) {
+    var denseWindowBudget = UInt64(160) << 20
+    #if QGPU_PACKING_DIAGNOSTICS
+      if let text = ProcessInfo.processInfo.environment["QGPU_ORIGINAL_WINDOW_MIB"],
+        let value = UInt64(text), value > 0, value <= 1024
+      {
+        denseWindowBudget = value << 20
+      }
+    #endif
+    while frames > 32 && UInt64(frames) * source.decodedBytesPerFrame > denseWindowBudget {
       frames = max(32, (frames / 2 / 32) * 32)
     }
     while source.logicalFrameCount % frames != 0 { frames -= 32 }
@@ -440,11 +632,28 @@ final class OriginalHDF5Packing {
     let allocatedBefore = UInt64(device.currentAllocatedSize)
     // Reserve bounded staging before any count storage is allocated. Grow the
     // resident only after checking each measured shard against the same budget.
+    let forceNonScalarDecode =
+      OriginalPackingDiagnostics.enabled("FORCE_NONSCALAR_DECODE", byDefault: false)
+    let fusedDirectRequested =
+      destination == nil
+      && source.sourceBytesPerValue == 2
+      && OriginalPackingDiagnostics.enabled("FUSED_DECODE", byDefault: false)
+    let directScratchRequested =
+      destination == nil
+      && source.sourceBytesPerValue == 2
+      && OriginalPackingDiagnostics.enabled("DIRECT_SCRATCH", byDefault: false)
+      && !fusedDirectRequested
+    let gpuTokenPlanRequested = directScratchRequested
+      && tokenPlanBuild != nil && tokenPlanExpand != nil
     let useScalar =
-      scalarUnshuffle?.threadExecutionWidth == 32 && source.sourceBytesPerValue == 2
-      && frames >= 2048 && pixels.isMultiple(of: 4096)
-      && windows.contains { $0.slices.contains { $0.globalFrameRange.count >= 2048 } }
-      && source.shards.allSatisfy { Int($0.index.metadata.nBlocksPerFrame) * 4096 == pixels }
+      directScratchRequested
+      ? scalarDecode != nil && pixels.isMultiple(of: 4096)
+        && source.shards.allSatisfy { Int($0.index.metadata.nBlocksPerFrame) * 4096 == pixels }
+      : (!fusedDirectRequested && !forceNonScalarDecode
+        && scalarUnshuffle?.threadExecutionWidth == 32 && source.sourceBytesPerValue == 2
+        && frames >= 2048 && pixels.isMultiple(of: 4096)
+        && windows.contains { $0.slices.contains { $0.globalFrameRange.count >= 2048 } }
+        && source.shards.allSatisfy { Int($0.index.metadata.nBlocksPerFrame) * 4096 == pixels })
     let scratchBytes =
       source.sourceBytesPerValue == 4 ? frames * pixels * 4 : (useScalar ? frames * pixels * 2 : 0)
     let cachedDPC = destination == nil ? validatedDPC(preparedDPC, source: source) : nil
@@ -469,9 +678,19 @@ final class OriginalHDF5Packing {
     let cachePlans = destination == nil && packingPlanURL != nil && source.sourceBytesPerValue != 4
     // Covers one compressed record, upload, decoded header, codec/hash scratch.
     let planStaging: UInt64 = cachePlans ? 64 << 20 : 0
-    let stagingReserve =
-      UInt64(frames * pixels * source.sourceBytesPerValue + scratchBytes + partialBytes)
-      + (768 << 20) + planStaging
+    // Keep the terms explicit so Swift 6.2 and Swift 6.3 can type-check the
+    // expression consistently across the supported Apple hosts.
+    let decodedStagingBytes =
+      UInt64(frames) * UInt64(pixels) * UInt64(source.sourceBytesPerValue)
+    let baseStagingBytes =
+      decodedStagingBytes + UInt64(scratchBytes) + UInt64(partialBytes)
+    let tokenPlanBlockBytes: UInt64 = 16 + 256 * 16
+    let tokenPlanStaging = gpuTokenPlanRequested
+      ? UInt64(frames)
+        * UInt64(source.shards.map { Int($0.index.metadata.nBlocksPerFrame) }.max() ?? 0)
+        * tokenPlanBlockBytes
+      : 0
+    let stagingReserve = baseStagingBytes + (768 << 20) + planStaging + tokenPlanStaging
     if let maximumAdditionalBytes, stagingReserve > maximumAdditionalBytes {
       if cachePlans {
         throw CacheMismatch(profile: priorProfile ?? Profile(), retryWithoutPlan: true)
@@ -549,9 +768,95 @@ final class OriginalHDF5Packing {
     let mask = try buffer(pixels)
     let errors = try buffer(4)
     let payloadWords = try buffer(4)
-    let scalarScratch = scratchBytes > 0 ? try buffer(scratchBytes, privateStorage: true) : nil
+    let scalarScratch = scratchBytes > 0
+      ? try buffer(scratchBytes, privateStorage: true) : nil
+    let tokenPlanBlocksPerFrame = source.shards.map {
+      Int($0.index.metadata.nBlocksPerFrame)
+    }.max() ?? 0
+    let tokenPlanHeaders = gpuTokenPlanRequested && tokenPlanBlocksPerFrame > 0
+      ? try buffer(frames * tokenPlanBlocksPerFrame * 16, privateStorage: true) : nil
+    let tokenPlanOps = gpuTokenPlanRequested && tokenPlanBlocksPerFrame > 0
+      ? try buffer(frames * tokenPlanBlocksPerFrame * 256 * 16, privateStorage: true) : nil
+    let directScratch =
+      destination == nil
+      && source.sourceBytesPerValue == 2
+      && scalarScratch != nil
+      && bitshuffleHeaders != nil
+      && bitshuffleValues != nil
+      && bitshuffleDPC != nil
+      && OriginalPackingDiagnostics.enabled("DIRECT_SCRATCH", byDefault: false)
+    let fusedDirect =
+      fusedDirectRequested
+      && fusedDecodeUnshuffle != nil
+      && source.sourceBytesPerValue == 2
+      && pixels.isMultiple(of: 4096)
+      && source.shards.allSatisfy {
+        Int($0.index.metadata.nBlocksPerFrame) * 4096 == pixels
+      }
+    let directCombined =
+      directScratch
+      && OriginalPackingDiagnostics.enabled("COMBINED_DIRECT", byDefault: false)
+      && bitshuffleDirectCombined != nil && bitshuffleDPCFusedReduce != nil
+    // Diagnostic two-queue pipeline: while the pack queue materializes window
+    // N, the decode queue prepares window N+1 in a second scratch slot. The
+    // default remains serialized until this path passes parity and consistency
+    // screens on the target machine.
+    let pipelineWindows =
+      directScratch && !directCombined && planReader == nil && planWriter == nil
+      && OriginalPackingDiagnostics.enabled("WINDOW_PIPELINE", byDefault: false)
+    let directWidthBounded =
+      directScratch
+      && OriginalPackingDiagnostics.enabled("WIDTH_BOUNDED", byDefault: false)
+      && bitshuffleHeadersVector4 != nil
+      && bitshuffleValuesWidthBoundedDPC != nil
+      && bitshuffleDPCFusedReduce != nil
+    let directWidthBoundedPayload =
+      directScratch
+      && OriginalPackingDiagnostics.enabled("WIDTH_BOUNDED_PAYLOAD", byDefault: false)
+      && bitshuffleHeadersVector4 != nil
+      && bitshuffleValuesWidthBounded != nil
+    let directZeroTailEnabled =
+      directScratch
+      && !pipelineWindows
+      && OriginalPackingDiagnostics.enabled("ZERO_TAIL_DIRECT", byDefault: false)
+      && bitshuffleHeadersVector4 != nil
+      && zeroTailDecode != nil
+      && bitshuffleValuesZeroTailDPC != nil
+      && bitshuffleDPCFusedReduce != nil
+    guard !directScratch || standardPlanes else {
+      throw Self.invalid("Direct bitshuffle scratch loading requires the exact standard plane packer")
+    }
+    let directHighPlaneWords =
+      directScratch && !directCombined
+      ? try buffer((pixels + 31) / 32 * MemoryLayout<UInt32>.stride) : nil
+    let pipelineScratch =
+      pipelineWindows ? try buffer(scratchBytes, privateStorage: true) : nil
+    let pipelineDecodeErrors = pipelineWindows ? try buffer(4) : nil
+    let directCombinedFixedPayload =
+      directCombined
+      ? try buffer(pixels * (frames / 32) * 16 * MemoryLayout<UInt32>.stride, privateStorage: true)
+      : nil
+    let directCombinedDPCPartials =
+      directCombined
+      ? try buffer(frames * (pixels / 128) * MemoryLayout<UInt64>.stride * 4, privateStorage: true)
+      : nil
+    let directZeroTails =
+      directZeroTailEnabled
+      ? try buffer(frames * (pixels / 4096) * MemoryLayout<UInt32>.stride, privateStorage: true)
+      : nil
+    let directPackingDPCPartials =
+      directScratch && !directCombined
+      && OriginalPackingDiagnostics.enabled("FUSED_PACK_DPC", byDefault: true)
+      && (directZeroTailEnabled ? bitshuffleValuesZeroTailDPC != nil : bitshuffleValuesDPC != nil)
+      && bitshuffleDPCFusedReduce != nil
+      ? try buffer(frames * (pixels / 128) * MemoryLayout<UInt64>.stride * 4, privateStorage: true)
+      : nil
     let partialDPC = partialBytes > 0 ? try buffer(partialBytes, privateStorage: true) : nil
     let widths = try buffer(pixels * 4)
+    let directPartialSums =
+      directScratch ? try buffer(pixels * checkpoints * 4, privateStorage: true) : nil
+    let directPartialMaximums =
+      directScratch ? try buffer(pixels * checkpoints * 4, privateStorage: true) : nil
     memset(widths.contents(), 0, widths.length)
     memset(mask.contents(), 0, mask.length)  // Preserve even source-marked hot pixels.
     var maximum: UInt32 = 0
@@ -574,7 +879,11 @@ final class OriginalHDF5Packing {
     let metadataStaging = headers.length * 3 + sizes.length + sums.length
     let auxiliaryStaging =
       moments.length * 3 + audit.length + mask.length + errors.length + widths.length
-      + payloadWords.length
+      + payloadWords.length + (directPackingDPCPartials?.length ?? 0)
+      + (directZeroTails?.length ?? 0)
+      + (directCombinedFixedPayload?.length ?? 0) + (directCombinedDPCPartials?.length ?? 0)
+      + (pipelineScratch?.length ?? 0) + (pipelineDecodeErrors?.length ?? 0)
+      + (tokenPlanHeaders?.length ?? 0) + (tokenPlanOps?.length ?? 0)
     let fixedStaging =
       UInt64(countStaging + metadataStaging + auxiliaryStaging + scratchBytes + partialBytes)
       + UInt64(source.logicalFrameCount) * 32 + planStaging
@@ -586,11 +895,32 @@ final class OriginalHDF5Packing {
     // between slices while the SSD is still delivering the next input.
     let readAheadEnabled =
       destination == nil
-      && OriginalPackingDiagnostics.enabled("READ_AHEAD", byDefault: true)
-    let readAheadDepth = source.sourceBytesPerValue == 4 ? 2 : 1
+      && OriginalPackingDiagnostics.enabled("READ_AHEAD", byDefault: false)
+    var readAheadDepth = source.sourceBytesPerValue == 4 ? 2 : 1
+    #if QGPU_PACKING_DIAGNOSTICS
+      if let text = ProcessInfo.processInfo.environment["QGPU_ORIGINAL_READ_AHEAD_DEPTH"],
+        let value = Int(text)
+      {
+        guard (1...8).contains(value) else {
+          throw Self.invalid(
+            "Unsupported READ_AHEAD_DEPTH; select an integer from 1 through 8")
+        }
+        readAheadDepth = value
+      }
+    #endif
     let reader =
       readAheadEnabled
-      ? CompressedReadAhead(device: device, depth: readAheadDepth) : nil
+      ? CompressedReadAhead(
+        device: device, depth: readAheadDepth,
+        coalesce: OriginalPackingDiagnostics.enabled("COALESCE_READS", byDefault: false),
+        coalesceBatchSize: {
+          #if QGPU_PACKING_DIAGNOSTICS
+            if let text = ProcessInfo.processInfo.environment["QGPU_ORIGINAL_COALESCE_BATCH"],
+              let value = Int(text), (1...4).contains(value)
+            { return value }
+          #endif
+          return 2
+        }()) : nil
     defer { reader?.cancelAndDrain() }
     let orderedSlices = readAheadEnabled ? windows.flatMap(\.slices) : []
     var sliceOrdinal = 0
@@ -637,6 +967,37 @@ final class OriginalHDF5Packing {
     let fuseDecodeHeaders =
       destination == nil && cachedDPC != nil && planReader == nil && !isolateKernels
       && OriginalPackingDiagnostics.enabled("FUSE_DECODE_HEADERS", byDefault: true)
+    let batchDirectDecode =
+      directScratch
+      && (pipelineWindows
+        || OriginalPackingDiagnostics.enabled("BATCH_DECODE", byDefault: false))
+    var pendingPacking: (
+      command: MTLCommandBuffer, started: CFAbsoluteTime, payload: MTLBuffer,
+      headers: MTLBuffer, moments: MTLBuffer, errors: MTLBuffer, upperBound: Int
+    )?
+    func finalizePendingPacking() throws {
+      guard let pending = pendingPacking else { return }
+      pendingPacking = nil
+      let elapsed = try wait(pending.command)
+      profile.packingGPU += elapsed
+      profile.packingWall += CFAbsoluteTimeGetCurrent() - pending.started
+      guard pending.errors.contents().load(as: UInt32.self) == 0 else {
+        throw Self.invalid("Packed counts differ from decoded source; no cache was published")
+      }
+      residentShards.append((pending.payload, pending.headers))
+      residentBytes += UInt64(pending.payload.length + pending.headers.length)
+      if cachedDPC == nil {
+        residentMomentData.append(Data(bytes: pending.moments.contents(), count: pending.moments.length))
+      }
+      let allocatedNow = UInt64(device.currentAllocatedSize)
+      if let maximumAdditionalBytes, allocatedNow > allocatedBefore,
+        allocatedNow - allocatedBefore > maximumAdditionalBytes
+      {
+        throw Self.invalid(
+          "Metal allocations exceeded the available load budget; release another resident")
+      }
+      progress(pending.upperBound, source.logicalFrameCount)
+    }
     for (ordinal, window) in windows.enumerated() {
       let slot = ordinal % slotCount
       availableSlots[slot].wait()
@@ -645,6 +1006,12 @@ final class OriginalHDF5Packing {
       let dense = denseSlots[slot]
       let narrow = narrowSlots.isEmpty ? nil : narrowSlots[slot]
       try autoreleasepool {
+        let windowScratch: MTLBuffer? =
+          pipelineWindows
+          ? (ordinal.isMultiple(of: 2) ? scalarScratch : pipelineScratch)
+          : scalarScratch
+        let windowDecodeErrors: MTLBuffer =
+          pipelineWindows ? pipelineDecodeErrors! : errors
         try writer?.check()
         if shouldCancel() { throw Metal4DSTEMStreamingIOError.cancelled }
         let cachedPlan: OriginalPackingLayoutCache.Window?
@@ -663,8 +1030,12 @@ final class OriginalHDF5Packing {
           cachedPlan = nil
         }
         memset(audit.contents(), 0, audit.length)
+        let batchedDecodeCommand =
+          batchDirectDecode
+          ? try (pipelineWindows ? decodeCommandBuffer() : commandBuffer()) : nil
+        let batchedDecodeStarted = batchedDecodeCommand.map { _ in CFAbsoluteTimeGetCurrent() }
         let fuseDPC =
-          partialDPC != nil
+          !fusedDirect && partialDPC != nil
           && (source.sourceBytesPerValue == 4
             || window.slices.allSatisfy { $0.globalFrameRange.count >= 2048 })
         for (sliceIndex, slice) in window.slices.enumerated() {
@@ -680,9 +1051,13 @@ final class OriginalHDF5Packing {
               pendingReadBytes >= preparedInput!.reservedBytes
               ? pendingReadBytes - preparedInput!.reservedBytes : 0
             if sliceOrdinal < orderedSlices.count {
+              // The input just taken remains retained by this decode until the
+              // slice command completes. Admission must count it together with
+              // any pending read-ahead inputs; otherwise unified-memory
+              // pressure is under-reported precisely during the overlap.
               try enqueueRead(
                 orderedSlices[sliceOrdinal],
-                currentInputBytes: pendingReadBytes)
+                currentInputBytes: pendingReadBytes + preparedInput!.reservedBytes)
               sliceOrdinal += 1
             }
           } else {
@@ -691,20 +1066,149 @@ final class OriginalHDF5Packing {
           let staging = try decodeSlice(
             slice, source: source,
             firstFrame: window.globalFrameRange.lowerBound, dense: dense, mask: mask, audit: audit,
-            scratch: scalarScratch, errors: errors,
+            scratch: windowScratch, errors: windowDecodeErrors,
             partialDPC: fuseDPC ? partialDPC : nil, moments: moments,
             preparedInput: preparedInput,
+            zeroTails: directZeroTails,
+            commandBufferOverride: batchedDecodeCommand,
             headersAfterDecode: fuseDecodeHeaders && sliceIndex == window.slices.count - 1
               ? (buffers: [dense, headers, sizes, sums, widths], shape: shape) : nil,
+            forceScalar: directScratch, skipUnshuffle: directScratch,
+            fusedDirect: fusedDirect,
+            scratchOffset: directScratch
+              ? (slice.globalFrameRange.lowerBound - window.globalFrameRange.lowerBound)
+                * Int(source.decodedBytesPerFrame) : 0,
+            tokenPlanBuild: gpuTokenPlanRequested ? tokenPlanBuild : nil,
+            tokenPlanExpand: gpuTokenPlanRequested ? tokenPlanExpand : nil,
+            tokenPlanHeaders: gpuTokenPlanRequested ? tokenPlanHeaders : nil,
+            tokenPlanOps: gpuTokenPlanRequested ? tokenPlanOps : nil,
+            tokenPlanBaseBlock: gpuTokenPlanRequested
+              ? (slice.globalFrameRange.lowerBound - window.globalFrameRange.lowerBound)
+                * Int(source.shards[slice.shardIndex].index.metadata.nBlocksPerFrame) : 0,
             shouldCancel: shouldCancel, profile: &profile)
           largestInput = max(largestInput, staging)
           peakStaging = fixedStaging + largestInput + largestPayload * 2
         }
-        let auditWords = audit.contents().assumingMemoryBound(to: UInt32.self)
-        for index in stride(from: 0, to: frames * 2, by: 2) {
-          maximum = max(maximum, auditWords[index])
+        if let batchedDecodeCommand {
+          let elapsed = try finish(batchedDecodeCommand)
+          profile.decodeGPU += elapsed
+          profile.decodeWall += CFAbsoluteTimeGetCurrent() - (batchedDecodeStarted ?? CFAbsoluteTimeGetCurrent())
+          if windowDecodeErrors.contents().load(as: UInt32.self) != 0 {
+            throw Self.invalid(
+              "Invalid compressed original counts; reopen an intact acquisition. No resident was published"
+            )
+          }
         }
-        if !fuseDecodeHeaders && cachedPlan == nil {
+        // In the two-queue diagnostic pipeline, decode for this window was
+        // allowed to overlap packing of the previous one. Reclaim the shared
+        // header/count buffers only after that previous pack has completed.
+        if pipelineWindows { try finalizePendingPacking() }
+        if directScratch {
+          maximum = 65535
+          guard let windowScratch else {
+            throw Self.invalid("Missing direct bitshuffle scratch pipelines")
+          }
+          memset(errors.contents(), 0, 4)
+          let directHeaderCommand = try commandBuffer()
+          if directCombined {
+            guard let bitshuffleDirectCombined, let directCombinedDPCPartials,
+              let bitshuffleDPCFusedReduce,
+              let combined = directHeaderCommand.makeComputeCommandEncoder()
+            else { throw Self.invalid("Missing combined direct bitshuffle pipelines") }
+            combined.setComputePipelineState(bitshuffleDirectCombined)
+            combined.setBuffer(windowScratch, offset: 0, index: 0)
+            combined.setBuffer(headers, offset: 0, index: 1)
+            combined.setBuffer(sizes, offset: 0, index: 2)
+            combined.setBuffer(sums, offset: 0, index: 3)
+            combined.setBuffer(widths, offset: 0, index: 4)
+            combined.setBuffer(errors, offset: 0, index: 5)
+            combined.setBuffer(directCombinedFixedPayload!, offset: 0, index: 6)
+            combined.setBuffer(directCombinedDPCPartials, offset: 0, index: 7)
+            combined.setBytes(&shape, length: MemoryLayout<Shape>.stride, index: 8)
+            combined.dispatchThreads(
+              MTLSize(width: pixels / 4, height: 1, depth: 1),
+              threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
+            combined.endEncoding()
+            guard let reduction = directHeaderCommand.makeComputeCommandEncoder() else {
+              throw Self.invalid("Cannot encode combined direct DPC reduction")
+            }
+            reduction.setComputePipelineState(bitshuffleDPCFusedReduce)
+            reduction.setBuffer(directCombinedDPCPartials, offset: 0, index: 0)
+            reduction.setBuffer(moments, offset: 0, index: 1)
+            reduction.setBytes(&shape, length: MemoryLayout<Shape>.stride, index: 2)
+            reduction.setBuffer(errors, offset: 0, index: 3)
+            reduction.dispatchThreads(
+              MTLSize(width: frames, height: 1, depth: 1),
+              threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
+            reduction.endEncoding()
+          } else {
+            guard let bitshuffleHeaders, let directHighPlaneWords else {
+              throw Self.invalid("Missing direct bitshuffle header pipelines")
+            }
+            memset(directHighPlaneWords.contents(), 0, directHighPlaneWords.length)
+            if OriginalPackingDiagnostics.enabled("HEADER_VECTOR4", byDefault: false),
+              let bitshuffleHeadersVector4,
+              let headerVector = directHeaderCommand.makeComputeCommandEncoder()
+            {
+              headerVector.setComputePipelineState(bitshuffleHeadersVector4)
+              headerVector.setBuffer(windowScratch, offset: 0, index: 0)
+              headerVector.setBuffer(headers, offset: 0, index: 1)
+              headerVector.setBuffer(sizes, offset: 0, index: 2)
+              headerVector.setBuffer(sums, offset: 0, index: 3)
+              headerVector.setBuffer(widths, offset: 0, index: 4)
+              headerVector.setBuffer(errors, offset: 0, index: 5)
+              headerVector.setBuffer(directHighPlaneWords, offset: 0, index: 6)
+              headerVector.setBytes(&shape, length: MemoryLayout<Shape>.stride, index: 7)
+              headerVector.setBuffer(directZeroTails, offset: 0, index: 8)
+              var zeroTailEnabled = UInt32(directZeroTailEnabled ? 1 : 0)
+              headerVector.setBytes(&zeroTailEnabled, length: 4, index: 9)
+              headerVector.dispatchThreads(
+                MTLSize(width: pixels / 4, height: 1, depth: 1),
+                threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
+              headerVector.endEncoding()
+            } else {
+              try encode(
+                directHeaderCommand, pipeline: bitshuffleHeaders,
+                buffers: [windowScratch, headers, sizes, sums, widths, errors, directHighPlaneWords],
+                shape: &shape, count: pixels)
+            }
+            if cachedDPC == nil && directPackingDPCPartials == nil {
+              guard let bitshuffleDPC,
+                let dpc = directHeaderCommand.makeComputeCommandEncoder()
+              else { throw Self.invalid("Cannot encode direct bitshuffle DPC") }
+              let useWideDPC = bitshuffleDPCWide != nil
+              if let bitshuffleDPCWide {
+                dpc.setComputePipelineState(bitshuffleDPCWide)
+              } else if let bitshuffleDPCPruned {
+                dpc.setComputePipelineState(bitshuffleDPCPruned)
+                dpc.setBuffer(directHighPlaneWords, offset: 0, index: 4)
+              } else {
+                dpc.setComputePipelineState(bitshuffleDPC)
+              }
+              dpc.setBuffer(windowScratch, offset: 0, index: 0)
+              dpc.setBuffer(moments, offset: 0, index: 1)
+              dpc.setBytes(&shape, length: MemoryLayout<Shape>.stride, index: 2)
+              dpc.setBuffer(errors, offset: 0, index: 3)
+              dpc.dispatchThreads(
+                MTLSize(width: frames * (useWideDPC ? 128 : 32), height: 1, depth: 1),
+                threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
+              dpc.endEncoding()
+            }
+          }
+          let directElapsed = try finish(directHeaderCommand)
+          profile.headersGPU += directElapsed
+          profile.productsGPU += directElapsed
+          if cachedDPC == nil {
+            profile.dpcGPU += directElapsed
+          }
+          if directPackingDPCPartials != nil || directCombined { profile.fusedDPCWindows += 1 }
+        } else {
+          let auditWords = audit.contents().assumingMemoryBound(to: UInt32.self)
+          for index in stride(from: 0, to: frames * 2, by: 2) {
+            maximum = max(maximum, auditWords[index])
+          }
+        }
+        if !directScratch && !fuseDecodeHeaders && cachedPlan == nil {
           let productsStarted = CFAbsoluteTimeGetCurrent()
           var headerCommand = try commandBuffer()
           try encode(
@@ -780,6 +1284,19 @@ final class OriginalHDF5Packing {
           readAheadEnabled
           ? fixedStaging + largestInput + prospectivePayload * 2
           : stagingReserve + additionalReadReserve
+        #if QGPU_PACKING_DIAGNOSTICS
+          if directScratch,
+            ProcessInfo.processInfo.environment["QGPU_ORIGINAL_DEBUG_COMBINED"] == "1",
+            ordinal == 0
+          {
+            let sizeWords = sizes.contents().assumingMemoryBound(to: UInt32.self)
+            var maximumSize: UInt32 = 0
+            for pixel in 0..<pixels { maximumSize = max(maximumSize, sizeWords[pixel]) }
+            fputs(
+              "COMBINED_DIRECT_DEBUG frames=\(frames) firstSize=\(sizeWords[0]) maxSize=\(maximumSize) wordCount=\(wordCount) payload=\(payloadBytes) fixed=\(directCombinedFixedPayload?.length ?? 0) staging=\(admissionStaging) resident=\(residentBytes) budget=\(maximumAdditionalBytes ?? 0)\n",
+              stderr)
+          }
+        #endif
         if let maximumAdditionalBytes,
           residentBytes + admissionStaging + UInt64(payloadBytes + headerBytes)
             > maximumAdditionalBytes
@@ -790,7 +1307,11 @@ final class OriginalHDF5Packing {
           )
         }
         let payload: MTLBuffer
-        do { payload = try buffer(payloadBytes, privateStorage: destination == nil) } catch {
+        do {
+          payload = destination == nil
+            ? try buffer(payloadBytes, privateStorage: true)
+            : try buffer(payloadBytes, privateStorage: false)
+        } catch {
           if cachedPlan != nil { throw CacheMismatch(profile: profile, retryWithoutPlan: true) }
           throw error
         }
@@ -798,8 +1319,8 @@ final class OriginalHDF5Packing {
         peakStaging = fixedStaging + largestInput + largestPayload * 2
         if destination != nil { memset(payload.contents(), 0, payload.length) }
         memset(errors.contents(), 0, 4)
-        let privateHeaders =
-          destination == nil ? try buffer(headerBytes, privateStorage: true) : nil
+        let privateHeaders = destination == nil
+          ? try buffer(headerBytes, privateStorage: true) : nil
         let packingStarted = CFAbsoluteTimeGetCurrent()
         var packingCommand = try commandBuffer()
         if let rangesPipeline, let verifiedValuesPipeline {
@@ -822,12 +1343,91 @@ final class OriginalHDF5Packing {
             try encode(
               packingCommand, pipeline: summaryReduce,
               buffers: [planPartials, headers, sums, widths, errors], shape: &shape, count: pixels)
+          } else if directScratch {
+            if directCombined {
+              guard let directCombinedFixedPayload, let compactFixedPlanes,
+                let encoder = packingCommand.makeComputeCommandEncoder()
+              else { throw Self.invalid("Missing combined direct compaction pipeline") }
+              encoder.setComputePipelineState(compactFixedPlanes)
+              encoder.setBuffer(directCombinedFixedPayload, offset: 0, index: 0)
+              encoder.setBuffer(headers, offset: 0, index: 1)
+              encoder.setBuffer(payload, offset: 0, index: 2)
+              encoder.setBuffer(errors, offset: 0, index: 3)
+              encoder.setBytes(&shape, length: MemoryLayout<Shape>.stride, index: 4)
+              encoder.dispatchThreads(
+                MTLSize(width: pixels, height: 1, depth: 1),
+                threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
+              encoder.endEncoding()
+            } else {
+              guard let bitshuffleValues,
+                let directPartialSums, let directPartialMaximums
+              else { throw Self.invalid("Missing direct bitshuffle packing buffers") }
+              guard let encoder = packingCommand.makeComputeCommandEncoder() else {
+                throw Self.invalid("Cannot encode direct bitshuffle packing")
+              }
+              let fusedDPC = directPackingDPCPartials != nil
+              if fusedDPC {
+                let dpcPipeline = directZeroTailEnabled
+                  ? bitshuffleValuesZeroTailDPC
+                  : (directWidthBounded
+                    ? bitshuffleValuesWidthBoundedDPC : bitshuffleValuesDPC)
+                guard let dpcPipeline else {
+                  throw Self.invalid("Missing fused direct bitshuffle DPC pipeline")
+                }
+                encoder.setComputePipelineState(dpcPipeline)
+              } else if directWidthBoundedPayload {
+                guard let bitshuffleValuesWidthBounded else {
+                  throw Self.invalid("Missing width-bounded bitshuffle pipeline")
+                }
+                encoder.setComputePipelineState(bitshuffleValuesWidthBounded)
+              } else {
+                encoder.setComputePipelineState(bitshuffleValues)
+              }
+              encoder.setBuffer(windowScratch, offset: 0, index: 0)
+              encoder.setBuffer(headers, offset: 0, index: 1)
+              encoder.setBuffer(payload, offset: 0, index: 2)
+              encoder.setBuffer(errors, offset: 0, index: 3)
+              encoder.setBytes(&shape, length: MemoryLayout<Shape>.stride, index: 4)
+              encoder.setBuffer(directPartialSums, offset: 0, index: 5)
+              encoder.setBuffer(directPartialMaximums, offset: 0, index: 6)
+              if let directPackingDPCPartials {
+                if directZeroTailEnabled {
+                  encoder.setBuffer(directZeroTails, offset: 0, index: 7)
+                  encoder.setBuffer(directPackingDPCPartials, offset: 0, index: 8)
+                } else {
+                  encoder.setBuffer(directPackingDPCPartials, offset: 0, index: 7)
+                }
+              }
+              encoder.dispatchThreads(
+                MTLSize(
+                  width: pixels / bitshufflePixelsPerThread * checkpoints,
+                  height: 1, depth: 1),
+                threadsPerThreadgroup: MTLSize(
+                  width: min(bitshufflePackingThreads, bitshuffleValues.maxTotalThreadsPerThreadgroup),
+                  height: 1, depth: 1))
+              encoder.endEncoding()
+              if let directPackingDPCPartials, let bitshuffleDPCFusedReduce {
+                guard let reduction = packingCommand.makeComputeCommandEncoder() else {
+                  throw Self.invalid("Cannot encode fused direct DPC reduction")
+                }
+                reduction.setComputePipelineState(bitshuffleDPCFusedReduce)
+                reduction.setBuffer(directPackingDPCPartials, offset: 0, index: 0)
+                reduction.setBuffer(moments, offset: 0, index: 1)
+                reduction.setBytes(&shape, length: MemoryLayout<Shape>.stride, index: 2)
+                reduction.setBuffer(errors, offset: 0, index: 3)
+                reduction.dispatchThreads(
+                  MTLSize(width: frames, height: 1, depth: 1),
+                  threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
+                reduction.endEncoding()
+              }
+            }
           } else {
             try encode(
               packingCommand,
-              pipeline: standardPlanes ? standardPlaneValues! : verifiedValuesPipeline,
-              buffers: [dense, headers, payload, errors],
-              shape: &shape, count: pixels * (checkpointPacking ? checkpoints : 1))
+              pipeline: standardPlanes ? selectedStandardPlaneValues! : verifiedValuesPipeline,
+              buffers: [dense, headers, payload, errors], shape: &shape,
+              count: pixels * (checkpointPacking ? checkpoints : 1),
+              threadsPerThreadgroup: standardPlanes ? standardPackingThreads : nil)
           }
           profile.fusedWindows += 1
           if checkpointPacking { profile.checkpointWindows += 1 }
@@ -856,56 +1456,85 @@ final class OriginalHDF5Packing {
             size: headerBytes)
           blit.endEncoding()
         }
-        let packingElapsed = try finish(packingCommand)
-        profile.packingGPU += packingElapsed
-        if isolateKernels && verifiedValuesPipeline == nil { profile.verifyGPU += packingElapsed }
-        profile.packingWall += CFAbsoluteTimeGetCurrent() - packingStarted
-        guard errors.contents().load(as: UInt32.self) == 0 else {
-          if cachedPlan != nil { throw CacheMismatch(profile: profile) }
-          throw Self.invalid("Packed counts differ from decoded source; no cache was published")
-        }
-        if cachedPlan != nil {
-          // Fresh current-count sums, not cached images/calibration metadata.
-          for pixel in 0..<pixels { detectorSum[pixel] += sumWords[pixel] }
-        }
-        if let planWriter {
-          let writeStarted = CFAbsoluteTimeGetCurrent()
-          if !planWriter.append(
-            headerData: Data(bytes: headers.contents(), count: headerBytes),
-            payloadWordCount: wordCount)
-          {
-            profile.planStatus = "notStored"
+        if pipelineWindows {
+          guard let privateHeaders else {
+            throw Self.invalid("Missing retained packed headers")
           }
-          profile.planWrite += CFAbsoluteTimeGetCurrent() - writeStarted
-        }
-        // Small shared metadata is copied; the large count and payload buffers
-        // stay owned until the writer signals this slot. No buffer can be reused
-        // while its bytes are being authenticated or written.
-        if let writer {
-          writer.submit(
-            rawData: data(dense), lowData: maximum <= 255 ? narrow.map(data) : nil,
-            payload: data(payload), headers: Data(bytes: headers.contents(), count: headers.length),
-            momentData: Data(bytes: moments.contents(), count: moments.length),
-            release: availableSlots[slot])
-          submitted = true
+          packingCommand.commit()
+          pendingPacking = (
+            packingCommand, packingStarted, payload, privateHeaders, moments, errors,
+            window.globalFrameRange.upperBound)
         } else {
-          guard let privateHeaders else { throw Self.invalid("Missing retained packed headers") }
-          residentShards.append((payload, privateHeaders))
-          residentBytes += UInt64(payload.length + privateHeaders.length)
-          if cachedDPC == nil {
-            residentMomentData.append(Data(bytes: moments.contents(), count: moments.length))
-          }
-          let allocatedNow = UInt64(device.currentAllocatedSize)
-          if let maximumAdditionalBytes, allocatedNow > allocatedBefore,
-            allocatedNow - allocatedBefore > maximumAdditionalBytes
-          {
-            throw Self.invalid(
-              "Metal allocations exceeded the available load budget; release another resident")
-          }
+          let packingElapsed = try finish(packingCommand)
+          profile.packingGPU += packingElapsed
+          if isolateKernels && verifiedValuesPipeline == nil { profile.verifyGPU += packingElapsed }
+          profile.packingWall += CFAbsoluteTimeGetCurrent() - packingStarted
         }
-        progress(window.globalFrameRange.upperBound, source.logicalFrameCount)
+        #if QGPU_PACKING_DIAGNOSTICS
+          if !pipelineWindows, directPackingDPCPartials != nil,
+            ProcessInfo.processInfo.environment["QGPU_ORIGINAL_DEBUG_DPC"] == "1"
+          {
+            let dpc = moments.contents().assumingMemoryBound(to: UInt64.self)
+            var maxTotal: UInt64 = 0, maxRow: UInt64 = 0, maxColumn: UInt64 = 0
+            for scan in 0..<frames {
+              maxTotal = max(maxTotal, dpc[scan * 4])
+              maxRow = max(maxRow, dpc[scan * 4 + 1])
+              maxColumn = max(maxColumn, dpc[scan * 4 + 2])
+            }
+            fputs(
+              "FUSED_DPC_DEBUG first=\(dpc[0]),\(dpc[1]),\(dpc[2]) max=\(maxTotal),\(maxRow),\(maxColumn)\n",
+              stderr)
+          }
+        #endif
+        if !pipelineWindows {
+          guard errors.contents().load(as: UInt32.self) == 0 else {
+            if cachedPlan != nil { throw CacheMismatch(profile: profile) }
+            throw Self.invalid("Packed counts differ from decoded source; no cache was published")
+          }
+          if cachedPlan != nil {
+            // Fresh current-count sums, not cached images/calibration metadata.
+            for pixel in 0..<pixels { detectorSum[pixel] += sumWords[pixel] }
+          }
+          if let planWriter {
+            let writeStarted = CFAbsoluteTimeGetCurrent()
+            if !planWriter.append(
+              headerData: Data(bytes: headers.contents(), count: headerBytes),
+              payloadWordCount: wordCount)
+            {
+              profile.planStatus = "notStored"
+            }
+            profile.planWrite += CFAbsoluteTimeGetCurrent() - writeStarted
+          }
+          // Small shared metadata is copied; the large count and payload buffers
+          // stay owned until the writer signals this slot. No buffer can be reused
+          // while its bytes are being authenticated or written.
+          if let writer {
+            writer.submit(
+              rawData: data(dense), lowData: maximum <= 255 ? narrow.map(data) : nil,
+              payload: data(payload), headers: Data(bytes: headers.contents(), count: headers.length),
+              momentData: Data(bytes: moments.contents(), count: moments.length),
+              release: availableSlots[slot])
+            submitted = true
+          } else {
+            guard let privateHeaders else { throw Self.invalid("Missing retained packed headers") }
+            residentShards.append((payload, privateHeaders))
+            residentBytes += UInt64(payload.length + privateHeaders.length)
+            if cachedDPC == nil {
+              residentMomentData.append(Data(bytes: moments.contents(), count: moments.length))
+            }
+            let allocatedNow = UInt64(device.currentAllocatedSize)
+            if let maximumAdditionalBytes, allocatedNow > allocatedBefore,
+              allocatedNow - allocatedBefore > maximumAdditionalBytes
+            {
+              throw Self.invalid(
+                "Metal allocations exceeded the available load budget; release another resident")
+            }
+          }
+          progress(window.globalFrameRange.upperBound, source.logicalFrameCount)
+        }
       }
     }
+    if pipelineWindows { try finalizePendingPacking() }
     if shouldCancel() { throw Metal4DSTEMStreamingIOError.cancelled }
     if destination == nil {
       try validateInputs()
@@ -936,7 +1565,7 @@ final class OriginalHDF5Packing {
       }
       profile.packedPayloadLayout = standardPlanes ? 1 : 0
       reportProfile(profile)
-      return OriginalPackedBuffers(
+      var packed = OriginalPackedBuffers(
         payloadLayout: standardPlanes ? 1 : 0,
         dataset: dataset, frames: frames, headerStride: headerStride,
         shards: residentShards, moments: residentMomentData, detectorSum: detectorSum,
@@ -950,6 +1579,7 @@ final class OriginalHDF5Packing {
         reusedDPC: profile.reusedDPC,
         combinedDecodePackingSeconds: profile.directBitshuffleWindows > 0
           ? profile.directBitshuffleGPU : nil)
+      return packed
     }
     guard let writer, let output, let temporary, let destination else {
       throw Self.invalid("Missing packed output destination")
@@ -1065,13 +1695,53 @@ final class OriginalHDF5Packing {
     return nil
   }
 
+  static func makeDecodeOrder(
+    metadata: MTLBuffer, frameCount: Int, blocks: Int, device: MTLDevice
+  ) throws -> MTLBuffer {
+    let count = frameCount * blocks
+    guard count > 0, metadata.length >= count * MemoryLayout<UInt32>.stride * 2 else {
+      throw invalid("Cannot construct the indexed decoder order")
+    }
+    let words = metadata.contents().assumingMemoryBound(to: UInt32.self)
+    var order = (0..<count).map(UInt32.init)
+    // The scalar decoder is launched in SIMD groups of 32, even when the
+    // threadgroup contains 64/128/256 threads. Sort only within each SIMD
+    // group so output ownership stays unchanged and no global permutation
+    // buffer is needed.
+    for start in stride(from: 0, to: count, by: 32) {
+      let end = min(start + 32, count)
+      order[start..<end].sort {
+        let left = words[Int($0) * 2 + 1]
+        let right = words[Int($1) * 2 + 1]
+        return left == right ? $0 < $1 : left < right
+      }
+    }
+    return try order.withUnsafeBytes { bytes in
+      guard let base = bytes.baseAddress,
+        let buffer = device.makeBuffer(
+          bytes: base, length: bytes.count, options: .storageModeShared)
+      else { throw invalid("Cannot allocate the indexed decoder order") }
+      buffer.label = "QH5 decoder SIMD order"
+      return buffer
+    }
+  }
+
   func decodeSlice(
     _ slice: Native4DSTEMIndexedSlice, source: Native4DSTEMIndexedSource,
     firstFrame: Int, dense: MTLBuffer, mask: MTLBuffer, audit: MTLBuffer,
     scratch: MTLBuffer?, errors: MTLBuffer,
     partialDPC: MTLBuffer?, moments: MTLBuffer,
     preparedInput: CompressedReadInput? = nil,
+    zeroTails: MTLBuffer? = nil,
+    commandBufferOverride: MTLCommandBuffer? = nil,
     headersAfterDecode: (buffers: [MTLBuffer], shape: Shape)? = nil,
+    forceScalar: Bool = false, skipUnshuffle: Bool = false, fusedDirect: Bool = false,
+    scratchOffset: Int = 0,
+    tokenPlanBuild: MTLComputePipelineState? = nil,
+    tokenPlanExpand: MTLComputePipelineState? = nil,
+    tokenPlanHeaders: MTLBuffer? = nil,
+    tokenPlanOps: MTLBuffer? = nil,
+    tokenPlanBaseBlock: Int = 0,
     shouldCancel: () -> Bool, profile: inout Profile
   ) throws -> UInt64 {
     let pixels = source.dataset.detectorRows * source.dataset.detectorCols
@@ -1089,60 +1759,152 @@ final class OriginalHDF5Packing {
     let metadata = input.metadata
     profile.read += input.readSeconds
     profile.copy += input.copySeconds
-    profile.readBytes += UInt64(compressed.length)
+    profile.readBytes += input.readBytes
+    if input.coalescedBatchSlices > 0 {
+      profile.coalescedReadBatches += 1
+      profile.coalescedReadSlices += input.coalescedBatchSlices
+      profile.coalescedReadGapBytes += input.coalescedGapBytes
+    }
     let decodeStarted = CFAbsoluteTimeGetCurrent()
-    var zero64: UInt64 = 0
     var zero: UInt32 = 0
     var blocks = UInt32(shard.index.metadata.nBlocksPerFrame)
     var pixelCount = UInt32(pixels)
     var frameCount = UInt32(slice.globalFrameRange.count)
     var auditOffset = UInt32(slice.globalFrameRange.lowerBound - firstFrame)
     let is32 = source.sourceBytesPerValue == 4
-    let scalar = is32 || (scratch != nil && scalarDecode != nil && frameCount >= 2048)
+    let scalar = !fusedDirect
+      && (forceScalar || is32 || (scratch != nil && scalarDecode != nil && frameCount >= 2048))
+    let tokenPlanDecodeRequested = scalar && tokenPlanBuild != nil && tokenPlanExpand != nil
+      && tokenPlanHeaders != nil && tokenPlanOps != nil
+    let orderedDecodeRequested = scalar && orderedScalarDecode != nil
+    let distance3DecodeRequested = scalar && !orderedDecodeRequested && distance3ScalarDecode != nil
+    let distance8DecodeRequested = scalar && !orderedDecodeRequested
+      && !distance3DecodeRequested && distance8ScalarDecode != nil
+    let useZeroTailDecode =
+      !orderedDecodeRequested && !distance3DecodeRequested && !distance8DecodeRequested
+      && !is32 && scalar
+      && zeroTails != nil && zeroTailDecode != nil
+    let decodeOrder = orderedDecodeRequested
+      ? try Self.makeDecodeOrder(metadata: metadata, frameCount: Int(frameCount), blocks: Int(blocks), device: device)
+      : nil
     if scalar, alignedRepeatFill || alignedHistoryCopy, let scratch, scratch.gpuAddress % 16 != 0 {
       throw Self.invalid("Aligned decompression requires a 16-byte-aligned scratch buffer")
     }
     let denseOffset =
       (slice.globalFrameRange.lowerBound - firstFrame) * Int(source.decodedBytesPerFrame)
-    let command = try commandBuffer()
+    let command: MTLCommandBuffer
+    if let commandBufferOverride {
+      command = commandBufferOverride
+    } else {
+      command = try commandBuffer()
+    }
     guard let encoder = command.makeComputeCommandEncoder() else {
       throw Self.invalid("Cannot encode source decode")
     }
-    encoder.setComputePipelineState(
-      is32
-        ? decode32
-        : (scalar ? scalarDecode! : (source.sourceBytesPerValue == 1 ? decode8 : decode16)))
-    encoder.setBuffer(compressed, offset: 0, index: 0)
-    encoder.setBuffer(metadata, offset: 0, index: 1)
-    encoder.setBytes(&zero64, length: 8, index: 2)
-    encoder.setBytes(&blocks, length: 4, index: 3)
-    encoder.setBytes(&pixelCount, length: 4, index: 4)
-    encoder.setBuffer(scalar ? scratch : dense, offset: scalar ? 0 : denseOffset, index: 5)
-    encoder.setBytes(&zero, length: 4, index: 6)
-    encoder.setBuffer(mask, offset: 0, index: 7)
-    encoder.setBuffer(audit, offset: 0, index: 8)
-    if source.sourceBytesPerValue > 1 { encoder.setBytes(&auditOffset, length: 4, index: 9) }
-    if scalar {
+    var rangeStart = input.compressedRangeStart
+    if tokenPlanDecodeRequested {
+      guard let tokenPlanBuild, let tokenPlanExpand, let tokenPlanHeaders, let tokenPlanOps,
+        tokenPlanBaseBlock >= 0,
+        tokenPlanBaseBlock <= Int(UInt32.max)
+      else { throw Self.invalid("GPU token-plan buffers are incomplete") }
+      var planBlockOffset = UInt32(tokenPlanBaseBlock)
+      encoder.setComputePipelineState(tokenPlanBuild)
+      encoder.setBuffer(compressed, offset: 0, index: 0)
+      encoder.setBuffer(metadata, offset: 0, index: 1)
+      encoder.setBytes(&rangeStart, length: 8, index: 2)
+      encoder.setBytes(&blocks, length: 4, index: 3)
+      encoder.setBytes(&pixelCount, length: 4, index: 4)
+      encoder.setBuffer(tokenPlanHeaders, offset: 0, index: 5)
+      encoder.setBuffer(tokenPlanOps, offset: 0, index: 6)
+      encoder.setBytes(&zero, length: 4, index: 7)
       memset(errors.contents(), 0, 4)
       encoder.setBuffer(errors, offset: 0, index: 10)
       encoder.setBytes(&frameCount, length: 4, index: 11)
+      encoder.setBytes(&planBlockOffset, length: 4, index: 12)
       encoder.dispatchThreads(
         MTLSize(width: Int(frameCount) * Int(blocks), height: 1, depth: 1),
         threadsPerThreadgroup: MTLSize(width: scalarDecodeThreads, height: 1, depth: 1))
+      encoder.endEncoding()
+
+      guard let expandEncoder = command.makeComputeCommandEncoder() else {
+        throw Self.invalid("Cannot encode GPU token-plan expansion")
+      }
+      expandEncoder.setComputePipelineState(tokenPlanExpand)
+      expandEncoder.setBuffer(compressed, offset: 0, index: 0)
+      expandEncoder.setBytes(&blocks, length: 4, index: 1)
+      expandEncoder.setBytes(&pixelCount, length: 4, index: 2)
+      expandEncoder.setBuffer(scratch, offset: scratchOffset, index: 3)
+      expandEncoder.setBuffer(tokenPlanHeaders, offset: 0, index: 4)
+      expandEncoder.setBuffer(tokenPlanOps, offset: 0, index: 5)
+      expandEncoder.setBytes(&planBlockOffset, length: 4, index: 6)
+      expandEncoder.setBytes(&rangeStart, length: 8, index: 7)
+      expandEncoder.setBuffer(errors, offset: 0, index: 10)
+      expandEncoder.setBytes(&frameCount, length: 4, index: 11)
+      let totalBlocks = Int(frameCount) * Int(blocks)
+      expandEncoder.dispatchThreadgroups(
+        MTLSize(width: (totalBlocks + 3) / 4, height: 1, depth: 1),
+        threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
+      expandEncoder.endEncoding()
     } else {
-      encoder.dispatchThreadgroups(
-        MTLSize(width: Int(frameCount), height: 1, depth: Int(blocks)),
-        threadsPerThreadgroup: MTLSize(
-          width: 32, height: source.sourceBytesPerValue == 1 ? 8 : 4, depth: 1))
+      encoder.setComputePipelineState(
+        fusedDirect
+          ? (fusedDecodeUnshuffleFrameCoop
+            ?? fusedDecodeUnshuffleVector
+            ?? fusedDecodeUnshuffle)!
+          : (is32
+          ? decode32
+          : (useZeroTailDecode
+            ? zeroTailDecode!
+            : (scalar
+              ? (orderedDecodeRequested
+                ? orderedScalarDecode!
+                : (distance3DecodeRequested
+                  ? distance3ScalarDecode!
+                  : (distance8DecodeRequested ? distance8ScalarDecode! : scalarDecode!)))
+              : (source.sourceBytesPerValue == 1 ? decode8 : decode16)))))
+      encoder.setBuffer(compressed, offset: 0, index: 0)
+      encoder.setBuffer(metadata, offset: 0, index: 1)
+      encoder.setBytes(&rangeStart, length: 8, index: 2)
+      encoder.setBytes(&blocks, length: 4, index: 3)
+      encoder.setBytes(&pixelCount, length: 4, index: 4)
+      encoder.setBuffer(scalar ? scratch : dense, offset: scalar ? scratchOffset : denseOffset, index: 5)
+      encoder.setBytes(&zero, length: 4, index: 6)
+      encoder.setBuffer(mask, offset: 0, index: 7)
+      encoder.setBuffer(audit, offset: 0, index: 8)
+      if source.sourceBytesPerValue > 1 { encoder.setBytes(&auditOffset, length: 4, index: 9) }
+      if scalar {
+        memset(errors.contents(), 0, 4)
+        encoder.setBuffer(errors, offset: 0, index: 10)
+        encoder.setBytes(&frameCount, length: 4, index: 11)
+        if let decodeOrder { encoder.setBuffer(decodeOrder, offset: 0, index: 12) }
+        if useZeroTailDecode {
+          var tailOffset = UInt32(
+            (slice.globalFrameRange.lowerBound - firstFrame) * Int(blocks))
+          encoder.setBuffer(zeroTails, offset: 0, index: 12)
+          encoder.setBytes(&tailOffset, length: 4, index: 13)
+        }
+        encoder.dispatchThreads(
+          MTLSize(width: Int(frameCount) * Int(blocks), height: 1, depth: 1),
+          threadsPerThreadgroup: MTLSize(width: scalarDecodeThreads, height: 1, depth: 1))
+      } else if fusedDirect && fusedDecodeUnshuffleFrameCoop != nil {
+        encoder.dispatchThreadgroups(
+          MTLSize(width: Int(frameCount), height: 1, depth: 1),
+          threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
+      } else {
+        encoder.dispatchThreadgroups(
+          MTLSize(width: Int(frameCount), height: 1, depth: Int(blocks)),
+          threadsPerThreadgroup: MTLSize(
+            width: 32, height: source.sourceBytesPerValue == 1 ? 8 : 4, depth: 1))
+      }
+      encoder.endEncoding()
     }
-    encoder.endEncoding()
     let selectedUnshuffle: MTLComputePipelineState?
     if is32 {
       selectedUnshuffle = partialDPC == nil ? unshuffle32 : dpcUnshuffle32
     } else {
       selectedUnshuffle = scalarUnshuffle
     }
-    if scalar, let selectedUnshuffle {
+    if !skipUnshuffle, scalar, let selectedUnshuffle {
       guard let unshuffle = command.makeComputeCommandEncoder() else {
         throw Self.invalid("Cannot encode exact unshuffle")
       }
@@ -1192,6 +1954,14 @@ final class OriginalHDF5Packing {
       if alignedRepeatFill { profile.alignedFillSlices += 1 }
       if alignedHistoryCopy { profile.alignedCopySlices += 1 }
       if transposeUnshuffle && partialDPC == nil { profile.transposeSlices += 1 }
+      if useZeroTailDecode { profile.zeroTailSlices += 1 }
+      if distance3DecodeRequested { profile.distance3DecodeSlices += 1 }
+    } else if scalar {
+      profile.scalarSlices += 1
+      if alignedRepeatFill { profile.alignedFillSlices += 1 }
+      if alignedHistoryCopy { profile.alignedCopySlices += 1 }
+      if useZeroTailDecode { profile.zeroTailSlices += 1 }
+      if distance3DecodeRequested { profile.distance3DecodeSlices += 1 }
     }
     if var headersAfterDecode {
       // The final slice and prior slices must complete before header reads.
@@ -1201,23 +1971,26 @@ final class OriginalHDF5Packing {
         command, pipeline: headersPipeline, buffers: headersAfterDecode.buffers,
         shape: &headersAfterDecode.shape, count: pixels)
     }
-    let elapsed = try finish(command)
-    if headersAfterDecode != nil {
-      profile.decodeAndHeadersGPU += elapsed
-      profile.fusedDecodeHeaderWindows += 1
-    } else {
-      profile.decodeGPU += elapsed
-    }
-    if scalar, errors.contents().load(as: UInt32.self) != 0 {
-      throw Self.invalid(
-        "Invalid compressed original counts; reopen an intact acquisition. No resident was published"
-      )
-    }
-    let wall = CFAbsoluteTimeGetCurrent() - decodeStarted
-    if headersAfterDecode != nil {
-      profile.decodeAndHeadersWall += wall
-    } else {
-      profile.decodeWall += wall
+    if commandBufferOverride == nil {
+      let elapsed = try finish(command)
+      if headersAfterDecode != nil {
+        profile.decodeAndHeadersGPU += elapsed
+        profile.fusedDecodeHeaderWindows += 1
+      } else {
+        profile.decodeGPU += elapsed
+      }
+      if orderedDecodeRequested { profile.orderedDecodeSlices += 1 }
+      if scalar, errors.contents().load(as: UInt32.self) != 0 {
+        throw Self.invalid(
+          "Invalid compressed original counts; reopen an intact acquisition. No resident was published"
+        )
+      }
+      let wall = CFAbsoluteTimeGetCurrent() - decodeStarted
+      if headersAfterDecode != nil {
+        profile.decodeAndHeadersWall += wall
+      } else {
+        profile.decodeWall += wall
+      }
     }
     return input.reservedBytes
   }
@@ -1283,6 +2056,12 @@ final class OriginalHDF5Packing {
     }
     return command
   }
+  func decodeCommandBuffer() throws -> MTLCommandBuffer {
+    guard let command = decodeQueue.makeCommandBuffer() else {
+      throw Self.invalid("Cannot create decode command")
+    }
+    return command
+  }
   func copiedBuffer(_ bytes: UnsafeRawBufferPointer) throws -> MTLBuffer {
     guard !bytes.isEmpty, bytes.count <= device.maxBufferLength,
       let result = device.makeBuffer(
@@ -1292,6 +2071,9 @@ final class OriginalHDF5Packing {
   }
   @discardableResult func finish(_ command: MTLCommandBuffer) throws -> Double {
     command.commit()
+    return try wait(command)
+  }
+  @discardableResult func wait(_ command: MTLCommandBuffer) throws -> Double {
     command.waitUntilCompleted()
     guard command.status == .completed else {
       throw Self.invalid(command.error?.localizedDescription ?? "Metal packing command failed")
@@ -1300,7 +2082,7 @@ final class OriginalHDF5Packing {
   }
   func encode(
     _ command: MTLCommandBuffer, pipeline: MTLComputePipelineState, buffers: [MTLBuffer],
-    shape: inout Shape, count: Int,
+    shape: inout Shape, count: Int, threadsPerThreadgroup: Int? = nil,
     afterShape: MTLBuffer? = nil, sampledEncoder: MTLComputeCommandEncoder? = nil
   ) throws {
     guard let encoder = sampledEncoder ?? command.makeComputeCommandEncoder() else {
@@ -1315,7 +2097,9 @@ final class OriginalHDF5Packing {
     encoder.dispatchThreads(
       MTLSize(width: count, height: 1, depth: 1),
       threadsPerThreadgroup: MTLSize(
-        width: min(128, pipeline.maxTotalThreadsPerThreadgroup), height: 1, depth: 1))
+        width: min(
+          threadsPerThreadgroup ?? 128, pipeline.maxTotalThreadsPerThreadgroup),
+        height: 1, depth: 1))
     encoder.endEncoding()
   }
   func data(_ buffer: MTLBuffer) -> Data {

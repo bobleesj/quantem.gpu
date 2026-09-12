@@ -185,7 +185,7 @@ Both encoded representations coexist at conversion peak.
 | Save/reopen dense native counts | CPU reference | Bounded exact uint8/uint16 tests |
 | File to ANS or packed; DP and exact mask sums | Python MPS | Small physical integer tests |
 | File to ANS or packed; DP and exact mask sums | CUDA | Host oracle and compilation; physical GPU pending |
-| ANS arrays to DP and exact mask sums | Native Swift/Metal | Small physical integer tests; canonical file reader pending |
+| ANS arrays/files to DP and exact mask sums | Native Swift/Metal | Small physical integer tests; QGANS file reader, bounded real-data reopen, and 512/1024 geometry smoke pass |
 | New ANS mean-DP, moments, and reverse GPU conversions | Pending | Not qualified |
 
 This table covers the new ANS profile, not the separate retained dense/packed

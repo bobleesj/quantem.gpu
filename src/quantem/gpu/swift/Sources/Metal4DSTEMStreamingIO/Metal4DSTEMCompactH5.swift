@@ -199,6 +199,12 @@ public enum MetalCompactH5AuthenticationPolicy: Sendable, Equatable {
   /// This maps the complete file and is intended only for machines whose measured
   /// memory budget safely admits the additional file-backed residency.
   case parallelMapped
+  /// Diagnostic-only direct-v3 local-cache path. The complete file is mapped
+  /// into shared Metal buffers and is structurally validated on GPU, but its
+  /// payload and descriptor SHA-256 values are explicitly trusted. This is
+  /// intentionally separate from `verifyChecksums: false` so callers cannot
+  /// accidentally treat a normal load as a zero-copy cache reopen.
+  case trustedMappedDirect
 }
 
 /// Source-descriptor caching policy, independent of the optional native cache.
@@ -401,6 +407,79 @@ struct CompactResidentShard {
   let descriptors: MTLBuffer
 }
 
+/// File-backed shared Metal buffers for the diagnostic direct-cache path.
+///
+/// The owner is captured by each Metal buffer's deallocator so the mapping
+/// outlives every buffer even when the resident source is released. This is a
+/// deliberate local-cache experiment: callers still receive the full parser
+/// and GPU descriptor-coverage checks, while payload SHA-256 is an explicit
+/// trust decision at the API/benchmark boundary.
+private final class CompactMappedFile: @unchecked Sendable {
+  private let address: UnsafeMutableRawPointer
+  private let length: Int
+
+  init(sourceURL: URL, expectedBytes: UInt64) throws {
+    let descriptor = sourceURL.path.withCString { Darwin.open($0, O_RDONLY) }
+    guard descriptor >= 0 else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "Could not open mapped compact source "
+          + sourceURL.path + ": " + String(cString: strerror(errno)) + "."
+      )
+    }
+    var status = stat()
+    guard fstat(descriptor, &status) == 0,
+      status.st_size > 0,
+      let fileLength = Int(exactly: status.st_size),
+      let expectedLength = Int(exactly: expectedBytes),
+      fileLength == expectedLength
+    else {
+      Darwin.close(descriptor)
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "Mapped compact source size changed or is not addressable."
+      )
+    }
+    guard let mapped = Darwin.mmap(nil, fileLength, PROT_READ, MAP_PRIVATE, descriptor, 0),
+      mapped != MAP_FAILED
+    else {
+      Darwin.close(descriptor)
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "Could not map compact direct cache: "
+          + String(cString: strerror(errno)) + "."
+      )
+    }
+    Darwin.close(descriptor)
+    address = mapped
+    length = fileLength
+  }
+
+  func buffer(
+    device: MTLDevice, offset: UInt64, length: Int, label: String
+  ) throws -> MTLBuffer {
+    guard let integerOffset = Int(exactly: offset), integerOffset >= 0,
+      integerOffset <= self.length, length >= 0, length <= self.length - integerOffset
+    else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "Mapped compact " + label + " range is outside the source file."
+      )
+    }
+    let pointer = address.advanced(by: integerOffset)
+    let owner = self
+    guard let result = device.makeBuffer(
+      bytesNoCopy: pointer,
+      length: length,
+      options: .storageModeShared,
+      deallocator: { _, _ in _ = owner }
+    ) else {
+      throw Metal4DSTEMStreamingIOError.allocationFailed(
+        label: "mapped compact " + label, bytes: UInt64(length)
+      )
+    }
+    return result
+  }
+
+  deinit { Darwin.munmap(address, length) }
+}
+
 /// Workers never access this buffer on the CPU. Metal command buffers use
 /// tracked resources and the validation shader writes only atomic maxima.
 /// The caller reads it only after every bounded window has joined.
@@ -480,7 +559,7 @@ private final class CompactResidencyLease {
   private var endAction: (() -> Void)?
 
   @available(macOS 15.0, iOS 18.0, *)
-  init(device: MTLDevice, buffers: [MTLBuffer]) throws {
+  init(device: MTLDevice, buffers: [MTLBuffer], requestResidency: Bool = true) throws {
     var identities = Set<ObjectIdentifier>()
     let unique = buffers.filter { identities.insert(ObjectIdentifier($0 as AnyObject)).inserted }
     let descriptor = MTLResidencySetDescriptor()
@@ -508,7 +587,7 @@ private final class CompactResidencyLease {
       set.commit()
     }
     // Advisory residency, not pinning: competing apps may still defer work.
-    set.requestResidency()
+    if requestResidency { set.requestResidency() }
   }
 
   func end() {
@@ -545,6 +624,7 @@ public final class MetalCompactH5ResidentSource {
   private let payloadLayout: UInt32
   private let headerWordsPerPixel: UInt32
   private var shards: [CompactResidentShard]
+  private let mappedFile: CompactMappedFile?
   private var excluded: MTLBuffer?
   private let maximumWidths: [UInt8]
   private let maximumMaskSumBound: UInt64
@@ -611,7 +691,8 @@ public final class MetalCompactH5ResidentSource {
     preparedDetectorProducts: [String: CompactPreparedDetectorResident],
     residencyLease: CompactResidencyLease? = nil,
     detectorRegions: CompactDetectorRegions? = nil,
-    planarVariant: String = "other"
+    planarVariant: String = "other",
+    mappedFile: CompactMappedFile? = nil
   ) {
     self.metadata = metadata
     self.loadMetrics = loadMetrics
@@ -629,6 +710,7 @@ public final class MetalCompactH5ResidentSource {
     self.payloadLayout = payloadLayout
     self.headerWordsPerPixel = headerWordsPerPixel
     self.shards = shards
+    self.mappedFile = mappedFile
     self.excluded = excluded
     self.maximumWidths = maximumWidths
     self.planarVariant = planarVariant
@@ -2128,7 +2210,10 @@ public enum MetalCompactH5Loader {
     }
     var interactionBytes = UInt64(pixels * 24 + scans * (is32 ? 24 : 16))
     var totalBytes = metadata.residentBytes + interactionBytes
-    var planned = totalBytes + packed.stagingBytes
+    let physicalResidentBytes = metadata.residentBytes
+    var planned = max(
+      totalBytes + packed.stagingBytes,
+      physicalResidentBytes + interactionBytes + packed.stagingBytes)
     if let maximumAdditionalBytes, planned > maximumAdditionalBytes {
       throw invalid(
         "Original resident plus interaction buffers exceeds the memory budget; open fewer acquisitions"
@@ -2197,13 +2282,16 @@ public enum MetalCompactH5Loader {
     if compactKernelOption("RESIDENCY_SETS", byDefault: true) {
       if #available(macOS 15.0, iOS 18.0, *) {
         let residencyStarted = ContinuousClock.now
-        let stable =
-          residentShards.flatMap { [$0.payload, $0.descriptors] }
-          + [
-            momentBuffer, dpc.row, dpc.column, excluded, entries,
-            outputA, outputB, diffraction, detectorSum,
-          ]
-        let lease = try CompactResidencyLease(device: device, buffers: stable)
+        let residentAllocations = residentShards.flatMap { [$0.payload, $0.descriptors] }
+        let auxiliaryAllocations = [
+          momentBuffer, dpc.row, dpc.column, excluded, entries,
+          outputA, outputB, diffraction, detectorSum,
+        ]
+        let stable = compactKernelOption("RESIDENCY_PAYLOAD_ONLY", byDefault: false)
+          ? residentAllocations : residentAllocations + auxiliaryAllocations
+        let lease = try CompactResidencyLease(
+          device: device, buffers: stable,
+          requestResidency: !compactKernelOption("DEFER_RESIDENCY", byDefault: false))
         // This hint may not enlarge the resident budget, including
         // driver-reported bookkeeping beyond existing resource allocations.
         let admitted = lease.footprintExcessBytes == 0
@@ -2217,6 +2305,8 @@ public enum MetalCompactH5Loader {
         }
         let record: [String: Any] = [
           "phase": "original_residency_set_prepared", "advisory_not_pinned": true,
+          "requested": !compactKernelOption("DEFER_RESIDENCY", byDefault: false),
+          "payload_only": compactKernelOption("RESIDENCY_PAYLOAD_ONLY", byDefault: false),
           "admitted": admitted,
           "allocation_count": lease.allocationCount, "set_allocated_bytes": lease.allocatedBytes,
           "footprint_excess_bytes": lease.footprintExcessBytes,
@@ -2366,6 +2456,16 @@ public enum MetalCompactH5Loader {
       )
     }
     let index = try parse(sourceURL: sourceURL, readPolicy: sourceReadPolicy)
+    if authenticationPolicy == .trustedMappedDirect {
+      guard index.storageLayout == .directV3, nativeCacheURL == nil,
+        sourceReadPolicy == .systemDefault, !verifyChecksums
+      else {
+        throw invalid(
+          "trustedMappedDirect requires a direct QGIX v3 file, system-default "
+            + "reads, no native cache, and verifyChecksums=false."
+        )
+      }
+    }
     var cacheStatus = nativeCacheURL == nil ? "notRequested" : "miss"
     var cacheFile: FileHandle?
     var cacheStamp: String?
@@ -2479,6 +2579,14 @@ public enum MetalCompactH5Loader {
 
     let descriptor = try openSource(sourceURL, readPolicy: sourceReadPolicy)
     defer { Darwin.close(descriptor) }
+    let mappedDirectFile: CompactMappedFile?
+    if authenticationPolicy == .trustedMappedDirect {
+      mappedDirectFile = try CompactMappedFile(
+        sourceURL: sourceURL, expectedBytes: index.metadata.sourceBytes
+      )
+    } else {
+      mappedDirectFile = nil
+    }
 
     let excludedSet = Set(index.metadata.excludedDetectorPixels)
     var residentShards: [CompactResidentShard] = []
@@ -2560,6 +2668,7 @@ public enum MetalCompactH5Loader {
                 index: index, device: concurrentDevice.value, queue: concurrentQueue.value,
                 validationPipeline: concurrentValidationPipeline.value,
                 maximumWidthBuffer: concurrentWidths.buffer,
+                mappedFile: mappedDirectFile,
                 payloadPreauthenticated: payloadsPreauthenticated,
                 verifyChecksums: verifyChecksums
               )
@@ -2820,7 +2929,8 @@ public enum MetalCompactH5Loader {
       preparedDPCMomentBuffer: preparedDPC?.moments,
       preparedDPCOutputs: preparedDPC.map { [$0.row, $0.column] } ?? [],
       preparedDetectorProducts: preparedDetectorProducts.products,
-      residencyLease: residencyLease
+      residencyLease: residencyLease,
+      mappedFile: mappedDirectFile
     )
     return resident
   }
@@ -2841,7 +2951,14 @@ public enum MetalCompactH5Loader {
       UInt64(metadata.scanCount), metadata.preparedDPCMoments == nil ? UInt64(8) : UInt64(16),
       label: "interaction scan buffers"
     )
-    var total = try add(metadata.residentBytes, pixelBytes, label: "resident budget")
+    // A trusted direct mapping supplies the payload/header storage itself.
+    // Count the file-backed union once rather than adding a second copy on top
+    // of the logical resident-byte estimate.
+    let residentStorageBytes =
+      authenticationPolicy == .trustedMappedDirect
+      ? max(metadata.residentBytes, metadata.sourceBytes)
+      : metadata.residentBytes
+    var total = try add(residentStorageBytes, pixelBytes, label: "resident budget")
     total = try add(total, scanBytes, label: "resident interaction budget")
     // Width validation buffer remains alive through publication.
     total = try add(
@@ -3502,6 +3619,123 @@ public enum MetalCompactH5Loader {
     }
   }
 
+  private static func loadMappedDirectShard(
+    shardIndex: Int,
+    shard: CompactH5ShardRecord,
+    index: CompactH5ParsedIndex,
+    device: MTLDevice,
+    queue: MTLCommandQueue,
+    validationPipeline: MTLComputePipelineState,
+    maximumWidthBuffer: MTLBuffer,
+    mappedFile: CompactMappedFile
+  ) throws -> CompactShardLoadResult {
+    let payloadBytes = try exactInt(shard.payloadBytes, label: "mapped direct payload bytes")
+    let headerBytes = try exactInt(shard.widthsBytes, label: "mapped compact header bytes")
+    let headerWords = try exactInt(
+      UInt64(shard.descriptorCount), label: "mapped compact header words"
+    )
+    guard shard.payloadBytes == shard.decodedBytes,
+      payloadBytes.isMultiple(of: MemoryLayout<UInt32>.stride),
+      headerBytes == headerWords * MemoryLayout<UInt32>.stride,
+      payloadBytes <= device.maxBufferLength,
+      headerBytes <= device.maxBufferLength,
+      let payloadWords = UInt32(exactly: payloadBytes / 4)
+    else {
+      throw Metal4DSTEMStreamingIOError.allocationFailed(
+        label: "mapped direct compact shard \(shardIndex)",
+        bytes: max(shard.payloadBytes, shard.widthsBytes)
+      )
+    }
+    let payload = try mappedFile.buffer(
+      device: device, offset: shard.payloadOffset, length: payloadBytes,
+      label: "payload shard \(shardIndex)"
+    )
+    let headers = try mappedFile.buffer(
+      device: device, offset: shard.widthsOffset, length: headerBytes,
+      label: "headers shard \(shardIndex)"
+    )
+    let preparationStart = ContinuousClock.now
+    let tileCount =
+      (index.metadata.scansPerShard + index.metadata.scanTile - 1)
+      / index.metadata.scanTile
+    let checkpointWords = (tileCount + 31) / 32
+    let widthWords = (tileCount + 7) / 8
+    guard
+      (index.headerEncoding == 0 && index.metadata.scanTile == 128
+        && index.headerWordsPerPixel == tileCount)
+        || ((index.headerEncoding == 1 || index.headerEncoding == 2)
+          && index.metadata.scanTile == 32
+          && index.headerWordsPerPixel == checkpointWords + widthWords),
+      headerWords
+        == index.metadata.detectorPixelCount * index.headerWordsPerPixel
+    else {
+      throw invalid("Mapped direct shard \(shardIndex) has inconsistent direct headers.")
+    }
+    let descriptorPreparationMilliseconds = milliseconds(from: preparationStart)
+    guard
+      let descriptorStatus = device.makeBuffer(
+        length: MemoryLayout<UInt32>.stride, options: .storageModeShared
+      )
+    else {
+      throw Metal4DSTEMStreamingIOError.allocationFailed(
+        label: "mapped direct descriptor status", bytes: 4
+      )
+    }
+    memset(descriptorStatus.contents(), 0, descriptorStatus.length)
+    let validationCount =
+      index.headerEncoding == 0
+      ? Int(shard.descriptorCount) : index.metadata.detectorPixelCount
+    var descriptorParameters = CompactDescriptorParameters(
+      descriptorCount: UInt32(validationCount),
+      payloadWords: payloadWords,
+      tileCount: UInt32(tileCount),
+      headerWordsPerPixel: UInt32(index.headerWordsPerPixel),
+      scanTile: UInt32(index.metadata.scanTile),
+      headerEncoding: index.headerEncoding
+    )
+    guard
+      let command = queue.makeCommandBuffer(),
+      let validation = command.makeComputeCommandEncoder()
+    else {
+      throw Metal4DSTEMStreamingIOError.metalUnavailable(
+        "Metal could not encode mapped direct shard \(shardIndex) validation."
+      )
+    }
+    validation.setComputePipelineState(validationPipeline)
+    validation.setBuffer(headers, offset: 0, index: 0)
+    validation.setBuffer(descriptorStatus, offset: 0, index: 1)
+    validation.setBytes(
+      &descriptorParameters,
+      length: MemoryLayout.stride(ofValue: descriptorParameters),
+      index: 2
+    )
+    validation.setBuffer(maximumWidthBuffer, offset: 0, index: 3)
+    validation.dispatchThreads(
+      MTLSize(width: validationCount, height: 1, depth: 1),
+      threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
+    )
+    validation.endEncoding()
+    try MetalCompactH5ResidentSource.complete(
+      command, operation: "mapped direct shard \(shardIndex) structural validation"
+    )
+    let status = descriptorStatus.contents().load(as: UInt32.self)
+    guard status == 0 else {
+      throw invalid(
+        "Mapped direct shard \(shardIndex) failed GPU header validation with status \(status)."
+      )
+    }
+    return CompactShardLoadResult(
+      resident: CompactResidentShard(payload: payload, descriptors: headers),
+      sourceReadMilliseconds: 0,
+      descriptorPreparationMilliseconds: descriptorPreparationMilliseconds,
+      gpuPreparationMilliseconds: 0,
+      gpuDecodeMilliseconds: 0,
+      decodedIntegrityMilliseconds: 0,
+      privateUploadMilliseconds: 0,
+      maximumTransientBytes: 4
+    )
+  }
+
   private static func loadDirectShard(
     fileDescriptor: Int32,
     shardIndex: Int,
@@ -3511,9 +3745,20 @@ public enum MetalCompactH5Loader {
     queue: MTLCommandQueue,
     validationPipeline: MTLComputePipelineState,
     maximumWidthBuffer: MTLBuffer,
+    mappedFile: CompactMappedFile?,
     payloadPreauthenticated: Bool,
     verifyChecksums: Bool
   ) throws -> CompactShardLoadResult {
+    if let mappedFile {
+      guard !verifyChecksums, !payloadPreauthenticated else {
+        throw invalid("Mapped direct cache cannot combine with payload authentication.")
+      }
+      return try loadMappedDirectShard(
+        shardIndex: shardIndex, shard: shard, index: index, device: device,
+        queue: queue, validationPipeline: validationPipeline,
+        maximumWidthBuffer: maximumWidthBuffer, mappedFile: mappedFile
+      )
+    }
     let payloadBytes = try exactInt(shard.payloadBytes, label: "direct payload bytes")
     let headerBytes = try exactInt(shard.widthsBytes, label: "compact header bytes")
     let headerWords = try exactInt(

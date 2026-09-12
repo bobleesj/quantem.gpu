@@ -116,6 +116,97 @@ public final class MetalANSResidentSource {
     try complete(command)
   }
 
+  /// Load a self-contained QGANS v1 file into private Metal buffers.
+  ///
+  /// The reader validates the manifest and section geometry first, then streams
+  /// each typed section through a bounded shared staging buffer into a private
+  /// resident buffer. It never materializes the logical four-dimensional count
+  /// volume or copies a multi-gigabyte section into a Swift array. By default,
+  /// every section checksum is verified while it is uploaded; an optional
+  /// whole-file SHA-256 can provide external source authentication.
+  public convenience init(
+    sourceURL: URL,
+    device: MTLDevice,
+    expectedSHA256: String? = nil,
+    verifyChecksums: Bool = true,
+    maximumAdditionalBytes: UInt64? = nil
+  ) throws {
+    let reader = try MetalANSFileReader(
+      sourceURL: sourceURL, expectedSHA256: expectedSHA256, verifyChecksums: verifyChecksums)
+    try self.init(
+      fileReader: reader, device: device, maximumAdditionalBytes: maximumAdditionalBytes)
+  }
+
+  private init(
+    fileReader: MetalANSFileReader,
+    device: MTLDevice,
+    maximumAdditionalBytes: UInt64?
+  ) throws {
+    let index = fileReader.index
+    shape = index.shape
+    logicalDtype = index.logicalDtype
+    blockFrames = index.blockFrames
+    scale = index.scale
+    self.device = device
+    tables = []
+    failure = nil
+    diffraction = nil
+    request = nil
+    isReleased = false
+    lastOperationScratchBytes = 0
+    guard let queue = device.makeCommandQueue() else {
+      throw Self.invalid("Metal could not create a count-ANS command queue for QGANS.")
+    }
+    self.queue = queue
+    let library = try Metal4DSTEMKernels.makeANSCountsLibrary(device: device)
+    let validation = try Self.pipeline(library, "ans_counts_validate", device)
+    decodePipeline = try Self.pipeline(library, "ans_counts_decode", device)
+    gatherPipeline = try Self.pipeline(library, "ans_counts_gather", device)
+    reducePipeline = try Self.pipeline(library, "ans_counts_reduce", device)
+    let sizes = index.sections.map { max(4, $0.byteCount) }
+    let outputBytesResult = index.detectorPixelCount.multipliedReportingOverflow(
+      by: index.logicalDtype == .uint8 ? 1 : 2)
+    guard !outputBytesResult.overflow else {
+      throw Self.invalid("QGANS diffraction-buffer size overflows Int.")
+    }
+    let outputBytes = outputBytesResult.partialValue
+    let stagingBytes = min(32 * 1024 * 1024, max(4, sizes.max() ?? 4))
+    var required = UInt64(0)
+    for size in sizes + [4, outputBytes, 8, stagingBytes] {
+      let next = required.addingReportingOverflow(UInt64(size))
+      guard !next.overflow else {
+        throw Self.invalid("QGANS resident-size arithmetic overflows UInt64.")
+      }
+      required = next.partialValue
+    }
+    try Self.admit(
+      sizes: sizes + [4, outputBytes, 8, stagingBytes], additionalBytes: required,
+      budget: maximumAdditionalBytes, device: device)
+    failure = try Self.buffer(device, bytes: 4, label: "ANS validation status")
+    diffraction = try Self.buffer(
+      device, bytes: outputBytes, label: "ANS selected diffraction")
+    request = try Self.buffer(device, bytes: 8, label: "ANS selected scan")
+    do {
+      tables = try index.sections.map {
+        try fileReader.upload(
+          section: $0, device: device, queue: queue, stagingBytes: stagingBytes)
+      }
+    } catch {
+      tables.removeAll(keepingCapacity: false)
+      failure = nil
+      diffraction = nil
+      request = nil
+      throw error
+    }
+    let command = try makeCommand()
+    let encoder = try bind(command, pipeline: validation, parameters: parameters())
+    encoder.dispatchThreads(
+      MTLSize(width: index.sections[2].elementCount, height: 1, depth: 1),
+      threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
+    encoder.endEncoding()
+    try complete(command)
+  }
+
   /// Read one full raw DP exactly, preserving original counts including rare high values.
   ///
   /// The small result is widened exactly to UInt32 for the native interaction API.
