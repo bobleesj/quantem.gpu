@@ -251,6 +251,7 @@ class _Source:
                 yield crop(values, (dr0, dr1, dc0, dc1))
             else:
                 yield cp.ascontiguousarray(values[:, dr0:dr1, dc0:dc1])
+            del values
         self.check()
 
     def close(self):
@@ -286,7 +287,7 @@ def _restore(values, report):
         return (values.astype(cp.float64) * report["scale"] + report["offset"]).astype(
             cp.float32
         )
-    return values.astype(cp.float32)
+    return values.astype(cp.float32, copy=False)
 
 
 def _range(source):
@@ -837,6 +838,7 @@ def _calibrated_blocks(source, scan_region, detector_region):
     if not source.saved or source.saved.get("version") != 2:
         for block in source.blocks(scan_region, detector_region):
             yield block, source.saved
+            del block
         return
     rows, cols = source.shape[:2]
     r0, r1, c0, c1 = scan_region or (0, rows, 0, cols)
@@ -856,6 +858,7 @@ def _calibrated_blocks(source, scan_region, detector_region):
             yield _slice_frames(block, first, stop), regions[index]
             first = stop
         cursor += block.shape[0]
+        del block
 
 
 def _load_regional(source, scan_region, detector_region, verbose, pack, resident_type):
@@ -886,6 +889,8 @@ def _load_regional(source, scan_region, detector_region, verbose, pack, resident
             previous_saved = saved
             chunks.append(pack(encoded, (1, frames, *shape[2:])))
             first += frames
+            # Packing is complete; do not overlap this region with the next producer call.
+            del encoded, block
         if first != math.prod(shape[:2]):
             raise ValueError(
                 "The source did not produce the complete declared scan; repeat the merge."
