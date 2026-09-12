@@ -1,5 +1,7 @@
 """Metal ANS and bounded MAPED parity against a NumPy count fixture."""
 
+import h5py
+import hdf5plugin
 import numpy as np
 import pytest
 
@@ -13,11 +15,93 @@ from quantem.gpu.io.backends.mps.precision import upload
 from quantem.gpu.maped import merge_to_scaled_h5
 
 
+def _median_corrected(raw, pixel_mask):
+    expected = raw.copy()
+    height, width = pixel_mask.shape
+    for row, column in np.argwhere(pixel_mask != 0):
+        neighbors = []
+        for dr in (-1, 0, 1):
+            for dc in (-1, 0, 1):
+                rr, cc = row + dr, column + dc
+                if (
+                    (dr or dc)
+                    and 0 <= rr < height
+                    and 0 <= cc < width
+                    and pixel_mask[rr, cc] == 0
+                ):
+                    neighbors.append(raw[..., rr, cc])
+        expected[..., row, column] = np.median(
+            np.stack(neighbors, axis=-1), axis=-1
+        ).astype(raw.dtype)
+    return expected
+
+
 def test_mps_region_planner_uses_bounded_scan_rows():
     assert _automatic_region_frames((512, 512, 192, 192)) == 4096
     large = _automatic_region_frames((512, 512, 512, 512))
     assert 512 <= large <= 4096
     assert large % 512 == 0
+
+
+def test_h5_ans_defaults_to_gpu_median_hot_pixel_correction(tmp_path):
+    dtype = np.uint16
+    raw = (np.arange(2 * 5 * 6 * 8).reshape(2, 5, 6, 8) * 7 % 251).astype(dtype)
+    mask = np.zeros((6, 8), np.uint8)
+    mask[0, 0] = 16
+    mask[2, 3] = 20
+    raw[..., mask != 0] = np.iinfo(dtype).max
+    expected = _median_corrected(raw, mask)
+    path = tmp_path / "hot-pixels.h5"
+    with h5py.File(path, "w") as handle:
+        data = handle.require_group("entry/data")
+        data.create_dataset(
+            "data_000001",
+            data=raw.reshape(-1, 6, 8),
+            chunks=(1, 6, 8),
+            **hdf5plugin.Bitshuffle(nelems=0, cname="lz4"),
+        )
+        detector = handle.require_group("entry/instrument/detector")
+        detector_specific = detector.require_group("detectorSpecific")
+        detector_specific["ntrigger"] = 10
+        detector_specific["y_pixels_in_detector"] = 6
+        detector_specific["x_pixels_in_detector"] = 8
+        detector_specific["pixel_mask"] = mask
+
+    loaded = io.load(
+        path,
+        backend="mps",
+        representation="ans",
+        scan_shape=(2, 5),
+        apply_mask=False,
+        verbose=False,
+    )
+    try:
+        decoded = loaded.data.decode_scan_range_device(0, 10)
+        try:
+            np.testing.assert_array_equal(
+                decoded.to_numpy().reshape(raw.shape), expected
+            )
+        finally:
+            decoded.release()
+        correction = loaded.metadata["hot_pixel_correction"]
+        assert correction["method"] == "median"
+        assert correction["pixel_count"] == 2
+        assert correction["coordinates_row_column"] == [[0, 0], [2, 3]]
+        assert correction["applied"] is True
+        mean_dp = loaded.data.mean_dp_device()
+        detector_mean = loaded.data.detector_mean_device()
+        try:
+            np.testing.assert_allclose(
+                mean_dp.to_numpy(), expected.mean(axis=(0, 1)), rtol=0, atol=1e-5
+            )
+            np.testing.assert_allclose(
+                detector_mean.to_numpy(), expected.mean(axis=(2, 3)), rtol=0, atol=1e-5
+            )
+        finally:
+            mean_dp.release()
+            detector_mean.release()
+    finally:
+        loaded.close()
 
 
 def test_mps_ans_bounded_merge_preserves_counts_mask_and_late_regions(

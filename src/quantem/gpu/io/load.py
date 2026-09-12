@@ -5073,6 +5073,7 @@ def load(
     detector_bin: int = 1,
     det_bin: int | None = None,
     apply_mask: bool | None = None,
+    hot_pixel_correction: str = "median",
     auto_narrow: bool = True,
     output: str = "native",
     stack: bool = True,
@@ -5096,7 +5097,8 @@ def load(
     A first-seen source needs one bounded measurement pass and one packing pass;
     a validated width-plan cache removes the measurement pass on later loads.
     All packed sources remain resident when this call returns. No binning,
-    clipping or masking is applied.
+    clipping is applied. Stored detector-mask pixels use GPU median replacement
+    by default before packing.
 
     All spatial arguments use ``(row, col)`` order. ``representation`` selects
     how the complete logical data is retained. Existing Lossless Pack Format
@@ -5112,9 +5114,9 @@ def load(
     ANS-to-bitpacked GPU transcode where implemented. CPU reference expansion
     requires ``backend="cpu", representation="dense"``. Unsupported conversions
     raise instead of silently loading HDF5, expanding densely, or using CPU.
-    ``apply_mask=None`` retains raw counts in packed/ANS storage and keeps
-    historical masking behavior for explicitly dense loads. Compute detector
-    masks explicitly on compact products.
+    ``apply_mask=None`` keeps historical masking behavior for explicitly dense
+    loads. Compact HDF5 loads use ``hot_pixel_correction``; saved compact sources
+    retain the correction already recorded in their metadata.
     File format and compression are detected from contents, independently of
     resident representation. No ``decompression=`` argument is needed.
 
@@ -5126,6 +5128,12 @@ def load(
     ``backend="auto"`` selects CUDA or MPS and never selects CPU silently.
     ``output="native"`` preserves the backend-native payload; use
     ``output="torch"`` when the consumer expects a Torch tensor.
+
+    ``hot_pixel_correction="median"`` is the default for an ordinary HDF5
+    acquisition loaded into resident packed or ANS storage. Stored detector-mask
+    pixels are replaced on the selected GPU by the integer local 3x3 median
+    before encoding. Use ``"zero"`` for zero replacement or ``"none"`` to
+    retain raw masked-pixel counts.
 
     Parameters
     ----------
@@ -5202,6 +5210,9 @@ def load(
         decoding fills its dataset slots.
     """
     from ._precision import load_precision, precision_name, saved_precision
+    from ._hot_pixels import normalize_hot_pixel_correction
+
+    hot_pixel_correction = normalize_hot_pixel_correction(hot_pixel_correction)
 
     precision = precision_name(dtype)
     precision_sources = [source] if isinstance(source, (str, os.PathLike)) else list(source)
@@ -5328,7 +5339,11 @@ def load(
                 "representation='dense' for selection or conversion options."
             )
         if dtype not in {None, "native"} or apply_mask:
-            raise ValueError("Packed loading preserves raw counts; use dtype='native' and apply_mask=False.")
+            raise ValueError(
+                "Packed loading preserves native count dtype; use "
+                "dtype='native' and apply_mask=False. Control stored detector-mask "
+                "pixels with hot_pixel_correction."
+            )
         if len(paths) > 1 and stack:
             raise ValueError("Use stack=False to keep each packed acquisition independently resident.")
         from ._native_packed import _packing_plan_ready, load_h5_packed
@@ -5336,7 +5351,10 @@ def load(
         results = []
         try:
             plans_ready = len(paths) > 1 and all(
-                _packing_plan_ready(path, dataset_path, scan_shape) for path in paths
+                _packing_plan_ready(
+                    path, dataset_path, scan_shape, hot_pixel_correction
+                )
+                for path in paths
             )
             if plans_ready:
                 from concurrent.futures import ThreadPoolExecutor
@@ -5350,6 +5368,7 @@ def load(
                             dataset_path=dataset_path,
                             device=device,
                             verbose=verbose,
+                            hot_pixel_correction=hot_pixel_correction,
                         )
                         for path in paths
                     ]
@@ -5367,6 +5386,7 @@ def load(
                     results.append(load_h5_packed(
                         path, scan_shape=scan_shape, dataset_path=dataset_path,
                         device=device, verbose=verbose,
+                        hot_pixel_correction=hot_pixel_correction,
                     ))
         except BaseException:
             for result in results:
@@ -5429,7 +5449,11 @@ def load(
         )) or detector_bin != 1 or output != "native" or not stack or scan_order != "row-major":
             raise ValueError("H5-to-ANS preserves complete native acquisitions; remove selection, conversion and multi-device options.")
         if dtype not in {None, "native"} or apply_mask:
-            raise ValueError("H5-to-ANS preserves raw native counts; use dtype='native' and apply_mask=False.")
+            raise ValueError(
+                "H5-to-ANS preserves native count dtype; use dtype='native' and "
+                "apply_mask=False. Control stored detector-mask pixels with "
+                "hot_pixel_correction."
+            )
         if ans_backend == "mps" and device is not None:
             raise ValueError("Metal ANS uses device='mps'; omit device selection.")
         return load_h5_ans(
@@ -5439,6 +5463,7 @@ def load(
             device=device,
             verbose=verbose,
             backend=ans_backend,
+            hot_pixel_correction=hot_pixel_correction,
         )
     # HDF5/prepared-packed loads use their declared working-mask contract. ANS files
     # retain original counts by default; detector masks are product controls.

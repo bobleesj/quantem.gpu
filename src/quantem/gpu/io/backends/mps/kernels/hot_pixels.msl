@@ -1,0 +1,79 @@
+#include <metal_stdlib>
+using namespace metal;
+
+template <typename T>
+inline void correct_one(
+    device T *frames,
+    device const uchar *valid,
+    device const int *bad,
+    constant ulong *p,
+    ulong item,
+    bool use_median
+) {
+    int bad_count = int(p[0]);
+    int height = int(p[1]);
+    int width = int(p[2]);
+    int bad_slot = int(item % ulong(bad_count));
+    ulong frame = item / ulong(bad_count);
+    int pixel = bad[bad_slot];
+    if (!use_median) {
+        frames[frame * ulong(height * width) + ulong(pixel)] = T(0);
+        return;
+    }
+    int row = pixel / width;
+    int column = pixel % width;
+    uint values[8];
+    int count = 0;
+    for (int dr = -1; dr <= 1; ++dr) {
+        for (int dc = -1; dc <= 1; ++dc) {
+            int rr = row + dr;
+            int cc = column + dc;
+            if ((dr == 0 && dc == 0) || rr < 0 || rr >= height ||
+                cc < 0 || cc >= width) continue;
+            int neighbor = rr * width + cc;
+            if (!valid[neighbor]) continue;
+            values[count++] = uint(frames[frame * ulong(height * width) + ulong(neighbor)]);
+        }
+    }
+    for (int i = 1; i < count; ++i) {
+        uint value = values[i];
+        int j = i - 1;
+        while (j >= 0 && values[j] > value) {
+            values[j + 1] = values[j];
+            --j;
+        }
+        values[j + 1] = value;
+    }
+    uint result = 0;
+    if (count & 1) result = values[count / 2];
+    else if (count) result = (values[count / 2 - 1] + values[count / 2]) / 2;
+    frames[frame * ulong(height * width) + ulong(pixel)] = T(result);
+}
+
+kernel void hot_median(
+    device uchar *frames [[buffer(0)]],
+    device const uchar *valid [[buffer(1)]],
+    device const int *bad [[buffer(2)]],
+    constant ulong *p [[buffer(3)]],
+    uint item [[thread_position_in_grid]]
+) {
+    if (item >= p[3]) return;
+    if (p[4] == 1)
+        correct_one(frames, valid, bad, p, item, true);
+    else
+        correct_one(reinterpret_cast<device ushort *>(frames), valid, bad, p, item, true);
+}
+
+kernel void hot_zero(
+    device uchar *frames [[buffer(0)]],
+    device const uchar *valid [[buffer(1)]],
+    device const int *bad [[buffer(2)]],
+    constant ulong *p [[buffer(3)]],
+    uint item [[thread_position_in_grid]]
+) {
+    if (item >= p[3]) return;
+    if (p[4] == 1)
+        correct_one(frames, valid, bad, p, item, false);
+    else
+        correct_one(reinterpret_cast<device ushort *>(frames), valid, bad, p, item, false);
+}

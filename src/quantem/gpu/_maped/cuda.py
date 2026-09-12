@@ -10,6 +10,7 @@ import torch.nn.functional as functional
 
 from quantem.gpu._compact.streamed import StreamedCounts
 from quantem.gpu._maped._provenance import summary_record
+from quantem.gpu.io._hot_pixels import correction_is_applied
 
 
 def _weights(shape, real_shifts, diffraction_shifts):
@@ -62,6 +63,7 @@ def _merge_regions(sources, real_shifts, diffraction_shifts, scans_per_region=10
     masks = [
         cp.ones((height, width), cp.uint8)
         if source.metadata.get("pixel_mask") is None
+        or correction_is_applied(source.metadata)
         else (cp.asarray(source.metadata["pixel_mask"]) == 0).astype(cp.uint8)
         for source in sources
     ]
@@ -274,7 +276,7 @@ def merge_to_scaled_h5(
     range_seconds = time.perf_counter() - started
     scale = (intensity_max - intensity_min) / 65535.0
     values = math.prod(shape)
-    summaries = summary_record(shape, len(sources))
+    summaries = summary_record(shape, sources)
     report = {
         "version": 1,
         "storage": "scaled_uint16",

@@ -435,7 +435,7 @@ def merge_to_scaled_h5(
         "measurement": "GPU comparison against merged float32 regions",
         "selection": {"scan_region": None, "detector_region": None},
     }
-    summaries = summary_record(shape, len(sources))
+    summaries = summary_record(shape, sources)
     metadata = {
         "quantem_precision_v1": json.dumps({**report, "complete": False}),
         "source_dtype": "float32",

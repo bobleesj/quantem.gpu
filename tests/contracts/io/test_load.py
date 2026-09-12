@@ -222,6 +222,21 @@ def test_load_rejects_unknown_output(monkeypatch) -> None:
         load_module.load("scan_master.h5", representation="dense", output="numpy", verbose=False)
 
 
+def test_load_rejects_unknown_hot_pixel_correction() -> None:
+    from importlib import import_module
+
+    load_module = import_module("quantem.gpu.io.load")
+    with pytest.raises(
+        ValueError,
+        match="hot_pixel_correction must be 'median', 'zero', or 'none'",
+    ):
+        load_module.load(
+            "scan_master.h5",
+            hot_pixel_correction="interpolate",
+            verbose=False,
+        )
+
+
 def test_load_u32_routes_to_parallel_gpu_output_dtype(monkeypatch) -> None:
     """Public dtype='u32' should reach the multi-GPU/list load path."""
     from importlib import import_module

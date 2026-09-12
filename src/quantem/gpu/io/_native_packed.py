@@ -52,6 +52,7 @@ def _packing_plan_identity(
     shape: tuple[int, ...],
     dtype: np.dtype,
     block_frames: int,
+    hot_pixel_correction: str,
 ) -> dict:
     """Build the exact source identity stored with cached packing widths."""
     return {
@@ -60,6 +61,7 @@ def _packing_plan_identity(
         "shape": [int(value) for value in shape],
         "dtype": dtype.str,
         "block_frames": int(block_frames),
+        "hot_pixel_correction": hot_pixel_correction,
     }
 
 
@@ -99,6 +101,7 @@ def _packing_plan_ready(
     path: str | Path,
     dataset_path: str | None,
     scan_shape: tuple[int, int] | None,
+    hot_pixel_correction: str,
 ) -> bool:
     """Return whether a source-validated plan can support one-pass loading."""
     cache_path = _packing_plan_cache_path(Path(path), dataset_path)
@@ -119,6 +122,7 @@ def _packing_plan_ready(
         block_frames = int(header["block_frames"])
         if (
             header.get("version") != _PACKING_PLAN_CACHE_VERSION
+            or header.get("hot_pixel_correction") != hot_pixel_correction
             or len(shape) != 4
             or block_frames < 1
             or (scan_shape is not None and tuple(scan_shape) != shape[:2])
@@ -194,6 +198,7 @@ def load_h5_packed(
     dataset_path: str | None,
     device: int | str | None,
     verbose: bool,
+    hot_pixel_correction: str = "median",
 ) -> FourDSTEMData:
     """Pack native counts with bounded buffers and an automatic width plan."""
     path = Path(path)
@@ -217,12 +222,16 @@ def load_h5_packed(
         else int(str(device).removeprefix("cuda:"))
     )
     with cp.cuda.Device(selected):
+        from .backends.cuda.hot_pixels import CUDAHotPixelCorrector
+
+        corrector = CUDAHotPixelCorrector(info.pixel_mask, hot_pixel_correction)
         scans, pixels = math.prod(shape[:2]), math.prod(shape[2:])
         block = 128
         streams = math.ceil(scans / block) * pixels
         kernels = _kernels(cp.cuda.Device().id)
         signatures = {str(path): _file_source_signature(path)}
         with ExitStack() as stack:
+            stack.callback(corrector.close)
             dataset_path = dataset_path or info.metadata.get("dataset_path")
             dataset = None
             session = None
@@ -251,7 +260,9 @@ def load_h5_packed(
                     }
                 )
             cache_path = _packing_plan_cache_path(path, dataset_path)
-            identity = _packing_plan_identity(signatures, shape, dtype, block)
+            identity = _packing_plan_identity(
+                signatures, shape, dtype, block, hot_pixel_correction
+            )
             cached_widths = _load_packing_widths(
                 cache_path, identity, streams, dtype.itemsize * 8
             )
@@ -272,7 +283,8 @@ def load_h5_packed(
                     for name, initial in signatures.items()
                 ):
                     raise RuntimeError(
-                        "Source changed during packed loading; retry with immutable inputs."
+                        "Source changed during packed loading; retry with immutable "
+                        "inputs."
                     )
                 for first in range(0, scans, chunk_scans):
                     stop = min(first + chunk_scans, scans)
@@ -302,6 +314,7 @@ def load_h5_packed(
                             batch_bytes_target=batch_bytes_target,
                             prune_device_pool=False,
                         )
+                    corrector.apply(raw)
                     start_stream = first // block * pixels
                     count_streams = math.ceil((stop - first) / block) * pixels
                     end_stream = start_stream + count_streams
@@ -370,11 +383,26 @@ def load_h5_packed(
             dtype=dtype.name,
             pixel_mask=info.pixel_mask,
             physical_resident_bytes=owner.resident_bytes,
-            lossless_exact=True,
-            detector_mask_policy="preserve-stored-counts",
+            lossless_exact=not corrector.record["applied"],
+            file_counts_exact=not corrector.record["applied"],
+            working_counts_exact=True,
+            detector_mask_policy=(
+                "gpu-median-corrected"
+                if corrector.record["applied"]
+                and corrector.record["method"] == "median"
+                else "gpu-zero-corrected"
+                if corrector.record["applied"]
+                else "preserve-stored-counts"
+            ),
+            hot_pixel_correction=corrector.record,
             source_read_passes=source_passes,
         )
         cp.get_default_memory_pool().free_all_blocks()
         if verbose:
-            print(f"Packed {scans} native scans in {source_passes} source pass(es).")
+            correction = metadata["hot_pixel_correction"]
+            print(
+                f"Loaded resident packed counts in {source_passes} source pass(es): "
+                f"{correction['method']} correction, "
+                f"{correction['pixel_count']} stored detector-mask pixels."
+            )
         return FourDSTEMData(owner, metadata)

@@ -1,4 +1,4 @@
-"""Stream complete H5 acquisitions into lossless CUDA count residents."""
+"""Stream complete H5 acquisitions into native-count GPU residents."""
 
 import math
 import time
@@ -12,7 +12,14 @@ from .models import FourDSTEMData
 
 
 def load_h5_ans(
-    path, *, scan_shape, dataset_path, device, verbose, backend="cuda"
+    path,
+    *,
+    scan_shape,
+    dataset_path,
+    device,
+    verbose,
+    backend="cuda",
+    hot_pixel_correction="median",
 ):
     """Load bounded native chunks into a backend-owned runtime ANS resident."""
     if backend == "mps":
@@ -21,6 +28,7 @@ def load_h5_ans(
             scan_shape=scan_shape,
             dataset_path=dataset_path,
             verbose=verbose,
+            hot_pixel_correction=hot_pixel_correction,
         )
     if backend != "cuda":
         raise NotImplementedError("Runtime HDF5-to-ANS needs CUDA or MPS.")
@@ -43,26 +51,35 @@ def load_h5_ans(
     dtype = np.dtype(info.dtype)
     if dtype not in (np.dtype("uint8"), np.dtype("uint16")):
         raise TypeError(
-            "Compact count loading preserves native uint8/uint16. Use dense loading for other dtypes."
+            "Compact count loading preserves native uint8/uint16. Use dense "
+            "loading for other dtypes."
         )
     selected = (
         cp.cuda.Device().id
         if device is None
         else int(str(device).removeprefix("cuda:"))
     )
-    valid = np.ones(info.detector_shape, bool)
-    if info.pixel_mask is not None:
-        valid &= np.asarray(info.pixel_mask) == 0
     with cp.cuda.Device(selected), ExitStack() as stack:
+        from .backends.cuda.hot_pixels import CUDAHotPixelCorrector
+
+        corrector = CUDAHotPixelCorrector(info.pixel_mask, hot_pixel_correction)
+        stack.callback(corrector.close)
+        valid = np.ones(info.detector_shape, bool)
+        if info.pixel_mask is not None and not corrector.record["applied"]:
+            valid &= np.asarray(info.pixel_mask) == 0
         cp.get_default_memory_pool().free_all_blocks()
         source = StreamedCounts(shape, dtype, valid)
         free, _ = cp.cuda.runtime.memGetInfo()
         # Bound raw + encoding scratch + H5 decompression + output allocation.
         per_scan = math.prod(info.detector_shape) * 8
-        chunk_scans = min(2048, max(1, int((free - 128 * 1024**2) // (per_scan * 2))))
+        chunk_scans = min(
+            2048,
+            max(1, int((free - 128 * 1024**2) // (per_scan * 2))),
+        )
         if chunk_scans < min(512, math.prod(info.scan_shape)):
             raise MemoryError(
-                "Insufficient CUDA staging space; close another resident document before loading."
+                "Insufficient CUDA staging space; close another resident document "
+                "before loading."
             )
         chunk_scans = max(512, chunk_scans // 512 * 512)
         dataset_path = dataset_path or info.metadata.get("dataset_path")
@@ -73,7 +90,8 @@ def load_h5_ans(
             dataset = handle[dataset_path]
             if tuple(dataset.shape) != shape or np.dtype(dataset.dtype) != dtype:
                 raise ValueError(
-                    "The selected H5 dataset must match its complete inspected native geometry and dtype."
+                    "The selected H5 dataset must match its complete inspected "
+                    "native geometry and dtype."
                 )
         else:
             names = _discover_chunk_names(str(path))
@@ -116,10 +134,9 @@ def load_h5_ans(
                 raw = raw.reshape(stop - first, *info.detector_shape)
             cp.cuda.get_current_stream().synchronize()
             read_seconds += time.perf_counter() - before
+            corrector.apply(raw)
             source.append(raw)
             del raw
-            if verbose:
-                print(f"Encoded {stop}/{math.prod(info.scan_shape)} native scans.")
         metadata = dict(info.metadata)
         metadata.update(
             backend="cuda",
@@ -139,10 +156,19 @@ def load_h5_ans(
             physical_resident_bytes=source.nbytes,
             index_bytes=source.index_nbytes,
             pixel_mask=info.pixel_mask,
-            lossless_exact=True,
-            file_counts_exact=True,
+            lossless_exact=not corrector.record["applied"],
+            file_counts_exact=not corrector.record["applied"],
             resident_profile="runtime-column-rans-spatial-v2",
-            detector_mask_policy="preserve-stored-counts",
+            detector_mask_policy=(
+                "gpu-median-corrected"
+                if corrector.record["applied"]
+                and corrector.record["method"] == "median"
+                else "gpu-zero-corrected"
+                if corrector.record["applied"]
+                else "preserve-stored-counts"
+            ),
+            hot_pixel_correction=corrector.record,
+            working_counts_exact=True,
             scan_bin=1,
             detector_bin=1,
             crop=None,
@@ -153,11 +179,21 @@ def load_h5_ans(
                 max_chunk_scans=chunk_scans,
             ),
         )
+        if verbose:
+            correction = metadata["hot_pixel_correction"]
+            print(
+                f"Loaded resident ANS on CUDA in "
+                f"{metadata['load_timings']['resident_ready_seconds']:.2f} s: "
+                f"{correction['method']} correction, "
+                f"{correction['pixel_count']} stored detector-mask pixels."
+            )
         return FourDSTEMData(source, metadata)
 
 
-def _load_h5_ans_mps(path, *, scan_shape, dataset_path, verbose):
-    """Decode bounded HDF5 blocks and encode exact ANS entirely with Metal."""
+def _load_h5_ans_mps(
+    path, *, scan_shape, dataset_path, verbose, hot_pixel_correction="median"
+):
+    """Decode bounded HDF5 blocks and encode native-count ANS with Metal."""
     from .backends.mps._streamed import MPSStreamedCounts
     from .backends.mps.dense import load_prepared_frames, _release_metal_buffer
     from .load import (
@@ -176,8 +212,11 @@ def _load_h5_ans_mps(path, *, scan_shape, dataset_path, verbose):
         raise TypeError(
             "Count-ANS loading preserves native uint8/uint16 detector counts."
         )
+    from .backends.mps.hot_pixels import MPSHotPixelCorrector
+
+    corrector = MPSHotPixelCorrector(info.pixel_mask, hot_pixel_correction)
     valid = np.ones(info.detector_shape, bool)
-    if info.pixel_mask is not None:
+    if info.pixel_mask is not None and not corrector.record["applied"]:
         valid &= np.asarray(info.pixel_mask) == 0
     source = MPSStreamedCounts(shape, dtype, valid)
     names = _discover_chunk_names(str(path)) or ["data"]
@@ -207,18 +246,18 @@ def _load_h5_ans_mps(path, *, scan_shape, dataset_path, verbose):
             )
             read_decode_seconds += time.perf_counter() - before
             try:
+                corrector.apply(raw)
                 source.append(raw)
             finally:
                 buffer, raw._mtl = raw._mtl, None
                 _release_metal_buffer(buffer)
                 del raw
-            if verbose:
-                print(f"Encoded {stop}/{scans} native scans on Metal.")
     except BaseException:
         source.release()
         raise
     finally:
         session.close()
+        corrector.close()
     metadata = dict(info.metadata)
     metadata.update(
         backend="mps",
@@ -238,10 +277,19 @@ def _load_h5_ans_mps(path, *, scan_shape, dataset_path, verbose):
         physical_resident_bytes=source.nbytes,
         index_bytes=0,
         pixel_mask=info.pixel_mask,
-        lossless_exact=True,
-        file_counts_exact=True,
+        lossless_exact=not corrector.record["applied"],
+        file_counts_exact=not corrector.record["applied"],
         resident_profile="runtime-column-rans-spatial-v2",
-        detector_mask_policy="preserve-stored-counts",
+        detector_mask_policy=(
+            "gpu-median-corrected"
+            if corrector.record["applied"]
+            and corrector.record["method"] == "median"
+            else "gpu-zero-corrected"
+            if corrector.record["applied"]
+            else "preserve-stored-counts"
+        ),
+        hot_pixel_correction=corrector.record,
+        working_counts_exact=True,
         scan_bin=1,
         detector_bin=1,
         crop=None,
@@ -252,4 +300,12 @@ def _load_h5_ans_mps(path, *, scan_shape, dataset_path, verbose):
             max_chunk_scans=chunk_scans,
         ),
     )
+    if verbose:
+        correction = metadata["hot_pixel_correction"]
+        print(
+            f"Loaded resident ANS on MPS in "
+            f"{metadata['load_timings']['resident_ready_seconds']:.2f} s: "
+            f"{correction['method']} correction, "
+            f"{correction['pixel_count']} stored detector-mask pixels."
+        )
     return FourDSTEMData(source, metadata)

@@ -7,6 +7,27 @@ import pytest
 from quantem.gpu import detector, io
 
 
+def _median_corrected(raw, pixel_mask):
+    expected = raw.copy()
+    height, width = pixel_mask.shape
+    for row, column in np.argwhere(pixel_mask != 0):
+        neighbors = []
+        for dr in (-1, 0, 1):
+            for dc in (-1, 0, 1):
+                rr, cc = row + dr, column + dc
+                if (
+                    (dr or dc)
+                    and 0 <= rr < height
+                    and 0 <= cc < width
+                    and pixel_mask[rr, cc] == 0
+                ):
+                    neighbors.append(raw[..., rr, cc])
+        expected[..., row, column] = np.median(
+            np.stack(neighbors, axis=-1), axis=-1
+        ).astype(raw.dtype)
+    return expected
+
+
 @pytest.fixture(autouse=True)
 def cuda_device():
     """Run these scientific workflows only when a CUDA device is available."""
@@ -101,6 +122,99 @@ def test_index_sum_preserves_uint64_bound(tmp_path):
     output = session.masked_sum(np.ones((257, 257), bool), output="native")
     assert output.dtype == np.uint64
     np.testing.assert_array_equal(output.get(), raw.sum((-2, -1), dtype=np.uint64))
+
+
+@pytest.mark.parametrize("dtype", [np.uint8, np.uint16])
+@pytest.mark.parametrize(
+    "representation", ["ans", None], ids=["ans", "default-packed"]
+)
+def test_h5_defaults_to_gpu_median_hot_pixel_correction(
+    tmp_path, dtype, representation
+):
+    raw = (np.arange(2 * 5 * 5 * 5).reshape(2, 5, 5, 5) * 7 % 251).astype(dtype)
+    mask = np.zeros((5, 5), np.uint8)
+    mask[0, 0] = 16
+    mask[2, 3] = 20
+    raw[..., mask != 0] = np.iinfo(dtype).max
+    expected = _median_corrected(raw, mask)
+    path = tmp_path / "hot-pixels.h5"
+    with h5py.File(path, "w") as handle:
+        handle["entry/data/data"] = raw
+        handle["entry/instrument/detector/detectorSpecific/pixel_mask"] = mask
+
+    loaded = io.load(
+        path,
+        backend="cuda",
+        representation=representation,
+        apply_mask=False,
+        verbose=False,
+    )
+    try:
+        assert loaded.representation is (
+            io.DataRepresentation.ANS
+            if representation == "ans"
+            else io.DataRepresentation.PACKED
+        )
+        correction = loaded.metadata["hot_pixel_correction"]
+        assert correction["method"] == "median"
+        assert correction["pixel_count"] == 2
+        assert correction["coordinates_row_column"] == [[0, 0], [2, 3]]
+        assert correction["applied"] is True
+        session = detector.prepare(loaded)
+        output = "native" if representation == "ans" else "numpy"
+        for index in (0, 9):
+            frame = session.frame(index, output=output)
+            np.testing.assert_array_equal(
+                frame.get() if output == "native" else frame,
+                expected.reshape(-1, 5, 5)[index],
+            )
+        if representation == "ans":
+            mean_dp = session.mean_dp(output=output).get()
+        else:
+            mean_dp = np.stack(
+                [session.frame(index, output="numpy") for index in range(10)]
+            ).mean(axis=0)
+        np.testing.assert_allclose(
+            mean_dp,
+            expected.mean(axis=(0, 1)),
+            rtol=0,
+            atol=1e-5,
+        )
+    finally:
+        loaded.close()
+
+
+@pytest.mark.parametrize("method", ["zero", "none"])
+def test_h5_ans_hot_pixel_correction_overrides(tmp_path, method):
+    raw = np.arange(3 * 4 * 4, dtype=np.uint16).reshape(1, 3, 4, 4)
+    raw[..., 1, 2] = np.iinfo(np.uint16).max
+    mask = np.zeros((4, 4), np.uint8)
+    mask[1, 2] = 20
+    path = tmp_path / f"hot-pixels-{method}.h5"
+    with h5py.File(path, "w") as handle:
+        handle["entry/data/data"] = raw
+        handle["entry/instrument/detector/detectorSpecific/pixel_mask"] = mask
+
+    loaded = io.load(
+        path,
+        backend="cuda",
+        representation="ans",
+        apply_mask=False,
+        hot_pixel_correction=method,
+        verbose=False,
+    )
+    try:
+        decoded = loaded.data.decode_scan_range_device(0, 3).get().reshape(raw.shape)
+        expected = raw.copy()
+        if method == "zero":
+            expected[..., 1, 2] = 0
+        np.testing.assert_array_equal(decoded, expected)
+        assert loaded.metadata["hot_pixel_correction"]["method"] == method
+        assert loaded.metadata["hot_pixel_correction"]["applied"] is (
+            method == "zero"
+        )
+    finally:
+        loaded.close()
 
 
 def test_mixed_dense_and_streamed_counts_keep_native_shapes(tmp_path):
