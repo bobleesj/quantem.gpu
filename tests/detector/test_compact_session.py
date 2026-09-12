@@ -95,7 +95,7 @@ def test_existing_numpy_workflow_keeps_shape_and_precision():
     np.testing.assert_array_equal(session.frame(0), counts[0, 0])
 
 
-@pytest.mark.parametrize("representation", [None, "ans", io.DataRepresentation.ANS])
+@pytest.mark.parametrize("representation", [None, "encoded", io.DataRepresentation.ENCODED])
 def test_prepared_folder_uses_existing_io_load(tmp_path, monkeypatch, representation):
     """The normal load API selects the compact loader without generic H5 decoding."""
     (tmp_path / "checkpoint.json").write_text(
@@ -125,14 +125,14 @@ def test_prepared_folder_uses_existing_io_load(tmp_path, monkeypatch, representa
     assert calls == [(tmp_path, 1)]
     assert loaded.data is source
     assert loaded.metadata["series_shape"] == (2,)
-    assert loaded.representation is io.DataRepresentation.ANS
+    assert loaded.representation is io.DataRepresentation.ENCODED
     assert loaded.lossless
     assert loaded.dtype == np.dtype("uint16")
     assert loaded.logical_bytes == source.counts.nbytes
     assert loaded.resident_bytes == 512
     assert loaded.metadata["resident_codec"] == "tans"
     assert loaded.metadata["resident_profile"] == source.storage_format
-    assert loaded.to_representation("ans") is loaded
+    assert loaded.to_representation("encoded") is loaded
     session = detector.prepare(loaded)
     assert session.series_shape == (2,)
     mask = np.ones(session.detector_shape, bool)

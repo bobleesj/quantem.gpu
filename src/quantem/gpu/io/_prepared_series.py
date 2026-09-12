@@ -21,7 +21,7 @@ def load_prepared_series(
         metadata = {
             "backend": "cuda",
             "device": f"cuda:{selected_device}",
-            "representation": "ans",
+            "representation": "encoded",
             "residency": "device",
             "resident_codec": "tans",
             "resident_profile": data.storage_format,

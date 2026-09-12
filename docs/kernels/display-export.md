@@ -22,6 +22,9 @@ presentation transform is requested and recorded.
 
 ## Shared operations
 
+For Swift buffer ownership, asynchronous encoding, percentile semantics, and
+standalone parity checks, see [Metal image statistics](metal-image-statistics.md).
+
 - finite min/max and percentile range;
 - histogram accumulation and contrast intervals;
 - linear, logarithmic, and other declared transfer functions;

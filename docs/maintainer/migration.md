@@ -74,7 +74,7 @@ domain's `backends/`; native Android code is owned by `vulkan/`.
 ## Canonical representation names and receipt v3
 
 The resident receipt is now `quantem.gpu.4dstem-resident-receipt/v3`.
-`representation` is `dense`, `packed`, or `ans`; the separate `storage_encoding`
+`representation` is `dense`, `packed`, or `encoded`; the separate `storage_encoding`
 field is removed. `storage_schema`, source/working dtype, geometry, hashes, and
 byte counts retain the detailed scientific meaning. This is an explicit schema
 change, not wire compatibility with v1 or v2. Existing sealed results keep their
@@ -93,8 +93,22 @@ The remote `storage_kind` field also reports `packed`; its separate
 `storage_schema` continues to identify the decoder. Save calls accept only
 `format="arina"` or `format="quantem"`. Replace `format="ans"` with
 `format="quantem", compression="ans"`, and remove the old HDF5 format aliases.
-File encodings themselves are unchanged. Default loading remains source-native
-until automatic HDF5-to-packed conversion is implemented and qualified.
+File encodings themselves are unchanged. Ordinary native HDF5 now loads into
+packed storage by default on CUDA:
+
+```python
+tilts = io.load(files, stack=False)
+```
+
+A first-seen source is read once to measure every adaptive stream width and once
+to write its exact packed words. Later loads reuse a source-validated width plan
+and read the detector values once. All packed sources remain resident when the
+call returns. Original uint8/uint16 counts, full geometry, and detector-mask
+metadata are retained. Masks are applied by scientific consumers, not by
+modifying the packed counts. Each result is caller-owned and must be closed
+after its final consumer. The existing dense result also supports
+`to_representation("packed")` on CUDA. This does not create a packed file or
+imply MPS/WebGPU support for this conversion.
 
 ## Next migration steps
 
@@ -155,3 +169,87 @@ Before publishing an rc:
 - Do not use fast-mode SSB as parity evidence.
 - Do not copy `MetalImageFFT` or `Native4DSTEMIO` source into Live4DSTEM.
 - Do not add a local Python FFT or HDF5 helper to the Mac app.
+
+
+## Python HDF5 loading defaults to packed storage
+
+`io.load(path)` now preserves complete native uint8/uint16 HDF5 counts in
+lossless packed GPU storage. Backend selection remains automatic. For multiple
+acquisitions use `io.load(paths, stack=False)` to retain separate packed owners.
+Saved packed, ANS and paired sources continue to reopen their recorded layouts.
+
+Code requiring dense tensors, selection, binning, or dtype conversion must request
+`representation="dense"` explicitly. Packed counts retain detector-mask metadata;
+apply that mask when calculating products rather than changing stored counts.
+
+Ordinary HDF5 packing is implemented for CUDA and Metal. Unsupported dtypes and
+backends raise with corrective guidance; there is no implicit dense or CPU fallback.
+CUDA and MPS precision loads keep encoded values resident and run detector queries
+on their owning accelerator. CUDA uses float64 intermediates where available;
+Metal uses deterministic float32/floating-pair reductions because Apple GPUs do
+not expose float64 arithmetic. CUDA loading reads the source twice to allocate
+exact packed storage without staging a complete decoded acquisition. MPS uses the
+same bounded source blocks and reuses its Metal decoder between blocks.
+
+The legacy `dtype='u4'` shortcut is no longer a default-load mode. Use lossless
+packed native counts, or explicit dense `dtype='u8'` when that precision is intended.
+
+## Packed precision for fractional intensities
+
+Keep a float32 archive, then explicitly choose a smaller working precision.
+The CUDA and MPS loaders retain all converted values in packed device storage and
+measure errors across every selected value on the accelerator. Loading does not
+change the source.
+
+```python
+from quantem.gpu import io
+
+io.save("merged_master.h5", merged, dtype="float32")
+half = io.load("merged_master.h5", dtype="float16")
+scaled = io.load("merged_master.h5", dtype="scaled_uint16")
+```
+
+`float16` retains fractional weak intensities with reduced floating-point
+precision. `scaled_uint16` stores `round((intensity - offset) / scale)` using
+one range for the complete source. Returned patterns and reductions restore
+`code * scale + offset`. These codes are not raw detector counts; code 65535
+is a valid intensity. Plain `uint16` keeps its existing whole-count meaning.
+Backend choice and packing are automatic. Lossy precision is always explicit.
+
+The loader reports source/working precision, intensity range, packed bytes,
+RMS and maximum absolute error, positive values becoming zero, overflow,
+clipping, and the number of values measured. Measurements use GPU reductions;
+no CPU codec or numerical fallback is used. Scaled uint16 may erase weak
+intensities despite a small RMS error. Preserve float32 for exact analysis.
+
+```python
+region = io.load(
+    "merged_master.h5", dtype="scaled_uint16",
+    scan_region=(128, 256, 128, 256),
+    detector_region=(0, 192, 0, 192),
+)
+io.save("display_master.h5", region)
+reopened = io.load("display_master.h5")
+```
+
+Bounds use `(row_start, row_stop, col_start, col_stop)`. A list of scan regions
+returns separately owned loaded objects. Global range measurement reads the
+complete source in bounded GPU blocks; error measurement covers the selected
+values. Reopened exports use saved scaling and label the original error report
+as saved, rather than claiming a fresh comparison against the original source.
+Inspect `reopened.metadata["precision"]` for the persisted report. `close()`
+releases storage after the final consumer. Disk compression is GPU
+bitshuffle/LZ4; packed resident size and compressed file size are different.
+
+Export directly with `io.save(..., dtype="float16")` or
+`io.save(..., dtype="scaled_uint16")`. Conversion and writing use bounded GPU
+blocks. A native 4D NPY source is also accepted by the precision loader.
+Unsupported resampling, masks, and source dtypes fail explicitly. Nonfinite
+sources and values outside float16's finite range are rejected before export.
+
+Both CUDA and Metal support precision conversion, packed saving, and reopening.
+For a file-backed source, the elapsed time includes reading the complete source;
+an already-resident MPS tensor uses the direct Metal path and avoids a host copy.
+The live widget consumes the loaded source without materializing a complete
+decoded array and exposes saved error details. The current release matrix still
+requires a dedicated minimum-memory laptop run before claiming a 24 GiB limit.

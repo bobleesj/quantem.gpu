@@ -48,7 +48,7 @@ from quantem.gpu import io
 
 # counts: native uint8/uint16, (scan_row, scan_col, detector_row, detector_col)
 saved = io.save("acquisition.ans", counts, format="quantem", compression="ans", backend="cpu")
-source = io.load(saved.path, backend="cuda", representation="ans", device=0).data
+source = io.load(saved.path, backend="cuda", representation="encoded", device=0).data
 try:
     pattern = source.extract_diffraction_device(0, 0)
     image = source.detector_sum_device(binary_detector_mask)
@@ -85,7 +85,7 @@ retained detector-rANS build manifest, explicitly through its legacy adapter.
 
 The direct `Show4DSTEM(source)` CUDA route currently expects the existing
 resident-owner protocol. Do not infer that every object returned by
-`io.load(..., representation="ans")` implements that widget protocol. The
+`io.load(..., representation="encoded")` implements that widget protocol. The
 canonical-file workflow above is the browser export integration.
 
 ## Resident source112 DP behavior

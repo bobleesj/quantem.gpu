@@ -8,7 +8,7 @@ final class Metal4DSTEMConsumerContractTests: XCTestCase {
   private let sourceB = String(repeating: "b", count: 64)
 
   func testCanonicalRepresentationNamesHaveNoLegacyAlias() throws {
-    for value in ["dense", "packed", "ans"] {
+    for value in ["dense", "packed", "encoded"] {
       let encoded = Data("\"\(value)\"".utf8)
       let representation = try JSONDecoder().decode(
         Metal4DSTEMResidentRepresentation.self, from: encoded)

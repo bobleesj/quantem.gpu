@@ -1,0 +1,198 @@
+#include <metal_stdlib>
+using namespace metal;
+
+// Float-float arithmetic keeps scale/offset rounding independent of fast math.
+inline float2 add_pair(float2 a, float2 b) {
+    float s = a.x + b.x;
+    float v = s - a.x;
+    float e = ((a.x - (s - v)) + (b.x - v)) + a.y + b.y;
+    float h = s + e;
+    return float2(h, e - (h - s));
+}
+inline float2 mul_pair(float a, float2 b) {
+    float h = a * b.x;
+    return add_pair(float2(h, fma(a, b.x, -h)), float2(a * b.y, 0));
+}
+inline ushort to_half(float value) {
+    uint bits = as_type<uint>(value), sign = (bits >> 16) & 0x8000;
+    uint exponent = (bits >> 23) & 255, mantissa = bits & 0x7fffff;
+    if (exponent < 102) return ushort(sign);
+    uint shift = exponent < 113 ? 126 - exponent : 13;
+    uint full = exponent < 113 ? mantissa | 0x800000 : mantissa;
+    uint q = full >> shift, remainder = full & ((1u << shift) - 1);
+    uint midpoint = 1u << (shift - 1);
+    q += remainder > midpoint || (remainder == midpoint && (q & 1));
+    return ushort(sign | (exponent < 113 ? q : ((exponent - 112) << 10) + q));
+}
+inline float from_half(ushort bits) {
+    uint sign = uint(bits & 0x8000) << 16, exponent = (bits >> 10) & 31;
+    uint mantissa = bits & 1023;
+    if (exponent == 31) return as_type<float>(sign | 0x7f800000u | (mantissa << 13));
+    if (!exponent) return (bits & 0x8000 ? -1.0f : 1.0f) * ldexp(float(mantissa), -24);
+    return as_type<float>(sign | ((exponent + 112) << 23) | (mantissa << 13));
+}
+inline float read_value(device const uchar *src, ulong i, ulong type) {
+    if (type == 0) return reinterpret_cast<device const float *>(src)[i];
+    if (type == 1) return from_half(reinterpret_cast<device const ushort *>(src)[i]);
+    if (type == 2) return float(reinterpret_cast<device const ushort *>(src)[i]);
+    if (type == 4) return float(reinterpret_cast<device const uint *>(src)[i]);
+    return float(src[i]);
+}
+inline float restored(ushort code, constant ulong *p, constant float *f) {
+    if (!p[4]) return from_half(code);
+    float2 v = add_pair(mul_pair(float(code), float2(f[0], f[1])), float2(f[2], f[3]));
+    return ldexp(v.x + v.y, -int(p[5]));
+}
+inline ushort encoded(float source, constant ulong *p, constant float *f) {
+    if (!p[4]) return to_half(source);
+    float x = ldexp(source, int(p[5]));
+    float2 numerator = add_pair(float2(x, 0), -float2(f[2], f[3]));
+    float q = numerator.x / f[0];
+    float2 residual = add_pair(numerator, -mul_pair(q, float2(f[0], f[1])));
+    q += (residual.x + residual.y) / f[0];
+    float lower_q = floor(q);
+    float fraction = q - lower_q;
+    bool half_way = abs(fraction - 0.5f) < 1.0e-6f;
+    float candidate = lower_q + ((fraction > 0.5f ||
+        (half_way && (uint(lower_q) & 1u))) ? 1.0f : 0.0f);
+    return ushort(clamp(candidate, 0.0f, 65535.0f));
+}
+#define COMMON constant ulong *p [[buffer(6)]], constant float *f [[buffer(7)]]
+
+kernel void precision_copy(device const uchar *src [[buffer(0)]], device uchar *dst [[buffer(1)]],
+    COMMON, uint i [[thread_position_in_grid]]) {
+    if (i >= p[0]) return;
+    ulong pixel = i % p[1], scan = i / p[1];
+    ulong j = scan * p[2] + (pixel / p[8] + p[9]) * p[10] + pixel % p[8] + p[11];
+    for (uint b = 0; b < p[12]; ++b) dst[i * p[12] + b] = src[j * p[12] + b];
+}
+kernel void precision_restore(device const uchar *src [[buffer(0)]], device float *dst [[buffer(1)]],
+    COMMON, uint i [[thread_position_in_grid]]) {
+    if (i < p[0]) dst[i] = p[13] ? restored(reinterpret_cast<device const ushort *>(src)[i], p, f) : read_value(src, i, p[3]);
+}
+kernel void precision_encode(device const float *src [[buffer(0)]], device ushort *dst [[buffer(1)]],
+    COMMON, uint i [[thread_position_in_grid]]) {
+    if (i >= p[0]) return;
+    dst[i] = encoded(src[i], p, f);
+}
+kernel void precision_range(device const float *src [[buffer(0)]], device float4 *dst [[buffer(1)]],
+    COMMON, uint i [[thread_position_in_grid]]) {
+    if (i >= p[14]) return;
+    float low = INFINITY, high = -INFINITY, invalid = 0, subnormal = 0;
+    for (ulong j = i; j < p[0]; j += p[14]) {
+        float v = src[j]; uint bits = as_type<uint>(v) & 0x7fffffff;
+        low = min(low, v); high = max(high, v);
+        invalid += !isfinite(v); subnormal += bits > 0 && bits < 0x800000;
+    }
+    dst[i] = float4(low, high, invalid, subnormal);
+}
+kernel void precision_measure(device const float *src [[buffer(0)]], device const float *dst [[buffer(1)]],
+    device float4 *errors [[buffer(2)]], device uint4 *counts [[buffer(3)]],
+    COMMON, uint i [[thread_position_in_grid]]) {
+    if (i >= p[14]) return;
+    float sum = 0, compensation = 0, maximum = 0; uint changed = 0, zero = 0, overflow = 0;
+    for (ulong j = i; j < p[0]; j += p[14]) {
+        float a = src[j], b = dst[j];
+        float difference = ldexp(b, int(p[5])) - ldexp(a, int(p[5]));
+        float term = difference * difference - compensation;
+        float next = sum + term; compensation = (next - sum) - term; sum = next;
+        maximum = max(maximum, abs(difference));
+        changed += as_type<uint>(a) != as_type<uint>(b) && !(a == 0 && b == 0);
+        zero += a > 0 && b == 0; overflow += !isfinite(b);
+    }
+    errors[i] = float4(sum, maximum, 0, 0); counts[i] = uint4(changed, zero, overflow, 0);
+}
+kernel void precision_encode_measure(
+    device const float *src [[buffer(0)]],
+    device ushort *dst [[buffer(1)]],
+    device float4 *errors [[buffer(2)]],
+    device uint4 *counts [[buffer(3)]],
+    COMMON,
+    uint i [[thread_position_in_grid]]
+) {
+    if (i >= p[14]) return;
+    float sum = 0, compensation = 0, maximum = 0;
+    uint changed = 0, zero = 0, overflow = 0;
+    for (ulong j = i; j < p[0]; j += p[14]) {
+        float a = src[j];
+        ushort code = encoded(a, p, f);
+        dst[j] = code;
+        float b = restored(code, p, f);
+        float difference = ldexp(b, int(p[5])) - ldexp(a, int(p[5]));
+        float term = difference * difference - compensation;
+        float next = sum + term;
+        compensation = (next - sum) - term;
+        sum = next;
+        maximum = max(maximum, abs(difference));
+        changed += as_type<uint>(a) != as_type<uint>(b) && !(a == 0 && b == 0);
+        zero += a > 0 && b == 0;
+        overflow += !isfinite(b);
+    }
+    errors[i] = float4(sum, maximum, 0, 0);
+    counts[i] = uint4(changed, zero, overflow, 0);
+}
+// Per-detector streams span at most 128 scan positions, as in native counts.
+kernel void precision_widths(device const ushort *src [[buffer(0)]], device uchar *widths [[buffer(1)]],
+    device ulong *lengths [[buffer(2)]], COMMON, uint stream [[thread_position_in_grid]]) {
+    if (stream >= p[0]) return;
+    ulong first = (stream / p[1]) * 128, pixel = stream % p[1];
+    uint count = uint(min(128ul, p[2] - first)), bits = 0;
+    for (uint scan = 0; scan < count; ++scan) bits |= src[(first + scan) * p[1] + pixel];
+    uint width = bits ? 32 - clz(bits) : 0;
+    widths[stream] = uchar(width); lengths[stream] = (count * width + 31) / 32;
+}
+kernel void precision_pack(device const ushort *src [[buffer(0)]], device const uchar *widths [[buffer(1)]],
+    device const ulong *offsets [[buffer(2)]], device uint *words [[buffer(3)]],
+    COMMON, uint stream [[thread_position_in_grid]]) {
+    if (stream >= p[0]) return;
+    ulong first = (stream / p[1]) * 128, pixel = stream % p[1], cursor = offsets[stream];
+    uint count = uint(min(128ul, p[2] - first)), width = widths[stream], used = 0;
+    if (!width) return;
+    ulong accumulator = 0;
+    for (uint scan = 0; scan < count; ++scan) {
+        accumulator |= ulong(src[(first + scan) * p[1] + pixel]) << used; used += width;
+        if (used >= 32) { words[cursor++] = uint(accumulator); accumulator >>= 32; used -= 32; }
+    }
+    if (used) words[cursor] = uint(accumulator);
+}
+inline ushort code_at(device const uint *words, device const ulong *offsets, device const uchar *widths,
+    ulong scan, ulong pixel, ulong pixels) {
+    ulong stream = (scan / 128) * pixels + pixel; uint width = widths[stream];
+    if (!width) return 0;
+    ulong bit = (scan % 128) * width, word = offsets[stream] + bit / 32;
+    uint shift = uint(bit % 32); ulong value = words[word];
+    if (shift + width > 32) value |= ulong(words[word + 1]) << 32;
+    return ushort((value >> shift) & ((1u << width) - 1));
+}
+#define PACKED device const uint *words [[buffer(0)]], device const ulong *offsets [[buffer(1)]], device const uchar *widths [[buffer(2)]]
+kernel void precision_frame(PACKED, device float *dst [[buffer(3)]], COMMON, uint pixel [[thread_position_in_grid]]) {
+    if (pixel < p[1]) dst[pixel] = restored(code_at(words, offsets, widths, p[8], pixel, p[1]), p, f);
+}
+kernel void precision_unpacked(PACKED, device ushort *dst [[buffer(3)]], COMMON, uint i [[thread_position_in_grid]]) {
+    if (i < p[0]) dst[i] = code_at(words, offsets, widths, i / p[1], i % p[1], p[1]);
+}
+kernel void precision_detector(PACKED, device float *dst [[buffer(3)]], device const float *mask [[buffer(4)]],
+    COMMON, uint scan [[threadgroup_position_in_grid]], uint lane [[thread_index_in_threadgroup]]) {
+    threadgroup float partial[256]; float sum = 0;
+    for (ulong pixel = lane; pixel < p[1]; pixel += 256)
+        sum += restored(code_at(words, offsets, widths, scan, pixel, p[1]), p, f) * mask[pixel];
+    partial[lane] = sum; threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint step = 128; step; step /= 2) {
+        if (lane < step) partial[lane] += partial[lane + step];
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (!lane) dst[p[8] + scan] = partial[0];
+}
+kernel void precision_mean(PACKED, device float *dst [[buffer(3)]], COMMON, uint pixel [[thread_position_in_grid]]) {
+    if (pixel >= p[1]) return;
+    float sum = 0, compensation = 0;
+    for (ulong scan = 0; scan < p[2]; ++scan) {
+        float term = restored(code_at(words, offsets, widths, scan, pixel, p[1]), p, f) / float(p[9]) - compensation;
+        float next = sum + term; compensation = (next - sum) - term; sum = next;
+    }
+    dst[pixel] = p[8] ? dst[pixel] + sum : sum;
+}
+kernel void precision_reduce(device const float *src [[buffer(0)]], device float *dst [[buffer(1)]],
+    COMMON, uint i [[thread_position_in_grid]]) {
+    if (i < p[0]) dst[i] = p[8] == 2 ? max(dst[i], src[i]) : dst[i] + src[i] / float(p[9]);
+}

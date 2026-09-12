@@ -48,6 +48,8 @@ def _kernels(device_id: int):
         return {
             name: module.get_function(name)
             for name in (
+                "dense_measure_packed",
+                "dense_write_packed",
                 "ans_validate",
                 "ans_decode_block",
                 "ans_diffraction",
@@ -57,6 +59,7 @@ def _kernels(device_id: int):
                 "packed_diffraction",
                 "packed_decode_block",
                 "packed_detector_sum",
+                "packed_detector_total",
             )
         }
 
@@ -394,6 +397,52 @@ class CudaPackedResidentCounts:
         self.is_released = False
         self.conversion_owned_buffer_peak_bytes = None
 
+    @classmethod
+    def from_array(cls, values, shape):
+        """Pack complete native counts using the existing exact block layout."""
+        import cupy as cp
+
+        if not isinstance(values, cp.ndarray) or values.dtype not in (
+            np.dtype("uint8"), np.dtype("uint16")
+        ):
+            raise TypeError("Load native uint8/uint16 counts on CUDA before packing.")
+        if len(shape) != 4 or values.size != int(np.prod(shape)):
+            raise ValueError("Provide the complete four-dimensional scan/detector shape.")
+        if not values.flags.c_contiguous:
+            raise ValueError("Use contiguous native counts before packing.")
+        block_frames = 128
+        scan_count = shape[0] * shape[1]
+        detector_count = shape[2] * shape[3]
+        stream_count = ((scan_count + block_frames - 1) // block_frames) * detector_count
+        device_id = values.device.id
+        with cp.cuda.Device(device_id):
+            kernels = _kernels(device_id)
+            widths = cp.empty(stream_count, cp.uint8)
+            lengths = cp.empty(stream_count, cp.uint64)
+            dimensions = (
+                np.uint64(scan_count), np.uint32(detector_count),
+                np.uint32(block_frames), np.uint64(stream_count),
+            )
+            launch = (((stream_count + 127) // 128,), (128,))
+            kernels["dense_measure_packed"](
+                *launch, (values, np.uint32(values.dtype.itemsize),
+                          widths, lengths, *dimensions)
+            )
+            offsets = cp.zeros(stream_count + 1, cp.uint64)
+            cp.cumsum(lengths, dtype=cp.uint64, out=offsets[1:])
+            words = cp.empty(int(offsets[-1].get()), cp.uint32)
+            kernels["dense_write_packed"](
+                *launch, (values, np.uint32(values.dtype.itemsize),
+                          widths, offsets, words, *dimensions)
+            )
+            cp.cuda.get_current_stream().synchronize()
+            result = cls(tuple(shape), block_frames, values.dtype, words,
+                         offsets, widths, device_id, kernels)
+            result.conversion_owned_buffer_peak_bytes = (
+                values.nbytes + result.resident_bytes + lengths.nbytes
+            )
+            return result
+
     @property
     def resident_bytes(self) -> int:
         """Owned bit payload, word offsets and widths, excluding returned arrays."""
@@ -485,16 +534,18 @@ class CudaPackedResidentCounts:
     def detector_sum_device(self, mask: np.ndarray):
         """Fuse bit extraction and exact uint64 binary-mask accumulation."""
         self._require_resident()
-        values = np.asarray(mask)
-        if (
-            values.shape != self.shape[2:]
-            or values.dtype.kind not in "buif"
-            or np.any((values != 0) & (values != 1))
-        ):
+        import cupy as cp
+
+        if isinstance(mask, cp.ndarray):
+            values = mask
+            invalid = bool(cp.any((values != 0) & (values != 1)))
+        else:
+            values = np.asarray(mask)
+            invalid = bool(np.any((values != 0) & (values != 1)))
+        if values.shape != self.shape[2:] or values.dtype.kind not in "buif" or invalid:
             raise ValueError(
                 f"mask must have detector shape {self.shape[2:]} and contain only zero or one."
             )
-        import cupy as cp
 
         selected = cp.asarray(values.reshape(-1), dtype=cp.uint8)
         output = cp.zeros(self.shape[:2], dtype=cp.uint64)
@@ -504,6 +555,27 @@ class CudaPackedResidentCounts:
             (
                 *self._arrays,
                 selected,
+                output,
+                np.uint64(self._scan_count),
+                np.uint32(self._detector_count),
+                np.uint32(self.block_frames),
+                np.uint64(self._stream_count),
+            ),
+        )
+        cp.cuda.get_current_stream().synchronize()
+        return output
+
+    def detector_total_device(self):
+        """Sum every scan position into one exact uint64 detector image."""
+        self._require_resident()
+        import cupy as cp
+
+        output = cp.zeros(self.shape[2:], dtype=cp.uint64)
+        self._launch(
+            "packed_detector_total",
+            self._stream_count,
+            (
+                *self._arrays,
                 output,
                 np.uint64(self._scan_count),
                 np.uint32(self._detector_count),

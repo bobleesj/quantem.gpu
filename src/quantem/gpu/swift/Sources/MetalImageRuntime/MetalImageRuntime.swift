@@ -178,6 +178,7 @@ public enum MetalImageRuntimeError: LocalizedError {
   case invalidShape(rows: Int, columns: Int)
   case inputBufferTooSmall(required: Int, actual: Int)
   case commandExecution(String)
+  case invalidStatisticsBuffers
 
   public var errorDescription: String? {
     switch self {
@@ -191,6 +192,8 @@ public enum MetalImageRuntimeError: LocalizedError {
       "The image requires \(required) bytes, but its buffer contains \(actual)."
     case .commandExecution(let message):
       "Metal image statistics failed: \(message)"
+    case .invalidStatisticsBuffers:
+      "Statistics outputs need separate buffers: 8 range bytes and 1024 histogram bytes per image."
     }
   }
 }
@@ -204,7 +207,7 @@ public struct MetalUInt32Statistics: @unchecked Sendable {
 }
 
 public struct MetalFloat32Statistics: @unchecked Sendable {
-  public let orderedValueRange: MTLBuffer
+  public let valueRange: MTLBuffer
   public let histogram: MTLBuffer
   public let minimum: Float
   public let maximum: Float
@@ -214,10 +217,11 @@ public struct MetalFloat32Statistics: @unchecked Sendable {
 public final class MetalDisplayStatistics: @unchecked Sendable {
   private let device: MTLDevice
   private let queue: MTLCommandQueue
-  private let rangeUInt32: MTLComputePipelineState
   private let rangeFloat32: MTLComputePipelineState
-  private let histogramUInt32: MTLComputePipelineState
-  private let histogramFloat32: MTLComputePipelineState
+  private let simdRangeUInt32: MTLComputePipelineState
+  private let histogramUInt32FromRange: MTLComputePipelineState
+  private let histogramFloat32FromRange: MTLComputePipelineState
+  private let finishRangeFloat32: MTLComputePipelineState
   private let lock = NSLock()
 
   public init(device: MTLDevice, commandQueue: MTLCommandQueue? = nil) throws {
@@ -233,184 +237,165 @@ public final class MetalDisplayStatistics: @unchecked Sendable {
       }
       return try device.makeComputePipelineState(function: function)
     }
-    rangeUInt32 = try pipeline(MetalDisplayKernels.rangeFunction)
     rangeFloat32 = try pipeline(MetalDisplayKernels.floatRangeFunction)
-    histogramUInt32 = try pipeline(MetalDisplayKernels.histogramFunction)
-    histogramFloat32 = try pipeline(MetalDisplayKernels.floatHistogramFunction)
+    simdRangeUInt32 = try pipeline(MetalDisplayKernels.simdRangeFunction)
+    histogramUInt32FromRange = try pipeline(MetalDisplayKernels.histogramFromRangeFunction)
+    histogramFloat32FromRange = try pipeline(MetalDisplayKernels.floatHistogramFromRangeFunction)
+    finishRangeFloat32 = try pipeline(MetalDisplayKernels.floatFinishRangeFunction)
+  }
+
+  /// Encode mixed-shape integer/float statistics without committing, waiting,
+  /// reading back, or allocating image/output buffers. The caller owns submission.
+  /// Set `updateRange` to false only when each range is already valid for its image.
+  /// Requests must use disjoint outputs on this device, with normal hazard tracking.
+  /// Example: `try statistics.encode(images, into: command)` followed by the
+  /// caller's rendering work and a single `command.commit()`.
+  public func encode(
+    _ images: [MetalStatisticsRequest], into command: MTLCommandBuffer,
+    updateRange: Bool = true
+  ) throws {
+    guard !images.isEmpty else { return }
+    let counts = try images.map {
+      try validate(values: $0.values, rows: $0.rows, columns: $0.columns, stride: 4)
+    }
+    var outputs = Set<ObjectIdentifier>()
+    let inputs = Set(images.map { ObjectIdentifier($0.values) })
+    for image in images {
+      guard image.valueRange.length >= 8, image.histogram.length >= 1024,
+        !inputs.contains(ObjectIdentifier(image.valueRange)),
+        !inputs.contains(ObjectIdentifier(image.histogram)),
+        outputs.insert(ObjectIdentifier(image.valueRange)).inserted,
+        outputs.insert(ObjectIdentifier(image.histogram)).inserted
+      else { throw MetalImageRuntimeError.invalidStatisticsBuffers }
+    }
+    guard let clear = command.makeBlitCommandEncoder() else {
+      throw MetalImageRuntimeError.allocation("statistics clear encoder")
+    }
+    for image in images {
+      clear.fill(buffer: image.histogram, range: 0..<1024, value: 0)
+      if updateRange {
+        clear.fill(buffer: image.valueRange, range: 0..<4, value: 255)
+        clear.fill(buffer: image.valueRange, range: 4..<8, value: 0)
+      }
+    }
+    clear.endEncoding()
+    if updateRange {
+      guard let range = command.makeComputeCommandEncoder(dispatchType: .concurrent) else {
+        throw MetalImageRuntimeError.allocation("statistics range encoder")
+      }
+      for (index, image) in images.enumerated() {
+        let pipeline = image.scalarType == .uint32 ? simdRangeUInt32 : rangeFloat32
+        range.setComputePipelineState(pipeline)
+        range.setBuffer(image.values, offset: 0, index: 0)
+        range.setBuffer(image.valueRange, offset: 0, index: 1)
+        var count = UInt32(counts[index])
+        range.setBytes(&count, length: 4, index: 2)
+        dispatch(range, pipeline: pipeline, count: counts[index])
+      }
+      range.endEncoding()
+    }
+    guard let histogram = command.makeComputeCommandEncoder(dispatchType: .concurrent) else {
+      throw MetalImageRuntimeError.allocation("statistics histogram encoder")
+    }
+    for (index, image) in images.enumerated() {
+      let pipeline =
+        image.scalarType == .uint32 ? histogramUInt32FromRange : histogramFloat32FromRange
+      histogram.setComputePipelineState(pipeline)
+      histogram.setBuffer(image.values, offset: 0, index: 0)
+      histogram.setBuffer(image.histogram, offset: 0, index: 1)
+      histogram.setBuffer(image.valueRange, offset: 0, index: 3)
+      if image.scalarType == .uint32 {
+        var parameters = MetalDisplayParameters(
+          rows: image.rows, cols: image.columns, low: 0, high: 0, scale: image.scale)
+        histogram.setBytes(
+          &parameters, length: MemoryLayout<MetalDisplayParameters>.stride, index: 2)
+      } else {
+        var parameters = MetalFloatDisplayParameters(
+          rows: image.rows, cols: image.columns, low: 0, high: 0, scale: image.scale)
+        histogram.setBytes(
+          &parameters, length: MemoryLayout<MetalFloatDisplayParameters>.stride, index: 2)
+        var ordered = UInt32(updateRange ? 1 : 0)
+        histogram.setBytes(&ordered, length: 4, index: 4)
+      }
+      dispatch(histogram, pipeline: pipeline, count: counts[index])
+    }
+    histogram.endEncoding()
+    if updateRange, images.contains(where: { $0.scalarType == .float32 }) {
+      guard let finish = command.makeComputeCommandEncoder() else {
+        throw MetalImageRuntimeError.allocation("statistics float range encoder")
+      }
+      finish.setComputePipelineState(finishRangeFloat32)
+      for image in images where image.scalarType == .float32 {
+        finish.setBuffer(image.valueRange, offset: 0, index: 0)
+        finish.dispatchThreads(
+          MTLSize(width: 1, height: 1, depth: 1),
+          threadsPerThreadgroup: MTLSize(width: 1, height: 1, depth: 1))
+      }
+      finish.endEncoding()
+    }
   }
 
   public func analyzeUInt32(
-    values: MTLBuffer,
-    rows: Int,
-    columns: Int,
-    scale: MetalDisplayScale
+    values: MTLBuffer, rows: Int, columns: Int, scale: MetalDisplayScale
   ) throws -> MetalUInt32Statistics {
-    let count = try validate(
-      values: values,
-      rows: rows,
-      columns: columns,
-      stride: MemoryLayout<UInt32>.stride
-    )
-    let range = try makeBuffer(
-      length: 2 * MemoryLayout<UInt32>.stride,
-      purpose: "UInt32 range buffer"
-    )
-    let rangePointer = range.contents().bindMemory(to: UInt32.self, capacity: 2)
-    rangePointer[0] = .max
-    rangePointer[1] = 0
-    lock.lock()
-    defer { lock.unlock() }
-    try runRange(pipeline: rangeUInt32, values: values, range: range, count: count)
-    // Nonempty UInt32 input may legitimately contain only UInt32.max.
-    let minimum = rangePointer[0]
-    let maximum = rangePointer[1]
-    let histogram = try makeHistogramBuffer()
-    var parameters = MetalDisplayParameters(
-      rows: rows,
-      cols: columns,
-      low: minimum,
-      high: maximum,
-      scale: scale
-    )
-    try runHistogram(
-      pipeline: histogramUInt32,
-      values: values,
-      histogram: histogram,
-      parameters: &parameters,
-      count: count
-    )
-    return MetalUInt32Statistics(
-      valueRange: range,
-      histogram: histogram,
-      minimum: minimum,
-      maximum: maximum,
-      bins: bins(from: histogram)
-    )
+    try analyzeUInt32Batch(values: [values], rows: rows, columns: columns, scales: [scale])[0][0]
   }
 
-  /// Analyze independent equal-shaped images with two GPU synchronization points.
-  /// Returns image-major statistics, then in the caller's requested scale order.
-  /// Uses the same range and histogram kernels as `analyzeUInt32`; never copies
-  /// scientific images to the CPU. Only ranges and 256-bin summaries are read.
+  /// Analyze equal-shaped images and scales in one submission and one completion wait.
+  /// Convenience API: allocates outputs. Use encode for reusable output buffers.
   public func analyzeUInt32Batch(
     values: [MTLBuffer], rows: Int, columns: Int,
     scales: [MetalDisplayScale] = [.linear, .logarithmic]
   ) throws -> [[MetalUInt32Statistics]] {
     guard !values.isEmpty else { return [] }
     guard !scales.isEmpty else { return values.map { _ in [] } }
-    let counts = try values.map {
-      try validate(values: $0, rows: rows, columns: columns, stride: 4)
-    }
-    let ranges = try values.map { _ in try makeBuffer(length: 8, purpose: "batch UInt32 range") }
-    for range in ranges {
-      let pointer = range.contents().assumingMemoryBound(to: UInt32.self)
-      pointer[0] = .max
-      pointer[1] = 0
-    }
+    let ranges = try values.map { _ in try makeBuffer(length: 8, purpose: "image range") }
     let histograms = try values.map { _ in try scales.map { _ in try makeHistogramBuffer() } }
     lock.lock()
     defer { lock.unlock() }
-    guard let rangeCommand = queue.makeCommandBuffer(),
-      let rangeEncoder = rangeCommand.makeComputeCommandEncoder()
-    else {
-      throw MetalImageRuntimeError.allocation("batch range command")
+    guard let command = queue.makeCommandBuffer() else {
+      throw MetalImageRuntimeError.allocation("statistics command")
     }
-    rangeEncoder.setComputePipelineState(rangeUInt32)
-    for index in values.indices {
-      rangeEncoder.setBuffer(values[index], offset: 0, index: 0)
-      rangeEncoder.setBuffer(ranges[index], offset: 0, index: 1)
-      var count = UInt32(counts[index])
-      rangeEncoder.setBytes(&count, length: 4, index: 2)
-      dispatch(rangeEncoder, pipeline: rangeUInt32, count: counts[index])
+    for (scaleIndex, scale) in scales.enumerated() {
+      let images = values.indices.map { index in
+        MetalStatisticsRequest(
+          values: values[index], rows: rows, columns: columns, scalarType: .uint32,
+          scale: scale, valueRange: ranges[index], histogram: histograms[index][scaleIndex])
+      }
+      try encode(images, into: command, updateRange: scaleIndex == 0)
     }
-    rangeEncoder.endEncoding()
-    try commitAndWait(rangeCommand)
-    guard let command = queue.makeCommandBuffer(),
-      let encoder = command.makeComputeCommandEncoder()
-    else {
-      throw MetalImageRuntimeError.allocation("batch histogram command")
-    }
-    encoder.setComputePipelineState(histogramUInt32)
-    var result: [[MetalUInt32Statistics]] = []
-    for index in values.indices {
-      let pointer = ranges[index].contents().assumingMemoryBound(to: UInt32.self)
-      let minimum = pointer[0]
-      let maximum = pointer[1]
-      for (scaleIndex, scale) in scales.enumerated() {
-        var parameters = MetalDisplayParameters(
-          rows: rows, cols: columns,
-          low: minimum, high: maximum, scale: scale)
-        encoder.setBuffer(values[index], offset: 0, index: 0)
-        encoder.setBuffer(histograms[index][scaleIndex], offset: 0, index: 1)
-        withUnsafeBytes(of: &parameters) {
-          encoder.setBytes($0.baseAddress!, length: $0.count, index: 2)
-        }
-        dispatch(encoder, pipeline: histogramUInt32, count: counts[index])
+    try commitAndWait(command)
+    return values.indices.map { index in
+      let range = ranges[index].contents().assumingMemoryBound(to: UInt32.self)
+      return histograms[index].map { histogram in
+        MetalUInt32Statistics(
+          valueRange: ranges[index], histogram: histogram,
+          minimum: range[0], maximum: range[1], bins: bins(from: histogram))
       }
     }
-    encoder.endEncoding()
-    try commitAndWait(command)
-    for index in values.indices {
-      let pointer = ranges[index].contents().assumingMemoryBound(to: UInt32.self)
-      let minimum = pointer[0] == .max ? 0 : pointer[0]
-      let maximum = pointer[0] == .max ? 0 : pointer[1]
-      result.append(
-        histograms[index].map { histogram in
-          MetalUInt32Statistics(
-            valueRange: ranges[index], histogram: histogram,
-            minimum: minimum, maximum: maximum, bins: bins(from: histogram))
-        })
-    }
-    return result
   }
 
   public func analyzeFloat32(
-    values: MTLBuffer,
-    rows: Int,
-    columns: Int,
-    scale: MetalDisplayScale
+    values: MTLBuffer, rows: Int, columns: Int, scale: MetalDisplayScale
   ) throws -> MetalFloat32Statistics {
-    let count = try validate(
-      values: values,
-      rows: rows,
-      columns: columns,
-      stride: MemoryLayout<Float>.stride
-    )
-    let range = try makeBuffer(
-      length: 2 * MemoryLayout<UInt32>.stride,
-      purpose: "Float32 ordered range buffer"
-    )
-    let rangePointer = range.contents().bindMemory(to: UInt32.self, capacity: 2)
-    rangePointer[0] = .max
-    rangePointer[1] = 0
+    let range = try makeBuffer(length: 8, purpose: "float image range")
+    let histogram = try makeHistogramBuffer()
     lock.lock()
     defer { lock.unlock() }
-    try runRange(pipeline: rangeFloat32, values: values, range: range, count: count)
-    let hasFiniteValues = rangePointer[0] != .max
-    let minimum = hasFiniteValues ? decodeOrderedFloat(rangePointer[0]) : 0
-    let maximum = hasFiniteValues ? decodeOrderedFloat(rangePointer[1]) : 0
-    let histogram = try makeHistogramBuffer()
-    var parameters = MetalFloatDisplayParameters(
-      rows: rows,
-      cols: columns,
-      low: minimum,
-      high: maximum,
-      scale: scale
-    )
-    try runHistogram(
-      pipeline: histogramFloat32,
-      values: values,
-      histogram: histogram,
-      parameters: &parameters,
-      count: count
-    )
+    guard let command = queue.makeCommandBuffer() else {
+      throw MetalImageRuntimeError.allocation("statistics command")
+    }
+    try encode(
+      [
+        MetalStatisticsRequest(
+          values: values, rows: rows, columns: columns, scalarType: .float32,
+          scale: scale, valueRange: range, histogram: histogram)
+      ], into: command)
+    try commitAndWait(command)
+    let limits = range.contents().assumingMemoryBound(to: Float.self)
     return MetalFloat32Statistics(
-      orderedValueRange: range,
-      histogram: histogram,
-      minimum: minimum,
-      maximum: maximum,
-      bins: bins(from: histogram)
-    )
+      valueRange: range, histogram: histogram, minimum: limits[0],
+      maximum: limits[1], bins: bins(from: histogram))
   }
 
   private func validate(
@@ -423,6 +408,9 @@ public final class MetalDisplayStatistics: @unchecked Sendable {
       throw MetalImageRuntimeError.invalidShape(rows: rows, columns: columns)
     }
     let count = rows * columns
+    guard count <= Int(UInt32.max), count <= Int.max / stride else {
+      throw MetalImageRuntimeError.invalidShape(rows: rows, columns: columns)
+    }
     let required = count * stride
     guard values.length >= required else {
       throw MetalImageRuntimeError.inputBufferTooSmall(
@@ -447,46 +435,6 @@ public final class MetalDisplayStatistics: @unchecked Sendable {
     )
     memset(histogram.contents(), 0, histogram.length)
     return histogram
-  }
-
-  private func runRange(
-    pipeline: MTLComputePipelineState,
-    values: MTLBuffer,
-    range: MTLBuffer,
-    count: Int
-  ) throws {
-    guard let command = queue.makeCommandBuffer(),
-      let encoder = command.makeComputeCommandEncoder()
-    else { throw MetalImageRuntimeError.allocation("range command") }
-    encoder.setComputePipelineState(pipeline)
-    encoder.setBuffer(values, offset: 0, index: 0)
-    encoder.setBuffer(range, offset: 0, index: 1)
-    var count32 = UInt32(count)
-    encoder.setBytes(&count32, length: MemoryLayout<UInt32>.stride, index: 2)
-    dispatch(encoder, pipeline: pipeline, count: count)
-    encoder.endEncoding()
-    try commitAndWait(command)
-  }
-
-  private func runHistogram<Parameters>(
-    pipeline: MTLComputePipelineState,
-    values: MTLBuffer,
-    histogram: MTLBuffer,
-    parameters: inout Parameters,
-    count: Int
-  ) throws {
-    guard let command = queue.makeCommandBuffer(),
-      let encoder = command.makeComputeCommandEncoder()
-    else { throw MetalImageRuntimeError.allocation("histogram command") }
-    encoder.setComputePipelineState(pipeline)
-    encoder.setBuffer(values, offset: 0, index: 0)
-    encoder.setBuffer(histogram, offset: 0, index: 1)
-    withUnsafeBytes(of: &parameters) { bytes in
-      encoder.setBytes(bytes.baseAddress!, length: bytes.count, index: 2)
-    }
-    dispatch(encoder, pipeline: pipeline, count: count)
-    encoder.endEncoding()
-    try commitAndWait(command)
   }
 
   private func dispatch(
@@ -519,10 +467,6 @@ public final class MetalDisplayStatistics: @unchecked Sendable {
     )
   }
 
-  private func decodeOrderedFloat(_ ordered: UInt32) -> Float {
-    let bits = (ordered & 0x8000_0000) != 0 ? ordered ^ 0x8000_0000 : ~ordered
-    return Float(bitPattern: bits)
-  }
 }
 
 public struct MetalUInt32SurfaceState: @unchecked Sendable {

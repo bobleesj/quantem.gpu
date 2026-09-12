@@ -12,6 +12,48 @@ DeviceName = Literal["cuda", "mps", "webgpu"]
 NativeDeviceName = Literal["cuda", "mps"]
 
 
+def least_busy_cuda_device(count: int | None = None) -> int:
+    """Return the visible CUDA device best suited to a large resident workflow.
+
+    Free memory is the admission constraint. Devices with comparable free memory
+    are ranked by utilization so an interactive workload does not silently slow a
+    large merge. NVML is optional; Torch free-memory ranking remains available.
+    """
+    import torch
+
+    visible = torch.cuda.device_count() if count is None else int(count)
+    if visible < 1:
+        raise RuntimeError("No visible CUDA device is available.")
+
+    def by_free_memory() -> int:
+        free = [torch.cuda.mem_get_info(index)[0] for index in range(visible)]
+        return max(range(visible), key=lambda index: free[index])
+
+    try:
+        import pynvml
+    except ImportError:
+        return by_free_memory()
+    try:
+        pynvml.nvmlInit()
+        ranked = []
+        for index in range(visible):
+            handle = pynvml.nvmlDeviceGetHandleByIndex(index)
+            utilization = pynvml.nvmlDeviceGetUtilizationRates(handle).gpu
+            free = pynvml.nvmlDeviceGetMemoryInfo(handle).free
+            ranked.append((-(free // (20 * 1024**3)), utilization, -free, index))
+        return min(ranked)[3]
+    except pynvml.NVMLError:
+        return by_free_memory()
+
+
+def release_cached_memory() -> None:
+    """Return unused backend allocator blocks without releasing live arrays."""
+    from ._cupy import cp
+
+    if cp is not None:
+        cp.get_default_memory_pool().free_all_blocks()
+
+
 def profile(device: str | None = None) -> dict[str, str | list[str] | None]:
     """Return a notebook-friendly summary of the active compute environment.
 

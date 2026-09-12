@@ -239,3 +239,62 @@ extern "C" __global__ void packed_detector_sum(
         atomicAdd(output + start + scan,
                   (u64)packed_count(words, word_offsets, widths, stream, scan));
 }
+
+extern "C" __global__ void packed_detector_total(
+    PACKED_INPUTS, u64* output, u64 scan_count,
+    u32 detector_count, u32 block_frames, u64 stream_count
+) {
+    u64 stream = (u64)blockIdx.x * blockDim.x + threadIdx.x;
+    if (stream >= stream_count) return;
+    u64 start = (stream / detector_count) * block_frames;
+    u32 count = (u32)min((u64)block_frames, scan_count - start);
+    u64 total = 0;
+    for (u32 scan = 0; scan < count; ++scan)
+        total += packed_count(words, word_offsets, widths, stream, scan);
+    atomicAdd(output + stream % detector_count, total);
+}
+
+// Dense native counts share the existing word-aligned packed layout.
+extern "C" __global__ void dense_measure_packed(
+    const void* source, u32 item_bytes, u8* widths, u64* lengths,
+    u64 scan_count, u32 detector_count, u32 block_frames, u64 stream_count
+) {
+    u64 stream = (u64)blockIdx.x * blockDim.x + threadIdx.x;
+    if (stream >= stream_count) return;
+    u64 first = (stream / detector_count) * block_frames;
+    u32 count = (u32)min((u64)block_frames, scan_count - first);
+    u32 combined = 0;
+    for (u32 scan = 0; scan < count; ++scan) {
+        u64 index = (first + scan) * detector_count + stream % detector_count;
+        combined |= item_bytes == 1 ? ((const u8*)source)[index] : ((const u16*)source)[index];
+    }
+    u32 width = combined ? 32 - __clz(combined) : 0;
+    widths[stream] = width;
+    lengths[stream] = ((u64)count * width + 31) / 32;
+}
+
+extern "C" __global__ void dense_write_packed(
+    const void* source, u32 item_bytes, const u8* widths, const u64* offsets,
+    u32* words, u64 scan_count, u32 detector_count, u32 block_frames, u64 stream_count
+) {
+    u64 stream = (u64)blockIdx.x * blockDim.x + threadIdx.x;
+    if (stream >= stream_count) return;
+    u32 width = widths[stream];
+    if (!width) return;
+    u64 first = (stream / detector_count) * block_frames;
+    u32 count = (u32)min((u64)block_frames, scan_count - first);
+    u64 accumulator = 0, cursor = offsets[stream];
+    u32 used = 0;
+    for (u32 scan = 0; scan < count; ++scan) {
+        u64 index = (first + scan) * detector_count + stream % detector_count;
+        u32 value = item_bytes == 1 ? ((const u8*)source)[index] : ((const u16*)source)[index];
+        accumulator |= (u64)value << used;
+        used += width;
+        if (used >= 32) {
+            words[cursor++] = (u32)accumulator;
+            accumulator >>= 32;
+            used -= 32;
+        }
+    }
+    if (used) words[cursor] = (u32)accumulator;
+}

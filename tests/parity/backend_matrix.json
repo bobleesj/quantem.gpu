@@ -39,6 +39,65 @@
   },
   "capabilities": [
     {
+      "id": "io.packed-display-precision",
+      "contract_version": "precision/v1",
+      "public_owner": "quantem.gpu.io.load / quantem.gpu.io.save",
+      "parity": "Explicit float16 or source-wide scaled uint16, packed device residency, restored intensity units, selected geometry, and GPU-measured error reports persisted through HDF5 export.",
+      "coverage": {
+        "cpu-reference": {
+          "level": "not-implemented",
+          "gates": [
+            "docs/maintainer/migration.md"
+          ],
+          "qualification": "Accelerator implementations are required; CPU scientific conversion is intentionally unsupported."
+        },
+        "cuda": {
+          "level": "required-hardware",
+          "gates": [
+            "tests/hardware/cuda/test_precision.py",
+            "tests/parity/precision_fixture.py"
+          ],
+          "qualification": "CUDA save/load, exact restored frames, repeated and out-of-order selections, mean diffraction, binary detector sums, and persisted error reports against the shared independent NumPy oracle."
+        },
+        "mps": {
+          "level": "required-hardware",
+          "gates": [
+            "tests/hardware/mps/test_precision.py",
+            "tests/parity/precision_fixture.py"
+          ],
+          "qualification": "Python Metal/MPS save/load, exact restored frames, repeated and out-of-order selections, mean diffraction, binary detector sums, and persisted error reports against the shared independent NumPy oracle; numerical reports use float32 Metal reductions."
+        },
+        "swift-metal": {
+          "level": "not-implemented",
+          "gates": [
+            "docs/maintainer/migration.md"
+          ],
+          "qualification": "No separate Swift API owns the display-precision archive contract; Apple Python uses the direct Metal/MPS implementation."
+        },
+        "webgpu": {
+          "level": "not-implemented",
+          "gates": [
+            "docs/maintainer/migration.md"
+          ],
+          "qualification": "CUDA save/load, selections and detector queries; Metal and browser-only precision formats are not implemented."
+        },
+        "direct3d": {
+          "level": "not-implemented",
+          "gates": [
+            "docs/maintainer/migration.md"
+          ],
+          "qualification": "CUDA save/load, selections and detector queries; Metal and browser-only precision formats are not implemented."
+        },
+        "vulkan": {
+          "level": "not-implemented",
+          "gates": [
+            "docs/maintainer/migration.md"
+          ],
+          "qualification": "CUDA save/load, selections and detector queries; Metal and browser-only precision formats are not implemented."
+        }
+      }
+    },
+    {
       "id": "io.empad-float-resident",
       "contract_version": "empad-source/v1",
       "public_owner": "NativeEMPADSource.open / MetalEMPADResidentSource.load",

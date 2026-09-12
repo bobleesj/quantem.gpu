@@ -20,8 +20,8 @@ class DataRepresentation(str, Enum):
     unpacked value for every logical array element. No representation changes
     scan coverage, detector coverage, binning, calibration, or scientific dtype.
 
-    ``ANS`` names an exact entropy-coded resident source. Disk encoding is
-    independent: an ANS file can be transcoded into packed storage. The
+    ``ENCODED`` names an exact entropy-coded resident source. Disk encoding is
+    independent: an encoded file can be transcoded into packed storage. The
     authenticated storage schema selects the precise decoder within a
     representation. ``PAIRED`` names the opt-in CUDA paired-count tANS resident
     layout with its polar interaction index; original HDF5 selects it only
@@ -39,7 +39,7 @@ class DataRepresentation(str, Enum):
 
     DENSE = "dense"
     PACKED = "packed"
-    ANS = "ans"
+    ENCODED = "encoded"
     PAIRED = "paired"
 
     @classmethod
@@ -84,7 +84,7 @@ class DataRepresentation(str, Enum):
 
         Ordinary HDF5 is dense-compatible source evidence. A QuantEM lossless
         pack container carries a fixed user-block magic and is loaded directly
-        as ``PACKED``. Standalone QuantEM/ANS files select ``ANS``
+        as ``PACKED``. Standalone QuantEM encoded files select ``ENCODED``
         from their magic regardless of extension, and saved paired resident
         forms select ``PAIRED`` the same way. This inspection reads only
         eight bytes; it does not validate the complete file.
@@ -111,7 +111,7 @@ class DataRepresentation(str, Enum):
         except OSError:
             return cls.DENSE
         if magic == b"QGANS\0\1\0":
-            return cls.ANS
+            return cls.ENCODED
         if magic == _PAIRED_RESIDENT_MAGIC:
             return cls.PAIRED
         return (

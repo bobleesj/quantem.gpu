@@ -26,7 +26,7 @@ authenticated source -> io.load -> dense, packed, or ANS counts
                                             aberration updates and search
 ```
 
-`representation="dense"`, `"packed"`, and `"ans"` are the count choices for
+`representation="dense"`, `"packed"`, and `"encoded"` are the count choices for
 the integration, with no legacy selector aliases. `"packed"` covers compact
 count storage; authenticated profile metadata still distinguishes bitpacking,
 block compression, and the ANS-derived layout. File layout and compression

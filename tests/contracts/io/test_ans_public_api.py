@@ -50,7 +50,7 @@ def test_public_ans_save_and_dense_reference_load_preserve_provenance(tmp_path, 
         assert loaded.metadata["logical_count_hash_verified"]
         assert loaded.to_representation("dense") is loaded
         with pytest.raises(NotImplementedError, match="not implemented"):
-            loaded.to_representation("ans")
+            loaded.to_representation("encoded")
     assert source.metadata == metadata
 
 
@@ -71,7 +71,7 @@ def test_quantem_auto_and_explicit_compression_write_identical_files(tmp_path, d
         paths.append(path)
     for path in paths:
         assert path.read_bytes() == paths[0].read_bytes()
-        assert io.DataRepresentation.detect_source(path).value == "ans"
+        assert io.DataRepresentation.detect_source(path).value == "encoded"
         with io.load(path, representation="dense", backend="cpu") as loaded:
             np.testing.assert_array_equal(loaded.data, counts)
             assert loaded.metadata["calibration"] == metadata["calibration"]
@@ -131,7 +131,7 @@ def test_new_counts_controls_fail_before_implicit_transform(tmp_path):
         with pytest.raises(exception, match=pattern):
             io.load(saved.path, representation="dense", backend="cpu", **options)
     with pytest.raises(NotImplementedError, match="CPU reference"):
-        io.load(saved.path, representation="ans", backend="cpu")
+        io.load(saved.path, representation="encoded", backend="cpu")
     with pytest.raises(NotImplementedError, match="reference encoder"):
         io.save(
             tmp_path / "no-gpu-fallback.ans",
@@ -142,12 +142,12 @@ def test_new_counts_controls_fail_before_implicit_transform(tmp_path):
     assert not (tmp_path / "no-gpu-fallback.ans").exists()
 
 
-def test_ans_request_requires_an_ans_source(tmp_path):
+def test_encoded_request_requires_an_encoded_source(tmp_path):
     prepared = tmp_path / "packed.h5"
     prepared.write_bytes(b"QGPUH5\0\x01")
     assert io.DataRepresentation.detect_source(prepared).value == "packed"
-    with pytest.raises(NotImplementedError, match="requires an ANS source"):
-        io.load(prepared, representation="ans")
+    with pytest.raises(NotImplementedError, match="requires an encoded source"):
+        io.load(prepared, representation="encoded")
 
 
 def test_removed_names_are_rejected_before_saving_or_loading(tmp_path):
@@ -180,7 +180,7 @@ def test_failed_conversion_publication_releases_output_not_source():
         def release(self):
             raise AssertionError("caller-owned input must not be released")
 
-    loaded = io.FourDSTEMData(Source(), {"representation": "ans"})
+    loaded = io.FourDSTEMData(Source(), {"representation": "encoded"})
     with pytest.raises(RuntimeError, match="publication failure"):
         loaded.to_representation("packed")
     assert output.released

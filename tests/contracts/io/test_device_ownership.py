@@ -208,7 +208,7 @@ def test_load_returns_every_acquisition_in_source_order(io_contexts, monkeypatch
     loader, _decoder, _contexts = io_contexts
     paths, values, prepared, released = _series(monkeypatch, loader)
     result = loader.load(
-        paths, backend="cuda", dtype="u16", apply_mask=False,
+        paths, representation="dense", backend="cuda", dtype="u16", apply_mask=False,
         devices=devices, verbose=False,
     )
     if devices is None:
@@ -236,7 +236,7 @@ def test_incomplete_series_never_returns_partial_data(io_contexts, monkeypatch, 
         monkeypatch, loader, shapes=shapes, failure=failure
     )
     with pytest.raises((OSError, ValueError), match="tilt_[12345]_master.h5"):
-        loader.load(paths, backend="cuda", dtype="u16", devices=devices, verbose=False)
+        loader.load(paths, representation="dense", backend="cuda", dtype="u16", devices=devices, verbose=False)
     assert sorted(map(id, prepared)) == sorted(map(id, released))
 
 
@@ -261,7 +261,7 @@ def test_failed_first_decode_drains_bounded_read_ahead(io_contexts, monkeypatch)
     monkeypatch.setattr(loader, "_prepare_master", prepare)
     monkeypatch.setattr(loader, "_decompress_prepared", decode)
     with pytest.raises(RuntimeError, match="decode failed"):
-        loader.load(paths, backend="cuda", dtype="u16", verbose=False)
+        loader.load(paths, representation="dense", backend="cuda", dtype="u16", verbose=False)
     assert len(prepared) == 4
     assert sorted(map(id, prepared)) == sorted(map(id, released))
 

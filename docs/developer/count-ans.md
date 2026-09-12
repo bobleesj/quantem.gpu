@@ -40,12 +40,12 @@ it does not constitute a new Metal hardware qualification.
 The public loader supports exact CUDA residency and explicitly requested CPU
 reference materialization. The returned resident owner keeps encoded buffers
 until `release()`; its operations return caller-owned device results. No dense
-acquisition is allocated when `representation="ans"` is selected:
+acquisition is allocated when `representation="encoded"` is selected:
 
 ```python
 from quantem.gpu import io
 
-source = io.load(saved.path, backend="cuda", representation="ans", device=0).data
+source = io.load(saved.path, backend="cuda", representation="encoded", device=0).data
 try:
     pattern = source.extract_diffraction_device(0, 0)
     image = source.detector_sum_device(binary_detector_mask)

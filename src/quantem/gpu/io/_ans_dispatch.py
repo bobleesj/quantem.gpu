@@ -1,4 +1,4 @@
-"""One public loader boundary for count-ANS files and resident conversion."""
+"""One public loader boundary for encoded count files and resident conversion."""
 
 import hashlib
 import math
@@ -20,15 +20,20 @@ def _convert_resident(loaded, representation):
     source = loaded.data
     metadata = deepcopy(loaded.metadata)
     if (
-        loaded.representation is DataRepresentation.ANS
+        loaded.representation is DataRepresentation.ENCODED
         and target is DataRepresentation.PACKED
     ):
         convert = getattr(source, "to_packed", None)
         if convert is None:
             raise NotImplementedError(
-                "Direct ANS-to-packed conversion is not qualified for this backend yet."
+                "Direct encoded-to-packed conversion is not qualified for this backend yet."
             )
         output = convert()
+    elif (loaded.representation is DataRepresentation.DENSE
+          and target is DataRepresentation.PACKED):
+        from .backends.cuda._ans import CudaPackedResidentCounts
+
+        output = CudaPackedResidentCounts.from_array(source, loaded.shape)
     else:
         raise NotImplementedError(
             f"{loaded.representation.value}-to-{target.value} resident conversion "
@@ -58,10 +63,10 @@ def _load_ans(source, *, backend, representation, expected_sha256, device):
             "CPU reference loading requires representation='dense'; GPU residency needs CUDA or MPS."
         )
     if device is not None and backend != "cuda":
-        raise ValueError("Explicit ANS device selection requires backend='cuda'; omit device for CPU or MPS.")
+        raise ValueError("Explicit encoded device selection requires backend='cuda'; omit device for CPU or MPS.")
     if target is DataRepresentation.DENSE and backend != "cpu":
         raise NotImplementedError(
-            "ANS-to-dense GPU materialization is not qualified yet; load as 'ans' or 'packed'."
+            "Encoded-to-dense GPU materialization is not qualified yet; load as 'encoded' or 'packed'."
         )
     owner = None
     with ANSFile(source, expected_sha256=expected_sha256) as encoded, ExitStack() as contexts:
@@ -70,7 +75,7 @@ def _load_ans(source, *, backend, representation, expected_sha256, device):
         source_dtype = metadata.get("source_dtype", encoded.dtype.name)
         metadata.update(
             backend=backend,
-            representation=DataRepresentation.ANS.value,
+            representation=DataRepresentation.ENCODED.value,
             residency="host" if backend == "cpu" else "device",
             source_shape=source_shape,
             working_shape=encoded.shape,
@@ -119,7 +124,7 @@ def _load_ans(source, *, backend, representation, expected_sha256, device):
                     logical_digest.update(memoryview(values).cast("B"))
                 if logical_digest.hexdigest() != encoded.manifest["logical_sha256"]:
                     raise ValueError(
-                        "Decoded ANS counts do not match the declared logical digest."
+                        "Decoded native counts do not match the declared logical digest."
                     )
                 metadata["logical_count_hash_verified"] = True
                 metadata["representation"] = "dense"

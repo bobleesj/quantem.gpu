@@ -154,6 +154,8 @@ public enum MetalDisplayKernels {
   public static let histogramFromRangeFunction = "metal_histogram_u32_from_range"
   public static let floatFragmentFunction = "metal_display_fragment_f32"
   public static let floatHistogramFunction = "metal_histogram_f32"
+  public static let floatHistogramFromRangeFunction = "metal_histogram_f32_from_range"
+  public static let floatFinishRangeFunction = "metal_finish_range_f32"
 
   /// Compile the bundled display shader source for a Metal device.
   public static func makeLibrary(device: MTLDevice) throws -> MTLLibrary {

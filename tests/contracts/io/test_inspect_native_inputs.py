@@ -32,7 +32,7 @@ def test_encoded_inspection_uses_header_and_preserves_validity(tmp_path):
         backend="cpu",
     )
     info = io.inspect(path)
-    assert info.ready and info.source_kind == "ans"
+    assert info.ready and info.source_kind == "encoded"
     assert info.scan_shape == (3, 5) and info.detector_shape == (7, 9)
     assert info.metadata["encoded_bytes"] > 0
     np.testing.assert_array_equal(np.flatnonzero(info.pixel_mask), [3, 20])
@@ -51,3 +51,20 @@ def test_prepared_header_checks_expected_scan_dimensions(tmp_path):
     mismatched = io.inspect(tmp_path, scan_shape=(1, 1))
     assert not mismatched.ready and mismatched.reason == "scan_shape_mismatch"
     assert mismatched.expected_frames == 1 and mismatched.actual_frames == 36
+
+
+def test_maped_json_provenance_has_public_metadata_keys(tmp_path):
+    path = tmp_path / "maped.h5"
+    merge = {"version": 1, "source_count": 7}
+    summary = {
+        "version": 1,
+        "mean_bright_field": {"operation": "arithmetic_mean"},
+    }
+    with h5py.File(path, "w") as source:
+        source["entry/data/data"] = np.zeros((2, 3, 4, 5), np.uint16)
+        source.attrs["quantem_maped_merge_v1"] = json.dumps(merge)
+        source.attrs["quantem_maped_summary_v1"] = json.dumps(summary)
+
+    metadata = io.inspect(path).metadata
+    assert metadata["maped_merge"] == merge
+    assert metadata["maped_summary"] == summary

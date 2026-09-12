@@ -77,6 +77,15 @@ class MPSANSArray:
             .copy()
         )
 
+    def to_torch(self):
+        """Copy this bounded Metal result into a Torch MPS tensor."""
+        if self.is_released:
+            raise RuntimeError("The ANS output was released; request a new result.")
+        import torch
+
+        view = np.frombuffer(_buffer_view(self.buffer), self.dtype).reshape(self.shape)
+        return torch.from_numpy(view).to("mps")
+
     def release(self):
         """Release exactly this buffer, leaving its source and other results intact."""
         buffer, self.buffer = self.buffer, None

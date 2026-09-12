@@ -7,6 +7,8 @@ import time
 
 import numpy as np
 
+from quantem.gpu.io._hot_pixels import correction_is_applied
+
 
 @cache
 def _kernels(device):
@@ -170,7 +172,7 @@ class CudaSeriesCompute:
                 descriptor[9 : 9 + len(arrays)] = [array.data.ptr for array in arrays]
             valid = np.ones(shape[2:], np.bool_)
             pixel_mask = metadata.get("pixel_mask")
-            if pixel_mask is not None:
+            if pixel_mask is not None and not correction_is_applied(metadata):
                 if np.shape(pixel_mask) != shape[2:]:
                     raise ValueError(
                         "Stored pixel mask does not match the complete detector shape."
