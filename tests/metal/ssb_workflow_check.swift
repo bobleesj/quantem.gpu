@@ -8,6 +8,47 @@ import MetalSSBKernels
       fatalError("An Apple GPU is required")
     }
     let n = 512
+    let calibration = MetalSSBCalibration(beamEnergyKeV: 300, semiangleMrad: 30,
+      scanStepRowAngstroms: 2, scanStepColumnAngstroms: 3,
+      detectorStepRowMrad: 10, detectorStepColumnMrad: 10, centerRow: 4, centerColumn: 4)
+    let calibrated = try calibration.geometry(detectorRows: 9, detectorColumns: 9,
+      detectorSum: Array(repeating: 100, count: 81), excludedPixels: [40])
+    precondition(abs(calibrated.geometry.wavelengthAngstroms - 0.01968749) < 1e-7)
+    precondition(!calibrated.pixels.contains(40) && calibrated.pixels == calibrated.pixels.sorted())
+    precondition(abs(calibrated.geometry.qxByRow[1] - 1 / 1024) < 1e-8)
+    precondition(abs(calibrated.geometry.qyByColumn[1] - 1 / 1536) < 1e-8)
+    var diskCalibration = calibration
+    diskCalibration.brightfieldRadiusPixels = 4
+    let disk = try diskCalibration.geometry(detectorRows: 9, detectorColumns: 9,
+      detectorSum: Array(repeating: 100, count: 81), excludedPixels: [40])
+    precondition(disk.pixels.count == 48)
+    precondition(disk.geometry.brightfieldAperture.contains(0))
+    precondition(disk.geometry.dcValue.x == 100)
+    diskCalibration.excludedDetectorPixels = [4]
+    let maskedDisk = try diskCalibration.geometry(detectorRows: 9, detectorColumns: 9,
+      detectorSum: Array(repeating: 100, count: 81), excludedPixels: [40])
+    precondition(maskedDisk.pixels.count == 47 && !maskedDisk.pixels.contains(4))
+    var fullDisk = MetalSSBCalibration(beamEnergyKeV: 300, semiangleMrad: 30,
+      scanStepRowAngstroms: 0.264, scanStepColumnAngstroms: 0.264,
+      detectorStepRowMrad: 1.090909090909091, detectorStepColumnMrad: 1.090909090909091,
+      centerRow: 94.88451385498047, centerColumn: 96.35952758789062,
+      brightfieldRadiusPixels: 53.35992814757164, excludedDetectorPixels: [78 * 192 + 74])
+    let sums = Array(repeating: UInt64(100), count: 192 * 192)
+    let historical = try fullDisk.geometry(detectorRows: 192, detectorColumns: 192, detectorSum: sums)
+    precondition(historical.pixels.count == 8937)
+    precondition(historical.geometry.brightfieldAperture.filter { $0 > 0 }.count == 2464)
+    try fullDisk.matchApertureToBrightfieldDisk()
+    precondition(abs(fullDisk.detectorStepRowMrad - 0.5622196476170719) < 1e-12)
+    let complete = try fullDisk.geometry(detectorRows: 192, detectorColumns: 192, detectorSum: sums)
+    precondition(complete.pixels == historical.pixels)
+    precondition(complete.geometry.brightfieldAperture.allSatisfy { $0 > 0 })
+    precondition(complete.geometry.dcValue == historical.geometry.dcValue)
+    // Choosing fewer BF pixels must not silently change angular calibration.
+    fullDisk.brightfieldRadiusPixels = 25
+    let selected = try fullDisk.geometry(detectorRows: 192, detectorColumns: 192, detectorSum: sums)
+    precondition(selected.pixels.count < complete.pixels.count)
+    precondition(abs(fullDisk.detectorStepRowMrad - 0.5622196476170719) < 1e-12)
+    precondition(selected.geometry.brightfieldAperture.allSatisfy { $0 > 0 })
     let q = (0..<n).map { Float($0 < n / 2 ? $0 : $0 - n) * 0.001 }
     func makeGeometry(dc: SIMD2<Float>) -> MetalSSBGeometry {
       MetalSSBGeometry(
@@ -82,6 +123,44 @@ import MetalSSBKernels
         )
       }
     }
+    // Resident callbacks must preserve requested column order and widths, and
+    // retain exact streaming behavior when no Fourier cache is admitted.
+    let source32 = buffer(values.map(UInt32.init))
+    for budget in [Int?.none, Int?(0)] {
+      let callbackEngine = try MetalSSBEngine(device: device, geometry: geometry, cacheBudgetBytes: budget)
+      try callbackEngine.prepare(countType: .uint32) { indices, output, command in
+        let blit = command.makeBlitCommandEncoder()!
+        for (local, logical) in indices.enumerated() {
+          blit.copy(from: source32, sourceOffset: logical * n * n * 4,
+            to: output, destinationOffset: local * n * n * 4, size: n * n * 4)
+        }
+        blit.endEncoding()
+      }
+      let callbackResult = try callbackEngine.reconstruct(aberrations: aberrations)
+      precondition(error(read(callbackResult.object), reference) < 1e-4)
+    }
+    let streamedEngine = try MetalSSBEngine(device: device, geometry: geometry, cacheBudgetBytes: 0)
+    try streamedEngine.prepare(brightfield: source32, countType: .uint32)
+    try engine.prepare(brightfield: source32, countType: .uint32)
+    for term in MetalSSBHigherOrder.supported {
+      var adjusted = aberrations
+      adjusted.higherOrder = [.init(order: term.order, symmetry: term.symmetry,
+        magnitudeNanometers: pow(10, Float(term.order + 1)), angleRadians: 0.21)]
+      let cached = try engine.reconstruct(aberrations: adjusted)
+      let streamed = try streamedEngine.reconstruct(aberrations: adjusted)
+      let difference = error(read(cached.object), read(streamed.object))
+      precondition(difference < 1e-4, "Higher-order cache/stream parity: \(term.name) \(difference)")
+      precondition(error(read(cached.object), reference) > 1e-6, "Control must change the scientific result")
+      let phase = try engine.phase(of: cached).contents().assumingMemoryBound(to: Float.self)
+      let object = read(cached.object)
+      for i in 0..<(n * n) {
+        precondition(abs(phase[i] - atan2(object[i].y, object[i].x)) < 1e-5)
+      }
+      print("PASS live \(term.name) cache/stream relative_l2=\(difference)")
+    }
+    let reset = try engine.reconstruct(aberrations: aberrations)
+    precondition(error(read(reset.object), reference) == 0,
+      "Resetting higher orders must restore the original reconstruction exactly")
     // Fitting needs physical positive DC; zero DC above isolates linear count scaling.
     let fittingGeometry = makeGeometry(dc: SIMD2<Float>(37, 0))
     let fittingEngine = try MetalSSBEngine(device: device, geometry: fittingGeometry)
@@ -106,6 +185,21 @@ import MetalSSBKernels
     precondition(read(restored.fourierSum) == read(fittedResult.fourierSum))
     precondition(loaded.optimization?.trials.map(\.loss) == fit.trials.map(\.loss))
     precondition(loaded.aberrations == fitted && loaded.provenance == fittedResult.provenance)
+    var manual = fitted
+    manual.higherOrder = [.init(order: 2, symmetry: 1, magnitudeNanometers: 50, angleRadians: 0.3)]
+    let manualResult = try fittingEngine.reconstruct(aberrations: manual)
+    let manualRun = try MetalSSBSavedRun(result: manualResult, sourceIdentity: run.sourceIdentity,
+      backendRevision: "manual-calibration-test", geometry: fittingGeometry,
+      aberrations: manual, rotationDegrees: 12, optimization: fit,
+      calibration: calibration, calibrationProvenance: ["semiangle": "Assumed"], optimizedRotationDegrees: 0)
+    try manualRun.save(to: url)
+    let manualLoaded = try MetalSSBSavedRun.load(from: url, matchingSourceIdentity: run.sourceIdentity)
+    precondition(manualLoaded.calibration == calibration)
+    precondition(manualLoaded.calibrationProvenance == ["semiangle": "Assumed"])
+    precondition(manualLoaded.aberrations == manual && manualLoaded.rotationDegrees == 12)
+    precondition(manualLoaded.optimizedRotationDegrees == 0)
+    let manualRestored = try manualLoaded.reconstruction(device: device)
+    precondition(read(manualRestored.object) == read(manualResult.object))
     var rejected = false
     do {
       _ = try MetalSSBSavedRun.load(from: url, matchingSourceIdentity: "different-acquisition")

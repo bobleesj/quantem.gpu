@@ -1,0 +1,508 @@
+{
+ "schema_version": 1,
+ "experiment_id": "20260911-ssb-fft-intermediate",
+ "status": "succeeded",
+ "question": "Can the exact full-aperture phase-variance objective reduce or eliminate global traffic through the fftA intermediate between the two 512-point transforms (or other provably-exact device memory traffic) enough to beat the retained 253.4 ms p50, and how close can it get to 50 ms?",
+ "paper": {
+  "authoritative_host": "apple-m5-24gb",
+  "repository": "quantem.gpu",
+  "manifest_path": "experiments/20260911-ssb-fft-intermediate/manifest.json"
+ },
+ "code": {
+  "repository": "quantem.gpu",
+  "revision": "31717e6e0661199cdd37e8a33215e467a13df2f9",
+  "dirty": true,
+  "entrypoint": "experiments/20260910-ssb-full-bf-scheduling/probe.swift",
+  "diff_sha256": "c85c5c4870946aab120d8ee6e13ceeb2d89eb3dc7c1c3bee89c484dc48b9d5e9",
+  "untracked_source_sha256": {
+   "MetalSSBCalibration.swift": "40a215ee38149be4c3843bfabe6abd0b30361a661685ba6566eb3483b5591b34",
+   "MetalSSBHigherOrder.swift": "756da9cdfd69ede1b06aab0cb8877a09286784c8cda0412d89355150836aa4d4"
+  },
+  "starting_source_sha256": {
+   "ssb.metal": "f94331fc8d1eb5ea66babfe62c7e86433bd29df73a01bbb415c0e9d49a0ade12",
+   "MetalSSBKernels.swift": "c8cac91566108e9e894df13ee2b45d58b136272e48f3b64fd5e730fcc83e97b2"
+  },
+  "note": "Starting point is the retained 20260910-ssb-full-bf-scheduling schedule (phase batch 8, one command buffer). Candidate patches are recorded per arm; rejected code is removed.",
+  "final_source_sha256": {
+   "ssb.metal": "3568994acafaa8b9cbfbbda7f8a742f0e3529d2d3117b886f2d6d991e7fa3004",
+   "MetalSSBKernels.swift": "c73b70d59e4f09a67893cd3efdf7e26110824d2684754317124623130ce6937e"
+  },
+  "final_source_diff_sha256": "05ab03c6fde272b9c787e5bfe1bda4dbc74ae3d0f583b17be22394147f483c8b",
+  "final_source_diff_scope": "git diff -- src (tracked source changes vs HEAD, including pre-existing dirty work)"
+ },
+ "inputs": [
+  {
+   "dataset_id": "reference-512-original-master",
+   "path": "private-fixture://reference-512-original/master.h5",
+   "sha256": "c9c0d968fae70b8911ae925d676b90007886970fa99fe296a47cfe07844bbfe9"
+  }
+ ],
+ "parameters": {
+  "scan_shape": [
+   512,
+   512
+  ],
+  "detector_shape": [
+   192,
+   192
+  ],
+  "bf_selected": 8937,
+  "bf_active": 8937,
+  "precision": "complex64/float32; exact packed original uint32 counts",
+  "crop": null,
+  "bin": 1,
+  "semiangle_mrad": 30,
+  "scan_step_angstrom": 0.264,
+  "energy_keV": 300,
+  "controls": {
+   "c10_nm": [
+    0,
+    55,
+    155.96977
+   ],
+   "c12_nm": 42.96961,
+   "phi12_rad": 0.293384,
+   "rotation_deg": 158.88268568029937
+  },
+  "fit_trials": 200,
+  "tolerances": {
+   "object_relative_l2": 1e-05,
+   "loss_absolute": 1e-06
+  },
+  "scope": "Kernel-level real-data A/B on the reference-512 original file via ssb-scheduling-probe; compare.py against a same-session baseline. Not synthetic evidence, not a UI frame rate."
+ },
+ "execution": {
+  "host": "apple-m5-24gb",
+  "backend": "swift-metal",
+  "gpu_ids": [
+   "Apple M5"
+  ],
+  "gpu_model": "Apple M5 10-core GPU, 24 GB unified memory"
+ },
+ "outputs": [
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-baseline-20260911/report.json",
+   "sha256": "7e9298435153c27b5389f259c527c6e1d8bb5e0e85a559c42595d8c9487166cf",
+   "result": "Same-session baseline (restored production schedule): loss p50 253.34 ms, p95 254.32 ms; object p50 70.01 ms; 12,574,949,376 B allocated."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-baseline-repeat-1/report.json",
+   "sha256": "29a57b959c99616bfb14f575e538762b98f75e3713c78d83c8f437e3b0936d5a",
+   "result": "Production-path repeat (a mis-quoted zsh sweep passed no environment variables; relabeled as a baseline repeat): loss p50 251.8 ms; object/loss bit-identical to baseline."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-baseline-repeat-2/report.json",
+   "sha256": "7803045a33a40ccf5add41b7dcf9acf7d1057ed47a9c33f02c05a5e6b557fd7f",
+   "result": "Production-path repeat (a mis-quoted zsh sweep passed no environment variables; relabeled as a baseline repeat): loss p50 250.92 ms; object/loss bit-identical to baseline."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-baseline-repeat-3/report.json",
+   "sha256": "71e5d1794825a9fbf9a5f813ed8fbc12dfffa2c9d581a2eb819728458899bc6c",
+   "result": "Production-path repeat (a mis-quoted zsh sweep passed no environment variables; relabeled as a baseline repeat): loss p50 251.42 ms; object/loss bit-identical to baseline."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-baseline-repeat-4/report.json",
+   "sha256": "4855f6e3e6ec2200cc7f70c09e54a00efc3522032d4b769cce1775cf16452e4b",
+   "result": "Production-path repeat (a mis-quoted zsh sweep passed no environment variables; relabeled as a baseline repeat): loss p50 252.59 ms; object/loss bit-identical to baseline."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-baseline-repeat-5/report.json",
+   "sha256": "e8936f375bc0ee57765360a1ec110b487d5e668e42761a0810b434d30021185d",
+   "result": "Production-path repeat (a mis-quoted zsh sweep passed no environment variables; relabeled as a baseline repeat): loss p50 249.94 ms; object/loss bit-identical to baseline."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-baseline-repeat-6/report.json",
+   "sha256": "246336dec4c79b5877c656f2478d2fd790435979c74a58e4d5515cb7c478f35c",
+   "result": "Production-path repeat (a mis-quoted zsh sweep passed no environment variables; relabeled as a baseline repeat): loss p50 250.64 ms; object/loss bit-identical to baseline."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-baseline-repeat-7/report.json",
+   "sha256": "bc8494668a867b40bff541df22ef4c4e9192de6687a94ef0abb7f48c3fa0e063",
+   "result": "Production-path repeat (a mis-quoted zsh sweep passed no environment variables; relabeled as a baseline repeat): loss p50 249.28 ms; object/loss bit-identical to baseline."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-baseline-repeat-8/report.json",
+   "sha256": "909b2143198cc33b7b06c2dd5e0f8836c34c00f911904557bdc2d305ce29c7be",
+   "result": "Production-path repeat (a mis-quoted zsh sweep passed no environment variables; relabeled as a baseline repeat): loss p50 251.28 ms; object/loss bit-identical to baseline."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-baseline-repeat-9/report.json",
+   "sha256": "f5764b1e38cc81bc3977735fe0382b691dbb838e8cb10e663422adebfa1fdf4b",
+   "result": "Production-path repeat (a mis-quoted zsh sweep passed no environment variables; relabeled as a baseline repeat): loss p50 250.79 ms; object/loss bit-identical to baseline."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-baseline-repeat-10/report.json",
+   "sha256": "98626e41ad33539cf9443c678334e7ac5d392e55ce73694023965982d322fe79",
+   "result": "Production-path repeat (a mis-quoted zsh sweep passed no environment variables; relabeled as a baseline repeat): loss p50 249.68 ms; object/loss bit-identical to baseline."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-diag-rows-only/report.json",
+   "sha256": "5d797857f41b6e6de61c706bc8b5374898cb24db1fb68626d5b3210f93195cab",
+   "result": "Diagnostic, pass 1 only (correct+column IFFT+fftA store): loss p50 165.16 ms; loss invalid by design."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-diag-cols-only/report.json",
+   "sha256": "534c1e0545451440c8a6dc26bca6c19a5e427fe1309ea6feb5e0755640465a54",
+   "result": "Diagnostic, pass 2 only (fftA load+row IFFT+atan moments): loss p50 79.94 ms; loss invalid by design."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-diag2-cols-pb8/report.json",
+   "sha256": "f5bcb2b12ba386d626dc846ee5a3355e0a1477b5bb3d9aa735a8b4fd6bcf301a",
+   "result": "Diagnostic, single encoder pass 2 only, batch 8 (re-reads one 8.4 MB region): 79.40 ms."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-diag2-cols-pb1/report.json",
+   "sha256": "b3390cdc442cc4be2703f801bfa77f80a804e05a3da87189a5a7dbb60d0b802c",
+   "result": "Diagnostic, single encoder pass 2 only, batch 1 (1 MB region): 199.81 ms; dispatch-bound."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-diag2-rows-pb8/report.json",
+   "sha256": "0beef436b0d5a098f6349f0b9ca2160e4868d14dba1eab107e534ae14ea26d20",
+   "result": "Diagnostic, single encoder pass 1 only, batch 8: 164.38 ms."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-diag2-g1-pb1/report.json",
+   "sha256": "523b4483b48ec56a7600fae0013516b0801fdb86b544b0203fac6d457c8c4e13",
+   "result": "Diagnostic, pass 1 only, batch 1, same G plane: 234.76 ms; dispatch-bound."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-diag2-p2-noload/report.json",
+   "sha256": "0a3c67d8947dd35d8683e4d9a44d481e50be6ce3627a5956dc1fefd1facb57d5",
+   "result": "Diagnostic, pass 2 without fftA loads: 61.88 ms."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-diag2-p2-noatan/report.json",
+   "sha256": "f6cfe12d7399f46fd2df72eaee2fdd58c384a9f216a9c118ee4b13ee70fac8da",
+   "result": "Diagnostic, pass 2 without atan: 77.49 ms."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-diag2-p2-noload-noatan/report.json",
+   "sha256": "49ad2d964deaaf458c6ffdfaa2cf0677f4214355f1e80831095612d614dd93a7",
+   "result": "Diagnostic, pass 2 FFT+moments only: 45.44 ms."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-diag2-p1-nostore/report.json",
+   "sha256": "dddc2d217f3b0ef107c84d7b137259604493a6242f84d4c576ca056a20ac6d2c",
+   "result": "Diagnostic, pass 1 without fftA store: 80.92 ms (store costs ~84 ms)."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-diag2-p1-noload/report.json",
+   "sha256": "c5eb844b6200ca96d50317136abb0b09d13b739f57a83ea2debc3f04f8b29fcd",
+   "result": "Diagnostic, pass 1 without G load: 140.42 ms."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-diag2-p1-nocorr/report.json",
+   "sha256": "ec33cec332936b038795dc59656ce2c1f051f9ce2942ad80f60375cac478ce0b",
+   "result": "Diagnostic, pass 1 without gamma correction (all G loaded): 171.44 ms."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-diag2-p1-noload-nostore/report.json",
+   "sha256": "170906f0d542f51f1ca9530bf72da983f50b544cf32a94918360d0ca9981f045",
+   "result": "Diagnostic, pass 1 correction+FFT arithmetic only: 57.65 ms."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-diag2-p1-nocorr-nostore/report.json",
+   "sha256": "5677797dc0078c365450d512b8365f3604aa637ed71f1a782b2ba2bc52199f8f",
+   "result": "Diagnostic, pass 1 load-all + FFT, no store: 90.28 ms."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-diag2-p1-colstore/report.json",
+   "sha256": "56167f4d40cfcabfa6a14b77bcab3ecea2086c3f7b1b67bc3842963732005c40",
+   "result": "Diagnostic, pass 1 with coalesced column-major store: 117.84 ms (46.5 ms below row-major store)."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-diag2-p1-colstore-pb2/report.json",
+   "sha256": "9bb12aafc144d28ce0857f7ca9c7ca4af046d4fa31f0db844f0cd629b025dd64",
+   "result": "Diagnostic, same with batch 2: 129.33 ms."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-arm-colmajor-p2only/report.json",
+   "sha256": "a70461efae0f23b1d426e7e8de91bf49519027f6118e6a6a093980929806a44c",
+   "result": "Diagnostic, pass 2 reading column-major intermediate: 179.77 ms."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-arm-colmajor-pb8/report.json",
+   "sha256": "93be50e12278f0a47940ebb06f2352f75aa33a22a76e9fdfbf1bf14b586b76d8",
+   "result": "Rejected arm column-major fftA end to end: loss p50 292.51 ms; object rel L2 0.0 and loss error 0.0 vs baseline."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-arm-pack2-pb8/report.json",
+   "sha256": "77b97d767c5fb16496a6d52583fb132f7bbba0aa3060bff155f904d464917999",
+   "result": "Rejected arm two-BF packed pass-2 IFFT, single encoder: loss p50 260.95 ms."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-arm-pack2-pb8-default/report.json",
+   "sha256": "7df142068de728b39529a5498d08c5768fac9fa8c73b19bc705ad2f46b9bb82f",
+   "result": "Rejected arm two-BF packed pass-2 IFFT (Nyquist/DC columns projected to real part), production encoders: loss p50 258.65 ms, p95 260.67 ms; object rel L2 0.0, loss error 0.0."
+  },
+  {
+   "artifact": "local-evidence://ssb-fft-intermediate-20260911/roofline/full.json",
+   "sha256": "aa388a400171cddba502e6165c6bebd863be5a6dae30cd1af4121c95d12ee251",
+   "result": "Apple M5 roofline, idle GPU, p50 of 9: read 9.393 GB 77.58 ms (121.1 GB/s); copy 76.32 ms (123.1 GB/s); contiguous write 9.408 GB 66.7-70.4 ms; production strided column write 435.8 ms (21.6 GB/s, 6.5x contiguous); FP32 FMA 3.974 TFLOPS; 8937x769 production 512-point IFFTs without memory traffic 65.45 ms; 2.343e9 atan 14.14 ms, atan2 18.23 ms."
+  },
+  {
+   "artifact": "local-evidence://ssb-fft-intermediate-20260911/support/results.json",
+   "sha256": "36f2ae995803a4af04536d09fd0d51ff9ca8125558525715359909f6e2fcf3d9",
+   "result": "CPU aperture-support analysis (8937 BF reproduced): 26.20% of half-plane entries exactly zero; 24.32% of 128 B G lines zero; 2.83% whole zero columns; exact pruning ceiling 2.54-2.99 GB of 28.2 GB traffic per objective."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-arm-gated-load/report.json",
+   "sha256": "4bbd6fc9a3108c3b3db6a579d3dc9fcf25c6961eba903f0d6d2f758b1859f5ac",
+   "result": "Rejected arm aperture-gated G load (load moved after the aperture-zero test): loss p50 248.83 ms, p95 249.70 ms; object rel L2 0.0, loss error 0.0 vs baseline."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-arm-gated-load-2/report.json",
+   "sha256": "40759233c2cc593ba9bf82e3cbfdf1d3d3bdcca2fe1c99964f11093924fc4ae8",
+   "result": "Gated-load repeat after system drift: loss p50 262.55 ms, p95 286.85 ms."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-baseline-post-gated/report.json",
+   "sha256": "097f1aab0a97c771eeb7d98a1cbf09935b235a7eaaea2cf212bc339767397ea2",
+   "result": "A/B/A production baseline after gated-load arm: loss p50 258.30 ms, p95 292.21 ms (machine drifted into slower state)."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-abab-base-1/report.json",
+   "sha256": "f381e8d7bb0fe1e24440a9c9dc10c685d8823052672103ff2ade00c9841cf0d6",
+   "result": "Interleaved production baseline 1: loss p50 262.09 ms, p95 268.67 ms."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-abab-base-2/report.json",
+   "sha256": "789b44f9adda0300e702689490a0e1848aa7d0d7c4b8ab2226a19941a1aca257",
+   "result": "Interleaved production baseline 2: loss p50 273.0 ms, p95 304.15 ms."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-abab-base-3/report.json",
+   "sha256": "63617f4e4976a99f75a21e20954fce7e893243d2d185cf8b75210234aa581f4e",
+   "result": "Interleaved production baseline 3: loss p50 262.67 ms, p95 277.11 ms."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-abab-base-4/report.json",
+   "sha256": "d2adcb1ed2e96f23f41326be455883f5b4977a2935a4b0b8dead371e86e3e6bf",
+   "result": "Interleaved production baseline 4: loss p50 265.16 ms, p95 274.28 ms."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-abab-base-5/report.json",
+   "sha256": "b190f368141033dec01ea0f13bb4fab8f95a16aec7b6347805301b55d267bf5c",
+   "result": "Interleaved production baseline 5: loss p50 256.81 ms, p95 272.2 ms."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-abab-base-6/report.json",
+   "sha256": "3193a4c9781912fbb5216781bc040b5c133b4c8561e8024b80ac341ec0596aad",
+   "result": "Interleaved production baseline 6: loss p50 250.12 ms, p95 254.4 ms."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-arm-blocked8-1/report.json",
+   "sha256": "a03d91a4760db7e16a469a7e4d00b23ac40ff4c92c54cc2e650a8aa1f6da62a8",
+   "result": "Rejected arm blocked 8-row fftA layout (32 KB aliased tile/scratch, 4 barriers per BF): loss p50 270.77 ms, p95 307.7 ms; parity exact (rel L2 0.0, loss error 0.0)."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-arm-blocked8-2/report.json",
+   "sha256": "4ff1018cb84f30768d8e3793a1c2280736694153fb804f890ba03d9bf9023b20",
+   "result": "Rejected arm blocked 8-row fftA layout (32 KB aliased tile/scratch, 4 barriers per BF): loss p50 297.34 ms, p95 319.38 ms; parity exact (rel L2 0.0, loss error 0.0)."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-arm-blocked4-1/report.json",
+   "sha256": "29fe4a402994d8ead44e25ddaf69bd487844869205872bfa99e6167989841446",
+   "result": "Blocked 4-row fftA arm 1 (switchable prototype), interleaved with baseline 1: loss p50 242.72 ms, p95 254.35 ms; parity exact."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-arm-blocked4-2/report.json",
+   "sha256": "3c450a73c6da8a0ea5579bb4dfa1d6a98fccfc899bf37d8ee60a19f9789a803b",
+   "result": "Blocked 4-row fftA arm 2 (switchable prototype), interleaved with baseline 2: loss p50 254.76 ms, p95 278.36 ms; parity exact."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-arm-blocked4-3/report.json",
+   "sha256": "87562e47fa573f6361bb5cb121438b66774b1a37a98599990bcda43be635dcaf",
+   "result": "Blocked 4-row fftA arm 3 (switchable prototype), interleaved with baseline 3: loss p50 245.01 ms, p95 252.3 ms; parity exact."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-arm-blocked4-4/report.json",
+   "sha256": "a57b198811e1b64f0f791f9a60b798c4bda1f9976fa0050f390d71eae4868c1c",
+   "result": "Blocked 4-row fftA arm 4 (switchable prototype), interleaved with baseline 4: loss p50 231.55 ms, p95 235.07 ms; parity exact."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-arm-blocked4-5/report.json",
+   "sha256": "d12743457496bb40c7d5916bc09b33a7372a558bb41c9c2c0691a28ffe6c1b19",
+   "result": "Blocked 4-row fftA arm 5 (switchable prototype), interleaved with baseline 5: loss p50 227.11 ms, p95 231.08 ms; parity exact."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-arm-blocked4-6/report.json",
+   "sha256": "19c2618474e58e7c3a925245cc1f436b0856ba2011936271c6daf1662a3d778c",
+   "result": "Blocked 4-row fftA arm 6 (switchable prototype), interleaved with baseline 6: loss p50 228.48 ms, p95 232.8 ms; parity exact."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-final-aba-start-1/report.json",
+   "sha256": "379d56240686f7f87f317396b66555b785b206f2fddbd2f58f3fdbeba9eb9c80",
+   "result": "Final A/B/A: exact starting sources, pair 1: loss p50 250.69 ms, p95 254.42 ms."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-final-aba-blocked4-1/report.json",
+   "sha256": "d3acdc54846098f04dbf68cf3e4881de5ccf551e17275843cdf6bdbac20b35b8",
+   "result": "Final A/B/A: accepted blocked-4 production code, pair 1: loss p50 256.93 ms, p95 262.71 ms; object rel L2 0.0 (3 cases), loss error 0.0, 12,574,949,376 B allocated."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-final-aba-start-2/report.json",
+   "sha256": "75c461a1e7dc4e478c1d7acd10f9f0f5f5fbebee8a3f119354857221f3a66577",
+   "result": "Final A/B/A: exact starting sources, pair 2: loss p50 249.97 ms, p95 251.44 ms."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-final-aba-blocked4-2/report.json",
+   "sha256": "90a71839c307357f06dd2dcecc981997adb4ddcb7a6fe3479d6f247587c64a46",
+   "result": "Final A/B/A: accepted blocked-4 production code, pair 2: loss p50 222.73 ms, p95 234.69 ms; object rel L2 0.0 (3 cases), loss error 0.0, 12,574,949,376 B allocated."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-final-aba-start-3/report.json",
+   "sha256": "33a8330e9283088feb4ab41ca89d39774c862235b410ac0e2cc0a277db043433",
+   "result": "Final A/B/A: exact starting sources, pair 3: loss p50 252.5 ms, p95 254.14 ms."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-final-aba-blocked4-3/report.json",
+   "sha256": "ea37b3c3781536791db00951adbbd51ae6278169fe88d757c06bc1ef6b8002fd",
+   "result": "Final A/B/A: accepted blocked-4 production code, pair 3: loss p50 222.77 ms, p95 228.08 ms; object rel L2 0.0 (3 cases), loss error 0.0, 12,574,949,376 B allocated."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-fit-base/report.json",
+   "sha256": "ee9222d84d4f8f225e28a86452bbceb5fc472f437f8212da5de567ae82e4a077",
+   "result": "Same-session production 200-trial + Nelder-Mead fit: 59.49 s, loss 0.136068195104599, 34 refinement evaluations, best (155.96977067784408, 42.96961130678202, 0.2933840939148923)."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-fit-blocked4/report.json",
+   "sha256": "257dc7275349173f01bcdc7b89db461866acdd3d6d285263c56e4f60ed9c2110",
+   "result": "Blocked-4 prototype fit: 52.39 s; loss, best parameters and 34 refinement evaluations identical to production."
+  },
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fi-fit-final-blocked4/report.json",
+   "sha256": "1b62b6f1836038c488684ef1f0589959797e80780c8984bd0cadb29c8cde46e8",
+   "result": "Accepted blocked-4 final-code fit: 55.17 s; loss, best parameters and 34 refinement evaluations identical to production."
+  },
+  {
+   "artifact": "local-evidence://ssb-fft-intermediate-20260911/logs/check-metal-ssb-blocked4.log",
+   "sha256": "882eb55e269bfdf05003eb8d28da3e2c1d80c3276d27118f66de241c824c38ef",
+   "result": "scripts/check_metal_ssb.sh on accepted code: 18 PASS (uint8/uint16/uint32 count parity, full vs streamed reconstruct, 12 higher-order cache/stream, 200-trial fit and saved-run exact round trip)."
+  },
+  {
+   "artifact": "local-evidence://ssb-fft-intermediate-20260911/logs/xctest-ssb-blocked4.log",
+   "sha256": "cf0c486a98215a64d94365328232f0a9d4ca87adcaaae9c3db901062082416b7",
+   "result": "swift test --filter MetalSSBKernelsTests NOT RUN: host has Command Line Tools only (no XCTest module)."
+  }
+ ],
+ "results": {
+  "qualification": "Exact accepted improvement (blocked 4-row fftA intermediate); 50 ms target not met and shown to be below the measured M5 floor for this exact formulation.",
+  "bf_selected": 8937,
+  "bf_active": 8937,
+  "accepted_change": "fftA intermediate stored as [bf][row/4][col 0..256][row%4]; pass 1 writes 32-byte segments; pass 2 uses 256-thread groups (4 rows) with a coalesced block load, padded threadgroup tile, register prefetch of the next BF, 2 barriers per BF. Per-value arithmetic and per-pixel BF accumulation order unchanged.",
+  "final_aba_loss_gpu_ms_p50": {
+   "start": [
+    250.69,
+    249.97,
+    252.5
+   ],
+   "blocked4": [
+    256.93,
+    222.73,
+    222.77
+   ]
+  },
+  "all_interleaved_pairs_loss_p50_ms": {
+   "baseline": [
+    262.09,
+    273.0,
+    262.67,
+    265.16,
+    256.81,
+    250.12,
+    250.69,
+    249.97,
+    252.5
+   ],
+   "blocked4": [
+    242.72,
+    254.76,
+    245.01,
+    231.55,
+    227.11,
+    228.48,
+    256.93,
+    222.73,
+    222.77
+   ],
+   "median_paired_delta_ms": -21.6,
+   "pairs_won": "8/9"
+  },
+  "best_loss_gpu_ms": {
+   "p50": 221.62,
+   "p95": 223.62,
+   "run": "fi-fit-blocked4 probe phase"
+  },
+  "variance_note": "Blocked-4 per-call loss spans about 221-279 ms versus 250-256 ms for the previous path in the same session; p50/p95 improved in 8 of 9 interleaved pairs.",
+  "calibration_fit_seconds": {
+   "baseline": 59.49,
+   "blocked4_prototype": 52.39,
+   "blocked4_final": 55.17,
+   "refinement_evaluations": 34,
+   "trajectory": "final loss, best parameters, refinement count identical"
+  },
+  "object_redraw": "unchanged path; p50 about 69-71 ms",
+  "resident_bytes": 12574949376,
+  "precision": "float32 phase/loss, complex64 FFT, exact packed uint32 source counts",
+  "parity": "object relative L2 0.0 (3 cases), loss absolute error 0.0 vs same-session baseline; check_metal_ssb 18 PASS",
+  "pass_split_ms": {
+   "pass1": 164.4,
+   "pass1_no_store": 80.9,
+   "pass1_arithmetic_only": 57.7,
+   "pass1_coalesced_store": 117.8,
+   "pass2": 79.4,
+   "pass2_fft_moments_only": 45.4
+  },
+  "m5_floor": {
+   "read_9_39GB_ms": 77.58,
+   "contiguous_write_9_4GB_ms": "66.7-70.4",
+   "strided_column_write_ms": 435.8,
+   "fp32_tflops": 3.974,
+   "production_ifft512_x_8937x769_ms": 65.45,
+   "atan_2_34e9_ms": 14.14
+  },
+  "rejected_arms": [
+   {
+    "arm": "single-encoder / concurrent ping-pong batch 2-8",
+    "result": "not isolated cleanly (sweep mis-quoted); diagnostics show batch-1 dispatch-bound 200-235 ms"
+   },
+   {
+    "arm": "column-major-fftA",
+    "loss_p50_ms": 292.51,
+    "maximum_loss_error": 0.0,
+    "reason": "pass 2 strided load 179.8 ms"
+   },
+   {
+    "arm": "pack-two-bf-pass2",
+    "loss_p50_ms": 258.65,
+    "maximum_loss_error": 0.0,
+    "reason": "slower; pass-2 FFT hidden behind memory"
+   },
+   {
+    "arm": "aperture-gated-G-load",
+    "loss_p50_ms": [
+     248.83,
+     262.55
+    ],
+    "maximum_loss_error": 0.0,
+    "reason": "no robust gain versus adjacent baseline"
+   },
+   {
+    "arm": "blocked-8-row-fftA",
+    "loss_p50_ms": [
+     270.77,
+     297.34
+    ],
+    "maximum_loss_error": 0.0,
+    "reason": "slower (32 KB tile/scratch aliasing, 4 barriers per BF, occupancy)"
+   }
+  ],
+  "limits": "No binning, cropping, BF reduction, reduced precision, or fewer trials. XCTest cache-vs-streamed loss gate not runnable on this host. The 50 ms target is below the measured floor: one read of the complex64 Hermitian G cache is 77.6 ms and the production FFT arithmetic alone is 65.5 ms."
+ },
+ "timestamps": {
+  "created": "2026-09-11",
+  "started": "2026-09-11",
+  "finished": "2026-09-11"
+ }
+}

@@ -11,9 +11,12 @@ public struct MetalSSBSavedRun: Codable, Sendable {
   public let backendRevision: String
   public let createdAt: Date
   public let geometry: MetalSSBGeometry
+  public let calibration: MetalSSBCalibration?
+  public let calibrationProvenance: [String: String]?
   public let aberrations: MetalSSBAberrations
   public let rotationDegrees: Float
   public let optimization: SSBOptimizationResult?
+  public let optimizedRotationDegrees: Float?
   public let seed: UInt64
   public let provenance: MetalSSBProvenance
   public let reconstructionWallSeconds: Double
@@ -26,7 +29,9 @@ public struct MetalSSBSavedRun: Codable, Sendable {
   public init(
     result: MetalSSBResult, sourceIdentity: String, backendRevision: String,
     geometry: MetalSSBGeometry, aberrations: MetalSSBAberrations,
-    rotationDegrees: Float, optimization: SSBOptimizationResult? = nil, seed: UInt64 = 42
+    rotationDegrees: Float, optimization: SSBOptimizationResult? = nil, seed: UInt64 = 42,
+    calibration: MetalSSBCalibration? = nil, calibrationProvenance: [String: String]? = nil,
+    optimizedRotationDegrees: Float? = nil
   ) throws {
     guard result.object.storageMode == .shared, result.fourierSum.storageMode == .shared else {
       throw SavedRunError.invalid("Saving requires completed, CPU-readable reconstruction buffers.")
@@ -36,9 +41,12 @@ public struct MetalSSBSavedRun: Codable, Sendable {
     self.backendRevision = backendRevision
     createdAt = Date()
     self.geometry = geometry
+    self.calibration = calibration
+    self.calibrationProvenance = calibrationProvenance
     self.aberrations = aberrations
     self.rotationDegrees = rotationDegrees
     self.optimization = optimization
+    self.optimizedRotationDegrees = optimizedRotationDegrees
     self.seed = seed
     provenance = result.provenance
     reconstructionWallSeconds = result.wallSeconds
@@ -102,6 +110,11 @@ public struct MetalSSBSavedRun: Codable, Sendable {
     guard !sourceIdentity.isEmpty, sourceIdentity == expected, !backendRevision.isEmpty else {
       throw SavedRunError.invalid(
         "This saved SSB run belongs to a different source, or lacks its compute revision.")
+    }
+    guard rotationDegrees.isFinite, optimizedRotationDegrees?.isFinite ?? true,
+      aberrations.c10Nanometers.isFinite, aberrations.c12Nanometers.isFinite,
+      aberrations.phi12Radians.isFinite else {
+      throw SavedRunError.invalid("Saved SSB coefficients must be finite. Recompute or restore a valid result.")
     }
     let bytes = 512 * 512 * MemoryLayout<SIMD2<Float>>.stride
     guard provenance.scanRows == 512, provenance.scanColumns == 512,

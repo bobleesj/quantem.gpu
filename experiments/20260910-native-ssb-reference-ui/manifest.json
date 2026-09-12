@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260910-native-ssb-reference-ui",
+  "status": "completed",
+  "question": "Can the native packed-HDF5 SSB workflow reproduce the retained reference-512 geometry and approach its 24-second M5 fit with working first/second/higher-order UI controls?",
+  "paper": {"authoritative_host": "apple-m5-24gb", "repository": "quantem.gpu", "manifest_path": "experiments/20260910-native-ssb-reference-ui/manifest.json"},
+  "code": {"repository": "quantem.gpu", "revision": "31717e6e0661199cdd37e8a33215e467a13df2f9", "entrypoint": "Live4DSTEM Tests/NativeUI/drive_ssb.py --file --calibration", "dirty": true, "diff_sha256": "c7f7e2a8bab104c23c4ffe39ab0dbb86e066faa73af566e03a4a8939977e0a6b", "snapshot_path": "local-evidence://ssb-bto-native-20260910/source-c.tar", "snapshot_sha256": "a163a12fcca8be73fa962027bc4b4588b18475d41bd8e6974b2c6a8486781cca", "base_snapshot_path": "local-evidence://ssb-bto-native-20260910/source.tar", "app_revision": "3564179fcba57916d9c1d0e09bb018ab3a1e3f7a", "app_dirty": true, "app_binary_sha256": "f15ebed45ea040869875c87848c05fa3ccb28d75bdbd307430f542b3d612800f"},
+  "inputs": [
+    {"dataset_id": "reference-512-original-master", "path": "private-fixture://reference-512-original/master.h5", "sha256": "c9c0d968fae70b8911ae925d676b90007886970fa99fe296a47cfe07844bbfe9"},
+    {"dataset_id": "reference-512-retained-geometry", "path": "private-fixture://reference-512-retained/snapshots/cal.json", "sha256": "42849e93f066897a96ef05c6dc16a848d3b8558e1170f123861cb1eeb5180d1f"}
+  ],
+  "parameters": {"scan_shape": [512,512], "detector_shape": [192,192], "source_dtype": "uint16", "scan_bin": 1, "detector_bin": 1, "crop": null, "expected_logical_bf": 8937, "expected_active_bf": 2464, "energy_keV": 300, "semiangle_mrad": 30, "scan_step_angstroms": 0.264, "detector_step_mrad": 1.090909090909091, "center_row_col": [94.88451385498047,96.35952758789062], "bf_radius_pixels": 53.35992814757164, "rotation_degrees": 158.88268568029937, "start_c10_c12_phi12": [0,50,0], "trials": 200, "seed": 42, "refinement": "Nelder-Mead", "precision": "float32/complex64; exact packed source counts", "historical_mps_fit_seconds": 24.065, "comparison_limits": "Historical Python MPS optimizer and native seeded TPE are separate implementations, not presumed identical candidate traces. Master hash alone does not fingerprint all linked payloads. One scan per each of 27 source shards matched all 8937 BF counts against retained exact companion; complete extraction parity remains pending. UI observation includes capture/hook overhead and is not a cold-I/O or presentation-FPS claim."},
+  "execution": {"host": "apple-m5-24gb", "backend": "swift-metal", "gpu_ids": ["Apple M5"], "gpu_model": "Apple M5, 24 GB unified memory"},
+  "outputs": [
+    {"artifact": "local-evidence://ssb-bto-native-20260910/native-c/report.json", "sha256": "a24fd527c70969e8d50d3541db82b99d2f3ddab9474d73f9519ed93215543942", "result": "Native fit/edit/reset/save/restore/FFT journey passed; real window screenshots and movie retained beside report."},
+    {"artifact": "local-evidence://ssb-bto-native-20260910/native-d-relaunch/report.json", "sha256": "387bb357860904847fd5c14273c0b814e082b71fe3c91ffcbf6a834b5de5206e", "result": "Fresh process restored exact saved phase without preparing or fitting; repeated controls, cancel, reset and FFT passed."},
+    {"artifact": "local-evidence://ssb-bto-native-20260910/native-b/report.json", "sha256": "fee9bf87e1c8dca756560d10ec04a529c0914592aef1cd119728a0a32d535d74", "result": "Earlier 8938-pixel run: 27.972s fit; failed higher-order accessibility lookup. Not the matched-mask result."}
+  ],
+  "result": {
+    "native_ui_pass": true,
+    "relaunch_ui_pass": true,
+    "logical_bf": 8937,
+    "active_bf": 2464,
+    "explicit_excluded_row_col": [[78,74]],
+    "preparation_seconds": 0.663654088973999,
+    "fit_seconds": 24.900060057640076,
+    "run_to_observed_result_seconds": 26.44899558403995,
+    "open_to_observed_resident_seconds": 2.1167793329805136,
+    "cache_bytes": 2593783808,
+    "live_metal_allocation_bytes_approx": 5730000000,
+    "lower_order_reconstruction_ms_observed": [22.523,23.654,58.475,56.646,30.758],
+    "higher_order_reconstruction_ms_observed": [142.056,147.409,177.107],
+    "relaunch_higher_order_max_observed_ms": 184.175,
+    "phase_sha256": "abf3c5341e6c79e2cd3525a989476051164f43e5718e682e5bff3b64b4422c29",
+    "attempts": ["native-a: harness waited for the wrong setup state and was interrupted before fitting", "native-b: unmatched 8938 logical pixels; fit completed but higher-order accessibility identifier was inherited by children", "native-c: explicit retained exclusion and button-only disclosure identifier; full workflow passed", "native-d-relaunch: same binary, restored result without preparation or fit; full repeat passed"],
+    "qualification": "Workflow measurement completed, not release-qualified or independently full-data parity-qualified. Native and historical Python TPE traces differ. UI observation includes capture/poll overhead. Restored fit timings/cache bytes are historical, not current allocations. No cold-I/O, 20-second, or 120 FPS claim. Coefficient physical-unit convention, full packed-column parity, concurrency warnings and continuous pointer performance remain open."
+  },
+  "timestamps": {"created": "2026-09-10", "started": "2026-09-10", "finished": "2026-09-10"}
+}

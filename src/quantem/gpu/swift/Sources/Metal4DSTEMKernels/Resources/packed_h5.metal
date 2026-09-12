@@ -761,6 +761,24 @@ kernel void compact_h5_selected_diffraction(
         );
 }
 
+// Exact detector-column gather for bounded resident consumers such as SSB.
+// p = scans in shard, total scans, shard offset, column count, tile count,
+//     scan tile, header words, header encoding, payload layout.
+kernel void compact_h5_detector_columns(
+    device const uint *payload [[buffer(0)]],
+    device const uint *descriptors [[buffer(1)]],
+    device const uint *excluded [[buffer(2)]],
+    device uint *output [[buffer(3)]],
+    constant uint *p [[buffer(4)]],
+    constant uint *pixels [[buffer(5)]],
+    uint2 position [[thread_position_in_grid]]) {
+    if (position.x >= p[0] || position.y >= p[3]) return;
+    uint pixel = pixels[position.y];
+    output[size_t(position.y) * p[1] + p[2] + position.x] = excluded[pixel]
+        ? 0u : compactSampleValue(payload, descriptors, p[4], p[5], p[6],
+            p[7], pixel, position.x, p[8]);
+}
+
 kernel void compact_h5_full_decode_u8(
     device const uint *payload [[buffer(0)]],
     device const uint *descriptors [[buffer(1)]],

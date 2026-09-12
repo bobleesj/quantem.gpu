@@ -1,0 +1,110 @@
+{
+ "schema_version": 1,
+ "experiment_id": "20260911-ssb-fft-cache-resident",
+ "status": "planned",
+ "question": "Can the exact full-aperture phase-variance objective keep the blocked fftA intermediate on-chip (served from GPU cache instead of device memory) by shrinking the per-dispatch working set without multiplying kernel drains, i.e. by fusing column-pass(batch k) and row-pass(batch k-1) into one dispatch, and does that measurably beat the retained blocked-4 schedule (best 221.6 ms p50, same-session repeats 222-257 ms) with bit-identical object, loss, and optimizer trajectory?",
+ "paper": {
+  "authoritative_host": "apple-m5-24gb",
+  "repository": "quantem.gpu",
+  "manifest_path": "experiments/20260911-ssb-fft-cache-resident/manifest.json"
+ },
+ "code": {
+  "repository": "quantem.gpu",
+  "revision": "31717e6e0661199cdd37e8a33215e467a13df2f9",
+  "dirty": true,
+  "entrypoint": "experiments/20260910-ssb-full-bf-scheduling/probe.swift",
+  "diff_sha256": "27123db8b2557844151e0f872865752eafd1a2176224edd52aa8a519e3ab72a7",
+  "diff_scope": "git diff -- src at experiment start (includes the accepted blocked-4 fftA layout from 20260911-ssb-fft-intermediate, uncommitted)",
+  "starting_source_sha256": {
+   "ssb.metal": "3568994acafaa8b9cbfbbda7f8a742f0e3529d2d3117b886f2d6d991e7fa3004",
+   "MetalSSBKernels.swift": "c73b70d59e4f09a67893cd3efdf7e26110824d2684754317124623130ce6937e"
+  },
+  "prototype_archive": "pipelined-prototype.patch (apply with git apply --unidiff-zero; not production-qualified)",
+  "publication_note": "Unfinished persistent scheduler preserved as a patch, excluded from production source pending exactness and performance qualification.",
+  "note": "Starting point is the accepted blocked 4-row fftA schedule (phase batch 8, two encoders per batch, one command buffer per objective). Candidate patches are recorded per arm; rejected code is removed."
+ },
+ "inputs": [
+  {
+   "dataset_id": "reference-512-original-master",
+   "path": "private-fixture://reference-512-original/master.h5",
+   "sha256": "c9c0d968fae70b8911ae925d676b90007886970fa99fe296a47cfe07844bbfe9"
+  }
+ ],
+ "parameters": {
+  "scan_shape": [
+   512,
+   512
+  ],
+  "detector_shape": [
+   192,
+   192
+  ],
+  "bf_selected": 8937,
+  "bf_active": 8937,
+  "precision": "complex64/float32; exact packed original uint32 counts",
+  "crop": null,
+  "bin": 1,
+  "semiangle_mrad": 30,
+  "scan_step_angstrom": 0.264,
+  "energy_keV": 300,
+  "controls": {
+   "c10_nm": [
+    0,
+    55,
+    155.96977
+   ],
+   "c12_nm": 42.96961,
+   "phi12_rad": 0.293384,
+   "rotation_deg": 158.88268568029937
+  },
+  "fit_trials": 200,
+  "tolerances": {
+   "object_relative_l2": 1e-05,
+   "loss_absolute": 1e-06
+  },
+  "scope": "Kernel-level real-data A/B on the reference-512 original file via ssb-scheduling-probe; compare.py against an adjacent same-session baseline. Not synthetic evidence, not a UI frame rate.",
+  "plan": [
+   "baseline: blocked-4 production schedule, this session",
+   "preliminary: production kernels at phase batch 4/2/1 (isolated, one constant), to separate dispatch-drain cost from cache residency",
+   "microbenchmark: write X MB then read X MB in adjacent dispatches for X in 1..64 MB, to size the on-chip write->read retention",
+   "candidate: fused-role dispatch (column pass batch k + row pass batch k-1, double-buffered fftA) at the batch size the microbenchmark supports"
+  ],
+  "design_decision": "Serial-dispatch schemes cannot win: batch-1 dispatches are latency-bound (~26/22 us per BF vs 18.4/8.9 us at batch 8), so any topology with a <=2 MB live intermediate needs the row pass to consume inside the same dispatch. Candidate: persistent work-queue kernel; W worker groups (256 threads) claim items in fixed order [COL(8k+0)x65][COL(8k+1)x65][ROW(k)x64][COL(8k+2..7)x65...]; COL item = 4 columns of one BF (exact pass-1 code, blocked store into ring slot bf % S); ROW item = 2 row blocks x up to 8 BFs (exact pass-2 tile/mirror/IFFT/phase code, 8-BF register sums, phase_sum += sum serialized per row-block pair by a batch counter). Counters: col_done[bf] (65), row_done[bf] (64), flush_done[rbp]; fences via atomic_thread_fence(device). Deadlock-freedom: only one batch's 64 ROW items can wait on later-claimed COL items, so W >= 65 suffices; bounded spins set an error flag and the host falls back to the retained schedule."
+ },
+ "execution": {
+  "host": "apple-m5-24gb",
+  "backend": "swift-metal",
+  "gpu_ids": [
+   "Apple M5"
+  ],
+  "gpu_model": "Apple M5 10-core GPU, 24 GB unified memory"
+ },
+ "outputs": [
+  {
+   "artifact": "local-evidence://ssb-scheduling-20260910/fcr-baseline-1/report.json",
+   "sha256": "52ef1f836e056810e7fba99849a02c55d3a24179609af573d35bc12fc34ff1d0",
+   "result": "Same-session blocked-4 production baseline: loss p50 229.89 ms, p95 232.87 ms, min 224.61 ms; object p50 75.06 ms; 12,574,949,376 B allocated; losses 0.147189587/0.146274567/0.136068195 (identical to prior session)."
+  },
+  {
+   "artifact": "experiments/20260911-ssb-fft-cache-resident/cache_retention_m5.txt",
+   "sha256": "b79042959f4f20e854eb325d22dd39d8dc51f8426e951b9805b5ed9ad5cfa103",
+   "original_sha256": "031dff3f4a4cc71c14b71638213508cf73ce43066f09d20a5e35351310cdb757",
+   "publication_note": "Memory labels spelled out for the publication gate; measured numbers unchanged.",
+   "result": "M5 write->read retention microbenchmark (3 GiB stream; per batch: stream X, write slot X, read slot X): read-only floor 26.9 ms (119.6 GB/s). Split (2 dispatches/batch) vs fused (1 dispatch/batch) p50: X=0.5 MB 39.6/33.6 ms; 1 MB 41.1/45.5; 2 MB 45.2/45.9; 4 MB 52.6/52.5; 6 MB 61.9/70.4; >=8 MB 68-76 ms (all-device memory, equals production batch 8 at 8.4 MB). Round trip is cache-served only when the live intermediate is about <=1-2 MB; 12,288 trivial dispatches cost <13 ms, so batch-1 production slowness is group latency, not fixed dispatch cost."
+  },
+  {
+   "artifact": "experiments/20260911-ssb-fft-cache-resident/residency_probe.swift",
+   "sha256": "9fc97c3712901b28e10ea3debdab4350f57011a08cca1c892434a89ea0c014ad",
+   "result": "Concurrent residency (whole groups kept alive, trivial register use): 120 groups x 256 threads or 480 x 64 = 30,720 threads regardless of threadgroup memory 1-27 KB (about 3,072 threads/core). A first variant letting 255 threads exit reported 640 groups and was discarded as measuring one SIMD group per group."
+  },
+  {
+   "artifact": "experiments/20260911-ssb-fft-cache-resident/msl_feature_probe.swift",
+   "sha256": "4ecec8458adebfdfd2f83abdfad4f2c4a7d666128d42302e62f509b2f914b287",
+   "result": "Runtime MSL probe on macOS 26 / M5: relaxed device atomics, atomic_thread_fence(mem_device, seq_cst, thread_scope_device), volatile device loads and threadgroup_barrier(mem_device) compile; memory_order_acquire/acq_rel do not exist."
+  }
+ ],
+ "timestamps": {
+  "created": "2026-09-11",
+  "started": "2026-09-11"
+ }
+}
