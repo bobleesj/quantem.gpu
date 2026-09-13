@@ -159,3 +159,38 @@ kernel void lz4_rle_save(
     }
     sizes[chunk] = out_pos;
 }
+
+kernel void bshuf_f32_save(
+    const device uint* src [[buffer(0)]],
+    device uchar* out [[buffer(1)]],
+    constant uint& src_frame_offset [[buffer(2)]],
+    constant uint& n_frames [[buffer(3)]],
+    constant uint& frame_bytes [[buffer(4)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    uint total = n_frames * frame_bytes;
+    if (gid >= total) return;
+
+    uint byte_in_frame = gid % frame_bytes;
+    uint frame = gid / frame_bytes;
+    uint block = byte_in_frame / 8192u;
+    uint block_start = block * 8192u;
+    uint block_bytes = frame_bytes - block_start;
+    if (block_bytes > 8192u) block_bytes = 8192u;
+
+    uint byte_in_block = byte_in_frame - block_start;
+    uint bitplane_bytes = block_bytes / 32u;
+    uint bit = byte_in_block / bitplane_bytes;
+    uint byte_in_plane = byte_in_block - bit * bitplane_bytes;
+    uint input_base = block_start / 4u + byte_in_plane * 8u;
+    ulong frame_base = ulong(src_frame_offset + frame) * ulong(frame_bytes / 4u);
+
+    uchar packed = 0;
+    for (uint k = 0; k < 8; k++) {
+        uint val = src[frame_base + input_base + k];
+        if ((uint(val) & (1u << bit)) != 0u) {
+            packed |= uchar(1u << k);
+        }
+    }
+    out[gid] = packed;
+}

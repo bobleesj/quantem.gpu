@@ -64,7 +64,10 @@ class StreamedSeriesCompute(CudaSeriesCompute):
             if not isinstance(source, StreamedCounts):
                 metadata = getattr(item, "metadata", {})
                 valid = np.ones(source.shape[2:], bool)
-                if metadata.get("pixel_mask") is not None:
+                from quantem.gpu.io._hot_pixels import correction_is_applied
+
+                corrected = correction_is_applied(metadata)
+                if metadata.get("pixel_mask") is not None and not corrected:
                     valid &= np.asarray(metadata["pixel_mask"]) == 0
                 excluded = metadata.get("excluded_detector_pixels", ())
                 if len(excluded):

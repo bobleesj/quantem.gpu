@@ -33,7 +33,7 @@ def _runtime():
     for name in (
         "copy", "restore", "encode", "encode_measure", "range", "range_reduce", "measure",
         "widths", "pack", "frame", "unpacked", "detector", "mean", "reduce",
-        "range_read", "divide", "ans_mean",
+        "range_read", "divide", "ans_mean", "measure_reduce",
     ):
         function = library.newFunctionWithName_(f"precision_{name}")
         pipeline, error = device.newComputePipelineStateWithFunction_error_(function, None)
@@ -324,18 +324,26 @@ def encode(values, report):
 
 
 def _accumulate_measurement(errors, counts, exponent, report, values):
-    squared = 0.0
-    for row in errors.get().tolist():
-        squared += math.ldexp(row[0], -2 * exponent)
+    """Reduce partial statistics on the GPU before reading scalar metadata."""
+    result = MetalArray((1, 4), np.float32)
+    totals = MetalArray((1, 4), np.uint64)
+    params = [0] * 16
+    params[14] = errors.shape[0]
+    try:
+        _dispatch("measure_reduce", [errors, counts, result, totals], params, groups=1)
+        high, low, maximum, _ = result.get()[0].tolist()
+        changed, zero, overflow, _ = totals.get()[0].tolist()
+        report["squared_error"] += math.ldexp(high + low, -2 * exponent)
         report["max_abs_error"] = max(
-            report["max_abs_error"], math.ldexp(row[1], -exponent)
+            report["max_abs_error"], math.ldexp(maximum, -exponent)
         )
-    report["squared_error"] += squared
-    for changed, zero, overflow, _ in counts.get().tolist():
         report["changed"] += changed
         report["positive_to_zero"] += zero
         report["overflow"] += overflow
-    report["values"] += values
+        report["values"] += values
+    finally:
+        result.release()
+        totals.release()
 
 
 def measure(original, restored, report):
@@ -352,6 +360,10 @@ def measure(original, restored, report):
         counts.release()
 
 
+# Supply enough independent work while keeping partial statistics bounded.
+_MEASUREMENT_PARTIALS = 65536
+
+
 def encode_measure(values, report):
     """Encode values and measure restored-unit error in one Metal pass."""
     result = MetalArray(
@@ -359,7 +371,7 @@ def encode_measure(values, report):
         np.float16 if report["storage"] == "float16" else np.uint16,
     )
     p, f = _parameters(values, report)
-    p[14] = p[15] = min(p[0], 8192)
+    p[14] = p[15] = min(p[0], _MEASUREMENT_PARTIALS)
     errors = MetalArray((p[14], 4), np.float32)
     counts = MetalArray((p[14], 4), np.uint32)
     try:

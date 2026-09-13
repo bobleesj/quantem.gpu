@@ -74,7 +74,8 @@ public final class MetalPrecision {
     let high = Double(range.y)
     report = [
       "version": 1, "storage": "scaled_uint16", "source_dtype": "float32", "source_shape": shape,
-      "intensity_min": low, "intensity_max": high, "scale": high == low ? 1 : (high - low) / 65535,
+      "intensity_min": low, "intensity_max": high,
+      "scale": high == low ? 1.0 : (high - low) / 65535,
       "offset": low, "complete": false, "scope": "all saved values",
       "range_scope": "complete source",
       "measurement": "GPU comparison against source", "clipped": 0,

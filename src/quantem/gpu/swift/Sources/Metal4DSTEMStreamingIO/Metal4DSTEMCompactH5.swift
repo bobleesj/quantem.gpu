@@ -608,6 +608,8 @@ private final class CompactResidencyLease {
 /// succeeds. The logical order is always
 /// `(scan_row, scan_column, detector_row, detector_column)`.
 public final class MetalCompactH5ResidentSource {
+  // Source mask provenance is separate from the active detector exclusion mask.
+  var sourceHotPixelIndices: [Int] = []
   public let metadata: MetalCompactH5Metadata
   public let loadMetrics: MetalCompactH5LoadMetrics
 
@@ -5165,7 +5167,10 @@ extension MetalCompactH5ResidentSource: MetalResidentCounts {
   public var hotPixelIndices: [Int] {
     guard let excluded, !isReleased else { return [] }
     let mask = excluded.contents().assumingMemoryBound(to: UInt32.self)
-    return (0..<metadata.detectorPixelCount).filter { mask[$0] != 0 }
+    return Array(
+      Set(sourceHotPixelIndices).union(
+        (0..<metadata.detectorPixelCount).filter { mask[$0] != 0 })
+    ).sorted()
   }
   public var hotPixelCorrection: String { hotPixelIndices.isEmpty ? "none" : "exclude" }
 

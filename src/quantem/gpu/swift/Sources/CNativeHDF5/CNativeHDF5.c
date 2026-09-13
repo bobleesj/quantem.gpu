@@ -1493,6 +1493,13 @@ void qh5_free_error(char *error_message) {
 
 int qh5_chunk_writer_open(const char *path, const uint64_t shape[4],
   qh5_chunk_writer **output, char **error_message) {
+  return qh5_chunk_writer_open_typed(path, shape, 2, output, error_message);
+}
+
+int qh5_chunk_writer_open_typed(const char *path, const uint64_t shape[4],
+  uint32_t item_bytes, qh5_chunk_writer **output, char **error_message) {
+  if (item_bytes != 2 && item_bytes != 4)
+    return qh5_fail(error_message, "Choose uint16 or float32 output storage.");
   if (!path || !shape || !output || !shape[0] || !shape[1] || !shape[2] || !shape[3])
     return qh5_fail(error_message, "Provide a path and a positive 4D shape.");
   *output = NULL;
@@ -1507,12 +1514,12 @@ int qh5_chunk_writer_open(const char *path, const uint64_t shape[4],
   hsize_t chunk[3] = {1, shape[2], shape[3]};
   hid_t space = H5Screate_simple(3, dimensions, NULL);
   hid_t properties = H5Pcreate(H5P_DATASET_CREATE);
-  unsigned int codec[5] = {0, 4, 2, 0, 2};
+  unsigned int codec[5] = {0, 4, item_bytes, 0, 2};
   H5Pset_chunk(properties, 3, chunk);
   H5Pset_filter(properties, 32008, H5Z_FLAG_OPTIONAL, 5, codec);
   H5Pset_fill_time(properties, H5D_FILL_TIME_NEVER);
   if (writer->file >= 0) writer->dataset = H5Dcreate2(writer->file, "/entry/data/data",
-    H5T_STD_U16LE, space, links, properties, H5P_DEFAULT);
+    item_bytes == 4 ? H5T_IEEE_F32LE : H5T_STD_U16LE, space, links, properties, H5P_DEFAULT);
   H5Pclose(properties); H5Pclose(links); H5Sclose(space);
   int status = 0;
   if (writer->dataset < 0) status = qh5_fail(error_message, "Cannot create a new compressed HDF5 file at %s.", path);

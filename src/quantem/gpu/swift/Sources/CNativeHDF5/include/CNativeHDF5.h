@@ -63,6 +63,8 @@ typedef struct qh5_lossless_pack_v1_writer qh5_lossless_pack_v1_writer;
 
 /* Standard uint16 HDF5 storage for chunks already compressed on an accelerator. */
 typedef struct qh5_chunk_writer qh5_chunk_writer;
+int qh5_chunk_writer_open_typed(const char *path, const uint64_t shape[4],
+  uint32_t item_bytes, qh5_chunk_writer **output, char **error_message);
 int qh5_chunk_writer_open(const char *path, const uint64_t shape[4],
   qh5_chunk_writer **writer, char **error_message);
 int qh5_chunk_writer_append(qh5_chunk_writer *writer, uint64_t first_frame,

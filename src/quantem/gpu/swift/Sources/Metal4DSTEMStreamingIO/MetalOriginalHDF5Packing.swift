@@ -85,6 +85,7 @@ extension MetalCompactH5Loader {
       packed, device: device, started: started,
       allocatedBefore: allocatedBefore, maximumAdditionalBytes: maximumAdditionalBytes,
       shouldCancel: shouldCancel)
+    resident.sourceHotPixelIndices = source.dataset.badPixelIndices
     do {
       // Region preparation extends readiness past the final original read.
       // Recheck the complete input binding before handing ownership over.

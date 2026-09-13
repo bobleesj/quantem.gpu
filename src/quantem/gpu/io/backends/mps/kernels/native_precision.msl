@@ -6,7 +6,7 @@ kernel void native_packed_read(device const uint* words [[buffer(0)]],
     device float* output [[buffer(3)]], constant ulong* p [[buffer(6)]],
     constant float* f [[buffer(7)]], uint i [[thread_position_in_grid]]) {
     if (i < p[0]) output[p[9] * p[1] + i] = restored(code_at(words, offsets, widths,
-      p[8] + i / p[1], i % p[1], p[1]), p, f);
+      p[8] + i / p[1], i % p[1], p[1], false), p, f);
 }
 
 kernel void native_range_reduce(device const float4* partial [[buffer(0)]],

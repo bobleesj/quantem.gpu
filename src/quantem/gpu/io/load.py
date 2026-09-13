@@ -170,15 +170,15 @@ def _clip_to_uint8(src, dst) -> bool:
     return True
 
 
-def _to_torch_data(data):
+def _to_torch_data(data, *, device=None):
     """Convert one backend-native load payload to a Torch tensor."""
     import torch
 
     if isinstance(data, torch.Tensor):
-        return data
+        return data.to(device=device) if device else data
     chunks = getattr(data, "chunks", None)
     if chunks is not None:
-        target = getattr(data, "device", None) or "cpu"
+        target = device or getattr(data, "device", None) or "cpu"
         frames = torch.cat(
             [torch.as_tensor(np.asarray(chunk), device=target) for chunk in chunks],
             dim=0,
@@ -188,8 +188,9 @@ def _to_torch_data(data):
             frames = frames.reshape(*scan_shape, *frames.shape[1:])
         return frames
     if hasattr(data, "__dlpack__"):
-        return torch.from_dlpack(data)
-    return torch.as_tensor(np.asarray(data))
+        tensor = torch.from_dlpack(data)
+        return tensor.to(device=device) if device else tensor
+    return torch.as_tensor(np.asarray(data), device=device)
 
 
 def _convert_load_output(result, output: str):
@@ -199,11 +200,9 @@ def _convert_load_output(result, output: str):
     if output != "torch":
         raise ValueError("output must be 'native' or 'torch'")
     if isinstance(result, list):
-        return [
-            LoadResult(_to_torch_data(item.data), item.metadata)
-            for item in result
-        ]
-    return LoadResult(_to_torch_data(result.data), result.metadata)
+        return [_convert_load_output(item, output) for item in result]
+    device = "mps" if result.metadata.get("backend") == "mps" else None
+    return LoadResult(_to_torch_data(result.data, device=device), result.metadata)
 
 
 def _slice_detector_region(data, region: tuple[int, int, int, int], *, compact: bool):

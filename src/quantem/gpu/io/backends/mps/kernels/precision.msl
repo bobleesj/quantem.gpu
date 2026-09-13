@@ -260,3 +260,49 @@ kernel void precision_ans_mean(
     dst[pixel] = p[8] ? dst[pixel] + sum : sum;
 }
 #endif
+
+// Retain the low-order contribution when aggregating nonnegative partial sums.
+inline float2 precision_sum_pair(float2 left, float2 right) {
+    if (isinf(left.x) || isinf(right.x)) return float2(INFINITY, 0);
+    float total = left.x + right.x;
+    float recovered = total - left.x;
+    float error = (left.x - (total - recovered)) + (right.x - recovered);
+    error += left.y + right.y;
+    float high = total + error;
+    return float2(high, error - (high - total));
+}
+
+kernel void precision_measure_reduce(
+    device const float4 *errors [[buffer(0)]],
+    device const uint4 *counts [[buffer(1)]],
+    device float4 *result [[buffer(2)]],
+    device ulong4 *totals [[buffer(3)]],
+    COMMON, uint lane [[thread_index_in_threadgroup]]) {
+    threadgroup float2 sums[256];
+    threadgroup float maxima[256];
+    threadgroup ulong4 counters[256];
+    float2 sum = float2(0);
+    float maximum = 0;
+    ulong4 count = ulong4(0);
+    for (ulong i = lane; i < p[14]; i += 256) {
+        sum = precision_sum_pair(sum, float2(errors[i].x, 0));
+        maximum = max(maximum, errors[i].y);
+        count += ulong4(counts[i]);
+    }
+    sums[lane] = sum;
+    maxima[lane] = maximum;
+    counters[lane] = count;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint step = 128; step; step >>= 1) {
+        if (lane < step) {
+            sums[lane] = precision_sum_pair(sums[lane], sums[lane + step]);
+            maxima[lane] = max(maxima[lane], maxima[lane + step]);
+            counters[lane] += counters[lane + step];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (!lane) {
+        result[0] = float4(sums[0], maxima[0], 0);
+        totals[0] = counters[0];
+    }
+}

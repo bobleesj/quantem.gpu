@@ -7,6 +7,8 @@ import Metal
 public final class MetalHDF5Writer {
   public let path: URL
   public let shape: [Int]
+  public let dtype: String
+  private let itemBytes: Int
   private let temporary: URL
   private let runtime: MetalPrecision
   private var writer: OpaquePointer?
@@ -65,7 +67,14 @@ public final class MetalHDF5Writer {
   public private(set) var writeSeconds = 0.0
   public private(set) var peakAllocatedBytes = 0
 
-  public init(path: URL, shape: [Int], runtime: MetalPrecision) throws {
+  public init(path: URL, shape: [Int], runtime: MetalPrecision, dtype: String = "scaled_uint16")
+    throws
+  {
+    guard ["scaled_uint16", "float32"].contains(dtype) else {
+      throw MetalPrecision.invalid("Choose scaled_uint16 or float32 storage.")
+    }
+    self.dtype = dtype
+    self.itemBytes = dtype == "float32" ? 4 : 2
     guard shape.count == 4, shape.allSatisfy({ $0 > 0 }), shape[2] * shape[3] % 4096 == 0 else {
       throw MetalPrecision.invalid(
         "Native HDF5 decoding currently requires a detector pixel count divisible by 4096; use a supported acquisition shape."
@@ -81,11 +90,12 @@ public final class MetalHDF5Writer {
       ".\(path.lastPathComponent).\(UUID().uuidString).tmp")
     var error: UnsafeMutablePointer<CChar>?
     let status = shape.map(UInt64.init).withUnsafeBufferPointer { dimensions in
-      qh5_chunk_writer_open(temporary.path, dimensions.baseAddress, &writer, &error)
+      qh5_chunk_writer_open_typed(
+        temporary.path, dimensions.baseAddress, UInt32(itemBytes), &writer, &error)
     }
     try Self.check(status, error)
   }
-  /// Compress native uint16 codes on Metal and queue one bounded byte write.
+  /// Compress native values of the selected dtype on Metal and queue a bounded write.
   /// Disk errors are reported by the next append or finish. Finish drains the
   /// pending write before publishing the destination; no host count array is used.
   public func append(_ values: MTLBuffer, frames: Int) throws {
@@ -94,14 +104,14 @@ public final class MetalHDF5Writer {
     }
     try finishPendingWrite()
     let started = Date.timeIntervalSinceReferenceDate
-    let frameBytes = shape[2] * shape[3] * 2
+    let frameBytes = shape[2] * shape[3] * itemBytes
     guard frames <= Int(UInt32.max) / frameBytes else {
       throw MetalPrecision.invalid(
         "This compression region exceeds 32-bit indexing; append fewer frames at a time.")
     }
     let blocks = (frameBytes + 8191) / 8192
     let maximum = 9216
-    try runtime.validate(values, count: frames * shape[2] * shape[3], bytes: 2)
+    try runtime.validate(values, count: frames * shape[2] * shape[3], bytes: itemBytes)
     let stride = 12 + blocks * (4 + maximum)
     if compressionWorkspace == nil || compressionWorkspace!.frames < frames {
       compressionWorkspace = (
@@ -113,7 +123,8 @@ public final class MetalHDF5Writer {
     let (_, shuffled, compressed, sizes, frameSizes, packed) = compressionWorkspace!
     peakAllocatedBytes = max(peakAllocatedBytes, runtime.device.currentAllocatedSize)
     let command = try runtime.command()
-    let shuffle = try runtime.encoder(command, "bshuf_u16_save", [values, shuffled])
+    let shuffle = try runtime.encoder(
+      command, itemBytes == 4 ? "bshuf_f32_save" : "bshuf_u16_save", [values, shuffled])
     for (index, item) in [0, frames, frameBytes].enumerated() {
       var word = UInt32(item)
       shuffle.setBytes(&word, length: 4, index: index + 2)
