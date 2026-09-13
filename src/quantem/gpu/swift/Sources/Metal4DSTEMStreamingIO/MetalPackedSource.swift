@@ -100,6 +100,8 @@ public final class MetalPackedSource {
         throw MetalPrecision.invalid("Saved regional shape and storage disagree.")
       }
       struct Coefficients: Decodable {
+        // Preserve the persisted precision-report JSON keys.
+        // swift-format-ignore: AlwaysUseLowerCamelCase
         let scale, offset, intensity_min, intensity_max, rmse, max_abs_error: Double
       }
       struct Envelope: Decodable { let regions: [Coefficients] }
