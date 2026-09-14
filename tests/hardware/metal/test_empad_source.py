@@ -91,6 +91,46 @@ class EMPADSourceTests(unittest.TestCase):
             if mutate is not None:
                 self.assertIn("changed during loading", result.stderr)
 
+    def test_supplier_readme_recognition_preserves_values_and_tracks_document_edits(self):
+        acquisition = self.root / "acquisition"
+        acquisition.mkdir()
+        self.raw = self.raw.rename(acquisition / self.raw.name)
+        readme = self.root / "readme.txt"
+        readme.write_text(
+            "acquisition\\\n\tExported by acquisition software; already background-subtracted.\n"
+        )
+        self.read(self.raw)
+        metadata = json.loads((self.root / "selected.bin.metadata.json").read_text())
+        self.assertEqual(metadata["backgroundSubtractionEvidence"], {
+            "document": "readme.txt", "statement": "already background-subtracted",
+        })
+        # Removing the declaration must not leave a remembered scientific claim.
+        readme.write_text("acquisition\\\n\tProcessing state unknown.\n")
+        self.read(self.raw)
+        metadata = json.loads((self.root / "selected.bin.metadata.json").read_text())
+        self.assertIsNone(metadata["backgroundSubtractionEvidence"])
+
+    def test_changed_supplier_declaration_invalidates_in_progress_source(self):
+        (self.root / "readme.txt").write_text(
+            self.raw.name + "\n\tAlready background subtracted.\n")
+        self.read(self.raw, mutate="readme", succeeds=False)
+
+    def test_readme_never_guesses_from_names_unrelated_or_uncertain_text(self):
+        header = self.raw.name + "\n"
+        for text in (
+            "background_subtracted\n\tAlready background subtracted.\n",
+            header + "\tNot already background subtracted.\n",
+            header + "\tUnsure whether already background subtracted.\n",
+            header + "\tAlready background subtracted.\n\tNot background corrected.\n",
+            header + "\tOriginal data.\nmissing_file.raw\n\tAlready background subtracted.\n",
+            "../\n\tAlready background subtracted.\n",
+        ):
+            with self.subTest(text=text):
+                (self.root / "readme.txt").write_text(text)
+                self.read(self.raw)
+                metadata = json.loads((self.root / "selected.bin.metadata.json").read_text())
+                self.assertIsNone(metadata["backgroundSubtractionEvidence"])
+
     @patch.dict(os.environ, {"QGPU_EMPAD_WINDOW": "64"})
     def test_metal_packing_and_apertures_across_staging_windows(self):
         self.frames *= 11
@@ -298,6 +338,34 @@ class EMPADSourceTests(unittest.TestCase):
         self.read(self.raw)
         xml.write_text(xml.read_text().replace('float32', 'uint32'))
         self.read(xml, succeeds=False)
+
+    def test_generation2_acquisition_words_are_not_float_intensities(self):
+        # A real acquisition producer reports float32 even for packed analog,
+        # counter and gain words. Finite IEEE-754 values do not prove calibration.
+        words = [0x40001F40 | ((pixel % 17) << 14)
+                 | (0x80000000 if pixel % 7 == 0 else 0)
+                 for pixel in range(16384)]
+        self.raw.write_bytes(struct.pack('<16384I', *words) * 6)
+        xml = self.root / 'acquisition.xml'
+        xml.write_text('<root><scan><type>scan</type><shape>(2, 3)</shape></scan>'
+                       '<sensor><type>EMPAD2</type><shape>(128,128)</shape></sensor>'
+                       '<pdcu><SerialNumber>test-sensor</SerialNumber></pdcu>'
+                       '<grabber><avg_scan_even_offset>8000</avg_scan_even_offset>'
+                       '<avg_scan_odd_offset>8000</avg_scan_odd_offset></grabber>'
+                       '<rawfile><datatype>float32</datatype><filename>scan_x3_y2.raw</filename>'
+                       '</rawfile></root>')
+        (self.root / 'readme.txt').write_text(
+            'acquisition.xml\n\tAlready background subtracted.\n')
+        for source in (xml, self.raw):
+            result = subprocess.run(
+                [os.environ['EMPAD_SOURCE_PARITY_EXE'], str(source), str(self.root / 'out'), '0'],
+                capture_output=True, text=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('matching sensor gain calibration', result.stderr)
+        # Processed floats with retained microscope metadata remain supported.
+        self.raw.write_bytes(b''.join(self.frames))
+        self.read(xml, metal=True)
 
     def test_emd_contiguous_float32_preserves_bits(self):
         import h5py

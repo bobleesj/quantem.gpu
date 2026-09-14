@@ -81,6 +81,14 @@ guess a square scan. Footer words are not scientific detector pixels.
 
 ### EMPAD-G2 float32 XML and RAW
 
+The XML dtype alone is insufficient evidence of a processed export. Some raw
+acquisition software writes `float32` for encoded analog/counter/gain words.
+The native reader conservatively rejects raw-offset metadata accompanied by a
+persistent bit-30 marker in three sampled frames. This guard is not an exhaustive
+encoding detector and never selects a gain calibration automatically. Encoded
+G2 needs matching sensor calibration and even/odd dark handling; mean-dark
+subtraction of IEEE-754 reinterpretations is scientifically invalid.
+
 ```text
 acquisition.xml
 └── <root>
@@ -156,7 +164,7 @@ detectorColumn)`; preserve recorded EMD axis order without implicit transpose.
 | ARINA HDF5 | Validated master and linked detector stacks; native packed loading supports uint8, uint16 and uint32 under its encoding constraints | Master/catalog fields |
 | ARINA HDF5 + NXem | Same acquisition with a readable, scan-shape-matched `_em_metadata.h5` companion | Companion microscope metadata |
 | EMPAD-G1 XML/RAW | Recorded scan shape; each frame has 128×128 float32 values and a 256-word footer | G1 XML |
-| EMPAD-G2 XML/RAW | XML declares `sensor/type=EMPAD2`, 128×128 sensor, raster shape and float32 words; no G1 footer | G2 XML |
+| EMPAD-G2 processed XML/RAW | Processed float32 export with `sensor/type=EMPAD2`, 128×128 sensor and raster shape; no G1 footer; encoded acquisition words are unsupported | G2 XML |
 | EMD 1 HDF5 datacube | `authoring_program=emdfile`, major version 1, `/datacube_root/datacube/data`, contiguous little-endian float32, shape `(scan0, scan1, 128, 128)` | EMD calibration and supported SoM2k fields |
 | Velox EMD scalar image | Separate catalog image/calibration path | Supported Velox metadata; not proof of a 4D acquisition |
 
@@ -197,7 +205,7 @@ A unified acquisition-software/version property is not currently exposed.
 
 ## ARINA detector metadata and the NCEM/NXem variant
 
-The NCEM acquisitions tested here use **ARINA HDF5 + NXem microscope
+The supported NCEM/NXem variant uses **ARINA HDF5 + NXem microscope
 metadata**. Call this the NCEM/NXem variant in documentation; the runtime label
 remains `ARINA HDF5 + NXem metadata`. Detection is based on the companion's
 contents and scan dimensions, not the institution or filename alone. A generic
@@ -309,6 +317,26 @@ signal units must not be labeled electrons; background-corrected EMPAD float
 values are not automatically calibrated electron counts or dose.
 
 ## Native client integration
+
+### Documented background subtraction
+
+`NativeEMPADSource.backgroundSubtractionEvidence` reports an explicit supplier
+README declaration without changing any measurement. Version 1 recognizes
+unindented relative file/directory headings followed by an indented sentence stating
+`already background subtracted` (hyphenated spelling also accepted). Headings
+must resolve to the opened RAW/XML/HDF5 file or a containing directory under
+that README. Negated, uncertain or conflicting statements remain unknown.
+This bounded reader is not a general natural-language interpreter and never
+infers correction from a folder name, file extension, microscope or detector.
+
+Clients should display `Yes · supplier README`, retain the evidence filename
+and sentence, and prevent a second mean-dark subtraction for these sources.
+This declaration establishes reported background subtraction only: it is not
+proof of gain calibration or electron units. Unknown sources keep the existing
+explicit correction workflow. Encoded EMPAD2 words are still rejected even if
+a README calls them corrected; source validation cannot be bypassed by prose.
+README edits invalidate an in-progress source snapshot. Small README metadata
+reads take place during inspection, not during interactive detector reductions.
 
 ```swift
 import Foundation

@@ -15,7 +15,11 @@ let source = try NativeEMPADSource.open(URL(fileURLWithPath: arguments[0]), scan
 let metadata: [String: Any] = [
   "formatIdentifier": source.formatIdentifier,
   "recordBytes": source.recordBytes,
+  "snapshotFingerprint": try source.snapshotFingerprint(),
   "microscope": source.microscopeMetadata,
+  "backgroundSubtractionEvidence": source.backgroundSubtractionEvidence.map {
+    ["document": $0.documentURL.lastPathComponent, "statement": $0.statement]
+  } as Any? ?? NSNull(),
   "scanRowAngstrom": source.scanCalibration?.rowSamplingAngstrom as Any? ?? NSNull(),
   "scanColumnAngstrom": source.scanCalibration?.columnSamplingAngstrom as Any? ?? NSNull(),
   "diffractionInverseNanometers": source.diffractionSamplingInverseNanometers as Any? ?? NSNull(),
@@ -24,7 +28,8 @@ let metadata: [String: Any] = [
 try JSONSerialization.data(withJSONObject: metadata).write(
   to: URL(fileURLWithPath: arguments[1] + ".metadata.json"))
 if let mutation = ProcessInfo.processInfo.environment["EMPAD_TEST_MUTATE"] {
-  let target = mutation == "xml" ? source.metadataURL! : source.rawURL
+  let target = mutation == "readme" ? source.backgroundSubtractionEvidence!.documentURL
+    : mutation == "xml" ? source.metadataURL! : source.rawURL
   let attributes = try FileManager.default.attributesOfItem(atPath: target.path)
   let handle = try FileHandle(forWritingTo: target)
   try handle.write(contentsOf: Data([0]))

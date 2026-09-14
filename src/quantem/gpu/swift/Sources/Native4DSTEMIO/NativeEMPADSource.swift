@@ -28,6 +28,8 @@ public struct NativeEMPADSource: Sendable {
   public let formatIdentifier: String
   public let formatName: String
   public let microscopeMetadata: [String: String]
+  /// Explicit supplier documentation; does not itself apply any correction.
+  public let backgroundSubtractionEvidence: NativeBackgroundSubtractionEvidence?
   public let recordBytes: Int
   private var dataOffset: UInt64 = 0
   private let rawIdentity: NativeFileIdentity
@@ -145,6 +147,12 @@ public struct NativeEMPADSource: Sendable {
     guard rawIdentity.bytes == UInt64(bytes) else {
       throw EMPADError("EMPAD RAW changed while being opened. Reopen the acquisition.")
     }
+    if metadata?.hasRawGeneration2Offsets == true {
+      try rejectEncodedGeneration2Words(raw, frames: frames)
+      guard rawIdentity == (try nativeFileIdentity(for: raw)) else {
+        throw EMPADError("EMPAD RAW changed during format validation. Reopen the acquisition.")
+      }
+    }
     return NativeEMPADSource(
       rawURL: raw, metadataURL: metadataURL,
       scanRows: shape.row, scanColumns: shape.col,
@@ -155,8 +163,34 @@ public struct NativeEMPADSource: Sendable {
         ? "empad-g2-float32-xml/v1" : "empad-g1-float32-xml/v1",
       formatName: metadata?.isGeneration2 == true
         ? "EMPAD-G2 · XML/RAW float32" : "EMPAD-G1 · XML/RAW float32",
-      microscopeMetadata: metadata?.microscopeMetadata ?? [:], recordBytes: recordBytes,
+      microscopeMetadata: metadata?.microscopeMetadata ?? [:],
+      backgroundSubtractionEvidence: .discover(raw: raw, metadata: metadataURL), recordBytes: recordBytes,
       rawIdentity: rawIdentity, metadataIdentity: metadataIdentity)
+  }
+
+  /// Some acquisition software labels encoded detector words as float32.
+  /// Refuse the ambiguous raw-offset/bit-30 signature; never reinterpret it
+  /// as calibrated intensity or infer a sensor calibration from the filename.
+  private static func rejectEncodedGeneration2Words(_ raw: URL, frames: Int) throws {
+    let handle = try FileHandle(forReadingFrom: raw)
+    defer { try? handle.close() }
+    for frame in Set([0, frames / 2, frames - 1]) {
+      try handle.seek(toOffset: UInt64(frame) * 65536)
+      guard let data = try handle.read(upToCount: 65536), data.count == 65536 else {
+        throw EMPADError("EMPAD RAW ended during format validation. Restore the complete acquisition.")
+      }
+      let markerInEveryWord = data.withUnsafeBytes { bytes in
+        stride(from: 0, to: bytes.count, by: 4).allSatisfy {
+          UInt32(littleEndian: bytes.loadUnaligned(fromByteOffset: $0, as: UInt32.self))
+            & 0x40000000 != 0
+        }
+      }
+      if !markerInEveryWord { return }
+    }
+    throw EMPADError(
+      "EMPAD2 RAW contains ambiguous encoded detector words despite its float32 XML label. "
+        + "Use a calibrated float32 export, or decode with the matching sensor gain calibration "
+        + "and dark acquisition first. Mean-dark subtraction alone is not valid for these words.")
   }
 
   /// Recognize the supported EMD schema from metadata rather than filenames.
@@ -207,7 +241,8 @@ public struct NativeEMPADSource: Sendable {
       rawURL: url, metadataURL: url, scanRows: rows, scanColumns: columns,
       scanCalibration: calibration, diffractionSamplingInverseNanometers: nil, acquisitionDate: nil,
       formatIdentifier: "emd1-contiguous-float32/v1", formatName: "EMD 1 · HDF5 float32",
-      microscopeMetadata: metadata, recordBytes: 65536, dataOffset: info.offset,
+      microscopeMetadata: metadata, backgroundSubtractionEvidence: .discover(raw: url, metadata: url),
+      recordBytes: 65536, dataOffset: info.offset,
       rawIdentity: identity, metadataIdentity: identity)
   }
 
@@ -215,6 +250,7 @@ public struct NativeEMPADSource: Sendable {
   /// Call before publishing a resident assembled from multiple read windows.
   /// This is a filesystem snapshot check, not a content checksum or file lock.
   public func validateUnchanged() throws {
+    try backgroundSubtractionEvidence?.validateUnchanged()
     guard rawIdentity == (try nativeFileIdentity(for: rawURL)) else {
       throw EMPADError(
         "EMPAD RAW changed during loading. Reopen the acquisition; no partial resident is valid.")
@@ -363,7 +399,7 @@ public enum NativeEMPADSourceError: LocalizedError {
   }
 }
 
-private struct EMPADError: LocalizedError {
+struct EMPADError: LocalizedError {
   let errorDescription: String?
   init(_ message: String) { errorDescription = message }
 }
@@ -372,6 +408,11 @@ private final class EMPADXML: NSObject, XMLParserDelegate {
   var filename = ""
   var acquisitionDate: String?
   var isGeneration2: Bool { fields["sensor/type"] == "EMPAD2" }
+  var hasRawGeneration2Offsets: Bool {
+    isGeneration2 && fields["pdcu/SerialNumber"] != nil
+      && fields["grabber/avg_scan_even_offset"] != nil
+      && fields["grabber/avg_scan_odd_offset"] != nil
+  }
   var microscopeMetadata: [String: String] {
     var result: [String: String] = [:]
     let root = "electron_microscope/"
@@ -551,7 +592,7 @@ private final class EMPADXML: NSObject, XMLParserDelegate {
     if stack.count >= 3, stack[1] == "iom_measurements" {
       setField(stack.dropFirst().joined(separator: "/"), value: value, parser: parser)
     }
-    if stack.count == 3, ["scan", "sensor", "rawfile"].contains(stack[1]) {
+    if stack.count == 3, ["scan", "sensor", "rawfile", "pdcu", "grabber"].contains(stack[1]) {
       setField(stack[1] + "/" + name, value: value, parser: parser)
       if stack[1] == "rawfile", name == "filename" { filename = value }
     }
@@ -567,6 +608,7 @@ private final class EMPADXML: NSObject, XMLParserDelegate {
         "exposure_time", "scan/type", "scan/shape", "scan/exposure_time", "sensor/type",
         "sensor/shape",
         "rawfile/filename", "rawfile/datatype",
+        "pdcu/SerialNumber", "grabber/avg_scan_even_offset", "grabber/avg_scan_odd_offset",
         "iom_measurements/high_voltage", "iom_measurements/nominal_camera_length",
         "iom_measurements/ColumnSourceHighVoltage",
         "iom_measurements/ColumnOpticsGetCameraLengthNominalCameraLength",
