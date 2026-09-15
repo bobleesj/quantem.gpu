@@ -3548,6 +3548,12 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
 
 /// Bounded concurrent loader for an exact paired-runtime tilt series.
 public enum MetalPairedRuntimeTANSSeriesLoader {
+  // MTLDevice resource creation is thread safe. Older SDKs omit its Sendable
+  // conformance; each task still owns its source and newly allocated buffers.
+  private struct SharedDevice: @unchecked Sendable {
+    let value: MTLDevice
+  }
+
   public static func load(
     sources: [Native4DSTEMIndexedSource], device: MTLDevice,
     maximumConcurrentLoads: Int = 3,
@@ -3560,6 +3566,7 @@ public enum MetalPairedRuntimeTANSSeriesLoader {
     }
     var next = 0
     var completed = 0
+    let sharedDevice = SharedDevice(value: device)
     var ordered = [MetalPairedRuntimeTANSResidentSource?](
       repeating: nil, count: sources.count)
     return try await withThrowingTaskGroup(
@@ -3569,7 +3576,7 @@ public enum MetalPairedRuntimeTANSSeriesLoader {
         let source = sources[index]
         group.addTask {
           let resident = try MetalPairedRuntimeTANSResidentSource.load(
-            source: source, device: device,
+            source: source, device: sharedDevice.value,
             maximumAdditionalBytes: maximumAdditionalBytesPerLoad)
           return (index, resident)
         }
