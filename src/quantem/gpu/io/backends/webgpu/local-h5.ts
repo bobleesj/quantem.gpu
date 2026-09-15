@@ -329,6 +329,8 @@ export async function collectShow4DSTEMLocalH5Files(
   return files;
 }
 
+export const show4DSTEMLocalH5Files = collectShow4DSTEMLocalH5Files;
+
 function localFileFor(path: string): File | null {
   const clean = normalisePath(path);
   return localFilesByPath.get(clean) || localFilesByName.get(basename(clean)) || null;

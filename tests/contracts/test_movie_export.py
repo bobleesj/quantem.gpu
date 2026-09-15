@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 from PIL import Image
 
 import quantem.gpu as qg
@@ -164,6 +165,38 @@ def test_cuda_backend_rejects_rendered_frames(tmp_path: Path) -> None:
         assert "requires array movie data" in str(exc)
     else:
         raise AssertionError("CUDA backend should reject pre-rendered frames")
+
+
+@pytest.mark.skipif(
+    not __import__("quantem.gpu.movie", fromlist=["cuda_mp4"]).cuda_mp4.is_available(),
+    reason="CUDA/NVENC movie export is unavailable",
+)
+def test_cuda_movie_preserves_frame_count_and_order(tmp_path: Path) -> None:
+    """NVENC output must retain every scientific frame in acquisition order."""
+    import cv2
+
+    source = np.stack(
+        [np.full((256, 256), value, dtype=np.float32) for value in range(8)]
+    )
+    path = movie.save_mp4(
+        source,
+        tmp_path / "ordered.mp4",
+        backend="cuda",
+        shared_contrast=False,
+        percentile=(0, 100),
+        label_height=0,
+    )
+    capture = cv2.VideoCapture(str(path))
+    decoded = []
+    while True:
+        ok, frame = capture.read()
+        if not ok:
+            break
+        decoded.append(float(frame[..., 0].mean()))
+    capture.release()
+
+    assert len(decoded) == len(source)
+    assert np.all(np.diff(decoded) > 0), decoded
 
 
 def test_save_mp4_auto_uses_mps_when_cuda_unavailable(tmp_path: Path, monkeypatch) -> None:

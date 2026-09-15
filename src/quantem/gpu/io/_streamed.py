@@ -10,6 +10,8 @@ import numpy as np
 from .inspect import inspect
 from .models import FourDSTEMData
 
+_CUDA_MAX_STAGING_SCANS = 16384
+
 
 def load_h5_ans(
     path,
@@ -45,6 +47,7 @@ def load_h5_ans(
 
     started = time.perf_counter()
     info = inspect(path, scan_shape=scan_shape)
+    inspected = time.perf_counter()
     if not info.ready or info.scan_shape is None or info.detector_shape is None:
         raise ValueError(f"{info.reason}: {info.action}")
     shape = (*info.scan_shape, *info.detector_shape)
@@ -70,11 +73,13 @@ def load_h5_ans(
         cp.get_default_memory_pool().free_all_blocks()
         source = StreamedCounts(shape, dtype, valid)
         free, _ = cp.cuda.runtime.memGetInfo()
-        # Bound raw + encoding scratch + H5 decompression + output allocation.
+        # Amortize HDF5/read/decode dispatch across larger batches, while
+        # reserving at least three quarters of free memory for resident output
+        # and other documents. The estimate includes decoded and codec scratch.
         per_scan = math.prod(info.detector_shape) * 8
         chunk_scans = min(
-            2048,
-            max(1, int((free - 128 * 1024**2) // (per_scan * 2))),
+            _CUDA_MAX_STAGING_SCANS,
+            max(1, int((free - 128 * 1024**2) // (per_scan * 8))),
         )
         if chunk_scans < min(512, math.prod(info.scan_shape)):
             raise MemoryError(
@@ -99,7 +104,10 @@ def load_h5_ans(
                 names = ["data"]
             session = _SparseFrameReadSession(str(path), names, apply_mask=False)
             stack.callback(session.close)
+        setup_finished = time.perf_counter()
         read_seconds = 0.0
+        transfer_decode_seconds = 0.0
+        preparation_timings = {}
         for first in range(0, math.prod(info.scan_shape), chunk_scans):
             stop = min(first + chunk_scans, math.prod(info.scan_shape))
             before = time.perf_counter()
@@ -124,13 +132,17 @@ def load_h5_ans(
                     apply_mask=False,
                     read_session=session,
                 )
+                for key, value in prepared["prepare_timing_s"].items():
+                    preparation_timings[key] = preparation_timings.get(key, 0.0) + value
+                decode_started = time.perf_counter()
                 raw = _decompress_prepared(
                     prepared,
                     auto_narrow=False,
                     output_dtype=dtype,
-                    batch_bytes_target=32 * 1024**2,
+                    batch_bytes_target=128 * 1024**2,
                     prune_device_pool=False,
                 )
+                transfer_decode_seconds += time.perf_counter() - decode_started
                 raw = raw.reshape(stop - first, *info.detector_shape)
             cp.cuda.get_current_stream().synchronize()
             read_seconds += time.perf_counter() - before
@@ -177,6 +189,10 @@ def load_h5_ans(
                 read_upload_seconds=read_seconds,
                 resident_ready_seconds=time.perf_counter() - started,
                 max_chunk_scans=chunk_scans,
+                inspect_seconds=inspected - started,
+                setup_seconds=setup_finished - inspected,
+                preparation_seconds=preparation_timings,
+                transfer_decode_seconds=transfer_decode_seconds,
             ),
         )
         if verbose:

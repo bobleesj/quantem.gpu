@@ -823,6 +823,9 @@ class CudaSSBBackend:
                 semiangle_cutoff=self.semiangle_cutoff,
                 angular_sampling=self.angular_sampling,
             )
+            # Interactive preview/export may be the first operation, before
+            # optimize or result has prepared rotation-dependent geometry.
+            self._accelerator.cache_rotation(self._rotation_angle_rad)
         return self._accelerator
 
     @property

@@ -52,6 +52,8 @@ def test_saved_form_is_detected_and_reopens_without_decoding(tmp_path):
     for before, after in zip(loaded.data.chunks[0].arrays, reopened.data.chunks[0].arrays):
         assert bool(cp.array_equal(before, after).get())
     assert bool(cp.array_equal(reopened.data.decode_chunk(0), cp.asarray(counts.reshape(1024, 24, 24))).get())
+    np.testing.assert_array_equal(reopened.data.detector_total_device().get(),
+                                  counts.sum(axis=(0, 1), dtype=np.uint64))
     with pytest.raises(ValueError, match="representation='paired'"):
         io.load(saved, backend="cuda", representation="dense")
 
@@ -65,3 +67,56 @@ def test_lean_loader_admits_a_series_with_few_slots(tmp_path):
         names = [str(path) for path, source, timings in loader.load_many(masters, scan_shape=(32, 32)) if source.ready_scans == 1024 and timings["chunks"] == 2]
     assert names == [str(m) for m in masters]
 
+
+@pytest.mark.parametrize("method", ["median", "zero", "none"])
+def test_corrected_series_and_scan_selection_match_stored_counts(tmp_path, method):
+    """Stored bad pixels are corrected before encoding, with exact image products."""
+    import h5py
+
+    masters, expected = [], []
+    for seed in (21, 22):
+        master, raw = _acquisition(tmp_path, f"corrected{seed}", seed)
+        mask = np.zeros((24, 24), np.uint32)
+        mask[5, 5] = 16
+        with h5py.File(master, "r+") as handle:
+            group = handle.require_group("entry/instrument/detector/detectorSpecific")
+            if "pixel_mask" in group:
+                del group["pixel_mask"]
+            group.create_dataset("pixel_mask", data=mask)
+        corrected = raw.copy()
+        if method == "median":
+            neighbors = np.delete(raw[..., 4:7, 4:7].reshape(32, 32, 9), 4, axis=-1)
+            corrected[..., 5, 5] = np.median(neighbors, axis=-1).astype(np.uint16)
+        elif method == "zero":
+            corrected[..., 5, 5] = 0
+        masters.append(master)
+        expected.append(corrected)
+    loaded = io.load(masters, backend="cuda", representation="paired",
+                     hot_pixel_correction=method, apply_mask=False, verbose=False)
+    for index, (item, counts) in enumerate(zip(loaded, expected)):
+        np.testing.assert_array_equal(item.data.decode_scan_range_device(7, 997).get(),
+                                      counts.reshape(1024, 24, 24)[7:997])
+        assert item.metadata["file_counts_exact"] == (method == "none")
+        saved = tmp_path / f"{method}-{index}.paired"
+        item.data.save(saved)
+        with io.load(saved, backend="cuda", apply_mask=False, verbose=False) as reopened:
+            assert reopened.metadata["hot_pixel_correction"] == item.metadata["hot_pixel_correction"]
+            assert reopened.metadata["file_counts_exact"] == (method == "none")
+        if method == "none":
+            counts[..., 5, 5] = 0  # detector queries exclude the original bad pixel
+        single = detector.prepare(item.data)
+        np.testing.assert_array_equal(single.reduce_frames_exact([7, 512, 997]),
+                                      counts.reshape(1024, 24, 24)[[7, 512, 997]].sum(axis=0, dtype=np.uint64))
+        single.close()
+    session = detector.prepare([item.data for item in loaded])
+    np.testing.assert_array_equal(session.mean_dp(),
+                                  np.stack([a.mean(axis=(0, 1)).astype(np.float32) for a in expected]))
+    for mode in ("sum", "mean", "max"):
+        selected = np.stack([a.reshape(1024, 24, 24)[[7, 512, 512, 997]] for a in expected])
+        want = (selected.sum(axis=1, dtype=np.uint64) if mode == "sum" else
+                selected.mean(axis=1).astype(np.float32) if mode == "mean" else
+                selected.max(axis=1))
+        np.testing.assert_array_equal(session.reduce_frames([7, 512, 512, 997], mode=mode), want)
+    session.close()
+    for item in loaded:
+        item.close()

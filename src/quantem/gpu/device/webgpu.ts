@@ -68,6 +68,12 @@ export function isSoftwareGPUAdapter(): boolean {
   return /swiftshader|llvmpipe|software|subzero/i.test(gpuInfo);
 }
 
+/** Drop the memoized device so the next caller creates a fresh one. */
+export function resetGPUDevice(): void {
+  gpuDevice = null;
+  devicePromise = null;
+}
+
 /** Error raised when browser scientific compute cannot run on hardware WebGPU. */
 export class WebGPUUnavailableError extends Error {
   constructor(operation: string, detail?: string) {

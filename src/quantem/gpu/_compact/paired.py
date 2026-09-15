@@ -209,6 +209,49 @@ class PairedCounts(StreamedCounts):
         self.encoding, self.decoding = tables(self.device)
         self.kernels = kernels(self.device)
         self.polar_permutation = _device_permutation(self.device, tuple(self.shape[2:]))
+        self._detector_total = None
+        self.hot_pixel_correction = None
+
+    @property
+    def nbytes(self) -> int:
+        return super().nbytes + (0 if self._detector_total is None else self._detector_total.nbytes)
+
+    def detector_total_device(self):
+        """Reuse exact scan totals, or reconstruct them once after saved-form load."""
+        import cupy as cp
+
+        if self.is_released:
+            raise ValueError("The resident source has been released.")
+        with cp.cuda.Device(self.device):
+            if self._detector_total is None:
+                self._detector_total = cp.zeros(self.shape[2:], cp.uint64)
+                for chunk in self.chunks:
+                    raw = self.decode_blocks(chunk.first, chunk.scans)
+                    self._detector_total += cp.sum(raw, axis=0, dtype=cp.uint64)
+            return self._detector_total * self.valid
+
+    def release(self) -> None:
+        super().release()
+        self._detector_total = None
+
+    def decode_scan_range_device(self, first: int, stop: int, *, errors=None):
+        """Decode an arbitrary scan interval with the paired stream decoder."""
+        import cupy as cp
+
+        if not 0 <= first < stop <= self.ready_scans:
+            raise ValueError(f"Scan interval {(first, stop)} is outside the resident source.")
+        with cp.cuda.Device(self.device):
+            output = cp.empty((stop - first, *self.shape[2:]), self.dtype)
+            for chunk in self.chunks:
+                begin, end = max(first, chunk.first), min(stop, chunk.first + chunk.scans)
+                if begin >= end:
+                    continue
+                aligned = begin // self.interval * self.interval
+                rounded_end = min(math.ceil(end / self.interval) * self.interval,
+                                  chunk.first + chunk.scans)
+                decoded = self.decode_blocks(aligned, rounded_end - aligned)
+                output[begin - first:end - first] = decoded[begin - aligned:end - aligned]
+            return output
 
     def append(self, raw) -> None:
         """Encode one complete block of consecutive native scans and index it."""
@@ -271,6 +314,16 @@ class PairedCounts(StreamedCounts):
             self.load_metrics["index_seconds"] += time.perf_counter() - started
             self.chunks.append(Chunk(self.ready_scans, scans, (payload, records, models, words, starts, widths)))
             self.ready_scans += scans
+            # Keep only one detector-sized sum while the decoded batch is already here.
+            started = time.perf_counter()
+            if self._detector_total is None:
+                self._detector_total = cp.zeros(self.shape[2:], cp.uint64)
+            self._detector_total += cp.sum(raw, axis=0, dtype=cp.uint64)
+            cp.cuda.get_current_stream().synchronize()
+            self.load_metrics["detector_total_seconds"] = (
+                self.load_metrics.get("detector_total_seconds", 0.0)
+                + time.perf_counter() - started
+            )
 
     def decode_blocks(self, first: int, scans: int, *, out=None):
         """Decode ``scans`` consecutive scans from ``first`` into native counts.
@@ -343,6 +396,7 @@ class PairedCounts(StreamedCounts):
             magic=RESIDENT_MAGIC, query_abi=QUERY_ABI, shape=list(self.shape), dtype=str(self.dtype),
             interval=int(self.interval), models=MODELS, states=STATES,
             valid=np.packbits(self.valid_pixels.ravel()).tobytes().hex(), chunks=table,
+            hot_pixel_correction=self.hot_pixel_correction,
         )
         blob = json.dumps(header).encode()
         data_start = (len(blob) + 24 + ALIGN - 1) & ~(ALIGN - 1)
@@ -386,6 +440,7 @@ class PairedCounts(StreamedCounts):
         valid = np.unpackbits(np.frombuffer(bytes.fromhex(header["valid"]), np.uint8))[: shape[2] * shape[3]].astype(bool).reshape(shape[2:])
         with cp.cuda.Device(cp.cuda.Device().id if device is None else device):
             source = cls(shape, np.dtype(header["dtype"]), valid)
+            source.hot_pixel_correction = header.get("hot_pixel_correction")
             owned = reader or ResidentFileReader()
             if allocate is None:
                 allocate = _arena_allocator(header)

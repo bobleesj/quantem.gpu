@@ -38,6 +38,7 @@ from quantem.gpu.io.uint4 import is_packed_uint4, pack_uint4_cupy
 
 from .constants import BLOCK_SIZE
 from .integrity import SourceIntegrity
+from ._hdf5_chunk_index import _chunk_locations
 
 # Compatibility exports; private mutable state lives in its owning module.
 from .models import (
@@ -100,6 +101,7 @@ _FRAME_SOURCE_CACHE_ENV = "QUANTEM_GPU_HDF5_FRAME_SOURCE_CACHE_DIR"
 _TRUST_FRAME_SOURCE_CACHE_ENV = "QUANTEM_GPU_HDF5_TRUST_FRAME_SOURCE_CACHE"
 _PREPARED_SCAN_CROP_CACHE_ENV = "QUANTEM_GPU_HDF5_PREPARED_SCAN_CROP_CACHE_DIR"
 _SCAN_CROP_MAX_GAP_ENV = "QUANTEM_GPU_HDF5_SCAN_CROP_MAX_GAP_BYTES"
+_HDF5_READ_TASK_BYTES = 8 * 1024**2
 _PREPARED_SCAN_CROP_CACHE_VERSION = 1
 
 
@@ -731,54 +733,98 @@ class GPUDecompressor:
         return result
 
 
-@njit(cache=True, parallel=True)
-def _parse_headers(
+@njit(cache=True, inline="always")
+def _parse_frame_header(
     pinned_buffer,
     chunk_sizes,
     chunk_offsets,
     block_starts_out,
     block_counts_out,
-    n_frames,
+    i,
     n_blocks_per_frame,
+):
+    """Locate the compressed blocks of one detector frame."""
+    offset = chunk_offsets[i]
+    chunk = pinned_buffer[offset : offset + chunk_sizes[i]]
+    uncomp_size = (
+        int(chunk[0]) << 56
+        | int(chunk[1]) << 48
+        | int(chunk[2]) << 40
+        | int(chunk[3]) << 32
+        | int(chunk[4]) << 24
+        | int(chunk[5]) << 16
+        | int(chunk[6]) << 8
+        | int(chunk[7])
+    )
+    block_size = (
+        int(chunk[8]) << 24
+        | int(chunk[9]) << 16
+        | int(chunk[10]) << 8
+        | int(chunk[11])
+    )
+    n_blocks = (uncomp_size + block_size - 1) // block_size
+    block_counts_out[i] = n_blocks
+    pos = 12
+    base_idx = i * n_blocks_per_frame
+    for b in range(n_blocks):
+        block_starts_out[base_idx + b] = pos
+        comp_size = (
+            int(chunk[pos]) << 24
+            | int(chunk[pos + 1]) << 16
+            | int(chunk[pos + 2]) << 8
+            | int(chunk[pos + 3])
+        )
+        pos += 4 + comp_size
+
+
+@njit(cache=True, parallel=True)
+def _parse_headers(
+    pinned_buffer, chunk_sizes, chunk_offsets, block_starts_out,
+    block_counts_out, n_frames, n_blocks_per_frame,
 ):
     """Parse bitshuffle+LZ4 chunk headers in parallel."""
     for i in prange(n_frames):
-        offset = chunk_offsets[i]
-        chunk = pinned_buffer[offset : offset + chunk_sizes[i]]
+        _parse_frame_header(
+            pinned_buffer, chunk_sizes, chunk_offsets, block_starts_out,
+            block_counts_out, i, n_blocks_per_frame,
+        )
 
-        # Parse header (first 12 bytes)
-        uncomp_size = (
-            int(chunk[0]) << 56
-            | int(chunk[1]) << 48
-            | int(chunk[2]) << 40
-            | int(chunk[3]) << 32
-            | int(chunk[4]) << 24
-            | int(chunk[5]) << 16
-            | int(chunk[6]) << 8
-            | int(chunk[7])
+
+# Bounded streaming batches do too little header work to amortize a parallel
+# team launch. Compile the identical parser without parallel scheduling there.
+@njit(cache=True, nogil=True)
+def _parse_headers_serial(
+    pinned_buffer, chunk_sizes, chunk_offsets, block_starts_out,
+    block_counts_out, n_frames, n_blocks_per_frame,
+):
+    """Parse bounded batches without parallel team-launch overhead."""
+    for i in range(n_frames):
+        _parse_frame_header(
+            pinned_buffer, chunk_sizes, chunk_offsets, block_starts_out,
+            block_counts_out, i, n_blocks_per_frame,
         )
-        block_size = (
-            int(chunk[8]) << 24
-            | int(chunk[9]) << 16
-            | int(chunk[10]) << 8
-            | int(chunk[11])
-        )
-        n_blocks = (uncomp_size + block_size - 1) // block_size
-        block_counts_out[i] = n_blocks
-        pos = 12
-        base_idx = i * n_blocks_per_frame
-        for b in range(n_blocks):
-            block_starts_out[base_idx + b] = pos
-            comp_size = (
-                int(chunk[pos]) << 24
-                | int(chunk[pos + 1]) << 16
-                | int(chunk[pos + 2]) << 8
-                | int(chunk[pos + 3])
+
+
+def _parse_headers_bulk(*args, thread_pool=None):
+    """Parse small batches without launching a full parallel worker team."""
+    if thread_pool is not None and 8192 <= int(args[5]) <= 32768:
+        frame_count, blocks_per_frame = int(args[5]), int(args[6])
+        frames_per_worker = (frame_count + 3) // 4
+
+        def parse_slice(first):
+            stop = min(first + frames_per_worker, frame_count)
+            _parse_headers_serial(
+                args[0], args[1][first:stop], args[2][first:stop],
+                args[3][first * blocks_per_frame:stop * blocks_per_frame],
+                args[4][first:stop], stop - first, blocks_per_frame,
             )
-            pos += 4 + comp_size
 
-
-_parse_headers_bulk = _parse_headers  # Same function, works with uint64 offsets
+        # Reads have completed. Reuse their workers and disjoint output slices
+        # instead of starting Numba's much larger parallel worker team.
+        list(thread_pool.map(parse_slice, range(0, frame_count, frames_per_worker)))
+        return
+    parser = _parse_headers_serial if int(args[5]) <= 32768 else _parse_headers
+    parser(*args)
 
 # A failed fence cannot return buffers to an allocator while work may use them.
 # Exception tracebacks retain the failing decoder's local device arrays too.
@@ -1347,12 +1393,7 @@ def _get_master_frame_sources(
                     "load(..., scan_region=...) requires one detector frame per "
                     f"HDF5 chunk; got chunks={ds.chunks} in {data_path}"
                 )
-            chunk_infos = []
-
-            def collect_chunk(info, output=chunk_infos):
-                output.append((info.byte_offset, info.size))
-
-            ds.id.chunk_iter(collect_chunk)
+            chunk_infos = _chunk_locations(ds)
             source_infos.append(
                 {
                     "path": data_path,
@@ -1434,11 +1475,9 @@ class _SparseFrameReadSession:
         file_open_seconds = time.perf_counter() - file_open_started
 
         pool_started = time.perf_counter()
-        self.thread_pool = (
-            ThreadPoolExecutor(max_workers=min(12, len(self.source_infos)))
-            if len(self.source_infos) > 1
-            else None
-        )
+        # Workers start lazily. One large shard can also supply independent
+        # required-byte reads, so concurrency must not depend on file count.
+        self.thread_pool = ThreadPoolExecutor(max_workers=12)
         pool_seconds = time.perf_counter() - pool_started
         self._initial_timing = {
             "metadata_discovery": float(metadata_seconds),
@@ -1887,7 +1926,18 @@ def _prepare_master_frames(
                 file_seconds += time.perf_counter() - close_started
         return file_seconds, advice_seconds, pread_seconds
 
-    worker_count = min(12, max(1, len(read_plan_by_source)))
+    # Split only the already-selected spans. Independent preadv calls write
+    # disjoint slices of the same registered buffer without a second host copy.
+    # A large HDF5 shard should not force the whole batch through one worker.
+    read_jobs = []
+    for source_index, reads in read_plan_by_source.items():
+        for file_offset, destination, count in reads:
+            for offset in range(0, count, _HDF5_READ_TASK_BYTES):
+                length = min(_HDF5_READ_TASK_BYTES, count - offset)
+                read_jobs.append(
+                    (source_index, [(file_offset + offset, destination + offset, length)])
+                )
+    worker_count = min(12, max(1, len(read_jobs)))
     t_read = time.perf_counter()
     pool_create_seconds = 0.0
     if worker_count > 1:
@@ -1895,7 +1945,7 @@ def _prepare_master_frames(
             read_metrics = list(
                 read_session.thread_pool.map(
                     read_source,
-                    read_plan_by_source.items(),
+                    read_jobs,
                 )
             )
         else:
@@ -1903,11 +1953,11 @@ def _prepare_master_frames(
             pool = ThreadPoolExecutor(max_workers=worker_count)
             pool_create_seconds = time.perf_counter() - pool_started
             try:
-                read_metrics = list(pool.map(read_source, read_plan_by_source.items()))
+                read_metrics = list(pool.map(read_source, read_jobs))
             finally:
                 pool.shutdown(wait=True)
     else:
-        read_metrics = [read_source(item) for item in read_plan_by_source.items()]
+        read_metrics = [read_source(item) for item in read_jobs]
     read_seconds = time.perf_counter() - t_read
     file_open_close_seconds = sum(metric[0] for metric in read_metrics)
     fadvise_seconds = sum(metric[1] for metric in read_metrics)
@@ -1927,6 +1977,7 @@ def _prepare_master_frames(
         block_counts,
         int(selected.size),
         n_blocks_per_frame,
+        thread_pool=read_session.thread_pool if read_session is not None else None,
     )
     block_offsets_arr[1:selected.size + 1] = np.cumsum(block_counts[:selected.size])
     total_blocks = int(block_offsets_arr[selected.size])
@@ -5445,7 +5496,8 @@ def load(
         elif any(saved):
             raise ValueError("Load saved paired resident forms and original HDF5 acquisitions in separate calls.")
         else:
-            loaded = load_h5_paired(paths, scan_shape=scan_shape, device=device, verbose=verbose)
+            loaded = load_h5_paired(paths, scan_shape=scan_shape, device=device,
+                                    verbose=verbose, hot_pixel_correction=hot_pixel_correction)
         return loaded[0] if isinstance(source, (str, os.PathLike)) else loaded
     if any(DataRepresentation.detect_source(path) is DataRepresentation.ENCODED for path in paths):
         from ._ans_dispatch import _load_ans
@@ -5529,6 +5581,36 @@ def load(
         return results[0] if isinstance(source, (str, os.PathLike)) else results
     # HDF5/prepared-packed loads use their declared working-mask contract. ANS files
     # retain original counts by default; detector masks are product controls.
+    # Native CUDA dense reads must use the same stored-pixel correction as
+    # encoded reads. Disable legacy zero masking before applying the median.
+    from .backends import resolve_backend
+
+    dense_corrector = None
+    if (
+        selected_representation is DataRepresentation.DENSE
+        and resolve_backend(backend) == "cuda"
+        and len(paths) == 1
+        and dtype in (None, "native")
+        and detector_bin == 1
+        and detector_region is None
+        and target_scan_region is None
+        and scan_shift_row_col is None
+        and devices is None
+        and apply_mask is None
+    ):
+        from ._metadata import read_pixel_mask
+        from .backends.cuda.hot_pixels import CUDAHotPixelCorrector
+
+        correction_device = (
+            int(str(device).removeprefix("cuda:"))
+            if device is not None
+            else cp.cuda.Device().id
+        )
+        with cp.cuda.Device(correction_device):
+            dense_corrector = CUDAHotPixelCorrector(
+                read_pixel_mask(paths[0]), hot_pixel_correction
+            )
+        apply_mask = False
     if apply_mask is None:
         apply_mask = True
     if (
@@ -5755,20 +5837,34 @@ def load(
     else:
         common.update(device=device, devices=devices)
 
-    result = _load(
-        source,
-        dtype=dtype if isinstance(dtype, str) else None,
-        gpus=devices if not stack else None,
-        stack=stack,
-        scan_region=scan_region,
-        scan_indices=scan_indices,
-        random_positions=random_positions,
-        seed=None if generated_sample is not None else seed,
-        replace=replace,
-        same_random_positions=same_random_positions,
-        prep_workers=None,
-        **common,
-    )
+    try:
+        result = _load(
+            source,
+            dtype=dtype if isinstance(dtype, str) else None,
+            gpus=devices if not stack else None,
+            stack=stack,
+            scan_region=scan_region,
+            scan_indices=scan_indices,
+            random_positions=random_positions,
+            seed=None if generated_sample is not None else seed,
+            replace=replace,
+            same_random_positions=same_random_positions,
+            prep_workers=None,
+            **common,
+        )
+        if dense_corrector is not None:
+            loaded_results = result if isinstance(result, list) else [result]
+            for loaded in loaded_results:
+                if dense_corrector.record["applied"]:
+                    with cp.cuda.Device(loaded.data.device.id):
+                        dense_corrector.apply(loaded.data)
+                loaded.metadata["hot_pixel_correction"] = {
+                    **dense_corrector.record,
+                    "stage": "gpu_dense_load_before_reconstruction",
+                }
+    finally:
+        if dense_corrector is not None:
+            dense_corrector.close()
     if drift_batch is not None:
         result.metadata["drift_batch"] = drift_batch
         if generated_sample is not None:

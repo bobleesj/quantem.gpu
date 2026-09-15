@@ -4,7 +4,6 @@ import numpy as np
 import pytest
 
 from quantem.gpu import io
-from quantem.gpu.io.backends.mps._streamed import MPSStreamedSeries
 from tests.hardware.mps.test_mps_buffer_release import _write_bslz4_master
 
 
@@ -72,6 +71,7 @@ def test_original_h5_auto_selects_lossless_runtime_ans(tmp_path):
 def test_original_h5_series_stays_independent_and_batches_diffraction(tmp_path):
     """A folder-style list produces ordered residents and one exact DP command."""
     pytest.importorskip("Metal")
+    from quantem.gpu.io.backends.mps._streamed import MPSStreamedSeries
     base = np.arange(1024 * 4 * 8, dtype=np.uint16).reshape(1024, 4, 8)
     counts = [base, base + 31, base + 79]
     paths = [

@@ -102,7 +102,9 @@ def test_native_source_matches_frozen_virtual_images():
     reference = json.loads(Path(os.environ["QUANTEM_GPU_PAIRED_REFERENCE"]).read_text())
     from quantem.gpu import io
 
-    source = io.load(reference["path"], backend="cuda", representation="paired", scan_shape=tuple(reference.get("scan_shape", (512, 512)))).data
+    source = io.load(reference["path"], backend="cuda", representation="paired",
+                     hot_pixel_correction="none",
+                     scan_shape=tuple(reference.get("scan_shape", (512, 512)))).data
     session = detector.prepare([source])
     shape = tuple(source.shape[2:])
     for pose, digest in zip(reference["poses"], reference["reference_VI_sha256"]):

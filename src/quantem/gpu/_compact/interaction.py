@@ -108,6 +108,8 @@ class StreamedSeriesCompute(CudaSeriesCompute):
                     "Finish loading every native scan before preparing detector queries."
                 )
             self.keepalive.extend((source.valid, source.decoding))
+            if getattr(source, "_detector_total", None) is not None:
+                self.keepalive.append(source._detector_total)
             for chunk in source.chunks:
                 self.keepalive.extend(chunk.arrays)
                 payload, offsets, models, words, starts, widths = chunk.arrays
@@ -171,8 +173,9 @@ class StreamedSeriesCompute(CudaSeriesCompute):
             # Pinned staging so selection uploads and error readbacks are asynchronous: a
             # synchronous memcpy waits for every kernel queued ahead of it, which would
             # serialise queries meant to overlap the host's planning of the next one.
-            self._staging = [cp.cuda.alloc_pinned_memory(n * 4) for n in (self.fields, self.fields, self.pixels, self.pixels)]
-            self._staging_views = [np.frombuffer(m, dtype, n) for m, dtype, n in zip(self._staging, (np.uint32, np.int32, np.uint32, np.int32), (self.fields, self.fields, self.pixels, self.pixels))]
+            slots = len(self.error_slots)
+            self._staging = [cp.cuda.alloc_pinned_memory(slots * n * 4) for n in (self.fields, self.fields, self.pixels, self.pixels)]
+            self._staging_views = [np.frombuffer(m, dtype, slots * n).reshape(slots, n) for m, dtype, n in zip(self._staging, (np.uint32, np.int32, np.uint32, np.int32), (self.fields, self.fields, self.pixels, self.pixels))]
             self._error_pinned = cp.cuda.alloc_pinned_memory(len(self.error_slots) * 4)
             self._error_host = np.frombuffer(self._error_pinned, np.uint32, len(self.error_slots))
         self.keepalive.extend(
@@ -213,6 +216,8 @@ class StreamedSeriesCompute(CudaSeriesCompute):
         import cupy as cp
 
         slot = self._launches % len(self.error_slots)
+        if any(item[3] == slot for item in self._inflight):
+            raise ValueError("Finish an outstanding detector query before queuing more than eight updates.")
         self._launches += 1
         self._current_launch = self._launches
         self._current_slot = slot
@@ -289,6 +294,43 @@ class StreamedSeriesCompute(CudaSeriesCompute):
                 result[index] = (total / self.n_frames).astype(cp.float32)
             return result[0] if not self.series_shape else result
 
+    def reduce_frames(self, indices, reduce="mean"):
+        """Reduce a scan selection without expanding the full acquisition."""
+        import cupy as cp
+
+        indices = np.sort(np.asarray(indices, dtype=np.int64).reshape(-1))
+        if not len(indices) or indices[0] < 0 or indices[-1] >= self.n_frames:
+            raise ValueError(f"Select scan indices from 0 through {self.n_frames - 1}.")
+        if reduce not in {"sum", "mean", "max"}:
+            raise ValueError(f"Unknown frame reduction {reduce!r}; use mean, sum, or max.")
+        with self.lock, cp.cuda.Device(self.device):
+            results = []
+            for source in self.index_owners:
+                total = cp.zeros(self.det_shape, cp.uint64)
+                # Group by codec block so sparse selections decode each block once.
+                boundaries = np.flatnonzero(np.diff(indices // 512)) + 1
+                for selected in np.split(indices, boundaries):
+                    first = int(selected[0] // 512 * 512)
+                    stop = min(first + 512, self.n_frames)
+                    raw = source.decode_scan_range_device(first, stop)
+                    values = raw[cp.asarray(selected - first)]
+                    if reduce == "max":
+                        cp.maximum(total, values.max(axis=0), out=total)
+                    else:
+                        total += values.sum(axis=0, dtype=cp.uint64)
+                total *= source.valid.reshape(self.det_shape)
+                results.append(total.astype(cp.float32) / len(indices) if reduce == "mean" else total)
+            result = cp.stack(results).get()
+            return result[0] if not self.series_shape else result
+
+    def reduce_frames_exact(self, indices):
+        """Return the integer scan-ROI sum used by the public detector API."""
+        return self.reduce_frames(indices, reduce="sum")
+
+    def reduce_frames_max(self, indices):
+        """Return the integer scan-ROI maximum used by the public detector API."""
+        return self.reduce_frames(indices, reduce="max")
+
     def _weighted_sum_native(self, weights):
         """Return exact per-scan sums for nonnegative integer pixel weights."""
         import cupy as cp
@@ -317,7 +359,7 @@ class StreamedSeriesCompute(CudaSeriesCompute):
                     self.selected_pixels,
                     self.pixel_coefficients,
                 ),
-                self._staging_views,
+                (views[self._current_slot] for views in self._staging_views),
                 selection,
             ):
                 if len(source):
@@ -440,7 +482,7 @@ class StreamedSeriesCompute(CudaSeriesCompute):
                     self.selected_pixels,
                     self.pixel_coefficients,
                 ),
-                self._staging_views,
+                (views[self._current_slot] for views in self._staging_views),
                 selection,
             ):
                 if len(source):

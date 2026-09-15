@@ -55,6 +55,9 @@ class PairedLoader:
         Rolling frame buffers in flight between the decode and encode streams.
         Two small buffers (``rolling_scans=512, rings=2``) admit the last
         acquisitions of a series when little device memory remains.
+    hot_pixel_correction
+        Replace stored-mask pixels before encoding. ``"none"`` preserves raw
+        counts; the public ``io.load`` entry point defaults to ``"median"``.
 
     Examples
     --------
@@ -63,10 +66,13 @@ class PairedLoader:
     ...         resident.append(source)
     """
 
-    def __init__(self, *, readers: int = 6, slots: int = 10, capacity: int = 128 * 1024**2, rolling_scans: int = _ROLLING_SCANS, rings: int = 3):
+    def __init__(self, *, readers: int = 6, slots: int = 10, capacity: int = 128 * 1024**2, rolling_scans: int = _ROLLING_SCANS, rings: int = 3, hot_pixel_correction: str = "none"):
         import cupy as cp
 
         from ._memory import _alloc_pinned_fast, _release_pinned
+        from ._hot_pixels import normalize_hot_pixel_correction
+
+        self.hot_pixel_correction = normalize_hot_pixel_correction(hot_pixel_correction)
 
         if slots < 3 or readers < 1:
             raise ValueError(f"slots must be at least 3 and readers at least 1; got {slots} and {readers}.")
@@ -144,13 +150,14 @@ class PairedLoader:
         failure, stop, timings = [], [], {}
         with cp.cuda.Device(selected):
             first = self._describe(paths[0], scan_shape)
-            first["source"] = PairedCounts(first["shape"], first["dtype"], first["valid"])  # builds the coding tables once
+            first["source"] = self._new_source(first)
             buffers = _DeviceBuffers(first, self.capacity, self.rolling_scans, self.rings)
             cp.cuda.Stream.null.synchronize()  # tables and buffers were prepared on the null stream; the loader streams never wait for it
             for ring in range(len(buffers.rolling)):
                 free.put((ring, None))
             timings[paths[0]] = _fresh_timings(first)
-            future = self.worker.submit(self._produce, paths, scan_shape, selected, admit, [first], buffers, handoff, free, failure, stop, timings)
+            descriptions = [first]
+            future = self.worker.submit(self._produce, paths, scan_shape, selected, admit, descriptions, buffers, handoff, free, failure, stop, timings)
             finished = False
             try:
                 with self.consumer_stream:
@@ -164,6 +171,7 @@ class PairedLoader:
                         self.consumer_stream.wait_event(event)
                         started = time.perf_counter()
                         source = description["source"]
+                        description["corrector"].apply(buffers.rolling[ring][:count])
                         source.append(buffers.rolling[ring][:count])
                         stats["consumer_seconds"] += time.perf_counter() - started
                         stats["chunks"] += 1
@@ -178,6 +186,7 @@ class PairedLoader:
                             stats.update(
                                 resident_ready_seconds=time.perf_counter() - stats.pop("started"),
                                 encode_seconds=source.load_metrics["encode_seconds"], index_seconds=source.load_metrics["index_seconds"],
+                                detector_total_seconds=source.load_metrics.get("detector_total_seconds", 0.0),
                                 read_seconds=float(np.sum(stats["read_seconds"])), header_seconds=float(np.sum(stats["header_seconds"])),
                                 shards=len(description["shards"]), resident_bytes=source.nbytes,
                             )
@@ -197,6 +206,23 @@ class PairedLoader:
                 self.producer_stream.synchronize()
                 self.consumer_stream.synchronize()
                 buffers.release()
+                for description in descriptions:
+                    description["corrector"].close()
+
+    def _new_source(self, description):
+        """Prepare the same stored-pixel correction as other compact loads."""
+        from .backends.cuda.hot_pixels import CUDAHotPixelCorrector
+
+        corrector = CUDAHotPixelCorrector(
+            description["pixel_mask"], self.hot_pixel_correction
+        )
+        description["corrector"] = corrector
+        description["metadata"]["hot_pixel_correction"] = corrector.record
+        valid = (np.ones(description["shape"][2:], bool)
+                 if corrector.record["applied"] else description["valid"])
+        source = PairedCounts(description["shape"], description["dtype"], valid)
+        source.hot_pixel_correction = dict(corrector.record)
+        return source
 
     def _describe(self, path, scan_shape):
         """Inspect one master and list its shards with their chunk tables."""
@@ -277,7 +303,10 @@ class PairedLoader:
                         description = future.result()
                         if description["shape"][2:] != descriptions[0]["shape"][2:]:
                             raise ValueError(f"{path}: every acquisition in one series must share the detector geometry {descriptions[0]['shape'][2:]}.")
-                        description["source"] = PairedCounts(description["shape"], description["dtype"], description["valid"])
+                        description["source"] = self._new_source(description)
+                        initialized = cp.cuda.Event(disable_timing=True)
+                        initialized.record()
+                        stream.wait_event(initialized)
                         descriptions.append(description)
                         timings[path] = _fresh_timings(description)
                         for shard in description["shards"]:
@@ -425,16 +454,17 @@ def _chunk_table(staging: np.ndarray, size: int, dataset_path: str, path: str):
     """Read one shard's chunk offsets and sizes from its staged image, not from disk."""
     import h5py
 
+    from ._hdf5_chunk_index import _chunk_locations
+
     image = _ImageFile(memoryview(staging)[:size])
     with h5py.File(image, "r") as handle:
         dataset = handle[dataset_path]
         if dataset.chunks is None or dataset.ndim != 3 or int(dataset.chunks[0]) != 1:
             raise ValueError(f"{path}: the paired loader needs one detector frame per HDF5 chunk; got chunks={dataset.chunks}.")
-        table = []
-        dataset.id.chunk_iter(lambda info: table.append((info.byte_offset, info.size)))
+        table = _chunk_locations(dataset)
         if len(table) != dataset.shape[0]:
             raise ValueError(f"{path}: {len(table)} stored chunks for {dataset.shape[0]} frames; every frame must be written.")
-        array = np.asarray(table, np.uint64)
+        array = table
         return np.ascontiguousarray(array[:, 0]), np.ascontiguousarray(array[:, 1]), int(dataset.shape[0]), tuple(int(v) for v in dataset.shape[1:]), np.dtype(dataset.dtype)
 
 
@@ -545,10 +575,12 @@ def _read_direct(path: str, staging: np.ndarray) -> tuple[int, float]:
 # --- io.load entry points -------------------------------------------------------
 
 
-def load_h5_paired(paths, *, scan_shape, device, verbose):
+def load_h5_paired(paths, *, scan_shape, device, verbose, hot_pixel_correction="median"):
     """Load original H5 acquisitions into the paired resident layout, one source each."""
     results = []
-    with PairedLoader() as loader:
+    # One acquisition does not benefit from the deeper series read queue.
+    with PairedLoader(readers=2 if len(paths) == 1 else 6,
+                      hot_pixel_correction=hot_pixel_correction) as loader:
         for _, source, timings in loader.load_many(paths, scan_shape=scan_shape, device=device):
             results.append(_result(source, timings, verbose))
     return results
@@ -565,20 +597,26 @@ def load_paired_file(path, *, device, verbose, reader=None, allocate=None):
     """
     started = time.perf_counter()
     source = PairedCounts.load(path, device=device, reader=reader, allocate=allocate)
-    timings = dict(metadata={}, pixel_mask=None, shape=source.shape, dtype=source.dtype, resident_ready_seconds=time.perf_counter() - started, resident_bytes=source.nbytes)
+    metadata = ({"hot_pixel_correction": source.hot_pixel_correction}
+                if source.hot_pixel_correction is not None else {})
+    timings = dict(metadata=metadata, pixel_mask=None, shape=source.shape, dtype=source.dtype, resident_ready_seconds=time.perf_counter() - started, resident_bytes=source.nbytes)
     return _result(source, timings, verbose)
 
 
 def _result(source, timings, verbose):
     shape, dtype = tuple(source.shape), np.dtype(source.dtype)
     metadata = dict(timings["metadata"])
+    correction = metadata.get("hot_pixel_correction", {})
+    corrected = correction.get("applied", False)
     metadata.update(
         backend="cuda", representation="paired", residency="device", source_shape=shape, working_shape=shape,
         scan_shape=shape[:2], detector_shape=shape[2:], source_dtype=dtype.name, working_dtype=dtype.name, dtype=dtype.name,
         n_frames=math.prod(shape[:2]), source_logical_tensor_bytes=math.prod(shape) * dtype.itemsize,
         working_logical_tensor_bytes=math.prod(shape) * dtype.itemsize, physical_resident_bytes=source.nbytes,
-        index_bytes=source.index_nbytes, pixel_mask=timings["pixel_mask"], lossless_exact=True, file_counts_exact=True,
-        resident_profile=QUERY_ABI, resident_codec="paired-tans", detector_mask_policy="preserve-stored-counts",
+        index_bytes=source.index_nbytes, pixel_mask=timings["pixel_mask"], lossless_exact=not corrected, file_counts_exact=not corrected,
+        working_counts_exact=True,
+        resident_profile=QUERY_ABI, resident_codec="paired-tans",
+        detector_mask_policy=(f"gpu-{correction['method']}-corrected" if corrected else "preserve-stored-counts"),
         scan_bin=1, detector_bin=1, crop=None,
         load_timings={key: value for key, value in timings.items() if key not in ("metadata", "pixel_mask", "shape", "dtype")},
     )

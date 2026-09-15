@@ -805,10 +805,14 @@ class SSB:
             loaded = load(
                 source,
                 backend=selected,
-                # SSB builds FFT-ready floating-point arrays and therefore
-                # consumes a dense detector stack. The general HDF5 default
-                # remains native encoded residency for direct reductions.
-                representation="dense",
+                # Preserve authenticated packed storage for the qualified
+                # BF-column path; ordinary acquisitions need dense FFT input.
+                representation=(
+                    "packed"
+                    if DataRepresentation.detect_source(source)
+                    is DataRepresentation.PACKED
+                    else "dense"
+                ),
                 detector_bin=1,
                 dtype=dtype,
                 verbose=verbose,
@@ -869,6 +873,11 @@ class SSB:
         session.source_provenance = json_value(
             getattr(data, "source_provenance", None)
         )
+        if data is not None and source_kind == "detector":
+            correction = loaded.metadata.get("hot_pixel_correction")
+            if correction is not None:
+                session.source_provenance = dict(session.source_provenance or {})
+                session.source_provenance["hot_pixel_correction"] = correction
         session.source_load_seconds = source_load_seconds
         return session
 

@@ -55,8 +55,15 @@ class Nv12Frame:
 
 def _imports() -> tuple[object, object, object]:
     try:
+        import ast
+
         import cupy as cp
         import imageio_ffmpeg
+
+        # PyNvVideoCodec 2.2 still imports the Python 3.13 compatibility
+        # constructor removed in Python 3.14.
+        if not hasattr(ast, "Str"):
+            ast.Str = ast.Constant
         import PyNvVideoCodec as nvc
     except ImportError as exc:
         raise RuntimeError(
@@ -355,6 +362,10 @@ def save_mp4(
         "tuning_info": str(tuning_info),
         "rc": "constqp",
         "qp": str(int(qp)),
+        # The elementary-stream mux path does not carry reordering metadata.
+        # Scientific frame sequences therefore require decode order to match
+        # acquisition order exactly.
+        "bf": "0",
         "fps": max(0.1, float(fps)),
     }
     encoder = nvc.CreateEncoder(out_width, out_height, "NV12", False, **config)
