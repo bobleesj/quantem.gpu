@@ -211,8 +211,11 @@ enum MetalPairedRuntimeTANSHDF5Builder {
       let sparseSlackValue = configuration.value("QGPU_PAIRED_RUNTIME_SPARSE_SLACK") ?? "0"
       guard ["0", "4", "8", "12", "16", "24", "32", "48", "64"].contains(sparseSlackValue),
         let sparseSlack = UInt32(sparseSlackValue)
-      else { throw invalid("QGPU_PAIRED_RUNTIME_SPARSE_SLACK must be 0, 4, 8, 12, 16, 24, 32, 48, or 64") }
-      let scratchlessValue = pairedRuntimeEnvironment("QGPU_PAIRED_RUNTIME_SCRATCHLESS_ENCODE") ?? "0"
+      else {
+        throw invalid("QGPU_PAIRED_RUNTIME_SPARSE_SLACK must be 0, 4, 8, 12, 16, 24, 32, 48, or 64")
+      }
+      let scratchlessValue =
+        pairedRuntimeEnvironment("QGPU_PAIRED_RUNTIME_SCRATCHLESS_ENCODE") ?? "0"
       guard scratchlessValue == "0" || scratchlessValue == "1" else {
         throw invalid("QGPU_PAIRED_RUNTIME_SCRATCHLESS_ENCODE must be 0 or 1")
       }
@@ -222,12 +225,14 @@ enum MetalPairedRuntimeTANSHDF5Builder {
       // working set cannot fit. This changes workspace, not stream selection.
       // Every actual allocation still goes through the hard admission guard.
       let windowSamples = PairedRuntimeTANSRecordABI.recordScans * descriptor.detectorPixels
-      let bufferedWindowBytes = UInt64(windowSamples * MemoryLayout<UInt32>.stride
-        + PairedRuntimeTANSRecordABI.streamScans * 2 * descriptor.streamsPerRecord
-        + windowSamples * MemoryLayout<UInt16>.stride
-        + descriptor.modesBytesPerRecord + descriptor.offsetsBytesPerRecord
-        + descriptor.streamsPerRecord * MemoryLayout<UInt32>.stride)
-      let boundedNormal = configuration.mode == .normal
+      let bufferedWindowBytes = UInt64(
+        windowSamples * MemoryLayout<UInt32>.stride
+          + PairedRuntimeTANSRecordABI.streamScans * 2 * descriptor.streamsPerRecord
+          + windowSamples * MemoryLayout<UInt16>.stride
+          + descriptor.modesBytesPerRecord + descriptor.offsetsBytesPerRecord
+          + descriptor.streamsPerRecord * MemoryLayout<UInt32>.stride)
+      let boundedNormal =
+        configuration.mode == .normal
         && maximumAdditionalBytes.map { $0 < bufferedWindowBytes } == true
       let useScratchlessEncode = scratchlessValue == "1" || boundedNormal
       scratchlessEncode = useScratchlessEncode
@@ -236,13 +241,20 @@ enum MetalPairedRuntimeTANSHDF5Builder {
       encodeConstants.setConstantValue(&specializedSparseSlack, type: .uint, index: 4)
       var specializedScratchless = useScratchlessEncode
       encodeConstants.setConstantValue(&specializedScratchless, type: .bool, index: 7)
-      let sparseMaxNonzeroValue = configuration.value("QGPU_PAIRED_RUNTIME_SPARSE_MAX_NONZERO") ?? "0"
+      let sparseMaxNonzeroValue =
+        configuration.value("QGPU_PAIRED_RUNTIME_SPARSE_MAX_NONZERO") ?? "0"
       guard var sparseMaxNonzero = UInt32(sparseMaxNonzeroValue), sparseMaxNonzero <= 512
-      else { throw invalid("QGPU_PAIRED_RUNTIME_SPARSE_MAX_NONZERO must be an integer from 0 to 512") }
+      else {
+        throw invalid("QGPU_PAIRED_RUNTIME_SPARSE_MAX_NONZERO must be an integer from 0 to 512")
+      }
       encodeConstants.setConstantValue(&sparseMaxNonzero, type: .uint, index: 27)
-      let compactEventValue = pairedRuntimeEnvironment("QGPU_PAIRED_RUNTIME_COMPACT_EVENT_MAX_NONZERO") ?? "0"
+      let compactEventValue =
+        pairedRuntimeEnvironment("QGPU_PAIRED_RUNTIME_COMPACT_EVENT_MAX_NONZERO") ?? "0"
       guard var compactEventMaxNonzero = UInt32(compactEventValue), compactEventMaxNonzero <= 512
-      else { throw invalid("QGPU_PAIRED_RUNTIME_COMPACT_EVENT_MAX_NONZERO must be an integer from 0 to 512") }
+      else {
+        throw invalid(
+          "QGPU_PAIRED_RUNTIME_COMPACT_EVENT_MAX_NONZERO must be an integer from 0 to 512")
+      }
       encodeConstants.setConstantValue(&compactEventMaxNonzero, type: .uint, index: 45)
       let streamOrder = pairedRuntimeEnvironment("QGPU_PAIRED_RUNTIME_STREAM_ORDER") ?? "pixel"
       guard streamOrder == "pixel" || streamOrder == "radial1" else {
@@ -250,7 +262,8 @@ enum MetalPairedRuntimeTANSHDF5Builder {
       }
       if streamOrder == "radial1" {
         guard descriptor.detectorPixels == 192 * 192,
-          let layout = PairedRuntimeTANSPolarPlan.indexLayout(leafPixels: 16, layoutKind: "radial1"),
+          let layout = PairedRuntimeTANSPolarPlan.indexLayout(
+            leafPixels: 16, layoutKind: "radial1"),
           layout.permutation.count == descriptor.detectorPixels,
           Set(layout.permutation).count == descriptor.detectorPixels,
           layout.permutation.allSatisfy({ $0 >= 0 && Int($0) < descriptor.detectorPixels })
@@ -297,7 +310,8 @@ enum MetalPairedRuntimeTANSHDF5Builder {
       failure = try Self.makeBuffer(
         device: device, bytes: 4, options: .storageModeShared,
         label: "paired-runtime producer failure")
-      let scratchBytes = useScratchlessEncode
+      let scratchBytes =
+        useScratchlessEncode
         ? MemoryLayout<UInt32>.stride
         : PairedRuntimeTANSRecordABI.streamScans * 2 * descriptor.streamsPerRecord
       scratch = try Self.makeBoundedBuffer(
@@ -312,7 +326,8 @@ enum MetalPairedRuntimeTANSHDF5Builder {
         device: device, bytes: descriptor.offsetsBytesPerRecord,
         options: .storageModeShared, label: "paired-runtime provisional CPU prefix",
         allocatedBefore: allocatedBefore, maximumAdditionalBytes: maximumAdditionalBytes)
-      stagingPairs = streamPixels != nil && useScratchlessEncode
+      stagingPairs =
+        streamPixels != nil && useScratchlessEncode
         ? try Self.makeBoundedBuffer(
           device: device, bytes: descriptor.streamsPerRecord * 8,
           options: .storageModeShared, label: "paired-runtime rank write ranges",
@@ -394,7 +409,8 @@ enum MetalPairedRuntimeTANSHDF5Builder {
       }
       if let stagingPairs, let streamPixels {
         // Pixel-order stream s = packetBase + pixel writes to rank range [offsets[r], offsets[r + 1]).
-        let pairs = stagingPairs.contents().bindMemory(to: UInt32.self, capacity: descriptor.streamsPerRecord * 2)
+        let pairs = stagingPairs.contents().bindMemory(
+          to: UInt32.self, capacity: descriptor.streamsPerRecord * 2)
         for packetBase in stride(from: 0, to: descriptor.streamsPerRecord, by: pixels) {
           for rank in 0..<pixels {
             let source = packetBase + Int(streamPixels[rank])
@@ -407,10 +423,13 @@ enum MetalPairedRuntimeTANSHDF5Builder {
       if shouldCancel() { throw Metal4DSTEMStreamingIOError.cancelled }
 
       let payloadBytes = Int(terminal)
-      let rankedModes = streamPixels == nil ? nil : try Self.makeBoundedBuffer(
-        device: device, bytes: descriptor.modesBytesPerRecord,
-        options: .storageModePrivate, label: "paired-runtime ranked modes \(recordIndex)",
-        allocatedBefore: allocatedBefore, maximumAdditionalBytes: maximumAdditionalBytes)
+      let rankedModes =
+        streamPixels == nil
+        ? nil
+        : try Self.makeBoundedBuffer(
+          device: device, bytes: descriptor.modesBytesPerRecord,
+          options: .storageModePrivate, label: "paired-runtime ranked modes \(recordIndex)",
+          allocatedBefore: allocatedBefore, maximumAdditionalBytes: maximumAdditionalBytes)
       let residentPayload = try Self.makeBoundedBuffer(
         device: device, bytes: max(4, Self.alignedUInt32Bytes(payloadBytes)),
         options: .storageModePrivate, label: "paired-runtime payload \(recordIndex)",

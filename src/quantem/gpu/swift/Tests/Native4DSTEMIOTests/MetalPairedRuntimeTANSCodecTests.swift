@@ -70,7 +70,10 @@ final class MetalPairedRuntimeTANSCodecTests: XCTestCase {
   }
 
   private func uint8Fixtures() -> [Fixture] {
-    let entropy = (0..<512).map { index in UInt16((index * 17 + index / 7) % 11) }
+    let entropy: [UInt16] = (0..<512).map { (index: Int) -> UInt16 in
+      let mixed = index * 17 + index / 7
+      return UInt16(mixed % 11)
+    }
     return [
       Fixture(
         name: "zero", values: [UInt16](repeating: 0, count: 512), mode: 253,
@@ -82,7 +85,7 @@ final class MetalPairedRuntimeTANSCodecTests: XCTestCase {
         payloadSHA256: "ea5dbf9596d187e9500f23e9a680109475341cf4e81f7e043f7d97152c10772f"),
       Fixture(
         name: "entropy", values: entropy, mode: 89, payloadBytes: 255,
-        payloadSHA256: "d62c1f09f44fe91d3b9b9f95ad9f87b6c5b8ff11f2f6ff979daca5751c667d5"),
+        payloadSHA256: "d62c1f09f44fe91d3b9b9f95ad9f87b6c5b8ff11f2f6ff979daca5751c667d5d"),
       Fixture(
         name: "six-bit escape",
         values: (0..<512).map { index in UInt16((index * 37 + 11) % 64) },
@@ -101,7 +104,10 @@ final class MetalPairedRuntimeTANSCodecTests: XCTestCase {
   }
 
   private func uint16Fixtures() -> [Fixture] {
-    let entropy = (0..<512).map { index in UInt16((index * 17 + index / 7) % 11) }
+    let entropy: [UInt16] = (0..<512).map { (index: Int) -> UInt16 in
+      let mixed = index * 17 + index / 7
+      return UInt16(mixed % 11)
+    }
     var sparse = [UInt16](repeating: 0, count: 512)
     sparse[13] = 128
     sparse[511] = 1
@@ -126,7 +132,7 @@ final class MetalPairedRuntimeTANSCodecTests: XCTestCase {
         payloadSHA256: "8eae0aa67f373fa805517b67e1891898e403dfd33578e8d4b5ed229803097838"),
       Fixture(
         name: "entropy", values: entropy, mode: 89, payloadBytes: 255,
-        payloadSHA256: "d62c1f09f44fe91d3b9b9f95ad9f87b6c5b8ff11f2f6ff979daca5751c667d5"),
+        payloadSHA256: "d62c1f09f44fe91d3b9b9f95ad9f87b6c5b8ff11f2f6ff979daca5751c667d5d"),
       Fixture(
         name: "wide escape", values: wide, mode: 89, payloadBytes: 276,
         payloadSHA256: "5c58b3bf2637e37478c3813dce7b285ae3ef9ba66b429459fa0c1834e18a6c77"),

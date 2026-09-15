@@ -63,8 +63,9 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
 
   public var residentBytes: UInt64 {
     guard !isReleased else { return 0 }
-    return UInt64((decodingTable?.length ?? 0) + (failure?.length ?? 0)
-      + (diffraction?.length ?? 0)) + chunks.reduce(0) { $0 + $1.bytes }
+    return UInt64(
+      (decodingTable?.length ?? 0) + (failure?.length ?? 0)
+        + (diffraction?.length ?? 0)) + chunks.reduce(0) { $0 + $1.bytes }
   }
 
   /// Binary detector-validity mask used by derived products; raw DPs stay untouched.
@@ -140,7 +141,8 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
       valid[pixel] = 0
     }
     validPixels = valid
-    let retained = UInt64(built.decoding.length + 4 + pixels * 4)
+    let retained =
+      UInt64(built.decoding.length + 4 + pixels * 4)
       + chunks.reduce(0) { $0 + $1.bytes }
     loadMetrics = MetalRuntimeANSLoadMetrics(
       totalSeconds: totalSeconds,
@@ -194,9 +196,11 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
     scan: Int, output: MTLBuffer, encoder: MTLComputeCommandEncoder
   ) throws {
     try requireLive()
-    guard let chunk = chunks.first(where: {
-      $0.firstScan <= scan && scan < $0.firstScan + $0.scanCount
-    }), let failure, let decodingTable else {
+    guard
+      let chunk = chunks.first(where: {
+        $0.firstScan <= scan && scan < $0.firstScan + $0.scanCount
+      }), let failure, let decodingTable
+    else {
       throw Self.invalid("The selected scan is missing from runtime ANS")
     }
     let local = scan - chunk.firstScan
@@ -251,7 +255,8 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
       }
       encoder.setBytes(&parameters, length: parameters.count * 8, index: 8)
       let blocks = (chunk.scanCount + interval - 1) / interval
-      let groups = usePacketOwner
+      let groups =
+        usePacketOwner
         ? (blocks + detectorPacketSIMDs - 1) / detectorPacketSIMDs
         : (changed + width - 1) / width
       encoder.dispatchThreadgroups(
@@ -474,7 +479,8 @@ public final class MetalRuntimeANSSeries: @unchecked Sendable {
       selectedFromZero += value == 1 ? 1 : 0
     }
     let rebaseFromZero = forceRebase || selectedFromZero < deltaFromCurrent
-    let previous = rebaseFromZero
+    let previous =
+      rebaseFromZero
       ? [UInt8](repeating: 0, count: pixels) : detectorMasks[priorityIndex]
     let selected = detectorSelected[priorityIndex].contents().bindMemory(
       to: UInt32.self, capacity: pixels)
@@ -495,10 +501,12 @@ public final class MetalRuntimeANSSeries: @unchecked Sendable {
         MetalRuntimeANSDetectorMetrics(
           changedDetectorPixels: 0, gpuMilliseconds: 0,
           wallMilliseconds: (CFAbsoluteTimeGetCurrent() - wallStarted) * 1000,
-          acquisitionCount: 1, submissionCount: 0))
+          acquisitionCount: 1, submissionCount: 0)
+      )
     }
     guard let failure = source.failure, let command = queue.makeCommandBuffer() else {
-      throw MetalRuntimeANSResidentSource.invalid("Metal could not encode a priority detector update")
+      throw MetalRuntimeANSResidentSource.invalid(
+        "Metal could not encode a priority detector update")
     }
     memset(failure.contents(), 0, 4)
     command.useResidencySet(residency)
@@ -511,7 +519,8 @@ public final class MetalRuntimeANSSeries: @unchecked Sendable {
       blit.endEncoding()
     }
     guard let encoder = command.makeComputeCommandEncoder(dispatchType: .concurrent) else {
-      throw MetalRuntimeANSResidentSource.invalid("Metal could not encode priority detector kernels")
+      throw MetalRuntimeANSResidentSource.invalid(
+        "Metal could not encode priority detector kernels")
     }
     try source.encodeDetectorDelta(
       selected: detectorSelected[priorityIndex],
@@ -522,14 +531,16 @@ public final class MetalRuntimeANSSeries: @unchecked Sendable {
     command.waitUntilCompleted()
     try source.checkFailure(command)
     detectorMasks[priorityIndex] = next
-    let gpuMilliseconds = command.gpuEndTime > command.gpuStartTime
+    let gpuMilliseconds =
+      command.gpuEndTime > command.gpuStartTime
       ? (command.gpuEndTime - command.gpuStartTime) * 1000 : 0
     return (
       virtualDetectorOutputs[priorityIndex],
       MetalRuntimeANSDetectorMetrics(
         changedDetectorPixels: changed, gpuMilliseconds: gpuMilliseconds,
         wallMilliseconds: (CFAbsoluteTimeGetCurrent() - wallStarted) * 1000,
-        acquisitionCount: 1, submissionCount: 1))
+        acquisitionCount: 1, submissionCount: 1)
+    )
   }
 
   /// Update one binary virtual-detector image for every acquisition exactly.
@@ -560,7 +571,8 @@ public final class MetalRuntimeANSSeries: @unchecked Sendable {
         selectedFromZero += next == 1 ? 1 : 0
       }
       rebaseFromZero[index] = forceRebase || selectedFromZero < deltaFromCurrent
-      let previous = rebaseFromZero[index]
+      let previous =
+        rebaseFromZero[index]
         ? [UInt8](repeating: 0, count: pixels) : detectorMasks[index]
       let selected = detectorSelected[index].contents().bindMemory(
         to: UInt32.self, capacity: pixels)
@@ -583,7 +595,8 @@ public final class MetalRuntimeANSSeries: @unchecked Sendable {
         MetalRuntimeANSDetectorMetrics(
           changedDetectorPixels: 0, gpuMilliseconds: 0,
           wallMilliseconds: (CFAbsoluteTimeGetCurrent() - wallStarted) * 1000,
-          acquisitionCount: sources.count, submissionCount: 0))
+          acquisitionCount: sources.count, submissionCount: 0)
+      )
     }
     guard let command = queue.makeCommandBuffer() else {
       throw MetalRuntimeANSResidentSource.invalid("Metal could not encode a detector update")
@@ -618,7 +631,8 @@ public final class MetalRuntimeANSSeries: @unchecked Sendable {
     command.waitUntilCompleted()
     for source in sources { try source.checkFailure(command) }
     detectorMasks = nextMasks
-    let gpuMilliseconds = command.gpuEndTime > command.gpuStartTime
+    let gpuMilliseconds =
+      command.gpuEndTime > command.gpuStartTime
       ? (command.gpuEndTime - command.gpuStartTime) * 1000 : 0
     return (
       virtualDetectorOutputs,
@@ -626,7 +640,8 @@ public final class MetalRuntimeANSSeries: @unchecked Sendable {
         changedDetectorPixels: changedCounts.max() ?? 0,
         gpuMilliseconds: gpuMilliseconds,
         wallMilliseconds: (CFAbsoluteTimeGetCurrent() - wallStarted) * 1000,
-        acquisitionCount: sources.count, submissionCount: 1))
+        acquisitionCount: sources.count, submissionCount: 1)
+    )
   }
 
   public func release() {
@@ -704,14 +719,16 @@ private final class RuntimeANSEncoder {
     }
     self.queue = queue
     let library = try Metal4DSTEMKernels.makeRuntimeANSLibrary(device: device)
-    let requestedPacketSIMDs = ProcessInfo.processInfo.environment[
-      "QGPU_RUNTIME_ANS_PACKET_OWNER_SIMDS"] ?? "4"
+    let requestedPacketSIMDs =
+      ProcessInfo.processInfo.environment[
+        "QGPU_RUNTIME_ANS_PACKET_OWNER_SIMDS"] ?? "4"
     guard requestedPacketSIMDs == "1" || requestedPacketSIMDs == "4" else {
       throw MetalRuntimeANSResidentSource.invalid(
         "QGPU_RUNTIME_ANS_PACKET_OWNER_SIMDS must be 1 or 4")
     }
     detectorPacketSIMDs = requestedPacketSIMDs == "4" ? 4 : 1
-    let detectorPacketName = detectorPacketSIMDs == 4
+    let detectorPacketName =
+      detectorPacketSIMDs == 4
       ? "streamed_counts_detector_packet4" : "streamed_counts_detector_packet"
     guard let encode = library.makeFunction(name: "streamed_counts_encode"),
       let compact = library.makeFunction(name: "streamed_counts_compact"),
@@ -752,26 +769,32 @@ private final class RuntimeANSEncoder {
     {
       let required = alreadyAllocated + newStagingBytes + UInt64(worstPayloadBytes)
       throw MetalRuntimeANSResidentSource.invalid(
-        "Runtime ANS encoding needs \(required) bytes at this window, but the load budget is \(maximumAdditionalBytes) bytes")
+        "Runtime ANS encoding needs \(required) bytes at this window, but the load budget is \(maximumAdditionalBytes) bytes"
+      )
     }
-    let reuseStaging = ProcessInfo.processInfo.environment[
-      "QGPU_RUNTIME_ANS_REUSE_STAGING"] != "0"
-    let scratch = try reuseStaging
+    let reuseStaging =
+      ProcessInfo.processInfo.environment[
+        "QGPU_RUNTIME_ANS_REUSE_STAGING"] != "0"
+    let scratch =
+      try reuseStaging
       ? reusablePrivateBuffer(
         &reusableScratch, bytes: scratchBytes, label: "runtime ANS scratch")
       : MetalRuntimeANSResidentSource.privateBuffer(
         device: device, bytes: scratchBytes, label: "runtime ANS scratch")
-    let sizes = try reuseStaging
+    let sizes =
+      try reuseStaging
       ? reusableSharedBuffer(
         &reusableSizes, bytes: streamCount * 4, label: "runtime ANS sizes")
       : MetalRuntimeANSResidentSource.sharedBuffer(
         device: device, bytes: streamCount * 4, label: "runtime ANS sizes")
-    let states = try reuseStaging
+    let states =
+      try reuseStaging
       ? reusablePrivateBuffer(
         &reusableStates, bytes: streamCount * 4, label: "runtime ANS states")
       : MetalRuntimeANSResidentSource.privateBuffer(
         device: device, bytes: streamCount * 4, label: "runtime ANS states")
-    let models = try reuseStaging
+    let models =
+      try reuseStaging
       ? reusablePrivateBuffer(
         &reusableModels, bytes: streamCount, label: "runtime ANS models")
       : MetalRuntimeANSResidentSource.privateBuffer(
@@ -797,7 +820,8 @@ private final class RuntimeANSEncoder {
     fusedDecodeAndEncodeSeconds += CFAbsoluteTimeGetCurrent() - fusedStarted
 
     let prefixStarted = CFAbsoluteTimeGetCurrent()
-    let offsets = try reuseStaging
+    let offsets =
+      try reuseStaging
       ? reusableSharedBuffer(
         &reusableOffsets, bytes: (streamCount + 1) * 4, label: "runtime ANS offsets")
       : MetalRuntimeANSResidentSource.sharedBuffer(
@@ -815,14 +839,16 @@ private final class RuntimeANSEncoder {
     }
     prefixSeconds += CFAbsoluteTimeGetCurrent() - prefixStarted
     let allocatedBeforePayload = UInt64(device.currentAllocatedSize)
-    let activeBeforePayload = allocatedBeforePayload > allocatedBefore
+    let activeBeforePayload =
+      allocatedBeforePayload > allocatedBefore
       ? allocatedBeforePayload - allocatedBefore : 0
     let finalMetadataBytes = (streamCount + 1) * 4 + streamCount
     if let maximumAdditionalBytes,
       activeBeforePayload + total + UInt64(finalMetadataBytes) > maximumAdditionalBytes
     {
       throw MetalRuntimeANSResidentSource.invalid(
-        "Runtime ANS payload needs \(activeBeforePayload + total + UInt64(finalMetadataBytes)) bytes at this window, but the load budget is \(maximumAdditionalBytes) bytes")
+        "Runtime ANS payload needs \(activeBeforePayload + total + UInt64(finalMetadataBytes)) bytes at this window, but the load budget is \(maximumAdditionalBytes) bytes"
+      )
     }
     let payload = try MetalRuntimeANSResidentSource.privateBuffer(
       device: device, bytes: max(1, Int(total)), label: "runtime ANS payload")
@@ -893,7 +919,8 @@ private final class RuntimeANSEncoder {
     return buffer
   }
 
-  private static func upload<T>(_ values: [T], device: MTLDevice, label: String) throws -> MTLBuffer {
+  private static func upload<T>(_ values: [T], device: MTLDevice, label: String) throws -> MTLBuffer
+  {
     try values.withUnsafeBytes { raw in
       guard let base = raw.baseAddress,
         let buffer = device.makeBuffer(
@@ -916,7 +943,8 @@ private final class RuntimeANSEncoder {
     }
     guard estimatedAdmissionBytes(source: source, frames: frames) <= maximumAdditionalBytes else {
       throw MetalRuntimeANSResidentSource.invalid(
-        "Runtime ANS needs more transient memory even at its smallest window; release another resident and retry")
+        "Runtime ANS needs more transient memory even at its smallest window; release another resident and retry"
+      )
     }
     return frames
   }
@@ -1014,7 +1042,8 @@ extension OriginalHDF5Packing {
     let pixels = source.dataset.detectorRows * source.dataset.detectorCols
     let denseBytes = frames * pixels * source.sourceBytesPerValue
     let dense = try buffer(denseBytes, privateStorage: true)
-    let scratch = source.sourceBytesPerValue == 2
+    let scratch =
+      source.sourceBytesPerValue == 2
       ? try buffer(denseBytes, privateStorage: true) : nil
     let mask = try buffer(pixels)
     let audit = try buffer(frames * 8)

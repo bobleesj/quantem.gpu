@@ -3,7 +3,9 @@ import XCTest
 final class PairedRuntimeTANSPolarQuadReferenceTests: XCTestCase {
   func testContiguousQuadWindowMatchesScalarPackingForEveryWidth() {
     for width in 0...32 {
-      let valueMask: UInt32 = width == 32 ? .max
+      let valueMask: UInt32 =
+        width == 32
+        ? .max
         : width == 0 ? 0 : (UInt32(1) << width) - 1
       let values = (0..<512).map { scan in
         (UInt32(scan) &* 2_654_435_761 ^ UInt32(scan >> 2)) & valueMask

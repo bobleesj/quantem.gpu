@@ -5588,7 +5588,6 @@ def load(
     dense_corrector = None
     if (
         selected_representation is DataRepresentation.DENSE
-        and resolve_backend(backend) == "cuda"
         and len(paths) == 1
         and dtype in (None, "native")
         and detector_bin == 1
@@ -5597,6 +5596,8 @@ def load(
         and scan_shift_row_col is None
         and devices is None
         and apply_mask is None
+        and cp is not None
+        and resolve_backend(backend) == "cuda"
     ):
         from ._metadata import read_pixel_mask
         from .backends.cuda.hot_pixels import CUDAHotPixelCorrector

@@ -23,10 +23,12 @@ enum MetalPairedRuntimeTANSBenchmark {
     }
     let indexed = try Native4DSTEMIndexedSource.open(dataset: dataset)
     let resident = try MetalPairedRuntimeTANSResidentSource.load(
-      source: indexed, device: device, maximumAdditionalBytes: ProcessInfo.processInfo.physicalMemory)
+      source: indexed, device: device,
+      maximumAdditionalBytes: ProcessInfo.processInfo.physicalMemory)
 
     let reference = try MetalRuntimeANSResidentSource.load(
-      source: indexed, device: device, maximumAdditionalBytes: ProcessInfo.processInfo.physicalMemory)
+      source: indexed, device: device,
+      maximumAdditionalBytes: ProcessInfo.processInfo.physicalMemory)
     defer { reference.releaseResidentStorage() }
     let scanCount = dataset.scanRows * dataset.scanCols
     let sampleFrames = [0, 1, dataset.scanCols - 1, scanCount / 2, scanCount - 2, scanCount - 1]
@@ -48,7 +50,8 @@ enum MetalPairedRuntimeTANSBenchmark {
         rowMoment += count * UInt64(pixel / dataset.detectorCols)
         columnMoment += count * UInt64(pixel % dataset.detectorCols)
       }
-      dpcMomentSampleParity = dpcMomentSampleParity
+      dpcMomentSampleParity =
+        dpcMomentSampleParity
         && resident.dpcMoments.total[frame] == total
         && resident.dpcMoments.detectorRowMoment[frame] == rowMoment
         && resident.dpcMoments.detectorColumnMoment[frame] == columnMoment

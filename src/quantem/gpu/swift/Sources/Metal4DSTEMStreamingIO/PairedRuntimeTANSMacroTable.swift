@@ -71,8 +71,9 @@ enum PairedRuntimeTANSMacroTable {
     for model in 0..<modelCount {
       let sourceBase = model * stateCount
       let modelBase = model * wordsPerModel
-      guard interleaved[modelBase..<(modelBase + stateCount)].elementsEqual(
-        decoding[sourceBase..<(sourceBase + stateCount)])
+      guard
+        interleaved[modelBase..<(modelBase + stateCount)].elementsEqual(
+          decoding[sourceBase..<(sourceBase + stateCount)])
       else { throw PairedRuntimeTANSMacroTableError.ordinaryTableMismatch(model: model) }
       let macroBase = modelBase + stateCount
       for state in 0..<stateCount {
@@ -110,7 +111,8 @@ enum PairedRuntimeTANSMacroTable {
         throw PairedRuntimeTANSMacroTableError.invalidTransition(model: model, state: state)
       }
       if pair == escapePair || consumed + bits > lookaheadBits { break }
-      let low = bits == 0
+      let low =
+        bits == 0
         ? 0 : (lookahead >> (lookaheadBits - consumed - bits)) & ((1 << bits) - 1)
       packed |= UInt64(pair) << (12 * count)
       state = base + low

@@ -13,11 +13,16 @@ struct TranslatedSamplingPlan {
 extension MetalImageOperations {
   /// Compatibility entry point for existing native workflow benchmarks.
   /// New callers should use `MetalEncodedSource.load(files:indexDirectory:device:)`.
-  @available(*, deprecated, message: "Use MetalEncodedSource.load(files:indexDirectory:device:shouldCancel:progress:).")
-  public func loadEncoded(files: [URL], indexDirectory: URL,
+  @available(
+    *, deprecated,
+    message: "Use MetalEncodedSource.load(files:indexDirectory:device:shouldCancel:progress:)."
+  )
+  public func loadEncoded(
+    files: [URL], indexDirectory: URL,
     shouldCancel: () -> Bool = { false }, progress: (Int, Int) -> Void = { _, _ in }
   ) throws -> [MetalEncodedSource] {
-    try MetalEncodedSource.load(files: files, indexDirectory: indexDirectory, device: device,
+    try MetalEncodedSource.load(
+      files: files, indexDirectory: indexDirectory, device: device,
       shouldCancel: shouldCancel, progress: progress)
   }
   public func interiorWindow(rows: Int, columns: Int) throws -> GPUImage {

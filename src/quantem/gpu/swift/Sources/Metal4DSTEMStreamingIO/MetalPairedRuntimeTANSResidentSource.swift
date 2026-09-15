@@ -213,9 +213,12 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     let started = CFAbsoluteTimeGetCurrent()
     let configuration = PairedRuntimeConfiguration(mode: interaction)
     let allocatedBefore = UInt64(device.currentAllocatedSize)
-    let allocationLimit = min(device.recommendedMaxWorkingSetSize,
-      maximumAdditionalBytes.map { allocatedBefore.addingReportingOverflow($0).overflow
-        ? UInt64.max : allocatedBefore + $0 } ?? UInt64.max)
+    let allocationLimit = min(
+      device.recommendedMaxWorkingSetSize,
+      maximumAdditionalBytes.map {
+        allocatedBefore.addingReportingOverflow($0).overflow
+          ? UInt64.max : allocatedBefore + $0
+      } ?? UInt64.max)
     let result = try MetalPairedRuntimeTANSHDF5Builder.build(
       source: source, device: device, maximumAdditionalBytes: maximumAdditionalBytes,
       configuration: configuration,
@@ -225,7 +228,9 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     let allocated = UInt64(device.currentAllocatedSize)
     let consolidationReserve = result.metrics.residentBytes + (UInt64(32) << 20)
     guard allocated <= allocationLimit, consolidationReserve <= allocationLimit - allocated else {
-      throw Self.invalid("Resident consolidation exceeds the available memory budget. Use Normal or select fewer tilts.")
+      throw Self.invalid(
+        "Resident consolidation exceeds the available memory budget. Use Normal or select fewer tilts."
+      )
     }
     if shouldCancel() { throw Metal4DSTEMStreamingIOError.cancelled }
     return try MetalPairedRuntimeTANSResidentSource(
@@ -307,8 +312,10 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     let detectorPacketOwner2 = try library.makeFunction(
       name: Metal4DSTEMKernels.pairedRuntimeTANSDetectorPacketOwner2Function,
       constantValues: twoConstants)
-    detectorPacketOwner2Pipeline = try device.makeComputePipelineState(function: detectorPacketOwner2)
-    let prepareSIMDEntropyFastPathValue = runtimeOption("QGPU_PAIRED_RUNTIME_PREPARE_SIMD_ENTROPY_FAST_PATH") ?? "0"
+    detectorPacketOwner2Pipeline = try device.makeComputePipelineState(
+      function: detectorPacketOwner2)
+    let prepareSIMDEntropyFastPathValue =
+      runtimeOption("QGPU_PAIRED_RUNTIME_PREPARE_SIMD_ENTROPY_FAST_PATH") ?? "0"
     guard prepareSIMDEntropyFastPathValue == "0" || prepareSIMDEntropyFastPathValue == "1" else {
       throw Self.invalid("QGPU_PAIRED_RUNTIME_PREPARE_SIMD_ENTROPY_FAST_PATH must be 0 or 1")
     }
@@ -335,7 +342,9 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
         name: Metal4DSTEMKernels.pairedRuntimeTANSDetectorPacketOwner2Function,
         constantValues: constants)
       detectorBranchlessPopPipeline = try device.makeComputePipelineState(function: function)
-    } else { detectorBranchlessPopPipeline = nil }
+    } else {
+      detectorBranchlessPopPipeline = nil
+    }
     var refillPipelines: [Int: MTLComputePipelineState] = [:]
     if runtimeOption("QGPU_PREPARE_REFILL_THRESHOLDS") == "1" {
       for threshold in [16, 24] {
@@ -359,7 +368,9 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
         name: Metal4DSTEMKernels.pairedRuntimeTANSDetectorPacketOwner2Function,
         constantValues: constants)
       detectorPhasedReadersPipeline = try device.makeComputePipelineState(function: function)
-    } else { detectorPhasedReadersPipeline = nil }
+    } else {
+      detectorPhasedReadersPipeline = nil
+    }
     var pairUnrollPipelines: [Int: MTLComputePipelineState] = [:]
     if runtimeOption("QGPU_PREPARE_PAIR_UNROLL") == "1" {
       for factor in [2, 4, 8] {
@@ -379,7 +390,7 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
       let checksumConstants = makeFunctionConstants()
       checksumConstants.setConstantValue(&twoStreams, type: .uint, index: 0)
       checksumConstants.setConstantValue(
-        &checksum, type: .bool, index: 14) // FC14: diagnostic decode checksum
+        &checksum, type: .bool, index: 14)  // FC14: diagnostic decode checksum
       let function = try library.makeFunction(
         name: Metal4DSTEMKernels.pairedRuntimeTANSDetectorPacketOwner2Function,
         constantValues: checksumConstants)
@@ -426,7 +437,8 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
       // after the trusted table above has been validated.
       guard detectorTrustedTablePipeline != nil else {
         throw Self.invalid(
-          "Prepare the window-reader pipeline only with QGPU_PAIRED_RUNTIME_PREPARE_TRUSTED_TABLE=1")
+          "Prepare the window-reader pipeline only with QGPU_PAIRED_RUNTIME_PREPARE_TRUSTED_TABLE=1"
+        )
       }
       let cadenceText = runtimeOption("QGPU_PAIRED_RUNTIME_WINDOW_READER_CADENCE") ?? "3"
       guard var cadence = UInt32(cadenceText), (1...3).contains(cadence) else {
@@ -643,7 +655,8 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     if detectorTrustedTablePipeline != nil,
       runtimeOption("QGPU_PAIRED_RUNTIME_PREPARE_PLAIN_SUMS") == "1"
     {
-      var trusted = true, plain = true
+      var trusted = true
+      var plain = true
       let constants = makeFunctionConstants()
       constants.setConstantValue(&twoStreams, type: .uint, index: 0)
       constants.setConstantValue(&trusted, type: .bool, index: 13)
@@ -658,7 +671,8 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     if detectorTrustedTablePipeline != nil,
       runtimeOption("QGPU_PAIRED_RUNTIME_PREPARE_REGISTER_SUMS") == "1"
     {
-      var trusted = true, register = true
+      var trusted = true
+      var register = true
       let constants = makeFunctionConstants()
       constants.setConstantValue(&twoStreams, type: .uint, index: 0)
       constants.setConstantValue(&trusted, type: .bool, index: 13)
@@ -670,17 +684,20 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     } else {
       detectorTrustedRegisterSumsPipeline = nil
     }
-    let prepareTrustedTableSplit4Value = runtimeOption("QGPU_PAIRED_RUNTIME_PREPARE_TRUSTED_TABLE_PACKET_SPLIT4") ?? "0"
+    let prepareTrustedTableSplit4Value =
+      runtimeOption("QGPU_PAIRED_RUNTIME_PREPARE_TRUSTED_TABLE_PACKET_SPLIT4") ?? "0"
     guard prepareTrustedTableSplit4Value == "0" || prepareTrustedTableSplit4Value == "1" else {
       throw Self.invalid(
         "QGPU_PAIRED_RUNTIME_PREPARE_TRUSTED_TABLE_PACKET_SPLIT4 must be 0 or 1")
     }
-    guard prepareTrustedTableSplit4Value == "0"
-      || (runtimeOption("QGPU_PAIRED_RUNTIME_PREPARE_TRUSTED_TABLE") == "1"
-        && runtimeOption("QGPU_PAIRED_RUNTIME_PREPARE_PACKET_SPLITS") == "1")
+    guard
+      prepareTrustedTableSplit4Value == "0"
+        || (runtimeOption("QGPU_PAIRED_RUNTIME_PREPARE_TRUSTED_TABLE") == "1"
+          && runtimeOption("QGPU_PAIRED_RUNTIME_PREPARE_PACKET_SPLITS") == "1")
     else {
       throw Self.invalid(
-        "Prepare the trusted-table split-4 pipeline only with trusted-table and packet-split preparation enabled")
+        "Prepare the trusted-table split-4 pipeline only with trusted-table and packet-split preparation enabled"
+      )
     }
     if prepareTrustedTableSplit4Value == "1" {
       // This composition is intentionally explicit and experimental. Validate
@@ -700,17 +717,20 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     } else {
       detectorTrustedTableSplit4Pipeline = nil
     }
-    let prepareTrustedTableSplit8Value = runtimeOption("QGPU_PAIRED_RUNTIME_PREPARE_TRUSTED_TABLE_PACKET_SPLIT8") ?? "0"
+    let prepareTrustedTableSplit8Value =
+      runtimeOption("QGPU_PAIRED_RUNTIME_PREPARE_TRUSTED_TABLE_PACKET_SPLIT8") ?? "0"
     guard prepareTrustedTableSplit8Value == "0" || prepareTrustedTableSplit8Value == "1" else {
       throw Self.invalid(
         "QGPU_PAIRED_RUNTIME_PREPARE_TRUSTED_TABLE_PACKET_SPLIT8 must be 0 or 1")
     }
-    guard prepareTrustedTableSplit8Value == "0"
-      || (runtimeOption("QGPU_PAIRED_RUNTIME_PREPARE_TRUSTED_TABLE") == "1"
-        && runtimeOption("QGPU_PAIRED_RUNTIME_PREPARE_PACKET_SPLITS") == "1")
+    guard
+      prepareTrustedTableSplit8Value == "0"
+        || (runtimeOption("QGPU_PAIRED_RUNTIME_PREPARE_TRUSTED_TABLE") == "1"
+          && runtimeOption("QGPU_PAIRED_RUNTIME_PREPARE_PACKET_SPLITS") == "1")
     else {
       throw Self.invalid(
-        "Prepare the trusted-table split-8 pipeline only with trusted-table and packet-split preparation enabled")
+        "Prepare the trusted-table split-8 pipeline only with trusted-table and packet-split preparation enabled"
+      )
     }
     if prepareTrustedTableSplit8Value == "1" {
       // Keep this composition explicit and experimental. The trusted-table
@@ -729,7 +749,8 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     } else {
       detectorTrustedTableSplit8Pipeline = nil
     }
-    let prepareVectorPairReductionValue = runtimeOption("QGPU_PAIRED_RUNTIME_PREPARE_VECTOR_PAIR_REDUCTION") ?? "0"
+    let prepareVectorPairReductionValue =
+      runtimeOption("QGPU_PAIRED_RUNTIME_PREPARE_VECTOR_PAIR_REDUCTION") ?? "0"
     guard prepareVectorPairReductionValue == "0" || prepareVectorPairReductionValue == "1" else {
       throw Self.invalid(
         "QGPU_PAIRED_RUNTIME_PREPARE_VECTOR_PAIR_REDUCTION must be 0 or 1")
@@ -868,7 +889,8 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     let detectorPacketOwner4 = try library.makeFunction(
       name: Metal4DSTEMKernels.pairedRuntimeTANSDetectorPacketOwner2Function,
       constantValues: fourConstants)
-    detectorPacketOwner4Pipeline = try device.makeComputePipelineState(function: detectorPacketOwner4)
+    detectorPacketOwner4Pipeline = try device.makeComputePipelineState(
+      function: detectorPacketOwner4)
     if runtimeOption("QGPU_PAIRED_RUNTIME_SPARSE_SPLIT") == "1" {
       let detectorSparseScatter = try library.makeFunction(
         name: Metal4DSTEMKernels.pairedRuntimeTANSDetectorSparseScatterFunction,
@@ -961,7 +983,8 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     guard polarSetting == "0" || polarSetting == "1" else {
       throw Self.invalid("QGPU_PAIRED_RUNTIME_POLAR_INDEX must be 0 or 1")
     }
-    let scan512QueryPrepareSetting = runtimeOption("QGPU_PAIRED_RUNTIME_PREPARE_POLAR_QUERY_SCAN512") ?? "0"
+    let scan512QueryPrepareSetting =
+      runtimeOption("QGPU_PAIRED_RUNTIME_PREPARE_POLAR_QUERY_SCAN512") ?? "0"
     guard scan512QueryPrepareSetting == "0" || scan512QueryPrepareSetting == "1" else {
       throw Self.invalid("QGPU_PAIRED_RUNTIME_PREPARE_POLAR_QUERY_SCAN512 must be 0 or 1")
     }
@@ -981,11 +1004,13 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
         // The defaulted fine-core layout is defined for 16-pixel leaves only.
         layoutKind = "radial1"
       }
-      guard ["polar", "radial1", "radialhalf", "radial1core4", "radial1fine4"].contains(layoutKind),
+      guard
+        ["polar", "radial1", "radialhalf", "radial1core4", "radial1fine4"].contains(layoutKind),
         !PairedRuntimeTANSPolarPlan.isPaddedLayout(layoutKind) || leafPixels == 16
       else {
         throw Self.invalid(
-          "QGPU_PAIRED_RUNTIME_POLAR_LAYOUT must be polar, radial1, radialhalf, or radial1core4 (16-pixel leaves)")
+          "QGPU_PAIRED_RUNTIME_POLAR_LAYOUT must be polar, radial1, radialhalf, or radial1core4 (16-pixel leaves)"
+        )
       }
       polarIndex = try autoreleasepool {
         try MetalPairedRuntimeTANSPolarIndex(
@@ -1022,12 +1047,15 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     try requireLive()
     if residentIndexPrepared { return }
     guard configuration.mode == .normal, polarIndex == nil else {
-      throw Self.invalid("Index-only preparation requires a Normal resident without an existing index")
+      throw Self.invalid(
+        "Index-only preparation requires a Normal resident without an existing index")
     }
     let device = queue.device
     let before = UInt64(device.currentAllocatedSize)
     let limit = before.addingReportingOverflow(maximumAdditionalBytes)
-    guard !limit.overflow else { throw Self.invalid("Additional index budget exceeds addressable memory") }
+    guard !limit.overflow else {
+      throw Self.invalid("Additional index budget exceeds addressable memory")
+    }
     if shouldCancel() { throw Metal4DSTEMStreamingIOError.cancelled }
     let library = try Metal4DSTEMKernels.makePairedRuntimeTANSLibrary(device: device)
     let candidate = try autoreleasepool {
@@ -1281,8 +1309,10 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     guard [1, 2, 4, 8].contains(stride), phase >= 0, phase < stride else {
       throw Self.invalid("Block stride must be 1, 2, 4 or 8 with 0 <= phase < stride")
     }
-    guard stride == 1 || (!historyEnabled
-      && runtimeOption("QGPU_PAIRED_RUNTIME_FROM_ZERO") != "1")
+    guard
+      stride == 1
+        || (!historyEnabled
+          && runtimeOption("QGPU_PAIRED_RUNTIME_FROM_ZERO") != "1")
     else { throw Self.invalid("Block stride cannot be combined with history or from_zero") }
     if stride == 1 {
       if blockStride > 1 { return try settleBlockStride(to: mask) }
@@ -1397,7 +1427,8 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
         start: checksums.contents().assumingMemoryBound(to: UInt32.self), count: packets))
     return (
       values, (CFAbsoluteTimeGetCurrent() - started) * 1_000,
-      max(0, command.gpuEndTime - command.gpuStartTime) * 1_000)
+      max(0, command.gpuEndTime - command.gpuStartTime) * 1_000
+    )
   }
 
   /// Runtime-compile and dispatch the isolated four-way checkpoint prototype.
@@ -1513,7 +1544,8 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
       }
       return (
         wallMilliseconds,
-        max(0, command.gpuEndTime - command.gpuStartTime) * 1_000)
+        max(0, command.gpuEndTime - command.gpuStartTime) * 1_000
+      )
     }
 
     let selectedBuffer = try Self.upload(
@@ -1580,7 +1612,9 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     ]
     let captureTiming = try dispatch(
       pipeline: capturePipeline,
-      buffers: [payload, offsets, modes, decodingTable, selectedBuffer, checkpoints, captureStatus],
+      buffers: [
+        payload, offsets, modes, decodingTable, selectedBuffer, checkpoints, captureStatus,
+      ],
       parameters: &captureParameters, threadCount: selectedStreamIndices.count,
       stage: "checkpoint capture")
     let captureStatuses = Array(
@@ -1589,7 +1623,8 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
         count: selectedStreamIndices.count))
     var captureHistogram = [Int](repeating: 0, count: 8)
     for status in captureStatuses {
-      let index = Int(status) < captureHistogram.count - 1
+      let index =
+        Int(status) < captureHistogram.count - 1
         ? Int(status) : captureHistogram.count - 1
       captureHistogram[index] += 1
     }
@@ -1661,14 +1696,17 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
         count: segmentCount))
     var segmentHistogram = [Int](repeating: 0, count: 7)
     for status in segmentStatuses {
-      let index = Int(status) < segmentHistogram.count - 1
+      let index =
+        Int(status) < segmentHistogram.count - 1
         ? Int(status) : segmentHistogram.count - 1
       segmentHistogram[index] += 1
     }
-    let segmentScratchBytes = decodedValuesBuffer.length + terminalStates.length
+    let segmentScratchBytes =
+      decodedValuesBuffer.length + terminalStates.length
       + terminalUnread.length + segmentStatus.length
     let allocatedAfterSegments = device.currentAllocatedSize
-    let diagnosticAllocationBytes = modeInspectionScratchBytes + captureAllocationBytes
+    let diagnosticAllocationBytes =
+      modeInspectionScratchBytes + captureAllocationBytes
       + segmentScratchBytes
     guard segmentHistogram[1] == segmentCount else {
       return FourWayCheckpointDiagnosticResult(
@@ -1731,11 +1769,16 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
   /// Scratch byte counts sum requested Metal buffer lengths, excluding host arrays
   /// and driver overhead. Reuse retains one exact mask pair until replacement/release.
   @_spi(PairedRuntimeTANSPrototype)
-  public func isolateDetectorStage(previous: [UInt8], target: [UInt8], stage: String,
+  public func isolateDetectorStage(
+    previous: [UInt8], target: [UInt8], stage: String,
     branchlessPop: Bool = false, reuseScratch: Bool = false, refillThreshold: Int = 32,
-    phasedReaders: Bool = false, pairUnroll: Int = 1)
-    throws -> (values: [UInt32], gpuMilliseconds: Double, fields: Int, residuals: Int,
-      allocatedScratchBytes: Int, preparedScratchBytes: Int, reusedScratch: Bool) {
+    phasedReaders: Bool = false, pairUnroll: Int = 1
+  )
+    throws -> (
+      values: [UInt32], gpuMilliseconds: Double, fields: Int, residuals: Int,
+      allocatedScratchBytes: Int, preparedScratchBytes: Int, reusedScratch: Bool
+    )
+  {
     stateLock.lock()
     defer {
       refreshMetadataSnapshot()
@@ -1745,7 +1788,9 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     guard let polarIndex, ["index", "residual", "combined"].contains(stage),
       previous.count == validPixels.count, target.count == validPixels.count,
       previous.allSatisfy({ $0 <= 1 }), target.allSatisfy({ $0 <= 1 })
-    else { throw Self.invalid("Stage isolation requires a prepared index and binary detector masks") }
+    else {
+      throw Self.invalid("Stage isolation requires a prepared index and binary detector masks")
+    }
     guard [16, 24, 32].contains(refillThreshold), !branchlessPop || refillThreshold == 32 else {
       throw Self.invalid("Use refillThreshold 16, 24, or 32; branchlessPop requires 32")
     }
@@ -1753,7 +1798,8 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
       throw Self.invalid("phasedReaders requires branchlessPop=false and refillThreshold=32")
     }
     guard [1, 2, 4, 8].contains(pairUnroll),
-      pairUnroll == 1 || (!branchlessPop && refillThreshold == 32 && !phasedReaders) else {
+      pairUnroll == 1 || (!branchlessPop && refillThreshold == 32 && !phasedReaders)
+    else {
       throw Self.invalid(
         "Use pairUnroll 1, 2, 4, or 8; unrolling requires branchlessPop=false, "
           + "refillThreshold=32, and phasedReaders=false")
@@ -1763,7 +1809,8 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     let jointPlanEnabled = runtimeOption("QGPU_PAIRED_RUNTIME_JOINT_PLAN") == "1"
     if reuseScratch, let cached = diagnosticScratch,
       cached.jointPlanEnabled == jointPlanEnabled,
-      cached.previous == previous, cached.target == target {
+      cached.previous == previous, cached.target == target
+    {
       scratch = cached
       reused = true
     } else {
@@ -1777,9 +1824,11 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
         detectorColumns: shape[3], leafPixels: polarIndex.leafPixels,
         layoutKind: polarIndex.layoutKind)
       let device = queue.device
-      let output = try Self.buffer(device: device, bytes: detectorProduct.length,
+      let output = try Self.buffer(
+        device: device, bytes: detectorProduct.length,
         options: .storageModeShared, label: "diagnostic stage contribution")
-      let status = try Self.buffer(device: device, bytes: 4,
+      let status = try Self.buffer(
+        device: device, bytes: 4,
         options: .storageModeShared, label: "diagnostic stage status")
       let selected = try Self.upload(
         plan.residualPixels.isEmpty ? [0] : streamAddresses(plan.residualPixels),
@@ -1787,9 +1836,11 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
       let coefficients = try Self.upload(
         plan.residualCoefficients.isEmpty ? [0] : plan.residualCoefficients,
         device: device, label: "diagnostic residual coefficients")
-      let indexInputs = reuseScratch || stage != "residual"
+      let indexInputs =
+        reuseScratch || stage != "residual"
         ? try polarIndex.prepareInputs(plan: plan) : nil
-      scratch = DiagnosticScratch(jointPlanEnabled: jointPlanEnabled,
+      scratch = DiagnosticScratch(
+        jointPlanEnabled: jointPlanEnabled,
         previous: previous, target: target, plan: plan,
         output: output, status: status, selected: selected, coefficients: coefficients,
         indexInputs: indexInputs)
@@ -1805,9 +1856,12 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     let coefficients = scratch.coefficients
     memset(output.contents(), 0, output.length)
     memset(status.contents(), 0, status.length)
-    guard let command = queue.makeCommandBuffer() else { throw Self.invalid("No diagnostic command") }
+    guard let command = queue.makeCommandBuffer() else {
+      throw Self.invalid("No diagnostic command")
+    }
     if stage != "residual" {
-      try polarIndex.encode(inputs: scratch.indexInputs!, output: output,
+      try polarIndex.encode(
+        inputs: scratch.indexInputs!, output: output,
         failure: status, command: command)
     }
     if stage != "index" && !plan.residualPixels.isEmpty {
@@ -1815,8 +1869,10 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
         throw Self.invalid("No diagnostic encoder")
       }
       let packets = shape[0] * shape[1] / 512
-      var parameters: [UInt32] = [UInt32(validPixels.count), UInt32(packets),
-        UInt32(plan.residualPixels.count), 0, UInt32(payload.length), 1, 1, 0]
+      var parameters: [UInt32] = [
+        UInt32(validPixels.count), UInt32(packets),
+        UInt32(plan.residualPixels.count), 0, UInt32(payload.length), 1, 1, 0,
+      ]
       if branchlessPop {
         guard let pipeline = detectorBranchlessPopPipeline else {
           throw Self.invalid("Prepare branchless-pop diagnostic before loading")
@@ -1837,13 +1893,18 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
           throw Self.invalid("Set QGPU_PREPARE_PAIR_UNROLL=1 before loading")
         }
         encoder.setComputePipelineState(pipeline)
-      } else { encoder.setComputePipelineState(detectorPacketOwner2Pipeline) }
-      for (index, buffer) in [payload, offsets, modes, decodingTable, selected,
-        coefficients, output, status].enumerated() {
+      } else {
+        encoder.setComputePipelineState(detectorPacketOwner2Pipeline)
+      }
+      for (index, buffer) in [
+        payload, offsets, modes, decodingTable, selected,
+        coefficients, output, status,
+      ].enumerated() {
         encoder.setBuffer(buffer, offset: 0, index: index)
       }
       encoder.setBytes(&parameters, length: parameters.count * 4, index: 8)
-      encoder.dispatchThreadgroups(MTLSize(width: (packets + 3) / 4, height: 1, depth: 1),
+      encoder.dispatchThreadgroups(
+        MTLSize(width: (packets + 3) / 4, height: 1, depth: 1),
         threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
       encoder.endEncoding()
     }
@@ -1852,10 +1913,14 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     guard command.status == .completed, status.contents().load(as: UInt32.self) == 0 else {
       throw Self.invalid("Stage isolation GPU failure")
     }
-    return (Array(UnsafeBufferPointer(start: output.contents().assumingMemoryBound(to: UInt32.self),
-      count: shape[0] * shape[1])), (command.gpuEndTime - command.gpuStartTime) * 1000,
+    return (
+      Array(
+        UnsafeBufferPointer(
+          start: output.contents().assumingMemoryBound(to: UInt32.self),
+          count: shape[0] * shape[1])), (command.gpuEndTime - command.gpuStartTime) * 1000,
       plan.selectedFields.count, plan.residualPixels.count,
-      reused ? 0 : scratch.byteCount, scratch.byteCount, reused)
+      reused ? 0 : scratch.byteCount, scratch.byteCount, reused
+    )
   }
 
   /// Submit one detector update for every unique resident, then complete them.
@@ -1889,12 +1954,18 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
       _ = try entry.element.settleBlockStride(to: masks[entry.offset])
     }
 
-    var pending: [(offset: Int, resident: MetalPairedRuntimeTANSResidentSource,
-      update: PendingDetectorUpdate)] = []
+    var pending:
+      [(
+        offset: Int, resident: MetalPairedRuntimeTANSResidentSource,
+        update: PendingDetectorUpdate
+      )] = []
     do {
       for entry in ordered {
-        pending.append((entry.offset, entry.element,
-          try entry.element.prepareDetectorUpdate(mask: masks[entry.offset])))
+        pending.append(
+          (
+            entry.offset, entry.element,
+            try entry.element.prepareDetectorUpdate(mask: masks[entry.offset])
+          ))
       }
     } catch {
       for item in pending { item.resident.rollbackPreparedDetectorUpdate(item.update) }
@@ -1933,12 +2004,14 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     let profileEnabled = runtimeOption("QGPU_PAIRED_RUNTIME_PROFILE") == "1"
     let requestEntry = profileEnabled ? ProcessInfo.processInfo.systemUptime : 0
     let preparationStart = profileEnabled ? ProcessInfo.processInfo.systemUptime : 0
-    var profile = profileEnabled
+    var profile =
+      profileEnabled
       ? UpdateProfile(requestEntry: requestEntry, preparationStart: preparationStart)
       : nil
     let stageSession = profileEnabled ? detectorProfiler?.makeSession() : nil
     try requireLive()
-    let historyActive = historyEnabled
+    let historyActive =
+      historyEnabled
       && runtimeOption("QGPU_PAIRED_RUNTIME_HISTORY") == "1"
     let previousHistoryValid = historyValid
     let previousPolarFields = polarFieldCount
@@ -2048,22 +2121,27 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     let requestHistoryBase = historyBaseValue == "1"
     guard !requestHistoryBase || historyActive else {
       throw Self.invalid(
-        "QGPU_PAIRED_RUNTIME_HISTORY_BASE=1 requires QGPU_PAIRED_RUNTIME_HISTORY=1 and startup history storage")
+        "QGPU_PAIRED_RUNTIME_HISTORY_BASE=1 requires QGPU_PAIRED_RUNTIME_HISTORY=1 and startup history storage"
+      )
     }
     // The public low-level mask API can still include invalid detector pixels.
     // Its exact raw-mask semantics use the direct path; indexed fields exclude
     // invalid pixels and are used only when both masks follow that policy.
-    let indexRequested = polarIndex != nil
+    let indexRequested =
+      polarIndex != nil
       && runtimeOption("QGPU_PAIRED_RUNTIME_POLAR_INDEX") == "1"
     let currentMaskForIndex = detectorMask
-    let currentIndexAllowed = indexRequested && !validPixels.withUnsafeBufferPointer { valid in
-      mask.withUnsafeBufferPointer { next in
-        currentMaskForIndex.withUnsafeBufferPointer { current in
-          (0..<pixels).contains(where: { valid[$0] == 0 && (next[$0] != 0 || current[$0] != 0) })
+    let currentIndexAllowed =
+      indexRequested
+      && !validPixels.withUnsafeBufferPointer { valid in
+        mask.withUnsafeBufferPointer { next in
+          currentMaskForIndex.withUnsafeBufferPointer { current in
+            (0..<pixels).contains(where: { valid[$0] == 0 && (next[$0] != 0 || current[$0] != 0) })
+          }
         }
       }
-    }
-    var polarQueryVariantValue = runtimeOption("QGPU_PAIRED_RUNTIME_POLAR_QUERY_VARIANT") ?? "packet-groups"
+    var polarQueryVariantValue =
+      runtimeOption("QGPU_PAIRED_RUNTIME_POLAR_QUERY_VARIANT") ?? "packet-groups"
     // A defaulted scan512 query quietly uses the ordinary query when this request
     // cannot use the prepared index (index off, invalid pixels in the mask, or a
     // non-512 scan); an explicitly requested variant still fails loudly.
@@ -2074,8 +2152,9 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     {
       polarQueryVariantValue = "packet-groups"
     }
-    guard let polarQueryVariant = MetalPairedRuntimeTANSPolarIndex.QueryVariant(
-      rawValue: polarQueryVariantValue)
+    guard
+      let polarQueryVariant = MetalPairedRuntimeTANSPolarIndex.QueryVariant(
+        rawValue: polarQueryVariantValue)
     else {
       throw Self.invalid(
         "QGPU_PAIRED_RUNTIME_POLAR_QUERY_VARIANT must be packet-groups, scan512, "
@@ -2106,16 +2185,18 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
       // checks below.
       let packetSplitsSetting = runtimeOption("QGPU_PAIRED_RUNTIME_PACKET_SPLITS") ?? "1"
       let trustedTableSetting = runtimeOption("QGPU_PAIRED_RUNTIME_TRUSTED_TABLE") ?? "0"
-      let split4TrustedTableComposition = polarQueryVariant == .scan512
+      let split4TrustedTableComposition =
+        polarQueryVariant == .scan512
         && packetSplitsSetting == "4" && trustedTableSetting == "1"
         && detectorTrustedTableSplit4Pipeline != nil
-      let split8TrustedTableComposition = polarQueryVariant == .scan512
+      let split8TrustedTableComposition =
+        polarQueryVariant == .scan512
         && packetSplitsSetting == "8" && trustedTableSetting == "1"
         && detectorTrustedTableSplit8Pipeline != nil
       guard polarIndex?.queryPipelinePrepared(for: polarQueryVariant) == true,
         currentIndexAllowed, shape[0] == 512, shape[1] == 512,
-        (packetSplitsSetting == "1" || split4TrustedTableComposition
-          || split8TrustedTableComposition),
+        packetSplitsSetting == "1" || split4TrustedTableComposition
+          || split8TrustedTableComposition,
         baselineSettings.allSatisfy({
           (runtimeOption($0.0) ?? $0.1) == $0.1
         })
@@ -2128,8 +2209,10 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
             + "joint plan/history and other detector specializations off)")
       }
     }
-    let historyIndexAllowed = currentIndexAllowed && historyValid
-      && historyMask != nil && !validPixels.indices.contains(where: {
+    let historyIndexAllowed =
+      currentIndexAllowed && historyValid
+      && historyMask != nil
+      && !validPixels.indices.contains(where: {
         validPixels[$0] == 0 && (mask[$0] != 0 || historyMask![$0] != 0)
       })
     if let polarIndex, currentIndexAllowed {
@@ -2158,7 +2241,7 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
         if zeroPlan.estimatedCost + 1 < previousPlan.estimatedCost {
           plan = zeroPlan
           startFromZero = true
-          selectedCost = zeroPlan.estimatedCost + 1 // account for clearing the candidate output
+          selectedCost = zeroPlan.estimatedCost + 1  // account for clearing the candidate output
         }
       }
       if requestHistoryBase, historyIndexAllowed, !fromZero {
@@ -2172,11 +2255,15 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
           layoutKind: polarIndex.layoutKind)
         let historyCost = historyPlan.estimatedCost
         let currentCost = previousPlan.estimatedCost
-        let paretoDominates = { (candidate: PairedRuntimeTANSPolarPlan,
-                                 baseline: PairedRuntimeTANSPolarPlan) -> Bool in
+        let paretoDominates = {
+          (
+            candidate: PairedRuntimeTANSPolarPlan,
+            baseline: PairedRuntimeTANSPolarPlan
+          ) -> Bool in
           let residualNoMore = candidate.residualPixels.count <= baseline.residualPixels.count
           let fieldsNoMore = candidate.selectedFields.count <= baseline.selectedFields.count
-          let oneStrict = candidate.residualPixels.count < baseline.residualPixels.count
+          let oneStrict =
+            candidate.residualPixels.count < baseline.residualPixels.count
             || candidate.selectedFields.count < baseline.selectedFields.count
           return residualNoMore && fieldsNoMore && oneStrict
         }
@@ -2185,7 +2272,8 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
         // the current plan and a cheaper zero-based plan, if one was selected.
         if historyCost < currentCost && historyCost < selectedCost
           && paretoDominates(historyPlan, previousPlan)
-          && paretoDominates(historyPlan, plan) {
+          && paretoDominates(historyPlan, plan)
+        {
           plan = historyPlan
           startFromZero = false
           usingHistoryBase = true
@@ -2231,7 +2319,8 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     }
     if residualOrderValue == "rank", selected.count > 1 {
       // Stream-rank order follows the payload layout, so a chunk's streams are adjacent.
-      guard let layout = PairedRuntimeTANSPolarPlan.indexLayout(leafPixels: 16, layoutKind: "radial1")
+      guard
+        let layout = PairedRuntimeTANSPolarPlan.indexLayout(leafPixels: 16, layoutKind: "radial1")
       else { throw Self.invalid("Rank residual order requires the radial1 layout") }
       let rankOf: [UInt32]
       if let streamRankOfPixel {
@@ -2249,12 +2338,17 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     }
     if residualOrderValue == "radius", selected.count > 1 {
       let columns = shape[3]
-      let centerRow = shape[2] / 2, centerColumn = columns / 2
+      let centerRow = shape[2] / 2
+      let centerColumn = columns / 2
       let order = selected.indices.sorted { left, right in
-        let a = Int(selected[left]), b = Int(selected[right])
-        let ay = a / columns - centerRow, ax = a % columns - centerColumn
-        let by = b / columns - centerRow, bx = b % columns - centerColumn
-        let ra = ay * ay + ax * ax, rb = by * by + bx * bx
+        let a = Int(selected[left])
+        let b = Int(selected[right])
+        let ay = a / columns - centerRow
+        let ax = a % columns - centerColumn
+        let by = b / columns - centerRow
+        let bx = b % columns - centerColumn
+        let ra = ay * ay + ax * ax
+        let rb = by * by + bx * bx
         return ra == rb ? a < b : ra < rb
       }
       selected = order.map { selected[$0] }
@@ -2327,7 +2421,8 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
       throw Self.invalid(
         "QGPU_PAIRED_RUNTIME_DETECTOR_KERNEL must be packet-owner2, partials, or adaptive-partials")
     }
-    let simdEntropyFastPathValue = runtimeOption("QGPU_PAIRED_RUNTIME_SIMD_ENTROPY_FAST_PATH") ?? "0"
+    let simdEntropyFastPathValue =
+      runtimeOption("QGPU_PAIRED_RUNTIME_SIMD_ENTROPY_FAST_PATH") ?? "0"
     guard simdEntropyFastPathValue == "0" || simdEntropyFastPathValue == "1" else {
       throw Self.invalid("QGPU_PAIRED_RUNTIME_SIMD_ENTROPY_FAST_PATH must be 0 or 1")
     }
@@ -2372,12 +2467,15 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     }
     let adaptiveGroups = (selected.count + 63) / 64
     let requestedPartialBytes = adaptiveGroups * packets * 512 * MemoryLayout<UInt32>.stride
-    if activePacketStride > 1 && (detectorKernel == "partials" || detectorKernel == "adaptive-partials") {
+    if activePacketStride > 1
+      && (detectorKernel == "partials" || detectorKernel == "adaptive-partials")
+    {
       throw Self.invalid("Block stride requires the ordinary two-stream packet-owner2 kernel")
     }
-    if requestedPartialBytes <= 128 * 1024 * 1024 && (detectorKernel == "partials"
-      || (detectorKernel == "adaptive-partials" && !selected.isEmpty
-        && adaptiveGroups <= partialMaximumGroups))
+    if requestedPartialBytes <= 128 * 1024 * 1024
+      && (detectorKernel == "partials"
+        || (detectorKernel == "adaptive-partials" && !selected.isEmpty
+          && adaptiveGroups <= partialMaximumGroups))
     {
       // The partial kernel gives each 64-pixel block its own SIMD group and
       // removes the packet-owner atomics from the hot loop. Scratch is lazy
@@ -2385,8 +2483,9 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
       let groups = adaptiveGroups
       let partialBytes = groups * packets * 512 * MemoryLayout<UInt32>.stride
       if detectorPartials == nil || detectorPartials!.length < partialBytes {
-        guard let next = detectorProduct.device.makeBuffer(
-          length: max(partialBytes, MemoryLayout<UInt32>.stride), options: .storageModeShared)
+        guard
+          let next = detectorProduct.device.makeBuffer(
+            length: max(partialBytes, MemoryLayout<UInt32>.stride), options: .storageModeShared)
         else { throw Self.invalid("Metal could not allocate exact detector partials") }
         next.label = "paired-runtime detector partials"
         detectorPartials = next
@@ -2457,8 +2556,10 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
         keepAlive: [selectedBuffer, coefficientBuffer])
     }
 
-    guard let encoder = stageSession?.makeComputeEncoder(
-      commandBuffer: command, stage: "residual") ?? command.makeComputeCommandEncoder() else {
+    guard
+      let encoder = stageSession?.makeComputeEncoder(
+        commandBuffer: command, stage: "residual") ?? command.makeComputeCommandEncoder()
+    else {
       throw Self.invalid("Metal could not encode a paired-runtime detector update")
     }
     let streamsPerLane = runtimeOption("QGPU_PAIRED_RUNTIME_STREAMS_PER_LANE") ?? "2"
@@ -2517,77 +2618,105 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     guard !reader32 || (!cooperative && !macro && !denseCompaction) else {
       throw Self.invalid("QGPU_PAIRED_RUNTIME_READER32=1 requires cooperative/macro/dense off")
     }
-    guard let packetSplits = Int(runtimeOption("QGPU_PAIRED_RUNTIME_PACKET_SPLITS") ?? "1"), [1, 2, 4, 8].contains(packetSplits)
+    guard let packetSplits = Int(runtimeOption("QGPU_PAIRED_RUNTIME_PACKET_SPLITS") ?? "1"),
+      [1, 2, 4, 8].contains(packetSplits)
     else { throw Self.invalid("Packet splits must be 1, 2, 4, or 8") }
-    guard packetSplits == 1 || (streamsPerLane == "2" && !reader32 && !cooperative
-      && !macro && !denseCompaction && !sparseSplit && detectorSplitPipelines[packetSplits] != nil)
-    else { throw Self.invalid("Prepare packet-split pipelines and disable other packet specializations") }
+    guard
+      packetSplits == 1
+        || (streamsPerLane == "2" && !reader32 && !cooperative
+          && !macro && !denseCompaction && !sparseSplit
+          && detectorSplitPipelines[packetSplits] != nil)
+    else {
+      throw Self.invalid("Prepare packet-split pipelines and disable other packet specializations")
+    }
     var parameters: [UInt32] = [
       UInt32(pixels), UInt32(packets), UInt32(selected.count), 0,
       UInt32(payload.length), sparseSplit ? 0 : 1,
       UInt32(activePacketStride), UInt32(activePacketPhase),
     ]
-    guard activePacketStride == 1
-      || (detectorKernel == "packet-owner2" && streamsPerLane == "2" && packetSplits == 1
-        && !cooperative && !sparseSplit && !denseCompaction && !macro)
-    else { throw Self.invalid("Block stride requires the ordinary two-stream packet-owner2 kernel") }
+    guard
+      activePacketStride == 1
+        || (detectorKernel == "packet-owner2" && streamsPerLane == "2" && packetSplits == 1
+          && !cooperative && !sparseSplit && !denseCompaction && !macro)
+    else {
+      throw Self.invalid("Block stride requires the ordinary two-stream packet-owner2 kernel")
+    }
     let logicalPackets = (packets - activePacketPhase + activePacketStride - 1) / activePacketStride
     let reuseWord = runtimeOption("QGPU_PAIRED_RUNTIME_REUSE_WORD") == "1"
     let registerSums = runtimeOption("QGPU_PAIRED_RUNTIME_REGISTER_SUMS") == "1"
     let plainSums = runtimeOption("QGPU_PAIRED_RUNTIME_PLAIN_SUMS") == "1"
-    guard !plainSums || (streamsPerLane == "2" && packetSplits == 1 && !reader32
-      && !cooperative && !macro && !denseCompaction && !sparseSplit && !reuseWord && !registerSums)
+    guard
+      !plainSums
+        || (streamsPerLane == "2" && packetSplits == 1 && !reader32
+          && !cooperative && !macro && !denseCompaction && !sparseSplit && !reuseWord
+          && !registerSums)
     else { throw Self.invalid("Plain sums require the ordinary two-stream packet kernel") }
-    guard !registerSums || (streamsPerLane == "2" && packetSplits == 1 && !reader32
-      && !cooperative && !macro && !denseCompaction && !sparseSplit && !reuseWord)
+    guard
+      !registerSums
+        || (streamsPerLane == "2" && packetSplits == 1 && !reader32
+          && !cooperative && !macro && !denseCompaction && !sparseSplit && !reuseWord)
     else { throw Self.invalid("Register sums require the ordinary two-stream packet kernel") }
-    guard !reuseWord || (streamsPerLane == "2" && packetSplits == 1 && !reader32
-      && !cooperative && !macro && !denseCompaction && !sparseSplit)
+    guard
+      !reuseWord
+        || (streamsPerLane == "2" && packetSplits == 1 && !reader32
+          && !cooperative && !macro && !denseCompaction && !sparseSplit)
     else { throw Self.invalid("Word reuse requires the ordinary two-stream packet kernel") }
-    guard !lazyRefill || (streamsPerLane == "2" && packetSplits == 1 && !reader32
-      && !cooperative && !macro && !denseCompaction && !sparseSplit && !reuseWord
-      && !registerSums && !plainSums && !trustedTable && detectorLazyRefillPipeline != nil)
+    guard
+      !lazyRefill
+        || (streamsPerLane == "2" && packetSplits == 1 && !reader32
+          && !cooperative && !macro && !denseCompaction && !sparseSplit && !reuseWord
+          && !registerSums && !plainSums && !trustedTable && detectorLazyRefillPipeline != nil)
     else {
       throw Self.invalid(
         "Lazy refill requires its prepared ordinary two-stream packet-owner2 pipeline")
     }
-    guard !trustedTable || (streamsPerLane == "2"
-      && (packetSplits == 1
-        || (packetSplits == 4 && detectorTrustedTableSplit4Pipeline != nil)
-        || (packetSplits == 8 && detectorTrustedTableSplit8Pipeline != nil))
-      && !reader32
-      && !cooperative && !macro && !denseCompaction && !sparseSplit && !reuseWord
-      && (!registerSums || (packetSplits == 1 && detectorTrustedRegisterSumsPipeline != nil))
-      && (!plainSums || (packetSplits == 1 && detectorTrustedPlainSumsPipeline != nil))
-      && !(registerSums && plainSums))
+    guard
+      !trustedTable
+        || (streamsPerLane == "2"
+          && (packetSplits == 1
+            || (packetSplits == 4 && detectorTrustedTableSplit4Pipeline != nil)
+            || (packetSplits == 8 && detectorTrustedTableSplit8Pipeline != nil))
+          && !reader32
+          && !cooperative && !macro && !denseCompaction && !sparseSplit && !reuseWord
+          && (!registerSums || (packetSplits == 1 && detectorTrustedRegisterSumsPipeline != nil))
+          && (!plainSums || (packetSplits == 1 && detectorTrustedPlainSumsPipeline != nil))
+          && !(registerSums && plainSums))
     else {
       throw Self.invalid(
-        "Trusted table requires the ordinary two-stream packet kernel or its prepared split-4/split-8, plain-sums or register-sums composition")
+        "Trusted table requires the ordinary two-stream packet kernel or its prepared split-4/split-8, plain-sums or register-sums composition"
+      )
     }
-    guard !simdEntropyFastPath || (streamsPerLane == "2" && packetSplits == 1
-      && !reader32 && !cooperative && !macro && !denseCompaction && !sparseSplit
-      && !reuseWord && !registerSums && !plainSums && !lazyRefill && !trustedTable
-      && runtimeOption("QGPU_PAIRED_RUNTIME_JOINT_PLAN") != "1"
-      && runtimeOption("QGPU_PAIRED_RUNTIME_HISTORY") != "1")
+    guard
+      !simdEntropyFastPath
+        || (streamsPerLane == "2" && packetSplits == 1
+          && !reader32 && !cooperative && !macro && !denseCompaction && !sparseSplit
+          && !reuseWord && !registerSums && !plainSums && !lazyRefill && !trustedTable
+          && runtimeOption("QGPU_PAIRED_RUNTIME_JOINT_PLAN") != "1"
+          && runtimeOption("QGPU_PAIRED_RUNTIME_HISTORY") != "1")
     else {
       throw Self.invalid(
-        "SIMD entropy fast path is an isolated packet-owner2 experiment; disable other specializations")
+        "SIMD entropy fast path is an isolated packet-owner2 experiment; disable other specializations"
+      )
     }
-    guard !vectorPairReduction || (detectorKernel == "packet-owner2"
-      && streamsPerLane == "2" && packetSplits == 1 && !reader32 && !cooperative
-      && !macro && !denseCompaction && !sparseSplit && !reuseWord && !registerSums
-      && !plainSums && !lazyRefill && !simdEntropyFastPath
-      && runtimeOption("QGPU_PAIRED_RUNTIME_JOINT_PLAN") != "1"
-      && runtimeOption("QGPU_PAIRED_RUNTIME_HISTORY") != "1")
+    guard
+      !vectorPairReduction
+        || (detectorKernel == "packet-owner2"
+          && streamsPerLane == "2" && packetSplits == 1 && !reader32 && !cooperative
+          && !macro && !denseCompaction && !sparseSplit && !reuseWord && !registerSums
+          && !plainSums && !lazyRefill && !simdEntropyFastPath
+          && runtimeOption("QGPU_PAIRED_RUNTIME_JOINT_PLAN") != "1"
+          && runtimeOption("QGPU_PAIRED_RUNTIME_HISTORY") != "1")
     else {
       throw Self.invalid(
         "Packed pair reduction requires the ordinary indexed two-stream packet-owner2 path")
     }
-    guard !windowReader || (detectorTrustedWindowReaderPipeline != nil
-      && streamsPerLane == "2" && packetSplits == 1 && !reader32 && !cooperative
-      && !macro && !denseCompaction && !sparseSplit && !reuseWord && !registerSums
-      && (!plainSums || detectorTrustedWindowReaderPlainPipeline != nil)
-      && !lazyRefill && !simdEntropyFastPath && !vectorPairReduction)
+    guard
+      !windowReader
+        || (detectorTrustedWindowReaderPipeline != nil
+          && streamsPerLane == "2" && packetSplits == 1 && !reader32 && !cooperative
+          && !macro && !denseCompaction && !sparseSplit && !reuseWord && !registerSums
+          && (!plainSums || detectorTrustedWindowReaderPlainPipeline != nil)
+          && !lazyRefill && !simdEntropyFastPath && !vectorPairReduction)
     else {
       throw Self.invalid(
         "The window reader requires its prepared trusted-table two-stream packet-owner2 "
@@ -2613,7 +2742,8 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     } else if windowReader {
       let diagLevel = Int(runtimeOption("QGPU_PAIRED_RUNTIME_WINDOW_DIAG") ?? "0") ?? 0
       // Defaulted trusted setup applies only once the validated index exists.
-      let trustedSetup = runtimeOption("QGPU_PAIRED_RUNTIME_TRUSTED_SETUP") == "1"
+      let trustedSetup =
+        runtimeOption("QGPU_PAIRED_RUNTIME_TRUSTED_SETUP") == "1"
         && (polarIndex != nil || runtimeOptionIsExplicit("QGPU_PAIRED_RUNTIME_TRUSTED_SETUP"))
       if trustedSetup {
         // Only valid after the load-time exact index build decoded and validated every stream.
@@ -2622,20 +2752,28 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
         let flatEventsRequested = runtimeOption("QGPU_PAIRED_RUNTIME_FLAT_EVENTS") == "1"
         let compactPairsRequested = runtimeOption("QGPU_PAIRED_RUNTIME_COMPACT_PAIRS") == "1"
         // Four bytes per trip builds on two per trip; an explicit COMPACT_PAIRS=0 disables both.
-        let compactQuadsRequested = compactPairsRequested
+        let compactQuadsRequested =
+          compactPairsRequested
           && runtimeOption("QGPU_PAIRED_RUNTIME_COMPACT_QUADS") == "1"
-        let trustedPipeline = diagLevel == 7
+        let trustedPipeline =
+          diagLevel == 7
           ? detectorTrustedSetupHeaderDiagPipeline
-          : eventRowsRequested ? detectorTrustedSetupEventRowsPipeline
-          : adjacentRequested ? detectorTrustedSetupAdjacentPipeline
-          : flatEventsRequested ? detectorTrustedSetupFlatEventsPipeline
-          : compactQuadsRequested ? detectorTrustedSetupCompactQuadsPipeline
-          : compactPairsRequested ? detectorTrustedSetupCompactPairsPipeline : detectorTrustedSetupWindowPipeline
+          : eventRowsRequested
+            ? detectorTrustedSetupEventRowsPipeline
+            : adjacentRequested
+              ? detectorTrustedSetupAdjacentPipeline
+              : flatEventsRequested
+                ? detectorTrustedSetupFlatEventsPipeline
+                : compactQuadsRequested
+                  ? detectorTrustedSetupCompactQuadsPipeline
+                  : compactPairsRequested
+                    ? detectorTrustedSetupCompactPairsPipeline : detectorTrustedSetupWindowPipeline
         guard let trustedSetupPipeline = trustedPipeline, polarIndex != nil,
           diagLevel == 0 || diagLevel == 7, !plainSums
         else {
           throw Self.invalid(
-            "Trusted setup requires its prepared pipeline, the validated polar index, and no other diagnostics")
+            "Trusted setup requires its prepared pipeline, the validated polar index, and no other diagnostics"
+          )
         }
         encoder.setComputePipelineState(trustedSetupPipeline)
       } else if diagLevel != 0 {
@@ -2645,7 +2783,8 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
         encoder.setComputePipelineState(diagnostic)
       } else {
         encoder.setComputePipelineState(
-          plainSums ? detectorTrustedWindowReaderPlainPipeline! : detectorTrustedWindowReaderPipeline!)
+          plainSums
+            ? detectorTrustedWindowReaderPlainPipeline! : detectorTrustedWindowReaderPipeline!)
       }
     } else if trustedTable && plainSums {
       encoder.setComputePipelineState(detectorTrustedPlainSumsPipeline!)
@@ -2725,7 +2864,9 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     }
     encoder.setBytes(&parameters, length: parameters.count * 4, index: 8)
     encoder.dispatchThreadgroups(
-      MTLSize(width: cooperative ? packets : ((logicalPackets + 3) / 4) * packetSplits, height: 1, depth: 1),
+      MTLSize(
+        width: cooperative ? packets : ((logicalPackets + 3) / 4) * packetSplits, height: 1,
+        depth: 1),
       threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
     if sparseSplit {
       guard let detectorSparseScatterPipeline else {
@@ -2864,7 +3005,8 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     return (
       values, (CFAbsoluteTimeGetCurrent() - pending.started) * 1_000,
       max(0, command.gpuEndTime - command.gpuStartTime) * 1_000,
-      pending.changedCount)
+      pending.changedCount
+    )
   }
 
   /// Restore host metadata when a batch fails before command submission.
@@ -2942,7 +3084,9 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
   /// Count entropy-coded streams using a threadgroup reduction, not a hot global
   /// histogram. This benchmark diagnostic is sized for a full detector mask.
   @_spi(PairedRuntimeTANSPrototype)
-  public func detectorEntropyModeCount(mask: [UInt8]) throws -> (count: UInt32, metalAllocatedBytes: Int) {
+  public func detectorEntropyModeCount(mask: [UInt8]) throws -> (
+    count: UInt32, metalAllocatedBytes: Int
+  ) {
     stateLock.lock()
     defer { stateLock.unlock() }
     try requireLive()
@@ -2954,7 +3098,8 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     guard !selected.isEmpty else { return (0, queue.device.currentAllocatedSize) }
 
     let library = try Metal4DSTEMKernels.makePairedRuntimeTANSLibrary(device: queue.device)
-    guard let function = library.makeFunction(name: "paired_runtime_tans_detector_entropy_mode_count")
+    guard
+      let function = library.makeFunction(name: "paired_runtime_tans_detector_entropy_mode_count")
     else { throw Self.invalid("Paired-runtime entropy-mode-count kernel is missing") }
     let pipeline = try queue.device.makeComputePipelineState(function: function)
     let selectedBuffer = try Self.upload(
@@ -3050,8 +3195,9 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
       options: .storageModeShared, label: "paired-runtime entropy-census counts")
     memset(counts.contents(), 0, counts.length)
     let library = try Metal4DSTEMKernels.makePairedRuntimeTANSLibrary(device: queue.device)
-    guard let function = library.makeFunction(
-      name: Metal4DSTEMKernels.pairedRuntimeTANSEntropyChunkCensusFunction)
+    guard
+      let function = library.makeFunction(
+        name: Metal4DSTEMKernels.pairedRuntimeTANSEntropyChunkCensusFunction)
     else { throw Self.invalid("Paired-runtime entropy-chunk census kernel is missing") }
     let pipeline = try queue.device.makeComputePipelineState(function: function)
     guard let command = queue.makeCommandBuffer(),
@@ -3077,7 +3223,8 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     command.waitUntilCompleted()
     guard command.status == .completed, command.error == nil else {
       throw Self.invalid(
-        "Entropy-chunk census failed: \(command.error?.localizedDescription ?? "incomplete command")")
+        "Entropy-chunk census failed: \(command.error?.localizedDescription ?? "incomplete command")"
+      )
     }
     let values = Array(
       UnsafeBufferPointer(start: counts.contents().assumingMemoryBound(to: UInt32.self), count: 9))
@@ -3097,7 +3244,8 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
       plan.residualPixels.count, packets, fullChunks, tailStreams,
       values[0], values[1], values[2], values[3], simdFullChunks, simdTailStreams,
       values[4], values[5], values[6], values[7],
-      residentBytesBefore, residentBytesAfter, queue.device.currentAllocatedSize, identity)
+      residentBytesBefore, residentBytesAfter, queue.device.currentAllocatedSize, identity
+    )
   }
 
   public func releaseResidentStorage() {
@@ -3148,7 +3296,8 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
   private func detectorValues() -> [UInt32] {
     if let destination = pendingCopyDestination {
       // One copy straight into the caller's display buffer; no intermediate array.
-      memcpy(destination.contents(), detectorProduct.contents(),
+      memcpy(
+        destination.contents(), detectorProduct.contents(),
         shape[0] * shape[1] * MemoryLayout<UInt32>.stride)
       return []
     }
@@ -3172,13 +3321,19 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
   /// Callers mutate resident state only while holding `stateLock` or during initialization.
   private func refreshMetadataSnapshot() {
     let indexBytes = polarIndex?.residentBytes ?? 0
-    let products = released ? 0
+    let products =
+      released
+      ? 0
       : failure.length + diffraction.length + detectorProduct.length
         + (historyProduct?.length ?? 0)
-    let scratch = released ? 0
+    let scratch =
+      released
+      ? 0
       : (detectorPartials?.length ?? 0) + (macroDecodingTable?.length ?? 0)
         + (diagnosticScratch?.byteCount ?? 0)
-    let totalBytes = released ? 0
+    let totalBytes =
+      released
+      ? 0
       : loadMetrics.residentBytes + UInt64(products) + UInt64(scratch) + indexBytes
     metadataLock.lock()
     cachedReleased = released
@@ -3240,8 +3395,9 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
         label: "paired-runtime compact offset validation")
       memset(compactFailure!.contents(), 0, 4)
     } else {
-      guard let rebase = library.makeFunction(
-        name: Metal4DSTEMKernels.pairedRuntimeTANSRebaseOffsetsFunction)
+      guard
+        let rebase = library.makeFunction(
+          name: Metal4DSTEMKernels.pairedRuntimeTANSRebaseOffsetsFunction)
       else { throw invalid("Paired-runtime offset consolidation kernel is missing") }
       pipeline = try queue.device.makeComputePipelineState(function: rebase)
       offsetBytes = (streamCount + 1) * 4
@@ -3322,7 +3478,8 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     }
     return (
       payload, offsets, modes,
-      UInt64(payload.length + offsets.length + modes.length))
+      UInt64(payload.length + offsets.length + modes.length)
+    )
   }
 
   private static func buffer(
@@ -3372,8 +3529,9 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     guard command.status == .completed, command.error == nil else {
       throw invalid("Trusted paired-runtime table readback failed")
     }
-    let actual = Array(UnsafeBufferPointer(
-      start: staging.contents().assumingMemoryBound(to: UInt32.self), count: expected.count))
+    let actual = Array(
+      UnsafeBufferPointer(
+        start: staging.contents().assumingMemoryBound(to: UInt32.self), count: expected.count))
     guard actual == expected else {
       let mismatch = actual.indices.first { actual[$0] != expected[$0] } ?? expected.count
       throw invalid("Trusted paired-runtime table differs from deterministic entry \(mismatch)")

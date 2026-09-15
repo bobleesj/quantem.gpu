@@ -24,20 +24,27 @@ enum MetalPairedRuntimeTANSSeriesBenchmark {
     guard indexed.count == 7 else {
       throw failure("The paired-runtime acceptance benchmark requires exactly seven acquisitions")
     }
-    let runOptimizationExperiment = ProcessInfo.processInfo.environment[
-      "QGPU_ANS_OPT_EXPERIMENT"] == "1"
-    let runResidentLoop = ProcessInfo.processInfo.environment[
-      "QGPU_ANS_RESIDENT_LOOP"] == "1"
-    let polarIndexAtStartup = ProcessInfo.processInfo.environment[
-      "QGPU_PAIRED_RUNTIME_POLAR_INDEX"] == "1"
-    let reader32Only = ProcessInfo.processInfo.environment[
-      "QGPU_ANS_OPT_READER32_ONLY"] == "1"
-    let polarOnly = ProcessInfo.processInfo.environment[
-      "QGPU_ANS_OPT_POLAR_ONLY"] == "1"
-    let polarQueryScan512Only = ProcessInfo.processInfo.environment[
-      "QGPU_ANS_OPT_POLAR_QUERY_SCAN512"] == "1"
-    let macro2Only = ProcessInfo.processInfo.environment[
-      "QGPU_ANS_OPT_MACRO2"] == "1"
+    let runOptimizationExperiment =
+      ProcessInfo.processInfo.environment[
+        "QGPU_ANS_OPT_EXPERIMENT"] == "1"
+    let runResidentLoop =
+      ProcessInfo.processInfo.environment[
+        "QGPU_ANS_RESIDENT_LOOP"] == "1"
+    let polarIndexAtStartup =
+      ProcessInfo.processInfo.environment[
+        "QGPU_PAIRED_RUNTIME_POLAR_INDEX"] == "1"
+    let reader32Only =
+      ProcessInfo.processInfo.environment[
+        "QGPU_ANS_OPT_READER32_ONLY"] == "1"
+    let polarOnly =
+      ProcessInfo.processInfo.environment[
+        "QGPU_ANS_OPT_POLAR_ONLY"] == "1"
+    let polarQueryScan512Only =
+      ProcessInfo.processInfo.environment[
+        "QGPU_ANS_OPT_POLAR_QUERY_SCAN512"] == "1"
+    let macro2Only =
+      ProcessInfo.processInfo.environment[
+        "QGPU_ANS_OPT_MACRO2"] == "1"
     if runResidentLoop {
       // Prepare every optional pipeline once. The loop changes selection flags
       // between queries, while the seven compact uint16 residents stay live.
@@ -53,7 +60,7 @@ enum MetalPairedRuntimeTANSSeriesBenchmark {
       setenv("QGPU_PAIRED_RUNTIME_DENSE_COMPACTION", "0", 1)
       setenv("QGPU_PAIRED_RUNTIME_MACRO", macro2Only ? "1" : "0", 1)
       if macro2Only {
-      setenv("QGPU_PAIRED_RUNTIME_MACRO_LOOKAHEAD_BITS", "2", 1)
+        setenv("QGPU_PAIRED_RUNTIME_MACRO_LOOKAHEAD_BITS", "2", 1)
       }
       setenv("QGPU_PAIRED_RUNTIME_COOPERATIVE", "0", 1)
       setenv(
@@ -61,9 +68,11 @@ enum MetalPairedRuntimeTANSSeriesBenchmark {
         ProcessInfo.processInfo.environment["QGPU_PAIRED_RUNTIME_PREPARE_READER32"] == "1"
           ? "1" : "0",
         1)
-      setenv("QGPU_PAIRED_RUNTIME_POLAR_INDEX",
+      setenv(
+        "QGPU_PAIRED_RUNTIME_POLAR_INDEX",
         (polarIndexAtStartup || polarQueryScan512Only) ? "1" : "0", 1)
-      setenv("QGPU_PAIRED_RUNTIME_PREPARE_POLAR_QUERY_SCAN512",
+      setenv(
+        "QGPU_PAIRED_RUNTIME_PREPARE_POLAR_QUERY_SCAN512",
         polarQueryScan512Only ? "1" : "0", 1)
       setenv("QGPU_PAIRED_RUNTIME_POLAR_QUERY_VARIANT", "packet-groups", 1)
     } else if runOptimizationExperiment {
@@ -74,15 +83,18 @@ enum MetalPairedRuntimeTANSSeriesBenchmark {
       setenv("QGPU_PAIRED_RUNTIME_MACRO", "1", 1)
       setenv("QGPU_PAIRED_RUNTIME_COOPERATIVE", "1", 1)
       setenv("QGPU_PAIRED_RUNTIME_READER32", reader32Only ? "1" : "0", 1)
-      setenv("QGPU_PAIRED_RUNTIME_POLAR_INDEX",
+      setenv(
+        "QGPU_PAIRED_RUNTIME_POLAR_INDEX",
         (polarOnly || polarQueryScan512Only) ? "1" : "0", 1)
-      setenv("QGPU_PAIRED_RUNTIME_PREPARE_POLAR_QUERY_SCAN512",
+      setenv(
+        "QGPU_PAIRED_RUNTIME_PREPARE_POLAR_QUERY_SCAN512",
         polarQueryScan512Only ? "1" : "0", 1)
       setenv("QGPU_PAIRED_RUNTIME_POLAR_QUERY_VARIANT", "packet-groups", 1)
     }
     let started = CFAbsoluteTimeGetCurrent()
-    let concurrentLoads = Int(
-      ProcessInfo.processInfo.environment["QGPU_PAIRED_RUNTIME_CONCURRENT_LOADS"] ?? "3") ?? 3
+    let concurrentLoads =
+      Int(
+        ProcessInfo.processInfo.environment["QGPU_PAIRED_RUNTIME_CONCURRENT_LOADS"] ?? "3") ?? 3
     let residents = try await MetalPairedRuntimeTANSSeriesLoader.load(
       sources: indexed, device: device, maximumConcurrentLoads: concurrentLoads,
       maximumAdditionalBytesPerLoad: ProcessInfo.processInfo.physicalMemory)
@@ -133,15 +145,18 @@ enum MetalPairedRuntimeTANSSeriesBenchmark {
     // Alternating translated masks forces a realistic large detector delta;
     // changing only one radius would measure a much smaller boundary update.
     let bfMasks = (0..<4).map { offset in
-      circularMask(centerColumnOffset: offset * 8, centerRowOffset: offset * 5,
+      circularMask(
+        centerColumnOffset: offset * 8, centerRowOffset: offset * 5,
         innerRadius: 0, outerRadius: 46)
     }
     let abfMasks = (0..<4).map { offset in
-      circularMask(centerColumnOffset: offset * 8, centerRowOffset: offset * 5,
+      circularMask(
+        centerColumnOffset: offset * 8, centerRowOffset: offset * 5,
         innerRadius: 24, outerRadius: 64)
     }
     let adfMasks = (0..<4).map { offset in
-      circularMask(centerColumnOffset: offset * 8, centerRowOffset: offset * 5,
+      circularMask(
+        centerColumnOffset: offset * 8, centerRowOffset: offset * 5,
         innerRadius: 48, outerRadius: 94)
     }
     let bf = try await detectorTrials(residents: residents, masks: bfMasks)
@@ -218,18 +233,23 @@ enum MetalPairedRuntimeTANSSeriesBenchmark {
         }
         self.mode = mode
       }
-      if let kernel = (ResidentLoopBenchmark.value(command, "kernel")
-        ?? ResidentLoopBenchmark.value(command, "detector_kernel")) as? String {
+      if let kernel =
+        (ResidentLoopBenchmark.value(command, "kernel")
+        ?? ResidentLoopBenchmark.value(command, "detector_kernel")) as? String
+      {
         guard ["packet-owner2", "partials", "adaptive-partials"].contains(kernel) else {
-          throw failure("resident loop kernel must be packet-owner2, partials, or adaptive-partials")
+          throw failure(
+            "resident loop kernel must be packet-owner2, partials, or adaptive-partials")
         }
         self.kernel = kernel
       }
       if let rawVariant = ResidentLoopBenchmark.value(command, "polar_query_variant") {
         guard let variant = rawVariant as? String,
-          ["packet-groups", "scan512", "scan512-stripe2", "scan512-stripe4",
-            "scan512-stripe8", "scan512-field4", "scan512-contiguous-quad"]
-            .contains(variant)
+          [
+            "packet-groups", "scan512", "scan512-stripe2", "scan512-stripe4",
+            "scan512-stripe8", "scan512-field4", "scan512-contiguous-quad",
+          ]
+          .contains(variant)
         else {
           throw failure(
             "resident loop polar_query_variant must be packet-groups, scan512, "
@@ -284,42 +304,50 @@ enum MetalPairedRuntimeTANSSeriesBenchmark {
         lazyRefill = value
       }
       if let value = ResidentLoopBenchmark.value(command, "streams_per_lane") {
-        let text = value is NSNumber ? String(describing: (value as! NSNumber).intValue) : "\(value)"
+        let text =
+          value is NSNumber ? String(describing: (value as! NSNumber).intValue) : "\(value)"
         guard ["1", "2", "4"].contains(text) else {
           throw failure("resident loop streams_per_lane must be 1, 2, or 4")
         }
         streamsPerLane = text
       }
       if let value = ResidentLoopBenchmark.value(command, "packet_splits") {
-        let text = value is NSNumber ? String(describing: (value as! NSNumber).intValue) : "\(value)"
+        let text =
+          value is NSNumber ? String(describing: (value as! NSNumber).intValue) : "\(value)"
         guard ["1", "2", "4", "8"].contains(text) else {
           throw failure("resident loop packet_splits must be 1, 2, 4, or 8")
         }
         packetSplits = text
       }
-      guard !simdEntropyFastPath || (mode == "indexed" && kernel == "packet-owner2"
-        && streamsPerLane == "2" && packetSplits == "1" && !jointPlan
-        && !reuseWord && !registerSums && !plainSums && !trustedTable && !lazyRefill)
+      guard
+        !simdEntropyFastPath
+          || (mode == "indexed" && kernel == "packet-owner2"
+            && streamsPerLane == "2" && packetSplits == "1" && !jointPlan
+            && !reuseWord && !registerSums && !plainSums && !trustedTable && !lazyRefill)
       else {
         throw failure(
           "SIMD entropy fast path requires indexed packet-owner2 with two streams/lane, "
             + "one packet split, and other optimizations disabled")
       }
-      guard !reader32 || (mode == "indexed" && kernel == "packet-owner2"
-        && streamsPerLane == "2" && packetSplits == "1" && !macro
-        && !reuseWord && !registerSums && !plainSums && !trustedTable && !lazyRefill
-        && !simdEntropyFastPath)
+      guard
+        !reader32
+          || (mode == "indexed" && kernel == "packet-owner2"
+            && streamsPerLane == "2" && packetSplits == "1" && !macro
+            && !reuseWord && !registerSums && !plainSums && !trustedTable && !lazyRefill
+            && !simdEntropyFastPath)
       else {
         throw failure(
           "reader32 requires indexed packet-owner2 with two streams/lane, one packet split, "
             + "macro/trusted-table and other reader specializations disabled")
       }
-      guard !vectorPairReduction || (mode == "indexed" && kernel == "packet-owner2"
-        && streamsPerLane == "2" && packetSplits == "1" && !reader32 && !macro
-        && !reuseWord && !registerSums && !plainSums && !lazyRefill && !jointPlan
-        && !simdEntropyFastPath && !history && !historyBase
-        && ProcessInfo.processInfo.environment[
-          "QGPU_PAIRED_RUNTIME_PREPARE_VECTOR_PAIR_REDUCTION"] == "1")
+      guard
+        !vectorPairReduction
+          || (mode == "indexed" && kernel == "packet-owner2"
+            && streamsPerLane == "2" && packetSplits == "1" && !reader32 && !macro
+            && !reuseWord && !registerSums && !plainSums && !lazyRefill && !jointPlan
+            && !simdEntropyFastPath && !history && !historyBase
+            && ProcessInfo.processInfo.environment[
+              "QGPU_PAIRED_RUNTIME_PREPARE_VECTOR_PAIR_REDUCTION"] == "1")
       else {
         throw failure(
           "vector pair reduction requires its prepared indexed two-stream packet-owner2 "
@@ -444,13 +472,14 @@ enum MetalPairedRuntimeTANSSeriesBenchmark {
       }
       var available = experimentMasks()
       if names.contains(where: { $0.hasPrefix("adf-drag-column-") }) {
-        available.append(contentsOf: (1...20).map { column in
-          ExperimentMask(
-            name: "adf-drag-column-\(column)",
-            values: circularMask(
-              centerColumnOffset: column, centerRowOffset: 0,
-              innerRadius: 48, outerRadius: 94))
-        })
+        available.append(
+          contentsOf: (1...20).map { column in
+            ExperimentMask(
+              name: "adf-drag-column-\(column)",
+              values: circularMask(
+                centerColumnOffset: column, centerRowOffset: 0,
+                innerRadius: 48, outerRadius: 94))
+          })
       }
       let selected = names.map { name in available.first { $0.name == name } }
       guard selected.allSatisfy({ $0 != nil }) else {
@@ -472,16 +501,19 @@ enum MetalPairedRuntimeTANSSeriesBenchmark {
         for mask in masks {
           let effectiveConfiguration = configuration
           setEnvironment(effectiveConfiguration)
-          let planProfileBefore = effectiveConfiguration.profile
+          let planProfileBefore =
+            effectiveConfiguration.profile
             ? MetalPairedRuntimeTANSResidentSource.polarPlanCacheProfileSnapshot() : [:]
           let started = CFAbsoluteTimeGetCurrent()
           let results = try await experimentUpdateAll(
             residents: residents, mask: mask.values, batched: configuration.batch,
             boundedConcurrency: configuration.boundedConcurrency)
           let allWall = (CFAbsoluteTimeGetCurrent() - started) * 1_000
-          let updateProfiles = effectiveConfiguration.profile
+          let updateProfiles =
+            effectiveConfiguration.profile
             ? residents.map(\.lastUpdateProfile) : []
-          let planProfileAfter = effectiveConfiguration.profile
+          let planProfileAfter =
+            effectiveConfiguration.profile
             ? MetalPairedRuntimeTANSResidentSource.polarPlanCacheProfileSnapshot() : [:]
           var planProfileDelta: [String: Double] = [:]
           for (key, value) in planProfileAfter where key != "shared_cache_enabled" {
@@ -538,9 +570,10 @@ enum MetalPairedRuntimeTANSSeriesBenchmark {
           guard source < actualMaps.count, actualMaps[source] == expectedMaps[source] else {
             let expectedValues = expectedMaps[source]
             let actualValues = source < actualMaps.count ? actualMaps[source] : []
-            let first = zip(actualValues, expectedValues).enumerated().first {
-              $0.element.0 != $0.element.1
-            }?.offset
+            let first =
+              zip(actualValues, expectedValues).enumerated().first {
+                $0.element.0 != $0.element.1
+              }?.offset
               ?? min(actualValues.count, expectedValues.count)
             mismatches.append([
               "mask": name, "source": source, "first_pixel": first,
@@ -593,7 +626,8 @@ enum MetalPairedRuntimeTANSSeriesBenchmark {
       "macro_table_bytes_by_source": residents.map(\.macroTableBytes),
       "compact_offsets_requested": ProcessInfo.processInfo.environment[
         "QGPU_PAIRED_RUNTIME_COMPACT_OFFSETS"] == "1",
-      "protocol": "JSON lines: set, run, quit; run responses include exact A1 hashes and full-map parity",
+      "protocol":
+        "JSON lines: set, run, quit; run responses include exact A1 hashes and full-map parity",
     ])
     func cycleParity(
       _ run: ResidentLoopRun, expected: [String: [[UInt32]]]
@@ -611,8 +645,10 @@ enum MetalPairedRuntimeTANSSeriesBenchmark {
       guard let data = line.data(using: .utf8),
         let command = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
       else {
-        emitJSON(["event": "ans_resident_loop_error", "sequence": sequence,
-                  "error": "command must be a JSON object"])
+        emitJSON([
+          "event": "ans_resident_loop_error", "sequence": sequence,
+          "error": "command must be a JSON object",
+        ])
         continue
       }
       let operation = ((command["command"] as? String) ?? (command["op"] as? String) ?? "run")
@@ -620,192 +656,196 @@ enum MetalPairedRuntimeTANSSeriesBenchmark {
       if operation == "quit" || operation == "exit" {
         let allocatedBeforeRelease = device.currentAllocatedSize
         for resident in residents { resident.releaseResidentStorage() }
-        emitJSON(["event": "ans_resident_loop_end", "sequence": sequence,
-                  "resident_count": residents.count,
-                  "metal_before_release_bytes": allocatedBeforeRelease,
-                  "metal_after_release_bytes": device.currentAllocatedSize,
-                  "all_released": residents.allSatisfy(\.isReleased)])
+        emitJSON([
+          "event": "ans_resident_loop_end", "sequence": sequence,
+          "resident_count": residents.count,
+          "metal_before_release_bytes": allocatedBeforeRelease,
+          "metal_after_release_bytes": device.currentAllocatedSize,
+          "all_released": residents.allSatisfy(\.isReleased),
+        ])
         return
       }
       do {
-      if operation == "entropy_census" {
-        let masks = experimentMasks()
-        let adfStart = masks.first { $0.name == "adf-center-8" }!.values
-        let adfEnd = masks.first { $0.name == "adf-center-20" }!.values
-        let adfDelta = zip(adfStart, adfEnd).map { $0 == $1 ? UInt8(0) : UInt8(1) }
-        let allRequested = [UInt8](repeating: 1, count: 192 * 192)
-        for (name, requested) in [
-          ("adf-center-8-to-20-delta", adfDelta),
-          ("all-valid-detector-pixels", allRequested),
-        ] {
-          let requestedPixels = requested.reduce(0) { $0 + Int($1) }
-          let requestedMaskSHA256 = SHA256.hash(data: Data(requested))
-            .map { String(format: "%02x", $0) }.joined()
-          for (source, resident) in residents.enumerated() {
-            let effective = effectiveMask(requested, resident: resident)
-            let census = try resident.detectorEntropyModeCount(mask: effective.values)
-            let selectedPixels = effective.values.reduce(0) { $0 + Int($1) }
-            let packets = 512
-            let effectiveMaskSHA256 = SHA256.hash(data: Data(effective.values))
+        if operation == "entropy_census" {
+          let masks = experimentMasks()
+          let adfStart = masks.first { $0.name == "adf-center-8" }!.values
+          let adfEnd = masks.first { $0.name == "adf-center-20" }!.values
+          let adfDelta = zip(adfStart, adfEnd).map { $0 == $1 ? UInt8(0) : UInt8(1) }
+          let allRequested = [UInt8](repeating: 1, count: 192 * 192)
+          for (name, requested) in [
+            ("adf-center-8-to-20-delta", adfDelta),
+            ("all-valid-detector-pixels", allRequested),
+          ] {
+            let requestedPixels = requested.reduce(0) { $0 + Int($1) }
+            let requestedMaskSHA256 = SHA256.hash(data: Data(requested))
               .map { String(format: "%02x", $0) }.joined()
-            emitJSON([
-              "event": "ans_opt_entropy_mode_counts", "sequence": sequence,
-              "mask": name, "source": source,
-              "requested_pixels": requestedPixels,
-              "selected_pixels": selectedPixels,
-              "excluded_pixels": effective.excluded,
-              "requested_mask_sha256": requestedMaskSHA256,
-              "effective_mask_sha256": effectiveMaskSHA256,
-              "total_stream_count": selectedPixels * packets,
-              "entropy_stream_count": census.count,
-              "diagnostic_metal_allocated_bytes": census.metalAllocatedBytes,
-              "validity_policy": "requested_mask_and_source_detectorValidityMask",
-            ])
+            for (source, resident) in residents.enumerated() {
+              let effective = effectiveMask(requested, resident: resident)
+              let census = try resident.detectorEntropyModeCount(mask: effective.values)
+              let selectedPixels = effective.values.reduce(0) { $0 + Int($1) }
+              let packets = 512
+              let effectiveMaskSHA256 = SHA256.hash(data: Data(effective.values))
+                .map { String(format: "%02x", $0) }.joined()
+              emitJSON([
+                "event": "ans_opt_entropy_mode_counts", "sequence": sequence,
+                "mask": name, "source": source,
+                "requested_pixels": requestedPixels,
+                "selected_pixels": selectedPixels,
+                "excluded_pixels": effective.excluded,
+                "requested_mask_sha256": requestedMaskSHA256,
+                "effective_mask_sha256": effectiveMaskSHA256,
+                "total_stream_count": selectedPixels * packets,
+                "entropy_stream_count": census.count,
+                "diagnostic_metal_allocated_bytes": census.metalAllocatedBytes,
+                "validity_policy": "requested_mask_and_source_detectorValidityMask",
+              ])
+            }
           }
+          continue
         }
-        continue
-      }
-      if operation == "fourway_checkpoint" {
-        guard residents.count == 7, indexed.count == residents.count else {
-          throw failure("Four-way checkpoint parity requires seven aligned indexed sources")
-        }
-        let sourceIndex = (command["source"] as? Int) ?? 0
-        guard residents.indices.contains(sourceIndex) else {
-          throw failure("Four-way checkpoint source must be in 0..<7")
-        }
-        let shaderPath = ProcessInfo.processInfo.environment[
-          "QGPU_FOURWAY_CHECKPOINT_SHADER"] ?? ""
-        guard !shaderPath.isEmpty else {
-          throw failure("Set QGPU_FOURWAY_CHECKPOINT_SHADER to the registered prototype MSL file")
-        }
-        let masks = experimentMasks()
-        guard let previous = masks.first(where: { $0.name == "adf-center-8" })?.values,
-          let target = masks.first(where: { $0.name == "adf-center-20" })?.values
-        else { throw failure("Four-way checkpoint parity requires the registered ADF masks") }
-        let requestedDelta = zip(previous, target).map { $0 == $1 ? UInt8(0) : UInt8(1) }
-        let effectiveDelta = effectiveMask(requestedDelta, resident: residents[sourceIndex])
-        let residualPixels = effectiveDelta.values.indices.compactMap {
-          effectiveDelta.values[$0] == 0 ? nil : UInt32($0)
-        }
-        guard !residualPixels.isEmpty else {
-          throw failure("Four-way checkpoint ADF residual mask is empty")
-        }
-        let candidateLimit = min(
-          max(1, (command["candidate_limit"] as? Int) ?? 8), residualPixels.count)
-        let loader = try Metal4DSTEMIndexedLoader(device: device)
-        var rejectedCandidates: [[String: Any]] = []
-        var decodedCandidate = false
-        for pixel in residualPixels.prefix(candidateLimit) {
-          let callStarted = CFAbsoluteTimeGetCurrent()
-          let diagnostic = try residents[sourceIndex].diagnoseFourWayCheckpoint(
-            selectedStreamIndices: [pixel], residualDetectorPixels: residualPixels,
-            shaderSourceURL: URL(fileURLWithPath: shaderPath))
-          let diagnosticWallMilliseconds = (CFAbsoluteTimeGetCurrent() - callStarted) * 1_000
-          guard diagnostic.sourceIdentitySHA256
-              == residents[sourceIndex].sourceIdentitySHA256
-          else { throw failure("Four-way checkpoint source identity changed during the call") }
-          if diagnostic.outcome == "rejected-non-entropy-modes" {
-            rejectedCandidates.append([
-              "pixel": pixel,
-              "outcome": diagnostic.outcome,
-              "mode_histogram": diagnostic.modeHistogram,
-              "selected_fallback_count": diagnostic.selectedFallbackCount,
-              "selected_unsupported_count": diagnostic.selectedUnsupportedCount,
-            ])
-            continue
+        if operation == "fourway_checkpoint" {
+          guard residents.count == 7, indexed.count == residents.count else {
+            throw failure("Four-way checkpoint parity requires seven aligned indexed sources")
           }
-          guard diagnostic.outcome == "decoded-entropy-subset-parity-unchecked",
-            let decoded = diagnostic.decodedValues, decoded.count == 512,
-            let checkpointCaptureWallMilliseconds = diagnostic.captureWallMilliseconds,
-            let fourWayDecodeWallMilliseconds = diagnostic.segmentWallMilliseconds,
-            diagnostic.selectedEntropyCount == 1,
-            diagnostic.selectedFallbackCount == 0,
-            diagnostic.selectedUnsupportedCount == 0,
-            diagnostic.captureStatusCounts == [0, 1, 0, 0, 0, 0, 0, 0],
-            diagnostic.segmentStatusCounts == [0, 4, 0, 0, 0, 0, 0]
-          else {
-            throw failure(
-              "Four-way runtime decoder failed validation for entropy candidate \(pixel): "
-                + diagnostic.outcome
-                + "; capture=\(diagnostic.captureStatusCounts ?? [])"
-                + "; segments=\(diagnostic.segmentStatusCounts ?? [])")
+          let sourceIndex = (command["source"] as? Int) ?? 0
+          guard residents.indices.contains(sourceIndex) else {
+            throw failure("Four-way checkpoint source must be in 0..<7")
           }
+          let shaderPath =
+            ProcessInfo.processInfo.environment[
+              "QGPU_FOURWAY_CHECKPOINT_SHADER"] ?? ""
+          guard !shaderPath.isEmpty else {
+            throw failure("Set QGPU_FOURWAY_CHECKPOINT_SHADER to the registered prototype MSL file")
+          }
+          let masks = experimentMasks()
+          guard let previous = masks.first(where: { $0.name == "adf-center-8" })?.values,
+            let target = masks.first(where: { $0.name == "adf-center-20" })?.values
+          else { throw failure("Four-way checkpoint parity requires the registered ADF masks") }
+          let requestedDelta = zip(previous, target).map { $0 == $1 ? UInt8(0) : UInt8(1) }
+          let effectiveDelta = effectiveMask(requestedDelta, resident: residents[sourceIndex])
+          let residualPixels = effectiveDelta.values.indices.compactMap {
+            effectiveDelta.values[$0] == 0 ? nil : UInt32($0)
+          }
+          guard !residualPixels.isEmpty else {
+            throw failure("Four-way checkpoint ADF residual mask is empty")
+          }
+          let candidateLimit = min(
+            max(1, (command["candidate_limit"] as? Int) ?? 8), residualPixels.count)
+          let loader = try Metal4DSTEMIndexedLoader(device: device)
+          var rejectedCandidates: [[String: Any]] = []
+          var decodedCandidate = false
+          for pixel in residualPixels.prefix(candidateLimit) {
+            let callStarted = CFAbsoluteTimeGetCurrent()
+            let diagnostic = try residents[sourceIndex].diagnoseFourWayCheckpoint(
+              selectedStreamIndices: [pixel], residualDetectorPixels: residualPixels,
+              shaderSourceURL: URL(fileURLWithPath: shaderPath))
+            let diagnosticWallMilliseconds = (CFAbsoluteTimeGetCurrent() - callStarted) * 1_000
+            guard
+              diagnostic.sourceIdentitySHA256
+                == residents[sourceIndex].sourceIdentitySHA256
+            else { throw failure("Four-way checkpoint source identity changed during the call") }
+            if diagnostic.outcome == "rejected-non-entropy-modes" {
+              rejectedCandidates.append([
+                "pixel": pixel,
+                "outcome": diagnostic.outcome,
+                "mode_histogram": diagnostic.modeHistogram,
+                "selected_fallback_count": diagnostic.selectedFallbackCount,
+                "selected_unsupported_count": diagnostic.selectedUnsupportedCount,
+              ])
+              continue
+            }
+            guard diagnostic.outcome == "decoded-entropy-subset-parity-unchecked",
+              let decoded = diagnostic.decodedValues, decoded.count == 512,
+              let checkpointCaptureWallMilliseconds = diagnostic.captureWallMilliseconds,
+              let fourWayDecodeWallMilliseconds = diagnostic.segmentWallMilliseconds,
+              diagnostic.selectedEntropyCount == 1,
+              diagnostic.selectedFallbackCount == 0,
+              diagnostic.selectedUnsupportedCount == 0,
+              diagnostic.captureStatusCounts == [0, 1, 0, 0, 0, 0, 0, 0],
+              diagnostic.segmentStatusCounts == [0, 4, 0, 0, 0, 0, 0]
+            else {
+              throw failure(
+                "Four-way runtime decoder failed validation for entropy candidate \(pixel): "
+                  + diagnostic.outcome
+                  + "; capture=\(diagnostic.captureStatusCounts ?? [])"
+                  + "; segments=\(diagnostic.segmentStatusCounts ?? [])")
+            }
 
-          var reference = [UInt16]()
-          reference.reserveCapacity(512)
-          for scanColumn in 0..<512 {
-            let frame = try loader.diffractionPattern(
-              source: indexed[sourceIndex], scanRow: 0, scanColumn: scanColumn)
-            guard frame.sourceIdentitySHA256 == diagnostic.sourceIdentitySHA256,
-              frame.values.count == 192 * 192
-            else { throw failure("Original-HDF5 frame identity or detector shape mismatch") }
-            reference.append(frame.values[Int(pixel)])
+            var reference = [UInt16]()
+            reference.reserveCapacity(512)
+            for scanColumn in 0..<512 {
+              let frame = try loader.diffractionPattern(
+                source: indexed[sourceIndex], scanRow: 0, scanColumn: scanColumn)
+              guard frame.sourceIdentitySHA256 == diagnostic.sourceIdentitySHA256,
+                frame.values.count == 192 * 192
+              else { throw failure("Original-HDF5 frame identity or detector shape mismatch") }
+              reference.append(frame.values[Int(pixel)])
+            }
+            let exact = decoded == reference
+            let decodedBytes = decoded.withUnsafeBytes { Data($0) }
+            let referenceBytes = reference.withUnsafeBytes { Data($0) }
+            let decodedHash = SHA256.hash(data: decodedBytes)
+              .map { String(format: "%02x", $0) }.joined()
+            let referenceHash = SHA256.hash(data: referenceBytes)
+              .map { String(format: "%02x", $0) }.joined()
+            let mismatchIndices = decoded.indices.compactMap {
+              decoded[$0] == reference[$0] ? nil : $0
+            }
+            emitJSON([
+              "event": "fourway_checkpoint_parity",
+              "sequence": sequence,
+              "source": sourceIndex,
+              "source_identity_sha256": diagnostic.sourceIdentitySHA256,
+              "shape": [512, 512, 192, 192],
+              "dtype": "uint16",
+              "transition": "adf-center-8-to-adf-center-20",
+              "selected_stream_index": pixel,
+              "scan_packet": 0,
+              "selected_stream_in_residual": residualPixels.contains(pixel),
+              "residual_detector_pixel_count": diagnostic.residualDetectorPixelCount,
+              "residual_stream_count": diagnostic.residualStreamCount,
+              "coverage_fraction": diagnostic.coverageFraction,
+              "mode_histogram": diagnostic.modeHistogram,
+              "exact_512_count_parity": exact,
+              "mismatch_count": mismatchIndices.count,
+              "mismatch_scan_indices": mismatchIndices,
+              "decoded_sha256": decodedHash,
+              "original_hdf5_sha256": referenceHash,
+              "decoded_values": decoded,
+              "original_hdf5_values": reference,
+              "timing_ms": [
+                "whole_diagnostic_with_compile": diagnosticWallMilliseconds,
+                "runtime_compile": diagnostic.runtimeCompileMilliseconds,
+                "mode_inspection_wall": diagnostic.modeInspectionWallMilliseconds,
+                "checkpoint_capture_wall": checkpointCaptureWallMilliseconds,
+                "fourway_segment_decode_wall": fourWayDecodeWallMilliseconds,
+                "original_hdf5_reference_excluded": true,
+              ],
+              "memory_bytes": [
+                "resident": diagnostic.residentBytes,
+                "explicit_diagnostic_buffers": diagnostic.diagnosticAllocationBytes,
+                "allocated_before": diagnostic.allocatedSizeBefore,
+                "allocated_after_segments": diagnostic.allocatedSizeAfter,
+                "compact_offsets": diagnostic.compactOffsetBytes,
+              ],
+              "candidate_rejections_before_success": rejectedCandidates,
+            ])
+            decodedCandidate = true
+            break
           }
-          let exact = decoded == reference
-          let decodedBytes = decoded.withUnsafeBytes { Data($0) }
-          let referenceBytes = reference.withUnsafeBytes { Data($0) }
-          let decodedHash = SHA256.hash(data: decodedBytes)
-            .map { String(format: "%02x", $0) }.joined()
-          let referenceHash = SHA256.hash(data: referenceBytes)
-            .map { String(format: "%02x", $0) }.joined()
-          let mismatchIndices = decoded.indices.compactMap {
-            decoded[$0] == reference[$0] ? nil : $0
+          if !decodedCandidate {
+            emitJSON([
+              "event": "fourway_checkpoint_no_entropy_candidate",
+              "sequence": sequence,
+              "source": sourceIndex,
+              "candidate_limit": candidateLimit,
+              "residual_detector_pixel_count": residualPixels.count,
+              "candidate_rejections": rejectedCandidates,
+              "exact_parity": false,
+            ])
           }
-          emitJSON([
-            "event": "fourway_checkpoint_parity",
-            "sequence": sequence,
-            "source": sourceIndex,
-            "source_identity_sha256": diagnostic.sourceIdentitySHA256,
-            "shape": [512, 512, 192, 192],
-            "dtype": "uint16",
-            "transition": "adf-center-8-to-adf-center-20",
-            "selected_stream_index": pixel,
-            "scan_packet": 0,
-            "selected_stream_in_residual": residualPixels.contains(pixel),
-            "residual_detector_pixel_count": diagnostic.residualDetectorPixelCount,
-            "residual_stream_count": diagnostic.residualStreamCount,
-            "coverage_fraction": diagnostic.coverageFraction,
-            "mode_histogram": diagnostic.modeHistogram,
-            "exact_512_count_parity": exact,
-            "mismatch_count": mismatchIndices.count,
-            "mismatch_scan_indices": mismatchIndices,
-            "decoded_sha256": decodedHash,
-            "original_hdf5_sha256": referenceHash,
-            "decoded_values": decoded,
-            "original_hdf5_values": reference,
-            "timing_ms": [
-              "whole_diagnostic_with_compile": diagnosticWallMilliseconds,
-              "runtime_compile": diagnostic.runtimeCompileMilliseconds,
-              "mode_inspection_wall": diagnostic.modeInspectionWallMilliseconds,
-              "checkpoint_capture_wall": checkpointCaptureWallMilliseconds,
-              "fourway_segment_decode_wall": fourWayDecodeWallMilliseconds,
-              "original_hdf5_reference_excluded": true,
-            ],
-            "memory_bytes": [
-              "resident": diagnostic.residentBytes,
-              "explicit_diagnostic_buffers": diagnostic.diagnosticAllocationBytes,
-              "allocated_before": diagnostic.allocatedSizeBefore,
-              "allocated_after_segments": diagnostic.allocatedSizeAfter,
-              "compact_offsets": diagnostic.compactOffsetBytes,
-            ],
-            "candidate_rejections_before_success": rejectedCandidates,
-          ])
-          decodedCandidate = true
-          break
+          continue
         }
-        if !decodedCandidate {
-          emitJSON([
-            "event": "fourway_checkpoint_no_entropy_candidate",
-            "sequence": sequence,
-            "source": sourceIndex,
-            "candidate_limit": candidateLimit,
-            "residual_detector_pixel_count": residualPixels.count,
-            "candidate_rejections": rejectedCandidates,
-            "exact_parity": false,
-          ])
-        }
-        continue
-      }
         if operation == "set" || operation == "config" {
           try configuration.apply(command)
           guard !configuration.macro || residents.allSatisfy({ $0.macroLookaheadBits == 2 }) else {
@@ -814,8 +854,10 @@ enum MetalPairedRuntimeTANSSeriesBenchmark {
                 + "launch with QGPU_ANS_OPT_MACRO2=1")
           }
           ResidentLoopBenchmark.setEnvironment(configuration)
-          emitJSON(["event": "ans_resident_loop_config", "sequence": sequence,
-                    "configuration": configuration.json])
+          emitJSON([
+            "event": "ans_resident_loop_config", "sequence": sequence,
+            "configuration": configuration.json,
+          ])
           continue
         }
         if operation == "stage_isolation" {
@@ -832,9 +874,11 @@ enum MetalPairedRuntimeTANSSeriesBenchmark {
           control.mode = "indexed"
           control.batch = false
           ResidentLoopBenchmark.setEnvironment(control)
-          let before = try await experimentUpdateAll(residents: residents, mask: previous,
+          let before = try await experimentUpdateAll(
+            residents: residents, mask: previous,
             batched: false, boundedConcurrency: 7)
-          let after = try await experimentUpdateAll(residents: residents, mask: target,
+          let after = try await experimentUpdateAll(
+            residents: residents, mask: target,
             batched: false, boundedConcurrency: 7)
           let expected = zip(before, after).map { pair in
             zip(pair.0.values, pair.1.values).map { $1 &- $0 }
@@ -842,17 +886,25 @@ enum MetalPairedRuntimeTANSSeriesBenchmark {
           setenv("QGPU_PAIRED_RUNTIME_JOINT_PLAN", jointPlan ? "1" : "0", 1)
           var stageMaps: [String: [[UInt32]]] = [:]
           var samples: [[String: Any]] = []
-          let stages = sequence % 2 == 0 ? ["combined", "residual", "index"] : ["index", "residual", "combined"]
+          let stages =
+            sequence % 2 == 0
+            ? ["combined", "residual", "index"] : ["index", "residual", "combined"]
           for stage in stages {
             let started = CFAbsoluteTimeGetCurrent()
-            let results = try await withThrowingTaskGroup(of: (Int, [UInt32], Double, Int, Int, Int, Int, Bool).self) { group in
+            let results = try await withThrowingTaskGroup(
+              of: (Int, [UInt32], Double, Int, Int, Int, Int, Bool).self
+            ) { group in
               for (source, resident) in residents.enumerated() {
                 group.addTask {
-                  let result = try resident.isolateDetectorStage(previous: previous, target: target,
+                  let result = try resident.isolateDetectorStage(
+                    previous: previous, target: target,
                     stage: stage, branchlessPop: branchlessPop, reuseScratch: reuseScratch,
-                    refillThreshold: refillThreshold, phasedReaders: phasedReaders, pairUnroll: pairUnroll)
-                  return (source, result.values, result.gpuMilliseconds, result.fields, result.residuals,
-                    result.allocatedScratchBytes, result.preparedScratchBytes, result.reusedScratch)
+                    refillThreshold: refillThreshold, phasedReaders: phasedReaders,
+                    pairUnroll: pairUnroll)
+                  return (
+                    source, result.values, result.gpuMilliseconds, result.fields, result.residuals,
+                    result.allocatedScratchBytes, result.preparedScratchBytes, result.reusedScratch
+                  )
                 }
               }
               var values: [(Int, [UInt32], Double, Int, Int, Int, Int, Bool)] = []
@@ -862,25 +914,32 @@ enum MetalPairedRuntimeTANSSeriesBenchmark {
             let wall = (CFAbsoluteTimeGetCurrent() - started) * 1000
             stageMaps[stage] = results.map { $0.1 }
             for result in results {
-              samples.append(["stage": stage, "source": result.0, "gpu_ms": result.2,
+              samples.append([
+                "stage": stage, "source": result.0, "gpu_ms": result.2,
                 "all_seven_wall_ms": wall, "fields": result.3, "residuals": result.4,
                 "allocated_scratch_bytes": result.5, "prepared_scratch_bytes": result.6,
-                "reused_scratch": result.7])
+                "reused_scratch": result.7,
+              ])
             }
           }
           for source in residents.indices {
-            let sum = zip(stageMaps["index"]![source], stageMaps["residual"]![source]).map { $0 &+ $1 }
+            let sum = zip(stageMaps["index"]![source], stageMaps["residual"]![source]).map {
+              $0 &+ $1
+            }
             guard sum == expected[source], stageMaps["combined"]![source] == expected[source] else {
               throw failure("Stage contribution parity failed for source \(source)")
             }
           }
-          emitJSON(["event": "stage_isolation", "sequence": sequence, "exact": true,
+          emitJSON([
+            "event": "stage_isolation", "sequence": sequence, "exact": true,
             "branchless_pop": branchlessPop,
             "reuse_scratch": reuseScratch, "refill_threshold": refillThreshold,
-            "phased_readers": phasedReaders, "metal_current_allocated_bytes": device.currentAllocatedSize,
+            "phased_readers": phasedReaders,
+            "metal_current_allocated_bytes": device.currentAllocatedSize,
             "pair_unroll": pairUnroll,
             "joint_plan": jointPlan,
-            "samples": samples, "resident_bytes": residents.reduce(0) { $0 + $1.residentBytes }])
+            "samples": samples, "resident_bytes": residents.reduce(0) { $0 + $1.residentBytes },
+          ])
           continue
         }
         if operation == "entropy_chunk_census" {
@@ -947,7 +1006,7 @@ enum MetalPairedRuntimeTANSSeriesBenchmark {
               "mixed_full_chunks": census.mixedFullChunks,
               "all_entropy_full_chunk_fraction":
                 Double(census.allEntropyFullChunks)
-                  / Double(census.fullChunksPerPacket * census.packets),
+                / Double(census.fullChunksPerPacket * census.packets),
               "tail_streams_per_packet": census.tailStreamsPerPacket,
               "tail_partial_chunk_count": census.tailStreamsPerPacket == 0 ? 0 : census.packets,
               "all_entropy_tail_chunks_not_eligible": census.allEntropyTailChunks,
@@ -960,7 +1019,7 @@ enum MetalPairedRuntimeTANSSeriesBenchmark {
               "mixed_full_simd_chunks": census.mixedSIMDFullChunks,
               "all_entropy_full_simd_chunk_fraction":
                 Double(census.allEntropySIMDFullChunks)
-                  / Double(census.simdFullChunksPerPacket * census.packets),
+                / Double(census.simdFullChunksPerPacket * census.packets),
               "simd_tail_streams_per_packet": census.simdTailStreamsPerPacket,
               "simd_tail_partial_chunk_count":
                 census.simdTailStreamsPerPacket == 0 ? 0 : census.packets,
@@ -1024,8 +1083,11 @@ enum MetalPairedRuntimeTANSSeriesBenchmark {
           continue
         }
         if operation == "dp_audit" {
-          let scans = [0, 1, 30, 31, 32, 33, 510, 511, 512, 513,
-                       16_383, 16_384, 16_385, 262_142, 262_143]
+          let scans =
+            [
+              0, 1, 30, 31, 32, 33, 510, 511, 512, 513,
+              16_383, 16_384, 16_385, 262_142, 262_143,
+            ]
             + (0..<20).map { ($0 * 7919 + 123) % 262_144 }
           var samples: [[String: Any]] = []
           for scan in scans {
@@ -1034,12 +1096,16 @@ enum MetalPairedRuntimeTANSSeriesBenchmark {
               let values = try resident.extractRawDiffraction(
                 scanRow: scan / 512, scanColumn: scan % 512)
               let wall = (CFAbsoluteTimeGetCurrent() - started) * 1000
-              samples.append(["source": source, "scan": scan,
-                              "sha256_u32_le": hash(values), "wall_ms": wall])
+              samples.append([
+                "source": source, "scan": scan,
+                "sha256_u32_le": hash(values), "wall_ms": wall,
+              ])
             }
           }
-          emitJSON(["event": "dp_audit", "sequence": sequence, "samples": samples,
-                    "metal_current_allocated_bytes": device.currentAllocatedSize])
+          emitJSON([
+            "event": "dp_audit", "sequence": sequence, "samples": samples,
+            "metal_current_allocated_bytes": device.currentAllocatedSize,
+          ])
           continue
         }
         if operation == "decode_checksum" {
@@ -1171,7 +1237,8 @@ enum MetalPairedRuntimeTANSSeriesBenchmark {
               + "QGPU_PAIRED_RUNTIME_POLAR_INDEX=1")
         }
         let names = try ResidentLoopBenchmark.masks(command)
-        let parityMapBytes = names.count * residents.count * 512 * 512
+        let parityMapBytes =
+          names.count * residents.count * 512 * 512
           * MemoryLayout<UInt32>.stride
         guard names.count <= 21, parityMapBytes <= 150 * 1024 * 1024 else {
           throw failure(
@@ -1182,7 +1249,8 @@ enum MetalPairedRuntimeTANSSeriesBenchmark {
           throw failure("resident loop cycles must be between 1 and 100")
         }
         let requestedArm = ((command["arm"] as? String) ?? "candidate").lowercased()
-        let arm = (requestedArm == "a1" || requestedArm == "control")
+        let arm =
+          (requestedArm == "a1" || requestedArm == "control")
           ? "A1" : requestedArm == "a2" ? "A2" : requestedArm
         guard ["A1", "candidate", "A2"].contains(arm) else {
           throw failure("resident loop arm must be A1, A2, or candidate")
@@ -1229,12 +1297,16 @@ enum MetalPairedRuntimeTANSSeriesBenchmark {
           "fullmap_mismatches": check.mismatches, "samples": run.samples,
         ])
       } catch {
-        emitJSON(["event": "ans_resident_loop_error", "sequence": sequence,
-                  "error": (error as NSError).localizedDescription])
+        emitJSON([
+          "event": "ans_resident_loop_error", "sequence": sequence,
+          "error": (error as NSError).localizedDescription,
+        ])
       }
     }
-    emitJSON(["event": "ans_resident_loop_end", "reason": "stdin_eof_without_quit",
-              "resident_count": residents.count])
+    emitJSON([
+      "event": "ans_resident_loop_end", "reason": "stdin_eof_without_quit",
+      "resident_count": residents.count,
+    ])
   }
 
   static func detectorTrials(
@@ -1327,53 +1399,59 @@ enum MetalPairedRuntimeTANSSeriesBenchmark {
     }
 
     var baseline: [String: [[UInt32]]] = [:]
-    let sparseOnly = ProcessInfo.processInfo.environment[
-      "QGPU_ANS_OPT_SPARSE_ONLY"] == "1"
-    let polarOnly = ProcessInfo.processInfo.environment[
-      "QGPU_ANS_OPT_POLAR_ONLY"] == "1"
-    let reader32Only = ProcessInfo.processInfo.environment[
-      "QGPU_ANS_OPT_READER32_ONLY"] == "1"
-    let cooperativeOnly = ProcessInfo.processInfo.environment[
-      "QGPU_ANS_OPT_COOPERATIVE_ONLY"] == "1"
-    let polarQueryScan512Only = ProcessInfo.processInfo.environment[
-      "QGPU_ANS_OPT_POLAR_QUERY_SCAN512"] == "1"
-    let arms = polarQueryScan512Only
+    let sparseOnly =
+      ProcessInfo.processInfo.environment[
+        "QGPU_ANS_OPT_SPARSE_ONLY"] == "1"
+    let polarOnly =
+      ProcessInfo.processInfo.environment[
+        "QGPU_ANS_OPT_POLAR_ONLY"] == "1"
+    let reader32Only =
+      ProcessInfo.processInfo.environment[
+        "QGPU_ANS_OPT_READER32_ONLY"] == "1"
+    let cooperativeOnly =
+      ProcessInfo.processInfo.environment[
+        "QGPU_ANS_OPT_COOPERATIVE_ONLY"] == "1"
+    let polarQueryScan512Only =
+      ProcessInfo.processInfo.environment[
+        "QGPU_ANS_OPT_POLAR_QUERY_SCAN512"] == "1"
+    let arms =
+      polarQueryScan512Only
       ? [
         ("A1", false, false, false, false, false, true, "packet-groups"),
         ("B-scan512", false, false, false, false, false, true, "scan512"),
         ("A2", false, false, false, false, false, true, "packet-groups"),
       ]
       : polarOnly
-      ? [
-        ("A1", false, false, false, false, false, false, "packet-groups"),
-        ("G", false, false, false, false, false, true, "packet-groups"),
-        ("A2", false, false, false, false, false, false, "packet-groups"),
-      ]
-      : sparseOnly
         ? [
           ("A1", false, false, false, false, false, false, "packet-groups"),
-          ("B", true, false, false, false, false, false, "packet-groups"),
+          ("G", false, false, false, false, false, true, "packet-groups"),
           ("A2", false, false, false, false, false, false, "packet-groups"),
         ]
-        : reader32Only
+        : sparseOnly
           ? [
             ("A1", false, false, false, false, false, false, "packet-groups"),
-            ("F", false, false, false, false, true, false, "packet-groups"),
+            ("B", true, false, false, false, false, false, "packet-groups"),
             ("A2", false, false, false, false, false, false, "packet-groups"),
           ]
-          : cooperativeOnly
+          : reader32Only
             ? [
               ("A1", false, false, false, false, false, false, "packet-groups"),
-              ("E", true, false, false, true, false, false, "packet-groups"),
+              ("F", false, false, false, false, true, false, "packet-groups"),
               ("A2", false, false, false, false, false, false, "packet-groups"),
             ]
-            : [
-              ("A1", false, false, false, false, false, false, "packet-groups"),
-              ("B", true, false, false, false, false, false, "packet-groups"),
-              ("C", true, true, false, false, false, false, "packet-groups"),
-              ("D", false, false, true, false, false, false, "packet-groups"),
-              ("A2", false, false, false, false, false, false, "packet-groups"),
-            ]
+            : cooperativeOnly
+              ? [
+                ("A1", false, false, false, false, false, false, "packet-groups"),
+                ("E", true, false, false, true, false, false, "packet-groups"),
+                ("A2", false, false, false, false, false, false, "packet-groups"),
+              ]
+              : [
+                ("A1", false, false, false, false, false, false, "packet-groups"),
+                ("B", true, false, false, false, false, false, "packet-groups"),
+                ("C", true, true, false, false, false, false, "packet-groups"),
+                ("D", false, false, true, false, false, false, "packet-groups"),
+                ("A2", false, false, false, false, false, false, "packet-groups"),
+              ]
     for (arm, sparse, dense, macro, cooperative, reader32, polar, polarQueryVariant) in arms {
       setenv("QGPU_PAIRED_RUNTIME_SPARSE_SPLIT", sparse ? "1" : "0", 1)
       setenv("QGPU_PAIRED_RUNTIME_DENSE_COMPACTION", dense ? "1" : "0", 1)
@@ -1382,9 +1460,12 @@ enum MetalPairedRuntimeTANSSeriesBenchmark {
       setenv("QGPU_PAIRED_RUNTIME_READER32", reader32 ? "1" : "0", 1)
       setenv("QGPU_PAIRED_RUNTIME_POLAR_INDEX", polar ? "1" : "0", 1)
       setenv("QGPU_PAIRED_RUNTIME_POLAR_QUERY_VARIANT", polarQueryVariant, 1)
-      let adaptive = polar && ProcessInfo.processInfo.environment[
-        "QGPU_ANS_OPT_POLAR_PARTIALS"] == "1"
-      setenv("QGPU_PAIRED_RUNTIME_DETECTOR_KERNEL", adaptive ? "adaptive-partials" : "packet-owner2", 1)
+      let adaptive =
+        polar
+        && ProcessInfo.processInfo.environment[
+          "QGPU_ANS_OPT_POLAR_PARTIALS"] == "1"
+      setenv(
+        "QGPU_PAIRED_RUNTIME_DETECTOR_KERNEL", adaptive ? "adaptive-partials" : "packet-owner2", 1)
       for cycle in 0..<cycles {
         _ = try await experimentUpdateAll(
           residents: residents, mask: [UInt8](repeating: 0, count: 192 * 192))
@@ -1423,8 +1504,9 @@ enum MetalPairedRuntimeTANSSeriesBenchmark {
       }
     }
 
-    let skipIndependent = ProcessInfo.processInfo.environment[
-      "QGPU_ANS_OPT_SKIP_INDEPENDENT_PARITY"] == "1"
+    let skipIndependent =
+      ProcessInfo.processInfo.environment[
+        "QGPU_ANS_OPT_SKIP_INDEPENDENT_PARITY"] == "1"
     if skipIndependent {
       emitJSON([
         "event": "ans_opt_independent_parity", "status": "pending",
@@ -1435,7 +1517,8 @@ enum MetalPairedRuntimeTANSSeriesBenchmark {
         try autoreleasepool {
           let allocated = UInt64(device.currentAllocatedSize)
           let reserve = UInt64(1024 * 1024 * 1024)
-          let available = ProcessInfo.processInfo.physicalMemory > allocated + reserve
+          let available =
+            ProcessInfo.processInfo.physicalMemory > allocated + reserve
             ? ProcessInfo.processInfo.physicalMemory - allocated - reserve : 0
           guard available > 0 else {
             throw failure("Insufficient bounded memory for independent runtime-rANS parity")

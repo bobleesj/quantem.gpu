@@ -15,7 +15,8 @@ struct PairedRuntimeConfiguration: Sendable {
 
   init(mode: MetalResidentInteractionMode?) {
     self.mode = mode
-    values = mode == .fast
+    values =
+      mode == .fast
       ? pairedRuntimeInteractiveDefaults.merging(pairedRuntimeSpeedDefaults) { _, fast in fast }
       : [:]
   }
@@ -98,14 +99,18 @@ func pairedRuntimeEnvironment(_ name: String) -> String? {
     if state.cachedGeneration != state.generation {
       state.values = ProcessInfo.processInfo.environment.filter { $0.key.hasPrefix("QGPU_") }
       // Benchmark-only A/B switches restoring earlier lookup costs.
-      state.legacyDictionaryLookup = state.values["QGPU_PAIRED_RUNTIME_LEGACY_ENVIRONMENT_LOOKUP"] == "1"
+      state.legacyDictionaryLookup =
+        state.values["QGPU_PAIRED_RUNTIME_LEGACY_ENVIRONMENT_LOOKUP"] == "1"
       state.directGetenv = state.values["QGPU_PAIRED_RUNTIME_DIRECT_GETENV"] == "1"
-      state.interactiveDefaults = ["interactive", "interactive-speed"].contains(state.values["QGPU_PAIRED_RUNTIME_PROFILE_DEFAULTS"] ?? "legacy")
-      state.speedDefaults = state.values["QGPU_PAIRED_RUNTIME_PROFILE_DEFAULTS"] == "interactive-speed"
+      state.interactiveDefaults = ["interactive", "interactive-speed"].contains(
+        state.values["QGPU_PAIRED_RUNTIME_PROFILE_DEFAULTS"] ?? "legacy")
+      state.speedDefaults =
+        state.values["QGPU_PAIRED_RUNTIME_PROFILE_DEFAULTS"] == "interactive-speed"
       state.cachedGeneration = state.generation
     }
     let explicit = state.values[name]
-    let resolved = explicit
+    let resolved =
+      explicit
       ?? (state.speedDefaults ? pairedRuntimeSpeedDefaults[name] : nil)
       ?? (state.interactiveDefaults ? pairedRuntimeInteractiveDefaults[name] : nil)
     return (resolved, state.legacyDictionaryLookup, state.directGetenv)
@@ -123,10 +128,13 @@ func pairedRuntimeEnvironmentIsExplicit(_ name: String) -> Bool {
   pairedRuntimeEnvironmentState.withLock { state in
     if state.cachedGeneration != state.generation {
       state.values = ProcessInfo.processInfo.environment.filter { $0.key.hasPrefix("QGPU_") }
-      state.legacyDictionaryLookup = state.values["QGPU_PAIRED_RUNTIME_LEGACY_ENVIRONMENT_LOOKUP"] == "1"
+      state.legacyDictionaryLookup =
+        state.values["QGPU_PAIRED_RUNTIME_LEGACY_ENVIRONMENT_LOOKUP"] == "1"
       state.directGetenv = state.values["QGPU_PAIRED_RUNTIME_DIRECT_GETENV"] == "1"
-      state.interactiveDefaults = ["interactive", "interactive-speed"].contains(state.values["QGPU_PAIRED_RUNTIME_PROFILE_DEFAULTS"] ?? "legacy")
-      state.speedDefaults = state.values["QGPU_PAIRED_RUNTIME_PROFILE_DEFAULTS"] == "interactive-speed"
+      state.interactiveDefaults = ["interactive", "interactive-speed"].contains(
+        state.values["QGPU_PAIRED_RUNTIME_PROFILE_DEFAULTS"] ?? "legacy")
+      state.speedDefaults =
+        state.values["QGPU_PAIRED_RUNTIME_PROFILE_DEFAULTS"] == "interactive-speed"
       state.cachedGeneration = state.generation
     }
     return state.values[name] != nil || !state.interactiveDefaults
@@ -200,11 +208,13 @@ struct PairedRuntimeTANSPolarPlan: Sendable {
   /// off-center crescents are a few pixels wide, and 16-pixel leaves elsewhere.
   static let radial1Core4Radius = 24.0
   private static let radial1Core4Layouts: [Int: IndexLayout] = [
-    16: makeLayout(detectorRows: 192, detectorColumns: 192, leafPixels: 16, layoutKind: "radial1core4")
+    16: makeLayout(
+      detectorRows: 192, detectorColumns: 192, leafPixels: 16, layoutKind: "radial1core4")
   ]
   /// radial1core4 plus 4-pixel leaves in the ring 40 <= radius < 60 (inner ADF edges).
   private static let radial1Fine4Layouts: [Int: IndexLayout] = [
-    16: makeLayout(detectorRows: 192, detectorColumns: 192, leafPixels: 16, layoutKind: "radial1fine4")
+    16: makeLayout(
+      detectorRows: 192, detectorColumns: 192, leafPixels: 16, layoutKind: "radial1fine4")
   ]
   /// Layouts whose leaves may hold fewer real pixels than slots.
   static func isPaddedLayout(_ layoutKind: String) -> Bool {
@@ -302,7 +312,8 @@ struct PairedRuntimeTANSPolarPlan: Sendable {
       "build_seconds": cacheBuildSeconds,
       "uncached_calls": Double(uncachedCalls),
       "uncached_build_seconds": uncachedBuildSeconds,
-      "shared_cache_enabled": pairedRuntimeEnvironment("QGPU_PAIRED_RUNTIME_SHARED_POLAR_PLAN") == "1" ? 1 : 0,
+      "shared_cache_enabled": pairedRuntimeEnvironment("QGPU_PAIRED_RUNTIME_SHARED_POLAR_PLAN")
+        == "1" ? 1 : 0,
     ]
   }
 
@@ -340,8 +351,9 @@ struct PairedRuntimeTANSPolarPlan: Sendable {
         detectorRows: detectorRows, detectorColumns: detectorColumns,
         leafPixels: requestedLeafPixels, layoutKind: layoutKind)
     }
-    guard let layout = indexLayout(
-      leafPixels: requestedLeafPixels, layoutKind: layoutKind)
+    guard
+      let layout = indexLayout(
+        leafPixels: requestedLeafPixels, layoutKind: layoutKind)
     else {
       return direct(
         delta: effective, validPixels: [UInt8](repeating: 1, count: pixelCount),
@@ -404,7 +416,7 @@ struct PairedRuntimeTANSPolarPlan: Sendable {
               let leafCost = leafFieldCost + residualCost
               if leafCost < bestLeafCost
                 || (leafCost == bestLeafCost && target == rootOption
-                    && bestTarget != rootOption)
+                  && bestTarget != rootOption)
               {
                 bestTarget = target
                 bestLeafCost = leafCost
@@ -519,14 +531,14 @@ struct PairedRuntimeTANSPolarPlan: Sendable {
     guard usedIndex, detectorRows == 192, detectorColumns == 192 else {
       var result = [Int32](repeating: 0, count: max(0, detectorRows * detectorColumns))
       for (pixel, coefficient) in zip(residualPixels, residualCoefficients)
-        where Int(pixel) < result.count
-      {
+      where Int(pixel) < result.count {
         result[Int(pixel)] += coefficient
       }
       return result
     }
-    guard let layout = Self.indexLayout(
-      leafPixels: leafPixelCount, layoutKind: layoutKind)
+    guard
+      let layout = Self.indexLayout(
+        leafPixels: leafPixelCount, layoutKind: layoutKind)
     else { return [] }
     var fields = [Int32](repeating: 0, count: layout.leaves + layout.roots)
     for (field, coefficient) in zip(selectedFields, fieldCoefficients) {
@@ -572,9 +584,11 @@ struct PairedRuntimeTANSPolarPlan: Sendable {
         ordered.append(
           OrderedPixel(
             pixel: detectorRow * detectorColumns + detectorColumn,
-            radialBand: layoutKind == "radial1" || isPaddedLayout(layoutKind) ? Int(floor(radius))
-              : layoutKind == "radialhalf" ? Int(floor(radius * 2))
-              : Int(floor(pow(radius, 1.5) / 45)),
+            radialBand: layoutKind == "radial1" || isPaddedLayout(layoutKind)
+              ? Int(floor(radius))
+              : layoutKind == "radialhalf"
+                ? Int(floor(radius * 2))
+                : Int(floor(pow(radius, 1.5) / 45)),
             angle: atan2(row, column), radius: radius))
       }
     }
@@ -914,7 +928,8 @@ extension PairedRuntimeTANSPolarPlan {
               let negativePixels = Int((packed &>> 8) & 0xff)
               // Padding ordinals and valid zero deltas both count toward 0, except in
               // padded core leaves, which vote with their real pixels only.
-              let slots = isPaddedLayout(layoutKind) ? Int(layout.leafPixelCounts[leaf]) : leafPixels
+              let slots =
+                isPaddedLayout(layoutKind) ? Int(layout.leafPixelCounts[leaf]) : leafPixels
               let zeroPixels = slots - Int(packed &>> 24) - Int((packed &>> 16) & 0xff)
               // First maximum over [0, 1, -1], as in the legacy planner.
               var best: Int8 = 0

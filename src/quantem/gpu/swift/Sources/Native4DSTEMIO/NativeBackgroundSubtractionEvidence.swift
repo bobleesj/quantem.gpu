@@ -10,7 +10,9 @@ public struct NativeBackgroundSubtractionEvidence: Sendable {
 
   func validateUnchanged() throws {
     guard identity == (try nativeFileIdentity(for: documentURL)) else {
-      throw EMPADError("The supplier README changed during loading. Reopen the folder to refresh its correction status.")
+      throw EMPADError(
+        "The supplier README changed during loading. Reopen the folder to refresh its correction status."
+      )
     }
   }
 
@@ -39,7 +41,8 @@ public struct NativeBackgroundSubtractionEvidence: Sendable {
   }
 
   private static func declarations(_ text: String, directory: URL, targets: [URL])
-    -> (statement: String?, conflict: Bool) {
+    -> (statement: String?, conflict: Bool)
+  {
     var applies = false
     var statement: String?
     for rawLine in text.components(separatedBy: .newlines) {
@@ -52,12 +55,15 @@ public struct NativeBackgroundSubtractionEvidence: Sendable {
         let path = line.replacingOccurrences(of: "\\", with: "/")
         let components = path.split(separator: "/")
         if !path.hasPrefix("/"), !components.contains(".."), path != "." {
-          let candidate = directory.appendingPathComponent(path).resolvingSymlinksInPath().standardizedFileURL
+          let candidate = directory.appendingPathComponent(path).resolvingSymlinksInPath()
+            .standardizedFileURL
           var isDirectory: ObjCBool = false
           if candidate.path.hasPrefix(directory.path + "/"),
-            FileManager.default.fileExists(atPath: candidate.path, isDirectory: &isDirectory) {
-            applies = targets.contains { $0 == candidate ||
-              (isDirectory.boolValue && $0.path.hasPrefix(candidate.path + "/")) }
+            FileManager.default.fileExists(atPath: candidate.path, isDirectory: &isDirectory)
+          {
+            applies = targets.contains {
+              $0 == candidate || (isDirectory.boolValue && $0.path.hasPrefix(candidate.path + "/"))
+            }
             continue
           }
         }
@@ -67,14 +73,19 @@ public struct NativeBackgroundSubtractionEvidence: Sendable {
       for clause in line.components(separatedBy: CharacterSet(charactersIn: ".;!?")) {
         let normalized = clause.lowercased().replacingOccurrences(of: "-", with: " ")
           .split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        guard normalized.contains("background subtract") || normalized.contains("background correct")
+        guard
+          normalized.contains("background subtract") || normalized.contains("background correct")
         else { continue }
         let words = Set(normalized.split(whereSeparator: { !$0.isLetter }).map(String.init))
-        if !words.isDisjoint(with: ["not", "no", "never", "uncorrected", "unsure", "unknown",
-                                    "whether", "if", "may", "might", "possibly", "maybe", "unless"]) {
+        if !words.isDisjoint(with: [
+          "not", "no", "never", "uncorrected", "unsure", "unknown",
+          "whether", "if", "may", "might", "possibly", "maybe", "unless",
+        ]) {
           return (nil, true)
         }
-        if normalized == "already background subtracted" || normalized == "already background corrected" {
+        if normalized == "already background subtracted"
+          || normalized == "already background corrected"
+        {
           statement = clause.trimmingCharacters(in: .whitespaces)
         }
       }

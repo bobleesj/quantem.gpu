@@ -686,7 +686,8 @@ final class OriginalHDF5Packing {
     let scratchBytes =
       source.sourceBytesPerValue == 4 ? frames * pixels * 4 : (useScalar ? frames * pixels * 2 : 0)
     let hasHotPixels = hotPixelPolicy == .median && !dataset.badPixelIndices.isEmpty
-    let cachedDPC = destination == nil && !hasHotPixels
+    let cachedDPC =
+      destination == nil && !hasHotPixels
       ? validatedDPC(preparedDPC, source: source) : nil
     if destination == nil, !ignoreCachedPlan, !hasHotPixels,
       cachedDPC != nil || bitshuffleDPC != nil, let packingPlanURL,
@@ -1116,7 +1117,8 @@ final class OriginalHDF5Packing {
             preparedInput: preparedInput,
             zeroTails: directZeroTails,
             commandBufferOverride: batchedDecodeCommand,
-            headersAfterDecode: fuseDecodeHeaders && !hasHotPixels && sliceIndex == window.slices.count - 1
+            headersAfterDecode: fuseDecodeHeaders && !hasHotPixels
+              && sliceIndex == window.slices.count - 1
               ? (buffers: [dense, headers, sizes, sums, widths], shape: shape) : nil,
             forceScalar: directScratch, skipUnshuffle: directScratch,
             fusedDirect: fusedDirect,
@@ -2101,7 +2103,9 @@ final class OriginalHDF5Packing {
     return words.withUnsafeBytes { Data($0) }
   }
 
-  static func measuredDetector(_ sums: [UInt64], rows: Int, columns: Int, excludedFromEstimate: [Int]) -> (
+  static func measuredDetector(
+    _ sums: [UInt64], rows: Int, columns: Int, excludedFromEstimate: [Int]
+  ) -> (
     Double, Double, Double
   ) {
     let excluded = Set(excludedFromEstimate)

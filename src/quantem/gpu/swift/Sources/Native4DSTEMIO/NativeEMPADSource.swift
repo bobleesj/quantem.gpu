@@ -164,7 +164,8 @@ public struct NativeEMPADSource: Sendable {
       formatName: metadata?.isGeneration2 == true
         ? "EMPAD-G2 · XML/RAW float32" : "EMPAD-G1 · XML/RAW float32",
       microscopeMetadata: metadata?.microscopeMetadata ?? [:],
-      backgroundSubtractionEvidence: .discover(raw: raw, metadata: metadataURL), recordBytes: recordBytes,
+      backgroundSubtractionEvidence: .discover(raw: raw, metadata: metadataURL),
+      recordBytes: recordBytes,
       rawIdentity: rawIdentity, metadataIdentity: metadataIdentity)
   }
 
@@ -177,12 +178,13 @@ public struct NativeEMPADSource: Sendable {
     for frame in Set([0, frames / 2, frames - 1]) {
       try handle.seek(toOffset: UInt64(frame) * 65536)
       guard let data = try handle.read(upToCount: 65536), data.count == 65536 else {
-        throw EMPADError("EMPAD RAW ended during format validation. Restore the complete acquisition.")
+        throw EMPADError(
+          "EMPAD RAW ended during format validation. Restore the complete acquisition.")
       }
       let markerInEveryWord = data.withUnsafeBytes { bytes in
         stride(from: 0, to: bytes.count, by: 4).allSatisfy {
           UInt32(littleEndian: bytes.loadUnaligned(fromByteOffset: $0, as: UInt32.self))
-            & 0x40000000 != 0
+            & 0x4000_0000 != 0
         }
       }
       if !markerInEveryWord { return }
@@ -241,7 +243,8 @@ public struct NativeEMPADSource: Sendable {
       rawURL: url, metadataURL: url, scanRows: rows, scanColumns: columns,
       scanCalibration: calibration, diffractionSamplingInverseNanometers: nil, acquisitionDate: nil,
       formatIdentifier: "emd1-contiguous-float32/v1", formatName: "EMD 1 · HDF5 float32",
-      microscopeMetadata: metadata, backgroundSubtractionEvidence: .discover(raw: url, metadata: url),
+      microscopeMetadata: metadata,
+      backgroundSubtractionEvidence: .discover(raw: url, metadata: url),
       recordBytes: 65536, dataOffset: info.offset,
       rawIdentity: identity, metadataIdentity: identity)
   }

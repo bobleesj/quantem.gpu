@@ -105,16 +105,22 @@ final class MetalPairedRuntimeTANSPolarIndex {
     self.packets = packets
     self.leafPixels = leafPixels
     self.layoutKind = layoutKind
-    guard let layoutForSize = PairedRuntimeTANSPolarPlan.indexLayout(
-      leafPixels: leafPixels, layoutKind: layoutKind) else {
+    guard
+      let layoutForSize = PairedRuntimeTANSPolarPlan.indexLayout(
+        leafPixels: leafPixels, layoutKind: layoutKind)
+    else {
       throw Self.invalid("Polar-index leaf width is unsupported")
     }
     let leaves = layoutForSize.leaves
     let fields = leaves + leaves / 16
     self.leaves = leaves
     self.fields = fields
-    let retainedCap = (leafPixels == 64 ? 256 : leafPixels == 32 ? 384
-      : PairedRuntimeTANSPolarPlan.isPaddedLayout(layoutKind) ? 768 : 512) * 1024 * 1024
+    let retainedCap =
+      (leafPixels == 64
+        ? 256
+        : leafPixels == 32
+          ? 384
+          : PairedRuntimeTANSPolarPlan.isPaddedLayout(layoutKind) ? 768 : 512) * 1024 * 1024
 
     let partialConstants = MTLFunctionConstantValues()
     var leafWidth = UInt32(leafPixels)
@@ -145,14 +151,18 @@ final class MetalPairedRuntimeTANSPolarIndex {
         .scan512Field4, .scan512ContiguousQuad, .packetMajor,
       ] {
         if variant == .packetMajor {
-          guard let function = library.makeFunction(
-            name: Metal4DSTEMKernels.pairedRuntimeTANSPolarQueryPacketMajorFunction) else {
+          guard
+            let function = library.makeFunction(
+              name: Metal4DSTEMKernels.pairedRuntimeTANSPolarQueryPacketMajorFunction)
+          else {
             throw Self.invalid("Metal could not load the packet-major polar-query kernel")
           }
           scan512Pipelines[variant] = try device.makeComputePipelineState(function: function)
         } else if variant == .scan512Field4 {
-          guard let function = library.makeFunction(
-            name: Metal4DSTEMKernels.pairedRuntimeTANSPolarQueryField4Function) else {
+          guard
+            let function = library.makeFunction(
+              name: Metal4DSTEMKernels.pairedRuntimeTANSPolarQueryField4Function)
+          else {
             throw Self.invalid("Metal could not load the field-parallel polar-query kernel")
           }
           scan512Pipelines[variant] = try device.makeComputePipelineState(function: function)
@@ -179,8 +189,9 @@ final class MetalPairedRuntimeTANSPolarIndex {
 
     // Fields are built, sized and packed one packet batch at a time, so the transient
     // field buffer holds `batchPackets` packets instead of the whole source.
-    let batchSetting = Int(
-      pairedRuntimeEnvironment("QGPU_PAIRED_RUNTIME_POLAR_BUILD_BATCH_PACKETS") ?? "64") ?? 64
+    let batchSetting =
+      Int(
+        pairedRuntimeEnvironment("QGPU_PAIRED_RUNTIME_POLAR_BUILD_BATCH_PACKETS") ?? "64") ?? 64
     let batchPackets = max(1, min(packets, batchSetting))
     let fieldBytes = try Self.byteProduct([batchPackets, fields, Self.scansPerPacket, 4])
     let streamCount = try Self.byteProduct([packets, fields])
@@ -208,13 +219,16 @@ final class MetalPairedRuntimeTANSPolarIndex {
       device: device, bytes: 4, options: .storageModeShared,
       label: "paired-runtime polar failure")
 
-    guard let layout = PairedRuntimeTANSPolarPlan.indexLayout(
-      leafPixels: leafPixels, layoutKind: layoutKind) else {
+    guard
+      let layout = PairedRuntimeTANSPolarPlan.indexLayout(
+        leafPixels: leafPixels, layoutKind: layoutKind)
+    else {
       throw Self.invalid("Polar-index leaf width is unsupported")
     }
     let permutation = layout.permutation
     guard permutation.count == leaves * leafPixels,
-      permutation.count == validPixels.count || PairedRuntimeTANSPolarPlan.isPaddedLayout(layoutKind),
+      permutation.count == validPixels.count
+        || PairedRuntimeTANSPolarPlan.isPaddedLayout(layoutKind),
       Set(permutation.filter { $0 >= 0 }).count == validPixels.count
     else {
       throw Self.invalid("Polar-index permutation is incomplete")
@@ -385,7 +399,8 @@ final class MetalPairedRuntimeTANSPolarIndex {
       failure.device.registryID == device.registryID
     else { throw Self.invalid("Polar query requires retaining commands and same-device buffers") }
     let inputs = try prepareInputs(plan: plan)
-    try encode(inputs: inputs, output: output, failure: failure,
+    try encode(
+      inputs: inputs, output: output, failure: failure,
       command: command, variant: variant, profiler: profiler,
       packetStride: packetStride, packetPhase: packetPhase)
   }
@@ -415,8 +430,10 @@ final class MetalPairedRuntimeTANSPolarIndex {
         batchFields, device: device, label: "paired-runtime selected polar fields")
       let coefficients = try Self.upload(
         batchCoefficients, device: device, label: "paired-runtime polar coefficients")
-      batches.append(.init(selected: selected, coefficients: coefficients,
-        count: batchFields.count))
+      batches.append(
+        .init(
+          selected: selected, coefficients: coefficients,
+          count: batchFields.count))
       first = end
     }
     return PreparedInputs(batches: batches)
@@ -436,7 +453,9 @@ final class MetalPairedRuntimeTANSPolarIndex {
     else { throw Self.invalid("Polar query requires retaining commands and same-device buffers") }
     guard [1, 2, 4, 8].contains(packetStride), packetPhase >= 0, packetPhase < packetStride,
       packetStride == 1 || variant.scan512StripeCount != nil
-    else { throw Self.invalid("Block-stride polar queries require a scan512 variant and a valid phase") }
+    else {
+      throw Self.invalid("Block-stride polar queries require a scan512 variant and a valid phase")
+    }
     let logicalPackets = (packets - packetPhase + packetStride - 1) / packetStride
     let pipeline: MTLComputePipelineState
     if variant == .packetGroups {
@@ -449,9 +468,11 @@ final class MetalPairedRuntimeTANSPolarIndex {
           + "QGPU_PAIRED_RUNTIME_POLAR_QUERY_VARIANT=\(variant.rawValue)")
     }
     for batch in inputs.batches {
-      guard let encoder = profiler?.makeComputeEncoder(
-        commandBuffer: command, stage: "polar")
-        ?? command.makeComputeCommandEncoder() else {
+      guard
+        let encoder = profiler?.makeComputeEncoder(
+          commandBuffer: command, stage: "polar")
+          ?? command.makeComputeCommandEncoder()
+      else {
         throw Self.invalid("Metal could not encode the polar query")
       }
       var parameters: [UInt32] = [
@@ -460,7 +481,8 @@ final class MetalPairedRuntimeTANSPolarIndex {
       ]
       encoder.setComputePipelineState(pipeline)
       for (index, buffer) in [
-        packedPayload, packedOffsets, packedTags, batch.selected, batch.coefficients, output, failure,
+        packedPayload, packedOffsets, packedTags, batch.selected, batch.coefficients, output,
+        failure,
       ].enumerated() {
         encoder.setBuffer(buffer, offset: 0, index: index)
       }
@@ -523,7 +545,8 @@ final class MetalPairedRuntimeTANSPolarIndex {
       device: device, bytes: staging.length, options: .storageModePrivate, label: label)
     guard let command = queue.makeCommandBuffer(), let blit = command.makeBlitCommandEncoder()
     else { throw invalid("Metal could not upload \(label)") }
-    blit.copy(from: staging, sourceOffset: 0, to: result, destinationOffset: 0,
+    blit.copy(
+      from: staging, sourceOffset: 0, to: result, destinationOffset: 0,
       size: staging.length)
     blit.endEncoding()
     command.commit()

@@ -169,7 +169,8 @@ final class PairedRuntimeDetectorProfiler {
           encoderUnionNanoseconds: 0, stageTimeline: [:], rawTimestamps: timestamps,
           calibratedNanosecondsPerTick: nil)
       }
-      let scale = Double(after.cpuNanoseconds - before.cpuNanoseconds)
+      let scale =
+        Double(after.cpuNanoseconds - before.cpuNanoseconds)
         / Double(after.gpuTicks - before.gpuTicks)
       guard scale.isFinite, scale > 0,
         timestamps.allSatisfy({ $0 >= before.gpuTicks && $0 <= after.gpuTicks })
@@ -187,9 +188,11 @@ final class PairedRuntimeDetectorProfiler {
         let start = timestamps[index * 2]
         let end = timestamps[index * 2 + 1]
         stageNanoseconds[stage, default: 0] += Double(end - start) * scale
-        let startSeconds = Double(before.cpuNanoseconds) * 1.0e-9
+        let startSeconds =
+          Double(before.cpuNanoseconds) * 1.0e-9
           + Double(start - before.gpuTicks) * scale * 1.0e-9
-        let endSeconds = Double(before.cpuNanoseconds) * 1.0e-9
+        let endSeconds =
+          Double(before.cpuNanoseconds) * 1.0e-9
           + Double(end - before.gpuTicks) * scale * 1.0e-9
         stageTimeline["gpu_\(stage)_\(index)_start_seconds"] = startSeconds
         stageTimeline["gpu_\(stage)_\(index)_end_seconds"] = endSeconds

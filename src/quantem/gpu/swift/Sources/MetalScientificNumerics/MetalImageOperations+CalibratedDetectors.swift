@@ -5,10 +5,12 @@ import Metal4DSTEMStreamingIO
 extension MetalImageOperations {
   /// Integrate restored scientific intensities without materializing a full 4D array.
   /// Weights use detector (row, column) order; all scan frames participate.
-  public func virtualImage(source: MetalPackedSource, weights: [Float],
+  public func virtualImage(
+    source: MetalPackedSource, weights: [Float],
     shouldCancel: () -> Bool = { false }, progress: (Int, Int) -> Void = { _, _ in }
   ) throws -> GPUImage {
-    try virtualImages(source: source, weights: [weights], shouldCancel: shouldCancel,
+    try virtualImages(
+      source: source, weights: [weights], shouldCancel: shouldCancel,
       progress: progress)[0]
   }
 
@@ -16,14 +18,19 @@ extension MetalImageOperations {
   ///
   /// Each weight array is detector-row-major. Returned images preserve mask order.
   /// Decoded regions are shared across reductions, never retained as a full 4D array.
-  public func virtualImages(source: MetalPackedSource, weights: [[Float]],
+  public func virtualImages(
+    source: MetalPackedSource, weights: [[Float]],
     shouldCancel: () -> Bool = { false }, progress: (Int, Int) -> Void = { _, _ in }
   ) throws -> [GPUImage] {
-    let shape = source.shape, pixels = shape[2] * shape[3]
+    let shape = source.shape
+    let pixels = shape[2] * shape[3]
     guard !weights.isEmpty,
       weights.allSatisfy({ $0.count == pixels && $0.allSatisfy(\.isFinite) }),
       !source.isReleased, source.readyFrames == shape[0] * shape[1]
-    else { throw Self.invalid("Use a complete calibrated resident and one finite weight per detector pixel.") }
+    else {
+      throw Self.invalid(
+        "Use a complete calibrated resident and one finite weight per detector pixel.")
+    }
     let results = try weights.map { _ in try image(rows: shape[0], columns: shape[1]) }
     let masks = try weights.map { try image(values: $0, rows: shape[2], columns: shape[3]) }
     for first in stride(from: 0, to: source.readyFrames, by: 512) {
@@ -33,7 +40,8 @@ extension MetalImageOperations {
         let values = try source.read(first..<(first + count))
         let command = try makeCommand()
         for (mask, result) in zip(masks, results) {
-          try run("calibrated_detector_sum", [values, mask.buffer, result.buffer],
+          try run(
+            "calibrated_detector_sum", [values, mask.buffer, result.buffer],
             words: [UInt32(pixels), UInt32(first)], count: count * 128,
             groupSize: 128, command: command)
         }
@@ -58,10 +66,12 @@ extension MetalImageOperations {
     guard let copy = command.makeBlitCommandEncoder() else {
       throw Self.invalid("Cannot copy the weighted image for normalization.")
     }
-    copy.copy(from: numerator.buffer, sourceOffset: 0, to: result.buffer,
+    copy.copy(
+      from: numerator.buffer, sourceOffset: 0, to: result.buffer,
       destinationOffset: 0, size: numerator.rows * numerator.columns * 4)
     copy.endEncoding()
-    try run("weighted_finish", [result.buffer, denominator.buffer, zero.buffer],
+    try run(
+      "weighted_finish", [result.buffer, denominator.buffer, zero.buffer],
       words: [UInt32(numerator.rows * numerator.columns), 1],
       count: numerator.rows * numerator.columns, command: command)
     try complete(command)

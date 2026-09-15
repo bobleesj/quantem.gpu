@@ -9,7 +9,8 @@ extension MetalEncodedSource {
   /// The caller owns the returned residents and releases them when finished.
   ///
   /// Example: `try MetalEncodedSource.load(files: files, indexDirectory: cache, device: device)`.
-  public static func load(files: [URL], indexDirectory: URL, device: MTLDevice,
+  public static func load(
+    files: [URL], indexDirectory: URL, device: MTLDevice,
     shouldCancel: () -> Bool = { false }, progress: (Int, Int) -> Void = { _, _ in }
   ) throws -> [MetalEncodedSource] {
     let catalog = Native4DSTEMCatalogBuilder(cacheDirectory: indexDirectory)
@@ -18,7 +19,8 @@ extension MetalEncodedSource {
       progress(index, files.count)
       let prepared = try catalog.prepare(input: file)
       guard prepared.datasets.count == 1 else {
-        throw Metal4DSTEMStreamingIOError.invalidRequest("Each file must identify one 4D acquisition.")
+        throw Metal4DSTEMStreamingIOError.invalidRequest(
+          "Each file must identify one 4D acquisition.")
       }
       return try MetalEncodedSource.load(
         source: Native4DSTEMIndexedSource.open(dataset: prepared.datasets[0]), device: device,

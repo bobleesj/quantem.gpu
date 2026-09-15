@@ -41,8 +41,9 @@ public final class MetalPairedRuntimeTANSSyntheticCodec {
     }
     self.queue = queue
     let library = try Metal4DSTEMKernels.makePairedRuntimeTANSLibrary(device: device)
-    let sparseSlackValue = ProcessInfo.processInfo.environment[
-      "QGPU_PAIRED_RUNTIME_SPARSE_SLACK"] ?? "0"
+    let sparseSlackValue =
+      ProcessInfo.processInfo.environment[
+        "QGPU_PAIRED_RUNTIME_SPARSE_SLACK"] ?? "0"
     guard sparseSlackValue == "0" || sparseSlackValue == "4" || sparseSlackValue == "8",
       let sparseSlack = UInt32(sparseSlackValue)
     else { throw Self.invalid("QGPU_PAIRED_RUNTIME_SPARSE_SLACK must be 0, 4, or 8") }
@@ -151,8 +152,7 @@ public final class MetalPairedRuntimeTANSSyntheticCodec {
     for (index, buffer) in [
       raw, frequencyStarts, encoding, scratch, sizes, modes, failure,
     ]
-      .enumerated()
-    {
+    .enumerated() {
       encode.setBuffer(buffer, offset: 0, index: index)
     }
     encode.setBytes(&encodeParameters, length: encodeParameters.count * 4, index: 7)

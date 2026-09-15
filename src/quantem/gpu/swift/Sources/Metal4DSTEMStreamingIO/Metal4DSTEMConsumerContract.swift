@@ -641,7 +641,8 @@ public struct Metal4DSTEMResidentCapabilities: Codable, Equatable, Sendable {
   ) throws -> Self {
     guard !source.isReleased else {
       throw Metal4DSTEMStreamingIOError.invalidRequest(
-        "Paired runtime ANS resident storage was released. Reload it before requesting capabilities.")
+        "Paired runtime ANS resident storage was released. Reload it before requesting capabilities."
+      )
     }
     let shape = source.shape
     let dtype = source.logicalDtype.rawValue

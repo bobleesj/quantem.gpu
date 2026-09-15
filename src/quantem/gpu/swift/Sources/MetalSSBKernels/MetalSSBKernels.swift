@@ -907,7 +907,8 @@ public final class MetalSSBEngine {
       guard let commands = streamedCommands else {
         throw MetalSSBError.commandQueue
       }
-      try encodeBrightfield(Array(activeBrightfieldIndices[offset..<(offset + batch)]), rawBuffer, commands)
+      try encodeBrightfield(
+        Array(activeBrightfieldIndices[offset..<(offset + batch)]), rawBuffer, commands)
       encodeForwardFFT(commands, batch: batch)
       let params = parameters(
         batch: batch,

@@ -21,7 +21,9 @@ enum MetalRuntimeANSBenchmark {
     let catalog = try Native4DSTEMCatalogBuilder(cacheDirectory: indexes).prepare(input: input)
     guard !catalog.datasets.isEmpty else { throw failure("No original indexed HDF5 acquisition") }
     var residents: [MetalRuntimeANSResidentSource] = []
-    defer { residents.forEach { $0.releaseResidentStorage() } }
+    defer {
+      for source in residents { source.releaseResidentStorage() }
+    }
     var records: [[String: Any]] = []
     let seriesStarted = CFAbsoluteTimeGetCurrent()
     for dataset in catalog.datasets {
@@ -105,11 +107,14 @@ enum MetalRuntimeANSBenchmark {
       series: series, masks: wideMasks, priorityIndex: residents.count / 2)
     let jumps = try detectorTrials(series: series, masks: jumpMasks)
     let parityBuffers = try series.updateVirtualDetectorBuffers(
-      mask: wideMasks[0], forceRebase: true).buffers
+      mask: wideMasks[0], forceRebase: true
+    ).buffers
     var detectorParity = true
     var detectorParityMismatches: [[String: Any]] = []
-    let parityFrames = [0, catalog.datasets[0].scanCols * catalog.datasets[0].scanRows / 2,
-      catalog.datasets[0].scanCols * catalog.datasets[0].scanRows - 1]
+    let parityFrames = [
+      0, catalog.datasets[0].scanCols * catalog.datasets[0].scanRows / 2,
+      catalog.datasets[0].scanCols * catalog.datasets[0].scanRows - 1,
+    ]
     for sourceIndex in residents.indices {
       let values = parityBuffers[sourceIndex].contents().bindMemory(
         to: UInt32.self, capacity: catalog.datasets[0].scanRows * catalog.datasets[0].scanCols)

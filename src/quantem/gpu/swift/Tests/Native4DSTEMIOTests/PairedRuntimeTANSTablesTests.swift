@@ -21,7 +21,7 @@ final class PairedRuntimeTANSTablesTests: XCTestCase {
     XCTAssertEqual(try tables.validateTransitionInversion(), 2_572_288)
   }
 
-  func teapple-m2-8gbryModelContainsExactlyOneStateTable() throws {
+  func testAllModelsContainExactlyOneStateTable() throws {
     let tables = try PairedRuntimeTANSTables.build()
     for model in 0..<PairedRuntimeTANSTables.modelCount {
       let lower = model * PairedRuntimeTANSTables.symbolCount
